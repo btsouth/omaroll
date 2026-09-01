@@ -144,6 +144,21 @@ int main(int argc, char *argv[]) {
   QGuiApplication::setApplicationVersion(QStringLiteral(OMAROLL_VERSION));
   QGuiApplication::setOrganizationName(QStringLiteral("Omaroll"));
 
+  // Informational CLI flags must work over SSH and in package containers that
+  // have no graphical platform plugin available. Handle them before creating
+  // QGuiApplication, which would otherwise abort before printing anything.
+  for (int index = 1; index < argc; ++index) {
+    const QByteArray argument(argv[index]);
+    if (argument == "--help" || argument == "-h") {
+      printUsage();
+      return 0;
+    }
+    if (argument == "--version") {
+      QTextStream(stdout) << "omaroll " << OMAROLL_VERSION << Qt::endl;
+      return 0;
+    }
+  }
+
   // On Wayland this is what becomes app_id. The Hyprland media-opacity rule
   // matches on it, so it must stay in lockstep with the .desktop filename and
   // StartupWMClass. Changing it silently breaks the transparency opt-out.
@@ -180,16 +195,6 @@ int main(int argc, char *argv[]) {
   application.setWindowIcon(applicationIcon);
 
   const QStringList arguments = application.arguments();
-
-  if (arguments.contains(QStringLiteral("--help")) ||
-      arguments.contains(QStringLiteral("-h"))) {
-    printUsage();
-    return 0;
-  }
-  if (arguments.contains(QStringLiteral("--version"))) {
-    QTextStream(stdout) << "omaroll " << OMAROLL_VERSION << Qt::endl;
-    return 0;
-  }
 
   const QString badArgument = argumentError(arguments);
   if (!badArgument.isEmpty()) {

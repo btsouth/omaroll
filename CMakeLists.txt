@@ -131,6 +131,9 @@ if(BUILD_TESTING)
   qt_add_executable(omaroll_tests tests/tst_omaroll.cpp)
   target_link_libraries(omaroll_tests PRIVATE omaroll_core Qt6::Test)
   add_test(NAME omaroll_tests COMMAND omaroll_tests)
+  add_test(NAME omaroll_version COMMAND omaroll --version)
+  set_tests_properties(omaroll_version PROPERTIES
+    PASS_REGULAR_EXPRESSION "omaroll ${PROJECT_VERSION}")
   # The suite touches QImage and QGuiApplication paths, so it needs a platform
   # plugin; offscreen keeps it runnable in a headless checkout or CI.
   set_tests_properties(omaroll_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
