@@ -508,12 +508,40 @@ private slots:
              dir.filePath(QStringLiteral("album/forest.png")));
     proxy.setAlbumFilter({}, {});
     QCOMPARE(proxy.count(), 5);
+
+    // Navigation must visit every visible row once before wrapping, in both
+    // directions. A one-step assertion misses cycles that accidentally cover
+    // only part of a mixed library.
+    const QString first = proxy.pathAt(0);
+    for (const int direction : {1, -1}) {
+      QSet<QString> visited;
+      QString path = first;
+      for (int step = 0; step < proxy.count(); ++step) {
+        QVERIFY(!path.isEmpty());
+        QVERIFY(!visited.contains(path));
+        visited.insert(path);
+        path = proxy.adjacentPath(path, direction);
+      }
+      QCOMPARE(visited.size(), proxy.count());
+      QCOMPARE(path, first);
+    }
+
     const QString next = proxy.adjacentPathInFolder(beach, 1);
     const QString previous = proxy.adjacentPathInFolder(beach, -1);
     QVERIFY(!next.isEmpty());
     QVERIFY(!previous.isEmpty());
     QCOMPARE(QFileInfo(next).absolutePath(), dir.path());
     QCOMPARE(QFileInfo(previous).absolutePath(), dir.path());
+    for (const int direction : {1, -1}) {
+      QSet<QString> visited;
+      QString path = beach;
+      do {
+        QVERIFY(!visited.contains(path));
+        visited.insert(path);
+        path = proxy.adjacentPathInFolder(path, direction);
+      } while (path != beach);
+      QCOMPARE(visited.size(), 4);
+    }
     QCOMPARE(proxy.adjacentPathInFolder(QStringLiteral("/missing.png"), 1),
              QString());
   }

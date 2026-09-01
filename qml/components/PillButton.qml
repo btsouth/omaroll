@@ -86,7 +86,10 @@ Item {
 
         TapHandler {
             enabled: root.enabled
-            onSingleTapped: root.clicked()
+            // Buttons act on every release. singleTapped deliberately waits
+            // for and excludes a possible double-tap, which drops clicks when
+            // someone moves quickly through Previous or Next.
+            onTapped: root.clicked()
         }
     }
 
