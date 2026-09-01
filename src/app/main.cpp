@@ -8,6 +8,7 @@
 #include "matte/MatteComposer.h"
 #include "matte/MatteProvider.h"
 #include "theme/OmarchyTheme.h"
+#include "thumbs/ThumbnailCache.h"
 #include "thumbs/ThumbnailProvider.h"
 
 #include <QGuiApplication>
@@ -16,6 +17,7 @@
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QThreadPool>
 #include <QTimer>
 
 namespace {
@@ -116,6 +118,10 @@ int main(int argc, char* argv[]) {
     qputenv("XDG_VIDEOS_DIR", layout.videos.toUtf8());
     qputenv("XDG_DOWNLOAD_DIR", layout.root.toUtf8());
   }
+
+  // Bound the thumbnail cache once per launch, off the GUI thread. A thumbnail
+  // is always rebuildable, so this can never lose anything the user cares about.
+  QThreadPool::globalInstance()->start([] { ThumbnailCache::prune(); });
 
   OmarchyTheme theme;
   AppSettings settings;

@@ -22,6 +22,14 @@ public:
 
   [[nodiscard]] static QString cacheDirectory();
 
+  // Cache ceiling. A thumbnail is always rebuildable, so bounding the directory
+  // costs a little work later rather than losing anything.
+  static constexpr qint64 kMaxCacheBytes = 256LL * 1024 * 1024;
+
+  // Deletes least-recently-used entries until the directory is under the
+  // ceiling. Safe to call from a worker thread; does nothing when already under.
+  static void prune(qint64 maxBytes = kMaxCacheBytes);
+
 private:
   [[nodiscard]] static QImage renderImage(const QString& path, const QSize& pixelSize);
   [[nodiscard]] static QImage renderVideo(const QString& path, const QSize& pixelSize,

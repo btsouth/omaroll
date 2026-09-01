@@ -173,8 +173,9 @@ the codebase.
 - **High DPI.** Thumbnails are generated at `devicePixelRatio` and the cache is
   keyed on the rendered pixel size, so a 1.25x or 1.5x monitor gets crisp tiles
   rather than upscaled ones.
-- **Cache and state.** Thumbnails in `~/.cache/omaroll/thumbs`, settings in
-  `~/.config/omaroll`. Both are safe to delete.
+- **Cache and state.** Thumbnails in `~/.cache/omaroll/thumbs`, bounded at 256MB
+  and pruned least-recently-used at launch. Settings in `~/.config/omaroll`.
+  Both are safe to delete at any time.
 
 ## Development
 

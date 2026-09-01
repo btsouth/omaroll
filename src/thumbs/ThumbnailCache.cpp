@@ -5,6 +5,7 @@
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFileInfo>
+#include <QDateTime>
 #include <QImageReader>
 #include <QProcess>
 #include <QStandardPaths>
@@ -27,6 +28,42 @@ QString cacheHome() {
 
 QString ThumbnailCache::cacheDirectory() {
   return cacheHome() + QStringLiteral("/omaroll/thumbs");
+}
+
+void ThumbnailCache::prune(qint64 maxBytes) {
+  QDir dir(cacheDirectory());
+  if (!dir.exists()) {
+    return;
+  }
+
+  // Oldest first, by last access where the filesystem tracks it and last
+  // modification otherwise, so a tile that is still being scrolled past
+  // survives ahead of one nobody has looked at in months.
+  QFileInfoList entries = dir.entryInfoList({QStringLiteral("*.jpg")}, QDir::Files);
+
+  qint64 total = 0;
+  for (const QFileInfo& entry : entries) {
+    total += entry.size();
+  }
+  if (total <= maxBytes) {
+    return;
+  }
+
+  std::sort(entries.begin(), entries.end(), [](const QFileInfo& a, const QFileInfo& b) {
+    const QDateTime left = a.lastRead().isValid() ? a.lastRead() : a.lastModified();
+    const QDateTime right = b.lastRead().isValid() ? b.lastRead() : b.lastModified();
+    return left < right;
+  });
+
+  for (const QFileInfo& entry : entries) {
+    if (total <= maxBytes) {
+      break;
+    }
+    const qint64 size = entry.size();
+    if (QFile::remove(entry.absoluteFilePath())) {
+      total -= size;
+    }
+  }
 }
 
 QString ThumbnailCache::cacheKey(const QString& path, const QSize& pixelSize, int seekPercent) {
