@@ -42,6 +42,25 @@ Item {
     anchors.fill: parent
     focus: visible
 
+    // Own wheel input for the whole modal. A Flickable stops accepting wheel
+    // events at its bounds, which otherwise lets the same event reach the
+    // library underneath and scroll it while Settings is open.
+    WheelHandler {
+        target: null
+        enabled: root.visible
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+        onWheel: function(event) {
+            const delta = event.pixelDelta.y !== 0
+                          ? event.pixelDelta.y : event.angleDelta.y / 2
+            const minimum = settingsFlickable.originY
+            const maximum = minimum + Math.max(
+                                0, settingsFlickable.contentHeight - settingsFlickable.height)
+            settingsFlickable.contentY = Math.max(
+                        minimum, Math.min(maximum, settingsFlickable.contentY - delta))
+            event.accepted = true
+        }
+    }
+
     Rectangle {
         anchors.fill: parent
         color: Qt.rgba(0, 0, 0, 0.6)
@@ -60,6 +79,7 @@ Item {
         TapHandler { onSingleTapped: {} }
 
         Flickable {
+            id: settingsFlickable
             anchors.fill: parent
             anchors.margins: 22
             contentHeight: column.implicitHeight
