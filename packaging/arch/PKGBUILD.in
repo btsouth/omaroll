@@ -1,0 +1,33 @@
+pkgname=omaroll
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc='Everything you capture, in one place'
+arch=('x86_64')
+url='https://github.com/tsouth89/omaroll'
+license=('MIT')
+depends=('qt6-base' 'qt6-declarative' 'qt6-multimedia' 'hicolor-icon-theme'
+         'xdg-desktop-portal' 'ffmpegthumbnailer')
+optdepends=('omacut: trim recordings'
+            'tensaku: annotate screenshots'
+            'tesseract: copy text out of a screenshot'
+            'zbar: scan QR codes'
+            'pinta: edit images'
+            'mpv: play video'
+            'imv: view images full size'
+            'localsend: send to another device')
+makedepends=('cmake' 'ninja' 'pkgconf')
+options=('!debug')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/tsouth89/omaroll/releases/download/v$pkgver/$pkgname-$pkgver.tar.gz")
+sha256sums=('@SOURCE_SHA256@')
+
+build() {
+  cmake -S "$pkgname-$pkgver" -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+  install -Dm644 "$pkgname-$pkgver/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

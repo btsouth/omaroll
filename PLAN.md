@@ -631,10 +631,18 @@ day one.
 - Surface alpha, corner radius and font pulled from the theme; cross-fade on theme change
 - Verified against one light and one dark theme
 - Screenshot and Recording sources with filename classification
-- Static grid, day grouping, image thumbnails via libvips
+- Static grid, day grouping, thumbnails
 - Open in default handler, show in files
 
 *Internal. The moment it is worth a screenshot.*
+
+**Shipped.** One deliberate deviation: thumbnails go through `QImageReader` with a
+scaled decode rather than libvips. For JPEG that already hands libjpeg a scale denominator, so a
+large photo is never fully decoded to draw a tile, and it removed a dependency from v0.1 entirely.
+`ThumbnailCache::renderImage` is the single function to swap when v0.2 measures against the
+performance budget and finds libvips is worth the link. Video thumbnails came forward from v0.2
+because `ffmpegthumbnailer` is a one-process call and a recordings grid without frames is not worth
+looking at.
 
 ### v0.2 — It is fast and complete
 
