@@ -1,0 +1,1247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>omaroll Build Plan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+  :root {
+    --ground:    #E9EDEC;
+    --surface:   #FBFCFC;
+    --surface-2: #F1F4F3;
+    --ink:       #141A19;
+    --ink-2:     #3D4A48;
+    --muted:     #677573;
+    --rule:      #D2DAD8;
+    --rule-2:    #E1E7E6;
+    --native:    #17786C;
+    --native-bg: #DCECE9;
+    --deleg:     #8A5D0F;
+    --deleg-bg:  #F3E9D5;
+    --gap:       #A33A2E;
+    --gap-bg:    #F6E2DF;
+    --shadow:    0 1px 2px rgba(20,26,25,.06), 0 8px 24px -16px rgba(20,26,25,.28);
+
+    --sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+    --measure: 68ch;
+    color-scheme: light;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:    #0E1211;
+      --surface:   #151A19;
+      --surface-2: #1B2120;
+      --ink:       #E4EBE9;
+      --ink-2:     #B4C1BE;
+      --muted:     #7E8D8A;
+      --rule:      #263130;
+      --rule-2:    #1F2726;
+      --native:    #62C7B7;
+      --native-bg: #14312D;
+      --deleg:     #D4A657;
+      --deleg-bg:  #33280F;
+      --gap:       #E58A7C;
+      --gap-bg:    #37201D;
+      --shadow:    0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.7);
+      color-scheme: dark;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:    #0E1211;
+    --surface:   #151A19;
+    --surface-2: #1B2120;
+    --ink:       #E4EBE9;
+    --ink-2:     #B4C1BE;
+    --muted:     #7E8D8A;
+    --rule:      #263130;
+    --rule-2:    #1F2726;
+    --native:    #62C7B7;
+    --native-bg: #14312D;
+    --deleg:     #D4A657;
+    --deleg-bg:  #33280F;
+    --gap:       #E58A7C;
+    --gap-bg:    #37201D;
+    --shadow:    0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.7);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 24px 120px;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  /* ---------- masthead ---------- */
+
+  .masthead {
+    padding: 72px 0 40px;
+    border-bottom: 1px solid var(--rule);
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .wordmark {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: clamp(40px, 7vw, 64px);
+    letter-spacing: -.035em;
+    line-height: 1;
+    margin: 0;
+    color: var(--ink);
+  }
+
+  .wordmark .dim { color: var(--muted); }
+
+  .tagline {
+    font-size: clamp(19px, 2.4vw, 23px);
+    line-height: 1.4;
+    font-weight: 500;
+    max-width: 30ch;
+    margin: 0;
+    text-wrap: balance;
+    color: var(--ink);
+  }
+
+  .standfirst {
+    max-width: var(--measure);
+    color: var(--ink-2);
+    margin: 0;
+    font-size: 17px;
+  }
+
+  .meta-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 4px;
+  }
+
+  .chip {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: .02em;
+    padding: 5px 10px;
+    border-radius: 3px;
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    color: var(--ink-2);
+    white-space: nowrap;
+  }
+
+  /* ---------- body layout ---------- */
+
+  .body-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  @media (min-width: 1000px) {
+    .body-grid {
+      grid-template-columns: 190px minmax(0, 1fr);
+      gap: 56px;
+      align-items: start;
+    }
+    .rail { display: block; }
+  }
+
+  .rail {
+    display: none;
+    position: sticky;
+    top: 32px;
+    padding-top: 56px;
+  }
+
+  .rail ol {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-left: 1px solid var(--rule);
+  }
+
+  .rail a {
+    display: block;
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: .01em;
+    color: var(--muted);
+    text-decoration: none;
+    padding: 4px 0 4px 14px;
+    margin-left: -1px;
+    border-left: 2px solid transparent;
+    transition: color .15s, border-color .15s;
+  }
+
+  .rail a:hover,
+  .rail a:focus-visible {
+    color: var(--ink);
+    border-left-color: var(--native);
+  }
+
+  main { min-width: 0; }
+
+  section {
+    padding: 56px 0;
+    border-bottom: 1px solid var(--rule-2);
+    scroll-margin-top: 24px;
+  }
+
+  section:last-of-type { border-bottom: none; }
+
+  h2 {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: clamp(22px, 3vw, 27px);
+    letter-spacing: -.025em;
+    line-height: 1.2;
+    margin: 0 0 6px;
+    text-wrap: balance;
+  }
+
+  h3 {
+    font-family: var(--mono);
+    font-weight: 600;
+    font-size: 15.5px;
+    letter-spacing: -.01em;
+    margin: 36px 0 10px;
+    color: var(--ink);
+  }
+
+  h4 {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 28px 0 10px;
+  }
+
+  .sec-sub {
+    color: var(--muted);
+    font-size: 14.5px;
+    margin: 0 0 28px;
+    max-width: var(--measure);
+  }
+
+  p { max-width: var(--measure); margin: 0 0 16px; color: var(--ink-2); }
+  p.lead { color: var(--ink); font-size: 17px; }
+  p:last-child { margin-bottom: 0; }
+
+  strong { color: var(--ink); font-weight: 600; }
+
+  a { color: var(--native); }
+
+  ul { max-width: var(--measure); margin: 0 0 16px; padding-left: 0; list-style: none; }
+  ul li {
+    position: relative;
+    padding-left: 20px;
+    margin-bottom: 9px;
+    color: var(--ink-2);
+  }
+  ul li::before {
+    content: "";
+    position: absolute;
+    left: 3px;
+    top: .68em;
+    width: 5px;
+    height: 1px;
+    background: var(--muted);
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: .875em;
+    background: var(--surface-2);
+    border: 1px solid var(--rule-2);
+    border-radius: 3px;
+    padding: 1px 5px;
+    color: var(--ink);
+  }
+
+  /* ---------- tables ---------- */
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    border-radius: 5px;
+    background: var(--surface);
+    margin: 20px 0 8px;
+    box-shadow: var(--shadow);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    min-width: 560px;
+  }
+
+  th {
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--surface-2);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--rule-2);
+    color: var(--ink-2);
+    vertical-align: top;
+  }
+
+  tr:last-child td { border-bottom: none; }
+
+  td.mono, th.mono { font-family: var(--mono); font-size: 13px; }
+  td.ink { color: var(--ink); font-weight: 500; }
+
+  tr.is-gap td { background: var(--gap-bg); }
+  tr.is-gap td.ink { color: var(--gap); font-weight: 600; }
+
+  /* status pills */
+  .pill {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+  .pill.native { background: var(--native-bg); color: var(--native); }
+  .pill.deleg  { background: var(--deleg-bg);  color: var(--deleg); }
+  .pill.gap    { background: var(--gap-bg);    color: var(--gap); }
+
+  /* ---------- key/legend ---------- */
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    margin: 0 0 22px;
+    padding: 14px 16px;
+    border: 1px solid var(--rule);
+    border-radius: 5px;
+    background: var(--surface-2);
+  }
+  .legend div {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13.5px;
+    color: var(--ink-2);
+  }
+  .swatch {
+    width: 10px; height: 10px;
+    border-radius: 2px;
+    flex: none;
+  }
+  .swatch.native { background: var(--native); }
+  .swatch.deleg  { background: var(--deleg); }
+
+  /* ---------- code block ---------- */
+
+  pre {
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.7;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 5px;
+    padding: 18px 20px;
+    overflow-x: auto;
+    margin: 18px 0;
+    color: var(--ink-2);
+    box-shadow: var(--shadow);
+  }
+  pre .c { color: var(--muted); }
+  pre .n { color: var(--native); font-weight: 500; }
+  pre .d { color: var(--deleg); font-weight: 500; }
+
+  /* ---------- chain diagram ---------- */
+
+  .chain {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 6px;
+    margin: 22px 0 10px;
+  }
+  .chain-node {
+    flex: 1 1 128px;
+    min-width: 118px;
+    border: 1px solid var(--rule);
+    border-radius: 5px;
+    background: var(--surface);
+    padding: 12px 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .chain-node .k {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .chain-node .v {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+    line-height: 1.35;
+  }
+  .chain-node.missing {
+    border-color: var(--gap);
+    border-style: dashed;
+    background: var(--gap-bg);
+  }
+  .chain-node.missing .v { color: var(--gap); }
+  .chain-node.missing .k { color: var(--gap); opacity: .8; }
+
+  /* ---------- milestones ---------- */
+
+  .miles { display: flex; flex-direction: column; gap: 0; margin-top: 8px; }
+
+  .mile {
+    display: grid;
+    grid-template-columns: 68px minmax(0, 1fr);
+    gap: 20px;
+    padding: 22px 0;
+    border-top: 1px solid var(--rule-2);
+  }
+  .mile:first-child { border-top: none; padding-top: 6px; }
+
+  .mile-v {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--native);
+    letter-spacing: -.01em;
+    padding-top: 2px;
+  }
+  .mile-body h3 { margin: 0 0 6px; font-size: 15px; }
+  .mile-body p { margin: 0 0 10px; font-size: 14.5px; }
+  .mile-body ul { margin: 0; }
+  .mile-body ul li { font-size: 14.5px; margin-bottom: 6px; }
+
+  .ship {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 2px 7px;
+    margin-top: 4px;
+  }
+
+  /* ---------- callout ---------- */
+
+  .note {
+    border-left: 2px solid var(--native);
+    background: var(--surface-2);
+    padding: 16px 20px;
+    border-radius: 0 5px 5px 0;
+    margin: 22px 0;
+    max-width: var(--measure);
+  }
+  .note p { margin: 0; font-size: 15px; }
+  .note .note-k {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--native);
+    display: block;
+    margin-bottom: 6px;
+  }
+
+  /* ---------- two-col ---------- */
+
+  .split {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 24px;
+    margin: 20px 0 4px;
+  }
+  @media (min-width: 700px) {
+    .split { grid-template-columns: 1fr 1fr; gap: 32px; }
+  }
+  .split > div > h4 { margin-top: 0; }
+  .split ul { margin-bottom: 0; }
+
+  footer {
+    padding: 44px 0 0;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: .02em;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--native);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="masthead">
+    <span class="eyebrow">Build plan · v1.0 target</span>
+    <h1 class="wordmark">omaroll<span class="dim">.</span></h1>
+    <p class="tagline">Everything you capture, in one place.</p>
+    <p class="standfirst">
+      A local-first capture library for Omarchy. It finds every screenshot, screen recording,
+      picture and download you already have, arranges them by day, and hands each one to the tool
+      that already owns the job. It replaces nothing. It just gives all of it a home.
+    </p>
+    <div class="meta-strip">
+      <span class="chip">C++20 · Qt 6.8 Quick</span>
+      <span class="chip">CMake + Ninja</span>
+      <span class="chip">GPL-3.0-or-later</span>
+      <span class="chip">Reuses the omakade skeleton</span>
+      <span class="chip">Offline by default</span>
+    </div>
+  </header>
+
+  <div class="body-grid">
+
+    <nav class="rail" aria-label="Sections">
+      <ol>
+        <li><a href="#gap">The gap</a></li>
+        <li><a href="#thesis">The thesis</a></li>
+        <li><a href="#principles">Principles</a></li>
+        <li><a href="#scope">Scope</a></li>
+        <li><a href="#actions">Action matrix</a></li>
+        <li><a href="#arch">Architecture</a></li>
+        <li><a href="#discovery">Discovery</a></li>
+        <li><a href="#matte">Mattes</a></li>
+        <li><a href="#thumbs">Thumbnails</a></li>
+        <li><a href="#ui">Interface</a></li>
+        <li><a href="#milestones">Milestones</a></li>
+        <li><a href="#ship">Packaging</a></li>
+        <li><a href="#launch">Launch</a></li>
+        <li><a href="#risks">Risks</a></li>
+      </ol>
+    </nav>
+
+    <main>
+
+      <!-- ============ GAP ============ -->
+      <section id="gap">
+        <h2>The gap</h2>
+        <p class="sec-sub">Omarchy ships a complete capture stack and then abandons the output in a folder.</p>
+
+        <p>
+          Every producer in the chain is already there and most of them are good. What is missing is
+          not another editor. It is the two steps after capture: finding the thing again, and doing
+          the obvious next thing with it.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Step</th>
+                <th>What ships with Omarchy</th>
+                <th>State</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td class="ink">Screenshot</td><td class="mono">omarchy-capture-screenshot · grim/slurp</td><td><span class="pill deleg">Solid</span></td></tr>
+              <tr><td class="ink">Screen recording</td><td class="mono">omarchy-capture-screenrecording · gpu-screen-recorder</td><td><span class="pill deleg">Solid</span></td></tr>
+              <tr><td class="ink">Video trim</td><td class="mono">omacut 0.4.0 · Qt Quick + ffmpeg</td><td><span class="pill deleg">Solid</span></td></tr>
+              <tr><td class="ink">Image edit</td><td class="mono">pinta</td><td><span class="pill deleg">Covered</span></td></tr>
+              <tr><td class="ink">Text from image</td><td class="mono">omarchy-capture-text · tesseract</td><td><span class="pill deleg">Covered</span></td></tr>
+              <tr><td class="ink">Viewing</td><td class="mono">imv · sushi · evince · mpv</td><td><span class="pill deleg">Covered</span></td></tr>
+              <tr class="is-gap"><td class="ink">Find what you captured</td><td class="mono">nautilus, on a flat folder</td><td><span class="pill gap">Missing</span></td></tr>
+              <tr class="is-gap"><td class="ink">Do the next thing with it</td><td class="mono">you, by hand, every time</td><td><span class="pill gap">Missing</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h4>What that looks like on a real machine</h4>
+        <pre><span class="c">$ ls ~/Videos</span>
+screenrecording-2026-08-30_20-10-45.mp4
+screenrecording-2026-08-30_20-10-59.mp4
+screenrecording-2026-08-30_20-11-49.mp4
+screenrecording-2026-08-30_20-12-04.mp4
+screenrecording-2026-08-31_23-26-39.mp4
+<span class="c">...</span>
+
+<span class="c"># 188 capture files across ~/Pictures and ~/Videos.</span>
+<span class="c"># Timestamp-named, no thumbnails, indistinguishable.</span></pre>
+
+        <div class="chain">
+          <div class="chain-node"><span class="k">Capture</span><span class="v">grim<br>gpu-screen-recorder</span></div>
+          <div class="chain-node"><span class="k">Lands in</span><span class="v">~/Pictures<br>~/Videos</span></div>
+          <div class="chain-node missing"><span class="k">Find it</span><span class="v">nothing</span></div>
+          <div class="chain-node missing"><span class="k">Act on it</span><span class="v">nothing</span></div>
+          <div class="chain-node"><span class="k">Tools that could</span><span class="v">omacut · pinta<br>mpv · tesseract</span></div>
+        </div>
+        <p style="font-size:13.5px;color:var(--muted);margin-top:14px;">
+          The last two boxes never connect. omaroll is the wire between them.
+        </p>
+      </section>
+
+      <!-- ============ THESIS ============ -->
+      <section id="thesis">
+        <h2>The thesis</h2>
+        <p class="sec-sub">Why this is the same shape as omakade, and why that shape worked.</p>
+
+        <p class="lead">
+          Omakade did not win because it was a nice grid. It won because it understood what the files
+          were and handed the action to whoever already owned it.
+        </p>
+        <p>
+          It does not launch games. It asks Steam to. That is why it read as native instead of as a
+          competing launcher, and it is why it needed so little code to feel complete. omaroll makes
+          the identical move on captures: it knows a <code>.mp4</code> in <code>~/Videos</code> named
+          <code>screenrecording-*</code> is a screen recording, and it knows the next thing you want
+          to do with one is trim it, so it hands it to omacut.
+        </p>
+
+        <div class="note">
+          <span class="note-k">The claim this buys you</span>
+          <p>
+            Every handler in the action matrix below already ships with Omarchy, with exactly one
+            exception. omaroll adds a front door and one new capability, and otherwise makes the tools
+            you already have reachable. That is the same claim that made omakade credible.
+          </p>
+        </div>
+
+        <p>
+          It also asks nothing of the user. A capture-tool rewrite would ask people to rebind PrtScn
+          and learn a new flow, competing with a keybinding that already works. omaroll asks for
+          nothing: install it, and 188 files you already own are suddenly arranged and actionable.
+          That difference is most of why the first one spread.
+        </p>
+      </section>
+
+      <!-- ============ PRINCIPLES ============ -->
+      <section id="principles">
+        <h2>Principles</h2>
+        <p class="sec-sub">Carried over from omakade because they are proven, not because they are convenient.</p>
+
+        <ul>
+          <li><strong>Read-only on discovery.</strong> omaroll never moves, renames, or rewrites a file it finds. Every action that produces output writes a new file beside the original.</li>
+          <li><strong>Delegate the verb.</strong> If a tool on the system already owns an action, omaroll launches it rather than reimplementing it. The bar for building something natively is that nothing on Omarchy does it at all.</li>
+          <li><strong>Zero config.</strong> First run shows your existing captures with no import, no setup, no account. Settings exist to change defaults, never to make the app work.</li>
+          <li><strong>Theme-native and live.</strong> Reads the active Omarchy palette, font, and transparency, and follows theme changes without a restart.</li>
+          <li><strong>Offline.</strong> Nothing in the core path touches the network. No telemetry, no sync, no accounts, ever.</li>
+          <li><strong>Fast on a real library.</strong> Cold start stays under a second on several thousand files. Thumbnails are cached and generated off the main thread.</li>
+          <li><strong>Keyboard first.</strong> Every action reachable without the mouse, in the Omarchy idiom.</li>
+        </ul>
+      </section>
+
+      <!-- ============ SCOPE ============ -->
+      <section id="scope">
+        <h2>Scope</h2>
+        <p class="sec-sub">The out-list is the more important half. Guard it.</p>
+
+        <div class="split">
+          <div>
+            <h4>In</h4>
+            <ul>
+              <li>Unified library across screenshots, recordings, pictures, videos, downloads</li>
+              <li>Day grouping, kind sections, search, favorites, hide</li>
+              <li>Thumbnails for images and video, hover-scrub on video</li>
+              <li>Multi-select and bulk actions</li>
+              <li>Delegated actions to installed tools</li>
+              <li>Mattes: the one native capability</li>
+              <li>Copy, drag out, rename, delete with confirm</li>
+              <li>Live theme following</li>
+              <li><code>--demo</code> mode with a fictional library</li>
+            </ul>
+          </div>
+          <div>
+            <h4>Out</h4>
+            <ul>
+              <li><strong>Video editing.</strong> omacut owns it and is good. Never rebuild it.</li>
+              <li><strong>Image editing.</strong> pinta owns it.</li>
+              <li><strong>Capture itself.</strong> <code>omarchy-capture-*</code> owns it. No hotkey grab, no overlay, no PrtScn fight.</li>
+              <li><strong>Scrolling capture.</strong> Needs synthetic input into another window. Wayland blocks it by design. Not possible, do not try.</li>
+              <li>A file tree, or anything that reads as a file manager</li>
+              <li>Cloud sync, accounts, sharing service</li>
+              <li>Tag taxonomies and albums at v1</li>
+              <li>RAW photo workflows</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="note">
+          <span class="note-k">The rule that keeps it small</span>
+          <p>
+            If a feature request can be answered with the name of a package already in
+            <code>omarchy-base.packages</code>, the answer is a row in the action matrix, not a
+            module in the codebase.
+          </p>
+        </div>
+      </section>
+
+      <!-- ============ ACTIONS ============ -->
+      <section id="actions">
+        <h2>Action matrix</h2>
+        <p class="sec-sub">The core of the app. Each capture kind has a default action and a short menu behind it.</p>
+
+        <div class="legend">
+          <div><span class="swatch native"></span> omaroll does it natively</div>
+          <div><span class="swatch deleg"></span> handed to a tool already installed</div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Capture kind</th>
+                <th>Action</th>
+                <th>Handler</th>
+                <th>Who</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td class="ink">Screen recording</td><td>Trim <em>(default)</em></td><td class="mono">omacut</td><td><span class="pill deleg">base pkg</span></td></tr>
+              <tr><td class="ink">Screen recording</td><td>Clip to GIF</td><td class="mono">ffmpeg one-shot</td><td><span class="pill deleg">via omacut dep</span></td></tr>
+              <tr><td class="ink">Screen recording</td><td>Resize / re-encode</td><td class="mono">ffmpeg one-shot</td><td><span class="pill deleg">via omacut dep</span></td></tr>
+              <tr><td class="ink">Screen recording</td><td>Play</td><td class="mono">mpv</td><td><span class="pill deleg">base pkg</span></td></tr>
+              <tr><td class="ink">Screenshot</td><td>Make it postable <em>(default)</em></td><td class="mono">matte composer</td><td><span class="pill native">native</span></td></tr>
+              <tr><td class="ink">Screenshot</td><td>Copy to clipboard</td><td class="mono">wl-copy</td><td><span class="pill deleg">base pkg</span></td></tr>
+              <tr><td class="ink">Screenshot</td><td>Copy the text</td><td class="mono">tesseract</td><td><span class="pill deleg">base pkg</span></td></tr>
+              <tr><td class="ink">Screenshot</td><td>Real edit</td><td class="mono">pinta</td><td><span class="pill deleg">base pkg</span></td></tr>
+              <tr><td class="ink">Any image</td><td>Scan a QR code</td><td class="mono">zbarimg</td><td><span class="pill deleg">base pkg</span></td></tr>
+              <tr><td class="ink">Any image</td><td>View full size</td><td class="mono">imv</td><td><span class="pill deleg">base pkg</span></td></tr>
+              <tr><td class="ink">Any</td><td>Send to phone</td><td class="mono">localsend</td><td><span class="pill deleg">base pkg</span></td></tr>
+              <tr><td class="ink">Any</td><td>Send to another machine</td><td class="mono">omarchy-tailscale-send</td><td><span class="pill deleg">omarchy bin</span></td></tr>
+              <tr><td class="ink">Any</td><td>Show in files</td><td class="mono">nautilus</td><td><span class="pill deleg">base pkg</span></td></tr>
+              <tr><td class="ink">Any</td><td>Delete</td><td class="mono">trash, with confirm</td><td><span class="pill native">native</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p style="margin-top:18px;">
+          One native row out of fourteen. That ratio is the design, and it is what keeps the codebase
+          small enough to finish. The action registry is data, not code: adding a handler is a table
+          entry with a match predicate and an argv template, so a contributor can wire up a new tool
+          without touching C++.
+        </p>
+      </section>
+
+      <!-- ============ ARCHITECTURE ============ -->
+      <section id="arch">
+        <h2>Architecture</h2>
+        <p class="sec-sub">Same stack as omakade, omacut, omawrite and omacalc. Most of the skeleton is already written.</p>
+
+        <p>
+          Qt 6.8 Quick with a C++20 core, CMake and Ninja, packaged as a native Arch package. This is
+          the Omarchy first-party house stack, it is what omakade already builds with, and it means
+          the theme layer, settings, single-instance handling, packaging and CI all transfer rather
+          than getting rewritten.
+        </p>
+
+        <h3>What lifts from omakade</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>From omakade</th><th>Into omaroll</th><th>Work</th></tr>
+            </thead>
+            <tbody>
+              <tr><td class="mono">src/theme/OmarchyTheme.{h,cpp}</td><td>Same file, unchanged</td><td><span class="pill native">Lift</span></td></tr>
+              <tr><td class="mono">src/app/AppSettings.{h,cpp}</td><td>New keys, same shape</td><td><span class="pill native">Lift</span></td></tr>
+              <tr><td class="mono">src/app/SingleInstance.{h,cpp}</td><td>Same file, unchanged</td><td><span class="pill native">Lift</span></td></tr>
+              <tr><td class="mono">src/app/main.cpp</td><td>Same bootstrap, new roots</td><td><span class="pill native">Lift</span></td></tr>
+              <tr><td class="mono">qml/components/GlassButton.qml</td><td>Same file, unchanged</td><td><span class="pill native">Lift</span></td></tr>
+              <tr><td class="mono">LibraryFilterModel</td><td>CaptureFilterModel</td><td><span class="pill deleg">Adapt</span></td></tr>
+              <tr><td class="mono">UnifiedGameModel</td><td>UnifiedCaptureModel</td><td><span class="pill deleg">Adapt</span></td></tr>
+              <tr><td class="mono">qml/components/GameCard.qml</td><td>CaptureCard.qml</td><td><span class="pill deleg">Adapt</span></td></tr>
+              <tr><td class="mono">qml/components/LibraryView.qml</td><td>CaptureGrid.qml</td><td><span class="pill deleg">Adapt</span></td></tr>
+              <tr><td class="mono">packaging/arch/PKGBUILD.in</td><td>New deps, same template</td><td><span class="pill deleg">Adapt</span></td></tr>
+              <tr><td class="mono">.desktop + metainfo.xml</td><td>Same shape</td><td><span class="pill deleg">Adapt</span></td></tr>
+              <tr><td class="mono">CI, release, SHA256SUMS flow</td><td>Same workflow</td><td><span class="pill native">Lift</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p style="margin-top:18px;">
+          omakade is roughly 14,000 lines across <code>src/</code> and <code>qml/</code>, and a real
+          slice of that is scaffolding rather than game logic. Starting omaroll from that skeleton
+          instead of from an empty CMakeLists is worth several weeks on its own, and it guarantees
+          the two apps look and feel like siblings.
+        </p>
+
+        <h3>Source layout</h3>
+        <pre>src/
+  app/        main.cpp  AppSettings  SingleInstance     <span class="c">lift</span>
+  theme/      OmarchyTheme                              <span class="c">lift</span>
+  library/    CaptureRoles.h
+              CaptureRecord
+              UnifiedCaptureModel                       <span class="c">adapt</span>
+              CaptureFilterModel                        <span class="c">adapt</span>
+              MockCaptureModel      <span class="c">--demo</span>
+  sources/    ScreenshotSource   <span class="c">~/Pictures, name-matched</span>
+              RecordingSource    <span class="c">~/Videos,   name-matched</span>
+              PictureSource      <span class="c">~/Pictures, the rest</span>
+              VideoSource        <span class="c">~/Videos,   the rest</span>
+              DownloadSource     <span class="c">~/Downloads, media only</span>
+  thumbs/     ThumbnailCache
+              ImageThumbnailer   <span class="d">libvips</span>
+              VideoThumbnailer   <span class="d">ffmpegthumbnailer</span>
+              ScrubStrip         <span class="c">lazy frame extraction</span>
+  actions/    ActionRegistry     <span class="c">the matrix, as data</span>
+              ProcessLauncher    <span class="c">argv templates, no shell</span>
+  matte/      MatteComposer      <span class="n">native</span>
+              HueExtractor       <span class="n">native</span>
+  text/       OcrService         <span class="d">tesseract</span>
+
+qml/
+  Main.qml
+  components/ CaptureCard  CaptureGrid  DayHeader
+              ScrubThumb   ActionBar    SectionTabs
+              MattePicker  GlassButton
+  screens/    CaptureDetail  MatteSheet  Settings</pre>
+      </section>
+
+      <!-- ============ DISCOVERY ============ -->
+      <section id="discovery">
+        <h2>Discovery and classification</h2>
+        <p class="sec-sub">The trick that makes sections possible: Omarchy names its own captures predictably.</p>
+
+        <p>
+          Screenshots land in <code>~/Pictures</code> alongside every other image, and recordings land
+          in <code>~/Videos</code> alongside every other video. A pure extension check cannot separate
+          "a screenshot I took" from "a photo I downloaded." But
+          <code>omarchy-capture-screenshot</code> writes
+          <code>screenshot-YYYY-MM-DD_HH-MM-SS.png</code> and
+          <code>omarchy-capture-screenrecording</code> writes
+          <code>screenrecording-YYYY-MM-DD_HH-MM-SS.mp4</code>. That naming is the classifier.
+        </p>
+
+        <h4>Classification order</h4>
+        <ul>
+          <li><strong>Filename pattern first.</strong> Omarchy's own capture prefixes, plus common ones from grim, flameshot, gpu-screen-recorder, OBS, and yt-dlp output templates.</li>
+          <li><strong>Then MIME and extension</strong> for everything else, into Pictures or Videos.</li>
+          <li><strong>Never by directory alone.</strong> A user who redirects captures elsewhere still gets them classified correctly.</li>
+        </ul>
+
+        <h4>Watched locations</h4>
+        <p>
+          Resolved from the environment so a customized setup works without configuration, each
+          overridable in settings:
+        </p>
+        <pre><span class="n">$OMARCHY_SCREENSHOT_DIR</span>   fallback <span class="n">$XDG_PICTURES_DIR</span>  fallback ~/Pictures
+<span class="n">$OMARCHY_SCREENRECORD_DIR</span> fallback <span class="n">$XDG_VIDEOS_DIR</span>    fallback ~/Videos
+<span class="n">$XDG_DOWNLOAD_DIR</span>         fallback ~/Downloads</pre>
+
+        <p>
+          Live updates via <code>QFileSystemWatcher</code> on the watched roots, so a capture taken
+          while omaroll is open appears at the top without a rescan. Index and metadata cache in
+          <code>~/.local/share/omaroll/</code>, thumbnails in <code>~/.cache/omaroll/thumbs/</code>,
+          both safe to delete at any time.
+        </p>
+
+        <h4>The record</h4>
+        <pre>CaptureRecord {
+  path        QString
+  kind        Screenshot | Recording | Picture | Video | Download
+  captured    QDateTime   <span class="c">parsed from name, else mtime</span>
+  bytes       qint64
+  size        QSize       <span class="c">images and video</span>
+  duration    int         <span class="c">video, ms</span>
+  thumb       QString     <span class="c">cache path, lazily filled</span>
+  favorite    bool
+  hidden      bool
+}</pre>
+      </section>
+
+      <!-- ============ MATTE ============ -->
+      <section id="matte">
+        <h2>Mattes</h2>
+        <p class="sec-sub">The one thing omaroll builds natively, because nothing on Linux does it.</p>
+
+        <p>
+          Click a screenshot, get six finished backgrounds derived from the image's own dominant hue,
+          pick one, and the composed PNG is on your clipboard and saved beside the original. No
+          editor in the flow. Choosing between finished results replaces tweaking one.
+        </p>
+
+        <p>
+          This is the single idea worth taking from matteshot, and it is the one part of that codebase
+          that actually moves. <code>compose.rs</code> is about 850 lines of pure image math on the
+          <code>image</code> crate with no Windows API in it at all, so the algorithm ports cleanly to
+          a Qt/libvips implementation. The other 45,000 lines are hand-drawn Win32, GDI, and Media
+          Foundation, or licensing and telemetry scaffolding for a paid Windows tray app. None of that
+          belongs here.
+        </p>
+
+        <div class="note">
+          <span class="note-k">Why it earns its native slot</span>
+          <p>
+            It is the only row in the action matrix with no existing handler, it is what makes
+            screenshots of omaroll itself look expensive, and it answers "how do I make this postable"
+            which is the actual reason people ask for image tools they do not otherwise want.
+          </p>
+        </div>
+
+        <h4>The seven</h4>
+        <ul>
+          <li><strong>Adaptive</strong> and <strong>Deep</strong>, light and dark gradients from the extracted hue</li>
+          <li><strong>Aurora</strong>, soft mesh blobs</li>
+          <li><strong>Slate</strong> and <strong>Paper</strong>, neutral dark and neutral light</li>
+          <li><strong>Pop</strong>, the complementary hue</li>
+          <li><strong>None</strong>, the raw capture, so the picker is never a tax</li>
+        </ul>
+
+        <p>
+          Deterministic per capture, so the same screenshot always offers the same six. Padding and a
+          few aspect presets (Original, 1:1, 16:9, social 1.91:1) sit alongside. Non-destructive
+          always: the original is untouched and the composite is a new file.
+        </p>
+      </section>
+
+      <!-- ============ THUMBS ============ -->
+      <section id="thumbs">
+        <h2>Thumbnails and performance</h2>
+        <p class="sec-sub">Both thumbnailers are already in omarchy-base.packages, so this costs no new dependencies.</p>
+
+        <ul>
+          <li><strong>Images</strong> through <code>libvips</code>, which is in base and is the fastest option available for this.</li>
+          <li><strong>Video</strong> through <code>ffmpegthumbnailer</code>, also in base.</li>
+          <li><strong>Hover-scrub</strong> extracts a small strip of frames lazily on first hover and caches it. Never on scan, never for the whole library.</li>
+          <li><strong>Cache</strong> keyed on path plus mtime plus size, bounded, in <code>~/.cache/omaroll/thumbs/</code>.</li>
+          <li><strong>Generation off the main thread</strong> via <code>QtConcurrent</code>, with a bounded queue prioritized by what is currently on screen.</li>
+        </ul>
+
+        <h4>Budget</h4>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Measure</th><th>Target</th></tr></thead>
+            <tbody>
+              <tr><td class="ink">Cold start to first paint, 5,000 files</td><td class="mono">&lt; 1s</td></tr>
+              <tr><td class="ink">Warm start, cache populated</td><td class="mono">&lt; 400ms</td></tr>
+              <tr><td class="ink">Scroll</td><td class="mono">60fps, no dropped frames on a full grid</td></tr>
+              <tr><td class="ink">Hover-scrub first frame</td><td class="mono">&lt; 150ms</td></tr>
+              <tr><td class="ink">Idle memory, 5,000 files</td><td class="mono">&lt; 250MB</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p style="margin-top:16px;">
+          The index is metadata only. Full-size images are never held in memory, and the grid is a
+          recycling view, so a 20,000 file library costs the same as a 2,000 file one to scroll.
+        </p>
+      </section>
+
+      <!-- ============ UI ============ -->
+      <section id="ui">
+        <h2>Interface</h2>
+        <p class="sec-sub">A library, not a file manager. The distinction is enforced by what is absent.</p>
+
+        <p>
+          One window. A row of section tabs across the top, a search field, and a grid of thumbnails
+          grouped by day with a sticky date header. No sidebar tree, no path bar, no columns view. If
+          it starts to look like nautilus, something has gone wrong.
+        </p>
+
+        <h4>Sections</h4>
+        <ul>
+          <li><strong>Recent</strong>, everything, newest first. The default view.</li>
+          <li><strong>Screenshots</strong> and <strong>Recordings</strong>, the two hero sections</li>
+          <li><strong>Pictures</strong> and <strong>Videos</strong>, everything else in those folders</li>
+          <li><strong>Downloads</strong>, media only</li>
+          <li><strong>Favorites</strong></li>
+        </ul>
+
+        <h4>Keyboard</h4>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th class="mono">Key</th><th>Does</th></tr></thead>
+            <tbody>
+              <tr><td class="mono ink">arrows / hjkl</td><td>Move through the grid</td></tr>
+              <tr><td class="mono ink">/</td><td>Search</td></tr>
+              <tr><td class="mono ink">Enter</td><td>Default action for that kind</td></tr>
+              <tr><td class="mono ink">Space</td><td>Large preview, play video in place</td></tr>
+              <tr><td class="mono ink">m</td><td>Matte picker (screenshots and images)</td></tr>
+              <tr><td class="mono ink">t</td><td>Trim in omacut (recordings)</td></tr>
+              <tr><td class="mono ink">c</td><td>Copy to clipboard</td></tr>
+              <tr><td class="mono ink">s</td><td>Send, localsend or tailscale</td></tr>
+              <tr><td class="mono ink">f</td><td>Favorite</td></tr>
+              <tr><td class="mono ink">1 - 6</td><td>Jump to section</td></tr>
+              <tr><td class="mono ink">Del</td><td>Delete, with confirm</td></tr>
+              <tr><td class="mono ink">Esc</td><td>Back, then close</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p style="margin-top:18px;">
+          Drag a thumbnail out and it drops as the real file into any Wayland target, which covers
+          "put this in a Discord message" without omaroll knowing anything about Discord.
+        </p>
+      </section>
+
+      <!-- ============ MILESTONES ============ -->
+      <section id="milestones">
+        <h2>Milestones</h2>
+        <p class="sec-sub">Each one is independently shippable. Order matters here, so it is numbered.</p>
+
+        <div class="miles">
+
+          <div class="mile">
+            <div class="mile-v">v0.1</div>
+            <div class="mile-body">
+              <h3>It sees your captures</h3>
+              <p>Scaffold from the omakade skeleton. Theme, settings, single-instance and packaging all transfer on day one.</p>
+              <ul>
+                <li>CMake project, Qt Quick shell, OmarchyTheme wired and following theme changes</li>
+                <li>Screenshot and Recording sources with filename classification</li>
+                <li>Static grid, day grouping, image thumbnails via libvips</li>
+                <li>Open in default handler, show in files</li>
+              </ul>
+              <span class="ship">Internal. The moment it is worth a screenshot.</span>
+            </div>
+          </div>
+
+          <div class="mile">
+            <div class="mile-v">v0.2</div>
+            <div class="mile-body">
+              <h3>It is fast and complete</h3>
+              <ul>
+                <li>Video thumbnails via ffmpegthumbnailer, hover-scrub strips</li>
+                <li>Remaining sources: Pictures, Videos, Downloads</li>
+                <li>Thumbnail cache, background generation, on-screen priority</li>
+                <li>Search, favorites, hide, sort</li>
+                <li>QFileSystemWatcher live updates</li>
+                <li>Full keyboard navigation</li>
+              </ul>
+              <span class="ship">Internal. Hits the performance budget here or it gets fixed here.</span>
+            </div>
+          </div>
+
+          <div class="mile">
+            <div class="mile-v">v0.3</div>
+            <div class="mile-body">
+              <h3>It does things</h3>
+              <p>The action registry lands, and with it the whole delegation argument.</p>
+              <ul>
+                <li>ActionRegistry as data, ProcessLauncher with argv templates and no shell</li>
+                <li>Trim to omacut, play in mpv, edit in pinta, view in imv</li>
+                <li>ffmpeg one-shots: clip to GIF, resize, extract frame</li>
+                <li>OCR to clipboard via tesseract, QR via zbarimg</li>
+                <li>Send via localsend and omarchy-tailscale-send</li>
+                <li>Multi-select and bulk actions</li>
+                <li>Actionable errors when a handler is missing, naming the package to install</li>
+              </ul>
+              <span class="ship">First public beta. Post it to the Omarchy Discord.</span>
+            </div>
+          </div>
+
+          <div class="mile">
+            <div class="mile-v">v0.4</div>
+            <div class="mile-body">
+              <h3>Mattes</h3>
+              <ul>
+                <li>HueExtractor and MatteComposer, all seven mattes, ported from compose.rs</li>
+                <li>MattePicker sheet, six variants, keyboard select</li>
+                <li>Padding and aspect presets, output size caps</li>
+                <li>Composite to clipboard and to a new file beside the original</li>
+              </ul>
+              <span class="ship">The feature the launch video opens on.</span>
+            </div>
+          </div>
+
+          <div class="mile">
+            <div class="mile-v">v0.9</div>
+            <div class="mile-body">
+              <h3>Release candidate</h3>
+              <ul>
+                <li><code>--demo</code> mode with a deterministic fictional library, same as omakade, so the launch material never exposes real files</li>
+                <li>Settings screen: watched folders, default actions per kind, cache size</li>
+                <li>Empty states, first-run state, permission and missing-folder handling</li>
+                <li>Test pass, including classification against real-world filename patterns</li>
+                <li>README, screenshots, demo video, project page</li>
+              </ul>
+              <span class="ship">Tagged RC, tested on a clean Omarchy VM.</span>
+            </div>
+          </div>
+
+          <div class="mile">
+            <div class="mile-v">v1.0</div>
+            <div class="mile-body">
+              <h3>Ship</h3>
+              <ul>
+                <li>GitHub release with <code>.pkg.tar.zst</code> and SHA256SUMS</li>
+                <li>PKGBUILD submitted to OPR</li>
+                <li>Launch post</li>
+              </ul>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ============ SHIP ============ -->
+      <section id="ship">
+        <h2>Packaging and distribution</h2>
+        <p class="sec-sub">The exact path omakade already took, which means it is known to work.</p>
+
+        <h4>PKGBUILD</h4>
+        <pre>pkgname=omaroll
+pkgdesc='Everything you capture, in one place'
+license=('GPL-3.0-or-later')
+depends=('qt6-base' 'qt6-declarative' 'qt6-wayland'
+         'libvips' 'ffmpegthumbnailer')
+optdepends=('omacut: trim recordings'
+            'tesseract: copy text out of a screenshot'
+            'zbar: scan QR codes'
+            'pinta: edit images'
+            'mpv: play video'
+            'imv: view images full size'
+            'localsend: send to another device'
+            'wl-clipboard: copy to clipboard')
+makedepends=('cmake' 'ninja' 'pkgconf')</pre>
+
+        <p>
+          Only two hard dependencies beyond Qt, and both are already in
+          <code>omarchy-base.packages</code>. Every optdepend is also already installed on a stock
+          Omarchy box, so the optdepends list functions as documentation rather than as work for the
+          user. On a non-Omarchy Arch system it degrades gracefully: a missing handler greys its
+          action out and names the package.
+        </p>
+
+        <h4>Channels</h4>
+        <ul>
+          <li><strong>OPR</strong> as the headline: <code>sudo pacman -S omarchy/omaroll</code>, then it updates with the system.</li>
+          <li><strong>GitHub release</strong> with the prebuilt package and SHA256SUMS, verified install in three commands.</li>
+          <li><strong>AUR</strong> for Arch users outside Omarchy.</li>
+          <li>Ship <code>.desktop</code> and <code>metainfo.xml</code> so it appears in the launcher properly.</li>
+        </ul>
+      </section>
+
+      <!-- ============ LAUNCH ============ -->
+      <section id="launch">
+        <h2>Launch</h2>
+        <p class="sec-sub">This one has a hook omakade did not have. Use it.</p>
+
+        <p class="lead">
+          The loudest complaint about Omarchy is video editing. omaroll is not a video editor, and the
+          post should say so in the first line.
+        </p>
+
+        <p>
+          Almost nobody asking for video editing wants kdenlive. They want to cut four seconds off a
+          clip and post it. Between omacut for the trim, ffmpeg one-shots for GIF and resize, and a
+          library that puts both one keystroke from the recording, that request is answered without
+          anyone building an NLE. Saying "I didn't build a video editor, I connected the ones you
+          already have" is a stronger post than any feature list, and it is true.
+        </p>
+
+        <h4>Materials</h4>
+        <ul>
+          <li>An 18 second demo, same length and register as the omakade one, opening on the grid filling with real thumbnails, then one screenshot to matte to clipboard, then one recording straight into omacut</li>
+          <li>Shot in <code>--demo</code> mode so nothing personal is on screen</li>
+          <li>Project page matching omakade's, so the two read as a family</li>
+          <li>Post to the Omarchy Discord at v0.3, not at v1.0. That audience finds the classification edge cases you will never hit alone.</li>
+        </ul>
+      </section>
+
+      <!-- ============ RISKS ============ -->
+      <section id="risks">
+        <h2>Risks</h2>
+        <p class="sec-sub">Named up front, with the mitigation baked into the plan rather than bolted on.</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Risk</th><th>Mitigation</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="ink">It reads as a worse file manager</td>
+                <td>No tree, no path bar, no columns. Day grouping, kind sections and a default action per kind are what make it a library. This is the main thing to protect in review.</td>
+              </tr>
+              <tr>
+                <td class="ink">Pictures and Videos sections overlap nautilus</td>
+                <td>They are secondary tabs. Screenshots and Recordings are the hero, and they are the two nautilus genuinely cannot help with.</td>
+              </tr>
+              <tr>
+                <td class="ink">Thumbnail generation on a huge library</td>
+                <td>Bounded queue, on-screen priority, persistent cache. Budget is set at v0.2 and enforced there.</td>
+              </tr>
+              <tr>
+                <td class="ink">Classification misses non-Omarchy filenames</td>
+                <td>Pattern list covers grim, flameshot, OBS, gpu-screen-recorder and yt-dlp templates, falls back to extension, and is user-extendable. Beta at v0.3 is specifically to collect the ones that were missed.</td>
+              </tr>
+              <tr>
+                <td class="ink">Scope creep into editing</td>
+                <td>The out-list, and the rule that a request answerable with a package name becomes a matrix row.</td>
+              </tr>
+              <tr>
+                <td class="ink">Upstream ships something similar</td>
+                <td>Move fast and stay compatible rather than competitive. The matte is the part nothing else has, and delegating to omacut means an upstream improvement to omacut makes omaroll better rather than redundant.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <footer>
+        omaroll · build plan · drafted 2026-09-01
+      </footer>
+
+    </main>
+  </div>
+</div>
+</body>
+</html>
