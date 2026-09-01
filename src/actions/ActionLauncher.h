@@ -26,6 +26,10 @@ public:
   // than failing after the click.
   Q_INVOKABLE bool handlerAvailable(const QString& program) const;
 
+  // XDG trash, never unlink. A capture the user deletes by accident has to be
+  // recoverable from their file manager like anything else they delete.
+  Q_INVOKABLE bool moveToTrash(const QString& path);
+
 signals:
   // Something the user should be told about, in their words rather than a
   // process exit code.

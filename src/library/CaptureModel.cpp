@@ -84,6 +84,8 @@ QVariant CaptureModel::data(const QModelIndex& index, int role) const {
     return QLocale::system().toString(record.captured.time(), QLocale::ShortFormat);
   case CaptureRoles::SizeLabelRole:
     return sizeLabel(record.bytes);
+  case CaptureRoles::BytesRole:
+    return record.bytes;
   case CaptureRoles::IsVideoRole:
     return record.isVideo();
   case CaptureRoles::IsDayStartRole:
@@ -105,6 +107,7 @@ QHash<int, QByteArray> CaptureModel::roleNames() const {
       {CaptureRoles::DayLabelRole, "dayLabel"},
       {CaptureRoles::TimeLabelRole, "timeLabel"},
       {CaptureRoles::SizeLabelRole, "sizeLabel"},
+      {CaptureRoles::BytesRole, "bytes"},
       {CaptureRoles::IsVideoRole, "isVideo"},
       {CaptureRoles::IsDayStartRole, "isDayStart"},
   };

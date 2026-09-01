@@ -1,5 +1,6 @@
 #include "actions/ActionLauncher.h"
 
+#include <QFile>
 #include <QFileInfo>
 #include <QProcess>
 #include <QStandardPaths>
@@ -30,6 +31,22 @@ bool ActionLauncher::open(const QString& path) {
     return false;
   }
   return run(QStringLiteral("xdg-open"), {path});
+}
+
+bool ActionLauncher::moveToTrash(const QString& path) {
+  if (!QFileInfo::exists(path)) {
+    emit failed(QStringLiteral("That file is no longer there"));
+    return false;
+  }
+
+  QFile file(path);
+  if (!file.moveToTrash()) {
+    // Most often a trash directory that does not exist on the volume the file
+    // lives on, which is worth saying rather than hiding behind "failed".
+    emit failed(QStringLiteral("Could not move to trash: %1").arg(file.errorString()));
+    return false;
+  }
+  return true;
 }
 
 bool ActionLauncher::showInFiles(const QString& path) {

@@ -1,5 +1,6 @@
 #include "actions/ActionLauncher.h"
 #include "app/SingleInstance.h"
+#include "library/CaptureFilterModel.h"
 #include "library/CaptureModel.h"
 #include "sources/CaptureLocations.h"
 #include "theme/OmarchyTheme.h"
@@ -47,12 +48,18 @@ int main(int argc, char* argv[]) {
       {CaptureLocations::recordings(), 1, CaptureRecord::Video},
   });
 
+  // QML only ever sees the proxy, so sorting and filtering can change without
+  // any delegate knowing.
+  CaptureFilterModel library;
+  library.setSourceModel(&captures);
+
   ActionLauncher actions;
 
   QQmlApplicationEngine engine;
   engine.addImageProvider(QLatin1String(ThumbnailProvider::kProviderId), new ThumbnailProvider);
   engine.rootContext()->setContextProperty(QStringLiteral("Theme"), &theme);
-  engine.rootContext()->setContextProperty(QStringLiteral("Captures"), &captures);
+  engine.rootContext()->setContextProperty(QStringLiteral("Captures"), &library);
+  engine.rootContext()->setContextProperty(QStringLiteral("Library"), &captures);
   engine.rootContext()->setContextProperty(QStringLiteral("Actions"), &actions);
 
   QObject::connect(

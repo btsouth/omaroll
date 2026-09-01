@@ -16,6 +16,7 @@ enum Role {
   DayLabelRole,
   TimeLabelRole,
   SizeLabelRole,
+  BytesRole,
   IsVideoRole,
   // First row of its day, so the delegate knows to draw a header above itself.
   IsDayStartRole,

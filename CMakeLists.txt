@@ -18,6 +18,8 @@ add_library(omaroll_core STATIC
   src/library/CaptureRoles.h
   src/library/CaptureModel.cpp
   src/library/CaptureModel.h
+  src/library/CaptureFilterModel.cpp
+  src/library/CaptureFilterModel.h
   src/sources/CaptureScanner.cpp
   src/sources/CaptureScanner.h
   src/sources/CaptureLocations.cpp
@@ -47,6 +49,9 @@ qt_add_qml_module(omaroll
     qml/components/CaptureGrid.qml
     qml/components/DayHeader.qml
     qml/components/Chrome.qml
+    qml/components/FilterBar.qml
+    qml/components/PillButton.qml
+    qml/components/ConfirmSheet.qml
 )
 
 target_link_libraries(omaroll PRIVATE omaroll_core Qt6::QuickControls2)
