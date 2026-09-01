@@ -12,7 +12,7 @@ import QtQuick
 Item {
     id: root
 
-    property color tint: Theme.darkerBackground
+    property color tint: Theme.surfaceBackground
     property real surfaceAlpha: Theme.surfaceAlpha
 
     function shade(base, amount) {

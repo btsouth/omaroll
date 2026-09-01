@@ -7,11 +7,11 @@ download you already have, arranges them by day, and hands each one to the tool 
 the job. It replaces nothing. It just gives all of it a home.
 
 - Stack: C++20 · Qt 6.8 Quick · CMake + Ninja
-- License: **MIT** (see section 14 — this is an inclusion requirement, not a preference)
+- License: **MIT** (see section 14; this is an inclusion requirement, not a preference)
 - Reuses the omakade skeleton
 - Offline by default, no telemetry, no accounts
 
-Status: **v1.0.0 built and tested locally. Nothing published.**
+Status: **v1.0.0 release candidate built and tested. GitHub publication authorized.**
 
 ---
 
@@ -73,7 +73,7 @@ launcher, and why it needed so little code to feel complete. omaroll makes the i
 captures: it knows a `.mp4` in `~/Videos` named `screenrecording-*` is a screen recording, and it
 knows the next thing you want to do with one is trim it, so it hands it to omacut.
 
-**Every handler in the action matrix already ships with Omarchy, with exactly one exception.**
+**Every handler in the action matrix already ships with Omarchy.**
 omaroll adds a front door and one new capability, and otherwise makes the tools you already have
 reachable. That is the same claim that made omakade credible.
 
@@ -111,6 +111,7 @@ The out-list is the more important half. Guard it.
 
 - Unified library across screenshots, recordings, pictures, videos, downloads
 - Day grouping, kind sections, search, favorites, hide
+- Named albums that follow renamed and moved files without modifying them
 - Thumbnails for images and video, hover-scrub on video
 - Multi-select and bulk actions
 - Delegated actions to installed tools
@@ -134,7 +135,7 @@ The out-list is the more important half. Guard it.
   Not possible, do not try.
 - A file tree, or anything that reads as a file manager
 - Cloud sync, accounts, sharing service
-- Tag taxonomies and albums at v1
+- Tag taxonomies
 - RAW photo workflows
 
 > **The rule that keeps it small:** if a feature request can be answered with the name of a package
@@ -161,13 +162,18 @@ The core of the app. Each capture kind has a default action and a short menu beh
 | Any image | Real edit | `pinta` | base pkg |
 | Any image | Scan a QR code | `zbarimg` | base pkg |
 | Any image | View full size | `imv` | base pkg |
-| Any | Send to phone | `localsend` | base pkg |
-| Any | Send to another machine | `omarchy-tailscale-send` | omarchy bin |
+| Any | Send to phone | `omarchy-menu-share file` → `localsend --headless send` | omarchy bin |
+| Any | Send to another machine | `omarchy-tailscale-send <machine>`, needs a peer picker first | deferred |
 | Any | Show in files | `nautilus` | base pkg |
 | Any | Delete | `QFile::moveToTrash()`, with confirm | **native** |
 
-One native row out of sixteen. That ratio is the design, and it is what keeps the codebase small
-enough to finish.
+Specialized media work stays delegated. Omaroll owns only the library behavior, safe trash and the
+matte composer, which is what keeps the codebase small enough to finish.
+
+Rows are matched on medium, still or moving, not on the section a file sits in. A downloaded clip
+trims like a recording and a downloaded photo mattes like a screenshot. Tailscale is deferred:
+`omarchy-tailscale-send` takes the machine as its first argument and there is no house picker for
+one outside the shell panel, so shipping the row would have sent the file path as the machine name.
 
 Three of these were corrected after auditing the Omarchy tree, and each removed code rather than
 adding it:
@@ -512,7 +518,7 @@ ApplicationWindow {
 ```
 
 ```cpp
-// src/theme/OmarchyTheme.cpp — surfaceAlpha, default 0.82
+// src/theme/OmarchyTheme.cpp: surfaceAlpha, default 0.82
 m_surfaceAlpha = readSectionAlpha(themeRoot() + "/shell.toml", "launcher", "background-alpha", 0.82);
 ```
 
@@ -622,7 +628,7 @@ while scroll position, selection and every thumbnail stay exactly where they wer
 
 Each one is independently shippable. Order matters, so it is numbered.
 
-### v0.1 — It sees your captures
+### v0.1: It sees your captures
 
 Scaffold from the omakade skeleton. Theme, settings, single-instance and packaging all transfer on
 day one.
@@ -644,7 +650,7 @@ performance budget and finds libvips is worth the link. Video thumbnails came fo
 because `ffmpegthumbnailer` is a one-process call and a recordings grid without frames is not worth
 looking at.
 
-### v0.2 — It is fast and complete  ·  **shipped**
+### v0.2: It is fast and complete  ·  **shipped**
 
 - Video thumbnails via ffmpegthumbnailer, hover-scrub strips
 - Thumbnails generated at `devicePixelRatio`, cache keyed on rendered pixel size
@@ -657,7 +663,7 @@ looking at.
 
 *Internal. Hits the performance budget here or it gets fixed here.*
 
-### v0.3 — It does things  ·  **shipped**
+### v0.3: It does things  ·  **shipped**
 
 The action registry lands, and with it the whole delegation argument.
 
@@ -671,7 +677,7 @@ The action registry lands, and with it the whole delegation argument.
 
 *First public beta. Post it to the Omarchy Discord.*
 
-### v0.4 — Mattes  ·  **shipped**
+### v0.4: Mattes  ·  **shipped**
 
 - HueExtractor and MatteComposer, all seven mattes, ported from compose.rs
 - MattePicker sheet, six variants, keyboard select
@@ -680,7 +686,7 @@ The action registry lands, and with it the whole delegation argument.
 
 *The feature the launch video opens on.*
 
-### v0.9 — Release candidate  ·  **shipped**
+### v0.9: Release candidate  ·  **shipped**
 
 - `--demo` mode with a deterministic fictional library, same as omakade, so launch material never
   exposes real files
@@ -691,13 +697,12 @@ The action registry lands, and with it the whole delegation argument.
 
 *Tagged RC, tested on a clean Omarchy VM.*
 
-### v1.0 — Ship  ·  **built, not published**
+### v1.0: Ship  ·  **release candidate**
 
-Code, packaging, tests and README are done and tagged 1.0.0 locally. The three
-publishing steps are deliberately not taken:
+Code, packaging, tests and README are done. The old local `v1.0.0` tag predates
+the release candidate and must be replaced at the final commit. Remaining work:
 
 - GitHub release with `.pkg.tar.zst` and SHA256SUMS
-- PKGBUILD submitted to OPR
 - Launch post
 
 ### What actually shipped, against the plan
@@ -723,11 +728,11 @@ Added beyond the plan, because verification needed them and the launch will too:
 
 - `--demo`, a deterministic fictional library, so no screenshot of omaroll ever
   shows a real file
-- `--render <file> [--render-view grid|detail|matte]`, which grabs the scene
+- `--render <file> [--render-view grid|detail|video|slideshow|matte|settings]`, which grabs the scene
   graph rather than the screen, so a render cannot be spoiled by an overlapping
   window and the project's images are reproducible
-- 22 tests over classification, traversal, sorting, filtering, hidden marks, hue
-  extraction and every matte, including the output-budget ceiling
+- 32 tests over classification, traversal, live folders, albums, lifecycle, actions, clipboard safety,
+  trash recovery, thumbnails and every matte, including the output-budget ceiling
 
 ---
 
@@ -768,15 +773,15 @@ package.
 
 ### Channels
 
-- **OPR** as the headline: `sudo pacman -S omarchy/omaroll`, then it updates with the system.
 - **GitHub release** with the prebuilt package and SHA256SUMS, verified install in three commands.
-- **AUR** for Arch users outside Omarchy.
+- **Omarchy repository** later, after upstream inclusion, for normal system updates.
+- **AUR** is optional for Arch users outside Omarchy.
 - Ship `.desktop` and `metainfo.xml` so it appears in the launcher properly.
 
 ### Desktop entry
 
 Follow omacut's shape rather than omakade's. omacut declares a `MimeType` list and takes `%f`, which
-is what lets other apps hand it a file — precisely how omaroll will invoke it. omaroll should be
+is what lets other apps hand it a file, precisely how omaroll will invoke it. omaroll should be
 equally openable, so a file manager or another tool can hand it a directory or an image.
 
 ```ini
@@ -786,20 +791,18 @@ Name=Omaroll
 GenericName=Capture Library
 Comment=Everything you capture, in one place
 Exec=omaroll %f
-Icon=omaroll
+Icon=io.github.tsouth89.omaroll
 Terminal=false
 Categories=Graphics;Viewer;AudioVideo;
 MimeType=image/png;image/jpeg;image/webp;video/mp4;video/x-matroska;inode/directory;
 Keywords=screenshot;recording;capture;gallery;library;
 StartupNotify=true
-StartupWMClass=omaroll
+StartupWMClass=io.github.tsouth89.omaroll
 ```
 
-**`StartupWMClass=omaroll`, not a reverse-DNS id.** omakade uses `io.github.tsouth89.Omakade`, which
-is correct for a Flathub-style app but wrong here: the first-party apps use plain ids (`omacut`,
-`omacalc`), and the Hyprland opacity rule in section 11 matches on that id. Simple id, and it must
-match `setDesktopFileName()` in `main.cpp`, `StartupWMClass`, and the hypr rule. Set it once and
-never change it.
+The reverse-DNS id matches the AppStream component and Omakade's packaging. It must match
+`setDesktopFileName()` in `main.cpp`, `StartupWMClass`, and the Hyprland rule. Set it once and never
+change it.
 
 ---
 
@@ -867,10 +870,10 @@ names), and the icon must be a glyph the Omarchy icon font already carries.
   `default/hypr/apps/system.lua` alongside mpv, imv and Pinta. See section 11 for why. That is a
   third line in the upstream PR, and until it lands the app should ship a `hypr/` snippet users can
   drop in.
-- **App id.** `omaroll`, plain, matching `omacut` and `omacalc` rather than omakade's reverse-DNS
-  form. On Wayland Qt derives `app_id` from `QGuiApplication::setDesktopFileName()`, so that call,
-  the `.desktop` filename, `StartupWMClass` and the hypr rule must all say `omaroll`. Section 13.
-- **Default state via `/etc/skel`.** Bundled apps seed defaults there — tensaku ships
+- **App id.** `io.github.tsouth89.omaroll`, matching the AppStream component and Omakade's
+  reverse-DNS form. On Wayland Qt derives `app_id` from `QGuiApplication::setDesktopFileName()`, so
+  that call, the `.desktop` filename, `StartupWMClass` and the hypr rule must agree. Section 13.
+- **Default state via `/etc/skel`.** Bundled apps seed defaults there; tensaku ships
   `/etc/skel/.local/state/tensaku/state.toml`. If omaroll needs shipped defaults, that is the path.
   Better: need none, per the zero-config principle.
 - **`.desktop` + `metainfo.xml`** with a `hicolor` scalable icon, matching what omacut installs.
@@ -892,7 +895,7 @@ C++:
 
 ### Path to inclusion
 
-1. Ship v1.0 to OPR and the AUR under MIT. Get real users.
+1. Ship v1.0 on GitHub under MIT. Get real users.
 2. Let it sit in OPR long enough to prove it is maintained and does not break on Omarchy updates.
 3. Open one PR against `omarchy`: the package-list line, the migration, the menu entry. Small,
    reviewable, and matching every convention above.
@@ -941,7 +944,7 @@ than any feature list, and it is true.
 | Thumbnails render with wrong colors | The `default-opacity` tag dims every window by default. Without the media opt-out in section 11, every thumbnail renders at 96-98.5%. Ship the hypr snippet from day one and check with a color picker. |
 | Looks like glass on a flat desktop | Omarchy runs blur off, rounding 0, shadows off. Read `cornerRadius` from the theme and design for blur being absent. |
 | Soft thumbnails on fractional scaling | Generate at `devicePixelRatio` and key the cache on rendered pixel size. On a photo grid this is the difference between polished and broken, and 1.25x/1.5x are common on Hyprland. |
-| App id drift | `setDesktopFileName()`, the `.desktop` filename, `StartupWMClass` and the hypr opacity rule must all read `omaroll`. A mismatch silently breaks the opacity opt-out with no error. |
+| App id drift | `setDesktopFileName()`, the `.desktop` filename, `StartupWMClass` and the Hyprland opacity rule must all agree. A mismatch silently breaks the opacity opt-out with no error. |
 
 ---
 

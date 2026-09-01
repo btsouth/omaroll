@@ -19,9 +19,6 @@ public:
   // Open in whatever the desktop has registered for the type.
   Q_INVOKABLE bool open(const QString& path);
 
-  // Reveal in the file manager with the file selected.
-  Q_INVOKABLE bool showInFiles(const QString& path);
-
   // True when a program is on PATH. QML uses this to grey out an action rather
   // than failing after the click.
   Q_INVOKABLE bool handlerAvailable(const QString& program) const;
@@ -33,13 +30,28 @@ public:
   // Launch and forget. Names the package in the failure when the program is
   // absent, so the message says what to install.
   bool runDetached(const QString& program, const QStringList& arguments,
-                   const QString& packageHint = {});
+                   const QString& packageHint = {}, const QString& confirmation = {});
 
-  // Run to completion and put stdout on the clipboard. Used by OCR, whose
-  // whole output is text the user wants to paste.
-  bool captureTextTo(const QString& program, const QStringList& arguments);
+  // Run to completion off the GUI thread's event loop and put stdout on the
+  // clipboard. Used by the recognisers, whose whole output is text the user
+  // wants to paste. A sensitive result is marked so clipboard history does not
+  // retain it, which matters for the otpauth:// URIs QR codes so often carry.
+  bool captureTextToClipboard(const QString& program, const QStringList& arguments,
+                              const QString& packageHint, bool sensitive,
+                              const QString& confirmation, const QString& nothingFound);
+
+  // One file on the clipboard as its own data, so it pastes as an image.
+  Q_INVOKABLE bool copyFile(const QString& path);
+
+  // Several files on the clipboard at once, as text/uri-list, which is what a
+  // paste into Nautilus or a browser upload expects. One file goes through the
+  // house helper instead so it pastes as image data.
+  Q_INVOKABLE bool copyUris(const QStringList& paths);
 
   [[nodiscard]] static QString mimeTypeFor(const QString& path);
+
+  // For the registry to put a note in the status line without launching.
+  void report(const QString& message) { emit reported(message); }
 
 signals:
   // Something the user should be told about, in their words rather than a
@@ -49,5 +61,6 @@ signals:
   void reported(const QString& message);
 
 private:
-  bool run(const QString& program, const QStringList& arguments);
+  [[nodiscard]] QString locate(const QString& program, const QString& packageHint);
+  bool copyText(const QString& text, bool sensitive, const QString& mimeType = {});
 };

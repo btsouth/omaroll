@@ -17,11 +17,10 @@ enum Role {
   TimeLabelRole,
   SizeLabelRole,
   BytesRole,
+  StampRole,
   IsVideoRole,
   FavoriteRole,
   HiddenRole,
-  // First row of its day, so the delegate knows to draw a header above itself.
-  IsDayStartRole,
 };
 
 } // namespace CaptureRoles

@@ -1,12 +1,13 @@
 pkgname=omaroll
 pkgver=@VERSION@
 pkgrel=1
-pkgdesc='Everything you capture, in one place'
+pkgdesc='A fast, beautiful image and video viewer for Omarchy'
 arch=('x86_64')
 url='https://github.com/tsouth89/omaroll'
 license=('MIT')
-depends=('qt6-base' 'qt6-declarative' 'qt6-multimedia' 'hicolor-icon-theme'
-         'xdg-desktop-portal' 'ffmpegthumbnailer')
+depends=('qt6-base' 'qt6-declarative' 'qt6-multimedia' 'qt6-imageformats'
+         'kimageformats' 'libavif' 'libheif' 'hicolor-icon-theme'
+         'xdg-desktop-portal' 'ffmpegthumbnailer' 'wl-clipboard' 'xdg-utils')
 optdepends=('omacut: trim recordings'
             'tensaku: annotate screenshots'
             'tesseract: copy text out of a screenshot'
@@ -29,5 +30,4 @@ build() {
 
 package() {
   DESTDIR="$pkgdir" cmake --install build
-  install -Dm644 "$pkgname-$pkgver/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

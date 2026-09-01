@@ -2,6 +2,7 @@
 
 #include "matte/HueExtractor.h"
 
+#include <QBuffer>
 #include <QClipboard>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -9,7 +10,9 @@
 #include <QLinearGradient>
 #include <QPainter>
 #include <QPainterPath>
+#include <QProcess>
 #include <QRadialGradient>
+#include <QStandardPaths>
 
 #include <cmath>
 
@@ -36,6 +39,45 @@ void paintBlob(QPainter& painter, const QPointF& center, qreal radius, const QCo
   painter.setBrush(gradient);
   painter.setPen(Qt::NoPen);
   painter.drawEllipse(center, radius, radius);
+}
+
+// Whether any pixel is actually see-through. Most screenshots carry an alpha
+// channel that is opaque everywhere, so the channel alone says nothing.
+bool hasTransparency(const QImage& image) {
+  if (!image.hasAlphaChannel()) {
+    return false;
+  }
+  const QImage sample = image.scaled(64, 64, Qt::KeepAspectRatio).convertToFormat(QImage::Format_ARGB32);
+  for (int y = 0; y < sample.height(); ++y) {
+    const QRgb* line = reinterpret_cast<const QRgb*>(sample.constScanLine(y));
+    for (int x = 0; x < sample.width(); ++x) {
+      if (qAlpha(line[x]) < 250) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// The composite onto the clipboard through wl-copy, which outlives omaroll,
+// rather than the Qt clipboard, whose offer dies with the window on Wayland.
+void offerToClipboard(const QImage& image) {
+  QByteArray png;
+  QBuffer buffer(&png);
+  buffer.open(QIODevice::WriteOnly);
+  image.save(&buffer, "PNG");
+
+  const QString wlCopy = QStandardPaths::findExecutable(QStringLiteral("wl-copy"));
+  if (!wlCopy.isEmpty()) {
+    QProcess process;
+    process.start(wlCopy, {QStringLiteral("--type"), QStringLiteral("image/png")});
+    process.write(png);
+    process.closeWriteChannel();
+    if (process.waitForFinished(3000)) {
+      return;
+    }
+  }
+  QGuiApplication::clipboard()->setImage(image);
 }
 
 } // namespace
@@ -135,16 +177,18 @@ QSize MatteComposer::canvasFor(const QSize& content, Aspect aspect, int padding)
     break;
   case Original:
   case AspectCount:
-    return padded;
+    break;
   }
 
   // Grow the short side to reach the ratio; never crop the capture to fit it.
   qreal width = padded.width();
   qreal height = padded.height();
-  if (width / height < ratio) {
-    width = height * ratio;
-  } else {
-    height = width / ratio;
+  if (ratio > 0.0) {
+    if (width / height < ratio) {
+      width = height * ratio;
+    } else {
+      height = width / ratio;
+    }
   }
 
   QSize canvas(qRound(width), qRound(height));
@@ -169,8 +213,10 @@ QImage MatteComposer::compose(const QImage& source, Matte matte, Aspect aspect,
     return source;
   }
 
-  const int padding =
-      qRound(std::max(source.width(), source.height()) * qBound(0.0, paddingFraction, 0.35));
+  // A fraction of the longest edge, with a floor so a tiny capture still gets
+  // a visible matte rather than a one-pixel frame.
+  const int padding = std::max(
+      24, qRound(std::max(source.width(), source.height()) * qBound(0.0, paddingFraction, 0.35)));
   const QSize canvasSize = canvasFor(source.size(), aspect, padding);
   if (canvasSize.isEmpty()) {
     return source;
@@ -197,9 +243,10 @@ QImage MatteComposer::compose(const QImage& source, Matte matte, Aspect aspect,
 
   // A soft drop shadow lifts the capture off the matte. Drawn as a few
   // decreasing-alpha rounded rects rather than a blur, which is far cheaper and
-  // indistinguishable at this size.
+  // indistinguishable at this size. Not under a capture with transparent
+  // pixels, where the slab would show through as a grey box.
   const qreal radius = std::max(2.0, padding * 0.10);
-  for (int step = 8; step >= 1; --step) {
+  for (int step = hasTransparency(source) ? 0 : 8; step >= 1; --step) {
     QColor shadow(0, 0, 0);
     shadow.setAlphaF(0.030f);
     painter.setPen(Qt::NoPen);
@@ -238,21 +285,29 @@ void MatteComposer::composeAndSave(const QString& path, int matte, int aspect,
   }
 
   // Never overwrite. The original is untouched and repeat composes get their
-  // own numbered files rather than clobbering the last one.
-  QString output = info.absolutePath() + QLatin1Char('/') + info.completeBaseName() +
-                   QStringLiteral("-matte.png");
+  // own numbered files rather than clobbering the last one. The stem is
+  // trimmed so a name already near the filesystem's limit still fits with
+  // the suffix appended.
+  QString stem = info.completeBaseName();
+  constexpr int kNameMax = 255;
+  constexpr int kSuffixRoom = 16; // "-matte-999.png"
+  while (stem.toUtf8().size() > kNameMax - kSuffixRoom && !stem.isEmpty()) {
+    stem.chop(1);
+  }
+  QString output = info.absolutePath() + QLatin1Char('/') + stem + QStringLiteral("-matte.png");
   int suffix = 2;
   while (QFileInfo::exists(output)) {
-    output = QStringLiteral("%1/%2-matte-%3.png")
-                 .arg(info.absolutePath(), info.completeBaseName())
-                 .arg(suffix++);
+    output = QStringLiteral("%1/%2-matte-%3.png").arg(info.absolutePath(), stem).arg(suffix++);
   }
 
   if (!result.save(output, "PNG")) {
-    emit failed(QStringLiteral("Could not write %1").arg(QFileInfo(output).fileName()));
+    emit failed(QFileInfo(info.absolutePath()).isWritable()
+                    ? QStringLiteral("Could not write %1").arg(QFileInfo(output).fileName())
+                    : QStringLiteral("%1 is not writable, so the matte has nowhere to go")
+                          .arg(info.absolutePath()));
     return;
   }
 
-  QGuiApplication::clipboard()->setImage(result);
+  offerToClipboard(result);
   emit composed(output);
 }

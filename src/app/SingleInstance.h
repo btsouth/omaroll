@@ -8,10 +8,10 @@ class SingleInstance final : public QObject {
 
 public:
   explicit SingleInstance(const QString& serverName = {}, QObject* parent = nullptr);
-  [[nodiscard]] bool claimOrNotify();
+  [[nodiscard]] bool claimOrNotify(const QString& path = {});
 
 signals:
-  void activationRequested();
+  void activationRequested(const QString& path);
 
 private:
   QString m_serverName;

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.tsouth89.omaroll</id>
+  <name>Omaroll</name>
+  <summary>A fast, beautiful image and video viewer</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="io.github.tsouth89">
+    <name>Omaroll contributors</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <launchable type="desktop-id">io.github.tsouth89.omaroll.desktop</launchable>
+  <provides>
+    <binary>omaroll</binary>
+  </provides>
+  <url type="homepage">https://github.com/tsouth89/omaroll</url>
+  <url type="bugtracker">https://github.com/tsouth89/omaroll/issues</url>
+  <description>
+    <p>
+      Omaroll is a local-first image and video viewer for Omarchy. Open one file
+      and move through its folder, or browse photos, videos, downloads, albums,
+      and custom folders together in a beautiful media library.
+    </p>
+  </description>
+  <categories>
+    <category>Graphics</category>
+    <category>Viewer</category>
+  </categories>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/tsouth89/omaroll/main/docs/library.png</image>
+      <caption>Browse photos and videos together in a local library</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/tsouth89/omaroll/main/docs/detail.png</image>
+      <caption>View media with navigation and file actions</caption>
+    </screenshot>
+  </screenshots>
+  <releases>
+    <release version="1.0.0" date="2026-09-01"/>
+  </releases>
+</component>

@@ -15,6 +15,7 @@ public:
   static constexpr const char* kProviderId = "matte";
 
   MatteProvider();
+  void shutdown();
 
   QQuickImageResponse* requestImageResponse(const QString& id,
                                             const QSize& requestedSize) override;

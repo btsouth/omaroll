@@ -1,17 +1,19 @@
+<p align="center">
+  <img src="resources/icons/omaroll.svg" width="112" alt="Omaroll logo">
+</p>
+
 # Omaroll
 
-**Everything you capture, in one place.**
+**Your media, in one beautiful library.**
 
-A fast, local-first capture library for Omarchy. Omaroll finds every screenshot,
-screen recording, picture and download you already have, arranges them by day,
-and hands each one to the tool that already owns the job.
-
-It replaces nothing. It just gives all of it a home.
+A fast, beautiful image and video viewer that turns your media folders into a
+library. Open one file and move through the rest of its folder, or browse photos,
+videos, downloads, albums, and custom folders together.
 
 > Omaroll is an independent community project. It is not an official Omarchy
 > application.
 
-![The library, grouped by day](docs/library.png)
+[![The library, grouped by day](docs/library.png)](docs/omaroll-demo-final_trimmed.mp4)
 
 ---
 
@@ -37,22 +39,41 @@ on them.
 ## What it does
 
 - **Sees everything you already have.** Screenshots, recordings, pictures,
-  videos and downloads, grouped by day, newest first. No import, no setup.
+  videos and downloads, grouped by day, newest first. Add any other folder to
+  the library from Settings, then switch between folders from the library bar.
+- **Builds real albums.** Select files, add them to a named collection, and
+  browse it beside your folders. Albums never move or copy media. If an album
+  file is renamed or moved within the library, Omaroll repairs the entry by
+  file and content identity. Files moved elsewhere and ambiguous duplicates
+  stay unavailable rather than matching the wrong copy.
 - **Knows what each file is.** Omarchy stamps its captures with a predictable
   name, so a screenshot is a Screenshot even though it lives in `~/Pictures`
   next to every other image.
 - **Hands off the work.** Trim goes to omacut, annotate to tensaku, convert to
-  `omarchy-transcode`, play to mpv, text to tesseract. Fifteen of the sixteen
-  actions are tools you already have installed.
+  `omarchy-transcode`, play to mpv, text to tesseract. Specialized media work
+  stays with tools you already have installed.
+- **Drags out as the real file.** Pull a thumbnail into a Discord message, a
+  browser upload or a Nautilus window and the file lands there. Select several
+  and they go together.
+- **Previews in place.** Space opens a capture large with every action beside
+  it. Images zoom, pan, rotate and animate; a recording starts muted with a
+  scrub bar and sound toggle, so you can find the moment before handing it to
+  omacut. The full player is in mpv.
+- **Presents any collection.** Start a fullscreen slideshow from a folder,
+  album, search or filtered library. Images advance automatically. Videos are
+  skipped by default, or can play through when enabled in Settings.
+- **Acts on a selection.** Check a few tiles and send, copy, favourite, hide
+  or trash them together.
 - **Makes a screenshot postable.** The one thing Omaroll builds itself: six
   finished backgrounds derived from the image's own dominant colour. Pick one,
   it is on your clipboard and saved beside the original.
-- **Follows your theme.** Reads the active Omarchy palette, font, corner radius
-  and surface alpha, and cross-fades when you change theme. No restart.
+- **Follows your theme.** Reads the active Omarchy palette, launcher surface,
+  font, corner radius and transparency, then cross-fades when you change theme.
+  No restart.
 
 ## Actions
 
-Every handler below already ships with Omarchy, with exactly one exception.
+Every handler below already ships with Omarchy.
 
 | Capture | Action | Handler |
 |---|---|---|
@@ -66,12 +87,16 @@ Every handler below already ships with Omarchy, with exactly one exception.
 | Image | Edit · View | `pinta` · `imv` |
 | Image | Scan QR code | `zbarimg` |
 | Any | Copy to clipboard | `omarchy-clipboard-paste-file` |
-| Any | Send to a device | `localsend` · `omarchy-tailscale-send` |
+| Any | Send with LocalSend | `omarchy-menu-share` |
 | Any | Show in files | `nautilus` |
 | Any | Move to Trash | XDG trash, never `unlink` |
 
+The image and video defaults, including whether slideshows include videos, can
+be changed in Settings.
+
 An action whose program is missing is shown greyed with the package to install,
-rather than hidden.
+rather than hidden. The medium decides the list, not the folder: a downloaded
+clip gets the recording actions and a downloaded photo gets the image actions.
 
 ![Every action for one capture](docs/detail.png)
 
@@ -92,21 +117,59 @@ and put on your clipboard.
 | Key | Does |
 |---|---|
 | arrows · `hjkl` | Move |
-| `Space` | Preview with every action for that capture |
-| `Enter` | Preview |
+| `Enter` | Your default action for that kind, initially trim or matte |
+| `Space` · right click | Preview with every action for that capture |
+| `←` `→` in an image preview | Previous · next file in the same folder |
+| `←` `→` in a video preview | Seek five seconds; hold `Shift` for previous · next |
+| `+` `-` · `0` · `R` in an image preview | Zoom · fit · rotate |
+| `F11` in a preview | Enter · leave fullscreen |
+| `F5` in a preview | Start · pause slideshow |
+| `I` in a preview | Show · hide file info and actions |
 | `M` | Make it postable |
 | `T` · `P` | Trim · Play a recording |
 | `A` · `C` | Annotate · Copy the text |
 | `Y` · `S` · `F` | Clipboard · Send · Show in files |
-| `V` · `H` | Favourite · Hide |
+| `V` · `Ctrl+H` | Favourite · Hide |
+| `1`-`7` | Jump to a section |
 | `X` · `Ctrl+A` | Select · Select all |
+| drag | Drop the file, or the whole selection, into another app |
 | `Del` | Move to Trash, with confirm |
 | `/` · `R` | Search · Rescan |
 | `Esc` | Clear selection, then close |
 
+The same letters work inside the preview. "Open with Omaroll" on a picture or
+video from any file manager opens it straight into its actions, with previous
+and next controls for the other media in that folder. A folder handed to
+`omaroll` opens as a recursive folder view for that session.
+
+## Formats
+
+Images: PNG, JPEG, WebP, animated GIF and WebP, BMP, AVIF, HEIC/HEIF and TIFF.
+
+Videos: MP4, M4V, MKV, WebM, MOV, AVI, MPEG, WMV, FLV, Ogg video, 3GP and
+MTS/M2TS. Playback uses Qt's FFmpeg backend, while the full-player action hands
+the file to mpv.
+
 ## Install
 
 Requires Omarchy or Arch with Qt 6.8+.
+
+```bash
+curl -fLO https://github.com/tsouth89/omaroll/releases/download/v1.0.0/omaroll-1.0.0-1-x86_64.pkg.tar.zst \
+     -fLO https://github.com/tsouth89/omaroll/releases/download/v1.0.0/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+sudo pacman -U ./omaroll-1.0.0-1-x86_64.pkg.tar.zst
+```
+
+Run the same commands for a newer release to update. The package is prepared for
+the Omarchy repository so installation and updates can move to normal `pacman`
+updates after inclusion.
+
+If you prefer a browser, download the package and `SHA256SUMS` from the
+[latest release](https://github.com/tsouth89/omaroll/releases/latest), put them
+in the same folder, then run the last two commands above from that folder.
+
+To build from source instead:
 
 ```bash
 git clone https://github.com/tsouth89/omaroll
@@ -116,17 +179,31 @@ cmake --build build
 sudo cmake --install build
 ```
 
+## Use it as a viewer
+
+Open any supported image, video, or folder from a terminal:
+
+```bash
+omaroll photo.jpg
+omaroll ~/Pictures
+```
+
+You can also choose Omaroll from a file manager's **Open With** menu and set it
+as the default for the media types you want. A single file opens directly in the
+viewer, with previous and next navigation through other media in that folder.
+
 ### Transparency
 
 Omaroll paints its own translucent chrome from your theme and draws every
 thumbnail fully opaque on top. Omarchy dims all windows slightly by default,
 which would wash out the pictures, so Omaroll opts out the same way mpv, imv and
-Pinta do. Drop `packaging/hypr/omaroll.lua` into `~/.config/hypr/` and require
-it, or add to your Hyprland config:
+Pinta do. Copy `/usr/share/omaroll/hypr/omaroll.lua` (or `packaging/hypr/omaroll.lua`
+from the source tree) into `~/.config/hypr/` and require it, or add to your
+Hyprland config:
 
 ```lua
-o.window("^(omaroll)$", { tag = "-default-opacity" })
-o.window("^(omaroll)$", { opacity = "1 1" })
+o.window("^(io\\.github\\.tsouth89\\.omaroll)$", { tag = "-default-opacity" })
+o.window("^(io\\.github\\.tsouth89\\.omaroll)$", { opacity = "1 1" })
 ```
 
 ## Try it without your own files
@@ -143,26 +220,9 @@ in this repository is made.
 omaroll --render shot.png --render-view matte
 ```
 
-Renders a view to a PNG and exits. It grabs the scene graph rather than the
+Renders a view to a PNG and exits. Views include `grid`, `detail`, `video`,
+`slideshow`, `matte`, and `settings`. It grabs the scene graph rather than the
 screen, so an overlapping window cannot spoil the shot.
-
-## What it will not do
-
-The out-list is the more important half.
-
-- **No video editing.** omacut owns it and is good.
-- **No annotation.** tensaku ships in base and is already the screenshot editor.
-- **No image editing.** pinta owns it.
-- **No capture.** `omarchy-capture-*` owns it. Omaroll grabs no hotkeys and
-  fights nothing for PrtScn.
-- **No scrolling capture.** It needs synthetic input into another window, which
-  Wayland blocks by design.
-- **No file tree.** If it starts to look like a file manager, something has gone
-  wrong.
-
-If a feature request can be answered with the name of a package already in
-`omarchy-base.packages`, the answer is a row in the action table, not a module in
-the codebase.
 
 ## Design notes
 
@@ -174,7 +234,8 @@ the codebase.
   keyed on the rendered pixel size, so a 1.25x or 1.5x monitor gets crisp tiles
   rather than upscaled ones.
 - **Cache and state.** Thumbnails in `~/.cache/omaroll/thumbs`, bounded at 256MB
-  and pruned least-recently-used at launch. Settings in `~/.config/omaroll`.
+  by default, configurable from 64MB to 1GB, and pruned least-recently-used.
+  Settings live in `~/.config/omaroll`.
   Both are safe to delete at any time.
 
 ## Development
@@ -184,6 +245,21 @@ cmake -S . -B build -G Ninja
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
+
+For a focused release check on an Omarchy desktop:
+
+1. Launch `omaroll --demo` and verify the grid, folder filters, search, sort,
+   selection, and Settings at both tiled and floating window sizes.
+2. Open a real image from the file manager. Verify previous and next stay in its
+   folder, then test zoom, pan, rotate, fullscreen, and `F5` slideshow.
+3. Open a real video. Verify muted preview, sound, seeking, fullscreen, and the
+   transition to the next item in a slideshow.
+4. Create an album, rename and move one member inside a watched folder, and
+   verify it remains in the album. Move it outside the library and verify it is
+   shown as unavailable instead of being matched to another file.
+5. Switch Omarchy themes while Omaroll is open and confirm the chrome updates
+   without changing the media colors.
+6. Move a disposable file to Trash and restore it from the desktop Trash.
 
 `PLAN.md` carries the full design rationale, the Omarchy conventions this
 follows, and the path to inclusion in base Omarchy.

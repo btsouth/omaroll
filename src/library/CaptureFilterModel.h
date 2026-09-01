@@ -1,6 +1,10 @@
 #pragma once
 
 #include <QSortFilterProxyModel>
+#include <QSet>
+#include <QStringList>
+
+struct CaptureRecord;
 
 // Sorting, kind filtering and search over the library.
 //
@@ -15,9 +19,15 @@ class CaptureFilterModel final : public QSortFilterProxyModel {
   Q_PROPERTY(int sortMode READ sortMode WRITE setSortMode NOTIFY sortModeChanged)
   Q_PROPERTY(QString searchText READ searchText WRITE setSearchText NOTIFY searchTextChanged)
   Q_PROPERTY(bool favoritesOnly READ favoritesOnly WRITE setFavoritesOnly NOTIFY favoritesOnlyChanged)
+  Q_PROPERTY(QString folderFilter READ folderFilter WRITE setFolderFilter NOTIFY folderFilterChanged)
+  Q_PROPERTY(QStringList folders READ folders NOTIFY foldersChanged)
+  Q_PROPERTY(QString albumFilter READ albumFilter NOTIFY albumFilterChanged)
   Q_PROPERTY(bool showHidden READ showHidden WRITE setShowHidden NOTIFY showHiddenChanged)
   Q_PROPERTY(int count READ count NOTIFY countChanged)
   Q_PROPERTY(bool empty READ empty NOTIFY countChanged)
+  // How many rows the source holds regardless of the current filter, so the
+  // UI can say "nothing matches" rather than "nothing exists".
+  Q_PROPERTY(int sourceCount READ sourceCount NOTIFY countChanged)
 
 public:
   enum SortMode {
@@ -33,6 +43,7 @@ public:
   static constexpr int kAllKinds = -1;
 
   explicit CaptureFilterModel(QObject* parent = nullptr);
+  void setSourceModel(QAbstractItemModel* sourceModel) override;
 
   [[nodiscard]] int kindFilter() const { return m_kindFilter; }
   void setKindFilter(int kind);
@@ -45,6 +56,12 @@ public:
 
   [[nodiscard]] bool favoritesOnly() const { return m_favoritesOnly; }
   void setFavoritesOnly(bool value);
+
+  [[nodiscard]] QString folderFilter() const { return m_folderFilter; }
+  void setFolderFilter(const QString& folder);
+  [[nodiscard]] QStringList folders() const;
+  [[nodiscard]] QString albumFilter() const { return m_albumFilter; }
+  Q_INVOKABLE void setAlbumFilter(const QString& name, const QStringList& paths);
 
   // Hidden entries are excluded by default. This is a "don't show me this
   // again" mark, not a security feature, so revealing them is one toggle away.
@@ -65,16 +82,29 @@ public:
   Q_INVOKABLE QString kindLabelAt(int row) const;
   Q_INVOKABLE int kindAt(int row) const;
   Q_INVOKABLE bool isVideoAt(int row) const;
+  Q_INVOKABLE qint64 stampAt(int row) const;
 
-  // How many rows the source holds regardless of the current filter, so the
-  // UI can say "nothing matches" rather than "nothing exists".
-  Q_INVOKABLE int sourceCount() const;
+  // The proxy row showing this path, or -1 when it is filtered out or unknown.
+  Q_INVOKABLE int rowOf(const QString& path) const;
+
+  // The next visible item from the same directory in the current sort order.
+  // Wraps at either end and returns empty when the directory has only one item.
+  Q_INVOKABLE QString adjacentPathInFolder(const QString& path, int direction) const;
+
+  // The next item in the visible collection. Used by albums, filtered library
+  // views and slideshows; wraps at either end.
+  Q_INVOKABLE QString adjacentPath(const QString& path, int direction) const;
+
+  [[nodiscard]] int sourceCount() const;
 
 signals:
   void kindFilterChanged();
   void sortModeChanged();
   void searchTextChanged();
   void favoritesOnlyChanged();
+  void folderFilterChanged();
+  void foldersChanged();
+  void albumFilterChanged();
   void showHiddenChanged();
   void countChanged();
 
@@ -84,9 +114,17 @@ protected:
   [[nodiscard]] bool lessThan(const QModelIndex& left, const QModelIndex& right) const override;
 
 private:
+  void beginFilterUpdate();
+  void endFilterUpdate();
+  [[nodiscard]] const CaptureRecord& sourceRecord(int sourceRow) const;
+
   int m_kindFilter = kAllKinds;
   int m_sortMode = NewestFirst;
   QString m_searchText;
+  QString m_folderFilter;
+  QString m_albumFilter;
+  QSet<QString> m_albumPaths;
   bool m_favoritesOnly = false;
   bool m_showHidden = false;
+  QList<QMetaObject::Connection> m_sourceConnections;
 };

@@ -9,6 +9,11 @@
 // The cache key includes the rendered pixel size, not just the file identity,
 // so moving the window to a monitor with a different scale factor regenerates
 // rather than upscaling a thumbnail that was correct on the old one.
+//
+// Thumbnails cover the requested size rather than fit inside it: the short
+// side matches the tile and the long side overhangs. The grid crops the
+// overhang, so a 16:9 frame in a 3:2 cell is never stretched up to fill it,
+// and a view that fits instead of cropping simply scales the whole thing down.
 class ThumbnailCache {
 public:
   // Hard ceiling on device pixel ratio. Past 2x the extra pixels cost decode

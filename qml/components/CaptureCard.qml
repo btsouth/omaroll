@@ -12,11 +12,20 @@ Item {
     property string timeLabel: ""
     property string sizeLabel: ""
     property bool isVideo: false
+    // mtime, carried in the thumbnail URL so a rewritten file busts Qt's
+    // in-memory pixmap cache as well as the disk one.
+    property double stamp: 0
     property bool favorite: false
     property bool hiddenMark: false
     property bool selected: false
     property bool checked: false
     property bool selectionMode: false
+    property bool thumbnailReady: false
+    // What leaves when this tile is dragged out. The grid sets it to the whole
+    // selection when this tile is part of one.
+    property var dragPaths: [path]
+    // Raised before the drag image is grabbed, so the badge below is in it.
+    property bool dragging: false
 
     signal activated()
     signal chosen()
@@ -41,19 +50,70 @@ Item {
         onTriggered: root.scrubIndex = (root.scrubIndex + 1) % root.scrubStops.length
     }
 
-    onPathChanged: root.scrubIndex = 0
+    onPathChanged: {
+        root.scrubIndex = 0
+        root.thumbnailReady = false
+    }
+
+    // Drag out and it drops as the real file into anything on the desktop that
+    // takes one: a Discord message, a Nautilus window, a browser upload. Copy
+    // only. A drop that moved the file would break the promise that omaroll
+    // never moves a capture.
+    Drag.dragType: Drag.Automatic
+    Drag.supportedActions: Qt.CopyAction
+    Drag.proposedAction: Qt.CopyAction
+    Drag.mimeData: ({
+        "text/uri-list": Library.uriList(root.dragPaths),
+        "text/plain": root.dragPaths.join("\n")
+    })
+    Drag.onDragFinished: {
+        root.dragging = false
+        // The release that ended the drag went to the drop target, not to us,
+        // so the handler would otherwise stay active and miss the next drag.
+        dragOut.enabled = false
+        dragOut.enabled = true
+    }
+
+    DragHandler {
+        id: dragOut
+        target: null
+        acceptedButtons: Qt.LeftButton
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+        // The GridView is a Flickable that would otherwise steal the drag to
+        // scroll. Wheel and scrollbar cover scrolling; a mouse drag on a tile
+        // means "take this file".
+        grabPermissions: PointerHandler.CanTakeOverFromItems
+                         | PointerHandler.CanTakeOverFromHandlersOfDifferentType
+                         | PointerHandler.ApprovesTakeOverByHandlersOfSameType
+        onActiveChanged: {
+            if (!active || root.path === "") {
+                return
+            }
+            // The tile itself is the drag image, grabbed at the pointer's
+            // offset so it does not jump under the cursor.
+            root.Drag.hotSpot = Qt.point(dragOut.centroid.pressPosition.x,
+                                         dragOut.centroid.pressPosition.y)
+            root.dragging = true
+            root.grabToImage(function (result) {
+                // The grab is asynchronous; a press-move-release quicker than
+                // it would otherwise start a drag with no button held.
+                if (!dragOut.active) {
+                    root.dragging = false
+                    return
+                }
+                root.Drag.imageSource = result.url
+                root.Drag.active = true
+            })
+        }
+    }
 
     Rectangle {
         id: frame
         anchors.fill: parent
         color: root.shade(Theme.background, root.selected ? 0.62 : 0.34)
         radius: Theme.cornerRadius
-        border.width: root.selected || root.checked ? 2 : 1
-        border.color: root.checked
-                      ? Theme.accent
-                      : (root.selected
-                         ? root.shade(Theme.accent, 0.75)
-                         : root.shade(Theme.foreground, hover.hovered ? 0.22 : 0.10))
+        border.width: 1
+        border.color: root.shade(Theme.foreground, hover.hovered ? 0.22 : 0.10)
         clip: true
 
         Behavior on color { ColorAnimation { duration: 180; easing.type: Easing.OutQuad } }
@@ -66,21 +126,31 @@ Item {
             fillMode: Image.PreserveAspectCrop
             asynchronous: true
             cache: true
+            retainWhileLoading: true
             // Decode at the size actually drawn, on the ratio of the screen this
             // window is on. Without the ratio, a 1.5x monitor shows an upscaled
             // tile and the whole grid reads as soft.
             sourceSize: Qt.size(Math.round(root.width), Math.round(root.height))
-            // "image://thumbs/<ratio>[@<seek%>]<absolute path>". The path keeps
-            // its leading slash, so the head reads as the first URL path segment
-            // and no separator has to survive percent-encoding.
-            source: root.path === ""
+            // "image://thumbs/<ratio>[@<seek%>][~<stamp>]<absolute path>". The
+            // path keeps its leading slash, so the head reads as the first URL
+            // path segment and no separator has to survive percent-encoding.
+            // Nothing is requested before the first layout, or every tile would
+            // ask once at the fallback size and again at its real one.
+            source: root.path === "" || root.width <= 0
                     ? ""
                     : "image://thumbs/" + Screen.devicePixelRatio
                       + (root.isVideo ? "@" + root.scrubPercent : "")
+                      + "~" + root.stamp
                       + root.path
             smooth: true
             mipmap: true
-            opacity: status === Image.Ready ? 1 : 0
+            opacity: root.thumbnailReady ? 1 : 0
+
+            onStatusChanged: {
+                if (status === Image.Ready) {
+                    root.thumbnailReady = true
+                }
+            }
 
             Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutQuad } }
         }
@@ -89,7 +159,7 @@ Item {
         // anything that cannot produce one.
         Text {
             anchors.centerIn: parent
-            visible: thumbnail.status !== Image.Ready
+            visible: !root.thumbnailReady
             text: root.isVideo ? "▶" : "▦"
             font.family: Theme.fontFamily
             font.pixelSize: 22
@@ -104,19 +174,16 @@ Item {
             color: root.shade(Theme.background, 0.55)
         }
 
-        // Footer scrim. Sits over the image so the metadata stays readable on a
-        // bright photograph, and only over the bottom strip so it costs the
-        // picture almost nothing.
+        // A fixed dark strip keeps metadata readable over every image and theme.
+        // It is deliberately compact so the picture still owns almost the whole
+        // card.
         Rectangle {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            height: 40
-            visible: thumbnail.status === Image.Ready
-            gradient: Gradient {
-                GradientStop { position: 0.0; color: "transparent" }
-                GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.62) }
-            }
+            height: 30
+            visible: root.thumbnailReady
+            color: Qt.rgba(0, 0, 0, 0.72)
         }
 
         Row {
@@ -126,20 +193,23 @@ Item {
             anchors.margins: 8
             spacing: 8
 
+            // White over the scrim once the picture is up; theme text over the
+            // bare frame before that, or on a light theme it would vanish.
             Text {
                 text: root.timeLabel
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
-                color: "#ffffff"
-                opacity: 0.94
+                font.weight: Font.DemiBold
+                color: root.thumbnailReady ? "#ffffff" : Theme.foreground
+                opacity: 1
             }
 
             Text {
                 text: root.sizeLabel
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
-                color: "#ffffff"
-                opacity: 0.62
+                color: root.thumbnailReady ? "#ffffff" : Theme.foreground
+                opacity: 0.82
             }
         }
 
@@ -180,6 +250,7 @@ Item {
         // Multi-select checkbox. Only present once selection is under way or the
         // card is hovered, so the resting grid stays pictures rather than chrome.
         Rectangle {
+            id: checkBox
             anchors.top: parent.top
             anchors.left: parent.left
             anchors.margins: 7
@@ -199,15 +270,63 @@ Item {
                 font.weight: Font.Bold
                 color: Theme.background
             }
+        }
 
-            TapHandler { onSingleTapped: root.toggleChecked() }
+        // Count badge, drawn only while a multi-file drag is being captured, so
+        // the drag image says how many files are leaving.
+        Rectangle {
+            anchors.centerIn: parent
+            visible: root.dragging && root.dragPaths.length > 1
+            width: dragCount.implicitWidth + 24
+            height: dragCount.implicitHeight + 14
+            radius: height / 2
+            color: Theme.accent
+
+            Text {
+                id: dragCount
+                anchors.centerIn: parent
+                text: root.dragPaths.length + " files"
+                font.family: Theme.fontFamily
+                font.pixelSize: 13
+                font.weight: Font.Bold
+                color: Theme.background
+            }
+        }
+
+        // Keep the current/checked outline above the thumbnail and metadata
+        // strip. A Rectangle's own border is painted below its children, which
+        // let the bottom strip cover the lower edge of the selection.
+        Rectangle {
+            anchors.fill: parent
+            z: 20
+            color: "transparent"
+            radius: Theme.cornerRadius
+            border.width: root.selected || root.checked ? 2 : 0
+            border.color: root.checked ? Theme.accent : root.shade(Theme.accent, 0.75)
         }
 
         HoverHandler { id: hover }
 
         TapHandler {
-            onSingleTapped: root.activated()
+            acceptedButtons: Qt.LeftButton
+            onSingleTapped: function (eventPoint) {
+                const checkboxPoint = checkBox.mapFromItem(frame, eventPoint.position)
+                if (root.selectionMode || checkBox.contains(checkboxPoint)) {
+                    root.toggleChecked()
+                } else {
+                    root.activated()
+                }
+            }
             onDoubleTapped: root.chosen()
+            // Touch has no hover, so no checkbox; a long press selects instead.
+            onLongPressed: root.toggleChecked()
+        }
+
+        // Right click goes straight to the actions, which is what a right
+        // click on a file means everywhere else on the desktop.
+        TapHandler {
+            acceptedButtons: Qt.RightButton
+            onSingleTapped: root.chosen()
         }
     }
 }

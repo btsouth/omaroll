@@ -3,8 +3,10 @@
 #include "thumbs/ThumbnailCache.h"
 
 #include <QRunnable>
-#include <QUrl>
 #include <QThread>
+#include <QUrl>
+
+#include <atomic>
 
 namespace {
 
@@ -26,7 +28,17 @@ public:
 
   [[nodiscard]] QString errorString() const override { return m_error; }
 
+  // Qt cancels when the requesting Image goes away or changes source, which a
+  // fast scroll does constantly. Skipping the work keeps the pool on tiles
+  // that are still on screen.
+  void cancel() override { m_cancelled.store(true); }
+
   void run() override {
+    if (m_cancelled.load()) {
+      m_error = QStringLiteral("Cancelled");
+      emit finished();
+      return;
+    }
     m_image = ThumbnailCache::thumbnail(m_path, m_logicalSize, m_devicePixelRatio, m_seekPercent);
     if (m_image.isNull()) {
       // A file that cannot be thumbnailed is ordinary: an unreadable codec, a
@@ -44,6 +56,7 @@ private:
   int m_seekPercent = 20;
   QImage m_image;
   QString m_error;
+  std::atomic_bool m_cancelled{false};
 };
 
 } // namespace
@@ -52,7 +65,12 @@ ThumbnailProvider::ThumbnailProvider() {
   // Bounded so a fast scroll through thousands of tiles cannot spawn an
   // unbounded number of ffmpegthumbnailer processes. Leave a core for the GUI
   // thread and the render thread.
-  m_pool.setMaxThreadCount(std::max(2, QThread::idealThreadCount() - 1));
+  m_pool.setMaxThreadCount(qBound(2, QThread::idealThreadCount() - 1, 4));
+}
+
+void ThumbnailProvider::shutdown() {
+  m_pool.clear();
+  m_pool.waitForDone();
 }
 
 QQuickImageResponse* ThumbnailProvider::requestImageResponse(const QString& id,
@@ -61,8 +79,11 @@ QQuickImageResponse* ThumbnailProvider::requestImageResponse(const QString& id,
   // parser leaves alone. The ratio is the first path segment and the absolute
   // path is everything from the next slash on:
   //   image://thumbs/1.5/home/user/Pictures/shot.png
-  //   image://thumbs/1.5@60/home/user/Videos/clip.mp4
-  // The optional @<percent> is the seek position for a video scrub frame.
+  //   image://thumbs/1.5@60~1725200000/home/user/Videos/clip.mp4
+  // The optional @<percent> is the seek position for a video scrub frame. The
+  // optional ~<stamp> is the file's mtime: it is not used here, it only makes
+  // the URL differ when the file is rewritten, so Qt's in-memory pixmap cache
+  // cannot keep serving the old frame.
   qreal devicePixelRatio = 1.0;
   int seekPercent = 20;
   QString path = id;
@@ -70,6 +91,11 @@ QQuickImageResponse* ThumbnailProvider::requestImageResponse(const QString& id,
   const qsizetype separator = id.indexOf(QLatin1Char('/'));
   if (separator > 0) {
     QString head = id.left(separator);
+
+    const qsizetype tilde = head.indexOf(QLatin1Char('~'));
+    if (tilde > 0) {
+      head = head.left(tilde);
+    }
 
     const qsizetype at = head.indexOf(QLatin1Char('@'));
     if (at > 0) {

@@ -6,6 +6,8 @@
 #include <QString>
 #include <QStringList>
 
+#include <atomic>
+
 // Walks the watched roots and turns files into CaptureRecords.
 //
 // Classification is filename-pattern first, then extension. That order is the
@@ -25,7 +27,12 @@ public:
     CaptureRecord::Kind videoFallback = CaptureRecord::Video;
   };
 
-  [[nodiscard]] static QList<CaptureRecord> scan(const QList<Root>& roots);
+  // Checked once per directory; a set flag ends the walk with a partial list
+  // the caller is expected to discard. When supplied, traversedDirectories is
+  // filled with the canonical directories the same walk visited.
+  [[nodiscard]] static QList<CaptureRecord> scan(const QList<Root>& roots,
+                                                 const std::atomic_bool* cancel = nullptr,
+                                                 QStringList* traversedDirectories = nullptr);
 
   // Exposed for testing and reuse: decide a kind from the bare filename, or
   // return false when nothing matches and the caller should fall back.

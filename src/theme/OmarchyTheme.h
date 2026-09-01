@@ -14,13 +14,16 @@ class OmarchyTheme final : public QObject {
   Q_PROPERTY(int cornerRadius READ cornerRadius NOTIFY themeChanged)
   Q_PROPERTY(int gapsOut READ gapsOut NOTIFY themeChanged)
   Q_PROPERTY(qreal surfaceAlpha READ surfaceAlpha NOTIFY themeChanged)
+  Q_PROPERTY(
+      QColor surfaceBackground READ surfaceBackground NOTIFY themeChanged)
   Q_PROPERTY(QColor accent READ accent NOTIFY themeChanged)
   Q_PROPERTY(QColor selection READ selection NOTIFY themeChanged)
   Q_PROPERTY(QColor muted READ muted NOTIFY themeChanged)
   Q_PROPERTY(QColor background READ background NOTIFY themeChanged)
   Q_PROPERTY(QColor darkBackground READ darkBackground NOTIFY themeChanged)
   Q_PROPERTY(QColor darkerBackground READ darkerBackground NOTIFY themeChanged)
-  Q_PROPERTY(QColor lighterBackground READ lighterBackground NOTIFY themeChanged)
+  Q_PROPERTY(
+      QColor lighterBackground READ lighterBackground NOTIFY themeChanged)
   Q_PROPERTY(QColor foreground READ foreground NOTIFY themeChanged)
   Q_PROPERTY(QColor darkForeground READ darkForeground NOTIFY themeChanged)
   Q_PROPERTY(QColor lightForeground READ lightForeground NOTIFY themeChanged)
@@ -34,8 +37,9 @@ class OmarchyTheme final : public QObject {
   Q_PROPERTY(QColor magenta READ magenta NOTIFY themeChanged)
 
 public:
-  explicit OmarchyTheme(QObject* parent = nullptr);
-  OmarchyTheme(QString stateHome, QString configHome, QObject* parent = nullptr);
+  explicit OmarchyTheme(QObject *parent = nullptr);
+  OmarchyTheme(QString stateHome, QString configHome,
+               QObject *parent = nullptr);
 
   [[nodiscard]] bool omarchyAvailable() const;
   [[nodiscard]] QString themeName() const;
@@ -44,6 +48,7 @@ public:
   [[nodiscard]] int cornerRadius() const;
   [[nodiscard]] int gapsOut() const;
   [[nodiscard]] qreal surfaceAlpha() const;
+  [[nodiscard]] QColor surfaceBackground() const;
 
   [[nodiscard]] QColor accent() const;
   [[nodiscard]] QColor selection() const;
@@ -74,15 +79,22 @@ private:
 
   [[nodiscard]] QString currentRoot() const;
   [[nodiscard]] QString themeRoot() const;
-  [[nodiscard]] static Values readSimpleToml(const QString& path);
-  [[nodiscard]] static qreal readSectionAlpha(const QString& path, const QString& section,
-                                              const QString& key, qreal fallback);
-  [[nodiscard]] static QColor parsedColor(const Values& values, const QString& key,
-                                          const QColor& fallback);
+  [[nodiscard]] static Values readSimpleToml(const QString &path);
+  [[nodiscard]] static qreal readSectionAlpha(const QString &path,
+                                              const QString &section,
+                                              const QString &key,
+                                              qreal fallback);
+  [[nodiscard]] static QColor readSectionColor(const QString &path,
+                                               const QString &section,
+                                               const QString &key,
+                                               const QColor &fallback);
+  [[nodiscard]] static QColor
+  parsedColor(const Values &values, const QString &key, const QColor &fallback);
   [[nodiscard]] static QString resolvedMonospaceFamily();
-  [[nodiscard]] static double contrastRatio(const QColor& first, const QColor& second);
+  [[nodiscard]] static double contrastRatio(const QColor &first,
+                                            const QColor &second);
   void applyFallback();
-  void applyValues(const Values& values);
+  void applyValues(const Values &values);
   void refreshHyprlandMetrics();
   void refreshWatchPaths();
   void scheduleReload();
@@ -99,6 +111,7 @@ private:
   int m_cornerRadius = 10;
   int m_gapsOut = 5;
   qreal m_surfaceAlpha = 0.82;
+  QColor m_surfaceBackground;
 
   QColor m_accent;
   QColor m_selection;

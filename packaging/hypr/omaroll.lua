@@ -5,5 +5,5 @@
 --
 -- Drop into ~/.config/hypr/ and require it, until the rule lands upstream in
 -- default/hypr/apps/system.lua.
-o.window("^(omaroll)$", { tag = "-default-opacity" })
-o.window("^(omaroll)$", { opacity = "1 1" })
+o.window("^(io\\.github\\.tsouth89\\.omaroll)$", { tag = "-default-opacity" })
+o.window("^(io\\.github\\.tsouth89\\.omaroll)$", { opacity = "1 1" })

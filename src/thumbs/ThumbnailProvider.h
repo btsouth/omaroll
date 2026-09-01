@@ -15,6 +15,7 @@ public:
   static constexpr const char* kProviderId = "thumbs";
 
   ThumbnailProvider();
+  void shutdown();
 
   QQuickImageResponse* requestImageResponse(const QString& id,
                                             const QSize& requestedSize) override;

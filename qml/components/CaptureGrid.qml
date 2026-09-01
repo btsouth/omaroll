@@ -9,10 +9,11 @@ import QtQuick.Controls.Basic
 FocusScope {
     id: root
 
-    property alias model: grid.model
+    property var model: null
     property alias currentIndex: grid.currentIndex
     property alias count: grid.count
     property string currentDayLabel: ""
+    property bool layoutReady: true
 
     // Multi-select is held by path, not by row. Sorting, filtering and rescans
     // all move rows around, and a selection that silently retargets is how bulk
@@ -20,7 +21,7 @@ FocusScope {
     property var checkedSet: ({})
     property int checkedCount: 0
 
-    signal chosen(string path)
+    signal chosen(int index)
     signal deleteRequested(string path)
     signal detailRequested(int index)
 
@@ -60,6 +61,26 @@ FocusScope {
 
     function checkedPaths() { return Object.keys(checkedSet) }
 
+    // A file deleted outside, or filtered out of view, must not stay counted
+    // in "Trash 3". Anything no longer in the visible model is dropped.
+    function pruneChecked() {
+        if (checkedCount === 0) {
+            return
+        }
+        const next = {}
+        for (const path of Object.keys(checkedSet)) {
+            if (Captures.rowOf(path) >= 0) {
+                next[path] = true
+            }
+        }
+        checkedSet = next
+        checkedCount = Object.keys(next).length
+    }
+    Connections {
+        target: Captures
+        function onCountChanged() { root.pruneChecked() }
+    }
+
     // Cells stay near a target width and flex to fill the row exactly, so there
     // is never a ragged gutter down the right edge. The scrollbar's width comes
     // out of the available space rather than overlapping the last column.
@@ -69,6 +90,30 @@ FocusScope {
     readonly property int available: Math.max(1, width - scrollbarWidth)
     readonly property int columns: Math.max(1, Math.floor(available / targetCellWidth))
     readonly property int cellWidth: Math.floor(available / columns)
+    onCellWidthChanged: relayoutTimer.restart()
+
+    // GridView resizes existing delegates when cellWidth changes, but does not
+    // reliably move them to their new columns. Reattach the same model after a
+    // resize settles, preserving the user's place while positions are rebuilt.
+    Timer {
+        id: relayoutTimer
+        interval: 80
+        onTriggered: {
+            if (grid.count === 0) {
+                return
+            }
+            const selected = grid.currentIndex
+            const scroll = grid.contentY
+            root.layoutReady = false
+            Qt.callLater(function () {
+                root.layoutReady = true
+                Qt.callLater(function () {
+                    grid.currentIndex = Math.min(selected, grid.count - 1)
+                    grid.contentY = Math.max(0, Math.min(scroll, grid.contentHeight - grid.height))
+                })
+            })
+        }
+    }
 
     function updateDay() {
         const index = grid.indexAt(grid.contentX + 4, grid.contentY + 4)
@@ -91,6 +136,8 @@ FocusScope {
         focus: true
         clip: true
 
+        model: root.layoutReady ? root.model : null
+
         cellWidth: root.cellWidth
         cellHeight: Math.round(root.cellWidth * 0.68)
 
@@ -109,6 +156,10 @@ FocusScope {
 
         onContentYChanged: root.updateDay()
         onCountChanged: Qt.callLater(root.updateDay)
+        Connections {
+            target: Library
+            function onDayLabelsChanged() { root.updateDay() }
+        }
         onWidthChanged: Qt.callLater(root.updateDay)
         Component.onCompleted: Qt.callLater(root.updateDay)
 
@@ -124,6 +175,7 @@ FocusScope {
             required property bool isVideo
             required property bool favorite
             required property bool hidden
+            required property double stamp
 
             width: grid.cellWidth
             height: grid.cellHeight
@@ -138,17 +190,23 @@ FocusScope {
                 timeLabel: cell.timeLabel
                 sizeLabel: cell.sizeLabel
                 isVideo: cell.isVideo
+                stamp: cell.stamp
                 favorite: cell.favorite
                 hiddenMark: cell.hidden
                 selected: grid.currentIndex === cell.index
                 checked: root.isChecked(cell.path)
                 selectionMode: root.checkedCount > 0
+                // Dragging a checked tile takes the whole selection with it.
+                dragPaths: root.isChecked(cell.path) ? root.checkedPaths() : [cell.path]
 
                 onActivated: {
                     grid.currentIndex = cell.index
                     grid.forceActiveFocus()
                 }
-                onChosen: root.detailRequested(cell.index)
+                onChosen: {
+                    grid.currentIndex = cell.index
+                    root.detailRequested(cell.index)
+                }
                 onToggleChecked: root.toggleChecked(cell.path)
             }
         }
@@ -161,7 +219,7 @@ FocusScope {
             case Qt.Key_Return:
             case Qt.Key_Enter:
                 if (grid.currentIndex >= 0) {
-                    root.chosen(Captures.pathAt(grid.currentIndex))
+                    root.chosen(grid.currentIndex)
                     event.accepted = true
                 }
                 break
@@ -183,12 +241,20 @@ FocusScope {
                     event.accepted = true
                 }
                 break
+            case Qt.Key_H:
+                grid.moveCurrentIndexLeft()
+                event.accepted = true
+                break
             case Qt.Key_J:
                 grid.moveCurrentIndexDown()
                 event.accepted = true
                 break
             case Qt.Key_K:
                 grid.moveCurrentIndexUp()
+                event.accepted = true
+                break
+            case Qt.Key_L:
+                grid.moveCurrentIndexRight()
                 event.accepted = true
                 break
             case Qt.Key_Home:

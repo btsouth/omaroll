@@ -1,7 +1,5 @@
 #pragma once
 
-#include "library/CaptureRecord.h"
-
 #include <QObject>
 #include <QStringList>
 #include <QVariantList>
@@ -10,9 +8,13 @@ class ActionLauncher;
 
 // The delegation matrix, as data.
 //
-// omaroll performs almost nothing itself. This table says, for each kind of
-// capture, which already-installed tool owns the job and how to hand the file
-// over. Adding a handler is a row here plus an argv template, not new code.
+// omaroll performs almost nothing itself. This table says, for each medium,
+// which already-installed tool owns the job and how to hand the file over.
+// Adding a handler is a row here plus an argv template, not new code.
+//
+// Rows are keyed on medium rather than on CaptureRecord::Kind because that is
+// what actually decides them: a downloaded clip trims like a recording and a
+// downloaded photo mattes like a screenshot.
 //
 // Nothing is run through a shell. Arguments are passed as a real argv, so a
 // filename containing a quote, a space or a semicolon is data rather than
@@ -21,39 +23,72 @@ class ActionRegistry final : public QObject {
   Q_OBJECT
 
 public:
+  enum class Media { Still, Moving, Any };
+
+  // How the handler's result reaches the user. Most tools open a window or
+  // send their own notification; the two recognisers only print to stdout, so
+  // omaroll has to catch that and put it somewhere useful.
+  enum class Result { Launch, TextToClipboard, SecretToClipboard, CopyFile };
+
   struct Definition {
-    QString id;
-    QString label;
+    QString id = {};
+    QString label = {};
     // Empty for actions omaroll performs itself; QML handles those and they are
     // always reported as available.
-    QString program;
-    // "{path}" is substituted with the file. Everything else is literal.
-    QStringList arguments;
-    QString shortcut;
+    QString program = {};
+    // "{path}" is substituted with the file, "{mime}" with its MIME type.
+    // Everything else is literal.
+    QStringList arguments = {};
+    QString shortcut = {};
     // Named in the error when the program is missing, so the message can say
     // what to install rather than just failing.
-    QString packageHint;
-    QList<CaptureRecord::Kind> kinds;
-    // Shown first and bound to Enter for its kind.
+    QString packageHint = {};
+    Media media = Media::Any;
+    // Shown first and bound to Enter for its medium.
     bool primary = false;
+    Result result = Result::Launch;
+    // Said in the status line after a successful launch, for a tool that
+    // otherwise gives no sign it did anything.
+    QString confirmation = {};
+    // Said when a recogniser finds nothing. Not an error; an empty screenshot
+    // is ordinary.
+    QString nothingFound = {};
+    // The handler takes any number of files at once, so "{path}" expands to
+    // all of them in a batch run rather than launching once per file.
+    bool batch = false;
+    // Where the tool writes, with "{stem}" for the source's base name, for
+    // tools that refuse to overwrite: omarchy-transcode runs ffmpeg without
+    // -y, and a second run would hang on its prompt. An existing output is
+    // reported instead of launched.
+    QString output = {};
   };
 
   explicit ActionRegistry(ActionLauncher* launcher, QObject* parent = nullptr);
 
-  // Rows for QML: id, label, shortcut, available, hint, primary.
-  Q_INVOKABLE QVariantList actionsFor(int kind) const;
+  // Rows for QML: id, label, shortcut, available, hint, primary, native.
+  Q_INVOKABLE QVariantList actionsFor(bool video) const;
 
   // Runs a delegated action. Returns false for an unknown id, an action omaroll
   // handles itself, or a missing program; the launcher reports why.
   Q_INVOKABLE bool run(const QString& id, const QString& path);
 
+  // The same action over a selection. A batch-capable handler gets every path
+  // in one launch; anything else is run once per file.
+  Q_INVOKABLE bool runBatch(const QString& id, const QStringList& paths);
+
   // True when the action is one QML performs in-app rather than delegating.
   Q_INVOKABLE bool isNative(const QString& id) const;
 
-  Q_INVOKABLE QString primaryActionFor(int kind) const;
+  Q_INVOKABLE QString primaryActionFor(bool video) const;
+
+  // Whether an action makes sense for this medium, so a shortcut pressed on
+  // the wrong kind of file is refused with a word rather than handed to a tool
+  // that cannot open it.
+  Q_INVOKABLE bool appliesTo(const QString& id, bool video) const;
 
 private:
-  [[nodiscard]] static QString screenshotEditor();
+  bool run(const QString& id, const QStringList& paths);
+  [[nodiscard]] static bool applies(const Definition& definition, bool video);
   [[nodiscard]] const Definition* find(const QString& id) const;
   [[nodiscard]] static QList<Definition> buildTable();
 

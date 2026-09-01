@@ -2,106 +2,219 @@
 
 #include "actions/ActionLauncher.h"
 
+#include <QFileInfo>
+#include <QStandardPaths>
 #include <QVariantMap>
+
+using namespace Qt::StringLiterals;
 
 namespace {
 
-using Kind = CaptureRecord::Kind;
-
-const QList<Kind> kEverything = {Kind::Screenshot, Kind::Recording, Kind::Picture, Kind::Video,
-                                 Kind::Download};
-const QList<Kind> kStills = {Kind::Screenshot, Kind::Picture, Kind::Download};
-const QList<Kind> kMoving = {Kind::Recording, Kind::Video};
+QString ocrLanguages() {
+  // Same variable omarchy-capture-text honours.
+  const QString configured = qEnvironmentVariable("OMARCHY_OCR_LANGS");
+  return configured.isEmpty() ? u"eng"_s : configured;
+}
 
 } // namespace
 
-QString ActionRegistry::screenshotEditor() {
-  // Omarchy's own capture script reads the same variable and defaults the same
-  // way, so a user who pointed it elsewhere gets their editor here too.
+namespace {
+
+ActionRegistry::Definition annotateRow() {
+  using Media = ActionRegistry::Media;
   const QString configured = qEnvironmentVariable("OMARCHY_SCREENSHOT_EDITOR");
-  return configured.isEmpty() ? QStringLiteral("tensaku-edit") : configured;
+  if (!configured.isEmpty() && configured != u"tensaku-edit"_s) {
+    return {.id = u"annotate"_s,
+            .label = u"Annotate"_s,
+            .program = configured,
+            .arguments = {u"{path}"_s},
+            .shortcut = u"A"_s,
+            .media = Media::Still};
+  }
+  return {.id = u"annotate"_s,
+          .label = u"Annotate"_s,
+          .program = u"tensaku"_s,
+          .arguments = {u"--filename"_s, u"{path}"_s, u"--output-filename"_s,
+                        u"{dir}/{stem}-annotated.png"_s, u"--actions-on-enter"_s,
+                        u"save-to-clipboard"_s, u"--save-after-copy"_s, u"--copy-command"_s,
+                        u"wl-copy"_s},
+          .shortcut = u"A"_s,
+          .packageHint = u"tensaku"_s,
+          .media = Media::Still};
 }
 
+ActionRegistry::Definition sendRow() {
+  using Media = ActionRegistry::Media;
+  if (!QStandardPaths::findExecutable(u"omarchy-menu-share"_s).isEmpty()) {
+    return {.id = u"send"_s,
+            .label = u"Send with LocalSend"_s,
+            .program = u"omarchy-menu-share"_s,
+            .arguments = {u"file"_s, u"{path}"_s},
+            .shortcut = u"S"_s,
+            .packageHint = u"localsend"_s,
+            .media = Media::Any,
+            .batch = true};
+  }
+  return {.id = u"send"_s,
+          .label = u"Send with LocalSend"_s,
+          .program = u"localsend"_s,
+          .arguments = {u"--headless"_s, u"send"_s, u"{path}"_s},
+          .shortcut = u"S"_s,
+          .packageHint = u"localsend"_s,
+          .media = Media::Any,
+          .batch = true};
+}
+
+} // namespace
+
 QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
-  const QString editor = screenshotEditor();
+  using enum Media;
+  using enum Result;
 
   return {
-      // --- Recordings -----------------------------------------------------
-      {QStringLiteral("trim"), QStringLiteral("Trim"), QStringLiteral("omacut"),
-       {QStringLiteral("{path}")}, QStringLiteral("T"), QStringLiteral("omacut"), kMoving, true},
+      // --- Recordings and videos ------------------------------------------
+      {.id = u"trim"_s,
+       .label = u"Trim"_s,
+       .program = u"omacut"_s,
+       .arguments = {u"{path}"_s},
+       .shortcut = u"T"_s,
+       .packageHint = u"omacut"_s,
+       .media = Moving,
+       .primary = true},
 
-      {QStringLiteral("play"), QStringLiteral("Play"), QStringLiteral("mpv"),
-       {QStringLiteral("{path}")}, QStringLiteral("P"), QStringLiteral("mpv"), kMoving, false},
+      {.id = u"play"_s,
+       .label = u"Play"_s,
+       .program = u"mpv"_s,
+       .arguments = {u"{path}"_s},
+       .shortcut = u"P"_s,
+       .packageHint = u"mpv"_s,
+       .media = Moving},
 
       // omarchy-transcode already does mp4 and gif at fixed rungs, so omaroll
-      // writes no ffmpeg invocations of its own.
-      {QStringLiteral("gif"), QStringLiteral("Clip to GIF"), QStringLiteral("omarchy-transcode"),
-       {QStringLiteral("{path}"), QStringLiteral("gif"), QStringLiteral("720p")},
-       {}, QStringLiteral("omarchy"), kMoving, false},
+      // writes no ffmpeg invocations of its own. It notifies on completion.
+      {.id = u"gif"_s,
+       .label = u"Clip to GIF"_s,
+       .program = u"omarchy-transcode"_s,
+       .arguments = {u"{path}"_s, u"gif"_s, u"720p"_s},
+       .packageHint = u"Omarchy"_s,
+       .media = Moving,
+       .output = u"{stem}-720p.gif"_s},
 
-      {QStringLiteral("shrink"), QStringLiteral("Resize to 1080p"),
-       QStringLiteral("omarchy-transcode"),
-       {QStringLiteral("{path}"), QStringLiteral("mp4"), QStringLiteral("1080p")},
-       {}, QStringLiteral("omarchy"), kMoving, false},
+      {.id = u"shrink"_s,
+       .label = u"Resize to 1080p"_s,
+       .program = u"omarchy-transcode"_s,
+       .arguments = {u"{path}"_s, u"mp4"_s, u"1080p"_s},
+       .packageHint = u"Omarchy"_s,
+       .media = Moving,
+       .output = u"{stem}-1080p.mp4"_s},
 
-      // --- Stills ---------------------------------------------------------
+      // --- Screenshots and pictures ---------------------------------------
       // The matte is the one thing omaroll builds itself, because nothing on
       // Omarchy does it. No program, so QML handles it.
-      {QStringLiteral("matte"), QStringLiteral("Make it postable"), {}, {}, QStringLiteral("M"),
-       {}, kStills, true},
+      {.id = u"matte"_s,
+       .label = u"Make it postable"_s,
+       .shortcut = u"M"_s,
+       .media = Still,
+       .primary = true},
 
-      {QStringLiteral("annotate"), QStringLiteral("Annotate"), editor,
-       {QStringLiteral("{path}")}, QStringLiteral("A"), QStringLiteral("tensaku"), kStills, false},
+      // tensaku-edit, Omarchy's wrapper, saves over the input. Fine for the
+      // screenshot it was written for, not for a photo omaroll also offers
+      // this on, so the default calls tensaku itself with the wrapper's own
+      // flags and a new output name. A user who set their own editor gets it
+      // with the bare path, as omarchy-capture-screenshot would hand it over.
+      annotateRow(),
 
-      {QStringLiteral("ocr"), QStringLiteral("Copy the text"), QStringLiteral("tesseract"),
-       {QStringLiteral("{path}"), QStringLiteral("stdout")}, QStringLiteral("C"),
-       QStringLiteral("tesseract"), kStills, false},
+      // Same tesseract invocation omarchy-capture-text uses, minus its
+      // single-block page mode: a whole screenshot has many blocks.
+      {.id = u"ocr"_s,
+       .label = u"Copy the text"_s,
+       .program = u"tesseract"_s,
+       .arguments = {u"{path}"_s, u"stdout"_s, u"--oem"_s, u"1"_s, u"-l"_s, ocrLanguages(),
+                     u"--dpi"_s, u"300"_s, u"-c"_s, u"preserve_interword_spaces=1"_s},
+       .shortcut = u"C"_s,
+       .packageHint = u"tesseract"_s,
+       .media = Still,
+       .result = TextToClipboard,
+       .nothingFound = u"No text found"_s},
 
-      {QStringLiteral("qr"), QStringLiteral("Scan QR code"), QStringLiteral("zbarimg"),
-       {QStringLiteral("--quiet"), QStringLiteral("{path}")}, {}, QStringLiteral("zbar"), kStills,
-       false},
+      // QR codes only, as omarchy-capture-qr does: dense screen content
+      // false-positives as a barcode otherwise. Decoded values are routinely
+      // secrets (otpauth:// setup codes), so they go to the clipboard marked
+      // sensitive and nowhere else.
+      {.id = u"qr"_s,
+       .label = u"Scan QR code"_s,
+       .program = u"zbarimg"_s,
+       .arguments = {u"-q"_s, u"--raw"_s, u"-Sdisable"_s, u"-Sqrcode.enable"_s, u"{path}"_s},
+       .packageHint = u"zbar"_s,
+       .media = Still,
+       .result = SecretToClipboard,
+       .confirmation = u"QR code copied to clipboard"_s,
+       .nothingFound = u"No QR code found"_s},
 
-      {QStringLiteral("edit"), QStringLiteral("Edit in Pinta"), QStringLiteral("pinta"),
-       {QStringLiteral("{path}")}, {}, QStringLiteral("pinta"), kStills, false},
+      {.id = u"edit"_s,
+       .label = u"Edit in Pinta"_s,
+       .program = u"pinta"_s,
+       .arguments = {u"{path}"_s},
+       .packageHint = u"pinta"_s,
+       .media = Still},
 
-      {QStringLiteral("view"), QStringLiteral("View full size"), QStringLiteral("imv"),
-       {QStringLiteral("{path}")}, {}, QStringLiteral("imv"), kStills, false},
+      {.id = u"view"_s,
+       .label = u"View full size"_s,
+       .program = u"imv"_s,
+       .arguments = {u"{path}"_s},
+       .packageHint = u"imv"_s,
+       .media = Still},
 
-      {QStringLiteral("convert"), QStringLiteral("Convert to JPEG"),
-       QStringLiteral("omarchy-transcode"),
-       {QStringLiteral("{path}"), QStringLiteral("jpg"), QStringLiteral("medium")},
-       {}, QStringLiteral("omarchy"), kStills, false},
+      {.id = u"convert"_s,
+       .label = u"Convert to JPEG"_s,
+       .program = u"omarchy-transcode"_s,
+       .arguments = {u"{path}"_s, u"jpg"_s, u"medium"_s},
+       .packageHint = u"Omarchy"_s,
+       .media = Still,
+       .output = u"{stem}-medium.jpg"_s},
 
       // --- Anything -------------------------------------------------------
-      {QStringLiteral("copy"), QStringLiteral("Copy to clipboard"),
-       QStringLiteral("omarchy-clipboard-paste-file"),
-       {QStringLiteral("--copy-only"), QStringLiteral("{mime}"), QStringLiteral("{path}")},
-       QStringLiteral("Y"), QStringLiteral("omarchy"), kEverything, false},
+      // The launcher handles this one: the house helper on Omarchy, plain
+      // wl-copy elsewhere, so the row is available on both.
+      {.id = u"copy"_s,
+       .label = u"Copy to clipboard"_s,
+       .program = u"wl-copy"_s,
+       .shortcut = u"Y"_s,
+       .packageHint = u"wl-clipboard"_s,
+       .result = CopyFile},
 
-      {QStringLiteral("send"), QStringLiteral("Send to a device"), QStringLiteral("localsend"),
-       {QStringLiteral("{path}")}, QStringLiteral("S"), QStringLiteral("localsend"), kEverything,
-       false},
+      // The same path the Share menu and the Nautilus extension take: LocalSend
+      // in headless send mode, which opens straight onto the device picker.
+      sendRow(),
 
-      {QStringLiteral("tailscale"), QStringLiteral("Send with Tailscale"),
-       QStringLiteral("omarchy-tailscale-send"), {QStringLiteral("{path}")}, {},
-       QStringLiteral("omarchy"), kEverything, false},
-
-      {QStringLiteral("files"), QStringLiteral("Show in files"), QStringLiteral("nautilus"),
-       {QStringLiteral("--select"), QStringLiteral("{path}")}, QStringLiteral("F"),
-       QStringLiteral("nautilus"), kEverything, false},
+      {.id = u"files"_s,
+       .label = u"Show in files"_s,
+       .program = u"nautilus"_s,
+       .arguments = {u"--select"_s, u"{path}"_s},
+       .shortcut = u"F"_s,
+       .packageHint = u"nautilus"_s},
 
       // Native: QML owns these.
-      {QStringLiteral("favorite"), QStringLiteral("Favourite"), {}, {}, QStringLiteral("V"), {},
-       kEverything, false},
-      {QStringLiteral("hide"), QStringLiteral("Hide"), {}, {}, QStringLiteral("H"), {},
-       kEverything, false},
-      {QStringLiteral("trash"), QStringLiteral("Move to Trash"), {}, {}, QStringLiteral("Del"), {},
-       kEverything, false},
+      {.id = u"favorite"_s, .label = u"Favourite"_s, .shortcut = u"V"_s},
+      {.id = u"hide"_s, .label = u"Hide"_s, .shortcut = u"Ctrl+H"_s},
+      {.id = u"trash"_s, .label = u"Move to Trash"_s, .shortcut = u"Del"_s},
   };
 }
 
 ActionRegistry::ActionRegistry(ActionLauncher* launcher, QObject* parent)
     : QObject(parent), m_launcher(launcher), m_definitions(buildTable()) {}
+
+bool ActionRegistry::applies(const Definition& definition, bool video) {
+  switch (definition.media) {
+  case Media::Still:
+    return !video;
+  case Media::Moving:
+    return video;
+  case Media::Any:
+    return true;
+  }
+  return false;
+}
 
 const ActionRegistry::Definition* ActionRegistry::find(const QString& id) const {
   for (const Definition& definition : m_definitions) {
@@ -117,60 +230,110 @@ bool ActionRegistry::isNative(const QString& id) const {
   return definition && definition->program.isEmpty();
 }
 
-QString ActionRegistry::primaryActionFor(int kind) const {
+bool ActionRegistry::appliesTo(const QString& id, bool video) const {
+  const Definition* definition = find(id);
+  return definition && applies(*definition, video);
+}
+
+QString ActionRegistry::primaryActionFor(bool video) const {
   for (const Definition& definition : m_definitions) {
-    if (definition.primary && definition.kinds.contains(static_cast<Kind>(kind))) {
+    if (definition.primary && applies(definition, video)) {
       return definition.id;
     }
   }
-  return QStringLiteral("open");
+  return u"open"_s;
 }
 
-QVariantList ActionRegistry::actionsFor(int kind) const {
+QVariantList ActionRegistry::actionsFor(bool video) const {
   QVariantList rows;
   for (const Definition& definition : m_definitions) {
-    if (!definition.kinds.contains(static_cast<Kind>(kind))) {
+    if (!applies(definition, video)) {
       continue;
     }
 
     const bool native = definition.program.isEmpty();
     QVariantMap row;
-    row[QStringLiteral("id")] = definition.id;
-    row[QStringLiteral("label")] = definition.label;
-    row[QStringLiteral("shortcut")] = definition.shortcut;
-    row[QStringLiteral("primary")] = definition.primary;
-    row[QStringLiteral("native")] = native;
-    row[QStringLiteral("available")] =
+    row[u"id"_s] = definition.id;
+    row[u"label"_s] = definition.label;
+    row[u"shortcut"_s] = definition.shortcut;
+    row[u"primary"_s] = definition.primary;
+    row[u"native"_s] = native;
+    row[u"available"_s] =
         native || (m_launcher && m_launcher->handlerAvailable(definition.program));
-    row[QStringLiteral("hint")] = definition.packageHint;
+    row[u"hint"_s] = definition.packageHint;
     rows.append(row);
   }
   return rows;
 }
 
-bool ActionRegistry::run(const QString& id, const QString& path) {
+bool ActionRegistry::runBatch(const QString& id, const QStringList& paths) {
+  if (paths.isEmpty()) {
+    return false;
+  }
+  if (paths.size() == 1) {
+    return run(id, paths.first());
+  }
   const Definition* definition = find(id);
-  if (!definition || definition->program.isEmpty() || !m_launcher) {
+  if (!definition || !definition->batch) {
+    bool all = true;
+    for (const QString& path : paths) {
+      all = run(id, path) && all;
+    }
+    return all;
+  }
+  return run(id, paths);
+}
+
+bool ActionRegistry::run(const QString& id, const QString& path) {
+  return run(id, QStringList{path});
+}
+
+bool ActionRegistry::run(const QString& id, const QStringList& paths) {
+  const Definition* definition = find(id);
+  if (!definition || definition->program.isEmpty() || !m_launcher || paths.isEmpty()) {
     return false;
   }
 
-  QStringList arguments;
-  arguments.reserve(definition->arguments.size());
-  for (const QString& argument : definition->arguments) {
-    if (argument == QStringLiteral("{path}")) {
-      arguments.append(path);
-    } else if (argument == QStringLiteral("{mime}")) {
-      arguments.append(ActionLauncher::mimeTypeFor(path));
-    } else {
-      arguments.append(argument);
+  const QFileInfo first(paths.first());
+  const auto expand = [&first](QString argument) {
+    argument.replace(u"{dir}"_s, first.absolutePath());
+    argument.replace(u"{stem}"_s, first.completeBaseName());
+    return argument;
+  };
+
+  if (!definition->output.isEmpty()) {
+    const QString output = first.absolutePath() + QLatin1Char('/') + expand(definition->output);
+    if (QFileInfo::exists(output)) {
+      m_launcher->report(u"Already done: %1 is beside the original"_s.arg(QFileInfo(output).fileName()));
+      return true;
     }
   }
 
-  // OCR writes to stdout rather than doing something visible, so it is the one
-  // row whose result has to be captured and put somewhere useful.
-  if (id == QStringLiteral("ocr")) {
-    return m_launcher->captureTextTo(definition->program, arguments);
+  QStringList arguments;
+  arguments.reserve(definition->arguments.size() + paths.size());
+  for (const QString& argument : definition->arguments) {
+    if (argument == u"{path}"_s) {
+      arguments.append(paths);
+    } else if (argument == u"{mime}"_s) {
+      arguments.append(ActionLauncher::mimeTypeFor(paths.first()));
+    } else {
+      arguments.append(expand(argument));
+    }
   }
 
-  return m_launcher->runDetached(definition->program, arguments, definition->packageHint);
+  switch (definition->result) {
+  case Result::CopyFile:
+    return m_launcher->copyFile(paths.first());
+  case Result::TextToClipboard:
+  case Result::SecretToClipboard:
+    return m_launcher->captureTextToClipboard(
+        definition->program, arguments, definition->packageHint,
+        definition->result == Result::SecretToClipboard, definition->confirmation,
+        definition->nothingFound);
+  case Result::Launch:
+    break;
+  }
+
+  return m_launcher->runDetached(definition->program, arguments, definition->packageHint,
+                                 definition->confirmation);
 }

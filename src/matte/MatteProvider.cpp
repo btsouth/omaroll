@@ -7,6 +7,8 @@
 #include <QThread>
 #include <QUrl>
 
+#include <atomic>
+
 namespace {
 
 // Source edge used for a preview compose. Large enough that the matte's
@@ -28,7 +30,14 @@ public:
 
   [[nodiscard]] QString errorString() const override { return m_error; }
 
+  void cancel() override { m_cancelled.store(true); }
+
   void run() override {
+    if (m_cancelled.load()) {
+      m_error = QStringLiteral("Cancelled");
+      emit finished();
+      return;
+    }
     QImageReader reader(m_path);
     reader.setAutoTransform(true);
 
@@ -75,12 +84,18 @@ private:
   QSize m_target;
   QImage m_image;
   QString m_error;
+  std::atomic_bool m_cancelled{false};
 };
 
 } // namespace
 
 MatteProvider::MatteProvider() {
-  m_pool.setMaxThreadCount(std::max(2, QThread::idealThreadCount() - 1));
+  m_pool.setMaxThreadCount(qBound(2, QThread::idealThreadCount() - 1, 4));
+}
+
+void MatteProvider::shutdown() {
+  m_pool.clear();
+  m_pool.waitForDone();
 }
 
 QQuickImageResponse* MatteProvider::requestImageResponse(const QString& id,

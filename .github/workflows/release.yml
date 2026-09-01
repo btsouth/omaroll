@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install dependencies
+        run: >-
+          pacman -Syu --noconfirm --needed
+          appstream base-devel cmake desktop-file-utils ffmpeg ffmpegthumbnailer
+          git github-cli kimageformats libavif libheif ninja pkgconf qt6-base
+          qt6-declarative qt6-imageformats qt6-multimedia qt6-wayland
+          wl-clipboard xdg-desktop-portal xdg-utils
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Check release version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          project_version="$(sed -n 's/^project(Omaroll VERSION \([^ ]*\).*/\1/p' CMakeLists.txt)"
+          test "$version" = "$project_version"
+          grep -q "<release version=\"$version\"" packaging/io.github.tsouth89.omaroll.metainfo.xml
+          grep -q "^## $version$" CHANGELOG.md
+          grep -q "omaroll-$version-1-x86_64.pkg.tar.zst" README.md
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Build and test
+        run: |
+          cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/release
+          ctest --test-dir build/release --output-on-failure
+          desktop-file-validate packaging/io.github.tsouth89.omaroll.desktop
+          appstreamcli validate packaging/io.github.tsouth89.omaroll.metainfo.xml
+      - name: Create source and package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git archive --format=tar --prefix="omaroll-$VERSION/" \
+            --output="omaroll-$VERSION.tar" "$GITHUB_SHA"
+          gzip -n "omaroll-$VERSION.tar"
+          source_sha="$(sha256sum "omaroll-$VERSION.tar.gz" | cut -d ' ' -f 1)"
+          sed -e "s/@VERSION@/$VERSION/g" -e "s/@SOURCE_SHA256@/$source_sha/g" \
+            packaging/arch/PKGBUILD.in > packaging/arch/PKGBUILD
+          cp "omaroll-$VERSION.tar.gz" packaging/arch/
+          useradd --create-home builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          runuser -u builder -- bash -lc "cd '$GITHUB_WORKSPACE/packaging/arch' && makepkg --cleanbuild --noconfirm"
+          package_file="$(find packaging/arch -maxdepth 1 -name 'omaroll-[0-9]*-x86_64.pkg.tar.zst' -print -quit)"
+          if previous_tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>/dev/null)"; then
+            mkdir previous-release
+            gh release download "$previous_tag" --repo "$GITHUB_REPOSITORY" \
+              --pattern 'omaroll-*-x86_64.pkg.tar.zst' --dir previous-release
+            previous_package="$(find previous-release -maxdepth 1 -name 'omaroll-*-x86_64.pkg.tar.zst' -print -quit)"
+            test -n "$previous_package"
+            pacman -U --noconfirm "$previous_package"
+          fi
+          pacman -U --noconfirm "$package_file"
+          omaroll --version
+          QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
+            omaroll --render /tmp/omaroll-package-smoke.png --render-view grid --render-size 560x420
+          test -s /tmp/omaroll-package-smoke.png
+          pacman -U --noconfirm "$package_file"
+          pacman -R --noconfirm omaroll
+          test ! -e /usr/bin/omaroll
+          pacman -U --noconfirm "$package_file"
+          cp packaging/arch/omaroll-*.pkg.tar.zst .
+          cp packaging/arch/PKGBUILD "PKGBUILD-$VERSION"
+          sha256sum "omaroll-$VERSION.tar.gz" omaroll-*.pkg.tar.zst "PKGBUILD-$VERSION" > SHA256SUMS
+          awk -v heading="## $VERSION" '$0 == heading {copy=1; next} /^## /{copy=0} copy' \
+            CHANGELOG.md > RELEASE_NOTES.md
+          test -s RELEASE_NOTES.md
+      - name: Attest release artifacts
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-checksums: SHA256SUMS
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          "omaroll-$VERSION.tar.gz"
+          omaroll-*.pkg.tar.zst
+          "PKGBUILD-$VERSION"
+          SHA256SUMS
+          --repo "$GITHUB_REPOSITORY"
+          --title "Omaroll $VERSION"
+          --notes-file RELEASE_NOTES.md

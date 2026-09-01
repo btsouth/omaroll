@@ -19,8 +19,8 @@ struct Layout {
   QString videos;
 };
 
-// Generates the files and returns where they live. The directory is removed
-// when the process exits.
+// Generates the files and returns where they live. Each process owns a
+// temporary directory, so simultaneous demo or render runs cannot interfere.
 [[nodiscard]] Layout build();
 
 } // namespace DemoLibrary

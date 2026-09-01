@@ -10,6 +10,17 @@ namespace {
 
 QString home() { return QDir::homePath(); }
 
+QString normalizedUserDir(QString value) {
+  if (value.startsWith(QStringLiteral("$HOME"))) {
+    value.replace(0, 5, home());
+  } else if (QDir::isRelativePath(value)) {
+    value = home() + QLatin1Char('/') + value;
+  }
+  // xdg-user-dirs uses $HOME to mean "disabled". Scanning it recursively
+  // would pull media from repositories, caches and unrelated applications.
+  return QDir::cleanPath(value) == QDir::cleanPath(home()) ? QString() : value;
+}
+
 // XDG user dirs live in a shell-fragment file rather than anywhere Qt reads, and
 // QStandardPaths does not honour a relocated XDG_PICTURES_DIR on every setup, so
 // parse user-dirs.dirs directly. Values look like:
@@ -17,7 +28,7 @@ QString home() { return QDir::homePath(); }
 QString xdgUserDir(const QString& key) {
   const QString configured = qEnvironmentVariable(key.toUtf8().constData());
   if (!configured.isEmpty()) {
-    return configured;
+    return normalizedUserDir(configured);
   }
 
   const QString configHome = qEnvironmentVariable("XDG_CONFIG_HOME").isEmpty()
@@ -38,11 +49,7 @@ QString xdgUserDir(const QString& key) {
     if (!match.hasMatch()) {
       continue;
     }
-    QString value = match.captured(1);
-    if (value.startsWith(QStringLiteral("$HOME"))) {
-      value.replace(0, 5, home());
-    }
-    return value;
+    return normalizedUserDir(match.captured(1));
   }
   return {};
 }

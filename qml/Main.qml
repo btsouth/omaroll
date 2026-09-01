@@ -26,28 +26,51 @@ ApplicationWindow {
     // unforgivable.
     property string pendingDeletePath: ""
     property var pendingDeleteBatch: []
+    property int visibilityBeforeViewerFullScreen: Window.Windowed
+    property bool viewerFolderOnly: false
 
     readonly property bool anySheetOpen: confirm.visible || detail.visible
                                          || matteSheet.visible || settingsSheet.visible
+                                         || albumNameSheet.visible
 
     function say(message) {
         notice.text = message
         noticeTimer.restart()
     }
 
+    function setViewerFullScreen(enabled) {
+        if (enabled) {
+            root.visibilityBeforeViewerFullScreen = root.visibility
+            root.visibility = Window.FullScreen
+        } else {
+            root.visibility = root.visibilityBeforeViewerFullScreen === Window.FullScreen
+                              ? Window.Windowed : root.visibilityBeforeViewerFullScreen
+        }
+    }
+
     function currentPath() { return Captures.pathAt(library.currentIndex) }
 
     // Every action funnels through here so a keystroke, a click in the detail
     // sidebar and a bulk operation all take the same path.
-    function perform(id, path) {
+    function perform(id, path, knownVideo) {
         if (path === "") {
+            return
+        }
+
+        // A letter pressed on the wrong medium: say so rather than hand a PNG
+        // to omacut or an mp4 to the matte composer.
+        const row = Captures.rowOf(path)
+        const video = knownVideo === undefined ? Captures.isVideoAt(row) : knownVideo
+        if (id !== "open" && !Registry.appliesTo(id, video)) {
+            root.say(video ? "That one is for screenshots and pictures"
+                           : "That one is for recordings and videos")
             return
         }
 
         switch (id) {
         case "matte":
             matteSheet.path = path
-            matteSheet.fileName = Captures.fileNameAt(library.currentIndex)
+            matteSheet.fileName = path.substring(path.lastIndexOf("/") + 1)
             matteSheet.open()
             return
         case "favorite":
@@ -69,13 +92,138 @@ ApplicationWindow {
         }
     }
 
+    // Enter runs the user's default action for the medium.
+    function performPrimary(index) {
+        if (index < 0) {
+            return
+        }
+        const video = Captures.isVideoAt(index)
+        root.perform(video ? Settings.videoPrimaryAction : Settings.imagePrimaryAction,
+                     Captures.pathAt(index), video)
+    }
+
+    // A persisted Downloads filter with Downloads switched off would show
+    // "Nothing matches" under a bar with no active pill.
+    function reconcileFilter() {
+        if (Captures.kindFilter === filters.kindDownload && !Settings.scanDownloads) {
+            Captures.kindFilter = filters.kindAll
+        }
+    }
+    Component.onCompleted: {
+        root.reconcileFilter()
+        if (InitialPath !== "") {
+            root.openPath(InitialPath)
+        } else if (InitialFolderPath !== "") {
+            root.openFolder(InitialFolderPath)
+        }
+    }
+    Connections {
+        target: Settings
+        function onScanDownloadsChanged() { root.reconcileFilter() }
+        function onAlbumsChanged() {
+            if (Captures.albumFilter === "") {
+                return
+            }
+            if (Settings.albumNames.indexOf(Captures.albumFilter) < 0) {
+                Captures.setAlbumFilter("", [])
+            } else {
+                Captures.setAlbumFilter(Captures.albumFilter,
+                                        Settings.albumPaths(Captures.albumFilter))
+            }
+        }
+    }
+
+    // A laptop that slept through midnight fires no timer, so the labels are
+    // checked whenever the window comes back.
+    onActiveChanged: if (active) Library.checkDayRollover()
+
+    // "Open with Omaroll" on a file: once the scan that includes it lands,
+    // select it and open straight into its actions.
+    property string pendingInitialPath: ""
+    function showAllMedia(folder) {
+        Captures.kindFilter = filters.kindAll
+        Captures.searchText = ""
+        Captures.favoritesOnly = false
+        Captures.setAlbumFilter("", [])
+        Captures.folderFilter = folder === undefined ? "" : folder
+    }
+    function openFolder(path) {
+        root.pendingInitialPath = ""
+        root.showAllMedia(path)
+        library.forceActiveFocus()
+    }
+    function openPath(path) {
+        // An explicit Open With request wins over a stale library filter.
+        root.showAllMedia(path.substring(0, path.lastIndexOf("/")))
+        if (Settings.isHidden(path)) {
+            Captures.showHidden = true
+        }
+        const row = Captures.rowOf(path)
+        if (row >= 0) {
+            root.pendingInitialPath = ""
+            library.currentIndex = row
+            root.openDetail(row, true)
+        } else {
+            root.pendingInitialPath = path
+        }
+    }
+    Connections {
+        target: Captures
+        function onCountChanged() {
+            if (detail.visible) {
+                const detailRow = Captures.rowOf(detail.path)
+                if (detailRow < 0) {
+                    detail.close()
+                    root.say("That file is no longer available")
+                } else {
+                    detail.canNavigate = root.adjacentViewerPath(detail.path, 1) !== ""
+                }
+            }
+            if (root.pendingInitialPath === "") {
+                return
+            }
+            const row = Captures.rowOf(root.pendingInitialPath)
+            if (row >= 0) {
+                root.openPath(root.pendingInitialPath)
+            }
+        }
+    }
+
+    // Bulk marks set rather than toggle: "Favourite" on a mixed selection
+    // favourites everything, and only a fully favourited one reverts.
+    // marksVersion is read inside allChecked() purely so bindings that call
+    // it re-evaluate when a mark changes; reads inside a called function are
+    // captured as dependencies.
+    property int marksVersion: 0
+    function allChecked(predicate) {
+        void root.marksVersion
+        const paths = library.checkedPaths()
+        return paths.length > 0 && paths.every(predicate)
+    }
+    function markChecked(which) {
+        const paths = library.checkedPaths()
+        if (which === "favorite") {
+            const on = !root.allChecked(function (p) { return Settings.isFavorite(p) })
+            Settings.setFavorite(paths, on)
+            root.say((on ? "Added " : "Removed ") + paths.length + (on ? " to favourites" : " from favourites"))
+        } else {
+            const on = !root.allChecked(function (p) { return Settings.isHidden(p) })
+            Settings.setHidden(paths, on)
+            root.say(on ? "Hidden " + paths.length : "Shown " + paths.length + " again")
+        }
+    }
+    Connections {
+        target: Settings
+        function onMarksChanged() { root.marksVersion++ }
+    }
+
     function requestDelete(path) {
         if (path === "") {
             return
         }
         root.pendingDeletePath = path
         root.pendingDeleteBatch = []
-        confirm.title = "Move this capture to Trash?"
+        confirm.title = "Move this item to Trash?"
         confirm.detail = path
         confirm.open()
     }
@@ -86,7 +234,7 @@ ApplicationWindow {
         }
         root.pendingDeletePath = ""
         root.pendingDeleteBatch = paths
-        confirm.title = "Move " + paths.length + " captures to Trash?"
+        confirm.title = "Move " + paths.length + " items to Trash?"
         confirm.detail = paths.length + " files. They stay recoverable from your file manager."
         confirm.open()
     }
@@ -100,8 +248,23 @@ ApplicationWindow {
         library.currentIndex = 0
         if (view === "detail") {
             root.openDetail(0)
+        } else if (view === "slideshow") {
+            root.openDetail(0, false)
+            detail.slideshowPausedForRender = true
+            detail.slideshowRunning = true
+            detail.showInfo = false
+        } else if (view === "video") {
+            for (let row = 0; row < library.count; row++) {
+                if (Captures.isVideoAt(row)) {
+                    library.currentIndex = row
+                    root.openDetail(row)
+                    break
+                }
+            }
         } else if (view === "matte") {
             root.perform("matte", Captures.pathAt(0))
+        } else if (view === "settings") {
+            settingsSheet.open()
         }
     }
 
@@ -125,7 +288,7 @@ ApplicationWindow {
 
             Text {
                 anchors.verticalCenter: parent.verticalCenter
-                text: "omaroll"
+                text: "Omaroll"
                 font.family: Theme.fontFamily
                 font.pixelSize: 17
                 font.weight: Font.Bold
@@ -153,8 +316,8 @@ ApplicationWindow {
                         return "Nothing to show"
                     }
                     const shown = Captures.count
-                    const total = Captures.sourceCount()
-                    const noun = shown === 1 ? " capture" : " captures"
+                    const total = Captures.sourceCount
+                    const noun = shown === 1 ? " item" : " items"
                     return shown === total ? shown + noun : shown + " of " + total + noun
                 }
                 font.family: Theme.fontFamily
@@ -171,14 +334,51 @@ ApplicationWindow {
             spacing: 8
 
             // Bulk actions appear only while a selection exists, so the resting
-            // header stays quiet.
+            // header stays quiet. Each acts on every checked file at once.
+            PillButton {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: library.checkedCount > 0
+                label: "Send"
+                onClicked: Registry.runBatch("send", library.checkedPaths())
+            }
+            PillButton {
+                id: albumActionButton
+                anchors.verticalCenter: parent.verticalCenter
+                visible: library.checkedCount > 0
+                label: "+ Album"
+                onClicked: albumActionMenu.visible ? albumActionMenu.close()
+                                                       : albumActionMenu.popup(
+                                                             albumActionButton, 0,
+                                                             albumActionButton.height + 4)
+            }
+            // The three secondary ones give way on a narrow window rather
+            // than run into the title; every one is still reachable by key.
+            PillButton {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: library.checkedCount > 0 && root.width >= 900
+                label: "Copy"
+                onClicked: Actions.copyUris(library.checkedPaths())
+            }
+            PillButton {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: library.checkedCount > 0 && root.width >= 900
+                label: root.allChecked(function (p) { return Settings.isFavorite(p) })
+                       ? "Unfavourite" : "Favourite"
+                onClicked: root.markChecked("favorite")
+            }
+            PillButton {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: library.checkedCount > 0 && root.width >= 900
+                label: root.allChecked(function (p) { return Settings.isHidden(p) })
+                       ? "Unhide" : "Hide"
+                onClicked: root.markChecked("hide")
+            }
             PillButton {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: library.checkedCount > 0
                 label: "Trash " + library.checkedCount
                 onClicked: root.requestDeleteBatch(library.checkedPaths())
             }
-
             PillButton {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: library.checkedCount > 0
@@ -205,6 +405,10 @@ ApplicationWindow {
         anchors.top: header.bottom
         anchors.left: parent.left
         anchors.right: parent.right
+        // Leaving the search field must land focus back on the grid, or the
+        // arrow keys go nowhere until a tile is clicked.
+        onDone: library.forceActiveFocus()
+        onCreateAlbumRequested: albumNameSheet.open([])
     }
 
     Rectangle {
@@ -232,14 +436,23 @@ ApplicationWindow {
         model: Captures
         visible: Captures.count > 0
 
-        onChosen: function (path) { root.perform("matte", path) }
+        onChosen: function (index) { root.performPrimary(index) }
         onDeleteRequested: function (path) { root.requestDelete(path) }
-        onDetailRequested: function (index) { root.openDetail(index) }
+        onDetailRequested: function (index) { root.openDetail(index, false) }
     }
 
-    function openDetail(index) {
+    function adjacentViewerPath(path, direction) {
+        return root.viewerFolderOnly
+               ? Captures.adjacentPathInFolder(path, direction)
+               : Captures.adjacentPath(path, direction)
+    }
+
+    function openDetail(index, folderOnly) {
         if (index < 0) {
             return
+        }
+        if (folderOnly !== undefined) {
+            root.viewerFolderOnly = folderOnly
         }
         detail.path = Captures.pathAt(index)
         detail.fileName = Captures.fileNameAt(index)
@@ -249,8 +462,32 @@ ApplicationWindow {
         detail.timeLabel = Captures.timeLabelAt(index)
         detail.sizeLabel = Captures.sizeLabelAt(index)
         detail.isVideo = Captures.isVideoAt(index)
+        detail.stamp = Captures.stampAt(index)
         detail.favorite = Settings.isFavorite(detail.path)
+        detail.canNavigate = root.adjacentViewerPath(detail.path, 1) !== ""
         detail.open()
+    }
+
+    function navigateDetail(direction) {
+        let path = root.adjacentViewerPath(detail.path, direction)
+        let row = Captures.rowOf(path)
+        if (detail.slideshowRunning && !Settings.slideshowVideos) {
+            let checked = 0
+            while (row >= 0 && Captures.isVideoAt(row) && checked < Captures.count) {
+                path = root.adjacentViewerPath(path, direction)
+                row = Captures.rowOf(path)
+                checked++
+            }
+            if (row < 0 || Captures.isVideoAt(row)) {
+                detail.setSlideshow(false)
+                return
+            }
+        }
+        if (row < 0) {
+            return
+        }
+        library.currentIndex = row
+        root.openDetail(row)
     }
 
     // Empty state. Two different empties: nothing exists, or nothing matches
@@ -262,12 +499,16 @@ ApplicationWindow {
         spacing: 10
         visible: Captures.count === 0 && !Library.scanning
 
-        readonly property bool filtered: Captures.sourceCount() > 0
+        readonly property bool filtered: Captures.sourceCount > 0
+        readonly property bool folderScoped: Captures.folderFilter !== ""
+        readonly property bool albumScoped: Captures.albumFilter !== ""
 
         Text {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
-            text: parent.filtered ? "Nothing matches" : "No captures yet"
+            text: parent.albumScoped ? "This album is empty"
+                  : parent.folderScoped ? "No media in this folder"
+                  : (parent.filtered ? "Nothing matches" : "No media yet")
             font.family: Theme.fontFamily
             font.pixelSize: 16
             font.weight: Font.DemiBold
@@ -278,9 +519,16 @@ ApplicationWindow {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
-            text: parent.filtered
+            text: parent.albumScoped
+                  ? "Choose All media from Browse, select files, then use + Album. "
+                    + "Unavailable files remain remembered."
+                  : parent.folderScoped
+                  ? "The folder may be empty, unavailable, or contain no supported images or videos."
+                  : parent.filtered
                   ? "Try a different filter, or clear the search."
-                  : "Take a screenshot with Super + Shift + S, or record from the Capture menu. "
+                  : (Theme.omarchyAvailable
+                     ? "Take a screenshot with Super + Shift + S, or record from the Capture menu. "
+                     : "")
                     + "Anything that lands in your Pictures and Videos folders shows up here."
             font.family: Theme.fontFamily
             font.pixelSize: 13
@@ -313,7 +561,7 @@ ApplicationWindow {
             elide: Text.ElideRight
             text: notice.text !== ""
                   ? notice.text
-                  : "Space preview   ·   M matte   ·   T trim   ·   V favourite   ·   Del trash   ·   / search"
+                  : "Enter act   ·   Space preview   ·   M matte   ·   T trim   ·   V favourite   ·   Del trash   ·   / search"
             font.family: Theme.fontFamily
             font.pixelSize: 11
             color: notice.text !== "" ? Theme.accent : root.shade(Theme.foreground, 0.42)
@@ -334,11 +582,110 @@ ApplicationWindow {
 
     DetailSheet {
         id: detail
+        onNavigateRequested: function (direction) { root.navigateDetail(direction) }
+        onFullScreenRequested: function (enabled) { root.setViewerFullScreen(enabled) }
         onActionTriggered: function (id) {
             if (id !== "play" && id !== "view") {
                 detail.close()
             }
-            root.perform(id, detail.path)
+            root.perform(id, detail.path, detail.isVideo)
+        }
+    }
+    AlbumNameSheet {
+        id: albumNameSheet
+        onSaved: function (name, count) {
+            if (count === 0) {
+                Captures.folderFilter = ""
+                Captures.setAlbumFilter(name, Settings.albumPaths(name))
+                root.say("Created album " + name)
+            } else {
+                root.say("Added " + count + (count === 1 ? " item" : " items")
+                         + " to " + name)
+            }
+        }
+    }
+
+    Menu {
+        id: albumActionMenu
+
+        background: Rectangle {
+            implicitWidth: 220
+            color: root.shade(Theme.background, 0.97)
+            border.width: 1
+            border.color: root.shade(Theme.foreground, 0.16)
+            radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
+        }
+
+        MenuItem {
+            id: removeFromAlbumRow
+            visible: Captures.albumFilter !== ""
+            height: visible ? 30 : 0
+            contentItem: Text {
+                text: "Remove from " + Captures.albumFilter
+                elide: Text.ElideRight
+                font.family: Theme.fontFamily
+                font.pixelSize: 11
+                color: Theme.foreground
+                verticalAlignment: Text.AlignVCenter
+                leftPadding: 12
+            }
+            background: Rectangle {
+                color: removeFromAlbumRow.hovered
+                       ? root.shade(Theme.foreground, 0.08) : "transparent"
+            }
+            onTriggered: {
+                const paths = library.checkedPaths()
+                Settings.removeFromAlbum(Captures.albumFilter, paths)
+                library.clearChecked()
+                root.say("Removed " + paths.length + (paths.length === 1 ? " item" : " items"))
+            }
+        }
+
+        Repeater {
+            model: Settings.albumNames
+
+            MenuItem {
+                id: addAlbumRow
+                required property string modelData
+                height: 30
+                contentItem: Text {
+                    text: "Add to " + addAlbumRow.modelData
+                    elide: Text.ElideRight
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 11
+                    color: Theme.foreground
+                    verticalAlignment: Text.AlignVCenter
+                    leftPadding: 12
+                }
+                background: Rectangle {
+                    color: addAlbumRow.hovered
+                           ? root.shade(Theme.foreground, 0.08) : "transparent"
+                }
+                onTriggered: {
+                    const paths = library.checkedPaths()
+                    const changed = Settings.addToAlbum(addAlbumRow.modelData, paths)
+                    root.say(changed ? "Added to " + addAlbumRow.modelData
+                                     : "Already in " + addAlbumRow.modelData)
+                }
+            }
+        }
+
+        MenuItem {
+            id: newAlbumRow
+            height: 30
+            contentItem: Text {
+                text: "+ New album"
+                font.family: Theme.fontFamily
+                font.pixelSize: 11
+                color: Theme.accent
+                verticalAlignment: Text.AlignVCenter
+                leftPadding: 12
+            }
+            background: Rectangle {
+                color: newAlbumRow.hovered
+                       ? root.shade(Theme.foreground, 0.08) : "transparent"
+            }
+            onTriggered: albumNameSheet.open(library.checkedPaths())
         }
     }
 
@@ -349,6 +696,10 @@ ApplicationWindow {
     SettingsSheet {
         id: settingsSheet
         onRescanRequested: Library.refresh()
+        onCreateAlbumRequested: {
+            settingsSheet.close()
+            albumNameSheet.open([])
+        }
     }
 
     ConfirmSheet {
@@ -362,7 +713,11 @@ ApplicationWindow {
                         moved++
                     }
                 }
-                root.say("Moved " + moved + (moved === 1 ? " capture" : " captures") + " to Trash")
+                if (moved > 0) {
+                    root.say(moved === root.pendingDeleteBatch.length
+                             ? "Moved " + moved + (moved === 1 ? " item" : " items") + " to Trash"
+                             : "Moved " + moved + " of " + root.pendingDeleteBatch.length + " items to Trash")
+                }
                 library.clearChecked()
             } else if (Actions.moveToTrash(root.pendingDeletePath)) {
                 root.say("Moved to Trash")
@@ -442,9 +797,11 @@ ApplicationWindow {
         enabled: !root.anySheetOpen
         onActivated: root.perform("favorite", root.currentPath())
     }
+    // Ctrl rather than a bare H, which the grid uses for vim-style movement.
+    // Modified keys are not swallowed by the search field, so guard it.
     Shortcut {
-        sequences: ["H"]
-        enabled: !root.anySheetOpen
+        sequences: ["Ctrl+H"]
+        enabled: !root.anySheetOpen && !filters.searchActive
         onActivated: root.perform("hide", root.currentPath())
     }
     Shortcut {
@@ -462,6 +819,19 @@ ApplicationWindow {
         enabled: !root.anySheetOpen
         onActivated: filters.focusSearch()
     }
+    // 1-7 jump between sections, in the order the filter bar shows them.
+    Repeater {
+        model: 7
+        Item {
+            id: sectionKey
+            required property int index
+            Shortcut {
+                sequences: [String(sectionKey.index + 1)]
+                enabled: !root.anySheetOpen
+                onActivated: filters.selectSection(sectionKey.index)
+            }
+        }
+    }
     Shortcut {
         sequences: ["Ctrl+A"]
         enabled: !root.anySheetOpen
@@ -471,9 +841,11 @@ ApplicationWindow {
         sequences: [StandardKey.Quit]
         onActivated: Qt.quit()
     }
+    // Not while the search field has focus: there Escape clears the search,
+    // and a window-level shortcut would otherwise fire first and quit.
     Shortcut {
         sequences: ["Escape"]
-        enabled: !root.anySheetOpen
+        enabled: !root.anySheetOpen && !filters.searchActive
         onActivated: {
             if (library.checkedCount > 0) {
                 library.clearChecked()

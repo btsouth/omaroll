@@ -11,13 +11,16 @@ namespace {
 const QStringList kImageSuffixes = {
     QStringLiteral("png"),  QStringLiteral("jpg"),  QStringLiteral("jpeg"),
     QStringLiteral("webp"), QStringLiteral("gif"),  QStringLiteral("bmp"),
-    QStringLiteral("avif"), QStringLiteral("tiff"), QStringLiteral("tif"),
+    QStringLiteral("avif"), QStringLiteral("heic"), QStringLiteral("heif"),
+    QStringLiteral("tiff"), QStringLiteral("tif"),
 };
 
 const QStringList kVideoSuffixes = {
     QStringLiteral("mp4"), QStringLiteral("mkv"),  QStringLiteral("webm"),
     QStringLiteral("mov"), QStringLiteral("avi"),  QStringLiteral("m4v"),
-    QStringLiteral("mpg"), QStringLiteral("mpeg"),
+    QStringLiteral("mpg"), QStringLiteral("mpeg"), QStringLiteral("wmv"),
+    QStringLiteral("flv"), QStringLiteral("ogv"),  QStringLiteral("3gp"),
+    QStringLiteral("mts"), QStringLiteral("m2ts"),
 };
 
 // Producers Omarchy users actually have installed. Each entry pairs a name
@@ -33,12 +36,15 @@ const QList<NamePattern>& namePatterns() {
   static const QList<NamePattern> patterns = {
       // Omarchy's own, the two that matter most.
       // screenshot-2026-08-31_23-26-39.png
-      {QRegularExpression(QStringLiteral(R"(^screenshot-(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})\.)"),
-                          QRegularExpression::CaseInsensitiveOption),
+      // Derived files keep the kind and the moment of their source, so a
+      // -matte.png, a -720p.gif or a -1080p.mp4 sits beside what it came from.
+      {QRegularExpression(
+           QStringLiteral(R"(^screenshot-(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})(?:-[\w-]+)?\.)"),
+           QRegularExpression::CaseInsensitiveOption),
        CaptureRecord::Screenshot, QStringLiteral("yyyy-MM-dd_HH-mm-ss")},
       // screenrecording-2026-08-31_23-26-39.mp4
       {QRegularExpression(
-           QStringLiteral(R"(^screenrecording-(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})\.)"),
+           QStringLiteral(R"(^screenrecording-(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})(?:-[\w-]+)?\.)"),
            QRegularExpression::CaseInsensitiveOption),
        CaptureRecord::Recording, QStringLiteral("yyyy-MM-dd_HH-mm-ss")},
 
@@ -85,6 +91,17 @@ bool isSkippedDirectory(const QString& name) {
   return skipped.contains(name);
 }
 
+// omarchy-capture-screenrecording writes screenrecording-<stamp>-preview.png
+// for its notification and deletes it two seconds later, and stages
+// screenrecording-<stamp>-processed.mp4 before moving it over the original.
+// Neither is a capture and both would flash into the grid otherwise.
+bool isTransientCaptureArtifact(const QString& name) {
+  static const QRegularExpression transient(
+      QStringLiteral(R"(^screenrecording-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}-(?:preview\.png|processed\.mp4)$)"),
+      QRegularExpression::CaseInsensitiveOption);
+  return transient.match(name).hasMatch();
+}
+
 } // namespace
 
 bool CaptureScanner::isImage(const QString& suffix) {
@@ -117,14 +134,18 @@ bool CaptureScanner::classifyByName(const QString& fileName, CaptureRecord::Kind
   return false;
 }
 
-QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots) {
+QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots,
+                                          const std::atomic_bool* cancel,
+                                          QStringList* traversedDirectories) {
   QList<CaptureRecord> records;
+  if (traversedDirectories) {
+    traversedDirectories->clear();
+  }
 
-  // Two guards, both needed once symlinks are followed: canonical paths stop
-  // the same file arriving twice through a symlinked directory, and visited
-  // directories stop a symlink loop from spinning forever.
+  // Canonical paths stop the same file arriving twice through a symlinked
+  // directory, or through two roots that resolve to the same place.
   QSet<QString> seenFiles;
-  QSet<QString> seenDirectories;
+  QSet<QString> reportedDirectories;
 
   for (const Root& root : roots) {
     const QString canonicalRoot = QFileInfo(root.path).canonicalFilePath();
@@ -132,16 +153,30 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots) {
       continue;
     }
 
+    // Per root, not shared: the loop guard only has to stop a symlink cycle
+    // inside one walk. Shared across roots it would let a shallow root claim a
+    // directory and silently stop a deeper root from ever descending into it,
+    // which is exactly the default layout, where the depth-1 screenshot root
+    // and the recursive Pictures root are the same directory.
+    QSet<QString> seenDirectories;
+
     // Breadth-first by depth so maxDepth is a real bound rather than a guess
     // about QDirIterator's traversal order.
     QList<QPair<QString, int>> pending{{canonicalRoot, 1}};
 
     while (!pending.isEmpty()) {
+      if (cancel && cancel->load()) {
+        return records;
+      }
       const auto [directory, depth] = pending.takeFirst();
       if (seenDirectories.contains(directory)) {
         continue;
       }
       seenDirectories.insert(directory);
+      if (traversedDirectories && !reportedDirectories.contains(directory)) {
+        reportedDirectories.insert(directory);
+        traversedDirectories->append(directory);
+      }
 
       QDir dir(directory);
       const QFileInfoList entries =
@@ -160,7 +195,7 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots) {
           continue;
         }
 
-        if (name.startsWith(QLatin1Char('.'))) {
+        if (name.startsWith(QLatin1Char('.')) || isTransientCaptureArtifact(name)) {
           continue;
         }
 
@@ -171,7 +206,11 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots) {
           continue;
         }
 
-        const QString canonicalFile = entry.canonicalFilePath();
+        // The directory is already canonical, so only a symlink needs the
+        // realpath walk; on a slow mount that is one syscall chain per file.
+        const QString canonicalFile = entry.isSymLink()
+                                          ? entry.canonicalFilePath()
+                                          : directory + QLatin1Char('/') + name;
         if (canonicalFile.isEmpty() || seenFiles.contains(canonicalFile)) {
           continue;
         }
@@ -181,6 +220,8 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots) {
         record.path = canonicalFile;
         record.fileName = name;
         record.bytes = entry.size();
+        record.modified = entry.lastModified().toMSecsSinceEpoch();
+        record.video = video;
         record.captured = entry.lastModified();
 
         CaptureRecord::Kind named = CaptureRecord::Picture;

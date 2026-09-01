@@ -1,18 +1,30 @@
 #include "app/SingleInstance.h"
 
 #include <QCoreApplication>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLocalSocket>
 
 #include <unistd.h>
 
 SingleInstance::SingleInstance(const QString& serverName, QObject* parent)
     : QObject(parent),
-      m_serverName(serverName.isEmpty() ? QStringLiteral("omaroll-%1").arg(getuid()) : serverName) {
+      // Per user and per session: two Wayland sessions of one account must
+      // not activate each other's windows across seats.
+      m_serverName(serverName.isEmpty()
+                       ? QStringLiteral("omaroll-%1-%2")
+                             .arg(getuid())
+                             .arg(qEnvironmentVariable("WAYLAND_DISPLAY", QStringLiteral("x11")))
+                       : serverName) {
   connect(&m_server, &QLocalServer::newConnection, this, [this] {
     while (QLocalSocket* socket = m_server.nextPendingConnection()) {
       connect(socket, &QLocalSocket::readyRead, this, [this, socket] {
-        if (socket->readAll().contains("activate")) {
-          emit activationRequested();
+        if (!socket->canReadLine()) {
+          return;
+        }
+        const QJsonDocument message = QJsonDocument::fromJson(socket->readLine());
+        if (message.isObject()) {
+          emit activationRequested(message.object().value(QStringLiteral("path")).toString());
         }
         socket->disconnectFromServer();
       });
@@ -21,7 +33,7 @@ SingleInstance::SingleInstance(const QString& serverName, QObject* parent)
   });
 }
 
-bool SingleInstance::claimOrNotify() {
+bool SingleInstance::claimOrNotify(const QString& path) {
   if (m_server.listen(m_serverName)) {
     return true;
   }
@@ -29,7 +41,10 @@ bool SingleInstance::claimOrNotify() {
   QLocalSocket socket;
   socket.connectToServer(m_serverName, QIODevice::WriteOnly);
   if (socket.waitForConnected(120)) {
-    socket.write("activate");
+    QJsonObject message;
+    message.insert(QStringLiteral("path"), path);
+    socket.write(QJsonDocument(message).toJson(QJsonDocument::Compact));
+    socket.write("\n");
     socket.flush();
     socket.waitForBytesWritten(120);
     return false;

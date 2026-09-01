@@ -1,4 +1,6 @@
 import QtQuick
+import QtQuick.Controls.Basic
+import QtQuick.Dialogs
 
 // Settings exist to change defaults, never to make the app work. Everything
 // here has a working value on a fresh install, which is why this window is
@@ -7,12 +9,29 @@ Item {
     id: root
 
     signal rescanRequested()
+    signal createAlbumRequested()
+    property string folderMessage: ""
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
     }
 
+    function nextValue(values, current) {
+        return values[(values.indexOf(current) + 1) % values.length]
+    }
+
+    function actionLabel(action) {
+        const labels = { "matte": "Make postable", "view": "View full size",
+                         "edit": "Edit in Pinta", "trim": "Trim", "play": "Play" }
+        return labels[action]
+    }
+
+    function cacheLabel(megabytes) {
+        return megabytes === 1024 ? "1 GB" : megabytes + " MB"
+    }
+
     function open() {
+        folderMessage = ""
         visible = true
         forceActiveFocus()
     }
@@ -32,7 +51,7 @@ Item {
     Rectangle {
         anchors.centerIn: parent
         width: Math.min(520, root.width - 60)
-        height: column.implicitHeight + 44
+        height: Math.min(620, root.height - 60, column.implicitHeight + 44)
         radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 4
         color: root.shade(Theme.background, 0.98)
         border.width: 1
@@ -40,11 +59,22 @@ Item {
 
         TapHandler { onSingleTapped: {} }
 
-        Column {
-            id: column
-            anchors.centerIn: parent
-            width: parent.width - 44
-            spacing: 14
+        Flickable {
+            anchors.fill: parent
+            anchors.margins: 22
+            contentHeight: column.implicitHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar {
+                id: settingsScrollBar
+                width: 8
+                policy: ScrollBar.AsNeeded
+            }
+
+            Column {
+                id: column
+                width: parent.width - settingsScrollBar.width - 14
+                spacing: 14
 
             Text {
                 text: "Settings"
@@ -136,7 +166,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     label: Settings.recursionDepth + " deep"
                     onClicked: Settings.recursionDepth =
-                               Settings.recursionDepth >= 6 ? 1 : Settings.recursionDepth + 1
+                               Settings.recursionDepth >= 8 ? 1 : Settings.recursionDepth + 1
                 }
             }
 
@@ -150,7 +180,7 @@ Item {
                     spacing: 2
 
                     Text {
-                        text: "Show hidden captures"
+                        text: "Show hidden media"
                         font.family: Theme.fontFamily
                         font.pixelSize: 12
                         color: Theme.foreground
@@ -182,6 +212,294 @@ Item {
             }
 
             Row {
+                width: parent.width
+                spacing: 12
+
+                Column {
+                    width: parent.width - slideshowVideosButton.width - 12
+                    spacing: 2
+
+                    Text {
+                        text: "Videos in slideshows"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 12
+                        color: Theme.foreground
+                    }
+                    Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        text: "Play each video through before moving to the next item."
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 10
+                        color: Theme.mutedText
+                    }
+                }
+
+                PillButton {
+                    id: slideshowVideosButton
+                    anchors.verticalCenter: parent.verticalCenter
+                    label: Settings.slideshowVideos ? "On" : "Off"
+                    active: Settings.slideshowVideos
+                    onClicked: Settings.slideshowVideos = !Settings.slideshowVideos
+                }
+            }
+
+            Row {
+                width: parent.width
+                spacing: 12
+
+                Column {
+                    width: parent.width - newAlbumButton.width - 12
+                    spacing: 2
+
+                    Text {
+                        text: "Albums"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 12
+                        color: Theme.foreground
+                    }
+                    Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        text: Settings.albumNames.length === 0
+                              ? "Create named collections without moving files."
+                              : Settings.albumNames.length + (Settings.albumNames.length === 1
+                                ? " album" : " albums")
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 10
+                        color: Theme.mutedText
+                    }
+                }
+
+                PillButton {
+                    id: newAlbumButton
+                    anchors.verticalCenter: parent.verticalCenter
+                    label: "New album"
+                    onClicked: root.createAlbumRequested()
+                }
+            }
+
+            Repeater {
+                model: Settings.albumNames
+
+                Row {
+                    id: albumSettingsRow
+                    required property string modelData
+                    width: column.width
+                    spacing: 10
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: parent.width - deleteAlbumButton.width
+                               - (forgetUnavailableButton.visible
+                                  ? forgetUnavailableButton.width + 10 : 0) - 10
+                        text: albumSettingsRow.modelData + "  ·  "
+                              + Settings.albumPaths(albumSettingsRow.modelData).length + " of "
+                              + Settings.albumItemCount(albumSettingsRow.modelData) + " available"
+                        elide: Text.ElideRight
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 10
+                        color: Theme.mutedText
+                    }
+                    PillButton {
+                        id: forgetUnavailableButton
+                        visible: Settings.unavailableAlbumItemCount(albumSettingsRow.modelData) > 0
+                        enabled: !Library.scanning
+                        label: "Forget unavailable"
+                        onClicked: Settings.removeUnavailableFromAlbum(albumSettingsRow.modelData)
+                    }
+                    PillButton {
+                        id: deleteAlbumButton
+                        label: "Delete"
+                        onClicked: Settings.deleteAlbum(albumSettingsRow.modelData)
+                    }
+                }
+            }
+
+            Rectangle {
+                width: parent.width
+                height: 1
+                color: root.shade(Theme.foreground, 0.12)
+            }
+
+            Row {
+                width: parent.width
+                spacing: 12
+
+                Column {
+                    width: parent.width - imageActionButton.width - 12
+                    spacing: 2
+
+                    Text {
+                        text: "Image default"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 12
+                        color: Theme.foreground
+                    }
+                    Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        text: "What Enter does on a photo or screenshot."
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 10
+                        color: Theme.mutedText
+                    }
+                }
+
+                PillButton {
+                    id: imageActionButton
+                    anchors.verticalCenter: parent.verticalCenter
+                    label: root.actionLabel(Settings.imagePrimaryAction)
+                    onClicked: Settings.imagePrimaryAction = root.nextValue(
+                                   ["matte", "view", "edit"], Settings.imagePrimaryAction)
+                }
+            }
+
+            Row {
+                width: parent.width
+                spacing: 12
+
+                Column {
+                    width: parent.width - videoActionButton.width - 12
+                    spacing: 2
+
+                    Text {
+                        text: "Video default"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 12
+                        color: Theme.foreground
+                    }
+                    Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        text: "What Enter does on a video or recording."
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 10
+                        color: Theme.mutedText
+                    }
+                }
+
+                PillButton {
+                    id: videoActionButton
+                    anchors.verticalCenter: parent.verticalCenter
+                    label: root.actionLabel(Settings.videoPrimaryAction)
+                    onClicked: Settings.videoPrimaryAction = root.nextValue(
+                                   ["trim", "play"], Settings.videoPrimaryAction)
+                }
+            }
+
+            Row {
+                width: parent.width
+                spacing: 12
+
+                Column {
+                    width: parent.width - cacheButton.width - 12
+                    spacing: 2
+
+                    Text {
+                        text: "Thumbnail cache"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 12
+                        color: Theme.foreground
+                    }
+                    Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        text: "Disk space for fast library previews."
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 10
+                        color: Theme.mutedText
+                    }
+                }
+
+                PillButton {
+                    id: cacheButton
+                    anchors.verticalCenter: parent.verticalCenter
+                    label: root.cacheLabel(Settings.thumbnailCacheMb)
+                    onClicked: Settings.thumbnailCacheMb = root.nextValue(
+                                   [64, 128, 256, 512, 1024], Settings.thumbnailCacheMb)
+                }
+            }
+
+            Rectangle {
+                width: parent.width
+                height: 1
+                color: root.shade(Theme.foreground, 0.12)
+            }
+
+            Row {
+                width: parent.width
+                spacing: 12
+
+                Column {
+                    width: parent.width - addFolder.width - 12
+                    spacing: 2
+
+                    Text {
+                        text: "Additional folders"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 12
+                        color: Theme.foreground
+                    }
+                    Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        text: root.folderMessage !== "" ? root.folderMessage
+                              : (Settings.libraryFolders.length === 0
+                                 ? "Add another folder to this library."
+                                 : Settings.libraryFolders.length + " added to this library.")
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 10
+                        color: root.folderMessage !== "" ? Theme.red : Theme.mutedText
+                    }
+                }
+
+                PillButton {
+                    id: addFolder
+                    anchors.verticalCenter: parent.verticalCenter
+                    label: "Add folder"
+                    onClicked: folderDialog.open()
+                }
+            }
+
+            Repeater {
+                model: Settings.libraryFolders
+
+                Row {
+                    id: folderRow
+                    required property string modelData
+                    width: column.width
+                    spacing: 10
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: parent.width - removeFolder.width - 10
+                        text: folderRow.modelData
+                        elide: Text.ElideMiddle
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 10
+                        color: Theme.mutedText
+                    }
+                    PillButton {
+                        id: removeFolder
+                        label: "Remove"
+                        onClicked: {
+                            if (Captures.folderFilter === folderRow.modelData) {
+                                Captures.folderFilter = ""
+                            }
+                            Settings.removeLibraryFolder(folderRow.modelData)
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                width: parent.width
+                height: 1
+                color: root.shade(Theme.foreground, 0.12)
+            }
+
+            Row {
                 anchors.right: parent.right
                 spacing: 8
 
@@ -199,6 +517,17 @@ Item {
                     onClicked: root.close()
                 }
             }
+            }
+        }
+    }
+
+    FolderDialog {
+        id: folderDialog
+        title: "Add a folder to Omaroll"
+        onAccepted: {
+            root.folderMessage = Settings.addLibraryFolder(selectedFolder)
+                                 ? "Folder added"
+                                 : "That folder is already added, unavailable, or is your home folder"
         }
     }
 

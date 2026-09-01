@@ -1,5 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
-  <rect x="6" y="14" width="52" height="36" rx="4" fill="none" stroke="currentColor" stroke-width="3"/>
-  <circle cx="32" cy="32" r="10" fill="none" stroke="currentColor" stroke-width="3"/>
-  <rect x="12" y="8" width="12" height="6" rx="2" fill="currentColor"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Omaroll">
+  <defs>
+    <linearGradient id="surface" x1="18" y1="12" x2="110" y2="118" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#20362d"/>
+      <stop offset="1" stop-color="#09110e"/>
+    </linearGradient>
+  </defs>
+  <rect x="7" y="7" width="114" height="114" rx="29" fill="url(#surface)"/>
+  <rect x="7.75" y="7.75" width="112.5" height="112.5" rx="28.25" fill="none" stroke="#c1c497" stroke-opacity=".22" stroke-width="1.5"/>
+
+  <rect x="27" y="31" width="67" height="60" rx="9" fill="#65b6a0" transform="rotate(-9 60.5 61)"/>
+  <rect x="34" y="29" width="70" height="68" rx="10" fill="#f3e8bd"/>
+  <rect x="41" y="36" width="56" height="43" rx="6" fill="#13241e"/>
+  <path d="M42 70 57 54l12 11 9-9 18 17v6H41v-8Z" fill="#65b6a0"/>
+  <circle cx="82" cy="49" r="6" fill="#e9b872"/>
+  <path d="M46 87h39" fill="none" stroke="#13241e" stroke-linecap="round" stroke-width="5"/>
+  <circle cx="94" cy="87" r="3" fill="#13241e"/>
 </svg>

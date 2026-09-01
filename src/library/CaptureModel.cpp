@@ -5,9 +5,12 @@
 #include "sources/CaptureLocations.h"
 
 #include <QDir>
+#include <QFileInfo>
+#include <QHash>
 #include <QLocale>
-#include <QSet>
 #include <QtConcurrent/QtConcurrentRun>
+
+#include <utility>
 
 namespace {
 
@@ -47,36 +50,76 @@ QString sizeLabel(qint64 bytes) {
   return QLocale::system().formattedDataSize(bytes, 1, QLocale::DataSizeTraditionalFormat);
 }
 
+// A rescan storm at the end of a recording (the processed file moved over the
+// original, a preview written and removed) all lands inside this window.
+constexpr int kRefreshDebounceMs = 600;
+
 } // namespace
 
 CaptureModel::CaptureModel(AppSettings* settings, QObject* parent)
-    : QAbstractListModel(parent), m_settings(settings) {
+    : QAbstractListModel(parent), m_settings(settings),
+      m_cancel(std::make_shared<std::atomic_bool>(false)), m_labelDate(QDate::currentDate()) {
   m_refreshTimer.setSingleShot(true);
-  m_refreshTimer.setInterval(180);
+  m_refreshTimer.setInterval(kRefreshDebounceMs);
   connect(&m_refreshTimer, &QTimer::timeout, this, &CaptureModel::refresh);
 
   connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this,
           [this] { scheduleRefresh(); });
 
-  connect(&m_scanWatcher, &QFutureWatcher<QList<CaptureRecord>>::finished, this,
-          [this] { adoptResults(m_scanWatcher.result()); });
+  connect(&m_scanWatcher, &QFutureWatcher<ScanResult>::finished, this, [this] {
+    if (!m_cancel->load()) {
+      adoptResults(m_scanWatcher.future().takeResult());
+    }
+  });
 
   if (m_settings) {
     // A source setting change means the roots moved; rescan rather than filter.
     connect(m_settings, &AppSettings::scanDownloadsChanged, this, &CaptureModel::refresh);
     connect(m_settings, &AppSettings::recursionDepthChanged, this, &CaptureModel::refresh);
+    connect(m_settings, &AppSettings::libraryFoldersChanged, this, [this] {
+      rewatch();
+      refresh();
+    });
     // A mark change only repaints flags, so never pay for a rescan.
     connect(m_settings, &AppSettings::marksChanged, this, &CaptureModel::applyMarks);
   }
+
+  m_midnightTimer.setSingleShot(true);
+  connect(&m_midnightTimer, &QTimer::timeout, this, [this] {
+    checkDayRollover();
+    scheduleMidnight();
+  });
+  scheduleMidnight();
 
   rewatch();
   refresh();
 }
 
 CaptureModel::~CaptureModel() {
-  // The worker holds no reference to this object, but waiting keeps the future
-  // from delivering into a destroyed watcher.
+  // Stop the walk rather than wait for a large tree to finish; the result is
+  // discarded either way, and the wait keeps the future from delivering into
+  // a destroyed watcher.
+  m_cancel->store(true);
   m_scanWatcher.waitForFinished();
+}
+
+void CaptureModel::scheduleMidnight() {
+  const QDateTime now = QDateTime::currentDateTime();
+  const QDateTime midnight = now.date().addDays(1).startOfDay();
+  m_midnightTimer.start(static_cast<int>(now.msecsTo(midnight)) + 1000);
+}
+
+void CaptureModel::checkDayRollover() {
+  const QDate today = QDate::currentDate();
+  if (today == m_labelDate) {
+    return;
+  }
+  m_labelDate = today;
+  if (!m_records.isEmpty()) {
+    emit dataChanged(index(0), index(static_cast<int>(m_records.size()) - 1),
+                     {CaptureRoles::DayLabelRole});
+  }
+  emit dayLabelsChanged();
 }
 
 QList<CaptureScanner::Root> CaptureModel::roots() const {
@@ -98,7 +141,28 @@ QList<CaptureScanner::Root> CaptureModel::roots() const {
     list.append(
         {CaptureLocations::downloads(), 1, CaptureRecord::Download, CaptureRecord::Download});
   }
+
+  for (const QString& folder : std::as_const(m_extraRoots)) {
+    list.append({folder, depth, CaptureRecord::Picture, CaptureRecord::Video});
+  }
+  if (m_settings) {
+    for (const QString& folder : m_settings->libraryFolders()) {
+      list.append({folder, depth, CaptureRecord::Picture, CaptureRecord::Video});
+    }
+  }
   return list;
+}
+
+void CaptureModel::setExtraRoot(const QString& directory) {
+  const QString canonical = QFileInfo(directory).canonicalFilePath();
+  const QString home = QFileInfo(QDir::homePath()).canonicalFilePath();
+  if (canonical.isEmpty() || !QFileInfo(canonical).isDir() ||
+      canonical == home || canonical == QDir::rootPath() || m_extraRoots.contains(canonical)) {
+    return;
+  }
+  m_extraRoots.append(canonical);
+  rewatch();
+  refresh();
 }
 
 int CaptureModel::rowCount(const QModelIndex& parent) const {
@@ -133,15 +197,14 @@ QVariant CaptureModel::data(const QModelIndex& index, int role) const {
     return sizeLabel(record.bytes);
   case CaptureRoles::BytesRole:
     return record.bytes;
+  case CaptureRoles::StampRole:
+    return record.modified;
   case CaptureRoles::IsVideoRole:
     return record.isVideo();
   case CaptureRoles::FavoriteRole:
     return record.favorite;
   case CaptureRoles::HiddenRole:
     return record.hidden;
-  case CaptureRoles::IsDayStartRole:
-    return index.row() == 0 ||
-           m_records.at(index.row() - 1).captured.date() != record.captured.date();
   default:
     return {};
   }
@@ -159,10 +222,10 @@ QHash<int, QByteArray> CaptureModel::roleNames() const {
       {CaptureRoles::TimeLabelRole, "timeLabel"},
       {CaptureRoles::SizeLabelRole, "sizeLabel"},
       {CaptureRoles::BytesRole, "bytes"},
+      {CaptureRoles::StampRole, "stamp"},
       {CaptureRoles::IsVideoRole, "isVideo"},
       {CaptureRoles::FavoriteRole, "favorite"},
       {CaptureRoles::HiddenRole, "hidden"},
-      {CaptureRoles::IsDayStartRole, "isDayStart"},
   };
 }
 
@@ -180,6 +243,26 @@ QString CaptureModel::dayLabelAt(int row) const {
   return dayLabel(m_records.at(row).captured.date());
 }
 
+QUrl CaptureModel::fileUrl(const QString& path) const { return QUrl::fromLocalFile(path); }
+
+QString CaptureModel::uriList(const QStringList& paths) const {
+  QString list;
+  for (const QString& path : paths) {
+    list += QUrl::fromLocalFile(path).toString(QUrl::FullyEncoded) + QStringLiteral("\r\n");
+  }
+  return list;
+}
+
+QStringList CaptureModel::missingMarks(const QStringList& marks, const QSet<QString>& livePaths) {
+  QStringList dead;
+  for (const QString& path : marks) {
+    if (!livePaths.contains(path) && !QFileInfo::exists(path)) {
+      dead.append(path);
+    }
+  }
+  return dead;
+}
+
 void CaptureModel::refresh() {
   if (m_scanning) {
     // Fold repeat requests into one follow-up scan rather than queueing many.
@@ -191,31 +274,101 @@ void CaptureModel::refresh() {
   emit scanningChanged();
 
   const QList<CaptureScanner::Root> scanRoots = roots();
-  m_scanWatcher.setFuture(
-      QtConcurrent::run([scanRoots] { return CaptureScanner::scan(scanRoots); }));
+  const QStringList marks = m_settings ? m_settings->markedPaths() : QStringList();
+  const std::shared_ptr<std::atomic_bool> cancel = m_cancel;
+
+  m_scanWatcher.setFuture(QtConcurrent::run([scanRoots, marks, cancel] {
+    ScanResult result;
+    result.records = CaptureScanner::scan(scanRoots, cancel.get(), &result.directories);
+    if (cancel->load()) {
+      return result;
+    }
+    // The existence checks belong here, off the GUI thread: a mark on an
+    // unmounted network share can take seconds to answer.
+    QSet<QString> live;
+    live.reserve(result.records.size());
+    for (const CaptureRecord& record : result.records) {
+      live.insert(record.path);
+    }
+    result.deadMarks = missingMarks(marks, live);
+    return result;
+  }));
 }
 
-void CaptureModel::adoptResults(QList<CaptureRecord> scanned) {
+void CaptureModel::adoptResults(ScanResult result) {
+  QList<CaptureRecord>& scanned = result.records;
+
   if (m_settings) {
-    QSet<QString> live;
-    live.reserve(scanned.size());
+    m_settings->forgetMarks(result.deadMarks);
+    m_settings->reconcileAlbums(scanned);
     for (CaptureRecord& record : scanned) {
       record.favorite = m_settings->isFavorite(record.path);
       record.hidden = m_settings->isHidden(record.path);
-      live.insert(record.path);
     }
-    m_settings->pruneMissing(live);
   }
 
-  beginResetModel();
-  m_records = std::move(scanned);
-  endResetModel();
+  QHash<QString, int> incoming;
+  incoming.reserve(scanned.size());
+  for (int row = 0; row < scanned.size(); ++row) {
+    incoming.insert(scanned.at(row).path, row);
+  }
+
+  // Remove what vanished, in runs from the bottom so row numbers stay valid.
+  int row = static_cast<int>(m_records.size()) - 1;
+  while (row >= 0) {
+    if (incoming.contains(m_records.at(row).path)) {
+      --row;
+      continue;
+    }
+    int first = row;
+    while (first > 0 && !incoming.contains(m_records.at(first - 1).path)) {
+      --first;
+    }
+    beginRemoveRows({}, first, row);
+    m_records.remove(first, row - first + 1);
+    endRemoveRows();
+    row = first - 1;
+  }
+
+  // Update what stayed. A rewritten file (a recording finalised in place)
+  // changes size and mtime; the mtime is what busts the thumbnail cache.
+  QSet<QString> kept;
+  kept.reserve(m_records.size());
+  for (int existing = 0; existing < m_records.size(); ++existing) {
+    CaptureRecord& record = m_records[existing];
+    const CaptureRecord& fresh = scanned.at(incoming.value(record.path));
+    kept.insert(record.path);
+    if (record.modified == fresh.modified && record.bytes == fresh.bytes &&
+        record.kind == fresh.kind && record.captured == fresh.captured &&
+        record.favorite == fresh.favorite && record.hidden == fresh.hidden) {
+      continue;
+    }
+    record = fresh;
+    const QModelIndex changed = index(existing);
+    emit dataChanged(changed, changed);
+  }
+
+  // Insert what is new at the top. The scan delivers newest first, and the
+  // proxy orders the whole library anyway.
+  QList<CaptureRecord> added;
+  for (const CaptureRecord& record : scanned) {
+    if (!kept.contains(record.path)) {
+      added.append(record);
+    }
+  }
+  if (!added.isEmpty()) {
+    beginInsertRows({}, 0, static_cast<int>(added.size()) - 1);
+    added.append(m_records);
+    m_records = std::move(added);
+    endInsertRows();
+  }
 
   m_scanning = false;
   emit scanningChanged();
   emit countChanged();
 
-  rewatch();
+  checkDayRollover();
+  rewatch(result.directories);
 
   if (m_rescanQueued) {
     m_rescanQueued = false;
@@ -242,18 +395,40 @@ void CaptureModel::applyMarks() {
   }
 }
 
-void CaptureModel::rewatch() {
+void CaptureModel::rewatch(const QStringList& scannedDirectories) {
   if (!m_watcher.directories().isEmpty()) {
     m_watcher.removePaths(m_watcher.directories());
   }
 
-  // Watch the roots only, not every subdirectory. A deep tree would blow past
-  // the inotify watch limit, and a change anywhere under a root still lands as
-  // a change to something we are watching often enough to be useful.
+  // QFileSystemWatcher is not recursive. The worker scan returns every
+  // directory it visited, so installing watches here performs no second walk
+  // on the GUI thread. Keep a generous cap so a pathological tree cannot
+  // consume the user's inotify allowance. A missing root is watched through
+  // its nearest existing ancestor so creating or mounting it triggers a scan.
+  constexpr int kMaximumWatches = 4096;
   QStringList existing;
   for (const CaptureScanner::Root& root : roots()) {
-    if (!existing.contains(root.path) && QDir(root.path).exists()) {
-      existing.append(root.path);
+    QDir candidate(root.path);
+    while (!candidate.exists() && !candidate.isRoot()) {
+      if (!candidate.cdUp()) {
+        break;
+      }
+    }
+    if (!candidate.exists()) {
+      continue;
+    }
+
+    const QString path = candidate.canonicalPath();
+    if (!path.isEmpty() && !existing.contains(path) && existing.size() < kMaximumWatches) {
+      existing.append(path);
+    }
+  }
+  for (const QString& directory : scannedDirectories) {
+    if (existing.size() >= kMaximumWatches) {
+      break;
+    }
+    if (!existing.contains(directory)) {
+      existing.append(directory);
     }
   }
   if (!existing.isEmpty()) {

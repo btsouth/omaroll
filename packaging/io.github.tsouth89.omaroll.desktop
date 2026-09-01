@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Omaroll
+GenericName=Media Library
+Comment=A fast, beautiful image and video viewer
+Exec=omaroll %f
+Icon=io.github.tsouth89.omaroll
+Terminal=false
+Categories=Graphics;Viewer;
+MimeType=image/png;image/jpeg;image/webp;image/gif;image/bmp;image/avif;image/heic;image/heif;image/tiff;video/mp4;video/x-m4v;video/x-matroska;video/webm;video/quicktime;video/x-msvideo;video/x-ms-wmv;video/x-flv;video/mpeg;video/ogg;video/3gpp;video/mp2t;inode/directory;
+Keywords=media;photo;video;screenshot;recording;capture;gallery;library;album;
+StartupNotify=true
+StartupWMClass=io.github.tsouth89.omaroll

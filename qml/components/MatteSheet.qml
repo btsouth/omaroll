@@ -29,6 +29,14 @@ Item {
 
     function close() { visible = false }
 
+    function save() {
+        if (preview.status === Image.Error) {
+            return
+        }
+        Matte.composeAndSave(root.path, root.selected, root.aspect, root.paddingPercent / 100.0)
+        root.close()
+    }
+
     visible: false
     anchors.fill: parent
     focus: visible
@@ -62,6 +70,7 @@ Item {
             height: 54
 
             Text {
+                id: title
                 anchors.left: parent.left
                 anchors.leftMargin: 20
                 anchors.verticalCenter: parent.verticalCenter
@@ -73,9 +82,13 @@ Item {
             }
 
             Text {
+                anchors.left: title.right
+                anchors.leftMargin: 16
                 anchors.right: parent.right
                 anchors.rightMargin: 20
                 anchors.verticalCenter: parent.verticalCenter
+                horizontalAlignment: Text.AlignRight
+                elide: Text.ElideMiddle
                 text: root.fileName
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
@@ -114,10 +127,10 @@ Item {
             Text {
                 anchors.centerIn: parent
                 visible: preview.status !== Image.Ready
-                text: "Composing…"
+                text: preview.status === Image.Error ? "Could not read this file" : "Composing…"
                 font.family: Theme.fontFamily
                 font.pixelSize: 12
-                color: Theme.mutedText
+                color: preview.status === Image.Error ? Theme.red : Theme.mutedText
             }
         }
 
@@ -238,12 +251,8 @@ Item {
 
                 PillButton {
                     label: "Copy and save"
-                    active: true
-                    onClicked: {
-                        Matte.composeAndSave(root.path, root.selected, root.aspect,
-                                             root.paddingPercent / 100.0)
-                        root.close()
-                    }
+                    active: preview.status !== Image.Error
+                    onClicked: root.save()
                 }
             }
         }
@@ -260,9 +269,7 @@ Item {
             root.selected = (root.selected + 1) % root.matteNames.length
             event.accepted = true
         } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            Matte.composeAndSave(root.path, root.selected, root.aspect,
-                                 root.paddingPercent / 100.0)
-            root.close()
+            root.save()
             event.accepted = true
         } else if (event.key >= Qt.Key_1 && event.key <= Qt.Key_7) {
             root.selected = event.key - Qt.Key_1
