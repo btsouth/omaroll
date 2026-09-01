@@ -1,6 +1,11 @@
 # omaroll
 
-Capture library for Omarchy. See PLAN.md for the full spec.
+Capture library for Omarchy. **v1.0.0 is built, tested and tagged locally.**
+See PLAN.md for the design rationale and README.md for what it does.
+
+Build: `cmake -S . -B build -G Ninja && cmake --build build`
+Test:  `ctest --test-dir build --output-on-failure` (22 tests)
+Look:  `./build/omaroll --demo` or `--render shot.png --render-view matte`
 
 ## Hard rules
 
@@ -45,3 +50,14 @@ Use house helpers over raw equivalents: `omarchy-notification-send`, not `notify
 - Theme by watching `~/.local/state/omarchy/current/theme/`. Do not add a `post_theme_commands`
   entry upstream; self-watching is correct and needs no upstream patch.
 - Never move, rename or rewrite a user's capture file. Actions write new files beside originals.
+
+## Verifying a change
+
+Never drive the GUI by hand to check something; the compositor steals focus and
+the shot comes out wrong. Use the render mode, which grabs the scene graph:
+
+```bash
+./build/omaroll --render /tmp/check.png --render-view grid   # or detail, matte
+```
+
+It runs against `--demo` automatically, so a render never contains a real file.
