@@ -118,6 +118,18 @@ Item {
         visible = false
     }
 
+    function dismiss() {
+        if (slideshowRunning) {
+            setSlideshow(false)
+            setFullScreen(false)
+            showInfo = true
+        } else if (fullScreen) {
+            setFullScreen(false)
+        } else {
+            close()
+        }
+    }
+
     onPathChanged: {
         stillReady = false
         imageSourceWidth = 0
@@ -159,17 +171,11 @@ Item {
         id: backdrop
         anchors.fill: parent
         color: Qt.rgba(0, 0, 0, 0.62)
-        TapHandler {
-            onSingleTapped: function (eventPoint) {
-                // Pointer handlers can recognize the same gesture at multiple
-                // levels. Only dismiss when the release is truly outside the
-                // panel, even if a child control also handled the click.
-                const point = backdrop.mapToItem(root, eventPoint.position)
-                if (point.x < panel.x || point.x > panel.x + panel.width
-                        || point.y < panel.y || point.y > panel.y + panel.height) {
-                    root.close()
-                }
-            }
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.LeftButton | Qt.RightButton
+            preventStealing: true
+            onClicked: root.close()
         }
     }
 
@@ -183,7 +189,11 @@ Item {
         border.width: 1
         border.color: root.shade(Theme.foreground, 0.20)
 
-        TapHandler { onSingleTapped: {} }
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.LeftButton | Qt.RightButton
+            preventStealing: true
+        }
 
         // Preview
         Rectangle {
@@ -288,8 +298,6 @@ Item {
                 Image {
                     source: root.visible && !root.isVideo && root.path !== ""
                             ? Library.fileUrl(root.path) : ""
-                    sourceSize: Qt.size(Math.round(stage.width * Screen.devicePixelRatio * 4),
-                                        Math.round(stage.height * Screen.devicePixelRatio * 4))
                     asynchronous: true
                     autoTransform: true
                     smooth: true
@@ -807,24 +815,12 @@ Item {
             event.accepted = true
             return
         }
-        if (event.key === Qt.Key_Escape && root.slideshowRunning) {
-            root.setSlideshow(false)
-            root.setFullScreen(false)
-            root.showInfo = true
+        if (event.key === Qt.Key_Escape) {
+            root.dismiss()
             event.accepted = true
             return
         }
-        if (event.key === Qt.Key_Escape && root.fullScreen) {
-            root.setFullScreen(false)
-            event.accepted = true
-            return
-        }
-        if (event.key === Qt.Key_Escape || event.key === Qt.Key_Space) {
-            root.close()
-            event.accepted = true
-            return
-        }
-        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+        if (event.key === Qt.Key_Space) {
             root.actionTriggered(root.isVideo ? Settings.videoPrimaryAction
                                               : Settings.imagePrimaryAction)
             event.accepted = true

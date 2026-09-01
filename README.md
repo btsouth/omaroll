@@ -55,7 +55,7 @@ on them.
 - **Drags out as the real file.** Pull a thumbnail into a Discord message, a
   browser upload or a Nautilus window and the file lands there. Select several
   and they go together.
-- **Previews in place.** Space opens a capture large with every action beside
+- **Previews in place.** Enter opens a capture large with every action beside
   it. Images zoom, pan, rotate and animate; a recording starts muted with a
   scrub bar and sound toggle, so you can find the moment before handing it to
   omacut. The full player is in mpv.
@@ -117,8 +117,8 @@ and put on your clipboard.
 | Key | Does |
 |---|---|
 | arrows · `hjkl` | Move |
-| `Enter` | Your default action for that kind, initially trim or matte |
-| `Space` · right click | Preview with every action for that capture |
+| `Enter` · right click | Preview with every action for that capture |
+| `Space` | Your default action for that kind, initially trim or matte |
 | `←` `→` in an image preview | Previous · next file in the same folder |
 | `←` `→` in a video preview | Seek five seconds; hold `Shift` for previous · next |
 | `+` `-` · `0` · `R` in an image preview | Zoom · fit · rotate |

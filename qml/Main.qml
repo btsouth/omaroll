@@ -92,7 +92,7 @@ ApplicationWindow {
         }
     }
 
-    // Enter runs the user's default action for the medium.
+    // Space runs the user's default action for the medium.
     function performPrimary(index) {
         if (index < 0) {
             return
@@ -100,6 +100,20 @@ ApplicationWindow {
         const video = Captures.isVideoAt(index)
         root.perform(video ? Settings.videoPrimaryAction : Settings.imagePrimaryAction,
                      Captures.pathAt(index), video)
+    }
+
+    function dismissTopLayer() {
+        if (confirm.visible) {
+            confirm.close()
+        } else if (settingsSheet.visible) {
+            settingsSheet.close()
+        } else if (matteSheet.visible) {
+            matteSheet.close()
+        } else if (albumNameSheet.visible) {
+            albumNameSheet.close()
+        } else if (detail.visible) {
+            detail.dismiss()
+        }
     }
 
     // A persisted Downloads filter with Downloads switched off would show
@@ -561,7 +575,7 @@ ApplicationWindow {
             elide: Text.ElideRight
             text: notice.text !== ""
                   ? notice.text
-                  : "Enter act   ·   Space preview   ·   M matte   ·   T trim   ·   V favourite   ·   Del trash   ·   / search"
+                  : "Enter details   ·   Space act   ·   M matte   ·   T trim   ·   V favourite   ·   Del trash   ·   / search"
             font.family: Theme.fontFamily
             font.pixelSize: 11
             color: notice.text !== "" ? Theme.accent : root.shade(Theme.foreground, 0.42)
@@ -841,13 +855,15 @@ ApplicationWindow {
         sequences: [StandardKey.Quit]
         onActivated: Qt.quit()
     }
-    // Not while the search field has focus: there Escape clears the search,
-    // and a window-level shortcut would otherwise fire first and quit.
+    // Sheets can move focus into a child control, so Escape is owned here at
+    // window scope. With no sheet, the search field still owns its Escape.
     Shortcut {
         sequences: ["Escape"]
-        enabled: !root.anySheetOpen && !filters.searchActive
+        enabled: root.anySheetOpen || !filters.searchActive
         onActivated: {
-            if (library.checkedCount > 0) {
+            if (root.anySheetOpen) {
+                root.dismissTopLayer()
+            } else if (library.checkedCount > 0) {
                 library.clearChecked()
             } else {
                 root.close()

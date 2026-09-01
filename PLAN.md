@@ -426,8 +426,8 @@ look like nautilus, something has gone wrong.
 |---|---|
 | arrows / hjkl | Move through the grid |
 | `/` | Search |
-| Enter | Default action for that kind |
-| Space | Large preview, play video in place |
+| Enter | Large preview, play video in place |
+| Space | Default action for that kind |
 | `m` | Matte picker (screenshots and images) |
 | `t` | Trim in omacut (recordings) |
 | `c` | Copy to clipboard |

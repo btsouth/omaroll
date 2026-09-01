@@ -219,13 +219,13 @@ FocusScope {
             case Qt.Key_Return:
             case Qt.Key_Enter:
                 if (grid.currentIndex >= 0) {
-                    root.chosen(grid.currentIndex)
+                    root.detailRequested(grid.currentIndex)
                     event.accepted = true
                 }
                 break
             case Qt.Key_Space:
                 if (grid.currentIndex >= 0) {
-                    root.detailRequested(grid.currentIndex)
+                    root.chosen(grid.currentIndex)
                     event.accepted = true
                 }
                 break
