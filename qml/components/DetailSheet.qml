@@ -826,7 +826,7 @@ Item {
             event.accepted = true
             return
         }
-        if (!root.isVideo && (event.key === Qt.Key_Left || event.key === Qt.Key_Right)) {
+        if (event.key === Qt.Key_Left || event.key === Qt.Key_Right) {
             root.requestNavigation(event.key === Qt.Key_Left ? -1 : 1)
             event.accepted = true
             return
@@ -851,13 +851,8 @@ Item {
             event.accepted = true
             return
         }
-        if (root.isVideo && (event.key === Qt.Key_Left || event.key === Qt.Key_Right)) {
-            if (root.slideshowRunning || event.modifiers & Qt.ShiftModifier) {
-                root.requestNavigation(event.key === Qt.Key_Left ? -1 : 1)
-                event.accepted = true
-                return
-            }
-            const step = event.key === Qt.Key_Left ? -5000 : 5000
+        if (root.isVideo && (event.key === Qt.Key_J || event.key === Qt.Key_L)) {
+            const step = event.key === Qt.Key_J ? -5000 : 5000
             player.position = Math.max(0, Math.min(player.duration, player.position + step))
             event.accepted = true
             return

@@ -119,8 +119,8 @@ and put on your clipboard.
 | arrows · `hjkl` | Move |
 | `Enter` · right click | Preview with every action for that capture |
 | `Space` | Your default action for that kind, initially trim or matte |
-| `←` `→` in an image preview | Previous · next file in the same folder |
-| `←` `→` in a video preview | Seek five seconds; hold `Shift` for previous · next |
+| `←` `→` in a preview | Previous · next file in the same folder |
+| `J` `L` in a video preview | Seek backward · forward five seconds |
 | `+` `-` · `0` · `R` in an image preview | Zoom · fit · rotate |
 | `F11` in a preview | Enter · leave fullscreen |
 | `F5` in a preview | Start · pause slideshow |
