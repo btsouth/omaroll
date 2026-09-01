@@ -115,7 +115,7 @@ The out-list is the more important half. Guard it.
 - Multi-select and bulk actions
 - Delegated actions to installed tools
 - Mattes: the one native capability
-- Copy, drag out, rename, delete with confirm
+- Copy, drag out, rename, delete with confirm (XDG trash, never `unlink`)
 - Live theme following
 - `--demo` mode with a fictional library
 
@@ -126,6 +126,10 @@ The out-list is the more important half. Guard it.
 - **Image editing.** pinta owns it.
 - **Format conversion.** `omarchy-transcode` owns it. omaroll writes no ffmpeg invocations.
 - **Capture itself.** `omarchy-capture-*` owns it. No hotkey grab, no overlay, no PrtScn fight.
+- **The moment right after a capture.** `omarchy-capture-screenshot` already fires a notification
+  reading "Screenshot saved to clipboard and file / Edit with Super + Alt + ," whose click action
+  runs `$SCREENSHOT_EDITOR`. That path exists and works. omaroll is the *later* path, for the
+  screenshot you took an hour ago. Do not add a competing toast.
 - **Scrolling capture.** Needs synthetic input into another window. Wayland blocks it by design.
   Not possible, do not try.
 - A file tree, or anything that reads as a file manager
@@ -160,7 +164,7 @@ The core of the app. Each capture kind has a default action and a short menu beh
 | Any | Send to phone | `localsend` | base pkg |
 | Any | Send to another machine | `omarchy-tailscale-send` | omarchy bin |
 | Any | Show in files | `nautilus` | base pkg |
-| Any | Delete | trash, with confirm | **native** |
+| Any | Delete | `QFile::moveToTrash()`, with confirm | **native** |
 
 One native row out of sixteen. That ratio is the design, and it is what keeps the codebase small
 enough to finish.
@@ -277,6 +281,22 @@ photo I downloaded." But `omarchy-capture-screenshot` writes
 2. **Then MIME and extension** for everything else, into Pictures or Videos.
 3. **Never by directory alone.** A user who redirects captures elsewhere still gets them classified
    correctly.
+
+### Traversal rules
+
+Left unstated in the first draft, and every one of these is a real-library problem:
+
+- **Screenshots and Recordings scan depth 1.** Omarchy writes captures flat into the configured
+  directory, so recursing only invites unrelated files.
+- **Pictures and Videos recurse**, to a bounded depth of 4. People foreseeably keep photos in
+  subfolders, and a library that cannot see them looks broken.
+- **Skip dotfiles and dot-directories.** `~/Pictures/.thumbnails` and similar caches must never
+  appear as content.
+- **Skip omaroll's own output directories** so a matte composite does not read as a new capture that
+  then gets its own matte.
+- **Follow symlinks** (`find -L` semantics, matching what Omarchy's own image picker does) but track
+  visited inodes so a symlink loop cannot hang the scan.
+- **Deduplicate by realpath**, since a symlinked directory can otherwise present the same file twice.
 
 ### Watched locations
 
@@ -472,6 +492,70 @@ So omaroll does both halves deliberately:
 That combination is what "transparent and beautiful" actually means on this desktop: the surface
 recedes, the pictures do not.
 
+### The mechanism, exactly as omakade does it
+
+Verified in omakade's source rather than described from memory. Three pieces:
+
+```qml
+// qml/Main.qml
+ApplicationWindow {
+  color: "transparent"              // the window surface itself carries no paint
+  ...
+  Rectangle {                        // the chrome, painted at theme alpha
+    gradient: Gradient {
+      GradientStop { position: 0.0;  color: root.alpha(Theme.darkerBackground, Theme.surfaceAlpha) }
+      GradientStop { position: 0.48; color: root.alpha(Theme.darkerBackground, Theme.surfaceAlpha * 0.88) }
+      GradientStop { position: 1.0;  color: root.alpha(Theme.darkerBackground, Theme.surfaceAlpha) }
+    }
+  }
+}
+```
+
+```cpp
+// src/theme/OmarchyTheme.cpp — surfaceAlpha, default 0.82
+m_surfaceAlpha = readSectionAlpha(themeRoot() + "/shell.toml", "launcher", "background-alpha", 0.82);
+```
+
+So: transparent window, one translucent gradient for the chrome at roughly 82% by default, and
+everything drawn on top of it is opaque. Content sits above the translucency rather than inside it.
+
+**That is exactly what omaroll wants, and it is the answer to "the pictures don't need to be
+transparent but the launcher should."** Same window, same alpha source, same default. The grid,
+thumbnails, previews and text are children painted at full opacity on top of the translucent
+surface, so the chrome glows and the photographs stay true.
+
+Lift `readSectionAlpha` and the `alpha(color, value)` helper unchanged.
+
+### One thing omakade does not do, and omaroll should
+
+omakade is a third-party app, so it is not in `default/hypr/apps/system.lua` and never opted out of
+the `default-opacity` tag. Its cover art is therefore composited by Hyprland at `0.985` focused and
+`0.96` unfocused, on top of its own in-app alpha.
+
+At 98.5% that is imperceptible, and for game covers it does not matter. For a library whose entire
+job is letting someone compare photographs and video frames, the unfocused `0.96` is worth removing,
+and it is one line upstream. This is not a defect in omakade; it is a difference in what the two apps
+are for, and it is why every media app in that list is on it.
+
+### High DPI and fractional scaling
+
+Missed in the first draft, and it matters more here than in most apps because the entire surface is
+resampled imagery.
+
+Hyprland commonly runs fractional scale factors (1.25, 1.5), and Qt 6 reports that through
+`devicePixelRatio` on a `fractional-scale-v1` surface. A thumbnail generated at logical pixel size
+and drawn on a 1.5x surface is upscaled and visibly soft, which on a photo grid reads as a broken
+app.
+
+- Generate thumbnails at `ceil(logicalSize * devicePixelRatio)`, not at logical size.
+- Key the cache on the rendered pixel size as well as path, mtime and size, so moving the window to
+  a differently scaled monitor regenerates rather than upscales.
+- Cap generation at 2x. Beyond that the cost is not repaid.
+- Set `smooth: true` and `mipmap: true` on downscaled `Image` items, and always set
+  `sourceSize` so Qt decodes at target size rather than decoding a 12-megapixel JPEG to draw a
+  200px cell.
+- Re-evaluate on `screenChanged`, since dragging between monitors changes the ratio live.
+
 ### Where the alpha comes from
 
 Never hardcode it. The active theme decides, and a theme that wants an opaque surface gets one.
@@ -525,6 +609,8 @@ while scroll position, selection and every thumbnail stay exactly where they wer
 
 - Thumbnails sample pixel-identical to the source file with a color picker, on any theme
 - Chrome alpha tracks `shell.toml`; an opaque theme renders fully opaque
+- Thumbnails stay crisp at 1.0x, 1.25x and 1.5x scale, and re-sharpen when dragged between monitors
+  of different scale
 - Looks correct with Hyprland blur off, which is the default, and better with it on
 - Corner radius follows the theme, `0` renders sharp
 - Theme switch cross-fades in under 200ms with no relayout, no flicker, no lost scroll position
@@ -553,6 +639,8 @@ day one.
 ### v0.2 — It is fast and complete
 
 - Video thumbnails via ffmpegthumbnailer, hover-scrub strips
+- Thumbnails generated at `devicePixelRatio`, cache keyed on rendered pixel size
+- Traversal rules: depth-1 captures, bounded recursion for Pictures/Videos, dotfiles skipped
 - Remaining sources: Pictures, Videos, Downloads
 - Thumbnail cache, background generation, on-screen priority
 - Search, favorites, hide, sort
@@ -645,6 +733,34 @@ package.
 - **AUR** for Arch users outside Omarchy.
 - Ship `.desktop` and `metainfo.xml` so it appears in the launcher properly.
 
+### Desktop entry
+
+Follow omacut's shape rather than omakade's. omacut declares a `MimeType` list and takes `%f`, which
+is what lets other apps hand it a file — precisely how omaroll will invoke it. omaroll should be
+equally openable, so a file manager or another tool can hand it a directory or an image.
+
+```ini
+[Desktop Entry]
+Type=Application
+Name=Omaroll
+GenericName=Capture Library
+Comment=Everything you capture, in one place
+Exec=omaroll %f
+Icon=omaroll
+Terminal=false
+Categories=Graphics;Viewer;AudioVideo;
+MimeType=image/png;image/jpeg;image/webp;video/mp4;video/x-matroska;inode/directory;
+Keywords=screenshot;recording;capture;gallery;library;
+StartupNotify=true
+StartupWMClass=omaroll
+```
+
+**`StartupWMClass=omaroll`, not a reverse-DNS id.** omakade uses `io.github.tsouth89.Omakade`, which
+is correct for a Flathub-style app but wrong here: the first-party apps use plain ids (`omacut`,
+`omacalc`), and the Hyprland opacity rule in section 11 matches on that id. Simple id, and it must
+match `setDesktopFileName()` in `main.cpp`, `StartupWMClass`, and the hypr rule. Set it once and
+never change it.
+
 ---
 
 ## 14. Inclusion in base Omarchy
@@ -711,8 +827,9 @@ names), and the icon must be a glyph the Omarchy icon font already carries.
   `default/hypr/apps/system.lua` alongside mpv, imv and Pinta. See section 11 for why. That is a
   third line in the upstream PR, and until it lands the app should ship a `hypr/` snippet users can
   drop in.
-- **App id.** Set a stable Wayland `app_id` of `omaroll`. The opacity rule matches on it, so this
-  has to be set deliberately and never change.
+- **App id.** `omaroll`, plain, matching `omacut` and `omacalc` rather than omakade's reverse-DNS
+  form. On Wayland Qt derives `app_id` from `QGuiApplication::setDesktopFileName()`, so that call,
+  the `.desktop` filename, `StartupWMClass` and the hypr rule must all say `omaroll`. Section 13.
 - **Default state via `/etc/skel`.** Bundled apps seed defaults there — tensaku ships
   `/etc/skel/.local/state/tensaku/state.toml`. If omaroll needs shipped defaults, that is the path.
   Better: need none, per the zero-config principle.
@@ -783,6 +900,8 @@ than any feature list, and it is true.
 | Duplicating something already in base | This already happened once in drafting: annotation looked like a gap and tensaku was already there. Before any native feature, grep `install/omarchy-base.packages` and `bin/` first. |
 | Thumbnails render with wrong colors | The `default-opacity` tag dims every window by default. Without the media opt-out in section 11, every thumbnail renders at 96-98.5%. Ship the hypr snippet from day one and check with a color picker. |
 | Looks like glass on a flat desktop | Omarchy runs blur off, rounding 0, shadows off. Read `cornerRadius` from the theme and design for blur being absent. |
+| Soft thumbnails on fractional scaling | Generate at `devicePixelRatio` and key the cache on rendered pixel size. On a photo grid this is the difference between polished and broken, and 1.25x/1.5x are common on Hyprland. |
+| App id drift | `setDesktopFileName()`, the `.desktop` filename, `StartupWMClass` and the hypr opacity rule must all read `omaroll`. A mismatch silently breaks the opacity opt-out with no error. |
 
 ---
 

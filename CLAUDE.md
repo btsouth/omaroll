@@ -26,7 +26,13 @@ Use house helpers over raw equivalents: `omarchy-notification-send`, not `notify
 
 - **Opt out of `default-opacity`** (`tag = "-default-opacity"`, `opacity = "1 1"`). Every media app
   in Omarchy does. Compositor dimming would wash out thumbnails.
-- **In-app alpha on chrome only.** Thumbnails, previews and text are always fully opaque.
+- **In-app alpha on chrome only**, exactly like omakade: `ApplicationWindow { color: "transparent" }`
+  plus one gradient painted at `Theme.surfaceAlpha` (from `shell.toml` `[launcher] background-alpha`,
+  default 0.82). Thumbnails, previews and text are children drawn fully opaque on top.
+- **Thumbnails at `devicePixelRatio`.** Cache keyed on rendered pixel size. Fractional scaling
+  (1.25x, 1.5x) is common on Hyprland and logical-size thumbnails look soft.
+- **App id is `omaroll`**, plain, not reverse-DNS. `setDesktopFileName()`, the `.desktop` filename,
+  `StartupWMClass` and the hypr opacity rule must all agree or the opt-out silently fails.
 - **Alpha, corner radius and font come from the theme**, never hardcoded. Omarchy defaults to
   rounding 0, blur off, shadows off. Design flat and sharp.
 - **Cross-fade theme changes** with `Behavior on color`. Never relayout or drop caches on retint.
