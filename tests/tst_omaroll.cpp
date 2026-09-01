@@ -546,6 +546,61 @@ private slots:
              QString());
   }
 
+  void equalSortKeysHaveStableOrder() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(qputenv("OMARCHY_SCREENSHOT_DIR", dir.path().toUtf8()));
+    QVERIFY(qputenv("OMARCHY_SCREENRECORD_DIR", dir.path().toUtf8()));
+    QVERIFY(qputenv("XDG_PICTURES_DIR", dir.path().toUtf8()));
+    QVERIFY(qputenv("XDG_VIDEOS_DIR", dir.path().toUtf8()));
+    QVERIFY(qputenv("XDG_DOWNLOAD_DIR", dir.path().toUtf8()));
+
+    const QDateTime stamp(QDate(2026, 8, 20), QTime(9, 0));
+    const auto write = [&](const QString& relativePath) {
+      const QString path = dir.filePath(relativePath);
+      QVERIFY(QDir().mkpath(QFileInfo(path).absolutePath()));
+      QImage image(16, 16, QImage::Format_RGB32);
+      image.fill(Qt::gray);
+      QVERIFY(image.save(path, "PNG"));
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::ReadWrite));
+      QVERIFY(file.setFileTime(stamp, QFileDevice::FileModificationTime));
+    };
+
+    // Reverse path order on disk so deterministic results cannot come from
+    // insertion order. All three otherwise have the same sort keys.
+    write(QStringLiteral("z/duplicate.png"));
+    write(QStringLiteral("m/duplicate.png"));
+    write(QStringLiteral("a/duplicate.png"));
+
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QSignalSpy scanned(&model, &CaptureModel::countChanged);
+    QVERIFY(scanned.wait(5000));
+
+    CaptureFilterModel proxy;
+    proxy.setSourceModel(&model);
+    QCOMPARE(proxy.count(), 3);
+    const QStringList expected = {
+        dir.filePath(QStringLiteral("a/duplicate.png")),
+        dir.filePath(QStringLiteral("m/duplicate.png")),
+        dir.filePath(QStringLiteral("z/duplicate.png")),
+    };
+    for (const int mode : {CaptureFilterModel::NewestFirst,
+                           CaptureFilterModel::OldestFirst,
+                           CaptureFilterModel::LargestFirst,
+                           CaptureFilterModel::SmallestFirst,
+                           CaptureFilterModel::NameAscending}) {
+      proxy.setSortMode(mode);
+      QStringList actual;
+      for (int row = 0; row < proxy.count(); ++row) {
+        actual.append(proxy.pathAt(row));
+      }
+      QCOMPARE(actual, expected);
+    }
+  }
+
   void hiddenIsExcludedUntilAskedFor() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

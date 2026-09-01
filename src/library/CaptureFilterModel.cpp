@@ -280,17 +280,24 @@ bool CaptureFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex& sour
 bool CaptureFilterModel::lessThan(const QModelIndex& left, const QModelIndex& right) const {
   const CaptureRecord& a = sourceRecord(left.row());
   const CaptureRecord& b = sourceRecord(right.row());
+  const auto pathOrder = [&] {
+    return QString::compare(a.path, b.path, Qt::CaseSensitive) < 0;
+  };
   switch (m_sortMode) {
   case OldestFirst:
-    return a.captured < b.captured;
+    return a.captured != b.captured ? a.captured < b.captured : pathOrder();
   case LargestFirst:
-    return a.bytes > b.bytes;
+    return a.bytes != b.bytes ? a.bytes > b.bytes : pathOrder();
   case SmallestFirst:
-    return a.bytes < b.bytes;
+    return a.bytes != b.bytes ? a.bytes < b.bytes : pathOrder();
   case NameAscending:
-    return QString::compare(a.fileName, b.fileName, Qt::CaseInsensitive) < 0;
+    if (const int names = QString::compare(a.fileName, b.fileName, Qt::CaseInsensitive);
+        names != 0) {
+      return names < 0;
+    }
+    return pathOrder();
   case NewestFirst:
   default:
-    return a.captured > b.captured;
+    return a.captured != b.captured ? a.captured > b.captured : pathOrder();
   }
 }

@@ -249,7 +249,10 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots,
 
   std::sort(records.begin(), records.end(),
             [](const CaptureRecord& first, const CaptureRecord& second) {
-              return first.captured > second.captured;
+              if (first.captured != second.captured) {
+                return first.captured > second.captured;
+              }
+              return first.path < second.path;
             });
 
   return records;
