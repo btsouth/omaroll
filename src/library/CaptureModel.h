@@ -5,10 +5,17 @@
 
 #include <QAbstractListModel>
 #include <QFileSystemWatcher>
+#include <QFutureWatcher>
 #include <QList>
 #include <QTimer>
 
-// The library, newest first, with each row knowing whether it opens a new day.
+class AppSettings;
+
+// The library, with each row knowing whether it opens a new day.
+//
+// Scanning runs on a worker thread. Once Pictures and Videos recurse, a cold
+// scan of a large tree is long enough to drop frames if it happens on the GUI
+// thread, and the window has to stay live while it works.
 class CaptureModel final : public QAbstractListModel {
   Q_OBJECT
   Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
@@ -16,7 +23,8 @@ class CaptureModel final : public QAbstractListModel {
   Q_PROPERTY(bool scanning READ scanning NOTIFY scanningChanged)
 
 public:
-  explicit CaptureModel(QObject* parent = nullptr);
+  explicit CaptureModel(AppSettings* settings, QObject* parent = nullptr);
+  ~CaptureModel() override;
 
   [[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
   [[nodiscard]] QVariant data(const QModelIndex& index, int role) const override;
@@ -24,8 +32,6 @@ public:
 
   [[nodiscard]] bool empty() const { return m_records.isEmpty(); }
   [[nodiscard]] bool scanning() const { return m_scanning; }
-
-  void setRoots(const QList<CaptureScanner::Root>& roots);
 
   Q_INVOKABLE void refresh();
   Q_INVOKABLE QString pathAt(int row) const;
@@ -36,14 +42,21 @@ signals:
   void scanningChanged();
 
 private:
+  [[nodiscard]] QList<CaptureScanner::Root> roots() const;
   void rewatch();
   void scheduleRefresh();
+  void applyMarks();
+  void adoptResults(QList<CaptureRecord> scanned);
 
-  QList<CaptureScanner::Root> m_roots;
+  AppSettings* m_settings = nullptr;
   QList<CaptureRecord> m_records;
   QFileSystemWatcher m_watcher;
+  QFutureWatcher<QList<CaptureRecord>> m_scanWatcher;
   // omarchy-capture-* writes and the compositor's own churn both arrive as
   // bursts; coalesce so a single screenshot does not trigger several rescans.
   QTimer m_refreshTimer;
   bool m_scanning = false;
+  // A scan requested while one is already running, so the newest state is not
+  // lost to a rescan that started a moment too early.
+  bool m_rescanQueued = false;
 };

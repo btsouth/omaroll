@@ -6,7 +6,7 @@ ApplicationWindow {
     id: root
 
     width: 1180
-    height: 760
+    height: 780
     minimumWidth: 560
     minimumHeight: 420
     visible: true
@@ -20,18 +20,89 @@ ApplicationWindow {
         return Qt.rgba(base.r, base.g, base.b, amount)
     }
 
-    // Deleting acts on a path captured when the sheet opened, not on whatever
-    // happens to be selected when it is confirmed. Sorting or a rescan can move
-    // the selection under a modal, and trashing the wrong file is unforgivable.
+    // Destructive actions act on a path captured when the sheet opened, not on
+    // whatever is selected when it is confirmed. A rescan or sort change can
+    // move the selection under a modal, and trashing the wrong file is
+    // unforgivable.
     property string pendingDeletePath: ""
+    property var pendingDeleteBatch: []
+
+    readonly property bool anySheetOpen: confirm.visible || detail.visible
+                                         || matteSheet.visible || settingsSheet.visible
+
+    function say(message) {
+        notice.text = message
+        noticeTimer.restart()
+    }
+
+    function currentPath() { return Captures.pathAt(library.currentIndex) }
+
+    // Every action funnels through here so a keystroke, a click in the detail
+    // sidebar and a bulk operation all take the same path.
+    function perform(id, path) {
+        if (path === "") {
+            return
+        }
+
+        switch (id) {
+        case "matte":
+            matteSheet.path = path
+            matteSheet.fileName = Captures.fileNameAt(library.currentIndex)
+            matteSheet.open()
+            return
+        case "favorite":
+            Settings.toggleFavorite(path)
+            root.say(Settings.isFavorite(path) ? "Added to favourites" : "Removed from favourites")
+            return
+        case "hide":
+            Settings.toggleHidden(path)
+            root.say(Settings.isHidden(path) ? "Hidden" : "Shown again")
+            return
+        case "trash":
+            root.requestDelete(path)
+            return
+        case "open":
+            Actions.open(path)
+            return
+        default:
+            Registry.run(id, path)
+        }
+    }
 
     function requestDelete(path) {
         if (path === "") {
             return
         }
         root.pendingDeletePath = path
+        root.pendingDeleteBatch = []
+        confirm.title = "Move this capture to Trash?"
         confirm.detail = path
         confirm.open()
+    }
+
+    function requestDeleteBatch(paths) {
+        if (paths.length === 0) {
+            return
+        }
+        root.pendingDeletePath = ""
+        root.pendingDeleteBatch = paths
+        confirm.title = "Move " + paths.length + " captures to Trash?"
+        confirm.detail = paths.length + " files. They stay recoverable from your file manager."
+        confirm.open()
+    }
+
+    // Called by --render so a screenshot can be taken of a specific view
+    // without anyone having to drive the UI by hand.
+    function openViewForRender(view) {
+        if (library.count === 0) {
+            return
+        }
+        library.currentIndex = 0
+        if (view === "detail") {
+            root.openDetail(0)
+        } else if (view === "matte") {
+            root.perform("matte", Captures.pathAt(0))
+        }
     }
 
     Chrome {
@@ -72,6 +143,12 @@ ApplicationWindow {
             Text {
                 anchors.verticalCenter: parent.verticalCenter
                 text: {
+                    if (Library.scanning && Captures.count === 0) {
+                        return "Scanning…"
+                    }
+                    if (library.checkedCount > 0) {
+                        return library.checkedCount + " selected"
+                    }
                     if (Captures.count === 0) {
                         return "Nothing to show"
                     }
@@ -82,18 +159,44 @@ ApplicationWindow {
                 }
                 font.family: Theme.fontFamily
                 font.pixelSize: 13
-                color: Theme.mutedText
+                color: library.checkedCount > 0 ? Theme.accent : Theme.mutedText
                 Behavior on color { ColorAnimation { duration: 180; easing.type: Easing.OutQuad } }
             }
         }
 
-        // Current day, tracking the top of the grid.
-        DayHeader {
+        Row {
             anchors.right: parent.right
             anchors.rightMargin: 20
             anchors.verticalCenter: parent.verticalCenter
-            label: library.currentDayLabel
-            shown: Captures.count > 0
+            spacing: 8
+
+            // Bulk actions appear only while a selection exists, so the resting
+            // header stays quiet.
+            PillButton {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: library.checkedCount > 0
+                label: "Trash " + library.checkedCount
+                onClicked: root.requestDeleteBatch(library.checkedPaths())
+            }
+
+            PillButton {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: library.checkedCount > 0
+                label: "Clear"
+                onClicked: library.clearChecked()
+            }
+
+            DayHeader {
+                anchors.verticalCenter: parent.verticalCenter
+                label: library.currentDayLabel
+                shown: Captures.count > 0 && library.checkedCount === 0
+            }
+
+            PillButton {
+                anchors.verticalCenter: parent.verticalCenter
+                label: "⚙"
+                onClicked: settingsSheet.open()
+            }
         }
     }
 
@@ -124,13 +227,30 @@ ApplicationWindow {
         anchors.leftMargin: 14
         anchors.rightMargin: 14
         anchors.bottomMargin: 4
-        focus: true
+        focus: !root.anySheetOpen
 
         model: Captures
         visible: Captures.count > 0
 
-        onChosen: function (path) { Actions.open(path) }
+        onChosen: function (path) { root.perform("matte", path) }
         onDeleteRequested: function (path) { root.requestDelete(path) }
+        onDetailRequested: function (index) { root.openDetail(index) }
+    }
+
+    function openDetail(index) {
+        if (index < 0) {
+            return
+        }
+        detail.path = Captures.pathAt(index)
+        detail.fileName = Captures.fileNameAt(index)
+        detail.kind = Captures.kindAt(index)
+        detail.kindLabel = Captures.kindLabelAt(index)
+        detail.dayLabel = Captures.dayLabelAt(index)
+        detail.timeLabel = Captures.timeLabelAt(index)
+        detail.sizeLabel = Captures.sizeLabelAt(index)
+        detail.isVideo = Captures.isVideoAt(index)
+        detail.favorite = Settings.isFavorite(detail.path)
+        detail.open()
     }
 
     // Empty state. Two different empties: nothing exists, or nothing matches
@@ -193,10 +313,10 @@ ApplicationWindow {
             elide: Text.ElideRight
             text: notice.text !== ""
                   ? notice.text
-                  : "Enter open   ·   F files   ·   Del trash   ·   / search   ·   R rescan   ·   hjkl move"
+                  : "Space preview   ·   M matte   ·   T trim   ·   V favourite   ·   Del trash   ·   / search"
             font.family: Theme.fontFamily
             font.pixelSize: 11
-            color: notice.text !== "" ? Theme.red : root.shade(Theme.foreground, 0.42)
+            color: notice.text !== "" ? Theme.accent : root.shade(Theme.foreground, 0.42)
             Behavior on color { ColorAnimation { duration: 180 } }
         }
 
@@ -205,24 +325,51 @@ ApplicationWindow {
             anchors.right: parent.right
             anchors.rightMargin: 20
             anchors.verticalCenter: parent.verticalCenter
-            text: Theme.themeName
+            text: Library.scanning ? "Scanning…" : Theme.themeName
             font.family: Theme.fontFamily
             font.pixelSize: 11
             color: root.shade(Theme.foreground, 0.32)
         }
     }
 
+    DetailSheet {
+        id: detail
+        onActionTriggered: function (id) {
+            if (id !== "play" && id !== "view") {
+                detail.close()
+            }
+            root.perform(id, detail.path)
+        }
+    }
+
+    MatteSheet {
+        id: matteSheet
+    }
+
+    SettingsSheet {
+        id: settingsSheet
+        onRescanRequested: Library.refresh()
+    }
+
     ConfirmSheet {
         id: confirm
-        title: "Move this capture to Trash?"
         confirmLabel: "Move to Trash"
         onAccepted: {
-            if (Actions.moveToTrash(root.pendingDeletePath)) {
-                notice.text = "Moved to Trash"
-                noticeTimer.restart()
-                Library.refresh()
+            if (root.pendingDeleteBatch.length > 0) {
+                let moved = 0
+                for (const path of root.pendingDeleteBatch) {
+                    if (Actions.moveToTrash(path)) {
+                        moved++
+                    }
+                }
+                root.say("Moved " + moved + (moved === 1 ? " capture" : " captures") + " to Trash")
+                library.clearChecked()
+            } else if (Actions.moveToTrash(root.pendingDeletePath)) {
+                root.say("Moved to Trash")
             }
             root.pendingDeletePath = ""
+            root.pendingDeleteBatch = []
+            Library.refresh()
         }
     }
 
@@ -235,49 +382,104 @@ ApplicationWindow {
 
     Timer {
         id: noticeTimer
-        interval: 4000
+        interval: 4200
         onTriggered: notice.text = ""
     }
 
     Connections {
         target: Actions
-        function onFailed(message) {
-            notice.text = message
-            noticeTimer.restart()
-        }
+        function onFailed(message) { root.say(message) }
+        function onReported(message) { root.say(message) }
     }
 
+    Connections {
+        target: Matte
+        function onComposed(outputPath) {
+            root.say("Matte copied and saved beside the original")
+            Library.refresh()
+        }
+        function onFailed(message) { root.say(message) }
+    }
+
+    // Shortcuts. All disabled while a sheet is open, which owns its own keys.
+    Shortcut {
+        sequences: ["M"]
+        enabled: !root.anySheetOpen
+        onActivated: root.perform("matte", root.currentPath())
+    }
+    Shortcut {
+        sequences: ["T"]
+        enabled: !root.anySheetOpen
+        onActivated: root.perform("trim", root.currentPath())
+    }
+    Shortcut {
+        sequences: ["P"]
+        enabled: !root.anySheetOpen
+        onActivated: root.perform("play", root.currentPath())
+    }
+    Shortcut {
+        sequences: ["A"]
+        enabled: !root.anySheetOpen
+        onActivated: root.perform("annotate", root.currentPath())
+    }
+    Shortcut {
+        sequences: ["C"]
+        enabled: !root.anySheetOpen
+        onActivated: root.perform("ocr", root.currentPath())
+    }
+    Shortcut {
+        sequences: ["Y"]
+        enabled: !root.anySheetOpen
+        onActivated: root.perform("copy", root.currentPath())
+    }
+    Shortcut {
+        sequences: ["S"]
+        enabled: !root.anySheetOpen
+        onActivated: root.perform("send", root.currentPath())
+    }
+    Shortcut {
+        sequences: ["V"]
+        enabled: !root.anySheetOpen
+        onActivated: root.perform("favorite", root.currentPath())
+    }
+    Shortcut {
+        sequences: ["H"]
+        enabled: !root.anySheetOpen
+        onActivated: root.perform("hide", root.currentPath())
+    }
     Shortcut {
         sequences: ["F"]
-        enabled: !confirm.visible
-        onActivated: {
-            const path = Captures.pathAt(library.currentIndex)
-            if (path !== "") {
-                Actions.showInFiles(path)
-            }
-        }
+        enabled: !root.anySheetOpen
+        onActivated: root.perform("files", root.currentPath())
     }
-
     Shortcut {
         sequences: ["R"]
-        enabled: !confirm.visible
+        enabled: !root.anySheetOpen
         onActivated: Library.refresh()
     }
-
     Shortcut {
         sequences: ["/"]
-        enabled: !confirm.visible
+        enabled: !root.anySheetOpen
         onActivated: filters.focusSearch()
     }
-
     Shortcut {
-        sequence: StandardKey.Quit
+        sequences: ["Ctrl+A"]
+        enabled: !root.anySheetOpen
+        onActivated: library.checkAll()
+    }
+    Shortcut {
+        sequences: [StandardKey.Quit]
         onActivated: Qt.quit()
     }
-
     Shortcut {
-        sequence: "Escape"
-        enabled: !confirm.visible
-        onActivated: root.close()
+        sequences: ["Escape"]
+        enabled: !root.anySheetOpen
+        onActivated: {
+            if (library.checkedCount > 0) {
+                library.clearChecked()
+            } else {
+                root.close()
+            }
+        }
     }
 }

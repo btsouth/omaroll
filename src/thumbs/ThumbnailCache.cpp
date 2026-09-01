@@ -29,17 +29,18 @@ QString ThumbnailCache::cacheDirectory() {
   return cacheHome() + QStringLiteral("/omaroll/thumbs");
 }
 
-QString ThumbnailCache::cacheKey(const QString& path, const QSize& pixelSize) {
+QString ThumbnailCache::cacheKey(const QString& path, const QSize& pixelSize, int seekPercent) {
   const QFileInfo info(path);
 
   // Same identity Omarchy's own image picker uses (size and mtime), plus the
   // rendered size so a scale change is a miss rather than a blurry hit.
-  const QString identity = QStringLiteral("%1|%2|%3|%4x%5")
+  const QString identity = QStringLiteral("%1|%2|%3|%4x%5|t%6")
                                .arg(path)
                                .arg(info.size())
                                .arg(info.lastModified().toSecsSinceEpoch())
                                .arg(pixelSize.width())
-                               .arg(pixelSize.height());
+                               .arg(pixelSize.height())
+                               .arg(seekPercent);
 
   return QString::fromLatin1(
       QCryptographicHash::hash(identity.toUtf8(), QCryptographicHash::Md5).toHex());
@@ -68,7 +69,7 @@ QImage ThumbnailCache::renderImage(const QString& path, const QSize& pixelSize) 
   return reader.read();
 }
 
-QImage ThumbnailCache::renderVideo(const QString& path, const QSize& pixelSize) {
+QImage ThumbnailCache::renderVideo(const QString& path, const QSize& pixelSize, int seekPercent) {
   const QString executable = QStandardPaths::findExecutable(QStringLiteral("ffmpegthumbnailer"));
   if (executable.isEmpty()) {
     return {};
@@ -87,8 +88,8 @@ QImage ThumbnailCache::renderVideo(const QString& path, const QSize& pixelSize) 
                                 // Longest edge; ffmpegthumbnailer preserves aspect.
                                 QStringLiteral("-s"),
                                 QString::number(std::max(pixelSize.width(), pixelSize.height())),
-                                // Seek 20% in: frame zero is very often black.
-                                QStringLiteral("-t"), QStringLiteral("20%"),
+                                QStringLiteral("-t"),
+                                QStringLiteral("%1%").arg(qBound(0, seekPercent, 95)),
                                 QStringLiteral("-q"), QStringLiteral("8"),
                             });
 
@@ -101,7 +102,7 @@ QImage ThumbnailCache::renderVideo(const QString& path, const QSize& pixelSize) 
 }
 
 QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
-                                 qreal devicePixelRatio) {
+                                 qreal devicePixelRatio, int seekPercent) {
   if (path.isEmpty() || !QFileInfo::exists(path)) {
     return {};
   }
@@ -115,7 +116,7 @@ QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
 
   const QString directory = cacheDirectory();
   const QString cachePath =
-      directory + QLatin1Char('/') + cacheKey(path, pixelSize) + QStringLiteral(".jpg");
+      directory + QLatin1Char('/') + cacheKey(path, pixelSize, seekPercent) + QStringLiteral(".jpg");
 
   QImage cached(cachePath);
   if (!cached.isNull()) {
@@ -123,7 +124,7 @@ QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
   }
 
   const QString suffix = QFileInfo(path).suffix();
-  QImage rendered = CaptureScanner::isVideo(suffix) ? renderVideo(path, pixelSize)
+  QImage rendered = CaptureScanner::isVideo(suffix) ? renderVideo(path, pixelSize, seekPercent)
                                                     : renderImage(path, pixelSize);
   if (rendered.isNull()) {
     return {};

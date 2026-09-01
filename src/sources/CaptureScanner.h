@@ -18,8 +18,11 @@ public:
     QString path;
     // Captures land flat, so depth 1. General media roots recurse.
     int maxDepth = 1;
-    // Files here that match no capture pattern fall back to this kind.
-    CaptureRecord::Kind fallbackKind = CaptureRecord::Picture;
+    // Files here that match no producer pattern fall back to these, chosen by
+    // medium. Two fields rather than one so a root like Downloads can call
+    // everything a Download while Pictures still splits image from video.
+    CaptureRecord::Kind imageFallback = CaptureRecord::Picture;
+    CaptureRecord::Kind videoFallback = CaptureRecord::Video;
   };
 
   [[nodiscard]] static QList<CaptureRecord> scan(const QList<Root>& roots);

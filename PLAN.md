@@ -11,7 +11,7 @@ the job. It replaces nothing. It just gives all of it a home.
 - Reuses the omakade skeleton
 - Offline by default, no telemetry, no accounts
 
-Status: planning. Nothing public yet.
+Status: **v1.0.0 built and tested locally. Nothing published.**
 
 ---
 
@@ -644,7 +644,7 @@ performance budget and finds libvips is worth the link. Video thumbnails came fo
 because `ffmpegthumbnailer` is a one-process call and a recordings grid without frames is not worth
 looking at.
 
-### v0.2 — It is fast and complete
+### v0.2 — It is fast and complete  ·  **shipped**
 
 - Video thumbnails via ffmpegthumbnailer, hover-scrub strips
 - Thumbnails generated at `devicePixelRatio`, cache keyed on rendered pixel size
@@ -657,7 +657,7 @@ looking at.
 
 *Internal. Hits the performance budget here or it gets fixed here.*
 
-### v0.3 — It does things
+### v0.3 — It does things  ·  **shipped**
 
 The action registry lands, and with it the whole delegation argument.
 
@@ -671,7 +671,7 @@ The action registry lands, and with it the whole delegation argument.
 
 *First public beta. Post it to the Omarchy Discord.*
 
-### v0.4 — Mattes
+### v0.4 — Mattes  ·  **shipped**
 
 - HueExtractor and MatteComposer, all seven mattes, ported from compose.rs
 - MattePicker sheet, six variants, keyboard select
@@ -680,7 +680,7 @@ The action registry lands, and with it the whole delegation argument.
 
 *The feature the launch video opens on.*
 
-### v0.9 — Release candidate
+### v0.9 — Release candidate  ·  **shipped**
 
 - `--demo` mode with a deterministic fictional library, same as omakade, so launch material never
   exposes real files
@@ -691,11 +691,43 @@ The action registry lands, and with it the whole delegation argument.
 
 *Tagged RC, tested on a clean Omarchy VM.*
 
-### v1.0 — Ship
+### v1.0 — Ship  ·  **built, not published**
+
+Code, packaging, tests and README are done and tagged 1.0.0 locally. The three
+publishing steps are deliberately not taken:
 
 - GitHub release with `.pkg.tar.zst` and SHA256SUMS
 - PKGBUILD submitted to OPR
 - Launch post
+
+### What actually shipped, against the plan
+
+Two deviations, both recorded rather than quietly made:
+
+- **Thumbnails use `QImageReader` scaled decode, not libvips.** For JPEG that
+  already hands libjpeg a scale denominator, so a large photo is never fully
+  decoded to draw a tile, and it removed a dependency. `ThumbnailCache::renderImage`
+  is the one function to swap if measurement ever justifies the link.
+- **Video thumbnails and hover-scrub came forward from v0.2 to v0.1.**
+  `ffmpegthumbnailer` is a one-process call and a recordings grid without frames
+  is not worth looking at.
+
+Three features in the plan were **deleted after auditing the Omarchy tree**,
+because something already installed does the job:
+
+- Annotation → `tensaku-edit`, honouring `$OMARCHY_SCREENSHOT_EDITOR`
+- GIF, resize and format conversion → `omarchy-transcode`
+- Clipboard → `omarchy-clipboard-paste-file`
+
+Added beyond the plan, because verification needed them and the launch will too:
+
+- `--demo`, a deterministic fictional library, so no screenshot of omaroll ever
+  shows a real file
+- `--render <file> [--render-view grid|detail|matte]`, which grabs the scene
+  graph rather than the screen, so a render cannot be spoiled by an overlapping
+  window and the project's images are reproducible
+- 22 tests over classification, traversal, sorting, filtering, hidden marks, hue
+  extraction and every matte, including the output-budget ceiling
 
 ---
 

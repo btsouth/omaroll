@@ -44,6 +44,26 @@ void CaptureFilterModel::setSearchText(const QString& text) {
   emit countChanged();
 }
 
+void CaptureFilterModel::setFavoritesOnly(bool value) {
+  if (m_favoritesOnly == value) {
+    return;
+  }
+  m_favoritesOnly = value;
+  invalidateFilter();
+  emit favoritesOnlyChanged();
+  emit countChanged();
+}
+
+void CaptureFilterModel::setShowHidden(bool value) {
+  if (m_showHidden == value) {
+    return;
+  }
+  m_showHidden = value;
+  invalidateFilter();
+  emit showHiddenChanged();
+  emit countChanged();
+}
+
 QString CaptureFilterModel::pathAt(int row) const {
   return data(index(row, 0), CaptureRoles::PathRole).toString();
 }
@@ -56,12 +76,40 @@ QString CaptureFilterModel::dayLabelAt(int row) const {
   return data(index(row, 0), CaptureRoles::DayLabelRole).toString();
 }
 
+QString CaptureFilterModel::timeLabelAt(int row) const {
+  return data(index(row, 0), CaptureRoles::TimeLabelRole).toString();
+}
+
+QString CaptureFilterModel::sizeLabelAt(int row) const {
+  return data(index(row, 0), CaptureRoles::SizeLabelRole).toString();
+}
+
+QString CaptureFilterModel::kindLabelAt(int row) const {
+  return data(index(row, 0), CaptureRoles::KindLabelRole).toString();
+}
+
+int CaptureFilterModel::kindAt(int row) const {
+  return data(index(row, 0), CaptureRoles::KindRole).toInt();
+}
+
+bool CaptureFilterModel::isVideoAt(int row) const {
+  return data(index(row, 0), CaptureRoles::IsVideoRole).toBool();
+}
+
 int CaptureFilterModel::sourceCount() const {
   return sourceModel() ? sourceModel()->rowCount() : 0;
 }
 
 bool CaptureFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex& sourceParent) const {
   const QModelIndex row = sourceModel()->index(sourceRow, 0, sourceParent);
+
+  if (!m_showHidden && row.data(CaptureRoles::HiddenRole).toBool()) {
+    return false;
+  }
+
+  if (m_favoritesOnly && !row.data(CaptureRoles::FavoriteRole).toBool()) {
+    return false;
+  }
 
   if (m_kindFilter != kAllKinds &&
       row.data(CaptureRoles::KindRole).toInt() != m_kindFilter) {

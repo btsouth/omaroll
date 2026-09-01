@@ -15,13 +15,17 @@ public:
   // time and cache space without being visible.
   static constexpr qreal kMaxDevicePixelRatio = 2.0;
 
+  // seekPercent only applies to video: which point in the clip to grab. Frame
+  // zero is very often black, so the resting value is a fifth of the way in.
   [[nodiscard]] static QImage thumbnail(const QString& path, const QSize& logicalSize,
-                                        qreal devicePixelRatio);
+                                        qreal devicePixelRatio, int seekPercent = 20);
 
   [[nodiscard]] static QString cacheDirectory();
 
 private:
   [[nodiscard]] static QImage renderImage(const QString& path, const QSize& pixelSize);
-  [[nodiscard]] static QImage renderVideo(const QString& path, const QSize& pixelSize);
-  [[nodiscard]] static QString cacheKey(const QString& path, const QSize& pixelSize);
+  [[nodiscard]] static QImage renderVideo(const QString& path, const QSize& pixelSize,
+                                          int seekPercent);
+  [[nodiscard]] static QString cacheKey(const QString& path, const QSize& pixelSize,
+                                        int seekPercent);
 };

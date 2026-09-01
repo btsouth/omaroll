@@ -188,22 +188,17 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots) {
         if (classifyByName(name, named, namedTime)) {
           record.kind = named;
           record.captured = namedTime;
-        } else {
-          // No producer signature. Fall back on the medium, not the directory,
-          // so a relocated capture folder still classifies correctly.
-          record.kind = video ? CaptureRecord::Video : root.fallbackKind;
-          if (video && root.fallbackKind == CaptureRecord::Picture) {
-            record.kind = CaptureRecord::Video;
-          }
-        }
 
-        // A name that says "screenshot" on a video file is a video; trust the
-        // medium over the label when they disagree.
-        if (video && record.kind == CaptureRecord::Screenshot) {
-          record.kind = CaptureRecord::Recording;
-        }
-        if (image && record.kind == CaptureRecord::Recording) {
-          record.kind = CaptureRecord::Screenshot;
+          // A name that says "screenshot" on a video file is still a video.
+          // Trust the medium over the label when the two disagree.
+          if (video && record.kind == CaptureRecord::Screenshot) {
+            record.kind = CaptureRecord::Recording;
+          } else if (image && record.kind == CaptureRecord::Recording) {
+            record.kind = CaptureRecord::Screenshot;
+          }
+        } else {
+          // No producer signature, so the root decides, by medium.
+          record.kind = video ? root.videoFallback : root.imageFallback;
         }
 
         records.append(record);

@@ -14,12 +14,51 @@ FocusScope {
     property alias count: grid.count
     property string currentDayLabel: ""
 
+    // Multi-select is held by path, not by row. Sorting, filtering and rescans
+    // all move rows around, and a selection that silently retargets is how bulk
+    // delete trashes the wrong files.
+    property var checkedSet: ({})
+    property int checkedCount: 0
+
     signal chosen(string path)
     signal deleteRequested(string path)
+    signal detailRequested(int index)
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
     }
+
+    function isChecked(path) { return checkedSet[path] === true }
+
+    function toggleChecked(path) {
+        if (path === "") {
+            return
+        }
+        const next = Object.assign({}, checkedSet)
+        if (next[path]) {
+            delete next[path]
+        } else {
+            next[path] = true
+        }
+        checkedSet = next
+        checkedCount = Object.keys(next).length
+    }
+
+    function clearChecked() {
+        checkedSet = ({})
+        checkedCount = 0
+    }
+
+    function checkAll() {
+        const next = {}
+        for (let i = 0; i < grid.count; i++) {
+            next[Captures.pathAt(i)] = true
+        }
+        checkedSet = next
+        checkedCount = Object.keys(next).length
+    }
+
+    function checkedPaths() { return Object.keys(checkedSet) }
 
     // Cells stay near a target width and flex to fill the row exactly, so there
     // is never a ragged gutter down the right edge. The scrollbar's width comes
@@ -59,7 +98,7 @@ FocusScope {
         boundsBehavior: Flickable.StopAtBounds
         highlight: null
 
-        // A sort or filter change reshuffles rows; fading rather than snapping
+        // A sort or filter change reshuffles rows; moving rather than snapping
         // makes it read as the same library reordering itself.
         displaced: Transition {
             NumberAnimation { properties: "x,y"; duration: 200; easing.type: Easing.OutQuad }
@@ -83,6 +122,8 @@ FocusScope {
             required property string timeLabel
             required property string sizeLabel
             required property bool isVideo
+            required property bool favorite
+            required property bool hidden
 
             width: grid.cellWidth
             height: grid.cellHeight
@@ -97,47 +138,24 @@ FocusScope {
                 timeLabel: cell.timeLabel
                 sizeLabel: cell.sizeLabel
                 isVideo: cell.isVideo
+                favorite: cell.favorite
+                hiddenMark: cell.hidden
                 selected: grid.currentIndex === cell.index
+                checked: root.isChecked(cell.path)
+                selectionMode: root.checkedCount > 0
 
                 onActivated: {
                     grid.currentIndex = cell.index
                     grid.forceActiveFocus()
                 }
-                onChosen: root.chosen(cell.path)
-            }
-        }
-
-        ScrollBar.vertical: ScrollBar {
-            id: scrollbar
-            policy: ScrollBar.AsNeeded
-            width: root.scrollbarWidth
-            // Anchored outside the grid's right margin so it never sits on top
-            // of a thumbnail.
-            parent: root
-            anchors.top: root.top
-            anchors.right: root.right
-            anchors.bottom: root.bottom
-
-            contentItem: Rectangle {
-                implicitWidth: scrollbar.hovered || scrollbar.pressed ? 8 : 6
-                radius: width / 2
-                color: root.shade(Theme.foreground,
-                                  scrollbar.pressed ? 0.62
-                                                    : (scrollbar.hovered ? 0.46 : 0.32))
-                Behavior on implicitWidth { NumberAnimation { duration: 120 } }
-                Behavior on color { ColorAnimation { duration: 140 } }
-            }
-
-            background: Rectangle {
-                implicitWidth: 8
-                radius: width / 2
-                color: root.shade(Theme.foreground, scrollbar.hovered ? 0.10 : 0.05)
-                Behavior on color { ColorAnimation { duration: 140 } }
+                onChosen: root.detailRequested(cell.index)
+                onToggleChecked: root.toggleChecked(cell.path)
             }
         }
 
         // Arrows are handled by GridView itself; this adds the vim keys and the
-        // ones that act on the selection.
+        // ones that act on the selection. Single-letter action keys live in
+        // Main so they work whether or not the grid has focus.
         Keys.onPressed: function (event) {
             switch (event.key) {
             case Qt.Key_Return:
@@ -147,19 +165,23 @@ FocusScope {
                     event.accepted = true
                 }
                 break
+            case Qt.Key_Space:
+                if (grid.currentIndex >= 0) {
+                    root.detailRequested(grid.currentIndex)
+                    event.accepted = true
+                }
+                break
             case Qt.Key_Delete:
                 if (grid.currentIndex >= 0) {
                     root.deleteRequested(Captures.pathAt(grid.currentIndex))
                     event.accepted = true
                 }
                 break
-            case Qt.Key_H:
-                grid.moveCurrentIndexLeft()
-                event.accepted = true
-                break
-            case Qt.Key_L:
-                grid.moveCurrentIndexRight()
-                event.accepted = true
+            case Qt.Key_X:
+                if (grid.currentIndex >= 0) {
+                    root.toggleChecked(Captures.pathAt(grid.currentIndex))
+                    event.accepted = true
+                }
                 break
             case Qt.Key_J:
                 grid.moveCurrentIndexDown()
@@ -180,6 +202,46 @@ FocusScope {
                 event.accepted = true
                 break
             }
+        }
+    }
+
+    // Standalone rather than GridView's attached ScrollBar. The attached one is
+    // reparented into the Flickable, so it cannot be anchored beside the grid;
+    // driving a sibling keeps the bar in its own column where it can never sit
+    // on top of a thumbnail.
+    ScrollBar {
+        id: scrollbar
+        orientation: Qt.Vertical
+        policy: grid.contentHeight > grid.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        width: root.scrollbarWidth
+
+        size: grid.height / Math.max(grid.contentHeight, 1)
+        position: grid.visibleArea.yPosition
+        onPositionChanged: {
+            if (pressed) {
+                grid.contentY = position * grid.contentHeight
+            }
+        }
+
+        contentItem: Rectangle {
+            implicitWidth: scrollbar.hovered || scrollbar.pressed ? 8 : 6
+            radius: width / 2
+            color: root.shade(Theme.foreground,
+                              scrollbar.pressed ? 0.62
+                                                : (scrollbar.hovered ? 0.46 : 0.32))
+            Behavior on implicitWidth { NumberAnimation { duration: 120 } }
+            Behavior on color { ColorAnimation { duration: 140 } }
+        }
+
+        background: Rectangle {
+            implicitWidth: 8
+            radius: width / 2
+            color: root.shade(Theme.foreground, scrollbar.hovered ? 0.10 : 0.05)
+            Behavior on color { ColorAnimation { duration: 140 } }
         }
     }
 }

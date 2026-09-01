@@ -14,9 +14,9 @@ constexpr int kFallbackEdge = 320;
 
 class ThumbnailResponse final : public QQuickImageResponse, public QRunnable {
 public:
-  ThumbnailResponse(QString path, QSize logicalSize, qreal devicePixelRatio)
+  ThumbnailResponse(QString path, QSize logicalSize, qreal devicePixelRatio, int seekPercent)
       : m_path(std::move(path)), m_logicalSize(logicalSize),
-        m_devicePixelRatio(devicePixelRatio) {
+        m_devicePixelRatio(devicePixelRatio), m_seekPercent(seekPercent) {
     setAutoDelete(false);
   }
 
@@ -27,7 +27,7 @@ public:
   [[nodiscard]] QString errorString() const override { return m_error; }
 
   void run() override {
-    m_image = ThumbnailCache::thumbnail(m_path, m_logicalSize, m_devicePixelRatio);
+    m_image = ThumbnailCache::thumbnail(m_path, m_logicalSize, m_devicePixelRatio, m_seekPercent);
     if (m_image.isNull()) {
       // A file that cannot be thumbnailed is ordinary: an unreadable codec, a
       // truncated download, a permission the user does not have. Report it and
@@ -41,6 +41,7 @@ private:
   QString m_path;
   QSize m_logicalSize;
   qreal m_devicePixelRatio = 1.0;
+  int m_seekPercent = 20;
   QImage m_image;
   QString m_error;
 };
@@ -60,13 +61,28 @@ QQuickImageResponse* ThumbnailProvider::requestImageResponse(const QString& id,
   // parser leaves alone. The ratio is the first path segment and the absolute
   // path is everything from the next slash on:
   //   image://thumbs/1.5/home/user/Pictures/shot.png
+  //   image://thumbs/1.5@60/home/user/Videos/clip.mp4
+  // The optional @<percent> is the seek position for a video scrub frame.
   qreal devicePixelRatio = 1.0;
+  int seekPercent = 20;
   QString path = id;
 
   const qsizetype separator = id.indexOf(QLatin1Char('/'));
   if (separator > 0) {
+    QString head = id.left(separator);
+
+    const qsizetype at = head.indexOf(QLatin1Char('@'));
+    if (at > 0) {
+      bool seekOkay = false;
+      const int parsedSeek = QStringView{head}.mid(at + 1).toInt(&seekOkay);
+      if (seekOkay) {
+        seekPercent = qBound(0, parsedSeek, 95);
+      }
+      head = head.left(at);
+    }
+
     bool okay = false;
-    const qreal parsed = QStringView{id}.left(separator).toDouble(&okay);
+    const qreal parsed = head.toDouble(&okay);
     if (okay && parsed > 0.0) {
       devicePixelRatio = parsed;
       path = id.mid(separator);
@@ -82,7 +98,7 @@ QQuickImageResponse* ThumbnailProvider::requestImageResponse(const QString& id,
     logicalSize = QSize(kFallbackEdge, kFallbackEdge);
   }
 
-  auto* response = new ThumbnailResponse(path, logicalSize, devicePixelRatio);
+  auto* response = new ThumbnailResponse(path, logicalSize, devicePixelRatio, seekPercent);
   m_pool.start(response);
   return response;
 }
