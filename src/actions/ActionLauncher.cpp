@@ -240,10 +240,17 @@ bool ActionLauncher::captureTextToClipboard(const QString& program, const QStrin
   process->setProgram(executable);
   process->setArguments(arguments);
 
-  connect(process, &QProcess::errorOccurred, this, [this, process, program] {
-    emit failed(u"Could not start %1"_s.arg(program));
-    process->deleteLater();
-  });
+  connect(process, &QProcess::errorOccurred, this,
+          [this, process, program](QProcess::ProcessError error) {
+            // A crash after a successful start also emits finished, which
+            // reports the tool's own last line; only a start that never
+            // happened ends here.
+            if (error != QProcess::FailedToStart) {
+              return;
+            }
+            emit failed(u"Could not start %1"_s.arg(program));
+            process->deleteLater();
+          });
 
   connect(process, &QProcess::finished, this,
           [this, process, program, sensitive, confirmation, nothingFound](
