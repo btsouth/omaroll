@@ -6,6 +6,7 @@
 #include <QFileInfo>
 #include <QProcess>
 #include <QStandardPaths>
+#include <QTimer>
 #include <QVariantMap>
 
 using namespace Qt::StringLiterals;
@@ -206,7 +207,8 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
 ActionRegistry::ActionRegistry(ActionLauncher* launcher, QObject* parent)
     : QObject(parent), m_launcher(launcher), m_definitions(buildTable()) {}
 
-bool ActionRegistry::outputLooksComplete(const QString& path) {
+void ActionRegistry::probeThenLaunch(const Definition& definition, const QStringList& arguments,
+                                     const QString& output) {
   // A >0-byte file is not proof the transcode finished: the fire-and-forget
   // era could die mid-write and leave a truncated mp4 that then blocked every
   // retry as "already done". ffprobe reads the container the way any player
@@ -214,16 +216,49 @@ bool ActionRegistry::outputLooksComplete(const QString& path) {
   // is somehow absent, trust the file rather than re-transcoding on a guess.
   const QString ffprobe = QStandardPaths::findExecutable(QStringLiteral("ffprobe"));
   if (ffprobe.isEmpty()) {
-    return true;
+    m_launcher->revealExisting(output);
+    return;
   }
-  QProcess probe;
-  probe.start(ffprobe, {u"-v"_s, u"error"_s, path});
-  if (!probe.waitForFinished(4000)) {
-    probe.kill();
-    return true;
-  }
-  return probe.exitStatus() == QProcess::NormalExit && probe.exitCode() == 0 &&
-         probe.readAllStandardError().trimmed().isEmpty();
+
+  // Off the event loop: a probe of a large file on a slow disk can take
+  // seconds, and the window has to stay live while it decides.
+  auto* probe = new QProcess(this);
+  auto* timeout = new QTimer(probe);
+  timeout->setSingleShot(true);
+  timeout->setInterval(4000);
+  connect(timeout, &QTimer::timeout, probe, &QProcess::kill);
+
+  connect(probe, &QProcess::finished, this,
+          [this, probe, definition, arguments, output](int exitCode, QProcess::ExitStatus status) {
+            probe->deleteLater();
+            // A probe that had to be killed says nothing about the file; trust
+            // it, as a missing ffprobe does, rather than throw away a good one.
+            const bool killed = status != QProcess::NormalExit;
+            const bool complete =
+                killed || (exitCode == 0 && probe->readAllStandardError().trimmed().isEmpty());
+            if (complete) {
+              // Shown, not just mentioned: the viewer opens on the file,
+              // because "already done" with nothing to look at reads as
+              // nothing happening.
+              m_launcher->revealExisting(output);
+              return;
+            }
+            // A truncated file with this exact name is the corpse of a
+            // transcode that died before runs were tracked. Left in place it
+            // blocks every retry forever, because ffmpeg refuses to overwrite.
+            QFile::remove(output);
+            launch(definition, arguments, output);
+          });
+  connect(probe, &QProcess::errorOccurred, this, [this, probe, output](QProcess::ProcessError error) {
+    if (error != QProcess::FailedToStart) {
+      return;
+    }
+    probe->deleteLater();
+    m_launcher->revealExisting(output);
+  });
+
+  probe->start(ffprobe, {u"-v"_s, u"error"_s, output});
+  timeout->start();
 }
 
 bool ActionRegistry::applies(const Definition& definition, bool video) {
@@ -323,28 +358,6 @@ bool ActionRegistry::run(const QString& id, const QStringList& paths) {
     return argument;
   };
 
-  QString output;
-  if (!definition->output.isEmpty()) {
-    output = first.absolutePath() + QLatin1Char('/') + expand(definition->output);
-    if (m_launcher->isPending(output)) {
-      m_launcher->report(u"Still working on %1"_s.arg(QFileInfo(output).fileName()));
-      return true;
-    }
-    const QFileInfo existing(output);
-    if (existing.exists()) {
-      if (existing.size() > 0 && outputLooksComplete(output)) {
-        // Shown, not just mentioned: the viewer opens on the file, because
-        // "already done" with nothing to look at reads as nothing happening.
-        m_launcher->revealExisting(output);
-        return true;
-      }
-      // An empty or truncated file with this exact name is the corpse of a
-      // transcode that died before runs were tracked. Left in place it blocks
-      // every retry forever, because ffmpeg refuses to overwrite.
-      QFile::remove(output);
-    }
-  }
-
   QStringList arguments;
   arguments.reserve(definition->arguments.size() + paths.size());
   for (const QString& argument : definition->arguments) {
@@ -370,9 +383,36 @@ bool ActionRegistry::run(const QString& id, const QStringList& paths) {
     break;
   }
 
-  if (!output.isEmpty()) {
-    return m_launcher->runTracked(definition->program, arguments, definition->packageHint, output);
+  QString output;
+  if (!definition->output.isEmpty()) {
+    output = first.absolutePath() + QLatin1Char('/') + expand(definition->output);
+    if (m_launcher->isPending(output)) {
+      m_launcher->report(u"Still working on %1"_s.arg(QFileInfo(output).fileName()));
+      return true;
+    }
+    const QFileInfo existing(output);
+    if (existing.exists()) {
+      if (existing.size() > 0) {
+        // Finished, or a truncated leftover: ffprobe decides, off the GUI
+        // thread, and the launch follows from there.
+        probeThenLaunch(*definition, arguments, output);
+        return true;
+      }
+      // An empty file with this exact name is the corpse of a transcode that
+      // died before runs were tracked. Left in place it blocks every retry
+      // forever, because ffmpeg refuses to overwrite.
+      QFile::remove(output);
+    }
   }
-  return m_launcher->runDetached(definition->program, arguments, definition->packageHint,
-                                 definition->confirmation);
+
+  return launch(*definition, arguments, output);
+}
+
+bool ActionRegistry::launch(const Definition& definition, const QStringList& arguments,
+                            const QString& output) {
+  if (!output.isEmpty()) {
+    return m_launcher->runTracked(definition.program, arguments, definition.packageHint, output);
+  }
+  return m_launcher->runDetached(definition.program, arguments, definition.packageHint,
+                                 definition.confirmation);
 }

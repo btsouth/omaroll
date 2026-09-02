@@ -88,7 +88,12 @@ public:
 
 private:
   bool run(const QString& id, const QStringList& paths);
-  [[nodiscard]] static bool outputLooksComplete(const QString& path);
+  // The output already exists and is not empty: ask ffprobe whether it is
+  // whole, then either reveal it or clear it and launch. Asynchronous, so a
+  // slow probe never freezes the window.
+  void probeThenLaunch(const Definition& definition, const QStringList& arguments,
+                       const QString& output);
+  bool launch(const Definition& definition, const QStringList& arguments, const QString& output);
   [[nodiscard]] static bool applies(const Definition& definition, bool video);
   [[nodiscard]] const Definition* find(const QString& id) const;
   [[nodiscard]] static QList<Definition> buildTable();
