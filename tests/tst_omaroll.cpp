@@ -1216,6 +1216,38 @@ private slots:
     QCOMPARE(small.size(), image.size());
   }
 
+  void animatedGifThumbnailSeeksLikeAVideo() {
+    if (QStandardPaths::findExecutable(QStringLiteral("ffmpeg")).isEmpty()) {
+      QSKIP("ffmpeg not installed");
+    }
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    // One second of red then four of blue, so frame zero and the 20% frame a
+    // video's tile would show are unmistakably different colours.
+    const QString path = dir.filePath(QStringLiteral("clip-720p.gif"));
+    QProcess ffmpeg;
+    ffmpeg.start(QStandardPaths::findExecutable(QStringLiteral("ffmpeg")),
+                 {QStringLiteral("-loglevel"), QStringLiteral("error"), QStringLiteral("-f"),
+                  QStringLiteral("lavfi"), QStringLiteral("-i"),
+                  QStringLiteral("color=red:s=64x64:r=5:d=1"), QStringLiteral("-f"),
+                  QStringLiteral("lavfi"), QStringLiteral("-i"),
+                  QStringLiteral("color=blue:s=64x64:r=5:d=4"), QStringLiteral("-filter_complex"),
+                  QStringLiteral("[0][1]concat=n=2:v=1"), path});
+    QVERIFY(ffmpeg.waitForFinished(15000));
+    QCOMPARE(ffmpeg.exitCode(), 0);
+
+    // The default grid seek is 20%: past the red opening, into the blue.
+    const QImage tile = ThumbnailCache::thumbnail(path, QSize(64, 64), 1.0, 20);
+    QVERIFY(!tile.isNull());
+    const QColor centre = tile.pixelColor(tile.width() / 2, tile.height() / 2);
+    // The GIF palette dims pure blue, so compare channels rather than expect
+    // full saturation.
+    QVERIFY2(centre.blue() > 120 && centre.red() < 80,
+             qPrintable(QStringLiteral("expected the 20%% frame (blue), got %1")
+                            .arg(centre.name())));
+  }
+
   // --- Mattes -----------------------------------------------------------
 
   void hueExtractorFindsDominantColour() {

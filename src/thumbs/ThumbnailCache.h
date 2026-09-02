@@ -36,7 +36,8 @@ public:
   static void prune(qint64 maxBytes = kMaxCacheBytes);
 
 private:
-  [[nodiscard]] static QImage renderImage(const QString& path, const QSize& pixelSize);
+  [[nodiscard]] static QImage renderImage(const QString& path, const QSize& pixelSize,
+                                          int seekPercent);
   [[nodiscard]] static QImage renderVideo(const QString& path, const QSize& pixelSize,
                                           int seekPercent);
   [[nodiscard]] static QString cacheKey(const QString& path, const QSize& pixelSize,

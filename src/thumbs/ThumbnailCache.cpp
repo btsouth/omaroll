@@ -105,7 +105,7 @@ QString ThumbnailCache::cacheKey(const QString& path, const QSize& pixelSize, in
   // rendered size so a scale change is a miss rather than a blurry hit. The
   // leading tag versions the rendering itself, so a change in how tiles are
   // made invalidates everything rather than serving old shapes from cache.
-  const QString identity = QStringLiteral("cover1|%1|%2|%3|%4x%5|t%6")
+  const QString identity = QStringLiteral("cover2|%1|%2|%3|%4x%5|t%6")
                                .arg(path)
                                .arg(info.size())
                                .arg(info.lastModified().toMSecsSinceEpoch())
@@ -117,7 +117,7 @@ QString ThumbnailCache::cacheKey(const QString& path, const QSize& pixelSize, in
       QCryptographicHash::hash(identity.toUtf8(), QCryptographicHash::Md5).toHex());
 }
 
-QImage ThumbnailCache::renderImage(const QString& path, const QSize& pixelSize) {
+QImage ThumbnailCache::renderImage(const QString& path, const QSize& pixelSize, int seekPercent) {
   QImageReader reader(path);
   reader.setAutoTransform(true);
 
@@ -135,6 +135,21 @@ QImage ThumbnailCache::renderImage(const QString& path, const QSize& pixelSize) 
       target = original;
     }
     reader.setScaledSize(target);
+  }
+
+  // An animated image takes the same percent-in frame ffmpegthumbnailer gives
+  // a video, so a GIF clipped from a recording matches its source in the grid.
+  // Frame zero of a screen recording rarely resembles that frame, and the
+  // mismatched pair read as two unrelated videos. ffmpegthumbnailer cannot do
+  // this itself: the GIF demuxer is unseekable and it falls back to frame zero.
+  const int frames = reader.imageCount();
+  if (frames > 1) {
+    const int target = qBound(0, frames * qBound(0, seekPercent, 95) / 100, frames - 1);
+    for (int skipped = 0; skipped < target; ++skipped) {
+      if (!reader.jumpToNextImage() && reader.read().isNull()) {
+        break;
+      }
+    }
   }
 
   return reader.read();
@@ -204,7 +219,7 @@ QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
 
   const QString suffix = QFileInfo(path).suffix();
   QImage rendered = CaptureScanner::isVideo(suffix) ? renderVideo(path, pixelSize, seekPercent)
-                                                    : renderImage(path, pixelSize);
+                                                    : renderImage(path, pixelSize, seekPercent);
   if (rendered.isNull() && !CaptureScanner::isVideo(suffix)) {
     // Video bytes under an image name happen; ffmpegthumbnailer can read it.
     rendered = renderVideo(path, pixelSize, seekPercent);
