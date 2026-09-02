@@ -32,6 +32,14 @@ Item {
     property bool slideshowRunning: false
     property bool slideshowPausedForRender: false
     readonly property int slideshowInterval: 4000
+    // The stage's bottom row holds the image controls or the video transport
+    // beside the slideshow group. Labels shrink to icons when the row at its
+    // long labels would not fit; the widths come from hidden copies drawn in
+    // the theme font, so the decision follows the font rather than a guess.
+    readonly property bool compactControls: root.fullScreen
+        || stage.width < stage.rowChrome + wideTopMeasure.implicitWidth
+           + (root.isVideo && !root.slideshowRunning ? transport.minimumWidth
+                                                      : wideImageMeasure.implicitWidth)
 
     signal actionTriggered(string id)
     signal navigateRequested(int direction)
@@ -214,6 +222,41 @@ Item {
             anchors.right: sidebar.left
             anchors.margins: 1
             color: root.shade(Theme.darkerBackground, 0.85)
+
+            // Margins around the bottom row: 16 either side, 12 between the
+            // groups, 10 of padding inside the slideshow group's panel.
+            readonly property int rowChrome: 16 + 12 + 10 + 16
+
+            // Nothing here reads compactControls, which keeps it loop-free.
+            Row {
+                id: wideTopMeasure
+                visible: false
+                spacing: 6
+                Repeater {
+                    model: root.isVideo ? ["Start slideshow", "Hide details", "Fullscreen"]
+                                        : ["Start slideshow", "Hide details"]
+                    PillButton { label: modelData }
+                }
+            }
+            Row {
+                id: wideImageMeasure
+                visible: false
+                spacing: 6
+                Repeater {
+                    model: ["Fit", "−", "+", "Rotate", "Full"]
+                    PillButton { label: modelData }
+                }
+                Item { width: 42; height: 1 }
+            }
+            Row {
+                id: compactImageMeasure
+                visible: false
+                spacing: 6
+                Repeater {
+                    model: ["Fit", "−", "+", "↻", "⛶"]
+                    PillButton { label: modelData }
+                }
+            }
 
             // A recording shows its thumbnail until the first decoded frame.
             Image {
@@ -457,28 +500,28 @@ Item {
 
                     PillButton {
                         enabled: root.canNavigate
-                        label: root.fullScreen || stage.width < 520
+                        label: root.compactControls
                                ? (root.slideshowRunning ? "Ⅱ" : "▶")
                                : (root.slideshowRunning ? "Pause slideshow" : "Start slideshow")
-                        toolTip: root.fullScreen || stage.width < 520
+                        toolTip: root.compactControls
                                  ? (root.slideshowRunning ? "Pause slideshow" : "Start slideshow")
                                  : ""
                         active: root.slideshowRunning
                         onClicked: root.setSlideshow(!root.slideshowRunning)
                     }
                     PillButton {
-                        label: root.fullScreen || stage.width < 520 ? "i"
+                        label: root.compactControls ? "i"
                                                : (root.showInfo ? "Hide details" : "Show details")
-                        toolTip: root.fullScreen || stage.width < 520
+                        toolTip: root.compactControls
                                  ? (root.showInfo ? "Hide details" : "Show details") : ""
                         active: root.showInfo
                         onClicked: root.showInfo = !root.showInfo
                     }
                     PillButton {
                         visible: root.isVideo || root.slideshowRunning
-                        label: root.fullScreen ? "↙" : (stage.width < 520 ? "⛶" : "Fullscreen")
+                        label: root.fullScreen ? "↙" : (root.compactControls ? "⛶" : "Fullscreen")
                         toolTip: root.fullScreen ? "Exit fullscreen"
-                                                 : (stage.width < 520 ? "Fullscreen" : "")
+                                                 : (root.compactControls ? "Fullscreen" : "")
                         onClicked: root.setFullScreen(!root.fullScreen)
                     }
                 }
@@ -518,7 +561,7 @@ Item {
                 }
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    visible: stage.width >= 520
+                    visible: !root.compactControls
                     width: 42
                     horizontalAlignment: Text.AlignHCenter
                     text: Math.round(root.imageZoom * 100) + "%"
@@ -531,14 +574,19 @@ Item {
                     onClicked: root.adjustImageZoom(1.25)
                 }
                 PillButton {
-                    label: stage.width < 520 ? "↻" : "Rotate"
-                    toolTip: stage.width < 520 ? "Rotate" : ""
+                    label: root.compactControls ? "↻" : "Rotate"
+                    toolTip: root.compactControls ? "Rotate" : ""
                     onClicked: root.rotateImage()
                 }
                 PillButton {
-                    label: root.fullScreen ? "↙" : (stage.width < 520 ? "⛶" : "Full")
+                    // At the minimum window width with details shown, even the
+                    // icon row is a few pixels too wide. F11 still works.
+                    visible: !root.compactControls
+                             || stage.width >= stage.rowChrome + compactImageMeasure.implicitWidth
+                                               + topControls.implicitWidth
+                    label: root.fullScreen ? "↙" : (root.compactControls ? "⛶" : "Full")
                     toolTip: root.fullScreen ? "Exit fullscreen"
-                                             : (stage.width < 520 ? "Fullscreen" : "")
+                                             : (root.compactControls ? "Fullscreen" : "")
                     onClicked: root.setFullScreen(!root.fullScreen)
                 }
             }
@@ -554,6 +602,13 @@ Item {
                 anchors.rightMargin: 12
                 anchors.bottomMargin: 16
                 height: 28
+
+                // Play, clock and sound at their natural widths beside a scrub
+                // bar that is still worth dragging.
+                readonly property int scrubMinimum: 120
+                readonly property real minimumWidth: playButton.implicitWidth + 14 + scrubMinimum
+                                                     + 14 + clockLabel.implicitWidth + 12
+                                                     + soundButton.implicitWidth
 
                 function clock(ms) {
                     const total = Math.max(0, Math.round(ms / 1000))
@@ -574,7 +629,7 @@ Item {
                 Item {
                     id: scrub
                     anchors.left: playButton.right
-                    anchors.right: clockLabel.left
+                    anchors.right: clockLabel.visible ? clockLabel.left : soundButton.left
                     anchors.leftMargin: 14
                     anchors.rightMargin: 14
                     anchors.verticalCenter: parent.verticalCenter
@@ -619,6 +674,8 @@ Item {
 
                 Text {
                     id: clockLabel
+                    // The clock goes first when the transport is short of room.
+                    visible: transport.width >= transport.minimumWidth
                     anchors.right: soundButton.left
                     anchors.rightMargin: 12
                     anchors.verticalCenter: parent.verticalCenter
