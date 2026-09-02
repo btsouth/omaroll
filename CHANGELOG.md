@@ -4,6 +4,39 @@
 
 ### Added
 
+- Clear folder sources in Settings. Omaroll lists the Omarchy and XDG folders
+  it detects automatically, combines roles that resolve to the same path, and
+  marks unavailable paths. Added folders stay saved so removable storage can
+  return later.
+- Original media dates. General photos use EXIF DateTimeOriginal or
+  DateTimeDigitized, and videos use their embedded creation time, so files
+  copied into a watched folder still land on the day they were made. Omaroll
+  reads one file at a time after discovery, caches both found and missing dates
+  by file identity, and never overrides a timestamped capture filename.
+- Find exact duplicates. Browse opens a read-only review that compares only
+  same-size candidates, hashes them off the interface thread, keeps matching
+  sets together, and updates when files change. It never removes anything.
+- Save the current video frame. The viewer hands its exact playback position
+  to `ffmpeg`, writes a timestamped PNG beside the recording, and tracks the
+  result without changing the video.
+- Rename in place. The sheet keeps the media extension fixed, refuses an
+  existing filename, and carries favourites, hidden state, and album membership
+  to the new path.
+- Search inside pictures. Filename results appear immediately, then local
+  Tesseract indexing adds screenshots and photos containing every search term.
+  It starts only while search is active, runs one file at a time, pauses after
+  the current file when search clears, and reuses a private, identity-checked
+  cache pruned to 64 MB at startup. Progress is visible, and Settings can stop
+  indexing and clear the text cache without touching media.
+- Set as background. A picture can become the current Omarchy background from
+  its action list without copying or moving it. Omaroll delegates the change to
+  `omarchy-theme-bg-set` and keeps the viewer open.
+- Media details. The viewer shows dimensions and duration, image format,
+  camera and exposure data when present, plus video codec, frame rate, bitrate
+  and audio. ImageMagick and ffprobe run only for the file being viewed.
+- Convert and resize choices. One sheet now exposes every image and video
+  format and size supported by `omarchy-transcode`. It works on one file or a
+  same-medium selection, tracks every output, and keeps every original intact.
 - Send to a machine. Pick one of your own machines on the tailnet and the file,
   or the whole selection, goes over Taildrop through `omarchy-tailscale-send`.
   The picker lists only machines Tailscale says can take a file right now, and

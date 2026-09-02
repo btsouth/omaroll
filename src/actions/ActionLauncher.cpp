@@ -318,3 +318,42 @@ bool ActionLauncher::moveToTrash(const QString& path) {
   }
   return true;
 }
+
+QVariantMap ActionLauncher::renameFile(const QString& path, const QString& baseName) {
+  const auto failure = [](const QString& message) {
+    return QVariantMap{{QStringLiteral("ok"), false},
+                       {QStringLiteral("error"), message}};
+  };
+
+  const QFileInfo source(path);
+  if (!source.isFile()) {
+    return failure(u"That file is no longer there"_s);
+  }
+
+  const QString name = baseName.trimmed();
+  if (name.isEmpty() || name == u"."_s || name == u".."_s ||
+      name.contains(QLatin1Char('/')) || name.contains(QChar::Null)) {
+    return failure(u"Use a name without a slash"_s);
+  }
+
+  const QString suffix = source.suffix();
+  const QString fileName = suffix.isEmpty() ? name : name + QLatin1Char('.') + suffix;
+  if (QFile::encodeName(fileName).size() > 255) {
+    return failure(u"That name is too long"_s);
+  }
+
+  const QString target = source.dir().filePath(fileName);
+  if (QDir::cleanPath(target) == QDir::cleanPath(source.absoluteFilePath())) {
+    return failure(u"That is already the file's name"_s);
+  }
+  if (QFileInfo::exists(target)) {
+    return failure(u"A file with that name already exists"_s);
+  }
+  if (!QFile::rename(source.absoluteFilePath(), target)) {
+    return failure(u"Could not rename this file"_s);
+  }
+
+  return {{QStringLiteral("ok"), true},
+          {QStringLiteral("path"), target},
+          {QStringLiteral("fileName"), fileName}};
+}

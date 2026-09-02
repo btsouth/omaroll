@@ -35,6 +35,19 @@ Item {
     // backdrop, so a result said there while the viewer is open goes unread.
     property string status: ""
     readonly property int slideshowInterval: 4000
+    readonly property int mediaWidth: Math.round(root.isVideo ? output.sourceRect.width
+                                                               : root.imageSourceWidth)
+    readonly property int mediaHeight: Math.round(root.isVideo ? output.sourceRect.height
+                                                                : root.imageSourceHeight)
+    readonly property string dimensionsLabel: root.mediaWidth > 0 && root.mediaHeight > 0
+                                               ? root.mediaWidth + " × " + root.mediaHeight : ""
+    readonly property string durationLabel: root.isVideo && player.duration > 0
+                                             ? root.formatDuration(player.duration) : ""
+    readonly property real playbackPosition: player.position
+    readonly property string technicalLabel: root.dimensionsLabel !== "" && root.durationLabel !== ""
+                                              ? root.dimensionsLabel + "  ·  " + root.durationLabel
+                                              : (root.dimensionsLabel !== "" ? root.dimensionsLabel
+                                                                             : root.durationLabel)
     // The stage's bottom row holds the image controls or the video transport
     // beside the slideshow group. Labels shrink to icons when the row at its
     // long labels would not fit; the widths come from hidden copies drawn in
@@ -50,6 +63,18 @@ Item {
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
+    }
+
+    function formatDuration(milliseconds) {
+        const total = Math.max(0, Math.floor(milliseconds / 1000))
+        const hours = Math.floor(total / 3600)
+        const minutes = Math.floor((total % 3600) / 60)
+        const seconds = total % 60
+        if (hours > 0) {
+            return hours + ":" + String(minutes).padStart(2, "0")
+                   + ":" + String(seconds).padStart(2, "0")
+        }
+        return minutes + ":" + String(seconds).padStart(2, "0")
     }
 
     function open() {
@@ -145,6 +170,7 @@ Item {
         stillReady = false
         imageSourceWidth = 0
         imageSourceHeight = 0
+        MediaInfo.inspect(path, isVideo)
     }
     onStillReadyChanged: {
         if (slideshowRunning && !slideshowPausedForRender && !isVideo && stillReady) {
@@ -774,6 +800,7 @@ Item {
             }
 
             Column {
+                id: metadataColumn
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: parent.top
@@ -805,6 +832,38 @@ Item {
                     font.pixelSize: 11
                     color: Theme.mutedText
                 }
+
+                Text {
+                    objectName: "mediaMetadata"
+                    width: parent.width
+                    visible: root.technicalLabel !== ""
+                    text: root.technicalLabel
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 11
+                    color: Theme.mutedText
+                }
+
+                Text {
+                    width: parent.width
+                    visible: MediaInfo.path === root.path && MediaInfo.loading
+                    text: "Reading details…"
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 11
+                    color: Theme.mutedText
+                }
+
+                Repeater {
+                    model: MediaInfo.path === root.path ? MediaInfo.lines : []
+                    Text {
+                        required property string modelData
+                        width: metadataColumn.width
+                        text: modelData
+                        elide: Text.ElideRight
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 11
+                        color: Theme.mutedText
+                    }
+                }
             }
 
             // Actions, from the registry
@@ -814,7 +873,7 @@ Item {
                 anchors.right: parent.right
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
-                anchors.topMargin: 96
+                anchors.topMargin: metadataColumn.y + metadataColumn.height + 12
                 anchors.bottomMargin: 14
                 anchors.leftMargin: 10
                 anchors.rightMargin: 10

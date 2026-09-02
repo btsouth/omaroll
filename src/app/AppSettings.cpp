@@ -281,6 +281,40 @@ void AppSettings::setSlideshowVideos(bool value) {
   emit slideshowVideosChanged();
 }
 
+void AppSettings::relocatePath(const QString& oldPath, const QString& newPath) {
+  if (oldPath.isEmpty() || newPath.isEmpty() || oldPath == newPath) {
+    return;
+  }
+
+  bool marksChangedValue = false;
+  if (m_favorites.remove(oldPath)) {
+    m_favorites.insert(newPath);
+    marksChangedValue = true;
+  }
+  if (m_hidden.remove(oldPath)) {
+    m_hidden.insert(newPath);
+    marksChangedValue = true;
+  }
+  if (marksChangedValue) {
+    persistMarks();
+    emit marksChanged();
+  }
+
+  bool albumsChangedValue = false;
+  for (auto album = m_albums.begin(); album != m_albums.end(); ++album) {
+    for (AlbumEntry& entry : album.value()) {
+      if (entry.path == oldPath) {
+        entry = identityFor(newPath);
+        albumsChangedValue = true;
+      }
+    }
+  }
+  if (albumsChangedValue) {
+    persistAlbums();
+    emit albumsChanged();
+  }
+}
+
 QStringList AppSettings::albumNames() const {
   QStringList names = m_albums.keys();
   names.sort(Qt::CaseInsensitive);

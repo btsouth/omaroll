@@ -112,11 +112,13 @@ Item {
 
         PillButton {
             id: libraryButton
-            label: root.width < 700 ? "Browse  ▾"
-                   : (Captures.albumFilter !== "" ? Captures.albumFilter + "  ▾"
+            label: root.width < 700 ? (Captures.duplicatesOnly ? "Dupes  ▾" : "Browse  ▾")
+                   : (Captures.duplicatesOnly ? "Duplicates  ▾"
+                      : Captures.albumFilter !== "" ? Captures.albumFilter + "  ▾"
                       : Captures.folderFilter !== ""
                         ? root.shortFolder(Captures.folderFilter) + "  ▾" : "Browse  ▾")
             active: Captures.folderFilter !== "" || Captures.albumFilter !== ""
+                    || Captures.duplicatesOnly
                     || libraryMenu.visible
             onClicked: libraryMenu.visible ? libraryMenu.close()
                                            : libraryMenu.popup(libraryButton, 0,
@@ -174,7 +176,7 @@ Item {
                 anchors.left: parent.left
                 anchors.leftMargin: 10
                 visible: search.text === "" && !search.activeFocus
-                text: "Search  /"
+                text: TextIndex.available ? "Search names + text  /" : "Search  /"
                 font.family: Theme.fontFamily
                 font.pixelSize: 12
                 color: root.shade(Theme.foreground, 0.35)
@@ -216,8 +218,10 @@ Item {
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
                 font.weight: Captures.folderFilter === "" && Captures.albumFilter === ""
+                             && !Captures.duplicatesOnly
                              ? Font.DemiBold : Font.Normal
                 color: Captures.folderFilter === "" && Captures.albumFilter === ""
+                       && !Captures.duplicatesOnly
                        ? Theme.accent : Theme.foreground
                 verticalAlignment: Text.AlignVCenter
                 leftPadding: 12
@@ -227,8 +231,32 @@ Item {
                        ? root.shade(Theme.foreground, 0.08) : "transparent"
             }
             onTriggered: {
+                Captures.duplicatesOnly = false
                 Captures.folderFilter = ""
                 Captures.setAlbumFilter("", [])
+            }
+        }
+
+        MenuItem {
+            id: duplicatesRow
+            height: 30
+            contentItem: Text {
+                text: "Exact duplicates"
+                font.family: Theme.fontFamily
+                font.pixelSize: 11
+                font.weight: Captures.duplicatesOnly ? Font.DemiBold : Font.Normal
+                color: Captures.duplicatesOnly ? Theme.accent : Theme.foreground
+                verticalAlignment: Text.AlignVCenter
+                leftPadding: 12
+            }
+            background: Rectangle {
+                color: duplicatesRow.hovered
+                       ? root.shade(Theme.foreground, 0.08) : "transparent"
+            }
+            onTriggered: {
+                Captures.folderFilter = ""
+                Captures.setAlbumFilter("", [])
+                Captures.duplicatesOnly = true
             }
         }
 
@@ -273,6 +301,7 @@ Item {
                            ? root.shade(Theme.foreground, 0.08) : "transparent"
                 }
                 onTriggered: {
+                    Captures.duplicatesOnly = false
                     Captures.setAlbumFilter("", [])
                     Captures.folderFilter = folderRow.modelData
                 }
@@ -317,6 +346,7 @@ Item {
                            ? root.shade(Theme.foreground, 0.08) : "transparent"
                 }
                 onTriggered: {
+                    Captures.duplicatesOnly = false
                     Captures.folderFilter = ""
                     Captures.setAlbumFilter(albumRow.modelData,
                                             Settings.albumPaths(albumRow.modelData))

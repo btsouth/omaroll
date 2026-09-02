@@ -1,0 +1,3 @@
+# Qt initializes the proprietary OpenGL driver even when the offscreen Quick
+# backend is software-only. The driver retains one process-lifetime allocation.
+leak:libnvidia-glcore.so

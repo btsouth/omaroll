@@ -43,6 +43,9 @@ on them.
 - **Sees everything you already have.** Screenshots, recordings, pictures,
   videos and downloads, grouped by day, newest first. Add any other folder to
   the library from Settings, then switch between folders from the library bar.
+  Photos and videos use their embedded original date when available, with the
+  file modification time only as a fallback. Omaroll never imports or copies
+  media into its own storage.
 - **Builds real albums.** Select files, add them to a named collection, and
   browse it beside your folders. Albums never move or copy media. If an album
   file is renamed or moved within the library, Omaroll repairs the entry by
@@ -51,21 +54,30 @@ on them.
 - **Knows what each file is.** Omarchy stamps its captures with a predictable
   name, so a screenshot is a Screenshot even though it lives in `~/Pictures`
   next to every other image.
+- **Finds words inside pictures.** Search checks filenames immediately, then
+  adds matches from screenshots and photos as local Tesseract indexing
+  progresses with a visible count. The private cache is reused until a file
+  changes and can be cleared from Settings.
+- **Reviews exact duplicates safely.** Choose Exact duplicates under Browse to
+  compare same-size candidates by content. Matching sets stay together for
+  review, and Omaroll never removes either copy on its own.
 - **Hands off the work.** Trim goes to omacut, annotate to tensaku, convert to
-  `omarchy-transcode`, play to mpv, text to tesseract. Specialized media work
-  stays with tools you already have installed.
+  `omarchy-transcode`, play to mpv, text to tesseract, and setting a background
+  to Omarchy. Specialized media work stays with tools you already have installed.
 - **Drags out as the real file.** Pull a thumbnail into a Discord message, a
   browser upload or a Nautilus window and the file lands there. Select several
   and they go together.
 - **Previews in place.** Enter opens a capture large with every action beside
   it. Images zoom, pan, rotate and animate; a recording starts muted with a
   scrub bar and sound toggle, so you can find the moment before handing it to
-  omacut. The full player is in mpv.
+  omacut. File details include dimensions, duration, image format, camera and
+  exposure data when present, plus video codec, frame rate, bitrate and audio.
+  The full player is in mpv.
 - **Presents any collection.** Start a fullscreen slideshow from a folder,
   album, search or filtered library. Images advance automatically. Videos are
   skipped by default, or can play through when enabled in Settings.
 - **Acts on a selection.** Check a few tiles and send, copy, favourite, hide
-  or trash them together, or Taildrop them to another of your machines.
+  convert, or trash them together, or Taildrop them to another of your machines.
 - **Fits the tiles to you.** Ctrl and the wheel, or Ctrl with plus and minus,
   make the grid tiles bigger or smaller, and the size sticks.
 - **Makes a screenshot postable.** The one thing Omaroll builds itself: six
@@ -82,14 +94,17 @@ Every handler below already ships with Omarchy.
 | Capture | Action | Handler |
 |---|---|---|
 | Recording | Trim *(default)* | `omacut` |
-| Recording | Clip to GIF · Resize | `omarchy-transcode` |
+| Recording | Convert · resize | `omarchy-transcode` |
 | Recording | Play | `mpv` |
+| Recording | Save current frame | `ffmpeg`, from the viewer position |
 | Screenshot | **Make it postable** *(default)* | **native** |
 | Screenshot | Annotate | `$OMARCHY_SCREENSHOT_EDITOR`, default `tensaku-edit` |
 | Screenshot | Copy the text | `tesseract` |
-| Image | Convert to JPEG | `omarchy-transcode` |
+| Image | Convert · resize | `omarchy-transcode` |
 | Image | Edit · View | `pinta` · `imv` |
+| Image | Set as background | `omarchy-theme-bg-set` |
 | Image | Scan QR code | `zbarimg` |
+| Any | Rename in place | native, extension preserved |
 | Any | Copy to clipboard | `omarchy-clipboard-paste-file` |
 | Any | Send with LocalSend | `omarchy-menu-share` |
 | Any | Send to a machine | `omarchy-tailscale-send`, after picking the machine |
@@ -132,7 +147,10 @@ and put on your clipboard.
 | `I` in a preview | Show · hide file info and actions |
 | `M` | Make it postable |
 | `T` · `P` | Trim · Play a recording |
+| `G` in a video preview | Save the current frame beside the recording |
 | `A` · `C` | Annotate · Copy the text |
+| `E` | Convert or resize, including the selection |
+| `N` | Rename, preserving the extension |
 | `Y` · `S` · `F` | Clipboard · Send · Show in files |
 | `V` · `Ctrl+H` | Favourite · Hide |
 | `1`-`7` | Jump to a section |
@@ -141,7 +159,7 @@ and put on your clipboard.
 | `Ctrl` + wheel · `Ctrl` `+` `-` `0` | Bigger or smaller tiles · reset |
 | drag | Drop the file, or the whole selection, into another app |
 | `Del` | Move to Trash, with confirm |
-| `/` · `R` | Search · Rescan |
+| `/` · `R` | Search filenames and picture text · Rescan |
 | `Esc` | Clear selection, then close |
 
 The same letters work inside the preview. "Open with Omaroll" on a picture or
@@ -228,13 +246,14 @@ omaroll --render shot.png --render-view matte
 ```
 
 Renders a view to a PNG and exits. Views include `grid`, `detail`, `video`,
-`slideshow`, `matte`, and `settings`. It grabs the scene graph rather than the
-screen, so an overlapping window cannot spoil the shot.
+`slideshow`, `matte`, `export`, `rename`, `duplicates`, and `settings`. It grabs the scene
+graph rather than the screen, so an overlapping window cannot spoil the shot.
 
 ## Design notes
 
-- **Read-only on discovery.** Omaroll never moves, renames or rewrites a file it
-  finds. Every action that produces output writes a new file beside the original.
+- **Read-only on discovery.** Browsing, indexing, duplicate review and previews
+  never change media. A file changes location only when you explicitly rename
+  it or move it to Trash. Generated work is written beside the original.
 - **Offline.** Nothing in the core path touches the network. No telemetry, no
   sync, no accounts.
 - **High DPI.** Thumbnails are generated at `devicePixelRatio` and the cache is
@@ -242,6 +261,8 @@ screen, so an overlapping window cannot spoil the shot.
   rather than upscaled ones.
 - **Cache and state.** Thumbnails in `~/.cache/omaroll/thumbs`, bounded at 256MB
   by default, configurable from 64MB to 1GB, and pruned least-recently-used.
+  Embedded media dates use a small identity-checked index in the same cache
+  root, so unchanged files are not inspected again on every launch.
   Settings live in `~/.config/omaroll`.
   Both are safe to delete at any time.
 
@@ -259,14 +280,18 @@ For a focused release check on an Omarchy desktop:
    selection, and Settings at both tiled and floating window sizes.
 2. Open a real image from the file manager. Verify previous and next stay in its
    folder, then test zoom, pan, rotate, fullscreen, and `F5` slideshow.
-3. Open a real video. Verify muted preview, sound, seeking, fullscreen, and the
-   transition to the next item in a slideshow.
+3. Open a real video. Verify muted preview, sound, seeking, technical details,
+   Save current frame, fullscreen, and the transition to the next item in a
+   slideshow.
 4. Create an album, rename and move one member inside a watched folder, and
    verify it remains in the album. Move it outside the library and verify it is
    shown as unavailable instead of being matched to another file.
-5. Switch Omarchy themes while Omaroll is open and confirm the chrome updates
+5. Put an exact copy of a disposable image in another watched folder. Open
+   Browse, choose Exact duplicates, and verify both copies stay grouped and
+   remain untouched until you act on them.
+6. Switch Omarchy themes while Omaroll is open and confirm the chrome updates
    without changing the media colors.
-6. Move a disposable file to Trash and restore it from the desktop Trash.
+7. Move a disposable file to Trash and restore it from the desktop Trash.
 
 ## License
 

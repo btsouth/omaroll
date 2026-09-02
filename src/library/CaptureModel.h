@@ -7,10 +7,12 @@
 #include <QDate>
 #include <QFileSystemWatcher>
 #include <QFutureWatcher>
+#include <QHash>
 #include <QList>
 #include <QSet>
 #include <QTimer>
 #include <QUrl>
+#include <QVariantList>
 
 #include <atomic>
 #include <memory>
@@ -32,6 +34,8 @@ class CaptureModel final : public QAbstractListModel {
   Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
   Q_PROPERTY(bool empty READ empty NOTIFY countChanged)
   Q_PROPERTY(bool scanning READ scanning NOTIFY scanningChanged)
+  Q_PROPERTY(QVariantList automaticFolders READ automaticFolders
+                 NOTIFY automaticFoldersChanged)
 
 public:
   explicit CaptureModel(AppSettings* settings, QObject* parent = nullptr);
@@ -43,10 +47,25 @@ public:
 
   [[nodiscard]] bool empty() const { return m_records.isEmpty(); }
   [[nodiscard]] bool scanning() const { return m_scanning; }
+  [[nodiscard]] QVariantList automaticFolders() const;
+  Q_INVOKABLE [[nodiscard]] bool folderAvailable(const QString& path) const;
 
   // Direct access for the proxy's sort and filter, which would otherwise pay
   // for a QVariant per role per comparison across the whole library.
   [[nodiscard]] const CaptureRecord& recordAt(int row) const { return m_records.at(row); }
+
+  struct CapturedDateUpdate {
+    QString path;
+    qint64 modified = 0;
+    qint64 bytes = 0;
+    QDateTime captured;
+    quint64 device = 0;
+    quint64 inode = 0;
+  };
+
+  // Replaces mtime fallbacks with dates read from embedded media metadata.
+  // File identity is checked again here because extraction is asynchronous.
+  void applyCapturedDates(const QList<CapturedDateUpdate>& updates);
 
   // A directory handed to omaroll on the command line or by "Open with",
   // scanned alongside the usual roots for this session only.
@@ -91,6 +110,7 @@ public:
 signals:
   void countChanged();
   void scanningChanged();
+  void automaticFoldersChanged();
   // "Today" became "Yesterday": every day label is stale at once.
   void dayLabelsChanged();
 
@@ -112,6 +132,7 @@ private:
   QStringList m_extraRoots;
   QSet<QString> m_heldPaths;
   QList<CaptureRecord> m_records;
+  QHash<QString, CapturedDateUpdate> m_capturedDates;
   QFileSystemWatcher m_watcher;
   QFutureWatcher<ScanResult> m_scanWatcher;
   // Set on teardown so a scan in flight stops walking instead of finishing a

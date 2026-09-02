@@ -117,6 +117,21 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .packageHint = u"mpv"_s,
        .media = Moving},
 
+      // The viewer supplies both the precise seek time and a filename-safe
+      // version of it. One still is written beside the recording and tracked
+      // like every other generated output.
+      {.id = u"frame"_s,
+       .label = u"Save current frame"_s,
+       .program = u"ffmpeg"_s,
+       .arguments = {u"-hide_banner"_s, u"-loglevel"_s, u"error"_s,
+                     u"-ss"_s, u"{seek}"_s, u"-i"_s, u"{path}"_s,
+                     u"-frames:v"_s, u"1"_s, u"-update"_s, u"1"_s,
+                     u"{dir}/{stem}-frame-{frame}.png"_s},
+       .shortcut = u"G"_s,
+       .packageHint = u"ffmpeg"_s,
+       .media = Moving,
+       .output = u"{stem}-frame-{frame}.png"_s},
+
       // omarchy-transcode already does mp4 and gif at fixed rungs, so omaroll
       // writes no ffmpeg invocations of its own. It notifies on completion.
       {.id = u"gif"_s,
@@ -125,6 +140,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .arguments = {u"{path}"_s, u"gif"_s, u"720p"_s},
        .packageHint = u"Omarchy"_s,
        .media = Moving,
+       .visible = false,
        .output = u"{stem}-720p.gif"_s},
 
       {.id = u"shrink"_s,
@@ -133,6 +149,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .arguments = {u"{path}"_s, u"mp4"_s, u"1080p"_s},
        .packageHint = u"Omarchy"_s,
        .media = Moving,
+       .visible = false,
        .output = u"{stem}-1080p.mp4"_s},
 
       // --- Screenshots and pictures ---------------------------------------
@@ -192,13 +209,35 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .packageHint = u"imv"_s,
        .media = Still},
 
+      // Omarchy owns applying and persisting the current background. Keep the
+      // library read-only and hand it the original path unchanged.
+      {.id = u"background"_s,
+       .label = u"Set as background"_s,
+       .program = u"omarchy-theme-bg-set"_s,
+       .arguments = {u"{path}"_s},
+       .packageHint = u"Omarchy"_s,
+       .media = Still,
+       .confirmation = u"Set as current background"_s},
+
       {.id = u"convert"_s,
        .label = u"Convert to JPEG"_s,
        .program = u"omarchy-transcode"_s,
        .arguments = {u"{path}"_s, u"jpg"_s, u"medium"_s},
        .packageHint = u"Omarchy"_s,
        .media = Still,
+       .visible = false,
        .output = u"{stem}-medium.jpg"_s},
+
+      // One UI row exposes every format and size the house transcoder owns.
+      // The sheet fills the two placeholders, for one file or a selection.
+      {.id = u"export"_s,
+       .label = u"Convert / resize"_s,
+       .program = u"omarchy-transcode"_s,
+       .arguments = {u"{path}"_s, u"{format}"_s, u"{resolution}"_s},
+       .shortcut = u"E"_s,
+       .packageHint = u"Omarchy"_s,
+       .media = Any,
+       .output = u"{stem}-{resolution}.{format}"_s},
 
       // --- Anything -------------------------------------------------------
       // The launcher handles this one: the house helper on Omarchy, plain
@@ -226,6 +265,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .packageHint = u"nautilus"_s},
 
       // Native: QML owns these.
+      {.id = u"rename"_s, .label = u"Rename"_s, .shortcut = u"N"_s},
       {.id = u"favorite"_s, .label = u"Favourite"_s, .shortcut = u"V"_s},
       {.id = u"hide"_s, .label = u"Hide"_s, .shortcut = u"Ctrl+H"_s},
       {.id = u"trash"_s, .label = u"Move to Trash"_s, .shortcut = u"Del"_s},
@@ -332,7 +372,7 @@ QString ActionRegistry::primaryActionFor(bool video) const {
 QVariantList ActionRegistry::actionsFor(bool video) const {
   QVariantList rows;
   for (const Definition& definition : m_definitions) {
-    if (!applies(definition, video)) {
+    if (!definition.visible || !applies(definition, video)) {
       continue;
     }
 

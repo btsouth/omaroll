@@ -24,6 +24,12 @@ add_library(omaroll_core STATIC
   src/library/CaptureModel.h
   src/library/CaptureFilterModel.cpp
   src/library/CaptureFilterModel.h
+  src/library/DuplicateIndex.cpp
+  src/library/DuplicateIndex.h
+  src/library/MediaInspector.cpp
+  src/library/MediaInspector.h
+  src/library/MediaDateIndex.cpp
+  src/library/MediaDateIndex.h
   src/sources/CaptureScanner.cpp
   src/sources/CaptureScanner.h
   src/sources/CaptureLocations.cpp
@@ -40,6 +46,8 @@ add_library(omaroll_core STATIC
   src/matte/MatteComposer.h
   src/matte/MatteProvider.cpp
   src/matte/MatteProvider.h
+  src/search/OcrIndex.cpp
+  src/search/OcrIndex.h
   src/thumbs/ThumbnailCache.cpp
   src/thumbs/ThumbnailCache.h
   src/thumbs/ThumbnailProvider.cpp
@@ -100,6 +108,8 @@ set(OMAROLL_QML_FILES
   qml/components/MatteSheet.qml
   qml/components/SettingsSheet.qml
   qml/components/AlbumNameSheet.qml
+  qml/components/ExportSheet.qml
+  qml/components/RenameSheet.qml
   qml/components/TailscaleSheet.qml
 )
 
@@ -142,7 +152,10 @@ if(BUILD_TESTING)
     PASS_REGULAR_EXPRESSION "omaroll ${PROJECT_VERSION}")
   # The suite touches QImage and QGuiApplication paths, so it needs a platform
   # plugin; offscreen keeps it runnable in a headless checkout or CI.
-  set_tests_properties(omaroll_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+  set(omaroll_test_environment
+    "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=;QT_QUICK_BACKEND=software;QT_IM_MODULE=compose")
+  set_tests_properties(omaroll_tests PROPERTIES ENVIRONMENT
+    "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
 
   # The UI suite loads the real Main.qml and drives it with synthetic input.
   # The module's files are compiled into the omaroll executable, so a second
@@ -163,5 +176,9 @@ if(BUILD_TESTING)
   target_compile_definitions(omaroll_ui_tests PRIVATE
     OMAROLL_QML_IMPORT_PATH="${CMAKE_BINARY_DIR}/uitest-imports")
   add_test(NAME omaroll_ui_tests COMMAND omaroll_ui_tests)
-  set_tests_properties(omaroll_ui_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+  # Qt Multimedia initializes the system FFmpeg, VAAPI/CUDA and D-Bus stacks,
+  # whose process-lifetime allocations make LeakSanitizer noisy. The core suite
+  # retains leak detection; this real-window suite still runs ASan and UBSan.
+  set_tests_properties(omaroll_ui_tests PROPERTIES ENVIRONMENT
+    "${omaroll_test_environment};ASAN_OPTIONS=detect_leaks=0")
 endif()

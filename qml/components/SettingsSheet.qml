@@ -11,6 +11,7 @@ Item {
     signal rescanRequested()
     signal createAlbumRequested()
     property string folderMessage: ""
+    property string textCacheMessage: ""
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
@@ -32,6 +33,7 @@ Item {
 
     function open() {
         folderMessage = ""
+        textCacheMessage = ""
         visible = true
         forceActiveFocus()
     }
@@ -126,10 +128,64 @@ Item {
                 width: parent.width
                 wrapMode: Text.WordWrap
                 text: "Omaroll reads the folders Omarchy already writes captures to. "
-                      + "It never moves, renames or changes a file it finds."
+                      + "It changes a file only when you explicitly rename or trash it."
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
                 color: Theme.mutedText
+            }
+
+            Rectangle {
+                width: parent.width
+                height: 1
+                color: root.shade(Theme.foreground, 0.12)
+            }
+
+            Column {
+                width: parent.width
+                spacing: 7
+
+                Text {
+                    text: "Automatic folders"
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 12
+                    color: Theme.foreground
+                }
+                Text {
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    text: "Detected from Omarchy and your XDG folders. New media appears here "
+                          + "automatically; nothing is imported or copied."
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 10
+                    color: Theme.mutedText
+                }
+
+                Repeater {
+                    model: Library.automaticFolders
+
+                    Column {
+                        required property var modelData
+                        width: parent.width
+                        spacing: 1
+
+                        Text {
+                            width: parent.width
+                            text: modelData.label
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 10
+                            font.weight: Font.DemiBold
+                            color: Theme.foreground
+                        }
+                        Text {
+                            width: parent.width
+                            text: modelData.path + (modelData.available ? "" : "  ·  Waiting for folder")
+                            elide: Text.ElideMiddle
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 10
+                            color: modelData.available ? Theme.mutedText : Theme.red
+                        }
+                    }
+                }
             }
 
             Rectangle {
@@ -240,6 +296,47 @@ Item {
                     label: Captures.showHidden ? "Shown" : "Hidden"
                     active: Captures.showHidden
                     onClicked: Captures.showHidden = !Captures.showHidden
+                }
+            }
+
+            Row {
+                width: parent.width
+                spacing: 12
+
+                Column {
+                    width: parent.width - clearTextCacheButton.width - 12
+                    spacing: 2
+
+                    Text {
+                        text: "Picture text search"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 12
+                        color: Theme.foreground
+                    }
+                    Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        text: root.textCacheMessage !== "" ? root.textCacheMessage
+                              : (TextIndex.available
+                                 ? "Tesseract text stays in a private local cache."
+                                 : "Tesseract is unavailable. Filename search still works.")
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 10
+                        color: Theme.mutedText
+                    }
+                }
+
+                PillButton {
+                    id: clearTextCacheButton
+                    objectName: "clearTextCacheButton"
+                    anchors.verticalCenter: parent.verticalCenter
+                    label: "Clear cache"
+                    onClicked: {
+                        const count = TextIndex.clearCache()
+                        root.textCacheMessage = count === 0 ? "The text cache is already empty."
+                                                           : "Cleared " + count
+                                                             + (count === 1 ? " entry." : " entries.")
+                    }
                 }
             }
 
@@ -506,6 +603,10 @@ Item {
                 Row {
                     id: folderRow
                     required property string modelData
+                    readonly property bool available: {
+                        void Library.automaticFolders
+                        return Library.folderAvailable(modelData)
+                    }
                     width: column.width
                     spacing: 10
 
@@ -513,10 +614,11 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter
                         width: parent.width - removeFolder.width - 10
                         text: folderRow.modelData
+                              + (folderRow.available ? "" : "  ·  Unavailable")
                         elide: Text.ElideMiddle
                         font.family: Theme.fontFamily
                         font.pixelSize: 10
-                        color: Theme.mutedText
+                        color: folderRow.available ? Theme.mutedText : Theme.red
                     }
                     PillButton {
                         id: removeFolder

@@ -21,6 +21,10 @@ struct CaptureRecord {
   Kind kind = Picture;
   // Parsed out of the filename when the producer stamped one, mtime otherwise.
   QDateTime captured;
+  // A producer timestamp is authoritative. General photos and videos can have
+  // their mtime fallback replaced later by embedded metadata without making
+  // capture discovery wait for ImageMagick or ffprobe.
+  bool hasProducerTimestamp = false;
   qint64 bytes = 0;
   // mtime in milliseconds. Part of the thumbnail identity, so a file rewritten in
   // place (a recording finalised by omarchy-capture-screenrecording) gets a

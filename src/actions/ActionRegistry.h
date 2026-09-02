@@ -45,6 +45,9 @@ public:
     // what to install rather than just failing.
     QString packageHint = {};
     Media media = Media::Any;
+    // Legacy or internal rows remain runnable without cluttering the action
+    // list. This preserves stable ids while a richer UI replaces a preset.
+    bool visible = true;
     // Shown first and bound to Enter for its medium.
     bool primary = false;
     Result result = Result::Launch;

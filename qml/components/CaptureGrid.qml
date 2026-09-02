@@ -119,12 +119,12 @@ FocusScope {
     function updateDay() {
         const index = grid.indexAt(grid.contentX + 4, grid.contentY + 4)
         if (index >= 0) {
-            root.currentDayLabel = Captures.dayLabelAt(index)
+            root.currentDayLabel = Captures.gridLabelAt(index)
         } else if (grid.count > 0) {
             // indexAt() answers -1 until the view has laid out, which is the
             // state the very first countChanged arrives in. Fall back to the
             // first row rather than leaving the header blank until a scroll.
-            root.currentDayLabel = Captures.dayLabelAt(0)
+            root.currentDayLabel = Captures.gridLabelAt(0)
         } else {
             root.currentDayLabel = ""
         }
@@ -172,7 +172,17 @@ FocusScope {
         }
 
         onContentYChanged: root.updateDay()
-        onCountChanged: Qt.callLater(root.updateDay)
+        onCountChanged: {
+            // Removing the selected last row can leave GridView's index one
+            // past the end until its next polish pass. Keep every keyboard
+            // action on a real row immediately after a trash or rescan.
+            if (count === 0) {
+                currentIndex = -1
+            } else if (currentIndex >= count) {
+                currentIndex = count - 1
+            }
+            Qt.callLater(root.updateDay)
+        }
         Connections {
             target: Library
             function onDayLabelsChanged() { root.updateDay() }

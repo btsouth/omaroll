@@ -6,8 +6,12 @@
 #include "library/CaptureFilterModel.h"
 #include "library/CaptureModel.h"
 #include "library/CaptureRoles.h"
+#include "library/DuplicateIndex.h"
+#include "library/MediaInspector.h"
+#include "library/MediaDateIndex.h"
 #include "matte/HueExtractor.h"
 #include "matte/MatteComposer.h"
+#include "search/OcrIndex.h"
 #include "sources/CaptureLocations.h"
 #include "sources/CaptureScanner.h"
 #include "theme/OmarchyTheme.h"
@@ -15,8 +19,10 @@
 
 #include <QClipboard>
 #include <QPainter>
+#include <QProcess>
 #include <QScopeGuard>
 #include <QSignalSpy>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QtTest>
 
@@ -61,6 +67,63 @@ private slots:
     } else {
       QVERIFY(qputenv("XDG_PICTURES_DIR", previous));
     }
+  }
+
+  void automaticFoldersAreVisibleCoalescedAndReportAvailability() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString pictures = dir.filePath(QStringLiteral("Pictures"));
+    const QString videos = dir.filePath(QStringLiteral("Videos"));
+    const QString downloads = dir.filePath(QStringLiteral("Downloads"));
+    QVERIFY(QDir().mkpath(pictures));
+    QVERIFY(QDir().mkpath(downloads));
+
+    const QByteArray oldPictures = qgetenv("XDG_PICTURES_DIR");
+    const QByteArray oldVideos = qgetenv("XDG_VIDEOS_DIR");
+    const QByteArray oldDownloads = qgetenv("XDG_DOWNLOAD_DIR");
+    const QByteArray oldShots = qgetenv("OMARCHY_SCREENSHOT_DIR");
+    const QByteArray oldRecordings = qgetenv("OMARCHY_SCREENRECORD_DIR");
+    const auto restore = qScopeGuard([&] {
+      const auto putBack = [](const char* name, const QByteArray& value) {
+        value.isNull() ? qunsetenv(name) : qputenv(name, value);
+      };
+      putBack("XDG_PICTURES_DIR", oldPictures);
+      putBack("XDG_VIDEOS_DIR", oldVideos);
+      putBack("XDG_DOWNLOAD_DIR", oldDownloads);
+      putBack("OMARCHY_SCREENSHOT_DIR", oldShots);
+      putBack("OMARCHY_SCREENRECORD_DIR", oldRecordings);
+    });
+    QVERIFY(qputenv("XDG_PICTURES_DIR", pictures.toUtf8()));
+    QVERIFY(qputenv("XDG_VIDEOS_DIR", videos.toUtf8()));
+    QVERIFY(qputenv("XDG_DOWNLOAD_DIR", downloads.toUtf8()));
+    QVERIFY(qputenv("OMARCHY_SCREENSHOT_DIR", pictures.toUtf8()));
+    QVERIFY(qputenv("OMARCHY_SCREENRECORD_DIR", videos.toUtf8()));
+
+    AppSettings settings;
+    settings.setScanDownloads(true);
+    CaptureModel model(&settings);
+    const QVariantList folders = model.automaticFolders();
+    QCOMPARE(folders.size(), 3);
+
+    QHash<QString, QVariantMap> byPath;
+    for (const QVariant& value : folders) {
+      const QVariantMap row = value.toMap();
+      byPath.insert(row.value(QStringLiteral("path")).toString(), row);
+    }
+    QCOMPARE(byPath.value(pictures).value(QStringLiteral("label")).toString(),
+             QStringLiteral("Screenshots + Pictures"));
+    QVERIFY(byPath.value(pictures).value(QStringLiteral("available")).toBool());
+    QCOMPARE(byPath.value(videos).value(QStringLiteral("label")).toString(),
+             QStringLiteral("Screen recordings + Videos"));
+    QVERIFY(!byPath.value(videos).value(QStringLiteral("available")).toBool());
+    QVERIFY(byPath.value(downloads).value(QStringLiteral("available")).toBool());
+    QVERIFY(model.folderAvailable(pictures));
+    QVERIFY(!model.folderAvailable(videos));
+
+    QSignalSpy changed(&model, &CaptureModel::automaticFoldersChanged);
+    settings.setScanDownloads(false);
+    QVERIFY(!changed.isEmpty());
+    QCOMPARE(model.automaticFolders().size(), 2);
   }
 
   void additionalLibraryFoldersPersistAndRejectHome() {
@@ -775,6 +838,13 @@ private slots:
     proxy.setSearchText({});
     QCOMPARE(proxy.count(), 4);
 
+    const QString beachPath = dir.filePath(QStringLiteral("beach.png"));
+    proxy.setOcrText(beachPath, QStringLiteral("Invoice overdue total"));
+    proxy.setSearchText(QStringLiteral("beach overdue"));
+    QCOMPARE(proxy.count(), 1);
+    QCOMPARE(proxy.pathAt(0), beachPath);
+    proxy.setSearchText({});
+
     rescanned.clear();
     write(QStringLiteral("album/forest.png"), 18,
           QDateTime(QDate(2026, 8, 18), QTime(9, 0)));
@@ -840,6 +910,111 @@ private slots:
              QString());
   }
 
+  void localOcrSearchRunsOnceThenUsesItsPrivateCache() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QByteArray previousPath = qgetenv("PATH");
+    const QByteArray previousLog = qgetenv("OMAROLL_OCR_TEST_LOG");
+    const QByteArray previousPictures = qgetenv("XDG_PICTURES_DIR");
+    const QByteArray previousVideos = qgetenv("XDG_VIDEOS_DIR");
+    const QByteArray previousShots = qgetenv("OMARCHY_SCREENSHOT_DIR");
+    const QByteArray previousRecordings = qgetenv("OMARCHY_SCREENRECORD_DIR");
+    const auto restore = qScopeGuard([&] {
+      const auto putBack = [](const char* name, const QByteArray& value) {
+        value.isNull() ? qunsetenv(name) : qputenv(name, value);
+      };
+      putBack("PATH", previousPath);
+      putBack("OMAROLL_OCR_TEST_LOG", previousLog);
+      putBack("XDG_PICTURES_DIR", previousPictures);
+      putBack("XDG_VIDEOS_DIR", previousVideos);
+      putBack("OMARCHY_SCREENSHOT_DIR", previousShots);
+      putBack("OMARCHY_SCREENRECORD_DIR", previousRecordings);
+    });
+
+    const QString logPath = dir.filePath(QStringLiteral("ocr-runs.log"));
+    QFile tesseract(dir.filePath(QStringLiteral("tesseract")));
+    QVERIFY(tesseract.open(QIODevice::WriteOnly));
+    tesseract.write("#!/bin/sh\n"
+                    "printf 'Invoice total forty two\\n'\n"
+                    "printf 'run\\n' >> \"$OMAROLL_OCR_TEST_LOG\"\n");
+    tesseract.close();
+    QVERIFY(tesseract.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                     QFileDevice::ExeOwner));
+    QVERIFY(qputenv("PATH", dir.path().toUtf8()));
+    QVERIFY(qputenv("OMAROLL_OCR_TEST_LOG", logPath.toUtf8()));
+    for (const char* name : {"XDG_PICTURES_DIR", "XDG_VIDEOS_DIR",
+                             "OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR"}) {
+      QVERIFY(qputenv(name, dir.path().toUtf8()));
+    }
+
+    const QString imagePath = dir.filePath(QStringLiteral("capture-001.png"));
+    QImage image(16, 12, QImage::Format_RGB32);
+    image.fill(Qt::white);
+    QVERIFY(image.save(imagePath, "PNG"));
+
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QSignalSpy scanned(&model, &CaptureModel::countChanged);
+    QVERIFY(scanned.wait(5000));
+    QCOMPARE(model.rowCount(), 1);
+
+    const auto runSearch = [&] {
+      CaptureFilterModel proxy;
+      proxy.setSourceModel(&model);
+      OcrIndex index(&model);
+      QVERIFY(index.available());
+      connect(&index, &OcrIndex::textReady, &proxy, &CaptureFilterModel::setOcrText);
+      proxy.setSearchText(QStringLiteral("invoice forty"));
+      index.setSearchText(proxy.searchText());
+      QTRY_COMPARE_WITH_TIMEOUT(proxy.count(), 1, 3000);
+      QCOMPARE(proxy.pathAt(0), imagePath);
+      QTRY_VERIFY_WITH_TIMEOUT(!index.indexing(), 3000);
+      QCOMPARE(index.completed(), 1);
+      QCOMPARE(index.total(), 1);
+    };
+
+    runSearch();
+    runSearch();
+
+    image = QImage(20, 14, QImage::Format_RGB32);
+    image.fill(Qt::black);
+    QVERIFY(image.save(imagePath, "PNG"));
+    QFile changed(imagePath);
+    QVERIFY(changed.open(QIODevice::ReadWrite));
+    QVERIFY(changed.setFileTime(QDateTime::currentDateTime().addSecs(2),
+                                QFileDevice::FileModificationTime));
+    changed.close();
+    scanned.clear();
+    model.refresh();
+    QVERIFY(scanned.wait(5000));
+    runSearch();
+
+    QFile log(logPath);
+    QVERIFY(log.open(QIODevice::ReadOnly));
+    QCOMPARE(log.readAll(), QByteArray("run\nrun\n"));
+    const QDir cache(OcrIndex::cacheDirectory());
+    QCOMPARE(cache.entryList({QStringLiteral("*.ocr")}, QDir::Files).size(), 1);
+    const QFileInfo entry(cache.filePath(cache.entryList({QStringLiteral("*.ocr")},
+                                                         QDir::Files).first()));
+    QVERIFY(!(entry.permissions() & (QFileDevice::ReadGroup | QFileDevice::ReadOther)));
+
+    CaptureFilterModel proxy;
+    proxy.setSourceModel(&model);
+    OcrIndex index(&model);
+    connect(&index, &OcrIndex::textReady, &proxy, &CaptureFilterModel::setOcrText);
+    proxy.setSearchText(QStringLiteral("invoice forty"));
+    index.setSearchText(proxy.searchText());
+    QTRY_COMPARE_WITH_TIMEOUT(proxy.count(), 1, 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(!index.indexing(), 3000);
+    QCOMPARE(index.completed(), 1);
+    QCOMPARE(index.total(), 1);
+    QCOMPARE(index.clearCache(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(proxy.count(), 0, 1000);
+    QCOMPARE(cache.entryList({QStringLiteral("*.ocr")}, QDir::Files).size(), 0);
+  }
+
   void equalSortKeysHaveStableOrder() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -893,6 +1068,327 @@ private slots:
       }
       QCOMPARE(actual, expected);
     }
+  }
+
+  void exactDuplicateReviewHashesOnlyPlausibleMatchesAndUpdates() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(qputenv("OMARCHY_SCREENSHOT_DIR", dir.path().toUtf8()));
+    QVERIFY(qputenv("OMARCHY_SCREENRECORD_DIR", dir.path().toUtf8()));
+    QVERIFY(qputenv("XDG_PICTURES_DIR", dir.path().toUtf8()));
+    QVERIFY(qputenv("XDG_VIDEOS_DIR", dir.path().toUtf8()));
+
+    const QByteArray same(2 * 1024 * 1024, 'a');
+    const QByteArray sameSizeDifferent(2 * 1024 * 1024, 'b');
+    const auto write = [&](const QString& name, const QByteArray& content) {
+      QFile file(dir.filePath(name));
+      QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+      QCOMPARE(file.write(content), content.size());
+    };
+    write(QStringLiteral("first.png"), same);
+    write(QStringLiteral("copy.png"), same);
+    write(QStringLiteral("same-size-but-different.png"), sameSizeDifferent);
+    write(QStringLiteral("unique.png"), QByteArray("one of a kind"));
+
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QSignalSpy scanned(&model, &CaptureModel::countChanged);
+    QVERIFY(scanned.wait(5000));
+    QCOMPARE(model.rowCount(), 4);
+
+    CaptureFilterModel proxy;
+    proxy.setSourceModel(&model);
+    DuplicateIndex duplicates(&model);
+    connect(&duplicates, &DuplicateIndex::groupsChanged, &proxy,
+            [&] { proxy.setDuplicateGroups(duplicates.groups()); });
+    proxy.setDuplicatesOnly(true);
+    duplicates.setActive(true);
+
+    QTRY_COMPARE_WITH_TIMEOUT(duplicates.groupCount(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!duplicates.scanning(), 5000);
+    QCOMPARE(duplicates.total(), 3);
+    QCOMPARE(duplicates.completed(), 3);
+    QCOMPARE(duplicates.duplicateCount(), 2);
+    QCOMPARE(proxy.count(), 2);
+    QCOMPARE(proxy.gridLabelAt(0), QStringLiteral("Exact match 1 of 1"));
+    QCOMPARE(proxy.gridLabelAt(1), QStringLiteral("Exact match 1 of 1"));
+    QVERIFY(QFileInfo::exists(dir.filePath(QStringLiteral("first.png"))));
+    QVERIFY(QFileInfo::exists(dir.filePath(QStringLiteral("copy.png"))));
+
+    // Reopening an unchanged review reuses the in-memory hashes immediately.
+    duplicates.setActive(false);
+    duplicates.setActive(true);
+    QVERIFY(!duplicates.scanning());
+    QCOMPARE(proxy.count(), 2);
+
+    // Rewriting one copy invalidates its identity. The live library change
+    // triggers a new comparison and both former matches leave the view.
+    write(QStringLiteral("copy.png"), QByteArray("no longer the same"));
+    model.refresh();
+    QTRY_COMPARE_WITH_TIMEOUT(duplicates.groupCount(), 0, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(proxy.count(), 0, 5000);
+    QVERIFY(QFileInfo::exists(dir.filePath(QStringLiteral("first.png"))));
+    QVERIFY(QFileInfo::exists(dir.filePath(QStringLiteral("copy.png"))));
+  }
+
+  void duplicateSetsStayTogetherAndFollowTheChosenSort() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(qputenv("OMARCHY_SCREENSHOT_DIR", dir.path().toUtf8()));
+    QVERIFY(qputenv("OMARCHY_SCREENRECORD_DIR", dir.path().toUtf8()));
+    QVERIFY(qputenv("XDG_PICTURES_DIR", dir.path().toUtf8()));
+    QVERIFY(qputenv("XDG_VIDEOS_DIR", dir.path().toUtf8()));
+
+    const QStringList oldSet = {
+        dir.filePath(QStringLiteral("screenshot-2025-01-02_08-00-00-old-a.png")),
+        dir.filePath(QStringLiteral("screenshot-2025-01-02_09-00-00-old-b.png")),
+    };
+    const QStringList newSet = {
+        dir.filePath(QStringLiteral("screenshot-2026-08-02_08-00-00-new-a.png")),
+        dir.filePath(QStringLiteral("screenshot-2026-08-02_09-00-00-new-b.png")),
+    };
+    for (const QString& path : oldSet + newSet) {
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("media");
+    }
+
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QSignalSpy scanned(&model, &CaptureModel::countChanged);
+    QVERIFY(scanned.wait(5000));
+    QCOMPARE(model.rowCount(), 4);
+
+    CaptureFilterModel proxy;
+    proxy.setSourceModel(&model);
+    QHash<QString, QString> groups;
+    for (const QString& path : oldSet) {
+      groups.insert(path, QStringLiteral("old"));
+    }
+    for (const QString& path : newSet) {
+      groups.insert(path, QStringLiteral("new"));
+    }
+    proxy.setDuplicateGroups(groups);
+    proxy.setDuplicatesOnly(true);
+
+    QCOMPARE(groups.value(proxy.pathAt(0)), QStringLiteral("new"));
+    QCOMPARE(groups.value(proxy.pathAt(1)), QStringLiteral("new"));
+    QCOMPARE(proxy.gridLabelAt(0), QStringLiteral("Exact match 1 of 2"));
+    QCOMPARE(proxy.gridLabelAt(2), QStringLiteral("Exact match 2 of 2"));
+
+    proxy.setSortMode(CaptureFilterModel::OldestFirst);
+    QCOMPARE(groups.value(proxy.pathAt(0)), QStringLiteral("old"));
+    QCOMPARE(groups.value(proxy.pathAt(1)), QStringLiteral("old"));
+    QCOMPARE(proxy.gridLabelAt(0), QStringLiteral("Exact match 1 of 2"));
+    QCOMPARE(proxy.gridLabelAt(2), QStringLiteral("Exact match 2 of 2"));
+  }
+
+  void mediaDetailsParseCameraExposureVideoAndAudio() {
+    const QByteArray image =
+        "JPEG\n2020:05:06 07:08:09\n\nTestMake\nTestMake Model X\n"
+        "Prime 50mm\n28/10\n1/125\n400\n50/1\n8\nsRGB\n";
+    const QStringList imageLines = MediaInspector::parseImage(image);
+    QCOMPARE(imageLines.value(0), QStringLiteral("JPEG  ·  sRGB  ·  8-bit"));
+    QVERIFY(imageLines.value(1).startsWith(QStringLiteral("Taken  ·  ")));
+    QCOMPARE(imageLines.value(2), QStringLiteral("Camera  ·  TestMake Model X"));
+    QCOMPARE(imageLines.value(3), QStringLiteral("Lens  ·  Prime 50mm"));
+    QCOMPARE(imageLines.value(4),
+             QStringLiteral("f/2.8  ·  1/125 s  ·  ISO 400  ·  50 mm"));
+
+    const QByteArray video = R"({
+      "streams": [
+        {"codec_type":"video","codec_name":"h264","profile":"High",
+         "pix_fmt":"yuv420p","r_frame_rate":"30000/1001"},
+        {"codec_type":"audio","codec_name":"aac","sample_rate":"48000",
+         "channel_layout":"stereo"}
+      ],
+      "format": {"format_name":"mov,mp4,m4a,3gp,3g2,mj2","bit_rate":"3608000"}
+    })";
+    const QStringList videoLines = MediaInspector::parseVideo(video, QStringLiteral("mp4"));
+    QCOMPARE(videoLines.value(0), QStringLiteral("MP4  ·  H.264  ·  High  ·  yuv420p"));
+    QCOMPARE(videoLines.value(1), QStringLiteral("29.97 fps  ·  3.6 Mbps"));
+    QCOMPARE(videoLines.value(2), QStringLiteral("AAC  ·  stereo  ·  48 kHz"));
+  }
+
+  void embeddedMediaDatesParseWithoutChangingWallClockPhotoTime() {
+    QCOMPARE(MediaDateIndex::parseImageDate(
+                 "2020:05:06 07:08:09\n2019:01:02 03:04:05\n"),
+             QDateTime(QDate(2020, 5, 6), QTime(7, 8, 9)));
+    QCOMPARE(MediaDateIndex::parseImageDate("\n2019:01:02 03:04:05\n"),
+             QDateTime(QDate(2019, 1, 2), QTime(3, 4, 5)));
+    QVERIFY(!MediaDateIndex::parseImageDate("undefined\n\n").isValid());
+
+    const QByteArray video = R"({
+      "streams": [{"tags":{"creation_time":"2018-04-03T02:01:00"}}],
+      "format": {"tags":{"com.apple.quicktime.creationdate":"2021-08-09T10:11:12"}}
+    })";
+    QCOMPARE(MediaDateIndex::parseVideoDate(video),
+             QDateTime(QDate(2021, 8, 9), QTime(10, 11, 12)));
+    QVERIFY(!MediaDateIndex::parseVideoDate("not json").isValid());
+  }
+
+  void generalMediaDatesAreEnrichedOnceAndProducerDatesAlwaysWin() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QByteArray previousPath = qgetenv("PATH");
+    const QByteArray previousLog = qgetenv("OMAROLL_DATE_TEST_LOG");
+    const QByteArray previousPictures = qgetenv("XDG_PICTURES_DIR");
+    const QByteArray previousVideos = qgetenv("XDG_VIDEOS_DIR");
+    const QByteArray previousShots = qgetenv("OMARCHY_SCREENSHOT_DIR");
+    const QByteArray previousRecordings = qgetenv("OMARCHY_SCREENRECORD_DIR");
+    const auto restore = qScopeGuard([&] {
+      const auto putBack = [](const char* name, const QByteArray& value) {
+        value.isNull() ? qunsetenv(name) : qputenv(name, value);
+      };
+      putBack("PATH", previousPath);
+      putBack("OMAROLL_DATE_TEST_LOG", previousLog);
+      putBack("XDG_PICTURES_DIR", previousPictures);
+      putBack("XDG_VIDEOS_DIR", previousVideos);
+      putBack("OMARCHY_SCREENSHOT_DIR", previousShots);
+      putBack("OMARCHY_SCREENRECORD_DIR", previousRecordings);
+    });
+
+    const QString logPath = dir.filePath(QStringLiteral("date-runs.log"));
+    QFile magick(dir.filePath(QStringLiteral("magick")));
+    QVERIFY(magick.open(QIODevice::WriteOnly));
+    magick.write("#!/bin/sh\n"
+                 "for last do :; done\n"
+                 "case \"$last\" in\n"
+                 "  *undated*) printf '\\n\\n' ;;\n"
+                 "  *) printf '2020:05:06 07:08:09\\n\\n' ;;\n"
+                 "esac\n"
+                 "printf 'image\\n' >> \"$OMAROLL_DATE_TEST_LOG\"\n");
+    magick.close();
+    QVERIFY(magick.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                  QFileDevice::ExeOwner));
+
+    QFile ffprobe(dir.filePath(QStringLiteral("ffprobe")));
+    QVERIFY(ffprobe.open(QIODevice::WriteOnly));
+    ffprobe.write("#!/bin/sh\n"
+                  "printf '%s\\n' '{\"format\":{\"tags\":{\"creation_time\":\"2021-08-09T10:11:12\"}}}'\n"
+                  "printf 'video\\n' >> \"$OMAROLL_DATE_TEST_LOG\"\n");
+    ffprobe.close();
+    QVERIFY(ffprobe.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                   QFileDevice::ExeOwner));
+    QVERIFY(qputenv("PATH", dir.path().toUtf8()));
+    QVERIFY(qputenv("OMAROLL_DATE_TEST_LOG", logPath.toUtf8()));
+    for (const char* name : {"XDG_PICTURES_DIR", "XDG_VIDEOS_DIR",
+                             "OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR"}) {
+      QVERIFY(qputenv(name, dir.path().toUtf8()));
+    }
+
+    QImage image(16, 12, QImage::Format_RGB32);
+    image.fill(Qt::white);
+    const QString photo = dir.filePath(QStringLiteral("phone photo #1.jpg"));
+    const QString capture =
+        dir.filePath(QStringLiteral("screenshot-2026-08-31_10-00-00.png"));
+    const QString undated = dir.filePath(QStringLiteral("undated.png"));
+    QVERIFY(image.save(photo, "JPG"));
+    QVERIFY(image.save(capture, "PNG"));
+    QVERIFY(image.save(undated, "PNG"));
+    const QString video = dir.filePath(QStringLiteral("family clip.mp4"));
+    QFile clip(video);
+    QVERIFY(clip.open(QIODevice::WriteOnly));
+    clip.write("test video");
+    clip.close();
+
+    QFile::remove(MediaDateIndex::cachePath());
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QSignalSpy scanned(&model, &CaptureModel::countChanged);
+    QVERIFY(scanned.wait(5000));
+    QCOMPARE(model.rowCount(), 4);
+
+    const int captureRow = model.rowOf(capture);
+    QVERIFY(captureRow >= 0);
+    QVERIFY(model.recordAt(captureRow).hasProducerTimestamp);
+    QCOMPARE(model.recordAt(captureRow).captured,
+             QDateTime(QDate(2026, 8, 31), QTime(10, 0)));
+    const QDateTime undatedFallback = model.recordAt(model.rowOf(undated)).captured;
+
+    {
+      MediaDateIndex dates(&model);
+      QTRY_COMPARE_WITH_TIMEOUT(dates.total(), 3, 2000);
+      QTRY_VERIFY_WITH_TIMEOUT(!dates.indexing(), 3000);
+      QCOMPARE(dates.completed(), 3);
+      QCOMPARE(model.recordAt(model.rowOf(photo)).captured,
+               QDateTime(QDate(2020, 5, 6), QTime(7, 8, 9)));
+      QCOMPARE(model.recordAt(model.rowOf(video)).captured,
+               QDateTime(QDate(2021, 8, 9), QTime(10, 11, 12)));
+      QCOMPARE(model.recordAt(model.rowOf(capture)).captured,
+               QDateTime(QDate(2026, 8, 31), QTime(10, 0)));
+      QCOMPARE(model.recordAt(model.rowOf(undated)).captured, undatedFallback);
+
+      // A result for an older version of the file cannot reorder the live row.
+      model.applyCapturedDates(
+          {{photo, 0, 0, QDateTime(QDate(1990, 1, 1), QTime(0, 0)), 0, 0}});
+      QCOMPARE(model.recordAt(model.rowOf(photo)).captured,
+               QDateTime(QDate(2020, 5, 6), QTime(7, 8, 9)));
+      // Embedded metadata can never override a producer timestamp.
+      const CaptureRecord& producer = model.recordAt(model.rowOf(capture));
+      model.applyCapturedDates({{capture, producer.modified, producer.bytes,
+                                 QDateTime(QDate(1990, 1, 1), QTime(0, 0)),
+                                 producer.device, producer.inode}});
+      QCOMPARE(model.recordAt(model.rowOf(capture)).captured,
+               QDateTime(QDate(2026, 8, 31), QTime(10, 0)));
+
+      // A watcher rescan keeps resolved dates in place instead of briefly
+      // restoring mtimes and reshuffling the grid.
+      scanned.clear();
+      model.refresh();
+      QVERIFY(scanned.wait(5000));
+      QCOMPARE(model.recordAt(model.rowOf(photo)).captured,
+               QDateTime(QDate(2020, 5, 6), QTime(7, 8, 9)));
+      QCOMPARE(model.recordAt(model.rowOf(video)).captured,
+               QDateTime(QDate(2021, 8, 9), QTime(10, 11, 12)));
+    }
+
+    QFile firstLog(logPath);
+    QVERIFY(firstLog.open(QIODevice::ReadOnly));
+    const QByteArray firstRuns = firstLog.readAll();
+    firstLog.close();
+    QCOMPARE(firstRuns.count('\n'), 3);
+    const QFileInfo dateCache(MediaDateIndex::cachePath());
+    QVERIFY(dateCache.isFile());
+    const QFileDevice::Permissions publicPermissions =
+        QFileDevice::ReadGroup | QFileDevice::WriteGroup | QFileDevice::ExeGroup |
+        QFileDevice::ReadOther | QFileDevice::WriteOther | QFileDevice::ExeOther;
+    QCOMPARE(dateCache.permissions() & publicPermissions, QFileDevice::Permissions());
+
+    // The second index applies its private cache and starts no process.
+    {
+      MediaDateIndex cached(&model);
+      QTest::qWait(300);
+      QVERIFY(!cached.indexing());
+    }
+    QFile secondLog(logPath);
+    QVERIFY(secondLog.open(QIODevice::ReadOnly));
+    QCOMPARE(secondLog.readAll(), firstRuns);
+  }
+
+  void imageDetailsRunLocallyForAnOddPath() {
+    if (QStandardPaths::findExecutable(QStringLiteral("magick")).isEmpty()) {
+      QSKIP("ImageMagick not installed");
+    }
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("odd # photo ?.png"));
+    QImage image(37, 23, QImage::Format_RGB32);
+    image.fill(Qt::cyan);
+    QVERIFY(image.save(path, "PNG"));
+    const qint64 before = QFileInfo(path).size();
+
+    MediaInspector inspector;
+    inspector.inspect(path, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!inspector.loading(), 5000);
+    QCOMPARE(inspector.path(), path);
+    QVERIFY(!inspector.lines().isEmpty());
+    QVERIFY(inspector.lines().first().startsWith(QStringLiteral("PNG")));
+    QCOMPARE(QFileInfo(path).size(), before);
   }
 
   void hiddenIsExcludedUntilAskedFor() {
@@ -1087,9 +1583,204 @@ private slots:
       moving << row.toMap().value(QStringLiteral("id")).toString();
     }
     QVERIFY(moving.contains(QStringLiteral("play")));
+    QVERIFY(moving.contains(QStringLiteral("frame")));
     QVERIFY(moving.contains(QStringLiteral("copy")));
+    QVERIFY(moving.contains(QStringLiteral("export")));
+    QVERIFY(moving.contains(QStringLiteral("rename")));
+    QVERIFY(!moving.contains(QStringLiteral("gif")));
+    QVERIFY(!moving.contains(QStringLiteral("shrink")));
     QVERIFY(!moving.contains(QStringLiteral("matte")));
     QVERIFY(!moving.contains(QStringLiteral("ocr")));
+    QVERIFY(!moving.contains(QStringLiteral("background")));
+
+    QStringList still;
+    for (const QVariant &row : registry.actionsFor(false)) {
+      still << row.toMap().value(QStringLiteral("id")).toString();
+    }
+    QVERIFY(still.contains(QStringLiteral("background")));
+    QVERIFY(still.contains(QStringLiteral("export")));
+    QVERIFY(still.contains(QStringLiteral("rename")));
+    QVERIFY(!still.contains(QStringLiteral("frame")));
+    QVERIFY(!still.contains(QStringLiteral("convert")));
+  }
+
+  void backgroundActionUsesTheOmarchyHandlerEndToEnd() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray previousPath = qgetenv("PATH");
+    const auto restorePath = qScopeGuard([&] { qputenv("PATH", previousPath); });
+    const QByteArray previousLog = qgetenv("OMAROLL_TEST_LOG");
+    const auto restoreLog = qScopeGuard([&] {
+      previousLog.isNull() ? qunsetenv("OMAROLL_TEST_LOG")
+                           : qputenv("OMAROLL_TEST_LOG", previousLog);
+    });
+
+    QFile handler(dir.filePath(QStringLiteral("omarchy-theme-bg-set")));
+    QVERIFY(handler.open(QIODevice::WriteOnly));
+    handler.write("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$OMAROLL_TEST_LOG\"\n");
+    handler.close();
+    QVERIFY(handler.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                   QFileDevice::ExeOwner));
+    QVERIFY(qputenv("PATH", dir.path().toUtf8()));
+    const QString logPath = dir.filePath(QStringLiteral("background.log"));
+    QVERIFY(qputenv("OMAROLL_TEST_LOG", logPath.toUtf8()));
+
+    const QString imagePath = dir.filePath(QStringLiteral("photo #1.png"));
+    QImage image(8, 8, QImage::Format_RGB32);
+    image.fill(Qt::blue);
+    QVERIFY(image.save(imagePath, "PNG"));
+
+    ActionLauncher launcher;
+    QSignalSpy reported(&launcher, &ActionLauncher::reported);
+    ActionRegistry registry(&launcher);
+    QVERIFY(registry.available(QStringLiteral("background")));
+    QVERIFY(registry.appliesTo(QStringLiteral("background"), false));
+    QVERIFY(!registry.appliesTo(QStringLiteral("background"), true));
+    QVERIFY(registry.run(QStringLiteral("background"), imagePath));
+    QCOMPARE(reported.size(), 1);
+    QCOMPARE(reported.first().first().toString(), QStringLiteral("Set as current background"));
+    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(logPath), 1000);
+    QFile log(logPath);
+    QVERIFY(log.open(QIODevice::ReadOnly));
+    QCOMPARE(QString::fromUtf8(log.readAll()), imagePath + QLatin1Char('\n'));
+  }
+
+  void renamePreservesTheExtensionAndMovesLibraryState() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString original = dir.filePath(QStringLiteral("capture #1.PNG"));
+    QImage image(8, 8, QImage::Format_RGB32);
+    image.fill(Qt::cyan);
+    QVERIFY(image.save(original, "PNG"));
+    const QString occupied = dir.filePath(QStringLiteral("occupied.PNG"));
+    QVERIFY(image.save(occupied, "PNG"));
+
+    const QString album = QStringLiteral("Rename test");
+    AppSettings settings;
+    settings.deleteAlbum(album);
+    QVERIFY(settings.createAlbum(album));
+    QVERIFY(settings.addToAlbum(album, {original}));
+    settings.toggleFavorite(original);
+    settings.toggleHidden(original);
+
+    ActionLauncher launcher;
+    QVERIFY(!launcher.renameFile(original, QString()).value(QStringLiteral("ok")).toBool());
+    QVERIFY(!launcher.renameFile(original, QStringLiteral("bad/name"))
+                 .value(QStringLiteral("ok"))
+                 .toBool());
+    const QVariantMap collision = launcher.renameFile(original, QStringLiteral("occupied"));
+    QVERIFY(!collision.value(QStringLiteral("ok")).toBool());
+    QCOMPARE(collision.value(QStringLiteral("error")).toString(),
+             QStringLiteral("A file with that name already exists"));
+
+    const QVariantMap renamed = launcher.renameFile(original, QStringLiteral("useful name"));
+    QVERIFY(renamed.value(QStringLiteral("ok")).toBool());
+    const QString newPath = dir.filePath(QStringLiteral("useful name.PNG"));
+    QCOMPARE(renamed.value(QStringLiteral("path")).toString(), newPath);
+    QCOMPARE(renamed.value(QStringLiteral("fileName")).toString(),
+             QStringLiteral("useful name.PNG"));
+    QVERIFY(!QFileInfo::exists(original));
+    QVERIFY(QFileInfo::exists(newPath));
+
+    settings.relocatePath(original, newPath);
+    QVERIFY(settings.isFavorite(newPath));
+    QVERIFY(settings.isHidden(newPath));
+    QCOMPARE(settings.albumPaths(album), QStringList{newPath});
+    AppSettings restored;
+    QVERIFY(restored.isFavorite(newPath));
+    QVERIFY(restored.isHidden(newPath));
+    QCOMPARE(restored.albumPaths(album), QStringList{newPath});
+
+    settings.toggleFavorite(newPath);
+    settings.toggleHidden(newPath);
+    settings.deleteAlbum(album);
+  }
+
+  void exportChoicesReachTheTranscoderForEverySelectedFile() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray previousPath = qgetenv("PATH");
+    const auto restorePath = qScopeGuard([&] { qputenv("PATH", previousPath); });
+
+    QFile handler(dir.filePath(QStringLiteral("omarchy-transcode")));
+    QVERIFY(handler.open(QIODevice::WriteOnly));
+    handler.write(
+        "#!/bin/sh\n"
+        "printf '%s\\n%s\\n%s\\n' \"$1\" \"$2\" \"$3\" > \"$1.args\"\n"
+        "out=\"${1%.*}-$3.$2\"\n"
+        "printf converted > \"$out\"\n");
+    handler.close();
+    QVERIFY(handler.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                   QFileDevice::ExeOwner));
+    QVERIFY(qputenv("PATH", dir.path().toUtf8()));
+
+    const QString first = dir.filePath(QStringLiteral("first photo.png"));
+    const QString second = dir.filePath(QStringLiteral("second # photo.webp"));
+    QImage image(8, 8, QImage::Format_RGB32);
+    image.fill(Qt::green);
+    QVERIFY(image.save(first, "PNG"));
+    QVERIFY(image.save(second, "WEBP"));
+
+    ActionLauncher launcher;
+    QSignalSpy settled(&launcher, &ActionLauncher::outputSettled);
+    ActionRegistry registry(&launcher);
+    QVERIFY(registry.runBatchWith(
+        QStringLiteral("export"),
+        {{QStringLiteral("format"), QStringLiteral("png")},
+         {QStringLiteral("resolution"), QStringLiteral("low")}},
+        {first, second}));
+    QTRY_COMPARE_WITH_TIMEOUT(settled.size(), 2, 3000);
+
+    for (const QString &path : {first, second}) {
+      QFile arguments(path + QStringLiteral(".args"));
+      QVERIFY(arguments.open(QIODevice::ReadOnly));
+      QCOMPARE(QString::fromUtf8(arguments.readAll()),
+               path + QStringLiteral("\npng\nlow\n"));
+      const QString output = QFileInfo(path).absolutePath() + QLatin1Char('/') +
+                             QFileInfo(path).completeBaseName() + QStringLiteral("-low.png");
+      QFile converted(output);
+      QVERIFY(converted.open(QIODevice::ReadOnly));
+      QCOMPARE(converted.readAll(), QByteArray("converted"));
+    }
+  }
+
+  void currentVideoFrameIsSavedAtTheChosenPosition() {
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty()) {
+      QSKIP("ffmpeg is not installed");
+    }
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString video = dir.filePath(QStringLiteral("short clip.mp4"));
+    QProcess encoder;
+    encoder.start(ffmpeg,
+                  {QStringLiteral("-hide_banner"), QStringLiteral("-loglevel"),
+                   QStringLiteral("error"), QStringLiteral("-f"), QStringLiteral("lavfi"),
+                   QStringLiteral("-i"), QStringLiteral("color=c=red:s=160x90:d=1:r=10"),
+                   QStringLiteral("-c:v"), QStringLiteral("libx264"),
+                   QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"), video});
+    QVERIFY(encoder.waitForFinished(10000));
+    QCOMPARE(encoder.exitStatus(), QProcess::NormalExit);
+    QCOMPARE(encoder.exitCode(), 0);
+
+    ActionLauncher launcher;
+    QSignalSpy settled(&launcher, &ActionLauncher::outputSettled);
+    ActionRegistry registry(&launcher);
+    QVERIFY(registry.runBatchWith(
+        QStringLiteral("frame"),
+        {{QStringLiteral("seek"), QStringLiteral("0.500")},
+         {QStringLiteral("frame"), QStringLiteral("00m00s500")}},
+        {video}));
+    QTRY_COMPARE_WITH_TIMEOUT(settled.size(), 1, 5000);
+    QVERIFY(settled.first().at(1).toBool());
+
+    const QString output = dir.filePath(QStringLiteral("short clip-frame-00m00s500.png"));
+    QCOMPARE(settled.first().at(0).toString(), output);
+    const QImage frame(output);
+    QVERIFY(!frame.isNull());
+    QCOMPARE(frame.size(), QSize(160, 90));
+    QVERIFY(QFileInfo(video).exists());
   }
 
   void clipboardFailuresAreReportedAndSecretsStayOutOfHistory() {

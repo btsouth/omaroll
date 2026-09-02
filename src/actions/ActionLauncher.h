@@ -4,6 +4,7 @@
 #include <QSet>
 #include <QString>
 #include <QStringList>
+#include <QVariantMap>
 
 // Hands a capture to whoever already owns the job.
 //
@@ -31,6 +32,11 @@ public:
   // XDG trash, never unlink. A capture the user deletes by accident has to be
   // recoverable from their file manager like anything else they delete.
   Q_INVOKABLE bool moveToTrash(const QString& path);
+
+  // Rename in place without letting the user accidentally change the media
+  // extension or overwrite another file. The map contains ok, path, fileName,
+  // and an inline error suitable for the rename sheet.
+  Q_INVOKABLE QVariantMap renameFile(const QString& path, const QString& baseName);
 
   // Launch and forget. Names the package in the failure when the program is
   // absent, so the message says what to install.

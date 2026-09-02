@@ -92,6 +92,10 @@ public:
   Q_INVOKABLE void toggleFavorite(const QString& path);
   Q_INVOKABLE void toggleHidden(const QString& path);
 
+  // Keep user-owned organization attached when an explicit in-app rename
+  // changes the path. Discovery itself remains read-only.
+  Q_INVOKABLE void relocatePath(const QString& oldPath, const QString& newPath);
+
   // Bulk marks: one persist and one signal for the whole set.
   Q_INVOKABLE void setFavorite(const QStringList& paths, bool on);
   Q_INVOKABLE void setHidden(const QStringList& paths, bool on);

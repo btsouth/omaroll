@@ -75,6 +75,8 @@ CaptureModel::CaptureModel(AppSettings* settings, QObject* parent)
   if (m_settings) {
     // A source setting change means the roots moved; rescan rather than filter.
     connect(m_settings, &AppSettings::scanDownloadsChanged, this, &CaptureModel::refresh);
+    connect(m_settings, &AppSettings::scanDownloadsChanged, this,
+            &CaptureModel::automaticFoldersChanged);
     connect(m_settings, &AppSettings::recursionDepthChanged, this, &CaptureModel::refresh);
     connect(m_settings, &AppSettings::libraryFoldersChanged, this, [this] {
       rewatch();
@@ -151,6 +153,52 @@ QList<CaptureScanner::Root> CaptureModel::roots() const {
     }
   }
   return list;
+}
+
+QVariantList CaptureModel::automaticFolders() const {
+  struct Source {
+    QString label;
+    QString path;
+  };
+  QList<Source> sources = {
+      {QStringLiteral("Screenshots"), CaptureLocations::screenshots()},
+      {QStringLiteral("Screen recordings"), CaptureLocations::recordings()},
+      {QStringLiteral("Pictures"), CaptureLocations::pictures()},
+      {QStringLiteral("Videos"), CaptureLocations::videos()},
+  };
+  if (!m_settings || m_settings->scanDownloads()) {
+    sources.append({QStringLiteral("Downloads"), CaptureLocations::downloads()});
+  }
+
+  QVariantList result;
+  QHash<QString, int> rowByPath;
+  for (const Source& source : std::as_const(sources)) {
+    const QFileInfo info(source.path);
+    QString path = info.canonicalFilePath();
+    if (path.isEmpty()) {
+      path = QDir::cleanPath(info.absoluteFilePath());
+    }
+    const auto found = rowByPath.constFind(path);
+    if (found == rowByPath.cend()) {
+      QVariantMap row;
+      row.insert(QStringLiteral("label"), source.label);
+      row.insert(QStringLiteral("path"), path);
+      row.insert(QStringLiteral("available"), info.isDir());
+      rowByPath.insert(path, static_cast<int>(result.size()));
+      result.append(row);
+      continue;
+    }
+    QVariantMap row = result.at(*found).toMap();
+    row.insert(QStringLiteral("label"),
+               row.value(QStringLiteral("label")).toString() + QStringLiteral(" + ") +
+                   source.label);
+    result[*found] = row;
+  }
+  return result;
+}
+
+bool CaptureModel::folderAvailable(const QString& path) const {
+  return QFileInfo(path).isDir();
 }
 
 void CaptureModel::setExtraRoot(const QString& directory) {
@@ -245,6 +293,48 @@ int CaptureModel::rowOf(const QString& path) const {
   return -1;
 }
 
+void CaptureModel::applyCapturedDates(const QList<CapturedDateUpdate>& updates) {
+  if (updates.isEmpty() || m_records.isEmpty()) {
+    return;
+  }
+
+  QHash<QString, const CapturedDateUpdate*> byPath;
+  byPath.reserve(updates.size());
+  for (const CapturedDateUpdate& update : updates) {
+    if (update.captured.isValid()) {
+      byPath.insert(update.path, &update);
+    }
+  }
+
+  int firstChanged = m_records.size();
+  int lastChanged = -1;
+  for (int row = 0; row < m_records.size(); ++row) {
+    CaptureRecord& record = m_records[row];
+    const auto found = byPath.constFind(record.path);
+    if (found == byPath.cend() || record.hasProducerTimestamp) {
+      continue;
+    }
+    const CapturedDateUpdate& update = **found;
+    if (record.modified != update.modified || record.bytes != update.bytes ||
+        record.device != update.device || record.inode != update.inode) {
+      continue;
+    }
+    m_capturedDates.insert(record.path, update);
+    if (record.captured == update.captured) {
+      continue;
+    }
+    record.captured = update.captured;
+    firstChanged = qMin(firstChanged, row);
+    lastChanged = row;
+  }
+
+  if (lastChanged >= 0) {
+    emit dataChanged(index(firstChanged), index(lastChanged),
+                     {CaptureRoles::CapturedRole, CaptureRoles::DayKeyRole,
+                      CaptureRoles::DayLabelRole, CaptureRoles::TimeLabelRole});
+  }
+}
+
 QString CaptureModel::dayLabelAt(int row) const {
   if (row < 0 || row >= m_records.size()) {
     return {};
@@ -330,6 +420,31 @@ void CaptureModel::adoptResults(ScanResult result) {
     }
   }
 
+  // Keep already-resolved metadata dates through ordinary watcher rescans.
+  // Without this, every new screenshot would briefly put copied photos back
+  // on their mtime dates until the date cache was applied again.
+  QSet<QString> liveDatePaths;
+  liveDatePaths.reserve(scanned.size());
+  for (CaptureRecord& record : scanned) {
+    const auto known = m_capturedDates.constFind(record.path);
+    if (known == m_capturedDates.cend()) {
+      continue;
+    }
+    if (!record.hasProducerTimestamp && known->modified == record.modified &&
+        known->bytes == record.bytes && known->device == record.device &&
+        known->inode == record.inode && known->captured.isValid()) {
+      record.captured = known->captured;
+      liveDatePaths.insert(record.path);
+    }
+  }
+  for (auto it = m_capturedDates.begin(); it != m_capturedDates.end();) {
+    if (liveDatePaths.contains(it.key())) {
+      ++it;
+    } else {
+      it = m_capturedDates.erase(it);
+    }
+  }
+
   QHash<QString, int> incoming;
   incoming.reserve(scanned.size());
   for (int row = 0; row < scanned.size(); ++row) {
@@ -363,6 +478,7 @@ void CaptureModel::adoptResults(ScanResult result) {
     kept.insert(record.path);
     if (record.modified == fresh.modified && record.bytes == fresh.bytes &&
         record.kind == fresh.kind && record.captured == fresh.captured &&
+        record.hasProducerTimestamp == fresh.hasProducerTimestamp &&
         record.favorite == fresh.favorite && record.hidden == fresh.hidden) {
       continue;
     }
@@ -389,6 +505,7 @@ void CaptureModel::adoptResults(ScanResult result) {
   m_scanning = false;
   emit scanningChanged();
   emit countChanged();
+  emit automaticFoldersChanged();
 
   checkDayRollover();
   rewatch(result.directories);

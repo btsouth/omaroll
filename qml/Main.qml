@@ -35,6 +35,7 @@ ApplicationWindow {
     // also reaching the tile, pill or viewer button under it.
     readonly property bool modalOpen: confirm.visible || matteSheet.visible
                                       || settingsSheet.visible || albumNameSheet.visible
+                                      || exportSheet.visible || renameSheet.visible
                                       || tailscaleSheet.visible
     readonly property bool anySheetOpen: modalOpen || detail.visible
     // A popup menu is up; the press that closes it must not also land under it.
@@ -53,6 +54,16 @@ ApplicationWindow {
         noticeTimer.restart()
     }
 
+    function restoreFocusAfterSheet() {
+        Qt.callLater(function () {
+            if (detail.visible) {
+                detail.forceActiveFocus()
+            } else if (!root.modalOpen) {
+                library.forceActiveFocus()
+            }
+        })
+    }
+
     function setViewerFullScreen(enabled) {
         if (enabled) {
             root.visibilityBeforeViewerFullScreen = root.visibility
@@ -64,6 +75,37 @@ ApplicationWindow {
     }
 
     function currentPath() { return Captures.pathAt(library.currentIndex) }
+
+    function frameStamp(milliseconds) {
+        const value = Math.max(0, Math.floor(milliseconds))
+        const hours = Math.floor(value / 3600000)
+        const minutes = Math.floor((value % 3600000) / 60000)
+        const seconds = Math.floor((value % 60000) / 1000)
+        const millis = value % 1000
+        const pad = function (number, width) { return String(number).padStart(width, "0") }
+        return (hours > 0 ? pad(hours, 2) + "h" : "")
+               + pad(minutes, 2) + "m" + pad(seconds, 2) + "s" + pad(millis, 3)
+    }
+
+    function openExport(paths, knownVideo) {
+        if (paths.length === 0) {
+            return
+        }
+        if (!Registry.available("export")) {
+            root.say("omarchy-transcode comes with Omarchy and is not on this system")
+            return
+        }
+        const firstRow = Captures.rowOf(paths[0])
+        const video = knownVideo === undefined ? Captures.isVideoAt(firstRow) : knownVideo
+        for (const path of paths) {
+            const row = Captures.rowOf(path)
+            if (row < 0 || Captures.isVideoAt(row) !== video) {
+                root.say("Select only pictures or only videos to convert together")
+                return
+            }
+        }
+        exportSheet.open(paths, video)
+    }
 
     // Every action funnels through here so a keystroke, a click in the detail
     // sidebar and a bulk operation all take the same path.
@@ -91,6 +133,24 @@ ApplicationWindow {
         case "tailscale":
             tailscaleSheet.open([path])
             return
+        case "export":
+            root.openExport([path], video)
+            return
+        case "rename":
+            renameSheet.open(path, Captures.fileNameAt(row))
+            return
+        case "frame": {
+            if (!detail.visible || detail.path !== path || !video) {
+                root.say("Open a video and choose the frame first")
+                return
+            }
+            const position = Math.max(0, detail.playbackPosition)
+            Registry.runBatchWith("frame",
+                                  {"seek": (position / 1000).toFixed(3),
+                                   "frame": root.frameStamp(position)},
+                                  [path])
+            return
+        }
         case "favorite":
             Settings.toggleFavorite(path)
             root.say(Settings.isFavorite(path) ? "Added to favourites" : "Removed from favourites")
@@ -123,6 +183,10 @@ ApplicationWindow {
     function dismissTopLayer() {
         if (confirm.visible) {
             confirm.close()
+        } else if (exportSheet.visible) {
+            exportSheet.close()
+        } else if (renameSheet.visible) {
+            renameSheet.close()
         } else if (tailscaleSheet.visible) {
             tailscaleSheet.close()
         } else if (settingsSheet.visible) {
@@ -182,6 +246,7 @@ ApplicationWindow {
         Captures.kindFilter = filters.kindAll
         Captures.searchText = ""
         Captures.favoritesOnly = false
+        Captures.duplicatesOnly = false
         Captures.setAlbumFilter("", [])
         Captures.folderFilter = folder === undefined ? "" : folder
     }
@@ -205,8 +270,26 @@ ApplicationWindow {
             root.pendingInitialPath = path
         }
     }
+    function refreshOpenDetail() {
+        if (!detail.visible || detail.path === "") {
+            return
+        }
+        const row = Captures.rowOf(detail.path)
+        if (row < 0) {
+            return
+        }
+        detail.fileName = Captures.fileNameAt(row)
+        detail.kind = Captures.kindAt(row)
+        detail.kindLabel = Captures.kindLabelAt(row)
+        detail.dayLabel = Captures.dayLabelAt(row)
+        detail.timeLabel = Captures.timeLabelAt(row)
+        detail.sizeLabel = Captures.sizeLabelAt(row)
+        detail.stamp = Captures.stampAt(row)
+        detail.canNavigate = root.adjacentViewerPath(detail.path, 1) !== ""
+    }
     Connections {
         target: Captures
+        function onDataChanged() { root.refreshOpenDetail() }
         function onCountChanged() {
             if (detail.visible) {
                 const detailRow = Captures.rowOf(detail.path)
@@ -214,7 +297,7 @@ ApplicationWindow {
                     detail.close()
                     root.say("That file is no longer available")
                 } else {
-                    detail.canNavigate = root.adjacentViewerPath(detail.path, 1) !== ""
+                    root.refreshOpenDetail()
                 }
             }
             if (root.pendingRevealPath !== "") {
@@ -227,8 +310,17 @@ ApplicationWindow {
                     revealRow = Captures.rowOf(root.pendingRevealPath)
                 }
                 if (revealRow >= 0) {
+                    const revealPath = root.pendingRevealPath
                     root.pendingRevealPath = ""
-                    library.currentIndex = revealRow
+                    // GridView preserves the old current item while proxy rows
+                    // move, one polish after this signal. Select the new file
+                    // after that adjustment so it cannot overwrite us.
+                    Qt.callLater(function () {
+                        const stableRow = Captures.rowOf(revealPath)
+                        if (stableRow >= 0) {
+                            library.currentIndex = stableRow
+                        }
+                    })
                 }
             }
             if (root.pendingInitialPath === "") {
@@ -320,6 +412,12 @@ ApplicationWindow {
             }
         } else if (view === "matte") {
             root.perform("matte", Captures.pathAt(0))
+        } else if (view === "export") {
+            root.perform("export", Captures.pathAt(0))
+        } else if (view === "rename") {
+            root.perform("rename", Captures.pathAt(0))
+        } else if (view === "duplicates") {
+            Captures.duplicatesOnly = true
         } else if (view === "settings") {
             settingsSheet.open()
         }
@@ -364,11 +462,29 @@ ApplicationWindow {
             Text {
                 anchors.verticalCenter: parent.verticalCenter
                 text: {
+                    if (Duplicates.scanning && Captures.duplicatesOnly) {
+                        return Duplicates.total > 0
+                               ? "Finding exact duplicates · " + Duplicates.completed
+                                 + " of " + Duplicates.total
+                               : "Finding exact duplicates"
+                    }
+                    if (TextIndex.indexing && Captures.searchText !== "") {
+                        return TextIndex.total > 0
+                               ? "Searching image text · " + TextIndex.completed
+                                 + " of " + TextIndex.total
+                               : "Searching image text…"
+                    }
                     if (Library.scanning && Captures.count === 0) {
                         return "Scanning…"
                     }
                     if (library.checkedCount > 0) {
                         return library.checkedCount + " selected"
+                    }
+                    if (MediaDates.indexing) {
+                        return MediaDates.total > 0
+                               ? "Reading media dates · " + MediaDates.completed
+                                 + " of " + MediaDates.total
+                               : "Reading media dates…"
                     }
                     if (Captures.count === 0) {
                         return "Nothing to show"
@@ -398,6 +514,13 @@ ApplicationWindow {
                 visible: library.checkedCount > 0
                 label: "Send"
                 onClicked: Registry.runBatch("send", library.checkedPaths())
+            }
+            PillButton {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: library.checkedCount > 0 && root.width >= 1050
+                         && Registry.available("export")
+                label: "Export"
+                onClicked: root.openExport(library.checkedPaths())
             }
             PillButton {
                 anchors.verticalCenter: parent.verticalCenter
@@ -579,7 +702,8 @@ ApplicationWindow {
         anchors.centerIn: library
         width: Math.min(420, parent.width - 80)
         spacing: 10
-        visible: Captures.count === 0 && !Library.scanning
+        visible: Captures.count === 0 && !Library.scanning && !TextIndex.indexing
+                 && !(Captures.duplicatesOnly && Duplicates.scanning)
 
         readonly property bool filtered: Captures.sourceCount > 0
         readonly property bool folderScoped: Captures.folderFilter !== ""
@@ -588,7 +712,8 @@ ApplicationWindow {
         Text {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
-            text: parent.albumScoped ? "This album is empty"
+            text: Captures.duplicatesOnly ? "No exact duplicates"
+                  : parent.albumScoped ? "This album is empty"
                   : parent.folderScoped ? "No media in this folder"
                   : (parent.filtered ? "Nothing matches" : "No media yet")
             font.family: Theme.fontFamily
@@ -601,7 +726,9 @@ ApplicationWindow {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
-            text: parent.albumScoped
+            text: Captures.duplicatesOnly
+                  ? "Files are compared by content. Nothing is removed automatically."
+                  : parent.albumScoped
                   ? "Choose All media from Browse, select files, then use + Album. "
                     + "Unavailable files remain remembered."
                   : parent.folderScoped
@@ -687,8 +814,8 @@ ApplicationWindow {
         // dropped back into the grid read as a mistake. What removes the
         // file from view (trash, hide), opens another sheet (matte) or hands
         // off to an editor still closes it.
-        readonly property var keepsViewer: ["play", "view", "favorite", "copy", "ocr", "qr",
-                                            "send", "tailscale", "files"]
+        readonly property var keepsViewer: ["play", "view", "frame", "background", "export", "favorite",
+                                            "copy", "ocr", "qr", "send", "tailscale", "files"]
         onActionTriggered: function (id) {
             if (detail.keepsViewer.indexOf(id) < 0) {
                 detail.close()
@@ -710,6 +837,7 @@ ApplicationWindow {
                          + " to " + name)
             }
         }
+        onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
     }
 
     Menu {
@@ -804,6 +932,31 @@ ApplicationWindow {
     MatteSheet {
         id: matteSheet
         objectName: "matteSheet"
+        onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
+    }
+
+    ExportSheet {
+        id: exportSheet
+        objectName: "exportSheet"
+        onExported: function (count, description) {
+            root.say("Converting " + (count === 1 ? "1 file" : count + " files")
+                     + " to " + description)
+            library.clearChecked()
+        }
+        onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
+    }
+
+    RenameSheet {
+        id: renameSheet
+        objectName: "renameSheet"
+        onRenamed: function (oldPath, newPath, fileName) {
+            Settings.relocatePath(oldPath, newPath)
+            root.pendingRevealPath = newPath
+            library.clearChecked()
+            root.say("Renamed to " + fileName)
+            Library.refresh()
+        }
+        onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
     }
 
     TailscaleSheet {
@@ -813,7 +966,7 @@ ApplicationWindow {
             root.say("Sending " + (count === 1 ? "1 file" : count + " files") + " to " + machine)
         }
         // Opened over the viewer, it took the keyboard; hand it back.
-        onVisibleChanged: if (!visible && detail.visible) detail.forceActiveFocus()
+        onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
     }
 
     SettingsSheet {
@@ -824,6 +977,7 @@ ApplicationWindow {
             settingsSheet.close()
             albumNameSheet.open([])
         }
+        onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
     }
 
     ConfirmSheet {
@@ -851,6 +1005,7 @@ ApplicationWindow {
             root.pendingDeleteBatch = []
             Library.refresh()
         }
+        onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
     }
 
     // Transient status line, so a result or a missing handler is reported where
@@ -918,6 +1073,18 @@ ApplicationWindow {
         sequences: ["C"]
         enabled: !root.anySheetOpen
         onActivated: root.perform("ocr", root.currentPath())
+    }
+    Shortcut {
+        sequences: ["E"]
+        enabled: !root.anySheetOpen
+        onActivated: library.checkedCount > 0
+                     ? root.openExport(library.checkedPaths())
+                     : root.perform("export", root.currentPath())
+    }
+    Shortcut {
+        sequences: ["N"]
+        enabled: !root.anySheetOpen
+        onActivated: root.perform("rename", root.currentPath())
     }
     // With a selection, the keys that have a bulk form act on all of it, as
     // the header buttons and a drag do; otherwise on the highlighted tile.

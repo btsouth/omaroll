@@ -6,8 +6,10 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QRegularExpression>
 #include <QSet>
 
+#include <algorithm>
 #include <utility>
 
 CaptureFilterModel::CaptureFilterModel(QObject* parent) : QSortFilterProxyModel(parent) {
@@ -19,6 +21,14 @@ CaptureFilterModel::CaptureFilterModel(QObject* parent) : QSortFilterProxyModel(
   connect(this, &QAbstractItemModel::rowsInserted, this, &CaptureFilterModel::countChanged);
   connect(this, &QAbstractItemModel::rowsRemoved, this, &CaptureFilterModel::countChanged);
   connect(this, &QAbstractItemModel::modelReset, this, &CaptureFilterModel::countChanged);
+
+  m_ocrFilterTimer.setSingleShot(true);
+  m_ocrFilterTimer.setInterval(60);
+  connect(&m_ocrFilterTimer, &QTimer::timeout, this, [this] {
+    beginFilterUpdate();
+    endFilterUpdate();
+    emit countChanged();
+  });
 }
 
 void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
@@ -44,6 +54,30 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
                                      &CaptureFilterModel::foldersChanged));
   m_sourceConnections.append(connect(model, &QAbstractItemModel::modelReset, this,
                                      &CaptureFilterModel::foldersChanged));
+  const auto rebuildDuplicateOrder = [this] {
+    if (!m_duplicateGroups.isEmpty()) {
+      rebuildDuplicateOrdinals();
+      invalidate();
+    }
+  };
+  m_sourceConnections.append(connect(model, &QAbstractItemModel::rowsInserted, this,
+                                     rebuildDuplicateOrder));
+  m_sourceConnections.append(connect(model, &QAbstractItemModel::rowsRemoved, this,
+                                     rebuildDuplicateOrder));
+  m_sourceConnections.append(connect(model, &QAbstractItemModel::modelReset, this,
+                                     rebuildDuplicateOrder));
+  m_sourceConnections.append(connect(
+      model, &QAbstractItemModel::dataChanged, this,
+      [this](const QModelIndex&, const QModelIndex&, const QList<int>& roles) {
+        if (!m_duplicateGroups.isEmpty() &&
+            (roles.isEmpty() || roles.contains(CaptureRoles::PathRole) ||
+             roles.contains(CaptureRoles::FileNameRole) ||
+             roles.contains(CaptureRoles::CapturedRole) ||
+             roles.contains(CaptureRoles::BytesRole))) {
+          rebuildDuplicateOrdinals();
+          invalidate();
+        }
+      }));
 }
 
 void CaptureFilterModel::beginFilterUpdate() {
@@ -76,6 +110,7 @@ void CaptureFilterModel::setSortMode(int mode) {
     return;
   }
   m_sortMode = mode;
+  rebuildDuplicateOrdinals();
   invalidate();
   emit sortModeChanged();
 }
@@ -86,6 +121,8 @@ void CaptureFilterModel::setSearchText(const QString& text) {
   }
   beginFilterUpdate();
   m_searchText = text;
+  m_searchTerms = text.toCaseFolded().split(QRegularExpression(QStringLiteral("\\s+")),
+                                            Qt::SkipEmptyParts);
   endFilterUpdate();
   emit searchTextChanged();
   emit countChanged();
@@ -155,6 +192,31 @@ void CaptureFilterModel::setShowHidden(bool value) {
   emit countChanged();
 }
 
+void CaptureFilterModel::setDuplicatesOnly(bool value) {
+  if (m_duplicatesOnly == value) {
+    return;
+  }
+  beginFilterUpdate();
+  m_duplicatesOnly = value;
+  endFilterUpdate();
+  invalidate();
+  emit duplicatesOnlyChanged();
+  emit countChanged();
+}
+
+void CaptureFilterModel::setDuplicateGroups(const QHash<QString, QString>& groups) {
+  if (m_duplicateGroups == groups) {
+    return;
+  }
+
+  beginFilterUpdate();
+  m_duplicateGroups = groups;
+  rebuildDuplicateOrdinals();
+  endFilterUpdate();
+  invalidate();
+  emit countChanged();
+}
+
 QString CaptureFilterModel::pathAt(int row) const {
   return data(index(row, 0), CaptureRoles::PathRole).toString();
 }
@@ -165,6 +227,20 @@ QString CaptureFilterModel::fileNameAt(int row) const {
 
 QString CaptureFilterModel::dayLabelAt(int row) const {
   return data(index(row, 0), CaptureRoles::DayLabelRole).toString();
+}
+
+QString CaptureFilterModel::gridLabelAt(int row) const {
+  if (!m_duplicatesOnly) {
+    return dayLabelAt(row);
+  }
+  const QString group = m_duplicateGroups.value(pathAt(row));
+  const int ordinal = m_duplicateOrdinals.value(group);
+  if (ordinal <= 0) {
+    return {};
+  }
+  return QStringLiteral("Exact match %1 of %2")
+      .arg(ordinal)
+      .arg(m_duplicateOrdinals.size());
 }
 
 QString CaptureFilterModel::timeLabelAt(int row) const {
@@ -189,6 +265,26 @@ bool CaptureFilterModel::isVideoAt(int row) const {
 
 qint64 CaptureFilterModel::stampAt(int row) const {
   return data(index(row, 0), CaptureRoles::StampRole).toLongLong();
+}
+
+void CaptureFilterModel::setOcrText(const QString& path, const QString& text) {
+  if (path.isEmpty()) {
+    return;
+  }
+  if (text.isEmpty()) {
+    if (m_ocrText.remove(path) == 0) {
+      return;
+    }
+  } else {
+    const QString folded = text.toCaseFolded();
+    if (m_ocrText.value(path) == folded) {
+      return;
+    }
+    m_ocrText.insert(path, folded);
+  }
+  if (!m_searchTerms.isEmpty()) {
+    m_ocrFilterTimer.start();
+  }
 }
 
 int CaptureFilterModel::rowOf(const QString& path) const {
@@ -243,6 +339,71 @@ const CaptureRecord& CaptureFilterModel::sourceRecord(int sourceRow) const {
   return static_cast<const CaptureModel*>(sourceModel())->recordAt(sourceRow);
 }
 
+bool CaptureFilterModel::recordLessThan(const CaptureRecord& first,
+                                        const CaptureRecord& second) const {
+  const auto pathOrder = [&] {
+    return QString::compare(first.path, second.path, Qt::CaseSensitive) < 0;
+  };
+  switch (m_sortMode) {
+  case OldestFirst:
+    return first.captured != second.captured ? first.captured < second.captured : pathOrder();
+  case LargestFirst:
+    return first.bytes != second.bytes ? first.bytes > second.bytes : pathOrder();
+  case SmallestFirst:
+    return first.bytes != second.bytes ? first.bytes < second.bytes : pathOrder();
+  case NameAscending:
+    if (const int names = QString::compare(first.fileName, second.fileName, Qt::CaseInsensitive);
+        names != 0) {
+      return names < 0;
+    }
+    return pathOrder();
+  case NewestFirst:
+  default:
+    return first.captured != second.captured ? first.captured > second.captured : pathOrder();
+  }
+}
+
+void CaptureFilterModel::rebuildDuplicateOrdinals() {
+  m_duplicateOrdinals.clear();
+  if (!sourceModel() || m_duplicateGroups.isEmpty()) {
+    return;
+  }
+
+  // Each set is represented by the first member under the selected sort. The
+  // sets therefore stay together without making Newest, Oldest or Name lie
+  // about their order.
+  QHash<QString, int> representatives;
+  for (int row = 0; row < sourceModel()->rowCount(); ++row) {
+    const CaptureRecord& record = sourceRecord(row);
+    const QString group = m_duplicateGroups.value(record.path);
+    if (group.isEmpty()) {
+      continue;
+    }
+    const auto current = representatives.constFind(group);
+    if (current == representatives.cend() ||
+        recordLessThan(record, sourceRecord(current.value()))) {
+      representatives.insert(group, row);
+    }
+  }
+
+  QStringList groups = representatives.keys();
+  std::sort(groups.begin(), groups.end(), [this, &representatives](const QString& first,
+                                                                  const QString& second) {
+    const CaptureRecord& a = sourceRecord(representatives.value(first));
+    const CaptureRecord& b = sourceRecord(representatives.value(second));
+    if (recordLessThan(a, b)) {
+      return true;
+    }
+    if (recordLessThan(b, a)) {
+      return false;
+    }
+    return first < second;
+  });
+  for (int index = 0; index < groups.size(); ++index) {
+    m_duplicateOrdinals.insert(groups.at(index), index + 1);
+  }
+}
+
 bool CaptureFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex& sourceParent) const {
   if (sourceParent.isValid()) {
     return false;
@@ -250,6 +411,9 @@ bool CaptureFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex& sour
   const CaptureRecord& record = sourceRecord(sourceRow);
 
   if (!m_showHidden && record.hidden) {
+    return false;
+  }
+  if (m_duplicatesOnly && !m_duplicateGroups.contains(record.path)) {
     return false;
   }
   if (m_favoritesOnly && !record.favorite) {
@@ -271,8 +435,14 @@ bool CaptureFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex& sour
   if (m_kindFilter != kAllKinds && static_cast<int>(record.kind) != m_kindFilter) {
     return false;
   }
-  if (!m_searchText.isEmpty() && !record.fileName.contains(m_searchText, Qt::CaseInsensitive)) {
-    return false;
+  if (!m_searchTerms.isEmpty()) {
+    const QString name = record.fileName.toCaseFolded();
+    const QString text = m_ocrText.value(record.path);
+    for (const QString& term : m_searchTerms) {
+      if (!name.contains(term) && !text.contains(term)) {
+        return false;
+      }
+    }
   }
   return true;
 }
@@ -280,24 +450,12 @@ bool CaptureFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex& sour
 bool CaptureFilterModel::lessThan(const QModelIndex& left, const QModelIndex& right) const {
   const CaptureRecord& a = sourceRecord(left.row());
   const CaptureRecord& b = sourceRecord(right.row());
-  const auto pathOrder = [&] {
-    return QString::compare(a.path, b.path, Qt::CaseSensitive) < 0;
-  };
-  switch (m_sortMode) {
-  case OldestFirst:
-    return a.captured != b.captured ? a.captured < b.captured : pathOrder();
-  case LargestFirst:
-    return a.bytes != b.bytes ? a.bytes > b.bytes : pathOrder();
-  case SmallestFirst:
-    return a.bytes != b.bytes ? a.bytes < b.bytes : pathOrder();
-  case NameAscending:
-    if (const int names = QString::compare(a.fileName, b.fileName, Qt::CaseInsensitive);
-        names != 0) {
-      return names < 0;
+  if (m_duplicatesOnly) {
+    const QString firstGroup = m_duplicateGroups.value(a.path);
+    const QString secondGroup = m_duplicateGroups.value(b.path);
+    if (firstGroup != secondGroup) {
+      return m_duplicateOrdinals.value(firstGroup) < m_duplicateOrdinals.value(secondGroup);
     }
-    return pathOrder();
-  case NewestFirst:
-  default:
-    return a.captured != b.captured ? a.captured > b.captured : pathOrder();
   }
+  return recordLessThan(a, b);
 }

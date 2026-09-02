@@ -16,17 +16,26 @@
 #include "app/DemoLibrary.h"
 #include "library/CaptureFilterModel.h"
 #include "library/CaptureModel.h"
+#include "library/DuplicateIndex.h"
+#include "library/MediaInspector.h"
+#include "library/MediaDateIndex.h"
 #include "matte/MatteComposer.h"
 #include "matte/MatteProvider.h"
+#include "search/OcrIndex.h"
 #include "theme/OmarchyTheme.h"
 #include "thumbs/ThumbnailProvider.h"
 
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
+#include <QImage>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QScopeGuard>
 #include <QSettings>
 #include <QStyleHints>
 #include <QTemporaryDir>
@@ -66,10 +75,18 @@ private slots:
     m_captures = new CaptureModel(m_settings, this);
     m_library = new CaptureFilterModel(this);
     m_library->setSourceModel(m_captures);
+    m_duplicates = new DuplicateIndex(m_captures, this);
+    connect(m_library, &CaptureFilterModel::duplicatesOnlyChanged, m_duplicates,
+            [this] { m_duplicates->setActive(m_library->duplicatesOnly()); });
+    connect(m_duplicates, &DuplicateIndex::groupsChanged, m_library,
+            [this] { m_library->setDuplicateGroups(m_duplicates->groups()); });
+    m_mediaInfo = new MediaInspector(this);
+    m_mediaDates = new MediaDateIndex(nullptr, this);
     m_actions = new ActionLauncher(this);
     m_registry = new ActionRegistry(m_actions, this);
     m_tailscale = new TailscalePeers(this);
     m_matte = new MatteComposer(this);
+    m_textIndex = new OcrIndex(nullptr, this);
     connect(m_actions, &ActionLauncher::outputPending, m_captures, &CaptureModel::holdPath);
     connect(m_actions, &ActionLauncher::outputSettled, m_captures, &CaptureModel::releasePath);
 
@@ -93,6 +110,10 @@ private slots:
     context->setContextProperty(QStringLiteral("Settings"), m_settings);
     context->setContextProperty(QStringLiteral("Registry"), m_registry);
     context->setContextProperty(QStringLiteral("Matte"), m_matte);
+    context->setContextProperty(QStringLiteral("TextIndex"), m_textIndex);
+    context->setContextProperty(QStringLiteral("Duplicates"), m_duplicates);
+    context->setContextProperty(QStringLiteral("MediaInfo"), m_mediaInfo);
+    context->setContextProperty(QStringLiteral("MediaDates"), m_mediaDates);
     context->setContextProperty(QStringLiteral("Tailscale"), m_tailscale);
     context->setContextProperty(QStringLiteral("DemoMode"), true);
     context->setContextProperty(QStringLiteral("InitialPath"), QString());
@@ -125,6 +146,7 @@ private slots:
       QTest::qWait(20);
     }
     QVERIFY(!prop("anySheetOpen").toBool());
+    m_library->setDuplicatesOnly(false);
     QMetaObject::invokeMethod(item("library"), "clearChecked");
     item("library")->setProperty("currentIndex", 0);
     item("library")->forceActiveFocus();
@@ -318,6 +340,11 @@ private slots:
     QTRY_COMPARE(m_settings->tileWidth(), before);
     QTest::keyClick(m_window, Qt::Key_0, Qt::ControlModifier);
     QTRY_COMPARE(m_settings->tileWidth(), 240);
+    // CaptureGrid coalesces cell-width changes for 80 ms before rebuilding
+    // delegate positions. Finish that relayout in this scenario so it cannot
+    // detach the model while the next scenario is sending selection keys.
+    QTest::qWait(120);
+    QTRY_VERIFY(item("library")->property("layoutReady").toBool());
   }
 
   void searchFiltersTheGridAndEscapeClearsIt() {
@@ -346,10 +373,47 @@ private slots:
     QTRY_VERIFY(!m_library->property("favoritesOnly").toBool());
   }
 
+  void exactDuplicatesOpenAsAGroupedReviewView() {
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("libraryMenu"));
+    QVERIFY(menu);
+    QMetaObject::invokeMethod(menu, "open");
+    QTRY_VERIFY(menu->property("visible").toBool());
+
+    QQuickItem* duplicatesRow = find(m_window->contentItem(), [](QQuickItem* candidate) {
+      return candidate->inherits("QQuickText") && candidate->isVisible() &&
+             candidate->property("text").toString() == QStringLiteral("Exact duplicates");
+    });
+    QVERIFY(duplicatesRow);
+    click(duplicatesRow);
+    QTRY_VERIFY(m_library->duplicatesOnly());
+    QTRY_VERIFY_WITH_TIMEOUT(!m_duplicates->scanning(), 15000);
+
+    // initTestCase deliberately copied alpine-dawn.jpg under an odd filename.
+    // The duplicate view finds those two, keeps both files, and groups them.
+    QCOMPARE(m_duplicates->groupCount(), 1);
+    QCOMPARE(m_duplicates->duplicateCount(), 2);
+    QCOMPARE(m_library->count(), 2);
+    QCOMPARE(m_library->gridLabelAt(0), QStringLiteral("Exact match 1 of 1"));
+    QVERIFY(QFileInfo::exists(m_library->pathAt(0)));
+    QVERIFY(QFileInfo::exists(m_library->pathAt(1)));
+    QQuickItem* browse = pill(m_window->contentItem(), QStringLiteral("Duplicates  ▾"));
+    QVERIFY(browse);
+
+    m_window->resize(560, 420);
+    QTRY_VERIFY(pill(m_window->contentItem(), QStringLiteral("Dupes  ▾")) != nullptr);
+    m_window->resize(1280, 820);
+    QTRY_VERIFY(pill(m_window->contentItem(), QStringLiteral("Duplicates  ▾")) != nullptr);
+    // CaptureGrid coalesces width changes for 80 ms. Finish that rebuild here
+    // so its saved selection cannot land in the following scenario.
+    QTest::qWait(120);
+    QTRY_VERIFY(item("library")->property("layoutReady").toBool());
+  }
+
   void selectionKeysActOnTheWholeSelection() {
     QQuickItem* grid = item("library");
     QTest::keyClick(m_window, Qt::Key_X);
     QTest::keyClick(m_window, Qt::Key_Right);
+    QTRY_COMPARE(grid->property("currentIndex").toInt(), 1);
     QTest::keyClick(m_window, Qt::Key_X);
     QTRY_COMPARE(grid->property("checkedCount").toInt(), 2);
 
@@ -383,6 +447,228 @@ private slots:
     QCOMPARE(item("library")->property("currentIndex").toInt(), last);
   }
 
+  void viewerShowsUsefulMediaMetadata() {
+    QQuickItem* detail = item("detail");
+    openDetail(0);
+    QTRY_VERIFY(detail->isVisible());
+    QTRY_VERIFY_WITH_TIMEOUT(detail->property("stillReady").toBool(), 10000);
+    QQuickItem* metadata = item("mediaMetadata");
+    QTRY_VERIFY(metadata->isVisible());
+    const QString label = metadata->property("text").toString();
+    QVERIFY2(label.contains(QStringLiteral(" × ")), qPrintable(label));
+    QVERIFY(detail->property("mediaWidth").toInt() > 0);
+    QVERIFY(detail->property("mediaHeight").toInt() > 0);
+    QTRY_COMPARE_WITH_TIMEOUT(m_mediaInfo->path(), detail->property("path").toString(), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!m_mediaInfo->loading(), 5000);
+    QVERIFY(!m_mediaInfo->lines().isEmpty());
+    QVERIFY(m_mediaInfo->lines().first().startsWith(QStringLiteral("JPEG")));
+  }
+
+  void viewerDateFollowsBackgroundMetadataEnrichment() {
+    QQuickItem* detail = item("detail");
+    const QString path = pathAt(0);
+    openDetail(0);
+    QTRY_VERIFY(detail->isVisible());
+
+    const int sourceRow = m_captures->rowOf(path);
+    QVERIFY(sourceRow >= 0);
+    const CaptureRecord record = m_captures->recordAt(sourceRow);
+    QVERIFY(!record.hasProducerTimestamp);
+    const QDateTime enriched = record.captured.addSecs(-61);
+    m_captures->applyCapturedDates({{path, record.modified, record.bytes, enriched,
+                                     record.device, record.inode}});
+    QTRY_COMPARE(detail->property("dayLabel").toString(),
+                 m_captures->dayLabelAt(m_captures->rowOf(path)));
+    QTRY_COMPARE(detail->property("timeLabel").toString(),
+                 m_library->timeLabelAt(m_library->rowOf(path)));
+
+    m_captures->applyCapturedDates({{path, record.modified, record.bytes,
+                                     record.captured, record.device, record.inode}});
+    QTRY_COMPARE(detail->property("timeLabel").toString(),
+                 m_library->timeLabelAt(m_library->rowOf(path)));
+  }
+
+  void videoViewerShowsCodecMetadataEndToEnd() {
+    int videoRow = -1;
+    for (int row = 0; row < m_library->rowCount(); ++row) {
+      if (m_library->isVideoAt(row)) {
+        videoRow = row;
+        break;
+      }
+    }
+    QVERIFY(videoRow >= 0);
+    openDetail(videoRow);
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->isVisible());
+    QTRY_COMPARE_WITH_TIMEOUT(m_mediaInfo->path(), detail->property("path").toString(), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!m_mediaInfo->loading(), 5000);
+    QVERIFY(m_mediaInfo->lines().size() >= 2);
+    QVERIFY(m_mediaInfo->lines().at(0).startsWith(QStringLiteral("MP4  ·  H.264")));
+    QVERIFY(m_mediaInfo->lines().at(1).contains(QStringLiteral("fps")));
+  }
+
+  void videoFrameTimestampsAreFilenameSafeAndPrecise() {
+    const auto stamp = [this](double milliseconds) {
+      QVariant result;
+      const bool called = QMetaObject::invokeMethod(
+          m_window, "frameStamp", Q_RETURN_ARG(QVariant, result),
+          Q_ARG(QVariant, milliseconds));
+      return called ? result.toString() : QString();
+    };
+    QCOMPARE(stamp(0), QStringLiteral("00m00s000"));
+    QCOMPARE(stamp(5'123), QStringLiteral("00m05s123"));
+    QCOMPARE(stamp(3'723'045), QStringLiteral("01h02m03s045"));
+  }
+
+  void videoViewerSavesItsCurrentFrameEndToEnd() {
+    int videoRow = -1;
+    QString picture;
+    for (int row = 0; row < m_library->rowCount(); ++row) {
+      if (m_library->isVideoAt(row) && videoRow < 0) {
+        videoRow = row;
+      } else if (!m_library->isVideoAt(row) && picture.isEmpty()) {
+        picture = pathAt(row);
+      }
+    }
+    QVERIFY(videoRow >= 0);
+    QVERIFY(!picture.isEmpty());
+
+    const QString bin = m_scratch.filePath(QStringLiteral("frame-bin"));
+    QVERIFY(QDir().mkpath(bin));
+    const QString logPath = m_scratch.filePath(QStringLiteral("frame-args.log"));
+    QFile handler(QDir(bin).filePath(QStringLiteral("ffmpeg")));
+    QVERIFY(handler.open(QIODevice::WriteOnly));
+    handler.write("#!/bin/sh\n"
+                  "printf '%s\\n' \"$@\" > \"$OMAROLL_FRAME_LOG\"\n"
+                  "for last do :; done\n"
+                  "cp \"$OMAROLL_FRAME_SOURCE\" \"$last\"\n");
+    handler.close();
+    QVERIFY(handler.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                   QFileDevice::ExeOwner));
+
+    const QByteArray oldPath = qgetenv("PATH");
+    const QByteArray oldLog = qgetenv("OMAROLL_FRAME_LOG");
+    const QByteArray oldSource = qgetenv("OMAROLL_FRAME_SOURCE");
+    const auto restore = qScopeGuard([&] {
+      const auto putBack = [](const char* name, const QByteArray& value) {
+        value.isNull() ? qunsetenv(name) : qputenv(name, value);
+      };
+      putBack("PATH", oldPath);
+      putBack("OMAROLL_FRAME_LOG", oldLog);
+      putBack("OMAROLL_FRAME_SOURCE", oldSource);
+    });
+    QVERIFY(qputenv("PATH", bin.toUtf8() + ':' + oldPath));
+    QVERIFY(qputenv("OMAROLL_FRAME_LOG", logPath.toUtf8()));
+    QVERIFY(qputenv("OMAROLL_FRAME_SOURCE", picture.toUtf8()));
+
+    const QString video = pathAt(videoRow);
+    QSignalSpy pending(m_actions, &ActionLauncher::outputPending);
+    QSignalSpy settled(m_actions, &ActionLauncher::outputSettled);
+    openDetail(videoRow);
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->isVisible());
+    QVERIFY(detail->property("isVideo").toBool());
+    QTest::keyClick(m_window, Qt::Key_G);
+    QTRY_COMPARE_WITH_TIMEOUT(pending.size(), 1, 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(settled.size(), 1, 3000);
+
+    const QString output = settled.first().at(0).toString();
+    QVERIFY(settled.first().at(1).toBool());
+    QVERIFY(output.startsWith(QFileInfo(video).absolutePath() + QLatin1Char('/')));
+    QVERIFY(output.contains(QStringLiteral("-frame-")));
+    QVERIFY(output.endsWith(QStringLiteral(".png")));
+    QVERIFY(!QImage(output).isNull());
+    QVERIFY(QFileInfo(video).exists());
+    QVERIFY(detail->isVisible());
+
+    QFile log(logPath);
+    QVERIFY(log.open(QIODevice::ReadOnly));
+    const QStringList arguments = QString::fromUtf8(log.readAll())
+                                      .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    const int seek = arguments.indexOf(QStringLiteral("-ss"));
+    QVERIFY(seek >= 0 && seek + 1 < arguments.size());
+    QVERIFY(arguments.at(seek + 1).toDouble() >= 0.0);
+    QCOMPARE(arguments.at(arguments.indexOf(QStringLiteral("-i")) + 1), video);
+    QCOMPARE(arguments.last(), output);
+  }
+
+  void exportSheetOffersImageAndVideoPresets() {
+    QQuickItem* sheet = item("exportSheet");
+    perform(QStringLiteral("export"), pathAt(0));
+    QTRY_VERIFY(sheet->isVisible());
+    QVERIFY(!sheet->property("isVideo").toBool());
+    QCOMPARE(sheet->property("format").toString(), QStringLiteral("jpg"));
+    QCOMPARE(sheet->property("resolution").toString(), QStringLiteral("medium"));
+    click(pill(sheet, QStringLiteral("PNG")));
+    click(pill(sheet, QStringLiteral("Low · 1080")));
+    QCOMPARE(sheet->property("format").toString(), QStringLiteral("png"));
+    QCOMPARE(sheet->property("resolution").toString(), QStringLiteral("low"));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!sheet->isVisible());
+
+    int videoRow = -1;
+    for (int row = 0; row < m_library->rowCount(); ++row) {
+      if (m_library->isVideoAt(row)) {
+        videoRow = row;
+        break;
+      }
+    }
+    QVERIFY(videoRow >= 0);
+    perform(QStringLiteral("export"), pathAt(videoRow));
+    QTRY_VERIFY(sheet->isVisible());
+    QVERIFY(sheet->property("isVideo").toBool());
+    QCOMPARE(sheet->property("format").toString(), QStringLiteral("mp4"));
+    QCOMPARE(sheet->property("resolution").toString(), QStringLiteral("1080p"));
+    click(pill(sheet, QStringLiteral("GIF")));
+    click(pill(sheet, QStringLiteral("720p")));
+    QCOMPARE(sheet->property("format").toString(), QStringLiteral("gif"));
+    QCOMPARE(sheet->property("resolution").toString(), QStringLiteral("720p"));
+  }
+
+  void renameSheetKeepsTheExtensionAndRenamesEndToEnd() {
+    int stillRow = -1;
+    const QString odd = QFileInfo(m_oddPath).canonicalFilePath();
+    for (int row = 0; row < m_library->rowCount(); ++row) {
+      if (!m_library->isVideoAt(row) && pathAt(row) != odd) {
+        stillRow = row;
+        break;
+      }
+    }
+    QVERIFY(stillRow >= 0);
+    const QString path = pathAt(stillRow);
+    perform(QStringLiteral("rename"), path);
+    QQuickItem* sheet = item("renameSheet");
+    QTRY_VERIFY(sheet->isVisible());
+    QCOMPARE(sheet->property("path").toString(), path);
+    QCOMPARE(sheet->property("suffix").toString(),
+             QStringLiteral(".") + QFileInfo(path).suffix());
+
+    QQuickItem* input = item("renameInput");
+    input->setProperty("text", QString());
+    click(pill(sheet, QStringLiteral("Rename")));
+    QVERIFY(sheet->isVisible());
+    QVERIFY(!sheet->property("errorMessage").toString().isEmpty());
+
+    const QString base = QStringLiteral("renamed through sheet");
+    input->setProperty("text", base);
+    click(pill(sheet, QStringLiteral("Rename")));
+    QTRY_VERIFY(!sheet->isVisible());
+    const QString renamed = QFileInfo(path).dir().filePath(
+        base + QStringLiteral(".") + QFileInfo(path).suffix());
+    QVERIFY(!QFileInfo::exists(path));
+    QVERIFY(QFileInfo::exists(renamed));
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(renamed) >= 0, 5000);
+    QTRY_COMPARE(item("library")->property("currentIndex").toInt(),
+                 m_library->rowOf(renamed));
+    QTRY_VERIFY(item("library")->hasActiveFocus());
+
+    perform(QStringLiteral("rename"), renamed);
+    QTRY_VERIFY(sheet->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!sheet->isVisible());
+    QTRY_VERIFY(item("library")->hasActiveFocus());
+  }
+
   void slideshowStartsFullscreenAndEscapeEndsIt() {
     QQuickItem* detail = item("detail");
     openDetail(0);
@@ -413,8 +699,8 @@ private slots:
   void oddFilenamesGetThumbnailsAndOpen() {
     const QString odd = QFileInfo(m_oddPath).canonicalFilePath();
     QVERIFY(m_library->rowOf(odd) >= 0);
-    QQuickItem* card = cardFor(odd);
-    QVERIFY2(card, qPrintable(odd));
+    QQuickItem* card = nullptr;
+    QTRY_VERIFY_WITH_TIMEOUT((card = cardFor(odd)) != nullptr, 5000);
     QTRY_VERIFY_WITH_TIMEOUT(card->property("thumbnailReady").toBool(), 15000);
     QQuickItem* plain = cardFor(pathAt(1));
     QVERIFY(plain);
@@ -478,7 +764,7 @@ private slots:
     QTRY_VERIFY(!confirm->isVisible());
     QTRY_VERIFY_WITH_TIMEOUT(!QFileInfo::exists(path), 5000);
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(path) < 0, 10000);
-    QVERIFY(grid->property("currentIndex").toInt() < m_library->rowCount());
+    QTRY_VERIFY(grid->property("currentIndex").toInt() < m_library->rowCount());
   }
 
   void theWindowRaisedNoQmlWarnings() {
@@ -574,6 +860,10 @@ private:
   ActionRegistry* m_registry = nullptr;
   TailscalePeers* m_tailscale = nullptr;
   MatteComposer* m_matte = nullptr;
+  OcrIndex* m_textIndex = nullptr;
+  DuplicateIndex* m_duplicates = nullptr;
+  MediaInspector* m_mediaInfo = nullptr;
+  MediaDateIndex* m_mediaDates = nullptr;
   ThumbnailProvider* m_thumbnails = nullptr;
   MatteProvider* m_mattes = nullptr;
   QQmlApplicationEngine* m_engine = nullptr;

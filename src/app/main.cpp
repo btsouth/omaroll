@@ -6,8 +6,12 @@
 #include "app/SingleInstance.h"
 #include "library/CaptureFilterModel.h"
 #include "library/CaptureModel.h"
+#include "library/DuplicateIndex.h"
+#include "library/MediaInspector.h"
+#include "library/MediaDateIndex.h"
 #include "matte/MatteComposer.h"
 #include "matte/MatteProvider.h"
+#include "search/OcrIndex.h"
 #include "sources/CaptureScanner.h"
 #include "theme/OmarchyTheme.h"
 #include "thumbs/ThumbnailCache.h"
@@ -130,7 +134,7 @@ Options:
                          your own files. Nothing personal appears on screen.
   --render <file.png>    Render the window to a PNG and exit. Draws offscreen,
                          so no compositor can resize it or overlap it.
-  --render-view <view>   Which view to render: grid, detail, video, slideshow, matte or settings.
+  --render-view <view>   Which view to render: grid, detail, video, slideshow, matte, export, rename, duplicates or settings.
   --render-size <WxH>    Window size, from 560x420 to 7680x4320. Default 1280x820.
   --version              Print the version and exit.
   --help                 Show this message.)"
@@ -218,7 +222,9 @@ int main(int argc, char *argv[]) {
   static const QStringList renderViews = {
       QStringLiteral("grid"),  QStringLiteral("detail"),
       QStringLiteral("video"), QStringLiteral("slideshow"),
-      QStringLiteral("matte"), QStringLiteral("settings")};
+      QStringLiteral("matte"), QStringLiteral("export"),
+      QStringLiteral("rename"), QStringLiteral("duplicates"),
+      QStringLiteral("settings")};
   if (!renderView.isEmpty() && !renderViews.contains(renderView)) {
     qWarning().noquote() << "omaroll: unknown render view:" << renderView;
     return 2;
@@ -284,6 +290,12 @@ int main(int argc, char *argv[]) {
 
   if (demo) {
     const DemoLibrary::Layout layout = DemoLibrary::build();
+    // Give the duplicate render one real match without making the normal demo
+    // library intentionally repetitive. This path exists only for visual QA.
+    if (renderView == QStringLiteral("duplicates")) {
+      QFile::copy(layout.pictures + QStringLiteral("/alpine-dawn.jpg"),
+                  layout.pictures + QStringLiteral("/alpine-dawn-copy.jpg"));
+    }
     // Point every location resolver at the fictional tree. Setting the
     // environment is what makes this a genuine end-to-end run rather than a
     // special path through the model.
@@ -318,11 +330,25 @@ int main(int argc, char *argv[]) {
                    &application, pruneThumbnailCache);
 
   CaptureModel captures(&settings);
+  // Demo and render order is deliberately fixed. Real libraries are enriched
+  // in the background after their fast filesystem scan lands.
+  MediaDateIndex mediaDates(demo ? nullptr : &captures);
 
   // QML only ever sees the proxy, so sorting and filtering can change without
   // any delegate knowing.
   CaptureFilterModel library;
   library.setSourceModel(&captures);
+  OcrIndex textIndex(&captures);
+  QObject::connect(&library, &CaptureFilterModel::searchTextChanged,
+                   &textIndex, [&] { textIndex.setSearchText(library.searchText()); });
+  QObject::connect(&textIndex, &OcrIndex::textReady,
+                   &library, &CaptureFilterModel::setOcrText);
+  DuplicateIndex duplicates(&captures);
+  QObject::connect(&library, &CaptureFilterModel::duplicatesOnlyChanged,
+                   &duplicates, [&] { duplicates.setActive(library.duplicatesOnly()); });
+  QObject::connect(&duplicates, &DuplicateIndex::groupsChanged, &library,
+                   [&] { library.setDuplicateGroups(duplicates.groups()); });
+  MediaInspector mediaInfo;
 
   // Restore what the user last chose, then keep the two in step. Doing it here
   // rather than in either class keeps the proxy unaware of persistence and the
@@ -389,6 +415,14 @@ int main(int argc, char *argv[]) {
   engine.rootContext()->setContextProperty(QStringLiteral("Registry"),
                                            &registry);
   engine.rootContext()->setContextProperty(QStringLiteral("Matte"), &matte);
+  engine.rootContext()->setContextProperty(QStringLiteral("TextIndex"),
+                                           &textIndex);
+  engine.rootContext()->setContextProperty(QStringLiteral("Duplicates"),
+                                           &duplicates);
+  engine.rootContext()->setContextProperty(QStringLiteral("MediaInfo"),
+                                           &mediaInfo);
+  engine.rootContext()->setContextProperty(QStringLiteral("MediaDates"),
+                                           &mediaDates);
   engine.rootContext()->setContextProperty(QStringLiteral("Tailscale"),
                                            &tailscale);
   engine.rootContext()->setContextProperty(QStringLiteral("DemoMode"), demo);

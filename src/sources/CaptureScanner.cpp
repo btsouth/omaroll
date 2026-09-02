@@ -233,10 +233,13 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots,
         }
 
         CaptureRecord::Kind named = CaptureRecord::Picture;
-        QDateTime namedTime = record.captured;
+        QDateTime namedTime;
         if (classifyByName(name, named, namedTime)) {
           record.kind = named;
-          record.captured = namedTime;
+          if (namedTime.isValid()) {
+            record.captured = namedTime;
+            record.hasProducerTimestamp = true;
+          }
 
           // A name that says "screenshot" on a video file is still a video.
           // Trust the medium over the label when the two disagree.
