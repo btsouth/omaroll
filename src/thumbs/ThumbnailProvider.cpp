@@ -86,11 +86,15 @@ QQuickImageResponse* ThumbnailProvider::requestImageResponse(const QString& id,
   // cannot keep serving the old frame.
   qreal devicePixelRatio = 1.0;
   int seekPercent = 20;
-  QString path = id;
+  // QML percent-encodes the path whole, so a '#', a '?' or a literal '%' in
+  // a filename survives URL parsing. Decode once, then split: the head never
+  // contains a slash, so the first one starts the path.
+  const QString decoded = QUrl::fromPercentEncoding(id.toUtf8());
+  QString path = decoded;
 
-  const qsizetype separator = id.indexOf(QLatin1Char('/'));
+  const qsizetype separator = decoded.indexOf(QLatin1Char('/'));
   if (separator > 0) {
-    QString head = id.left(separator);
+    QString head = decoded.left(separator);
 
     const qsizetype tilde = head.indexOf(QLatin1Char('~'));
     if (tilde > 0) {
@@ -111,13 +115,9 @@ QQuickImageResponse* ThumbnailProvider::requestImageResponse(const QString& id,
     const qreal parsed = head.toDouble(&okay);
     if (okay && parsed > 0.0) {
       devicePixelRatio = parsed;
-      path = id.mid(separator);
+      path = decoded.mid(separator);
     }
   }
-
-  // A filename with a space or a hash reaches us encoded; decode before it is
-  // ever treated as a filesystem path.
-  path = QUrl::fromPercentEncoding(path.toUtf8());
 
   QSize logicalSize = requestedSize;
   if (logicalSize.width() <= 0 || logicalSize.height() <= 0) {

@@ -103,11 +103,13 @@ QQuickImageResponse* MatteProvider::requestImageResponse(const QString& id,
   int matte = 0;
   int aspect = 0;
   qreal padding = 0.07;
-  QString path = id;
+  // Decoded once, then split; the QML side encodes the path whole.
+  const QString decoded = QUrl::fromPercentEncoding(id.toUtf8());
+  QString path = decoded;
 
-  const qsizetype separator = id.indexOf(QLatin1Char('/'));
+  const qsizetype separator = decoded.indexOf(QLatin1Char('/'));
   if (separator > 0) {
-    const QStringList head = id.left(separator).split(QLatin1Char('.'));
+    const QStringList head = decoded.left(separator).split(QLatin1Char('.'));
     if (head.size() >= 1) {
       matte = head.at(0).toInt();
     }
@@ -117,10 +119,8 @@ QQuickImageResponse* MatteProvider::requestImageResponse(const QString& id,
     if (head.size() >= 3) {
       padding = qBound(0.0, head.at(2).toDouble() / 100.0, 0.35);
     }
-    path = id.mid(separator);
+    path = decoded.mid(separator);
   }
-
-  path = QUrl::fromPercentEncoding(path.toUtf8());
 
   QSize target = requestedSize;
   if (target.width() <= 0 || target.height() <= 0) {

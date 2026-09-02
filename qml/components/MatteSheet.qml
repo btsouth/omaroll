@@ -136,6 +136,7 @@ Item {
 
             Image {
                 id: preview
+                objectName: "mattePreview"
                 anchors.fill: parent
                 anchors.margins: 10
                 fillMode: Image.PreserveAspectFit
@@ -146,7 +147,7 @@ Item {
                                     Math.round(stage.height * Screen.devicePixelRatio))
                 source: root.path === "" ? "" :
                         "image://matte/" + root.selected + "." + root.aspect + "."
-                        + root.paddingPercent + root.path
+                        + root.paddingPercent + encodeURIComponent(root.path)
                 opacity: status === Image.Ready ? 1 : 0
                 Behavior on opacity { NumberAnimation { duration: 160 } }
             }
@@ -206,7 +207,7 @@ Item {
                         sourceSize: Qt.size(248, 150)
                         source: root.path === "" ? "" :
                                 "image://matte/" + chip.index + "." + root.aspect + "."
-                                + root.paddingPercent + root.path
+                                + root.paddingPercent + encodeURIComponent(root.path)
                     }
 
                     Text {

@@ -134,9 +134,9 @@ Item {
             // window is on. Without the ratio, a 1.5x monitor shows an upscaled
             // tile and the whole grid reads as soft.
             sourceSize: Qt.size(Math.round(root.width), Math.round(root.height))
-            // "image://thumbs/<ratio>[@<seek%>][~<stamp>]<absolute path>". The
-            // path keeps its leading slash, so the head reads as the first URL
-            // path segment and no separator has to survive percent-encoding.
+            // "image://thumbs/<ratio>[@<seek%>][~<stamp>]<encoded path>". The
+            // path is percent-encoded whole, so a '#', a '?' or a literal '%'
+            // in a filename survives URL parsing; the provider decodes once.
             // Nothing is requested before the first layout, or every tile would
             // ask once at the fallback size and again at its real one.
             source: root.path === "" || root.width <= 0
@@ -144,7 +144,7 @@ Item {
                     : "image://thumbs/" + Screen.devicePixelRatio
                       + (root.isVideo ? "@" + root.scrubPercent : "")
                       + "~" + root.stamp
-                      + root.path
+                      + encodeURIComponent(root.path)
             smooth: true
             mipmap: true
             opacity: root.thumbnailReady ? 1 : 0

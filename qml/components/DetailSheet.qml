@@ -282,7 +282,7 @@ Item {
                                     Math.round(stage.height * Screen.devicePixelRatio))
                 source: root.path === "" ? ""
                         : "image://thumbs/" + Screen.devicePixelRatio + "@40~"
-                          + root.stamp + root.path
+                          + root.stamp + encodeURIComponent(root.path)
             }
 
             // Stills fit on open, zoom to 4x without throwing away decoded
