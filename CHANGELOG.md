@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.1.0
+
+### Added
+
+- Send to a machine. Pick one of your own machines on the tailnet and the file,
+  or the whole selection, goes over Taildrop through `omarchy-tailscale-send`.
+  The picker lists only machines Tailscale says can take a file right now, and
+  says why when there are none. In the viewer's action list and, with a
+  selection, as a Tailscale button in the header. Needs the `tailscale` package.
+- Tile size. Ctrl and the wheel, or Ctrl with plus, minus and 0, make the grid
+  tiles bigger or smaller between 160 and 480 pixels. The size is remembered.
+
+### Install
+
+```bash
+curl -fLO https://github.com/tsouth89/omaroll/releases/download/v1.1.0/omaroll-1.1.0-1-x86_64.pkg.tar.zst \
+     -fLO https://github.com/tsouth89/omaroll/releases/download/v1.1.0/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+sudo pacman -U ./omaroll-1.1.0-1-x86_64.pkg.tar.zst
+```
+
+Every asset is covered by `SHA256SUMS` and a signed build attestation:
+`gh attestation verify omaroll-1.1.0-1-x86_64.pkg.tar.zst --repo tsouth89/omaroll`.
+
 ## 1.0.4
 
 ### Fixed
