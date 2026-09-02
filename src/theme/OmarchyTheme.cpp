@@ -16,16 +16,11 @@
 
 namespace {
 QString defaultStateHome() {
-  const QString configured = qEnvironmentVariable("XDG_STATE_HOME");
-  return configured.isEmpty()
-             ? QDir::homePath() + QStringLiteral("/.local/state")
-             : configured;
+  return QDir::homePath() + QStringLiteral("/.local/state");
 }
 
 QString defaultConfigHome() {
-  const QString configured = qEnvironmentVariable("XDG_CONFIG_HOME");
-  return configured.isEmpty() ? QDir::homePath() + QStringLiteral("/.config")
-                              : configured;
+  return QDir::homePath() + QStringLiteral("/.config");
 }
 
 QJsonObject hyprlandOption(const QString &option) {
@@ -105,9 +100,15 @@ void OmarchyTheme::reload() {
   applyFallback();
 
   const QString colorsPath = themeRoot() + QStringLiteral("/colors.toml");
-  const Values values = readSimpleToml(colorsPath);
+  Values values = readSimpleToml(colorsPath);
   m_omarchyAvailable = !values.isEmpty();
   if (m_omarchyAvailable) {
+    if (!values.contains(QStringLiteral("mode")) &&
+        !values.contains(QStringLiteral("theme_type")) &&
+        QFileInfo::exists(themeRoot() + QStringLiteral("/light.mode"))) {
+      values.insert(QStringLiteral("mode"), QStringLiteral("light"));
+    }
+    values = resolvedValues(std::move(values));
     applyValues(values);
     const QString shellPath = themeRoot() + QStringLiteral("/shell.toml");
     m_surfaceBackground =
@@ -137,6 +138,15 @@ void OmarchyTheme::reload() {
     }
   }
 
+  const QString userShellPath =
+      m_configHome + QStringLiteral("/omarchy/shell.toml");
+  m_surfaceBackground =
+      readSectionColor(userShellPath, QStringLiteral("launcher"),
+                       QStringLiteral("background"), m_surfaceBackground);
+  m_surfaceAlpha =
+      readSectionAlpha(userShellPath, QStringLiteral("launcher"),
+                       QStringLiteral("background-alpha"), m_surfaceAlpha);
+
   m_fontFamily = resolvedMonospaceFamily();
   refreshHyprlandMetrics();
   refreshWatchPaths();
@@ -144,7 +154,17 @@ void OmarchyTheme::reload() {
 }
 
 QString OmarchyTheme::currentRoot() const {
-  return m_stateHome + QStringLiteral("/omarchy/current");
+  const QString stateRoot = m_stateHome + QStringLiteral("/omarchy/current");
+  if (QFileInfo::exists(stateRoot + QStringLiteral("/theme/colors.toml"))) {
+    return stateRoot;
+  }
+
+  const QString configRoot = m_configHome + QStringLiteral("/omarchy/current");
+  if (QFileInfo::exists(configRoot + QStringLiteral("/theme/colors.toml"))) {
+    return configRoot;
+  }
+
+  return stateRoot;
 }
 
 QString OmarchyTheme::themeRoot() const {
@@ -167,6 +187,99 @@ OmarchyTheme::Values OmarchyTheme::readSimpleToml(const QString &path) {
       values.insert(match.captured(1), match.captured(2));
     }
   }
+  return values;
+}
+
+OmarchyTheme::Values OmarchyTheme::resolvedValues(Values values) {
+  const auto alias = [&values](const QString &key, const QString &fallback) {
+    if (!values.contains(key) && values.contains(fallback)) {
+      values.insert(key, values.value(fallback));
+    }
+  };
+
+  const QList<QPair<QString, QString>> legacyNames = {
+      {QStringLiteral("background"), QStringLiteral("bg")},
+      {QStringLiteral("dark_background"), QStringLiteral("dark_bg")},
+      {QStringLiteral("darker_background"), QStringLiteral("darker_bg")},
+      {QStringLiteral("lighter_background"), QStringLiteral("lighter_bg")},
+      {QStringLiteral("foreground"), QStringLiteral("fg")},
+      {QStringLiteral("dark_foreground"), QStringLiteral("dark_fg")},
+      {QStringLiteral("light_foreground"), QStringLiteral("light_fg")},
+      {QStringLiteral("bright_foreground"), QStringLiteral("bright_fg")},
+  };
+  for (const auto &[key, fallback] : legacyNames) {
+    alias(key, fallback);
+  }
+
+  alias(QStringLiteral("background"), QStringLiteral("color0"));
+  alias(QStringLiteral("foreground"), QStringLiteral("color7"));
+  if (values.contains(QStringLiteral("background"))) {
+    values.insert(QStringLiteral("color0"),
+                  values.value(QStringLiteral("background")));
+  }
+  if (values.contains(QStringLiteral("foreground"))) {
+    values.insert(QStringLiteral("color7"),
+                  values.value(QStringLiteral("foreground")));
+  }
+
+  const QList<QPair<QString, QString>> ansiNames = {
+      {QStringLiteral("red"), QStringLiteral("color1")},
+      {QStringLiteral("green"), QStringLiteral("color2")},
+      {QStringLiteral("yellow"), QStringLiteral("color3")},
+      {QStringLiteral("blue"), QStringLiteral("color4")},
+      {QStringLiteral("magenta"), QStringLiteral("color5")},
+      {QStringLiteral("cyan"), QStringLiteral("color6")},
+  };
+  for (const auto &[key, fallback] : ansiNames) {
+    alias(key, fallback);
+  }
+  alias(QStringLiteral("magenta"), QStringLiteral("purple"));
+  alias(QStringLiteral("accent"), QStringLiteral("color4"));
+
+  alias(QStringLiteral("light_foreground"), QStringLiteral("color7"));
+  alias(QStringLiteral("light_foreground"), QStringLiteral("foreground"));
+  alias(QStringLiteral("bright_foreground"), QStringLiteral("color15"));
+  alias(QStringLiteral("bright_foreground"), QStringLiteral("foreground"));
+  alias(QStringLiteral("lighter_background"), QStringLiteral("color0"));
+  alias(QStringLiteral("lighter_background"), QStringLiteral("background"));
+  alias(QStringLiteral("dark_foreground"), QStringLiteral("color8"));
+  alias(QStringLiteral("dark_foreground"), QStringLiteral("foreground"));
+  alias(QStringLiteral("muted"), QStringLiteral("color8"));
+  alias(QStringLiteral("muted"), QStringLiteral("dark_foreground"));
+  alias(QStringLiteral("selection"), QStringLiteral("selection_background"));
+  alias(QStringLiteral("selection"), QStringLiteral("color8"));
+  alias(QStringLiteral("selection"), QStringLiteral("color0"));
+  alias(QStringLiteral("selection"), QStringLiteral("background"));
+
+  const auto deriveShade = [&values](const QString &key, qreal amount) {
+    if (values.contains(key)) {
+      return;
+    }
+    const QColor background(values.value(QStringLiteral("background")));
+    if (!background.isValid()) {
+      return;
+    }
+    const auto channel = [amount](int value) {
+      return qRound(value * (1.0 - amount));
+    };
+    values.insert(key,
+                  QColor(channel(background.red()), channel(background.green()),
+                         channel(background.blue()))
+                      .name());
+  };
+  deriveShade(QStringLiteral("dark_background"), 0.25);
+  deriveShade(QStringLiteral("darker_background"), 0.5);
+
+  alias(QStringLiteral("mode"), QStringLiteral("theme_type"));
+  if (!values.contains(QStringLiteral("mode"))) {
+    const QColor background(values.value(QStringLiteral("background")));
+    const bool light =
+        background.isValid() &&
+        background.red() + background.green() + background.blue() > 382;
+    values.insert(QStringLiteral("mode"),
+                  light ? QStringLiteral("light") : QStringLiteral("dark"));
+  }
+
   return values;
 }
 
@@ -349,11 +462,15 @@ void OmarchyTheme::refreshWatchPaths() {
   const QStringList candidates = {
       m_stateHome,
       m_stateHome + QStringLiteral("/omarchy"),
+      m_configHome,
+      m_configHome + QStringLiteral("/omarchy"),
       currentRoot(),
       themeRoot(),
       themeRoot() + QStringLiteral("/colors.toml"),
+      themeRoot() + QStringLiteral("/light.mode"),
       themeRoot() + QStringLiteral("/shell.toml"),
       currentRoot() + QStringLiteral("/theme.name"),
+      m_configHome + QStringLiteral("/omarchy/shell.toml"),
       m_configHome + QStringLiteral("/fontconfig"),
       m_configHome + QStringLiteral("/fontconfig/fonts.conf"),
   };

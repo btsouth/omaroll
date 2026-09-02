@@ -80,6 +80,7 @@ private:
   [[nodiscard]] QString currentRoot() const;
   [[nodiscard]] QString themeRoot() const;
   [[nodiscard]] static Values readSimpleToml(const QString &path);
+  [[nodiscard]] static Values resolvedValues(Values values);
   [[nodiscard]] static qreal readSectionAlpha(const QString &path,
                                               const QString &section,
                                               const QString &key,
