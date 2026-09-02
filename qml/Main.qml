@@ -31,7 +31,7 @@ ApplicationWindow {
 
     readonly property bool anySheetOpen: confirm.visible || detail.visible
                                          || matteSheet.visible || settingsSheet.visible
-                                         || albumNameSheet.visible
+                                         || albumNameSheet.visible || tailscaleSheet.visible
 
     function say(message) {
         notice.text = message
@@ -73,6 +73,9 @@ ApplicationWindow {
             matteSheet.fileName = path.substring(path.lastIndexOf("/") + 1)
             matteSheet.open()
             return
+        case "tailscale":
+            tailscaleSheet.open([path])
+            return
         case "favorite":
             Settings.toggleFavorite(path)
             root.say(Settings.isFavorite(path) ? "Added to favourites" : "Removed from favourites")
@@ -105,6 +108,8 @@ ApplicationWindow {
     function dismissTopLayer() {
         if (confirm.visible) {
             confirm.close()
+        } else if (tailscaleSheet.visible) {
+            tailscaleSheet.close()
         } else if (settingsSheet.visible) {
             settingsSheet.close()
         } else if (matteSheet.visible) {
@@ -379,6 +384,13 @@ ApplicationWindow {
                 onClicked: Registry.runBatch("send", library.checkedPaths())
             }
             PillButton {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: library.checkedCount > 0 && root.width >= 900
+                         && Registry.available("tailscale")
+                label: "Tailscale"
+                onClicked: tailscaleSheet.open(library.checkedPaths())
+            }
+            PillButton {
                 id: albumActionButton
                 anchors.verticalCenter: parent.verticalCenter
                 visible: library.checkedCount > 0
@@ -646,7 +658,7 @@ ApplicationWindow {
         // file from view (trash, hide), opens another sheet (matte) or hands
         // off to an editor still closes it.
         readonly property var keepsViewer: ["play", "view", "favorite", "copy", "ocr", "qr",
-                                            "send", "files"]
+                                            "send", "tailscale", "files"]
         onActionTriggered: function (id) {
             if (detail.keepsViewer.indexOf(id) < 0) {
                 detail.close()
@@ -755,6 +767,13 @@ ApplicationWindow {
 
     MatteSheet {
         id: matteSheet
+    }
+
+    TailscaleSheet {
+        id: tailscaleSheet
+        onSent: function (machine, count) {
+            root.say("Sending " + (count === 1 ? "1 file" : count + " files") + " to " + machine)
+        }
     }
 
     SettingsSheet {

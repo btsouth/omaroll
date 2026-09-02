@@ -1,5 +1,6 @@
 #include "actions/ActionLauncher.h"
 #include "actions/ActionRegistry.h"
+#include "actions/TailscalePeers.h"
 #include "app/AppSettings.h"
 #include "app/SingleInstance.h"
 #include "library/CaptureFilterModel.h"
@@ -1210,6 +1211,88 @@ private slots:
     QFile redone(output);
     QVERIFY(redone.open(QIODevice::ReadOnly));
     QCOMPARE(redone.readAll(), QByteArray("fresh"));
+  }
+
+  void tailscalePeersAreTheMachinesThatCanTakeAFile() {
+    QVariantList peers;
+    QString error;
+
+    QVERIFY(!TailscalePeers::parse(R"({"BackendState":"NeedsLogin","Self":{"UserID":0}})",
+                                   &peers, &error));
+    QVERIFY(error.contains(QStringLiteral("not logged in")));
+    QVERIFY(!TailscalePeers::parse("not json", &peers, &error));
+    QVERIFY(!error.isEmpty());
+
+    // The daemon's own verdict wins: the offline laptop and the machine owned
+    // by someone else are out, the phone is in, and a daemon too old to give
+    // a verdict falls back to online and same owner.
+    const QByteArray running = R"({
+      "BackendState": "Running",
+      "Self": {"UserID": 7, "HostName": "desk"},
+      "Peer": {
+        "a": {"HostName": "phone", "DNSName": "phone.tail.ts.net.", "OS": "android",
+              "UserID": 7, "Online": true, "TaildropTarget": 1},
+        "b": {"HostName": "laptop", "DNSName": "laptop.tail.ts.net.", "OS": "linux",
+              "UserID": 7, "Online": false, "TaildropTarget": 5},
+        "c": {"HostName": "shared", "DNSName": "shared.tail.ts.net.", "OS": "linux",
+              "UserID": 9, "Online": true, "TaildropTarget": 9},
+        "d": {"HostName": "old", "DNSName": "", "OS": "macOS",
+              "UserID": 7, "Online": true, "TaildropTarget": 0},
+        "e": {"HostName": "theirs", "DNSName": "theirs.tail.ts.net.", "OS": "windows",
+              "UserID": 9, "Online": true, "TaildropTarget": 0}
+      }})";
+    QVERIFY(TailscalePeers::parse(running, &peers, &error));
+    QVERIFY(error.isEmpty());
+    QCOMPARE(peers.size(), 2);
+    QCOMPARE(peers.at(0).toMap().value(QStringLiteral("name")).toString(), QStringLiteral("old"));
+    QCOMPARE(peers.at(0).toMap().value(QStringLiteral("machine")).toString(),
+             QStringLiteral("old"));
+    QCOMPARE(peers.at(1).toMap().value(QStringLiteral("name")).toString(),
+             QStringLiteral("phone"));
+    QCOMPARE(peers.at(1).toMap().value(QStringLiteral("machine")).toString(),
+             QStringLiteral("phone.tail.ts.net"));
+
+    QVERIFY(TailscalePeers::parse(R"({"BackendState":"Running","Self":{"UserID":7},"Peer":{}})",
+                                  &peers, &error));
+    QVERIFY(peers.isEmpty());
+    QVERIFY(error.contains(QStringLiteral("No other machine")));
+  }
+
+  void sendToMachineHandsTheMachineAndEveryFileToTheHouseSender() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray previousPath = qgetenv("PATH");
+    const auto restorePath = qScopeGuard([&] { qputenv("PATH", previousPath); });
+
+    // A stand-in for omarchy-tailscale-send that records its argv, one per
+    // line, so the test can see exactly what the real one would be handed.
+    const QString record = dir.filePath(QStringLiteral("argv.txt"));
+    QFile script(dir.filePath(QStringLiteral("omarchy-tailscale-send")));
+    QVERIFY(script.open(QIODevice::WriteOnly));
+    script.write("#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > \"" +
+                 record.toUtf8() + "\"\n");
+    script.close();
+    QVERIFY(script.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                  QFileDevice::ExeOwner));
+    QVERIFY(qputenv("PATH", dir.path().toUtf8()));
+
+    ActionLauncher launcher;
+    ActionRegistry registry(&launcher);
+    QVERIFY(registry.available(QStringLiteral("tailscale")));
+    QVERIFY(registry.appliesTo(QStringLiteral("tailscale"), true));
+    QVERIFY(registry.appliesTo(QStringLiteral("tailscale"), false));
+
+    const QString first = dir.filePath(QStringLiteral("a shot.png"));
+    const QString second = dir.filePath(QStringLiteral("clip.mp4"));
+    QVERIFY(registry.runBatchWith(QStringLiteral("tailscale"),
+                                  {{QStringLiteral("machine"), QStringLiteral("laptop.tail.ts.net")}},
+                                  {first, second}));
+    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(record) && QFileInfo(record).size() > 0, 3000);
+    QFile recorded(record);
+    QVERIFY(recorded.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QStringList argv =
+        QString::fromUtf8(recorded.readAll()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    QCOMPARE(argv, (QStringList{QStringLiteral("laptop.tail.ts.net"), first, second}));
   }
 
   void clipToGifRunsTheRealTranscoderEndToEnd() {

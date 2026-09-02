@@ -1,5 +1,6 @@
 #include "actions/ActionLauncher.h"
 #include "actions/ActionRegistry.h"
+#include "actions/TailscalePeers.h"
 #include "app/AppSettings.h"
 #include "app/DemoLibrary.h"
 #include "app/SingleInstance.h"
@@ -353,6 +354,7 @@ int main(int argc, char *argv[]) {
 
   ActionLauncher actions;
   ActionRegistry registry(&actions);
+  TailscalePeers tailscale;
   MatteComposer matte;
 
   // A tracked tool's half-written output stays out of the library until the
@@ -387,6 +389,8 @@ int main(int argc, char *argv[]) {
   engine.rootContext()->setContextProperty(QStringLiteral("Registry"),
                                            &registry);
   engine.rootContext()->setContextProperty(QStringLiteral("Matte"), &matte);
+  engine.rootContext()->setContextProperty(QStringLiteral("Tailscale"),
+                                           &tailscale);
   engine.rootContext()->setContextProperty(QStringLiteral("DemoMode"), demo);
   engine.rootContext()->setContextProperty(QStringLiteral("InitialPath"),
                                            initialPath);

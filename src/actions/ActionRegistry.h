@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QStringList>
 #include <QVariantList>
+#include <QVariantMap>
 
 class ActionLauncher;
 
@@ -76,6 +77,15 @@ public:
   // in one launch; anything else is run once per file.
   Q_INVOKABLE bool runBatch(const QString& id, const QStringList& paths);
 
+  // A batch with extra placeholders filled in: {machine} for the Tailscale
+  // row, chosen by the user in a sheet before the launch.
+  Q_INVOKABLE bool runBatchWith(const QString& id, const QVariantMap& placeholders,
+                                const QStringList& paths);
+
+  // True when the action's program is installed, for chrome that should only
+  // offer what can run.
+  Q_INVOKABLE bool available(const QString& id) const;
+
   // True when the action is one QML performs in-app rather than delegating.
   Q_INVOKABLE bool isNative(const QString& id) const;
 
@@ -87,7 +97,7 @@ public:
   Q_INVOKABLE bool appliesTo(const QString& id, bool video) const;
 
 private:
-  bool run(const QString& id, const QStringList& paths);
+  bool run(const QString& id, const QStringList& paths, const QVariantMap& placeholders = {});
   // The output already exists and is not empty: ask ffprobe whether it is
   // whole, then either reveal it or clear it and launch. Asynchronous, so a
   // slow probe never freezes the window.

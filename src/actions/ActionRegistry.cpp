@@ -68,6 +68,30 @@ ActionRegistry::Definition sendRow() {
           .batch = true};
 }
 
+// omarchy-tailscale-send needs a machine first; TailscalePeers supplies the
+// list and QML the choice, then {machine} is filled in here. Without Omarchy,
+// the same Taildrop copy the house script performs.
+ActionRegistry::Definition tailscaleRow() {
+  using Media = ActionRegistry::Media;
+  if (!QStandardPaths::findExecutable(u"omarchy-tailscale-send"_s).isEmpty()) {
+    return {.id = u"tailscale"_s,
+            .label = u"Send to a machine"_s,
+            .program = u"omarchy-tailscale-send"_s,
+            .arguments = {u"{machine}"_s, u"{path}"_s},
+            .packageHint = u"tailscale"_s,
+            .media = Media::Any,
+            .batch = true};
+  }
+  return {.id = u"tailscale"_s,
+          .label = u"Send to a machine"_s,
+          .program = u"tailscale"_s,
+          .arguments = {u"file"_s, u"cp"_s, u"--update-interval=0"_s, u"--"_s, u"{path}"_s,
+                        u"{machine}:"_s},
+          .packageHint = u"tailscale"_s,
+          .media = Media::Any,
+          .batch = true};
+}
+
 } // namespace
 
 QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
@@ -189,6 +213,10 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
       // The same path the Share menu and the Nautilus extension take: LocalSend
       // in headless send mode, which opens straight onto the device picker.
       sendRow(),
+
+      // Taildrop to one of the user's own machines. No shortcut: the sheet
+      // that picks the machine is the step, and S stays LocalSend.
+      tailscaleRow(),
 
       {.id = u"files"_s,
        .label = u"Show in files"_s,
@@ -324,37 +352,49 @@ QVariantList ActionRegistry::actionsFor(bool video) const {
 }
 
 bool ActionRegistry::runBatch(const QString& id, const QStringList& paths) {
+  return runBatchWith(id, {}, paths);
+}
+
+bool ActionRegistry::runBatchWith(const QString& id, const QVariantMap& placeholders,
+                                  const QStringList& paths) {
   if (paths.isEmpty()) {
     return false;
   }
-  if (paths.size() == 1) {
-    return run(id, paths.first());
-  }
   const Definition* definition = find(id);
-  if (!definition || !definition->batch) {
+  if (paths.size() > 1 && !(definition && definition->batch)) {
     bool all = true;
     for (const QString& path : paths) {
-      all = run(id, path) && all;
+      all = run(id, QStringList{path}, placeholders) && all;
     }
     return all;
   }
-  return run(id, paths);
+  return run(id, paths, placeholders);
+}
+
+bool ActionRegistry::available(const QString& id) const {
+  const Definition* definition = find(id);
+  return definition && (definition->program.isEmpty() ||
+                        (m_launcher && m_launcher->handlerAvailable(definition->program)));
 }
 
 bool ActionRegistry::run(const QString& id, const QString& path) {
   return run(id, QStringList{path});
 }
 
-bool ActionRegistry::run(const QString& id, const QStringList& paths) {
+bool ActionRegistry::run(const QString& id, const QStringList& paths,
+                         const QVariantMap& placeholders) {
   const Definition* definition = find(id);
   if (!definition || definition->program.isEmpty() || !m_launcher || paths.isEmpty()) {
     return false;
   }
 
   const QFileInfo first(paths.first());
-  const auto expand = [&first](QString argument) {
+  const auto expand = [&first, &placeholders](QString argument) {
     argument.replace(u"{dir}"_s, first.absolutePath());
     argument.replace(u"{stem}"_s, first.completeBaseName());
+    for (auto it = placeholders.cbegin(); it != placeholders.cend(); ++it) {
+      argument.replace(QLatin1Char('{') + it.key() + QLatin1Char('}'), it.value().toString());
+    }
     return argument;
   };
 

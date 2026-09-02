@@ -32,6 +32,8 @@ add_library(omaroll_core STATIC
   src/actions/ActionLauncher.h
   src/actions/ActionRegistry.cpp
   src/actions/ActionRegistry.h
+  src/actions/TailscalePeers.cpp
+  src/actions/TailscalePeers.h
   src/matte/HueExtractor.cpp
   src/matte/HueExtractor.h
   src/matte/MatteComposer.cpp
@@ -101,6 +103,7 @@ qt_add_qml_module(omaroll
     qml/components/MatteSheet.qml
     qml/components/SettingsSheet.qml
     qml/components/AlbumNameSheet.qml
+    qml/components/TailscaleSheet.qml
 )
 
 target_link_libraries(omaroll PRIVATE omaroll_core Qt6::Multimedia Qt6::QuickControls2)

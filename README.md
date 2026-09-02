@@ -65,7 +65,7 @@ on them.
   album, search or filtered library. Images advance automatically. Videos are
   skipped by default, or can play through when enabled in Settings.
 - **Acts on a selection.** Check a few tiles and send, copy, favourite, hide
-  or trash them together.
+  or trash them together, or Taildrop them to another of your machines.
 - **Makes a screenshot postable.** The one thing Omaroll builds itself: six
   finished backgrounds derived from the image's own dominant colour. Pick one,
   it is on your clipboard and saved beside the original.
@@ -90,6 +90,7 @@ Every handler below already ships with Omarchy.
 | Image | Scan QR code | `zbarimg` |
 | Any | Copy to clipboard | `omarchy-clipboard-paste-file` |
 | Any | Send with LocalSend | `omarchy-menu-share` |
+| Any | Send to a machine | `omarchy-tailscale-send`, after picking the machine |
 | Any | Show in files | `nautilus` |
 | Any | Move to Trash | XDG trash, never `unlink` |
 

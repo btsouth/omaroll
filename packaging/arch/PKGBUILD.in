@@ -15,7 +15,8 @@ optdepends=('omacut: trim recordings'
             'pinta: edit images'
             'mpv: play video'
             'imv: view images full size'
-            'localsend: send to another device')
+            'localsend: send to another device'
+            'tailscale: send to another of your machines')
 makedepends=('cmake' 'ninja' 'pkgconf')
 options=('!debug')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/tsouth89/omaroll/releases/download/v$pkgver/$pkgname-$pkgver.tar.gz")
