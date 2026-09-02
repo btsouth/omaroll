@@ -231,12 +231,18 @@ Item {
             anchors.bottom: parent.bottom
             anchors.left: parent.left
             anchors.right: parent.right
-            height: 56
+            // On a narrow window the aspect and padding pills would run into
+            // Cancel and Copy and save; drop them onto their own line instead.
+            readonly property bool stacked: width < shapeControls.implicitWidth
+                                                    + saveControls.implicitWidth + 64
+            height: stacked ? 92 : 56
 
             Row {
+                id: shapeControls
                 anchors.left: parent.left
                 anchors.leftMargin: 20
-                anchors.verticalCenter: parent.verticalCenter
+                anchors.top: parent.top
+                anchors.topMargin: controls.stacked ? 8 : 15
                 spacing: 6
 
                 Repeater {
@@ -266,9 +272,11 @@ Item {
             }
 
             Row {
+                id: saveControls
                 anchors.right: parent.right
                 anchors.rightMargin: 20
-                anchors.verticalCenter: parent.verticalCenter
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 15
                 spacing: 8
 
                 PillButton {
