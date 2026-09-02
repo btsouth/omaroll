@@ -161,7 +161,7 @@ QImage MatteComposer::paintBackground(const QSize& size, Matte matte, const QCol
   return background;
 }
 
-QSize MatteComposer::canvasFor(const QSize& content, Aspect aspect, int padding) {
+QSize MatteComposer::canvasFor(const QSize& content, Aspect aspect, int& padding) {
   const QSize padded(content.width() + padding * 2, content.height() + padding * 2);
 
   qreal ratio = 0.0;
@@ -200,6 +200,11 @@ QSize MatteComposer::canvasFor(const QSize& content, Aspect aspect, int padding)
     const qreal scale = std::sqrt(static_cast<qreal>(kMaxOutputPixels) / pixels);
     canvas = QSize(qMax(1, qRound(canvas.width() * scale)),
                    qMax(1, qRound(canvas.height() * scale)));
+    // The padding was measured against the unscaled capture. Left alone it
+    // would eat the shrunken canvas: a tall screenshot came out as a sliver
+    // with more than half the width in matte, and past a point the content
+    // area went negative and the capture was cropped.
+    padding = qMax(2, qRound(padding * scale));
   }
   return canvas;
 }
@@ -215,7 +220,7 @@ QImage MatteComposer::compose(const QImage& source, Matte matte, Aspect aspect,
 
   // A fraction of the longest edge, with a floor so a tiny capture still gets
   // a visible matte rather than a one-pixel frame.
-  const int padding = std::max(
+  int padding = std::max(
       24, qRound(std::max(source.width(), source.height()) * qBound(0.0, paddingFraction, 0.35)));
   const QSize canvasSize = canvasFor(source.size(), aspect, padding);
   if (canvasSize.isEmpty()) {

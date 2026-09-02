@@ -1580,6 +1580,49 @@ private slots:
     QVERIFY(result.height() >= source.height());
   }
 
+  void budgetScalingKeepsTheCaptureWholeAndProportioned() {
+    // A tall scrolling screenshot at the largest padding stop, forced wide:
+    // the canvas is shrunk to the budget, and the padding has to shrink with
+    // it or the capture is cropped top and bottom.
+    QImage tall(1080, 7000, QImage::Format_RGB32);
+    tall.fill(QColor(255, 0, 255));
+    const QImage result = MatteComposer::compose(tall, MatteComposer::Slate,
+                                                 MatteComposer::Wide, 0.18);
+    QVERIFY(!result.isNull());
+
+    int top = result.height();
+    int bottom = -1;
+    for (int y = 0; y < result.height(); ++y) {
+      const QRgb pixel = result.pixel(result.width() / 2, y);
+      if (qRed(pixel) > 200 && qGreen(pixel) < 80 && qBlue(pixel) > 200) {
+        top = std::min(top, y);
+        bottom = std::max(bottom, y);
+      }
+    }
+    QVERIFY(bottom > top);
+    // Not cropped: matte above and below the capture.
+    QVERIFY(top > 0);
+    QVERIFY(bottom < result.height() - 1);
+    // Proportioned: the vertical padding is the requested 18% of the long
+    // edge, which on this canvas is about 13% of its height either side.
+    const qreal above = qreal(top) / result.height();
+    const qreal below = qreal(result.height() - 1 - bottom) / result.height();
+    QVERIFY2(above > 0.10 && above < 0.16, qPrintable(QString::number(above)));
+    QVERIFY2(below > 0.10 && below < 0.16, qPrintable(QString::number(below)));
+    // The capture keeps its own shape rather than becoming a sliver.
+    int left = result.width();
+    int right = -1;
+    for (int x = 0; x < result.width(); ++x) {
+      const QRgb pixel = result.pixel(x, result.height() / 2);
+      if (qRed(pixel) > 200 && qGreen(pixel) < 80 && qBlue(pixel) > 200) {
+        left = std::min(left, x);
+        right = std::max(right, x);
+      }
+    }
+    const qreal ratio = qreal(right - left + 1) / (bottom - top + 1);
+    QVERIFY2(std::abs(ratio - 1080.0 / 7000.0) < 0.01, qPrintable(QString::number(ratio)));
+  }
+
   void composeStaysWithinTheOutputBudget() {
     // A very tall capture forced into a wide aspect is the case that could
     // otherwise ask for a multi-gigabyte canvas.

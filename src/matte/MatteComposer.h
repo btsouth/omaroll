@@ -63,5 +63,7 @@ signals:
 private:
   [[nodiscard]] static QImage paintBackground(const QSize& size, Matte matte,
                                               const QColor& seed);
-  [[nodiscard]] static QSize canvasFor(const QSize& content, Aspect aspect, int padding);
+  // Sizes the canvas around the padded content. When the pixel budget shrinks
+  // the canvas, padding is shrunk with it so the proportions survive.
+  [[nodiscard]] static QSize canvasFor(const QSize& content, Aspect aspect, int& padding);
 };
