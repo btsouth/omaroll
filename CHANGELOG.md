@@ -39,6 +39,16 @@
   theme change.
 - If the single-instance socket cannot be created at all, Omaroll runs
   anyway rather than exiting silently with nothing on screen.
+- A file whose name contains a `#`, a `?` or a literal `%` now gets a
+  thumbnail and a matte preview. The path is percent-encoded once on the way
+  into the image provider and decoded once on the way out.
+- With a selection, `V`, `Ctrl+H`, `Y`, `S` and `Del` act on every checked
+  file, as the header buttons and a drag already did, instead of only on the
+  highlighted tile.
+- Album reconciliation no longer stats every file in the library on the GUI
+  thread after each rescan; the scanner gathers the identity off-thread. An
+  album entry on btrfs, whose device numbers can change between boots, is no
+  longer marked unavailable by the device number alone.
 - Actions that leave the file where it is no longer close the viewer.
   Favourite, copy to clipboard, copy the text, scan QR code, send and show in
   files all run with the picture still open, and the result is shown inside
