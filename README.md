@@ -76,7 +76,7 @@ on them.
 - **Presents any collection.** Start a fullscreen slideshow from a folder,
   album, search or filtered library. Images advance automatically. Videos are
   skipped by default, or can play through when enabled in Settings.
-- **Acts on a selection.** Check a few tiles and send, copy, favourite, hide
+- **Acts on a selection.** Check a few tiles and send, copy, favourite, hide,
   convert, or trash them together, or Taildrop them to another of your machines.
 - **Fits the tiles to you.** Ctrl and the wheel, or Ctrl with plus and minus,
   make the grid tiles bigger or smaller, and the size sticks.

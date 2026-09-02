@@ -33,15 +33,15 @@
   `omarchy-theme-bg-set` and keeps the viewer open.
 - Media details. The viewer shows dimensions and duration, image format,
   camera and exposure data when present, plus video codec, frame rate, bitrate
-  and audio. ImageMagick and ffprobe run only for the file being viewed.
+  and audio. The details panel inspects only the file being viewed.
 - Convert and resize choices. One sheet now exposes every image and video
   format and size supported by `omarchy-transcode`. It works on one file or a
   same-medium selection, tracks every output, and keeps every original intact.
 - Send to a machine. Pick one of your own machines on the tailnet and the file,
   or the whole selection, goes over Taildrop through `omarchy-tailscale-send`.
   The picker lists only machines Tailscale says can take a file right now, and
-  says why when there are none. In the viewer's action list and, with a
-  selection, as a Tailscale button in the header. Needs the `tailscale` package.
+  says why when there are none. The action is in the viewer and, when files are
+  selected, in the header. It needs the `tailscale` package.
 - Tile size. Ctrl and the wheel, or Ctrl with plus, minus and 0, make the grid
   tiles bigger or smaller between 160 and 480 pixels. The size is remembered.
 
@@ -66,10 +66,11 @@
   unrelated capture saved after a delete.
 - Adding a file to an album at the name of a member whose file had gone
   replaces the unavailable entry instead of being refused.
-- The theme no longer reloads, and every colour binding no longer re-evaluates,
-  each time something is copied to the clipboard. The shell writes its
-  clipboard history beside the theme state, and that write used to count as a
-  theme change.
+- The theme no longer reloads and re-evaluates every colour binding each time
+  something is copied to the clipboard. The shell writes its clipboard history
+  beside the theme state, and that write used to count as a theme change.
+- Theme switches are detected even if the filesystem misses its change
+  notification during Omarchy's atomic directory replacement.
 - If the single-instance socket cannot be created at all, Omaroll runs
   anyway rather than exiting silently with nothing on screen.
 - A file whose name contains a `#`, a `?` or a literal `%` now gets a
