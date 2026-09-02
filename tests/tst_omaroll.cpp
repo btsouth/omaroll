@@ -463,6 +463,40 @@ private slots:
     settings.deleteAlbum(QStringLiteral("Replace"));
   }
 
+  void themeIgnoresUnrelatedWritesBesideItsState() {
+    QTemporaryDir state;
+    QTemporaryDir config;
+    QVERIFY(state.isValid());
+    QVERIFY(config.isValid());
+    const QString root = state.filePath(QStringLiteral("omarchy/current"));
+    QVERIFY(QDir().mkpath(root + QStringLiteral("/theme")));
+    QFile colors(root + QStringLiteral("/theme/colors.toml"));
+    QVERIFY(colors.open(QIODevice::WriteOnly | QIODevice::Text));
+    colors.write("mode = \"dark\"\nbackground = \"#101820\"\nforeground = \"#f0f0f0\"\n");
+    colors.close();
+
+    OmarchyTheme theme(state.path(), config.path());
+    QSignalSpy changed(&theme, &OmarchyTheme::themeChanged);
+
+    // What omarchy-shell does on every copy: an atomic write beside the theme.
+    QFile history(state.filePath(QStringLiteral("omarchy/clipboard-history.json.tmp")));
+    QVERIFY(history.open(QIODevice::WriteOnly));
+    history.write("[]");
+    history.close();
+    QVERIFY(QFile::rename(history.fileName(),
+                          state.filePath(QStringLiteral("omarchy/clipboard-history.json"))));
+    QTest::qWait(400);
+    QCOMPARE(changed.size(), 0);
+
+    // A real change still lands.
+    QTest::qWait(20);
+    QVERIFY(colors.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text));
+    colors.write("mode = \"dark\"\nbackground = \"#202020\"\nforeground = \"#f0f0f0\"\n");
+    colors.close();
+    QTRY_COMPARE_WITH_TIMEOUT(changed.size(), 1, 1500);
+    QCOMPARE(theme.background(), QColor(QStringLiteral("#202020")));
+  }
+
   void classifiesOmarchyScreenshot() {
     CaptureRecord::Kind kind = CaptureRecord::Picture;
     QDateTime captured;

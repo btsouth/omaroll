@@ -96,7 +96,41 @@ QColor OmarchyTheme::cyan() const { return m_cyan; }
 QColor OmarchyTheme::blue() const { return m_blue; }
 QColor OmarchyTheme::magenta() const { return m_magenta; }
 
+// Identity of every file the theme is read from. A watched parent directory
+// reports every entry created or renamed inside it, most of which are not the
+// theme; only a change in this string is worth a full reload.
+QString OmarchyTheme::sourceSignature() const {
+  const QStringList sources = {
+      themeRoot() + QStringLiteral("/colors.toml"),
+      themeRoot() + QStringLiteral("/light.mode"),
+      themeRoot() + QStringLiteral("/shell.toml"),
+      currentRoot() + QStringLiteral("/theme.name"),
+      m_configHome + QStringLiteral("/omarchy/shell.toml"),
+      m_configHome + QStringLiteral("/fontconfig/fonts.conf"),
+  };
+  QString signature = QFileInfo(themeRoot()).canonicalFilePath();
+  for (const QString &source : sources) {
+    const QFileInfo info(source);
+    signature += QLatin1Char('|') + source + QLatin1Char(':');
+    if (info.exists()) {
+      signature += QString::number(info.size()) + QLatin1Char('/') +
+                   QString::number(info.lastModified().toMSecsSinceEpoch());
+    }
+  }
+  return signature;
+}
+
 void OmarchyTheme::reload() {
+  const QString signature = sourceSignature();
+  if (!m_sourceSignature.isEmpty() && signature == m_sourceSignature) {
+    // Nothing the theme reads has changed. Re-arm the watches in case a
+    // directory was replaced, and skip the parse, the hyprctl round trips
+    // and the retint of every binding.
+    refreshWatchPaths();
+    return;
+  }
+  m_sourceSignature = signature;
+
   applyFallback();
 
   const QString colorsPath = themeRoot() + QStringLiteral("/colors.toml");

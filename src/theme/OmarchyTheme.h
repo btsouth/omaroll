@@ -75,6 +75,7 @@ signals:
   void themeChanged();
 
 private:
+  [[nodiscard]] QString sourceSignature() const;
   using Values = QHash<QString, QString>;
 
   [[nodiscard]] QString currentRoot() const;
@@ -106,6 +107,9 @@ private:
   QTimer m_reloadTimer;
 
   bool m_omarchyAvailable = false;
+  // What the last reload read, so a directory event about something else
+  // (the shell writes clipboard history beside the theme state) costs nothing.
+  QString m_sourceSignature;
   QString m_themeName = QStringLiteral("Omaroll Dark");
   QString m_mode = QStringLiteral("dark");
   QString m_fontFamily = QStringLiteral("monospace");
