@@ -355,6 +355,14 @@ int main(int argc, char *argv[]) {
   ActionRegistry registry(&actions);
   MatteComposer matte;
 
+  // A tracked tool's half-written output stays out of the library until the
+  // run settles; writing to an existing file fires no directory event, so the
+  // release also rescans to pick the finished file up.
+  QObject::connect(&actions, &ActionLauncher::outputPending, &captures,
+                   &CaptureModel::holdPath);
+  QObject::connect(&actions, &ActionLauncher::outputSettled, &captures,
+                   &CaptureModel::releasePath);
+
   QQmlApplicationEngine engine;
   auto *thumbnailProvider = new ThumbnailProvider;
   auto *matteProvider = new MatteProvider;

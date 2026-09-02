@@ -97,6 +97,64 @@ bool ActionLauncher::runDetached(const QString& program, const QStringList& argu
   return true;
 }
 
+bool ActionLauncher::runTracked(const QString& program, const QStringList& arguments,
+                                const QString& packageHint, const QString& outputPath) {
+  const QString executable = locate(program, packageHint);
+  if (executable.isEmpty()) {
+    return false;
+  }
+
+  auto* process = new QProcess(this);
+  process->setProgram(executable);
+  process->setArguments(arguments);
+
+  m_pendingOutputs.insert(outputPath);
+  emit outputPending(outputPath);
+  emit reported(u"Making %1"_s.arg(QFileInfo(outputPath).fileName()));
+
+  connect(process, &QProcess::errorOccurred, this,
+          [this, process, program, outputPath](QProcess::ProcessError error) {
+            // Anything after a successful start also emits finished, which
+            // owns the cleanup; only a start that never happened ends here.
+            if (error != QProcess::FailedToStart) {
+              return;
+            }
+            process->deleteLater();
+            m_pendingOutputs.remove(outputPath);
+            emit failed(u"Could not start %1"_s.arg(program));
+            emit outputSettled(outputPath, false);
+          });
+
+  connect(process, &QProcess::finished, this,
+          [this, process, program, outputPath](int exitCode, QProcess::ExitStatus status) {
+            process->deleteLater();
+            m_pendingOutputs.remove(outputPath);
+
+            const QFileInfo output(outputPath);
+            const bool saved =
+                status == QProcess::NormalExit && exitCode == 0 && output.size() > 0;
+            if (saved) {
+              emit reported(u"Saved %1 beside the original"_s.arg(output.fileName()));
+            } else {
+              // The run was refused while this path existed, so whatever sits
+              // there now is this run's partial write, not a user's file.
+              QFile::remove(outputPath);
+              const QStringList lines = QString::fromUtf8(process->readAllStandardError())
+                                            .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+              emit failed(lines.isEmpty() ? u"%1 did not finish"_s.arg(program)
+                                          : u"%1: %2"_s.arg(program, lines.last().trimmed()));
+            }
+            emit outputSettled(outputPath, saved);
+          });
+
+  process->start();
+  return true;
+}
+
+bool ActionLauncher::isPending(const QString& outputPath) const {
+  return m_pendingOutputs.contains(outputPath);
+}
+
 bool ActionLauncher::copyText(const QString& text, bool sensitive, const QString& mimeType) {
   // wl-copy rather than QClipboard: the house tools use it, it keeps the
   // selection alive after omaroll closes, and only it can flag a paste as

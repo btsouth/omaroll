@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 
@@ -32,6 +33,18 @@ public:
   bool runDetached(const QString& program, const QStringList& arguments,
                    const QString& packageHint = {}, const QString& confirmation = {});
 
+  // Launch and follow a tool that writes a new file beside the original.
+  // A transcode can run for minutes with its output sitting at zero bytes, so
+  // fire-and-forget left the user guessing whether anything happened. The
+  // output is announced as pending so the library holds the half-written file
+  // back, and settled once the tool exits: saved on success, or cleaned up and
+  // explained on failure. The tool's own stderr is quoted when it has one.
+  bool runTracked(const QString& program, const QStringList& arguments,
+                  const QString& packageHint, const QString& outputPath);
+
+  // True while a tracked run is still writing this path.
+  [[nodiscard]] bool isPending(const QString& outputPath) const;
+
   // Run to completion off the GUI thread's event loop and put stdout on the
   // clipboard. Used by the recognisers, whose whole output is text the user
   // wants to paste. A sensitive result is marked so clipboard history does not
@@ -59,8 +72,14 @@ signals:
   void failed(const QString& message);
   // Something worth confirming happened, for the same status line.
   void reported(const QString& message);
+  // A tracked run started writing this path; the library holds it back.
+  void outputPending(const QString& path);
+  // A tracked run ended. saved means the finished file is on disk.
+  void outputSettled(const QString& path, bool saved);
 
 private:
   [[nodiscard]] QString locate(const QString& program, const QString& packageHint);
   bool copyText(const QString& text, bool sensitive, const QString& mimeType = {});
+
+  QSet<QString> m_pendingOutputs;
 };

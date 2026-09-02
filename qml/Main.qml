@@ -154,6 +154,10 @@ ApplicationWindow {
     // "Open with Omaroll" on a file: once the scan that includes it lands,
     // select it and open straight into its actions.
     property string pendingInitialPath: ""
+    // A file a tracked action just saved: select it once the scan lands, but
+    // stay in the grid rather than opening the viewer over whatever the user
+    // is doing now. Filters are only cleared when they would hide it.
+    property string pendingRevealPath: ""
     function showAllMedia(folder) {
         Captures.kindFilter = filters.kindAll
         Captures.searchText = ""
@@ -191,6 +195,20 @@ ApplicationWindow {
                     root.say("That file is no longer available")
                 } else {
                     detail.canNavigate = root.adjacentViewerPath(detail.path, 1) !== ""
+                }
+            }
+            if (root.pendingRevealPath !== "") {
+                let revealRow = Captures.rowOf(root.pendingRevealPath)
+                if (revealRow < 0 && Library.rowOf(root.pendingRevealPath) >= 0) {
+                    // Scanned in but hidden by the current view; bring the
+                    // library to it the way "Open with" does.
+                    root.showAllMedia(root.pendingRevealPath.substring(
+                        0, root.pendingRevealPath.lastIndexOf("/")))
+                    revealRow = Captures.rowOf(root.pendingRevealPath)
+                }
+                if (revealRow >= 0) {
+                    root.pendingRevealPath = ""
+                    library.currentIndex = revealRow
                 }
             }
             if (root.pendingInitialPath === "") {
@@ -764,6 +782,13 @@ ApplicationWindow {
         target: Actions
         function onFailed(message) { root.say(message) }
         function onReported(message) { root.say(message) }
+        // A finished transcode lands next to its source, not at the top, so
+        // show where it went: select it once the rescan brings it in.
+        function onOutputSettled(path, saved) {
+            if (saved) {
+                root.pendingRevealPath = path
+            }
+        }
     }
 
     Connections {

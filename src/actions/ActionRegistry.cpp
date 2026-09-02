@@ -301,8 +301,13 @@ bool ActionRegistry::run(const QString& id, const QStringList& paths) {
     return argument;
   };
 
+  QString output;
   if (!definition->output.isEmpty()) {
-    const QString output = first.absolutePath() + QLatin1Char('/') + expand(definition->output);
+    output = first.absolutePath() + QLatin1Char('/') + expand(definition->output);
+    if (m_launcher->isPending(output)) {
+      m_launcher->report(u"Still working on %1"_s.arg(QFileInfo(output).fileName()));
+      return true;
+    }
     if (QFileInfo::exists(output)) {
       m_launcher->report(u"Already done: %1 is beside the original"_s.arg(QFileInfo(output).fileName()));
       return true;
@@ -334,6 +339,9 @@ bool ActionRegistry::run(const QString& id, const QStringList& paths) {
     break;
   }
 
+  if (!output.isEmpty()) {
+    return m_launcher->runTracked(definition->program, arguments, definition->packageHint, output);
+  }
   return m_launcher->runDetached(definition->program, arguments, definition->packageHint,
                                  definition->confirmation);
 }

@@ -898,6 +898,44 @@ private slots:
     QCOMPARE(model.pathAt(0), dir.filePath(QStringLiteral("c.png")));
   }
 
+  void heldPathsStayOutOfTheLibraryUntilReleased() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(qputenv("OMARCHY_SCREENSHOT_DIR", dir.path().toUtf8()));
+    QVERIFY(qputenv("OMARCHY_SCREENRECORD_DIR", dir.path().toUtf8()));
+    QVERIFY(qputenv("XDG_PICTURES_DIR", dir.path().toUtf8()));
+    QVERIFY(qputenv("XDG_VIDEOS_DIR", dir.path().toUtf8()));
+
+    QImage image(4, 4, QImage::Format_RGB32);
+    image.fill(Qt::red);
+    QVERIFY(image.save(dir.filePath(QStringLiteral("done.png")), "PNG"));
+
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QSignalSpy count(&model, &CaptureModel::countChanged);
+    QVERIFY(count.wait(5000));
+    QCOMPARE(model.rowCount(), 1);
+
+    // A transcode's output mid-write: held, so the scan leaves it out.
+    const QString partial = dir.filePath(QStringLiteral("done-720p.gif"));
+    model.holdPath(partial);
+    QFile file(partial);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("x");
+    file.close();
+    model.refresh();
+    QVERIFY(count.wait(5000));
+    QCOMPARE(model.rowCount(), 1);
+    QCOMPARE(model.rowOf(partial), -1);
+
+    // Released once the tool finishes, and the rescan it schedules brings the
+    // finished file in without being told to.
+    model.releasePath(partial);
+    QTRY_COMPARE_WITH_TIMEOUT(model.rowCount(), 2, 5000);
+    QVERIFY(model.rowOf(partial) >= 0);
+  }
+
   void nestedFoldersUpdateWhileTheAppIsOpen() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -1014,6 +1052,67 @@ private slots:
     QCOMPARE(QString::fromUtf8(log.readAll()),
              QStringLiteral(
                  "file\n/tmp/first capture.png\n/tmp/second # capture.mp4\n"));
+  }
+
+  void trackedRunsReportSettleAndCleanUpAfterFailure() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    ActionLauncher launcher;
+    QSignalSpy failed(&launcher, &ActionLauncher::failed);
+    QSignalSpy reported(&launcher, &ActionLauncher::reported);
+    QSignalSpy pending(&launcher, &ActionLauncher::outputPending);
+    QSignalSpy settled(&launcher, &ActionLauncher::outputSettled);
+
+    // Success: pending while the tool runs, settled saved, and the user is
+    // told where the file went.
+    const QString saved = dir.filePath(QStringLiteral("clip-720p.gif"));
+    QVERIFY(launcher.runTracked(QStringLiteral("sh"),
+                                {QStringLiteral("-c"),
+                                 QStringLiteral("printf data > '%1'").arg(saved)},
+                                {}, saved));
+    QVERIFY(launcher.isPending(saved));
+    QCOMPARE(pending.size(), 1);
+    QVERIFY(reported.last().at(0).toString().contains(
+        QStringLiteral("Making clip-720p.gif")));
+    QTRY_COMPARE_WITH_TIMEOUT(settled.size(), 1, 3000);
+    QCOMPARE(settled.last().at(0).toString(), saved);
+    QCOMPARE(settled.last().at(1).toBool(), true);
+    QVERIFY(!launcher.isPending(saved));
+    QVERIFY(reported.last().at(0).toString().contains(
+        QStringLiteral("Saved clip-720p.gif beside the original")));
+    QCOMPARE(failed.size(), 0);
+
+    // While a run is in flight, asking again says so rather than lying that
+    // the partial file means the job is already done.
+    const QString source =
+        dir.filePath(QStringLiteral("screenrecording-2026-09-01_10-00-00.mp4"));
+    const QString busy =
+        dir.filePath(QStringLiteral("screenrecording-2026-09-01_10-00-00-720p.gif"));
+    QVERIFY(launcher.runTracked(
+        QStringLiteral("sh"),
+        {QStringLiteral("-c"),
+         QStringLiteral("sleep 0.3 && printf data > '%1'").arg(busy)},
+        {}, busy));
+    ActionRegistry registry(&launcher);
+    QVERIFY(registry.run(QStringLiteral("gif"), source));
+    QVERIFY(reported.last().at(0).toString().contains(
+        QStringLiteral("Still working on")));
+    QTRY_COMPARE_WITH_TIMEOUT(settled.size(), 2, 3000);
+    QCOMPARE(settled.last().at(1).toBool(), true);
+
+    // Failure: the partial write this run left behind is removed, and the
+    // tool's own last words are quoted rather than a bare exit code.
+    const QString broken = dir.filePath(QStringLiteral("clip-1080p.mp4"));
+    QVERIFY(launcher.runTracked(
+        QStringLiteral("sh"),
+        {QStringLiteral("-c"),
+         QStringLiteral("printf junk > '%1'; echo boom >&2; exit 1").arg(broken)},
+        {}, broken));
+    QTRY_COMPARE_WITH_TIMEOUT(settled.size(), 3, 3000);
+    QCOMPARE(settled.last().at(1).toBool(), false);
+    QVERIFY(!QFileInfo::exists(broken));
+    QVERIFY(failed.last().at(0).toString().contains(QStringLiteral("boom")));
   }
 
   void trashIsRecoverableAndMissingFilesFailClearly() {

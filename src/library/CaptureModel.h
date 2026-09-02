@@ -53,7 +53,18 @@ public:
   void setExtraRoot(const QString& directory);
 
   Q_INVOKABLE void refresh();
+
+  // A tool omaroll launched is still writing this file. Scans leave it out
+  // until it is released, so a transcode's zero-byte output never shows up as
+  // a broken library entry mid-write.
+  void holdPath(const QString& path);
+  void releasePath(const QString& path);
+
   Q_INVOKABLE QString pathAt(int row) const;
+  // The source row for a path, -1 when no scan has brought it in yet. The
+  // proxy's rowOf answers "visible under the current filters?"; this answers
+  // "in the library at all?".
+  Q_INVOKABLE int rowOf(const QString& path) const;
   Q_INVOKABLE QString dayLabelAt(int row) const;
 
   // "Today" and "Yesterday" are relative to the day the labels were built.
@@ -99,6 +110,7 @@ private:
 
   AppSettings* m_settings = nullptr;
   QStringList m_extraRoots;
+  QSet<QString> m_heldPaths;
   QList<CaptureRecord> m_records;
   QFileSystemWatcher m_watcher;
   QFutureWatcher<ScanResult> m_scanWatcher;

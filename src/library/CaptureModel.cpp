@@ -236,6 +236,15 @@ QString CaptureModel::pathAt(int row) const {
   return m_records.at(row).path;
 }
 
+int CaptureModel::rowOf(const QString& path) const {
+  for (int row = 0; row < m_records.size(); ++row) {
+    if (m_records.at(row).path == path) {
+      return row;
+    }
+  }
+  return -1;
+}
+
 QString CaptureModel::dayLabelAt(int row) const {
   if (row < 0 || row >= m_records.size()) {
     return {};
@@ -295,8 +304,22 @@ void CaptureModel::refresh() {
   }));
 }
 
+void CaptureModel::holdPath(const QString& path) {
+  m_heldPaths.insert(path);
+  scheduleRefresh();
+}
+
+void CaptureModel::releasePath(const QString& path) {
+  m_heldPaths.remove(path);
+  scheduleRefresh();
+}
+
 void CaptureModel::adoptResults(ScanResult result) {
   QList<CaptureRecord>& scanned = result.records;
+  if (!m_heldPaths.isEmpty()) {
+    scanned.removeIf(
+        [this](const CaptureRecord& record) { return m_heldPaths.contains(record.path); });
+  }
 
   if (m_settings) {
     m_settings->forgetMarks(result.deadMarks);
