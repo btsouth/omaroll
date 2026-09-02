@@ -84,7 +84,8 @@ FocusScope {
     // Cells stay near a target width and flex to fill the row exactly, so there
     // is never a ragged gutter down the right edge. The scrollbar's width comes
     // out of the available space rather than overlapping the last column.
-    readonly property int targetCellWidth: 240
+    readonly property int targetCellWidth: Settings.tileWidth
+    readonly property int tileStep: 40
     readonly property int cellSpacing: 12
     readonly property int scrollbarWidth: 12
     readonly property int available: Math.max(1, width - scrollbarWidth)
@@ -155,6 +156,19 @@ FocusScope {
         }
         add: Transition {
             NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 180 }
+        }
+
+        // Ctrl+wheel resizes the tiles; a plain wheel still scrolls, because
+        // the handler leaves anything without Ctrl to the Flickable.
+        WheelHandler {
+            target: null
+            acceptedModifiers: Qt.ControlModifier
+            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+            onWheel: function (event) {
+                const delta = event.angleDelta.y !== 0 ? event.angleDelta.y : event.pixelDelta.y
+                Settings.tileWidth += delta > 0 ? root.tileStep : -root.tileStep
+                event.accepted = true
+            }
         }
 
         onContentYChanged: root.updateDay()

@@ -932,6 +932,22 @@ ApplicationWindow {
         enabled: !root.anySheetOpen
         onActivated: library.checkAll()
     }
+    // Tile size, the way every browser and file manager does it.
+    Shortcut {
+        sequences: ["Ctrl++", "Ctrl+="]
+        enabled: !root.anySheetOpen
+        onActivated: Settings.tileWidth += library.tileStep
+    }
+    Shortcut {
+        sequences: ["Ctrl+-"]
+        enabled: !root.anySheetOpen
+        onActivated: Settings.tileWidth -= library.tileStep
+    }
+    Shortcut {
+        sequences: ["Ctrl+0"]
+        enabled: !root.anySheetOpen
+        onActivated: Settings.tileWidth = 240
+    }
     Shortcut {
         sequences: [StandardKey.Quit]
         onActivated: Qt.quit()

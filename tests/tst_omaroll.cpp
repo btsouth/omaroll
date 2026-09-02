@@ -75,6 +75,7 @@ private slots:
     settings.setImagePrimaryAction(QStringLiteral("view"));
     settings.setVideoPrimaryAction(QStringLiteral("play"));
     settings.setThumbnailCacheMb(512);
+    settings.setTileWidth(320);
     settings.setSlideshowVideos(true);
 
     const QString unavailable = dir.path();
@@ -84,6 +85,12 @@ private slots:
     QCOMPARE(restored.imagePrimaryAction(), QStringLiteral("view"));
     QCOMPARE(restored.videoPrimaryAction(), QStringLiteral("play"));
     QCOMPARE(restored.thumbnailCacheMb(), 512);
+    QCOMPARE(restored.tileWidth(), 320);
+    restored.setTileWidth(10);
+    QCOMPARE(restored.tileWidth(), 160);
+    restored.setTileWidth(5000);
+    QCOMPARE(restored.tileWidth(), 480);
+    restored.setTileWidth(240);
     QVERIFY(restored.slideshowVideos());
     restored.setImagePrimaryAction(QStringLiteral("invalid"));
     restored.setVideoPrimaryAction(QStringLiteral("invalid"));

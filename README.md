@@ -66,6 +66,8 @@ on them.
   skipped by default, or can play through when enabled in Settings.
 - **Acts on a selection.** Check a few tiles and send, copy, favourite, hide
   or trash them together, or Taildrop them to another of your machines.
+- **Fits the tiles to you.** Ctrl and the wheel, or Ctrl with plus and minus,
+  make the grid tiles bigger or smaller, and the size sticks.
 - **Makes a screenshot postable.** The one thing Omaroll builds itself: six
   finished backgrounds derived from the image's own dominant colour. Pick one,
   it is on your clipboard and saved beside the original.
@@ -135,6 +137,7 @@ and put on your clipboard.
 | `V` · `Ctrl+H` | Favourite · Hide |
 | `1`-`7` | Jump to a section |
 | `X` · `Ctrl+A` | Select · Select all |
+| `Ctrl` + wheel · `Ctrl` `+` `-` `0` | Bigger or smaller tiles · reset |
 | drag | Drop the file, or the whole selection, into another app |
 | `Del` | Move to Trash, with confirm |
 | `/` · `R` | Search · Rescan |

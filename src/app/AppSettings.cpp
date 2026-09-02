@@ -23,6 +23,9 @@ constexpr auto kLibraryFolders = "sources/libraryFolders";
 constexpr auto kImagePrimaryAction = "actions/imagePrimary";
 constexpr auto kVideoPrimaryAction = "actions/videoPrimary";
 constexpr auto kThumbnailCacheMb = "cache/maximumMb";
+constexpr auto kTileWidth = "view/tileWidth";
+constexpr int kMinimumTileWidth = 160;
+constexpr int kMaximumTileWidth = 480;
 constexpr auto kSlideshowVideos = "slideshow/includeVideos";
 constexpr auto kAlbums = "library/albums";
 
@@ -115,6 +118,8 @@ AppSettings::AppSettings(QObject* parent)
   }
   m_thumbnailCacheMb =
       qBound(64, m_settings.value(kThumbnailCacheMb, 256).toInt(), 1024);
+  m_tileWidth = qBound(kMinimumTileWidth, m_settings.value(kTileWidth, 240).toInt(),
+                       kMaximumTileWidth);
   m_slideshowVideos = m_settings.value(kSlideshowVideos, false).toBool();
   const QVariantMap storedAlbums = m_settings.value(kAlbums).toMap();
   for (auto it = storedAlbums.cbegin(); it != storedAlbums.cend(); ++it) {
@@ -236,6 +241,16 @@ void AppSettings::setVideoPrimaryAction(const QString& action) {
   m_videoPrimaryAction = action;
   m_settings.setValue(kVideoPrimaryAction, action);
   emit videoPrimaryActionChanged();
+}
+
+void AppSettings::setTileWidth(int width) {
+  const int bounded = qBound(kMinimumTileWidth, width, kMaximumTileWidth);
+  if (m_tileWidth == bounded) {
+    return;
+  }
+  m_tileWidth = bounded;
+  m_settings.setValue(kTileWidth, bounded);
+  emit tileWidthChanged();
 }
 
 void AppSettings::setThumbnailCacheMb(int megabytes) {

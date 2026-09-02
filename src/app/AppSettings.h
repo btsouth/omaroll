@@ -34,6 +34,9 @@ class AppSettings final : public QObject {
                  NOTIFY videoPrimaryActionChanged)
   Q_PROPERTY(int thumbnailCacheMb READ thumbnailCacheMb WRITE setThumbnailCacheMb
                  NOTIFY thumbnailCacheMbChanged)
+  // Target width of a grid tile in logical pixels. Ctrl+wheel and Ctrl+plus
+  // or minus step it; the grid flexes the real width to fill each row.
+  Q_PROPERTY(int tileWidth READ tileWidth WRITE setTileWidth NOTIFY tileWidthChanged)
   Q_PROPERTY(bool slideshowVideos READ slideshowVideos WRITE setSlideshowVideos
                  NOTIFY slideshowVideosChanged)
   Q_PROPERTY(QStringList albumNames READ albumNames NOTIFY albumsChanged)
@@ -66,6 +69,9 @@ public:
   void setVideoPrimaryAction(const QString& action);
   [[nodiscard]] int thumbnailCacheMb() const { return m_thumbnailCacheMb; }
   void setThumbnailCacheMb(int megabytes);
+
+  [[nodiscard]] int tileWidth() const { return m_tileWidth; }
+  void setTileWidth(int width);
   [[nodiscard]] bool slideshowVideos() const { return m_slideshowVideos; }
   void setSlideshowVideos(bool value);
 
@@ -107,6 +113,7 @@ signals:
   void imagePrimaryActionChanged();
   void videoPrimaryActionChanged();
   void thumbnailCacheMbChanged();
+  void tileWidthChanged();
   void slideshowVideosChanged();
   void albumsChanged();
   // One signal for "a mark changed", so the model can refresh its flags without
@@ -141,6 +148,7 @@ private:
   QString m_imagePrimaryAction = QStringLiteral("matte");
   QString m_videoPrimaryAction = QStringLiteral("trim");
   int m_thumbnailCacheMb = 256;
+  int m_tileWidth = 240;
   bool m_slideshowVideos = false;
   QMap<QString, QList<AlbumEntry>> m_albums;
 };
