@@ -137,6 +137,7 @@ and put on your clipboard.
 | `V` · `Ctrl+H` | Favourite · Hide |
 | `1`-`7` | Jump to a section |
 | `X` · `Ctrl+A` | Select · Select all |
+| with a selection | `V` `Ctrl+H` `Y` `S` `Del` act on every checked file |
 | `Ctrl` + wheel · `Ctrl` `+` `-` `0` | Bigger or smaller tiles · reset |
 | drag | Drop the file, or the whole selection, into another app |
 | `Del` | Move to Trash, with confirm |

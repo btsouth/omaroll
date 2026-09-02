@@ -467,6 +467,7 @@ ApplicationWindow {
 
     FilterBar {
         id: filters
+        objectName: "filters"
         anchors.top: header.bottom
         anchors.left: parent.left
         anchors.right: parent.right
@@ -505,7 +506,15 @@ ApplicationWindow {
         visible: Captures.count > 0
 
         onChosen: function (index) { root.performPrimary(index) }
-        onDeleteRequested: function (path) { root.requestDelete(path) }
+        // Del with a selection asks about the whole selection, like the
+        // header's Trash button; the highlighted tile alone otherwise.
+        onDeleteRequested: function (path) {
+            if (library.checkedCount > 0) {
+                root.requestDeleteBatch(library.checkedPaths())
+            } else {
+                root.requestDelete(path)
+            }
+        }
         onDetailRequested: function (index) { root.openDetail(index, false) }
     }
 
@@ -690,6 +699,7 @@ ApplicationWindow {
     }
     AlbumNameSheet {
         id: albumNameSheet
+        objectName: "albumNameSheet"
         onSaved: function (name, count) {
             if (count === 0) {
                 Captures.folderFilter = ""
@@ -704,6 +714,7 @@ ApplicationWindow {
 
     Menu {
         id: albumActionMenu
+        objectName: "albumActionMenu"
         // Modal, undimmed: the press that closes the menu is consumed here
         // rather than also landing on the tile or pill under it.
         modal: true
@@ -908,27 +919,33 @@ ApplicationWindow {
         enabled: !root.anySheetOpen
         onActivated: root.perform("ocr", root.currentPath())
     }
+    // With a selection, the keys that have a bulk form act on all of it, as
+    // the header buttons and a drag do; otherwise on the highlighted tile.
     Shortcut {
         sequences: ["Y"]
         enabled: !root.anySheetOpen
-        onActivated: root.perform("copy", root.currentPath())
+        onActivated: library.checkedCount > 0 ? Actions.copyUris(library.checkedPaths())
+                                              : root.perform("copy", root.currentPath())
     }
     Shortcut {
         sequences: ["S"]
         enabled: !root.anySheetOpen
-        onActivated: root.perform("send", root.currentPath())
+        onActivated: library.checkedCount > 0 ? Registry.runBatch("send", library.checkedPaths())
+                                              : root.perform("send", root.currentPath())
     }
     Shortcut {
         sequences: ["V"]
         enabled: !root.anySheetOpen
-        onActivated: root.perform("favorite", root.currentPath())
+        onActivated: library.checkedCount > 0 ? root.markChecked("favorite")
+                                              : root.perform("favorite", root.currentPath())
     }
     // Ctrl rather than a bare H, which the grid uses for vim-style movement.
     // Modified keys are not swallowed by the search field, so guard it.
     Shortcut {
         sequences: ["Ctrl+H"]
         enabled: !root.anySheetOpen && !filters.searchActive
-        onActivated: root.perform("hide", root.currentPath())
+        onActivated: library.checkedCount > 0 ? root.markChecked("hide")
+                                              : root.perform("hide", root.currentPath())
     }
     Shortcut {
         sequences: ["F"]
