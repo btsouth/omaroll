@@ -31,6 +31,9 @@ Item {
     property bool showInfo: true
     property bool slideshowRunning: false
     property bool slideshowPausedForRender: false
+    // The window's status line, repeated here: the footer sits under the
+    // backdrop, so a result said there while the viewer is open goes unread.
+    property string status: ""
     readonly property int slideshowInterval: 4000
     // The stage's bottom row holds the image controls or the video transport
     // beside the slideshow group. Labels shrink to icons when the row at its
@@ -692,6 +695,35 @@ Item {
                     label: audio.muted ? "Muted" : "Sound"
                     active: !audio.muted
                     onClicked: audio.muted = !audio.muted
+                }
+            }
+
+            Rectangle {
+                id: statusToast
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.top: parent.top
+                anchors.topMargin: 14
+                width: Math.min(statusText.implicitWidth + 28, stage.width - 32)
+                height: statusText.implicitHeight + 14
+                radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 4
+                color: Qt.rgba(Theme.darkerBackground.r, Theme.darkerBackground.g,
+                               Theme.darkerBackground.b, 0.86)
+                border.width: 1
+                border.color: Qt.rgba(Theme.foreground.r, Theme.foreground.g,
+                                      Theme.foreground.b, 0.18)
+                opacity: root.visible && root.status !== "" ? 1 : 0
+                visible: opacity > 0
+                Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutQuad } }
+
+                Text {
+                    id: statusText
+                    anchors.centerIn: parent
+                    width: Math.min(implicitWidth, parent.width - 28)
+                    elide: Text.ElideRight
+                    text: root.status
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 12
+                    color: Theme.accent
                 }
             }
 

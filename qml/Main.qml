@@ -246,7 +246,12 @@ ApplicationWindow {
     }
     Connections {
         target: Settings
-        function onMarksChanged() { root.marksVersion++ }
+        function onMarksChanged() {
+            root.marksVersion++
+            // The star in the viewer's sidebar follows a favourite toggled
+            // while it is open.
+            detail.favorite = Settings.isFavorite(detail.path)
+        }
     }
 
     function requestDelete(path) {
@@ -635,12 +640,20 @@ ApplicationWindow {
         id: detail
         onNavigateRequested: function (direction) { root.navigateDetail(direction) }
         onFullScreenRequested: function (enabled) { root.setViewerFullScreen(enabled) }
+        // Anything that leaves the file where it is keeps the viewer open,
+        // with the result said inside it. Favouriting a picture and being
+        // dropped back into the grid read as a mistake. What removes the
+        // file from view (trash, hide), opens another sheet (matte) or hands
+        // off to an editor still closes it.
+        readonly property var keepsViewer: ["play", "view", "favorite", "copy", "ocr", "qr",
+                                            "send", "files"]
         onActionTriggered: function (id) {
-            if (id !== "play" && id !== "view") {
+            if (detail.keepsViewer.indexOf(id) < 0) {
                 detail.close()
             }
             root.perform(id, detail.path, detail.isVideo)
         }
+        status: notice.text
     }
     AlbumNameSheet {
         id: albumNameSheet
