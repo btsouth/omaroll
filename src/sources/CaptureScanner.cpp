@@ -2,9 +2,12 @@
 
 #include <QDir>
 #include <QDirIterator>
+#include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QSet>
+
+#include <sys/stat.h>
 
 namespace {
 
@@ -223,6 +226,11 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots,
         record.modified = entry.lastModified().toMSecsSinceEpoch();
         record.video = video;
         record.captured = entry.lastModified();
+        struct stat status {};
+        if (::stat(QFile::encodeName(canonicalFile).constData(), &status) == 0) {
+          record.device = status.st_dev;
+          record.inode = status.st_ino;
+        }
 
         CaptureRecord::Kind named = CaptureRecord::Picture;
         QDateTime namedTime = record.captured;

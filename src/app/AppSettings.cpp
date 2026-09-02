@@ -143,10 +143,15 @@ AppSettings::AppSettings(QObject* parent)
         // Inode and size together. A freed inode number is handed to the
         // next file created on ext4 and xfs, so the number alone would
         // repoint an entry to whatever was saved after a delete.
+        // On btrfs a subvolume's device number is anonymous and can change
+        // between boots, so the device alone must not unresolve an entry:
+        // the mtime stands in for it then.
         if (entry.device != 0 && entry.inode != 0 &&
             ::stat(QFile::encodeName(entry.path).constData(), &status) == 0 &&
-            entry.device == status.st_dev && entry.inode == status.st_ino &&
-            entry.bytes == static_cast<qint64>(status.st_size)) {
+            entry.inode == status.st_ino &&
+            entry.bytes == static_cast<qint64>(status.st_size) &&
+            (entry.device == status.st_dev ||
+             entry.modified == QFileInfo(entry.path).lastModified().toMSecsSinceEpoch())) {
           entry.resolved = true;
         }
         entries.append(entry);
@@ -417,12 +422,16 @@ void AppSettings::reconcileAlbums(const QList<CaptureRecord>& records) {
   QList<Candidate> candidates;
   candidates.reserve(records.size());
   for (const CaptureRecord& record : records) {
-    struct stat status {};
-    quint64 device = 0;
-    quint64 inode = 0;
-    if (::stat(QFile::encodeName(record.path).constData(), &status) == 0) {
-      device = status.st_dev;
-      inode = status.st_ino;
+    quint64 device = record.device;
+    quint64 inode = record.inode;
+    // The scanner fills these in off the GUI thread; a record built any other
+    // way is looked up here.
+    if (device == 0 && inode == 0) {
+      struct stat status {};
+      if (::stat(QFile::encodeName(record.path).constData(), &status) == 0) {
+        device = status.st_dev;
+        inode = status.st_ino;
+      }
     }
     candidates.append({record.path, record.bytes, record.modified, device, inode});
   }
@@ -442,8 +451,9 @@ void AppSettings::reconcileAlbums(const QList<CaptureRecord>& records) {
         }
       } else {
         for (const Candidate& candidate : std::as_const(candidates)) {
-          if (entry.device != 0 && entry.inode != 0 && candidate.device == entry.device &&
-              candidate.inode == entry.inode && candidate.bytes == entry.bytes) {
+          if (entry.device != 0 && entry.inode != 0 && candidate.inode == entry.inode &&
+              candidate.bytes == entry.bytes &&
+              (candidate.device == entry.device || candidate.modified == entry.modified)) {
             if (entry.path != candidate.path) {
               entry.path = candidate.path;
               persistedChange = true;
