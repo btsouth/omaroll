@@ -190,6 +190,10 @@ Item {
 
     Menu {
         id: libraryMenu
+        // Modal, undimmed: the press that closes the menu is consumed here
+        // rather than also landing on the tile or pill under it.
+        modal: true
+        dim: false
 
         background: Rectangle {
             implicitWidth: 280
@@ -336,6 +340,10 @@ Item {
 
     Menu {
         id: sortMenu
+        // Modal, undimmed: the press that closes the menu is consumed here
+        // rather than also landing on the tile or pill under it.
+        modal: true
+        dim: false
 
         background: Rectangle {
             implicitWidth: 150

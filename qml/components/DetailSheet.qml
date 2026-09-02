@@ -192,11 +192,17 @@ Item {
         id: backdrop
         anchors.fill: parent
         color: Qt.rgba(0, 0, 0, 0.62)
+        // Every button is swallowed so nothing reaches the library; only a
+        // left click on the dimmed area reads as "close".
         MouseArea {
             anchors.fill: parent
-            acceptedButtons: Qt.LeftButton | Qt.RightButton
+            acceptedButtons: Qt.AllButtons
             preventStealing: true
-            onClicked: root.close()
+            onClicked: function (mouse) {
+                if (mouse.button === Qt.LeftButton) {
+                    root.close()
+                }
+            }
         }
     }
 
@@ -212,7 +218,7 @@ Item {
 
         MouseArea {
             anchors.fill: parent
-            acceptedButtons: Qt.LeftButton | Qt.RightButton
+            acceptedButtons: Qt.AllButtons
             preventStealing: true
         }
 
