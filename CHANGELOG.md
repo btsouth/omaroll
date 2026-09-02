@@ -20,6 +20,25 @@
   open sheet or the viewer ignores input until it closes, and the click that
   closes the Browse, Sort or Album menu no longer also lands on what is under
   it.
+- After using the Browse, Sort or Album menu the arrow keys work again at
+  once, instead of being dead until a tile was clicked.
+- On a narrow window the matte picker's aspect and padding buttons no longer
+  run into Cancel and Copy and save; they drop onto their own line.
+- A very tall screenshot made postable with a forced aspect kept its
+  proportions in the preview but not in the saved file: the padding was not
+  scaled with the canvas, so the capture came out as a thin strip and, at the
+  largest padding, was cropped top and bottom. The saved matte now matches.
+- An album entry is matched on inode and size together. Filesystems that hand
+  a freed inode number to the next file could otherwise repoint an entry to an
+  unrelated capture saved after a delete.
+- Adding a file to an album at the name of a member whose file had gone
+  replaces the unavailable entry instead of being refused.
+- The theme no longer reloads, and every colour binding no longer re-evaluates,
+  each time something is copied to the clipboard. The shell writes its
+  clipboard history beside the theme state, and that write used to count as a
+  theme change.
+- If the single-instance socket cannot be created at all, Omaroll runs
+  anyway rather than exiting silently with nothing on screen.
 - Actions that leave the file where it is no longer close the viewer.
   Favourite, copy to clipboard, copy the text, scan QR code, send and show in
   files all run with the picture still open, and the result is shown inside
