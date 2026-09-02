@@ -11,12 +11,21 @@ Item {
     property bool floating: false
     property int badge: -1
     property string toolTip: ""
+    property string shortcut: ""
+    readonly property string resolvedToolTip: {
+        const action = root.toolTip !== "" ? root.toolTip : root.label
+        return root.shortcut !== ""
+               ? action + "  ·  " + root.shortcut
+               : root.toolTip
+    }
 
     signal clicked()
 
     activeFocusOnTab: true
+    opacity: root.enabled ? 1 : 0.42
     Accessible.role: Accessible.Button
     Accessible.name: root.label
+    Accessible.description: root.shortcut !== "" ? "Shortcut " + root.shortcut : ""
     Accessible.onPressAction: if (root.enabled) root.clicked()
 
     function shade(base, amount) {
@@ -25,6 +34,8 @@ Item {
 
     implicitWidth: content.implicitWidth + (floating ? 26 : 22)
     implicitHeight: floating ? 34 : 26
+
+    Behavior on opacity { NumberAnimation { duration: 120 } }
 
     Rectangle {
         anchors.fill: parent
@@ -75,12 +86,12 @@ Item {
 
         HoverHandler {
             id: hover
-            cursorShape: Qt.PointingHandCursor
+            cursorShape: root.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
         }
 
         ToolTip {
-            visible: root.toolTip !== "" && hover.hovered
-            text: root.toolTip
+            visible: root.resolvedToolTip !== "" && hover.hovered
+            text: root.resolvedToolTip
             delay: 500
         }
 

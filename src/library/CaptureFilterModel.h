@@ -96,6 +96,7 @@ public:
   Q_INVOKABLE int kindAt(int row) const;
   Q_INVOKABLE bool isVideoAt(int row) const;
   Q_INVOKABLE qint64 stampAt(int row) const;
+  Q_INVOKABLE QString ocrSnippetAt(int row) const;
 
   // Text found by the local OCR index. Updates are coalesced because a warm
   // cache can deliver many entries in one event-loop turn.
@@ -113,6 +114,10 @@ public:
   Q_INVOKABLE QString adjacentPath(const QString& path, int direction) const;
 
   [[nodiscard]] int sourceCount() const;
+
+  [[nodiscard]] QVariant data(const QModelIndex& index,
+                              int role = Qt::DisplayRole) const override;
+  [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
 
 signals:
   void kindFilterChanged();
@@ -138,6 +143,7 @@ private:
   [[nodiscard]] const CaptureRecord& sourceRecord(int sourceRow) const;
   [[nodiscard]] bool recordLessThan(const CaptureRecord& first,
                                     const CaptureRecord& second) const;
+  [[nodiscard]] QString ocrSnippet(const CaptureRecord& record) const;
 
   int m_kindFilter = kAllKinds;
   int m_sortMode = NewestFirst;
@@ -152,6 +158,7 @@ private:
   QHash<QString, QString> m_duplicateGroups;
   QHash<QString, int> m_duplicateOrdinals;
   QHash<QString, QString> m_ocrText;
+  QHash<QString, QString> m_ocrFolded;
   QTimer m_ocrFilterTimer;
   QList<QMetaObject::Connection> m_sourceConnections;
 };

@@ -203,6 +203,7 @@ FocusScope {
             required property bool favorite
             required property bool hidden
             required property double stamp
+            required property string ocrSnippet
 
             width: grid.cellWidth
             height: grid.cellHeight
@@ -220,6 +221,7 @@ FocusScope {
                 stamp: cell.stamp
                 favorite: cell.favorite
                 hiddenMark: cell.hidden
+                ocrSnippet: cell.ocrSnippet
                 selected: grid.currentIndex === cell.index
                 checked: root.isChecked(cell.path)
                 selectionMode: root.checkedCount > 0

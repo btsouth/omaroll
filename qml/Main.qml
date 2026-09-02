@@ -36,7 +36,7 @@ ApplicationWindow {
     readonly property bool modalOpen: confirm.visible || matteSheet.visible
                                       || settingsSheet.visible || albumNameSheet.visible
                                       || exportSheet.visible || renameSheet.visible
-                                      || tailscaleSheet.visible
+                                      || tailscaleSheet.visible || textReviewSheet.visible
     readonly property bool anySheetOpen: modalOpen || detail.visible
     // A popup menu is up; the press that closes it must not also land under it.
     readonly property bool popupOpen: filters.menuOpen || albumActionMenu.visible
@@ -139,6 +139,13 @@ ApplicationWindow {
         case "rename":
             renameSheet.open(path, Captures.fileNameAt(row))
             return
+        case "ocr":
+            if (!TextIndex.available) {
+                root.say("Text recognition needs tesseract")
+                return
+            }
+            textReviewSheet.open(path, Captures.fileNameAt(row))
+            return
         case "frame": {
             if (!detail.visible || detail.path !== path || !video) {
                 root.say("Open a video and choose the frame first")
@@ -189,6 +196,8 @@ ApplicationWindow {
             renameSheet.close()
         } else if (tailscaleSheet.visible) {
             tailscaleSheet.close()
+        } else if (textReviewSheet.visible) {
+            textReviewSheet.close()
         } else if (settingsSheet.visible) {
             settingsSheet.close()
         } else if (matteSheet.visible) {
@@ -286,6 +295,9 @@ ApplicationWindow {
         detail.sizeLabel = Captures.sizeLabelAt(row)
         detail.stamp = Captures.stampAt(row)
         detail.canNavigate = root.adjacentViewerPath(detail.path, 1) !== ""
+        if (!detail.isVideo) {
+            Qr.inspect(detail.path)
+        }
     }
     Connections {
         target: Captures
@@ -416,6 +428,8 @@ ApplicationWindow {
             root.perform("export", Captures.pathAt(0))
         } else if (view === "rename") {
             root.perform("rename", Captures.pathAt(0))
+        } else if (view === "ocr") {
+            root.perform("ocr", Captures.pathAt(0))
         } else if (view === "duplicates") {
             Captures.duplicatesOnly = true
         } else if (view === "settings") {
@@ -513,6 +527,7 @@ ApplicationWindow {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: library.checkedCount > 0
                 label: "Send"
+                shortcut: Registry.shortcutFor("send")
                 onClicked: Registry.runBatch("send", library.checkedPaths())
             }
             PillButton {
@@ -520,6 +535,7 @@ ApplicationWindow {
                 visible: library.checkedCount > 0 && root.width >= 1050
                          && Registry.available("export")
                 label: "Export"
+                shortcut: Registry.shortcutFor("export")
                 onClicked: root.openExport(library.checkedPaths())
             }
             PillButton {
@@ -545,6 +561,7 @@ ApplicationWindow {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: library.checkedCount > 0 && root.width >= 900
                 label: "Copy"
+                shortcut: Registry.shortcutFor("copy")
                 onClicked: Actions.copyUris(library.checkedPaths())
             }
             PillButton {
@@ -552,6 +569,7 @@ ApplicationWindow {
                 visible: library.checkedCount > 0 && root.width >= 900
                 label: root.allChecked(function (p) { return Settings.isFavorite(p) })
                        ? "Unfavourite" : "Favourite"
+                shortcut: Registry.shortcutFor("favorite")
                 onClicked: root.markChecked("favorite")
             }
             PillButton {
@@ -559,12 +577,14 @@ ApplicationWindow {
                 visible: library.checkedCount > 0 && root.width >= 900
                 label: root.allChecked(function (p) { return Settings.isHidden(p) })
                        ? "Unhide" : "Hide"
+                shortcut: Registry.shortcutFor("hide")
                 onClicked: root.markChecked("hide")
             }
             PillButton {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: library.checkedCount > 0
                 label: "Trash " + library.checkedCount
+                shortcut: Registry.shortcutFor("trash")
                 onClicked: root.requestDeleteBatch(library.checkedPaths())
             }
             PillButton {
@@ -583,6 +603,7 @@ ApplicationWindow {
             PillButton {
                 anchors.verticalCenter: parent.verticalCenter
                 label: "⚙"
+                toolTip: "Settings"
                 onClicked: settingsSheet.open()
             }
         }
@@ -671,6 +692,11 @@ ApplicationWindow {
         detail.favorite = Settings.isFavorite(detail.path)
         detail.canNavigate = root.adjacentViewerPath(detail.path, 1) !== ""
         detail.open()
+        if (detail.isVideo) {
+            Qr.clear()
+        } else {
+            Qr.inspect(detail.path)
+        }
     }
 
     function navigateDetail(direction) {
@@ -807,6 +833,8 @@ ApplicationWindow {
         id: detail
         objectName: "detail"
         enabled: !root.modalOpen && !root.popupOpen
+        qrDetected: Qr.path === detail.path && Qr.detected
+        onVisibleChanged: if (!visible) Qr.clear()
         onNavigateRequested: function (direction) { root.navigateDetail(direction) }
         onFullScreenRequested: function (enabled) { root.setViewerFullScreen(enabled) }
         // Anything that leaves the file where it is keeps the viewer open,
@@ -968,6 +996,11 @@ ApplicationWindow {
         // Opened over the viewer, it took the keyboard; hand it back.
         onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
     }
+    TextReviewSheet {
+        id: textReviewSheet
+        objectName: "textReviewSheet"
+        onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
+    }
 
     SettingsSheet {
         id: settingsSheet
@@ -1050,58 +1083,58 @@ ApplicationWindow {
 
     // Shortcuts. All disabled while a sheet is open, which owns its own keys.
     Shortcut {
-        sequences: ["M"]
+        sequences: [Registry.shortcutFor("matte")]
         enabled: !root.anySheetOpen
         onActivated: root.perform("matte", root.currentPath())
     }
     Shortcut {
-        sequences: ["T"]
+        sequences: [Registry.shortcutFor("trim")]
         enabled: !root.anySheetOpen
         onActivated: root.perform("trim", root.currentPath())
     }
     Shortcut {
-        sequences: ["P"]
+        sequences: [Registry.shortcutFor("play")]
         enabled: !root.anySheetOpen
         onActivated: root.perform("play", root.currentPath())
     }
     Shortcut {
-        sequences: ["A"]
+        sequences: [Registry.shortcutFor("annotate")]
         enabled: !root.anySheetOpen
         onActivated: root.perform("annotate", root.currentPath())
     }
     Shortcut {
-        sequences: ["C"]
+        sequences: [Registry.shortcutFor("ocr")]
         enabled: !root.anySheetOpen
         onActivated: root.perform("ocr", root.currentPath())
     }
     Shortcut {
-        sequences: ["E"]
+        sequences: [Registry.shortcutFor("export")]
         enabled: !root.anySheetOpen
         onActivated: library.checkedCount > 0
                      ? root.openExport(library.checkedPaths())
                      : root.perform("export", root.currentPath())
     }
     Shortcut {
-        sequences: ["N"]
+        sequences: [Registry.shortcutFor("rename")]
         enabled: !root.anySheetOpen
         onActivated: root.perform("rename", root.currentPath())
     }
     // With a selection, the keys that have a bulk form act on all of it, as
     // the header buttons and a drag do; otherwise on the highlighted tile.
     Shortcut {
-        sequences: ["Y"]
+        sequences: [Registry.shortcutFor("copy")]
         enabled: !root.anySheetOpen
         onActivated: library.checkedCount > 0 ? Actions.copyUris(library.checkedPaths())
                                               : root.perform("copy", root.currentPath())
     }
     Shortcut {
-        sequences: ["S"]
+        sequences: [Registry.shortcutFor("send")]
         enabled: !root.anySheetOpen
         onActivated: library.checkedCount > 0 ? Registry.runBatch("send", library.checkedPaths())
                                               : root.perform("send", root.currentPath())
     }
     Shortcut {
-        sequences: ["V"]
+        sequences: [Registry.shortcutFor("favorite")]
         enabled: !root.anySheetOpen
         onActivated: library.checkedCount > 0 ? root.markChecked("favorite")
                                               : root.perform("favorite", root.currentPath())
@@ -1109,13 +1142,13 @@ ApplicationWindow {
     // Ctrl rather than a bare H, which the grid uses for vim-style movement.
     // Modified keys are not swallowed by the search field, so guard it.
     Shortcut {
-        sequences: ["Ctrl+H"]
+        sequences: [Registry.shortcutFor("hide")]
         enabled: !root.anySheetOpen && !filters.searchActive
         onActivated: library.checkedCount > 0 ? root.markChecked("hide")
                                               : root.perform("hide", root.currentPath())
     }
     Shortcut {
-        sequences: ["F"]
+        sequences: [Registry.shortcutFor("files")]
         enabled: !root.anySheetOpen
         onActivated: root.perform("files", root.currentPath())
     }
@@ -1136,7 +1169,7 @@ ApplicationWindow {
             id: sectionKey
             required property int index
             Shortcut {
-                sequences: [String(sectionKey.index + 1)]
+                sequences: [filters.sectionShortcut(sectionKey.index)]
                 enabled: !root.anySheetOpen
                 onActivated: filters.selectSection(sectionKey.index)
             }

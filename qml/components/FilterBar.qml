@@ -28,6 +28,8 @@ Item {
         Captures.kindFilter = kinds[index]
     }
 
+    function sectionShortcut(index) { return String(index + 1) }
+
     readonly property var sortLabels: ["Newest", "Oldest", "Largest", "Smallest", "Name"]
 
     // True while the search field owns the keyboard, so window-level
@@ -71,32 +73,38 @@ Item {
 
         PillButton {
             label: "All"
+            shortcut: root.sectionShortcut(0)
             active: Captures.kindFilter === root.kindAll
             onClicked: Captures.kindFilter = root.kindAll
         }
         PillButton {
             label: root.width < 700 ? "Shots" : "Screenshots"
+            shortcut: root.sectionShortcut(1)
             active: Captures.kindFilter === root.kindScreenshot
             onClicked: Captures.kindFilter = root.kindScreenshot
         }
         PillButton {
             label: root.width < 700 ? "Clips" : "Recordings"
+            shortcut: root.sectionShortcut(2)
             active: Captures.kindFilter === root.kindRecording
             onClicked: Captures.kindFilter = root.kindRecording
         }
         PillButton {
             label: root.width < 700 ? "Photos" : "Pictures"
+            shortcut: root.sectionShortcut(3)
             active: Captures.kindFilter === root.kindPicture
             onClicked: Captures.kindFilter = root.kindPicture
         }
         PillButton {
             label: "Videos"
+            shortcut: root.sectionShortcut(4)
             active: Captures.kindFilter === root.kindVideo
             onClicked: Captures.kindFilter = root.kindVideo
         }
         PillButton {
             visible: Settings.scanDownloads
             label: root.width < 700 ? "Down" : "Downloads"
+            shortcut: root.sectionShortcut(5)
             active: Captures.kindFilter === root.kindDownload
             onClicked: Captures.kindFilter = root.kindDownload
         }
@@ -106,6 +114,8 @@ Item {
         // Orthogonal to the kind: favourites of whatever section is showing.
         PillButton {
             label: "★"
+            toolTip: "Favourites"
+            shortcut: root.sectionShortcut(6)
             active: Captures.favoritesOnly
             onClicked: Captures.favoritesOnly = !Captures.favoritesOnly
         }

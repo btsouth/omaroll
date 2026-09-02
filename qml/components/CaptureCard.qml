@@ -20,6 +20,7 @@ Item {
     property bool selected: false
     property bool checked: false
     property bool selectionMode: false
+    property string ocrSnippet: ""
     property bool thumbnailReady: false
     // What leaves when this tile is dragged out. The grid sets it to the whole
     // selection when this tile is part of one.
@@ -184,12 +185,29 @@ Item {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            height: 30
+            height: root.ocrSnippet !== "" ? 52 : 30
             visible: root.thumbnailReady
             color: Qt.rgba(0, 0, 0, 0.72)
         }
 
+        Text {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: metadataRow.top
+            anchors.leftMargin: 8
+            anchors.rightMargin: 8
+            anchors.bottomMargin: 2
+            visible: root.ocrSnippet !== "" && root.thumbnailReady
+            text: root.ocrSnippet
+            elide: Text.ElideRight
+            font.family: Theme.fontFamily
+            font.pixelSize: 10
+            color: "#ffffff"
+            opacity: 0.90
+        }
+
         Row {
+            id: metadataRow
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom

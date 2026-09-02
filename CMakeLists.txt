@@ -48,6 +48,8 @@ add_library(omaroll_core STATIC
   src/matte/MatteProvider.h
   src/search/OcrIndex.cpp
   src/search/OcrIndex.h
+  src/search/QrDetector.cpp
+  src/search/QrDetector.h
   src/thumbs/ThumbnailCache.cpp
   src/thumbs/ThumbnailCache.h
   src/thumbs/ThumbnailProvider.cpp
@@ -111,6 +113,7 @@ set(OMAROLL_QML_FILES
   qml/components/ExportSheet.qml
   qml/components/RenameSheet.qml
   qml/components/TailscaleSheet.qml
+  qml/components/TextReviewSheet.qml
 )
 
 qt_add_qml_module(omaroll

@@ -14,7 +14,7 @@
 namespace {
 
 constexpr quint32 kCacheMagic = 0x4f435231; // OCR1
-constexpr quint16 kCacheVersion = 2;
+constexpr quint16 kCacheVersion = 3;
 constexpr qint64 kMaximumCacheEntryBytes = 4 * 1024 * 1024;
 constexpr qint64 kMaximumCacheBytes = 64 * 1024 * 1024;
 constexpr int kOcrTimeoutMs = 30'000;
@@ -25,10 +25,21 @@ QString cacheHome() {
                               : configured;
 }
 
-QString normalizedText(const QByteArray& bytes) {
+QString layoutText(const QByteArray& bytes) {
+  QString text = QString::fromUtf8(bytes);
+  text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+  text.replace(QLatin1Char('\r'), QLatin1Char('\n'));
+  while (text.endsWith(QLatin1Char('\n'))) {
+    text.chop(1);
+  }
+  return text;
+}
+
+QString normalizedText(const QString& text) {
   // Search does not need page layout. Collapsing whitespace makes the cache
-  // smaller and lets a phrase match across Tesseract's line wrapping.
-  return QString::fromUtf8(bytes).simplified();
+  // match a phrase across Tesseract's line wrapping. The cache itself keeps
+  // the layout-preserving text used by the review sheet.
+  return text.simplified();
 }
 
 } // namespace
@@ -92,6 +103,78 @@ void OcrIndex::setSearchText(const QString& text) {
   sync();
 }
 
+void OcrIndex::recognize(const QString& path, bool refresh) {
+  m_reviewPath = path;
+  m_reviewModified = 0;
+  m_reviewBytes = 0;
+  m_reviewText.clear();
+  m_reviewError.clear();
+  m_reviewing = true;
+  m_reviewCandidate.reset();
+  emit reviewChanged();
+
+  if (!available() || !m_model) {
+    m_reviewing = false;
+    m_reviewError = QStringLiteral("Text recognition is not available");
+    emit reviewChanged();
+    return;
+  }
+
+  const int row = m_model->rowOf(path);
+  if (row < 0 || m_model->recordAt(row).isVideo()) {
+    m_reviewing = false;
+    m_reviewError = QStringLiteral("This image is no longer available");
+    emit reviewChanged();
+    return;
+  }
+
+  const auto& record = m_model->recordAt(row);
+  const Candidate candidate{record.path, record.modified, record.bytes};
+  m_reviewModified = candidate.modified;
+  m_reviewBytes = candidate.bytes;
+  if (refresh) {
+    m_entries.remove(candidate.path);
+    m_failed.remove(failureKey(candidate));
+    QFile::remove(cachePath(candidate.path));
+    emit textReady(candidate.path, {});
+  } else {
+    const auto known = m_entries.constFind(candidate.path);
+    if (known != m_entries.cend() && known->modified == candidate.modified &&
+        known->bytes == candidate.bytes) {
+      publishReview(candidate, known->text);
+      return;
+    }
+    QString cached;
+    if (readCache(candidate, &cached)) {
+      adopt(candidate, cached);
+      publishReview(candidate, cached);
+      return;
+    }
+  }
+
+  if (m_current && m_current->path == candidate.path &&
+      m_current->modified == candidate.modified && m_current->bytes == candidate.bytes) {
+    return;
+  }
+  m_reviewCandidate = candidate;
+  processNext();
+}
+
+void OcrIndex::cancelReview() {
+  m_reviewCandidate.reset();
+  if (m_reviewPath.isEmpty() && m_reviewText.isEmpty() && m_reviewError.isEmpty() &&
+      !m_reviewing) {
+    return;
+  }
+  m_reviewPath.clear();
+  m_reviewModified = 0;
+  m_reviewBytes = 0;
+  m_reviewText.clear();
+  m_reviewError.clear();
+  m_reviewing = false;
+  emit reviewChanged();
+}
+
 int OcrIndex::clearCache() {
   // Clearing is also an explicit stop. The next edit to an active query can
   // start a fresh index, but this click must not immediately recreate what it
@@ -100,6 +183,7 @@ int OcrIndex::clearCache() {
   m_queue.clear();
   m_timeout.stop();
   m_current.reset();
+  m_reviewCandidate.reset();
   if (m_process.state() != QProcess::NotRunning) {
     m_process.kill();
   }
@@ -112,6 +196,7 @@ int OcrIndex::clearCache() {
   }
   m_entries.clear();
   m_failed.clear();
+  cancelReview();
 
   int removed = 0;
   QDir directory(cacheDirectory());
@@ -170,7 +255,7 @@ void OcrIndex::sync() {
     }
   }
 
-  resetProgress(m_queue.size() + (m_current ? 1 : 0));
+  resetProgress(m_queue.size() + (m_current && !m_currentForReview ? 1 : 0));
   setIndexing(m_current.has_value() || !m_queue.isEmpty());
   processNext();
 }
@@ -179,14 +264,22 @@ void OcrIndex::processNext() {
   if (m_process.state() != QProcess::NotRunning || m_current.has_value()) {
     return;
   }
-  if (!m_active || m_queue.isEmpty()) {
+  if (!m_reviewCandidate && (!m_active || m_queue.isEmpty())) {
     setIndexing(false);
     return;
   }
 
-  const Candidate candidate = m_queue.takeFirst();
+  const bool forReview = m_reviewCandidate.has_value();
+  const Candidate candidate = forReview ? *m_reviewCandidate : m_queue.takeFirst();
+  if (forReview) {
+    m_reviewCandidate.reset();
+  }
   if (!stillCurrent(candidate)) {
-    advanceProgress();
+    if (forReview && candidate.path == m_reviewPath) {
+      publishReview(candidate, {}, QStringLiteral("This image is no longer available"));
+    } else if (!forReview) {
+      advanceProgress();
+    }
     QTimer::singleShot(0, this, &OcrIndex::processNext);
     return;
   }
@@ -194,12 +287,24 @@ void OcrIndex::processNext() {
   QString cached;
   if (readCache(candidate, &cached)) {
     adopt(candidate, cached);
+    if (candidate.path == m_reviewPath) {
+      publishReview(candidate, cached);
+    }
+    if (!forReview) {
+      advanceProgress();
+    }
+    QTimer::singleShot(0, this, &OcrIndex::processNext);
+    return;
+  }
+
+  if (!forReview && m_failed.contains(failureKey(candidate))) {
     advanceProgress();
     QTimer::singleShot(0, this, &OcrIndex::processNext);
     return;
   }
 
   m_current = candidate;
+  m_currentForReview = forReview;
   m_process.setProgram(m_program);
   m_process.setArguments({candidate.path, QStringLiteral("stdout"),
                           QStringLiteral("--oem"), QStringLiteral("1"),
@@ -221,19 +326,28 @@ void OcrIndex::finishCurrent(bool successful) {
   }
   m_timeout.stop();
   const Candidate candidate = *m_current;
+  const bool forReview = m_currentForReview;
   m_current.reset();
+  m_currentForReview = false;
 
   if (successful && stillCurrent(candidate)) {
-    const QString text = normalizedText(m_process.readAllStandardOutput());
+    const QString text = layoutText(m_process.readAllStandardOutput());
     writeCache(candidate, text);
     adopt(candidate, text);
+    if (candidate.path == m_reviewPath) {
+      publishReview(candidate, text);
+    }
   } else {
-    m_failed.insert(cachePath(candidate.path) + QString::number(candidate.modified) +
-                    QLatin1Char(':') + QString::number(candidate.bytes));
+    m_failed.insert(failureKey(candidate));
+    if (candidate.path == m_reviewPath) {
+      publishReview(candidate, {}, QStringLiteral("Could not extract text"));
+    }
   }
-  advanceProgress();
+  if (!forReview) {
+    advanceProgress();
+  }
 
-  if (!m_active) {
+  if (!m_active && !m_reviewCandidate) {
     setIndexing(false);
     return;
   }
@@ -368,5 +482,22 @@ void OcrIndex::pruneCache() {
 
 void OcrIndex::adopt(const Candidate& candidate, const QString& text) {
   m_entries.insert(candidate.path, {candidate.modified, candidate.bytes, text});
-  emit textReady(candidate.path, text);
+  emit textReady(candidate.path, normalizedText(text));
+}
+
+void OcrIndex::publishReview(const Candidate& candidate, const QString& text,
+                             const QString& error) {
+  if (candidate.path != m_reviewPath || candidate.modified != m_reviewModified ||
+      candidate.bytes != m_reviewBytes) {
+    return;
+  }
+  m_reviewText = text;
+  m_reviewError = error;
+  m_reviewing = false;
+  emit reviewChanged();
+}
+
+QString OcrIndex::failureKey(const Candidate& candidate) const {
+  return cachePath(candidate.path) + QString::number(candidate.modified) +
+         QLatin1Char(':') + QString::number(candidate.bytes);
 }

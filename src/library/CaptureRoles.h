@@ -21,6 +21,8 @@ enum Role {
   IsVideoRole,
   FavoriteRole,
   HiddenRole,
+  // Added by CaptureFilterModel while a search result needs OCR context.
+  OcrSnippetRole,
 };
 
 } // namespace CaptureRoles

@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls.Basic
 import QtMultimedia
 
 // One capture, large, with everything you can do to it.
@@ -31,6 +32,7 @@ Item {
     property bool showInfo: true
     property bool slideshowRunning: false
     property bool slideshowPausedForRender: false
+    property bool qrDetected: false
     // The window's status line, repeated here: the footer sits under the
     // backdrop, so a result said there while the viewer is open goes unread.
     property string status: ""
@@ -56,6 +58,18 @@ Item {
         || stage.width < stage.rowChrome + wideTopMeasure.implicitWidth
            + (root.isVideo && !root.slideshowRunning ? transport.minimumWidth
                                                       : wideImageMeasure.implicitWidth)
+    readonly property var viewerShortcuts: ({
+        previous: { key: Qt.Key_Left, label: "Left" },
+        next: { key: Qt.Key_Right, label: "Right" },
+        slideshow: { key: Qt.Key_F5, label: "F5" },
+        info: { key: Qt.Key_I, label: "I" },
+        fullscreen: { key: Qt.Key_F11, label: "F11" },
+        fit: { key: Qt.Key_0, label: "0" },
+        zoomOut: { key: Qt.Key_Minus, label: "−" },
+        zoomIn: { key: Qt.Key_Plus, label: "+" },
+        rotate: { key: Qt.Key_R, label: "R" }
+    })
+    property bool actionNavigationActive: false
 
     signal actionTriggered(string id)
     signal navigateRequested(int direction)
@@ -77,7 +91,65 @@ Item {
         return minutes + ":" + String(seconds).padStart(2, "0")
     }
 
+    function firstAvailableAction() {
+        for (let index = 0; index < actions.count; ++index) {
+            if (actions.model[index].available) {
+                return index
+            }
+        }
+        return -1
+    }
+
+    function visibleActions() {
+        const rows = Registry.actionsFor(root.isVideo)
+        return rows.filter(function (row) { return row.id !== "qr" || root.qrDetected })
+    }
+
+    function focusAction(index) {
+        if (index < 0 || index >= actions.count || !actions.model[index].available) {
+            return false
+        }
+        if (!showInfo) {
+            showInfo = true
+        }
+        actionNavigationActive = true
+        actions.currentIndex = index
+        actions.positionViewAtIndex(index, ListView.Contain)
+        Qt.callLater(function () {
+            const item = actions.itemAtIndex(index)
+            if (item && root.visible && root.actionNavigationActive) {
+                item.forceActiveFocus()
+            }
+        })
+        return true
+    }
+
+    function focusFirstAction() {
+        return focusAction(firstAvailableAction())
+    }
+
+    function focusRelativeAction(direction) {
+        if (actions.count === 0) {
+            return false
+        }
+        let index = actions.currentIndex
+        for (let checked = 0; checked < actions.count; ++checked) {
+            index = (index + direction + actions.count) % actions.count
+            if (actions.model[index].available) {
+                return focusAction(index)
+            }
+        }
+        return false
+    }
+
+    function focusPreview() {
+        actionNavigationActive = false
+        actions.currentIndex = -1
+        forceActiveFocus()
+    }
+
     function open() {
+        const keepActionFocus = visible && actionNavigationActive
         playbackError = ""
         if (!visible) {
             showInfo = true
@@ -85,7 +157,11 @@ Item {
         }
         resetImageView()
         visible = true
-        forceActiveFocus()
+        if (keepActionFocus) {
+            Qt.callLater(root.focusFirstAction)
+        } else {
+            focusPreview()
+        }
         if (slideshowRunning && isVideo) {
             Qt.callLater(function () {
                 player.position = 0
@@ -151,6 +227,8 @@ Item {
     function close() {
         setSlideshow(false)
         setFullScreen(false)
+        actionNavigationActive = false
+        actions.currentIndex = -1
         visible = false
     }
 
@@ -180,6 +258,11 @@ Item {
     onCanNavigateChanged: {
         if (!canNavigate) {
             setSlideshow(false)
+        }
+    }
+    onShowInfoChanged: {
+        if (!showInfo && actionNavigationActive) {
+            focusPreview()
         }
     }
 
@@ -500,6 +583,8 @@ Item {
                 visible: root.canNavigate
                 label: "←"
                 floating: true
+                toolTip: "Previous"
+                shortcut: root.viewerShortcuts.previous.label
                 onClicked: root.requestNavigation(-1)
             }
 
@@ -510,6 +595,8 @@ Item {
                 visible: root.canNavigate
                 label: "→"
                 floating: true
+                toolTip: "Next"
+                shortcut: root.viewerShortcuts.next.label
                 onClicked: root.requestNavigation(1)
             }
 
@@ -538,17 +625,16 @@ Item {
                         label: root.compactControls
                                ? (root.slideshowRunning ? "Ⅱ" : "▶")
                                : (root.slideshowRunning ? "Pause slideshow" : "Start slideshow")
-                        toolTip: root.compactControls
-                                 ? (root.slideshowRunning ? "Pause slideshow" : "Start slideshow")
-                                 : ""
+                        toolTip: root.slideshowRunning ? "Pause slideshow" : "Start slideshow"
+                        shortcut: root.viewerShortcuts.slideshow.label
                         active: root.slideshowRunning
                         onClicked: root.setSlideshow(!root.slideshowRunning)
                     }
                     PillButton {
                         label: root.compactControls ? "i"
                                                : (root.showInfo ? "Hide details" : "Show details")
-                        toolTip: root.compactControls
-                                 ? (root.showInfo ? "Hide details" : "Show details") : ""
+                        toolTip: root.showInfo ? "Hide details" : "Show details"
+                        shortcut: root.viewerShortcuts.info.label
                         active: root.showInfo
                         onClicked: root.showInfo = !root.showInfo
                     }
@@ -556,7 +642,8 @@ Item {
                         visible: root.isVideo || root.slideshowRunning
                         label: root.fullScreen ? "↙" : (root.compactControls ? "⛶" : "Fullscreen")
                         toolTip: root.fullScreen ? "Exit fullscreen"
-                                                 : (root.compactControls ? "Fullscreen" : "")
+                                                 : "Fullscreen"
+                        shortcut: root.viewerShortcuts.fullscreen.label
                         onClicked: root.setFullScreen(!root.fullScreen)
                     }
                 }
@@ -587,11 +674,15 @@ Item {
 
                 PillButton {
                     label: "Fit"
+                    toolTip: "Fit image"
+                    shortcut: root.viewerShortcuts.fit.label
                     active: root.imageZoom === 1 && root.imageRotation === 0
                     onClicked: root.resetImageView()
                 }
                 PillButton {
                     label: "−"
+                    toolTip: "Zoom out"
+                    shortcut: root.viewerShortcuts.zoomOut.label
                     onClicked: root.adjustImageZoom(1 / 1.25)
                 }
                 Text {
@@ -606,11 +697,14 @@ Item {
                 }
                 PillButton {
                     label: "+"
+                    toolTip: "Zoom in"
+                    shortcut: root.viewerShortcuts.zoomIn.label
                     onClicked: root.adjustImageZoom(1.25)
                 }
                 PillButton {
                     label: root.compactControls ? "↻" : "Rotate"
-                    toolTip: root.compactControls ? "Rotate" : ""
+                    toolTip: "Rotate"
+                    shortcut: root.viewerShortcuts.rotate.label
                     onClicked: root.rotateImage()
                 }
                 PillButton {
@@ -621,7 +715,8 @@ Item {
                                                + topControls.implicitWidth
                     label: root.fullScreen ? "↙" : (root.compactControls ? "⛶" : "Full")
                     toolTip: root.fullScreen ? "Exit fullscreen"
-                                             : (root.compactControls ? "Fullscreen" : "")
+                                             : "Fullscreen"
+                    shortcut: root.viewerShortcuts.fullscreen.label
                     onClicked: root.setFullScreen(!root.fullScreen)
                 }
             }
@@ -866,39 +961,73 @@ Item {
                 }
             }
 
+            Text {
+                id: actionsHeading
+                anchors.left: parent.left
+                anchors.leftMargin: 20
+                anchors.top: metadataColumn.bottom
+                anchors.topMargin: 14
+                text: "ACTIONS"
+                font.family: Theme.fontFamily
+                font.pixelSize: 9
+                font.weight: Font.DemiBold
+                color: root.shade(Theme.foreground, 0.38)
+            }
+
             // Actions, from the registry
             ListView {
                 id: actions
+                objectName: "viewerActions"
                 anchors.left: parent.left
                 anchors.right: parent.right
-                anchors.top: parent.top
+                anchors.top: actionsHeading.bottom
                 anchors.bottom: parent.bottom
-                anchors.topMargin: metadataColumn.y + metadataColumn.height + 12
+                anchors.topMargin: 4
                 anchors.bottomMargin: 14
                 anchors.leftMargin: 10
                 anchors.rightMargin: 10
                 clip: true
                 spacing: 1
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-                model: root.visible ? Registry.actionsFor(root.isVideo) : []
+                model: root.visible ? root.visibleActions() : []
 
-                delegate: Item {
+                delegate: FocusScope {
                     id: row
+                    required property int index
                     required property var modelData
+                    objectName: "viewerAction_" + modelData.id
                     width: actions.width
                     height: 30
+                    activeFocusOnTab: false
 
                     readonly property bool usable: modelData.available
                     readonly property bool primary: modelData.id === (root.isVideo
                                                        ? Settings.videoPrimaryAction
                                                        : Settings.imagePrimaryAction)
+                    readonly property string shortcut: modelData.shortcut
+                    readonly property string toolTipText: modelData.shortcut !== ""
+                                                           ? modelData.label + "  ·  "
+                                                             + modelData.shortcut
+                                                           : ""
+
+                    Accessible.role: Accessible.Button
+                    Accessible.name: modelData.label
+                    Accessible.description: modelData.shortcut !== ""
+                                            ? "Shortcut " + modelData.shortcut : ""
+                    Accessible.ignored: !row.usable
+                    Accessible.onPressAction: if (row.usable) root.actionTriggered(row.modelData.id)
 
                     Rectangle {
                         anchors.fill: parent
                         radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
-                        color: rowHover.hovered && row.usable
+                        color: row.activeFocus
+                               ? root.shade(Theme.accent, 0.18)
+                               : rowHover.hovered && row.usable
                                ? root.shade(Theme.foreground, 0.09)
                                : "transparent"
+                        border.width: row.activeFocus ? 2 : 0
+                        border.color: Theme.accent
                         Behavior on color { ColorAnimation { duration: 120 } }
                     }
 
@@ -935,9 +1064,45 @@ Item {
                         cursorShape: row.usable ? Qt.PointingHandCursor : Qt.ArrowCursor
                     }
 
+                    ToolTip {
+                        visible: rowHover.hovered && row.toolTipText !== ""
+                        text: row.toolTipText
+                        delay: 500
+                    }
+
                     TapHandler {
                         enabled: row.usable
-                        onSingleTapped: root.actionTriggered(row.modelData.id)
+                        onSingleTapped: {
+                            root.actionNavigationActive = true
+                            actions.currentIndex = row.index
+                            row.forceActiveFocus()
+                            root.actionTriggered(row.modelData.id)
+                        }
+                    }
+
+                    Keys.onPressed: function (event) {
+                        if (event.key === Qt.Key_Up || event.key === Qt.Key_Down) {
+                            root.focusRelativeAction(event.key === Qt.Key_Up ? -1 : 1)
+                            event.accepted = true
+                            return
+                        }
+                        if (event.key === Qt.Key_Backtab
+                                || (event.key === Qt.Key_Tab
+                                    && (event.modifiers & Qt.ShiftModifier))) {
+                            root.focusPreview()
+                            event.accepted = true
+                            return
+                        }
+                        if (event.key === Qt.Key_Tab) {
+                            root.focusRelativeAction(1)
+                            event.accepted = true
+                            return
+                        }
+                        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+                                || event.key === Qt.Key_Space) {
+                            root.actionTriggered(row.modelData.id)
+                            event.accepted = true
+                        }
                     }
                 }
             }
@@ -964,17 +1129,28 @@ Item {
     }
 
     Keys.onPressed: function (event) {
-        if (event.key === Qt.Key_F5) {
+        if (event.key === Qt.Key_Backtab
+                || (event.key === Qt.Key_Tab && (event.modifiers & Qt.ShiftModifier))) {
+            root.focusPreview()
+            event.accepted = true
+            return
+        }
+        if (event.key === Qt.Key_Tab) {
+            root.focusFirstAction()
+            event.accepted = true
+            return
+        }
+        if (event.key === root.viewerShortcuts.slideshow.key) {
             root.setSlideshow(!root.slideshowRunning)
             event.accepted = true
             return
         }
-        if (event.key === Qt.Key_F11) {
+        if (event.key === root.viewerShortcuts.fullscreen.key) {
             root.setFullScreen(!root.fullScreen)
             event.accepted = true
             return
         }
-        if (event.key === Qt.Key_I) {
+        if (event.key === root.viewerShortcuts.info.key) {
             root.showInfo = !root.showInfo
             event.accepted = true
             return
@@ -990,27 +1166,29 @@ Item {
             event.accepted = true
             return
         }
-        if (event.key === Qt.Key_Left || event.key === Qt.Key_Right) {
-            root.requestNavigation(event.key === Qt.Key_Left ? -1 : 1)
+        if (event.key === root.viewerShortcuts.previous.key
+                || event.key === root.viewerShortcuts.next.key) {
+            root.requestNavigation(event.key === root.viewerShortcuts.previous.key ? -1 : 1)
             event.accepted = true
             return
         }
-        if (!root.isVideo && (event.key === Qt.Key_Plus || event.key === Qt.Key_Equal)) {
+        if (!root.isVideo && (event.key === root.viewerShortcuts.zoomIn.key
+                              || event.key === Qt.Key_Equal)) {
             root.adjustImageZoom(1.25)
             event.accepted = true
             return
         }
-        if (!root.isVideo && event.key === Qt.Key_Minus) {
+        if (!root.isVideo && event.key === root.viewerShortcuts.zoomOut.key) {
             root.adjustImageZoom(1 / 1.25)
             event.accepted = true
             return
         }
-        if (!root.isVideo && event.key === Qt.Key_0) {
+        if (!root.isVideo && event.key === root.viewerShortcuts.fit.key) {
             root.resetImageView()
             event.accepted = true
             return
         }
-        if (!root.isVideo && event.key === Qt.Key_R) {
+        if (!root.isVideo && event.key === root.viewerShortcuts.rotate.key) {
             root.rotateImage()
             event.accepted = true
             return

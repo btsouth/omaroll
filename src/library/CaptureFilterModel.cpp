@@ -27,6 +27,10 @@ CaptureFilterModel::CaptureFilterModel(QObject* parent) : QSortFilterProxyModel(
   connect(&m_ocrFilterTimer, &QTimer::timeout, this, [this] {
     beginFilterUpdate();
     endFilterUpdate();
+    if (rowCount() > 0) {
+      emit dataChanged(index(0, 0), index(rowCount() - 1, 0),
+                       {CaptureRoles::OcrSnippetRole});
+    }
     emit countChanged();
   });
 }
@@ -124,6 +128,10 @@ void CaptureFilterModel::setSearchText(const QString& text) {
   m_searchTerms = text.toCaseFolded().split(QRegularExpression(QStringLiteral("\\s+")),
                                             Qt::SkipEmptyParts);
   endFilterUpdate();
+  if (rowCount() > 0) {
+    emit dataChanged(index(0, 0), index(rowCount() - 1, 0),
+                     {CaptureRoles::OcrSnippetRole});
+  }
   emit searchTextChanged();
   emit countChanged();
 }
@@ -267,6 +275,26 @@ qint64 CaptureFilterModel::stampAt(int row) const {
   return data(index(row, 0), CaptureRoles::StampRole).toLongLong();
 }
 
+QString CaptureFilterModel::ocrSnippetAt(int row) const {
+  return data(index(row, 0), CaptureRoles::OcrSnippetRole).toString();
+}
+
+QVariant CaptureFilterModel::data(const QModelIndex& proxyIndex, int role) const {
+  if (role == CaptureRoles::OcrSnippetRole) {
+    if (!proxyIndex.isValid()) {
+      return {};
+    }
+    return ocrSnippet(sourceRecord(mapToSource(proxyIndex).row()));
+  }
+  return QSortFilterProxyModel::data(proxyIndex, role);
+}
+
+QHash<int, QByteArray> CaptureFilterModel::roleNames() const {
+  QHash<int, QByteArray> roles = QSortFilterProxyModel::roleNames();
+  roles.insert(CaptureRoles::OcrSnippetRole, QByteArrayLiteral("ocrSnippet"));
+  return roles;
+}
+
 void CaptureFilterModel::setOcrText(const QString& path, const QString& text) {
   if (path.isEmpty()) {
     return;
@@ -275,12 +303,13 @@ void CaptureFilterModel::setOcrText(const QString& path, const QString& text) {
     if (m_ocrText.remove(path) == 0) {
       return;
     }
+    m_ocrFolded.remove(path);
   } else {
-    const QString folded = text.toCaseFolded();
-    if (m_ocrText.value(path) == folded) {
+    if (m_ocrText.value(path) == text) {
       return;
     }
-    m_ocrText.insert(path, folded);
+    m_ocrText.insert(path, text);
+    m_ocrFolded.insert(path, text.toCaseFolded());
   }
   if (!m_searchTerms.isEmpty()) {
     m_ocrFilterTimer.start();
@@ -337,6 +366,40 @@ int CaptureFilterModel::sourceCount() const {
 // full re-sort of a large library from building a QVariant per comparison.
 const CaptureRecord& CaptureFilterModel::sourceRecord(int sourceRow) const {
   return static_cast<const CaptureModel*>(sourceModel())->recordAt(sourceRow);
+}
+
+QString CaptureFilterModel::ocrSnippet(const CaptureRecord& record) const {
+  if (m_searchTerms.isEmpty()) {
+    return {};
+  }
+  const QString text = m_ocrText.value(record.path);
+  if (text.isEmpty()) {
+    return {};
+  }
+  const QString name = record.fileName.toCaseFolded();
+  const QString folded = text.toCaseFolded();
+  QString matchedOnlyInText;
+  for (const QString& term : m_searchTerms) {
+    if (!name.contains(term) && folded.contains(term)) {
+      matchedOnlyInText = term;
+      break;
+    }
+  }
+  if (matchedOnlyInText.isEmpty()) {
+    return {};
+  }
+
+  const qsizetype match = text.indexOf(matchedOnlyInText, 0, Qt::CaseInsensitive);
+  const qsizetype start = qMax<qsizetype>(0, match - 44);
+  const qsizetype end = qMin<qsizetype>(text.size(), match + matchedOnlyInText.size() + 56);
+  QString snippet = text.mid(start, end - start).simplified();
+  if (start > 0) {
+    snippet.prepend(QChar(0x2026));
+  }
+  if (end < text.size()) {
+    snippet.append(QChar(0x2026));
+  }
+  return snippet;
 }
 
 bool CaptureFilterModel::recordLessThan(const CaptureRecord& first,
@@ -437,7 +500,7 @@ bool CaptureFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex& sour
   }
   if (!m_searchTerms.isEmpty()) {
     const QString name = record.fileName.toCaseFolded();
-    const QString text = m_ocrText.value(record.path);
+    const QString text = m_ocrFolded.value(record.path);
     for (const QString& term : m_searchTerms) {
       if (!name.contains(term) && !text.contains(term)) {
         return false;

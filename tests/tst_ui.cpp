@@ -22,10 +22,12 @@
 #include "matte/MatteComposer.h"
 #include "matte/MatteProvider.h"
 #include "search/OcrIndex.h"
+#include "search/QrDetector.h"
 #include "theme/OmarchyTheme.h"
 #include "thumbs/ThumbnailProvider.h"
 
 #include <QDir>
+#include <QClipboard>
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -71,6 +73,31 @@ private slots:
     transcode.close();
     QVERIFY(transcode.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
                                      QFileDevice::ExeOwner));
+    QFile tesseract(toolBin + QStringLiteral("/tesseract"));
+    QVERIFY(tesseract.open(QIODevice::WriteOnly));
+    tesseract.write("#!/bin/sh\nprintf 'First  line\\nSecond line\\n'\n");
+    tesseract.close();
+    QVERIFY(tesseract.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                     QFileDevice::ExeOwner));
+    QFile zbar(toolBin + QStringLiteral("/zbarimg"));
+    QVERIFY(zbar.open(QIODevice::WriteOnly));
+    zbar.write("#!/bin/sh\n"
+               "for last do :; done\n"
+               "case \"$last\" in\n"
+               "  *qr-positive*) printf 'otpauth://ui-private-value\\n' ;;\n"
+               "  *) exit 4 ;;\n"
+               "esac\n");
+    zbar.close();
+    QVERIFY(zbar.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                QFileDevice::ExeOwner));
+    QFile wlCopy(toolBin + QStringLiteral("/wl-copy"));
+    QVERIFY(wlCopy.open(QIODevice::WriteOnly));
+    wlCopy.write("#!/bin/sh\ncat > \"$OMAROLL_UI_CLIPBOARD_LOG\"\n");
+    wlCopy.close();
+    QVERIFY(wlCopy.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                  QFileDevice::ExeOwner));
+    QVERIFY(qputenv("OMAROLL_UI_CLIPBOARD_LOG",
+                    m_scratch.filePath(QStringLiteral("clipboard.log")).toUtf8()));
     QVERIFY(qputenv("PATH", toolBin.toUtf8() + ':' + qgetenv("PATH")));
     // A name with every character that trips URL parsing. Newest by mtime,
     // so it sits at the top of the grid.
@@ -97,7 +124,8 @@ private slots:
     m_registry = new ActionRegistry(m_actions, this);
     m_tailscale = new TailscalePeers(this);
     m_matte = new MatteComposer(this);
-    m_textIndex = new OcrIndex(nullptr, this);
+    m_textIndex = new OcrIndex(m_captures, this);
+    m_qr = new QrDetector(m_captures, this);
     connect(m_actions, &ActionLauncher::outputPending, m_captures, &CaptureModel::holdPath);
     connect(m_actions, &ActionLauncher::outputSettled, m_captures, &CaptureModel::releasePath);
 
@@ -122,6 +150,7 @@ private slots:
     context->setContextProperty(QStringLiteral("Registry"), m_registry);
     context->setContextProperty(QStringLiteral("Matte"), m_matte);
     context->setContextProperty(QStringLiteral("TextIndex"), m_textIndex);
+    context->setContextProperty(QStringLiteral("Qr"), m_qr);
     context->setContextProperty(QStringLiteral("Duplicates"), m_duplicates);
     context->setContextProperty(QStringLiteral("MediaInfo"), m_mediaInfo);
     context->setContextProperty(QStringLiteral("MediaDates"), m_mediaDates);
@@ -457,6 +486,150 @@ private slots:
     const int last = m_library->rowCount() - 1;
     QTRY_COMPARE(detail->property("path").toString(), pathAt(last));
     QCOMPARE(item("library")->property("currentIndex").toInt(), last);
+  }
+
+  void viewerActionsHaveCompleteKeyboardFocusAndAccurateHelp() {
+    QQuickItem* detail = item("detail");
+    openDetail(0);
+    QTRY_VERIFY(detail->isVisible());
+    QVERIFY(detail->hasActiveFocus());
+
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QQuickItem* focused = activeViewerAction();
+    QTRY_VERIFY(focused != nullptr);
+    QCOMPARE(focused->objectName(), QStringLiteral("viewerAction_matte"));
+    QVERIFY(focused->property("usable").toBool());
+    QCOMPARE(focused->property("shortcut").toString(),
+             m_registry->shortcutFor(QStringLiteral("matte")));
+    QCOMPARE(focused->property("toolTipText").toString(),
+             QStringLiteral("Make it postable  ·  M"));
+
+    QTest::keyClick(m_window, Qt::Key_Down);
+    QQuickItem* next = activeViewerAction();
+    QTRY_VERIFY(next != nullptr);
+    QVERIFY(next != focused);
+    QVERIFY(next->property("usable").toBool());
+    QTest::keyClick(m_window, Qt::Key_Up);
+    QTRY_VERIFY(activeViewerAction() != nullptr);
+    QCOMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_matte"));
+
+    QTest::keyClick(m_window, Qt::Key_Tab, Qt::ShiftModifier);
+    QTRY_VERIFY(detail->hasActiveFocus());
+    QVERIFY(!detail->property("actionNavigationActive").toBool());
+
+    // Focus stays in the action pane while Left and Right retain their viewer
+    // meaning, including when the delegate model is rebuilt for another file.
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    const QString before = detail->property("path").toString();
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTRY_VERIFY(detail->property("path").toString() != before);
+    QTRY_VERIFY(detail->property("actionNavigationActive").toBool());
+    QTRY_VERIFY(activeViewerAction() != nullptr);
+
+    // Return and Space activate the focused row rather than the viewer's
+    // default action. The first still action opens the matte sheet.
+    openDetail(0);
+    QMetaObject::invokeMethod(detail, "focusPreview");
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QTRY_VERIFY(activeViewerAction() != nullptr);
+    QCOMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_matte"));
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(item("matteSheet")->isVisible());
+    QVERIFY(!detail->isVisible());
+  }
+
+  void shortcutTooltipsUseTheLiveShortcutValues() {
+    QQuickItem* all = pill(m_window->contentItem(), QStringLiteral("All"));
+    QVERIFY(all);
+    QCOMPARE(all->property("shortcut").toString(), QStringLiteral("1"));
+    QCOMPARE(all->property("resolvedToolTip").toString(),
+             QStringLiteral("All  ·  1"));
+
+    openDetail(0);
+    QQuickItem* rotate = pill(item("detail"), QStringLiteral("Rotate"));
+    QTRY_VERIFY(rotate != nullptr);
+    QCOMPARE(rotate->property("shortcut").toString(), QStringLiteral("R"));
+    QCOMPARE(rotate->property("resolvedToolTip").toString(),
+             QStringLiteral("Rotate  ·  R"));
+  }
+
+  void extractedTextOpensASelectableLayoutPreservingReview() {
+    const QString path = pathAt(0);
+    QVERIFY(!m_library->isVideoAt(0));
+    QVERIFY(m_registry->appliesTo(QStringLiteral("ocr"), false));
+    QVERIFY(m_textIndex->available());
+    const QFileInfo before(path);
+    perform(QStringLiteral("ocr"), path);
+    QQuickItem* sheet = item("textReviewSheet");
+    QTRY_VERIFY(sheet->isVisible());
+    QTRY_COMPARE_WITH_TIMEOUT(m_textIndex->reviewPath(), path, 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(!m_textIndex->reviewing(), 3000);
+    QCOMPARE(m_textIndex->reviewError(), QString());
+    QCOMPARE(m_textIndex->reviewText(), QStringLiteral("First  line\nSecond line"));
+
+    QQuickItem* editor = item("ocrTextArea");
+    QTRY_COMPARE(editor->property("text").toString(),
+                 QStringLiteral("First  line\nSecond line"));
+    QVERIFY(QMetaObject::invokeMethod(editor, "select", Q_ARG(int, 0), Q_ARG(int, 5)));
+    QTRY_COMPARE(editor->property("selectedText").toString(), QStringLiteral("First"));
+    click(item("copyOcrSelection"));
+    QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("First"));
+
+    editor->setProperty("text", QStringLiteral("Corrected locally"));
+    click(item("copyAllOcrText"));
+    QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("Corrected locally"));
+    QCOMPARE(QFileInfo(path).size(), before.size());
+    QCOMPARE(QFileInfo(path).lastModified(), before.lastModified());
+
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!sheet->isVisible());
+    QVERIFY(m_textIndex->reviewPath().isEmpty());
+  }
+
+  void qrActionAppearsOnlyAfterDetectionAndCopiesThroughTheSecurePath() {
+    openDetail(0);
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->isVisible());
+    QTRY_COMPARE(m_qr->path(), detail->property("path").toString());
+    QTRY_VERIFY_WITH_TIMEOUT(!m_qr->checking(), 3000);
+    QVERIFY(!m_qr->detected());
+    QVERIFY(find(detail, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("viewerAction_qr");
+    }) == nullptr);
+    QMetaObject::invokeMethod(detail, "close");
+    QTRY_VERIFY(!detail->isVisible());
+
+    const QString qrPath = QFileInfo(pathAt(0)).dir().filePath(
+        QStringLiteral("qr-positive-ui.png"));
+    QImage image(19, 17, QImage::Format_RGB32);
+    image.fill(Qt::white);
+    QVERIFY(image.save(qrPath, "PNG"));
+    m_captures->refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(qrPath) >= 0, 5000);
+    openDetail(m_library->rowOf(qrPath));
+    QTRY_COMPARE(m_qr->path(), qrPath);
+    QTRY_VERIFY_WITH_TIMEOUT(!m_qr->checking(), 3000);
+    QVERIFY(m_qr->detected());
+
+    QQuickItem* qrAction = nullptr;
+    QTRY_VERIFY((qrAction = find(detail, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("viewerAction_qr") &&
+             candidate->isVisible();
+    })) != nullptr);
+    QSignalSpy reported(m_actions, &ActionLauncher::reported);
+    click(qrAction);
+    QTRY_VERIFY_WITH_TIMEOUT(!reported.isEmpty(), 3000);
+    QCOMPARE(reported.last().first().toString(),
+             QStringLiteral("QR code copied to clipboard"));
+    QFile clipboard(m_scratch.filePath(QStringLiteral("clipboard.log")));
+    QVERIFY(clipboard.open(QIODevice::ReadOnly));
+    QCOMPARE(clipboard.readAll(), QByteArray("otpauth://ui-private-value"));
+    QVERIFY(detail->isVisible());
+
+    QMetaObject::invokeMethod(detail, "close");
+    QVERIFY(QFile::remove(qrPath));
+    m_captures->refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(qrPath) < 0, 5000);
   }
 
   void viewerShowsUsefulMediaMetadata() {
@@ -843,6 +1016,13 @@ private:
     });
   }
 
+  QQuickItem* activeViewerAction() const {
+    return find(m_window->contentItem(), [](QQuickItem* candidate) {
+      return candidate->objectName().startsWith(QStringLiteral("viewerAction_")) &&
+             candidate->hasActiveFocus();
+    });
+  }
+
   static QPoint centre(QQuickItem* target) {
     return target->mapToScene(QPointF(target->width() / 2, target->height() / 2)).toPoint();
   }
@@ -878,6 +1058,7 @@ private:
   TailscalePeers* m_tailscale = nullptr;
   MatteComposer* m_matte = nullptr;
   OcrIndex* m_textIndex = nullptr;
+  QrDetector* m_qr = nullptr;
   DuplicateIndex* m_duplicates = nullptr;
   MediaInspector* m_mediaInfo = nullptr;
   MediaDateIndex* m_mediaDates = nullptr;

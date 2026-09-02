@@ -171,7 +171,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
       // Same tesseract invocation omarchy-capture-text uses, minus its
       // single-block page mode: a whole screenshot has many blocks.
       {.id = u"ocr"_s,
-       .label = u"Copy the text"_s,
+       .label = u"Extract text"_s,
        .program = u"tesseract"_s,
        .arguments = {u"{path}"_s, u"stdout"_s, u"--oem"_s, u"1"_s, u"-l"_s, ocrLanguages(),
                      u"--dpi"_s, u"300"_s, u"-c"_s, u"preserve_interword_spaces=1"_s},
@@ -186,7 +186,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
       // secrets (otpauth:// setup codes), so they go to the clipboard marked
       // sensitive and nowhere else.
       {.id = u"qr"_s,
-       .label = u"Scan QR code"_s,
+       .label = u"Copy QR content"_s,
        .program = u"zbarimg"_s,
        .arguments = {u"-q"_s, u"--raw"_s, u"-Sdisable"_s, u"-Sqrcode.enable"_s, u"{path}"_s},
        .packageHint = u"zbar"_s,
@@ -243,7 +243,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
       // The launcher handles this one: the house helper on Omarchy, plain
       // wl-copy elsewhere, so the row is available on both.
       {.id = u"copy"_s,
-       .label = u"Copy to clipboard"_s,
+       .label = u"Copy image"_s,
        .program = u"wl-copy"_s,
        .shortcut = u"Y"_s,
        .packageHint = u"wl-clipboard"_s,
@@ -415,6 +415,11 @@ bool ActionRegistry::available(const QString& id) const {
   const Definition* definition = find(id);
   return definition && (definition->program.isEmpty() ||
                         (m_launcher && m_launcher->handlerAvailable(definition->program)));
+}
+
+QString ActionRegistry::shortcutFor(const QString& id) const {
+  const Definition* definition = find(id);
+  return definition ? definition->shortcut : QString();
 }
 
 bool ActionRegistry::run(const QString& id, const QString& path) {

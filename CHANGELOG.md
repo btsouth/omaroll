@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Extracted image text now opens in a selectable review sheet with preserved
+  line breaks, Copy selection, Copy all, retry, and temporary corrections.
+- The viewer action list supports Tab, arrow keys, Enter, Space, and
+  accessibility activation. Shortcut tooltips now use the live bindings.
+- QR actions appear only after a QR code is detected in the open image.
+- OCR search results show the matching text when the filename did not match.
+
+### Changed
+
+- `Copy to clipboard` is now `Copy image`.
+
 ## 1.1.0
 
 ### Added

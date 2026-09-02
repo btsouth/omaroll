@@ -99,13 +99,13 @@ Every handler below already ships with Omarchy.
 | Recording | Save current frame | `ffmpeg`, from the viewer position |
 | Screenshot | **Make it postable** *(default)* | **native** |
 | Screenshot | Annotate | `$OMARCHY_SCREENSHOT_EDITOR`, default `tensaku-edit` |
-| Screenshot | Copy the text | `tesseract` |
+| Screenshot | Extract and select text | `tesseract` |
 | Image | Convert · resize | `omarchy-transcode` |
 | Image | Edit · View | `pinta` · `imv` |
 | Image | Set as background | `omarchy-theme-bg-set` |
-| Image | Scan QR code | `zbarimg` |
+| Image | Copy detected QR content | `zbarimg` |
 | Any | Rename in place | native, extension preserved |
-| Any | Copy to clipboard | `omarchy-clipboard-paste-file` |
+| Any | Copy image | `omarchy-clipboard-paste-file` |
 | Any | Send with LocalSend | `omarchy-menu-share` |
 | Any | Send to a machine | `omarchy-tailscale-send`, after picking the machine |
 | Any | Show in files | `nautilus` |
@@ -148,7 +148,7 @@ and put on your clipboard.
 | `M` | Make it postable |
 | `T` · `P` | Trim · Play a recording |
 | `G` in a video preview | Save the current frame beside the recording |
-| `A` · `C` | Annotate · Copy the text |
+| `A` · `C` | Annotate · Extract text |
 | `E` | Convert or resize, including the selection |
 | `N` | Rename, preserving the extension |
 | `Y` · `S` · `F` | Clipboard · Send · Show in files |

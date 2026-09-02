@@ -94,6 +94,9 @@ public:
 
   Q_INVOKABLE QString primaryActionFor(bool video) const;
 
+  // One source for shortcut handlers, action rows and hover help.
+  Q_INVOKABLE QString shortcutFor(const QString& id) const;
+
   // Whether an action makes sense for this medium, so a shortcut pressed on
   // the wrong kind of file is refused with a word rather than handed to a tool
   // that cannot open it.

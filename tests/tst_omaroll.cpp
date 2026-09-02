@@ -12,6 +12,7 @@
 #include "matte/HueExtractor.h"
 #include "matte/MatteComposer.h"
 #include "search/OcrIndex.h"
+#include "search/QrDetector.h"
 #include "sources/CaptureLocations.h"
 #include "sources/CaptureScanner.h"
 #include "theme/OmarchyTheme.h"
@@ -970,9 +971,13 @@ private slots:
       index.setSearchText(proxy.searchText());
       QTRY_COMPARE_WITH_TIMEOUT(proxy.count(), 1, 3000);
       QCOMPARE(proxy.pathAt(0), imagePath);
+      QCOMPARE(proxy.ocrSnippetAt(0), QStringLiteral("Invoice total forty two"));
       QTRY_VERIFY_WITH_TIMEOUT(!index.indexing(), 3000);
       QCOMPARE(index.completed(), 1);
       QCOMPARE(index.total(), 1);
+      proxy.setSearchText(QStringLiteral("capture"));
+      QTRY_COMPARE_WITH_TIMEOUT(proxy.count(), 1, 1000);
+      QVERIFY(proxy.ocrSnippetAt(0).isEmpty());
     };
 
     runSearch();
@@ -1013,6 +1018,215 @@ private slots:
     QCOMPARE(index.clearCache(), 1);
     QTRY_COMPARE_WITH_TIMEOUT(proxy.count(), 0, 1000);
     QCOMPARE(cache.entryList({QStringLiteral("*.ocr")}, QDir::Files).size(), 0);
+  }
+
+  void ocrReviewPreservesLayoutHandlesEmptyAndRejectsStaleResults() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QByteArray previousPath = qgetenv("PATH");
+    const QByteArray previousLog = qgetenv("OMAROLL_OCR_REVIEW_LOG");
+    const QByteArray previousPictures = qgetenv("XDG_PICTURES_DIR");
+    const QByteArray previousVideos = qgetenv("XDG_VIDEOS_DIR");
+    const QByteArray previousShots = qgetenv("OMARCHY_SCREENSHOT_DIR");
+    const QByteArray previousRecordings = qgetenv("OMARCHY_SCREENRECORD_DIR");
+    const auto restore = qScopeGuard([&] {
+      const auto putBack = [](const char* name, const QByteArray& value) {
+        value.isNull() ? qunsetenv(name) : qputenv(name, value);
+      };
+      putBack("PATH", previousPath);
+      putBack("OMAROLL_OCR_REVIEW_LOG", previousLog);
+      putBack("XDG_PICTURES_DIR", previousPictures);
+      putBack("XDG_VIDEOS_DIR", previousVideos);
+      putBack("OMARCHY_SCREENSHOT_DIR", previousShots);
+      putBack("OMARCHY_SCREENRECORD_DIR", previousRecordings);
+    });
+
+    const QString logPath = dir.filePath(QStringLiteral("review-runs.log"));
+    QFile tesseract(dir.filePath(QStringLiteral("tesseract")));
+    QVERIFY(tesseract.open(QIODevice::WriteOnly));
+    tesseract.write("#!/bin/sh\n"
+                    "printf 'run\\n' >> \"$OMAROLL_OCR_REVIEW_LOG\"\n"
+                    "case \"$1\" in\n"
+                    "  *slow*) /usr/bin/sleep 0.2; printf 'STALE\\n' ;;\n"
+                    "  *empty*) ;;\n"
+                    "  *fail*) exit 2 ;;\n"
+                    "  *) printf 'Alpha  beta\\nSecond line\\n' ;;\n"
+                    "esac\n");
+    tesseract.close();
+    QVERIFY(tesseract.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                     QFileDevice::ExeOwner));
+    QVERIFY(qputenv("PATH", dir.path().toUtf8() + ':' + previousPath));
+    QVERIFY(qputenv("OMAROLL_OCR_REVIEW_LOG", logPath.toUtf8()));
+    for (const char* name : {"XDG_PICTURES_DIR", "XDG_VIDEOS_DIR",
+                             "OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR"}) {
+      QVERIFY(qputenv(name, dir.path().toUtf8()));
+    }
+
+    const auto makeImage = [&dir](const QString& name) {
+      const QString path = dir.filePath(name);
+      QImage image(16, 12, QImage::Format_RGB32);
+      image.fill(Qt::white);
+      return image.save(path, "PNG") ? path : QString();
+    };
+    const QString layout = makeImage(QStringLiteral("layout.png"));
+    const QString empty = makeImage(QStringLiteral("empty.png"));
+    const QString failure = makeImage(QStringLiteral("fail.png"));
+    const QString slow = makeImage(QStringLiteral("slow.png"));
+    const QString fresh = makeImage(QStringLiteral("fresh.png"));
+    QVERIFY(!layout.isEmpty() && !empty.isEmpty() && !failure.isEmpty() &&
+            !slow.isEmpty() && !fresh.isEmpty());
+
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QSignalSpy scanned(&model, &CaptureModel::countChanged);
+    QVERIFY(scanned.wait(5000));
+    QCOMPARE(model.rowCount(), 5);
+
+    OcrIndex index(&model);
+    QVERIFY(index.available());
+    index.recognize(layout);
+    QTRY_VERIFY_WITH_TIMEOUT(!index.reviewing(), 3000);
+    QCOMPARE(index.reviewPath(), layout);
+    QCOMPARE(index.reviewText(), QStringLiteral("Alpha  beta\nSecond line"));
+    QVERIFY(index.reviewError().isEmpty());
+
+    // The second review comes from the shared private cache without another
+    // process, and the layout text remains distinct from normalized search.
+    index.cancelReview();
+    index.recognize(layout);
+    QVERIFY(!index.reviewing());
+    QCOMPARE(index.reviewText(), QStringLiteral("Alpha  beta\nSecond line"));
+
+    index.recognize(empty);
+    QTRY_VERIFY_WITH_TIMEOUT(!index.reviewing(), 3000);
+    QVERIFY(index.reviewText().isEmpty());
+    QVERIFY(index.reviewError().isEmpty());
+
+    index.recognize(failure);
+    QTRY_VERIFY_WITH_TIMEOUT(!index.reviewing(), 3000);
+    QVERIFY(index.reviewText().isEmpty());
+    QCOMPARE(index.reviewError(), QStringLiteral("Could not extract text"));
+
+    // A result from the previous image must not overwrite a newer request.
+    index.recognize(slow);
+    index.recognize(fresh);
+    QTRY_VERIFY_WITH_TIMEOUT(!index.reviewing(), 3000);
+    QCOMPARE(index.reviewPath(), fresh);
+    QCOMPARE(index.reviewText(), QStringLiteral("Alpha  beta\nSecond line"));
+    QVERIFY(index.reviewError().isEmpty());
+
+    QFile log(logPath);
+    QVERIFY(log.open(QIODevice::ReadOnly));
+    QCOMPARE(log.readAll().count("run\n"), 5);
+  }
+
+  void qrDetectionCachesOnlyPresenceAndRejectsStaleResults() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QByteArray previousPath = qgetenv("PATH");
+    const QByteArray previousLog = qgetenv("OMAROLL_QR_TEST_LOG");
+    const QByteArray previousPictures = qgetenv("XDG_PICTURES_DIR");
+    const QByteArray previousVideos = qgetenv("XDG_VIDEOS_DIR");
+    const QByteArray previousShots = qgetenv("OMARCHY_SCREENSHOT_DIR");
+    const QByteArray previousRecordings = qgetenv("OMARCHY_SCREENRECORD_DIR");
+    const auto restore = qScopeGuard([&] {
+      const auto putBack = [](const char* name, const QByteArray& value) {
+        value.isNull() ? qunsetenv(name) : qputenv(name, value);
+      };
+      putBack("PATH", previousPath);
+      putBack("OMAROLL_QR_TEST_LOG", previousLog);
+      putBack("XDG_PICTURES_DIR", previousPictures);
+      putBack("XDG_VIDEOS_DIR", previousVideos);
+      putBack("OMARCHY_SCREENSHOT_DIR", previousShots);
+      putBack("OMARCHY_SCREENRECORD_DIR", previousRecordings);
+    });
+
+    const QString logPath = dir.filePath(QStringLiteral("qr-runs.log"));
+    QFile zbar(dir.filePath(QStringLiteral("zbarimg")));
+    QVERIFY(zbar.open(QIODevice::WriteOnly));
+    zbar.write("#!/bin/sh\n"
+               "printf 'run\\n' >> \"$OMAROLL_QR_TEST_LOG\"\n"
+               "for last do :; done\n"
+               "case \"$last\" in\n"
+               "  *slow*) /usr/bin/sleep 0.2; printf 'old-secret\\n' ;;\n"
+               "  *positive*) printf 'otpauth://private-value\\n' ;;\n"
+               "  *) exit 4 ;;\n"
+               "esac\n");
+    zbar.close();
+    QVERIFY(zbar.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                QFileDevice::ExeOwner));
+    QVERIFY(qputenv("PATH", dir.path().toUtf8() + ':' + previousPath));
+    QVERIFY(qputenv("OMAROLL_QR_TEST_LOG", logPath.toUtf8()));
+    for (const char* name : {"XDG_PICTURES_DIR", "XDG_VIDEOS_DIR",
+                             "OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR"}) {
+      QVERIFY(qputenv(name, dir.path().toUtf8()));
+    }
+
+    const auto makeImage = [&dir](const QString& name) {
+      const QString path = dir.filePath(name);
+      QImage image(16, 12, QImage::Format_RGB32);
+      image.fill(Qt::white);
+      return image.save(path, "PNG") ? path : QString();
+    };
+    const QString positive = makeImage(QStringLiteral("positive.png"));
+    const QString negative = makeImage(QStringLiteral("negative.png"));
+    const QString slow = makeImage(QStringLiteral("slow.png"));
+    const QString fresh = makeImage(QStringLiteral("fresh-positive.png"));
+    QVERIFY(!positive.isEmpty() && !negative.isEmpty() && !slow.isEmpty() &&
+            !fresh.isEmpty());
+
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QSignalSpy scanned(&model, &CaptureModel::countChanged);
+    QVERIFY(scanned.wait(5000));
+    QCOMPARE(model.rowCount(), 4);
+
+    QrDetector detector(&model);
+    QVERIFY(detector.available());
+    detector.inspect(positive);
+    QTRY_VERIFY_WITH_TIMEOUT(!detector.checking(), 3000);
+    QCOMPARE(detector.path(), positive);
+    QVERIFY(detector.detected());
+
+    // A second inspection uses the in-memory identity cache. The decoded
+    // value is intentionally not exposed by the detector at all.
+    detector.inspect(positive);
+    QVERIFY(!detector.checking());
+    QVERIFY(detector.detected());
+    {
+      QFile log(logPath);
+      QVERIFY(log.open(QIODevice::ReadOnly));
+      QCOMPARE(log.readAll().count("run\n"), 1);
+    }
+
+    detector.inspect(negative);
+    QTRY_VERIFY_WITH_TIMEOUT(!detector.checking(), 3000);
+    QVERIFY(!detector.detected());
+
+    detector.inspect(slow);
+    detector.inspect(fresh);
+    QTRY_VERIFY_WITH_TIMEOUT(!detector.checking(), 3000);
+    QCOMPARE(detector.path(), fresh);
+    QVERIFY(detector.detected());
+
+    // Cancelling the slow check must not cache a false negative for it.
+    detector.inspect(slow);
+    QTRY_VERIFY_WITH_TIMEOUT(!detector.checking(), 3000);
+    QCOMPARE(detector.path(), slow);
+    QVERIFY(detector.detected());
+
+    QFile log(logPath);
+    QVERIFY(log.open(QIODevice::ReadOnly));
+    const qsizetype runs = log.readAll().count("run\n");
+    QVERIFY(runs == 4 || runs == 5);
+    detector.clear();
+    QVERIFY(detector.path().isEmpty());
+    QVERIFY(!detector.checking());
+    QVERIFY(!detector.detected());
   }
 
   void equalSortKeysHaveStableOrder() {
@@ -1573,6 +1787,9 @@ private slots:
     ActionRegistry registry(nullptr);
     QCOMPARE(registry.primaryActionFor(true), QStringLiteral("trim"));
     QCOMPARE(registry.primaryActionFor(false), QStringLiteral("matte"));
+    QCOMPARE(registry.shortcutFor(QStringLiteral("matte")), QStringLiteral("M"));
+    QCOMPARE(registry.shortcutFor(QStringLiteral("hide")), QStringLiteral("Ctrl+H"));
+    QVERIFY(registry.shortcutFor(QStringLiteral("missing")).isEmpty());
     // The public single-path overload must dispatch to the path-list overload,
     // not resolve its braced argument back to itself and recurse forever.
     QVERIFY(!registry.run(QStringLiteral("favorite"),
@@ -1594,14 +1811,20 @@ private slots:
     QVERIFY(!moving.contains(QStringLiteral("background")));
 
     QStringList still;
+    QString copyLabel;
     for (const QVariant &row : registry.actionsFor(false)) {
-      still << row.toMap().value(QStringLiteral("id")).toString();
+      const QVariantMap values = row.toMap();
+      still << values.value(QStringLiteral("id")).toString();
+      if (values.value(QStringLiteral("id")).toString() == QStringLiteral("copy")) {
+        copyLabel = values.value(QStringLiteral("label")).toString();
+      }
     }
     QVERIFY(still.contains(QStringLiteral("background")));
     QVERIFY(still.contains(QStringLiteral("export")));
     QVERIFY(still.contains(QStringLiteral("rename")));
     QVERIFY(!still.contains(QStringLiteral("frame")));
     QVERIFY(!still.contains(QStringLiteral("convert")));
+    QCOMPARE(copyLabel, QStringLiteral("Copy image"));
   }
 
   void backgroundActionUsesTheOmarchyHandlerEndToEnd() {

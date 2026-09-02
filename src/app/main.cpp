@@ -12,6 +12,7 @@
 #include "matte/MatteComposer.h"
 #include "matte/MatteProvider.h"
 #include "search/OcrIndex.h"
+#include "search/QrDetector.h"
 #include "sources/CaptureScanner.h"
 #include "theme/OmarchyTheme.h"
 #include "thumbs/ThumbnailCache.h"
@@ -134,7 +135,7 @@ Options:
                          your own files. Nothing personal appears on screen.
   --render <file.png>    Render the window to a PNG and exit. Draws offscreen,
                          so no compositor can resize it or overlap it.
-  --render-view <view>   Which view to render: grid, detail, video, slideshow, matte, export, rename, duplicates or settings.
+  --render-view <view>   Which view to render: grid, detail, video, slideshow, matte, export, rename, OCR, duplicates or settings.
   --render-size <WxH>    Window size, from 560x420 to 7680x4320. Default 1280x820.
   --version              Print the version and exit.
   --help                 Show this message.)"
@@ -223,7 +224,7 @@ int main(int argc, char *argv[]) {
       QStringLiteral("grid"),  QStringLiteral("detail"),
       QStringLiteral("video"), QStringLiteral("slideshow"),
       QStringLiteral("matte"), QStringLiteral("export"),
-      QStringLiteral("rename"), QStringLiteral("duplicates"),
+      QStringLiteral("rename"), QStringLiteral("ocr"), QStringLiteral("duplicates"),
       QStringLiteral("settings")};
   if (!renderView.isEmpty() && !renderViews.contains(renderView)) {
     qWarning().noquote() << "omaroll: unknown render view:" << renderView;
@@ -339,6 +340,7 @@ int main(int argc, char *argv[]) {
   CaptureFilterModel library;
   library.setSourceModel(&captures);
   OcrIndex textIndex(&captures);
+  QrDetector qrDetector(&captures);
   QObject::connect(&library, &CaptureFilterModel::searchTextChanged,
                    &textIndex, [&] { textIndex.setSearchText(library.searchText()); });
   QObject::connect(&textIndex, &OcrIndex::textReady,
@@ -417,6 +419,7 @@ int main(int argc, char *argv[]) {
   engine.rootContext()->setContextProperty(QStringLiteral("Matte"), &matte);
   engine.rootContext()->setContextProperty(QStringLiteral("TextIndex"),
                                            &textIndex);
+  engine.rootContext()->setContextProperty(QStringLiteral("Qr"), &qrDetector);
   engine.rootContext()->setContextProperty(QStringLiteral("Duplicates"),
                                            &duplicates);
   engine.rootContext()->setContextProperty(QStringLiteral("MediaInfo"),
