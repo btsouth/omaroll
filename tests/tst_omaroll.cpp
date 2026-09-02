@@ -355,7 +355,7 @@ private slots:
     QVERIFY(QDir(root).rename(QStringLiteral("next-theme"),
                               QStringLiteral("theme")));
     QTRY_COMPARE_WITH_TIMEOUT(theme.background(),
-                              QColor(QStringLiteral("#302010")), 1500);
+                              QColor(QStringLiteral("#302010")), 3000);
   }
 
   void themeUsesMachineLauncherOverride() {

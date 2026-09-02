@@ -1,5 +1,6 @@
 #include "theme/OmarchyTheme.h"
 
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFont>
@@ -59,14 +60,20 @@ OmarchyTheme::OmarchyTheme(QString stateHome, QString configHome,
       m_configHome(std::move(configHome)) {
   m_reloadTimer.setSingleShot(true);
   m_reloadTimer.setInterval(60);
+  // QFileSystemWatcher can lose the replacement event when a theme directory
+  // is swapped atomically, notably on overlay filesystems. The signature makes
+  // this inexpensive and keeps live theme changes reliable in that case.
+  m_pollTimer.setInterval(750);
 
   connect(&m_reloadTimer, &QTimer::timeout, this, &OmarchyTheme::reload);
+  connect(&m_pollTimer, &QTimer::timeout, this, &OmarchyTheme::reload);
   connect(&m_watcher, &QFileSystemWatcher::fileChanged, this,
           [this] { scheduleReload(); });
   connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this,
           [this] { scheduleReload(); });
 
   reload();
+  m_pollTimer.start();
 }
 
 bool OmarchyTheme::omarchyAvailable() const { return m_omarchyAvailable; }
@@ -115,6 +122,12 @@ QString OmarchyTheme::sourceSignature() const {
     if (info.exists()) {
       signature += QString::number(info.size()) + QLatin1Char('/') +
                    QString::number(info.lastModified().toMSecsSinceEpoch());
+      QFile file(source);
+      if (file.open(QIODevice::ReadOnly)) {
+        signature += QLatin1Char('/') + QString::fromLatin1(
+            QCryptographicHash::hash(file.readAll(), QCryptographicHash::Sha256)
+                .toHex());
+      }
     }
   }
   return signature;

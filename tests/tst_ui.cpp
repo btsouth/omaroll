@@ -61,6 +61,17 @@ private slots:
     QVERIFY(qputenv("XDG_DOWNLOAD_DIR", layout.root.toUtf8()));
     QVERIFY(qputenv("XDG_CACHE_HOME", m_scratch.filePath(QStringLiteral("cache")).toUtf8()));
     QVERIFY(qputenv("XDG_DATA_HOME", m_scratch.filePath(QStringLiteral("data")).toUtf8()));
+    // The demo UI test exercises the export sheet without depending on an
+    // Omarchy installation on the build machine.
+    const QString toolBin = m_scratch.filePath(QStringLiteral("bin"));
+    QVERIFY(QDir().mkpath(toolBin));
+    QFile transcode(toolBin + QStringLiteral("/omarchy-transcode"));
+    QVERIFY(transcode.open(QIODevice::WriteOnly));
+    transcode.write("#!/bin/sh\nexit 0\n");
+    transcode.close();
+    QVERIFY(transcode.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                     QFileDevice::ExeOwner));
+    QVERIFY(qputenv("PATH", toolBin.toUtf8() + ':' + qgetenv("PATH")));
     // A name with every character that trips URL parsing. Newest by mtime,
     // so it sits at the top of the grid.
     m_oddPath = layout.pictures + QStringLiteral("/odd %20 name #1 (copy)?.jpg");
@@ -219,8 +230,9 @@ private slots:
 
     // Two quick clicks on Rotate: two rotations, and never the double-tap that
     // used to open whatever tile sat under the button.
-    QQuickItem* rotate = pill(detail, QStringLiteral("Rotate"));
-    QVERIFY(rotate);
+    QQuickItem* rotate = nullptr;
+    QTRY_VERIFY_WITH_TIMEOUT(
+        (rotate = pill(detail, QStringLiteral("Rotate"))) != nullptr, 5000);
     QTest::mouseDClick(m_window, Qt::LeftButton, Qt::NoModifier, centre(rotate));
     settle();
     QVERIFY(detail->isVisible());
@@ -729,6 +741,10 @@ private slots:
     QQuickItem* albumPill = pill(m_window->contentItem(), QStringLiteral("+ Album"));
     QVERIFY(albumPill);
     QTRY_VERIFY(centre(albumPill).x() > 0 && centre(albumPill).x() < m_window->width());
+    QTest::qWait(120);
+    albumPill = pill(m_window->contentItem(), QStringLiteral("+ Album"));
+    QVERIFY(albumPill);
+    QTRY_VERIFY(centre(albumPill).x() > 0 && centre(albumPill).x() < m_window->width());
     click(albumPill);
     QObject* menu = m_window->findChild<QObject*>(QStringLiteral("albumActionMenu"));
     QVERIFY(menu);
@@ -810,11 +826,12 @@ private:
     return found;
   }
 
-  // A PillButton by its label, visible, inside the given item.
+  // A visible PillButton by its label or its compact-mode tooltip.
   static QQuickItem* pill(QQuickItem* within, const QString& label) {
     return find(within, [&label](QQuickItem* candidate) {
       return candidate->property("floating").isValid() &&
-             candidate->property("label").toString() == label && candidate->isVisible() &&
+             (candidate->property("label").toString() == label ||
+              candidate->property("toolTip").toString() == label) && candidate->isVisible() &&
              candidate->width() > 0;
     });
   }

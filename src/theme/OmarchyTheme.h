@@ -105,6 +105,7 @@ private:
   QString m_configHome;
   QFileSystemWatcher m_watcher;
   QTimer m_reloadTimer;
+  QTimer m_pollTimer;
 
   bool m_omarchyAvailable = false;
   // What the last reload read, so a directory event about something else
