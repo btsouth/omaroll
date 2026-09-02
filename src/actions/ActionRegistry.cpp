@@ -4,6 +4,7 @@
 
 #include <QFile>
 #include <QFileInfo>
+#include <QProcess>
 #include <QStandardPaths>
 #include <QVariantMap>
 
@@ -205,6 +206,26 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
 ActionRegistry::ActionRegistry(ActionLauncher* launcher, QObject* parent)
     : QObject(parent), m_launcher(launcher), m_definitions(buildTable()) {}
 
+bool ActionRegistry::outputLooksComplete(const QString& path) {
+  // A >0-byte file is not proof the transcode finished: the fire-and-forget
+  // era could die mid-write and leave a truncated mp4 that then blocked every
+  // retry as "already done". ffprobe reads the container the way any player
+  // would; it ships with the ffmpeg omarchy-transcode needs anyway. When it
+  // is somehow absent, trust the file rather than re-transcoding on a guess.
+  const QString ffprobe = QStandardPaths::findExecutable(QStringLiteral("ffprobe"));
+  if (ffprobe.isEmpty()) {
+    return true;
+  }
+  QProcess probe;
+  probe.start(ffprobe, {u"-v"_s, u"error"_s, path});
+  if (!probe.waitForFinished(4000)) {
+    probe.kill();
+    return true;
+  }
+  return probe.exitStatus() == QProcess::NormalExit && probe.exitCode() == 0 &&
+         probe.readAllStandardError().trimmed().isEmpty();
+}
+
 bool ActionRegistry::applies(const Definition& definition, bool video) {
   switch (definition.media) {
   case Media::Still:
@@ -311,15 +332,15 @@ bool ActionRegistry::run(const QString& id, const QStringList& paths) {
     }
     const QFileInfo existing(output);
     if (existing.exists()) {
-      if (existing.size() > 0) {
-        // Settled rather than just reported, so the grid selects the file:
+      if (existing.size() > 0 && outputLooksComplete(output)) {
+        // Shown, not just mentioned: the viewer opens on the file, because
         // "already done" with nothing to look at reads as nothing happening.
-        m_launcher->settleExisting(output);
+        m_launcher->revealExisting(output);
         return true;
       }
-      // An empty file with this exact name is the corpse of a transcode that
-      // died before runs were tracked. Left in place it blocks every retry,
-      // because ffmpeg refuses to overwrite.
+      // An empty or truncated file with this exact name is the corpse of a
+      // transcode that died before runs were tracked. Left in place it blocks
+      // every retry forever, because ffmpeg refuses to overwrite.
       QFile::remove(output);
     }
   }

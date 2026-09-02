@@ -803,6 +803,11 @@ ApplicationWindow {
                 root.pendingRevealPath = path
             }
         }
+        // The file was made earlier: open straight onto it. Selection plus a
+        // footer line was too subtle to read as anything happening at all.
+        function onOutputAlreadyDone(path) {
+            root.openPath(path)
+        }
     }
 
     Connections {

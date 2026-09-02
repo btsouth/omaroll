@@ -1154,16 +1154,98 @@ private slots:
     QCOMPARE(finished.readAll(), QByteArray("fresh"));
     finished.close();
 
-    // A genuinely finished file settles as saved without relaunching, so the
-    // grid selects it instead of "already done" looking like nothing.
+    // A genuinely finished file is handed to the viewer without relaunching,
+    // so pressing the action again always shows the result.
     reported.clear();
+    QSignalSpy alreadyDone(&launcher, &ActionLauncher::outputAlreadyDone);
     QVERIFY(registry.run(QStringLiteral("gif"), source));
-    QCOMPARE(settled.size(), 2);
-    QCOMPARE(settled.last().at(0).toString(), output);
-    QCOMPARE(settled.last().at(1).toBool(), true);
-    QVERIFY(reported.last().at(0).toString().contains(QStringLiteral("Already done")));
+    QCOMPARE(alreadyDone.size(), 1);
+    QCOMPARE(alreadyDone.last().at(0).toString(), output);
+    QCOMPARE(settled.size(), 1);
+    QVERIFY(reported.last().at(0).toString().contains(QStringLiteral("Already made earlier")));
     QVERIFY(finished.open(QIODevice::ReadOnly));
     QCOMPARE(finished.readAll(), QByteArray("fresh"));
+  }
+
+  void truncatedLeftoversAreRedoneNotCalledDone() {
+    if (QStandardPaths::findExecutable(QStringLiteral("ffprobe")).isEmpty()) {
+      QSKIP("ffprobe not installed");
+    }
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray previousPath = qgetenv("PATH");
+    const auto restorePath = qScopeGuard([&] { qputenv("PATH", previousPath); });
+
+    QFile script(dir.filePath(QStringLiteral("omarchy-transcode")));
+    QVERIFY(script.open(QIODevice::WriteOnly));
+    script.write("#!/bin/sh\nout=\"${1%.*}-1080p.mp4\"\nprintf fresh > \"$out\"\n");
+    script.close();
+    QVERIFY(script.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                  QFileDevice::ExeOwner));
+    // The stub shadows the real transcoder, but ffprobe stays reachable.
+    QVERIFY(qputenv("PATH", (dir.path() + QStringLiteral(":") +
+                             QString::fromLocal8Bit(previousPath))
+                                .toLocal8Bit()));
+
+    const QString source =
+        dir.filePath(QStringLiteral("screenrecording-2026-09-02_10-00-00.mp4"));
+    const QString output =
+        dir.filePath(QStringLiteral("screenrecording-2026-09-02_10-00-00-1080p.mp4"));
+
+    // The fire-and-forget era could die mid-write: a non-empty file that no
+    // player can open, which used to block every retry as "already done".
+    QFile corpse(output);
+    QVERIFY(corpse.open(QIODevice::WriteOnly));
+    corpse.write(QByteArray(4096, 'x'));
+    corpse.close();
+
+    ActionLauncher launcher;
+    ActionRegistry registry(&launcher);
+    QSignalSpy settled(&launcher, &ActionLauncher::outputSettled);
+    QSignalSpy alreadyDone(&launcher, &ActionLauncher::outputAlreadyDone);
+    QVERIFY(registry.run(QStringLiteral("shrink"), source));
+    QTRY_COMPARE_WITH_TIMEOUT(settled.size(), 1, 5000);
+    QCOMPARE(alreadyDone.size(), 0);
+    QCOMPARE(settled.last().at(1).toBool(), true);
+    QFile redone(output);
+    QVERIFY(redone.open(QIODevice::ReadOnly));
+    QCOMPARE(redone.readAll(), QByteArray("fresh"));
+  }
+
+  void clipToGifRunsTheRealTranscoderEndToEnd() {
+    if (QStandardPaths::findExecutable(QStringLiteral("omarchy-transcode")).isEmpty() ||
+        QStandardPaths::findExecutable(QStringLiteral("ffmpeg")).isEmpty()) {
+      QSKIP("omarchy-transcode or ffmpeg not installed");
+    }
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString source =
+        dir.filePath(QStringLiteral("screenrecording-2026-09-02_09-00-00.mp4"));
+    QProcess ffmpeg;
+    ffmpeg.start(QStandardPaths::findExecutable(QStringLiteral("ffmpeg")),
+                 {QStringLiteral("-loglevel"), QStringLiteral("error"), QStringLiteral("-f"),
+                  QStringLiteral("lavfi"), QStringLiteral("-i"),
+                  QStringLiteral("testsrc2=size=320x240:rate=10:duration=3"),
+                  QStringLiteral("-c:v"), QStringLiteral("libx264"), QStringLiteral("-pix_fmt"),
+                  QStringLiteral("yuv420p"), source});
+    QVERIFY(ffmpeg.waitForFinished(30000));
+    QCOMPARE(ffmpeg.exitCode(), 0);
+
+    // The exact path the Clip to GIF button takes, with the real tool.
+    ActionLauncher launcher;
+    ActionRegistry registry(&launcher);
+    QSignalSpy failed(&launcher, &ActionLauncher::failed);
+    QSignalSpy settled(&launcher, &ActionLauncher::outputSettled);
+    QVERIFY(registry.run(QStringLiteral("gif"), source));
+    QTRY_COMPARE_WITH_TIMEOUT(settled.size(), 1, 60000);
+    if (!failed.isEmpty()) {
+      qWarning() << "failure reported:" << failed.last().at(0).toString();
+    }
+    QCOMPARE(settled.last().at(1).toBool(), true);
+    const QString output =
+        dir.filePath(QStringLiteral("screenrecording-2026-09-02_09-00-00-720p.gif"));
+    QVERIFY(QFileInfo(output).size() > 0);
   }
 
   void trashIsRecoverableAndMissingFilesFailClearly() {

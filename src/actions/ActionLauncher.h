@@ -52,8 +52,9 @@ public:
   [[nodiscard]] QStringList pendingOutputs() const;
 
   // A finished output already sits on disk from an earlier run: say so and
-  // settle it as saved, so the grid selects it instead of doing nothing.
-  void settleExisting(const QString& path);
+  // hand the path to the viewer, so pressing the action again always shows
+  // the file rather than flashing a footer line and doing nothing visible.
+  void revealExisting(const QString& path);
 
   // Run to completion off the GUI thread's event loop and put stdout on the
   // clipboard. Used by the recognisers, whose whole output is text the user
@@ -86,6 +87,9 @@ signals:
   void outputPending(const QString& path);
   // A tracked run ended. saved means the finished file is on disk.
   void outputSettled(const QString& path, bool saved);
+  // The requested output already existed, finished, from an earlier run. The
+  // viewer opens on it; a footer flash alone reads as nothing happening.
+  void outputAlreadyDone(const QString& path);
   void pendingOutputsChanged();
 
 private:

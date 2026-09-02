@@ -88,6 +88,7 @@ public:
 
 private:
   bool run(const QString& id, const QStringList& paths);
+  [[nodiscard]] static bool outputLooksComplete(const QString& path);
   [[nodiscard]] static bool applies(const Definition& definition, bool video);
   [[nodiscard]] const Definition* find(const QString& id) const;
   [[nodiscard]] static QList<Definition> buildTable();

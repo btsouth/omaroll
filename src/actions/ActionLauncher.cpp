@@ -165,9 +165,9 @@ QStringList ActionLauncher::pendingOutputs() const {
   return QStringList(m_pendingOutputs.begin(), m_pendingOutputs.end());
 }
 
-void ActionLauncher::settleExisting(const QString& path) {
-  emit reported(u"Already done: %1 is beside the original"_s.arg(QFileInfo(path).fileName()));
-  emit outputSettled(path, true);
+void ActionLauncher::revealExisting(const QString& path) {
+  emit reported(u"Already made earlier: %1"_s.arg(QFileInfo(path).fileName()));
+  emit outputAlreadyDone(path);
 }
 
 bool ActionLauncher::copyText(const QString& text, bool sensitive, const QString& mimeType) {
