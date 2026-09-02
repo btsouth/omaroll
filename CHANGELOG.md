@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.0.4
+
+### Fixed
+
+- Actions that leave the file where it is no longer close the viewer.
+  Favourite, copy to clipboard, copy the text, scan QR code, send and show in
+  files all run with the picture still open, and the result is shown inside
+  the viewer instead of in the footer behind it. Trash, hide, the matte picker
+  and the editors still close it as before.
+- The favourite star in the viewer's sidebar follows the toggle while the
+  viewer is open.
+- Pressing a transcode action whose output already exists no longer freezes
+  the window while ffprobe checks the file. The check runs in the background
+  and the viewer opens on the file, or the run starts, when it answers.
+- A text or QR recogniser that crashes after starting is reported once, with
+  the tool's own last line, rather than as "could not start" followed by a
+  second message.
+
+### Install
+
+```bash
+curl -fLO https://github.com/tsouth89/omaroll/releases/download/v1.0.4/omaroll-1.0.4-1-x86_64.pkg.tar.zst \
+     -fLO https://github.com/tsouth89/omaroll/releases/download/v1.0.4/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+sudo pacman -U ./omaroll-1.0.4-1-x86_64.pkg.tar.zst
+```
+
+Every asset is covered by `SHA256SUMS` and a signed build attestation:
+`gh attestation verify omaroll-1.0.4-1-x86_64.pkg.tar.zst --repo tsouth89/omaroll`.
+
 ## 1.0.3
 
 ### Fixed
