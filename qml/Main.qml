@@ -468,6 +468,12 @@ ApplicationWindow {
         if (folderOnly !== undefined) {
             root.viewerFolderOnly = folderOnly
         }
+        // The player and the still both bind on path together with isVideo.
+        // Clearing the path first means neither ever sees the new path paired
+        // with the previous kind, which handed an image to the video player
+        // for a moment on every step from a recording to a picture.
+        detail.path = ""
+        detail.isVideo = Captures.isVideoAt(index)
         detail.path = Captures.pathAt(index)
         detail.fileName = Captures.fileNameAt(index)
         detail.kind = Captures.kindAt(index)
@@ -475,7 +481,6 @@ ApplicationWindow {
         detail.dayLabel = Captures.dayLabelAt(index)
         detail.timeLabel = Captures.timeLabelAt(index)
         detail.sizeLabel = Captures.sizeLabelAt(index)
-        detail.isVideo = Captures.isVideoAt(index)
         detail.stamp = Captures.stampAt(index)
         detail.favorite = Settings.isFavorite(detail.path)
         detail.canNavigate = root.adjacentViewerPath(detail.path, 1) !== ""
