@@ -51,7 +51,10 @@ bool SingleInstance::claimOrNotify(const QString& path) {
   }
 
   if (m_server.serverError() != QAbstractSocket::AddressInUseError) {
-    return false;
+    // The socket could not be made at all (an unwritable or missing TMPDIR,
+    // say). Nobody else is running; run without single-instance rather than
+    // exit with nothing on screen.
+    return true;
   }
   QLocalServer::removeServer(m_serverName);
   return m_server.listen(m_serverName);
