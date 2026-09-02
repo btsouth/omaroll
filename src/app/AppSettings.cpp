@@ -140,9 +140,13 @@ AppSettings::AppSettings(QObject* parent)
       entry.inode = stored.value(QStringLiteral("inode")).toString().toULongLong();
       if (!entry.path.isEmpty()) {
         struct stat status {};
+        // Inode and size together. A freed inode number is handed to the
+        // next file created on ext4 and xfs, so the number alone would
+        // repoint an entry to whatever was saved after a delete.
         if (entry.device != 0 && entry.inode != 0 &&
             ::stat(QFile::encodeName(entry.path).constData(), &status) == 0 &&
-            entry.device == status.st_dev && entry.inode == status.st_ino) {
+            entry.device == status.st_dev && entry.inode == status.st_ino &&
+            entry.bytes == static_cast<qint64>(status.st_size)) {
           entry.resolved = true;
         }
         entries.append(entry);
@@ -331,20 +335,33 @@ bool AppSettings::addToAlbum(const QString& name, const QStringList& paths) {
   }
   bool changed = false;
   for (const QString& path : paths) {
+    // An entry already here for this path stands, unless its file is gone:
+    // then a new file at the same name is a new member and takes its place.
+    qsizetype stale = -1;
     bool present = false;
-    for (const AlbumEntry& entry : std::as_const(*it)) {
-      if (entry.path == path) {
-        present = true;
+    for (qsizetype row = 0; row < it->size(); ++row) {
+      if (it->at(row).path == path) {
+        if (it->at(row).resolved) {
+          present = true;
+        } else {
+          stale = row;
+        }
         break;
       }
     }
-    if (!present) {
-      AlbumEntry entry = identityFor(path);
-      if (entry.resolved) {
-        it->append(std::move(entry));
-        changed = true;
-      }
+    if (present) {
+      continue;
     }
+    AlbumEntry entry = identityFor(path);
+    if (!entry.resolved) {
+      continue;
+    }
+    if (stale >= 0) {
+      (*it)[stale] = std::move(entry);
+    } else {
+      it->append(std::move(entry));
+    }
+    changed = true;
   }
   if (changed) {
     persistAlbums();
@@ -426,7 +443,7 @@ void AppSettings::reconcileAlbums(const QList<CaptureRecord>& records) {
       } else {
         for (const Candidate& candidate : std::as_const(candidates)) {
           if (entry.device != 0 && entry.inode != 0 && candidate.device == entry.device &&
-              candidate.inode == entry.inode) {
+              candidate.inode == entry.inode && candidate.bytes == entry.bytes) {
             if (entry.path != candidate.path) {
               entry.path = candidate.path;
               persistedChange = true;

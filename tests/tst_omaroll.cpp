@@ -404,6 +404,65 @@ private slots:
 
   // --- Classification ---------------------------------------------------
 
+  void albumInodeMatchNeedsTheSizeToAgree() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("screenshot-2026-09-02_12-00-00.png"));
+    QImage(64, 64, QImage::Format_RGB32).save(path);
+
+    AppSettings settings;
+    QVERIFY(settings.createAlbum(QStringLiteral("Inode")));
+    QVERIFY(settings.addToAlbum(QStringLiteral("Inode"), {path}));
+    QCOMPARE(settings.unavailableAlbumItemCount(QStringLiteral("Inode")), 0);
+
+    // Pretend the inode number was handed to a different file: same path,
+    // same device and inode on disk, but the entry remembers another size.
+    QSettings stored(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("omaroll"),
+                     QStringLiteral("omaroll"));
+    QVariantMap albums = stored.value(QStringLiteral("library/albums")).toMap();
+    QVariantList entries = albums.value(QStringLiteral("Inode")).toList();
+    QCOMPARE(entries.size(), 1);
+    QVariantMap entry = entries.first().toMap();
+    entry.insert(QStringLiteral("bytes"), entry.value(QStringLiteral("bytes")).toLongLong() + 1);
+    entry.insert(QStringLiteral("fingerprint"), QByteArray("not-this-file"));
+    entries[0] = entry;
+    albums.insert(QStringLiteral("Inode"), entries);
+    stored.setValue(QStringLiteral("library/albums"), albums);
+    stored.sync();
+
+    AppSettings restored;
+    QCOMPARE(restored.unavailableAlbumItemCount(QStringLiteral("Inode")), 1);
+
+    CaptureRecord record;
+    record.path = path;
+    record.bytes = QFileInfo(path).size();
+    record.modified = QFileInfo(path).lastModified().toMSecsSinceEpoch();
+    restored.reconcileAlbums({record});
+    QCOMPARE(restored.unavailableAlbumItemCount(QStringLiteral("Inode")), 1);
+    restored.deleteAlbum(QStringLiteral("Inode"));
+  }
+
+  void addingOverAnUnavailableAlbumEntryReplacesIt() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("out.png"));
+    QImage(32, 32, QImage::Format_RGB32).save(path);
+
+    AppSettings settings;
+    QVERIFY(settings.createAlbum(QStringLiteral("Replace")));
+    QVERIFY(settings.addToAlbum(QStringLiteral("Replace"), {path}));
+    QVERIFY(QFile::remove(path));
+    settings.reconcileAlbums({});
+    QCOMPARE(settings.unavailableAlbumItemCount(QStringLiteral("Replace")), 1);
+
+    // A different file lands at the same name and is added again.
+    QImage(48, 48, QImage::Format_RGB32).save(path);
+    QVERIFY(settings.addToAlbum(QStringLiteral("Replace"), {path}));
+    QCOMPARE(settings.albumItemCount(QStringLiteral("Replace")), 1);
+    QCOMPARE(settings.unavailableAlbumItemCount(QStringLiteral("Replace")), 0);
+    settings.deleteAlbum(QStringLiteral("Replace"));
+  }
+
   void classifiesOmarchyScreenshot() {
     CaptureRecord::Kind kind = CaptureRecord::Picture;
     QDateTime captured;
