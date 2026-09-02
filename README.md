@@ -13,9 +13,9 @@ videos, downloads, albums, and custom folders together.
 > Omaroll is an independent community project. It is not an official Omarchy
 > application.
 
-[![The library, grouped by day](docs/library.png)](https://github.com/tsouth89/omaroll/raw/main/docs/omaroll-demo-final_trimmed.mp4)
+[![The library over the Ethereal theme, with the wallpaper showing through the chrome](docs/library.png)](https://tsouth89.github.io/omaroll/docs/omaroll-demo.mp4)
 
-*Click the picture to watch a 25 second demo.*
+[Watch the 25 second demo](https://tsouth89.github.io/omaroll/docs/omaroll-demo.mp4)
 
 ---
 
