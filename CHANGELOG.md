@@ -1,5 +1,51 @@
 # Changelog
 
+## 1.0.3
+
+The 1.0.2 transcode work was right in the tests and wrong in the hand:
+pressing Clip to GIF on a file whose output already existed flashed one
+footer line and did nothing visible, a broken leftover from before 1.0.2
+blocked every retry forever, and a recording, its 1080p resize and its GIF
+could wear three different thumbnails for the same content. This release
+closes the loop for real. Thanks to the testing feedback that pinned each of
+these down.
+
+### Fixed
+
+- **Pressing a transcode action always visibly does something.** No output
+  yet: the transcode runs, with a "Making ..." line pinned in the footer for
+  the whole run, and the finished file selected in the grid. A broken
+  leftover in the way: it is removed and the transcode redone. A finished
+  file already there: the viewer opens straight onto it.
+- **Broken leftovers no longer block retries.** An existing output is checked
+  with ffprobe before being trusted, so an empty or truncated file from an
+  older run is cleared and remade instead of being reported as already done
+  forever.
+- **A transcode's thumbnail matches its source, exactly.** A `-720p.gif`,
+  `-1080p.mp4` or `-4k.mp4` now renders its tile from the source video beside
+  it, so the family is pixel-identical. Rendering the derived file itself
+  could never line up: thumbnail seeking goes by keyframe, a short re-encode
+  has only one, and a GIF decodes a different frame again.
+- **Hover scrubbing snaps back.** A recording's tile no longer parks on
+  whatever scrub frame a passing hover ended on, which could leave one tile
+  showing a different moment than its neighbours.
+- **Animated GIFs without a source beside them** thumbnail at the same
+  percent-in moment as videos rather than always frame zero.
+
+The thumbnail cache regenerates lazily on first view after upgrading.
+
+### Install
+
+```bash
+curl -fLO https://github.com/tsouth89/omaroll/releases/download/v1.0.3/omaroll-1.0.3-1-x86_64.pkg.tar.zst \
+     -fLO https://github.com/tsouth89/omaroll/releases/download/v1.0.3/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+sudo pacman -U ./omaroll-1.0.3-1-x86_64.pkg.tar.zst
+```
+
+Every asset is covered by `SHA256SUMS` and a signed build attestation:
+`gh attestation verify omaroll-1.0.3-1-x86_64.pkg.tar.zst --repo tsouth89/omaroll`.
+
 ## 1.0.2
 
 Clip to GIF, Resize to 1080p and Convert to JPEG used to be fire-and-forget:
