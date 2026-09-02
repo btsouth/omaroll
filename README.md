@@ -263,9 +263,6 @@ For a focused release check on an Omarchy desktop:
    without changing the media colors.
 6. Move a disposable file to Trash and restore it from the desktop Trash.
 
-`PLAN.md` carries the full design rationale, the Omarchy conventions this
-follows, and the path to inclusion in base Omarchy.
-
 ## License
 
 MIT. See [LICENSE](LICENSE).
