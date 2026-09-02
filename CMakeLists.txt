@@ -87,23 +87,26 @@ qt_add_resources(omaroll "omaroll_icons"
     resources/icons/omaroll.svg
 )
 
+set(OMAROLL_QML_FILES
+  qml/Main.qml
+  qml/components/CaptureCard.qml
+  qml/components/CaptureGrid.qml
+  qml/components/DayHeader.qml
+  qml/components/Chrome.qml
+  qml/components/FilterBar.qml
+  qml/components/PillButton.qml
+  qml/components/ConfirmSheet.qml
+  qml/components/DetailSheet.qml
+  qml/components/MatteSheet.qml
+  qml/components/SettingsSheet.qml
+  qml/components/AlbumNameSheet.qml
+  qml/components/TailscaleSheet.qml
+)
+
 qt_add_qml_module(omaroll
   URI Omaroll
   VERSION 1.0
-  QML_FILES
-    qml/Main.qml
-    qml/components/CaptureCard.qml
-    qml/components/CaptureGrid.qml
-    qml/components/DayHeader.qml
-    qml/components/Chrome.qml
-    qml/components/FilterBar.qml
-    qml/components/PillButton.qml
-    qml/components/ConfirmSheet.qml
-    qml/components/DetailSheet.qml
-    qml/components/MatteSheet.qml
-    qml/components/SettingsSheet.qml
-    qml/components/AlbumNameSheet.qml
-    qml/components/TailscaleSheet.qml
+  QML_FILES ${OMAROLL_QML_FILES}
 )
 
 target_link_libraries(omaroll PRIVATE omaroll_core Qt6::Multimedia Qt6::QuickControls2)
@@ -140,4 +143,25 @@ if(BUILD_TESTING)
   # The suite touches QImage and QGuiApplication paths, so it needs a platform
   # plugin; offscreen keeps it runnable in a headless checkout or CI.
   set_tests_properties(omaroll_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+  # The UI suite loads the real Main.qml and drives it with synthetic input.
+  # The module's files are compiled into the omaroll executable, so a second
+  # process cannot import them from there; a qmldir over symlinks to the
+  # sources gives the test the same module, always current.
+  set(uitest_module ${CMAKE_BINARY_DIR}/uitest-imports/Omaroll)
+  file(MAKE_DIRECTORY ${uitest_module})
+  set(uitest_qmldir "module Omaroll\n")
+  foreach(qml_file IN LISTS OMAROLL_QML_FILES)
+    get_filename_component(qml_name ${qml_file} NAME_WE)
+    file(CREATE_LINK ${CMAKE_SOURCE_DIR}/${qml_file} ${uitest_module}/${qml_name}.qml SYMBOLIC)
+    string(APPEND uitest_qmldir "${qml_name} 1.0 ${qml_name}.qml\n")
+  endforeach()
+  file(WRITE ${uitest_module}/qmldir "${uitest_qmldir}")
+
+  qt_add_executable(omaroll_ui_tests tests/tst_ui.cpp)
+  target_link_libraries(omaroll_ui_tests PRIVATE omaroll_core Qt6::Multimedia Qt6::QuickControls2 Qt6::Test)
+  target_compile_definitions(omaroll_ui_tests PRIVATE
+    OMAROLL_QML_IMPORT_PATH="${CMAKE_BINARY_DIR}/uitest-imports")
+  add_test(NAME omaroll_ui_tests COMMAND omaroll_ui_tests)
+  set_tests_properties(omaroll_ui_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()
