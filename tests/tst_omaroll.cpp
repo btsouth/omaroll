@@ -1115,6 +1115,57 @@ private slots:
     QVERIFY(failed.last().at(0).toString().contains(QStringLiteral("boom")));
   }
 
+  void existingOutputsAreRevealedAndEmptyCorpsesCleared() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray previousPath = qgetenv("PATH");
+    const auto restorePath = qScopeGuard([&] { qputenv("PATH", previousPath); });
+
+    // A stand-in transcoder that writes the same output name the real one
+    // would, so the registry's guard and launch path both run for real.
+    QFile script(dir.filePath(QStringLiteral("omarchy-transcode")));
+    QVERIFY(script.open(QIODevice::WriteOnly));
+    script.write("#!/bin/sh\nout=\"${1%.*}-720p.gif\"\nprintf fresh > \"$out\"\n");
+    script.close();
+    QVERIFY(script.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                  QFileDevice::ExeOwner));
+    QVERIFY(qputenv("PATH", dir.path().toUtf8()));
+
+    ActionLauncher launcher;
+    ActionRegistry registry(&launcher);
+    QSignalSpy reported(&launcher, &ActionLauncher::reported);
+    QSignalSpy settled(&launcher, &ActionLauncher::outputSettled);
+
+    const QString source =
+        dir.filePath(QStringLiteral("screenrecording-2026-09-01_10-00-00.mp4"));
+    const QString output =
+        dir.filePath(QStringLiteral("screenrecording-2026-09-01_10-00-00-720p.gif"));
+
+    // The corpse of a transcode that died before runs were tracked: an empty
+    // file that used to make every retry report "already done" and stop.
+    QFile corpse(output);
+    QVERIFY(corpse.open(QIODevice::WriteOnly));
+    corpse.close();
+    QVERIFY(registry.run(QStringLiteral("gif"), source));
+    QTRY_COMPARE_WITH_TIMEOUT(settled.size(), 1, 3000);
+    QCOMPARE(settled.last().at(1).toBool(), true);
+    QFile finished(output);
+    QVERIFY(finished.open(QIODevice::ReadOnly));
+    QCOMPARE(finished.readAll(), QByteArray("fresh"));
+    finished.close();
+
+    // A genuinely finished file settles as saved without relaunching, so the
+    // grid selects it instead of "already done" looking like nothing.
+    reported.clear();
+    QVERIFY(registry.run(QStringLiteral("gif"), source));
+    QCOMPARE(settled.size(), 2);
+    QCOMPARE(settled.last().at(0).toString(), output);
+    QCOMPARE(settled.last().at(1).toBool(), true);
+    QVERIFY(reported.last().at(0).toString().contains(QStringLiteral("Already done")));
+    QVERIFY(finished.open(QIODevice::ReadOnly));
+    QCOMPARE(finished.readAll(), QByteArray("fresh"));
+  }
+
   void trashIsRecoverableAndMissingFilesFailClearly() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

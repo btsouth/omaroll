@@ -596,12 +596,26 @@ ApplicationWindow {
             anchors.rightMargin: 16
             anchors.verticalCenter: parent.verticalCenter
             elide: Text.ElideRight
+            // A transcode runs for minutes with its output invisible, so the
+            // in-flight names stay pinned here between transient notices.
+            readonly property string making: {
+                const pending = Actions.pendingOutputs
+                if (pending.length === 0) {
+                    return ""
+                }
+                const name = pending[0].substring(pending[0].lastIndexOf("/") + 1)
+                return "Making " + name
+                       + (pending.length > 1 ? " and " + (pending.length - 1) + " more…" : "…")
+            }
             text: notice.text !== ""
                   ? notice.text
+                  : making !== ""
+                  ? making
                   : "Enter details   ·   Space act   ·   M matte   ·   T trim   ·   V favourite   ·   Del trash   ·   / search"
             font.family: Theme.fontFamily
             font.pixelSize: 11
-            color: notice.text !== "" ? Theme.accent : root.shade(Theme.foreground, 0.42)
+            color: notice.text !== "" || making !== ""
+                   ? Theme.accent : root.shade(Theme.foreground, 0.42)
             Behavior on color { ColorAnimation { duration: 180 } }
         }
 

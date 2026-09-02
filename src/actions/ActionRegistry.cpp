@@ -2,6 +2,7 @@
 
 #include "actions/ActionLauncher.h"
 
+#include <QFile>
 #include <QFileInfo>
 #include <QStandardPaths>
 #include <QVariantMap>
@@ -308,9 +309,18 @@ bool ActionRegistry::run(const QString& id, const QStringList& paths) {
       m_launcher->report(u"Still working on %1"_s.arg(QFileInfo(output).fileName()));
       return true;
     }
-    if (QFileInfo::exists(output)) {
-      m_launcher->report(u"Already done: %1 is beside the original"_s.arg(QFileInfo(output).fileName()));
-      return true;
+    const QFileInfo existing(output);
+    if (existing.exists()) {
+      if (existing.size() > 0) {
+        // Settled rather than just reported, so the grid selects the file:
+        // "already done" with nothing to look at reads as nothing happening.
+        m_launcher->settleExisting(output);
+        return true;
+      }
+      // An empty file with this exact name is the corpse of a transcode that
+      // died before runs were tracked. Left in place it blocks every retry,
+      // because ffmpeg refuses to overwrite.
+      QFile::remove(output);
     }
   }
 

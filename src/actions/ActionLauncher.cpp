@@ -110,6 +110,7 @@ bool ActionLauncher::runTracked(const QString& program, const QStringList& argum
 
   m_pendingOutputs.insert(outputPath);
   emit outputPending(outputPath);
+  emit pendingOutputsChanged();
   emit reported(u"Making %1"_s.arg(QFileInfo(outputPath).fileName()));
 
   connect(process, &QProcess::errorOccurred, this,
@@ -121,6 +122,7 @@ bool ActionLauncher::runTracked(const QString& program, const QStringList& argum
             }
             process->deleteLater();
             m_pendingOutputs.remove(outputPath);
+            emit pendingOutputsChanged();
             emit failed(u"Could not start %1"_s.arg(program));
             emit outputSettled(outputPath, false);
           });
@@ -129,6 +131,7 @@ bool ActionLauncher::runTracked(const QString& program, const QStringList& argum
           [this, process, program, outputPath](int exitCode, QProcess::ExitStatus status) {
             process->deleteLater();
             m_pendingOutputs.remove(outputPath);
+            emit pendingOutputsChanged();
 
             const QFileInfo output(outputPath);
             const bool saved =
@@ -148,11 +151,23 @@ bool ActionLauncher::runTracked(const QString& program, const QStringList& argum
           });
 
   process->start();
+  // ffmpeg reads stdin for interactive commands; an EOF up front means any
+  // unexpected prompt gets an answer instead of waiting on a pipe forever.
+  process->closeWriteChannel();
   return true;
 }
 
 bool ActionLauncher::isPending(const QString& outputPath) const {
   return m_pendingOutputs.contains(outputPath);
+}
+
+QStringList ActionLauncher::pendingOutputs() const {
+  return QStringList(m_pendingOutputs.begin(), m_pendingOutputs.end());
+}
+
+void ActionLauncher::settleExisting(const QString& path) {
+  emit reported(u"Already done: %1 is beside the original"_s.arg(QFileInfo(path).fileName()));
+  emit outputSettled(path, true);
 }
 
 bool ActionLauncher::copyText(const QString& text, bool sensitive, const QString& mimeType) {

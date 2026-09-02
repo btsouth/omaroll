@@ -13,6 +13,10 @@
 // semicolon is data rather than syntax.
 class ActionLauncher final : public QObject {
   Q_OBJECT
+  // Full paths of tracked outputs still being written. The footer pins a
+  // "Making ..." line on this, because a transcode can run for minutes with
+  // nothing else on screen saying anything is happening.
+  Q_PROPERTY(QStringList pendingOutputs READ pendingOutputs NOTIFY pendingOutputsChanged)
 
 public:
   explicit ActionLauncher(QObject* parent = nullptr);
@@ -45,6 +49,12 @@ public:
   // True while a tracked run is still writing this path.
   [[nodiscard]] bool isPending(const QString& outputPath) const;
 
+  [[nodiscard]] QStringList pendingOutputs() const;
+
+  // A finished output already sits on disk from an earlier run: say so and
+  // settle it as saved, so the grid selects it instead of doing nothing.
+  void settleExisting(const QString& path);
+
   // Run to completion off the GUI thread's event loop and put stdout on the
   // clipboard. Used by the recognisers, whose whole output is text the user
   // wants to paste. A sensitive result is marked so clipboard history does not
@@ -76,6 +86,7 @@ signals:
   void outputPending(const QString& path);
   // A tracked run ended. saved means the finished file is on disk.
   void outputSettled(const QString& path, bool saved);
+  void pendingOutputsChanged();
 
 private:
   [[nodiscard]] QString locate(const QString& program, const QString& packageHint);
