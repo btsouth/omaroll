@@ -29,9 +29,14 @@ ApplicationWindow {
     property int visibilityBeforeViewerFullScreen: Window.Windowed
     property bool viewerFolderOnly: false
 
-    readonly property bool anySheetOpen: confirm.visible || detail.visible
-                                         || matteSheet.visible || settingsSheet.visible
-                                         || albumNameSheet.visible || tailscaleSheet.visible
+    // A modal above the library, and possibly above the viewer. Whatever sits
+    // under an open sheet is disabled outright: pointer handlers take passive
+    // grabs, so a scrim alone does not stop a tap on a sheet's control from
+    // also reaching the tile, pill or viewer button under it.
+    readonly property bool modalOpen: confirm.visible || matteSheet.visible
+                                      || settingsSheet.visible || albumNameSheet.visible
+                                      || tailscaleSheet.visible
+    readonly property bool anySheetOpen: modalOpen || detail.visible
 
     function say(message) {
         notice.text = message
@@ -321,6 +326,7 @@ ApplicationWindow {
         anchors.left: parent.left
         anchors.right: parent.right
         height: 58
+        enabled: !root.anySheetOpen
 
         Row {
             anchors.left: parent.left
@@ -454,6 +460,7 @@ ApplicationWindow {
         anchors.top: header.bottom
         anchors.left: parent.left
         anchors.right: parent.right
+        enabled: !root.anySheetOpen
         // Leaving the search field must land focus back on the grid, or the
         // arrow keys go nowhere until a tile is clicked.
         onDone: library.forceActiveFocus()
@@ -481,6 +488,7 @@ ApplicationWindow {
         anchors.rightMargin: 14
         anchors.bottomMargin: 4
         focus: !root.anySheetOpen
+        enabled: !root.anySheetOpen
 
         model: Captures
         visible: Captures.count > 0
@@ -650,6 +658,7 @@ ApplicationWindow {
 
     DetailSheet {
         id: detail
+        enabled: !root.modalOpen
         onNavigateRequested: function (direction) { root.navigateDetail(direction) }
         onFullScreenRequested: function (enabled) { root.setViewerFullScreen(enabled) }
         // Anything that leaves the file where it is keeps the viewer open,
@@ -774,6 +783,8 @@ ApplicationWindow {
         onSent: function (machine, count) {
             root.say("Sending " + (count === 1 ? "1 file" : count + " files") + " to " + machine)
         }
+        // Opened over the viewer, it took the keyboard; hand it back.
+        onVisibleChanged: if (!visible && detail.visible) detail.forceActiveFocus()
     }
 
     SettingsSheet {

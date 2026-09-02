@@ -56,7 +56,20 @@ Item {
     Rectangle {
         anchors.fill: parent
         color: Qt.rgba(0, 0, 0, 0.68)
-        TapHandler { onSingleTapped: root.close() }
+        // A MouseArea rather than a TapHandler: a TapHandler only takes a
+        // passive grab, so a tap on a control inside the card also arrived
+        // here and closed the sheet. Every button is accepted so a right
+        // click cannot fall through to a tile behind the scrim.
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.AllButtons
+            preventStealing: true
+            onClicked: function (mouse) {
+                if (mouse.button === Qt.LeftButton) {
+                    root.close()
+                }
+            }
+        }
     }
 
     Rectangle {
@@ -68,7 +81,12 @@ Item {
         border.width: 1
         border.color: root.shade(Theme.foreground, 0.20)
 
-        TapHandler { onSingleTapped: {} }
+        // Clicks inside the card must not reach the scrim behind it.
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.AllButtons
+            preventStealing: true
+        }
 
         // Header
         Item {
