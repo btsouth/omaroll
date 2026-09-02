@@ -33,6 +33,10 @@ Item {
     // True while the search field owns the keyboard, so window-level
     // shortcuts that the field would not swallow (Escape, Ctrl+H) stand down.
     readonly property bool searchActive: search.activeFocus
+    // A menu is up. Main disables the surfaces under it: a modal popup stops
+    // items from getting the press that closes it, but not the passive tap
+    // handlers on the tiles, which would otherwise still fire.
+    readonly property bool menuOpen: libraryMenu.visible || sortMenu.visible
 
     // The user left the search field with Enter or Escape.
     signal done()
@@ -190,6 +194,7 @@ Item {
 
     Menu {
         id: libraryMenu
+        objectName: "libraryMenu"
         // Modal, undimmed: the press that closes the menu is consumed here
         // rather than also landing on the tile or pill under it.
         modal: true
@@ -340,6 +345,7 @@ Item {
 
     Menu {
         id: sortMenu
+        objectName: "sortMenu"
         // Modal, undimmed: the press that closes the menu is consumed here
         // rather than also landing on the tile or pill under it.
         modal: true

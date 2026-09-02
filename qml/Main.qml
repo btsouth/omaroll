@@ -37,6 +37,16 @@ ApplicationWindow {
                                       || settingsSheet.visible || albumNameSheet.visible
                                       || tailscaleSheet.visible
     readonly property bool anySheetOpen: modalOpen || detail.visible
+    // A popup menu is up; the press that closes it must not also land under it.
+    readonly property bool popupOpen: filters.menuOpen || albumActionMenu.visible
+    // A menu takes the keyboard while it is up and does not give it back to
+    // the grid on its own, which left the arrow keys dead until a tile was
+    // clicked.
+    onPopupOpenChanged: {
+        if (!popupOpen && !anySheetOpen) {
+            library.forceActiveFocus()
+        }
+    }
 
     function say(message) {
         notice.text = message
@@ -326,7 +336,7 @@ ApplicationWindow {
         anchors.left: parent.left
         anchors.right: parent.right
         height: 58
-        enabled: !root.anySheetOpen
+        enabled: !root.anySheetOpen && !albumActionMenu.visible
 
         Row {
             anchors.left: parent.left
@@ -460,7 +470,7 @@ ApplicationWindow {
         anchors.top: header.bottom
         anchors.left: parent.left
         anchors.right: parent.right
-        enabled: !root.anySheetOpen
+        enabled: !root.anySheetOpen && !albumActionMenu.visible
         // Leaving the search field must land focus back on the grid, or the
         // arrow keys go nowhere until a tile is clicked.
         onDone: library.forceActiveFocus()
@@ -479,6 +489,7 @@ ApplicationWindow {
 
     CaptureGrid {
         id: library
+        objectName: "library"
         anchors.top: divider.bottom
         anchors.left: parent.left
         anchors.right: parent.right
@@ -488,7 +499,7 @@ ApplicationWindow {
         anchors.rightMargin: 14
         anchors.bottomMargin: 4
         focus: !root.anySheetOpen
-        enabled: !root.anySheetOpen
+        enabled: !root.anySheetOpen && !root.popupOpen
 
         model: Captures
         visible: Captures.count > 0
@@ -658,7 +669,8 @@ ApplicationWindow {
 
     DetailSheet {
         id: detail
-        enabled: !root.modalOpen
+        objectName: "detail"
+        enabled: !root.modalOpen && !root.popupOpen
         onNavigateRequested: function (direction) { root.navigateDetail(direction) }
         onFullScreenRequested: function (enabled) { root.setViewerFullScreen(enabled) }
         // Anything that leaves the file where it is keeps the viewer open,
@@ -780,10 +792,12 @@ ApplicationWindow {
 
     MatteSheet {
         id: matteSheet
+        objectName: "matteSheet"
     }
 
     TailscaleSheet {
         id: tailscaleSheet
+        objectName: "tailscaleSheet"
         onSent: function (machine, count) {
             root.say("Sending " + (count === 1 ? "1 file" : count + " files") + " to " + machine)
         }
@@ -793,6 +807,7 @@ ApplicationWindow {
 
     SettingsSheet {
         id: settingsSheet
+        objectName: "settingsSheet"
         onRescanRequested: Library.refresh()
         onCreateAlbumRequested: {
             settingsSheet.close()
@@ -802,6 +817,7 @@ ApplicationWindow {
 
     ConfirmSheet {
         id: confirm
+        objectName: "confirm"
         confirmLabel: "Move to Trash"
         onAccepted: {
             if (root.pendingDeleteBatch.length > 0) {
