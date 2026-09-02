@@ -31,6 +31,15 @@ Item {
     anchors.fill: parent
     focus: visible
 
+    // Own wheel input for the whole modal so it cannot scroll the library
+    // underneath, as Settings does.
+    WheelHandler {
+        target: null
+        enabled: root.visible
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+        onWheel: function (event) { event.accepted = true }
+    }
+
     // Scrim. Swallows clicks so nothing behind it can be triggered by accident.
     Rectangle {
         anchors.fill: parent

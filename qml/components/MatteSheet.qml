@@ -41,6 +41,15 @@ Item {
     anchors.fill: parent
     focus: visible
 
+    // Own wheel input for the whole modal so it cannot scroll the library
+    // underneath, as Settings does.
+    WheelHandler {
+        target: null
+        enabled: root.visible
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+        onWheel: function (event) { event.accepted = true }
+    }
+
     readonly property var matteNames: Matte.matteNames()
     readonly property var aspectNames: Matte.aspectNames()
 

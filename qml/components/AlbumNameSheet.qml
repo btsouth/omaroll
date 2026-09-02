@@ -38,6 +38,15 @@ Item {
     anchors.fill: parent
     focus: visible
 
+    // Own wheel input for the whole modal so it cannot scroll the library
+    // underneath, as Settings does.
+    WheelHandler {
+        target: null
+        enabled: root.visible
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+        onWheel: function (event) { event.accepted = true }
+    }
+
     Rectangle {
         anchors.fill: parent
         color: Qt.rgba(0, 0, 0, 0.6)

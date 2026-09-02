@@ -150,6 +150,16 @@ Item {
     anchors.fill: parent
     focus: visible
 
+    // Own wheel input for the whole modal, as Settings does. The still
+    // viewport zooms and the action list scrolls; both are visited first.
+    // Anything they do not accept must not reach the library underneath.
+    WheelHandler {
+        target: null
+        enabled: root.visible
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+        onWheel: function (event) { event.accepted = true }
+    }
+
     Timer {
         id: slideshowTimer
         interval: root.slideshowInterval
