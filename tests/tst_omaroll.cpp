@@ -1298,6 +1298,54 @@ private slots:
     QCOMPARE(small.size(), image.size());
   }
 
+  void derivedFilesWearTheirSourcesTile() {
+    if (QStandardPaths::findExecutable(QStringLiteral("ffmpeg")).isEmpty() ||
+        QStandardPaths::findExecutable(QStringLiteral("ffmpegthumbnailer")).isEmpty()) {
+      QSKIP("ffmpeg or ffmpegthumbnailer not installed");
+    }
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    // Dark for the opening quarter then green, the shape of a screen
+    // recording that starts on an idle desktop. Short on purpose: a short
+    // re-encode has a single keyframe, the case where a percent seek fails
+    // and the derived file used to fall back to its dark first frame.
+    const QString source = dir.filePath(QStringLiteral("screenrecording-2026-09-02_10-40-00.mp4"));
+    QProcess ffmpeg;
+    ffmpeg.start(
+        QStandardPaths::findExecutable(QStringLiteral("ffmpeg")),
+        {QStringLiteral("-loglevel"), QStringLiteral("error"), QStringLiteral("-f"),
+         QStringLiteral("lavfi"), QStringLiteral("-i"),
+         QStringLiteral("color=0x0a0a0a:s=320x240:r=30:d=2"), QStringLiteral("-f"),
+         QStringLiteral("lavfi"), QStringLiteral("-i"),
+         QStringLiteral("color=0x22aa66:s=320x240:r=30:d=6"), QStringLiteral("-filter_complex"),
+         QStringLiteral("[0][1]concat=n=2:v=1"), QStringLiteral("-c:v"), QStringLiteral("libx264"),
+         QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"), source});
+    QVERIFY(ffmpeg.waitForFinished(30000));
+    QCOMPARE(ffmpeg.exitCode(), 0);
+
+    // The derived names omarchy-transcode writes. Contents deliberately
+    // unrelated (a black frame), because the tile must come from the source.
+    const QString gif = dir.filePath(QStringLiteral("screenrecording-2026-09-02_10-40-00-720p.gif"));
+    const QString resized =
+        dir.filePath(QStringLiteral("screenrecording-2026-09-02_10-40-00-1080p.mp4"));
+    QProcess black;
+    black.start(QStandardPaths::findExecutable(QStringLiteral("ffmpeg")),
+                {QStringLiteral("-loglevel"), QStringLiteral("error"), QStringLiteral("-f"),
+                 QStringLiteral("lavfi"), QStringLiteral("-i"),
+                 QStringLiteral("color=black:s=320x240:r=10:d=1"), gif});
+    QVERIFY(black.waitForFinished(30000));
+    QCOMPARE(black.exitCode(), 0);
+    QVERIFY(QFile::copy(source, resized));
+
+    const QImage sourceTile = ThumbnailCache::thumbnail(source, QSize(80, 60), 1.0, 20);
+    const QImage gifTile = ThumbnailCache::thumbnail(gif, QSize(80, 60), 1.0, 20);
+    const QImage resizedTile = ThumbnailCache::thumbnail(resized, QSize(80, 60), 1.0, 20);
+    QVERIFY(!sourceTile.isNull());
+    QCOMPARE(gifTile, sourceTile);
+    QCOMPARE(resizedTile, sourceTile);
+  }
+
   void animatedGifThumbnailSeeksLikeAVideo() {
     if (QStandardPaths::findExecutable(QStringLiteral("ffmpeg")).isEmpty()) {
       QSKIP("ffmpeg not installed");

@@ -13,6 +13,7 @@
 #include <QMutexLocker>
 #include <QPainter>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QThread>
@@ -105,7 +106,7 @@ QString ThumbnailCache::cacheKey(const QString& path, const QSize& pixelSize, in
   // rendered size so a scale change is a miss rather than a blurry hit. The
   // leading tag versions the rendering itself, so a change in how tiles are
   // made invalidates everything rather than serving old shapes from cache.
-  const QString identity = QStringLiteral("cover2|%1|%2|%3|%4x%5|t%6")
+  const QString identity = QStringLiteral("cover3|%1|%2|%3|%4x%5|t%6")
                                .arg(path)
                                .arg(info.size())
                                .arg(info.lastModified().toMSecsSinceEpoch())
@@ -217,12 +218,39 @@ QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
     return {};
   }
 
-  const QString suffix = QFileInfo(path).suffix();
-  QImage rendered = CaptureScanner::isVideo(suffix) ? renderVideo(path, pixelSize, seekPercent)
-                                                    : renderImage(path, pixelSize, seekPercent);
+  // A transcode's output takes its source's exact tile. Rendering the derived
+  // file itself can never line up: ffmpegthumbnailer seeks by keyframe and
+  // fails outright on a short single-keyframe re-encode (frame zero, usually
+  // dark), while a GIF decodes to the true percent frame, so the same content
+  // wore three different tiles and read as three unrelated videos.
+  QString renderPath = path;
+  static const QRegularExpression derivedName(
+      QStringLiteral(R"(^(.*)-(?:4k|1080p|720p)\.(?:mp4|gif)$)"),
+      QRegularExpression::CaseInsensitiveOption);
+  const QRegularExpressionMatch derived = derivedName.match(path);
+  if (derived.hasMatch()) {
+    for (const QString& extension :
+         {QStringLiteral("mp4"), QStringLiteral("mkv"), QStringLiteral("webm"),
+          QStringLiteral("mov"), QStringLiteral("m4v"), QStringLiteral("avi")}) {
+      const QString candidate = derived.captured(1) + QLatin1Char('.') + extension;
+      if (QFileInfo::exists(candidate)) {
+        renderPath = candidate;
+        break;
+      }
+    }
+  }
+
+  const QString suffix = QFileInfo(renderPath).suffix();
+  QImage rendered = CaptureScanner::isVideo(suffix)
+                        ? renderVideo(renderPath, pixelSize, seekPercent)
+                        : renderImage(renderPath, pixelSize, seekPercent);
   if (rendered.isNull() && !CaptureScanner::isVideo(suffix)) {
     // Video bytes under an image name happen; ffmpegthumbnailer can read it.
-    rendered = renderVideo(path, pixelSize, seekPercent);
+    rendered = renderVideo(renderPath, pixelSize, seekPercent);
+  }
+  if (rendered.isNull() && renderPath != path) {
+    // The source could not be read after all; the derived file stands alone.
+    rendered = renderImage(path, pixelSize, seekPercent);
   }
   if (rendered.isNull()) {
     rememberFailure(key);

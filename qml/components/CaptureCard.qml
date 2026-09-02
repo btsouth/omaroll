@@ -47,6 +47,9 @@ Item {
         interval: 700
         repeat: true
         running: root.isVideo && hover.hovered && root.path !== ""
+        // Back to the resting frame when the hover ends, or a browsed-over
+        // tile parks mid-scrub and no longer matches its neighbours.
+        onRunningChanged: if (!running) root.scrubIndex = 0
         onTriggered: root.scrubIndex = (root.scrubIndex + 1) % root.scrubStops.length
     }
 
