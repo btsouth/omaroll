@@ -1,5 +1,56 @@
 # Changelog
 
+## 1.0.1
+
+Omaroll now resolves theme colors the way Omarchy itself does. Before this
+release, only themes with a fully semantic `colors.toml` followed your theme;
+anything else quietly fell back to Omaroll's built-in green look.
+
+### Fixed
+
+- **Compact terminal palettes follow the theme.** A `colors.toml` that defines
+  only `background`, `foreground` and `color0`..`color15` (the format many
+  third-party and Ghostty-derived themes use) now resolves through the same
+  alias cascade as `omarchy-theme-color`: ANSI names map to semantic names,
+  `muted`, `selection` and the foreground variants follow the same fallback
+  chains, missing dark and darker background shades are derived with the same
+  25% and 50% black mixes, and light or dark mode is detected with the same
+  precedence and luminance threshold.
+- **Accent falls back to the terminal blue.** When a theme defines no `accent`,
+  Omaroll takes `color4`, exactly like the Omarchy shell, instead of showing
+  the built-in green accent.
+- **Legacy names and the Omarchy 3 layout work again.** Themes using the old
+  short names (`bg`, `fg`, `dark_bg`, ...) resolve correctly, and a theme
+  installed under `~/.config/omarchy/current` is found when the Omarchy 4
+  state root has none.
+- **The state root matches Omarchy.** Omaroll reads the fixed
+  `~/.local/state/omarchy/current` path that Omarchy's own scripts use, rather
+  than honouring `XDG_STATE_HOME` when Omarchy does not.
+- **Machine-level launcher overrides apply.** A `[launcher]` `background` or
+  `background-alpha` in `~/.config/omarchy/shell.toml` overrides the theme's
+  values, updates live when the file changes and reverts when it is removed,
+  matching the Omarchy shell's "user keys win" rule.
+- **Theme switches are picked up reliably.** The atomic directory replacement
+  `omarchy-theme-set` performs (staging `next-theme`, then renaming it into
+  place) triggers a reload, as does creating or removing a `light.mode`
+  marker.
+
+Six new regression tests cover the cascade, the accent fallback, the legacy
+locations and the live override behaviour, with resolved values verified
+byte-for-byte against `omarchy-theme-color` output.
+
+### Install
+
+```bash
+curl -fLO https://github.com/tsouth89/omaroll/releases/download/v1.0.1/omaroll-1.0.1-1-x86_64.pkg.tar.zst \
+     -fLO https://github.com/tsouth89/omaroll/releases/download/v1.0.1/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+sudo pacman -U ./omaroll-1.0.1-1-x86_64.pkg.tar.zst
+```
+
+Every asset is covered by `SHA256SUMS` and a signed build attestation:
+`gh attestation verify omaroll-1.0.1-1-x86_64.pkg.tar.zst --repo tsouth89/omaroll`.
+
 ## 1.0.0
 
 Omaroll is a fast image and video viewer that turns your media folders into a
