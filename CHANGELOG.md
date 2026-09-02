@@ -16,8 +16,10 @@
 
 - The matte picker no longer closes when you click a matte, an aspect or the
   padding button, and a right click on any sheet no longer opens the tile
-  behind it. Every sheet now swallows clicks properly, and the library under an
-  open sheet ignores input until it closes.
+  behind it. Every sheet now swallows clicks properly, the library under an
+  open sheet or the viewer ignores input until it closes, and the click that
+  closes the Browse, Sort or Album menu no longer also lands on what is under
+  it.
 - Actions that leave the file where it is no longer close the viewer.
   Favourite, copy to clipboard, copy the text, scan QR code, send and show in
   files all run with the picture still open, and the result is shown inside
