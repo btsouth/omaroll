@@ -131,6 +131,9 @@ FocusScope {
 
     GridView {
         id: grid
+        // Left from the first tile lands on the last and Right from the last
+        // on the first, matching the viewer's Previous and Next.
+        keyNavigationWraps: true
         anchors.fill: parent
         anchors.rightMargin: root.scrollbarWidth
         focus: true
