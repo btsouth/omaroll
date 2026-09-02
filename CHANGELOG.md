@@ -12,22 +12,12 @@
 - Tile size. Ctrl and the wheel, or Ctrl with plus, minus and 0, make the grid
   tiles bigger or smaller between 160 and 480 pixels. The size is remembered.
 
-### Install
-
-```bash
-curl -fLO https://github.com/tsouth89/omaroll/releases/download/v1.1.0/omaroll-1.1.0-1-x86_64.pkg.tar.zst \
-     -fLO https://github.com/tsouth89/omaroll/releases/download/v1.1.0/SHA256SUMS
-sha256sum -c --ignore-missing SHA256SUMS
-sudo pacman -U ./omaroll-1.1.0-1-x86_64.pkg.tar.zst
-```
-
-Every asset is covered by `SHA256SUMS` and a signed build attestation:
-`gh attestation verify omaroll-1.1.0-1-x86_64.pkg.tar.zst --repo tsouth89/omaroll`.
-
-## 1.0.4
-
 ### Fixed
 
+- The matte picker no longer closes when you click a matte, an aspect or the
+  padding button, and a right click on any sheet no longer opens the tile
+  behind it. Every sheet now swallows clicks properly, and the library under an
+  open sheet ignores input until it closes.
 - Actions that leave the file where it is no longer close the viewer.
   Favourite, copy to clipboard, copy the text, scan QR code, send and show in
   files all run with the picture still open, and the result is shown inside
@@ -45,14 +35,14 @@ Every asset is covered by `SHA256SUMS` and a signed build attestation:
 ### Install
 
 ```bash
-curl -fLO https://github.com/tsouth89/omaroll/releases/download/v1.0.4/omaroll-1.0.4-1-x86_64.pkg.tar.zst \
-     -fLO https://github.com/tsouth89/omaroll/releases/download/v1.0.4/SHA256SUMS
+curl -fLO https://github.com/tsouth89/omaroll/releases/download/v1.1.0/omaroll-1.1.0-1-x86_64.pkg.tar.zst \
+     -fLO https://github.com/tsouth89/omaroll/releases/download/v1.1.0/SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
-sudo pacman -U ./omaroll-1.0.4-1-x86_64.pkg.tar.zst
+sudo pacman -U ./omaroll-1.1.0-1-x86_64.pkg.tar.zst
 ```
 
 Every asset is covered by `SHA256SUMS` and a signed build attestation:
-`gh attestation verify omaroll-1.0.4-1-x86_64.pkg.tar.zst --repo tsouth89/omaroll`.
+`gh attestation verify omaroll-1.1.0-1-x86_64.pkg.tar.zst --repo tsouth89/omaroll`.
 
 ## 1.0.3
 
