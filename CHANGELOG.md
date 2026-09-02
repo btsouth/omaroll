@@ -1,5 +1,50 @@
 # Changelog
 
+## 1.0.2
+
+Clip to GIF, Resize to 1080p and Convert to JPEG used to be fire-and-forget:
+the new file blended into the library with no word about where it went, a
+transcode's output sat in the grid as a broken zero-byte tile while ffmpeg
+worked, and if the run died the tile stayed broken forever with no
+explanation. Transcodes are now followed to the end.
+
+### Fixed
+
+- **You can see where the file went.** When a transcode finishes, the library
+  rescans, the status line says the new file was saved beside the original,
+  and the grid selects and scrolls to it. If the current filter would hide
+  it, the view clears to show it, the same way "Open with Omaroll" does;
+  otherwise your filters are left alone.
+- **No more broken tiles mid-transcode.** The output file is held out of the
+  library until the tool finishes, so the zero-byte in-progress file never
+  appears as a broken entry, and its thumbnail is only made once the file is
+  complete.
+- **Failures are cleaned up and explained.** A transcode that dies leaves no
+  partial file behind, and the tool's own last error line is quoted in the
+  status message instead of silence.
+- **No more false "already done".** Running the same transcode again while
+  one is in flight says "Still working on ..." instead of mistaking the
+  half-written file for a finished one.
+- **Stale entries fix themselves.** Finished transcodes are rescanned even
+  though writing into an existing file fires no directory event, which was
+  why a thumbnail made from a half-written file used to stay broken until
+  restart.
+
+One behaviour change: a transcode is now cancelled if you close Omaroll while
+it is running, rather than continuing unwatched in the background.
+
+### Install
+
+```bash
+curl -fLO https://github.com/tsouth89/omaroll/releases/download/v1.0.2/omaroll-1.0.2-1-x86_64.pkg.tar.zst \
+     -fLO https://github.com/tsouth89/omaroll/releases/download/v1.0.2/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+sudo pacman -U ./omaroll-1.0.2-1-x86_64.pkg.tar.zst
+```
+
+Every asset is covered by `SHA256SUMS` and a signed build attestation:
+`gh attestation verify omaroll-1.0.2-1-x86_64.pkg.tar.zst --repo tsouth89/omaroll`.
+
 ## 1.0.1
 
 Omaroll now resolves theme colors the way Omarchy itself does. Before this
