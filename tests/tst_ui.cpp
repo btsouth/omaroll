@@ -51,6 +51,11 @@ private slots:
     QVERIFY(qputenv("XDG_VIDEOS_DIR", layout.videos.toUtf8()));
     QVERIFY(qputenv("XDG_DOWNLOAD_DIR", layout.root.toUtf8()));
     QVERIFY(qputenv("XDG_CACHE_HOME", m_scratch.filePath(QStringLiteral("cache")).toUtf8()));
+    QVERIFY(qputenv("XDG_DATA_HOME", m_scratch.filePath(QStringLiteral("data")).toUtf8()));
+    // A name with every character that trips URL parsing. Newest by mtime,
+    // so it sits at the top of the grid.
+    m_oddPath = layout.pictures + QStringLiteral("/odd %20 name #1 (copy)?.jpg");
+    QVERIFY(QFile::copy(layout.pictures + QStringLiteral("/alpine-dawn.jpg"), m_oddPath));
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        layout.root + QStringLiteral("/config"));
 
@@ -315,6 +320,167 @@ private slots:
     QTRY_COMPARE(m_settings->tileWidth(), 240);
   }
 
+  void searchFiltersTheGridAndEscapeClearsIt() {
+    const int all = m_library->rowCount();
+    QTest::keyClick(m_window, Qt::Key_Slash);
+    QTRY_VERIFY(item("filters")->property("searchActive").toBool());
+    typeText(QStringLiteral("alpine"));
+    QTRY_COMPARE(m_library->rowCount(), 1);
+    QCOMPARE(m_library->fileNameAt(0), QStringLiteral("alpine-dawn.jpg"));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_COMPARE(m_library->rowCount(), all);
+    QVERIFY(m_library->property("searchText").toString().isEmpty());
+    QTRY_VERIFY(item("library")->hasActiveFocus());
+  }
+
+  void sectionKeysSwitchTheFilter() {
+    QTest::keyClick(m_window, Qt::Key_2);
+    QTRY_COMPARE(m_library->property("kindFilter").toInt(), 0);
+    QTest::keyClick(m_window, Qt::Key_4);
+    QTRY_COMPARE(m_library->property("kindFilter").toInt(), 2);
+    QTest::keyClick(m_window, Qt::Key_1);
+    QTRY_COMPARE(m_library->property("kindFilter").toInt(), -1);
+    QTest::keyClick(m_window, Qt::Key_7);
+    QTRY_VERIFY(m_library->property("favoritesOnly").toBool());
+    QTest::keyClick(m_window, Qt::Key_7);
+    QTRY_VERIFY(!m_library->property("favoritesOnly").toBool());
+  }
+
+  void selectionKeysActOnTheWholeSelection() {
+    QQuickItem* grid = item("library");
+    QTest::keyClick(m_window, Qt::Key_X);
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTest::keyClick(m_window, Qt::Key_X);
+    QTRY_COMPARE(grid->property("checkedCount").toInt(), 2);
+
+    QTest::keyClick(m_window, Qt::Key_V);
+    QTRY_VERIFY(m_settings->isFavorite(pathAt(0)) && m_settings->isFavorite(pathAt(1)));
+    QTest::keyClick(m_window, Qt::Key_V);
+    QTRY_VERIFY(!m_settings->isFavorite(pathAt(0)) && !m_settings->isFavorite(pathAt(1)));
+
+    QTest::keyClick(m_window, Qt::Key_Delete);
+    QQuickItem* confirm = item("confirm");
+    QTRY_VERIFY(confirm->isVisible());
+    QVERIFY(confirm->property("title").toString().contains(QStringLiteral("2 items")));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!confirm->isVisible());
+    QCOMPARE(grid->property("checkedCount").toInt(), 2);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_COMPARE(grid->property("checkedCount").toInt(), 0);
+  }
+
+  void viewerArrowsMoveThroughTheLibrary() {
+    QQuickItem* detail = item("detail");
+    openDetail(0);
+    QTRY_VERIFY(detail->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTRY_COMPARE(detail->property("path").toString(), pathAt(1));
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QTRY_COMPARE(detail->property("path").toString(), pathAt(0));
+    QTest::keyClick(m_window, Qt::Key_Left);
+    const int last = m_library->rowCount() - 1;
+    QTRY_COMPARE(detail->property("path").toString(), pathAt(last));
+    QCOMPARE(item("library")->property("currentIndex").toInt(), last);
+  }
+
+  void slideshowStartsFullscreenAndEscapeEndsIt() {
+    QQuickItem* detail = item("detail");
+    openDetail(0);
+    QTRY_VERIFY(detail->isVisible());
+    QTest::keyClick(m_window, Qt::Key_F5);
+    QTRY_VERIFY(detail->property("slideshowRunning").toBool());
+    QVERIFY(detail->property("fullScreen").toBool());
+    QVERIFY(!detail->property("showInfo").toBool());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!detail->property("slideshowRunning").toBool());
+    QVERIFY(!detail->property("fullScreen").toBool());
+    QVERIFY(detail->isVisible());
+  }
+
+  void hideFromTheViewerClosesItAndHidesTheFile() {
+    QQuickItem* detail = item("detail");
+    const QString path = pathAt(1);
+    openDetail(1);
+    QTRY_VERIFY(detail->isVisible());
+    QTest::keyClick(m_window, Qt::Key_H, Qt::ControlModifier);
+    QTRY_VERIFY(!detail->isVisible());
+    QVERIFY(m_settings->isHidden(path));
+    QTRY_VERIFY(m_library->rowOf(path) < 0);
+    m_settings->toggleHidden(path);
+    QTRY_VERIFY(m_library->rowOf(path) >= 0);
+  }
+
+  void oddFilenamesGetThumbnailsAndOpen() {
+    const QString odd = QFileInfo(m_oddPath).canonicalFilePath();
+    QVERIFY(m_library->rowOf(odd) >= 0);
+    QQuickItem* card = cardFor(odd);
+    QVERIFY2(card, qPrintable(odd));
+    QTRY_VERIFY_WITH_TIMEOUT(card->property("thumbnailReady").toBool(), 15000);
+    QQuickItem* plain = cardFor(pathAt(1));
+    QVERIFY(plain);
+    QTRY_VERIFY_WITH_TIMEOUT(plain->property("thumbnailReady").toBool(), 15000);
+
+    QQuickItem* detail = item("detail");
+    openDetail(m_library->rowOf(odd));
+    QTRY_VERIFY(detail->isVisible());
+    QTRY_VERIFY_WITH_TIMEOUT(detail->property("stillReady").toBool(), 10000);
+    QVERIFY2(detail->property("playbackError").toString().isEmpty(),
+             qPrintable(detail->property("playbackError").toString()));
+    invoke("dismissTopLayer");
+
+    perform(QStringLiteral("matte"), odd);
+    QTRY_VERIFY(item("matteSheet")->isVisible());
+    QQuickItem* preview = item("mattePreview");
+    // Image.Ready
+    QTRY_COMPARE_WITH_TIMEOUT(preview->property("status").toInt(), 1, 15000);
+  }
+
+  void albumFromASelection() {
+    QTest::keyClick(m_window, Qt::Key_X);
+    QTRY_COMPARE(item("library")->property("checkedCount").toInt(), 1);
+    // The header row re-lays itself out in the next polish pass once the
+    // selection pills appear; click only once the pill has its place.
+    QQuickItem* albumPill = pill(m_window->contentItem(), QStringLiteral("+ Album"));
+    QVERIFY(albumPill);
+    QTRY_VERIFY(centre(albumPill).x() > 0 && centre(albumPill).x() < m_window->width());
+    click(albumPill);
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("albumActionMenu"));
+    QVERIFY(menu);
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QQuickItem* newAlbum = find(m_window->contentItem(), [](QQuickItem* candidate) {
+      return candidate->inherits("QQuickText") && candidate->isVisible() &&
+             candidate->property("text").toString() == QStringLiteral("+ New album");
+    });
+    QVERIFY(newAlbum);
+    click(newAlbum);
+    QQuickItem* sheet = item("albumNameSheet");
+    QTRY_VERIFY(sheet->isVisible());
+    typeText(QStringLiteral("Trip"));
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!sheet->isVisible());
+    QVERIFY(m_settings->albumNames().contains(QStringLiteral("Trip")));
+    QCOMPARE(m_settings->albumPaths(QStringLiteral("Trip")).size(), 1);
+    QCOMPARE(m_settings->albumPaths(QStringLiteral("Trip")).first(), pathAt(0));
+    m_settings->deleteAlbum(QStringLiteral("Trip"));
+  }
+
+  void trashMovesTheFileAndTheGridFollows() {
+    QQuickItem* grid = item("library");
+    const int last = m_library->rowCount() - 1;
+    const QString path = pathAt(last);
+    QVERIFY(QFileInfo::exists(path));
+    grid->setProperty("currentIndex", last);
+    QTest::keyClick(m_window, Qt::Key_Delete);
+    QQuickItem* confirm = item("confirm");
+    QTRY_VERIFY(confirm->isVisible());
+    QCOMPARE(confirm->property("detail").toString(), path);
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!confirm->isVisible());
+    QTRY_VERIFY_WITH_TIMEOUT(!QFileInfo::exists(path), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(path) < 0, 10000);
+    QVERIFY(grid->property("currentIndex").toInt() < m_library->rowCount());
+  }
+
   void theWindowRaisedNoQmlWarnings() {
     QVERIFY2(m_warnings.isEmpty(), qPrintable(m_warnings.join(QLatin1Char('\n'))));
   }
@@ -390,6 +556,12 @@ private:
     QTest::qWait(30);
   }
 
+  void typeText(const QString& text) {
+    for (const QChar character : text) {
+      QTest::keyClick(m_window, character.toLatin1());
+    }
+  }
+
   // singleTapped waits out the double-click interval before firing.
   static void settle() { QTest::qWait(QGuiApplication::styleHints()->mouseDoubleClickInterval() + 100); }
 
@@ -407,6 +579,7 @@ private:
   QQmlApplicationEngine* m_engine = nullptr;
   QQuickWindow* m_window = nullptr;
   QStringList m_warnings;
+  QString m_oddPath;
 };
 
 // Offscreen unconditionally, not just under ctest. Run by hand on a live
