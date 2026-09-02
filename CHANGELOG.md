@@ -2,35 +2,21 @@
 
 ## 1.0.3
 
-The 1.0.2 transcode work was right in the tests and wrong in the hand:
-pressing Clip to GIF on a file whose output already existed flashed one
-footer line and did nothing visible, a broken leftover from before 1.0.2
-blocked every retry forever, and a recording, its 1080p resize and its GIF
-could wear three different thumbnails for the same content. This release
-closes the loop for real. Thanks to the testing feedback that pinned each of
-these down.
-
 ### Fixed
 
-- **Pressing a transcode action always visibly does something.** No output
-  yet: the transcode runs, with a "Making ..." line pinned in the footer for
-  the whole run, and the finished file selected in the grid. A broken
-  leftover in the way: it is removed and the transcode redone. A finished
-  file already there: the viewer opens straight onto it.
-- **Broken leftovers no longer block retries.** An existing output is checked
-  with ffprobe before being trusted, so an empty or truncated file from an
-  older run is cleared and remade instead of being reported as already done
-  forever.
-- **A transcode's thumbnail matches its source, exactly.** A `-720p.gif`,
-  `-1080p.mp4` or `-4k.mp4` now renders its tile from the source video beside
-  it, so the family is pixel-identical. Rendering the derived file itself
-  could never line up: thumbnail seeking goes by keyframe, a short re-encode
-  has only one, and a GIF decodes a different frame again.
-- **Hover scrubbing snaps back.** A recording's tile no longer parks on
-  whatever scrub frame a passing hover ended on, which could leave one tile
-  showing a different moment than its neighbours.
-- **Animated GIFs without a source beside them** thumbnail at the same
-  percent-in moment as videos rather than always frame zero.
+- Transcode actions always show a result. A running transcode pins a
+  "Making ..." line in the footer and selects the finished file in the grid,
+  and pressing an action whose output already exists opens the viewer on it.
+- Existing outputs are verified with ffprobe before being trusted, so an
+  empty or truncated file left by an interrupted run is cleared and remade
+  instead of blocking every retry as "already done".
+- A `-720p.gif`, `-1080p.mp4` or `-4k.mp4` renders its thumbnail from the
+  source video beside it, so a recording and its conversions show identical
+  tiles instead of three different frames of the same content.
+- A recording's tile returns to its resting frame when a hover scrub ends,
+  instead of parking on whatever frame the hover left it at.
+- An animated GIF with no source beside it thumbnails at the same percent-in
+  moment as a video, rather than always its first frame.
 
 The thumbnail cache regenerates lazily on first view after upgrading.
 
