@@ -53,6 +53,7 @@ QString sizeLabel(qint64 bytes) {
 // A rescan storm at the end of a recording (the processed file moved over the
 // original, a preview written and removed) all lands inside this window.
 constexpr int kRefreshDebounceMs = 600;
+constexpr int kFallbackRefreshMs = 60'000;
 
 } // namespace
 
@@ -62,6 +63,10 @@ CaptureModel::CaptureModel(AppSettings* settings, QObject* parent)
   m_refreshTimer.setSingleShot(true);
   m_refreshTimer.setInterval(kRefreshDebounceMs);
   connect(&m_refreshTimer, &QTimer::timeout, this, &CaptureModel::refresh);
+
+  m_fallbackRefreshTimer.setInterval(kFallbackRefreshMs);
+  connect(&m_fallbackRefreshTimer, &QTimer::timeout, this,
+          &CaptureModel::scheduleRefresh);
 
   connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this,
           [this] { scheduleRefresh(); });
@@ -285,6 +290,9 @@ QString CaptureModel::pathAt(int row) const {
 }
 
 int CaptureModel::rowOf(const QString& path) const {
+  if (m_rowIndexValid) {
+    return m_rowsByPath.value(path, -1);
+  }
   for (int row = 0; row < m_records.size(); ++row) {
     if (m_records.at(row).path == path) {
       return row;
@@ -298,23 +306,20 @@ void CaptureModel::applyCapturedDates(const QList<CapturedDateUpdate>& updates) 
     return;
   }
 
-  QHash<QString, const CapturedDateUpdate*> byPath;
-  byPath.reserve(updates.size());
-  for (const CapturedDateUpdate& update : updates) {
-    if (update.captured.isValid()) {
-      byPath.insert(update.path, &update);
-    }
-  }
-
   int firstChanged = m_records.size();
   int lastChanged = -1;
-  for (int row = 0; row < m_records.size(); ++row) {
-    CaptureRecord& record = m_records[row];
-    const auto found = byPath.constFind(record.path);
-    if (found == byPath.cend() || record.hasProducerTimestamp) {
+  for (const CapturedDateUpdate& update : updates) {
+    if (!update.captured.isValid()) {
       continue;
     }
-    const CapturedDateUpdate& update = **found;
+    const int row = rowOf(update.path);
+    if (row < 0) {
+      continue;
+    }
+    CaptureRecord& record = m_records[row];
+    if (record.hasProducerTimestamp) {
+      continue;
+    }
     if (record.modified != update.modified || record.bytes != update.bytes ||
         record.device != update.device || record.inode != update.inode) {
       continue;
@@ -406,6 +411,9 @@ void CaptureModel::releasePath(const QString& path) {
 
 void CaptureModel::adoptResults(ScanResult result) {
   QList<CaptureRecord>& scanned = result.records;
+  // Row signals can invoke rowOf while this diff is in progress. Fall back to
+  // the live list until every removal and insertion has settled.
+  m_rowIndexValid = false;
   if (!m_heldPaths.isEmpty()) {
     scanned.removeIf(
         [this](const CaptureRecord& record) { return m_heldPaths.contains(record.path); });
@@ -502,6 +510,8 @@ void CaptureModel::adoptResults(ScanResult result) {
     endInsertRows();
   }
 
+  rebuildRowIndex();
+
   m_scanning = false;
   emit scanningChanged();
   emit countChanged();
@@ -514,6 +524,15 @@ void CaptureModel::adoptResults(ScanResult result) {
     m_rescanQueued = false;
     scheduleRefresh();
   }
+}
+
+void CaptureModel::rebuildRowIndex() {
+  m_rowsByPath.clear();
+  m_rowsByPath.reserve(m_records.size());
+  for (int row = 0; row < m_records.size(); ++row) {
+    m_rowsByPath.insert(m_records.at(row).path, row);
+  }
+  m_rowIndexValid = true;
 }
 
 void CaptureModel::applyMarks() {
@@ -536,17 +555,28 @@ void CaptureModel::applyMarks() {
 }
 
 void CaptureModel::rewatch(const QStringList& scannedDirectories) {
-  if (!m_watcher.directories().isEmpty()) {
-    m_watcher.removePaths(m_watcher.directories());
-  }
-
   // QFileSystemWatcher is not recursive. The worker scan returns every
   // directory it visited, so installing watches here performs no second walk
   // on the GUI thread. Keep a generous cap so a pathological tree cannot
   // consume the user's inotify allowance. A missing root is watched through
   // its nearest existing ancestor so creating or mounting it triggers a scan.
+  // Trees beyond the cap get a quiet worker rescan once a minute instead.
   constexpr int kMaximumWatches = 4096;
-  QStringList existing;
+  QStringList wanted;
+  QSet<QString> wantedSet;
+  bool incomplete = false;
+  const auto addWanted = [&](const QString& path) {
+    if (path.isEmpty() || wantedSet.contains(path)) {
+      return;
+    }
+    if (wanted.size() >= kMaximumWatches) {
+      incomplete = true;
+      return;
+    }
+    wanted.append(path);
+    wantedSet.insert(path);
+  };
+
   for (const CaptureScanner::Root& root : roots()) {
     QDir candidate(root.path);
     while (!candidate.exists() && !candidate.isRoot()) {
@@ -559,20 +589,42 @@ void CaptureModel::rewatch(const QStringList& scannedDirectories) {
     }
 
     const QString path = candidate.canonicalPath();
-    if (!path.isEmpty() && !existing.contains(path) && existing.size() < kMaximumWatches) {
-      existing.append(path);
+    addWanted(path);
+  }
+  QStringList orderedDirectories = scannedDirectories;
+  orderedDirectories.sort(Qt::CaseSensitive);
+  for (const QString& directory : std::as_const(orderedDirectories)) {
+    addWanted(directory);
+  }
+
+  const QStringList watched = m_watcher.directories();
+  const QSet<QString> current(watched.cbegin(), watched.cend());
+  QStringList removed;
+  for (const QString& path : current) {
+    if (!wantedSet.contains(path)) {
+      removed.append(path);
     }
   }
-  for (const QString& directory : scannedDirectories) {
-    if (existing.size() >= kMaximumWatches) {
-      break;
-    }
-    if (!existing.contains(directory)) {
-      existing.append(directory);
+  if (!removed.isEmpty()) {
+    m_watcher.removePaths(removed);
+  }
+
+  QStringList added;
+  for (const QString& path : std::as_const(wanted)) {
+    if (!current.contains(path)) {
+      added.append(path);
     }
   }
-  if (!existing.isEmpty()) {
-    m_watcher.addPaths(existing);
+  if (!added.isEmpty() && !m_watcher.addPaths(added).isEmpty()) {
+    incomplete = true;
+  }
+
+  if (incomplete) {
+    if (!m_fallbackRefreshTimer.isActive()) {
+      m_fallbackRefreshTimer.start();
+    }
+  } else {
+    m_fallbackRefreshTimer.stop();
   }
 }
 

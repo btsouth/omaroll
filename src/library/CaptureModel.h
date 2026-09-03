@@ -127,11 +127,14 @@ private:
   void scheduleMidnight();
   void applyMarks();
   void adoptResults(ScanResult result);
+  void rebuildRowIndex();
 
   AppSettings* m_settings = nullptr;
   QStringList m_extraRoots;
   QSet<QString> m_heldPaths;
   QList<CaptureRecord> m_records;
+  QHash<QString, int> m_rowsByPath;
+  bool m_rowIndexValid = true;
   QHash<QString, CapturedDateUpdate> m_capturedDates;
   QFileSystemWatcher m_watcher;
   QFutureWatcher<ScanResult> m_scanWatcher;
@@ -141,6 +144,9 @@ private:
   // omarchy-capture-* writes and the compositor's own churn both arrive as
   // bursts; coalesce so a single screenshot does not trigger several rescans.
   QTimer m_refreshTimer;
+  // Used only when a very broad tree exceeds the bounded inotify watch set.
+  // The scan itself stays on the worker thread.
+  QTimer m_fallbackRefreshTimer;
   QTimer m_midnightTimer;
   QDate m_labelDate;
   bool m_scanning = false;

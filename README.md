@@ -45,7 +45,8 @@ on them.
   the library from Settings, then switch between folders from the library bar.
   Photos and videos use their embedded original date when available, with the
   file modification time only as a fallback. Omaroll never imports or copies
-  media into its own storage.
+  media into its own storage. Large libraries use bounded metadata batches,
+  lazy thumbnails, and worker-thread rescans.
 - **Builds real albums.** Select files, add them to a named collection, and
   browse it beside your folders. Albums never move or copy media. If an album
   file is renamed or moved within the library, Omaroll repairs the entry by

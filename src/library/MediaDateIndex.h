@@ -6,17 +6,17 @@
 #include <QList>
 #include <QObject>
 #include <QProcess>
+#include <QSet>
 #include <QTimer>
-
-#include <optional>
 
 // Reads the original capture date embedded in general photos and videos.
 //
 // Discovery itself stays a fast filesystem walk. Once a scan lands, this
-// class checks one file at a time with ImageMagick or ffprobe and replaces only
-// mtime fallbacks. Omarchy's timestamped capture names always remain
-// authoritative. Results, including "no embedded date", are cached by path
-// and filesystem identity so an unchanged library is not probed every launch.
+// class checks small image batches with ImageMagick and videos one at a time
+// with ffprobe, then replaces only mtime fallbacks. Omarchy's timestamped
+// capture names always remain authoritative. Results, including "no embedded
+// date", are cached by path and filesystem identity so an unchanged library
+// is not probed every launch.
 class MediaDateIndex final : public QObject {
   Q_OBJECT
   Q_PROPERTY(bool indexing READ indexing NOTIFY indexingChanged)
@@ -60,7 +60,10 @@ private:
   void sync();
   void processNext();
   void finishCurrent(bool successful);
+  [[nodiscard]] bool isCurrent(const Candidate& candidate) const;
   [[nodiscard]] bool stillCurrent(const Candidate& candidate) const;
+  [[nodiscard]] static QHash<int, QDateTime> parseImageBatch(
+      const QByteArray& output, QSet<int>* completed);
   void adopt(const Candidate& candidate, const QDateTime& captured);
   void setIndexing(bool value);
   void resetProgress(int total);
@@ -75,7 +78,7 @@ private:
   QHash<QString, Entry> m_entries;
   QList<Candidate> m_queue;
   QHash<QString, QString> m_failed;
-  std::optional<Candidate> m_current;
+  QList<Candidate> m_current;
   QProcess m_process;
   QTimer m_timeout;
   QTimer m_syncTimer;

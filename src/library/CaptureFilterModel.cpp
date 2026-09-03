@@ -317,16 +317,16 @@ void CaptureFilterModel::setOcrText(const QString& path, const QString& text) {
 }
 
 int CaptureFilterModel::rowOf(const QString& path) const {
-  if (path.isEmpty()) {
+  if (path.isEmpty() || !sourceModel()) {
     return -1;
   }
-  const int rows = rowCount();
-  for (int row = 0; row < rows; ++row) {
-    if (data(index(row, 0), CaptureRoles::PathRole).toString() == path) {
-      return row;
-    }
+  const auto* source = static_cast<const CaptureModel*>(sourceModel());
+  const int sourceRow = source->rowOf(path);
+  if (sourceRow < 0) {
+    return -1;
   }
-  return -1;
+  const QModelIndex proxyIndex = mapFromSource(source->index(sourceRow, 0));
+  return proxyIndex.isValid() ? proxyIndex.row() : -1;
 }
 
 QString CaptureFilterModel::adjacentPathInFolder(const QString& path, int direction) const {

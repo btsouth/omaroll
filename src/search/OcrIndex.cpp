@@ -249,24 +249,29 @@ void OcrIndex::sync() {
   m_queue.clear();
   // Captures are the main search case, so read screenshots before general
   // pictures. Each group remains newest-first in the model's scan order.
-  for (const bool screenshots : {true, false}) {
-    for (int row = 0; row < m_model->rowCount(); ++row) {
-      const auto& record = m_model->recordAt(row);
-      if (record.isVideo() || (record.kind == CaptureRecord::Screenshot) != screenshots) {
-        continue;
-      }
-      const Candidate candidate{record.path, record.modified, record.bytes};
-      const auto known = m_entries.constFind(candidate.path);
-      if ((known != m_entries.cend() && known->modified == candidate.modified &&
-           known->bytes == candidate.bytes) ||
-          (m_current && m_current->path == candidate.path) ||
-          m_failed.contains(cachePath(candidate.path) + QString::number(candidate.modified) +
-                            QLatin1Char(':') + QString::number(candidate.bytes))) {
-        continue;
-      }
-      m_queue.append(candidate);
+  QList<Candidate> screenshots;
+  QList<Candidate> pictures;
+  screenshots.reserve(m_model->rowCount());
+  pictures.reserve(m_model->rowCount());
+  for (int row = 0; row < m_model->rowCount(); ++row) {
+    const auto& record = m_model->recordAt(row);
+    if (record.isVideo()) {
+      continue;
     }
+    const Candidate candidate{record.path, record.modified, record.bytes};
+    const auto known = m_entries.constFind(candidate.path);
+    const bool alreadyRunning =
+        m_current && m_current->path == candidate.path &&
+        m_current->modified == candidate.modified && m_current->bytes == candidate.bytes;
+    if ((known != m_entries.cend() && known->modified == candidate.modified &&
+         known->bytes == candidate.bytes) ||
+        alreadyRunning || m_failed.contains(failureKey(candidate))) {
+      continue;
+    }
+    (record.kind == CaptureRecord::Screenshot ? screenshots : pictures).append(candidate);
   }
+  m_queue = std::move(screenshots);
+  m_queue.append(std::move(pictures));
 
   resetProgress(m_queue.size() + (m_current && !m_currentForReview ? 1 : 0));
   setIndexing(m_current.has_value() || !m_queue.isEmpty());
@@ -550,6 +555,6 @@ void OcrIndex::publishReview(const Candidate& candidate, const QString& text,
 }
 
 QString OcrIndex::failureKey(const Candidate& candidate) const {
-  return cachePath(candidate.path) + QString::number(candidate.modified) +
+  return candidate.path + QChar::Null + QString::number(candidate.modified) +
          QLatin1Char(':') + QString::number(candidate.bytes);
 }

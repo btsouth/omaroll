@@ -11,6 +11,7 @@
 #include <QSet>
 #include <QStandardPaths>
 
+#include <algorithm>
 #include <utility>
 
 namespace {
@@ -19,7 +20,10 @@ constexpr quint32 kCacheMagic = 0x4f4d4431; // OMD1
 constexpr quint16 kCacheVersion = 2;
 constexpr qint64 kMaximumCacheBytes = 16 * 1024 * 1024;
 constexpr quint32 kMaximumCacheEntries = 100'000;
-constexpr int kProbeTimeoutMs = 5000;
+constexpr int kImageBatchSize = 32;
+constexpr int kImageBatchTimeoutMs = 30'000;
+constexpr int kVideoProbeTimeoutMs = 5000;
+constexpr auto kImageRecordPrefix = "\x1e" "OMAROLL_DATE:";
 
 QString cacheHome() {
   const QString configured = qEnvironmentVariable("XDG_CACHE_HOME");
@@ -91,7 +95,6 @@ MediaDateIndex::MediaDateIndex(CaptureModel* model, QObject* parent)
   loadCache();
 
   m_timeout.setSingleShot(true);
-  m_timeout.setInterval(kProbeTimeoutMs);
   connect(&m_timeout, &QTimer::timeout, &m_process, &QProcess::kill);
   connect(&m_process, &QProcess::finished, this,
           [this](int exitCode, QProcess::ExitStatus status) {
@@ -149,6 +152,29 @@ QDateTime MediaDateIndex::parseImageDate(const QByteArray& output) {
   return {};
 }
 
+QHash<int, QDateTime> MediaDateIndex::parseImageBatch(const QByteArray& output,
+                                                      QSet<int>* completed) {
+  QHash<int, QDateTime> dates;
+  const QStringList lines =
+      QString::fromUtf8(output).split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+  const QString prefix = QString::fromLatin1(kImageRecordPrefix);
+  for (int line = 0; line < lines.size(); ++line) {
+    if (!lines.at(line).startsWith(prefix)) {
+      continue;
+    }
+    bool okay = false;
+    const int index = QStringView{lines.at(line)}.mid(prefix.size()).toInt(&okay);
+    if (!okay || index < 0) {
+      continue;
+    }
+    completed->insert(index);
+    const QString fields = lines.value(line + 1) + QLatin1Char('\n') +
+                           lines.value(line + 2) + QLatin1Char('\n');
+    dates.insert(index, parseImageDate(fields.toUtf8()));
+  }
+  return dates;
+}
+
 QDateTime MediaDateIndex::parseVideoDate(const QByteArray& output) {
   QJsonParseError error;
   const QJsonDocument document = QJsonDocument::fromJson(output, &error);
@@ -178,46 +204,47 @@ void MediaDateIndex::sync() {
 
   QList<CaptureModel::CapturedDateUpdate> cachedDates;
   m_queue.clear();
-  for (int row = 0; row < m_model->rowCount(); ++row) {
-    const CaptureRecord& record = m_model->recordAt(row);
-    if (record.hasProducerTimestamp ||
-        (record.isVideo() ? m_videoProgram.isEmpty() : m_imageProgram.isEmpty())) {
-      continue;
-    }
-
-    const Candidate candidate{record.path, record.modified, record.bytes,
-                              record.isVideo(), record.device, record.inode};
-    const auto known = m_entries.constFind(record.path);
-    if (known != m_entries.cend() && known->modified == record.modified &&
-        known->bytes == record.bytes && known->device == record.device &&
-        known->inode == record.inode) {
-      if (known->captured.isValid()) {
-        cachedDates.append({record.path, record.modified, record.bytes,
-                            known->captured, record.device, record.inode});
+  // Group images so one ImageMagick process can inspect a bounded batch.
+  // Each group remains newest-first in the model's scan order.
+  for (const bool videos : {false, true}) {
+    for (int row = 0; row < m_model->rowCount(); ++row) {
+      const CaptureRecord& record = m_model->recordAt(row);
+      if (record.isVideo() != videos || record.hasProducerTimestamp ||
+          (videos ? m_videoProgram.isEmpty() : m_imageProgram.isEmpty())) {
+        continue;
       }
-      continue;
-    }
-    if (known != m_entries.cend()) {
-      m_entries.erase(known);
-      m_cacheDirty = true;
-    }
 
-    const auto failed = m_failed.constFind(record.path);
-    if ((failed != m_failed.cend() &&
-         failed.value() == identityKey(record.modified, record.bytes, record.device,
-                                       record.inode)) ||
-        (m_current && m_current->path == record.path &&
-         m_current->modified == record.modified && m_current->bytes == record.bytes &&
-         m_current->device == record.device && m_current->inode == record.inode &&
-         m_current->video == record.isVideo())) {
-      continue;
+      const Candidate candidate{record.path, record.modified, record.bytes,
+                                record.isVideo(), record.device, record.inode};
+      const auto known = m_entries.constFind(record.path);
+      if (known != m_entries.cend() && known->modified == record.modified &&
+          known->bytes == record.bytes && known->device == record.device &&
+          known->inode == record.inode) {
+        if (known->captured.isValid()) {
+          cachedDates.append({record.path, record.modified, record.bytes,
+                              known->captured, record.device, record.inode});
+        }
+        continue;
+      }
+      if (known != m_entries.cend()) {
+        m_entries.erase(known);
+        m_cacheDirty = true;
+      }
+
+      const auto failed = m_failed.constFind(record.path);
+      if ((failed != m_failed.cend() &&
+           failed.value() == identityKey(record.modified, record.bytes, record.device,
+                                         record.inode)) ||
+          isCurrent(candidate)) {
+        continue;
+      }
+      m_queue.append(candidate);
     }
-    m_queue.append(candidate);
   }
 
   m_model->applyCapturedDates(cachedDates);
-  resetProgress(m_queue.size() + (m_current ? 1 : 0));
-  setIndexing(m_current.has_value() || !m_queue.isEmpty());
+  resetProgress(m_queue.size() + m_current.size());
+  setIndexing(!m_current.isEmpty() || !m_queue.isEmpty());
   if (m_cacheDirty) {
     scheduleSave();
   }
@@ -225,7 +252,7 @@ void MediaDateIndex::sync() {
 }
 
 void MediaDateIndex::processNext() {
-  if (m_process.state() != QProcess::NotRunning || m_current.has_value()) {
+  if (m_process.state() != QProcess::NotRunning || !m_current.isEmpty()) {
     return;
   }
   if (m_queue.isEmpty()) {
@@ -233,52 +260,101 @@ void MediaDateIndex::processNext() {
     return;
   }
 
-  const Candidate candidate = m_queue.takeFirst();
-  if (!stillCurrent(candidate)) {
+  const Candidate first = m_queue.takeFirst();
+  if (!stillCurrent(first)) {
     advanceProgress();
     QTimer::singleShot(0, this, &MediaDateIndex::processNext);
     return;
   }
 
-  m_current = candidate;
-  m_process.setProgram(candidate.video ? m_videoProgram : m_imageProgram);
+  m_current.append(first);
+  if (!first.video) {
+    while (m_current.size() < kImageBatchSize && !m_queue.isEmpty() &&
+           !m_queue.first().video) {
+      const Candidate candidate = m_queue.takeFirst();
+      if (stillCurrent(candidate)) {
+        m_current.append(candidate);
+      } else {
+        advanceProgress();
+      }
+    }
+  }
+
+  m_process.setProgram(first.video ? m_videoProgram : m_imageProgram);
   m_process.setProcessChannelMode(QProcess::SeparateChannels);
-  if (candidate.video) {
+  if (first.video) {
     m_process.setArguments(
         {QStringLiteral("-v"), QStringLiteral("error"),
          QStringLiteral("-show_entries"),
          QStringLiteral("format_tags=creation_time,com.apple.quicktime.creationdate:"
                         "stream_tags=creation_time,com.apple.quicktime.creationdate"),
-         QStringLiteral("-of"), QStringLiteral("json"), candidate.path});
+         QStringLiteral("-of"), QStringLiteral("json"), first.path});
+    m_timeout.setInterval(kVideoProbeTimeoutMs);
   } else {
-    m_process.setArguments(
-        {QStringLiteral("identify"), QStringLiteral("-ping"),
-         QStringLiteral("-quiet"), QStringLiteral("-format"),
-         QStringLiteral("%[EXIF:DateTimeOriginal]\\n%[EXIF:DateTimeDigitized]\\n"),
-         candidate.path});
+    QStringList arguments = {QStringLiteral("identify"), QStringLiteral("-ping"),
+                             QStringLiteral("-quiet")};
+    for (int index = 0; index < m_current.size(); ++index) {
+      arguments.append(
+          {QStringLiteral("-format"),
+           QStringLiteral("%1%2\\n%[EXIF:DateTimeOriginal]\\n"
+                          "%[EXIF:DateTimeDigitized]\\n")
+               .arg(QString::fromLatin1(kImageRecordPrefix))
+               .arg(index),
+           m_current.at(index).path});
+    }
+    m_process.setArguments(arguments);
+    m_timeout.setInterval(kImageBatchTimeoutMs);
   }
   m_process.start(QIODevice::ReadOnly);
   m_timeout.start();
 }
 
 void MediaDateIndex::finishCurrent(bool successful) {
-  if (!m_current) {
+  if (m_current.isEmpty()) {
     return;
   }
   m_timeout.stop();
-  const Candidate candidate = *m_current;
-  m_current.reset();
+  const QList<Candidate> batch = std::exchange(m_current, {});
+  const QByteArray output = m_process.readAllStandardOutput();
 
-  if (successful && stillCurrent(candidate)) {
-    const QByteArray output = m_process.readAllStandardOutput();
-    adopt(candidate, candidate.video ? parseVideoDate(output) : parseImageDate(output));
+  if (batch.first().video) {
+    const Candidate& candidate = batch.first();
+    if (successful && stillCurrent(candidate)) {
+      adopt(candidate, parseVideoDate(output));
+    } else if (stillCurrent(candidate)) {
+      m_failed.insert(candidate.path,
+                      identityKey(candidate.modified, candidate.bytes, candidate.device,
+                                  candidate.inode));
+    }
+    advanceProgress();
   } else {
-    m_failed.insert(candidate.path,
-                    identityKey(candidate.modified, candidate.bytes, candidate.device,
-                                candidate.inode));
+    QSet<int> completed;
+    const QHash<int, QDateTime> dates = parseImageBatch(output, &completed);
+    for (int index = 0; index < batch.size(); ++index) {
+      const Candidate& candidate = batch.at(index);
+      if (completed.contains(index) && stillCurrent(candidate)) {
+        adopt(candidate, dates.value(index));
+      } else if (stillCurrent(candidate)) {
+        m_failed.insert(candidate.path,
+                        identityKey(candidate.modified, candidate.bytes, candidate.device,
+                                    candidate.inode));
+      }
+      advanceProgress();
+    }
   }
-  advanceProgress();
   QTimer::singleShot(0, this, &MediaDateIndex::processNext);
+}
+
+bool MediaDateIndex::isCurrent(const Candidate& candidate) const {
+  return std::any_of(m_current.cbegin(), m_current.cend(),
+                     [&candidate](const Candidate& current) {
+                       return current.path == candidate.path &&
+                              current.modified == candidate.modified &&
+                              current.bytes == candidate.bytes &&
+                              current.device == candidate.device &&
+                              current.inode == candidate.inode &&
+                              current.video == candidate.video;
+                     });
 }
 
 bool MediaDateIndex::stillCurrent(const Candidate& candidate) const {

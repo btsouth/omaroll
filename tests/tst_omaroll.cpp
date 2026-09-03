@@ -1130,6 +1130,75 @@ private slots:
     QVERIFY(!runs.at(3).contains(QStringLiteral("--psm 11")));
   }
 
+  void clearingOcrSearchStopsTheQueuedLibraryWork() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QByteArray previousPath = qgetenv("PATH");
+    const QByteArray previousLog = qgetenv("OMAROLL_OCR_CANCEL_LOG");
+    const QByteArray previousCache = qgetenv("XDG_CACHE_HOME");
+    const QByteArray previousPictures = qgetenv("XDG_PICTURES_DIR");
+    const QByteArray previousVideos = qgetenv("XDG_VIDEOS_DIR");
+    const QByteArray previousShots = qgetenv("OMARCHY_SCREENSHOT_DIR");
+    const QByteArray previousRecordings = qgetenv("OMARCHY_SCREENRECORD_DIR");
+    const auto restore = qScopeGuard([&] {
+      const auto putBack = [](const char* name, const QByteArray& value) {
+        value.isNull() ? qunsetenv(name) : qputenv(name, value);
+      };
+      putBack("PATH", previousPath);
+      putBack("OMAROLL_OCR_CANCEL_LOG", previousLog);
+      putBack("XDG_CACHE_HOME", previousCache);
+      putBack("XDG_PICTURES_DIR", previousPictures);
+      putBack("XDG_VIDEOS_DIR", previousVideos);
+      putBack("OMARCHY_SCREENSHOT_DIR", previousShots);
+      putBack("OMARCHY_SCREENRECORD_DIR", previousRecordings);
+    });
+
+    const QString logPath = dir.filePath(QStringLiteral("ocr-cancel.log"));
+    QFile tesseract(dir.filePath(QStringLiteral("tesseract")));
+    QVERIFY(tesseract.open(QIODevice::WriteOnly));
+    tesseract.write("#!/bin/sh\n"
+                    "printf 'run\\n' >> \"$OMAROLL_OCR_CANCEL_LOG\"\n"
+                    "/usr/bin/sleep 0.15\n"
+                    "printf 'Nothing relevant here\\n'\n");
+    tesseract.close();
+    QVERIFY(tesseract.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                     QFileDevice::ExeOwner));
+    QVERIFY(qputenv("PATH", dir.path().toUtf8()));
+    QVERIFY(qputenv("OMAROLL_OCR_CANCEL_LOG", logPath.toUtf8()));
+    QVERIFY(qputenv("XDG_CACHE_HOME", dir.filePath(QStringLiteral("cache")).toUtf8()));
+    for (const char* name : {"XDG_PICTURES_DIR", "XDG_VIDEOS_DIR",
+                             "OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR"}) {
+      QVERIFY(qputenv(name, dir.path().toUtf8()));
+    }
+
+    QImage image(4, 4, QImage::Format_RGB32);
+    image.fill(Qt::white);
+    for (int index = 0; index < 16; ++index) {
+      QVERIFY(image.save(dir.filePath(QStringLiteral("photo-%1.png").arg(index)), "PNG"));
+    }
+
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QSignalSpy scanned(&model, &CaptureModel::countChanged);
+    QVERIFY(scanned.wait(5000));
+    QCOMPARE(model.rowCount(), 16);
+
+    OcrIndex index(&model);
+    index.setSearchText(QStringLiteral("needle"));
+    QTRY_VERIFY(index.indexing());
+    QCOMPARE(index.total(), 16);
+    index.setSearchText({});
+    QVERIFY(!index.indexing());
+    QCOMPARE(index.total(), 0);
+
+    QTest::qWait(300);
+    QFile log(logPath);
+    QVERIFY(log.open(QIODevice::ReadOnly));
+    QCOMPARE(log.readAll().count("run\n"), 1);
+  }
+
   void ocrReviewPreservesLayoutHandlesEmptyAndRejectsStaleResults() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -1579,12 +1648,21 @@ private slots:
     QFile magick(dir.filePath(QStringLiteral("magick")));
     QVERIFY(magick.open(QIODevice::WriteOnly));
     magick.write("#!/bin/sh\n"
-                 "for last do :; done\n"
-                 "case \"$last\" in\n"
-                 "  *undated*) printf '\\n\\n' ;;\n"
-                 "  *) printf '2020:05:06 07:08:09\\n\\n' ;;\n"
-                 "esac\n"
-                 "printf 'image\\n' >> \"$OMAROLL_DATE_TEST_LOG\"\n");
+                 "printf 'image\\n' >> \"$OMAROLL_DATE_TEST_LOG\"\n"
+                 "index=0\n"
+                 "while [ \"$#\" -gt 0 ]; do\n"
+                 "  if [ \"$1\" = -format ] && [ \"$#\" -ge 3 ]; then\n"
+                 "    printf '\\036OMAROLL_DATE:%s\\n' \"$index\"\n"
+                 "    case \"$3\" in\n"
+                 "      *undated*) printf '\\n\\n' ;;\n"
+                 "      *) printf '2020:05:06 07:08:09\\n\\n' ;;\n"
+                 "    esac\n"
+                 "    index=$((index + 1))\n"
+                 "    shift 3\n"
+                 "  else\n"
+                 "    shift\n"
+                 "  fi\n"
+                 "done\n");
     magick.close();
     QVERIFY(magick.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
                                   QFileDevice::ExeOwner));
@@ -1675,7 +1753,8 @@ private slots:
     QVERIFY(firstLog.open(QIODevice::ReadOnly));
     const QByteArray firstRuns = firstLog.readAll();
     firstLog.close();
-    QCOMPARE(firstRuns.count('\n'), 3);
+    QCOMPARE(firstRuns.count("image\n"), 1);
+    QCOMPARE(firstRuns.count("video\n"), 1);
     const QFileInfo dateCache(MediaDateIndex::cachePath());
     QVERIFY(dateCache.isFile());
     const QFileDevice::Permissions publicPermissions =
@@ -1692,6 +1771,121 @@ private slots:
     QFile secondLog(logPath);
     QVERIFY(secondLog.open(QIODevice::ReadOnly));
     QCOMPARE(secondLog.readAll(), firstRuns);
+  }
+
+  void imageDatesUseBoundedBatchesAndPathIndexesStayCorrect() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QByteArray previousPath = qgetenv("PATH");
+    const QByteArray previousLog = qgetenv("OMAROLL_DATE_BATCH_LOG");
+    const QByteArray previousCache = qgetenv("XDG_CACHE_HOME");
+    const QByteArray previousPictures = qgetenv("XDG_PICTURES_DIR");
+    const QByteArray previousVideos = qgetenv("XDG_VIDEOS_DIR");
+    const QByteArray previousShots = qgetenv("OMARCHY_SCREENSHOT_DIR");
+    const QByteArray previousRecordings = qgetenv("OMARCHY_SCREENRECORD_DIR");
+    const auto restore = qScopeGuard([&] {
+      const auto putBack = [](const char* name, const QByteArray& value) {
+        value.isNull() ? qunsetenv(name) : qputenv(name, value);
+      };
+      putBack("PATH", previousPath);
+      putBack("OMAROLL_DATE_BATCH_LOG", previousLog);
+      putBack("XDG_CACHE_HOME", previousCache);
+      putBack("XDG_PICTURES_DIR", previousPictures);
+      putBack("XDG_VIDEOS_DIR", previousVideos);
+      putBack("OMARCHY_SCREENSHOT_DIR", previousShots);
+      putBack("OMARCHY_SCREENRECORD_DIR", previousRecordings);
+    });
+
+    const QString logPath = dir.filePath(QStringLiteral("date-batches.log"));
+    QFile magick(dir.filePath(QStringLiteral("magick")));
+    QVERIFY(magick.open(QIODevice::WriteOnly));
+    magick.write("#!/bin/sh\n"
+                 "printf 'batch\\n' >> \"$OMAROLL_DATE_BATCH_LOG\"\n"
+                 "index=0\n"
+                 "status=0\n"
+                 "while [ \"$#\" -gt 0 ]; do\n"
+                 "  if [ \"$1\" = -format ] && [ \"$#\" -ge 3 ]; then\n"
+                 "    case \"$3\" in\n"
+                 "      *'photo 32 #'*) status=1 ;;\n"
+                 "      *) printf '\\036OMAROLL_DATE:%s\\n2020:05:06 07:08:09\\n\\n' \"$index\" ;;\n"
+                 "    esac\n"
+                 "    index=$((index + 1))\n"
+                 "    shift 3\n"
+                 "  else\n"
+                 "    shift\n"
+                 "  fi\n"
+                 "done\n"
+                 "exit \"$status\"\n");
+    magick.close();
+    QVERIFY(magick.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                  QFileDevice::ExeOwner));
+    QVERIFY(qputenv("PATH", dir.path().toUtf8()));
+    QVERIFY(qputenv("OMAROLL_DATE_BATCH_LOG", logPath.toUtf8()));
+    QVERIFY(qputenv("XDG_CACHE_HOME", dir.filePath(QStringLiteral("cache")).toUtf8()));
+    for (const char* name : {"XDG_PICTURES_DIR", "XDG_VIDEOS_DIR",
+                             "OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR"}) {
+      QVERIFY(qputenv(name, dir.path().toUtf8()));
+    }
+
+    QImage image(4, 4, QImage::Format_RGB32);
+    image.fill(Qt::white);
+    QStringList paths;
+    for (int index = 0; index < 65; ++index) {
+      const QString path =
+          dir.filePath(QStringLiteral("photo %1 #.png").arg(index, 2, 10, QLatin1Char('0')));
+      QVERIFY(image.save(path, "PNG"));
+      paths.append(path);
+    }
+
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QSignalSpy scanned(&model, &CaptureModel::countChanged);
+    QVERIFY(scanned.wait(5000));
+    QCOMPARE(model.rowCount(), paths.size());
+
+    {
+      MediaDateIndex dates(&model);
+      QTRY_COMPARE_WITH_TIMEOUT(dates.total(), paths.size(), 2000);
+      QTRY_VERIFY_WITH_TIMEOUT(!dates.indexing(), 5000);
+      QCOMPARE(dates.completed(), paths.size());
+      for (const QString& path : std::as_const(paths)) {
+        const int row = model.rowOf(path);
+        QVERIFY(row >= 0);
+        if (path.endsWith(QStringLiteral("photo 32 #.png"))) {
+          QCOMPARE(model.recordAt(row).captured.toMSecsSinceEpoch(),
+                   model.recordAt(row).modified);
+        } else {
+          QCOMPARE(model.recordAt(row).captured,
+                   QDateTime(QDate(2020, 5, 6), QTime(7, 8, 9)));
+        }
+      }
+    }
+
+    QFile log(logPath);
+    QVERIFY(log.open(QIODevice::ReadOnly));
+    QCOMPARE(log.readAll().count("batch\n"), 3);
+
+    CaptureFilterModel proxy;
+    proxy.setSourceModel(&model);
+    QVERIFY(proxy.rowOf(paths.first()) >= 0);
+    proxy.setSearchText(QStringLiteral("does not exist"));
+    QCOMPARE(proxy.rowOf(paths.first()), -1);
+    proxy.setSearchText({});
+
+    const QString removed = paths.takeFirst();
+    QVERIFY(QFile::remove(removed));
+    const QString added = dir.filePath(QStringLiteral("new photo.png"));
+    QVERIFY(image.save(added, "PNG"));
+    scanned.clear();
+    model.refresh();
+    QVERIFY(scanned.wait(5000));
+    QCOMPARE(model.rowOf(removed), -1);
+    QVERIFY(model.rowOf(added) >= 0);
+    for (const QString& path : std::as_const(paths)) {
+      QVERIFY(model.rowOf(path) >= 0);
+    }
   }
 
   void imageDetailsRunLocallyForAnOddPath() {

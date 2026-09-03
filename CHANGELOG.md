@@ -18,6 +18,10 @@
   almost no text. Results still share the same private cache.
 - Viewer actions keep keyboard focus when moving between files or closing a
   nested sheet. Extracted text receives focus as soon as it is ready.
+- Large libraries use indexed path lookups and bounded image metadata batches.
+  OCR queues start and stop without hashing every path.
+- Libraries with more directories than the inotify safety cap get a periodic
+  worker rescan, while ordinary watcher updates only change affected paths.
 
 ## 1.1.0
 
