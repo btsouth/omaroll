@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0
 
 ### Added
 
@@ -41,6 +41,18 @@
   synchronous row and folder-index updates.
 - Late QR detection no longer moves keyboard focus to a different viewer
   action.
+
+### Install
+
+```bash
+curl -fLO https://github.com/tsouth89/omaroll/releases/download/v1.2.0/omaroll-1.2.0-1-x86_64.pkg.tar.zst \
+     -fLO https://github.com/tsouth89/omaroll/releases/download/v1.2.0/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+sudo pacman -U ./omaroll-1.2.0-1-x86_64.pkg.tar.zst
+```
+
+Every asset is covered by `SHA256SUMS` and a signed build attestation:
+`gh attestation verify omaroll-1.2.0-1-x86_64.pkg.tar.zst --repo tsouth89/omaroll`.
 
 ## 1.1.0
 

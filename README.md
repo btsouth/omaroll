@@ -182,10 +182,10 @@ the file to mpv.
 Requires Omarchy or Arch with Qt 6.8+.
 
 ```bash
-curl -fLO https://github.com/tsouth89/omaroll/releases/download/v1.1.0/omaroll-1.1.0-1-x86_64.pkg.tar.zst \
-     -fLO https://github.com/tsouth89/omaroll/releases/download/v1.1.0/SHA256SUMS
+curl -fLO https://github.com/tsouth89/omaroll/releases/download/v1.2.0/omaroll-1.2.0-1-x86_64.pkg.tar.zst \
+     -fLO https://github.com/tsouth89/omaroll/releases/download/v1.2.0/SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
-sudo pacman -U ./omaroll-1.1.0-1-x86_64.pkg.tar.zst
+sudo pacman -U ./omaroll-1.2.0-1-x86_64.pkg.tar.zst
 ```
 
 Run the same commands for a newer release to update. The package is prepared for
