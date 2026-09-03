@@ -14,6 +14,10 @@
 ### Changed
 
 - `Copy to clipboard` is now `Copy image`.
+- Extract Text retries sparse screenshots once when the normal OCR pass finds
+  almost no text. Results still share the same private cache.
+- Viewer actions keep keyboard focus when moving between files or closing a
+  nested sheet. Extracted text receives focus as soon as it is ready.
 
 ## 1.1.0
 

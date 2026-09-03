@@ -57,7 +57,7 @@ ApplicationWindow {
     function restoreFocusAfterSheet() {
         Qt.callLater(function () {
             if (detail.visible) {
-                detail.forceActiveFocus()
+                detail.restoreFocus()
             } else if (!root.modalOpen) {
                 library.forceActiveFocus()
             }

@@ -70,6 +70,7 @@ private:
 
   void sync();
   void processNext();
+  void startCurrentProcess(bool sparseText);
   void finishCurrent(bool successful);
   void setIndexing(bool value);
   void resetProgress(int total);
@@ -99,6 +100,8 @@ private:
   int m_completed = 0;
   int m_total = 0;
   bool m_currentForReview = false;
+  bool m_sparseTextPass = false;
+  QString m_firstPassText;
   QString m_reviewPath;
   qint64 m_reviewModified = 0;
   qint64 m_reviewBytes = 0;

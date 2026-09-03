@@ -361,6 +361,33 @@ private slots:
     QTRY_VERIFY(!detail->isVisible());
   }
 
+  void viewerSheetRestoresTheFocusedAction() {
+    QQuickItem* detail = item("detail");
+    QQuickItem* exportSheet = item("exportSheet");
+    openDetail(0);
+    QTRY_VERIFY(detail->isVisible());
+
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    for (int guard = 0; guard < 20 &&
+                        (!activeViewerAction() || activeViewerAction()->objectName() !=
+                                                      QStringLiteral("viewerAction_export"));
+         ++guard) {
+      QTest::keyClick(m_window, Qt::Key_Down);
+    }
+    QTRY_VERIFY(activeViewerAction() != nullptr);
+    QCOMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_export"));
+
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(exportSheet->isVisible());
+    QVERIFY(detail->isVisible());
+    QVERIFY(!detail->isEnabled());
+
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!exportSheet->isVisible());
+    QTRY_VERIFY(activeViewerAction() != nullptr);
+    QCOMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_export"));
+  }
+
   void escapeUnwindsAndReturnsFocusToTheGrid() {
     QQuickItem* settings = item("settingsSheet");
     QMetaObject::invokeMethod(settings, "open");
@@ -517,18 +544,30 @@ private slots:
     QTRY_VERIFY(detail->hasActiveFocus());
     QVERIFY(!detail->property("actionNavigationActive").toBool());
 
-    // Focus stays in the action pane while Left and Right retain their viewer
-    // meaning, including when the delegate model is rebuilt for another file.
+    // Focus stays on the same common action while Left and Right retain their
+    // viewer meaning and the delegate model is rebuilt for another file.
     QTest::keyClick(m_window, Qt::Key_Tab);
+    for (int guard = 0; guard < 20 &&
+                        (!activeViewerAction() || activeViewerAction()->objectName() !=
+                                                      QStringLiteral("viewerAction_copy"));
+         ++guard) {
+      QTest::keyClick(m_window, Qt::Key_Down);
+    }
+    QTRY_VERIFY(activeViewerAction() != nullptr);
+    QCOMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_copy"));
     const QString before = detail->property("path").toString();
     QTest::keyClick(m_window, Qt::Key_Right);
     QTRY_VERIFY(detail->property("path").toString() != before);
     QTRY_VERIFY(detail->property("actionNavigationActive").toBool());
     QTRY_VERIFY(activeViewerAction() != nullptr);
+    QCOMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_copy"));
 
     // Return and Space activate the focused row rather than the viewer's
     // default action. The first still action opens the matte sheet.
     openDetail(0);
+    QTest::qWait(30);
+    QTRY_VERIFY(activeViewerAction() != nullptr);
+    QCOMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_copy"));
     QMetaObject::invokeMethod(detail, "focusPreview");
     QTest::keyClick(m_window, Qt::Key_Tab);
     QTRY_VERIFY(activeViewerAction() != nullptr);
@@ -570,6 +609,7 @@ private slots:
     QQuickItem* editor = item("ocrTextArea");
     QTRY_COMPARE(editor->property("text").toString(),
                  QStringLiteral("First  line\nSecond line"));
+    QTRY_VERIFY(editor->hasActiveFocus());
     QVERIFY(QMetaObject::invokeMethod(editor, "select", Q_ARG(int, 0), Q_ARG(int, 5)));
     QTRY_COMPARE(editor->property("selectedText").toString(), QStringLiteral("First"));
     click(item("copyOcrSelection"));

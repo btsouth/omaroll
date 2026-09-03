@@ -70,6 +70,7 @@ Item {
         rotate: { key: Qt.Key_R, label: "R" }
     })
     property bool actionNavigationActive: false
+    property string focusedActionId: ""
 
     signal actionTriggered(string id)
     signal navigateRequested(int direction)
@@ -114,6 +115,7 @@ Item {
         }
         actionNavigationActive = true
         actions.currentIndex = index
+        focusedActionId = actions.model[index].id
         actions.positionViewAtIndex(index, ListView.Contain)
         Qt.callLater(function () {
             const item = actions.itemAtIndex(index)
@@ -126,6 +128,18 @@ Item {
 
     function focusFirstAction() {
         return focusAction(firstAvailableAction())
+    }
+
+    function focusActionById(id) {
+        if (id === "") {
+            return false
+        }
+        for (let index = 0; index < actions.count; ++index) {
+            if (actions.model[index].id === id && actions.model[index].available) {
+                return focusAction(index)
+            }
+        }
+        return false
     }
 
     function focusRelativeAction(direction) {
@@ -144,12 +158,23 @@ Item {
 
     function focusPreview() {
         actionNavigationActive = false
+        focusedActionId = ""
         actions.currentIndex = -1
         forceActiveFocus()
     }
 
+    function restoreFocus() {
+        if (actionNavigationActive) {
+            if (focusActionById(focusedActionId) || focusFirstAction()) {
+                return
+            }
+        }
+        focusPreview()
+    }
+
     function open() {
         const keepActionFocus = visible && actionNavigationActive
+        const previousActionId = focusedActionId
         playbackError = ""
         if (!visible) {
             showInfo = true
@@ -158,7 +183,11 @@ Item {
         resetImageView()
         visible = true
         if (keepActionFocus) {
-            Qt.callLater(root.focusFirstAction)
+            Qt.callLater(function () {
+                if (!root.focusActionById(previousActionId)) {
+                    root.focusFirstAction()
+                }
+            })
         } else {
             focusPreview()
         }
@@ -228,6 +257,7 @@ Item {
         setSlideshow(false)
         setFullScreen(false)
         actionNavigationActive = false
+        focusedActionId = ""
         actions.currentIndex = -1
         visible = false
     }
@@ -1073,9 +1103,7 @@ Item {
                     TapHandler {
                         enabled: row.usable
                         onSingleTapped: {
-                            root.actionNavigationActive = true
-                            actions.currentIndex = row.index
-                            row.forceActiveFocus()
+                            root.focusAction(row.index)
                             root.actionTriggered(row.modelData.id)
                         }
                     }

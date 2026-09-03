@@ -1020,6 +1020,116 @@ private slots:
     QCOMPARE(cache.entryList({QStringLiteral("*.ocr")}, QDir::Files).size(), 0);
   }
 
+  void sparseOcrRetryImprovesWeakRecognitionAndCachesTheResult() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QByteArray previousPath = qgetenv("PATH");
+    const QByteArray previousLog = qgetenv("OMAROLL_OCR_SPARSE_LOG");
+    const QByteArray previousCache = qgetenv("XDG_CACHE_HOME");
+    const QByteArray previousPictures = qgetenv("XDG_PICTURES_DIR");
+    const QByteArray previousVideos = qgetenv("XDG_VIDEOS_DIR");
+    const QByteArray previousShots = qgetenv("OMARCHY_SCREENSHOT_DIR");
+    const QByteArray previousRecordings = qgetenv("OMARCHY_SCREENRECORD_DIR");
+    const auto restore = qScopeGuard([&] {
+      const auto putBack = [](const char* name, const QByteArray& value) {
+        value.isNull() ? qunsetenv(name) : qputenv(name, value);
+      };
+      putBack("PATH", previousPath);
+      putBack("OMAROLL_OCR_SPARSE_LOG", previousLog);
+      putBack("XDG_CACHE_HOME", previousCache);
+      putBack("XDG_PICTURES_DIR", previousPictures);
+      putBack("XDG_VIDEOS_DIR", previousVideos);
+      putBack("OMARCHY_SCREENSHOT_DIR", previousShots);
+      putBack("OMARCHY_SCREENRECORD_DIR", previousRecordings);
+    });
+
+    const QString logPath = dir.filePath(QStringLiteral("sparse-runs.log"));
+    QFile tesseract(dir.filePath(QStringLiteral("tesseract")));
+    QVERIFY(tesseract.open(QIODevice::WriteOnly));
+    tesseract.write("#!/bin/sh\n"
+                    "printf '%s\\n' \"$*\" >> \"$OMAROLL_OCR_SPARSE_LOG\"\n"
+                    "sparse_mode=false\n"
+                    "for argument do\n"
+                    "  [ \"$argument\" = 11 ] && sparse_mode=true\n"
+                    "done\n"
+                    "case \"$1\" in\n"
+                    "  *sparse*)\n"
+                    "    if $sparse_mode; then printf 'Isolated label found\\n'; "
+                    "else printf 'x\\n'; fi ;;\n"
+                    "  *background*) printf 'x\\n' ;;\n"
+                    "  *) printf 'Enough text from the normal pass\\n' ;;\n"
+                    "esac\n");
+    tesseract.close();
+    QVERIFY(tesseract.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                     QFileDevice::ExeOwner));
+    QVERIFY(qputenv("PATH", dir.path().toUtf8() + ':' + previousPath));
+    QVERIFY(qputenv("OMAROLL_OCR_SPARSE_LOG", logPath.toUtf8()));
+    QVERIFY(qputenv("XDG_CACHE_HOME", dir.filePath(QStringLiteral("cache")).toUtf8()));
+    for (const char* name : {"XDG_PICTURES_DIR", "XDG_VIDEOS_DIR",
+                             "OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR"}) {
+      QVERIFY(qputenv(name, dir.path().toUtf8()));
+    }
+
+    const auto makeImage = [&dir](const QString& name) {
+      const QString path = dir.filePath(name);
+      QImage image(16, 12, QImage::Format_RGB32);
+      image.fill(Qt::white);
+      return image.save(path, "PNG") ? path : QString();
+    };
+    const QString sparse = makeImage(QStringLiteral("sparse.png"));
+    const QString normal = makeImage(QStringLiteral("normal.png"));
+    const QString background = makeImage(QStringLiteral("background.png"));
+    QVERIFY(!sparse.isEmpty() && !normal.isEmpty() && !background.isEmpty());
+
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QSignalSpy scanned(&model, &CaptureModel::countChanged);
+    QVERIFY(scanned.wait(5000));
+    QCOMPARE(model.rowCount(), 3);
+
+    CaptureFilterModel proxy;
+    proxy.setSourceModel(&model);
+    OcrIndex index(&model);
+    QVERIFY(index.available());
+    connect(&index, &OcrIndex::textReady, &proxy, &CaptureFilterModel::setOcrText);
+
+    index.recognize(sparse);
+    QTRY_VERIFY_WITH_TIMEOUT(!index.reviewing(), 3000);
+    QCOMPARE(index.reviewText(), QStringLiteral("Isolated label found"));
+    proxy.setSearchText(QStringLiteral("isolated label"));
+    QCOMPARE(proxy.count(), 1);
+    QCOMPARE(proxy.pathAt(0), sparse);
+    proxy.setSearchText({});
+
+    index.cancelReview();
+    index.recognize(sparse);
+    QVERIFY(!index.reviewing());
+    QCOMPARE(index.reviewText(), QStringLiteral("Isolated label found"));
+
+    index.recognize(normal);
+    QTRY_VERIFY_WITH_TIMEOUT(!index.reviewing(), 3000);
+    QCOMPARE(index.reviewText(), QStringLiteral("Enough text from the normal pass"));
+
+    // Background search remains single-pass even when its result is weak.
+    index.cancelReview();
+    proxy.setSearchText(QStringLiteral("not present"));
+    index.setSearchText(proxy.searchText());
+    QTRY_VERIFY_WITH_TIMEOUT(!index.indexing(), 3000);
+    QCOMPARE(proxy.count(), 0);
+
+    QFile log(logPath);
+    QVERIFY(log.open(QIODevice::ReadOnly));
+    const QStringList runs = QString::fromUtf8(log.readAll())
+                                 .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    QCOMPARE(runs.size(), 4);
+    QVERIFY(!runs.at(0).contains(QStringLiteral("--psm 11")));
+    QVERIFY(runs.at(1).contains(QStringLiteral("--psm 11")));
+    QVERIFY(!runs.at(2).contains(QStringLiteral("--psm 11")));
+    QVERIFY(!runs.at(3).contains(QStringLiteral("--psm 11")));
+  }
+
   void ocrReviewPreservesLayoutHandlesEmptyAndRejectsStaleResults() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -1119,7 +1229,7 @@ private slots:
 
     QFile log(logPath);
     QVERIFY(log.open(QIODevice::ReadOnly));
-    QCOMPARE(log.readAll().count("run\n"), 5);
+    QCOMPARE(log.readAll().count("run\n"), 6);
   }
 
   void qrDetectionCachesOnlyPresenceAndRejectsStaleResults() {

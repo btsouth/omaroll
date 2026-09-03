@@ -18,6 +18,7 @@ constexpr quint16 kCacheVersion = 3;
 constexpr qint64 kMaximumCacheEntryBytes = 4 * 1024 * 1024;
 constexpr qint64 kMaximumCacheBytes = 64 * 1024 * 1024;
 constexpr int kOcrTimeoutMs = 30'000;
+constexpr int kSparseTextThreshold = 6;
 
 QString cacheHome() {
   const QString configured = qEnvironmentVariable("XDG_CACHE_HOME");
@@ -40,6 +41,16 @@ QString normalizedText(const QString& text) {
   // match a phrase across Tesseract's line wrapping. The cache itself keeps
   // the layout-preserving text used by the review sheet.
   return text.simplified();
+}
+
+int usefulCharacterCount(const QString& text) {
+  int count = 0;
+  for (const QChar character : text) {
+    if (character.isLetterOrNumber()) {
+      ++count;
+    }
+  }
+  return count;
 }
 
 } // namespace
@@ -183,6 +194,8 @@ int OcrIndex::clearCache() {
   m_queue.clear();
   m_timeout.stop();
   m_current.reset();
+  m_sparseTextPass = false;
+  m_firstPassText.clear();
   m_reviewCandidate.reset();
   if (m_process.state() != QProcess::NotRunning) {
     m_process.kill();
@@ -305,13 +318,27 @@ void OcrIndex::processNext() {
 
   m_current = candidate;
   m_currentForReview = forReview;
+  m_sparseTextPass = false;
+  m_firstPassText.clear();
+  startCurrentProcess(false);
+}
+
+void OcrIndex::startCurrentProcess(bool sparseText) {
+  if (!m_current) {
+    return;
+  }
+  m_sparseTextPass = sparseText;
   m_process.setProgram(m_program);
-  m_process.setArguments({candidate.path, QStringLiteral("stdout"),
-                          QStringLiteral("--oem"), QStringLiteral("1"),
-                          QStringLiteral("-l"), m_languages,
-                          QStringLiteral("--dpi"), QStringLiteral("300"),
-                          QStringLiteral("-c"),
-                          QStringLiteral("preserve_interword_spaces=1")});
+  QStringList arguments = {m_current->path, QStringLiteral("stdout"),
+                           QStringLiteral("--oem"), QStringLiteral("1"),
+                           QStringLiteral("-l"), m_languages,
+                           QStringLiteral("--dpi"), QStringLiteral("300")};
+  if (sparseText) {
+    arguments.append({QStringLiteral("--psm"), QStringLiteral("11")});
+  }
+  arguments.append({QStringLiteral("-c"),
+                    QStringLiteral("preserve_interword_spaces=1")});
+  m_process.setArguments(arguments);
   m_process.setProcessChannelMode(QProcess::SeparateChannels);
   m_process.start(QIODevice::ReadOnly);
   m_timeout.start();
@@ -327,11 +354,35 @@ void OcrIndex::finishCurrent(bool successful) {
   m_timeout.stop();
   const Candidate candidate = *m_current;
   const bool forReview = m_currentForReview;
+  const bool sparseTextPass = m_sparseTextPass;
+  const QString passText = successful ? layoutText(m_process.readAllStandardOutput())
+                                      : QString();
+
+  const bool reviewStillWanted =
+      forReview && candidate.path == m_reviewPath &&
+      candidate.modified == m_reviewModified && candidate.bytes == m_reviewBytes;
+  if (!sparseTextPass && successful && stillCurrent(candidate) && reviewStillWanted &&
+      !m_reviewCandidate && usefulCharacterCount(passText) < kSparseTextThreshold) {
+    m_firstPassText = passText;
+    QTimer::singleShot(0, this, [this] {
+      if (m_current) {
+        startCurrentProcess(true);
+      }
+    });
+    return;
+  }
+
   m_current.reset();
   m_currentForReview = false;
+  m_sparseTextPass = false;
 
-  if (successful && stillCurrent(candidate)) {
-    const QString text = layoutText(m_process.readAllStandardOutput());
+  const bool hasSuccessfulFirstPass = sparseTextPass && stillCurrent(candidate);
+  if ((successful || hasSuccessfulFirstPass) && stillCurrent(candidate)) {
+    const QString text = sparseTextPass &&
+                                 usefulCharacterCount(m_firstPassText) >=
+                                     usefulCharacterCount(passText)
+                             ? m_firstPassText
+                             : passText;
     writeCache(candidate, text);
     adopt(candidate, text);
     if (candidate.path == m_reviewPath) {
@@ -343,6 +394,7 @@ void OcrIndex::finishCurrent(bool successful) {
       publishReview(candidate, {}, QStringLiteral("Could not extract text"));
     }
   }
+  m_firstPassText.clear();
   if (!forReview) {
     advanceProgress();
   }

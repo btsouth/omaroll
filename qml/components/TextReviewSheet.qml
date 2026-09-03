@@ -14,6 +14,9 @@ Item {
         if (TextIndex.reviewPath === root.path && !TextIndex.reviewing) {
             textArea.text = TextIndex.reviewText
             textArea.cursorPosition = 0
+            if (textArea.text !== "" && root.visible) {
+                Qt.callLater(textArea.forceActiveFocus)
+            }
         }
     }
 
