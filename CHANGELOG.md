@@ -14,6 +14,9 @@
 ### Changed
 
 - `Copy to clipboard` is now `Copy image`.
+- Browse is now a bounded, searchable library panel with direct source,
+  folder, album, duplicate, and add-folder controls. Folder labels are concise
+  while the parent path remains visible as context.
 - Extract Text retries sparse screenshots once when the normal OCR pass finds
   almost no text. Results still share the same private cache.
 - Viewer actions keep keyboard focus when moving between files or closing a
@@ -22,6 +25,12 @@
   OCR queues start and stop without hashing every path.
 - Libraries with more directories than the inotify safety cap get a periodic
   worker rescan, while ordinary watcher updates only change affected paths.
+
+### Fixed
+
+- First-run media date indexing publishes one settled update instead of
+  repeatedly re-sorting the grid as each file is read. Visible thumbnails are
+  reused, and folder changes no longer animate every tile into place.
 
 ## 1.1.0
 

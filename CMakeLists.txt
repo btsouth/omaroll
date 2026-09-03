@@ -104,6 +104,7 @@ set(OMAROLL_QML_FILES
   qml/components/DayHeader.qml
   qml/components/Chrome.qml
   qml/components/FilterBar.qml
+  qml/components/LibraryBrowserSheet.qml
   qml/components/PillButton.qml
   qml/components/ConfirmSheet.qml
   qml/components/DetailSheet.qml

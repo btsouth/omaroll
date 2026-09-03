@@ -77,6 +77,7 @@ private:
   QString m_videoProgram;
   QHash<QString, Entry> m_entries;
   QList<Candidate> m_queue;
+  QHash<QString, CaptureModel::CapturedDateUpdate> m_pendingDates;
   QHash<QString, QString> m_failed;
   QList<Candidate> m_current;
   QProcess m_process;

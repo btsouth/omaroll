@@ -38,11 +38,12 @@ Item {
     // A menu is up. Main disables the surfaces under it: a modal popup stops
     // items from getting the press that closes it, but not the passive tap
     // handlers on the tiles, which would otherwise still fire.
-    readonly property bool menuOpen: libraryMenu.visible || sortMenu.visible
+    readonly property bool menuOpen: sortMenu.visible
+    property bool browserOpen: false
 
     // The user left the search field with Enter or Escape.
     signal done()
-    signal createAlbumRequested()
+    signal browseRequested()
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
@@ -53,9 +54,9 @@ Item {
         search.selectAll()
     }
 
-    function shortFolder(path) {
+    function folderName(path) {
         const parts = path.split("/").filter(function (part) { return part !== "" })
-        return parts.slice(Math.max(0, parts.length - 2)).join("/")
+        return parts.length > 0 ? parts[parts.length - 1] : path
     }
 
     // On a half-screen tile the pills and the search cannot share a row, so
@@ -126,13 +127,12 @@ Item {
                    : (Captures.duplicatesOnly ? "Duplicates  ▾"
                       : Captures.albumFilter !== "" ? Captures.albumFilter + "  ▾"
                       : Captures.folderFilter !== ""
-                        ? root.shortFolder(Captures.folderFilter) + "  ▾" : "Browse  ▾")
+                        ? root.folderName(Captures.folderFilter) + "  ▾" : "Browse  ▾")
             active: Captures.folderFilter !== "" || Captures.albumFilter !== ""
                     || Captures.duplicatesOnly
-                    || libraryMenu.visible
-            onClicked: libraryMenu.visible ? libraryMenu.close()
-                                           : libraryMenu.popup(libraryButton, 0,
-                                                               libraryButton.height + 4)
+                    || root.browserOpen
+            toolTip: Captures.folderFilter
+            onClicked: root.browseRequested()
         }
     }
 
@@ -201,185 +201,6 @@ Item {
             label: root.sortLabels[Captures.sortMode] + "  ▾"
             active: sortMenu.visible
             onClicked: sortMenu.visible ? sortMenu.close() : sortMenu.popup(sortButton, 0, sortButton.height + 4)
-        }
-    }
-
-    Menu {
-        id: libraryMenu
-        objectName: "libraryMenu"
-        // Modal, undimmed: the press that closes the menu is consumed here
-        // rather than also landing on the tile or pill under it.
-        modal: true
-        dim: false
-
-        background: Rectangle {
-            implicitWidth: 280
-            color: root.shade(Theme.background, 0.97)
-            border.width: 1
-            border.color: root.shade(Theme.foreground, 0.16)
-            radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
-        }
-
-        MenuItem {
-            id: allMediaRow
-            height: 30
-            contentItem: Text {
-                text: "All media"
-                font.family: Theme.fontFamily
-                font.pixelSize: 11
-                font.weight: Captures.folderFilter === "" && Captures.albumFilter === ""
-                             && !Captures.duplicatesOnly
-                             ? Font.DemiBold : Font.Normal
-                color: Captures.folderFilter === "" && Captures.albumFilter === ""
-                       && !Captures.duplicatesOnly
-                       ? Theme.accent : Theme.foreground
-                verticalAlignment: Text.AlignVCenter
-                leftPadding: 12
-            }
-            background: Rectangle {
-                color: allMediaRow.hovered
-                       ? root.shade(Theme.foreground, 0.08) : "transparent"
-            }
-            onTriggered: {
-                Captures.duplicatesOnly = false
-                Captures.folderFilter = ""
-                Captures.setAlbumFilter("", [])
-            }
-        }
-
-        MenuItem {
-            id: duplicatesRow
-            height: 30
-            contentItem: Text {
-                text: "Exact duplicates"
-                font.family: Theme.fontFamily
-                font.pixelSize: 11
-                font.weight: Captures.duplicatesOnly ? Font.DemiBold : Font.Normal
-                color: Captures.duplicatesOnly ? Theme.accent : Theme.foreground
-                verticalAlignment: Text.AlignVCenter
-                leftPadding: 12
-            }
-            background: Rectangle {
-                color: duplicatesRow.hovered
-                       ? root.shade(Theme.foreground, 0.08) : "transparent"
-            }
-            onTriggered: {
-                Captures.folderFilter = ""
-                Captures.setAlbumFilter("", [])
-                Captures.duplicatesOnly = true
-            }
-        }
-
-        MenuItem {
-            enabled: false
-            height: 24
-            contentItem: Text {
-                text: "FOLDERS"
-                font.family: Theme.fontFamily
-                font.pixelSize: 9
-                color: root.shade(Theme.foreground, 0.38)
-                verticalAlignment: Text.AlignBottom
-                leftPadding: 12
-            }
-        }
-
-        Repeater {
-            model: Captures.folders
-
-            MenuItem {
-                id: folderRow
-                required property int index
-                required property string modelData
-                height: 30
-
-                contentItem: Text {
-                    text: folderRow.modelData
-                    elide: Text.ElideMiddle
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 11
-                    font.weight: Captures.folderFilter === folderRow.modelData
-                                 ? Font.DemiBold : Font.Normal
-                    color: Captures.folderFilter === folderRow.modelData
-                           ? Theme.accent : Theme.foreground
-                    verticalAlignment: Text.AlignVCenter
-                    leftPadding: 12
-                    rightPadding: 12
-                }
-
-                background: Rectangle {
-                    color: folderRow.hovered
-                           ? root.shade(Theme.foreground, 0.08) : "transparent"
-                }
-                onTriggered: {
-                    Captures.duplicatesOnly = false
-                    Captures.setAlbumFilter("", [])
-                    Captures.folderFilter = folderRow.modelData
-                }
-            }
-        }
-
-        MenuItem {
-            enabled: false
-            height: 24
-            contentItem: Text {
-                text: "ALBUMS"
-                font.family: Theme.fontFamily
-                font.pixelSize: 9
-                color: root.shade(Theme.foreground, 0.38)
-                verticalAlignment: Text.AlignBottom
-                leftPadding: 12
-            }
-        }
-
-        Repeater {
-            model: Settings.albumNames
-
-            MenuItem {
-                id: albumRow
-                required property string modelData
-                height: 30
-                contentItem: Text {
-                    text: albumRow.modelData
-                    elide: Text.ElideRight
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 11
-                    font.weight: Captures.albumFilter === albumRow.modelData
-                                 ? Font.DemiBold : Font.Normal
-                    color: Captures.albumFilter === albumRow.modelData
-                           ? Theme.accent : Theme.foreground
-                    verticalAlignment: Text.AlignVCenter
-                    leftPadding: 12
-                    rightPadding: 12
-                }
-                background: Rectangle {
-                    color: albumRow.hovered
-                           ? root.shade(Theme.foreground, 0.08) : "transparent"
-                }
-                onTriggered: {
-                    Captures.duplicatesOnly = false
-                    Captures.folderFilter = ""
-                    Captures.setAlbumFilter(albumRow.modelData,
-                                            Settings.albumPaths(albumRow.modelData))
-                }
-            }
-        }
-
-        MenuItem {
-            id: createAlbumRow
-            height: 30
-            contentItem: Text {
-                text: "+ New album"
-                font.family: Theme.fontFamily
-                font.pixelSize: 11
-                color: Theme.accent
-                verticalAlignment: Text.AlignVCenter
-                leftPadding: 12
-            }
-            background: Rectangle {
-                color: createAlbumRow.hovered
-                       ? root.shade(Theme.foreground, 0.08) : "transparent"
-            }
-            onTriggered: root.createAlbumRequested()
         }
     }
 

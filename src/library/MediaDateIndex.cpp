@@ -242,7 +242,13 @@ void MediaDateIndex::sync() {
     }
   }
 
-  m_model->applyCapturedDates(cachedDates);
+  if (m_indexing || !m_current.isEmpty() || !m_pendingDates.isEmpty()) {
+    for (const CaptureModel::CapturedDateUpdate& update : std::as_const(cachedDates)) {
+      m_pendingDates.insert(update.path, update);
+    }
+  } else {
+    m_model->applyCapturedDates(cachedDates);
+  }
   resetProgress(m_queue.size() + m_current.size());
   setIndexing(!m_current.isEmpty() || !m_queue.isEmpty());
   if (m_cacheDirty) {
@@ -256,6 +262,10 @@ void MediaDateIndex::processNext() {
     return;
   }
   if (m_queue.isEmpty()) {
+    if (!m_pendingDates.isEmpty()) {
+      m_model->applyCapturedDates(m_pendingDates.values());
+      m_pendingDates.clear();
+    }
     setIndexing(false);
     return;
   }
@@ -378,8 +388,9 @@ void MediaDateIndex::adopt(const Candidate& candidate, const QDateTime& captured
   m_cacheDirty = true;
   scheduleSave();
   if (captured.isValid()) {
-    m_model->applyCapturedDates({{candidate.path, candidate.modified, candidate.bytes,
-                                  captured, candidate.device, candidate.inode}});
+    m_pendingDates.insert(candidate.path,
+                          {candidate.path, candidate.modified, candidate.bytes, captured,
+                           candidate.device, candidate.inode});
   }
 }
 

@@ -1844,6 +1844,7 @@ private slots:
     QSignalSpy scanned(&model, &CaptureModel::countChanged);
     QVERIFY(scanned.wait(5000));
     QCOMPARE(model.rowCount(), paths.size());
+    QSignalSpy dateChanges(&model, &QAbstractItemModel::dataChanged);
 
     {
       MediaDateIndex dates(&model);
@@ -1862,6 +1863,7 @@ private slots:
         }
       }
     }
+    QCOMPARE(dateChanges.count(), 1);
 
     QFile log(logPath);
     QVERIFY(log.open(QIODevice::ReadOnly));

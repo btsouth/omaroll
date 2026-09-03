@@ -42,7 +42,8 @@ on them.
 
 - **Sees everything you already have.** Screenshots, recordings, pictures,
   videos and downloads, grouped by day, newest first. Add any other folder to
-  the library from Settings, then switch between folders from the library bar.
+  the library from Browse or Settings, then search and switch between sources,
+  folders, and albums from the library bar.
   Photos and videos use their embedded original date when available, with the
   file modification time only as a fallback. Omaroll never imports or copies
   media into its own storage. Large libraries use bounded metadata batches,

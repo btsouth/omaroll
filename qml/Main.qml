@@ -34,7 +34,8 @@ ApplicationWindow {
     // grabs, so a scrim alone does not stop a tap on a sheet's control from
     // also reaching the tile, pill or viewer button under it.
     readonly property bool modalOpen: confirm.visible || matteSheet.visible
-                                      || settingsSheet.visible || albumNameSheet.visible
+                                      || libraryBrowser.visible || settingsSheet.visible
+                                      || albumNameSheet.visible
                                       || exportSheet.visible || renameSheet.visible
                                       || tailscaleSheet.visible || textReviewSheet.visible
     readonly property bool anySheetOpen: modalOpen || detail.visible
@@ -198,6 +199,8 @@ ApplicationWindow {
             tailscaleSheet.close()
         } else if (textReviewSheet.visible) {
             textReviewSheet.close()
+        } else if (libraryBrowser.visible) {
+            libraryBrowser.close()
         } else if (settingsSheet.visible) {
             settingsSheet.close()
         } else if (matteSheet.visible) {
@@ -432,6 +435,8 @@ ApplicationWindow {
             root.perform("ocr", Captures.pathAt(0))
         } else if (view === "duplicates") {
             Captures.duplicatesOnly = true
+        } else if (view === "browser") {
+            libraryBrowser.open()
         } else if (view === "settings") {
             settingsSheet.open()
         }
@@ -616,10 +621,11 @@ ApplicationWindow {
         anchors.left: parent.left
         anchors.right: parent.right
         enabled: !root.anySheetOpen && !albumActionMenu.visible
+        browserOpen: libraryBrowser.visible
         // Leaving the search field must land focus back on the grid, or the
         // arrow keys go nowhere until a tile is clicked.
         onDone: library.forceActiveFocus()
-        onCreateAlbumRequested: albumNameSheet.open([])
+        onBrowseRequested: libraryBrowser.open()
     }
 
     Rectangle {
@@ -999,6 +1005,13 @@ ApplicationWindow {
     TextReviewSheet {
         id: textReviewSheet
         objectName: "textReviewSheet"
+        onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
+    }
+
+    LibraryBrowserSheet {
+        id: libraryBrowser
+        objectName: "libraryBrowser"
+        onCreateAlbumRequested: albumNameSheet.open([])
         onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
     }
 

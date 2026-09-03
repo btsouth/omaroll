@@ -287,26 +287,23 @@ private slots:
     QCOMPARE(detail->property("path").toString(), pathAt(1));
   }
 
-  void clickOutsideAMenuIsConsumed() {
-    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("libraryMenu"));
-    QVERIFY(menu);
-    QMetaObject::invokeMethod(menu, "open");
-    QTRY_VERIFY(menu->property("visible").toBool());
+  void clickOutsideTheLibraryBrowserIsConsumed() {
+    QObject* browser = m_window->findChild<QObject*>(QStringLiteral("libraryBrowser"));
+    QVERIFY(browser);
+    QMetaObject::invokeMethod(browser, "open");
+    QTRY_VERIFY(browser->property("visible").toBool());
 
-    // Click a tile while the menu is open: the menu closes, the tile is not
-    // touched.
-    QQuickItem* card = cardFor(pathAt(2));
-    QVERIFY(card);
-    click(card);
+    // Click the scrim: the browser closes and nothing in the library is touched.
+    QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, QPoint(10, 400));
     settle();
-    QTRY_VERIFY(!menu->property("visible").toBool());
+    QTRY_VERIFY(!browser->property("visible").toBool());
     QCOMPARE(item("library")->property("currentIndex").toInt(), 0);
     QVERIFY(!item("detail")->isVisible());
     QVERIFY(item("library")->isEnabled());
     // The arrow keys work again without a click on a tile first.
     QTRY_VERIFY(item("library")->hasActiveFocus());
 
-    // The menu itself still takes clicks: choose a sort order from it.
+    // Popup menus still take clicks: choose a sort order from one.
     QObject* sortMenu = m_window->findChild<QObject*>(QStringLiteral("sortMenu"));
     QVERIFY(sortMenu);
     QMetaObject::invokeMethod(sortMenu, "open");
@@ -321,6 +318,34 @@ private slots:
     QTRY_VERIFY(!sortMenu->property("visible").toBool());
     QTRY_VERIFY(item("library")->hasActiveFocus());
     m_library->setSortMode(0);
+  }
+
+  void libraryBrowserFindsAndOpensAFolderFromTheKeyboard() {
+    const QStringList folders = m_library->folders();
+    QVERIFY(folders.size() >= 2);
+    const QString wanted = folders.constLast();
+
+    QObject* browser = m_window->findChild<QObject*>(QStringLiteral("libraryBrowser"));
+    QVERIFY(browser);
+    QMetaObject::invokeMethod(browser, "open");
+    QTRY_VERIFY(browser->property("visible").toBool());
+
+    QQuickItem* search = item("librarySearch");
+    QTRY_VERIFY(search->hasActiveFocus());
+    search->setProperty("text", wanted);
+    QTRY_COMPARE(browser->property("query").toString(), wanted);
+    QTest::keyClick(m_window, Qt::Key_Return);
+
+    QTRY_VERIFY(!browser->property("visible").toBool());
+    QTRY_COMPARE(m_library->folderFilter(), wanted);
+    QVERIFY(m_library->rowCount() > 0);
+    for (int row = 0; row < m_library->rowCount(); ++row) {
+      const QString directory = QFileInfo(pathAt(row)).absolutePath();
+      QVERIFY(directory == wanted || directory.startsWith(wanted + QLatin1Char('/')));
+    }
+
+    m_library->setFolderFilter({});
+    QTRY_VERIFY(item("library")->hasActiveFocus());
   }
 
   void favouriteFromTheViewerKeepsItOpen() {
@@ -442,10 +467,10 @@ private slots:
   }
 
   void exactDuplicatesOpenAsAGroupedReviewView() {
-    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("libraryMenu"));
-    QVERIFY(menu);
-    QMetaObject::invokeMethod(menu, "open");
-    QTRY_VERIFY(menu->property("visible").toBool());
+    QObject* browser = m_window->findChild<QObject*>(QStringLiteral("libraryBrowser"));
+    QVERIFY(browser);
+    QMetaObject::invokeMethod(browser, "open");
+    QTRY_VERIFY(browser->property("visible").toBool());
 
     QQuickItem* duplicatesRow = find(m_window->contentItem(), [](QQuickItem* candidate) {
       return candidate->inherits("QQuickText") && candidate->isVisible() &&

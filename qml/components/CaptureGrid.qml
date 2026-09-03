@@ -141,6 +141,7 @@ FocusScope {
         clip: true
 
         model: root.layoutReady ? root.model : null
+        reuseItems: true
 
         cellWidth: root.cellWidth
         cellHeight: Math.round(root.cellWidth * 0.68)
@@ -154,10 +155,6 @@ FocusScope {
         displaced: Transition {
             NumberAnimation { properties: "x,y"; duration: 200; easing.type: Easing.OutQuad }
         }
-        add: Transition {
-            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 180 }
-        }
-
         // Ctrl+wheel resizes the tiles; a plain wheel still scrolls, because
         // the handler leaves anything without Ctrl to the Flickable.
         WheelHandler {
