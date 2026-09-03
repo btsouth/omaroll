@@ -54,6 +54,11 @@ QString sizeLabel(qint64 bytes) {
 // original, a preview written and removed) all lands inside this window.
 constexpr int kRefreshDebounceMs = 600;
 constexpr int kFallbackRefreshMs = 60'000;
+// A few removal runs preserve the view more smoothly as a normal model diff.
+// Hundreds of interleaved runs make QList shift and proxy updates quadratic,
+// as when a large mounted library disappears or half a generated tree is
+// removed. One reset is bounded and lets the grid restore its place by path.
+constexpr int kMaximumIncrementalRemovalRuns = 256;
 
 } // namespace
 
@@ -459,55 +464,71 @@ void CaptureModel::adoptResults(ScanResult result) {
     incoming.insert(scanned.at(row).path, row);
   }
 
-  // Remove what vanished, in runs from the bottom so row numbers stay valid.
-  int row = static_cast<int>(m_records.size()) - 1;
-  while (row >= 0) {
-    if (incoming.contains(m_records.at(row).path)) {
-      --row;
-      continue;
+  int removalRuns = 0;
+  bool insideRemoval = false;
+  for (const CaptureRecord& record : std::as_const(m_records)) {
+    const bool missing = !incoming.contains(record.path);
+    if (missing && !insideRemoval) {
+      ++removalRuns;
     }
-    int first = row;
-    while (first > 0 && !incoming.contains(m_records.at(first - 1).path)) {
-      --first;
-    }
-    beginRemoveRows({}, first, row);
-    m_records.remove(first, row - first + 1);
-    endRemoveRows();
-    row = first - 1;
+    insideRemoval = missing;
   }
 
-  // Update what stayed. A rewritten file (a recording finalised in place)
-  // changes size and mtime; the mtime is what busts the thumbnail cache.
-  QSet<QString> kept;
-  kept.reserve(m_records.size());
-  for (int existing = 0; existing < m_records.size(); ++existing) {
-    CaptureRecord& record = m_records[existing];
-    const CaptureRecord& fresh = scanned.at(incoming.value(record.path));
-    kept.insert(record.path);
-    if (record.modified == fresh.modified && record.bytes == fresh.bytes &&
-        record.kind == fresh.kind && record.captured == fresh.captured &&
-        record.hasProducerTimestamp == fresh.hasProducerTimestamp &&
-        record.favorite == fresh.favorite && record.hidden == fresh.hidden) {
-      continue;
+  if (removalRuns > kMaximumIncrementalRemovalRuns) {
+    beginResetModel();
+    m_records = std::move(scanned);
+    endResetModel();
+  } else {
+    // Remove what vanished, in runs from the bottom so row numbers stay valid.
+    int row = static_cast<int>(m_records.size()) - 1;
+    while (row >= 0) {
+      if (incoming.contains(m_records.at(row).path)) {
+        --row;
+        continue;
+      }
+      int first = row;
+      while (first > 0 && !incoming.contains(m_records.at(first - 1).path)) {
+        --first;
+      }
+      beginRemoveRows({}, first, row);
+      m_records.remove(first, row - first + 1);
+      endRemoveRows();
+      row = first - 1;
     }
-    record = fresh;
-    const QModelIndex changed = index(existing);
-    emit dataChanged(changed, changed);
-  }
 
-  // Insert what is new at the top. The scan delivers newest first, and the
-  // proxy orders the whole library anyway.
-  QList<CaptureRecord> added;
-  for (const CaptureRecord& record : scanned) {
-    if (!kept.contains(record.path)) {
-      added.append(record);
+    // Update what stayed. A rewritten file (a recording finalised in place)
+    // changes size and mtime; the mtime is what busts the thumbnail cache.
+    QSet<QString> kept;
+    kept.reserve(m_records.size());
+    for (int existing = 0; existing < m_records.size(); ++existing) {
+      CaptureRecord& record = m_records[existing];
+      const CaptureRecord& fresh = scanned.at(incoming.value(record.path));
+      kept.insert(record.path);
+      if (record.modified == fresh.modified && record.bytes == fresh.bytes &&
+          record.kind == fresh.kind && record.captured == fresh.captured &&
+          record.hasProducerTimestamp == fresh.hasProducerTimestamp &&
+          record.favorite == fresh.favorite && record.hidden == fresh.hidden) {
+        continue;
+      }
+      record = fresh;
+      const QModelIndex changed = index(existing);
+      emit dataChanged(changed, changed);
     }
-  }
-  if (!added.isEmpty()) {
-    beginInsertRows({}, 0, static_cast<int>(added.size()) - 1);
-    added.append(m_records);
-    m_records = std::move(added);
-    endInsertRows();
+
+    // Insert what is new at the top. The scan delivers newest first, and the
+    // proxy orders the whole library anyway.
+    QList<CaptureRecord> added;
+    for (const CaptureRecord& record : scanned) {
+      if (!kept.contains(record.path)) {
+        added.append(record);
+      }
+    }
+    if (!added.isEmpty()) {
+      beginInsertRows({}, 0, static_cast<int>(added.size()) - 1);
+      added.append(m_records);
+      m_records = std::move(added);
+      endInsertRows();
+    }
   }
 
   rebuildRowIndex();

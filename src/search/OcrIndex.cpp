@@ -15,8 +15,8 @@ namespace {
 
 constexpr quint32 kCacheMagic = 0x4f435231; // OCR1
 constexpr quint16 kCacheVersion = 3;
-constexpr qint64 kMaximumCacheEntryBytes = 4 * 1024 * 1024;
-constexpr qint64 kMaximumCacheBytes = 64 * 1024 * 1024;
+constexpr qint64 kMaximumCacheEntryBytes = 4LL * 1024 * 1024;
+constexpr qint64 kMaximumCacheBytes = 64LL * 1024 * 1024;
 constexpr int kOcrTimeoutMs = 30'000;
 constexpr int kSparseTextThreshold = 6;
 
@@ -168,10 +168,16 @@ void OcrIndex::recognize(const QString& path, bool refresh) {
     return;
   }
   m_reviewCandidate = candidate;
+  if (m_current && m_process.state() != QProcess::NotRunning) {
+    interruptCurrent(!m_currentForReview && m_active);
+    return;
+  }
   processNext();
 }
 
 void OcrIndex::cancelReview() {
+  const bool cancelCurrent =
+      m_currentForReview && m_current && m_current->path == m_reviewPath;
   m_reviewCandidate.reset();
   if (m_reviewPath.isEmpty() && m_reviewText.isEmpty() && m_reviewError.isEmpty() &&
       !m_reviewing) {
@@ -184,6 +190,9 @@ void OcrIndex::cancelReview() {
   m_reviewError.clear();
   m_reviewing = false;
   emit reviewChanged();
+  if (cancelCurrent) {
+    interruptCurrent(false);
+  }
 }
 
 int OcrIndex::clearCache() {
@@ -196,6 +205,8 @@ int OcrIndex::clearCache() {
   m_current.reset();
   m_sparseTextPass = false;
   m_firstPassText.clear();
+  m_interruptCurrent = false;
+  m_requeueInterrupted = false;
   m_reviewCandidate.reset();
   if (m_process.state() != QProcess::NotRunning) {
     m_process.kill();
@@ -349,6 +360,16 @@ void OcrIndex::startCurrentProcess(bool sparseText) {
   m_timeout.start();
 }
 
+void OcrIndex::interruptCurrent(bool requeue) {
+  if (!m_current || m_process.state() == QProcess::NotRunning) {
+    return;
+  }
+  m_interruptCurrent = true;
+  m_requeueInterrupted = requeue;
+  m_timeout.stop();
+  m_process.kill();
+}
+
 void OcrIndex::finishCurrent(bool successful) {
   if (!m_current) {
     if (m_active) {
@@ -360,6 +381,22 @@ void OcrIndex::finishCurrent(bool successful) {
   const Candidate candidate = *m_current;
   const bool forReview = m_currentForReview;
   const bool sparseTextPass = m_sparseTextPass;
+  if (m_interruptCurrent) {
+    const bool requeue = m_requeueInterrupted;
+    m_interruptCurrent = false;
+    m_requeueInterrupted = false;
+    m_current.reset();
+    m_currentForReview = false;
+    m_sparseTextPass = false;
+    m_firstPassText.clear();
+    m_process.readAllStandardOutput();
+    m_process.readAllStandardError();
+    if (requeue && m_active && stillCurrent(candidate)) {
+      m_queue.prepend(candidate);
+    }
+    QTimer::singleShot(0, this, &OcrIndex::processNext);
+    return;
+  }
   const QString passText = successful ? layoutText(m_process.readAllStandardOutput())
                                       : QString();
 

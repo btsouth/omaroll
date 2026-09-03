@@ -78,6 +78,13 @@ FocusScope {
         const selected = Captures.rowOf(selectedPath)
         if (selected >= 0) {
             grid.currentIndex = selected
+        } else if (grid.count > 0) {
+            if (grid.currentIndex < 0 || grid.currentIndex >= grid.count) {
+                grid.currentIndex = 0
+            }
+            selectedPath = Captures.pathAt(grid.currentIndex)
+        } else {
+            selectedPath = ""
         }
         restoringLayout = false
         Qt.callLater(root.restoreLayoutAnchor)
@@ -114,6 +121,8 @@ FocusScope {
         function onCountChanged() { root.pruneChecked() }
         function onLayoutAboutToBeChanged() { root.rememberLayout() }
         function onLayoutChanged() { root.restoreLayout() }
+        function onModelAboutToBeReset() { root.rememberLayout() }
+        function onModelReset() { root.restoreLayout() }
     }
 
     // Cells stay near a target width and flex to fill the row exactly, so there

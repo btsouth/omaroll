@@ -22,6 +22,22 @@ CaptureFilterModel::CaptureFilterModel(QObject* parent) : QSortFilterProxyModel(
   connect(this, &QAbstractItemModel::rowsRemoved, this, &CaptureFilterModel::countChanged);
   connect(this, &QAbstractItemModel::modelReset, this, &CaptureFilterModel::countChanged);
 
+  m_folderIndexTimer.setSingleShot(true);
+  m_folderIndexTimer.setInterval(0);
+  connect(&m_folderIndexTimer, &QTimer::timeout, this, [this] {
+    if (rebuildFolderIndex()) {
+      emit foldersChanged();
+    }
+  });
+  m_duplicateOrderTimer.setSingleShot(true);
+  m_duplicateOrderTimer.setInterval(0);
+  connect(&m_duplicateOrderTimer, &QTimer::timeout, this, [this] {
+    if (!m_duplicateGroups.isEmpty()) {
+      rebuildDuplicateOrdinals();
+      invalidate();
+    }
+  });
+
   m_ocrFilterTimer.setSingleShot(true);
   m_ocrFilterTimer.setInterval(60);
   connect(&m_ocrFilterTimer, &QTimer::timeout, this, [this] {
@@ -36,6 +52,8 @@ CaptureFilterModel::CaptureFilterModel(QObject* parent) : QSortFilterProxyModel(
 }
 
 void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
+  m_folderIndexTimer.stop();
+  m_duplicateOrderTimer.stop();
   for (const QMetaObject::Connection& connection : std::as_const(m_sourceConnections)) {
     disconnect(connection);
   }
@@ -55,10 +73,10 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
       connect(model, &QAbstractItemModel::rowsInserted, this, &CaptureFilterModel::countChanged));
   m_sourceConnections.append(
       connect(model, &QAbstractItemModel::rowsRemoved, this, &CaptureFilterModel::countChanged));
-  const auto rebuildFolders = [this] {
-    rebuildFolderIndex();
-    emit foldersChanged();
-  };
+  // A scan diff can emit thousands of row signals. Folder choices and their
+  // recursive counts need one rebuild after that batch, not one full source
+  // walk per inserted, removed, or changed run.
+  const auto rebuildFolders = [this] { m_folderIndexTimer.start(); };
   m_sourceConnections.append(
       connect(model, &QAbstractItemModel::rowsInserted, this, rebuildFolders));
   m_sourceConnections.append(
@@ -67,8 +85,7 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
       connect(model, &QAbstractItemModel::modelReset, this, rebuildFolders));
   const auto rebuildDuplicateOrder = [this] {
     if (!m_duplicateGroups.isEmpty()) {
-      rebuildDuplicateOrdinals();
-      invalidate();
+      m_duplicateOrderTimer.start();
     }
   };
   m_sourceConnections.append(connect(model, &QAbstractItemModel::rowsInserted, this,
@@ -81,19 +98,17 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
       model, &QAbstractItemModel::dataChanged, this,
       [this](const QModelIndex&, const QModelIndex&, const QList<int>& roles) {
         if (roles.isEmpty() || roles.contains(CaptureRoles::PathRole)) {
-          rebuildFolderIndex();
-          emit foldersChanged();
+          m_folderIndexTimer.start();
         }
         if (!m_duplicateGroups.isEmpty() &&
             (roles.isEmpty() || roles.contains(CaptureRoles::PathRole) ||
              roles.contains(CaptureRoles::FileNameRole) ||
              roles.contains(CaptureRoles::CapturedRole) ||
              roles.contains(CaptureRoles::BytesRole))) {
-          rebuildDuplicateOrdinals();
-          invalidate();
+          m_duplicateOrderTimer.start();
         }
       }));
-  rebuildFolderIndex();
+  (void)rebuildFolderIndex();
   emit foldersChanged();
 }
 
@@ -127,6 +142,7 @@ void CaptureFilterModel::setSortMode(int mode) {
     return;
   }
   m_sortMode = mode;
+  m_duplicateOrderTimer.stop();
   rebuildDuplicateOrdinals();
   invalidate();
   emit sortModeChanged();
@@ -180,7 +196,7 @@ int CaptureFilterModel::folderItemCount(const QString& folder) const {
   return m_folderItemCounts.value(QDir::cleanPath(folder));
 }
 
-void CaptureFilterModel::rebuildFolderIndex() {
+bool CaptureFilterModel::rebuildFolderIndex() {
   QSet<QString> unique;
   if (sourceModel()) {
     for (int row = 0; row < sourceModel()->rowCount(); ++row) {
@@ -192,30 +208,40 @@ void CaptureFilterModel::rebuildFolderIndex() {
       }
     }
   }
-  m_folders = QStringList(unique.begin(), unique.end());
-  m_folders.sort(Qt::CaseInsensitive);
+  QStringList folders(unique.begin(), unique.end());
+  std::sort(folders.begin(), folders.end(), [](const QString& left, const QString& right) {
+    const int folded = QString::compare(left, right, Qt::CaseInsensitive);
+    return folded != 0 ? folded < 0 : left < right;
+  });
 
-  m_folderItemCounts.clear();
-  m_folderItemCounts.reserve(unique.size());
-  if (!sourceModel()) {
-    return;
-  }
-  for (int row = 0; row < sourceModel()->rowCount(); ++row) {
-    const QString path = sourceModel()
-                             ->data(sourceModel()->index(row, 0), CaptureRoles::PathRole)
-                             .toString();
-    QString directory = QFileInfo(path).absolutePath();
-    while (!directory.isEmpty()) {
-      if (unique.contains(directory)) {
-        ++m_folderItemCounts[directory];
+  QHash<QString, int> counts;
+  counts.reserve(unique.size());
+  if (sourceModel()) {
+    for (int row = 0; row < sourceModel()->rowCount(); ++row) {
+      const QString path = sourceModel()
+                               ->data(sourceModel()->index(row, 0), CaptureRoles::PathRole)
+                               .toString();
+      QString directory = QFileInfo(path).absolutePath();
+      while (!directory.isEmpty()) {
+        // Source roots can contain media only in descendants and therefore
+        // are not necessarily in the visible folder list. Keep ancestor
+        // counts too so source chips and empty-state diagnostics stay honest.
+        ++counts[directory];
+        const QString parent = QFileInfo(directory).path();
+        if (parent == directory || parent == QStringLiteral(".")) {
+          break;
+        }
+        directory = parent;
       }
-      const QString parent = QFileInfo(directory).path();
-      if (parent == directory || parent == QStringLiteral(".")) {
-        break;
-      }
-      directory = parent;
     }
   }
+
+  if (m_folders == folders && m_folderItemCounts == counts) {
+    return false;
+  }
+  m_folders = std::move(folders);
+  m_folderItemCounts = std::move(counts);
+  return true;
 }
 
 void CaptureFilterModel::setAlbumFilter(const QString& name, const QStringList& paths) {
@@ -261,6 +287,7 @@ void CaptureFilterModel::setDuplicateGroups(const QHash<QString, QString>& group
 
   beginFilterUpdate();
   m_duplicateGroups = groups;
+  m_duplicateOrderTimer.stop();
   rebuildDuplicateOrdinals();
   endFilterUpdate();
   invalidate();

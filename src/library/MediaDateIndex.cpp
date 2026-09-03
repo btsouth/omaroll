@@ -18,7 +18,7 @@ namespace {
 
 constexpr quint32 kCacheMagic = 0x4f4d4431; // OMD1
 constexpr quint16 kCacheVersion = 2;
-constexpr qint64 kMaximumCacheBytes = 16 * 1024 * 1024;
+constexpr qint64 kMaximumCacheBytes = 16LL * 1024 * 1024;
 constexpr quint32 kMaximumCacheEntries = 100'000;
 constexpr int kImageBatchSize = 32;
 constexpr int kImageBatchTimeoutMs = 30'000;
@@ -188,7 +188,7 @@ QDateTime MediaDateIndex::parseVideoDate(const QByteArray& output) {
   if (parsed.isValid()) {
     return parsed;
   }
-  for (const QJsonValue& value : root.value(QStringLiteral("streams")).toArray()) {
+  for (const auto& value : root.value(QStringLiteral("streams")).toArray()) {
     parsed = dateFromTags(value.toObject().value(QStringLiteral("tags")).toObject());
     if (parsed.isValid()) {
       return parsed;
@@ -349,8 +349,8 @@ void MediaDateIndex::finishCurrent(bool successful) {
                         identityKey(candidate.modified, candidate.bytes, candidate.device,
                                     candidate.inode));
       }
-      advanceProgress();
     }
+    advanceProgress(static_cast<int>(batch.size()));
   }
   QTimer::singleShot(0, this, &MediaDateIndex::processNext);
 }
@@ -412,11 +412,11 @@ void MediaDateIndex::resetProgress(int total) {
   emit progressChanged();
 }
 
-void MediaDateIndex::advanceProgress() {
+void MediaDateIndex::advanceProgress(int amount) {
   if (m_completed >= m_total) {
     return;
   }
-  ++m_completed;
+  m_completed = qMin(m_total, m_completed + qMax(1, amount));
   emit progressChanged();
 }
 

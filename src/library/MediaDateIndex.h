@@ -67,7 +67,7 @@ private:
   void adopt(const Candidate& candidate, const QDateTime& captured);
   void setIndexing(bool value);
   void resetProgress(int total);
-  void advanceProgress();
+  void advanceProgress(int amount = 1);
   void loadCache();
   void scheduleSave();
   void saveCache();

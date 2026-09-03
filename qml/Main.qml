@@ -746,13 +746,23 @@ ApplicationWindow {
         readonly property bool filtered: Captures.sourceCount > 0
         readonly property bool folderScoped: Captures.folderFilter !== ""
         readonly property bool albumScoped: Captures.albumFilter !== ""
+        readonly property int scopedItems: albumScoped
+                                           ? Settings.albumPaths(Captures.albumFilter).length
+                                           : folderScoped
+                                             ? Captures.folderItemCount(Captures.folderFilter) : 0
+        readonly property bool scopeFilteredOut: (albumScoped || folderScoped)
+                                                 && scopedItems > 0
 
         Text {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             text: Captures.duplicatesOnly ? "No exact duplicates"
-                  : parent.albumScoped ? "This album is empty"
-                  : parent.folderScoped ? "No media in this folder"
+                  : parent.albumScoped
+                    ? (parent.scopeFilteredOut ? "Nothing matches in this album"
+                                                : "This album is empty")
+                  : parent.folderScoped
+                    ? (parent.scopeFilteredOut ? "Nothing matches in this folder"
+                                                : "No media in this folder")
                   : (parent.filtered ? "Nothing matches" : "No media yet")
             font.family: Theme.fontFamily
             font.pixelSize: 16
@@ -766,8 +776,10 @@ ApplicationWindow {
             wrapMode: Text.WordWrap
             text: Captures.duplicatesOnly
                   ? "Files are compared by content. Nothing is removed automatically."
+                  : parent.scopeFilteredOut
+                  ? "Try a different media type, turn off Favourites, or clear the search."
                   : parent.albumScoped
-                  ? "Choose All media from Browse, select files, then use + Album. "
+                  ? "Choose Whole library from Browse, select files, then use + Album. "
                     + "Unavailable files remain remembered."
                   : parent.folderScoped
                   ? "The folder may be empty, unavailable, or contain no supported images or videos."

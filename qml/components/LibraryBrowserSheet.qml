@@ -225,7 +225,7 @@ FocusScope {
                 spacing: 8
 
                 PillButton {
-                    label: "All media"
+                    label: "Whole library"
                     active: Captures.folderFilter === "" && Captures.albumFilter === ""
                             && !Captures.duplicatesOnly
                     onClicked: root.showAll()
@@ -437,6 +437,11 @@ FocusScope {
                     }
 
                     HoverHandler { id: rowHover }
+                    ToolTip {
+                        visible: root.section === 0 && rowHover.hovered
+                        text: choiceRow.value
+                        delay: 500
+                    }
                     TapHandler {
                         onTapped: root.section === 0 ? root.showFolder(choiceRow.value)
                                                      : root.showAlbum(choiceRow.value)

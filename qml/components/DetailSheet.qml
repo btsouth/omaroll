@@ -71,6 +71,11 @@ Item {
     })
     property bool actionNavigationActive: false
     property string focusedActionId: ""
+    onQrDetectedChanged: {
+        if (actionNavigationActive) {
+            Qt.callLater(restoreFocus)
+        }
+    }
 
     signal actionTriggered(string id)
     signal navigateRequested(int direction)

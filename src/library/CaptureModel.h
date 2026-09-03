@@ -25,10 +25,10 @@ class AppSettings;
 // scan of a large tree is long enough to drop frames if it happens on the GUI
 // thread, and the window has to stay live while it works.
 //
-// A scan result is applied as a diff, never as a reset: rows that vanished are
-// removed, rows that changed are updated in place, and new files are inserted
-// at the top. So a screenshot taken while omaroll is open slides in without
-// the grid losing its scroll position, its selection or the current item.
+// Ordinary scan results are applied as a diff: rows that vanished are removed,
+// rows that changed are updated in place, and new files are inserted at the
+// top. Highly fragmented mass removals use one bounded reset instead of
+// thousands of row operations; the grid preserves its place by path across it.
 class CaptureModel final : public QAbstractListModel {
   Q_OBJECT
   Q_PROPERTY(int count READ rowCount NOTIFY countChanged)

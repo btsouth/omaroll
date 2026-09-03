@@ -15,7 +15,8 @@
 
 namespace {
 
-constexpr qint64 kHashChunkBytes = 1024 * 1024;
+constexpr qint64 kHashChunkBytes = 1024LL * 1024;
+constexpr int kProgressBatchSize = 32;
 
 } // namespace
 
@@ -242,7 +243,7 @@ void DuplicateIndex::start() {
       }
 
       ++completed;
-      if (guard) {
+      if (guard && (completed == work.size() || completed % kProgressBatchSize == 0)) {
         QMetaObject::invokeMethod(
             guard.data(), [guard, generation, completed] {
               if (guard && guard->m_generation == generation && guard->m_active) {

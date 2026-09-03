@@ -71,6 +71,7 @@ private:
   void sync();
   void processNext();
   void startCurrentProcess(bool sparseText);
+  void interruptCurrent(bool requeue);
   void finishCurrent(bool successful);
   void setIndexing(bool value);
   void resetProgress(int total);
@@ -101,6 +102,8 @@ private:
   int m_total = 0;
   bool m_currentForReview = false;
   bool m_sparseTextPass = false;
+  bool m_interruptCurrent = false;
+  bool m_requeueInterrupted = false;
   QString m_firstPassText;
   QString m_reviewPath;
   qint64 m_reviewModified = 0;

@@ -687,6 +687,27 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(!m_qr->checking(), 3000);
     QVERIFY(m_qr->detected());
 
+    // Inserting or removing the asynchronous QR row must not move keyboard
+    // focus onto a different action farther down the list.
+    QVERIFY(QMetaObject::invokeMethod(detail, "focusActionById",
+                                      Q_ARG(QVariant, QStringLiteral("rename"))));
+    QTRY_VERIFY(find(detail, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("viewerAction_rename") &&
+             candidate->hasActiveFocus();
+    }) != nullptr);
+    m_qr->inspect(pathAt(0));
+    QTRY_VERIFY_WITH_TIMEOUT(!m_qr->checking(), 3000);
+    QTRY_VERIFY(find(detail, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("viewerAction_rename") &&
+             candidate->hasActiveFocus();
+    }) != nullptr);
+    m_qr->inspect(qrPath);
+    QTRY_VERIFY(m_qr->detected());
+    QTRY_VERIFY(find(detail, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("viewerAction_rename") &&
+             candidate->hasActiveFocus();
+    }) != nullptr);
+
     QQuickItem* qrAction = nullptr;
     QTRY_VERIFY((qrAction = find(detail, [](QQuickItem* candidate) {
       return candidate->objectName() == QStringLiteral("viewerAction_qr") &&

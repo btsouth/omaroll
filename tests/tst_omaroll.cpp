@@ -835,6 +835,7 @@ private slots:
     QCOMPARE(proxy.sourceCount(), 4);
     QCOMPARE(proxy.count(), 1);
     QVERIFY(!sourceCountChanged.isEmpty());
+    QTRY_COMPARE(proxy.folderItemCount(dir.path()), 4);
 
     proxy.setSearchText({});
     QCOMPARE(proxy.count(), 4);
@@ -852,8 +853,8 @@ private slots:
     model.refresh();
     QVERIFY(rescanned.wait(5000));
     QCOMPARE(proxy.count(), 5);
-    QCOMPARE(proxy.folders(),
-             QStringList({dir.path(), dir.filePath(QStringLiteral("album"))}));
+    QTRY_COMPARE(proxy.folders(),
+                 QStringList({dir.path(), dir.filePath(QStringLiteral("album"))}));
     QCOMPARE(proxy.folderItemCount(dir.path()), 5);
     QCOMPARE(proxy.folderItemCount(dir.filePath(QStringLiteral("album"))), 1);
     QCOMPARE(proxy.folderItemCount(dir.filePath(QStringLiteral("missing"))), 0);
@@ -1301,7 +1302,33 @@ private slots:
 
     QFile log(logPath);
     QVERIFY(log.open(QIODevice::ReadOnly));
-    QCOMPARE(log.readAll().count("run\n"), 6);
+    const qsizetype runs = log.readAll().count("run\n");
+    // The replaced slow review may be killed before its helper reaches the
+    // first instruction, or immediately after it. Either way only the fresh
+    // result is published.
+    QVERIFY(runs == 5 || runs == 6);
+    log.close();
+
+    // An explicit review jumps ahead of an in-flight background search. The
+    // interrupted search item is then retried, rather than being recorded as
+    // a failure or silently dropped.
+    const auto runCount = [&] {
+      QFile runsFile(logPath);
+      return runsFile.open(QIODevice::ReadOnly)
+                 ? runsFile.readAll().count("run\n")
+                 : qsizetype(-1);
+    };
+    index.cancelReview();
+    index.setSearchText(QStringLiteral("needle"));
+    QTRY_VERIFY(index.indexing());
+    QTRY_VERIFY(runCount() > runs);
+    const qsizetype beforePriorityReview = runCount();
+    index.recognize(layout, true);
+    QTRY_VERIFY_WITH_TIMEOUT(!index.reviewing(), 1000);
+    QCOMPARE(index.reviewText(), QStringLiteral("Alpha  beta\nSecond line"));
+    QTRY_VERIFY_WITH_TIMEOUT(!index.indexing(), 3000);
+    QCOMPARE(runCount(), beforePriorityReview + 2);
+    index.setSearchText({});
   }
 
   void qrDetectionCachesOnlyPresenceAndRejectsStaleResults() {
@@ -2016,6 +2043,51 @@ private slots:
     QCOMPARE(inserts.size(), 1);
     QCOMPARE(removes.size(), 1);
     QCOMPARE(model.pathAt(0), dir.filePath(QStringLiteral("c.png")));
+  }
+
+  void fragmentedLargeRemovalUsesBoundedReset() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(qputenv("OMARCHY_SCREENSHOT_DIR", dir.path().toUtf8()));
+    QVERIFY(qputenv("OMARCHY_SCREENRECORD_DIR", dir.path().toUtf8()));
+    QVERIFY(qputenv("XDG_PICTURES_DIR", dir.path().toUtf8()));
+    QVERIFY(qputenv("XDG_VIDEOS_DIR", dir.path().toUtf8()));
+
+    QImage image(4, 4, QImage::Format_RGB32);
+    image.fill(Qt::blue);
+    const QString seed = dir.filePath(QStringLiteral("item-000.png"));
+    QVERIFY(image.save(seed, "PNG"));
+    for (int index = 1; index < 600; ++index) {
+      QVERIFY(QFile::copy(seed, dir.filePath(
+                                  QStringLiteral("item-%1.png").arg(index, 3, 10,
+                                                                    QLatin1Char('0')))));
+    }
+
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QSignalSpy count(&model, &CaptureModel::countChanged);
+    QVERIFY(count.wait(5000));
+    QCOMPARE(model.rowCount(), 600);
+
+    CaptureFilterModel proxy;
+    proxy.setSourceModel(&model);
+    QSignalSpy resets(&model, &QAbstractItemModel::modelReset);
+    QSignalSpy removes(&model, &QAbstractItemModel::rowsRemoved);
+    QSignalSpy folderChanges(&proxy, &CaptureFilterModel::foldersChanged);
+    for (int row = 0; row < model.rowCount(); row += 2) {
+      QVERIFY(QFile::remove(model.pathAt(row)));
+    }
+
+    count.clear();
+    model.refresh();
+    QVERIFY(count.wait(5000));
+    QCOMPARE(model.rowCount(), 300);
+    QCOMPARE(proxy.rowCount(), 300);
+    QCOMPARE(resets.size(), 1);
+    QCOMPARE(removes.size(), 0);
+    QTRY_COMPARE(proxy.folderItemCount(dir.path()), 300);
+    QCOMPARE(folderChanges.size(), 1);
   }
 
   void heldPathsStayOutOfTheLibraryUntilReleased() {

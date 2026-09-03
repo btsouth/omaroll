@@ -21,6 +21,8 @@
   returns to the active folder or album.
 - Extract Text retries sparse screenshots once when the normal OCR pass finds
   almost no text. Results still share the same private cache.
+- Extract Text takes priority over background OCR and stops its current pass
+  when the review closes.
 - Viewer actions keep keyboard focus when moving between files or closing a
   nested sheet. Extracted text receives focus as soon as it is ready.
 - Large libraries use indexed path lookups and bounded image metadata batches.
@@ -35,6 +37,10 @@
   reused, and folder changes no longer animate every tile into place.
 - Background date enrichment and manual sort changes preserve the selected
   file and visible scroll anchor when rows move.
+- Mass file removals use one bounded model refresh instead of thousands of
+  synchronous row and folder-index updates.
+- Late QR detection no longer moves keyboard focus to a different viewer
+  action.
 
 ## 1.1.0
 

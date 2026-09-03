@@ -140,7 +140,7 @@ protected:
 private:
   void beginFilterUpdate();
   void endFilterUpdate();
-  void rebuildFolderIndex();
+  [[nodiscard]] bool rebuildFolderIndex();
   void rebuildDuplicateOrdinals();
   [[nodiscard]] const CaptureRecord& sourceRecord(int sourceRow) const;
   [[nodiscard]] bool recordLessThan(const CaptureRecord& first,
@@ -163,6 +163,8 @@ private:
   QHash<QString, int> m_duplicateOrdinals;
   QHash<QString, QString> m_ocrText;
   QHash<QString, QString> m_ocrFolded;
+  QTimer m_folderIndexTimer;
+  QTimer m_duplicateOrderTimer;
   QTimer m_ocrFilterTimer;
   QList<QMetaObject::Connection> m_sourceConnections;
 };
