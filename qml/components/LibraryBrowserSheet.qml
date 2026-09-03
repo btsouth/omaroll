@@ -8,18 +8,42 @@ FocusScope {
     property int section: 0
     property string query: ""
     property string folderMessage: ""
+    readonly property bool compact: height < 560
+    readonly property var sourceChoices: section === 0 ? Captures.folders : Settings.albumNames
+    readonly property var filteredChoices: {
+        if (query === "") {
+            return sourceChoices
+        }
+        const folded = query.toLocaleLowerCase()
+        const result = []
+        for (let index = 0; index < sourceChoices.length; index++) {
+            const value = String(sourceChoices[index])
+            if (value.toLocaleLowerCase().includes(folded)) {
+                result.push(value)
+            }
+        }
+        return result
+    }
     signal createAlbumRequested()
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
     }
 
+    function formatCount(value) {
+        return Number(value).toLocaleString(Qt.locale(), "f", 0)
+    }
+
     function open() {
-        section = 0
+        section = Captures.albumFilter !== "" ? 1 : 0
+        folderSearch.text = ""
         query = ""
         folderMessage = ""
         visible = true
-        Qt.callLater(function () { folderSearch.forceActiveFocus() })
+        Qt.callLater(function () {
+            root.syncCurrentChoice()
+            folderSearch.forceActiveFocus()
+        })
     }
 
     function close() { visible = false }
@@ -77,32 +101,35 @@ FocusScope {
         return parts.slice(Math.max(0, parts.length - 3), parts.length - 1).join(" / ")
     }
 
-    function matches(value) {
-        return query === "" || value.toLocaleLowerCase().includes(query.toLocaleLowerCase())
+    function firstMatchIndex() {
+        return choices.count > 0 ? 0 : -1
     }
 
-    function firstMatchIndex() {
-        for (let index = 0; index < choices.count; index++) {
-            if (matches(String(choices.model[index]))) {
-                return index
+    function currentChoiceIndex() {
+        const selected = section === 0 ? Captures.folderFilter : Captures.albumFilter
+        if (selected !== "") {
+            for (let index = 0; index < filteredChoices.length; index++) {
+                if (String(filteredChoices[index]) === selected) {
+                    return index
+                }
             }
         }
-        return -1
+        return firstMatchIndex()
+    }
+
+    function syncCurrentChoice() {
+        choices.currentIndex = currentChoiceIndex()
+        if (choices.currentIndex >= 0) {
+            choices.positionViewAtIndex(choices.currentIndex, ListView.Center)
+        }
     }
 
     function moveChoice(direction) {
         if (choices.count === 0) {
             return
         }
-        let index = choices.currentIndex
-        for (let visited = 0; visited < choices.count; visited++) {
-            index = (index + direction + choices.count) % choices.count
-            if (matches(String(choices.model[index]))) {
-                choices.currentIndex = index
-                choices.positionViewAtIndex(index, ListView.Contain)
-                return
-            }
-        }
+        choices.currentIndex = (choices.currentIndex + direction + choices.count) % choices.count
+        choices.positionViewAtIndex(choices.currentIndex, ListView.Contain)
     }
 
     function openChoice(index) {
@@ -116,9 +143,9 @@ FocusScope {
     visible: false
     anchors.fill: parent
     focus: visible
-    onQueryChanged: choices.currentIndex = firstMatchIndex()
+    onQueryChanged: Qt.callLater(syncCurrentChoice)
     onSectionChanged: Qt.callLater(function () {
-        choices.currentIndex = firstMatchIndex()
+        root.syncCurrentChoice()
     })
 
     WheelHandler {
@@ -146,8 +173,8 @@ FocusScope {
 
     Rectangle {
         anchors.centerIn: parent
-        width: Math.min(640, root.width - 50)
-        height: Math.min(680, root.height - 50)
+        width: Math.min(640, root.width - (root.compact ? 28 : 50))
+        height: Math.min(680, root.height - (root.compact ? 28 : 50))
         radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 4
         color: root.shade(Theme.background, 0.98)
         border.width: 1
@@ -161,8 +188,8 @@ FocusScope {
 
         Column {
             anchors.fill: parent
-            anchors.margins: 22
-            spacing: 12
+            anchors.margins: root.compact ? 14 : 22
+            spacing: root.compact ? 8 : 12
 
             Row {
                 width: parent.width
@@ -263,7 +290,7 @@ FocusScope {
                 spacing: 8
 
                 PillButton {
-                    label: "Folders  " + Captures.folders.length
+                    label: "Folders  " + root.formatCount(Captures.folders.length)
                     active: root.section === 0
                     onClicked: {
                         root.section = 0
@@ -271,7 +298,7 @@ FocusScope {
                     }
                 }
                 PillButton {
-                    label: "Albums  " + Settings.albumNames.length
+                    label: "Albums  " + root.formatCount(Settings.albumNames.length)
                     active: root.section === 1
                     onClicked: {
                         root.section = 1
@@ -341,13 +368,13 @@ FocusScope {
                 clip: true
                 reuseItems: true
                 boundsBehavior: Flickable.StopAtBounds
-                model: root.section === 0 ? Captures.folders : Settings.albumNames
+                model: root.filteredChoices
                 ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
                 header: Text {
                     width: choices.width
                     height: visible ? 48 : 0
-                    visible: root.query !== "" && root.firstMatchIndex() < 0
+                    visible: root.query !== "" && choices.count === 0
                     text: root.section === 0 ? "No matching folders" : "No matching albums"
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
@@ -360,10 +387,11 @@ FocusScope {
                     id: choiceRow
                     required property var modelData
                     readonly property string value: String(modelData)
-                    readonly property bool match: root.matches(value)
+                    readonly property int itemCount: root.section === 0
+                                                     ? Captures.folderItemCount(value)
+                                                     : Settings.albumPaths(value).length
                     width: choices.width - 10
-                    height: match ? 48 : 0
-                    visible: match
+                    height: 48
                     radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
                     color: rowHover.hovered || ListView.isCurrentItem
                            ? root.shade(Theme.foreground, 0.08) : "transparent"
@@ -396,10 +424,11 @@ FocusScope {
                         Text {
                             width: parent.width
                             text: root.section === 0
-                                  ? root.contextForPath(choiceRow.value)
-                                  : Settings.albumPaths(choiceRow.value).length
-                                    + (Settings.albumPaths(choiceRow.value).length === 1
-                                       ? " item" : " items")
+                                  ? root.contextForPath(choiceRow.value) + "  ·  "
+                                    + root.formatCount(choiceRow.itemCount)
+                                    + (choiceRow.itemCount === 1 ? " item" : " items")
+                                  : root.formatCount(choiceRow.itemCount)
+                                    + (choiceRow.itemCount === 1 ? " item" : " items")
                             elide: Text.ElideMiddle
                             font.family: Theme.fontFamily
                             font.pixelSize: 9

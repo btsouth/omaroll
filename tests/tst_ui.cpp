@@ -331,9 +331,11 @@ private slots:
     QTRY_VERIFY(browser->property("visible").toBool());
 
     QQuickItem* search = item("librarySearch");
+    QQuickItem* choices = item("libraryChoices");
     QTRY_VERIFY(search->hasActiveFocus());
     search->setProperty("text", wanted);
     QTRY_COMPARE(browser->property("query").toString(), wanted);
+    QTRY_COMPARE(choices->property("count").toInt(), 1);
     QTest::keyClick(m_window, Qt::Key_Return);
 
     QTRY_VERIFY(!browser->property("visible").toBool());
@@ -343,6 +345,15 @@ private slots:
       const QString directory = QFileInfo(pathAt(row)).absolutePath();
       QVERIFY(directory == wanted || directory.startsWith(wanted + QLatin1Char('/')));
     }
+
+    QMetaObject::invokeMethod(browser, "open");
+    QTRY_VERIFY(browser->property("visible").toBool());
+    QTRY_COMPARE(browser->property("query").toString(), QString());
+    QCOMPARE(search->property("text").toString(), QString());
+    QTRY_COMPARE(choices->property("count").toInt(), folders.size());
+    QTRY_COMPARE(choices->property("currentIndex").toInt(), folders.indexOf(wanted));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!browser->property("visible").toBool());
 
     m_library->setFolderFilter({});
     QTRY_VERIFY(item("library")->hasActiveFocus());
@@ -736,6 +747,37 @@ private slots:
                                      record.captured, record.device, record.inode}});
     QTRY_COMPARE(detail->property("timeLabel").toString(),
                  m_library->timeLabelAt(m_library->rowOf(path)));
+  }
+
+  void backgroundDateReorderKeepsTheSelectedFile() {
+    int row = -1;
+    for (int candidate = 1; candidate < m_library->rowCount(); ++candidate) {
+      const int sourceRow = m_captures->rowOf(pathAt(candidate));
+      if (sourceRow >= 0 && !m_captures->recordAt(sourceRow).hasProducerTimestamp) {
+        row = candidate;
+        break;
+      }
+    }
+    QVERIFY(row > 0);
+
+    QQuickItem* grid = item("library");
+    const QString selectedPath = pathAt(row);
+    grid->setProperty("currentIndex", row);
+    QCOMPARE(grid->property("currentIndex").toInt(), row);
+    QSignalSpy reordered(m_library, &QAbstractItemModel::layoutChanged);
+    const int sourceRow = m_captures->rowOf(selectedPath);
+    const CaptureRecord record = m_captures->recordAt(sourceRow);
+    const QDateTime moved = QDateTime::currentDateTime().addDays(1);
+    m_captures->applyCapturedDates({{selectedPath, record.modified, record.bytes, moved,
+                                     record.device, record.inode}});
+
+    QTRY_VERIFY(!reordered.isEmpty());
+    QTRY_COMPARE(m_library->rowOf(selectedPath), 0);
+    QTRY_COMPARE(pathAt(grid->property("currentIndex").toInt()), selectedPath);
+
+    m_captures->applyCapturedDates({{selectedPath, record.modified, record.bytes,
+                                     record.captured, record.device, record.inode}});
+    QTRY_COMPARE(pathAt(grid->property("currentIndex").toInt()), selectedPath);
   }
 
   void videoViewerShowsCodecMetadataEndToEnd() {

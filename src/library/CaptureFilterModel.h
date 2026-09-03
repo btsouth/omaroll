@@ -63,6 +63,7 @@ public:
   [[nodiscard]] QString folderFilter() const { return m_folderFilter; }
   void setFolderFilter(const QString& folder);
   [[nodiscard]] QStringList folders() const;
+  Q_INVOKABLE int folderItemCount(const QString& folder) const;
   [[nodiscard]] QString albumFilter() const { return m_albumFilter; }
   Q_INVOKABLE void setAlbumFilter(const QString& name, const QStringList& paths);
 
@@ -139,6 +140,7 @@ protected:
 private:
   void beginFilterUpdate();
   void endFilterUpdate();
+  void rebuildFolderIndex();
   void rebuildDuplicateOrdinals();
   [[nodiscard]] const CaptureRecord& sourceRecord(int sourceRow) const;
   [[nodiscard]] bool recordLessThan(const CaptureRecord& first,
@@ -150,6 +152,8 @@ private:
   QString m_searchText;
   QStringList m_searchTerms;
   QString m_folderFilter;
+  QStringList m_folders;
+  QHash<QString, int> m_folderItemCounts;
   QString m_albumFilter;
   QSet<QString> m_albumPaths;
   bool m_favoritesOnly = false;

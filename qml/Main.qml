@@ -20,6 +20,10 @@ ApplicationWindow {
         return Qt.rgba(base.r, base.g, base.b, amount)
     }
 
+    function formatCount(value) {
+        return Number(value).toLocaleString(Qt.locale(), "f", 0)
+    }
+
     // Destructive actions act on a path captured when the sheet opened, not on
     // whatever is selected when it is confirmed. A rescan or sort change can
     // move the selection under a modal, and trashing the wrong file is
@@ -511,7 +515,9 @@ ApplicationWindow {
                     const shown = Captures.count
                     const total = Captures.sourceCount
                     const noun = shown === 1 ? " item" : " items"
-                    return shown === total ? shown + noun : shown + " of " + total + noun
+                    return shown === total
+                           ? root.formatCount(shown) + noun
+                           : root.formatCount(shown) + " of " + root.formatCount(total) + noun
                 }
                 font.family: Theme.fontFamily
                 font.pixelSize: 13

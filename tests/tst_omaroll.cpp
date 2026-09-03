@@ -854,6 +854,9 @@ private slots:
     QCOMPARE(proxy.count(), 5);
     QCOMPARE(proxy.folders(),
              QStringList({dir.path(), dir.filePath(QStringLiteral("album"))}));
+    QCOMPARE(proxy.folderItemCount(dir.path()), 5);
+    QCOMPARE(proxy.folderItemCount(dir.filePath(QStringLiteral("album"))), 1);
+    QCOMPARE(proxy.folderItemCount(dir.filePath(QStringLiteral("missing"))), 0);
     proxy.setFolderFilter(dir.path());
     QCOMPARE(proxy.count(), 5);
     proxy.setFolderFilter(dir.filePath(QStringLiteral("album")));

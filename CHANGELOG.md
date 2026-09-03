@@ -16,7 +16,9 @@
 - `Copy to clipboard` is now `Copy image`.
 - Browse is now a bounded, searchable library panel with direct source,
   folder, album, duplicate, and add-folder controls. Folder labels are concise
-  while the parent path remains visible as context.
+  while the parent path and recursive item count remain visible as context.
+  Search filters the choice model before rows are created, and reopening Browse
+  returns to the active folder or album.
 - Extract Text retries sparse screenshots once when the normal OCR pass finds
   almost no text. Results still share the same private cache.
 - Viewer actions keep keyboard focus when moving between files or closing a
@@ -31,6 +33,8 @@
 - First-run media date indexing publishes one settled update instead of
   repeatedly re-sorting the grid as each file is read. Visible thumbnails are
   reused, and folder changes no longer animate every tile into place.
+- Background date enrichment and manual sort changes preserve the selected
+  file and visible scroll anchor when rows move.
 
 ## 1.1.0
 

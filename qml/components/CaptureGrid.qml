@@ -20,6 +20,10 @@ FocusScope {
     // delete trashes the wrong files.
     property var checkedSet: ({})
     property int checkedCount: 0
+    property string selectedPath: ""
+    property string layoutAnchorPath: ""
+    property real layoutAnchorOffset: 0
+    property bool restoringLayout: false
 
     signal chosen(int index)
     signal deleteRequested(string path)
@@ -61,6 +65,35 @@ FocusScope {
 
     function checkedPaths() { return Object.keys(checkedSet) }
 
+    function rememberLayout() {
+        restoringLayout = true
+        const anchor = grid.indexAt(grid.contentX + 4, grid.contentY + 4)
+        layoutAnchorPath = anchor >= 0 ? Captures.pathAt(anchor) : ""
+        layoutAnchorOffset = anchor >= 0
+                             ? grid.contentY - Math.floor(anchor / root.columns) * grid.cellHeight
+                             : 0
+    }
+
+    function restoreLayout() {
+        const selected = Captures.rowOf(selectedPath)
+        if (selected >= 0) {
+            grid.currentIndex = selected
+        }
+        restoringLayout = false
+        Qt.callLater(root.restoreLayoutAnchor)
+    }
+
+    function restoreLayoutAnchor() {
+        const anchor = Captures.rowOf(layoutAnchorPath)
+        if (anchor >= 0) {
+            const wanted = Math.floor(anchor / root.columns) * grid.cellHeight
+                           + layoutAnchorOffset
+            grid.contentY = Math.max(0, Math.min(wanted, grid.contentHeight - grid.height))
+        }
+        layoutAnchorPath = ""
+        root.updateDay()
+    }
+
     // A file deleted outside, or filtered out of view, must not stay counted
     // in "Trash 3". Anything no longer in the visible model is dropped.
     function pruneChecked() {
@@ -79,6 +112,8 @@ FocusScope {
     Connections {
         target: Captures
         function onCountChanged() { root.pruneChecked() }
+        function onLayoutAboutToBeChanged() { root.rememberLayout() }
+        function onLayoutChanged() { root.restoreLayout() }
     }
 
     // Cells stay near a target width and flex to fill the row exactly, so there
@@ -153,7 +188,11 @@ FocusScope {
         // A sort or filter change reshuffles rows; moving rather than snapping
         // makes it read as the same library reordering itself.
         displaced: Transition {
-            NumberAnimation { properties: "x,y"; duration: 200; easing.type: Easing.OutQuad }
+            NumberAnimation {
+                properties: "x,y"
+                duration: MediaDates.indexing ? 0 : 200
+                easing.type: Easing.OutQuad
+            }
         }
         // Ctrl+wheel resizes the tiles; a plain wheel still scrolls, because
         // the handler leaves anything without Ctrl to the Flickable.
@@ -178,7 +217,15 @@ FocusScope {
             } else if (currentIndex >= count) {
                 currentIndex = count - 1
             }
+            if (root.selectedPath === "" && currentIndex >= 0) {
+                root.selectedPath = Captures.pathAt(currentIndex)
+            }
             Qt.callLater(root.updateDay)
+        }
+        onCurrentIndexChanged: {
+            if (!root.restoringLayout) {
+                root.selectedPath = currentIndex >= 0 ? Captures.pathAt(currentIndex) : ""
+            }
         }
         Connections {
             target: Library
