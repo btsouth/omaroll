@@ -1,9 +1,21 @@
 # Changelog
 
+## 1.3.1
+
+### Fixed
+
+- Creating an album, tag, or smart collection from Browse now keeps keyboard
+  focus in the naming field.
+
 ## 1.3.0
+
+PDF support is the headline addition in this release. Omaroll can now treat
+PDFs as first-class library items.
 
 ### Added
 
+- Scan, thumbnail, preview, page through, organize, send, rename, and trash PDF
+  documents. Rendering and page inspection use Poppler locally.
 - Browse by month or day, plus quick views for today, this week, recently
   modified files, and files changed since the previous visit.
 - Save the current filters and sort as a smart collection. Saved views update
@@ -14,8 +26,6 @@
   tolerates resizing and JPEG recompression.
 - Keep one file from an exact-duplicate set and move only its byte-for-byte
   identical copies to Trash after confirmation.
-- Scan, thumbnail, preview, page through, organize, send, rename, and trash PDF
-  documents. Rendering and page inspection use Poppler locally.
 
 ### Changed
 

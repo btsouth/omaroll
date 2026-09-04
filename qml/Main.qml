@@ -1204,9 +1204,13 @@ ApplicationWindow {
     LibraryBrowserSheet {
         id: libraryBrowser
         objectName: "libraryBrowser"
-        onCreateAlbumRequested: albumNameSheet.open([])
-        onCreateTagRequested: albumNameSheet.open([], "tag")
-        onSaveSmartCollectionRequested: albumNameSheet.open([], "smart", Captures.currentView())
+        // Browse restores focus after it closes. Open the next sheet on the
+        // following event-loop turn so its text field wins that handoff.
+        onCreateAlbumRequested: Qt.callLater(function () { albumNameSheet.open([]) })
+        onCreateTagRequested: Qt.callLater(function () { albumNameSheet.open([], "tag") })
+        onSaveSmartCollectionRequested: Qt.callLater(function () {
+            albumNameSheet.open([], "smart", Captures.currentView())
+        })
         onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
     }
 

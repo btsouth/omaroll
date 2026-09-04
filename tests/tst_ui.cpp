@@ -204,6 +204,7 @@ private slots:
     }
     QVERIFY(!prop("anySheetOpen").toBool());
     m_library->setDuplicatesOnly(false);
+    m_library->setSimilarOnly(false);
     QMetaObject::invokeMethod(item("library"), "clearChecked");
     item("library")->setProperty("currentIndex", 0);
     item("library")->forceActiveFocus();
@@ -535,6 +536,105 @@ private slots:
     // so its saved selection cannot land in the following scenario.
     QTest::qWait(120);
     QTRY_VERIFY(item("library")->property("layoutReady").toBool());
+  }
+
+  void browseQuickDatesApplyTheExpectedRanges() {
+    QObject* browser = m_window->findChild<QObject*>(QStringLiteral("libraryBrowser"));
+    QVERIFY(browser);
+    const QString today = QDate::currentDate().toString(Qt::ISODate);
+
+    QMetaObject::invokeMethod(browser, "open");
+    QTRY_VERIFY(browser->property("visible").toBool());
+    click(pill(m_window->contentItem(), QStringLiteral("Today")));
+    QTRY_VERIFY(!browser->property("visible").toBool());
+    QCOMPARE(m_library->dateFrom(), today);
+    QCOMPARE(m_library->dateTo(), today);
+    QCOMPARE(m_library->dateField(), 0);
+    QVERIFY(m_library->modifiedAfter().isEmpty());
+
+    QMetaObject::invokeMethod(browser, "open");
+    QTRY_VERIFY(browser->property("visible").toBool());
+    click(pill(m_window->contentItem(), QStringLiteral("Recently modified")));
+    QTRY_VERIFY(!browser->property("visible").toBool());
+    QCOMPARE(m_library->dateTo(), today);
+    QCOMPARE(m_library->dateField(), 1);
+    QCOMPARE(QDate::fromString(m_library->dateFrom(), Qt::ISODate),
+             QDate::currentDate().addDays(-6));
+
+    // A first run has no previous visit, so this shortcut deliberately falls
+    // back to today's modified files instead of producing an empty view.
+    QVERIFY(m_settings->previousVisit().isEmpty());
+    QMetaObject::invokeMethod(browser, "open");
+    QTRY_VERIFY(browser->property("visible").toBool());
+    click(pill(m_window->contentItem(), QStringLiteral("New since last visit")));
+    QTRY_VERIFY(!browser->property("visible").toBool());
+    QCOMPARE(m_library->dateFrom(), today);
+    QCOMPARE(m_library->dateTo(), today);
+    QCOMPARE(m_library->dateField(), 1);
+    m_library->clearDateRange();
+  }
+
+  void similarPicturesOpenAsAGroupedReviewView() {
+    const QString recompressed = QFileInfo(m_oddPath).dir().filePath(
+        QStringLiteral("alpine-recompressed.jpg"));
+    QImage source(m_oddPath);
+    QVERIFY(!source.isNull());
+    QVERIFY(source.scaled(source.width() * 2, source.height() * 2, Qt::IgnoreAspectRatio,
+                          Qt::SmoothTransformation)
+                .save(recompressed, "JPG", 58));
+    m_captures->refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(recompressed) >= 0, 5000);
+
+    QObject* browser = m_window->findChild<QObject*>(QStringLiteral("libraryBrowser"));
+    QVERIFY(browser);
+    QMetaObject::invokeMethod(browser, "open");
+    QTRY_VERIFY(browser->property("visible").toBool());
+    click(pill(m_window->contentItem(), QStringLiteral("Similar pictures")));
+    QTRY_VERIFY(m_library->similarOnly());
+    QTRY_VERIFY_WITH_TIMEOUT(!m_similarities->scanning(), 15000);
+    QVERIFY(m_similarities->groupCount() >= 1);
+    QVERIFY(m_similarities->similarCount() >= 3);
+    QVERIFY(m_library->rowOf(recompressed) >= 0);
+    QVERIFY(m_library->gridLabelAt(0).startsWith(QStringLiteral("Similar set ")));
+
+    m_library->setSimilarOnly(false);
+    QVERIFY(QFile::remove(recompressed));
+    m_captures->refresh();
+    QTRY_COMPARE_WITH_TIMEOUT(m_library->rowOf(recompressed), -1, 5000);
+  }
+
+  void smartCollectionSavesAndReappliesTheCurrentView() {
+    m_library->setSearchText(QStringLiteral("alpine"));
+    m_library->setSortMode(CaptureFilterModel::NameAscending);
+    QTRY_COMPARE(m_library->count(), 1);
+
+    QObject* browser = m_window->findChild<QObject*>(QStringLiteral("libraryBrowser"));
+    QVERIFY(browser);
+    QMetaObject::invokeMethod(browser, "open");
+    QTRY_VERIFY(browser->property("visible").toBool());
+    click(pill(m_window->contentItem(), QStringLiteral("Save current view")));
+    QQuickItem* sheet = item("albumNameSheet");
+    QTRY_VERIFY(sheet->isVisible());
+    QCOMPARE(sheet->property("mode").toString(), QStringLiteral("smart"));
+    QQuickItem* nameInput = item("collectionNameInput");
+    QTRY_VERIFY(nameInput->hasActiveFocus());
+    typeText(QStringLiteral("Alpine pictures"));
+    QCOMPARE(nameInput->property("text").toString(), QStringLiteral("Alpine pictures"));
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY_WITH_TIMEOUT(!sheet->isVisible() ||
+                                 !sheet->property("errorMessage").toString().isEmpty(),
+                             5000);
+    QVERIFY2(!sheet->isVisible(), qPrintable(sheet->property("errorMessage").toString()));
+    QVERIFY(m_settings->smartCollectionNames().contains(QStringLiteral("Alpine pictures")));
+    QCOMPARE(m_library->smartCollectionFilter(), QStringLiteral("Alpine pictures"));
+    QCOMPARE(m_library->searchText(), QStringLiteral("alpine"));
+    QCOMPARE(m_library->sortMode(), CaptureFilterModel::NameAscending);
+    QCOMPARE(m_library->count(), 1);
+
+    m_settings->deleteSmartCollection(QStringLiteral("Alpine pictures"));
+    m_library->setSearchText({});
+    m_library->setSortMode(CaptureFilterModel::NewestFirst);
+    m_library->clearSmartCollection();
   }
 
   void selectionKeysActOnTheWholeSelection() {
@@ -1116,6 +1216,66 @@ private slots:
     QCOMPARE(m_settings->albumPaths(QStringLiteral("Trip")).size(), 1);
     QCOMPARE(m_settings->albumPaths(QStringLiteral("Trip")).first(), pathAt(0));
     m_settings->deleteAlbum(QStringLiteral("Trip"));
+  }
+
+  void tagFromASelection() {
+    const QString selected = pathAt(0);
+    QTest::keyClick(m_window, Qt::Key_X);
+    QTRY_COMPARE(item("library")->property("checkedCount").toInt(), 1);
+    QQuickItem* organize = pill(m_window->contentItem(), QStringLiteral("Organize"));
+    QVERIFY(organize);
+    QTest::qWait(120);
+    organize = pill(m_window->contentItem(), QStringLiteral("Organize"));
+    click(organize);
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("albumActionMenu"));
+    QVERIFY(menu);
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QQuickItem* newTag = find(m_window->contentItem(), [](QQuickItem* candidate) {
+      return candidate->inherits("QQuickText") && candidate->isVisible() &&
+             candidate->property("text").toString() == QStringLiteral("+ New tag");
+    });
+    QVERIFY(newTag);
+    click(newTag);
+    QQuickItem* sheet = item("albumNameSheet");
+    QTRY_VERIFY(sheet->isVisible());
+    QCOMPARE(sheet->property("mode").toString(), QStringLiteral("tag"));
+    typeText(QStringLiteral("UI Review"));
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!sheet->isVisible());
+    QVERIFY(m_settings->tagNames().contains(QStringLiteral("UI Review")));
+    QCOMPARE(m_settings->tagPaths(QStringLiteral("UI Review")), QStringList{selected});
+    m_settings->deleteTag(QStringLiteral("UI Review"));
+    QMetaObject::invokeMethod(item("library"), "clearChecked");
+  }
+
+  void keepingOneExactDuplicateMovesOnlyTheOtherCopyToTrash() {
+    QVERIFY(QFileInfo::exists(m_oddPath));
+    m_library->setDuplicatesOnly(true);
+    QTRY_VERIFY_WITH_TIMEOUT(!m_duplicates->scanning(), 15000);
+    const QStringList matchingOriginals = m_duplicates->otherCopies(m_oddPath);
+    QVERIFY(!matchingOriginals.isEmpty());
+    const QString kept = matchingOriginals.first();
+    QVERIFY(QFileInfo::exists(kept));
+    const QStringList trashed = m_duplicates->otherCopies(kept);
+    QVERIFY(trashed.contains(m_oddPath));
+    for (const QString& path : trashed) {
+      QVERIFY(QFileInfo::exists(path));
+    }
+    const int keptRow = m_library->rowOf(kept);
+    QVERIFY(keptRow >= 0);
+    item("library")->setProperty("currentIndex", keptRow);
+    click(pill(m_window->contentItem(), QStringLiteral("Keep selected")));
+    QTRY_VERIFY(item("confirm")->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!item("confirm")->isVisible());
+    for (const QString& path : trashed) {
+      QTRY_VERIFY_WITH_TIMEOUT(!QFileInfo::exists(path), 5000);
+      QTRY_VERIFY_WITH_TIMEOUT(m_captures->rowOf(path) < 0, 10000);
+    }
+    QVERIFY(QFileInfo::exists(kept));
+    QTRY_COMPARE_WITH_TIMEOUT(m_duplicates->groupCount(), 0, 10000);
+    m_library->setDuplicatesOnly(false);
+    QVERIFY(m_library->rowOf(kept) >= 0);
   }
 
   void trashMovesTheFileAndTheGridFollows() {
