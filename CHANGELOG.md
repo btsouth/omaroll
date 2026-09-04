@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.0
 
 ### Added
 
@@ -68,14 +68,14 @@
 ### Install
 
 ```bash
-curl -fLO https://github.com/tsouth89/omaroll/releases/download/v1.2.0/omaroll-1.2.0-1-x86_64.pkg.tar.zst \
-     -fLO https://github.com/tsouth89/omaroll/releases/download/v1.2.0/SHA256SUMS
+curl -fLO https://github.com/btsouth/omaroll/releases/download/v1.2.0/omaroll-1.2.0-1-x86_64.pkg.tar.zst \
+     -fLO https://github.com/btsouth/omaroll/releases/download/v1.2.0/SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
 sudo pacman -U ./omaroll-1.2.0-1-x86_64.pkg.tar.zst
 ```
 
 Every asset is covered by `SHA256SUMS` and a signed build attestation:
-`gh attestation verify omaroll-1.2.0-1-x86_64.pkg.tar.zst --repo tsouth89/omaroll`.
+`gh attestation verify omaroll-1.2.0-1-x86_64.pkg.tar.zst --repo btsouth/omaroll`.
 
 ## 1.1.0
 
@@ -177,14 +177,14 @@ Every asset is covered by `SHA256SUMS` and a signed build attestation:
 ### Install
 
 ```bash
-curl -fLO https://github.com/tsouth89/omaroll/releases/download/v1.1.0/omaroll-1.1.0-1-x86_64.pkg.tar.zst \
-     -fLO https://github.com/tsouth89/omaroll/releases/download/v1.1.0/SHA256SUMS
+curl -fLO https://github.com/btsouth/omaroll/releases/download/v1.1.0/omaroll-1.1.0-1-x86_64.pkg.tar.zst \
+     -fLO https://github.com/btsouth/omaroll/releases/download/v1.1.0/SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
 sudo pacman -U ./omaroll-1.1.0-1-x86_64.pkg.tar.zst
 ```
 
 Every asset is covered by `SHA256SUMS` and a signed build attestation:
-`gh attestation verify omaroll-1.1.0-1-x86_64.pkg.tar.zst --repo tsouth89/omaroll`.
+`gh attestation verify omaroll-1.1.0-1-x86_64.pkg.tar.zst --repo btsouth/omaroll`.
 
 ## 1.0.3
 
@@ -209,14 +209,14 @@ The thumbnail cache regenerates lazily on first view after upgrading.
 ### Install
 
 ```bash
-curl -fLO https://github.com/tsouth89/omaroll/releases/download/v1.0.3/omaroll-1.0.3-1-x86_64.pkg.tar.zst \
-     -fLO https://github.com/tsouth89/omaroll/releases/download/v1.0.3/SHA256SUMS
+curl -fLO https://github.com/btsouth/omaroll/releases/download/v1.0.3/omaroll-1.0.3-1-x86_64.pkg.tar.zst \
+     -fLO https://github.com/btsouth/omaroll/releases/download/v1.0.3/SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
 sudo pacman -U ./omaroll-1.0.3-1-x86_64.pkg.tar.zst
 ```
 
 Every asset is covered by `SHA256SUMS` and a signed build attestation:
-`gh attestation verify omaroll-1.0.3-1-x86_64.pkg.tar.zst --repo tsouth89/omaroll`.
+`gh attestation verify omaroll-1.0.3-1-x86_64.pkg.tar.zst --repo btsouth/omaroll`.
 
 ## 1.0.2
 
@@ -254,14 +254,14 @@ it is running, rather than continuing unwatched in the background.
 ### Install
 
 ```bash
-curl -fLO https://github.com/tsouth89/omaroll/releases/download/v1.0.2/omaroll-1.0.2-1-x86_64.pkg.tar.zst \
-     -fLO https://github.com/tsouth89/omaroll/releases/download/v1.0.2/SHA256SUMS
+curl -fLO https://github.com/btsouth/omaroll/releases/download/v1.0.2/omaroll-1.0.2-1-x86_64.pkg.tar.zst \
+     -fLO https://github.com/btsouth/omaroll/releases/download/v1.0.2/SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
 sudo pacman -U ./omaroll-1.0.2-1-x86_64.pkg.tar.zst
 ```
 
 Every asset is covered by `SHA256SUMS` and a signed build attestation:
-`gh attestation verify omaroll-1.0.2-1-x86_64.pkg.tar.zst --repo tsouth89/omaroll`.
+`gh attestation verify omaroll-1.0.2-1-x86_64.pkg.tar.zst --repo btsouth/omaroll`.
 
 ## 1.0.1
 
@@ -305,14 +305,14 @@ byte-for-byte against `omarchy-theme-color` output.
 ### Install
 
 ```bash
-curl -fLO https://github.com/tsouth89/omaroll/releases/download/v1.0.1/omaroll-1.0.1-1-x86_64.pkg.tar.zst \
-     -fLO https://github.com/tsouth89/omaroll/releases/download/v1.0.1/SHA256SUMS
+curl -fLO https://github.com/btsouth/omaroll/releases/download/v1.0.1/omaroll-1.0.1-1-x86_64.pkg.tar.zst \
+     -fLO https://github.com/btsouth/omaroll/releases/download/v1.0.1/SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
 sudo pacman -U ./omaroll-1.0.1-1-x86_64.pkg.tar.zst
 ```
 
 Every asset is covered by `SHA256SUMS` and a signed build attestation:
-`gh attestation verify omaroll-1.0.1-1-x86_64.pkg.tar.zst --repo tsouth89/omaroll`.
+`gh attestation verify omaroll-1.0.1-1-x86_64.pkg.tar.zst --repo btsouth/omaroll`.
 
 ## 1.0.0
 
@@ -366,14 +366,14 @@ MTS/M2TS, played through Qt's FFmpeg backend.
 Requires Omarchy, or Arch with Qt 6.8 or newer.
 
 ```bash
-curl -fLO https://github.com/tsouth89/omaroll/releases/download/v1.0.0/omaroll-1.0.0-1-x86_64.pkg.tar.zst \
-     -fLO https://github.com/tsouth89/omaroll/releases/download/v1.0.0/SHA256SUMS
+curl -fLO https://github.com/btsouth/omaroll/releases/download/v1.0.0/omaroll-1.0.0-1-x86_64.pkg.tar.zst \
+     -fLO https://github.com/btsouth/omaroll/releases/download/v1.0.0/SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
 sudo pacman -U ./omaroll-1.0.0-1-x86_64.pkg.tar.zst
 ```
 
 Every asset below is covered by `SHA256SUMS` and by a signed build attestation.
-`gh attestation verify omaroll-1.0.0-1-x86_64.pkg.tar.zst --repo tsouth89/omaroll`
+`gh attestation verify omaroll-1.0.0-1-x86_64.pkg.tar.zst --repo btsouth/omaroll`
 confirms the package was built by this repository's release workflow from the
 tagged commit.
 

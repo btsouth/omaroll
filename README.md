@@ -197,10 +197,10 @@ Documents: PDF. Thumbnails, previews, and page counts use Poppler locally.
 Requires Omarchy or Arch with Qt 6.8+ and Poppler.
 
 ```bash
-curl -fLO https://github.com/tsouth89/omaroll/releases/download/v1.2.0/omaroll-1.2.0-1-x86_64.pkg.tar.zst \
-     -fLO https://github.com/tsouth89/omaroll/releases/download/v1.2.0/SHA256SUMS
+curl -fLO https://github.com/btsouth/omaroll/releases/download/v1.3.0/omaroll-1.3.0-1-x86_64.pkg.tar.zst \
+     -fLO https://github.com/btsouth/omaroll/releases/download/v1.3.0/SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
-sudo pacman -U ./omaroll-1.2.0-1-x86_64.pkg.tar.zst
+sudo pacman -U ./omaroll-1.3.0-1-x86_64.pkg.tar.zst
 ```
 
 Run the same commands for a newer release to update. The package is prepared for
@@ -208,13 +208,13 @@ the Omarchy repository so installation and updates can move to normal `pacman`
 updates after inclusion.
 
 If you prefer a browser, download the package and `SHA256SUMS` from the
-[latest release](https://github.com/tsouth89/omaroll/releases/latest), put them
+[latest release](https://github.com/btsouth/omaroll/releases/latest), put them
 in the same folder, then run the last two commands above from that folder.
 
 To build from source instead:
 
 ```bash
-git clone https://github.com/tsouth89/omaroll
+git clone https://github.com/btsouth/omaroll
 cd omaroll
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
@@ -304,11 +304,17 @@ For a focused release check on an Omarchy desktop:
    verify it remains in the album. Move it outside the library and verify it is
    shown as unavailable instead of being matched to another file.
 5. Put an exact copy of a disposable image in another watched folder. Open
-   Browse, choose Exact duplicates, and verify both copies stay grouped and
-   remain untouched until you act on them.
-6. Switch Omarchy themes while Omaroll is open and confirm the chrome updates
+   Browse, choose Exact duplicates, keep one selected copy, and verify only the
+   other byte-for-byte copies move to Trash after confirmation.
+6. Resize or recompress a disposable image, open Similar pictures, and verify
+   the pair is grouped without either file being modified.
+7. Add a tag and saved view, restart Omaroll, and verify both persist. Rename a
+   tagged file inside Omaroll and verify its tag follows it.
+8. Open a multipage PDF and verify thumbnails, page navigation, details,
+   rename, organize, send, and Trash actions.
+9. Switch Omarchy themes while Omaroll is open and confirm the chrome updates
    without changing the media colors.
-7. Move a disposable file to Trash and restore it from the desktop Trash.
+10. Move a disposable file to Trash and restore it from the desktop Trash.
 
 ## License
 

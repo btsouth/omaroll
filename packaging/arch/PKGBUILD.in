@@ -3,7 +3,7 @@ pkgver=@VERSION@
 pkgrel=1
 pkgdesc='A fast, beautiful image and video viewer for Omarchy'
 arch=('x86_64')
-url='https://github.com/tsouth89/omaroll'
+url='https://github.com/btsouth/omaroll'
 license=('MIT')
 depends=('qt6-base' 'qt6-declarative' 'qt6-multimedia' 'qt6-imageformats'
          'kimageformats' 'libavif' 'libheif' 'hicolor-icon-theme'
@@ -21,7 +21,7 @@ optdepends=('omacut: trim recordings'
             'tailscale: send to another of your machines')
 makedepends=('cmake' 'ninja' 'pkgconf')
 options=('!debug')
-source=("$pkgname-$pkgver.tar.gz::https://github.com/tsouth89/omaroll/releases/download/v$pkgver/$pkgname-$pkgver.tar.gz")
+source=("$pkgname-$pkgver.tar.gz::https://github.com/btsouth/omaroll/releases/download/v$pkgver/$pkgname-$pkgver.tar.gz")
 sha256sums=('@SOURCE_SHA256@')
 
 build() {
