@@ -73,19 +73,18 @@ on them.
   copies to Trash after confirmation.
 - **Finds similar pictures.** A local perceptual comparison groups resized and
   recompressed versions for review without changing or removing anything.
-- **Hands off the work.** Trim goes to omacut, annotate to tensaku, convert to
-  `omarchy-transcode`, play to mpv, text to tesseract, and setting a background
-  to Omarchy. Specialized media work stays with tools you already have installed.
+- **Hands off specialist work.** Trim goes to omacut, annotate to tensaku,
+  convert to `omarchy-transcode`, text to tesseract, and setting a background
+  to Omarchy. Optional actions can still open mpv or imv when you want them.
 - **Drags out as the real file.** Pull a thumbnail into a Discord message, a
   browser upload or a Nautilus window and the file lands there. Select several
   and they go together.
 - **Previews in place.** Enter opens a capture large with every action beside
-  it. Images zoom, pan, rotate and animate; PDFs render in place with page
-  navigation; a recording starts muted with a
-  scrub bar and sound toggle, so you can find the moment before handing it to
-  omacut. File details include dimensions, duration, image format, camera and
-  exposure data when present, plus video codec, frame rate, bitrate and audio.
-  The full player is in mpv.
+  it. Images fit, display at actual size, zoom, pan, rotate, flip, and animate.
+  PDFs render in place with page navigation. Videos play with sound and include
+  seeking, volume, speed, audio track, and subtitle controls. File details
+  include dimensions, duration, image format, camera and exposure data when
+  present, plus video codec, frame rate, bitrate and audio.
 - **Presents any collection.** Start a fullscreen slideshow from a folder,
   album, search or filtered library. Images advance automatically. Videos are
   skipped by default, or can play through when enabled in Settings.
@@ -152,10 +151,15 @@ and put on your clipboard.
 |---|---|
 | arrows · `hjkl` | Move |
 | `Enter` · right click | Preview with every action for that capture |
-| `Space` | Your default action for that kind, initially trim or matte |
+| `Space` on the grid or a still/PDF preview | Your default action for that kind, initially trim, matte, or open document |
+| `Space` in a video or animated-image preview | Play · pause |
 | `←` `→` in a preview | Previous · next file in the same folder |
 | `J` `L` in a video preview | Seek backward · forward five seconds |
-| `+` `-` · `0` · `R` in an image preview | Zoom · fit · rotate |
+| `M` · `↑` `↓` or `9` `0` in a video preview | Mute · volume down/up |
+| `[` `]` · `Backspace` in a video preview | Change speed · reset speed |
+| `Home` `End` in a video preview | Start · end |
+| `+` `-` · `0` · `1` · `R` in an image preview | Zoom · fit · actual size · rotate |
+| `Shift+H` `Shift+V` in an image preview | Flip horizontally · vertically |
 | `F11` in a preview | Enter · leave fullscreen |
 | `F5` in a preview | Start · pause slideshow |
 | `I` in a preview | Show · hide file info and actions |
@@ -184,10 +188,11 @@ and next controls for the other media in that folder. A folder handed to
 
 ## Formats
 
-Images: PNG, JPEG, WebP, animated GIF and WebP, BMP, AVIF, HEIC/HEIF and TIFF.
+Images: PNG, JPEG, WebP, animated GIF and WebP, BMP, AVIF, HEIC/HEIF, TIFF,
+SVG/SVGZ, ICO, JXL, JPEG 2000, QOI, PSD, DDS, EXR, and TGA.
 
 Videos: MP4, M4V, MKV, WebM, MOV, AVI, MPEG, WMV, FLV, Ogg video, 3GP and
-MTS/M2TS. Playback uses Qt's FFmpeg backend, while the full-player action hands
+MTS/M2TS. Playback uses Qt's FFmpeg backend. An optional action can still hand
 the file to mpv.
 
 Documents: PDF. Thumbnails, previews, and page counts use Poppler locally.
@@ -296,10 +301,11 @@ For a focused release check on an Omarchy desktop:
 1. Launch `omaroll --demo` and verify the grid, folder filters, search, sort,
    selection, and Settings at both tiled and floating window sizes.
 2. Open a real image from the file manager. Verify previous and next stay in its
-   folder, then test zoom, pan, rotate, fullscreen, and `F5` slideshow.
-3. Open a real video. Verify muted preview, sound, seeking, technical details,
-   Save current frame, fullscreen, and the transition to the next item in a
-   slideshow.
+   folder, then test fit, actual size, deep zoom, pan, rotate, both flips,
+   fullscreen, animation pause, and `F5` slideshow.
+3. Open a real video. Verify play and pause, sound, volume, seeking, playback
+   speed, audio tracks, subtitles, technical details, Save current frame,
+   double-click fullscreen, and the transition to the next item in a slideshow.
 4. Create an album, rename and move one member inside a watched folder, and
    verify it remains in the album. Move it outside the library and verify it is
    shown as unavailable instead of being matched to another file.
@@ -310,8 +316,8 @@ For a focused release check on an Omarchy desktop:
    the pair is grouped without either file being modified.
 7. Add a tag and saved view, restart Omaroll, and verify both persist. Rename a
    tagged file inside Omaroll and verify its tag follows it.
-8. Open a multipage PDF and verify thumbnails, page navigation, details,
-   rename, organize, send, and Trash actions.
+8. Open a multipage PDF from the file manager and verify thumbnails, page
+   navigation, details, rename, organize, send, and Trash actions.
 9. Switch Omarchy themes while Omaroll is open and confirm the chrome updates
    without changing the media colors.
 10. Move a disposable file to Trash and restore it from the desktop Trash.

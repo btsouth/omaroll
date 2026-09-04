@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Image previews now include actual-size viewing, horizontal and vertical
+  flips, a checkerboard behind transparency, zoom up to 64 times the fitted
+  size, and Space to pause animated GIF and WebP files.
+- Video playback now includes standard Space, mute, volume, seek, speed, audio
+  track, and subtitle controls. Double-clicking the video toggles fullscreen.
+- SVG, icons, JPEG 2000, JXL, QOI, PSD, DDS, EXR, and TGA images can be scanned
+  and opened directly when the packaged image plugins are installed.
+
+### Changed
+
+- Videos start with sound, play once, and preserve an intentional pause when
+  the window is minimized and restored.
+
+### Fixed
+
+- Opening a PDF directly from a file manager no longer rejects it as an
+  unsupported media file.
+- Space in a video preview now pauses or resumes playback instead of launching
+  the configured video action.
+
 ## 1.3.1
 
 ### Fixed

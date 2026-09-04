@@ -259,8 +259,7 @@ int main(int argc, char* argv[]) {
         return 2;
       }
     }
-    if (handed.isFile() && !CaptureScanner::isImage(handed.suffix()) &&
-        !CaptureScanner::isVideo(handed.suffix())) {
+    if (handed.isFile() && !CaptureScanner::isSupported(handed.suffix())) {
       qWarning().noquote() << "omaroll: unsupported media file:" << requestedPath;
       return 2;
     }

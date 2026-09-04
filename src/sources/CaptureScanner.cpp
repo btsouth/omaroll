@@ -14,7 +14,10 @@ namespace {
 const QStringList kImageSuffixes = {
     QStringLiteral("png"),  QStringLiteral("jpg"),  QStringLiteral("jpeg"), QStringLiteral("webp"),
     QStringLiteral("gif"),  QStringLiteral("bmp"),  QStringLiteral("avif"), QStringLiteral("heic"),
-    QStringLiteral("heif"), QStringLiteral("tiff"), QStringLiteral("tif"),
+    QStringLiteral("heif"), QStringLiteral("tiff"), QStringLiteral("tif"),  QStringLiteral("svg"),
+    QStringLiteral("svgz"), QStringLiteral("ico"),  QStringLiteral("jxl"),  QStringLiteral("jp2"),
+    QStringLiteral("j2k"),  QStringLiteral("qoi"),  QStringLiteral("psd"),  QStringLiteral("dds"),
+    QStringLiteral("exr"),  QStringLiteral("tga"),
 };
 
 const QStringList kVideoSuffixes = {
@@ -122,6 +125,10 @@ bool CaptureScanner::isVideo(const QString& suffix) {
 
 bool CaptureScanner::isDocument(const QString& suffix) {
   return kDocumentSuffixes.contains(suffix.toLower());
+}
+
+bool CaptureScanner::isSupported(const QString& suffix) {
+  return isImage(suffix) || isVideo(suffix) || isDocument(suffix);
 }
 
 bool CaptureScanner::classifyByName(const QString& fileName, CaptureRecord::Kind& kind,

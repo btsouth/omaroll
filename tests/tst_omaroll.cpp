@@ -22,6 +22,7 @@
 #include "thumbs/ThumbnailCache.h"
 
 #include <QClipboard>
+#include <QImageReader>
 #include <QPainter>
 #include <QPdfWriter>
 #include <QProcess>
@@ -754,6 +755,33 @@ private slots:
       QCOMPARE(record.isVideo(), CaptureScanner::isVideo(QFileInfo(record.path).suffix()));
       QCOMPARE(record.isDocument(),
                CaptureScanner::isDocument(QFileInfo(record.path).suffix()));
+    }
+  }
+
+  void directOpenRecognizesEveryViewerMediumAndCommonImageFormat() {
+    const QStringList images = {QStringLiteral("png"),  QStringLiteral("JPG"),
+                                QStringLiteral("svg"),  QStringLiteral("svgz"),
+                                QStringLiteral("ico"),  QStringLiteral("jxl"),
+                                QStringLiteral("jp2"),  QStringLiteral("j2k"),
+                                QStringLiteral("qoi"),  QStringLiteral("psd"),
+                                QStringLiteral("dds"),  QStringLiteral("exr"),
+                                QStringLiteral("tga")};
+    for (const QString& suffix : images) {
+      QVERIFY2(CaptureScanner::isImage(suffix), qPrintable(suffix));
+      QVERIFY2(CaptureScanner::isSupported(suffix), qPrintable(suffix));
+    }
+    QVERIFY(CaptureScanner::isSupported(QStringLiteral("mkv")));
+    QVERIFY(CaptureScanner::isSupported(QStringLiteral("PDF")));
+    QVERIFY(!CaptureScanner::isSupported(QStringLiteral("txt")));
+
+    const QList<QByteArray> decoders = QImageReader::supportedImageFormats();
+    for (const QByteArray format : {QByteArray("svg"), QByteArray("ico"), QByteArray("jxl"),
+                                    QByteArray("jp2"), QByteArray("qoi"), QByteArray("psd"),
+                                    QByteArray("dds"), QByteArray("exr"), QByteArray("tga")}) {
+      QVERIFY2(decoders.contains(format),
+               qPrintable(QStringLiteral("missing image decoder for %1; found: %2")
+                              .arg(QString::fromLatin1(format),
+                                   QString::fromLatin1(decoders.join(',')))));
     }
   }
 

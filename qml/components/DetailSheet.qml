@@ -27,6 +27,9 @@ Item {
     property bool canNavigate: false
     property real imageZoom: 1.0
     property int imageRotation: 0
+    property bool imageFlipHorizontal: false
+    property bool imageFlipVertical: false
+    property bool animationPlaying: true
     property real imageSourceWidth: 0
     property real imageSourceHeight: 0
     property bool stillReady: false
@@ -35,6 +38,7 @@ Item {
     property bool slideshowRunning: false
     property bool slideshowPausedForRender: false
     property bool qrDetected: false
+    property bool resumeVideoAfterRestore: false
     // The window's status line, repeated here: the footer sits under the
     // backdrop, so a result said there while the viewer is open goes unread.
     property string status: ""
@@ -48,6 +52,15 @@ Item {
     readonly property string durationLabel: root.isVideo && player.duration > 0
                                              ? root.formatDuration(player.duration) : ""
     readonly property real playbackPosition: player.position
+    readonly property int playbackState: player.playbackState
+    readonly property real playbackRate: player.playbackRate
+    readonly property real playbackVolume: audio.volume
+    readonly property bool playbackMuted: audio.muted
+    readonly property int playbackLoops: player.loops
+    readonly property bool isAnimatedImage: !root.isVideo && !root.isDocument
+                                             && (root.fileName.toLowerCase().endsWith(".gif")
+                                                 || root.fileName.toLowerCase().endsWith(".webp"))
+    readonly property real displayedImageScale: stillViewport.fittedScale * root.imageZoom
     readonly property string mediaTechnical: root.dimensionsLabel !== "" && root.durationLabel !== ""
                                              ? root.dimensionsLabel + "  ·  " + root.durationLabel
                                              : (root.dimensionsLabel !== "" ? root.dimensionsLabel
@@ -73,9 +86,12 @@ Item {
         info: { key: Qt.Key_I, label: "I" },
         fullscreen: { key: Qt.Key_F11, label: "F11" },
         fit: { key: Qt.Key_0, label: "0" },
+        actual: { key: Qt.Key_1, label: "1" },
         zoomOut: { key: Qt.Key_Minus, label: "−" },
         zoomIn: { key: Qt.Key_Plus, label: "+" },
-        rotate: { key: Qt.Key_R, label: "R" }
+        rotate: { key: Qt.Key_R, label: "R" },
+        flipHorizontal: { key: Qt.Key_H, label: "Shift+H" },
+        flipVertical: { key: Qt.Key_V, label: "Shift+V" }
     })
     property bool actionNavigationActive: false
     property string focusedActionId: ""
@@ -224,11 +240,21 @@ Item {
     function resetImageView() {
         imageZoom = 1.0
         imageRotation = 0
+        imageFlipHorizontal = false
+        imageFlipVertical = false
         Qt.callLater(stillViewport.centerContent)
     }
 
     function adjustImageZoom(factor) {
-        imageZoom = Math.max(1, Math.min(4, imageZoom * factor))
+        imageZoom = Math.max(0.001, Math.min(64, imageZoom * factor))
+        Qt.callLater(stillViewport.centerContent)
+    }
+
+    function showActualImageSize() {
+        if (stillViewport.fittedScale <= 0) {
+            return
+        }
+        imageZoom = 1 / stillViewport.fittedScale
         Qt.callLater(stillViewport.centerContent)
     }
 
@@ -236,6 +262,56 @@ Item {
         imageRotation = (imageRotation + 90) % 360
         imageZoom = 1.0
         Qt.callLater(stillViewport.centerContent)
+    }
+
+    function toggleVideoPlayback() {
+        if (player.playbackState === MediaPlayer.PlayingState) {
+            player.pause()
+        } else {
+            player.play()
+        }
+    }
+
+    function seekVideo(milliseconds) {
+        player.position = Math.max(0, Math.min(player.duration, player.position + milliseconds))
+    }
+
+    function adjustVolume(amount) {
+        audio.volume = Math.max(0, Math.min(1, audio.volume + amount))
+        if (audio.volume > 0) {
+            audio.muted = false
+        }
+    }
+
+    function adjustPlaybackRate(amount) {
+        player.playbackRate = Math.max(0.25, Math.min(4, player.playbackRate + amount))
+    }
+
+    function cyclePlaybackRate() {
+        const rates = [0.5, 1, 1.25, 1.5, 2]
+        for (let index = 0; index < rates.length; ++index) {
+            if (player.playbackRate < rates[index] - 0.01) {
+                player.playbackRate = rates[index]
+                return
+            }
+        }
+        player.playbackRate = rates[0]
+    }
+
+    function cycleSubtitleTrack() {
+        const count = player.subtitleTracks.length
+        if (count === 0) {
+            return
+        }
+        player.activeSubtitleTrack = player.activeSubtitleTrack + 1 >= count
+                                     ? -1 : player.activeSubtitleTrack + 1
+    }
+
+    function cycleAudioTrack() {
+        const count = player.audioTracks.length
+        if (count > 1) {
+            player.activeAudioTrack = (player.activeAudioTrack + 1) % count
+        }
     }
 
     function setSlideshow(enabled) {
@@ -290,6 +366,7 @@ Item {
 
     onPathChanged: {
         stillReady = false
+        animationPlaying = true
         imageSourceWidth = 0
         imageSourceHeight = 0
         if (isDocument) {
@@ -410,7 +487,7 @@ Item {
                 visible: false
                 spacing: 6
                 Repeater {
-                    model: ["Fit", "−", "+", "Rotate", "Full"]
+                    model: ["Fit", "Actual", "−", "+", "Rotate", "Flip H", "Flip V", "Full"]
                     PillButton { label: modelData }
                 }
                 Item { width: 42; height: 1 }
@@ -420,7 +497,7 @@ Item {
                 visible: false
                 spacing: 6
                 Repeater {
-                    model: ["Fit", "−", "+", "↻", "⛶"]
+                    model: ["Fit", "1:1", "−", "+", "↻", "↔", "↕", "⛶"]
                     PillButton { label: modelData }
                 }
             }
@@ -483,6 +560,21 @@ Item {
                     x: (stillViewport.contentWidth - width) / 2
                     y: (stillViewport.contentHeight - height) / 2
 
+                    Image {
+                        id: transparencyGrid
+                        objectName: "transparencyGrid"
+                        anchors.centerIn: parent
+                        width: stillViewport.sourceWidth * stillViewport.fittedScale
+                               * root.imageZoom
+                        height: stillViewport.sourceHeight * stillViewport.fittedScale
+                                * root.imageZoom
+                        rotation: root.imageRotation
+                        visible: !root.isDocument
+                        fillMode: Image.Tile
+                        smooth: false
+                        source: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAQMAAAAlPW0iAAAABlBMVEVFUExmZmbID7WAAAAAEElEQVQI12NgYGQgHv3/BwAEowINzPTc0QAAAABJRU5ErkJggg=="
+                    }
+
                     Loader {
                         id: stillLoader
                         anchors.centerIn: parent
@@ -491,6 +583,12 @@ Item {
                         height: stillViewport.sourceHeight * stillViewport.fittedScale
                                 * root.imageZoom
                         rotation: root.imageRotation
+                        transform: Scale {
+                            origin.x: stillLoader.width / 2
+                            origin.y: stillLoader.height / 2
+                            xScale: root.imageFlipHorizontal ? -1 : 1
+                            yScale: root.imageFlipVertical ? -1 : 1
+                        }
                         readonly property string suffix: root.fileName.toLowerCase()
                         sourceComponent: root.isDocument ? pdfStill
                                          : suffix.endsWith(".gif") || suffix.endsWith(".webp")
@@ -567,12 +665,13 @@ Item {
             Component {
                 id: animatedStill
                 AnimatedImage {
+                    objectName: "animatedImage"
                     source: root.visible && !root.isVideo && root.path !== ""
                             ? Library.fileUrl(root.path) : ""
                     asynchronous: true
                     autoTransform: true
                     cache: false
-                    playing: root.visible
+                    playing: root.visible && root.animationPlaying
                     smooth: true
                     fillMode: Image.Stretch
                     onStatusChanged: {
@@ -588,16 +687,21 @@ Item {
                 }
             }
 
-            // A recording plays in place, muted, the moment the preview opens.
-            // Enough to tell two clips apart or find the moment to trim; the
-            // full player with sound is one keystroke away in mpv.
+            // A recording plays in place with the normal controls expected of
+            // a default media viewer. Specialist editing can still be handed
+            // to the action list without weakening playback here.
             MediaPlayer {
                 id: player
+                objectName: "videoPlayer"
                 source: root.visible && root.isVideo && root.path !== ""
                         ? Library.fileUrl(root.path) : ""
                 videoOutput: output
-                audioOutput: AudioOutput { id: audio; muted: true }
-                loops: root.slideshowRunning ? 1 : MediaPlayer.Infinite
+                audioOutput: AudioOutput {
+                    id: audio
+                    volume: 0.8
+                    muted: false
+                }
+                loops: 1
                 onSourceChanged: {
                     if (source.toString() !== "") {
                         play()
@@ -618,8 +722,7 @@ Item {
                 }
             }
 
-            // Decoding a muted preview while the window is minimised is wasted
-            // battery; resume when it comes back.
+            // Do not decode while minimized, and preserve an intentional pause.
             readonly property bool windowShown: Window.visibility !== Window.Minimized
                                                 && Window.visibility !== Window.Hidden
             onWindowShownChanged: {
@@ -627,8 +730,13 @@ Item {
                     return
                 }
                 if (windowShown) {
-                    player.play()
+                    if (root.resumeVideoAfterRestore) {
+                        player.play()
+                    }
+                    root.resumeVideoAfterRestore = false
                 } else {
+                    root.resumeVideoAfterRestore =
+                        player.playbackState === MediaPlayer.PlayingState
                     player.pause()
                 }
             }
@@ -646,11 +754,34 @@ Item {
 
             VideoOutput {
                 id: output
+                objectName: "videoOutput"
                 anchors.fill: parent
                 anchors.margins: 16
                 anchors.bottomMargin: 56
                 fillMode: VideoOutput.PreserveAspectFit
                 visible: root.isVideo && player.hasVideo
+
+                TapHandler {
+                    onDoubleTapped: root.setFullScreen(!root.fullScreen)
+                }
+            }
+
+            Text {
+                anchors.horizontalCenter: output.horizontalCenter
+                anchors.bottom: output.bottom
+                anchors.bottomMargin: 24
+                width: Math.max(0, output.width - 80)
+                visible: root.isVideo && output.videoSink
+                         && output.videoSink.subtitleText !== ""
+                text: output.videoSink ? output.videoSink.subtitleText : ""
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.Wrap
+                font.family: Theme.fontFamily
+                font.pixelSize: Math.max(16, Math.min(28, output.height / 24))
+                font.weight: Font.DemiBold
+                color: "white"
+                style: Text.Outline
+                styleColor: "black"
             }
 
             PillButton {
@@ -788,7 +919,17 @@ Item {
                     toolTip: "Fit image"
                     shortcut: root.viewerShortcuts.fit.label
                     active: root.imageZoom === 1 && root.imageRotation === 0
+                            && !root.imageFlipHorizontal && !root.imageFlipVertical
                     onClicked: root.resetImageView()
+                }
+                PillButton {
+                    objectName: "actualSizeButton"
+                    visible: !root.isDocument && stage.width >= 430
+                    label: root.compactControls ? "1:1" : "Actual"
+                    toolTip: "Actual size"
+                    shortcut: root.viewerShortcuts.actual.label
+                    active: Math.abs(root.displayedImageScale - 1) < 0.01
+                    onClicked: root.showActualImageSize()
                 }
                 PillButton {
                     label: "−"
@@ -801,7 +942,7 @@ Item {
                     visible: !root.compactControls
                     width: 42
                     horizontalAlignment: Text.AlignHCenter
-                    text: Math.round(root.imageZoom * 100) + "%"
+                    text: Math.round(root.displayedImageScale * 100) + "%"
                     font.family: Theme.fontFamily
                     font.pixelSize: 11
                     color: Theme.mutedText
@@ -819,6 +960,24 @@ Item {
                     onClicked: root.rotateImage()
                 }
                 PillButton {
+                    objectName: "flipHorizontalButton"
+                    visible: !root.isDocument && stage.width >= 560
+                    label: root.compactControls ? "↔" : "Flip H"
+                    toolTip: "Flip horizontally"
+                    shortcut: root.viewerShortcuts.flipHorizontal.label
+                    active: root.imageFlipHorizontal
+                    onClicked: root.imageFlipHorizontal = !root.imageFlipHorizontal
+                }
+                PillButton {
+                    objectName: "flipVerticalButton"
+                    visible: !root.isDocument && stage.width >= 560
+                    label: root.compactControls ? "↕" : "Flip V"
+                    toolTip: "Flip vertically"
+                    shortcut: root.viewerShortcuts.flipVertical.label
+                    active: root.imageFlipVertical
+                    onClicked: root.imageFlipVertical = !root.imageFlipVertical
+                }
+                PillButton {
                     // At the minimum window width with details shown, even the
                     // icon row is a few pixels too wide. F11 still works.
                     visible: !root.compactControls
@@ -832,7 +991,7 @@ Item {
                 }
             }
 
-            // Transport: play/pause, a scrub bar, the clock, sound.
+            // Transport: play/pause, scrub, clock, tracks, speed, and sound.
             Item {
                 id: transport
                 visible: root.isVideo && !root.slideshowRunning
@@ -844,12 +1003,12 @@ Item {
                 anchors.bottomMargin: 16
                 height: 28
 
-                // Play, clock and sound at their natural widths beside a scrub
-                // bar that is still worth dragging.
+                // Keep the scrub useful at the minimum window width. Track
+                // selectors appear only when the file has alternatives.
                 readonly property int scrubMinimum: 120
                 readonly property real minimumWidth: playButton.implicitWidth + 14 + scrubMinimum
                                                      + 14 + clockLabel.implicitWidth + 12
-                                                     + soundButton.implicitWidth
+                                                     + mediaControls.implicitWidth
 
                 function clock(ms) {
                     const total = Math.max(0, Math.round(ms / 1000))
@@ -860,17 +1019,19 @@ Item {
 
                 PillButton {
                     id: playButton
+                    objectName: "videoPlayButton"
                     anchors.left: parent.left
                     anchors.verticalCenter: parent.verticalCenter
                     label: player.playbackState === MediaPlayer.PlayingState ? "❚❚" : "▶"
-                    onClicked: player.playbackState === MediaPlayer.PlayingState
-                               ? player.pause() : player.play()
+                    toolTip: player.playbackState === MediaPlayer.PlayingState ? "Pause" : "Play"
+                    shortcut: "Space"
+                    onClicked: root.toggleVideoPlayback()
                 }
 
                 Item {
                     id: scrub
                     anchors.left: playButton.right
-                    anchors.right: clockLabel.visible ? clockLabel.left : soundButton.left
+                    anchors.right: clockLabel.visible ? clockLabel.left : mediaControls.left
                     anchors.leftMargin: 14
                     anchors.rightMargin: 14
                     anchors.verticalCenter: parent.verticalCenter
@@ -917,7 +1078,7 @@ Item {
                     id: clockLabel
                     // The clock goes first when the transport is short of room.
                     visible: transport.width >= transport.minimumWidth
-                    anchors.right: soundButton.left
+                    anchors.right: mediaControls.left
                     anchors.rightMargin: 12
                     anchors.verticalCenter: parent.verticalCenter
                     text: transport.clock(player.position) + " / " + transport.clock(player.duration)
@@ -926,13 +1087,45 @@ Item {
                     color: Theme.mutedText
                 }
 
-                PillButton {
-                    id: soundButton
+                Row {
+                    id: mediaControls
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
-                    label: audio.muted ? "Muted" : "Sound"
-                    active: !audio.muted
-                    onClicked: audio.muted = !audio.muted
+                    spacing: 6
+
+                    PillButton {
+                        visible: player.audioTracks.length > 1 && transport.width >= 520
+                        label: "Audio " + (player.activeAudioTrack + 1)
+                        toolTip: "Switch audio track"
+                        onClicked: root.cycleAudioTrack()
+                    }
+                    PillButton {
+                        visible: player.subtitleTracks.length > 0 && transport.width >= 440
+                        objectName: "subtitleButton"
+                        label: "CC"
+                        toolTip: player.activeSubtitleTrack >= 0
+                                 ? "Turn subtitles off" : "Choose subtitles"
+                        active: player.activeSubtitleTrack >= 0
+                        onClicked: root.cycleSubtitleTrack()
+                    }
+                    PillButton {
+                        id: speedButton
+                        objectName: "playbackSpeedButton"
+                        label: Number(player.playbackRate.toFixed(2)) + "×"
+                        toolTip: "Playback speed"
+                        shortcut: "[  ]"
+                        active: Math.abs(player.playbackRate - 1) > 0.01
+                        onClicked: root.cyclePlaybackRate()
+                    }
+                    PillButton {
+                        id: soundButton
+                        objectName: "videoSoundButton"
+                        label: audio.muted ? "Muted" : Math.round(audio.volume * 100) + "%"
+                        toolTip: audio.muted ? "Unmute" : "Mute"
+                        shortcut: "M"
+                        active: !audio.muted
+                        onClicked: audio.muted = !audio.muted
+                    }
                 }
             }
 
@@ -1270,10 +1463,15 @@ Item {
             return
         }
         if (event.key === Qt.Key_Space) {
-            root.actionTriggered(root.isDocument
-                                 ? Registry.primaryActionForKind(false, true)
-                                 : (root.isVideo ? Settings.videoPrimaryAction
-                                                 : Settings.imagePrimaryAction))
+            if (root.isVideo) {
+                root.toggleVideoPlayback()
+            } else if (root.isAnimatedImage) {
+                root.animationPlaying = !root.animationPlaying
+            } else {
+                root.actionTriggered(root.isDocument
+                                     ? Registry.primaryActionForKind(false, true)
+                                     : Settings.imagePrimaryAction)
+            }
             event.accepted = true
             return
         }
@@ -1299,8 +1497,25 @@ Item {
             event.accepted = true
             return
         }
+        if (!root.isVideo && !root.isDocument
+                && event.key === root.viewerShortcuts.actual.key) {
+            root.showActualImageSize()
+            event.accepted = true
+            return
+        }
         if (!root.isVideo && event.key === root.viewerShortcuts.rotate.key) {
             root.rotateImage()
+            event.accepted = true
+            return
+        }
+        if (!root.isVideo && !root.isDocument && (event.modifiers & Qt.ShiftModifier)
+                && (event.key === root.viewerShortcuts.flipHorizontal.key
+                    || event.key === root.viewerShortcuts.flipVertical.key)) {
+            if (event.key === root.viewerShortcuts.flipHorizontal.key) {
+                root.imageFlipHorizontal = !root.imageFlipHorizontal
+            } else {
+                root.imageFlipVertical = !root.imageFlipVertical
+            }
             event.accepted = true
             return
         }
@@ -1314,8 +1529,34 @@ Item {
             return
         }
         if (root.isVideo && (event.key === Qt.Key_J || event.key === Qt.Key_L)) {
-            const step = event.key === Qt.Key_J ? -5000 : 5000
-            player.position = Math.max(0, Math.min(player.duration, player.position + step))
+            root.seekVideo(event.key === Qt.Key_J ? -5000 : 5000)
+            event.accepted = true
+            return
+        }
+        if (root.isVideo && event.key === Qt.Key_M) {
+            audio.muted = !audio.muted
+            event.accepted = true
+            return
+        }
+        if (root.isVideo && (event.key === Qt.Key_Up || event.key === Qt.Key_Down
+                             || event.key === Qt.Key_9 || event.key === Qt.Key_0)) {
+            root.adjustVolume(event.key === Qt.Key_Up || event.key === Qt.Key_0 ? 0.05 : -0.05)
+            event.accepted = true
+            return
+        }
+        if (root.isVideo && (event.key === Qt.Key_BracketLeft
+                             || event.key === Qt.Key_BracketRight)) {
+            root.adjustPlaybackRate(event.key === Qt.Key_BracketLeft ? -0.25 : 0.25)
+            event.accepted = true
+            return
+        }
+        if (root.isVideo && event.key === Qt.Key_Backspace) {
+            player.playbackRate = 1
+            event.accepted = true
+            return
+        }
+        if (root.isVideo && (event.key === Qt.Key_Home || event.key === Qt.Key_End)) {
+            player.position = event.key === Qt.Key_Home ? 0 : player.duration
             event.accepted = true
             return
         }

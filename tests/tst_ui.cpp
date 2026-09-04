@@ -35,6 +35,7 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QImage>
+#include <QMediaPlayer>
 #include <QPainter>
 #include <QPdfWriter>
 #include <QQmlApplicationEngine>
@@ -292,6 +293,105 @@ private slots:
     settle();
     QVERIFY(detail->isVisible());
     QCOMPARE(detail->property("path").toString(), shown);
+  }
+
+  void imageViewerSupportsActualSizeFlipsDeepZoomAndAnimationPause() {
+    int imageRow = -1;
+    for (int row = 0; row < m_library->rowCount(); ++row) {
+      if (!m_library->isVideoAt(row) && !m_library->isDocumentAt(row)) {
+        imageRow = row;
+        break;
+      }
+    }
+    QVERIFY(imageRow >= 0);
+    openDetail(imageRow);
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->property("stillReady").toBool());
+    QTRY_COMPARE(item("transparencyGrid")->property("status").toInt(), 1);
+
+    click(item("actualSizeButton"));
+    QTRY_VERIFY(qAbs(detail->property("displayedImageScale").toDouble() - 1.0) < 0.01);
+    click(item("flipHorizontalButton"));
+    click(item("flipVerticalButton"));
+    QVERIFY(detail->property("imageFlipHorizontal").toBool());
+    QVERIFY(detail->property("imageFlipVertical").toBool());
+
+    QVERIFY(QMetaObject::invokeMethod(detail, "resetImageView"));
+    QVERIFY(QMetaObject::invokeMethod(detail, "adjustImageZoom", Q_ARG(QVariant, 10.0)));
+    QVERIFY(detail->property("imageZoom").toDouble() > 4.0);
+    QTest::keyClick(m_window, Qt::Key_0);
+    QCOMPARE(detail->property("imageZoom").toDouble(), 1.0);
+    QVERIFY(!detail->property("imageFlipHorizontal").toBool());
+    QVERIFY(!detail->property("imageFlipVertical").toBool());
+    QTest::keyClick(m_window, Qt::Key_H, Qt::ShiftModifier);
+    QTest::keyClick(m_window, Qt::Key_V, Qt::ShiftModifier);
+    QVERIFY(detail->property("imageFlipHorizontal").toBool());
+    QVERIFY(detail->property("imageFlipVertical").toBool());
+
+    // Animated files reserve Space for playback instead of launching the
+    // default image action. The actual decoder binding uses the same state.
+    detail->setProperty("fileName", QStringLiteral("animation.gif"));
+    detail->setProperty("animationPlaying", true);
+    QSignalSpy action(detail, SIGNAL(actionTriggered(QString)));
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QVERIFY(!detail->property("animationPlaying").toBool());
+    QCOMPARE(action.size(), 0);
+
+    m_window->resize(560, 420);
+    QTRY_VERIFY(!item("actualSizeButton")->isVisible());
+    QVERIFY(!item("flipHorizontalButton")->isVisible());
+    QVERIFY(!item("flipVerticalButton")->isVisible());
+    QQuickItem* fit = pill(detail, QStringLiteral("Fit"));
+    QVERIFY(fit);
+    QVERIFY(fit->mapToScene(QPointF(0, 0)).x() >= 0);
+    m_window->resize(1280, 820);
+    QTRY_VERIFY(item("actualSizeButton")->isVisible());
+  }
+
+  void videoViewerHasDefaultPlayerKeyboardAndPointerControls() {
+    int videoRow = -1;
+    for (int row = 0; row < m_library->rowCount(); ++row) {
+      if (m_library->isVideoAt(row)) {
+        videoRow = row;
+        break;
+      }
+    }
+    QVERIFY(videoRow >= 0);
+    openDetail(videoRow);
+    QQuickItem* detail = item("detail");
+    QTRY_COMPARE_WITH_TIMEOUT(detail->property("playbackState").toInt(),
+                              static_cast<int>(QMediaPlayer::PlayingState), 5000);
+    QCOMPARE(detail->property("playbackLoops").toInt(), 1);
+    QVERIFY(!detail->property("playbackMuted").toBool());
+
+    QSignalSpy action(detail, SIGNAL(actionTriggered(QString)));
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTRY_COMPARE(detail->property("playbackState").toInt(),
+                 static_cast<int>(QMediaPlayer::PausedState));
+    QCOMPARE(action.size(), 0);
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTRY_COMPARE(detail->property("playbackState").toInt(),
+                 static_cast<int>(QMediaPlayer::PlayingState));
+
+    const bool muted = detail->property("playbackMuted").toBool();
+    QTest::keyClick(m_window, Qt::Key_M);
+    QCOMPARE(detail->property("playbackMuted").toBool(), !muted);
+    const double volume = detail->property("playbackVolume").toDouble();
+    QTest::keyClick(m_window, Qt::Key_Up);
+    QVERIFY(detail->property("playbackVolume").toDouble() > volume);
+    QVERIFY(!detail->property("playbackMuted").toBool());
+
+    QTest::keyClick(m_window, Qt::Key_BracketRight);
+    QCOMPARE(detail->property("playbackRate").toDouble(), 1.25);
+    QTest::keyClick(m_window, Qt::Key_Backspace);
+    QCOMPARE(detail->property("playbackRate").toDouble(), 1.0);
+
+    QQuickItem* output = item("videoOutput");
+    QTRY_VERIFY(output->isVisible() && output->width() > 0);
+    QTest::mouseDClick(m_window, Qt::LeftButton, Qt::NoModifier, centre(output));
+    QTRY_VERIFY(detail->property("fullScreen").toBool());
+    QTest::mouseDClick(m_window, Qt::LeftButton, Qt::NoModifier, centre(output));
+    QTRY_VERIFY(!detail->property("fullScreen").toBool());
   }
 
   void rightClickOnATileOpensThatTile() {
