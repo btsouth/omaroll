@@ -28,6 +28,8 @@ add_library(omaroll_core STATIC
   src/library/DuplicateIndex.h
   src/library/MediaInspector.cpp
   src/library/MediaInspector.h
+  src/library/SimilarityIndex.cpp
+  src/library/SimilarityIndex.h
   src/library/MediaDateIndex.cpp
   src/library/MediaDateIndex.h
   src/sources/CaptureScanner.cpp
@@ -46,6 +48,12 @@ add_library(omaroll_core STATIC
   src/matte/MatteComposer.h
   src/matte/MatteProvider.cpp
   src/matte/MatteProvider.h
+  src/pdf/PdfInspector.cpp
+  src/pdf/PdfInspector.h
+  src/pdf/PdfProvider.cpp
+  src/pdf/PdfProvider.h
+  src/pdf/PdfSupport.cpp
+  src/pdf/PdfSupport.h
   src/search/OcrIndex.cpp
   src/search/OcrIndex.h
   src/search/QrDetector.cpp

@@ -16,16 +16,14 @@ QrDetector::QrDetector(CaptureModel* model, QObject* parent)
   m_timeout.setSingleShot(true);
   m_timeout.setInterval(kQrTimeoutMs);
   connect(&m_timeout, &QTimer::timeout, &m_process, &QProcess::kill);
-  connect(&m_process, &QProcess::finished, this,
-          [this](int exitCode, QProcess::ExitStatus status) {
-            finishCurrent(status == QProcess::NormalExit, exitCode == 0);
-          });
-  connect(&m_process, &QProcess::errorOccurred, this,
-          [this](QProcess::ProcessError error) {
-            if (error == QProcess::FailedToStart) {
-              finishCurrent(false, false);
-            }
-          });
+  connect(&m_process, &QProcess::finished, this, [this](int exitCode, QProcess::ExitStatus status) {
+    finishCurrent(status == QProcess::NormalExit, exitCode == 0);
+  });
+  connect(&m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
+    if (error == QProcess::FailedToStart) {
+      finishCurrent(false, false);
+    }
+  });
 }
 
 QrDetector::~QrDetector() {
@@ -49,7 +47,7 @@ void QrDetector::inspect(const QString& path) {
     return;
   }
   const int row = m_model->rowOf(path);
-  if (row < 0 || m_model->recordAt(row).isVideo()) {
+  if (row < 0 || m_model->recordAt(row).isVideo() || m_model->recordAt(row).isDocument()) {
     emit stateChanged();
     if (m_process.state() != QProcess::NotRunning) {
       m_process.kill();
@@ -58,7 +56,7 @@ void QrDetector::inspect(const QString& path) {
   }
 
   const auto& record = m_model->recordAt(row);
-  const Candidate candidate{record.path, record.modified, record.bytes};
+  const Candidate candidate {record.path, record.modified, record.bytes};
   const auto cached = m_cache.constFind(candidate.path);
   if (cached != m_cache.cend() && cached->modified == candidate.modified &&
       cached->bytes == candidate.bytes) {
@@ -156,7 +154,7 @@ bool QrDetector::stillCurrent(const Candidate& candidate) const {
     return false;
   }
   const auto& record = m_model->recordAt(row);
-  return !record.isVideo() && record.modified == candidate.modified &&
+  return !record.isVideo() && !record.isDocument() && record.modified == candidate.modified &&
          record.bytes == candidate.bytes;
 }
 

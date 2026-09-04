@@ -7,10 +7,13 @@
 #include "library/CaptureModel.h"
 #include "library/CaptureRoles.h"
 #include "library/DuplicateIndex.h"
-#include "library/MediaInspector.h"
 #include "library/MediaDateIndex.h"
+#include "library/MediaInspector.h"
+#include "library/SimilarityIndex.h"
 #include "matte/HueExtractor.h"
 #include "matte/MatteComposer.h"
+#include "pdf/PdfInspector.h"
+#include "pdf/PdfSupport.h"
 #include "search/OcrIndex.h"
 #include "search/QrDetector.h"
 #include "sources/CaptureLocations.h"
@@ -20,6 +23,7 @@
 
 #include <QClipboard>
 #include <QPainter>
+#include <QPdfWriter>
 #include <QProcess>
 #include <QScopeGuard>
 #include <QSignalSpy>
@@ -37,10 +41,8 @@ private slots:
     QVERIFY(m_scratch.isValid());
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        m_scratch.filePath(QStringLiteral("config")));
-    QVERIFY(qputenv("XDG_CACHE_HOME",
-                    m_scratch.filePath(QStringLiteral("cache")).toUtf8()));
-    QVERIFY(qputenv("XDG_DATA_HOME",
-                    m_scratch.filePath(QStringLiteral("data")).toUtf8()));
+    QVERIFY(qputenv("XDG_CACHE_HOME", m_scratch.filePath(QStringLiteral("cache")).toUtf8()));
+    QVERIFY(qputenv("XDG_DATA_HOME", m_scratch.filePath(QStringLiteral("data")).toUtf8()));
   }
 
   void singleInstanceForwardsTheOpenedPath() {
@@ -61,8 +63,7 @@ private slots:
   void disabledXdgPictureDirectoryDoesNotScanHome() {
     const QByteArray previous = qgetenv("XDG_PICTURES_DIR");
     QVERIFY(qputenv("XDG_PICTURES_DIR", QDir::homePath().toUtf8()));
-    QCOMPARE(CaptureLocations::pictures(),
-             QDir::homePath() + QStringLiteral("/Pictures"));
+    QCOMPARE(CaptureLocations::pictures(), QDir::homePath() + QStringLiteral("/Pictures"));
     if (previous.isNull()) {
       qunsetenv("XDG_PICTURES_DIR");
     } else {
@@ -184,8 +185,7 @@ private slots:
 
     QFile shell(root + QStringLiteral("/theme/shell.toml"));
     QVERIFY(shell.open(QIODevice::WriteOnly | QIODevice::Text));
-    shell.write(
-        "[launcher]\nbackground = \"#223344\"\nbackground-alpha = 0.73\n");
+    shell.write("[launcher]\nbackground = \"#223344\"\nbackground-alpha = 0.73\n");
     shell.close();
 
     OmarchyTheme theme(state.path(), config.path());
@@ -193,22 +193,16 @@ private slots:
     QCOMPARE(theme.surfaceBackground(), QColor(QStringLiteral("#223344")));
     QCOMPARE(theme.surfaceAlpha(), 0.73);
 
-    QVERIFY(shell.open(QIODevice::WriteOnly | QIODevice::Truncate |
-                       QIODevice::Text));
-    shell.write(
-        "[launcher]\nbackground = \"#445566\"\nbackground-alpha = 0.91\n");
+    QVERIFY(shell.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text));
+    shell.write("[launcher]\nbackground = \"#445566\"\nbackground-alpha = 0.91\n");
     shell.close();
-    QTRY_COMPARE_WITH_TIMEOUT(theme.surfaceBackground(),
-                              QColor(QStringLiteral("#445566")), 1500);
+    QTRY_COMPARE_WITH_TIMEOUT(theme.surfaceBackground(), QColor(QStringLiteral("#445566")), 1500);
     QTRY_COMPARE_WITH_TIMEOUT(theme.surfaceAlpha(), 0.91, 1500);
 
-    QVERIFY(shell.open(QIODevice::WriteOnly | QIODevice::Truncate |
-                       QIODevice::Text));
-    shell.write(
-        "[launcher]\nbackground = \"not-a-color\"\nbackground-alpha = 4.0\n");
+    QVERIFY(shell.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text));
+    shell.write("[launcher]\nbackground = \"not-a-color\"\nbackground-alpha = 4.0\n");
     shell.close();
-    QTRY_COMPARE_WITH_TIMEOUT(theme.surfaceBackground(),
-                              QColor(QStringLiteral("#05080a")), 1500);
+    QTRY_COMPARE_WITH_TIMEOUT(theme.surfaceBackground(), QColor(QStringLiteral("#05080a")), 1500);
     QTRY_COMPARE_WITH_TIMEOUT(theme.surfaceAlpha(), 1.0, 1500);
   }
 
@@ -353,10 +347,8 @@ private slots:
     nextColors.close();
 
     QVERIFY(QDir(themePath).removeRecursively());
-    QVERIFY(QDir(root).rename(QStringLiteral("next-theme"),
-                              QStringLiteral("theme")));
-    QTRY_COMPARE_WITH_TIMEOUT(theme.background(),
-                              QColor(QStringLiteral("#302010")), 3000);
+    QVERIFY(QDir(root).rename(QStringLiteral("next-theme"), QStringLiteral("theme")));
+    QTRY_COMPARE_WITH_TIMEOUT(theme.background(), QColor(QStringLiteral("#302010")), 3000);
   }
 
   void themeUsesMachineLauncherOverride() {
@@ -365,8 +357,7 @@ private slots:
     QVERIFY(state.isValid());
     QVERIFY(config.isValid());
 
-    const QString themePath =
-        state.filePath(QStringLiteral("omarchy/current/theme"));
+    const QString themePath = state.filePath(QStringLiteral("omarchy/current/theme"));
     QVERIFY(QDir().mkpath(themePath));
     QFile colors(themePath + QStringLiteral("/colors.toml"));
     QVERIFY(colors.open(QIODevice::WriteOnly | QIODevice::Text));
@@ -374,34 +365,28 @@ private slots:
     colors.close();
     QFile shell(themePath + QStringLiteral("/shell.toml"));
     QVERIFY(shell.open(QIODevice::WriteOnly | QIODevice::Text));
-    shell.write(
-        "[launcher]\nbackground = \"#223344\"\nbackground-alpha = 0.73\n");
+    shell.write("[launcher]\nbackground = \"#223344\"\nbackground-alpha = 0.73\n");
     shell.close();
 
     const QString userRoot = config.filePath(QStringLiteral("omarchy"));
     QVERIFY(QDir().mkpath(userRoot));
     QFile userShell(userRoot + QStringLiteral("/shell.toml"));
     QVERIFY(userShell.open(QIODevice::WriteOnly | QIODevice::Text));
-    userShell.write(
-        "[launcher]\nbackground = \"#445566\"\nbackground-alpha = 0.91\n");
+    userShell.write("[launcher]\nbackground = \"#445566\"\nbackground-alpha = 0.91\n");
     userShell.close();
 
     OmarchyTheme theme(state.path(), config.path());
     QCOMPARE(theme.surfaceBackground(), QColor(QStringLiteral("#445566")));
     QCOMPARE(theme.surfaceAlpha(), 0.91);
 
-    QVERIFY(userShell.open(QIODevice::WriteOnly | QIODevice::Truncate |
-                           QIODevice::Text));
-    userShell.write(
-        "[launcher]\nbackground = \"#667788\"\nbackground-alpha = 0.64\n");
+    QVERIFY(userShell.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text));
+    userShell.write("[launcher]\nbackground = \"#667788\"\nbackground-alpha = 0.64\n");
     userShell.close();
-    QTRY_COMPARE_WITH_TIMEOUT(theme.surfaceBackground(),
-                              QColor(QStringLiteral("#667788")), 1500);
+    QTRY_COMPARE_WITH_TIMEOUT(theme.surfaceBackground(), QColor(QStringLiteral("#667788")), 1500);
     QTRY_COMPARE_WITH_TIMEOUT(theme.surfaceAlpha(), 0.64, 1500);
 
     QVERIFY(userShell.remove());
-    QTRY_COMPARE_WITH_TIMEOUT(theme.surfaceBackground(),
-                              QColor(QStringLiteral("#223344")), 1500);
+    QTRY_COMPARE_WITH_TIMEOUT(theme.surfaceBackground(), QColor(QStringLiteral("#223344")), 1500);
     QTRY_COMPARE_WITH_TIMEOUT(theme.surfaceAlpha(), 0.73, 1500);
   }
 
@@ -418,7 +403,7 @@ private slots:
     const QString original = dir.filePath(QStringLiteral("original.png"));
     QVERIFY(image.save(original, "PNG"));
     QVERIFY(settings.addToAlbum(album, {original}));
-    QCOMPARE(settings.albumPaths(album), QStringList{original});
+    QCOMPARE(settings.albumPaths(album), QStringList {original});
 
     const QString renamed = dir.filePath(QStringLiteral("renamed.png"));
     QVERIFY(QFile::rename(original, renamed));
@@ -426,9 +411,9 @@ private slots:
     renamedRecord.path = renamed;
     renamedRecord.bytes = QFileInfo(renamed).size();
     settings.reconcileAlbums({renamedRecord});
-    QCOMPARE(settings.albumPaths(album), QStringList{renamed});
+    QCOMPARE(settings.albumPaths(album), QStringList {renamed});
     AppSettings afterRename;
-    QCOMPARE(afterRename.albumPaths(album), QStringList{renamed});
+    QCOMPARE(afterRename.albumPaths(album), QStringList {renamed});
 
     // Copy then remove gives the file a new inode, like a move between
     // filesystems. The content identity still repairs the album entry.
@@ -439,7 +424,7 @@ private slots:
     copiedRecord.path = copied;
     copiedRecord.bytes = QFileInfo(copied).size();
     settings.reconcileAlbums({copiedRecord});
-    QCOMPARE(settings.albumPaths(album), QStringList{copied});
+    QCOMPARE(settings.albumPaths(album), QStringList {copied});
 
     const QString duplicateA = dir.filePath(QStringLiteral("duplicate-a.png"));
     const QString duplicateB = dir.filePath(QStringLiteral("duplicate-b.png"));
@@ -506,6 +491,45 @@ private slots:
     restored.deleteAlbum(QStringLiteral("Inode"));
   }
 
+  void tagsAndSmartCollectionsPersistAndFollowRenames() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString suffix = QString::number(QRandomGenerator::global()->generate());
+    const QString tag = QStringLiteral("Tag ") + suffix;
+    const QString collection = QStringLiteral("Smart ") + suffix;
+    const QString original = dir.filePath(QStringLiteral("original.png"));
+    const QString renamed = dir.filePath(QStringLiteral("renamed.png"));
+    QImage image(24, 18, QImage::Format_RGB32);
+    image.fill(Qt::cyan);
+    QVERIFY(image.save(original, "PNG"));
+
+    AppSettings settings;
+    QVERIFY(settings.createTag(tag));
+    QVERIFY(settings.addTag(tag, {original}));
+    QCOMPARE(settings.tagsForPath(original), QStringList {tag});
+    QCOMPARE(settings.tagItemCount(tag), 1);
+
+    QVariantMap view;
+    view.insert(QStringLiteral("kind"), CaptureRecord::Picture);
+    view.insert(QStringLiteral("favorites"), true);
+    view.insert(QStringLiteral("tag"), tag);
+    QVERIFY(settings.saveSmartCollection(collection, view));
+
+    AppSettings restored;
+    QCOMPARE(restored.tagPaths(tag), QStringList {original});
+    QCOMPARE(restored.smartCollection(collection), view);
+    QVERIFY(QFile::rename(original, renamed));
+    restored.relocatePath(original, renamed);
+    QCOMPARE(restored.tagPaths(tag), QStringList {renamed});
+    QCOMPARE(restored.tagsForPath(renamed), QStringList {tag});
+
+    AppSettings finalRestore;
+    QCOMPARE(finalRestore.tagPaths(tag), QStringList {renamed});
+    QCOMPARE(finalRestore.smartCollection(collection), view);
+    finalRestore.deleteTag(tag);
+    finalRestore.deleteSmartCollection(collection);
+  }
+
   void addingOverAnUnavailableAlbumEntryReplacesIt() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -536,7 +560,8 @@ private slots:
     QVERIFY(QDir().mkpath(root + QStringLiteral("/theme")));
     QFile colors(root + QStringLiteral("/theme/colors.toml"));
     QVERIFY(colors.open(QIODevice::WriteOnly | QIODevice::Text));
-    colors.write("mode = \"dark\"\nbackground = \"#101820\"\nforeground = \"#f0f0f0\"\n");
+    colors.write("mode = \"dark\"\nbackground = \"#101820\"\nforeground = "
+                 "\"#f0f0f0\"\n");
     colors.close();
 
     OmarchyTheme theme(state.path(), config.path());
@@ -555,7 +580,8 @@ private slots:
     // A real change still lands.
     QTest::qWait(20);
     QVERIFY(colors.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text));
-    colors.write("mode = \"dark\"\nbackground = \"#202020\"\nforeground = \"#f0f0f0\"\n");
+    colors.write("mode = \"dark\"\nbackground = \"#202020\"\nforeground = "
+                 "\"#f0f0f0\"\n");
     colors.close();
     QTRY_COMPARE_WITH_TIMEOUT(changed.size(), 1, 1500);
     QCOMPARE(theme.background(), QColor(QStringLiteral("#202020")));
@@ -564,8 +590,8 @@ private slots:
   void classifiesOmarchyScreenshot() {
     CaptureRecord::Kind kind = CaptureRecord::Picture;
     QDateTime captured;
-    QVERIFY(CaptureScanner::classifyByName(
-        QStringLiteral("screenshot-2026-08-31_23-26-39.png"), kind, captured));
+    QVERIFY(CaptureScanner::classifyByName(QStringLiteral("screenshot-2026-08-31_23-26-39.png"),
+                                           kind, captured));
     QCOMPARE(kind, CaptureRecord::Screenshot);
     QCOMPARE(captured.date(), QDate(2026, 8, 31));
     QCOMPARE(captured.time(), QTime(23, 26, 39));
@@ -575,8 +601,7 @@ private slots:
     CaptureRecord::Kind kind = CaptureRecord::Picture;
     QDateTime captured;
     QVERIFY(CaptureScanner::classifyByName(
-        QStringLiteral("screenrecording-2026-08-31_23-26-39.mp4"), kind,
-        captured));
+        QStringLiteral("screenrecording-2026-08-31_23-26-39.mp4"), kind, captured));
     QCOMPARE(kind, CaptureRecord::Recording);
     QCOMPARE(captured.time(), QTime(23, 26, 39));
   }
@@ -585,16 +610,12 @@ private slots:
     QTest::addColumn<QString>("fileName");
     QTest::addColumn<int>("expected");
 
-    QTest::newRow("grim") << "20260831_23h26m39s_grim.png"
-                          << int(CaptureRecord::Screenshot);
-    QTest::newRow("flameshot")
-        << "flameshot_2026-08-31.png" << int(CaptureRecord::Screenshot);
-    QTest::newRow("gnome style")
-        << "Screenshot from 2026-08-31.png" << int(CaptureRecord::Screenshot);
-    QTest::newRow("obs") << "2026-08-31 23-26-39.mkv"
-                         << int(CaptureRecord::Recording);
-    QTest::newRow("gsr") << "Video_2026-08-31.mp4"
-                         << int(CaptureRecord::Recording);
+    QTest::newRow("grim") << "20260831_23h26m39s_grim.png" << int(CaptureRecord::Screenshot);
+    QTest::newRow("flameshot") << "flameshot_2026-08-31.png" << int(CaptureRecord::Screenshot);
+    QTest::newRow("gnome style") << "Screenshot from 2026-08-31.png"
+                                 << int(CaptureRecord::Screenshot);
+    QTest::newRow("obs") << "2026-08-31 23-26-39.mkv" << int(CaptureRecord::Recording);
+    QTest::newRow("gsr") << "Video_2026-08-31.mp4" << int(CaptureRecord::Recording);
   }
 
   void classifiesThirdPartyProducers() {
@@ -611,10 +632,8 @@ private slots:
   void ignoresUnrelatedNames() {
     CaptureRecord::Kind kind = CaptureRecord::Picture;
     QDateTime captured;
-    QVERIFY(!CaptureScanner::classifyByName(QStringLiteral("holiday-photo.jpg"),
-                                            kind, captured));
-    QVERIFY(!CaptureScanner::classifyByName(QStringLiteral("IMG_4821.jpeg"),
-                                            kind, captured));
+    QVERIFY(!CaptureScanner::classifyByName(QStringLiteral("holiday-photo.jpg"), kind, captured));
+    QVERIFY(!CaptureScanner::classifyByName(QStringLiteral("IMG_4821.jpeg"), kind, captured));
   }
 
   // --- Traversal --------------------------------------------------------
@@ -623,7 +642,7 @@ private slots:
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
 
-    const auto write = [&](const QString &relative) {
+    const auto write = [&](const QString& relative) {
       const QString full = dir.filePath(relative);
       QDir().mkpath(QFileInfo(full).absolutePath());
       QImage image(4, 4, QImage::Format_RGB32);
@@ -641,24 +660,23 @@ private slots:
     write(QStringLiteral(".dotfile.png"));
 
     // Depth 1: only the top-level file.
-    auto shallow = CaptureScanner::scan(
-        {{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
+    auto shallow =
+        CaptureScanner::scan({{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
     QCOMPARE(shallow.size(), 1);
     QCOMPARE(shallow.first().fileName, QStringLiteral("top.png"));
 
     // Depth 2 reaches nested/ but not nested/deeper/, and never the skipped
     // directories at any depth.
-    auto deeper = CaptureScanner::scan(
-        {{dir.path(), 2, CaptureRecord::Picture, CaptureRecord::Video}});
+    auto deeper =
+        CaptureScanner::scan({{dir.path(), 2, CaptureRecord::Picture, CaptureRecord::Video}});
     QCOMPARE(deeper.size(), 2);
 
     QStringList names;
-    for (const auto &record : deeper) {
+    for (const auto& record : deeper) {
       names << record.fileName;
     }
     std::sort(names.begin(), names.end());
-    QCOMPARE(names, QStringList({QStringLiteral("one.png"),
-                                 QStringLiteral("top.png")}));
+    QCOMPARE(names, QStringList({QStringLiteral("one.png"), QStringLiteral("top.png")}));
   }
 
   void scanDeduplicatesAcrossOverlappingRoots() {
@@ -682,7 +700,7 @@ private slots:
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
 
-    const auto write = [&](const QString &relative) {
+    const auto write = [&](const QString& relative) {
       const QString full = dir.filePath(relative);
       QDir().mkpath(QFileInfo(full).absolutePath());
       QImage image(4, 4, QImage::Format_RGB32);
@@ -722,15 +740,20 @@ private slots:
     QVERIFY(phoneClip.open(QIODevice::WriteOnly));
     phoneClip.write("not really a video");
     phoneClip.close();
+    QFile document(dir.filePath(QStringLiteral("manual.pdf")));
+    QVERIFY(document.open(QIODevice::WriteOnly));
+    document.write("not really a PDF");
+    document.close();
 
-    const auto records = CaptureScanner::scan(
-        {{dir.path(), 1, CaptureRecord::Download, CaptureRecord::Download}});
-    QCOMPARE(records.size(), 4);
-    for (const auto &record : records) {
+    const auto records =
+        CaptureScanner::scan({{dir.path(), 1, CaptureRecord::Download, CaptureRecord::Download}});
+    QCOMPARE(records.size(), 5);
+    for (const auto& record : records) {
       QCOMPARE(record.kind, CaptureRecord::Download);
       // A downloaded clip still plays, scrubs and trims like a recording.
-      QCOMPARE(record.isVideo(),
-               CaptureScanner::isVideo(QFileInfo(record.path).suffix()));
+      QCOMPARE(record.isVideo(), CaptureScanner::isVideo(QFileInfo(record.path).suffix()));
+      QCOMPARE(record.isDocument(),
+               CaptureScanner::isDocument(QFileInfo(record.path).suffix()));
     }
   }
 
@@ -742,14 +765,51 @@ private slots:
     image.fill(Qt::green);
     // A recording name on a PNG: the medium has to win, or the grid offers
     // "Trim" on something omacut cannot open.
-    QVERIFY(image.save(
-        dir.filePath(QStringLiteral("screenrecording-2026-08-31_10-00-00.png")),
-        "PNG"));
+    QVERIFY(
+        image.save(dir.filePath(QStringLiteral("screenrecording-2026-08-31_10-00-00.png")), "PNG"));
 
-    const auto records = CaptureScanner::scan(
-        {{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
+    const auto records =
+        CaptureScanner::scan({{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
     QCOMPARE(records.size(), 1);
     QCOMPARE(records.first().kind, CaptureRecord::Screenshot);
+  }
+
+  void pdfsAreScannedRenderedAndInspected() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("reference.pdf"));
+    {
+      QPdfWriter writer(path);
+      writer.setResolution(96);
+      QPainter painter(&writer);
+      QVERIFY(painter.isActive());
+      painter.drawText(QPoint(120, 160), QStringLiteral("Omaroll PDF page one"));
+      QVERIFY(writer.newPage());
+      painter.drawText(QPoint(120, 160), QStringLiteral("Omaroll PDF page two"));
+      painter.end();
+    }
+
+    const auto records =
+        CaptureScanner::scan({{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
+    QCOMPARE(records.size(), 1);
+    QCOMPARE(records.first().kind, CaptureRecord::Document);
+    QVERIFY(records.first().isDocument());
+    QVERIFY(!records.first().isVideo());
+
+    if (!PdfSupport::available()) {
+      QSKIP("Poppler is not installed");
+    }
+    const QImage preview = PdfSupport::renderPage(path, 2, QSize(420, 420));
+    QVERIFY(!preview.isNull());
+    QVERIFY(preview.width() > 0);
+    QVERIFY(preview.height() > 0);
+
+    PdfInspector inspector;
+    QVERIFY(inspector.available());
+    inspector.inspect(path);
+    QTRY_VERIFY_WITH_TIMEOUT(!inspector.loading(), 5000);
+    QCOMPARE(inspector.pageCount(), 2);
+    QVERIFY(inspector.error().isEmpty());
   }
 
   // --- Filtering and sorting -------------------------------------------
@@ -767,8 +827,7 @@ private slots:
     // from the name, but an unnamed one falls back to mtime, and a file written
     // during the test would otherwise always be the newest thing in the
     // library.
-    const auto write = [&](const QString &name, int edge,
-                           const QDateTime &stamp) {
+    const auto write = [&](const QString& name, int edge, const QDateTime& stamp) {
       QImage image(edge, edge, QImage::Format_RGB32);
       image.fill(Qt::gray);
       const QString path = dir.filePath(name);
@@ -784,8 +843,7 @@ private slots:
           QDateTime(QDate(2026, 8, 30), QTime(10, 0)));
     write(QStringLiteral("screenshot-2026-08-31_10-00-00.png"), 64,
           QDateTime(QDate(2026, 8, 31), QTime(10, 0)));
-    write(QStringLiteral("beach.png"), 16,
-          QDateTime(QDate(2026, 8, 20), QTime(9, 0)));
+    write(QStringLiteral("beach.png"), 16, QDateTime(QDate(2026, 8, 20), QTime(9, 0)));
 
     AppSettings settings;
     settings.setScanDownloads(false);
@@ -800,16 +858,14 @@ private slots:
 
     // Newest first by default.
     proxy.setSortMode(CaptureFilterModel::NewestFirst);
-    QCOMPARE(proxy.fileNameAt(0),
-             QStringLiteral("screenshot-2026-08-31_10-00-00.png"));
+    QCOMPARE(proxy.fileNameAt(0), QStringLiteral("screenshot-2026-08-31_10-00-00.png"));
 
     proxy.setSortMode(CaptureFilterModel::OldestFirst);
     QCOMPARE(proxy.fileNameAt(0), QStringLiteral("beach.png"));
 
     // Size sorting reads the file, not the name.
     proxy.setSortMode(CaptureFilterModel::LargestFirst);
-    QCOMPARE(proxy.fileNameAt(0),
-             QStringLiteral("screenshot-2026-08-31_10-00-00.png"));
+    QCOMPARE(proxy.fileNameAt(0), QStringLiteral("screenshot-2026-08-31_10-00-00.png"));
 
     proxy.setSortMode(CaptureFilterModel::NameAscending);
     QCOMPARE(proxy.fileNameAt(0), QStringLiteral("beach.png"));
@@ -828,8 +884,7 @@ private slots:
     // by the active filter and the proxy's visible count stays unchanged.
     QSignalSpy sourceCountChanged(&proxy, &CaptureFilterModel::countChanged);
     QSignalSpy rescanned(&model, &CaptureModel::countChanged);
-    write(QStringLiteral("mountain.png"), 12,
-          QDateTime(QDate(2026, 8, 19), QTime(9, 0)));
+    write(QStringLiteral("mountain.png"), 12, QDateTime(QDate(2026, 8, 19), QTime(9, 0)));
     model.refresh();
     QVERIFY(rescanned.wait(5000));
     QCOMPARE(proxy.sourceCount(), 4);
@@ -848,13 +903,11 @@ private slots:
     proxy.setSearchText({});
 
     rescanned.clear();
-    write(QStringLiteral("album/forest.png"), 18,
-          QDateTime(QDate(2026, 8, 18), QTime(9, 0)));
+    write(QStringLiteral("album/forest.png"), 18, QDateTime(QDate(2026, 8, 18), QTime(9, 0)));
     model.refresh();
     QVERIFY(rescanned.wait(5000));
     QCOMPARE(proxy.count(), 5);
-    QTRY_COMPARE(proxy.folders(),
-                 QStringList({dir.path(), dir.filePath(QStringLiteral("album"))}));
+    QTRY_COMPARE(proxy.folders(), QStringList({dir.path(), dir.filePath(QStringLiteral("album"))}));
     QCOMPARE(proxy.folderItemCount(dir.path()), 5);
     QCOMPARE(proxy.folderItemCount(dir.filePath(QStringLiteral("album"))), 1);
     QCOMPARE(proxy.folderItemCount(dir.filePath(QStringLiteral("missing"))), 0);
@@ -867,15 +920,40 @@ private slots:
     proxy.setFolderFilter({});
     QCOMPARE(proxy.count(), 5);
     const QString beach = dir.filePath(QStringLiteral("beach.png"));
-    proxy.setAlbumFilter(
-        QStringLiteral("Weekend"),
-        {beach, dir.filePath(QStringLiteral("album/forest.png"))});
+    proxy.setAlbumFilter(QStringLiteral("Weekend"),
+                         {beach, dir.filePath(QStringLiteral("album/forest.png"))});
     QCOMPARE(proxy.count(), 2);
-    QCOMPARE(proxy.adjacentPath(beach, 1),
-             dir.filePath(QStringLiteral("album/forest.png")));
-    QCOMPARE(proxy.adjacentPath(beach, -1),
-             dir.filePath(QStringLiteral("album/forest.png")));
+    QCOMPARE(proxy.adjacentPath(beach, 1), dir.filePath(QStringLiteral("album/forest.png")));
+    QCOMPARE(proxy.adjacentPath(beach, -1), dir.filePath(QStringLiteral("album/forest.png")));
     proxy.setAlbumFilter({}, {});
+    QCOMPARE(proxy.count(), 5);
+
+    proxy.setDateRange(QStringLiteral("2026-08-30"), QStringLiteral("2026-08-31"));
+    QCOMPARE(proxy.count(), 2);
+    QCOMPARE(proxy.dateFrom(), QStringLiteral("2026-08-30"));
+    QCOMPARE(proxy.dateTo(), QStringLiteral("2026-08-31"));
+    proxy.clearDateRange();
+    QCOMPARE(proxy.count(), 5);
+    proxy.setModifiedAfter(QStringLiteral("2026-08-20T09:00:00"));
+    QCOMPARE(proxy.count(), 2);
+    QVERIFY(!proxy.modifiedAfter().isEmpty());
+    proxy.clearDateRange();
+    QCOMPARE(proxy.count(), 5);
+    QTRY_VERIFY_WITH_TIMEOUT(!proxy.dateBuckets().isEmpty(), 1000);
+    QCOMPARE(proxy.dateDays(QStringLiteral("2026-08")).size(), 5);
+
+    const QString forest = dir.filePath(QStringLiteral("album/forest.png"));
+    proxy.setTagFilter(QStringLiteral("Review"), {beach, forest});
+    QCOMPARE(proxy.count(), 2);
+    const QVariantMap savedView = proxy.currentView();
+    proxy.applyView(QStringLiteral("Review pictures"), savedView, {beach, forest});
+    QCOMPARE(proxy.smartCollectionFilter(), QStringLiteral("Review pictures"));
+    QCOMPARE(proxy.count(), 2);
+    proxy.setSearchText(QStringLiteral("beach"));
+    QVERIFY(proxy.smartCollectionFilter().isEmpty());
+    QCOMPARE(proxy.count(), 1);
+    proxy.setSearchText({});
+    proxy.setTagFilter({}, {});
     QCOMPARE(proxy.count(), 5);
 
     // Navigation must visit every visible row once before wrapping, in both
@@ -911,8 +989,7 @@ private slots:
       } while (path != beach);
       QCOMPARE(visited.size(), 4);
     }
-    QCOMPARE(proxy.adjacentPathInFolder(QStringLiteral("/missing.png"), 1),
-             QString());
+    QCOMPARE(proxy.adjacentPathInFolder(QStringLiteral("/missing.png"), 1), QString());
   }
 
   void localOcrSearchRunsOnceThenUsesItsPrivateCache() {
@@ -948,8 +1025,8 @@ private slots:
                                      QFileDevice::ExeOwner));
     QVERIFY(qputenv("PATH", dir.path().toUtf8()));
     QVERIFY(qputenv("OMAROLL_OCR_TEST_LOG", logPath.toUtf8()));
-    for (const char* name : {"XDG_PICTURES_DIR", "XDG_VIDEOS_DIR",
-                             "OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR"}) {
+    for (const char* name : {"XDG_PICTURES_DIR", "XDG_VIDEOS_DIR", "OMARCHY_SCREENSHOT_DIR",
+                             "OMARCHY_SCREENRECORD_DIR"}) {
       QVERIFY(qputenv(name, dir.path().toUtf8()));
     }
 
@@ -1005,8 +1082,8 @@ private slots:
     QCOMPARE(log.readAll(), QByteArray("run\nrun\n"));
     const QDir cache(OcrIndex::cacheDirectory());
     QCOMPARE(cache.entryList({QStringLiteral("*.ocr")}, QDir::Files).size(), 1);
-    const QFileInfo entry(cache.filePath(cache.entryList({QStringLiteral("*.ocr")},
-                                                         QDir::Files).first()));
+    const QFileInfo entry(
+        cache.filePath(cache.entryList({QStringLiteral("*.ocr")}, QDir::Files).first()));
     QVERIFY(!(entry.permissions() & (QFileDevice::ReadGroup | QFileDevice::ReadOther)));
 
     CaptureFilterModel proxy;
@@ -1070,8 +1147,8 @@ private slots:
     QVERIFY(qputenv("PATH", dir.path().toUtf8() + ':' + previousPath));
     QVERIFY(qputenv("OMAROLL_OCR_SPARSE_LOG", logPath.toUtf8()));
     QVERIFY(qputenv("XDG_CACHE_HOME", dir.filePath(QStringLiteral("cache")).toUtf8()));
-    for (const char* name : {"XDG_PICTURES_DIR", "XDG_VIDEOS_DIR",
-                             "OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR"}) {
+    for (const char* name : {"XDG_PICTURES_DIR", "XDG_VIDEOS_DIR", "OMARCHY_SCREENSHOT_DIR",
+                             "OMARCHY_SCREENRECORD_DIR"}) {
       QVERIFY(qputenv(name, dir.path().toUtf8()));
     }
 
@@ -1125,8 +1202,8 @@ private slots:
 
     QFile log(logPath);
     QVERIFY(log.open(QIODevice::ReadOnly));
-    const QStringList runs = QString::fromUtf8(log.readAll())
-                                 .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    const QStringList runs =
+        QString::fromUtf8(log.readAll()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
     QCOMPARE(runs.size(), 4);
     QVERIFY(!runs.at(0).contains(QStringLiteral("--psm 11")));
     QVERIFY(runs.at(1).contains(QStringLiteral("--psm 11")));
@@ -1171,8 +1248,8 @@ private slots:
     QVERIFY(qputenv("PATH", dir.path().toUtf8()));
     QVERIFY(qputenv("OMAROLL_OCR_CANCEL_LOG", logPath.toUtf8()));
     QVERIFY(qputenv("XDG_CACHE_HOME", dir.filePath(QStringLiteral("cache")).toUtf8()));
-    for (const char* name : {"XDG_PICTURES_DIR", "XDG_VIDEOS_DIR",
-                             "OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR"}) {
+    for (const char* name : {"XDG_PICTURES_DIR", "XDG_VIDEOS_DIR", "OMARCHY_SCREENSHOT_DIR",
+                             "OMARCHY_SCREENRECORD_DIR"}) {
       QVERIFY(qputenv(name, dir.path().toUtf8()));
     }
 
@@ -1241,8 +1318,8 @@ private slots:
                                      QFileDevice::ExeOwner));
     QVERIFY(qputenv("PATH", dir.path().toUtf8() + ':' + previousPath));
     QVERIFY(qputenv("OMAROLL_OCR_REVIEW_LOG", logPath.toUtf8()));
-    for (const char* name : {"XDG_PICTURES_DIR", "XDG_VIDEOS_DIR",
-                             "OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR"}) {
+    for (const char* name : {"XDG_PICTURES_DIR", "XDG_VIDEOS_DIR", "OMARCHY_SCREENSHOT_DIR",
+                             "OMARCHY_SCREENRECORD_DIR"}) {
       QVERIFY(qputenv(name, dir.path().toUtf8()));
     }
 
@@ -1257,8 +1334,8 @@ private slots:
     const QString failure = makeImage(QStringLiteral("fail.png"));
     const QString slow = makeImage(QStringLiteral("slow.png"));
     const QString fresh = makeImage(QStringLiteral("fresh.png"));
-    QVERIFY(!layout.isEmpty() && !empty.isEmpty() && !failure.isEmpty() &&
-            !slow.isEmpty() && !fresh.isEmpty());
+    QVERIFY(!layout.isEmpty() && !empty.isEmpty() && !failure.isEmpty() && !slow.isEmpty() &&
+            !fresh.isEmpty());
 
     AppSettings settings;
     settings.setScanDownloads(false);
@@ -1314,9 +1391,7 @@ private slots:
     // a failure or silently dropped.
     const auto runCount = [&] {
       QFile runsFile(logPath);
-      return runsFile.open(QIODevice::ReadOnly)
-                 ? runsFile.readAll().count("run\n")
-                 : qsizetype(-1);
+      return runsFile.open(QIODevice::ReadOnly) ? runsFile.readAll().count("run\n") : qsizetype(-1);
     };
     index.cancelReview();
     index.setSearchText(QStringLiteral("needle"));
@@ -1369,8 +1444,8 @@ private slots:
                                 QFileDevice::ExeOwner));
     QVERIFY(qputenv("PATH", dir.path().toUtf8() + ':' + previousPath));
     QVERIFY(qputenv("OMAROLL_QR_TEST_LOG", logPath.toUtf8()));
-    for (const char* name : {"XDG_PICTURES_DIR", "XDG_VIDEOS_DIR",
-                             "OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR"}) {
+    for (const char* name : {"XDG_PICTURES_DIR", "XDG_VIDEOS_DIR", "OMARCHY_SCREENSHOT_DIR",
+                             "OMARCHY_SCREENRECORD_DIR"}) {
       QVERIFY(qputenv(name, dir.path().toUtf8()));
     }
 
@@ -1384,8 +1459,7 @@ private slots:
     const QString negative = makeImage(QStringLiteral("negative.png"));
     const QString slow = makeImage(QStringLiteral("slow.png"));
     const QString fresh = makeImage(QStringLiteral("fresh-positive.png"));
-    QVERIFY(!positive.isEmpty() && !negative.isEmpty() && !slow.isEmpty() &&
-            !fresh.isEmpty());
+    QVERIFY(!positive.isEmpty() && !negative.isEmpty() && !slow.isEmpty() && !fresh.isEmpty());
 
     AppSettings settings;
     settings.setScanDownloads(false);
@@ -1479,10 +1553,8 @@ private slots:
         dir.filePath(QStringLiteral("m/duplicate.png")),
         dir.filePath(QStringLiteral("z/duplicate.png")),
     };
-    for (const int mode : {CaptureFilterModel::NewestFirst,
-                           CaptureFilterModel::OldestFirst,
-                           CaptureFilterModel::LargestFirst,
-                           CaptureFilterModel::SmallestFirst,
+    for (const int mode : {CaptureFilterModel::NewestFirst, CaptureFilterModel::OldestFirst,
+                           CaptureFilterModel::LargestFirst, CaptureFilterModel::SmallestFirst,
                            CaptureFilterModel::NameAscending}) {
       proxy.setSortMode(mode);
       QStringList actual;
@@ -1534,6 +1606,10 @@ private slots:
     QCOMPARE(duplicates.completed(), 3);
     QCOMPARE(duplicates.duplicateCount(), 2);
     QCOMPARE(proxy.count(), 2);
+    const QString firstPath = dir.filePath(QStringLiteral("first.png"));
+    const QString copyPath = dir.filePath(QStringLiteral("copy.png"));
+    QCOMPARE(duplicates.groupPaths(firstPath), QStringList({copyPath, firstPath}));
+    QCOMPARE(duplicates.otherCopies(firstPath), QStringList {copyPath});
     QCOMPARE(proxy.gridLabelAt(0), QStringLiteral("Exact match 1 of 1"));
     QCOMPARE(proxy.gridLabelAt(1), QStringLiteral("Exact match 1 of 1"));
     QVERIFY(QFileInfo::exists(dir.filePath(QStringLiteral("first.png"))));
@@ -1553,6 +1629,58 @@ private slots:
     QTRY_COMPARE_WITH_TIMEOUT(proxy.count(), 0, 5000);
     QVERIFY(QFileInfo::exists(dir.filePath(QStringLiteral("first.png"))));
     QVERIFY(QFileInfo::exists(dir.filePath(QStringLiteral("copy.png"))));
+  }
+
+  void visuallySimilarPicturesAreSuggestedWithoutGroupingDifferentColour() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    for (const char* name : {"OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR",
+                             "XDG_PICTURES_DIR", "XDG_VIDEOS_DIR"}) {
+      QVERIFY(qputenv(name, dir.path().toUtf8()));
+    }
+
+    QImage source(320, 240, QImage::Format_RGB32);
+    QPainter painter(&source);
+    QLinearGradient gradient(0, 0, source.width(), source.height());
+    gradient.setColorAt(0, QColor(24, 70, 130));
+    gradient.setColorAt(1, QColor(230, 190, 80));
+    painter.fillRect(source.rect(), gradient);
+    painter.setPen(QPen(Qt::white, 12));
+    painter.drawEllipse(QRect(70, 45, 180, 150));
+    painter.drawLine(20, 210, 300, 30);
+    painter.end();
+    const QString original = dir.filePath(QStringLiteral("original.png"));
+    const QString recompressed = dir.filePath(QStringLiteral("recompressed.jpg"));
+    const QString different = dir.filePath(QStringLiteral("different.png"));
+    QVERIFY(source.save(original, "PNG"));
+    QVERIFY(source.scaled(640, 480, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                .save(recompressed, "JPG", 58));
+    QImage other(320, 240, QImage::Format_RGB32);
+    other.fill(QColor(220, 20, 30));
+    QVERIFY(other.save(different, "PNG"));
+
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QSignalSpy scanned(&model, &CaptureModel::countChanged);
+    QVERIFY(scanned.wait(5000));
+    QCOMPARE(model.rowCount(), 3);
+
+    CaptureFilterModel proxy;
+    proxy.setSourceModel(&model);
+    SimilarityIndex similarities(&model);
+    connect(&similarities, &SimilarityIndex::groupsChanged, &proxy,
+            [&] { proxy.setSimilarGroups(similarities.groups()); });
+    proxy.setSimilarOnly(true);
+    similarities.setActive(true);
+    QTRY_COMPARE_WITH_TIMEOUT(similarities.groupCount(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!similarities.scanning(), 5000);
+    QCOMPARE(similarities.similarCount(), 2);
+    QCOMPARE(proxy.count(), 2);
+    QVERIFY(proxy.rowOf(original) >= 0);
+    QVERIFY(proxy.rowOf(recompressed) >= 0);
+    QCOMPARE(proxy.rowOf(different), -1);
+    QCOMPARE(proxy.gridLabelAt(0), QStringLiteral("Similar set 1 of 1"));
   }
 
   void duplicateSetsStayTogetherAndFollowTheChosenSort() {
@@ -1609,16 +1737,14 @@ private slots:
   }
 
   void mediaDetailsParseCameraExposureVideoAndAudio() {
-    const QByteArray image =
-        "JPEG\n2020:05:06 07:08:09\n\nTestMake\nTestMake Model X\n"
-        "Prime 50mm\n28/10\n1/125\n400\n50/1\n8\nsRGB\n";
+    const QByteArray image = "JPEG\n2020:05:06 07:08:09\n\nTestMake\nTestMake Model X\n"
+                             "Prime 50mm\n28/10\n1/125\n400\n50/1\n8\nsRGB\n";
     const QStringList imageLines = MediaInspector::parseImage(image);
     QCOMPARE(imageLines.value(0), QStringLiteral("JPEG  ·  sRGB  ·  8-bit"));
     QVERIFY(imageLines.value(1).startsWith(QStringLiteral("Taken  ·  ")));
     QCOMPARE(imageLines.value(2), QStringLiteral("Camera  ·  TestMake Model X"));
     QCOMPARE(imageLines.value(3), QStringLiteral("Lens  ·  Prime 50mm"));
-    QCOMPARE(imageLines.value(4),
-             QStringLiteral("f/2.8  ·  1/125 s  ·  ISO 400  ·  50 mm"));
+    QCOMPARE(imageLines.value(4), QStringLiteral("f/2.8  ·  1/125 s  ·  ISO 400  ·  50 mm"));
 
     const QByteArray video = R"({
       "streams": [
@@ -1636,8 +1762,7 @@ private slots:
   }
 
   void embeddedMediaDatesParseWithoutChangingWallClockPhotoTime() {
-    QCOMPARE(MediaDateIndex::parseImageDate(
-                 "2020:05:06 07:08:09\n2019:01:02 03:04:05\n"),
+    QCOMPARE(MediaDateIndex::parseImageDate("2020:05:06 07:08:09\n2019:01:02 03:04:05\n"),
              QDateTime(QDate(2020, 5, 6), QTime(7, 8, 9)));
     QCOMPARE(MediaDateIndex::parseImageDate("\n2019:01:02 03:04:05\n"),
              QDateTime(QDate(2019, 1, 2), QTime(3, 4, 5)));
@@ -1700,23 +1825,24 @@ private slots:
     QFile ffprobe(dir.filePath(QStringLiteral("ffprobe")));
     QVERIFY(ffprobe.open(QIODevice::WriteOnly));
     ffprobe.write("#!/bin/sh\n"
-                  "printf '%s\\n' '{\"format\":{\"tags\":{\"creation_time\":\"2021-08-09T10:11:12\"}}}'\n"
+                  "printf '%s\\n' "
+                  "'{\"format\":{\"tags\":{\"creation_time\":\"2021-08-09T10:"
+                  "11:12\"}}}'\n"
                   "printf 'video\\n' >> \"$OMAROLL_DATE_TEST_LOG\"\n");
     ffprobe.close();
     QVERIFY(ffprobe.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
                                    QFileDevice::ExeOwner));
     QVERIFY(qputenv("PATH", dir.path().toUtf8()));
     QVERIFY(qputenv("OMAROLL_DATE_TEST_LOG", logPath.toUtf8()));
-    for (const char* name : {"XDG_PICTURES_DIR", "XDG_VIDEOS_DIR",
-                             "OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR"}) {
+    for (const char* name : {"XDG_PICTURES_DIR", "XDG_VIDEOS_DIR", "OMARCHY_SCREENSHOT_DIR",
+                             "OMARCHY_SCREENRECORD_DIR"}) {
       QVERIFY(qputenv(name, dir.path().toUtf8()));
     }
 
     QImage image(16, 12, QImage::Format_RGB32);
     image.fill(Qt::white);
     const QString photo = dir.filePath(QStringLiteral("phone photo #1.jpg"));
-    const QString capture =
-        dir.filePath(QStringLiteral("screenshot-2026-08-31_10-00-00.png"));
+    const QString capture = dir.filePath(QStringLiteral("screenshot-2026-08-31_10-00-00.png"));
     const QString undated = dir.filePath(QStringLiteral("undated.png"));
     QVERIFY(image.save(photo, "JPG"));
     QVERIFY(image.save(capture, "PNG"));
@@ -1738,8 +1864,7 @@ private slots:
     const int captureRow = model.rowOf(capture);
     QVERIFY(captureRow >= 0);
     QVERIFY(model.recordAt(captureRow).hasProducerTimestamp);
-    QCOMPARE(model.recordAt(captureRow).captured,
-             QDateTime(QDate(2026, 8, 31), QTime(10, 0)));
+    QCOMPARE(model.recordAt(captureRow).captured, QDateTime(QDate(2026, 8, 31), QTime(10, 0)));
     const QDateTime undatedFallback = model.recordAt(model.rowOf(undated)).captured;
 
     {
@@ -1756,15 +1881,14 @@ private slots:
       QCOMPARE(model.recordAt(model.rowOf(undated)).captured, undatedFallback);
 
       // A result for an older version of the file cannot reorder the live row.
-      model.applyCapturedDates(
-          {{photo, 0, 0, QDateTime(QDate(1990, 1, 1), QTime(0, 0)), 0, 0}});
+      model.applyCapturedDates({{photo, 0, 0, QDateTime(QDate(1990, 1, 1), QTime(0, 0)), 0, 0}});
       QCOMPARE(model.recordAt(model.rowOf(photo)).captured,
                QDateTime(QDate(2020, 5, 6), QTime(7, 8, 9)));
       // Embedded metadata can never override a producer timestamp.
       const CaptureRecord& producer = model.recordAt(model.rowOf(capture));
-      model.applyCapturedDates({{capture, producer.modified, producer.bytes,
-                                 QDateTime(QDate(1990, 1, 1), QTime(0, 0)),
-                                 producer.device, producer.inode}});
+      model.applyCapturedDates(
+          {{capture, producer.modified, producer.bytes, QDateTime(QDate(1990, 1, 1), QTime(0, 0)),
+            producer.device, producer.inode}});
       QCOMPARE(model.recordAt(model.rowOf(capture)).captured,
                QDateTime(QDate(2026, 8, 31), QTime(10, 0)));
 
@@ -1838,7 +1962,8 @@ private slots:
                  "  if [ \"$1\" = -format ] && [ \"$#\" -ge 3 ]; then\n"
                  "    case \"$3\" in\n"
                  "      *'photo 32 #'*) status=1 ;;\n"
-                 "      *) printf '\\036OMAROLL_DATE:%s\\n2020:05:06 07:08:09\\n\\n' \"$index\" ;;\n"
+                 "      *) printf '\\036OMAROLL_DATE:%s\\n2020:05:06 "
+                 "07:08:09\\n\\n' \"$index\" ;;\n"
                  "    esac\n"
                  "    index=$((index + 1))\n"
                  "    shift 3\n"
@@ -1853,8 +1978,8 @@ private slots:
     QVERIFY(qputenv("PATH", dir.path().toUtf8()));
     QVERIFY(qputenv("OMAROLL_DATE_BATCH_LOG", logPath.toUtf8()));
     QVERIFY(qputenv("XDG_CACHE_HOME", dir.filePath(QStringLiteral("cache")).toUtf8()));
-    for (const char* name : {"XDG_PICTURES_DIR", "XDG_VIDEOS_DIR",
-                             "OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR"}) {
+    for (const char* name : {"XDG_PICTURES_DIR", "XDG_VIDEOS_DIR", "OMARCHY_SCREENSHOT_DIR",
+                             "OMARCHY_SCREENRECORD_DIR"}) {
       QVERIFY(qputenv(name, dir.path().toUtf8()));
     }
 
@@ -1885,11 +2010,9 @@ private slots:
         const int row = model.rowOf(path);
         QVERIFY(row >= 0);
         if (path.endsWith(QStringLiteral("photo 32 #.png"))) {
-          QCOMPARE(model.recordAt(row).captured.toMSecsSinceEpoch(),
-                   model.recordAt(row).modified);
+          QCOMPARE(model.recordAt(row).captured.toMSecsSinceEpoch(), model.recordAt(row).modified);
         } else {
-          QCOMPARE(model.recordAt(row).captured,
-                   QDateTime(QDate(2020, 5, 6), QTime(7, 8, 9)));
+          QCOMPARE(model.recordAt(row).captured, QDateTime(QDate(2020, 5, 6), QTime(7, 8, 9)));
         }
       }
     }
@@ -1951,8 +2074,7 @@ private slots:
 
     QImage image(8, 8, QImage::Format_RGB32);
     image.fill(Qt::white);
-    const QString path =
-        dir.filePath(QStringLiteral("screenshot-2026-08-31_10-00-00.png"));
+    const QString path = dir.filePath(QStringLiteral("screenshot-2026-08-31_10-00-00.png"));
     QVERIFY(image.save(path, "PNG"));
 
     AppSettings settings;
@@ -1988,13 +2110,13 @@ private slots:
 
     // A scan that saw neither, as happens when a root is unmounted or switched
     // off in settings. Only the mark whose file is actually gone may go.
-    QCOMPARE(CaptureModel::missingMarks({kept, gone}, {}), QStringList{gone});
+    QCOMPARE(CaptureModel::missingMarks({kept, gone}, {}), QStringList {gone});
   }
 
   void scanSkipsTheRecorderTransients() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
-    const auto touch = [&](const QString &name) {
+    const auto touch = [&](const QString& name) {
       QFile file(dir.filePath(name));
       QVERIFY(file.open(QIODevice::WriteOnly));
       file.write("x");
@@ -2003,8 +2125,8 @@ private slots:
     touch(QStringLiteral("screenrecording-2026-09-01_10-00-00-preview.png"));
     touch(QStringLiteral("screenrecording-2026-09-01_10-00-00-processed.mp4"));
 
-    const auto records = CaptureScanner::scan(
-        {{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
+    const auto records =
+        CaptureScanner::scan({{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
     QCOMPARE(records.size(), 1);
     QCOMPARE(records.first().kind, CaptureRecord::Recording);
   }
@@ -2058,9 +2180,8 @@ private slots:
     const QString seed = dir.filePath(QStringLiteral("item-000.png"));
     QVERIFY(image.save(seed, "PNG"));
     for (int index = 1; index < 600; ++index) {
-      QVERIFY(QFile::copy(seed, dir.filePath(
-                                  QStringLiteral("item-%1.png").arg(index, 3, 10,
-                                                                    QLatin1Char('0')))));
+      QVERIFY(QFile::copy(
+          seed, dir.filePath(QStringLiteral("item-%1.png").arg(index, 3, 10, QLatin1Char('0')))));
     }
 
     AppSettings settings;
@@ -2147,8 +2268,7 @@ private slots:
 
     QImage image(8, 8, QImage::Format_RGB32);
     image.fill(Qt::yellow);
-    QVERIFY(image.save(QDir(album).filePath(QStringLiteral("new-photo.png")),
-                       "PNG"));
+    QVERIFY(image.save(QDir(album).filePath(QStringLiteral("new-photo.png")), "PNG"));
     QTRY_COMPARE_WITH_TIMEOUT(model.rowCount(), 1, 5000);
   }
 
@@ -2156,10 +2276,9 @@ private slots:
     AppSettings settings;
     settings.setScanDownloads(false);
     CaptureModel model(&settings);
-    const QString list = model.uriList(
-        {QStringLiteral("/tmp/a b.png"), QStringLiteral("/tmp/c#d.mp4")});
-    QCOMPARE(list, QStringLiteral(
-                       "file:///tmp/a%20b.png\r\nfile:///tmp/c%23d.mp4\r\n"));
+    const QString list =
+        model.uriList({QStringLiteral("/tmp/a b.png"), QStringLiteral("/tmp/c#d.mp4")});
+    QCOMPARE(list, QStringLiteral("file:///tmp/a%20b.png\r\nfile:///tmp/c%23d.mp4\r\n"));
   }
 
   // --- Actions ----------------------------------------------------------
@@ -2173,11 +2292,10 @@ private slots:
     QVERIFY(registry.shortcutFor(QStringLiteral("missing")).isEmpty());
     // The public single-path overload must dispatch to the path-list overload,
     // not resolve its braced argument back to itself and recurse forever.
-    QVERIFY(!registry.run(QStringLiteral("favorite"),
-                          QStringLiteral("/tmp/not-a-capture")));
+    QVERIFY(!registry.run(QStringLiteral("favorite"), QStringLiteral("/tmp/not-a-capture")));
 
     QStringList moving;
-    for (const QVariant &row : registry.actionsFor(true)) {
+    for (const QVariant& row : registry.actionsFor(true)) {
       moving << row.toMap().value(QStringLiteral("id")).toString();
     }
     QVERIFY(moving.contains(QStringLiteral("play")));
@@ -2193,7 +2311,7 @@ private slots:
 
     QStringList still;
     QString copyLabel;
-    for (const QVariant &row : registry.actionsFor(false)) {
+    for (const QVariant& row : registry.actionsFor(false)) {
       const QVariantMap values = row.toMap();
       still << values.value(QStringLiteral("id")).toString();
       if (values.value(QStringLiteral("id")).toString() == QStringLiteral("copy")) {
@@ -2206,6 +2324,19 @@ private slots:
     QVERIFY(!still.contains(QStringLiteral("frame")));
     QVERIFY(!still.contains(QStringLiteral("convert")));
     QCOMPARE(copyLabel, QStringLiteral("Copy image"));
+
+    QStringList documents;
+    for (const QVariant& row : registry.actionsForKind(false, true)) {
+      documents << row.toMap().value(QStringLiteral("id")).toString();
+    }
+    QCOMPARE(registry.primaryActionForKind(false, true), QStringLiteral("open-document"));
+    QVERIFY(documents.contains(QStringLiteral("open-document")));
+    QVERIFY(documents.contains(QStringLiteral("send")));
+    QVERIFY(documents.contains(QStringLiteral("rename")));
+    QVERIFY(documents.contains(QStringLiteral("trash")));
+    QVERIFY(!documents.contains(QStringLiteral("matte")));
+    QVERIFY(!documents.contains(QStringLiteral("export")));
+    QVERIFY(!documents.contains(QStringLiteral("copy")));
   }
 
   void backgroundActionUsesTheOmarchyHandlerEndToEnd() {
@@ -2289,11 +2420,11 @@ private slots:
     settings.relocatePath(original, newPath);
     QVERIFY(settings.isFavorite(newPath));
     QVERIFY(settings.isHidden(newPath));
-    QCOMPARE(settings.albumPaths(album), QStringList{newPath});
+    QCOMPARE(settings.albumPaths(album), QStringList {newPath});
     AppSettings restored;
     QVERIFY(restored.isFavorite(newPath));
     QVERIFY(restored.isHidden(newPath));
-    QCOMPARE(restored.albumPaths(album), QStringList{newPath});
+    QCOMPARE(restored.albumPaths(album), QStringList {newPath});
 
     settings.toggleFavorite(newPath);
     settings.toggleHidden(newPath);
@@ -2308,11 +2439,10 @@ private slots:
 
     QFile handler(dir.filePath(QStringLiteral("omarchy-transcode")));
     QVERIFY(handler.open(QIODevice::WriteOnly));
-    handler.write(
-        "#!/bin/sh\n"
-        "printf '%s\\n%s\\n%s\\n' \"$1\" \"$2\" \"$3\" > \"$1.args\"\n"
-        "out=\"${1%.*}-$3.$2\"\n"
-        "printf converted > \"$out\"\n");
+    handler.write("#!/bin/sh\n"
+                  "printf '%s\\n%s\\n%s\\n' \"$1\" \"$2\" \"$3\" > \"$1.args\"\n"
+                  "out=\"${1%.*}-$3.$2\"\n"
+                  "printf converted > \"$out\"\n");
     handler.close();
     QVERIFY(handler.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
                                    QFileDevice::ExeOwner));
@@ -2328,18 +2458,16 @@ private slots:
     ActionLauncher launcher;
     QSignalSpy settled(&launcher, &ActionLauncher::outputSettled);
     ActionRegistry registry(&launcher);
-    QVERIFY(registry.runBatchWith(
-        QStringLiteral("export"),
-        {{QStringLiteral("format"), QStringLiteral("png")},
-         {QStringLiteral("resolution"), QStringLiteral("low")}},
-        {first, second}));
+    QVERIFY(registry.runBatchWith(QStringLiteral("export"),
+                                  {{QStringLiteral("format"), QStringLiteral("png")},
+                                   {QStringLiteral("resolution"), QStringLiteral("low")}},
+                                  {first, second}));
     QTRY_COMPARE_WITH_TIMEOUT(settled.size(), 2, 3000);
 
-    for (const QString &path : {first, second}) {
+    for (const QString& path : {first, second}) {
       QFile arguments(path + QStringLiteral(".args"));
       QVERIFY(arguments.open(QIODevice::ReadOnly));
-      QCOMPARE(QString::fromUtf8(arguments.readAll()),
-               path + QStringLiteral("\npng\nlow\n"));
+      QCOMPARE(QString::fromUtf8(arguments.readAll()), path + QStringLiteral("\npng\nlow\n"));
       const QString output = QFileInfo(path).absolutePath() + QLatin1Char('/') +
                              QFileInfo(path).completeBaseName() + QStringLiteral("-low.png");
       QFile converted(output);
@@ -2358,12 +2486,11 @@ private slots:
     QVERIFY(dir.isValid());
     const QString video = dir.filePath(QStringLiteral("short clip.mp4"));
     QProcess encoder;
-    encoder.start(ffmpeg,
-                  {QStringLiteral("-hide_banner"), QStringLiteral("-loglevel"),
-                   QStringLiteral("error"), QStringLiteral("-f"), QStringLiteral("lavfi"),
-                   QStringLiteral("-i"), QStringLiteral("color=c=red:s=160x90:d=1:r=10"),
-                   QStringLiteral("-c:v"), QStringLiteral("libx264"),
-                   QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"), video});
+    encoder.start(ffmpeg, {QStringLiteral("-hide_banner"), QStringLiteral("-loglevel"),
+                           QStringLiteral("error"), QStringLiteral("-f"), QStringLiteral("lavfi"),
+                           QStringLiteral("-i"), QStringLiteral("color=c=red:s=160x90:d=1:r=10"),
+                           QStringLiteral("-c:v"), QStringLiteral("libx264"),
+                           QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"), video});
     QVERIFY(encoder.waitForFinished(10000));
     QCOMPARE(encoder.exitStatus(), QProcess::NormalExit);
     QCOMPARE(encoder.exitCode(), 0);
@@ -2371,11 +2498,10 @@ private slots:
     ActionLauncher launcher;
     QSignalSpy settled(&launcher, &ActionLauncher::outputSettled);
     ActionRegistry registry(&launcher);
-    QVERIFY(registry.runBatchWith(
-        QStringLiteral("frame"),
-        {{QStringLiteral("seek"), QStringLiteral("0.500")},
-         {QStringLiteral("frame"), QStringLiteral("00m00s500")}},
-        {video}));
+    QVERIFY(registry.runBatchWith(QStringLiteral("frame"),
+                                  {{QStringLiteral("seek"), QStringLiteral("0.500")},
+                                   {QStringLiteral("frame"), QStringLiteral("00m00s500")}},
+                                  {video}));
     QTRY_COMPARE_WITH_TIMEOUT(settled.size(), 1, 5000);
     QVERIFY(settled.first().at(1).toBool());
 
@@ -2391,10 +2517,9 @@ private slots:
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QByteArray previousPath = qgetenv("PATH");
-    const auto restorePath =
-        qScopeGuard([&] { qputenv("PATH", previousPath); });
+    const auto restorePath = qScopeGuard([&] { qputenv("PATH", previousPath); });
 
-    const auto script = [&](const QString &name, const QByteArray &body) {
+    const auto script = [&](const QString& name, const QByteArray& body) {
       QFile file(dir.filePath(name));
       if (!file.open(QIODevice::WriteOnly)) {
         return false;
@@ -2402,8 +2527,7 @@ private slots:
       file.write("#!/bin/sh\n");
       file.write(body);
       file.close();
-      return file.setPermissions(QFileDevice::ReadOwner |
-                                 QFileDevice::WriteOwner |
+      return file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
                                  QFileDevice::ExeOwner);
     };
     QVERIFY(script(QStringLiteral("wl-copy"), "exit 1\n"));
@@ -2446,8 +2570,7 @@ private slots:
     QFile log(logPath);
     QVERIFY(log.open(QIODevice::ReadOnly));
     QCOMPARE(QString::fromUtf8(log.readAll()),
-             QStringLiteral(
-                 "file\n/tmp/first capture.png\n/tmp/second # capture.mp4\n"));
+             QStringLiteral("file\n/tmp/first capture.png\n/tmp/second # capture.mp4\n"));
   }
 
   void trackedRunsReportSettleAndCleanUpAfterFailure() {
@@ -2463,14 +2586,12 @@ private slots:
     // Success: pending while the tool runs, settled saved, and the user is
     // told where the file went.
     const QString saved = dir.filePath(QStringLiteral("clip-720p.gif"));
-    QVERIFY(launcher.runTracked(QStringLiteral("sh"),
-                                {QStringLiteral("-c"),
-                                 QStringLiteral("printf data > '%1'").arg(saved)},
-                                {}, saved));
+    QVERIFY(launcher.runTracked(
+        QStringLiteral("sh"),
+        {QStringLiteral("-c"), QStringLiteral("printf data > '%1'").arg(saved)}, {}, saved));
     QVERIFY(launcher.isPending(saved));
     QCOMPARE(pending.size(), 1);
-    QVERIFY(reported.last().at(0).toString().contains(
-        QStringLiteral("Making clip-720p.gif")));
+    QVERIFY(reported.last().at(0).toString().contains(QStringLiteral("Making clip-720p.gif")));
     QTRY_COMPARE_WITH_TIMEOUT(settled.size(), 1, 3000);
     QCOMPARE(settled.last().at(0).toString(), saved);
     QCOMPARE(settled.last().at(1).toBool(), true);
@@ -2481,19 +2602,16 @@ private slots:
 
     // While a run is in flight, asking again says so rather than lying that
     // the partial file means the job is already done.
-    const QString source =
-        dir.filePath(QStringLiteral("screenrecording-2026-09-01_10-00-00.mp4"));
+    const QString source = dir.filePath(QStringLiteral("screenrecording-2026-09-01_10-00-00.mp4"));
     const QString busy =
         dir.filePath(QStringLiteral("screenrecording-2026-09-01_10-00-00-720p.gif"));
     QVERIFY(launcher.runTracked(
         QStringLiteral("sh"),
-        {QStringLiteral("-c"),
-         QStringLiteral("sleep 0.3 && printf data > '%1'").arg(busy)},
-        {}, busy));
+        {QStringLiteral("-c"), QStringLiteral("sleep 0.3 && printf data > '%1'").arg(busy)}, {},
+        busy));
     ActionRegistry registry(&launcher);
     QVERIFY(registry.run(QStringLiteral("gif"), source));
-    QVERIFY(reported.last().at(0).toString().contains(
-        QStringLiteral("Still working on")));
+    QVERIFY(reported.last().at(0).toString().contains(QStringLiteral("Still working on")));
     QTRY_COMPARE_WITH_TIMEOUT(settled.size(), 2, 3000);
     QCOMPARE(settled.last().at(1).toBool(), true);
 
@@ -2532,8 +2650,7 @@ private slots:
     QSignalSpy reported(&launcher, &ActionLauncher::reported);
     QSignalSpy settled(&launcher, &ActionLauncher::outputSettled);
 
-    const QString source =
-        dir.filePath(QStringLiteral("screenrecording-2026-09-01_10-00-00.mp4"));
+    const QString source = dir.filePath(QStringLiteral("screenrecording-2026-09-01_10-00-00.mp4"));
     const QString output =
         dir.filePath(QStringLiteral("screenrecording-2026-09-01_10-00-00-720p.gif"));
 
@@ -2579,12 +2696,11 @@ private slots:
     QVERIFY(script.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
                                   QFileDevice::ExeOwner));
     // The stub shadows the real transcoder, but ffprobe stays reachable.
-    QVERIFY(qputenv("PATH", (dir.path() + QStringLiteral(":") +
-                             QString::fromLocal8Bit(previousPath))
-                                .toLocal8Bit()));
+    QVERIFY(qputenv(
+        "PATH",
+        (dir.path() + QStringLiteral(":") + QString::fromLocal8Bit(previousPath)).toLocal8Bit()));
 
-    const QString source =
-        dir.filePath(QStringLiteral("screenrecording-2026-09-02_10-00-00.mp4"));
+    const QString source = dir.filePath(QStringLiteral("screenrecording-2026-09-02_10-00-00.mp4"));
     const QString output =
         dir.filePath(QStringLiteral("screenrecording-2026-09-02_10-00-00-1080p.mp4"));
 
@@ -2612,8 +2728,8 @@ private slots:
     QVariantList peers;
     QString error;
 
-    QVERIFY(!TailscalePeers::parse(R"({"BackendState":"NeedsLogin","Self":{"UserID":0}})",
-                                   &peers, &error));
+    QVERIFY(!TailscalePeers::parse(R"({"BackendState":"NeedsLogin","Self":{"UserID":0}})", &peers,
+                                   &error));
     QVERIFY(error.contains(QStringLiteral("not logged in")));
     QVERIFY(!TailscalePeers::parse("not json", &peers, &error));
     QVERIFY(!error.isEmpty());
@@ -2642,8 +2758,7 @@ private slots:
     QCOMPARE(peers.at(0).toMap().value(QStringLiteral("name")).toString(), QStringLiteral("old"));
     QCOMPARE(peers.at(0).toMap().value(QStringLiteral("machine")).toString(),
              QStringLiteral("old"));
-    QCOMPARE(peers.at(1).toMap().value(QStringLiteral("name")).toString(),
-             QStringLiteral("phone"));
+    QCOMPARE(peers.at(1).toMap().value(QStringLiteral("name")).toString(), QStringLiteral("phone"));
     QCOMPARE(peers.at(1).toMap().value(QStringLiteral("machine")).toString(),
              QStringLiteral("phone.tail.ts.net"));
 
@@ -2679,15 +2794,15 @@ private slots:
 
     const QString first = dir.filePath(QStringLiteral("a shot.png"));
     const QString second = dir.filePath(QStringLiteral("clip.mp4"));
-    QVERIFY(registry.runBatchWith(QStringLiteral("tailscale"),
-                                  {{QStringLiteral("machine"), QStringLiteral("laptop.tail.ts.net")}},
-                                  {first, second}));
+    QVERIFY(registry.runBatchWith(
+        QStringLiteral("tailscale"),
+        {{QStringLiteral("machine"), QStringLiteral("laptop.tail.ts.net")}}, {first, second}));
     QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(record) && QFileInfo(record).size() > 0, 3000);
     QFile recorded(record);
     QVERIFY(recorded.open(QIODevice::ReadOnly | QIODevice::Text));
     const QStringList argv =
         QString::fromUtf8(recorded.readAll()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
-    QCOMPARE(argv, (QStringList{QStringLiteral("laptop.tail.ts.net"), first, second}));
+    QCOMPARE(argv, (QStringList {QStringLiteral("laptop.tail.ts.net"), first, second}));
   }
 
   void clipToGifRunsTheRealTranscoderEndToEnd() {
@@ -2698,8 +2813,7 @@ private slots:
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
 
-    const QString source =
-        dir.filePath(QStringLiteral("screenrecording-2026-09-02_09-00-00.mp4"));
+    const QString source = dir.filePath(QStringLiteral("screenrecording-2026-09-02_09-00-00.mp4"));
     QProcess ffmpeg;
     ffmpeg.start(QStandardPaths::findExecutable(QStringLiteral("ffmpeg")),
                  {QStringLiteral("-loglevel"), QStringLiteral("error"), QStringLiteral("-f"),
@@ -2738,20 +2852,17 @@ private slots:
     ActionLauncher launcher;
     QSignalSpy failed(&launcher, &ActionLauncher::failed);
     const bool moved = launcher.moveToTrash(path);
-    QVERIFY2(moved, failed.isEmpty()
-                        ? "moveToTrash failed without a message"
-                        : qPrintable(failed.last().first().toString()));
+    QVERIFY2(moved, failed.isEmpty() ? "moveToTrash failed without a message"
+                                     : qPrintable(failed.last().first().toString()));
     QVERIFY(!QFileInfo::exists(path));
 
     const QDir trash(m_scratch.filePath(QStringLiteral("data/Trash/files")));
-    QVERIFY2(!trash.entryList({QStringLiteral("recover me*")}, QDir::Files)
-                  .isEmpty(),
+    QVERIFY2(!trash.entryList({QStringLiteral("recover me*")}, QDir::Files).isEmpty(),
              qPrintable(trash.absolutePath()));
 
     QVERIFY(!launcher.moveToTrash(path));
     QCOMPARE(failed.size(), 1);
-    QCOMPARE(failed.first().first().toString(),
-             QStringLiteral("That file is no longer there"));
+    QCOMPARE(failed.first().first().toString(), QStringLiteral("That file is no longer there"));
   }
 
   // --- Thumbnails -------------------------------------------------------
@@ -2790,21 +2901,22 @@ private slots:
     // and the derived file used to fall back to its dark first frame.
     const QString source = dir.filePath(QStringLiteral("screenrecording-2026-09-02_10-40-00.mp4"));
     QProcess ffmpeg;
-    ffmpeg.start(
-        QStandardPaths::findExecutable(QStringLiteral("ffmpeg")),
-        {QStringLiteral("-loglevel"), QStringLiteral("error"), QStringLiteral("-f"),
-         QStringLiteral("lavfi"), QStringLiteral("-i"),
-         QStringLiteral("color=0x0a0a0a:s=320x240:r=30:d=2"), QStringLiteral("-f"),
-         QStringLiteral("lavfi"), QStringLiteral("-i"),
-         QStringLiteral("color=0x22aa66:s=320x240:r=30:d=6"), QStringLiteral("-filter_complex"),
-         QStringLiteral("[0][1]concat=n=2:v=1"), QStringLiteral("-c:v"), QStringLiteral("libx264"),
-         QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"), source});
+    ffmpeg.start(QStandardPaths::findExecutable(QStringLiteral("ffmpeg")),
+                 {QStringLiteral("-loglevel"), QStringLiteral("error"), QStringLiteral("-f"),
+                  QStringLiteral("lavfi"), QStringLiteral("-i"),
+                  QStringLiteral("color=0x0a0a0a:s=320x240:r=30:d=2"), QStringLiteral("-f"),
+                  QStringLiteral("lavfi"), QStringLiteral("-i"),
+                  QStringLiteral("color=0x22aa66:s=320x240:r=30:d=6"),
+                  QStringLiteral("-filter_complex"), QStringLiteral("[0][1]concat=n=2:v=1"),
+                  QStringLiteral("-c:v"), QStringLiteral("libx264"), QStringLiteral("-pix_fmt"),
+                  QStringLiteral("yuv420p"), source});
     QVERIFY(ffmpeg.waitForFinished(30000));
     QCOMPARE(ffmpeg.exitCode(), 0);
 
     // The derived names omarchy-transcode writes. Contents deliberately
     // unrelated (a black frame), because the tile must come from the source.
-    const QString gif = dir.filePath(QStringLiteral("screenrecording-2026-09-02_10-40-00-720p.gif"));
+    const QString gif =
+        dir.filePath(QStringLiteral("screenrecording-2026-09-02_10-40-00-720p.gif"));
     const QString resized =
         dir.filePath(QStringLiteral("screenrecording-2026-09-02_10-40-00-1080p.mp4"));
     QProcess black;
@@ -2851,9 +2963,9 @@ private slots:
     const QColor centre = tile.pixelColor(tile.width() / 2, tile.height() / 2);
     // The GIF palette dims pure blue, so compare channels rather than expect
     // full saturation.
-    QVERIFY2(centre.blue() > 120 && centre.red() < 80,
-             qPrintable(QStringLiteral("expected the 20%% frame (blue), got %1")
-                            .arg(centre.name())));
+    QVERIFY2(
+        centre.blue() > 120 && centre.red() < 80,
+        qPrintable(QStringLiteral("expected the 20%% frame (blue), got %1").arg(centre.name())));
   }
 
   // --- Mattes -----------------------------------------------------------
@@ -2877,8 +2989,8 @@ private slots:
     QImage source(200, 100, QImage::Format_RGB32);
     source.fill(QColor::fromHsv(30, 200, 200));
 
-    const QImage result = MatteComposer::compose(
-        source, MatteComposer::Adaptive, MatteComposer::Original, 0.10);
+    const QImage result =
+        MatteComposer::compose(source, MatteComposer::Adaptive, MatteComposer::Original, 0.10);
     QVERIFY(!result.isNull());
     // Padding has a 24 px floor, applied on both sides.
     QCOMPARE(result.width(), 200 + 2 * 24);
@@ -2888,8 +3000,8 @@ private slots:
   void composeNoneReturnsTheOriginal() {
     QImage source(40, 30, QImage::Format_RGB32);
     source.fill(Qt::magenta);
-    const QImage result = MatteComposer::compose(source, MatteComposer::None,
-                                                 MatteComposer::Square, 0.2);
+    const QImage result =
+        MatteComposer::compose(source, MatteComposer::None, MatteComposer::Square, 0.2);
     QCOMPARE(result.size(), source.size());
   }
 
@@ -2897,13 +3009,12 @@ private slots:
     QImage source(100, 400, QImage::Format_RGB32);
     source.fill(QColor::fromHsv(280, 180, 180));
 
-    const QImage result = MatteComposer::compose(source, MatteComposer::Deep,
-                                                 MatteComposer::Wide, 0.05);
+    const QImage result =
+        MatteComposer::compose(source, MatteComposer::Deep, MatteComposer::Wide, 0.05);
     QVERIFY(!result.isNull());
 
     const qreal ratio = qreal(result.width()) / result.height();
-    QVERIFY2(qAbs(ratio - 16.0 / 9.0) < 0.02,
-             qPrintable(QString::number(ratio)));
+    QVERIFY2(qAbs(ratio - 16.0 / 9.0) < 0.02, qPrintable(QString::number(ratio)));
     // The capture is tall, so the canvas had to grow sideways rather than crop.
     QVERIFY(result.width() >= source.width());
     QVERIFY(result.height() >= source.height());
@@ -2915,8 +3026,8 @@ private slots:
     // it or the capture is cropped top and bottom.
     QImage tall(1080, 7000, QImage::Format_RGB32);
     tall.fill(QColor(255, 0, 255));
-    const QImage result = MatteComposer::compose(tall, MatteComposer::Slate,
-                                                 MatteComposer::Wide, 0.18);
+    const QImage result =
+        MatteComposer::compose(tall, MatteComposer::Slate, MatteComposer::Wide, 0.18);
     QVERIFY(!result.isNull());
 
     int top = result.height();
@@ -2958,12 +3069,11 @@ private slots:
     QImage source(400, 12000, QImage::Format_RGB32);
     source.fill(QColor::fromHsv(90, 180, 180));
 
-    const QImage result = MatteComposer::compose(source, MatteComposer::Slate,
-                                                 MatteComposer::Social, 0.05);
+    const QImage result =
+        MatteComposer::compose(source, MatteComposer::Slate, MatteComposer::Social, 0.05);
     QVERIFY(!result.isNull());
     const qint64 pixels = qint64(result.width()) * result.height();
-    QVERIFY2(pixels <= MatteComposer::kMaxOutputPixels,
-             qPrintable(QString::number(pixels)));
+    QVERIFY2(pixels <= MatteComposer::kMaxOutputPixels, qPrintable(QString::number(pixels)));
   }
 
   void everyMatteProducesSomething() {
@@ -2971,11 +3081,9 @@ private slots:
     source.fill(QColor::fromHsv(15, 190, 190));
 
     for (int matte = 0; matte < MatteComposer::MatteCount; ++matte) {
-      const QImage result = MatteComposer::compose(
-          source, static_cast<MatteComposer::Matte>(matte),
-          MatteComposer::Original, 0.08);
-      QVERIFY2(!result.isNull(),
-               qPrintable(QStringLiteral("matte %1 was null").arg(matte)));
+      const QImage result = MatteComposer::compose(source, static_cast<MatteComposer::Matte>(matte),
+                                                   MatteComposer::Original, 0.08);
+      QVERIFY2(!result.isNull(), qPrintable(QStringLiteral("matte %1 was null").arg(matte)));
     }
   }
 

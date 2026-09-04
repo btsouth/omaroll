@@ -18,6 +18,8 @@ Item {
     property string timeLabel: ""
     property string sizeLabel: ""
     property bool isVideo: false
+    property bool isDocument: false
+    property int pdfPage: 1
     property double stamp: 0
     property bool favorite: false
     property int kind: 0
@@ -46,10 +48,16 @@ Item {
     readonly property string durationLabel: root.isVideo && player.duration > 0
                                              ? root.formatDuration(player.duration) : ""
     readonly property real playbackPosition: player.position
-    readonly property string technicalLabel: root.dimensionsLabel !== "" && root.durationLabel !== ""
-                                              ? root.dimensionsLabel + "  ·  " + root.durationLabel
-                                              : (root.dimensionsLabel !== "" ? root.dimensionsLabel
-                                                                             : root.durationLabel)
+    readonly property string mediaTechnical: root.dimensionsLabel !== "" && root.durationLabel !== ""
+                                             ? root.dimensionsLabel + "  ·  " + root.durationLabel
+                                             : (root.dimensionsLabel !== "" ? root.dimensionsLabel
+                                                                            : root.durationLabel)
+    readonly property string technicalLabel: root.mediaTechnical
+                                             + (root.isDocument && PdfInfo.pageCount > 0
+                                                ? (root.mediaTechnical !== "" ? "  ·  " : "")
+                                                  + PdfInfo.pageCount
+                                                  + (PdfInfo.pageCount === 1 ? " page" : " pages")
+                                                : "")
     // The stage's bottom row holds the image controls or the video transport
     // beside the slideshow group. Labels shrink to icons when the row at its
     // long labels would not fit; the widths come from hidden copies drawn in
@@ -107,7 +115,7 @@ Item {
     }
 
     function visibleActions() {
-        const rows = Registry.actionsFor(root.isVideo)
+        const rows = Registry.actionsForKind(root.isVideo, root.isDocument)
         return rows.filter(function (row) { return row.id !== "qr" || root.qrDetected })
     }
 
@@ -181,6 +189,7 @@ Item {
         const keepActionFocus = visible && actionNavigationActive
         const previousActionId = focusedActionId
         playbackError = ""
+        pdfPage = 1
         if (!visible) {
             showInfo = true
             slideshowRunning = false
@@ -283,7 +292,12 @@ Item {
         stillReady = false
         imageSourceWidth = 0
         imageSourceHeight = 0
-        MediaInfo.inspect(path, isVideo)
+        if (isDocument) {
+            PdfInfo.inspect(path)
+        } else {
+            PdfInfo.clear()
+            MediaInfo.inspect(path, isVideo)
+        }
     }
     onStillReadyChanged: {
         if (slideshowRunning && !slideshowPausedForRender && !isVideo && stillReady) {
@@ -478,7 +492,8 @@ Item {
                                 * root.imageZoom
                         rotation: root.imageRotation
                         readonly property string suffix: root.fileName.toLowerCase()
-                        sourceComponent: suffix.endsWith(".gif") || suffix.endsWith(".webp")
+                        sourceComponent: root.isDocument ? pdfStill
+                                         : suffix.endsWith(".gif") || suffix.endsWith(".webp")
                                          ? animatedStill : staticStill
                     }
                 }
@@ -516,6 +531,33 @@ Item {
                             root.stillReady = true
                         } else if (status === Image.Error) {
                             root.playbackError = "Could not display this image"
+                            root.stillReady = true
+                        }
+                    }
+                }
+            }
+
+            Component {
+                id: pdfStill
+                Image {
+                    source: root.visible && root.isDocument && root.path !== ""
+                            ? "image://pdf/" + root.pdfPage + "~" + root.stamp
+                              + encodeURIComponent(root.path) : ""
+                    sourceSize: Qt.size(Math.max(800, Math.round(stage.width * Screen.devicePixelRatio)),
+                                        Math.max(800, Math.round(stage.height * Screen.devicePixelRatio)))
+                    asynchronous: true
+                    smooth: true
+                    mipmap: true
+                    fillMode: Image.Stretch
+                    onStatusChanged: {
+                        if (status === Image.Ready) {
+                            root.imageSourceWidth = sourceSize.width
+                            root.imageSourceHeight = sourceSize.height
+                            root.stillReady = true
+                        } else if (status === Image.Error) {
+                            root.playbackError = PdfInfo.available
+                                                 ? "Could not display this PDF page"
+                                                 : "PDF support needs Poppler"
                             root.stillReady = true
                         }
                     }
@@ -633,6 +675,40 @@ Item {
                 toolTip: "Next"
                 shortcut: root.viewerShortcuts.next.label
                 onClicked: root.requestNavigation(1)
+            }
+
+            Row {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 62
+                spacing: 8
+                visible: root.isDocument
+
+                PillButton {
+                    label: "Previous page"
+                    enabled: root.pdfPage > 1
+                    onClicked: if (root.pdfPage > 1) {
+                        root.stillReady = false
+                        root.pdfPage--
+                    }
+                }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: PdfInfo.pageCount > 0
+                          ? "Page " + root.pdfPage + " of " + PdfInfo.pageCount
+                          : (PdfInfo.error !== "" ? PdfInfo.error : "Reading pages…")
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 11
+                    color: Theme.foreground
+                }
+                PillButton {
+                    label: "Next page"
+                    enabled: PdfInfo.pageCount > 0 && root.pdfPage < PdfInfo.pageCount
+                    onClicked: if (root.pdfPage < PdfInfo.pageCount) {
+                        root.stillReady = false
+                        root.pdfPage++
+                    }
+                }
             }
 
             Rectangle {
@@ -1037,9 +1113,9 @@ Item {
                     activeFocusOnTab: false
 
                     readonly property bool usable: modelData.available
-                    readonly property bool primary: modelData.id === (root.isVideo
-                                                       ? Settings.videoPrimaryAction
-                                                       : Settings.imagePrimaryAction)
+                    readonly property bool primary: modelData.id ===
+                                                    Registry.primaryActionForKind(
+                                                        root.isVideo, root.isDocument)
                     readonly property string shortcut: modelData.shortcut
                     readonly property string toolTipText: modelData.shortcut !== ""
                                                            ? modelData.label + "  ·  "
@@ -1194,8 +1270,10 @@ Item {
             return
         }
         if (event.key === Qt.Key_Space) {
-            root.actionTriggered(root.isVideo ? Settings.videoPrimaryAction
-                                              : Settings.imagePrimaryAction)
+            root.actionTriggered(root.isDocument
+                                 ? Registry.primaryActionForKind(false, true)
+                                 : (root.isVideo ? Settings.videoPrimaryAction
+                                                 : Settings.imagePrimaryAction))
             event.accepted = true
             return
         }
@@ -1223,6 +1301,15 @@ Item {
         }
         if (!root.isVideo && event.key === root.viewerShortcuts.rotate.key) {
             root.rotateImage()
+            event.accepted = true
+            return
+        }
+        if (root.isDocument && (event.key === Qt.Key_PageDown || event.key === Qt.Key_PageUp)) {
+            const next = root.pdfPage + (event.key === Qt.Key_PageDown ? 1 : -1)
+            if (next >= 1 && next <= PdfInfo.pageCount) {
+                root.stillReady = false
+                root.pdfPage = next
+            }
             event.accepted = true
             return
         }

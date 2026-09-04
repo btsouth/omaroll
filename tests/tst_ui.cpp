@@ -17,21 +17,26 @@
 #include "library/CaptureFilterModel.h"
 #include "library/CaptureModel.h"
 #include "library/DuplicateIndex.h"
-#include "library/MediaInspector.h"
 #include "library/MediaDateIndex.h"
+#include "library/MediaInspector.h"
+#include "library/SimilarityIndex.h"
 #include "matte/MatteComposer.h"
 #include "matte/MatteProvider.h"
+#include "pdf/PdfInspector.h"
+#include "pdf/PdfProvider.h"
 #include "search/OcrIndex.h"
 #include "search/QrDetector.h"
 #include "theme/OmarchyTheme.h"
 #include "thumbs/ThumbnailProvider.h"
 
-#include <QDir>
 #include <QClipboard>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QImage>
+#include <QPainter>
+#include <QPdfWriter>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickItem>
@@ -103,6 +108,7 @@ private slots:
     // so it sits at the top of the grid.
     m_oddPath = layout.pictures + QStringLiteral("/odd %20 name #1 (copy)?.jpg");
     QVERIFY(QFile::copy(layout.pictures + QStringLiteral("/alpine-dawn.jpg"), m_oddPath));
+    m_pdfPath = layout.pictures + QStringLiteral("/omaroll-guide.pdf");
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        layout.root + QStringLiteral("/config"));
 
@@ -118,7 +124,13 @@ private slots:
             [this] { m_duplicates->setActive(m_library->duplicatesOnly()); });
     connect(m_duplicates, &DuplicateIndex::groupsChanged, m_library,
             [this] { m_library->setDuplicateGroups(m_duplicates->groups()); });
+    m_similarities = new SimilarityIndex(m_captures, this);
+    connect(m_library, &CaptureFilterModel::similarOnlyChanged, m_similarities,
+            [this] { m_similarities->setActive(m_library->similarOnly()); });
+    connect(m_similarities, &SimilarityIndex::groupsChanged, m_library,
+            [this] { m_library->setSimilarGroups(m_similarities->groups()); });
     m_mediaInfo = new MediaInspector(this);
+    m_pdfInfo = new PdfInspector(this);
     m_mediaDates = new MediaDateIndex(nullptr, this);
     m_actions = new ActionLauncher(this);
     m_registry = new ActionRegistry(m_actions, this);
@@ -138,8 +150,10 @@ private slots:
     m_engine->addImportPath(QStringLiteral(OMAROLL_QML_IMPORT_PATH));
     m_thumbnails = new ThumbnailProvider;
     m_mattes = new MatteProvider;
+    m_pdfs = new PdfProvider;
     m_engine->addImageProvider(QLatin1String(ThumbnailProvider::kProviderId), m_thumbnails);
     m_engine->addImageProvider(QLatin1String(MatteProvider::kProviderId), m_mattes);
+    m_engine->addImageProvider(QLatin1String(PdfProvider::kProviderId), m_pdfs);
 
     QQmlContext* context = m_engine->rootContext();
     context->setContextProperty(QStringLiteral("Theme"), m_theme);
@@ -152,7 +166,9 @@ private slots:
     context->setContextProperty(QStringLiteral("TextIndex"), m_textIndex);
     context->setContextProperty(QStringLiteral("Qr"), m_qr);
     context->setContextProperty(QStringLiteral("Duplicates"), m_duplicates);
+    context->setContextProperty(QStringLiteral("Similarities"), m_similarities);
     context->setContextProperty(QStringLiteral("MediaInfo"), m_mediaInfo);
+    context->setContextProperty(QStringLiteral("PdfInfo"), m_pdfInfo);
     context->setContextProperty(QStringLiteral("MediaDates"), m_mediaDates);
     context->setContextProperty(QStringLiteral("Tailscale"), m_tailscale);
     context->setContextProperty(QStringLiteral("DemoMode"), true);
@@ -174,6 +190,7 @@ private slots:
   void cleanupTestCase() {
     m_thumbnails->shutdown();
     m_mattes->shutdown();
+    m_pdfs->shutdown();
     delete m_engine;
     m_engine = nullptr;
     QThreadPool::globalInstance()->waitForDone();
@@ -260,8 +277,7 @@ private slots:
     // Two quick clicks on Rotate: two rotations, and never the double-tap that
     // used to open whatever tile sat under the button.
     QQuickItem* rotate = nullptr;
-    QTRY_VERIFY_WITH_TIMEOUT(
-        (rotate = pill(detail, QStringLiteral("Rotate"))) != nullptr, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT((rotate = pill(detail, QStringLiteral("Rotate"))) != nullptr, 5000);
     QTest::mouseDClick(m_window, Qt::LeftButton, Qt::NoModifier, centre(rotate));
     settle();
     QVERIFY(detail->isVisible());
@@ -293,7 +309,8 @@ private slots:
     QMetaObject::invokeMethod(browser, "open");
     QTRY_VERIFY(browser->property("visible").toBool());
 
-    // Click the scrim: the browser closes and nothing in the library is touched.
+    // Click the scrim: the browser closes and nothing in the library is
+    // touched.
     QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, QPoint(10, 400));
     settle();
     QTRY_VERIFY(!browser->property("visible").toBool());
@@ -404,9 +421,9 @@ private slots:
     QTRY_VERIFY(detail->isVisible());
 
     QTest::keyClick(m_window, Qt::Key_Tab);
-    for (int guard = 0; guard < 20 &&
-                        (!activeViewerAction() || activeViewerAction()->objectName() !=
-                                                      QStringLiteral("viewerAction_export"));
+    for (int guard = 0;
+         guard < 20 && (!activeViewerAction() || activeViewerAction()->objectName() !=
+                                                     QStringLiteral("viewerAction_export"));
          ++guard) {
       QTest::keyClick(m_window, Qt::Key_Down);
     }
@@ -500,6 +517,13 @@ private slots:
     QCOMPARE(m_library->gridLabelAt(0), QStringLiteral("Exact match 1 of 1"));
     QVERIFY(QFileInfo::exists(m_library->pathAt(0)));
     QVERIFY(QFileInfo::exists(m_library->pathAt(1)));
+    QQuickItem* keep = pill(m_window->contentItem(), QStringLiteral("Keep selected"));
+    QVERIFY(keep);
+    click(keep);
+    QTRY_VERIFY(item("confirm")->isVisible());
+    QVERIFY(item("confirm")->property("title").toString().startsWith(QStringLiteral("Keep ")));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!item("confirm")->isVisible());
     QQuickItem* browse = pill(m_window->contentItem(), QStringLiteral("Duplicates  ▾"));
     QVERIFY(browse);
 
@@ -564,8 +588,7 @@ private slots:
     QVERIFY(focused->property("usable").toBool());
     QCOMPARE(focused->property("shortcut").toString(),
              m_registry->shortcutFor(QStringLiteral("matte")));
-    QCOMPARE(focused->property("toolTipText").toString(),
-             QStringLiteral("Make it postable  ·  M"));
+    QCOMPARE(focused->property("toolTipText").toString(), QStringLiteral("Make it postable  ·  M"));
 
     QTest::keyClick(m_window, Qt::Key_Down);
     QQuickItem* next = activeViewerAction();
@@ -583,9 +606,9 @@ private slots:
     // Focus stays on the same common action while Left and Right retain their
     // viewer meaning and the delegate model is rebuilt for another file.
     QTest::keyClick(m_window, Qt::Key_Tab);
-    for (int guard = 0; guard < 20 &&
-                        (!activeViewerAction() || activeViewerAction()->objectName() !=
-                                                      QStringLiteral("viewerAction_copy"));
+    for (int guard = 0;
+         guard < 20 && (!activeViewerAction() ||
+                        activeViewerAction()->objectName() != QStringLiteral("viewerAction_copy"));
          ++guard) {
       QTest::keyClick(m_window, Qt::Key_Down);
     }
@@ -617,15 +640,13 @@ private slots:
     QQuickItem* all = pill(m_window->contentItem(), QStringLiteral("All"));
     QVERIFY(all);
     QCOMPARE(all->property("shortcut").toString(), QStringLiteral("1"));
-    QCOMPARE(all->property("resolvedToolTip").toString(),
-             QStringLiteral("All  ·  1"));
+    QCOMPARE(all->property("resolvedToolTip").toString(), QStringLiteral("All  ·  1"));
 
     openDetail(0);
     QQuickItem* rotate = pill(item("detail"), QStringLiteral("Rotate"));
     QTRY_VERIFY(rotate != nullptr);
     QCOMPARE(rotate->property("shortcut").toString(), QStringLiteral("R"));
-    QCOMPARE(rotate->property("resolvedToolTip").toString(),
-             QStringLiteral("Rotate  ·  R"));
+    QCOMPARE(rotate->property("resolvedToolTip").toString(), QStringLiteral("Rotate  ·  R"));
   }
 
   void extractedTextOpensASelectableLayoutPreservingReview() {
@@ -643,8 +664,7 @@ private slots:
     QCOMPARE(m_textIndex->reviewText(), QStringLiteral("First  line\nSecond line"));
 
     QQuickItem* editor = item("ocrTextArea");
-    QTRY_COMPARE(editor->property("text").toString(),
-                 QStringLiteral("First  line\nSecond line"));
+    QTRY_COMPARE(editor->property("text").toString(), QStringLiteral("First  line\nSecond line"));
     QTRY_VERIFY(editor->hasActiveFocus());
     QVERIFY(QMetaObject::invokeMethod(editor, "select", Q_ARG(int, 0), Q_ARG(int, 5)));
     QTRY_COMPARE(editor->property("selectedText").toString(), QStringLiteral("First"));
@@ -670,13 +690,13 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(!m_qr->checking(), 3000);
     QVERIFY(!m_qr->detected());
     QVERIFY(find(detail, [](QQuickItem* candidate) {
-      return candidate->objectName() == QStringLiteral("viewerAction_qr");
-    }) == nullptr);
+              return candidate->objectName() == QStringLiteral("viewerAction_qr");
+            }) == nullptr);
     QMetaObject::invokeMethod(detail, "close");
     QTRY_VERIFY(!detail->isVisible());
 
-    const QString qrPath = QFileInfo(pathAt(0)).dir().filePath(
-        QStringLiteral("qr-positive-ui.png"));
+    const QString qrPath =
+        QFileInfo(pathAt(0)).dir().filePath(QStringLiteral("qr-positive-ui.png"));
     QImage image(19, 17, QImage::Format_RGB32);
     image.fill(Qt::white);
     QVERIFY(image.save(qrPath, "PNG"));
@@ -692,32 +712,31 @@ private slots:
     QVERIFY(QMetaObject::invokeMethod(detail, "focusActionById",
                                       Q_ARG(QVariant, QStringLiteral("rename"))));
     QTRY_VERIFY(find(detail, [](QQuickItem* candidate) {
-      return candidate->objectName() == QStringLiteral("viewerAction_rename") &&
-             candidate->hasActiveFocus();
-    }) != nullptr);
+                  return candidate->objectName() == QStringLiteral("viewerAction_rename") &&
+                         candidate->hasActiveFocus();
+                }) != nullptr);
     m_qr->inspect(pathAt(0));
     QTRY_VERIFY_WITH_TIMEOUT(!m_qr->checking(), 3000);
     QTRY_VERIFY(find(detail, [](QQuickItem* candidate) {
-      return candidate->objectName() == QStringLiteral("viewerAction_rename") &&
-             candidate->hasActiveFocus();
-    }) != nullptr);
+                  return candidate->objectName() == QStringLiteral("viewerAction_rename") &&
+                         candidate->hasActiveFocus();
+                }) != nullptr);
     m_qr->inspect(qrPath);
     QTRY_VERIFY(m_qr->detected());
     QTRY_VERIFY(find(detail, [](QQuickItem* candidate) {
-      return candidate->objectName() == QStringLiteral("viewerAction_rename") &&
-             candidate->hasActiveFocus();
-    }) != nullptr);
+                  return candidate->objectName() == QStringLiteral("viewerAction_rename") &&
+                         candidate->hasActiveFocus();
+                }) != nullptr);
 
     QQuickItem* qrAction = nullptr;
     QTRY_VERIFY((qrAction = find(detail, [](QQuickItem* candidate) {
-      return candidate->objectName() == QStringLiteral("viewerAction_qr") &&
-             candidate->isVisible();
-    })) != nullptr);
+                   return candidate->objectName() == QStringLiteral("viewerAction_qr") &&
+                          candidate->isVisible();
+                 })) != nullptr);
     QSignalSpy reported(m_actions, &ActionLauncher::reported);
     click(qrAction);
     QTRY_VERIFY_WITH_TIMEOUT(!reported.isEmpty(), 3000);
-    QCOMPARE(reported.last().first().toString(),
-             QStringLiteral("QR code copied to clipboard"));
+    QCOMPARE(reported.last().first().toString(), QStringLiteral("QR code copied to clipboard"));
     QFile clipboard(m_scratch.filePath(QStringLiteral("clipboard.log")));
     QVERIFY(clipboard.open(QIODevice::ReadOnly));
     QCOMPARE(clipboard.readAll(), QByteArray("otpauth://ui-private-value"));
@@ -757,15 +776,15 @@ private slots:
     const CaptureRecord record = m_captures->recordAt(sourceRow);
     QVERIFY(!record.hasProducerTimestamp);
     const QDateTime enriched = record.captured.addSecs(-61);
-    m_captures->applyCapturedDates({{path, record.modified, record.bytes, enriched,
-                                     record.device, record.inode}});
+    m_captures->applyCapturedDates(
+        {{path, record.modified, record.bytes, enriched, record.device, record.inode}});
     QTRY_COMPARE(detail->property("dayLabel").toString(),
                  m_captures->dayLabelAt(m_captures->rowOf(path)));
     QTRY_COMPARE(detail->property("timeLabel").toString(),
                  m_library->timeLabelAt(m_library->rowOf(path)));
 
-    m_captures->applyCapturedDates({{path, record.modified, record.bytes,
-                                     record.captured, record.device, record.inode}});
+    m_captures->applyCapturedDates(
+        {{path, record.modified, record.bytes, record.captured, record.device, record.inode}});
     QTRY_COMPARE(detail->property("timeLabel").toString(),
                  m_library->timeLabelAt(m_library->rowOf(path)));
   }
@@ -789,15 +808,15 @@ private slots:
     const int sourceRow = m_captures->rowOf(selectedPath);
     const CaptureRecord record = m_captures->recordAt(sourceRow);
     const QDateTime moved = QDateTime::currentDateTime().addDays(1);
-    m_captures->applyCapturedDates({{selectedPath, record.modified, record.bytes, moved,
-                                     record.device, record.inode}});
+    m_captures->applyCapturedDates(
+        {{selectedPath, record.modified, record.bytes, moved, record.device, record.inode}});
 
     QTRY_VERIFY(!reordered.isEmpty());
     QTRY_COMPARE(m_library->rowOf(selectedPath), 0);
     QTRY_COMPARE(pathAt(grid->property("currentIndex").toInt()), selectedPath);
 
-    m_captures->applyCapturedDates({{selectedPath, record.modified, record.bytes,
-                                     record.captured, record.device, record.inode}});
+    m_captures->applyCapturedDates({{selectedPath, record.modified, record.bytes, record.captured,
+                                     record.device, record.inode}});
     QTRY_COMPARE(pathAt(grid->property("currentIndex").toInt()), selectedPath);
   }
 
@@ -824,8 +843,7 @@ private slots:
     const auto stamp = [this](double milliseconds) {
       QVariant result;
       const bool called = QMetaObject::invokeMethod(
-          m_window, "frameStamp", Q_RETURN_ARG(QVariant, result),
-          Q_ARG(QVariant, milliseconds));
+          m_window, "frameStamp", Q_RETURN_ARG(QVariant, result), Q_ARG(QVariant, milliseconds));
       return called ? result.toString() : QString();
     };
     QCOMPARE(stamp(0), QStringLiteral("00m00s000"));
@@ -896,8 +914,8 @@ private slots:
 
     QFile log(logPath);
     QVERIFY(log.open(QIODevice::ReadOnly));
-    const QStringList arguments = QString::fromUtf8(log.readAll())
-                                      .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    const QStringList arguments =
+        QString::fromUtf8(log.readAll()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
     const int seek = arguments.indexOf(QStringLiteral("-ss"));
     QVERIFY(seek >= 0 && seek + 1 < arguments.size());
     QVERIFY(arguments.at(seek + 1).toDouble() >= 0.0);
@@ -953,8 +971,7 @@ private slots:
     QQuickItem* sheet = item("renameSheet");
     QTRY_VERIFY(sheet->isVisible());
     QCOMPARE(sheet->property("path").toString(), path);
-    QCOMPARE(sheet->property("suffix").toString(),
-             QStringLiteral(".") + QFileInfo(path).suffix());
+    QCOMPARE(sheet->property("suffix").toString(), QStringLiteral(".") + QFileInfo(path).suffix());
 
     QQuickItem* input = item("renameInput");
     input->setProperty("text", QString());
@@ -966,13 +983,12 @@ private slots:
     input->setProperty("text", base);
     click(pill(sheet, QStringLiteral("Rename")));
     QTRY_VERIFY(!sheet->isVisible());
-    const QString renamed = QFileInfo(path).dir().filePath(
-        base + QStringLiteral(".") + QFileInfo(path).suffix());
+    const QString renamed =
+        QFileInfo(path).dir().filePath(base + QStringLiteral(".") + QFileInfo(path).suffix());
     QVERIFY(!QFileInfo::exists(path));
     QVERIFY(QFileInfo::exists(renamed));
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(renamed) >= 0, 5000);
-    QTRY_COMPARE(item("library")->property("currentIndex").toInt(),
-                 m_library->rowOf(renamed));
+    QTRY_COMPARE(item("library")->property("currentIndex").toInt(), m_library->rowOf(renamed));
     QTRY_VERIFY(item("library")->hasActiveFocus());
 
     perform(QStringLiteral("rename"), renamed);
@@ -1034,16 +1050,51 @@ private slots:
     QTRY_COMPARE_WITH_TIMEOUT(preview->property("status").toInt(), 1, 15000);
   }
 
+  void pdfPreviewPagesInPlaceAndOffersDocumentActions() {
+    {
+      QPdfWriter writer(m_pdfPath);
+      writer.setResolution(96);
+      QPainter painter(&writer);
+      QVERIFY(painter.isActive());
+      painter.drawText(QPoint(100, 140), QStringLiteral("Omaroll guide"));
+      QVERIFY(writer.newPage());
+      painter.drawText(QPoint(100, 140), QStringLiteral("Second page"));
+      painter.end();
+    }
+    m_captures->refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(m_pdfPath) >= 0, 5000);
+    const int row = m_library->rowOf(m_pdfPath);
+    QVERIFY(row >= 0);
+    openDetail(row);
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->isVisible());
+    QVERIFY(detail->property("isDocument").toBool());
+    QTRY_COMPARE_WITH_TIMEOUT(m_pdfInfo->path(), m_pdfPath, 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(!m_pdfInfo->loading(), 5000);
+    QCOMPARE(m_pdfInfo->pageCount(), 2);
+    QTRY_VERIFY_WITH_TIMEOUT(detail->property("stillReady").toBool(), 10000);
+    QVERIFY(find(detail, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("viewerAction_open-document");
+    }));
+    QCOMPARE(detail->property("pdfPage").toInt(), 1);
+    QTest::keyClick(m_window, Qt::Key_PageDown);
+    QTRY_COMPARE(detail->property("pdfPage").toInt(), 2);
+    invoke("dismissTopLayer");
+    QVERIFY(QFile::remove(m_pdfPath));
+    m_captures->refresh();
+    QTRY_COMPARE_WITH_TIMEOUT(m_library->rowOf(m_pdfPath), -1, 5000);
+  }
+
   void albumFromASelection() {
     QTest::keyClick(m_window, Qt::Key_X);
     QTRY_COMPARE(item("library")->property("checkedCount").toInt(), 1);
     // The header row re-lays itself out in the next polish pass once the
     // selection pills appear; click only once the pill has its place.
-    QQuickItem* albumPill = pill(m_window->contentItem(), QStringLiteral("+ Album"));
+    QQuickItem* albumPill = pill(m_window->contentItem(), QStringLiteral("Organize"));
     QVERIFY(albumPill);
     QTRY_VERIFY(centre(albumPill).x() > 0 && centre(albumPill).x() < m_window->width());
     QTest::qWait(120);
-    albumPill = pill(m_window->contentItem(), QStringLiteral("+ Album"));
+    albumPill = pill(m_window->contentItem(), QStringLiteral("Organize"));
     QVERIFY(albumPill);
     QTRY_VERIFY(centre(albumPill).x() > 0 && centre(albumPill).x() < m_window->width());
     click(albumPill);
@@ -1132,8 +1183,8 @@ private:
     return find(within, [&label](QQuickItem* candidate) {
       return candidate->property("floating").isValid() &&
              (candidate->property("label").toString() == label ||
-              candidate->property("toolTip").toString() == label) && candidate->isVisible() &&
-             candidate->width() > 0;
+              candidate->property("toolTip").toString() == label) &&
+             candidate->isVisible() && candidate->width() > 0;
     });
   }
 
@@ -1174,7 +1225,9 @@ private:
   }
 
   // singleTapped waits out the double-click interval before firing.
-  static void settle() { QTest::qWait(QGuiApplication::styleHints()->mouseDoubleClickInterval() + 100); }
+  static void settle() {
+    QTest::qWait(QGuiApplication::styleHints()->mouseDoubleClickInterval() + 100);
+  }
 
   QTemporaryDir m_scratch;
   OmarchyTheme* m_theme = nullptr;
@@ -1188,14 +1241,18 @@ private:
   OcrIndex* m_textIndex = nullptr;
   QrDetector* m_qr = nullptr;
   DuplicateIndex* m_duplicates = nullptr;
+  SimilarityIndex* m_similarities = nullptr;
   MediaInspector* m_mediaInfo = nullptr;
+  PdfInspector* m_pdfInfo = nullptr;
   MediaDateIndex* m_mediaDates = nullptr;
   ThumbnailProvider* m_thumbnails = nullptr;
   MatteProvider* m_mattes = nullptr;
+  PdfProvider* m_pdfs = nullptr;
   QQmlApplicationEngine* m_engine = nullptr;
   QQuickWindow* m_window = nullptr;
   QStringList m_warnings;
   QString m_oddPath;
+  QString m_pdfPath;
 };
 
 // Offscreen unconditionally, not just under ctest. Run by hand on a live

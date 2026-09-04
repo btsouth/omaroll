@@ -7,10 +7,13 @@
 #include "library/CaptureFilterModel.h"
 #include "library/CaptureModel.h"
 #include "library/DuplicateIndex.h"
-#include "library/MediaInspector.h"
 #include "library/MediaDateIndex.h"
+#include "library/MediaInspector.h"
+#include "library/SimilarityIndex.h"
 #include "matte/MatteComposer.h"
 #include "matte/MatteProvider.h"
+#include "pdf/PdfInspector.h"
+#include "pdf/PdfProvider.h"
 #include "search/OcrIndex.h"
 #include "search/QrDetector.h"
 #include "sources/CaptureScanner.h"
@@ -34,10 +37,10 @@
 
 namespace {
 
-QString optionValue(const QStringList &arguments, const QString &name) {
+QString optionValue(const QStringList& arguments, const QString& name) {
   const QString prefix = name + QLatin1Char('=');
   for (qsizetype index = 0; index < arguments.size(); ++index) {
-    const QString &argument = arguments.at(index);
+    const QString& argument = arguments.at(index);
     if (argument.startsWith(prefix)) {
       return argument.mid(prefix.size());
     }
@@ -49,9 +52,9 @@ QString optionValue(const QStringList &arguments, const QString &name) {
   return {};
 }
 
-bool optionPresent(const QStringList &arguments, const QString &name) {
+bool optionPresent(const QStringList& arguments, const QString& name) {
   const QString prefix = name + QLatin1Char('=');
-  for (const QString &argument : arguments) {
+  for (const QString& argument : arguments) {
     if (argument == name || argument.startsWith(prefix)) {
       return true;
     }
@@ -59,26 +62,23 @@ bool optionPresent(const QStringList &arguments, const QString &name) {
   return false;
 }
 
-QString argumentError(const QStringList &arguments) {
-  static const QStringList valueOptions = {QStringLiteral("--render"),
-                                           QStringLiteral("--render-view"),
-                                           QStringLiteral("--render-size")};
-  static const QStringList flagOptions = {
-      QStringLiteral("--demo"), QStringLiteral("--help"), QStringLiteral("-h"),
-      QStringLiteral("--version")};
+QString argumentError(const QStringList& arguments) {
+  static const QStringList valueOptions = {
+      QStringLiteral("--render"), QStringLiteral("--render-view"), QStringLiteral("--render-size")};
+  static const QStringList flagOptions = {QStringLiteral("--demo"), QStringLiteral("--help"),
+                                          QStringLiteral("-h"), QStringLiteral("--version")};
   int positional = 0;
   for (qsizetype index = 1; index < arguments.size(); ++index) {
-    const QString &argument = arguments.at(index);
+    const QString& argument = arguments.at(index);
     if (valueOptions.contains(argument)) {
-      if (index + 1 >= arguments.size() ||
-          arguments.at(index + 1).startsWith(u"--")) {
+      if (index + 1 >= arguments.size() || arguments.at(index + 1).startsWith(u"--")) {
         return QStringLiteral("%1 needs a value").arg(argument);
       }
       ++index;
       continue;
     }
     bool knownAssignment = false;
-    for (const QString &option : valueOptions) {
+    for (const QString& option : valueOptions) {
       if (argument.startsWith(option + QLatin1Char('='))) {
         if (argument.size() == option.size() + 1) {
           return QStringLiteral("%1 needs a value").arg(option);
@@ -103,12 +103,11 @@ QString argumentError(const QStringList &arguments) {
 // The first argument that is neither an option nor an option's value. The
 // desktop entry passes %f here, so "Open with Omaroll" on a picture or a
 // folder lands in it.
-QString positionalArgument(const QStringList &arguments) {
-  static const QStringList valueOptions = {QStringLiteral("--render"),
-                                           QStringLiteral("--render-view"),
-                                           QStringLiteral("--render-size")};
+QString positionalArgument(const QStringList& arguments) {
+  static const QStringList valueOptions = {
+      QStringLiteral("--render"), QStringLiteral("--render-view"), QStringLiteral("--render-size")};
   for (qsizetype index = 1; index < arguments.size(); ++index) {
-    const QString &argument = arguments.at(index);
+    const QString& argument = arguments.at(index);
     if (valueOptions.contains(argument)) {
       ++index;
       continue;
@@ -145,7 +144,7 @@ Options:
 
 } // namespace
 
-int main(int argc, char *argv[]) {
+int main(int argc, char* argv[]) {
   QGuiApplication::setApplicationName(QStringLiteral("Omaroll"));
   QGuiApplication::setApplicationDisplayName(QStringLiteral("Omaroll"));
   QGuiApplication::setApplicationVersion(QStringLiteral(OMAROLL_VERSION));
@@ -169,8 +168,7 @@ int main(int argc, char *argv[]) {
   // On Wayland this is what becomes app_id. The Hyprland media-opacity rule
   // matches on it, so it must stay in lockstep with the .desktop filename and
   // StartupWMClass. Changing it silently breaks the transparency opt-out.
-  QGuiApplication::setDesktopFileName(
-      QStringLiteral("io.github.tsouth89.omaroll"));
+  QGuiApplication::setDesktopFileName(QStringLiteral("io.github.tsouth89.omaroll"));
 
   // Basic rather than a platform style: every colour comes from the Omarchy
   // theme, and a style that injects its own palette fights that.
@@ -186,18 +184,15 @@ int main(int argc, char *argv[]) {
       // unconditional. OMAROLL_RENDER_PLATFORM overrides it for checking
       // something the offscreen platform cannot draw, such as video frames.
       const QByteArray platform = qgetenv("OMAROLL_RENDER_PLATFORM");
-      qputenv("QT_QPA_PLATFORM",
-              platform.isEmpty() ? QByteArray("offscreen") : platform);
+      qputenv("QT_QPA_PLATFORM", platform.isEmpty() ? QByteArray("offscreen") : platform);
       break;
     }
   }
 
   QGuiApplication application(argc, argv);
-  QIcon applicationIcon =
-      QIcon::fromTheme(QStringLiteral("io.github.tsouth89.omaroll"));
+  QIcon applicationIcon = QIcon::fromTheme(QStringLiteral("io.github.tsouth89.omaroll"));
   if (applicationIcon.isNull()) {
-    applicationIcon =
-        QIcon(QStringLiteral(":/icons/resources/icons/omaroll.svg"));
+    applicationIcon = QIcon(QStringLiteral(":/icons/resources/icons/omaroll.svg"));
   }
   application.setWindowIcon(applicationIcon);
 
@@ -212,29 +207,23 @@ int main(int argc, char *argv[]) {
 
   const QString renderPath = optionValue(arguments, QStringLiteral("--render"));
   const bool rendering = !renderPath.isEmpty();
-  if (!rendering &&
-      (optionPresent(arguments, QStringLiteral("--render-view")) ||
-       optionPresent(arguments, QStringLiteral("--render-size")))) {
-    qWarning().noquote()
-        << "omaroll: --render-view and --render-size require --render";
+  if (!rendering && (optionPresent(arguments, QStringLiteral("--render-view")) ||
+                     optionPresent(arguments, QStringLiteral("--render-size")))) {
+    qWarning().noquote() << "omaroll: --render-view and --render-size require --render";
     return 2;
   }
-  const QString renderView =
-      optionValue(arguments, QStringLiteral("--render-view"));
+  const QString renderView = optionValue(arguments, QStringLiteral("--render-view"));
   static const QStringList renderViews = {
-      QStringLiteral("grid"),  QStringLiteral("detail"),
-      QStringLiteral("video"), QStringLiteral("slideshow"),
-      QStringLiteral("matte"), QStringLiteral("export"),
-      QStringLiteral("rename"), QStringLiteral("ocr"), QStringLiteral("duplicates"),
-      QStringLiteral("browser"), QStringLiteral("settings")};
+      QStringLiteral("grid"),      QStringLiteral("detail"),  QStringLiteral("video"),
+      QStringLiteral("slideshow"), QStringLiteral("matte"),   QStringLiteral("export"),
+      QStringLiteral("rename"),    QStringLiteral("ocr"),     QStringLiteral("duplicates"),
+      QStringLiteral("browser"),   QStringLiteral("settings")};
   if (!renderView.isEmpty() && !renderViews.contains(renderView)) {
     qWarning().noquote() << "omaroll: unknown render view:" << renderView;
     return 2;
   }
-  const QString renderSize =
-      optionValue(arguments, QStringLiteral("--render-size"));
-  static const QRegularExpression sizePattern(
-      QStringLiteral(R"(^[1-9]\d*x[1-9]\d*$)"));
+  const QString renderSize = optionValue(arguments, QStringLiteral("--render-size"));
+  static const QRegularExpression sizePattern(QStringLiteral(R"(^[1-9]\d*x[1-9]\d*$)"));
   if (!renderSize.isEmpty() && !sizePattern.match(renderSize).hasMatch()) {
     qWarning().noquote() << "omaroll: render size must look like 1280x820";
     return 2;
@@ -244,20 +233,17 @@ int main(int argc, char *argv[]) {
     const int width = dimensions.at(0).toInt();
     const int height = dimensions.at(1).toInt();
     if (width < 560 || height < 420 || width > 7680 || height > 4320) {
-      qWarning().noquote()
-          << "omaroll: render size must be between 560x420 and 7680x4320";
+      qWarning().noquote() << "omaroll: render size must be between 560x420 and 7680x4320";
       return 2;
     }
   }
   const bool demo = rendering || arguments.contains(QStringLiteral("--demo"));
-  const QString requestedPath =
-      demo ? QString() : positionalArgument(arguments);
+  const QString requestedPath = demo ? QString() : positionalArgument(arguments);
 
   if (!requestedPath.isEmpty()) {
     const QFileInfo handed(requestedPath);
     if (!handed.exists()) {
-      qWarning().noquote() << "omaroll: file or folder does not exist:"
-                           << requestedPath;
+      qWarning().noquote() << "omaroll: file or folder does not exist:" << requestedPath;
       return 2;
     }
     if (!handed.isReadable()) {
@@ -275,8 +261,7 @@ int main(int argc, char *argv[]) {
     }
     if (handed.isFile() && !CaptureScanner::isImage(handed.suffix()) &&
         !CaptureScanner::isVideo(handed.suffix())) {
-      qWarning().noquote() << "omaroll: unsupported media file:"
-                           << requestedPath;
+      qWarning().noquote() << "omaroll: unsupported media file:" << requestedPath;
       return 2;
     }
   }
@@ -324,12 +309,11 @@ int main(int argc, char *argv[]) {
   // rebuildable, so this can never lose anything the user cares about.
   const auto pruneThumbnailCache = [&settings] {
     const qint64 bytes = qint64(settings.thumbnailCacheMb()) * 1024 * 1024;
-    QThreadPool::globalInstance()->start(
-        [bytes] { ThumbnailCache::prune(bytes); });
+    QThreadPool::globalInstance()->start([bytes] { ThumbnailCache::prune(bytes); });
   };
   pruneThumbnailCache();
-  QObject::connect(&settings, &AppSettings::thumbnailCacheMbChanged,
-                   &application, pruneThumbnailCache);
+  QObject::connect(&settings, &AppSettings::thumbnailCacheMbChanged, &application,
+                   pruneThumbnailCache);
 
   CaptureModel captures(&settings);
   // Demo and render order is deliberately fixed. Real libraries are enriched
@@ -342,16 +326,21 @@ int main(int argc, char *argv[]) {
   library.setSourceModel(&captures);
   OcrIndex textIndex(&captures);
   QrDetector qrDetector(&captures);
-  QObject::connect(&library, &CaptureFilterModel::searchTextChanged,
-                   &textIndex, [&] { textIndex.setSearchText(library.searchText()); });
-  QObject::connect(&textIndex, &OcrIndex::textReady,
-                   &library, &CaptureFilterModel::setOcrText);
+  QObject::connect(&library, &CaptureFilterModel::searchTextChanged, &textIndex,
+                   [&] { textIndex.setSearchText(library.searchText()); });
+  QObject::connect(&textIndex, &OcrIndex::textReady, &library, &CaptureFilterModel::setOcrText);
   DuplicateIndex duplicates(&captures);
-  QObject::connect(&library, &CaptureFilterModel::duplicatesOnlyChanged,
-                   &duplicates, [&] { duplicates.setActive(library.duplicatesOnly()); });
+  QObject::connect(&library, &CaptureFilterModel::duplicatesOnlyChanged, &duplicates,
+                   [&] { duplicates.setActive(library.duplicatesOnly()); });
   QObject::connect(&duplicates, &DuplicateIndex::groupsChanged, &library,
                    [&] { library.setDuplicateGroups(duplicates.groups()); });
+  SimilarityIndex similarities(&captures);
+  QObject::connect(&library, &CaptureFilterModel::similarOnlyChanged, &similarities,
+                   [&] { similarities.setActive(library.similarOnly()); });
+  QObject::connect(&similarities, &SimilarityIndex::groupsChanged, &library,
+                   [&] { library.setSimilarGroups(similarities.groups()); });
   MediaInspector mediaInfo;
+  PdfInspector pdfInfo;
 
   // Restore what the user last chose, then keep the two in step. Doing it here
   // rather than in either class keeps the proxy unaware of persistence and the
@@ -389,51 +378,41 @@ int main(int argc, char *argv[]) {
   // A tracked tool's half-written output stays out of the library until the
   // run settles; writing to an existing file fires no directory event, so the
   // release also rescans to pick the finished file up.
-  QObject::connect(&actions, &ActionLauncher::outputPending, &captures,
-                   &CaptureModel::holdPath);
-  QObject::connect(&actions, &ActionLauncher::outputSettled, &captures,
-                   &CaptureModel::releasePath);
+  QObject::connect(&actions, &ActionLauncher::outputPending, &captures, &CaptureModel::holdPath);
+  QObject::connect(&actions, &ActionLauncher::outputSettled, &captures, &CaptureModel::releasePath);
 
   QQmlApplicationEngine engine;
-  auto *thumbnailProvider = new ThumbnailProvider;
-  auto *matteProvider = new MatteProvider;
-  engine.addImageProvider(QLatin1String(ThumbnailProvider::kProviderId),
-                          thumbnailProvider);
-  engine.addImageProvider(QLatin1String(MatteProvider::kProviderId),
-                          matteProvider);
+  auto* thumbnailProvider = new ThumbnailProvider;
+  auto* matteProvider = new MatteProvider;
+  auto* pdfProvider = new PdfProvider;
+  engine.addImageProvider(QLatin1String(ThumbnailProvider::kProviderId), thumbnailProvider);
+  engine.addImageProvider(QLatin1String(MatteProvider::kProviderId), matteProvider);
+  engine.addImageProvider(QLatin1String(PdfProvider::kProviderId), pdfProvider);
   QObject::connect(&application, &QCoreApplication::aboutToQuit, &application,
-                   [thumbnailProvider, matteProvider] {
+                   [thumbnailProvider, matteProvider, pdfProvider] {
                      thumbnailProvider->shutdown();
                      matteProvider->shutdown();
+                     pdfProvider->shutdown();
                      QThreadPool::globalInstance()->waitForDone();
                    });
   engine.rootContext()->setContextProperty(QStringLiteral("Theme"), &theme);
-  engine.rootContext()->setContextProperty(QStringLiteral("Captures"),
-                                           &library);
-  engine.rootContext()->setContextProperty(QStringLiteral("Library"),
-                                           &captures);
+  engine.rootContext()->setContextProperty(QStringLiteral("Captures"), &library);
+  engine.rootContext()->setContextProperty(QStringLiteral("Library"), &captures);
   engine.rootContext()->setContextProperty(QStringLiteral("Actions"), &actions);
-  engine.rootContext()->setContextProperty(QStringLiteral("Settings"),
-                                           &settings);
-  engine.rootContext()->setContextProperty(QStringLiteral("Registry"),
-                                           &registry);
+  engine.rootContext()->setContextProperty(QStringLiteral("Settings"), &settings);
+  engine.rootContext()->setContextProperty(QStringLiteral("Registry"), &registry);
   engine.rootContext()->setContextProperty(QStringLiteral("Matte"), &matte);
-  engine.rootContext()->setContextProperty(QStringLiteral("TextIndex"),
-                                           &textIndex);
+  engine.rootContext()->setContextProperty(QStringLiteral("TextIndex"), &textIndex);
   engine.rootContext()->setContextProperty(QStringLiteral("Qr"), &qrDetector);
-  engine.rootContext()->setContextProperty(QStringLiteral("Duplicates"),
-                                           &duplicates);
-  engine.rootContext()->setContextProperty(QStringLiteral("MediaInfo"),
-                                           &mediaInfo);
-  engine.rootContext()->setContextProperty(QStringLiteral("MediaDates"),
-                                           &mediaDates);
-  engine.rootContext()->setContextProperty(QStringLiteral("Tailscale"),
-                                           &tailscale);
+  engine.rootContext()->setContextProperty(QStringLiteral("Duplicates"), &duplicates);
+  engine.rootContext()->setContextProperty(QStringLiteral("Similarities"), &similarities);
+  engine.rootContext()->setContextProperty(QStringLiteral("MediaInfo"), &mediaInfo);
+  engine.rootContext()->setContextProperty(QStringLiteral("PdfInfo"), &pdfInfo);
+  engine.rootContext()->setContextProperty(QStringLiteral("MediaDates"), &mediaDates);
+  engine.rootContext()->setContextProperty(QStringLiteral("Tailscale"), &tailscale);
   engine.rootContext()->setContextProperty(QStringLiteral("DemoMode"), demo);
-  engine.rootContext()->setContextProperty(QStringLiteral("InitialPath"),
-                                           initialPath);
-  engine.rootContext()->setContextProperty(QStringLiteral("InitialFolderPath"),
-                                           initialFolderPath);
+  engine.rootContext()->setContextProperty(QStringLiteral("InitialPath"), initialPath);
+  engine.rootContext()->setContextProperty(QStringLiteral("InitialFolderPath"), initialFolderPath);
 
   QObject::connect(
       &engine, &QQmlApplicationEngine::objectCreationFailed, &application,
@@ -445,10 +424,9 @@ int main(int argc, char *argv[]) {
   }
 
   if (!rendering && !demo) {
-    auto *window =
-        qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
-    QObject::connect(&instance, &SingleInstance::activationRequested,
-                     &application, [window, &captures](const QString &path) {
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst());
+    QObject::connect(&instance, &SingleInstance::activationRequested, &application,
+                     [window, &captures](const QString& path) {
                        window->show();
                        window->raise();
                        window->requestActivate();
@@ -462,22 +440,19 @@ int main(int argc, char *argv[]) {
                        } else if (handed.isFile()) {
                          const QString canonical = handed.canonicalFilePath();
                          captures.setExtraRoot(handed.canonicalPath());
-                         QMetaObject::invokeMethod(window, "openPath",
-                                                   Q_ARG(QVariant, canonical));
+                         QMetaObject::invokeMethod(window, "openPath", Q_ARG(QVariant, canonical));
                        }
                      });
   }
 
   if (rendering) {
-    auto *window =
-        qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst());
     if (!window) {
       return 1;
     }
 
     const QString sizeText = renderSize;
-    const QStringList parts =
-        sizeText.split(QLatin1Char('x'), Qt::SkipEmptyParts);
+    const QStringList parts = sizeText.split(QLatin1Char('x'), Qt::SkipEmptyParts);
     if (parts.size() == 2) {
       window->resize(parts.at(0).toInt(), parts.at(1).toInt());
     } else {
@@ -492,8 +467,7 @@ int main(int argc, char *argv[]) {
     // the scene graph, which is unaffected by anything overlapping the window.
     QTimer::singleShot(5000, &application, [window, view] {
       if (!view.isEmpty()) {
-        QMetaObject::invokeMethod(window, "openViewForRender",
-                                  Q_ARG(QVariant, view));
+        QMetaObject::invokeMethod(window, "openViewForRender", Q_ARG(QVariant, view));
       }
     });
 

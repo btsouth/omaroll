@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>io.github.tsouth89.omaroll</id>
   <name>Omaroll</name>
-  <summary>A fast, beautiful image and video viewer</summary>
+  <summary>A fast, beautiful image, video, and PDF viewer</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
   <developer id="io.github.tsouth89">
@@ -17,9 +17,9 @@
   <url type="bugtracker">https://github.com/tsouth89/omaroll/issues</url>
   <description>
     <p>
-      Omaroll is a local-first image and video viewer for Omarchy. Open one file
-      and move through its folder, or browse photos, videos, downloads, albums,
-      and custom folders together in a beautiful media library.
+      Omaroll is a local-first image, video, and PDF viewer for Omarchy. Open one
+      file and move through its folder, or browse photos, videos, documents,
+      downloads, albums, tags, and custom folders together in a media library.
     </p>
   </description>
   <categories>

@@ -12,6 +12,7 @@ Item {
     property string timeLabel: ""
     property string sizeLabel: ""
     property bool isVideo: false
+    property bool isDocument: false
     // mtime, carried in the thumbnail URL so a rewritten file busts Qt's
     // in-memory pixmap cache as well as the disk one.
     property double stamp: 0
@@ -164,7 +165,7 @@ Item {
         Text {
             anchors.centerIn: parent
             visible: !root.thumbnailReady
-            text: root.isVideo ? "▶" : "▦"
+            text: root.isVideo ? "▶" : (root.isDocument ? "PDF" : "▦")
             font.family: Theme.fontFamily
             font.pixelSize: 22
             color: root.shade(Theme.foreground, 0.28)

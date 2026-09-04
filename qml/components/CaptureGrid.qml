@@ -253,6 +253,7 @@ FocusScope {
             required property string timeLabel
             required property string sizeLabel
             required property bool isVideo
+            required property bool isDocument
             required property bool favorite
             required property bool hidden
             required property double stamp
@@ -271,6 +272,7 @@ FocusScope {
                 timeLabel: cell.timeLabel
                 sizeLabel: cell.sizeLabel
                 isVideo: cell.isVideo
+                isDocument: cell.isDocument
                 stamp: cell.stamp
                 favorite: cell.favorite
                 hiddenMark: cell.hidden

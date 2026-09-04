@@ -1,5 +1,6 @@
 #include "thumbs/ThumbnailCache.h"
 
+#include "pdf/PdfSupport.h"
 #include "sources/CaptureScanner.h"
 
 #include <QCoreApplication>
@@ -59,9 +60,7 @@ QString cacheHome() {
 
 } // namespace
 
-QString ThumbnailCache::cacheDirectory() {
-  return cacheHome() + QStringLiteral("/omaroll/thumbs");
-}
+QString ThumbnailCache::cacheDirectory() { return cacheHome() + QStringLiteral("/omaroll/thumbs"); }
 
 void ThumbnailCache::prune(qint64 maxBytes) {
   QDir dir(cacheDirectory());
@@ -177,12 +176,16 @@ QImage ThumbnailCache::renderVideo(const QString& path, const QSize& pixelSize, 
 
   QProcess process;
   process.start(executable, {
-                                QStringLiteral("-i"), path,
-                                QStringLiteral("-o"), output,
-                                QStringLiteral("-s"), QString::number(longest),
+                                QStringLiteral("-i"),
+                                path,
+                                QStringLiteral("-o"),
+                                output,
+                                QStringLiteral("-s"),
+                                QString::number(longest),
                                 QStringLiteral("-t"),
                                 QStringLiteral("%1%").arg(qBound(0, seekPercent, 95)),
-                                QStringLiteral("-q"), QStringLiteral("8"),
+                                QStringLiteral("-q"),
+                                QStringLiteral("8"),
                             });
 
   if (!process.waitForFinished(8000) || process.exitStatus() != QProcess::NormalExit ||
@@ -241,10 +244,12 @@ QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
   }
 
   const QString suffix = QFileInfo(renderPath).suffix();
-  QImage rendered = CaptureScanner::isVideo(suffix)
-                        ? renderVideo(renderPath, pixelSize, seekPercent)
-                        : renderImage(renderPath, pixelSize, seekPercent);
-  if (rendered.isNull() && !CaptureScanner::isVideo(suffix)) {
+  QImage rendered =
+      CaptureScanner::isVideo(suffix)      ? renderVideo(renderPath, pixelSize, seekPercent)
+      : CaptureScanner::isDocument(suffix) ? PdfSupport::renderPage(renderPath, 1, pixelSize * 2)
+                                           : renderImage(renderPath, pixelSize, seekPercent);
+  if (rendered.isNull() && !CaptureScanner::isVideo(suffix) &&
+      !CaptureScanner::isDocument(suffix)) {
     // Video bytes under an image name happen; ffmpegthumbnailer can read it.
     rendered = renderVideo(renderPath, pixelSize, seekPercent);
   }
@@ -260,8 +265,7 @@ QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
   // Scale down until the short side meets the tile. Only when both sides
   // overhang: otherwise expanding to cover would be an upscale.
   if (rendered.width() > pixelSize.width() && rendered.height() > pixelSize.height()) {
-    rendered = rendered.scaled(pixelSize, Qt::KeepAspectRatioByExpanding,
-                               Qt::SmoothTransformation);
+    rendered = rendered.scaled(pixelSize, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
   }
 
   // A panorama covered on its short side is enormous on its long one; the

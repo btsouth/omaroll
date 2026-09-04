@@ -12,19 +12,19 @@
 namespace {
 
 const QStringList kImageSuffixes = {
-    QStringLiteral("png"),  QStringLiteral("jpg"),  QStringLiteral("jpeg"),
-    QStringLiteral("webp"), QStringLiteral("gif"),  QStringLiteral("bmp"),
-    QStringLiteral("avif"), QStringLiteral("heic"), QStringLiteral("heif"),
-    QStringLiteral("tiff"), QStringLiteral("tif"),
+    QStringLiteral("png"),  QStringLiteral("jpg"),  QStringLiteral("jpeg"), QStringLiteral("webp"),
+    QStringLiteral("gif"),  QStringLiteral("bmp"),  QStringLiteral("avif"), QStringLiteral("heic"),
+    QStringLiteral("heif"), QStringLiteral("tiff"), QStringLiteral("tif"),
 };
 
 const QStringList kVideoSuffixes = {
-    QStringLiteral("mp4"), QStringLiteral("mkv"),  QStringLiteral("webm"),
-    QStringLiteral("mov"), QStringLiteral("avi"),  QStringLiteral("m4v"),
-    QStringLiteral("mpg"), QStringLiteral("mpeg"), QStringLiteral("wmv"),
-    QStringLiteral("flv"), QStringLiteral("ogv"),  QStringLiteral("3gp"),
+    QStringLiteral("mp4"), QStringLiteral("mkv"),  QStringLiteral("webm"), QStringLiteral("mov"),
+    QStringLiteral("avi"), QStringLiteral("m4v"),  QStringLiteral("mpg"),  QStringLiteral("mpeg"),
+    QStringLiteral("wmv"), QStringLiteral("flv"),  QStringLiteral("ogv"),  QStringLiteral("3gp"),
     QStringLiteral("mts"), QStringLiteral("m2ts"),
 };
+
+const QStringList kDocumentSuffixes = {QStringLiteral("pdf")};
 
 // Producers Omarchy users actually have installed. Each entry pairs a name
 // pattern with the kind it implies; capture group 1, when present, is a
@@ -47,7 +47,8 @@ const QList<NamePattern>& namePatterns() {
        CaptureRecord::Screenshot, QStringLiteral("yyyy-MM-dd_HH-mm-ss")},
       // screenrecording-2026-08-31_23-26-39.mp4
       {QRegularExpression(
-           QStringLiteral(R"(^screenrecording-(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})(?:-[\w-]+)?\.)"),
+           QStringLiteral(
+               R"(^screenrecording-(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})(?:-[\w-]+)?\.)"),
            QRegularExpression::CaseInsensitiveOption),
        CaptureRecord::Recording, QStringLiteral("yyyy-MM-dd_HH-mm-ss")},
 
@@ -59,7 +60,8 @@ const QList<NamePattern>& namePatterns() {
       // Flameshot and the GNOME-style label a lot of tools copy.
       {QRegularExpression(QStringLiteral(R"(^(?:flameshot|screenshot[ _]from)[ _-])"),
                           QRegularExpression::CaseInsensitiveOption),
-       CaptureRecord::Screenshot, {}},
+       CaptureRecord::Screenshot,
+       {}},
 
       // OBS default: 2026-08-31 23-26-39.mkv
       {QRegularExpression(QStringLiteral(R"(^(\d{4}-\d{2}-\d{2} \d{2}-\d{2}-\d{2})\.)")),
@@ -68,13 +70,15 @@ const QList<NamePattern>& namePatterns() {
       // gpu-screen-recorder when driven outside Omarchy's wrapper.
       {QRegularExpression(QStringLiteral(R"(^(?:video|replay)[ _-]\d)"),
                           QRegularExpression::CaseInsensitiveOption),
-       CaptureRecord::Recording, {}},
+       CaptureRecord::Recording,
+       {}},
 
       // Bare "Screenshot ..." from assorted tools, kept last so the precise
       // patterns above win.
       {QRegularExpression(QStringLiteral(R"(^screenshot)"),
                           QRegularExpression::CaseInsensitiveOption),
-       CaptureRecord::Screenshot, {}},
+       CaptureRecord::Screenshot,
+       {}},
   };
   return patterns;
 }
@@ -100,7 +104,8 @@ bool isSkippedDirectory(const QString& name) {
 // Neither is a capture and both would flash into the grid otherwise.
 bool isTransientCaptureArtifact(const QString& name) {
   static const QRegularExpression transient(
-      QStringLiteral(R"(^screenrecording-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}-(?:preview\.png|processed\.mp4)$)"),
+      QStringLiteral(
+          R"(^screenrecording-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}-(?:preview\.png|processed\.mp4)$)"),
       QRegularExpression::CaseInsensitiveOption);
   return transient.match(name).hasMatch();
 }
@@ -115,6 +120,10 @@ bool CaptureScanner::isVideo(const QString& suffix) {
   return kVideoSuffixes.contains(suffix.toLower());
 }
 
+bool CaptureScanner::isDocument(const QString& suffix) {
+  return kDocumentSuffixes.contains(suffix.toLower());
+}
+
 bool CaptureScanner::classifyByName(const QString& fileName, CaptureRecord::Kind& kind,
                                     QDateTime& captured) {
   for (const NamePattern& pattern : namePatterns()) {
@@ -126,8 +135,7 @@ bool CaptureScanner::classifyByName(const QString& fileName, CaptureRecord::Kind
     kind = pattern.kind;
 
     if (!pattern.timestampFormat.isEmpty() && match.lastCapturedIndex() >= 1) {
-      const QDateTime stamped =
-          QDateTime::fromString(match.captured(1), pattern.timestampFormat);
+      const QDateTime stamped = QDateTime::fromString(match.captured(1), pattern.timestampFormat);
       if (stamped.isValid()) {
         captured = stamped;
       }
@@ -137,8 +145,7 @@ bool CaptureScanner::classifyByName(const QString& fileName, CaptureRecord::Kind
   return false;
 }
 
-QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots,
-                                          const std::atomic_bool* cancel,
+QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots, const std::atomic_bool* cancel,
                                           QStringList* traversedDirectories) {
   QList<CaptureRecord> records;
   if (traversedDirectories) {
@@ -165,7 +172,7 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots,
 
     // Breadth-first by depth so maxDepth is a real bound rather than a guess
     // about QDirIterator's traversal order.
-    QList<QPair<QString, int>> pending{{canonicalRoot, 1}};
+    QList<QPair<QString, int>> pending {{canonicalRoot, 1}};
 
     while (!pending.isEmpty()) {
       if (cancel && cancel->load()) {
@@ -205,15 +212,15 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots,
         const QString suffix = entry.suffix();
         const bool image = isImage(suffix);
         const bool video = isVideo(suffix);
-        if (!image && !video) {
+        const bool document = isDocument(suffix);
+        if (!image && !video && !document) {
           continue;
         }
 
         // The directory is already canonical, so only a symlink needs the
         // realpath walk; on a slow mount that is one syscall chain per file.
-        const QString canonicalFile = entry.isSymLink()
-                                          ? entry.canonicalFilePath()
-                                          : directory + QLatin1Char('/') + name;
+        const QString canonicalFile =
+            entry.isSymLink() ? entry.canonicalFilePath() : directory + QLatin1Char('/') + name;
         if (canonicalFile.isEmpty() || seenFiles.contains(canonicalFile)) {
           continue;
         }
@@ -225,6 +232,7 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots,
         record.bytes = entry.size();
         record.modified = entry.lastModified().toMSecsSinceEpoch();
         record.video = video;
+        record.document = document;
         record.captured = entry.lastModified();
         struct stat status {};
         if (::stat(QFile::encodeName(canonicalFile).constData(), &status) == 0) {
@@ -234,7 +242,11 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots,
 
         CaptureRecord::Kind named = CaptureRecord::Picture;
         QDateTime namedTime;
-        if (classifyByName(name, named, namedTime)) {
+        if (document) {
+          record.kind = root.imageFallback == CaptureRecord::Download
+                            ? CaptureRecord::Download
+                            : CaptureRecord::Document;
+        } else if (classifyByName(name, named, namedTime)) {
           record.kind = named;
           if (namedTime.isValid()) {
             record.captured = namedTime;

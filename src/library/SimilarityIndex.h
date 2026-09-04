@@ -10,37 +10,32 @@
 
 class CaptureModel;
 
-// Finds byte-identical media only when the user opens the duplicate view.
-//
-// Files are first grouped by size, so ordinary libraries need little or no
-// content I/O. Only files whose size occurs more than once are hashed, on one
-// worker thread, in cancellable chunks. Results are a review filter: this
-// class never changes or removes media.
-class DuplicateIndex final : public QObject {
+// Finds visually similar still images on demand. A small perceptual difference
+// hash survives resizing and ordinary JPEG recompression. Results are review
+// suggestions only: no file is ever changed or removed automatically.
+class SimilarityIndex final : public QObject {
   Q_OBJECT
   Q_PROPERTY(bool active READ active NOTIFY activeChanged)
   Q_PROPERTY(bool scanning READ scanning NOTIFY scanningChanged)
   Q_PROPERTY(int completed READ completed NOTIFY progressChanged)
   Q_PROPERTY(int total READ total NOTIFY progressChanged)
-  Q_PROPERTY(int duplicateCount READ duplicateCount NOTIFY groupsChanged)
+  Q_PROPERTY(int similarCount READ similarCount NOTIFY groupsChanged)
   Q_PROPERTY(int groupCount READ groupCount NOTIFY groupsChanged)
 
 public:
-  explicit DuplicateIndex(CaptureModel* model, QObject* parent = nullptr);
-  ~DuplicateIndex() override;
+  explicit SimilarityIndex(CaptureModel* model, QObject* parent = nullptr);
+  ~SimilarityIndex() override;
 
   [[nodiscard]] bool active() const { return m_active; }
   [[nodiscard]] bool scanning() const { return m_scanning; }
   [[nodiscard]] int completed() const { return m_completed; }
   [[nodiscard]] int total() const { return m_total; }
-  [[nodiscard]] int duplicateCount() const { return m_groups.size(); }
+  [[nodiscard]] int similarCount() const { return m_groups.size(); }
   [[nodiscard]] int groupCount() const;
   [[nodiscard]] const QHash<QString, QString>& groups() const { return m_groups; }
 
   void setActive(bool active);
   Q_INVOKABLE void refresh();
-  Q_INVOKABLE [[nodiscard]] QStringList groupPaths(const QString& path) const;
-  Q_INVOKABLE [[nodiscard]] QStringList otherCopies(const QString& keepPath) const;
 
 signals:
   void activeChanged();
@@ -54,13 +49,17 @@ private:
     qint64 bytes = 0;
     qint64 modified = 0;
   };
-
   struct CachedHash {
     qint64 bytes = 0;
     qint64 modified = 0;
-    QByteArray digest;
+    quint64 hash = 0;
+    int red = 0;
+    int green = 0;
+    int blue = 0;
+    int width = 0;
+    int height = 0;
+    bool valid = false;
   };
-
   struct Result {
     quint64 generation = 0;
     QHash<QString, QString> groups;
@@ -72,8 +71,7 @@ private:
   void setScanning(bool scanning);
   void setProgress(int completed, int total);
   [[nodiscard]] QList<Candidate> candidates() const;
-  [[nodiscard]] static QByteArray hashFile(const Candidate& candidate,
-                                           const std::atomic_bool* cancel);
+  [[nodiscard]] static CachedHash hashFile(const Candidate& candidate);
 
   CaptureModel* m_model = nullptr;
   QFutureWatcher<Result> m_watcher;

@@ -6,9 +6,9 @@
 
 **Your media, in one beautiful library.**
 
-A fast, beautiful image and video viewer that turns your media folders into a
+A fast, beautiful image, video, and PDF viewer that turns your media folders into a
 library. Open one file and move through the rest of its folder, or browse photos,
-videos, downloads, albums, and custom folders together.
+videos, documents, downloads, albums, tags, and custom folders together.
 
 > Omaroll is an independent community project. It is not an official Omarchy
 > application.
@@ -41,7 +41,7 @@ on them.
 ## What it does
 
 - **Sees everything you already have.** Screenshots, recordings, pictures,
-  videos and downloads, grouped by day, newest first. Add any other folder to
+  videos, PDFs and downloads, grouped by day, newest first. Add any other folder to
   the library from Browse or Settings, then search and switch between sources,
   folders, and albums from the library bar.
   Photos and videos use their embedded original date when available, with the
@@ -53,6 +53,13 @@ on them.
   file is renamed or moved within the library, Omaroll repairs the entry by
   file and content identity. Files moved elsewhere and ambiguous duplicates
   stay unavailable rather than matching the wrong copy.
+- **Browses time directly.** Open a month or day, jump to today or this week,
+  find recently modified files, or see what changed since the previous visit.
+- **Saves useful views.** Any combination of search, kind, folder, date, tag,
+  favourites, hidden files, and sort order can become a smart collection that
+  updates as files change.
+- **Adds lightweight tags.** Tag any selection and browse it without moving or
+  copying files. Tags follow in-app renames and can be combined with saved views.
 - **Knows what each file is.** Omarchy stamps its captures with a predictable
   name, so a screenshot is a Screenshot even though it lives in `~/Pictures`
   next to every other image.
@@ -62,7 +69,10 @@ on them.
   changes and can be cleared from Settings.
 - **Reviews exact duplicates safely.** Choose Exact duplicates under Browse to
   compare same-size candidates by content. Matching sets stay together for
-  review, and Omaroll never removes either copy on its own.
+  review. Choose which one to keep and Omaroll moves only the other exact
+  copies to Trash after confirmation.
+- **Finds similar pictures.** A local perceptual comparison groups resized and
+  recompressed versions for review without changing or removing anything.
 - **Hands off the work.** Trim goes to omacut, annotate to tensaku, convert to
   `omarchy-transcode`, play to mpv, text to tesseract, and setting a background
   to Omarchy. Specialized media work stays with tools you already have installed.
@@ -70,7 +80,8 @@ on them.
   browser upload or a Nautilus window and the file lands there. Select several
   and they go together.
 - **Previews in place.** Enter opens a capture large with every action beside
-  it. Images zoom, pan, rotate and animate; a recording starts muted with a
+  it. Images zoom, pan, rotate and animate; PDFs render in place with page
+  navigation; a recording starts muted with a
   scrub bar and sound toggle, so you can find the moment before handing it to
   omacut. File details include dimensions, duration, image format, camera and
   exposure data when present, plus video codec, frame rate, bitrate and audio.
@@ -106,8 +117,9 @@ Every handler below already ships with Omarchy.
 | Image | Edit · View | `pinta` · `imv` |
 | Image | Set as background | `omarchy-theme-bg-set` |
 | Image | Copy detected QR content | `zbarimg` |
+| PDF | Open document *(default)* | `sushi` |
 | Any | Rename in place | native, extension preserved |
-| Any | Copy image | `omarchy-clipboard-paste-file` |
+| Image or video | Copy image | `omarchy-clipboard-paste-file` |
 | Any | Send with LocalSend | `omarchy-menu-share` |
 | Any | Send to a machine | `omarchy-tailscale-send`, after picking the machine |
 | Any | Show in files | `nautilus` |
@@ -155,7 +167,8 @@ and put on your clipboard.
 | `N` | Rename, preserving the extension |
 | `Y` · `S` · `F` | Clipboard · Send · Show in files |
 | `V` · `Ctrl+H` | Favourite · Hide |
-| `1`-`7` | Jump to a section |
+| `1`-`8` | Jump to a section |
+| `Page Up` `Page Down` in a PDF preview | Previous · next page |
 | `X` · `Ctrl+A` | Select · Select all |
 | with a selection | `V` `Ctrl+H` `Y` `S` `Del` act on every checked file |
 | `Ctrl` + wheel · `Ctrl` `+` `-` `0` | Bigger or smaller tiles · reset |
@@ -177,9 +190,11 @@ Videos: MP4, M4V, MKV, WebM, MOV, AVI, MPEG, WMV, FLV, Ogg video, 3GP and
 MTS/M2TS. Playback uses Qt's FFmpeg backend, while the full-player action hands
 the file to mpv.
 
+Documents: PDF. Thumbnails, previews, and page counts use Poppler locally.
+
 ## Install
 
-Requires Omarchy or Arch with Qt 6.8+.
+Requires Omarchy or Arch with Qt 6.8+ and Poppler.
 
 ```bash
 curl -fLO https://github.com/tsouth89/omaroll/releases/download/v1.2.0/omaroll-1.2.0-1-x86_64.pkg.tar.zst \
@@ -208,7 +223,7 @@ sudo cmake --install build
 
 ## Use it as a viewer
 
-Open any supported image, video, or folder from a terminal:
+Open any supported image, video, PDF, or folder from a terminal:
 
 ```bash
 omaroll photo.jpg

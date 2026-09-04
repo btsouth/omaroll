@@ -4,6 +4,7 @@
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -28,18 +29,20 @@ constexpr int kMinimumTileWidth = 160;
 constexpr int kMaximumTileWidth = 480;
 constexpr auto kSlideshowVideos = "slideshow/includeVideos";
 constexpr auto kAlbums = "library/albums";
+constexpr auto kTags = "library/tags";
+constexpr auto kSmartCollections = "library/smartCollections";
+constexpr auto kLastVisit = "library/lastVisit";
 
 QString normalizedFolder(const QString& path, bool mustExist) {
   const QFileInfo info(path);
   if (mustExist && (!info.isDir() || !info.isReadable())) {
     return {};
   }
-  const QString normalized = info.exists() ? info.canonicalFilePath()
-                                           : QDir::cleanPath(info.absoluteFilePath());
+  const QString normalized =
+      info.exists() ? info.canonicalFilePath() : QDir::cleanPath(info.absoluteFilePath());
   const QString home = QFileInfo(QDir::homePath()).canonicalFilePath();
-  return normalized.isEmpty() || normalized == home || normalized == QDir::rootPath()
-             ? QString()
-             : normalized;
+  return normalized.isEmpty() || normalized == home || normalized == QDir::rootPath() ? QString()
+                                                                                      : normalized;
 }
 
 QString normalizedAlbumName(const QString& name) {
@@ -84,9 +87,8 @@ AppSettings::AlbumEntry AppSettings::identityFor(const QString& path) {
 }
 
 AppSettings::AppSettings(QObject* parent)
-    : QObject(parent),
-      m_settings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("omaroll"),
-                 QStringLiteral("omaroll")) {
+    : QObject(parent), m_settings(QSettings::IniFormat, QSettings::UserScope,
+                                  QStringLiteral("omaroll"), QStringLiteral("omaroll")) {
   const QStringList favorites = m_settings.value(kFavorites).toStringList();
   m_favorites = QSet<QString>(favorites.begin(), favorites.end());
 
@@ -95,7 +97,7 @@ AppSettings::AppSettings(QObject* parent)
 
   m_showHidden = m_settings.value(kShowHidden, false).toBool();
   m_sortMode = qBound(0, m_settings.value(kSortMode, 0).toInt(), 4);
-  m_kindFilter = qBound(-1, m_settings.value(kKindFilter, -1).toInt(), 4);
+  m_kindFilter = qBound(-1, m_settings.value(kKindFilter, -1).toInt(), 5);
   m_scanDownloads = m_settings.value(kScanDownloads, true).toBool();
   m_recursionDepth = qBound(1, m_settings.value(kRecursionDepth, 4).toInt(), 8);
   const QStringList folders = m_settings.value(kLibraryFolders).toStringList();
@@ -107,58 +109,71 @@ AppSettings::AppSettings(QObject* parent)
   }
   const QString imageAction =
       m_settings.value(kImagePrimaryAction, QStringLiteral("matte")).toString();
-  if (QStringList{QStringLiteral("matte"), QStringLiteral("view"), QStringLiteral("edit")}
+  if (QStringList {QStringLiteral("matte"), QStringLiteral("view"), QStringLiteral("edit")}
           .contains(imageAction)) {
     m_imagePrimaryAction = imageAction;
   }
   const QString videoAction =
       m_settings.value(kVideoPrimaryAction, QStringLiteral("trim")).toString();
-  if (QStringList{QStringLiteral("trim"), QStringLiteral("play")}.contains(videoAction)) {
+  if (QStringList {QStringLiteral("trim"), QStringLiteral("play")}.contains(videoAction)) {
     m_videoPrimaryAction = videoAction;
   }
-  m_thumbnailCacheMb =
-      qBound(64, m_settings.value(kThumbnailCacheMb, 256).toInt(), 1024);
-  m_tileWidth = qBound(kMinimumTileWidth, m_settings.value(kTileWidth, 240).toInt(),
-                       kMaximumTileWidth);
+  m_thumbnailCacheMb = qBound(64, m_settings.value(kThumbnailCacheMb, 256).toInt(), 1024);
+  m_tileWidth =
+      qBound(kMinimumTileWidth, m_settings.value(kTileWidth, 240).toInt(), kMaximumTileWidth);
   m_slideshowVideos = m_settings.value(kSlideshowVideos, false).toBool();
   const QVariantMap storedAlbums = m_settings.value(kAlbums).toMap();
-  for (auto it = storedAlbums.cbegin(); it != storedAlbums.cend(); ++it) {
-    const QString name = normalizedAlbumName(it.key());
-    if (name.isEmpty()) {
-      continue;
-    }
-    QList<AlbumEntry> entries;
-    const QVariantList storedEntries = it.value().toList();
-    for (const QVariant& value : storedEntries) {
-      const QVariantMap stored = value.toMap();
-      AlbumEntry entry;
-      entry.path = stored.value(QStringLiteral("path")).toString();
-      entry.bytes = stored.value(QStringLiteral("bytes"), -1).toLongLong();
-      entry.modified = stored.value(QStringLiteral("modified")).toLongLong();
-      entry.fingerprint = stored.value(QStringLiteral("fingerprint")).toByteArray();
-      entry.device = stored.value(QStringLiteral("device")).toString().toULongLong();
-      entry.inode = stored.value(QStringLiteral("inode")).toString().toULongLong();
-      if (!entry.path.isEmpty()) {
-        struct stat status {};
-        // Inode and size together. A freed inode number is handed to the
-        // next file created on ext4 and xfs, so the number alone would
-        // repoint an entry to whatever was saved after a delete.
-        // On btrfs a subvolume's device number is anonymous and can change
-        // between boots, so the device alone must not unresolve an entry:
-        // the mtime stands in for it then.
-        if (entry.device != 0 && entry.inode != 0 &&
-            ::stat(QFile::encodeName(entry.path).constData(), &status) == 0 &&
-            entry.inode == status.st_ino &&
-            entry.bytes == static_cast<qint64>(status.st_size) &&
-            (entry.device == status.st_dev ||
-             entry.modified == QFileInfo(entry.path).lastModified().toMSecsSinceEpoch())) {
-          entry.resolved = true;
-        }
-        entries.append(entry);
+  const auto restoreCollections = [this](const QVariantMap& storedCollections,
+                                         QMap<QString, QList<AlbumEntry>>& target) {
+    for (auto it = storedCollections.cbegin(); it != storedCollections.cend(); ++it) {
+      const QString name = normalizedAlbumName(it.key());
+      if (name.isEmpty()) {
+        continue;
       }
+      QList<AlbumEntry> entries;
+      const QVariantList storedEntries = it.value().toList();
+      for (const QVariant& value : storedEntries) {
+        const QVariantMap stored = value.toMap();
+        AlbumEntry entry;
+        entry.path = stored.value(QStringLiteral("path")).toString();
+        entry.bytes = stored.value(QStringLiteral("bytes"), -1).toLongLong();
+        entry.modified = stored.value(QStringLiteral("modified")).toLongLong();
+        entry.fingerprint = stored.value(QStringLiteral("fingerprint")).toByteArray();
+        entry.device = stored.value(QStringLiteral("device")).toString().toULongLong();
+        entry.inode = stored.value(QStringLiteral("inode")).toString().toULongLong();
+        if (!entry.path.isEmpty()) {
+          struct stat status {};
+          // Inode and size together. A freed inode number is handed to the
+          // next file created on ext4 and xfs, so the number alone would
+          // repoint an entry to whatever was saved after a delete.
+          // On btrfs a subvolume's device number is anonymous and can change
+          // between boots, so the device alone must not unresolve an entry:
+          // the mtime stands in for it then.
+          if (entry.device != 0 && entry.inode != 0 &&
+              ::stat(QFile::encodeName(entry.path).constData(), &status) == 0 &&
+              entry.inode == status.st_ino && entry.bytes == static_cast<qint64>(status.st_size) &&
+              (entry.device == status.st_dev ||
+               entry.modified == QFileInfo(entry.path).lastModified().toMSecsSinceEpoch())) {
+            entry.resolved = true;
+          }
+          entries.append(entry);
+        }
+      }
+      target.insert(name, entries);
     }
-    m_albums.insert(name, entries);
+  };
+  restoreCollections(storedAlbums, m_albums);
+  restoreCollections(m_settings.value(kTags).toMap(), m_tags);
+
+  const QVariantMap storedSmart = m_settings.value(kSmartCollections).toMap();
+  for (auto it = storedSmart.cbegin(); it != storedSmart.cend(); ++it) {
+    const QString name = normalizedAlbumName(it.key());
+    if (!name.isEmpty()) {
+      m_smartCollections.insert(name, it.value().toMap());
+    }
   }
+  m_previousVisit = m_settings.value(kLastVisit).toString();
+  m_settings.setValue(kLastVisit, QDateTime::currentDateTime().toString(Qt::ISODate));
 }
 
 void AppSettings::setShowHidden(bool value) {
@@ -183,7 +198,7 @@ void AppSettings::setSortMode(int value) {
 }
 
 void AppSettings::setKindFilter(int value) {
-  const int bounded = qBound(-1, value, 4);
+  const int bounded = qBound(-1, value, 5);
   if (m_kindFilter == bounded) {
     return;
   }
@@ -312,6 +327,20 @@ void AppSettings::relocatePath(const QString& oldPath, const QString& newPath) {
   if (albumsChangedValue) {
     persistAlbums();
     emit albumsChanged();
+  }
+
+  bool tagsChangedValue = false;
+  for (auto tag = m_tags.begin(); tag != m_tags.end(); ++tag) {
+    for (AlbumEntry& entry : tag.value()) {
+      if (entry.path == oldPath) {
+        entry = identityFor(newPath);
+        tagsChangedValue = true;
+      }
+    }
+  }
+  if (tagsChangedValue) {
+    persistTags();
+    emit tagsChanged();
   }
 }
 
@@ -445,7 +474,146 @@ void AppSettings::removeUnavailableFromAlbum(const QString& name) {
   }
 }
 
-void AppSettings::reconcileAlbums(const QList<CaptureRecord>& records) {
+QStringList AppSettings::tagNames() const {
+  QStringList names = m_tags.keys();
+  names.sort(Qt::CaseInsensitive);
+  return names;
+}
+
+QStringList AppSettings::tagPaths(const QString& name) const {
+  QStringList paths;
+  for (const AlbumEntry& entry : m_tags.value(name)) {
+    if (entry.resolved) {
+      paths.append(entry.path);
+    }
+  }
+  return paths;
+}
+
+QStringList AppSettings::tagsForPath(const QString& path) const {
+  QStringList tags;
+  for (auto it = m_tags.cbegin(); it != m_tags.cend(); ++it) {
+    for (const AlbumEntry& entry : it.value()) {
+      if (entry.resolved && entry.path == path) {
+        tags.append(it.key());
+        break;
+      }
+    }
+  }
+  return tags;
+}
+
+int AppSettings::tagItemCount(const QString& name) const {
+  return static_cast<int>(m_tags.value(name).size());
+}
+
+bool AppSettings::createTag(const QString& name) {
+  const QString normalized = normalizedAlbumName(name);
+  if (normalized.isEmpty()) {
+    return false;
+  }
+  for (const QString& existing : m_tags.keys()) {
+    if (existing.compare(normalized, Qt::CaseInsensitive) == 0) {
+      return false;
+    }
+  }
+  m_tags.insert(normalized, {});
+  persistTags();
+  emit tagsChanged();
+  return true;
+}
+
+void AppSettings::deleteTag(const QString& name) {
+  if (m_tags.remove(name) == 0) {
+    return;
+  }
+  persistTags();
+  emit tagsChanged();
+}
+
+bool AppSettings::addTag(const QString& name, const QStringList& paths) {
+  auto it = m_tags.find(name);
+  if (it == m_tags.end()) {
+    return false;
+  }
+  bool changed = false;
+  for (const QString& path : paths) {
+    bool present = false;
+    for (const AlbumEntry& entry : std::as_const(*it)) {
+      if (entry.path == path && entry.resolved) {
+        present = true;
+        break;
+      }
+    }
+    if (!present) {
+      AlbumEntry entry = identityFor(path);
+      if (entry.resolved) {
+        it->append(std::move(entry));
+        changed = true;
+      }
+    }
+  }
+  if (changed) {
+    persistTags();
+    emit tagsChanged();
+  }
+  return changed;
+}
+
+void AppSettings::removeTag(const QString& name, const QStringList& paths) {
+  auto it = m_tags.find(name);
+  if (it == m_tags.end()) {
+    return;
+  }
+  bool changed = false;
+  for (qsizetype index = it->size() - 1; index >= 0; --index) {
+    if (paths.contains(it->at(index).path)) {
+      it->removeAt(index);
+      changed = true;
+    }
+  }
+  if (changed) {
+    persistTags();
+    emit tagsChanged();
+  }
+}
+
+QStringList AppSettings::smartCollectionNames() const {
+  QStringList names = m_smartCollections.keys();
+  names.sort(Qt::CaseInsensitive);
+  return names;
+}
+
+QVariantMap AppSettings::smartCollection(const QString& name) const {
+  return m_smartCollections.value(name);
+}
+
+bool AppSettings::saveSmartCollection(const QString& name, const QVariantMap& view) {
+  const QString normalized = normalizedAlbumName(name);
+  if (normalized.isEmpty() || view.isEmpty()) {
+    return false;
+  }
+  for (const QString& existing : m_smartCollections.keys()) {
+    if (existing.compare(normalized, Qt::CaseInsensitive) == 0 && existing != normalized) {
+      return false;
+    }
+  }
+  m_smartCollections.insert(normalized, view);
+  persistSmartCollections();
+  emit smartCollectionsChanged();
+  return true;
+}
+
+void AppSettings::deleteSmartCollection(const QString& name) {
+  if (m_smartCollections.remove(name) == 0) {
+    return;
+  }
+  persistSmartCollections();
+  emit smartCollectionsChanged();
+}
+
+bool AppSettings::reconcileCollectionMap(QMap<QString, QList<AlbumEntry>>& collections,
+                                         const QList<CaptureRecord>& records) {
   struct Candidate {
     QString path;
     qint64 bytes = 0;
@@ -472,8 +640,8 @@ void AppSettings::reconcileAlbums(const QList<CaptureRecord>& records) {
 
   bool persistedChange = false;
   bool resolutionChange = false;
-  for (auto album = m_albums.begin(); album != m_albums.end(); ++album) {
-    for (AlbumEntry& entry : album.value()) {
+  for (auto collection = collections.begin(); collection != collections.end(); ++collection) {
+    for (AlbumEntry& entry : collection.value()) {
       const bool wasResolved = entry.resolved;
       entry.resolved = false;
 
@@ -538,11 +706,20 @@ void AppSettings::reconcileAlbums(const QList<CaptureRecord>& records) {
       resolutionChange = resolutionChange || wasResolved != entry.resolved;
     }
   }
-  if (persistedChange) {
+  return persistedChange || resolutionChange;
+}
+
+void AppSettings::reconcileAlbums(const QList<CaptureRecord>& records) {
+  if (reconcileCollectionMap(m_albums, records)) {
     persistAlbums();
-  }
-  if (persistedChange || resolutionChange) {
     emit albumsChanged();
+  }
+}
+
+void AppSettings::reconcileTags(const QList<CaptureRecord>& records) {
+  if (reconcileCollectionMap(m_tags, records)) {
+    persistTags();
+    emit tagsChanged();
   }
 }
 
@@ -563,6 +740,33 @@ void AppSettings::persistAlbums() {
     albums.insert(album.key(), entries);
   }
   m_settings.setValue(kAlbums, albums);
+}
+
+void AppSettings::persistTags() {
+  QVariantMap tags;
+  for (auto tag = m_tags.cbegin(); tag != m_tags.cend(); ++tag) {
+    QVariantList entries;
+    for (const AlbumEntry& entry : tag.value()) {
+      QVariantMap stored;
+      stored.insert(QStringLiteral("path"), entry.path);
+      stored.insert(QStringLiteral("bytes"), entry.bytes);
+      stored.insert(QStringLiteral("modified"), entry.modified);
+      stored.insert(QStringLiteral("fingerprint"), entry.fingerprint);
+      stored.insert(QStringLiteral("device"), QString::number(entry.device));
+      stored.insert(QStringLiteral("inode"), QString::number(entry.inode));
+      entries.append(stored);
+    }
+    tags.insert(tag.key(), entries);
+  }
+  m_settings.setValue(kTags, tags);
+}
+
+void AppSettings::persistSmartCollections() {
+  QVariantMap stored;
+  for (auto it = m_smartCollections.cbegin(); it != m_smartCollections.cend(); ++it) {
+    stored.insert(it.key(), it.value());
+  }
+  m_settings.setValue(kSmartCollections, stored);
 }
 
 bool AppSettings::isFavorite(const QString& path) const { return m_favorites.contains(path); }

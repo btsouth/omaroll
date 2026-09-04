@@ -1,13 +1,14 @@
 #pragma once
 
-#include <QObject>
 #include <QByteArray>
 #include <QList>
 #include <QMap>
+#include <QObject>
 #include <QSet>
 #include <QSettings>
 #include <QStringList>
 #include <QUrl>
+#include <QVariantMap>
 
 struct CaptureRecord;
 
@@ -25,21 +26,27 @@ class AppSettings final : public QObject {
   Q_PROPERTY(bool showHidden READ showHidden WRITE setShowHidden NOTIFY showHiddenChanged)
   Q_PROPERTY(int sortMode READ sortMode WRITE setSortMode NOTIFY sortModeChanged)
   Q_PROPERTY(int kindFilter READ kindFilter WRITE setKindFilter NOTIFY kindFilterChanged)
-  Q_PROPERTY(bool scanDownloads READ scanDownloads WRITE setScanDownloads NOTIFY scanDownloadsChanged)
-  Q_PROPERTY(int recursionDepth READ recursionDepth WRITE setRecursionDepth NOTIFY recursionDepthChanged)
+  Q_PROPERTY(
+      bool scanDownloads READ scanDownloads WRITE setScanDownloads NOTIFY scanDownloadsChanged)
+  Q_PROPERTY(
+      int recursionDepth READ recursionDepth WRITE setRecursionDepth NOTIFY recursionDepthChanged)
   Q_PROPERTY(QStringList libraryFolders READ libraryFolders NOTIFY libraryFoldersChanged)
-  Q_PROPERTY(QString imagePrimaryAction READ imagePrimaryAction WRITE setImagePrimaryAction
-                 NOTIFY imagePrimaryActionChanged)
-  Q_PROPERTY(QString videoPrimaryAction READ videoPrimaryAction WRITE setVideoPrimaryAction
-                 NOTIFY videoPrimaryActionChanged)
-  Q_PROPERTY(int thumbnailCacheMb READ thumbnailCacheMb WRITE setThumbnailCacheMb
-                 NOTIFY thumbnailCacheMbChanged)
+  Q_PROPERTY(QString imagePrimaryAction READ imagePrimaryAction WRITE setImagePrimaryAction NOTIFY
+                 imagePrimaryActionChanged)
+  Q_PROPERTY(QString videoPrimaryAction READ videoPrimaryAction WRITE setVideoPrimaryAction NOTIFY
+                 videoPrimaryActionChanged)
+  Q_PROPERTY(int thumbnailCacheMb READ thumbnailCacheMb WRITE setThumbnailCacheMb NOTIFY
+                 thumbnailCacheMbChanged)
   // Target width of a grid tile in logical pixels. Ctrl+wheel and Ctrl+plus
   // or minus step it; the grid flexes the real width to fill each row.
   Q_PROPERTY(int tileWidth READ tileWidth WRITE setTileWidth NOTIFY tileWidthChanged)
-  Q_PROPERTY(bool slideshowVideos READ slideshowVideos WRITE setSlideshowVideos
-                 NOTIFY slideshowVideosChanged)
+  Q_PROPERTY(bool slideshowVideos READ slideshowVideos WRITE setSlideshowVideos NOTIFY
+                 slideshowVideosChanged)
   Q_PROPERTY(QStringList albumNames READ albumNames NOTIFY albumsChanged)
+  Q_PROPERTY(QStringList tagNames READ tagNames NOTIFY tagsChanged)
+  Q_PROPERTY(
+      QStringList smartCollectionNames READ smartCollectionNames NOTIFY smartCollectionsChanged)
+  Q_PROPERTY(QString previousVisit READ previousVisit CONSTANT)
 
 public:
   explicit AppSettings(QObject* parent = nullptr);
@@ -86,6 +93,22 @@ public:
   Q_INVOKABLE void removeUnavailableFromAlbum(const QString& name);
   void reconcileAlbums(const QList<CaptureRecord>& records);
 
+  [[nodiscard]] QStringList tagNames() const;
+  Q_INVOKABLE [[nodiscard]] QStringList tagPaths(const QString& name) const;
+  Q_INVOKABLE [[nodiscard]] QStringList tagsForPath(const QString& path) const;
+  Q_INVOKABLE [[nodiscard]] int tagItemCount(const QString& name) const;
+  Q_INVOKABLE bool createTag(const QString& name);
+  Q_INVOKABLE void deleteTag(const QString& name);
+  Q_INVOKABLE bool addTag(const QString& name, const QStringList& paths);
+  Q_INVOKABLE void removeTag(const QString& name, const QStringList& paths);
+  void reconcileTags(const QList<CaptureRecord>& records);
+
+  [[nodiscard]] QStringList smartCollectionNames() const;
+  Q_INVOKABLE [[nodiscard]] QVariantMap smartCollection(const QString& name) const;
+  Q_INVOKABLE bool saveSmartCollection(const QString& name, const QVariantMap& view);
+  Q_INVOKABLE void deleteSmartCollection(const QString& name);
+  [[nodiscard]] QString previousVisit() const { return m_previousVisit; }
+
   Q_INVOKABLE [[nodiscard]] bool isFavorite(const QString& path) const;
   Q_INVOKABLE [[nodiscard]] bool isHidden(const QString& path) const;
 
@@ -120,6 +143,8 @@ signals:
   void tileWidthChanged();
   void slideshowVideosChanged();
   void albumsChanged();
+  void tagsChanged();
+  void smartCollectionsChanged();
   // One signal for "a mark changed", so the model can refresh its flags without
   // caring which one it was.
   void marksChanged();
@@ -137,6 +162,10 @@ private:
 
   void persistMarks();
   void persistAlbums();
+  void persistTags();
+  void persistSmartCollections();
+  bool reconcileCollectionMap(QMap<QString, QList<AlbumEntry>>& collections,
+                              const QList<CaptureRecord>& records);
   [[nodiscard]] static AlbumEntry identityFor(const QString& path);
 
   QSettings m_settings;
@@ -155,4 +184,7 @@ private:
   int m_tileWidth = 240;
   bool m_slideshowVideos = false;
   QMap<QString, QList<AlbumEntry>> m_albums;
+  QMap<QString, QList<AlbumEntry>> m_tags;
+  QMap<QString, QVariantMap> m_smartCollections;
+  QString m_previousVisit;
 };

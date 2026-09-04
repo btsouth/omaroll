@@ -6,8 +6,10 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QLocale>
 #include <QRegularExpression>
 #include <QSet>
+#include <QVariantMap>
 
 #include <algorithm>
 #include <utility>
@@ -25,14 +27,19 @@ CaptureFilterModel::CaptureFilterModel(QObject* parent) : QSortFilterProxyModel(
   m_folderIndexTimer.setSingleShot(true);
   m_folderIndexTimer.setInterval(0);
   connect(&m_folderIndexTimer, &QTimer::timeout, this, [this] {
-    if (rebuildFolderIndex()) {
+    const bool folderIndexChanged = rebuildFolderIndex();
+    const bool datesChanged = rebuildDateIndex();
+    if (folderIndexChanged) {
       emit foldersChanged();
+    }
+    if (datesChanged) {
+      emit dateBucketsChanged();
     }
   });
   m_duplicateOrderTimer.setSingleShot(true);
   m_duplicateOrderTimer.setInterval(0);
   connect(&m_duplicateOrderTimer, &QTimer::timeout, this, [this] {
-    if (!m_duplicateGroups.isEmpty()) {
+    if (!m_duplicateGroups.isEmpty() || !m_similarGroups.isEmpty()) {
       rebuildDuplicateOrdinals();
       invalidate();
     }
@@ -44,8 +51,7 @@ CaptureFilterModel::CaptureFilterModel(QObject* parent) : QSortFilterProxyModel(
     beginFilterUpdate();
     endFilterUpdate();
     if (rowCount() > 0) {
-      emit dataChanged(index(0, 0), index(rowCount() - 1, 0),
-                       {CaptureRoles::OcrSnippetRole});
+      emit dataChanged(index(0, 0), index(rowCount() - 1, 0), {CaptureRoles::OcrSnippetRole});
     }
     emit countChanged();
   });
@@ -64,6 +70,9 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
     m_folders.clear();
     m_folderItemCounts.clear();
     emit foldersChanged();
+    m_dateBuckets.clear();
+    m_dateDays.clear();
+    emit dateBucketsChanged();
     return;
   }
 
@@ -81,35 +90,40 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
       connect(model, &QAbstractItemModel::rowsInserted, this, rebuildFolders));
   m_sourceConnections.append(
       connect(model, &QAbstractItemModel::rowsRemoved, this, rebuildFolders));
-  m_sourceConnections.append(
-      connect(model, &QAbstractItemModel::modelReset, this, rebuildFolders));
+  m_sourceConnections.append(connect(model, &QAbstractItemModel::modelReset, this, rebuildFolders));
   const auto rebuildDuplicateOrder = [this] {
-    if (!m_duplicateGroups.isEmpty()) {
+    if (!m_duplicateGroups.isEmpty() || !m_similarGroups.isEmpty()) {
       m_duplicateOrderTimer.start();
     }
   };
-  m_sourceConnections.append(connect(model, &QAbstractItemModel::rowsInserted, this,
-                                     rebuildDuplicateOrder));
-  m_sourceConnections.append(connect(model, &QAbstractItemModel::rowsRemoved, this,
-                                     rebuildDuplicateOrder));
-  m_sourceConnections.append(connect(model, &QAbstractItemModel::modelReset, this,
-                                     rebuildDuplicateOrder));
-  m_sourceConnections.append(connect(
-      model, &QAbstractItemModel::dataChanged, this,
-      [this](const QModelIndex&, const QModelIndex&, const QList<int>& roles) {
-        if (roles.isEmpty() || roles.contains(CaptureRoles::PathRole)) {
-          m_folderIndexTimer.start();
-        }
-        if (!m_duplicateGroups.isEmpty() &&
-            (roles.isEmpty() || roles.contains(CaptureRoles::PathRole) ||
-             roles.contains(CaptureRoles::FileNameRole) ||
-             roles.contains(CaptureRoles::CapturedRole) ||
-             roles.contains(CaptureRoles::BytesRole))) {
-          m_duplicateOrderTimer.start();
-        }
-      }));
+  m_sourceConnections.append(
+      connect(model, &QAbstractItemModel::rowsInserted, this, rebuildDuplicateOrder));
+  m_sourceConnections.append(
+      connect(model, &QAbstractItemModel::rowsRemoved, this, rebuildDuplicateOrder));
+  m_sourceConnections.append(
+      connect(model, &QAbstractItemModel::modelReset, this, rebuildDuplicateOrder));
+  m_sourceConnections.append(
+      connect(model, &QAbstractItemModel::dataChanged, this,
+              [this](const QModelIndex&, const QModelIndex&, const QList<int>& roles) {
+                if (roles.isEmpty() || roles.contains(CaptureRoles::PathRole)) {
+                  m_folderIndexTimer.start();
+                }
+                if (roles.isEmpty() || roles.contains(CaptureRoles::CapturedRole) ||
+                    roles.contains(CaptureRoles::StampRole)) {
+                  m_folderIndexTimer.start();
+                }
+                if ((!m_duplicateGroups.isEmpty() || !m_similarGroups.isEmpty()) &&
+                    (roles.isEmpty() || roles.contains(CaptureRoles::PathRole) ||
+                     roles.contains(CaptureRoles::FileNameRole) ||
+                     roles.contains(CaptureRoles::CapturedRole) ||
+                     roles.contains(CaptureRoles::BytesRole))) {
+                  m_duplicateOrderTimer.start();
+                }
+              }));
   (void)rebuildFolderIndex();
+  (void)rebuildDateIndex();
   emit foldersChanged();
+  emit dateBucketsChanged();
 }
 
 void CaptureFilterModel::beginFilterUpdate() {
@@ -133,6 +147,7 @@ void CaptureFilterModel::setKindFilter(int kind) {
   beginFilterUpdate();
   m_kindFilter = kind;
   endFilterUpdate();
+  clearSmartCollection();
   emit kindFilterChanged();
   emit countChanged();
 }
@@ -145,6 +160,7 @@ void CaptureFilterModel::setSortMode(int mode) {
   m_duplicateOrderTimer.stop();
   rebuildDuplicateOrdinals();
   invalidate();
+  clearSmartCollection();
   emit sortModeChanged();
 }
 
@@ -154,12 +170,12 @@ void CaptureFilterModel::setSearchText(const QString& text) {
   }
   beginFilterUpdate();
   m_searchText = text;
-  m_searchTerms = text.toCaseFolded().split(QRegularExpression(QStringLiteral("\\s+")),
-                                            Qt::SkipEmptyParts);
+  m_searchTerms =
+      text.toCaseFolded().split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
   endFilterUpdate();
+  clearSmartCollection();
   if (rowCount() > 0) {
-    emit dataChanged(index(0, 0), index(rowCount() - 1, 0),
-                     {CaptureRoles::OcrSnippetRole});
+    emit dataChanged(index(0, 0), index(rowCount() - 1, 0), {CaptureRoles::OcrSnippetRole});
   }
   emit searchTextChanged();
   emit countChanged();
@@ -172,6 +188,7 @@ void CaptureFilterModel::setFavoritesOnly(bool value) {
   beginFilterUpdate();
   m_favoritesOnly = value;
   endFilterUpdate();
+  clearSmartCollection();
   emit favoritesOnlyChanged();
   emit countChanged();
 }
@@ -184,13 +201,12 @@ void CaptureFilterModel::setFolderFilter(const QString& folder) {
   beginFilterUpdate();
   m_folderFilter = normalized;
   endFilterUpdate();
+  clearSmartCollection();
   emit folderFilterChanged();
   emit countChanged();
 }
 
-QStringList CaptureFilterModel::folders() const {
-  return m_folders;
-}
+QStringList CaptureFilterModel::folders() const { return m_folders; }
 
 int CaptureFilterModel::folderItemCount(const QString& folder) const {
   return m_folderItemCounts.value(QDir::cleanPath(folder));
@@ -200,9 +216,8 @@ bool CaptureFilterModel::rebuildFolderIndex() {
   QSet<QString> unique;
   if (sourceModel()) {
     for (int row = 0; row < sourceModel()->rowCount(); ++row) {
-      const QString path = sourceModel()
-                               ->data(sourceModel()->index(row, 0), CaptureRoles::PathRole)
-                               .toString();
+      const QString path =
+          sourceModel()->data(sourceModel()->index(row, 0), CaptureRoles::PathRole).toString();
       if (!path.isEmpty()) {
         unique.insert(QFileInfo(path).absolutePath());
       }
@@ -218,9 +233,8 @@ bool CaptureFilterModel::rebuildFolderIndex() {
   counts.reserve(unique.size());
   if (sourceModel()) {
     for (int row = 0; row < sourceModel()->rowCount(); ++row) {
-      const QString path = sourceModel()
-                               ->data(sourceModel()->index(row, 0), CaptureRoles::PathRole)
-                               .toString();
+      const QString path =
+          sourceModel()->data(sourceModel()->index(row, 0), CaptureRoles::PathRole).toString();
       QString directory = QFileInfo(path).absolutePath();
       while (!directory.isEmpty()) {
         // Source roots can contain media only in descendants and therefore
@@ -253,8 +267,241 @@ void CaptureFilterModel::setAlbumFilter(const QString& name, const QStringList& 
   m_albumFilter = name;
   m_albumPaths = next;
   endFilterUpdate();
+  clearSmartCollection();
   emit albumFilterChanged();
   emit countChanged();
+}
+
+void CaptureFilterModel::setTagFilter(const QString& name, const QStringList& paths) {
+  const QSet<QString> next(paths.begin(), paths.end());
+  if (m_tagFilter == name && m_tagPaths == next) {
+    return;
+  }
+  const bool changedName = m_tagFilter != name;
+  beginFilterUpdate();
+  m_tagFilter = name;
+  m_tagPaths = next;
+  endFilterUpdate();
+  if (changedName) {
+    clearSmartCollection();
+  }
+  emit tagFilterChanged();
+  emit countChanged();
+}
+
+namespace {
+QDate isoDate(const QString& value) {
+  return value.isEmpty() ? QDate() : QDate::fromString(value, Qt::ISODate);
+}
+} // namespace
+
+void CaptureFilterModel::setDateFrom(const QString& value) {
+  const QDate parsed = isoDate(value);
+  if (parsed == m_dateFrom && m_modifiedAfter.isEmpty()) {
+    return;
+  }
+  beginFilterUpdate();
+  m_dateFrom = parsed;
+  m_modifiedAfter.clear();
+  m_modifiedAfterMs = 0;
+  endFilterUpdate();
+  clearSmartCollection();
+  emit dateRangeChanged();
+  emit countChanged();
+}
+
+void CaptureFilterModel::setDateTo(const QString& value) {
+  const QDate parsed = isoDate(value);
+  if (parsed == m_dateTo && m_modifiedAfter.isEmpty()) {
+    return;
+  }
+  beginFilterUpdate();
+  m_dateTo = parsed;
+  m_modifiedAfter.clear();
+  m_modifiedAfterMs = 0;
+  endFilterUpdate();
+  clearSmartCollection();
+  emit dateRangeChanged();
+  emit countChanged();
+}
+
+void CaptureFilterModel::setDateField(int value) {
+  const int bounded = qBound(0, value, 1);
+  if (bounded == m_dateField && m_modifiedAfter.isEmpty()) {
+    return;
+  }
+  beginFilterUpdate();
+  m_dateField = bounded;
+  m_modifiedAfter.clear();
+  m_modifiedAfterMs = 0;
+  endFilterUpdate();
+  clearSmartCollection();
+  emit dateRangeChanged();
+  emit countChanged();
+}
+
+void CaptureFilterModel::setDateRange(const QString& from, const QString& to, int field) {
+  const QDate nextFrom = isoDate(from);
+  const QDate nextTo = isoDate(to);
+  const int nextField = qBound(0, field, 1);
+  if (nextFrom == m_dateFrom && nextTo == m_dateTo && nextField == m_dateField &&
+      m_modifiedAfter.isEmpty()) {
+    return;
+  }
+  beginFilterUpdate();
+  m_dateFrom = nextFrom;
+  m_dateTo = nextTo;
+  m_dateField = nextField;
+  m_modifiedAfter.clear();
+  m_modifiedAfterMs = 0;
+  endFilterUpdate();
+  clearSmartCollection();
+  emit dateRangeChanged();
+  emit countChanged();
+}
+
+void CaptureFilterModel::setModifiedAfter(const QString& value) {
+  const QDateTime parsed = QDateTime::fromString(value, Qt::ISODate);
+  const QString normalized = parsed.isValid() ? parsed.toString(Qt::ISODate) : QString();
+  if (normalized == m_modifiedAfter && !m_dateFrom.isValid() && !m_dateTo.isValid()) {
+    return;
+  }
+  beginFilterUpdate();
+  m_dateFrom = {};
+  m_dateTo = {};
+  m_dateField = parsed.isValid() ? 1 : 0;
+  m_modifiedAfter = normalized;
+  m_modifiedAfterMs = parsed.isValid() ? parsed.toMSecsSinceEpoch() : 0;
+  endFilterUpdate();
+  clearSmartCollection();
+  emit dateRangeChanged();
+  emit countChanged();
+}
+
+void CaptureFilterModel::clearDateRange() {
+  if (!m_modifiedAfter.isEmpty()) {
+    setModifiedAfter({});
+  } else {
+    setDateRange({}, {}, 0);
+  }
+}
+
+bool CaptureFilterModel::rebuildDateIndex() {
+  QMap<QDate, int> dayCounts;
+  if (sourceModel()) {
+    for (int row = 0; row < sourceModel()->rowCount(); ++row) {
+      const QDate date = sourceRecord(row).captured.date();
+      if (date.isValid()) {
+        ++dayCounts[date];
+      }
+    }
+  }
+
+  QMap<QString, int> monthCounts;
+  QHash<QString, QVariantList> daysByMonth;
+  QList<QDate> dates = dayCounts.keys();
+  std::reverse(dates.begin(), dates.end());
+  for (const QDate& date : std::as_const(dates)) {
+    const QString monthKey = date.toString(QStringLiteral("yyyy-MM"));
+    monthCounts[monthKey] += dayCounts.value(date);
+    QVariantMap row;
+    row.insert(QStringLiteral("date"), date.toString(Qt::ISODate));
+    row.insert(QStringLiteral("label"),
+               QLocale::system().toString(date, QStringLiteral("dddd, d MMMM")));
+    row.insert(QStringLiteral("count"), dayCounts.value(date));
+    daysByMonth[monthKey].append(row);
+  }
+
+  QVariantList buckets;
+  QStringList monthKeys = monthCounts.keys();
+  std::reverse(monthKeys.begin(), monthKeys.end());
+  for (const QString& key : std::as_const(monthKeys)) {
+    const QDate start = QDate::fromString(key + QStringLiteral("-01"), Qt::ISODate);
+    QVariantMap row;
+    row.insert(QStringLiteral("key"), key);
+    row.insert(QStringLiteral("label"),
+               QLocale::system().toString(start, QStringLiteral("MMMM yyyy")));
+    row.insert(QStringLiteral("count"), monthCounts.value(key));
+    row.insert(QStringLiteral("from"), start.toString(Qt::ISODate));
+    row.insert(QStringLiteral("to"), start.addMonths(1).addDays(-1).toString(Qt::ISODate));
+    buckets.append(row);
+  }
+  if (buckets == m_dateBuckets && daysByMonth == m_dateDays) {
+    return false;
+  }
+  m_dateBuckets = std::move(buckets);
+  m_dateDays = std::move(daysByMonth);
+  return true;
+}
+
+QVariantList CaptureFilterModel::dateDays(const QString& monthKey) const {
+  return m_dateDays.value(monthKey);
+}
+
+QVariantMap CaptureFilterModel::currentView() const {
+  QVariantMap view;
+  view.insert(QStringLiteral("search"), m_searchText);
+  view.insert(QStringLiteral("kind"), m_kindFilter);
+  view.insert(QStringLiteral("folder"), m_folderFilter);
+  view.insert(QStringLiteral("favorites"), m_favoritesOnly);
+  view.insert(QStringLiteral("showHidden"), m_showHidden);
+  view.insert(QStringLiteral("dateFrom"), dateFrom());
+  view.insert(QStringLiteral("dateTo"), dateTo());
+  view.insert(QStringLiteral("dateField"), m_dateField);
+  view.insert(QStringLiteral("modifiedAfter"), m_modifiedAfter);
+  view.insert(QStringLiteral("tag"), m_tagFilter);
+  view.insert(QStringLiteral("sort"), m_sortMode);
+  return view;
+}
+
+void CaptureFilterModel::applyView(const QString& name, const QVariantMap& view,
+                                   const QStringList& tagPaths) {
+  beginFilterUpdate();
+  m_searchText = view.value(QStringLiteral("search")).toString();
+  m_searchTerms = m_searchText.toCaseFolded().split(QRegularExpression(QStringLiteral("\\s+")),
+                                                    Qt::SkipEmptyParts);
+  m_kindFilter = qBound(kAllKinds, view.value(QStringLiteral("kind"), kAllKinds).toInt(),
+                        static_cast<int>(CaptureRecord::Document));
+  m_folderFilter = view.value(QStringLiteral("folder")).toString();
+  m_favoritesOnly = view.value(QStringLiteral("favorites")).toBool();
+  m_showHidden = view.value(QStringLiteral("showHidden")).toBool();
+  m_dateFrom = isoDate(view.value(QStringLiteral("dateFrom")).toString());
+  m_dateTo = isoDate(view.value(QStringLiteral("dateTo")).toString());
+  m_dateField = qBound(0, view.value(QStringLiteral("dateField")).toInt(), 1);
+  m_modifiedAfter = view.value(QStringLiteral("modifiedAfter")).toString();
+  m_modifiedAfterMs = QDateTime::fromString(m_modifiedAfter, Qt::ISODate).toMSecsSinceEpoch();
+  m_tagFilter = view.value(QStringLiteral("tag")).toString();
+  m_tagPaths = QSet<QString>(tagPaths.begin(), tagPaths.end());
+  m_sortMode = qBound(0, view.value(QStringLiteral("sort"), NewestFirst).toInt(),
+                      static_cast<int>(NameAscending));
+  m_albumFilter.clear();
+  m_albumPaths.clear();
+  m_duplicatesOnly = false;
+  m_similarOnly = false;
+  m_smartCollectionFilter = name;
+  endFilterUpdate();
+  invalidate();
+  emit searchTextChanged();
+  emit kindFilterChanged();
+  emit folderFilterChanged();
+  emit favoritesOnlyChanged();
+  emit showHiddenChanged();
+  emit dateRangeChanged();
+  emit tagFilterChanged();
+  emit sortModeChanged();
+  emit albumFilterChanged();
+  emit duplicatesOnlyChanged();
+  emit similarOnlyChanged();
+  emit smartCollectionFilterChanged();
+  emit countChanged();
+}
+
+void CaptureFilterModel::clearSmartCollection() {
+  if (m_smartCollectionFilter.isEmpty()) {
+    return;
+  }
+  m_smartCollectionFilter.clear();
+  emit smartCollectionFilterChanged();
 }
 
 void CaptureFilterModel::setShowHidden(bool value) {
@@ -264,6 +511,7 @@ void CaptureFilterModel::setShowHidden(bool value) {
   beginFilterUpdate();
   m_showHidden = value;
   endFilterUpdate();
+  clearSmartCollection();
   emit showHiddenChanged();
   emit countChanged();
 }
@@ -274,9 +522,37 @@ void CaptureFilterModel::setDuplicatesOnly(bool value) {
   }
   beginFilterUpdate();
   m_duplicatesOnly = value;
+  if (value) {
+    m_similarOnly = false;
+  }
   endFilterUpdate();
+  rebuildDuplicateOrdinals();
   invalidate();
+  clearSmartCollection();
   emit duplicatesOnlyChanged();
+  if (value) {
+    emit similarOnlyChanged();
+  }
+  emit countChanged();
+}
+
+void CaptureFilterModel::setSimilarOnly(bool value) {
+  if (m_similarOnly == value) {
+    return;
+  }
+  beginFilterUpdate();
+  m_similarOnly = value;
+  if (value) {
+    m_duplicatesOnly = false;
+  }
+  endFilterUpdate();
+  rebuildDuplicateOrdinals();
+  invalidate();
+  clearSmartCollection();
+  emit similarOnlyChanged();
+  if (value) {
+    emit duplicatesOnlyChanged();
+  }
   emit countChanged();
 }
 
@@ -288,6 +564,18 @@ void CaptureFilterModel::setDuplicateGroups(const QHash<QString, QString>& group
   beginFilterUpdate();
   m_duplicateGroups = groups;
   m_duplicateOrderTimer.stop();
+  rebuildDuplicateOrdinals();
+  endFilterUpdate();
+  invalidate();
+  emit countChanged();
+}
+
+void CaptureFilterModel::setSimilarGroups(const QHash<QString, QString>& groups) {
+  if (m_similarGroups == groups) {
+    return;
+  }
+  beginFilterUpdate();
+  m_similarGroups = groups;
   rebuildDuplicateOrdinals();
   endFilterUpdate();
   invalidate();
@@ -307,15 +595,17 @@ QString CaptureFilterModel::dayLabelAt(int row) const {
 }
 
 QString CaptureFilterModel::gridLabelAt(int row) const {
-  if (!m_duplicatesOnly) {
+  if (!m_duplicatesOnly && !m_similarOnly) {
     return dayLabelAt(row);
   }
-  const QString group = m_duplicateGroups.value(pathAt(row));
+  const QHash<QString, QString>& groups = m_similarOnly ? m_similarGroups : m_duplicateGroups;
+  const QString group = groups.value(pathAt(row));
   const int ordinal = m_duplicateOrdinals.value(group);
   if (ordinal <= 0) {
     return {};
   }
-  return QStringLiteral("Exact match %1 of %2")
+  return QStringLiteral("%1 %2 of %3")
+      .arg(m_similarOnly ? QStringLiteral("Similar set") : QStringLiteral("Exact match"))
       .arg(ordinal)
       .arg(m_duplicateOrdinals.size());
 }
@@ -338,6 +628,10 @@ int CaptureFilterModel::kindAt(int row) const {
 
 bool CaptureFilterModel::isVideoAt(int row) const {
   return data(index(row, 0), CaptureRoles::IsVideoRole).toBool();
+}
+
+bool CaptureFilterModel::isDocumentAt(int row) const {
+  return data(index(row, 0), CaptureRoles::IsDocumentRole).toBool();
 }
 
 qint64 CaptureFilterModel::stampAt(int row) const {
@@ -497,7 +791,8 @@ bool CaptureFilterModel::recordLessThan(const CaptureRecord& first,
 
 void CaptureFilterModel::rebuildDuplicateOrdinals() {
   m_duplicateOrdinals.clear();
-  if (!sourceModel() || m_duplicateGroups.isEmpty()) {
+  const QHash<QString, QString>& reviewGroups = m_similarOnly ? m_similarGroups : m_duplicateGroups;
+  if (!sourceModel() || reviewGroups.isEmpty()) {
     return;
   }
 
@@ -507,7 +802,7 @@ void CaptureFilterModel::rebuildDuplicateOrdinals() {
   QHash<QString, int> representatives;
   for (int row = 0; row < sourceModel()->rowCount(); ++row) {
     const CaptureRecord& record = sourceRecord(row);
-    const QString group = m_duplicateGroups.value(record.path);
+    const QString group = reviewGroups.value(record.path);
     if (group.isEmpty()) {
       continue;
     }
@@ -518,21 +813,21 @@ void CaptureFilterModel::rebuildDuplicateOrdinals() {
     }
   }
 
-  QStringList groups = representatives.keys();
-  std::sort(groups.begin(), groups.end(), [this, &representatives](const QString& first,
-                                                                  const QString& second) {
-    const CaptureRecord& a = sourceRecord(representatives.value(first));
-    const CaptureRecord& b = sourceRecord(representatives.value(second));
-    if (recordLessThan(a, b)) {
-      return true;
-    }
-    if (recordLessThan(b, a)) {
-      return false;
-    }
-    return first < second;
-  });
-  for (int index = 0; index < groups.size(); ++index) {
-    m_duplicateOrdinals.insert(groups.at(index), index + 1);
+  QStringList groupOrder = representatives.keys();
+  std::sort(groupOrder.begin(), groupOrder.end(),
+            [this, &representatives](const QString& first, const QString& second) {
+              const CaptureRecord& a = sourceRecord(representatives.value(first));
+              const CaptureRecord& b = sourceRecord(representatives.value(second));
+              if (recordLessThan(a, b)) {
+                return true;
+              }
+              if (recordLessThan(b, a)) {
+                return false;
+              }
+              return first < second;
+            });
+  for (int index = 0; index < groupOrder.size(); ++index) {
+    m_duplicateOrdinals.insert(groupOrder.at(index), index + 1);
   }
 }
 
@@ -548,10 +843,27 @@ bool CaptureFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex& sour
   if (m_duplicatesOnly && !m_duplicateGroups.contains(record.path)) {
     return false;
   }
+  if (m_similarOnly && !m_similarGroups.contains(record.path)) {
+    return false;
+  }
   if (m_favoritesOnly && !record.favorite) {
     return false;
   }
   if (!m_albumFilter.isEmpty() && !m_albumPaths.contains(record.path)) {
+    return false;
+  }
+  if (!m_tagFilter.isEmpty() && !m_tagPaths.contains(record.path)) {
+    return false;
+  }
+  if (m_modifiedAfterMs > 0 && record.modified <= m_modifiedAfterMs) {
+    return false;
+  }
+  const QDate date = m_dateField == 1 ? QDateTime::fromMSecsSinceEpoch(record.modified).date()
+                                      : record.captured.date();
+  if (m_dateFrom.isValid() && date < m_dateFrom) {
+    return false;
+  }
+  if (m_dateTo.isValid() && date > m_dateTo) {
     return false;
   }
   if (!m_folderFilter.isEmpty()) {
@@ -559,13 +871,18 @@ bool CaptureFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex& sour
     const QString prefix = m_folderFilter.endsWith(QLatin1Char('/'))
                                ? m_folderFilter
                                : m_folderFilter + QLatin1Char('/');
-    if (directory != m_folderFilter &&
-        !directory.startsWith(prefix)) {
+    if (directory != m_folderFilter && !directory.startsWith(prefix)) {
       return false;
     }
   }
-  if (m_kindFilter != kAllKinds && static_cast<int>(record.kind) != m_kindFilter) {
-    return false;
+  if (m_kindFilter != kAllKinds) {
+    if (m_kindFilter == CaptureRecord::Document) {
+      if (!record.isDocument()) {
+        return false;
+      }
+    } else if (static_cast<int>(record.kind) != m_kindFilter) {
+      return false;
+    }
   }
   if (!m_searchTerms.isEmpty()) {
     const QString name = record.fileName.toCaseFolded();
@@ -582,9 +899,10 @@ bool CaptureFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex& sour
 bool CaptureFilterModel::lessThan(const QModelIndex& left, const QModelIndex& right) const {
   const CaptureRecord& a = sourceRecord(left.row());
   const CaptureRecord& b = sourceRecord(right.row());
-  if (m_duplicatesOnly) {
-    const QString firstGroup = m_duplicateGroups.value(a.path);
-    const QString secondGroup = m_duplicateGroups.value(b.path);
+  if (m_duplicatesOnly || m_similarOnly) {
+    const QHash<QString, QString>& groups = m_similarOnly ? m_similarGroups : m_duplicateGroups;
+    const QString firstGroup = groups.value(a.path);
+    const QString secondGroup = groups.value(b.path);
     if (firstGroup != secondGroup) {
       return m_duplicateOrdinals.value(firstGroup) < m_duplicateOrdinals.value(secondGroup);
     }

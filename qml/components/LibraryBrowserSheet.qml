@@ -9,7 +9,23 @@ FocusScope {
     property string query: ""
     property string folderMessage: ""
     readonly property bool compact: height < 560
-    readonly property var sourceChoices: section === 0 ? Captures.folders : Settings.albumNames
+    readonly property var dateChoices: {
+        const rows = []
+        for (const month of Captures.dateBuckets) {
+            rows.push({type: "month", value: month.key, label: month.label,
+                       count: month.count, from: month.from, to: month.to})
+            for (const day of Captures.dateDays(month.key)) {
+                rows.push({type: "day", value: day.date, label: day.label,
+                           count: day.count, from: day.date, to: day.date})
+            }
+        }
+        return rows
+    }
+    readonly property var sourceChoices: section === 0 ? Captures.folders
+                                         : section === 1 ? Settings.albumNames
+                                         : section === 2 ? dateChoices
+                                         : section === 3 ? Settings.tagNames
+                                         : Settings.smartCollectionNames
     readonly property var filteredChoices: {
         if (query === "") {
             return sourceChoices
@@ -17,14 +33,17 @@ FocusScope {
         const folded = query.toLocaleLowerCase()
         const result = []
         for (let index = 0; index < sourceChoices.length; index++) {
-            const value = String(sourceChoices[index])
-            if (value.toLocaleLowerCase().includes(folded)) {
+            const value = sourceChoices[index]
+            const label = typeof value === "object" ? String(value.label) : String(value)
+            if (label.toLocaleLowerCase().includes(folded)) {
                 result.push(value)
             }
         }
         return result
     }
     signal createAlbumRequested()
+    signal createTagRequested()
+    signal saveSmartCollectionRequested()
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
@@ -35,7 +54,10 @@ FocusScope {
     }
 
     function open() {
-        section = Captures.albumFilter !== "" ? 1 : 0
+        section = Captures.albumFilter !== "" ? 1
+                  : Captures.dateFrom !== "" || Captures.modifiedAfter !== "" ? 2
+                  : Captures.tagFilter !== "" ? 3
+                  : Captures.smartCollectionFilter !== "" ? 4 : 0
         folderSearch.text = ""
         query = ""
         folderMessage = ""
@@ -50,8 +72,12 @@ FocusScope {
 
     function clearLibraryView() {
         Captures.duplicatesOnly = false
+        Captures.similarOnly = false
         Captures.folderFilter = ""
         Captures.setAlbumFilter("", [])
+        Captures.setTagFilter("", [])
+        Captures.clearDateRange()
+        Captures.clearSmartCollection()
     }
 
     function showAll() {
@@ -60,23 +86,69 @@ FocusScope {
     }
 
     function showDuplicates() {
-        Captures.folderFilter = ""
-        Captures.setAlbumFilter("", [])
+        clearLibraryView()
         Captures.duplicatesOnly = true
         close()
     }
 
+    function showSimilar() {
+        clearLibraryView()
+        Captures.similarOnly = true
+        close()
+    }
+
     function showFolder(path) {
-        Captures.duplicatesOnly = false
-        Captures.setAlbumFilter("", [])
+        clearLibraryView()
         Captures.folderFilter = path
         close()
     }
 
     function showAlbum(name) {
-        Captures.duplicatesOnly = false
-        Captures.folderFilter = ""
+        clearLibraryView()
         Captures.setAlbumFilter(name, Settings.albumPaths(name))
+        close()
+    }
+
+    function showDate(choice) {
+        clearLibraryView()
+        Captures.setDateRange(choice.from, choice.to, 0)
+        close()
+    }
+
+    function showTag(name) {
+        clearLibraryView()
+        Captures.setTagFilter(name, Settings.tagPaths(name))
+        close()
+    }
+
+    function showSmart(name) {
+        clearLibraryView()
+        const view = Settings.smartCollection(name)
+        Captures.applyView(name, view,
+                           view.tag ? Settings.tagPaths(String(view.tag)) : [])
+        close()
+    }
+
+    function isoDate(date) {
+        const pad = function (value) { return String(value).padStart(2, "0") }
+        return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate())
+    }
+
+    function showRecent(days, modified) {
+        clearLibraryView()
+        const today = new Date()
+        const first = new Date(today.getFullYear(), today.getMonth(), today.getDate() - days + 1)
+        Captures.setDateRange(isoDate(first), isoDate(today), modified ? 1 : 0)
+        close()
+    }
+
+    function showSinceLastVisit() {
+        if (Settings.previousVisit === "") {
+            showRecent(1, true)
+            return
+        }
+        clearLibraryView()
+        Captures.setModifiedAfter(Settings.previousVisit)
         close()
     }
 
@@ -84,8 +156,7 @@ FocusScope {
         if (!choices.currentItem || !choices.currentItem.visible) {
             return
         }
-        section === 0 ? showFolder(choices.currentItem.value)
-                      : showAlbum(choices.currentItem.value)
+        root.openChoice(choices.currentIndex)
     }
 
     function nameForPath(path) {
@@ -106,10 +177,15 @@ FocusScope {
     }
 
     function currentChoiceIndex() {
-        const selected = section === 0 ? Captures.folderFilter : Captures.albumFilter
+        const selected = section === 0 ? Captures.folderFilter
+                         : section === 1 ? Captures.albumFilter
+                         : section === 3 ? Captures.tagFilter
+                         : section === 4 ? Captures.smartCollectionFilter : ""
         if (selected !== "") {
             for (let index = 0; index < filteredChoices.length; index++) {
-                if (String(filteredChoices[index]) === selected) {
+                const choice = filteredChoices[index]
+                const value = typeof choice === "object" ? String(choice.value) : String(choice)
+                if (value === selected) {
                     return index
                 }
             }
@@ -136,8 +212,25 @@ FocusScope {
         if (index < 0 || index >= choices.count) {
             return
         }
-        const value = String(choices.model[index])
-        section === 0 ? showFolder(value) : showAlbum(value)
+        const choice = choices.model[index]
+        if (section === 0) showFolder(String(choice))
+        else if (section === 1) showAlbum(String(choice))
+        else if (section === 2) showDate(choice)
+        else if (section === 3) showTag(String(choice))
+        else showSmart(String(choice))
+    }
+
+    function deleteCurrentChoice() {
+        const index = choices.currentIndex
+        if (index < 0 || index >= choices.count || section === 0 || section === 2) {
+            return
+        }
+        const name = String(choices.model[index])
+        if (section === 1) Settings.deleteAlbum(name)
+        else if (section === 3) Settings.deleteTag(name)
+        else Settings.deleteSmartCollection(name)
+        folderMessage = "Deleted " + name
+        Qt.callLater(syncCurrentChoice)
     }
 
     visible: false
@@ -214,7 +307,7 @@ FocusScope {
 
             Text {
                 width: parent.width
-                text: "Choose a source, find a folder, or open an album. Folders are read in place."
+                text: "Browse folders, dates, albums, tags, saved views, and review sets."
                 wrapMode: Text.WordWrap
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
@@ -227,7 +320,10 @@ FocusScope {
                 PillButton {
                     label: "Whole library"
                     active: Captures.folderFilter === "" && Captures.albumFilter === ""
-                            && !Captures.duplicatesOnly
+                            && Captures.tagFilter === "" && Captures.dateFrom === ""
+                            && Captures.dateTo === "" && Captures.modifiedAfter === ""
+                            && Captures.smartCollectionFilter === ""
+                            && !Captures.duplicatesOnly && !Captures.similarOnly
                     onClicked: root.showAll()
                 }
                 PillButton {
@@ -236,8 +332,30 @@ FocusScope {
                     onClicked: root.showDuplicates()
                 }
                 PillButton {
+                    label: "Similar pictures"
+                    active: Captures.similarOnly
+                    onClicked: root.showSimilar()
+                }
+                PillButton {
                     label: "+ Add folder"
                     onClicked: folderDialog.open()
+                }
+            }
+
+            Flow {
+                width: parent.width
+                spacing: 7
+
+                PillButton { label: "Today"; onClicked: root.showRecent(1, false) }
+                PillButton { label: "This week"; onClicked: root.showRecent(7, false) }
+                PillButton { label: "New since last visit"; onClicked: root.showSinceLastVisit() }
+                PillButton { label: "Recently modified"; onClicked: root.showRecent(7, true) }
+                PillButton {
+                    label: "Save current view"
+                    onClicked: {
+                        root.close()
+                        root.saveSmartCollectionRequested()
+                    }
                 }
             }
 
@@ -286,7 +404,8 @@ FocusScope {
                 color: Theme.mutedText
             }
 
-            Row {
+            Flow {
+                width: parent.width
                 spacing: 8
 
                 PillButton {
@@ -306,12 +425,44 @@ FocusScope {
                     }
                 }
                 PillButton {
+                    label: "Dates  " + root.formatCount(Captures.dateBuckets.length)
+                    active: root.section === 2
+                    onClicked: { root.section = 2; folderSearch.forceActiveFocus() }
+                }
+                PillButton {
+                    label: "Tags  " + root.formatCount(Settings.tagNames.length)
+                    active: root.section === 3
+                    onClicked: { root.section = 3; folderSearch.forceActiveFocus() }
+                }
+                PillButton {
+                    label: "Smart  " + root.formatCount(Settings.smartCollectionNames.length)
+                    active: root.section === 4
+                    onClicked: { root.section = 4; folderSearch.forceActiveFocus() }
+                }
+                PillButton {
                     visible: root.section === 1
                     label: "+ New album"
                     onClicked: {
                         root.close()
                         root.createAlbumRequested()
                     }
+                }
+                PillButton {
+                    visible: root.section === 3
+                    label: "+ New tag"
+                    onClicked: { root.close(); root.createTagRequested() }
+                }
+                PillButton {
+                    visible: root.section === 4
+                    label: "+ Save view"
+                    onClicked: { root.close(); root.saveSmartCollectionRequested() }
+                }
+                PillButton {
+                    visible: (root.section === 1 || root.section === 3 || root.section === 4)
+                             && choices.currentIndex >= 0
+                    label: "Delete selected"
+                    toolTip: "Remove this collection. Files are not deleted."
+                    onClicked: root.deleteCurrentChoice()
                 }
             }
 
@@ -353,7 +504,10 @@ FocusScope {
                     anchors.left: parent.left
                     anchors.leftMargin: 10
                     visible: folderSearch.text === ""
-                    text: root.section === 0 ? "Find a folder" : "Find an album"
+                    text: root.section === 0 ? "Find a folder"
+                          : root.section === 1 ? "Find an album"
+                          : root.section === 2 ? "Find a date"
+                          : root.section === 3 ? "Find a tag" : "Find a smart collection"
                     font.family: Theme.fontFamily
                     font.pixelSize: 12
                     color: root.shade(Theme.foreground, 0.35)
@@ -375,7 +529,11 @@ FocusScope {
                     width: choices.width
                     height: visible ? 48 : 0
                     visible: root.query !== "" && choices.count === 0
-                    text: root.section === 0 ? "No matching folders" : "No matching albums"
+                    text: root.section === 0 ? "No matching folders"
+                          : root.section === 1 ? "No matching albums"
+                          : root.section === 2 ? "No matching dates"
+                          : root.section === 3 ? "No matching tags"
+                                               : "No matching smart collections"
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                     font.family: Theme.fontFamily
@@ -386,10 +544,26 @@ FocusScope {
                 delegate: Rectangle {
                     id: choiceRow
                     required property var modelData
-                    readonly property string value: String(modelData)
+                    required property int index
+                    readonly property bool dateChoice: root.section === 2
+                    readonly property string value: dateChoice ? String(modelData.value)
+                                                                    : String(modelData)
+                    readonly property string choiceLabel: dateChoice ? String(modelData.label)
+                                                                          : value
+                    readonly property bool selectedChoice:
+                        root.section === 0 ? Captures.folderFilter === value
+                        : root.section === 1 ? Captures.albumFilter === value
+                        : root.section === 2 ? Captures.dateFrom === String(modelData.from)
+                                             && Captures.dateTo === String(modelData.to)
+                        : root.section === 3 ? Captures.tagFilter === value
+                                             : Captures.smartCollectionFilter === value
                     readonly property int itemCount: root.section === 0
                                                      ? Captures.folderItemCount(value)
-                                                     : Settings.albumPaths(value).length
+                                                     : root.section === 1
+                                                     ? Settings.albumPaths(value).length
+                                                     : root.section === 2 ? Number(modelData.count)
+                                                     : root.section === 3
+                                                     ? Settings.tagItemCount(value) : 0
                     width: choices.width - 10
                     height: 48
                     radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
@@ -407,18 +581,14 @@ FocusScope {
                         Text {
                             width: parent.width
                             text: root.section === 0 ? root.nameForPath(choiceRow.value)
-                                                     : choiceRow.value
+                                                     : choiceRow.choiceLabel
+                            leftPadding: choiceRow.dateChoice && choiceRow.modelData.type === "day"
+                                         ? 18 : 0
                             elide: Text.ElideRight
                             font.family: Theme.fontFamily
                             font.pixelSize: 11
-                            font.weight: (root.section === 0
-                                          ? Captures.folderFilter === choiceRow.value
-                                          : Captures.albumFilter === choiceRow.value)
-                                         ? Font.DemiBold : Font.Normal
-                            color: (root.section === 0
-                                    ? Captures.folderFilter === choiceRow.value
-                                    : Captures.albumFilter === choiceRow.value)
-                                   ? Theme.accent : Theme.foreground
+                            font.weight: choiceRow.selectedChoice ? Font.DemiBold : Font.Normal
+                            color: choiceRow.selectedChoice ? Theme.accent : Theme.foreground
                         }
 
                         Text {
@@ -427,6 +597,7 @@ FocusScope {
                                   ? root.contextForPath(choiceRow.value) + "  ·  "
                                     + root.formatCount(choiceRow.itemCount)
                                     + (choiceRow.itemCount === 1 ? " item" : " items")
+                                  : root.section === 4 ? "Dynamic saved view"
                                   : root.formatCount(choiceRow.itemCount)
                                     + (choiceRow.itemCount === 1 ? " item" : " items")
                             elide: Text.ElideMiddle
@@ -443,8 +614,7 @@ FocusScope {
                         delay: 500
                     }
                     TapHandler {
-                        onTapped: root.section === 0 ? root.showFolder(choiceRow.value)
-                                                     : root.showAlbum(choiceRow.value)
+                        onTapped: root.openChoice(choiceRow.index)
                     }
                 }
 

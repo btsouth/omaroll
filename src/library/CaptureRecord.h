@@ -14,6 +14,7 @@ struct CaptureRecord {
     Picture,
     Video,
     Download,
+    Document,
   };
 
   QString path;
@@ -26,13 +27,17 @@ struct CaptureRecord {
   // capture discovery wait for ImageMagick or ffprobe.
   bool hasProducerTimestamp = false;
   qint64 bytes = 0;
-  // mtime in milliseconds. Part of the thumbnail identity, so a file rewritten in
-  // place (a recording finalised by omarchy-capture-screenrecording) gets a
+  // mtime in milliseconds. Part of the thumbnail identity, so a file rewritten
+  // in place (a recording finalised by omarchy-capture-screenrecording) gets a
   // fresh tile rather than the cached old one.
   qint64 modified = 0;
   // The medium, decided by extension. Kept apart from kind because a Download
   // can be either, and everything that plays, scrubs or trims keys off this.
   bool video = false;
+  // Documents currently means PDF. Kept separate from Kind because a PDF in
+  // Downloads still needs document viewer behavior even if future source
+  // classification grows more specific.
+  bool document = false;
   // Filesystem identity, gathered by the scanner off the GUI thread so album
   // reconciliation never has to stat the whole library on it. Zero when the
   // record was not made by the scanner.
@@ -44,4 +49,5 @@ struct CaptureRecord {
   bool hidden = false;
 
   [[nodiscard]] bool isVideo() const { return video; }
+  [[nodiscard]] bool isDocument() const { return document || kind == Document; }
 };

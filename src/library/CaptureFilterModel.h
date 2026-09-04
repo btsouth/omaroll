@@ -1,10 +1,13 @@
 #pragma once
 
-#include <QSortFilterProxyModel>
+#include <QDate>
 #include <QHash>
 #include <QSet>
+#include <QSortFilterProxyModel>
 #include <QStringList>
 #include <QTimer>
+#include <QVariantList>
+#include <QVariantMap>
 
 struct CaptureRecord;
 
@@ -20,12 +23,24 @@ class CaptureFilterModel final : public QSortFilterProxyModel {
   Q_PROPERTY(int kindFilter READ kindFilter WRITE setKindFilter NOTIFY kindFilterChanged)
   Q_PROPERTY(int sortMode READ sortMode WRITE setSortMode NOTIFY sortModeChanged)
   Q_PROPERTY(QString searchText READ searchText WRITE setSearchText NOTIFY searchTextChanged)
-  Q_PROPERTY(bool favoritesOnly READ favoritesOnly WRITE setFavoritesOnly NOTIFY favoritesOnlyChanged)
-  Q_PROPERTY(QString folderFilter READ folderFilter WRITE setFolderFilter NOTIFY folderFilterChanged)
+  Q_PROPERTY(
+      bool favoritesOnly READ favoritesOnly WRITE setFavoritesOnly NOTIFY favoritesOnlyChanged)
+  Q_PROPERTY(
+      QString folderFilter READ folderFilter WRITE setFolderFilter NOTIFY folderFilterChanged)
   Q_PROPERTY(QStringList folders READ folders NOTIFY foldersChanged)
   Q_PROPERTY(QString albumFilter READ albumFilter NOTIFY albumFilterChanged)
+  Q_PROPERTY(QString tagFilter READ tagFilter NOTIFY tagFilterChanged)
+  Q_PROPERTY(QString dateFrom READ dateFrom WRITE setDateFrom NOTIFY dateRangeChanged)
+  Q_PROPERTY(QString dateTo READ dateTo WRITE setDateTo NOTIFY dateRangeChanged)
+  Q_PROPERTY(int dateField READ dateField WRITE setDateField NOTIFY dateRangeChanged)
+  Q_PROPERTY(QString modifiedAfter READ modifiedAfter NOTIFY dateRangeChanged)
+  Q_PROPERTY(QVariantList dateBuckets READ dateBuckets NOTIFY dateBucketsChanged)
+  Q_PROPERTY(
+      QString smartCollectionFilter READ smartCollectionFilter NOTIFY smartCollectionFilterChanged)
   Q_PROPERTY(bool showHidden READ showHidden WRITE setShowHidden NOTIFY showHiddenChanged)
-  Q_PROPERTY(bool duplicatesOnly READ duplicatesOnly WRITE setDuplicatesOnly NOTIFY duplicatesOnlyChanged)
+  Q_PROPERTY(
+      bool duplicatesOnly READ duplicatesOnly WRITE setDuplicatesOnly NOTIFY duplicatesOnlyChanged)
+  Q_PROPERTY(bool similarOnly READ similarOnly WRITE setSimilarOnly NOTIFY similarOnlyChanged)
   Q_PROPERTY(int count READ count NOTIFY countChanged)
   Q_PROPERTY(bool empty READ empty NOTIFY countChanged)
   // How many rows the source holds regardless of the current filter, so the
@@ -66,6 +81,27 @@ public:
   Q_INVOKABLE int folderItemCount(const QString& folder) const;
   [[nodiscard]] QString albumFilter() const { return m_albumFilter; }
   Q_INVOKABLE void setAlbumFilter(const QString& name, const QStringList& paths);
+  [[nodiscard]] QString tagFilter() const { return m_tagFilter; }
+  Q_INVOKABLE void setTagFilter(const QString& name, const QStringList& paths);
+
+  [[nodiscard]] QString dateFrom() const { return m_dateFrom.toString(Qt::ISODate); }
+  [[nodiscard]] QString dateTo() const { return m_dateTo.toString(Qt::ISODate); }
+  void setDateFrom(const QString& value);
+  void setDateTo(const QString& value);
+  [[nodiscard]] int dateField() const { return m_dateField; }
+  void setDateField(int value);
+  Q_INVOKABLE void setDateRange(const QString& from, const QString& to, int field = 0);
+  [[nodiscard]] QString modifiedAfter() const { return m_modifiedAfter; }
+  Q_INVOKABLE void setModifiedAfter(const QString& value);
+  Q_INVOKABLE void clearDateRange();
+  [[nodiscard]] QVariantList dateBuckets() const { return m_dateBuckets; }
+  Q_INVOKABLE QVariantList dateDays(const QString& monthKey) const;
+
+  [[nodiscard]] QString smartCollectionFilter() const { return m_smartCollectionFilter; }
+  Q_INVOKABLE QVariantMap currentView() const;
+  Q_INVOKABLE void applyView(const QString& name, const QVariantMap& view,
+                             const QStringList& tagPaths = {});
+  Q_INVOKABLE void clearSmartCollection();
 
   // Hidden entries are excluded by default. This is a "don't show me this
   // again" mark, not a security feature, so revealing them is one toggle away.
@@ -78,6 +114,9 @@ public:
   [[nodiscard]] bool duplicatesOnly() const { return m_duplicatesOnly; }
   void setDuplicatesOnly(bool value);
   void setDuplicateGroups(const QHash<QString, QString>& groups);
+  [[nodiscard]] bool similarOnly() const { return m_similarOnly; }
+  void setSimilarOnly(bool value);
+  void setSimilarGroups(const QHash<QString, QString>& groups);
 
   [[nodiscard]] int count() const { return rowCount(); }
   [[nodiscard]] bool empty() const { return rowCount() == 0; }
@@ -96,6 +135,7 @@ public:
   Q_INVOKABLE QString kindLabelAt(int row) const;
   Q_INVOKABLE int kindAt(int row) const;
   Q_INVOKABLE bool isVideoAt(int row) const;
+  Q_INVOKABLE bool isDocumentAt(int row) const;
   Q_INVOKABLE qint64 stampAt(int row) const;
   Q_INVOKABLE QString ocrSnippetAt(int row) const;
 
@@ -116,8 +156,7 @@ public:
 
   [[nodiscard]] int sourceCount() const;
 
-  [[nodiscard]] QVariant data(const QModelIndex& index,
-                              int role = Qt::DisplayRole) const override;
+  [[nodiscard]] QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
   [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
 
 signals:
@@ -128,8 +167,13 @@ signals:
   void folderFilterChanged();
   void foldersChanged();
   void albumFilterChanged();
+  void tagFilterChanged();
+  void dateRangeChanged();
+  void dateBucketsChanged();
+  void smartCollectionFilterChanged();
   void showHiddenChanged();
   void duplicatesOnlyChanged();
+  void similarOnlyChanged();
   void countChanged();
 
 protected:
@@ -141,10 +185,10 @@ private:
   void beginFilterUpdate();
   void endFilterUpdate();
   [[nodiscard]] bool rebuildFolderIndex();
+  [[nodiscard]] bool rebuildDateIndex();
   void rebuildDuplicateOrdinals();
   [[nodiscard]] const CaptureRecord& sourceRecord(int sourceRow) const;
-  [[nodiscard]] bool recordLessThan(const CaptureRecord& first,
-                                    const CaptureRecord& second) const;
+  [[nodiscard]] bool recordLessThan(const CaptureRecord& first, const CaptureRecord& second) const;
   [[nodiscard]] QString ocrSnippet(const CaptureRecord& record) const;
 
   int m_kindFilter = kAllKinds;
@@ -156,10 +200,22 @@ private:
   QHash<QString, int> m_folderItemCounts;
   QString m_albumFilter;
   QSet<QString> m_albumPaths;
+  QString m_tagFilter;
+  QSet<QString> m_tagPaths;
+  QDate m_dateFrom;
+  QDate m_dateTo;
+  int m_dateField = 0;
+  QString m_modifiedAfter;
+  qint64 m_modifiedAfterMs = 0;
+  QVariantList m_dateBuckets;
+  QHash<QString, QVariantList> m_dateDays;
+  QString m_smartCollectionFilter;
   bool m_favoritesOnly = false;
   bool m_showHidden = false;
   bool m_duplicatesOnly = false;
+  bool m_similarOnly = false;
   QHash<QString, QString> m_duplicateGroups;
+  QHash<QString, QString> m_similarGroups;
   QHash<QString, int> m_duplicateOrdinals;
   QHash<QString, QString> m_ocrText;
   QHash<QString, QString> m_ocrFolded;

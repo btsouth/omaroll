@@ -21,16 +21,15 @@ constexpr int kProgressBatchSize = 32;
 } // namespace
 
 DuplicateIndex::DuplicateIndex(CaptureModel* model, QObject* parent)
-    : QObject(parent), m_model(model),
-      m_cancel(std::make_shared<std::atomic_bool>(false)) {
+    : QObject(parent), m_model(model), m_cancel(std::make_shared<std::atomic_bool>(false)) {
   m_refreshTimer.setSingleShot(true);
   m_refreshTimer.setInterval(180);
   connect(&m_refreshTimer, &QTimer::timeout, this, &DuplicateIndex::start);
 
   connect(&m_watcher, &QFutureWatcher<Result>::finished, this, [this] {
     const Result result = m_watcher.future().takeResult();
-    const bool current = result.generation == m_generation && m_active &&
-                         !m_restartQueued && !m_dirty;
+    const bool current =
+        result.generation == m_generation && m_active && !m_restartQueued && !m_dirty;
     if (current) {
       m_cache = result.cache;
       if (m_groups != result.groups) {
@@ -47,12 +46,9 @@ DuplicateIndex::DuplicateIndex(CaptureModel* model, QObject* parent)
   });
 
   if (m_model) {
-    connect(m_model, &QAbstractItemModel::rowsInserted, this,
-            [this] { markDirty(); });
-    connect(m_model, &QAbstractItemModel::rowsRemoved, this,
-            [this] { markDirty(); });
-    connect(m_model, &QAbstractItemModel::modelReset, this,
-            [this] { markDirty(); });
+    connect(m_model, &QAbstractItemModel::rowsInserted, this, [this] { markDirty(); });
+    connect(m_model, &QAbstractItemModel::rowsRemoved, this, [this] { markDirty(); });
+    connect(m_model, &QAbstractItemModel::modelReset, this, [this] { markDirty(); });
     connect(m_model, &QAbstractItemModel::dataChanged, this,
             [this](const QModelIndex&, const QModelIndex&, const QList<int>& roles) {
               if (roles.isEmpty() || roles.contains(CaptureRoles::PathRole) ||
@@ -75,6 +71,27 @@ int DuplicateIndex::groupCount() const {
     unique.insert(it.value());
   }
   return unique.size();
+}
+
+QStringList DuplicateIndex::groupPaths(const QString& path) const {
+  const QString group = m_groups.value(path);
+  if (group.isEmpty()) {
+    return {};
+  }
+  QStringList paths;
+  for (auto it = m_groups.cbegin(); it != m_groups.cend(); ++it) {
+    if (it.value() == group) {
+      paths.append(it.key());
+    }
+  }
+  paths.sort(Qt::CaseSensitive);
+  return paths;
+}
+
+QStringList DuplicateIndex::otherCopies(const QString& keepPath) const {
+  QStringList paths = groupPaths(keepPath);
+  paths.removeAll(keepPath);
+  return paths;
 }
 
 void DuplicateIndex::setActive(bool active) {
@@ -144,15 +161,13 @@ QList<DuplicateIndex::Candidate> DuplicateIndex::candidates() const {
       result.append(it.value());
     }
   }
-  std::sort(result.begin(), result.end(),
-            [](const Candidate& first, const Candidate& second) {
-              return first.path < second.path;
-            });
+  std::sort(result.begin(), result.end(), [](const Candidate& first, const Candidate& second) {
+    return first.path < second.path;
+  });
   return result;
 }
 
-QByteArray DuplicateIndex::hashFile(const Candidate& candidate,
-                                    const std::atomic_bool* cancel) {
+QByteArray DuplicateIndex::hashFile(const Candidate& candidate, const std::atomic_bool* cancel) {
   QFile file(candidate.path);
   if (!file.open(QIODevice::ReadOnly)) {
     return {};
@@ -235,8 +250,7 @@ void DuplicateIndex::start() {
         return result;
       }
       if (!digest.isEmpty()) {
-        result.cache.insert(candidate.path,
-                            {candidate.bytes, candidate.modified, digest});
+        result.cache.insert(candidate.path, {candidate.bytes, candidate.modified, digest});
         const QString key = QString::number(candidate.bytes) + QLatin1Char(':') +
                             QString::fromLatin1(digest.toHex());
         contentGroups[key].append(candidate.path);
@@ -245,11 +259,13 @@ void DuplicateIndex::start() {
       ++completed;
       if (guard && (completed == work.size() || completed % kProgressBatchSize == 0)) {
         QMetaObject::invokeMethod(
-            guard.data(), [guard, generation, completed] {
+            guard.data(),
+            [guard, generation, completed] {
               if (guard && guard->m_generation == generation && guard->m_active) {
                 guard->setProgress(completed, guard->m_total);
               }
-            }, Qt::QueuedConnection);
+            },
+            Qt::QueuedConnection);
       }
     }
 

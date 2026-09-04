@@ -26,6 +26,8 @@ QString kindLabel(CaptureRecord::Kind kind) {
     return QStringLiteral("Video");
   case CaptureRecord::Download:
     return QStringLiteral("Download");
+  case CaptureRecord::Document:
+    return QStringLiteral("PDF document");
   }
   return {};
 }
@@ -70,11 +72,9 @@ CaptureModel::CaptureModel(AppSettings* settings, QObject* parent)
   connect(&m_refreshTimer, &QTimer::timeout, this, &CaptureModel::refresh);
 
   m_fallbackRefreshTimer.setInterval(kFallbackRefreshMs);
-  connect(&m_fallbackRefreshTimer, &QTimer::timeout, this,
-          &CaptureModel::scheduleRefresh);
+  connect(&m_fallbackRefreshTimer, &QTimer::timeout, this, &CaptureModel::scheduleRefresh);
 
-  connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this,
-          [this] { scheduleRefresh(); });
+  connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this, [this] { scheduleRefresh(); });
 
   connect(&m_scanWatcher, &QFutureWatcher<ScanResult>::finished, this, [this] {
     if (!m_cancel->load()) {
@@ -199,23 +199,20 @@ QVariantList CaptureModel::automaticFolders() const {
       continue;
     }
     QVariantMap row = result.at(*found).toMap();
-    row.insert(QStringLiteral("label"),
-               row.value(QStringLiteral("label")).toString() + QStringLiteral(" + ") +
-                   source.label);
+    row.insert(QStringLiteral("label"), row.value(QStringLiteral("label")).toString() +
+                                            QStringLiteral(" + ") + source.label);
     result[*found] = row;
   }
   return result;
 }
 
-bool CaptureModel::folderAvailable(const QString& path) const {
-  return QFileInfo(path).isDir();
-}
+bool CaptureModel::folderAvailable(const QString& path) const { return QFileInfo(path).isDir(); }
 
 void CaptureModel::setExtraRoot(const QString& directory) {
   const QString canonical = QFileInfo(directory).canonicalFilePath();
   const QString home = QFileInfo(QDir::homePath()).canonicalFilePath();
-  if (canonical.isEmpty() || !QFileInfo(canonical).isDir() ||
-      canonical == home || canonical == QDir::rootPath() || m_extraRoots.contains(canonical)) {
+  if (canonical.isEmpty() || !QFileInfo(canonical).isDir() || canonical == home ||
+      canonical == QDir::rootPath() || m_extraRoots.contains(canonical)) {
     return;
   }
   m_extraRoots.append(canonical);
@@ -242,7 +239,7 @@ QVariant CaptureModel::data(const QModelIndex& index, int role) const {
   case CaptureRoles::KindRole:
     return static_cast<int>(record.kind);
   case CaptureRoles::KindLabelRole:
-    return kindLabel(record.kind);
+    return record.isDocument() ? QStringLiteral("PDF document") : kindLabel(record.kind);
   case CaptureRoles::CapturedRole:
     return record.captured;
   case CaptureRoles::DayKeyRole:
@@ -259,6 +256,8 @@ QVariant CaptureModel::data(const QModelIndex& index, int role) const {
     return record.modified;
   case CaptureRoles::IsVideoRole:
     return record.isVideo();
+  case CaptureRoles::IsDocumentRole:
+    return record.isDocument();
   case CaptureRoles::FavoriteRole:
     return record.favorite;
   case CaptureRoles::HiddenRole:
@@ -282,6 +281,7 @@ QHash<int, QByteArray> CaptureModel::roleNames() const {
       {CaptureRoles::BytesRole, "bytes"},
       {CaptureRoles::StampRole, "stamp"},
       {CaptureRoles::IsVideoRole, "isVideo"},
+      {CaptureRoles::IsDocumentRole, "isDocument"},
       {CaptureRoles::FavoriteRole, "favorite"},
       {CaptureRoles::HiddenRole, "hidden"},
   };
@@ -427,6 +427,7 @@ void CaptureModel::adoptResults(ScanResult result) {
   if (m_settings) {
     m_settings->forgetMarks(result.deadMarks);
     m_settings->reconcileAlbums(scanned);
+    m_settings->reconcileTags(scanned);
     for (CaptureRecord& record : scanned) {
       record.favorite = m_settings->isFavorite(record.path);
       record.hidden = m_settings->isHidden(record.path);
@@ -505,7 +506,8 @@ void CaptureModel::adoptResults(ScanResult result) {
       const CaptureRecord& fresh = scanned.at(incoming.value(record.path));
       kept.insert(record.path);
       if (record.modified == fresh.modified && record.bytes == fresh.bytes &&
-          record.kind == fresh.kind && record.captured == fresh.captured &&
+          record.kind == fresh.kind && record.video == fresh.video &&
+          record.document == fresh.document && record.captured == fresh.captured &&
           record.hasProducerTimestamp == fresh.hasProducerTimestamp &&
           record.favorite == fresh.favorite && record.hidden == fresh.hidden) {
         continue;

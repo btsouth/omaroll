@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Browse by month or day, plus quick views for today, this week, recently
+  modified files, and files changed since the previous visit.
+- Save the current filters and sort as a smart collection. Saved views update
+  automatically as the library changes.
+- Add reusable tags to any selection and browse tagged files without moving
+  them. Tags follow in-app renames using the same identity checks as albums.
+- Review visually similar pictures using a local perceptual comparison that
+  tolerates resizing and JPEG recompression.
+- Keep one file from an exact-duplicate set and move only its byte-for-byte
+  identical copies to Trash after confirmation.
+- Scan, thumbnail, preview, page through, organize, send, rename, and trash PDF
+  documents. Rendering and page inspection use Poppler locally.
+
+### Changed
+
+- Browse now brings folders, albums, dates, tags, saved views, exact
+  duplicates, and similar-picture review into one panel.
+- Selection organization now includes both albums and tags.
+
 ## 1.2.0
 
 ### Added

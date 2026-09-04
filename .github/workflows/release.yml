@@ -18,7 +18,7 @@ jobs:
         run: >-
           pacman -Syu --noconfirm --needed
           appstream base-devel cmake desktop-file-utils ffmpeg ffmpegthumbnailer
-          git github-cli imagemagick kimageformats libavif libheif ninja pkgconf qt6-base
+          git github-cli imagemagick kimageformats libavif libheif ninja pkgconf poppler qt6-base
           qt6-declarative qt6-imageformats qt6-multimedia qt6-wayland
           wl-clipboard xdg-desktop-portal xdg-utils
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

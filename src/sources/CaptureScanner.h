@@ -41,4 +41,5 @@ public:
 
   [[nodiscard]] static bool isImage(const QString& suffix);
   [[nodiscard]] static bool isVideo(const QString& suffix);
+  [[nodiscard]] static bool isDocument(const QString& suffix);
 };

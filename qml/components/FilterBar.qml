@@ -14,14 +14,20 @@ Item {
     readonly property int kindPicture: 2
     readonly property int kindVideo: 3
     readonly property int kindDownload: 4
+    readonly property int kindDocument: 5
 
-    // Sections in bar order, for the number keys.
+    // Number keys keep the existing 7 shortcut for favourites. PDFs take 8.
     function selectSection(index) {
         if (index === 6) {
             Captures.favoritesOnly = !Captures.favoritesOnly
             return
         }
-        const kinds = [kindAll, kindScreenshot, kindRecording, kindPicture, kindVideo, kindDownload]
+        if (index === 7) {
+            Captures.kindFilter = kindDocument
+            return
+        }
+        const kinds = [kindAll, kindScreenshot, kindRecording, kindPicture, kindVideo,
+                       kindDownload]
         if (index === 5 && !Settings.scanDownloads) {
             return
         }
@@ -109,6 +115,12 @@ Item {
             active: Captures.kindFilter === root.kindDownload
             onClicked: Captures.kindFilter = root.kindDownload
         }
+        PillButton {
+            label: "PDFs"
+            shortcut: root.sectionShortcut(7)
+            active: Captures.kindFilter === root.kindDocument
+            onClicked: Captures.kindFilter = root.kindDocument
+        }
 
         Item { width: 6; height: 1 }
 
@@ -123,13 +135,21 @@ Item {
 
         PillButton {
             id: libraryButton
-            label: root.width < 700 ? (Captures.duplicatesOnly ? "Dupes  ▾" : "Browse  ▾")
+            label: root.width < 700 ? (Captures.duplicatesOnly ? "Dupes  ▾"
+                                      : Captures.similarOnly ? "Similar  ▾" : "Browse  ▾")
                    : (Captures.duplicatesOnly ? "Duplicates  ▾"
+                      : Captures.similarOnly ? "Similar pictures  ▾"
+                      : Captures.smartCollectionFilter !== "" ? Captures.smartCollectionFilter + "  ▾"
+                      : Captures.tagFilter !== "" ? "#" + Captures.tagFilter + "  ▾"
+                      : Captures.dateFrom !== "" || Captures.modifiedAfter !== "" ? "Date  ▾"
                       : Captures.albumFilter !== "" ? Captures.albumFilter + "  ▾"
                       : Captures.folderFilter !== ""
                         ? root.folderName(Captures.folderFilter) + "  ▾" : "Browse  ▾")
             active: Captures.folderFilter !== "" || Captures.albumFilter !== ""
                     || Captures.duplicatesOnly
+                    || Captures.similarOnly || Captures.tagFilter !== ""
+                    || Captures.dateFrom !== "" || Captures.modifiedAfter !== ""
+                    || Captures.smartCollectionFilter !== ""
                     || root.browserOpen
             toolTip: Captures.folderFilter
             onClicked: root.browseRequested()

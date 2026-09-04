@@ -101,10 +101,15 @@ ApplicationWindow {
             return
         }
         const firstRow = Captures.rowOf(paths[0])
+        if (firstRow < 0 || Captures.isDocumentAt(firstRow)) {
+            root.say("PDF documents cannot be converted here")
+            return
+        }
         const video = knownVideo === undefined ? Captures.isVideoAt(firstRow) : knownVideo
         for (const path of paths) {
             const row = Captures.rowOf(path)
-            if (row < 0 || Captures.isVideoAt(row) !== video) {
+            if (row < 0 || Captures.isDocumentAt(row)
+                    || Captures.isVideoAt(row) !== video) {
                 root.say("Select only pictures or only videos to convert together")
                 return
             }
@@ -123,9 +128,11 @@ ApplicationWindow {
         // to omacut or an mp4 to the matte composer.
         const row = Captures.rowOf(path)
         const video = knownVideo === undefined ? Captures.isVideoAt(row) : knownVideo
-        if (id !== "open" && !Registry.appliesTo(id, video)) {
-            root.say(video ? "That one is for screenshots and pictures"
-                           : "That one is for recordings and videos")
+        const document = row >= 0 && Captures.isDocumentAt(row)
+        if (id !== "open" && !Registry.appliesToKind(id, video, document)) {
+            root.say(document ? "That action does not apply to documents"
+                     : video ? "That one is for screenshots and pictures"
+                             : "That one is for recordings and videos")
             return
         }
 
@@ -188,7 +195,9 @@ ApplicationWindow {
             return
         }
         const video = Captures.isVideoAt(index)
-        root.perform(video ? Settings.videoPrimaryAction : Settings.imagePrimaryAction,
+        const document = Captures.isDocumentAt(index)
+        root.perform(document ? Registry.primaryActionForKind(false, true)
+                              : (video ? Settings.videoPrimaryAction : Settings.imagePrimaryAction),
                      Captures.pathAt(index), video)
     }
 
@@ -245,6 +254,25 @@ ApplicationWindow {
                                         Settings.albumPaths(Captures.albumFilter))
             }
         }
+        function onTagsChanged() {
+            if (Captures.tagFilter === "") {
+                return
+            }
+            if (Settings.tagNames.indexOf(Captures.tagFilter) < 0) {
+                Captures.setTagFilter("", [])
+                Captures.clearSmartCollection()
+            } else {
+                Captures.setTagFilter(Captures.tagFilter,
+                                      Settings.tagPaths(Captures.tagFilter))
+            }
+        }
+        function onSmartCollectionsChanged() {
+            if (Captures.smartCollectionFilter !== ""
+                    && Settings.smartCollectionNames.indexOf(
+                        Captures.smartCollectionFilter) < 0) {
+                Captures.clearSmartCollection()
+            }
+        }
     }
 
     // A laptop that slept through midnight fires no timer, so the labels are
@@ -263,6 +291,10 @@ ApplicationWindow {
         Captures.searchText = ""
         Captures.favoritesOnly = false
         Captures.duplicatesOnly = false
+        Captures.similarOnly = false
+        Captures.clearDateRange()
+        Captures.setTagFilter("", [])
+        Captures.clearSmartCollection()
         Captures.setAlbumFilter("", [])
         Captures.folderFilter = folder === undefined ? "" : folder
     }
@@ -296,13 +328,14 @@ ApplicationWindow {
         }
         detail.fileName = Captures.fileNameAt(row)
         detail.kind = Captures.kindAt(row)
+        detail.isDocument = Captures.isDocumentAt(row)
         detail.kindLabel = Captures.kindLabelAt(row)
         detail.dayLabel = Captures.dayLabelAt(row)
         detail.timeLabel = Captures.timeLabelAt(row)
         detail.sizeLabel = Captures.sizeLabelAt(row)
         detail.stamp = Captures.stampAt(row)
         detail.canNavigate = root.adjacentViewerPath(detail.path, 1) !== ""
-        if (!detail.isVideo) {
+        if (!detail.isVideo && !detail.isDocument) {
             Qr.inspect(detail.path)
         }
     }
@@ -363,6 +396,16 @@ ApplicationWindow {
         const paths = library.checkedPaths()
         return paths.length > 0 && paths.every(predicate)
     }
+    function checkedHasDocuments() {
+        const count = library.checkedCount
+        if (count === 0) {
+            return false
+        }
+        return library.checkedPaths().some(function (path) {
+            const row = Captures.rowOf(path)
+            return row >= 0 && Captures.isDocumentAt(row)
+        })
+    }
     function markChecked(which) {
         const paths = library.checkedPaths()
         if (which === "favorite") {
@@ -396,15 +439,31 @@ ApplicationWindow {
         confirm.open()
     }
 
-    function requestDeleteBatch(paths) {
+    function requestDeleteBatch(paths, title, detail) {
         if (paths.length === 0) {
             return
         }
         root.pendingDeletePath = ""
         root.pendingDeleteBatch = paths
-        confirm.title = "Move " + paths.length + " items to Trash?"
-        confirm.detail = paths.length + " files. They stay recoverable from your file manager."
+        confirm.title = title === undefined
+                        ? "Move " + paths.length + " items to Trash?" : title
+        confirm.detail = detail === undefined
+                         ? paths.length + " files. They stay recoverable from your file manager."
+                         : detail
         confirm.open()
+    }
+
+    function keepSelectedDuplicate(path) {
+        const others = Duplicates.otherCopies(path)
+        if (others.length === 0) {
+            root.say("No other exact copies remain")
+            return
+        }
+        const name = path.substring(path.lastIndexOf("/") + 1)
+        root.requestDeleteBatch(others,
+                                "Keep " + name + " and trash " + others.length
+                                + (others.length === 1 ? " copy?" : " copies?"),
+                                "Only byte-for-byte identical copies are moved. They remain recoverable from your file manager.")
     }
 
     // Called by --render so a screenshot can be taken of a specific view
@@ -491,6 +550,12 @@ ApplicationWindow {
                                  + " of " + Duplicates.total
                                : "Finding exact duplicates"
                     }
+                    if (Similarities.scanning && Captures.similarOnly) {
+                        return Similarities.total > 0
+                               ? "Finding similar pictures · " + Similarities.completed
+                                 + " of " + Similarities.total
+                               : "Finding similar pictures"
+                    }
                     if (TextIndex.indexing && Captures.searchText !== "") {
                         return TextIndex.total > 0
                                ? "Searching image text · " + TextIndex.completed
@@ -544,7 +609,7 @@ ApplicationWindow {
             PillButton {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: library.checkedCount > 0 && root.width >= 1050
-                         && Registry.available("export")
+                         && Registry.available("export") && !root.checkedHasDocuments()
                 label: "Export"
                 shortcut: Registry.shortcutFor("export")
                 onClicked: root.openExport(library.checkedPaths())
@@ -560,7 +625,7 @@ ApplicationWindow {
                 id: albumActionButton
                 anchors.verticalCenter: parent.verticalCenter
                 visible: library.checkedCount > 0
-                label: "+ Album"
+                label: "Organize"
                 onClicked: albumActionMenu.visible ? albumActionMenu.close()
                                                        : albumActionMenu.popup(
                                                              albumActionButton, 0,
@@ -603,6 +668,16 @@ ApplicationWindow {
                 visible: library.checkedCount > 0
                 label: "Clear"
                 onClicked: library.clearChecked()
+            }
+
+            PillButton {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: library.checkedCount === 0 && Captures.duplicatesOnly
+                         && library.currentIndex >= 0 && Duplicates.groupCount > 0
+                         && Duplicates.otherCopies(root.currentPath()).length > 0
+                label: "Keep selected"
+                toolTip: "Trash the other byte-for-byte identical copies"
+                onClicked: root.keepSelectedDuplicate(root.currentPath())
             }
 
             DayHeader {
@@ -693,6 +768,7 @@ ApplicationWindow {
         // for a moment on every step from a recording to a picture.
         detail.path = ""
         detail.isVideo = Captures.isVideoAt(index)
+        detail.isDocument = Captures.isDocumentAt(index)
         detail.path = Captures.pathAt(index)
         detail.fileName = Captures.fileNameAt(index)
         detail.kind = Captures.kindAt(index)
@@ -704,7 +780,7 @@ ApplicationWindow {
         detail.favorite = Settings.isFavorite(detail.path)
         detail.canNavigate = root.adjacentViewerPath(detail.path, 1) !== ""
         detail.open()
-        if (detail.isVideo) {
+        if (detail.isVideo || detail.isDocument) {
             Qr.clear()
         } else {
             Qr.inspect(detail.path)
@@ -742,10 +818,15 @@ ApplicationWindow {
         spacing: 10
         visible: Captures.count === 0 && !Library.scanning && !TextIndex.indexing
                  && !(Captures.duplicatesOnly && Duplicates.scanning)
+                 && !(Captures.similarOnly && Similarities.scanning)
 
         readonly property bool filtered: Captures.sourceCount > 0
         readonly property bool folderScoped: Captures.folderFilter !== ""
         readonly property bool albumScoped: Captures.albumFilter !== ""
+        readonly property bool tagScoped: Captures.tagFilter !== ""
+        readonly property bool dateScoped: Captures.dateFrom !== ""
+                                           || Captures.modifiedAfter !== ""
+        readonly property bool smartScoped: Captures.smartCollectionFilter !== ""
         readonly property int scopedItems: albumScoped
                                            ? Settings.albumPaths(Captures.albumFilter).length
                                            : folderScoped
@@ -757,6 +838,10 @@ ApplicationWindow {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             text: Captures.duplicatesOnly ? "No exact duplicates"
+                  : Captures.similarOnly ? "No similar pictures"
+                  : parent.smartScoped ? "No items match this saved view"
+                  : parent.tagScoped ? "This tag has no available items"
+                  : parent.dateScoped ? "No media in this date range"
                   : parent.albumScoped
                     ? (parent.scopeFilteredOut ? "Nothing matches in this album"
                                                 : "This album is empty")
@@ -776,13 +861,17 @@ ApplicationWindow {
             wrapMode: Text.WordWrap
             text: Captures.duplicatesOnly
                   ? "Files are compared by content. Nothing is removed automatically."
+                  : Captures.similarOnly
+                  ? "Pictures are compared visually. Review every suggestion before removing anything."
                   : parent.scopeFilteredOut
                   ? "Try a different media type, turn off Favourites, or clear the search."
                   : parent.albumScoped
-                  ? "Choose Whole library from Browse, select files, then use + Album. "
+                  ? "Choose Whole library from Browse, select files, then use Organize. "
                     + "Unavailable files remain remembered."
+                  : parent.tagScoped || parent.dateScoped || parent.smartScoped
+                  ? "Choose another view from Browse or clear a filter."
                   : parent.folderScoped
-                  ? "The folder may be empty, unavailable, or contain no supported images or videos."
+                  ? "The folder may be empty, unavailable, or contain no supported media."
                   : parent.filtered
                   ? "Try a different filter, or clear the search."
                   : (Theme.omarchyAvailable
@@ -866,7 +955,7 @@ ApplicationWindow {
         // dropped back into the grid read as a mistake. What removes the
         // file from view (trash, hide), opens another sheet (matte) or hands
         // off to an editor still closes it.
-        readonly property var keepsViewer: ["play", "view", "frame", "background", "export", "favorite",
+        readonly property var keepsViewer: ["play", "view", "open-document", "frame", "background", "export", "favorite",
                                             "copy", "ocr", "qr", "send", "tailscale", "files"]
         onActionTriggered: function (id) {
             if (detail.keepsViewer.indexOf(id) < 0) {
@@ -879,8 +968,16 @@ ApplicationWindow {
     AlbumNameSheet {
         id: albumNameSheet
         objectName: "albumNameSheet"
-        onSaved: function (name, count) {
-            if (count === 0) {
+        onSaved: function (name, count, mode) {
+            if (mode === "smart") {
+                const view = Settings.smartCollection(name)
+                Captures.applyView(name, view,
+                                   view.tag ? Settings.tagPaths(String(view.tag)) : [])
+                root.say("Saved smart collection " + name)
+            } else if (mode === "tag" && count === 0) {
+                Captures.setTagFilter(name, Settings.tagPaths(name))
+                root.say("Created tag " + name)
+            } else if (count === 0) {
                 Captures.folderFilter = ""
                 Captures.setAlbumFilter(name, Settings.albumPaths(name))
                 root.say("Created album " + name)
@@ -979,6 +1076,84 @@ ApplicationWindow {
             }
             onTriggered: albumNameSheet.open(library.checkedPaths())
         }
+
+        MenuSeparator {
+            visible: Settings.tagNames.length > 0 || Captures.tagFilter !== ""
+        }
+
+        MenuItem {
+            id: removeTagRow
+            visible: Captures.tagFilter !== ""
+            height: visible ? 30 : 0
+            contentItem: Text {
+                text: "Remove tag " + Captures.tagFilter
+                elide: Text.ElideRight
+                font.family: Theme.fontFamily
+                font.pixelSize: 11
+                color: Theme.foreground
+                verticalAlignment: Text.AlignVCenter
+                leftPadding: 12
+            }
+            background: Rectangle {
+                color: removeTagRow.hovered
+                       ? root.shade(Theme.foreground, 0.08) : "transparent"
+            }
+            onTriggered: {
+                const paths = library.checkedPaths()
+                Settings.removeTag(Captures.tagFilter, paths)
+                library.clearChecked()
+                root.say("Removed tag from " + paths.length
+                         + (paths.length === 1 ? " item" : " items"))
+            }
+        }
+
+        Repeater {
+            model: Settings.tagNames
+
+            MenuItem {
+                id: addTagRow
+                required property string modelData
+                height: 30
+                contentItem: Text {
+                    text: "Tag as " + addTagRow.modelData
+                    elide: Text.ElideRight
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 11
+                    color: Theme.foreground
+                    verticalAlignment: Text.AlignVCenter
+                    leftPadding: 12
+                }
+                background: Rectangle {
+                    color: addTagRow.hovered
+                           ? root.shade(Theme.foreground, 0.08) : "transparent"
+                }
+                onTriggered: {
+                    const paths = library.checkedPaths()
+                    const changed = Settings.addTag(addTagRow.modelData, paths)
+                    root.say(changed ? "Tagged as " + addTagRow.modelData
+                                     : "Already tagged as " + addTagRow.modelData)
+                }
+            }
+        }
+
+        MenuItem {
+            id: newTagRow
+            height: 30
+            contentItem: Text {
+                text: "+ New tag"
+                font.family: Theme.fontFamily
+                font.pixelSize: 11
+                color: Theme.accent
+                verticalAlignment: Text.AlignVCenter
+                leftPadding: 12
+            }
+            background: Rectangle {
+                color: newTagRow.hovered
+                       ? root.shade(Theme.foreground, 0.08) : "transparent"
+            }
+            onTriggered: albumNameSheet.open(library.checkedPaths(), "tag")
+        }
+
     }
 
     MatteSheet {
@@ -1030,6 +1205,8 @@ ApplicationWindow {
         id: libraryBrowser
         objectName: "libraryBrowser"
         onCreateAlbumRequested: albumNameSheet.open([])
+        onCreateTagRequested: albumNameSheet.open([], "tag")
+        onSaveSmartCollectionRequested: albumNameSheet.open([], "smart", Captures.currentView())
         onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
     }
 
@@ -1193,9 +1370,9 @@ ApplicationWindow {
         enabled: !root.anySheetOpen
         onActivated: filters.focusSearch()
     }
-    // 1-7 jump between sections, in the order the filter bar shows them.
+    // Number keys jump between sections, in the order the filter bar shows them.
     Repeater {
-        model: 7
+        model: 8
         Item {
             id: sectionKey
             required property int index

@@ -24,7 +24,7 @@ class ActionRegistry final : public QObject {
   Q_OBJECT
 
 public:
-  enum class Media { Still, Moving, Any };
+  enum class Media { Still, Moving, Document, Visual, Any };
 
   // How the handler's result reaches the user. Most tools open a window or
   // send their own notification; the two recognisers only print to stdout, so
@@ -71,6 +71,7 @@ public:
 
   // Rows for QML: id, label, shortcut, available, hint, primary, native.
   Q_INVOKABLE QVariantList actionsFor(bool video) const;
+  Q_INVOKABLE QVariantList actionsForKind(bool video, bool document) const;
 
   // Runs a delegated action. Returns false for an unknown id, an action omaroll
   // handles itself, or a missing program; the launcher reports why.
@@ -93,6 +94,7 @@ public:
   Q_INVOKABLE bool isNative(const QString& id) const;
 
   Q_INVOKABLE QString primaryActionFor(bool video) const;
+  Q_INVOKABLE QString primaryActionForKind(bool video, bool document) const;
 
   // One source for shortcut handlers, action rows and hover help.
   Q_INVOKABLE QString shortcutFor(const QString& id) const;
@@ -101,6 +103,7 @@ public:
   // the wrong kind of file is refused with a word rather than handed to a tool
   // that cannot open it.
   Q_INVOKABLE bool appliesTo(const QString& id, bool video) const;
+  Q_INVOKABLE bool appliesToKind(const QString& id, bool video, bool document) const;
 
 private:
   bool run(const QString& id, const QStringList& paths, const QVariantMap& placeholders = {});
@@ -110,7 +113,7 @@ private:
   void probeThenLaunch(const Definition& definition, const QStringList& arguments,
                        const QString& output);
   bool launch(const Definition& definition, const QStringList& arguments, const QString& output);
-  [[nodiscard]] static bool applies(const Definition& definition, bool video);
+  [[nodiscard]] static bool applies(const Definition& definition, bool video, bool document);
   [[nodiscard]] const Definition* find(const QString& id) const;
   [[nodiscard]] static QList<Definition> buildTable();
 

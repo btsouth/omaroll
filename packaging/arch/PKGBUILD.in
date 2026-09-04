@@ -7,8 +7,9 @@ url='https://github.com/tsouth89/omaroll'
 license=('MIT')
 depends=('qt6-base' 'qt6-declarative' 'qt6-multimedia' 'qt6-imageformats'
          'kimageformats' 'libavif' 'libheif' 'hicolor-icon-theme'
-         'xdg-desktop-portal' 'ffmpegthumbnailer' 'wl-clipboard' 'xdg-utils')
+         'xdg-desktop-portal' 'ffmpegthumbnailer' 'poppler' 'wl-clipboard' 'xdg-utils')
 optdepends=('omacut: trim recordings'
+            'sushi: open PDF documents'
             'imagemagick: read photo dates and technical details'
             'tensaku: annotate screenshots'
             'tesseract: copy and search text in pictures'

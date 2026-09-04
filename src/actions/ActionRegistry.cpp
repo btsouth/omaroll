@@ -123,9 +123,8 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
       {.id = u"frame"_s,
        .label = u"Save current frame"_s,
        .program = u"ffmpeg"_s,
-       .arguments = {u"-hide_banner"_s, u"-loglevel"_s, u"error"_s,
-                     u"-ss"_s, u"{seek}"_s, u"-i"_s, u"{path}"_s,
-                     u"-frames:v"_s, u"1"_s, u"-update"_s, u"1"_s,
+       .arguments = {u"-hide_banner"_s, u"-loglevel"_s, u"error"_s, u"-ss"_s, u"{seek}"_s, u"-i"_s,
+                     u"{path}"_s, u"-frames:v"_s, u"1"_s, u"-update"_s, u"1"_s,
                      u"{dir}/{stem}-frame-{frame}.png"_s},
        .shortcut = u"G"_s,
        .packageHint = u"ffmpeg"_s,
@@ -236,10 +235,19 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .arguments = {u"{path}"_s, u"{format}"_s, u"{resolution}"_s},
        .shortcut = u"E"_s,
        .packageHint = u"Omarchy"_s,
-       .media = Any,
+       .media = Visual,
        .output = u"{stem}-{resolution}.{format}"_s},
 
       // --- Anything -------------------------------------------------------
+      {.id = u"open-document"_s,
+       .label = u"Open document"_s,
+       .program = u"sushi"_s,
+       .arguments = {u"{path}"_s},
+       .shortcut = u"O"_s,
+       .packageHint = u"sushi"_s,
+       .media = Document,
+       .primary = true},
+
       // The launcher handles this one: the house helper on Omarchy, plain
       // wl-copy elsewhere, so the row is available on both.
       {.id = u"copy"_s,
@@ -247,6 +255,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .program = u"wl-copy"_s,
        .shortcut = u"Y"_s,
        .packageHint = u"wl-clipboard"_s,
+       .media = Visual,
        .result = CopyFile},
 
       // The same path the Share menu and the Nautilus extension take: LocalSend
@@ -317,24 +326,29 @@ void ActionRegistry::probeThenLaunch(const Definition& definition, const QString
             QFile::remove(output);
             launch(definition, arguments, output);
           });
-  connect(probe, &QProcess::errorOccurred, this, [this, probe, output](QProcess::ProcessError error) {
-    if (error != QProcess::FailedToStart) {
-      return;
-    }
-    probe->deleteLater();
-    m_launcher->revealExisting(output);
-  });
+  connect(probe, &QProcess::errorOccurred, this,
+          [this, probe, output](QProcess::ProcessError error) {
+            if (error != QProcess::FailedToStart) {
+              return;
+            }
+            probe->deleteLater();
+            m_launcher->revealExisting(output);
+          });
 
   probe->start(ffprobe, {u"-v"_s, u"error"_s, output});
   timeout->start();
 }
 
-bool ActionRegistry::applies(const Definition& definition, bool video) {
+bool ActionRegistry::applies(const Definition& definition, bool video, bool document) {
   switch (definition.media) {
   case Media::Still:
-    return !video;
+    return !video && !document;
   case Media::Moving:
-    return video;
+    return video && !document;
+  case Media::Document:
+    return document;
+  case Media::Visual:
+    return !document;
   case Media::Any:
     return true;
   }
@@ -356,23 +370,33 @@ bool ActionRegistry::isNative(const QString& id) const {
 }
 
 bool ActionRegistry::appliesTo(const QString& id, bool video) const {
+  return appliesToKind(id, video, false);
+}
+
+bool ActionRegistry::appliesToKind(const QString& id, bool video, bool document) const {
   const Definition* definition = find(id);
-  return definition && applies(*definition, video);
+  return definition && applies(*definition, video, document);
 }
 
 QString ActionRegistry::primaryActionFor(bool video) const {
+  return primaryActionForKind(video, false);
+}
+
+QString ActionRegistry::primaryActionForKind(bool video, bool document) const {
   for (const Definition& definition : m_definitions) {
-    if (definition.primary && applies(definition, video)) {
+    if (definition.primary && applies(definition, video, document)) {
       return definition.id;
     }
   }
   return u"open"_s;
 }
 
-QVariantList ActionRegistry::actionsFor(bool video) const {
+QVariantList ActionRegistry::actionsFor(bool video) const { return actionsForKind(video, false); }
+
+QVariantList ActionRegistry::actionsForKind(bool video, bool document) const {
   QVariantList rows;
   for (const Definition& definition : m_definitions) {
-    if (!definition.visible || !applies(definition, video)) {
+    if (!definition.visible || !applies(definition, video, document)) {
       continue;
     }
 
@@ -404,7 +428,7 @@ bool ActionRegistry::runBatchWith(const QString& id, const QVariantMap& placehol
   if (paths.size() > 1 && !(definition && definition->batch)) {
     bool all = true;
     for (const QString& path : paths) {
-      all = run(id, QStringList{path}, placeholders) && all;
+      all = run(id, QStringList {path}, placeholders) && all;
     }
     return all;
   }
@@ -423,7 +447,7 @@ QString ActionRegistry::shortcutFor(const QString& id) const {
 }
 
 bool ActionRegistry::run(const QString& id, const QString& path) {
-  return run(id, QStringList{path});
+  return run(id, QStringList {path});
 }
 
 bool ActionRegistry::run(const QString& id, const QStringList& paths,
@@ -460,10 +484,10 @@ bool ActionRegistry::run(const QString& id, const QStringList& paths,
     return m_launcher->copyFile(paths.first());
   case Result::TextToClipboard:
   case Result::SecretToClipboard:
-    return m_launcher->captureTextToClipboard(
-        definition->program, arguments, definition->packageHint,
-        definition->result == Result::SecretToClipboard, definition->confirmation,
-        definition->nothingFound);
+    return m_launcher->captureTextToClipboard(definition->program, arguments,
+                                              definition->packageHint,
+                                              definition->result == Result::SecretToClipboard,
+                                              definition->confirmation, definition->nothingFound);
   case Result::Launch:
     break;
   }

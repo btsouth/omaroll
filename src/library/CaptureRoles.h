@@ -19,6 +19,7 @@ enum Role {
   BytesRole,
   StampRole,
   IsVideoRole,
+  IsDocumentRole,
   FavoriteRole,
   HiddenRole,
   // Added by CaptureFilterModel while a search result needs OCR context.
