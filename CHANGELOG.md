@@ -1,20 +1,20 @@
 # Changelog
 
-## Unreleased
+## 1.6.0
 
 ### Added
 
-- Tab and Shift+Tab step through the sections, wrapping at either end.
-- Browse a photo library by camera and lens. The metadata pass that reads
-  capture dates now records the camera and lens too, and saved views keep
-  the choice. Libraries without camera photos do not show the section.
 - Star ratings. Rate a file from the viewer or with Alt+1 to Alt+5, sort by
   Top rated, and narrow any view to a minimum rating from Browse. Saved views
   keep the choice.
-- Nested tags. A tag named Travel/Japan sits under Travel in Browse, and
-  choosing the parent shows everything beneath it.
 - Captions. Add a short caption in the viewer; it shows on the tile and is
   searched with filenames and picture text.
+- Nested tags. A tag named Travel/Japan sits under Travel in Browse, and
+  choosing the parent shows everything beneath it.
+- Browse a photo library by camera and lens. The metadata pass that reads
+  capture dates now records the camera and lens too, and saved views keep
+  the choice. Libraries without camera photos do not show the section.
+- Tab and Shift+Tab step through the sections, wrapping at either end.
 
 ### Changed
 

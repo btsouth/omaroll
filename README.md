@@ -217,10 +217,10 @@ Documents: PDF. Thumbnails, previews, and page counts use Poppler locally.
 Requires Omarchy or Arch with Qt 6.8+ and Poppler.
 
 ```bash
-curl -fLO https://github.com/btsouth/omaroll/releases/download/v1.5.0/omaroll-1.5.0-1-x86_64.pkg.tar.zst \
-     -fLO https://github.com/btsouth/omaroll/releases/download/v1.5.0/SHA256SUMS
+curl -fLO https://github.com/btsouth/omaroll/releases/download/v1.6.0/omaroll-1.6.0-1-x86_64.pkg.tar.zst \
+     -fLO https://github.com/btsouth/omaroll/releases/download/v1.6.0/SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
-sudo pacman -U ./omaroll-1.5.0-1-x86_64.pkg.tar.zst
+sudo pacman -U ./omaroll-1.6.0-1-x86_64.pkg.tar.zst
 ```
 
 Run the same commands for a newer release to update. The package is prepared for
