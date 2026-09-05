@@ -622,7 +622,9 @@ ApplicationWindow {
                     }
                     const shown = Captures.count
                     const total = Captures.sourceCount
-                    const noun = shown === 1 ? " item" : " items"
+                    // "1 of 420 items": the noun follows the number it sits
+                    // next to, which is the total once a filter narrows it.
+                    const noun = (shown === total ? shown : total) === 1 ? " item" : " items"
                     return shown === total
                            ? root.formatCount(shown) + noun
                            : root.formatCount(shown) + " of " + root.formatCount(total) + noun
