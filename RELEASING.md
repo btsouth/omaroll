@@ -1,8 +1,8 @@
 # Releasing Omaroll
 
-Start with [current status](docs/STATUS.md). v1.4.0 is the latest release in the
-5 September 2026 handoff. Merged work and draft PR #6 do not constitute a new
-release; no next version has been selected.
+Start with [current status](docs/STATUS.md). v1.4.0 is the latest published
+release. Version 1.5.0 is prepared in the tree and is released only when its
+tag is pushed after desktop acceptance.
 
 1. Update the version in `CMakeLists.txt`, AppStream metadata, the changelog,
    README package command, and public feature descriptions.

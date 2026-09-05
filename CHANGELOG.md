@@ -1,17 +1,31 @@
 # Changelog
 
-## Unreleased
+## 1.5.0
 
-- Defer video setup until a video is opened, reducing startup work for images and the library.
+### Added
 
-- Keep automated playback and headless renders off physical audio devices, including native PipeWire.
+- Open multiple selected files in order, including across folders and in an
+  already-running window. Explicitly selected hidden files open without
+  scanning their surrounding folders.
+- Opt-in startup readiness tracing and a reproducible startup benchmark.
 
-- Open multiple selected files in order, including across folders and in an already-running window.
-- Open explicitly selected hidden files without scanning their surrounding folders.
+### Changed
 
-- Sort numbered filenames naturally, so image2 appears before image10.
-- Confirm copying extracted text visually and through accessibility announcements.
-- Run real video rendering checks under Mesa OpenGL in CI and release validation.
+- Video setup is deferred until a video is opened, reducing startup work for
+  images and the library.
+- Numbered filenames sort naturally, so image2 appears before image10.
+- Copying extracted text is confirmed visually and through accessibility
+  announcements.
+- Real video rendering checks run under Mesa OpenGL in CI and release
+  validation, and automated playback stays off physical audio devices,
+  including native PipeWire.
+
+### Fixed
+
+- Thumbnail, PDF and matte image responses no longer risk a crash when a
+  request is cancelled or finishes during fast scrolling or a tile size change.
+- Tiles no longer keep a previous file's thumbnail after the window or tile
+  size changes, which could open a different file than the one shown.
 
 ## 1.4.0
 
