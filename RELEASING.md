@@ -1,8 +1,8 @@
 # Releasing Omaroll
 
 Start with [current status](docs/STATUS.md). v1.5.0 is the latest published
-release. A version is released only when its tag is pushed after desktop
-acceptance.
+release. Version 1.6.0 is prepared in the tree and is released only when its
+tag is pushed after desktop acceptance.
 
 1. Update the version in `CMakeLists.txt`, AppStream metadata, the changelog,
    README package command, and public feature descriptions.

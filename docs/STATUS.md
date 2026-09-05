@@ -1,7 +1,7 @@
 # Project status and handoff
 
-Snapshot: 5 September 2026 UTC, after the v1.5.0 release and four feature merges
-to main. Check the linked PRs and release before resuming.
+Snapshot: 5 September 2026 UTC, with 1.6.0 prepared after the v1.5.0 release and
+the feature merges that followed. Check the linked PRs and release before resuming.
 
 ## Released
 
@@ -47,11 +47,16 @@ of 949.9 to 257.2 ms for an image-ready submitted frame and 1181.2 to 471.9 ms
 for a ready grid. These are offscreen NVIDIA measurements from main entry,
 not compositor presentation or general performance guarantees.
 
-## Unreleased on main
+## 1.6.0 candidate
 
 Four feature PRs landed after the release, each squash merged with green CI and
-passing core and UI suites in the sandbox. None has had a physical desktop test
-yet, so they are not part of any tag until that gate is passed:
+passing core and UI suites in the sandbox. All were tested on the real Omarchy
+desktop on 5 September 2026, which found three problems fixed in
+[PR #16](https://github.com/btsouth/omaroll/pull/16) (Shift+Tab was an
+ambiguous shortcut), [PR #17](https://github.com/btsouth/omaroll/pull/17)
+(caption save depended on focus; a finished video left a blank stage) and
+[PR #18](https://github.com/btsouth/omaroll/pull/18) (header count wording).
+Version 1.6.0 carries all of it:
 
 - [PR #11](https://github.com/btsouth/omaroll/pull/11): Tab and Shift+Tab cycle
   the section pills.
@@ -63,7 +68,7 @@ yet, so they are not part of any tag until that gate is passed:
 - [PR #14](https://github.com/btsouth/omaroll/pull/14): tags nest with a slash
   and files take a caption in the viewer that is searched with names and text.
 
-The changelog carries them under Unreleased. Semantic search and face
+The changelog lists them under 1.6.0. Semantic search and face
 recognition were considered against Lightroom and Immich and deferred
 (SBS-1139); do not add ML dependencies without a fresh decision.
 
