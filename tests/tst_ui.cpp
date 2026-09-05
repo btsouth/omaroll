@@ -1994,7 +1994,11 @@ private slots:
     QVERIFY2(cutRow * cellHeight < view->height() && (cutRow + 1) * cellHeight > view->height(),
              "row is not partly visible at this size");
     const QString path = pathAt(index);
-    const QPointF inView(cellWidth / 2, cutRow * cellHeight + 40);
+    // Middle of the strip of the row that is still visible; the strip's height
+    // depends on the platform's fonts, so do not assume a depth.
+    const qreal strip = view->height() - cutRow * cellHeight;
+    QVERIFY2(strip >= 24, qPrintable(QStringLiteral("visible strip is only %1 px").arg(strip)));
+    const QPointF inView(cellWidth / 2, cutRow * cellHeight + strip / 2);
     int hit = -1;
     QVERIFY(QMetaObject::invokeMethod(view, "indexAt", Q_RETURN_ARG(int, hit),
                                       Q_ARG(qreal, inView.x()),
