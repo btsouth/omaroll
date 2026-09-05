@@ -18,6 +18,9 @@ add_library(omaroll_core STATIC
   src/app/DemoLibrary.h
   src/app/SingleInstance.cpp
   src/app/SingleInstance.h
+  src/app/OpenRequest.cpp
+  src/app/OpenRequest.h
+  src/app/HeadlessAudio.h
   src/library/CaptureRecord.h
   src/library/CaptureRoles.h
   src/library/CaptureModel.cpp
@@ -156,6 +159,8 @@ install(FILES README.md PRIVACY.md SUPPORT.md CHANGELOG.md
 # Tests
 include(CTest)
 if(BUILD_TESTING)
+  add_executable(omaroll_benchmark_library EXCLUDE_FROM_ALL tests/benchmark_library.cpp)
+  target_link_libraries(omaroll_benchmark_library PRIVATE omaroll_core)
   qt_add_executable(omaroll_tests tests/tst_omaroll.cpp)
   target_link_libraries(omaroll_tests PRIVATE omaroll_core Qt6::Test)
   add_test(NAME omaroll_tests COMMAND omaroll_tests)
@@ -165,7 +170,7 @@ if(BUILD_TESTING)
   # The suite touches QImage and QGuiApplication paths, so it needs a platform
   # plugin; offscreen keeps it runnable in a headless checkout or CI.
   set(omaroll_test_environment
-    "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=;QT_QUICK_BACKEND=software;QT_IM_MODULE=compose;PULSE_SERVER=unix:/nonexistent")
+    "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=;QT_QUICK_BACKEND=software;QT_IM_MODULE=compose;QT_AUDIO_BACKEND=pulseaudio;PULSE_SERVER=unix:/nonexistent;PIPEWIRE_REMOTE=omaroll-no-audio")
   set_tests_properties(omaroll_tests PROPERTIES ENVIRONMENT
     "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
 

@@ -17,6 +17,7 @@
 class CaptureScanner {
 public:
   struct Root {
+    // A directory to walk, or an explicitly opened file to include by itself.
     QString path;
     // Captures land flat, so depth 1. General media roots recurse.
     int maxDepth = 1;

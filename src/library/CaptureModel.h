@@ -70,6 +70,7 @@ public:
   // A directory handed to omaroll on the command line or by "Open with",
   // scanned alongside the usual roots for this session only.
   void setExtraRoot(const QString& directory);
+  Q_INVOKABLE void addExtraFiles(const QStringList& paths);
 
   Q_INVOKABLE void refresh();
 
@@ -131,6 +132,7 @@ private:
 
   AppSettings* m_settings = nullptr;
   QStringList m_extraRoots;
+  QSet<QString> m_extraFiles;
   QSet<QString> m_heldPaths;
   QList<CaptureRecord> m_records;
   QHash<QString, int> m_rowsByPath;

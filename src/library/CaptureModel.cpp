@@ -157,6 +157,9 @@ QList<CaptureScanner::Root> CaptureModel::roots() const {
   for (const QString& folder : std::as_const(m_extraRoots)) {
     list.append({folder, depth, CaptureRecord::Picture, CaptureRecord::Video});
   }
+  for (const QString& file : std::as_const(m_extraFiles)) {
+    list.append({file, 1, CaptureRecord::Picture, CaptureRecord::Video});
+  }
   if (m_settings) {
     for (const QString& folder : m_settings->libraryFolders()) {
       list.append({folder, depth, CaptureRecord::Picture, CaptureRecord::Video});
@@ -207,6 +210,19 @@ QVariantList CaptureModel::automaticFolders() const {
 }
 
 bool CaptureModel::folderAvailable(const QString& path) const { return QFileInfo(path).isDir(); }
+
+void CaptureModel::addExtraFiles(const QStringList& paths) {
+  const qsizetype before = m_extraFiles.size();
+  for (const QString& path : paths) {
+    const QFileInfo info(path);
+    if (info.isFile() && CaptureScanner::isSupported(info.suffix())) {
+      m_extraFiles.insert(info.canonicalFilePath());
+    }
+  }
+  if (m_extraFiles.size() != before) {
+    refresh();
+  }
+}
 
 void CaptureModel::setExtraRoot(const QString& directory) {
   const QString canonical = QFileInfo(directory).canonicalFilePath();

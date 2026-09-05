@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep automated playback and headless renders off physical audio devices, including native PipeWire.
+
+- Open multiple selected files in order, including across folders and in an already-running window.
+- Open explicitly selected hidden files without scanning their surrounding folders.
+
 - Sort numbered filenames naturally, so image2 appears before image10.
 - Confirm copying extracted text visually and through accessibility announcements.
 - Run real video rendering checks under Mesa OpenGL in CI and release validation.

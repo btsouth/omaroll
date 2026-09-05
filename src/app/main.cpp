@@ -3,6 +3,8 @@
 #include "actions/TailscalePeers.h"
 #include "app/AppSettings.h"
 #include "app/DemoLibrary.h"
+#include "app/HeadlessAudio.h"
+#include "app/OpenRequest.h"
 #include "app/SingleInstance.h"
 #include "library/CaptureFilterModel.h"
 #include "library/CaptureModel.h"
@@ -25,6 +27,8 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QIcon>
+#include <QAudioDevice>
+#include <QMediaDevices>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
@@ -41,6 +45,9 @@ QString optionValue(const QStringList& arguments, const QString& name) {
   const QString prefix = name + QLatin1Char('=');
   for (qsizetype index = 0; index < arguments.size(); ++index) {
     const QString& argument = arguments.at(index);
+    if (argument == QStringLiteral("--")) {
+      break;
+    }
     if (argument.startsWith(prefix)) {
       return argument.mid(prefix.size());
     }
@@ -55,6 +62,9 @@ QString optionValue(const QStringList& arguments, const QString& name) {
 bool optionPresent(const QStringList& arguments, const QString& name) {
   const QString prefix = name + QLatin1Char('=');
   for (const QString& argument : arguments) {
+    if (argument == QStringLiteral("--")) {
+      break;
+    }
     if (argument == name || argument.startsWith(prefix)) {
       return true;
     }
@@ -67,9 +77,11 @@ QString argumentError(const QStringList& arguments) {
       QStringLiteral("--render"), QStringLiteral("--render-view"), QStringLiteral("--render-size")};
   static const QStringList flagOptions = {QStringLiteral("--demo"), QStringLiteral("--help"),
                                           QStringLiteral("-h"), QStringLiteral("--version")};
-  int positional = 0;
   for (qsizetype index = 1; index < arguments.size(); ++index) {
     const QString& argument = arguments.at(index);
+    if (argument == QStringLiteral("--")) {
+      break;
+    }
     if (valueOptions.contains(argument)) {
       if (index + 1 >= arguments.size() || arguments.at(index + 1).startsWith(u"--")) {
         return QStringLiteral("%1 needs a value").arg(argument);
@@ -93,41 +105,39 @@ QString argumentError(const QStringList& arguments) {
     if (argument.startsWith(QLatin1Char('-'))) {
       return QStringLiteral("unknown option: %1").arg(argument);
     }
-    if (++positional > 1) {
-      return QStringLiteral("open one file or folder at a time");
-    }
   }
   return {};
 }
 
-// The first argument that is neither an option nor an option's value. The
-// desktop entry passes %f here, so "Open with Omaroll" on a picture or a
-// folder lands in it.
-QString positionalArgument(const QStringList& arguments) {
+// Paths after -- are literal, including names beginning with a dash.
+QStringList positionalArguments(const QStringList& arguments) {
   static const QStringList valueOptions = {
       QStringLiteral("--render"), QStringLiteral("--render-view"), QStringLiteral("--render-size")};
+  QStringList paths;
+  bool literal = false;
   for (qsizetype index = 1; index < arguments.size(); ++index) {
     const QString& argument = arguments.at(index);
-    if (valueOptions.contains(argument)) {
+    if (!literal && argument == QStringLiteral("--")) {
+      literal = true;
+    } else if (!literal && valueOptions.contains(argument)) {
       ++index;
-      continue;
+    } else if (literal || !argument.startsWith(QLatin1Char('-'))) {
+      paths.append(argument);
     }
-    if (argument.startsWith(QLatin1Char('-'))) {
-      continue;
-    }
-    return argument;
   }
-  return {};
+  return paths;
 }
 
 void printUsage() {
   QTextStream(stdout) << R"(omaroll - your media, in one beautiful library
 
 Usage:
-  omaroll [options] [file or folder]
+  omaroll [options] [file ... | folder]
 
 A file is selected and opened in the detail view; its folder is added to the
-library if it is not already watched. A folder is added to the library.
+library if it is not already watched. Multiple files open as a selection in
+the supplied order. A folder is added to the library. Use -- before filenames
+that begin with a dash.
 
 Options:
   --demo                 Browse a deterministic fictional library instead of
@@ -155,6 +165,9 @@ int main(int argc, char* argv[]) {
   // QGuiApplication, which would otherwise abort before printing anything.
   for (int index = 1; index < argc; ++index) {
     const QByteArray argument(argv[index]);
+    if (argument == "--") {
+      break;
+    }
     if (argument == "--help" || argument == "-h") {
       printUsage();
       return 0;
@@ -179,7 +192,11 @@ int main(int argc, char* argv[]) {
   // the offscreen platform instead, where the requested size is the size.
   for (int index = 1; index < argc; ++index) {
     const QByteArray argument(argv[index]);
+    if (argument == "--") {
+      break;
+    }
     if (argument == "--render" || argument.startsWith("--render=")) {
+      disableHeadlessAudio();
       // Omarchy exports QT_QPA_PLATFORM=wayland session-wide, so this is
       // unconditional. OMAROLL_RENDER_PLATFORM overrides it for checking
       // something the offscreen platform cannot draw, such as video frames.
@@ -207,6 +224,10 @@ int main(int argc, char* argv[]) {
 
   const QString renderPath = optionValue(arguments, QStringLiteral("--render"));
   const bool rendering = !renderPath.isEmpty();
+  if (rendering && !QMediaDevices::audioOutputs().isEmpty()) {
+    QTextStream(stderr) << "omaroll: refusing a headless render with audio outputs available\n";
+    return 1;
+  }
   if (!rendering && (optionPresent(arguments, QStringLiteral("--render-view")) ||
                      optionPresent(arguments, QStringLiteral("--render-size")))) {
     qWarning().noquote() << "omaroll: --render-view and --render-size require --render";
@@ -237,39 +258,21 @@ int main(int argc, char* argv[]) {
       return 2;
     }
   }
-  const bool demo = rendering || arguments.contains(QStringLiteral("--demo"));
-  const QString requestedPath = demo ? QString() : positionalArgument(arguments);
-
-  if (!requestedPath.isEmpty()) {
-    const QFileInfo handed(requestedPath);
-    if (!handed.exists()) {
-      qWarning().noquote() << "omaroll: file or folder does not exist:" << requestedPath;
-      return 2;
-    }
-    if (!handed.isReadable()) {
-      qWarning().noquote() << "omaroll: cannot read:" << requestedPath;
-      return 2;
-    }
-    if (handed.isDir()) {
-      const QString canonical = handed.canonicalFilePath();
-      const QString home = QFileInfo(QDir::homePath()).canonicalFilePath();
-      if (canonical == home || canonical == QDir::rootPath()) {
-        qWarning().noquote() << "omaroll: choose a media folder, not your home "
-                                "or filesystem root";
-        return 2;
-      }
-    }
-    if (handed.isFile() && !CaptureScanner::isSupported(handed.suffix())) {
-      qWarning().noquote() << "omaroll: unsupported media file:" << requestedPath;
-      return 2;
-    }
+  const bool demo = rendering || optionPresent(arguments, QStringLiteral("--demo"));
+  const OpenRequest request =
+      OpenRequest::fromPaths(demo ? QStringList() : positionalArguments(arguments));
+  if (!request.error.isEmpty()) {
+    qWarning().noquote() << "omaroll:" << request.error;
+    return 2;
   }
+  const QStringList requestedPaths =
+      request.folder.isEmpty() ? request.files : QStringList{request.folder};
 
   // A render is a one-shot batch job and a demo is a throwaway window; neither
   // should take over, or be refused by, a real session's instance.
   SingleInstance instance;
   if (!rendering && !demo) {
-    if (!instance.claimOrNotify(requestedPath)) {
+    if (!instance.claimOrNotify(requestedPaths)) {
       return 0;
     }
   }
@@ -356,18 +359,17 @@ int main(int argc, char* argv[]) {
 
   // "Open with": a file is selected once the scan lands, and its folder joins
   // the library if no watched root already covers it. A folder simply joins.
-  QString initialPath;
-  QString initialFolderPath;
-  if (!demo) {
-    const QFileInfo handed(requestedPath);
-    if (handed.isDir()) {
-      initialFolderPath = handed.canonicalFilePath();
-      captures.setExtraRoot(initialFolderPath);
-    } else if (handed.isFile()) {
-      initialPath = handed.canonicalFilePath();
-      captures.setExtraRoot(handed.canonicalPath());
+  const auto addRequest = [&captures](const OpenRequest& opened) {
+    if (!opened.folder.isEmpty()) {
+      captures.setExtraRoot(opened.folder);
+    } else {
+      captures.addExtraFiles(opened.files);
+      if (opened.files.size() == 1) {
+        captures.setExtraRoot(QFileInfo(opened.files.first()).canonicalPath());
+      }
     }
-  }
+  };
+  addRequest(request);
 
   ActionLauncher actions;
   ActionRegistry registry(&actions);
@@ -410,8 +412,8 @@ int main(int argc, char* argv[]) {
   engine.rootContext()->setContextProperty(QStringLiteral("MediaDates"), &mediaDates);
   engine.rootContext()->setContextProperty(QStringLiteral("Tailscale"), &tailscale);
   engine.rootContext()->setContextProperty(QStringLiteral("DemoMode"), demo);
-  engine.rootContext()->setContextProperty(QStringLiteral("InitialPath"), initialPath);
-  engine.rootContext()->setContextProperty(QStringLiteral("InitialFolderPath"), initialFolderPath);
+  engine.rootContext()->setContextProperty(QStringLiteral("InitialPaths"), request.files);
+  engine.rootContext()->setContextProperty(QStringLiteral("InitialFolderPath"), request.folder);
 
   QObject::connect(
       &engine, &QQmlApplicationEngine::objectCreationFailed, &application,
@@ -425,21 +427,20 @@ int main(int argc, char* argv[]) {
   if (!rendering && !demo) {
     auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst());
     QObject::connect(&instance, &SingleInstance::activationRequested, &application,
-                     [window, &captures](const QString& path) {
+                     [window, addRequest](const QStringList& paths) {
+                       const OpenRequest opened = OpenRequest::fromPaths(paths);
+                       if (!opened.error.isEmpty()) {
+                         QMetaObject::invokeMethod(window, "say", Q_ARG(QVariant, opened.error));
+                         return;
+                       }
                        window->show();
                        window->raise();
                        window->requestActivate();
-
-                       const QFileInfo handed(path);
-                       if (handed.isDir()) {
-                         const QString canonical = handed.canonicalFilePath();
-                         captures.setExtraRoot(canonical);
-                         QMetaObject::invokeMethod(window, "openFolder",
-                                                   Q_ARG(QVariant, canonical));
-                       } else if (handed.isFile()) {
-                         const QString canonical = handed.canonicalFilePath();
-                         captures.setExtraRoot(handed.canonicalPath());
-                         QMetaObject::invokeMethod(window, "openPath", Q_ARG(QVariant, canonical));
+                       addRequest(opened);
+                       if (!opened.folder.isEmpty()) {
+                         QMetaObject::invokeMethod(window, "openFolder", Q_ARG(QVariant, opened.folder));
+                       } else if (!opened.files.isEmpty()) {
+                         QMetaObject::invokeMethod(window, "openPaths", Q_ARG(QVariant, opened.files));
                        }
                      });
   }

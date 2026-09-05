@@ -9,7 +9,7 @@ mkdir -p "$output_dir"
 export QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME= QT_IM_MODULE=compose
 export QT_QUICK_BACKEND=rhi QSG_RHI_BACKEND=opengl LIBGL_ALWAYS_SOFTWARE=1
 export OMAROLL_REQUIRE_OPENGL=1
-export PULSE_SERVER=unix:/nonexistent
+export QT_AUDIO_BACKEND=pulseaudio PULSE_SERVER=unix:/nonexistent PIPEWIRE_REMOTE=omaroll-no-audio
 
 timeout 180 "$build_dir/omaroll_ui_tests"
 for view in grid video ocr; do

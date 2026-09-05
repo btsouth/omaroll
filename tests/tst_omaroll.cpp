@@ -2,7 +2,12 @@
 #include "actions/ActionRegistry.h"
 #include "actions/TailscalePeers.h"
 #include "app/AppSettings.h"
+#include "app/HeadlessAudio.h"
 #include "app/SingleInstance.h"
+#include "app/OpenRequest.h"
+#include <QLocalSocket>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include "library/CaptureFilterModel.h"
 #include "library/CaptureModel.h"
 #include "library/CaptureRoles.h"
@@ -56,9 +61,121 @@ private slots:
 
     SingleInstance second(server);
     const QString path = QStringLiteral("/tmp/a strange # capture.png");
-    QVERIFY(!second.claimOrNotify(path));
+    QVERIFY(!second.claimOrNotify({path}));
     QTRY_COMPARE_WITH_TIMEOUT(activation.size(), 1, 1000);
-    QCOMPARE(activation.first().first().toString(), path);
+    QCOMPARE(activation.first().first().toStringList(), QStringList{path});
+  }
+
+  void singleInstanceForwardsMultiplePaths() {
+    const QString server = QStringLiteral("omaroll-selection-%1").arg(QCoreApplication::applicationPid());
+    SingleInstance first(server);
+    QVERIFY(first.claimOrNotify());
+    QSignalSpy activation(&first, &SingleInstance::activationRequested);
+    const QStringList paths{QStringLiteral("/tmp/one folder/a # 雪.png"),
+                            QStringLiteral("/tmp/other folder/b.webp"),
+                            QStringLiteral("/tmp/one folder/c.gif")};
+    SingleInstance second(server);
+    QVERIFY(!second.claimOrNotify(paths));
+    QTRY_COMPARE(activation.size(), 1);
+    QCOMPARE(activation.first().first().toStringList(), paths);
+    SingleInstance third(server);
+    QVERIFY(!third.claimOrNotify());
+    QTRY_COMPARE(activation.size(), 2);
+    QVERIFY(activation.last().first().toStringList().isEmpty());
+  }
+
+  void openRequestValidatesAndPreservesSelection() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString first = dir.filePath(QStringLiteral("a space # 雪.png"));
+    const QString second = dir.filePath(QStringLiteral(".hidden.webp"));
+    for (const QString& path : {first, second}) {
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("fixture");
+    }
+    const QString alias = dir.filePath(QStringLiteral("alias.png"));
+    QVERIFY(QFile::link(first, alias));
+    const OpenRequest selection = OpenRequest::fromPaths({second, first, alias});
+    QVERIFY(selection.error.isEmpty());
+    QCOMPARE(selection.files, (QStringList{second, first}));
+    QVERIFY(selection.folder.isEmpty());
+    const OpenRequest folder = OpenRequest::fromPaths({dir.path()});
+    QVERIFY(folder.error.isEmpty());
+    QCOMPARE(folder.folder, dir.path());
+    for (const QStringList& paths : {QStringList{first, dir.filePath("missing.png")},
+                                     QStringList{first, dir.path()},
+                                     QStringList{QDir::homePath()}}) {
+      const OpenRequest rejected = OpenRequest::fromPaths(paths);
+      QVERIFY(!rejected.error.isEmpty());
+      QVERIFY(rejected.files.isEmpty());
+      QVERIFY(rejected.folder.isEmpty());
+    }
+    // Explicit files do not pull in neighbors and may include dotfiles.
+    const auto records = CaptureScanner::scan({{second, 1}, {first, 1}, {alias, 1}});
+    QCOMPARE(records.size(), 2);
+    QSet<QString> found;
+    for (const auto& record : records) found.insert(record.path);
+    QCOMPARE(found, (QSet<QString>{first, second}));
+  }
+
+  void singleInstanceAcceptsLegacyAndFragmentedRequests() {
+    const QString server = QStringLiteral("omaroll-fragments-%1").arg(QCoreApplication::applicationPid());
+    SingleInstance first(server);
+    QVERIFY(first.claimOrNotify());
+    QSignalSpy activation(&first, &SingleInstance::activationRequested);
+    QLocalSocket sender;
+    sender.connectToServer(server);
+    QVERIFY(sender.waitForConnected());
+    const QString path = QStringLiteral("/tmp/space # 雪.png");
+    const QByteArray message = QJsonDocument(QJsonObject{{QStringLiteral("path"), path}}).toJson(QJsonDocument::Compact);
+    sender.write(message.left(message.size() / 2));
+    sender.flush();
+    QTest::qWait(30);
+    QCOMPARE(activation.size(), 0);
+    sender.write(message.mid(message.size() / 2) + "\n");
+    sender.flush();
+    QTRY_COMPARE(activation.size(), 1);
+    QCOMPARE(activation.first().first().toStringList(), QStringList{path});
+  }
+
+  void executableForwardsCanonicalSelectionAndRejectsInvalidBatch() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString first = dir.filePath(QStringLiteral("--render=雪.png"));
+    const QString second = dir.filePath(QStringLiteral("a space #.webp"));
+    for (const QString& path : {first, second}) {
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("fixture");
+    }
+    const QByteArray oldDisplay = qgetenv("WAYLAND_DISPLAY");
+    qputenv("WAYLAND_DISPLAY", QFileInfo(dir.path()).fileName().toUtf8());
+    SingleInstance receiver;
+    oldDisplay.isNull() ? qunsetenv("WAYLAND_DISPLAY") : qputenv("WAYLAND_DISPLAY", oldDisplay);
+    QVERIFY(receiver.claimOrNotify());
+    QSignalSpy activation(&receiver, &SingleInstance::activationRequested);
+    QProcess process;
+    auto environment = QProcessEnvironment::systemEnvironment();
+    environment.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("offscreen"));
+    environment.insert(QStringLiteral("QT_QPA_PLATFORMTHEME"), QString());
+    environment.insert(QStringLiteral("WAYLAND_DISPLAY"), QFileInfo(dir.path()).fileName());
+    environment.insert(QStringLiteral("QT_FORCE_STDERR_LOGGING"), QStringLiteral("1"));
+    process.setProcessEnvironment(environment);
+    process.setWorkingDirectory(dir.path());
+    const QString binary = QCoreApplication::applicationDirPath() + QStringLiteral("/omaroll");
+    process.start(binary, {QStringLiteral("--"), QFileInfo(first).fileName(), second, first});
+    QVERIFY(process.waitForFinished(5000));
+    QCOMPARE(process.exitCode(), 0);
+    QTRY_COMPARE(activation.size(), 1);
+    QCOMPARE(activation.first().first().toStringList(), (QStringList{first, second}));
+    activation.clear();
+    process.start(binary, {first, dir.filePath(QStringLiteral("missing.png"))});
+    QVERIFY(process.waitForFinished(5000));
+    QCOMPARE(process.exitCode(), 2);
+    QVERIFY(process.readAllStandardError().contains("does not exist"));
+    QTest::qWait(30);
+    QVERIFY(activation.isEmpty());
   }
 
   void disabledXdgPictureDirectoryDoesNotScanHome() {
@@ -809,6 +926,7 @@ private slots:
     environment.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("offscreen"));
     environment.insert(QStringLiteral("QT_QUICK_BACKEND"), QStringLiteral("software"));
     environment.insert(QStringLiteral("QT_QPA_PLATFORMTHEME"), QString());
+    environment.insert(QStringLiteral("QT_FORCE_STDERR_LOGGING"), QStringLiteral("1"));
     process.setProcessEnvironment(environment);
     process.start(QCoreApplication::applicationDirPath() + QStringLiteral("/omaroll"), {pdf});
     QVERIFY(process.waitForStarted());
@@ -2923,13 +3041,31 @@ private slots:
     QCOMPARE(argv, (QStringList {QStringLiteral("laptop.tail.ts.net"), first, second}));
   }
 
-  void clipToGifRunsTheRealTranscoderEndToEnd() {
+  void clipToGifRunsRealConversionWithoutDesktopSideEffects() {
     if (QStandardPaths::findExecutable(QStringLiteral("omarchy-transcode")).isEmpty() ||
         QStandardPaths::findExecutable(QStringLiteral("ffmpeg")).isEmpty()) {
       QSKIP("omarchy-transcode or ffmpeg not installed");
     }
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
+
+    // Keep the real conversion, but never notify the desktop or replace the
+    // user's clipboard from an automated test. The session bus stays blocked
+    // when this suite runs in the local sandbox.
+    const QString bin = dir.filePath(QStringLiteral("bin"));
+    QVERIFY(QDir().mkpath(bin));
+    for (const QString& name : {QStringLiteral("omarchy-notification-send"), QStringLiteral("wl-copy")}) {
+      QFile helper(bin + QLatin1Char('/') + name);
+      QVERIFY(helper.open(QIODevice::WriteOnly));
+      helper.write(name == QStringLiteral("wl-copy") ? "#!/bin/sh\ncat >/dev/null\n"
+                                                     : "#!/bin/sh\nexit 0\n");
+      helper.close();
+      QVERIFY(helper.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                    QFileDevice::ExeOwner));
+    }
+    const QByteArray previousPath = qgetenv("PATH");
+    const auto restorePath = qScopeGuard([&] { qputenv("PATH", previousPath); });
+    QVERIFY(qputenv("PATH", bin.toUtf8() + ':' + previousPath));
 
     const QString source = dir.filePath(QStringLiteral("screenrecording-2026-09-02_09-00-00.mp4"));
     QProcess ffmpeg;
@@ -3209,5 +3345,11 @@ private:
   QTemporaryDir m_scratch;
 };
 
-QTEST_MAIN(OmarollTest)
+int main(int argc, char* argv[]) {
+  disableHeadlessAudio();
+  QGuiApplication application(argc, argv);
+  OmarollTest test;
+  QTEST_SET_MAIN_SOURCE_PATH
+  return QTest::qExec(&test, argc, argv);
+}
 #include "tst_omaroll.moc"

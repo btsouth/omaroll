@@ -165,7 +165,10 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots, const std::a
   QSet<QString> reportedDirectories;
 
   for (const Root& root : roots) {
-    const QString canonicalRoot = QFileInfo(root.path).canonicalFilePath();
+    const QFileInfo rootInfo(root.path);
+    const bool explicitFile = rootInfo.isFile();
+    const QString canonicalRoot = explicitFile ? rootInfo.canonicalPath()
+                                              : rootInfo.canonicalFilePath();
     if (canonicalRoot.isEmpty()) {
       continue;
     }
@@ -196,8 +199,9 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots, const std::a
       }
 
       QDir dir(directory);
-      const QFileInfoList entries =
-          dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot, QDir::NoSort);
+      const QFileInfoList entries = explicitFile
+          ? QFileInfoList{rootInfo}
+          : dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot, QDir::NoSort);
 
       for (const QFileInfo& entry : entries) {
         const QString name = entry.fileName();
@@ -212,7 +216,7 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots, const std::a
           continue;
         }
 
-        if (name.startsWith(QLatin1Char('.')) || isTransientCaptureArtifact(name)) {
+        if (!explicitFile && (name.startsWith(QLatin1Char('.')) || isTransientCaptureArtifact(name))) {
           continue;
         }
 

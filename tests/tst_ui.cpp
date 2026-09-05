@@ -14,6 +14,7 @@
 #include "actions/TailscalePeers.h"
 #include "app/AppSettings.h"
 #include "app/DemoLibrary.h"
+#include "app/HeadlessAudio.h"
 #include "library/CaptureFilterModel.h"
 #include "library/CaptureModel.h"
 #include "library/DuplicateIndex.h"
@@ -31,6 +32,8 @@
 
 #include <QAudioBuffer>
 #include <QAudioBufferOutput>
+#include <QAudioDevice>
+#include <QMediaDevices>
 #include <QClipboard>
 #include <QDir>
 #include <QFile>
@@ -52,6 +55,7 @@
 #include <QStyleHints>
 #include <QTemporaryDir>
 #include <QThreadPool>
+#include <QTextStream>
 #include <QVideoSink>
 #include <QVideoFrame>
 #include <QtTest>
@@ -179,7 +183,7 @@ private slots:
     context->setContextProperty(QStringLiteral("MediaDates"), m_mediaDates);
     context->setContextProperty(QStringLiteral("Tailscale"), m_tailscale);
     context->setContextProperty(QStringLiteral("DemoMode"), true);
-    context->setContextProperty(QStringLiteral("InitialPath"), QString());
+    context->setContextProperty(QStringLiteral("InitialPaths"), QStringList());
     context->setContextProperty(QStringLiteral("InitialFolderPath"), QString());
 
     m_engine->loadFromModule("Omaroll", "Main");
@@ -1282,6 +1286,64 @@ private slots:
     QTRY_COMPARE_WITH_TIMEOUT(preview->property("status").toInt(), 1, 15000);
   }
 
+  void explicitSelectionNavigatesInOrderAcrossFolders() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(QDir().mkpath(dir.filePath("other folder")));
+    const QString first = dir.filePath(QStringLiteral(".first # 雪.png"));
+    const QString second = dir.filePath(QStringLiteral("other folder/second.png"));
+    const QString third = dir.filePath(QStringLiteral("third.png"));
+    QImage fixture(80, 60, QImage::Format_RGB32);
+    fixture.fill(Qt::green);
+    for (const QString& path : {first, second, third}) QVERIFY(fixture.save(path));
+    const QStringList selection{second, first, third};
+    m_captures->addExtraFiles(selection);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openPaths", Q_ARG(QVariant, selection)));
+    QQuickItem* detail = item("detail");
+    const auto restore = qScopeGuard([&] {
+      QMetaObject::invokeMethod(m_window, "openFolder", Q_ARG(QVariant, QString()));
+      m_captures->refresh();
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(detail->isVisible(), 5000);
+    QTRY_COMPARE(detail->property("path").toString(), second);
+    QTRY_VERIFY(detail->property("canNavigate").toBool());
+    QCOMPARE(detail->property("selectionLabel").toString(), QStringLiteral("1 of 3 selected files"));
+    QTRY_VERIFY_WITH_TIMEOUT(detail->property("stillReady").toBool(), 5000);
+    for (const QString& expected : {first, third, second}) {
+      QTest::keyClick(m_window, Qt::Key_Right);
+      QTRY_COMPARE(detail->property("path").toString(), expected);
+    }
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QTRY_COMPARE(detail->property("path").toString(), third);
+    QVERIFY(QFile::remove(first));
+    m_captures->refresh();
+    QTRY_COMPARE(m_library->rowOf(first), -1);
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QTRY_COMPARE(detail->property("path").toString(), second);
+    // A later Open With request replaces the previous selection.
+    const QStringList replacement{third, second};
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openPaths", Q_ARG(QVariant, replacement)));
+    QTRY_COMPARE(detail->property("path").toString(), third);
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTRY_COMPARE(detail->property("path").toString(), second);
+    // Renaming a directly added file must keep its result discoverable.
+    perform(QStringLiteral("rename"), second);
+    QTRY_VERIFY(item("renameSheet")->isVisible());
+    item("renameInput")->setProperty("text", QStringLiteral("renamed selection"));
+    click(pill(item("renameSheet"), QStringLiteral("Rename")));
+    QTRY_VERIFY(!item("renameSheet")->isVisible());
+    const QString renamed = dir.filePath(QStringLiteral("other folder/renamed selection.png"));
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(renamed) >= 0, 5000);
+    openDetail(m_library->rowOf(renamed));
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QTRY_COMPARE(detail->property("path").toString(), third);
+    // A single-file request restores the folder navigation behavior.
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openPath", Q_ARG(QVariant, renamed)));
+    QVERIFY(prop("viewerPaths").value<QJSValue>().toVariant().toList().isEmpty());
+    QVERIFY(prop("viewerFolderOnly").toBool());
+    QVERIFY(detail->property("selectionLabel").toString().isEmpty());
+  }
+
   void pdfPreviewPagesInPlaceAndOffersDocumentActions() {
     {
       QPdfWriter writer(m_pdfPath);
@@ -1737,8 +1799,13 @@ private:
 // session this would open a real window on the desktop, be resized by the
 // tiling compositor, and click the wrong things.
 int main(int argc, char* argv[]) {
+  disableHeadlessAudio();
   qputenv("QT_QPA_PLATFORM", "offscreen");
   QGuiApplication application(argc, argv);
+  if (!QMediaDevices::audioOutputs().isEmpty()) {
+    QTextStream(stderr) << "Refusing playback tests with audio outputs available\n";
+    return 1;
+  }
   UiTest test;
   QTEST_SET_MAIN_SOURCE_PATH
   return QTest::qExec(&test, argc, argv);
