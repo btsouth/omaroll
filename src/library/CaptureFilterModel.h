@@ -42,6 +42,8 @@ class CaptureFilterModel final : public QSortFilterProxyModel {
   Q_PROPERTY(QVariantList cameras READ cameras NOTIFY camerasChanged)
   Q_PROPERTY(QVariantList lenses READ lenses NOTIFY camerasChanged)
   Q_PROPERTY(
+      int minimumRating READ minimumRating WRITE setMinimumRating NOTIFY minimumRatingChanged)
+  Q_PROPERTY(
       QString smartCollectionFilter READ smartCollectionFilter NOTIFY smartCollectionFilterChanged)
   Q_PROPERTY(bool showHidden READ showHidden WRITE setShowHidden NOTIFY showHiddenChanged)
   Q_PROPERTY(
@@ -60,6 +62,7 @@ public:
     LargestFirst,
     SmallestFirst,
     NameAscending,
+    RatingFirst,
   };
   Q_ENUM(SortMode)
 
@@ -112,6 +115,9 @@ public:
   void setLensFilter(const QString& lens);
   [[nodiscard]] QVariantList cameras() const { return m_cameras; }
   [[nodiscard]] QVariantList lenses() const { return m_lenses; }
+  // Stars a file needs to show. Zero shows everything, including unrated.
+  [[nodiscard]] int minimumRating() const { return m_minimumRating; }
+  void setMinimumRating(int stars);
 
   [[nodiscard]] QString smartCollectionFilter() const { return m_smartCollectionFilter; }
   Q_INVOKABLE QVariantMap currentView() const;
@@ -189,6 +195,7 @@ signals:
   void cameraFilterChanged();
   void lensFilterChanged();
   void camerasChanged();
+  void minimumRatingChanged();
   void smartCollectionFilterChanged();
   void showHiddenChanged();
   void duplicatesOnlyChanged();
@@ -234,6 +241,7 @@ private:
   QString m_lensFilter;
   QVariantList m_cameras;
   QVariantList m_lenses;
+  int m_minimumRating = 0;
   QString m_smartCollectionFilter;
   bool m_favoritesOnly = false;
   bool m_showHidden = false;

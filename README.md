@@ -57,11 +57,14 @@ on them.
 - **Browses time directly.** Open a month or day, jump to today or this week,
   find recently modified files, or see what changed since the previous visit.
 - **Saves useful views.** Any combination of search, kind, folder, date, tag,
-  favourites, hidden files, and sort order can become a smart collection that
+  favourites, minimum rating, hidden files, and sort order can become a smart collection that
   updates as files change.
 - **Browses by camera.** Photos and videos with embedded camera details can
   be filtered by camera or lens from Browse, and a saved view remembers the
   choice. A library of screenshots never shows the section.
+- **Rates what matters.** Give any file one to five stars from the viewer or
+  with `Alt+1` to `Alt+5`, sort by rating, and narrow any view to a minimum
+  rating. Ratings are stored with favourites and never touch the file.
 - **Adds lightweight tags.** Tag any selection and browse it without moving or
   copying files. Tags follow in-app renames and can be combined with saved views.
 - **Knows what each file is.** Omarchy stamps its captures with a predictable
@@ -176,6 +179,7 @@ and put on your clipboard.
 | `Y` · `S` · `F` | Clipboard · Send · Show in files |
 | `V` · `Ctrl+H` | Favourite · Hide |
 | `1`-`8` · `Tab` `Shift+Tab` | Jump to a section · next · previous section |
+| `Alt+1`-`Alt+5` · `Alt+0` | Rate · clear rating, in the grid or the viewer |
 | `Page Up` `Page Down` in a PDF preview | Previous · next page |
 | `X` · `Ctrl+A` | Select · Select all |
 | with a selection | `V` `Ctrl+H` `Y` `S` `Del` act on every checked file |

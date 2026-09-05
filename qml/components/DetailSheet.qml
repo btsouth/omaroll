@@ -28,6 +28,7 @@ Item {
     property int pdfPage: 1
     property double stamp: 0
     property bool favorite: false
+    property int rating: 0
     property int kind: 0
     property string playbackError: ""
     property bool canNavigate: false
@@ -113,6 +114,7 @@ Item {
     }
 
     signal actionTriggered(string id)
+    signal rateRequested(int stars)
     signal navigateRequested(int direction)
     signal fullScreenRequested(bool enabled)
 
@@ -1297,6 +1299,32 @@ Item {
                     font.family: Theme.fontFamily
                     font.pixelSize: 11
                     color: Theme.mutedText
+                }
+
+                // Rating. Click a star to set it, or the lit star again to
+                // clear. Alt+1 to Alt+5 and Alt+0 do the same from the keyboard.
+                Row {
+                    objectName: "viewerRating"
+                    spacing: 2
+
+                    Repeater {
+                        model: 5
+
+                        Text {
+                            required property int index
+                            readonly property bool lit: index < root.rating
+                            text: "★"
+                            font.pixelSize: 15
+                            color: lit ? Theme.yellow : root.shade(Theme.foreground, 0.28)
+                            Accessible.role: Accessible.Button
+                            Accessible.name: (index + 1) + (index === 0 ? " star" : " stars")
+
+                            TapHandler {
+                                onTapped: root.rateRequested(index + 1 === root.rating
+                                                             ? 0 : index + 1)
+                            }
+                        }
+                    }
                 }
 
                 Repeater {

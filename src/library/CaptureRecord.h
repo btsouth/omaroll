@@ -51,6 +51,8 @@ struct CaptureRecord {
   // them, so discovery stays a pure function of the filesystem.
   bool favorite = false;
   bool hidden = false;
+  // Stars, 1 to 5; zero is unrated.
+  int rating = 0;
 
   [[nodiscard]] bool isVideo() const { return video; }
   [[nodiscard]] bool isDocument() const { return document || kind == Document; }

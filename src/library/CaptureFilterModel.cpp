@@ -527,6 +527,19 @@ void CaptureFilterModel::setLensFilter(const QString& lens) {
   emit countChanged();
 }
 
+void CaptureFilterModel::setMinimumRating(int stars) {
+  const int bounded = qBound(0, stars, 5);
+  if (m_minimumRating == bounded) {
+    return;
+  }
+  beginFilterUpdate();
+  m_minimumRating = bounded;
+  endFilterUpdate();
+  clearSmartCollection();
+  emit minimumRatingChanged();
+  emit countChanged();
+}
+
 QVariantMap CaptureFilterModel::currentView() const {
   QVariantMap view;
   view.insert(QStringLiteral("search"), m_searchText);
@@ -541,6 +554,7 @@ QVariantMap CaptureFilterModel::currentView() const {
   view.insert(QStringLiteral("tag"), m_tagFilter);
   view.insert(QStringLiteral("camera"), m_cameraFilter);
   view.insert(QStringLiteral("lens"), m_lensFilter);
+  view.insert(QStringLiteral("minRating"), m_minimumRating);
   view.insert(QStringLiteral("sort"), m_sortMode);
   return view;
 }
@@ -565,8 +579,9 @@ void CaptureFilterModel::applyView(const QString& name, const QVariantMap& view,
   m_tagPaths = QSet<QString>(tagPaths.begin(), tagPaths.end());
   m_cameraFilter = view.value(QStringLiteral("camera")).toString();
   m_lensFilter = view.value(QStringLiteral("lens")).toString();
+  m_minimumRating = qBound(0, view.value(QStringLiteral("minRating")).toInt(), 5);
   m_sortMode = qBound(0, view.value(QStringLiteral("sort"), NewestFirst).toInt(),
-                      static_cast<int>(NameAscending));
+                      static_cast<int>(RatingFirst));
   m_albumFilter.clear();
   m_albumPaths.clear();
   m_duplicatesOnly = false;
@@ -583,6 +598,7 @@ void CaptureFilterModel::applyView(const QString& name, const QVariantMap& view,
   emit tagFilterChanged();
   emit cameraFilterChanged();
   emit lensFilterChanged();
+  emit minimumRatingChanged();
   emit sortModeChanged();
   emit albumFilterChanged();
   emit duplicatesOnlyChanged();
@@ -878,6 +894,11 @@ bool CaptureFilterModel::recordLessThan(const CaptureRecord& first,
       return names < 0;
     }
     return pathOrder();
+  case RatingFirst:
+    if (first.rating != second.rating) {
+      return first.rating > second.rating;
+    }
+    return first.captured != second.captured ? first.captured > second.captured : pathOrder();
   case NewestFirst:
   default:
     return first.captured != second.captured ? first.captured > second.captured : pathOrder();
@@ -942,6 +963,9 @@ bool CaptureFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex& sour
     return false;
   }
   if (m_favoritesOnly && !record.favorite) {
+    return false;
+  }
+  if (m_minimumRating > 0 && record.rating < m_minimumRating) {
     return false;
   }
   if (!m_albumFilter.isEmpty() && !m_albumPaths.contains(record.path)) {

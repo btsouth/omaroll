@@ -15,6 +15,9 @@
 namespace {
 constexpr auto kFavorites = "library/favorites";
 constexpr auto kHidden = "library/hidden";
+// One "stars:path" entry per rated file, so the ini stays readable by hand.
+constexpr auto kRatings = "library/ratings";
+constexpr int kMaximumRating = 5;
 constexpr auto kShowHidden = "library/showHidden";
 constexpr auto kSortMode = "library/sortMode";
 constexpr auto kKindFilter = "library/kindFilter";
@@ -95,8 +98,19 @@ AppSettings::AppSettings(QObject* parent)
   const QStringList hidden = m_settings.value(kHidden).toStringList();
   m_hidden = QSet<QString>(hidden.begin(), hidden.end());
 
+  const QStringList ratings = m_settings.value(kRatings).toStringList();
+  for (const QString& entry : ratings) {
+    const qsizetype colon = entry.indexOf(QLatin1Char(':'));
+    bool okay = false;
+    const int stars = colon > 0 ? entry.first(colon).toInt(&okay) : 0;
+    const QString path = colon > 0 ? entry.sliced(colon + 1) : QString();
+    if (okay && stars >= 1 && stars <= kMaximumRating && !path.isEmpty()) {
+      m_ratings.insert(path, stars);
+    }
+  }
+
   m_showHidden = m_settings.value(kShowHidden, false).toBool();
-  m_sortMode = qBound(0, m_settings.value(kSortMode, 0).toInt(), 4);
+  m_sortMode = qBound(0, m_settings.value(kSortMode, 0).toInt(), 5);
   m_kindFilter = qBound(-1, m_settings.value(kKindFilter, -1).toInt(), 5);
   m_scanDownloads = m_settings.value(kScanDownloads, true).toBool();
   m_recursionDepth = qBound(1, m_settings.value(kRecursionDepth, 4).toInt(), 8);
@@ -186,9 +200,9 @@ void AppSettings::setShowHidden(bool value) {
 }
 
 void AppSettings::setSortMode(int value) {
-  // Five modes; an ini edited by hand or by an older version must not leave
+  // Six modes; an ini edited by hand or by an older version must not leave
   // the sort menu reading "undefined".
-  const int bounded = qBound(0, value, 4);
+  const int bounded = qBound(0, value, 5);
   if (m_sortMode == bounded) {
     return;
   }
@@ -308,6 +322,10 @@ void AppSettings::relocatePath(const QString& oldPath, const QString& newPath) {
   }
   if (m_hidden.remove(oldPath)) {
     m_hidden.insert(newPath);
+    marksChangedValue = true;
+  }
+  if (const int stars = m_ratings.take(oldPath); stars > 0) {
+    m_ratings.insert(newPath, stars);
     marksChangedValue = true;
   }
   if (marksChangedValue) {
@@ -783,6 +801,29 @@ void AppSettings::toggleFavorite(const QString& path) {
   emit marksChanged();
 }
 
+int AppSettings::rating(const QString& path) const { return m_ratings.value(path, 0); }
+
+void AppSettings::setRating(const QStringList& paths, int rating) {
+  const int stars = qBound(0, rating, kMaximumRating);
+  bool changed = false;
+  for (const QString& path : paths) {
+    if (path.isEmpty()) {
+      continue;
+    }
+    if (stars == 0) {
+      changed = m_ratings.remove(path) > 0 || changed;
+    } else if (m_ratings.value(path, 0) != stars) {
+      m_ratings.insert(path, stars);
+      changed = true;
+    }
+  }
+  if (!changed) {
+    return;
+  }
+  persistMarks();
+  emit marksChanged();
+}
+
 void AppSettings::toggleHidden(const QString& path) {
   if (path.isEmpty()) {
     return;
@@ -824,6 +865,9 @@ void AppSettings::setHidden(const QStringList& paths, bool on) {
 QStringList AppSettings::markedPaths() const {
   QSet<QString> all = m_favorites;
   all.unite(m_hidden);
+  for (auto it = m_ratings.cbegin(); it != m_ratings.cend(); ++it) {
+    all.insert(it.key());
+  }
   return QStringList(all.begin(), all.end());
 }
 
@@ -832,6 +876,7 @@ void AppSettings::forgetMarks(const QStringList& paths) {
   for (const QString& path : paths) {
     changed = m_favorites.remove(path) || changed;
     changed = m_hidden.remove(path) || changed;
+    changed = m_ratings.remove(path) > 0 || changed;
   }
   if (changed) {
     persistMarks();
@@ -841,4 +886,11 @@ void AppSettings::forgetMarks(const QStringList& paths) {
 void AppSettings::persistMarks() {
   m_settings.setValue(kFavorites, QStringList(m_favorites.begin(), m_favorites.end()));
   m_settings.setValue(kHidden, QStringList(m_hidden.begin(), m_hidden.end()));
+  QStringList ratings;
+  ratings.reserve(m_ratings.size());
+  for (auto it = m_ratings.cbegin(); it != m_ratings.cend(); ++it) {
+    ratings.append(QString::number(it.value()) + QLatin1Char(':') + it.key());
+  }
+  ratings.sort();
+  m_settings.setValue(kRatings, ratings);
 }

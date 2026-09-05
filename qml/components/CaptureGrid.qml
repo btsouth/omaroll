@@ -280,6 +280,7 @@ FocusScope {
             required property bool isVideo
             required property bool isDocument
             required property bool favorite
+            required property int rating
             required property bool hidden
             required property double stamp
             required property string ocrSnippet
@@ -301,6 +302,7 @@ FocusScope {
                 isDocument: cell.isDocument
                 stamp: cell.stamp
                 favorite: cell.favorite
+                rating: cell.rating
                 hiddenMark: cell.hidden
                 ocrSnippet: cell.ocrSnippet
                 selected: grid.currentIndex === cell.index

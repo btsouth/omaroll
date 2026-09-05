@@ -95,6 +95,7 @@ FocusScope {
         Captures.setTagFilter("", [])
         Captures.cameraFilter = ""
         Captures.lensFilter = ""
+        Captures.minimumRating = 0
         Captures.clearDateRange()
         Captures.clearSmartCollection()
     }
@@ -358,6 +359,7 @@ FocusScope {
                             && Captures.tagFilter === "" && Captures.dateFrom === ""
                             && Captures.dateTo === "" && Captures.modifiedAfter === ""
                             && Captures.cameraFilter === "" && Captures.lensFilter === ""
+                            && Captures.minimumRating === 0
                             && Captures.smartCollectionFilter === ""
                             && !Captures.duplicatesOnly && !Captures.similarOnly
                     onClicked: root.showAll()
@@ -391,6 +393,35 @@ FocusScope {
                     onClicked: {
                         root.close()
                         root.saveSmartCollectionRequested()
+                    }
+                }
+            }
+
+            // A minimum rating narrows whatever else is chosen, the way the
+            // kind pills do, so picking one leaves the sheet open. The row
+            // only appears once something has been rated.
+            Flow {
+                width: parent.width
+                spacing: 7
+                visible: Settings.ratedCount > 0 || Captures.minimumRating > 0
+
+                Text {
+                    height: 26
+                    verticalAlignment: Text.AlignVCenter
+                    text: "Rated at least"
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 11
+                    color: Theme.mutedText
+                }
+
+                Repeater {
+                    model: 5
+
+                    PillButton {
+                        required property int index
+                        label: "★".repeat(index + 1)
+                        active: Captures.minimumRating === index + 1
+                        onClicked: Captures.minimumRating = active ? 0 : index + 1
                     }
                 }
             }

@@ -48,7 +48,8 @@ Item {
         Captures.kindFilter = kinds[(current + step + kinds.length) % kinds.length]
     }
 
-    readonly property var sortLabels: ["Newest", "Oldest", "Largest", "Smallest", "Name"]
+    readonly property var sortLabels: ["Newest", "Oldest", "Largest", "Smallest", "Name",
+                                       "Top rated"]
 
     // True while the search field owns the keyboard, so window-level
     // shortcuts that the field would not swallow (Escape, Ctrl+H) stand down.
@@ -160,6 +161,8 @@ Item {
                       : Captures.tagFilter !== "" ? "#" + Captures.tagFilter + "  ▾"
                       : Captures.cameraFilter !== "" ? Captures.cameraFilter + "  ▾"
                       : Captures.lensFilter !== "" ? Captures.lensFilter + "  ▾"
+                      : Captures.minimumRating > 0
+                        ? "★".repeat(Captures.minimumRating) + "+  ▾"
                       : Captures.dateFrom !== "" || Captures.modifiedAfter !== "" ? "Date  ▾"
                       : Captures.albumFilter !== "" ? Captures.albumFilter + "  ▾"
                       : Captures.folderFilter !== ""
@@ -168,6 +171,7 @@ Item {
                     || Captures.duplicatesOnly
                     || Captures.similarOnly || Captures.tagFilter !== ""
                     || Captures.cameraFilter !== "" || Captures.lensFilter !== ""
+                    || Captures.minimumRating > 0
                     || Captures.dateFrom !== "" || Captures.modifiedAfter !== ""
                     || Captures.smartCollectionFilter !== ""
                     || root.browserOpen

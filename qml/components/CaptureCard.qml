@@ -17,6 +17,7 @@ Item {
     // in-memory pixmap cache as well as the disk one.
     property double stamp: 0
     property bool favorite: false
+    property int rating: 0
     property bool hiddenMark: false
     property bool selected: false
     property bool checked: false
@@ -207,6 +208,18 @@ Item {
             font.pixelSize: 10
             color: "#ffffff"
             opacity: 0.90
+        }
+
+        // Stars sit at the right end of the strip, so they read with the
+        // time and size rather than competing with the picture.
+        Text {
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.margins: 8
+            visible: root.rating > 0
+            text: "★".repeat(root.rating)
+            font.pixelSize: 11
+            color: root.thumbnailReady ? Theme.yellow : Theme.foreground
         }
 
         Row {
