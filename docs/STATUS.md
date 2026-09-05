@@ -1,16 +1,19 @@
 # Project status and handoff
 
-Snapshot: 5 September 2026 UTC, after PR #9 merged. Check the linked PRs and release before resuming.
+Snapshot: 5 September 2026 UTC, after the v1.5.0 release. Check the linked PRs and release before resuming.
 
 ## Released
 
-[v1.4.0](https://github.com/btsouth/omaroll/releases/tag/v1.4.0) remains the latest
-public release. 1.5.0 is prepared but not tagged or published.
-The viewer supports still and animated images, embedded video controls, PDF
-paging, OCR/QR, albums, tags, saved collections and duplicate review. The
-README describes the supported formats and workflows.
+[v1.5.0](https://github.com/btsouth/omaroll/releases/tag/v1.5.0) is the latest
+public release, tagged from
+[PR #7](https://github.com/btsouth/omaroll/pull/7) (64ddae8) after a desktop
+test on the real Omarchy session. The Release workflow published the source
+archive, Arch package, PKGBUILD and checksums; all four were downloaded and
+verified. The viewer supports still and animated images, embedded video
+controls, PDF paging, OCR/QR, albums, tags, saved collections and duplicate
+review. The README describes the supported formats and workflows.
 
-## Prepared: 1.5.0, not yet tagged
+## What 1.5.0 bundled
 
 Main carries the 1.5.0 version, changelog and AppStream entry. It bundles:
 
@@ -30,7 +33,8 @@ Main carries the 1.5.0 version, changelog and AppStream entry. It bundles:
 - [PR #9](https://github.com/btsouth/omaroll/pull/9): grid delegates are
   rebuilt rather than reused across the tile relayout, fixing tiles that kept
   a previous file's thumbnail and opened a different file in small tiled
-  windows. Found in the desktop test of the 1.5.0 candidate.
+  windows. Found in the desktop test of the 1.5.0 candidate, which also
+  covered image, video with live audio, PDF and multi-file forwarding.
 
 CodeRabbit reviewed PR #6 with one minor finding, which was fixed before the
 squash merge. Core, UI, sanitizer and OpenGL checks passed locally and in CI.
@@ -44,9 +48,8 @@ not compositor presentation or general performance guarantees.
 
 ## Next decisions and release gates
 
-1. Try the 1.5.0 candidate on the real Omarchy desktop, then tag `v1.5.0`
-   following [RELEASING.md](../RELEASING.md). Keep new changes in separate
-   focused PRs.
+1. Keep new changes in separate focused PRs off main, following
+   [RELEASING.md](../RELEASING.md) for the next tag.
 2. Finish installed Omarchy acceptance (SBS-1121): file-manager selections,
    clipboard, drag/drop, scaling, window state and physical audio. Headless
    passes do not close this gate.
@@ -56,11 +59,11 @@ not compositor presentation or general performance guarantees.
    copy, collision handling and a metadata/color policy. Reuse Omarchy helpers
    where they satisfy the workflow. Comparison and organization improvements
    follow in the [roadmap](ROADMAP.md).
-5. After 1.5.0 ships, refresh the Omarchy package submission to it.
+5. Watch the Omarchy package submission for upstream feedback.
 
 [Official package PR #295](https://github.com/omacom/omarchy-pkgs/pull/295)
-remains open and targets v1.4.0. Earlier edge, rc and stable package builds
-passed; upstream acceptance is pending. Repository inclusion, default
+remains open and was refreshed to v1.5.0 after the release. Earlier edge, rc
+and stable package builds passed; upstream acceptance is pending. Repository inclusion, default
 installation and MIME defaults are separate upstream decisions.
 
 ## Safe continuation
