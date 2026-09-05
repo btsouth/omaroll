@@ -16,6 +16,11 @@
 - Captions. Add a short caption in the viewer; it shows on the tile and is
   searched with filenames and picture text.
 
+### Changed
+
+- A video that plays to its end rewinds to its first frame and pauses there
+  instead of leaving a blank stage.
+
 ## 1.5.0
 
 ### Added

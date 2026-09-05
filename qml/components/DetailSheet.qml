@@ -741,9 +741,19 @@ Item {
                             }
                         }
                         onMediaStatusChanged: {
-                            if (mediaStatus === MediaPlayer.EndOfMedia && root.slideshowRunning) {
-                                root.requestNavigation(1)
+                            if (mediaStatus !== MediaPlayer.EndOfMedia) {
+                                return
                             }
+                            if (root.slideshowRunning) {
+                                root.requestNavigation(1)
+                                return
+                            }
+                            // A finished clip stops and the backend drops its
+                            // frame, leaving a blank stage that reads as broken.
+                            // Rewind to the first frame and hold it, so the
+                            // picture stays and the play button means replay.
+                            pause()
+                            position = 0
                         }
                     }
                 }

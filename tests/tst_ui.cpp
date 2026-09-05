@@ -1820,6 +1820,16 @@ private slots:
     QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
     m_window->showNormal();
     QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+    // A clip that reaches its end holds its first frame, paused, instead of
+    // stopping on a blank stage; Space then plays it again from the start.
+    player->setPosition(player->duration() - 300);
+    QTRY_COMPARE_WITH_TIMEOUT(player->playbackState(), QMediaPlayer::PausedState, 5000);
+    QTRY_VERIFY(player->position() < 500);
+    QVERIFY(player->hasVideo());
+    QVERIFY(item("videoOutput")->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+    QTRY_VERIFY(player->position() > 0 && player->position() < 3000);
     // Basic controls must remain within the narrow window.
     m_window->resize(560, 420);
     QTest::qWait(100);
