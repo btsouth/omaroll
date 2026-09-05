@@ -1,0 +1,19 @@
+{
+    "benchmark_peak_rss_kib": 105692,
+    "cache_budget_bytes": 268435456,
+    "files": 10000,
+    "model_and_proxy_ms": 65.859389,
+    "natural_sort_ms": 12.179004,
+    "qt": "6.11.2",
+    "scan_ms": [
+        55.842931,
+        51.225524,
+        50.009983,
+        50.955232,
+        53.92059
+    ],
+    "twenty_thumbnails_cold_warm_ms": [
+        82.701671,
+        3.377204
+    ]
+}

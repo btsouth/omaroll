@@ -234,8 +234,8 @@ ApplicationWindow {
     }
     Component.onCompleted: {
         root.reconcileFilter()
-        if (InitialPath !== "") {
-            root.openPath(InitialPath)
+        if (InitialPaths.length > 0) {
+            root.openPaths(InitialPaths)
         } else if (InitialFolderPath !== "") {
             root.openFolder(InitialFolderPath)
         }
@@ -282,6 +282,7 @@ ApplicationWindow {
     // "Open with Omaroll" on a file: once the scan that includes it lands,
     // select it and open straight into its actions.
     property string pendingInitialPath: ""
+    property var viewerPaths: []
     // A file a tracked action just saved: select it once the scan lands, but
     // stay in the grid rather than opening the viewer over whatever the user
     // is doing now. Filters are only cleared when they would hide it.
@@ -299,23 +300,35 @@ ApplicationWindow {
         Captures.folderFilter = folder === undefined ? "" : folder
     }
     function openFolder(path) {
+        root.viewerPaths = []
         root.pendingInitialPath = ""
         root.showAllMedia(path)
         library.forceActiveFocus()
     }
     function openPath(path) {
+        root.openPaths([path])
+    }
+    function openPaths(paths) {
+        if (paths.length === 0) return
+        root.pendingInitialPath = ""
+        root.viewerPaths = paths.length > 1 ? Array.from(paths) : []
         // An explicit Open With request wins over a stale library filter.
-        root.showAllMedia(path.substring(0, path.lastIndexOf("/")))
-        if (Settings.isHidden(path)) {
-            Captures.showHidden = true
+        const folder = paths.length > 1 ? ""
+                       : paths[0].substring(0, paths[0].lastIndexOf("/"))
+        root.showAllMedia(folder)
+        for (const path of paths) {
+            if (Settings.isHidden(path)) Captures.showHidden = true
         }
-        const row = Captures.rowOf(path)
+        root.pendingInitialPath = paths[0]
+        root.finishPendingOpen()
+    }
+    function finishPendingOpen() {
+        const row = Captures.rowOf(root.pendingInitialPath)
         if (row >= 0) {
             root.pendingInitialPath = ""
             library.currentIndex = row
-            root.openDetail(row, true)
-        } else {
-            root.pendingInitialPath = path
+            root.viewerFolderOnly = root.viewerPaths.length === 0
+            root.openDetail(row)
         }
     }
     function refreshOpenDetail() {
@@ -380,7 +393,7 @@ ApplicationWindow {
             }
             const row = Captures.rowOf(root.pendingInitialPath)
             if (row >= 0) {
-                root.openPath(root.pendingInitialPath)
+                root.finishPendingOpen()
             }
         }
     }
@@ -751,6 +764,17 @@ ApplicationWindow {
     }
 
     function adjacentViewerPath(path, direction) {
+        if (root.viewerPaths.length > 0) {
+            const start = root.viewerPaths.indexOf(path)
+            if (start < 0) return ""
+            for (let step = 1; step < root.viewerPaths.length; step++) {
+                const index = (start + direction * step + root.viewerPaths.length)
+                              % root.viewerPaths.length
+                const candidate = root.viewerPaths[index]
+                if (Captures.rowOf(candidate) >= 0) return candidate
+            }
+            return ""
+        }
         return root.viewerFolderOnly
                ? Captures.adjacentPathInFolder(path, direction)
                : Captures.adjacentPath(path, direction)
@@ -762,6 +786,7 @@ ApplicationWindow {
         }
         if (folderOnly !== undefined) {
             root.viewerFolderOnly = folderOnly
+            root.viewerPaths = []
         }
         // The player and the still both bind on path together with isVideo.
         // Clearing the path first means neither ever sees the new path paired
@@ -793,7 +818,8 @@ ApplicationWindow {
         let row = Captures.rowOf(path)
         if (detail.slideshowRunning && !Settings.slideshowVideos) {
             let checked = 0
-            while (row >= 0 && Captures.isVideoAt(row) && checked < Captures.count) {
+            const limit = root.viewerPaths.length || Captures.count
+            while (row >= 0 && Captures.isVideoAt(row) && checked < limit) {
                 path = root.adjacentViewerPath(path, direction)
                 row = Captures.rowOf(path)
                 checked++
@@ -946,6 +972,9 @@ ApplicationWindow {
     DetailSheet {
         id: detail
         objectName: "detail"
+        selectionLabel: root.viewerPaths.indexOf(detail.path) < 0 ? ""
+                        : (root.viewerPaths.indexOf(detail.path) + 1)
+                          + " of " + root.viewerPaths.length + " selected files"
         enabled: !root.modalOpen && !root.popupOpen
         qrDetected: Qr.path === detail.path && Qr.detected
         onVisibleChanged: if (!visible) Qr.clear()
@@ -1179,6 +1208,10 @@ ApplicationWindow {
         objectName: "renameSheet"
         onRenamed: function (oldPath, newPath, fileName) {
             Settings.relocatePath(oldPath, newPath)
+            Library.addExtraFiles([newPath])
+            root.viewerPaths = root.viewerPaths.map(function (path) {
+                return path === oldPath ? newPath : path
+            })
             root.pendingRevealPath = newPath
             library.clearChecked()
             root.say("Renamed to " + fileName)
@@ -1275,12 +1308,14 @@ ApplicationWindow {
         // show where it went: select it once the rescan brings it in.
         function onOutputSettled(path, saved) {
             if (saved) {
+                Library.addExtraFiles([path])
                 root.pendingRevealPath = path
             }
         }
         // The file was made earlier: open straight onto it. Selection plus a
         // footer line was too subtle to read as anything happening at all.
         function onOutputAlreadyDone(path) {
+            Library.addExtraFiles([path])
             root.openPath(path)
         }
     }
@@ -1288,6 +1323,7 @@ ApplicationWindow {
     Connections {
         target: Matte
         function onComposed(outputPath) {
+            Library.addExtraFiles([outputPath])
             root.say("Matte copied and saved beside the original")
             Library.refresh()
         }

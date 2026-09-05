@@ -1,0 +1,44 @@
+[
+  {
+    "mode": "single-image",
+    "first_scene_frame_ms": 968.0767030004063,
+    "idle_cpu_percent_one_core": 0.0,
+    "rss_kib": 337792,
+    "peak_rss_kib": 337792
+  },
+  {
+    "mode": "single-image",
+    "first_scene_frame_ms": 1051.9812399998045,
+    "idle_cpu_percent_one_core": 0.0,
+    "rss_kib": 337712,
+    "peak_rss_kib": 337712
+  },
+  {
+    "mode": "single-image",
+    "first_scene_frame_ms": 1019.5345440006349,
+    "idle_cpu_percent_one_core": 0.0,
+    "rss_kib": 337136,
+    "peak_rss_kib": 337136
+  },
+  {
+    "mode": "library",
+    "first_scene_frame_ms": 941.4049259994499,
+    "idle_cpu_percent_one_core": 0.19957882728398083,
+    "rss_kib": 337892,
+    "peak_rss_kib": 337892
+  },
+  {
+    "mode": "library",
+    "first_scene_frame_ms": 960.354880999148,
+    "idle_cpu_percent_one_core": 0.0,
+    "rss_kib": 333644,
+    "peak_rss_kib": 333644
+  },
+  {
+    "mode": "library",
+    "first_scene_frame_ms": 915.4056509996735,
+    "idle_cpu_percent_one_core": 0.0,
+    "rss_kib": 338140,
+    "peak_rss_kib": 338140
+  }
+]

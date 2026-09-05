@@ -23,7 +23,7 @@ jobs:
       - name: Configure
         run: cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build
-        run: cmake --build build/release
+        run: cmake --build build/release --target all omaroll_benchmark_library
       - name: Test
         run: ctest --test-dir build/release --output-on-failure
       - name: Test rendered media with Mesa OpenGL

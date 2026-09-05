@@ -18,6 +18,8 @@ add_library(omaroll_core STATIC
   src/app/DemoLibrary.h
   src/app/SingleInstance.cpp
   src/app/SingleInstance.h
+  src/app/OpenRequest.cpp
+  src/app/OpenRequest.h
   src/library/CaptureRecord.h
   src/library/CaptureRoles.h
   src/library/CaptureModel.cpp
@@ -156,6 +158,8 @@ install(FILES README.md PRIVACY.md SUPPORT.md CHANGELOG.md
 # Tests
 include(CTest)
 if(BUILD_TESTING)
+  add_executable(omaroll_benchmark_library EXCLUDE_FROM_ALL tests/benchmark_library.cpp)
+  target_link_libraries(omaroll_benchmark_library PRIVATE omaroll_core)
   qt_add_executable(omaroll_tests tests/tst_omaroll.cpp)
   target_link_libraries(omaroll_tests PRIVATE omaroll_core Qt6::Test)
   add_test(NAME omaroll_tests COMMAND omaroll_tests)

@@ -7,7 +7,8 @@
 **Your media, in one beautiful library.**
 
 A fast, beautiful image, video, and PDF viewer that turns your media folders into a
-library. Open one file and move through the rest of its folder, or browse photos,
+library. Open one file and move through the rest of its folder, open a selection
+of files in order, or browse photos,
 videos, documents, downloads, albums, tags, and custom folders together.
 
 > Omaroll is an independent community project. It is not an official Omarchy

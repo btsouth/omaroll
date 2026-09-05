@@ -1,6 +1,9 @@
 #include "app/SingleInstance.h"
 
 #include <QCoreApplication>
+#include <QDeadlineTimer>
+#include <QDebug>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocalSocket>
@@ -24,7 +27,21 @@ SingleInstance::SingleInstance(const QString& serverName, QObject* parent)
         }
         const QJsonDocument message = QJsonDocument::fromJson(socket->readLine());
         if (message.isObject()) {
-          emit activationRequested(message.object().value(QStringLiteral("path")).toString());
+          QStringList paths;
+          const QJsonObject object = message.object();
+          if (object.value(QStringLiteral("paths")).isArray()) {
+            for (const QJsonValue& value : object.value(QStringLiteral("paths")).toArray()) {
+              if (value.isString()) {
+                paths.append(value.toString());
+              }
+            }
+          } else {
+            const QString path = object.value(QStringLiteral("path")).toString();
+            if (!path.isEmpty()) {
+              paths.append(path);
+            }
+          }
+          emit activationRequested(paths);
         }
         socket->disconnectFromServer();
       });
@@ -33,7 +50,7 @@ SingleInstance::SingleInstance(const QString& serverName, QObject* parent)
   });
 }
 
-bool SingleInstance::claimOrNotify(const QString& path) {
+bool SingleInstance::claimOrNotify(const QStringList& paths) {
   if (m_server.listen(m_serverName)) {
     return true;
   }
@@ -42,11 +59,17 @@ bool SingleInstance::claimOrNotify(const QString& path) {
   socket.connectToServer(m_serverName, QIODevice::WriteOnly);
   if (socket.waitForConnected(120)) {
     QJsonObject message;
-    message.insert(QStringLiteral("path"), path);
-    socket.write(QJsonDocument(message).toJson(QJsonDocument::Compact));
-    socket.write("\n");
-    socket.flush();
-    socket.waitForBytesWritten(120);
+    message.insert(QStringLiteral("paths"), QJsonArray::fromStringList(paths));
+    // An older running version can still open the first file after an upgrade.
+    message.insert(QStringLiteral("path"), paths.value(0));
+    socket.write(QJsonDocument(message).toJson(QJsonDocument::Compact) + '\n');
+    QDeadlineTimer deadline(5000);
+    while (socket.bytesToWrite() > 0) {
+      if (deadline.hasExpired() || !socket.waitForBytesWritten(deadline.remainingTime())) {
+        qWarning() << "omaroll: could not finish forwarding the selection:" << socket.errorString();
+        break;
+      }
+    }
     return false;
   }
 

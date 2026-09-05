@@ -13,6 +13,7 @@ Item {
 
     property string path: ""
     property string fileName: ""
+    property string selectionLabel: ""
     property string kindLabel: ""
     property string dayLabel: ""
     property string timeLabel: ""
@@ -1213,6 +1214,17 @@ Item {
                 anchors.top: parent.top
                 anchors.margins: 18
                 spacing: 4
+
+                Text {
+                    objectName: "viewerSelectionLabel"
+                    width: parent.width
+                    visible: root.selectionLabel !== ""
+                    text: root.selectionLabel
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 11
+                    color: Theme.mutedText
+                    elide: Text.ElideRight
+                }
 
                 Text {
                     width: parent.width
