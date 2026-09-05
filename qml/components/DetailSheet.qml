@@ -1370,17 +1370,28 @@ Item {
                         readonly property string saved: root.caption
                         onSavedChanged: text = saved
                         Component.onCompleted: text = saved
-                        onEditingFinished: {
+                        function commit() {
                             if (text.trim() !== root.caption) {
                                 root.captionEdited(text.trim())
                             }
                         }
-                        Keys.onEscapePressed: {
-                            text = root.caption
+                        // Enter saves outright. Handing focus back to the
+                        // sheet is not enough on its own: a focus scope
+                        // returns focus to its current item, which is this
+                        // field, so the focus-out save would never fire.
+                        function finish() {
+                            commit()
+                            focus = false
                             root.focusPreview()
                         }
-                        Keys.onReturnPressed: root.focusPreview()
-                        Keys.onEnterPressed: root.focusPreview()
+                        onEditingFinished: commit()
+                        Keys.onEscapePressed: {
+                            text = root.caption
+                            focus = false
+                            root.focusPreview()
+                        }
+                        Keys.onReturnPressed: finish()
+                        Keys.onEnterPressed: finish()
                     }
 
                     Text {
