@@ -1,0 +1,116 @@
+[
+  {
+    "mode": "single-image",
+    "graphics": "NVIDIA Corporation RENDERER: NVIDIA GeForce RTX 4070 SUPER/PCIe/SSE2 VERSION: 4.6.0 NVIDIA 610.57.04",
+    "main_entry_stages_ms": {
+      "application": 3.76173,
+      "theme": 19.287995,
+      "services": 21.296525,
+      "qml": 76.715962,
+      "first_frame": 229.454735,
+      "image_frame": 245.758953
+    },
+    "fixture": "transparent.png",
+    "fixture_bytes": 749,
+    "fixture_sha256": "9840c1cc71b4dee8b5285bb4021463336ed66d78560702bdc9e60d9e73b49e76",
+    "files": 100,
+    "idle_cpu_percent_one_core": 0.0,
+    "rss_kib": 259920,
+    "peak_rss_kib": 259920
+  },
+  {
+    "mode": "single-image",
+    "graphics": "NVIDIA Corporation RENDERER: NVIDIA GeForce RTX 4070 SUPER/PCIe/SSE2 VERSION: 4.6.0 NVIDIA 610.57.04",
+    "main_entry_stages_ms": {
+      "application": 3.745224,
+      "theme": 19.060328,
+      "services": 20.84897,
+      "qml": 73.609182,
+      "first_frame": 243.301354,
+      "image_frame": 265.439806
+    },
+    "fixture": "transparent.png",
+    "fixture_bytes": 749,
+    "fixture_sha256": "9840c1cc71b4dee8b5285bb4021463336ed66d78560702bdc9e60d9e73b49e76",
+    "files": 100,
+    "idle_cpu_percent_one_core": 0.0,
+    "rss_kib": 260436,
+    "peak_rss_kib": 260436
+  },
+  {
+    "mode": "single-image",
+    "graphics": "NVIDIA Corporation RENDERER: NVIDIA GeForce RTX 4070 SUPER/PCIe/SSE2 VERSION: 4.6.0 NVIDIA 610.57.04",
+    "main_entry_stages_ms": {
+      "application": 4.155414,
+      "theme": 21.059962,
+      "services": 23.089553,
+      "qml": 84.25053,
+      "first_frame": 232.872831,
+      "image_frame": 257.227589
+    },
+    "fixture": "transparent.png",
+    "fixture_bytes": 749,
+    "fixture_sha256": "9840c1cc71b4dee8b5285bb4021463336ed66d78560702bdc9e60d9e73b49e76",
+    "files": 100,
+    "idle_cpu_percent_one_core": 0.0,
+    "rss_kib": 260888,
+    "peak_rss_kib": 260888
+  },
+  {
+    "mode": "library",
+    "graphics": "NVIDIA Corporation RENDERER: NVIDIA GeForce RTX 4070 SUPER/PCIe/SSE2 VERSION: 4.6.0 NVIDIA 610.57.04",
+    "main_entry_stages_ms": {
+      "application": 3.887104,
+      "theme": 20.370178,
+      "services": 22.348289,
+      "qml": 79.101409,
+      "first_frame": 247.285181,
+      "grid_frame": 471.867327
+    },
+    "fixture": "transparent.png",
+    "fixture_bytes": 749,
+    "fixture_sha256": "9840c1cc71b4dee8b5285bb4021463336ed66d78560702bdc9e60d9e73b49e76",
+    "files": 100,
+    "idle_cpu_percent_one_core": 0.0,
+    "rss_kib": 258772,
+    "peak_rss_kib": 258772
+  },
+  {
+    "mode": "library",
+    "graphics": "NVIDIA Corporation RENDERER: NVIDIA GeForce RTX 4070 SUPER/PCIe/SSE2 VERSION: 4.6.0 NVIDIA 610.57.04",
+    "main_entry_stages_ms": {
+      "application": 3.830354,
+      "theme": 18.180418,
+      "services": 19.970937,
+      "qml": 77.87499,
+      "first_frame": 254.52669,
+      "grid_frame": 486.412222
+    },
+    "fixture": "transparent.png",
+    "fixture_bytes": 749,
+    "fixture_sha256": "9840c1cc71b4dee8b5285bb4021463336ed66d78560702bdc9e60d9e73b49e76",
+    "files": 100,
+    "idle_cpu_percent_one_core": 0.1996288311920445,
+    "rss_kib": 258744,
+    "peak_rss_kib": 258744
+  },
+  {
+    "mode": "library",
+    "graphics": "NVIDIA Corporation RENDERER: NVIDIA GeForce RTX 4070 SUPER/PCIe/SSE2 VERSION: 4.6.0 NVIDIA 610.57.04",
+    "main_entry_stages_ms": {
+      "application": 3.696508,
+      "theme": 19.348544,
+      "services": 21.855226,
+      "qml": 77.233427,
+      "first_frame": 246.964606,
+      "grid_frame": 469.419281
+    },
+    "fixture": "transparent.png",
+    "fixture_bytes": 749,
+    "fixture_sha256": "9840c1cc71b4dee8b5285bb4021463336ed66d78560702bdc9e60d9e73b49e76",
+    "files": 100,
+    "idle_cpu_percent_one_core": 0.19966454499568556,
+    "rss_kib": 259008,
+    "peak_rss_kib": 259008
+  }
+]

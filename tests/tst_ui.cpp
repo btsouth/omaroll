@@ -61,6 +61,7 @@
 #include <QtTest>
 
 #include <functional>
+#include <algorithm>
 
 class UiTest : public QObject {
   Q_OBJECT
@@ -155,7 +156,15 @@ private slots:
     m_engine = new QQmlApplicationEngine(this);
     connect(m_engine, &QQmlEngine::warnings, this, [this](const QList<QQmlError>& warnings) {
       for (const QQmlError& warning : warnings) {
-        m_warnings.append(warning.toString());
+        const auto expected = std::find_if(m_expectedQmlWarnings.begin(), m_expectedQmlWarnings.end(),
+                                          [&](const QString& suffix) {
+                                            return warning.toString().endsWith(suffix);
+                                          });
+        if (expected != m_expectedQmlWarnings.end()) {
+          m_expectedQmlWarnings.erase(expected);
+        } else {
+          m_warnings.append(warning.toString());
+        }
       }
     });
     m_engine->addImportPath(QStringLiteral(OMAROLL_QML_IMPORT_PATH));
@@ -196,6 +205,8 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowCount() >= 3, 15000);
     // Let the grid lay its tiles out before anything is clicked.
     QTRY_VERIFY_WITH_TIMEOUT(cardFor(pathAt(1)) != nullptr, 5000);
+    QVERIFY(!m_window->findChild<QMediaPlayer*>(QStringLiteral("videoPlayer")));
+    QVERIFY(!m_window->findChild<QObject*>(QStringLiteral("videoOutput")));
   }
 
   void cleanupTestCase() {
@@ -327,6 +338,39 @@ private slots:
     QCOMPARE(detail->property("path").toString(), shown);
   }
 
+  void startupReadinessExcludesPlaceholdersAndFailedImages() {
+    QQuickItem* grid = item("library");
+    const auto viewportReady = [grid] {
+      QVariant ready;
+      QMetaObject::invokeMethod(grid, "viewportReady", Q_RETURN_ARG(QVariant, ready));
+      return ready.toBool();
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(viewportReady(), 15000);
+    QQuickItem* card = cardFor(pathAt(0));
+    QVERIFY(card);
+    // A decoded thumbnail which is still faded out is not a useful tile.
+    card->setProperty("thumbnailReady", false);
+    QTRY_VERIFY(!card->property("thumbnailPresented").toBool());
+    QVERIFY(!viewportReady());
+    card->setProperty("thumbnailReady", true);
+    QTRY_VERIFY(viewportReady());
+
+    openDetail(m_library->rowOf(QFileInfo(m_oddPath).canonicalFilePath()));
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->property("imageReady").toBool());
+    const QString missing = m_scratch.filePath(QStringLiteral("missing-image.png"));
+    // Consume exactly the two decoder warnings this negative case provokes.
+    m_expectedQmlWarnings = {QStringLiteral("Cannot open: ") + QUrl::fromLocalFile(missing).toString(),
+                             QStringLiteral("No thumbnail for ") + missing};
+    detail->setProperty("path", missing);
+    QTRY_VERIFY(!detail->property("playbackError").toString().isEmpty());
+    QVERIFY(detail->property("stillReady").toBool());
+    QVERIFY(!detail->property("imageReady").toBool());
+    QTRY_VERIFY(m_expectedQmlWarnings.isEmpty());
+    invoke("dismissTopLayer");
+    QVERIFY(!detail->property("imageReady").toBool());
+  }
+
   void imageViewerSupportsActualSizeFlipsDeepZoomAndAnimationPause() {
     int imageRow = -1;
     for (int row = 0; row < m_library->rowCount(); ++row) {
@@ -424,6 +468,22 @@ private slots:
     QTRY_VERIFY(detail->property("fullScreen").toBool());
     QTest::mouseDClick(m_window, Qt::LeftButton, Qt::NoModifier, centre(output));
     QTRY_VERIFY(!detail->property("fullScreen").toBool());
+
+    // Closing and visiting a picture must stop decoding, but retain the player
+    // and its session controls when the next video is opened.
+    auto* player = m_window->findChild<QMediaPlayer*>(QStringLiteral("videoPlayer"));
+    QVERIFY(player);
+    const double retainedVolume = detail->property("playbackVolume").toDouble();
+    invoke("dismissTopLayer");
+    openDetail(m_library->rowOf(QFileInfo(m_oddPath).canonicalFilePath()));
+    QTRY_VERIFY(detail->property("imageReady").toBool());
+    QTRY_VERIFY(player->source().isEmpty());
+    QCOMPARE(player->playbackState(), QMediaPlayer::StoppedState);
+    invoke("dismissTopLayer");
+    openDetail(videoRow);
+    QCOMPARE(m_window->findChild<QMediaPlayer*>(QStringLiteral("videoPlayer")), player);
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+    QCOMPARE(detail->property("playbackVolume").toDouble(), retainedVolume);
   }
 
   void rightClickOnATileOpensThatTile() {
@@ -1791,6 +1851,7 @@ private:
   QQmlApplicationEngine* m_engine = nullptr;
   QQuickWindow* m_window = nullptr;
   QStringList m_warnings;
+  QStringList m_expectedQmlWarnings;
   QString m_oddPath;
   QString m_pdfPath;
 };

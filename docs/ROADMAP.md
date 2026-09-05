@@ -4,12 +4,17 @@ Omaroll should cover everyday media viewing and organization on Omarchy:
 open files quickly, find them again, make a quick correction, and share the
 result. Discovery stays read-only and core use stays offline.
 
+See [current status and handoff](STATUS.md) for release boundaries and evidence.
+
 ## Reliability and package adoption
 
-- Run real animated-image, video, audio and subtitle checks in ordinary CI.
+- Maintain the animated-image, video-track, subtitle and rendered-pixel checks
+  already running in CI. Local tests stay audio-isolated.
 - Verify installed behavior on Omarchy: file-manager opening, scaling,
   clipboard, drag/drop, window state and physical audio.
-- Measure current startup time, library responsiveness and resource use.
+- Review draft PR #6 for deferred video setup and content-ready startup timing.
+- Extend recorded startup and 10k/50k library baselines with warm navigation,
+  larger/mixed libraries, compositor presentation and regression budgets.
 - Maintain the [Omarchy package submission](https://github.com/omacom/omarchy-pkgs/pull/295).
 
 ## Complete image workflows

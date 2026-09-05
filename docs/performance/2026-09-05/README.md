@@ -3,6 +3,9 @@
 Measured during multi-file opening development after 1.4.0. These are local
 engineering measurements, not release performance guarantees.
 
+The [startup follow-up](../2026-09-05-startup/README.md) adds content-ready
+frame measurements and compares eager and deferred video initialization.
+
 Environment: Intel Core i7-14700F, 28 logical CPUs, 31.1 GiB RAM,
 Linux 7.2.3-arch1-2, Qt 6.11.2, Release build. Disposable fixtures were placed
 on the project's Btrfs filesystem, not the RAM-backed `/tmp`. Filesystem caches

@@ -16,7 +16,7 @@ jobs:
         run: >-
           pacman -Syu --noconfirm --needed
           appstream base-devel cmake desktop-file-utils ffmpeg ffmpegthumbnailer
-          git imagemagick kimageformats libavif libheif ninja pkgconf poppler qt6-base
+          git imagemagick kimageformats libavif libheif ninja pkgconf poppler python qt6-base
           qt6-declarative qt6-imageformats qt6-multimedia qt6-svg qt6-wayland
           wl-clipboard xdg-desktop-portal xdg-utils mesa xorg-server-xvfb xorg-xauth
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -28,12 +28,16 @@ jobs:
         run: ctest --test-dir build/release --output-on-failure
       - name: Test rendered media with Mesa OpenGL
         run: xvfb-run -a bash tests/run-opengl.sh build/release
+      - name: Check startup readiness (informational timings)
+        run: xvfb-run -a python3 tests/benchmark_startup.py build/release/omaroll --runs 1 > build/release/startup.json
       - name: Save rendered views
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: opengl-renders
-          path: build/release/opengl-renders/*.png
+          path: |
+            build/release/opengl-renders/*.png
+            build/release/startup.json
           if-no-files-found: ignore
           retention-days: 7
       - name: Validate metadata

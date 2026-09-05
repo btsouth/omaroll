@@ -6,6 +6,7 @@
 #include "app/HeadlessAudio.h"
 #include "app/OpenRequest.h"
 #include "app/SingleInstance.h"
+#include "app/StartupTrace.h"
 #include "library/CaptureFilterModel.h"
 #include "library/CaptureModel.h"
 #include "library/DuplicateIndex.h"
@@ -155,6 +156,7 @@ Options:
 } // namespace
 
 int main(int argc, char* argv[]) {
+  const StartupTrace startup;
   QGuiApplication::setApplicationName(QStringLiteral("Omaroll"));
   QGuiApplication::setApplicationDisplayName(QStringLiteral("Omaroll"));
   QGuiApplication::setApplicationVersion(QStringLiteral(OMAROLL_VERSION));
@@ -207,6 +209,7 @@ int main(int argc, char* argv[]) {
   }
 
   QGuiApplication application(argc, argv);
+  startup.mark("application");
   QIcon applicationIcon = QIcon::fromTheme(QStringLiteral("io.github.tsouth89.omaroll"));
   if (applicationIcon.isNull()) {
     applicationIcon = QIcon(QStringLiteral(":/icons/resources/icons/omaroll.svg"));
@@ -302,6 +305,7 @@ int main(int argc, char* argv[]) {
   }
 
   OmarchyTheme theme;
+  startup.mark("theme");
   AppSettings settings;
   if (demo) {
     settings.setSlideshowVideos(true);
@@ -419,10 +423,13 @@ int main(int argc, char* argv[]) {
       &engine, &QQmlApplicationEngine::objectCreationFailed, &application,
       [] { QCoreApplication::exit(1); }, Qt::QueuedConnection);
 
+  startup.mark("services");
   engine.loadFromModule("Omaroll", "Main");
+  startup.mark("qml");
   if (engine.rootObjects().isEmpty()) {
     return 1;
   }
+  startup.watch(qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst()));
 
   if (!rendering && !demo) {
     auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst());

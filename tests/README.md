@@ -19,21 +19,22 @@ does not block Qt's native PipeWire backend.
 ## Rendered video
 
 Qt's software scene graph can decode video without displaying it. Run the
-OpenGL suite as well. On a headless Arch machine, install `imagemagick`, `mesa`,
+OpenGL suite as well. In a disposable headless Arch CI container, install `imagemagick`, `mesa`,
 `xorg-server-xvfb` and `xorg-xauth`, then run:
 
 ```sh
 xvfb-run -a bash tests/run-opengl.sh build/release
 ```
 
-With a working local display, run it inside the local audio sandbox:
+On the development desktop, always run it inside the local audio sandbox:
 
 ```sh
 bash tests/run-isolated.sh build/release bash tests/run-opengl.sh build/release
 ```
 
 It uses
-offscreen Qt and software OpenGL, uses the disconnected audio backend, runs the full
+offscreen Qt and requests software OpenGL (some drivers use hardware instead),
+uses the disconnected audio backend, runs the full
 UI suite and renders narrow grid, video and OCR views. The video-track test
 requires actual colored pixels in the rendered video area. Inspect the PNGs in
 `build/release/opengl-renders/` for layout changes.
@@ -80,19 +81,45 @@ and twenty cold-cache then warm-cache thumbnails. Peak memory belongs to the
 benchmark process, which also creates fixtures; it is not application memory.
 
 The startup probe launches the actual executable six times using offscreen Qt
-and OpenGL, recording the actual graphics driver. The software-rendering
-environment request is not honored by every driver. Each launch gets fresh
-application settings and a fresh thumbnail cache, with 100 copies of the transparent PNG fixture. It
-records receipt of Qt's first completed scene-graph rendering log after the
-renderer has done work, then samples idle CPU between seconds three and eight.
-This is a diagnostic first-frame measurement. It does not establish when the
-requested image or useful grid becomes visible. Zero measured idle CPU means
-no CPU ticks were observed during that short interval.
+and OpenGL, recording the actual graphics driver. Each launch gets fresh
+settings and a fresh thumbnail cache, with 100 copies of the transparent PNG.
+Use `--fixture resources/demo/alpine-dawn.jpg` to measure a photographic image,
+`--files N` to change the library size, and `--runs N` for repeated samples.
+Fixture creation is excluded. The output records the fixture hash and size.
+
+`OMAROLL_STARTUP_TRACE=1` enables diagnostic JSON lines on stderr. Timings start
+at entry to `main`, excluding process spawning and dynamic loading before main:
+
+- `application`, `theme`, `services`, `qml`: cumulative setup milestones.
+  `services` is recorded after image providers and context properties are
+  registered, immediately before QML loading.
+- `first_frame`: first scene-graph frame submitted.
+- `image_frame`: frame submitted after the requested still image reports a
+  successful decode and has nonzero display dimensions.
+- `grid_frame`: frame submitted after scanning settles and every cell
+  intersecting the viewport has a decoded thumbnail at full opacity. An empty
+  library, missing delegate, failed decode or fading thumbnail does not qualify.
+
+Readiness is sampled on the GUI thread before scene synchronization, latched
+at synchronization, then reported at Qt's
+[afterFrameEnd](https://doc.qt.io/qt-6/qquickwindow.html#afterFrameEnd) signal.
+These are content-ready submitted frames, not pixel readbacks or proof of
+presentation by Hyprland. The UI tests separately exercise failed images,
+thumbnail fading and rendered media. Normal launches do not enable tracing.
+
+The probe fails if required milestones are absent within its eight-second
+observation window. CI checks that evidence arrives and retains the JSON; it
+sets no speed threshold. Idle CPU is sampled between seconds three and eight.
+Zero means no CPU ticks were observed in that interval. Do not run benchmarks
+concurrently with builds or other tests.
 
 Use `xvfb-run -a` around the startup command on headless CI hosts that need an
 X display for Mesa. These measurements are informational, not CI timing gates.
 Wayland presentation, cold disk reads, large photographs, animation and warm
 viewer navigation require separate measurements.
+
+The [startup follow-up](../docs/performance/2026-09-05-startup/README.md) records
+content-ready timing and the deferred-video comparison.
 
 A [recorded development baseline](../docs/performance/2026-09-05/README.md)
 includes raw results and the measurements still outstanding.

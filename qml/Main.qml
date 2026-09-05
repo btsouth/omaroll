@@ -16,6 +16,17 @@ ApplicationWindow {
     // thumbnail is drawn opaque on top of it.
     color: "transparent"
 
+    // Called only by the opt-in startup trace, before scene synchronization.
+    // A decode failure is settled for slideshow purposes, but is not ready media.
+    function startupReadiness() {
+        if (modalOpen || popupOpen) return 0
+        if (detail.visible) {
+            return detail.imageReady && InitialPaths.length > 0
+                    && detail.path === InitialPaths[0] ? 2 : 0
+        }
+        return !Library.scanning && library.viewportReady() ? 4 : 0
+    }
+
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
     }

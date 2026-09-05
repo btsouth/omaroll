@@ -100,7 +100,7 @@ qt_add_resources(omaroll_core "omaroll_demo_media"
     resources/demo/winter-cabin.jpg
 )
 
-qt_add_executable(omaroll src/app/main.cpp)
+qt_add_executable(omaroll src/app/main.cpp src/app/StartupTrace.h)
 
 qt_add_resources(omaroll "omaroll_icons"
   PREFIX "/icons"
