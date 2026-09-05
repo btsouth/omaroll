@@ -785,6 +785,44 @@ private slots:
     }
   }
 
+  void executableAcceptsDirectPdfOpen() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString pdf = dir.filePath(QStringLiteral("document # 1.pdf"));
+    {
+      QPdfWriter writer(pdf);
+      QPainter painter(&writer);
+      QVERIFY(painter.isActive());
+      painter.drawText(QPoint(100, 100), QStringLiteral("Direct PDF open"));
+    }
+    QProcess process;
+    auto environment = QProcessEnvironment::systemEnvironment();
+    // Keep settings, discovery, the instance socket and the window away from
+    // any real user session, including when this test runs outside CTest.
+    for (const QString& name : {QStringLiteral("HOME"), QStringLiteral("XDG_CONFIG_HOME"),
+                                QStringLiteral("XDG_DATA_HOME"), QStringLiteral("XDG_CACHE_HOME"),
+                                QStringLiteral("XDG_PICTURES_DIR"), QStringLiteral("XDG_VIDEOS_DIR"),
+                                QStringLiteral("XDG_DOWNLOAD_DIR"), QStringLiteral("OMARCHY_SCREENSHOT_DIR"),
+                                QStringLiteral("OMARCHY_SCREENRECORD_DIR")})
+      environment.insert(name, dir.path());
+    environment.insert(QStringLiteral("WAYLAND_DISPLAY"), QFileInfo(dir.path()).fileName());
+    environment.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("offscreen"));
+    environment.insert(QStringLiteral("QT_QUICK_BACKEND"), QStringLiteral("software"));
+    environment.insert(QStringLiteral("QT_QPA_PLATFORMTHEME"), QString());
+    process.setProcessEnvironment(environment);
+    process.start(QCoreApplication::applicationDirPath() + QStringLiteral("/omaroll"), {pdf});
+    QVERIFY(process.waitForStarted());
+    const auto stop = qScopeGuard([&] {
+      process.terminate();
+      if (!process.waitForFinished(3000)) {
+        process.kill();
+        process.waitForFinished();
+      }
+    });
+    QVERIFY2(!process.waitForFinished(1500), process.readAllStandardError().constData());
+    QVERIFY(!process.readAllStandardError().contains("unsupported media file"));
+  }
+
   void videoNameOnImageFileStaysAnImage() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

@@ -145,7 +145,7 @@ Item {
                 mipmap: true
                 sourceSize: Qt.size(Math.round(stage.width * Screen.devicePixelRatio),
                                     Math.round(stage.height * Screen.devicePixelRatio))
-                source: root.path === "" ? "" :
+                source: !root.visible || root.path === "" ? "" :
                         "image://matte/" + root.selected + "." + root.aspect + "."
                         + root.paddingPercent + encodeURIComponent(root.path)
                 opacity: status === Image.Ready ? 1 : 0
@@ -205,7 +205,7 @@ Item {
                         asynchronous: true
                         smooth: true
                         sourceSize: Qt.size(248, 150)
-                        source: root.path === "" ? "" :
+                        source: !root.visible || root.path === "" ? "" :
                                 "image://matte/" + chip.index + "." + root.aspect + "."
                                 + root.paddingPercent + encodeURIComponent(root.path)
                     }

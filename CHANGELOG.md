@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.4.0
 
 ### Added
 
@@ -19,6 +19,9 @@
 
 ### Fixed
 
+- Browse stays fully visible at the minimum window width.
+- Closed matte previews no longer reload their previous file when the window
+  changes size.
 - Opening a PDF directly from a file manager no longer rejects it as an
   unsupported media file.
 - Space in a video preview now pauses or resumes playback instead of launching

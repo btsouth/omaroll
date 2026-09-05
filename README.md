@@ -190,6 +190,8 @@ and next controls for the other media in that folder. A folder handed to
 
 Images: PNG, JPEG, WebP, animated GIF and WebP, BMP, AVIF, HEIC/HEIF, TIFF,
 SVG/SVGZ, ICO, JXL, JPEG 2000, QOI, PSD, DDS, EXR, and TGA.
+TGA support depends on the installed Qt plugin; uncompressed Truevision 2.0
+files work, while older files without the footer may not.
 
 Videos: MP4, M4V, MKV, WebM, MOV, AVI, MPEG, WMV, FLV, Ogg video, 3GP and
 MTS/M2TS. Playback uses Qt's FFmpeg backend. An optional action can still hand
@@ -202,10 +204,10 @@ Documents: PDF. Thumbnails, previews, and page counts use Poppler locally.
 Requires Omarchy or Arch with Qt 6.8+ and Poppler.
 
 ```bash
-curl -fLO https://github.com/btsouth/omaroll/releases/download/v1.3.1/omaroll-1.3.1-1-x86_64.pkg.tar.zst \
-     -fLO https://github.com/btsouth/omaroll/releases/download/v1.3.1/SHA256SUMS
+curl -fLO https://github.com/btsouth/omaroll/releases/download/v1.4.0/omaroll-1.4.0-1-x86_64.pkg.tar.zst \
+     -fLO https://github.com/btsouth/omaroll/releases/download/v1.4.0/SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
-sudo pacman -U ./omaroll-1.3.1-1-x86_64.pkg.tar.zst
+sudo pacman -U ./omaroll-1.4.0-1-x86_64.pkg.tar.zst
 ```
 
 Run the same commands for a newer release to update. The package is prepared for

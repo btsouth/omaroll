@@ -37,6 +37,7 @@ Item {
     property bool showInfo: true
     property bool slideshowRunning: false
     property bool slideshowPausedForRender: false
+    property bool videoPausedForRender: false
     property bool qrDetected: false
     property bool resumeVideoAfterRestore: false
     // The window's status line, repeated here: the footer sits under the
@@ -202,6 +203,7 @@ Item {
     }
 
     function open() {
+        videoPausedForRender = false
         const keepActionFocus = visible && actionNavigationActive
         const previousActionId = focusedActionId
         playbackError = ""
@@ -713,6 +715,12 @@ Item {
                     root.playbackError = errorString !== "" ? errorString : "Could not play this file"
                     if (root.slideshowRunning) {
                         slideshowErrorTimer.restart()
+                    }
+                }
+                onPositionChanged: {
+                    if (root.videoPausedForRender && player.position >= 1000
+                            && playbackState === MediaPlayer.PlayingState) {
+                        pause()
                     }
                 }
                 onMediaStatusChanged: {

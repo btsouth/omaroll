@@ -29,6 +29,8 @@
 #include "theme/OmarchyTheme.h"
 #include "thumbs/ThumbnailProvider.h"
 
+#include <QAudioBuffer>
+#include <QAudioBufferOutput>
 #include <QClipboard>
 #include <QDir>
 #include <QFile>
@@ -36,6 +38,7 @@
 #include <QGuiApplication>
 #include <QImage>
 #include <QMediaPlayer>
+#include <QMediaMetaData>
 #include <QPainter>
 #include <QPdfWriter>
 #include <QQmlApplicationEngine>
@@ -48,6 +51,8 @@
 #include <QStyleHints>
 #include <QTemporaryDir>
 #include <QThreadPool>
+#include <QVideoSink>
+#include <QVideoFrame>
 #include <QtTest>
 
 #include <functional>
@@ -244,6 +249,28 @@ private slots:
     QVERIFY(!item("detail")->isVisible());
     QCOMPARE(item("library")->property("currentIndex").toInt(), 0);
     QCOMPARE(item("library")->property("checkedCount").toInt(), 0);
+  }
+
+  void closedMatteDoesNotReloadItsPreviousFile() {
+    const QString path = m_scratch.filePath(QStringLiteral("matte-disposable.png"));
+    QImage source(80, 60, QImage::Format_RGB32);
+    source.fill(Qt::red);
+    QVERIFY(source.save(path));
+    const auto cleanup = qScopeGuard([&] {
+      invoke("dismissTopLayer");
+      QFile::remove(path);
+      m_window->resize(1280, 820);
+    });
+    perform(QStringLiteral("matte"), path);
+    QTRY_COMPARE(item("mattePreview")->property("status").toInt(), 1);
+    invoke("dismissTopLayer");
+    QTRY_VERIFY(item("mattePreview")->property("source").toUrl().isEmpty());
+    QVERIFY(QFile::remove(path));
+    m_window->resize(560, 420);
+    QTest::qWait(100);
+    QVERIFY(!find(item("matteSheet"), [](QQuickItem* child) {
+      return child->property("source").toString().startsWith(QStringLiteral("image://matte/"));
+    }));
   }
 
   void rightClickOnASheetStaysOnTheSheet() {
@@ -1265,9 +1292,11 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(m_pdfPath) >= 0, 5000);
     const int row = m_library->rowOf(m_pdfPath);
     QVERIFY(row >= 0);
-    openDetail(row);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openPath", Q_ARG(QVariant, m_pdfPath)));
+    const auto restoreFilter = qScopeGuard([&] { m_library->setFolderFilter(QString()); });
     QQuickItem* detail = item("detail");
     QTRY_VERIFY(detail->isVisible());
+    QCOMPARE(detail->property("path").toString(), m_pdfPath);
     QVERIFY(detail->property("isDocument").toBool());
     QTRY_COMPARE_WITH_TIMEOUT(m_pdfInfo->path(), m_pdfPath, 3000);
     QTRY_VERIFY_WITH_TIMEOUT(!m_pdfInfo->loading(), 5000);
@@ -1393,6 +1422,163 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(!QFileInfo::exists(path), 5000);
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(path) < 0, 10000);
     QTRY_VERIFY(grid->property("currentIndex").toInt() < m_library->rowCount());
+  }
+
+  void videoRenderKeepsADecodedFrameVisible() {
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openViewForRender",
+                                      Q_ARG(QVariant, QStringLiteral("video"))));
+    auto* player = m_window->findChild<QMediaPlayer*>(QStringLiteral("videoPlayer"));
+    QVERIFY(player);
+    QTRY_VERIFY(player->position() >= 1000);
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    QVERIFY(player->videoSink());
+    QVERIFY(player->videoSink()->videoFrame().isValid());
+    QVERIFY(!player->videoSink()->videoFrame().toImage().isNull());
+  }
+
+  // Fixture copies live until demo teardown so thumbnail workers can finish.
+  void realAnimationsPauseResumeAndKeepTheirFrame_data() {
+    QTest::addColumn<QString>("name");
+    QTest::newRow("gif") << QStringLiteral("animated.gif");
+    QTest::newRow("webp") << QStringLiteral("animated.webp");
+  }
+
+  void realAnimationsPauseResumeAndKeepTheirFrame() {
+    QFETCH(QString, name);
+    const QString source = QFINDTESTDATA(qPrintable("fixtures/viewer/" + name));
+    QVERIFY(!source.isEmpty());
+    const QString path = QFileInfo(m_oddPath).dir().filePath(name);
+    QVERIFY(QFile::copy(source, path));
+    const auto cleanup = qScopeGuard([&] {
+      invoke("dismissTopLayer");
+    });
+    m_captures->refresh();
+    QTRY_VERIFY(m_library->rowOf(path) >= 0);
+    openDetail(m_library->rowOf(path));
+    QQuickItem* animation = item("animatedImage");
+    QTRY_COMPARE(animation->property("status").toInt(), 1);
+    QCOMPARE(animation->property("frameCount").toInt(), 12);
+    QTRY_VERIFY(animation->property("currentFrame").toInt() >= 3);
+    const int frame = animation->property("currentFrame").toInt();
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QCOMPARE(animation->property("currentFrame").toInt(), frame);
+    QSignalSpy frameChanges(animation, SIGNAL(currentFrameChanged()));
+    QTest::qWait(400);
+    QCOMPARE(frameChanges.size(), 0);
+    QCOMPARE(animation->property("currentFrame").toInt(), frame);
+    const QImage paused = m_window->grabWindow();
+    QVERIFY(!paused.isNull());
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTRY_VERIFY(frameChanges.size() >= 3);
+    QVERIFY(m_window->grabWindow() != paused);
+    // Keep decoding past the end of the first cycle, including disposal and loop handling.
+    frameChanges.clear();
+    QTRY_VERIFY_WITH_TIMEOUT(frameChanges.size() >= 15, 4000);
+    QVERIFY(item("detail")->property("playbackError").toString().isEmpty());
+  }
+
+  void stillWebpDisplaysWithoutAnimationErrors() {
+    const QString source = QFINDTESTDATA("fixtures/viewer/still.webp");
+    QVERIFY(!source.isEmpty());
+    const QString path = QFileInfo(m_oddPath).dir().filePath(QStringLiteral("still.webp"));
+    QVERIFY(QFile::copy(source, path));
+    const auto cleanup = qScopeGuard([&] {
+      invoke("dismissTopLayer");
+    });
+    m_captures->refresh();
+    QTRY_VERIFY(m_library->rowOf(path) >= 0);
+    openDetail(m_library->rowOf(path));
+    QTRY_COMPARE(item("animatedImage")->property("status").toInt(), 1);
+    QCOMPARE(item("animatedImage")->property("frameCount").toInt(), 1);
+    QVERIFY(item("detail")->property("playbackError").toString().isEmpty());
+  }
+
+  void videoTracksSeekingAndMinimizeRestore() {
+    const QString source = QFINDTESTDATA("fixtures/viewer/tracks.mkv");
+    QVERIFY(!source.isEmpty());
+    const QString path = QFileInfo(m_oddPath).dir().filePath(QStringLiteral("tracks.mkv"));
+    QVERIFY(QFile::copy(source, path));
+    const auto cleanup = qScopeGuard([&] {
+      m_window->showNormal();
+      m_window->resize(1280, 820);
+      invoke("dismissTopLayer");
+    });
+    m_captures->refresh();
+    QTRY_VERIFY(m_library->rowOf(path) >= 0);
+    openDetail(m_library->rowOf(path));
+    auto* player = m_window->findChild<QMediaPlayer*>(QStringLiteral("videoPlayer"));
+    QVERIFY(player);
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+    QTRY_COMPARE(player->audioTracks().size(), 2);
+    QTRY_COMPARE(player->subtitleTracks().size(), 1);
+    QAudioFormat audioFormat;
+    audioFormat.setSampleRate(48000);
+    audioFormat.setChannelCount(1);
+    audioFormat.setSampleFormat(QAudioFormat::Float);
+    QAudioBufferOutput decodedAudio(audioFormat);
+    double frequency = 0;
+    connect(&decodedAudio, &QAudioBufferOutput::audioBufferReceived, &decodedAudio,
+            [&](const QAudioBuffer& buffer) {
+      if (buffer.frameCount() < 500 || buffer.format().sampleFormat() != QAudioFormat::Float)
+        return;
+      const float* samples = buffer.constData<float>();
+      int crossings = 0;
+      for (int i = 1; i < buffer.frameCount(); ++i)
+        if (samples[i - 1] <= 0 && samples[i] > 0) ++crossings;
+      frequency = double(crossings) * buffer.format().sampleRate() / buffer.frameCount();
+    });
+    player->setAudioBufferOutput(&decodedAudio);
+    const auto detachAudio = qScopeGuard([&] { player->setAudioBufferOutput(nullptr); });
+    QTRY_VERIFY(frequency > 350 && frequency < 530);
+    const int audioTrack = player->activeAudioTrack();
+    click(pill(item("detail"), QStringLiteral("Switch audio track")));
+    QTRY_COMPARE(player->activeAudioTrack(), (audioTrack + 1) % 2);
+    QTRY_VERIFY(frequency > 760 && frequency < 1000);
+    const int subtitleTrack = player->activeSubtitleTrack();
+    click(item("subtitleButton"));
+    QTRY_COMPARE(player->activeSubtitleTrack(), subtitleTrack == -1 ? 0 : -1);
+    click(item("subtitleButton"));
+    QTRY_COMPARE(player->activeSubtitleTrack(), subtitleTrack);
+    if (player->activeSubtitleTrack() < 0) click(item("subtitleButton"));
+    QVERIFY(player->videoSink());
+    player->setPosition(1000);
+    QTRY_VERIFY(player->videoSink()->subtitleText().contains(QStringLiteral("Omaroll subtitle test")));
+    player->setPosition(7000);
+    QTRY_VERIFY(player->videoSink()->subtitleText().contains(QStringLiteral("Second subtitle")));
+    click(item("subtitleButton"));
+    QTRY_VERIFY(player->videoSink()->subtitleText().isEmpty());
+
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    QTest::keyClick(m_window, Qt::Key_Home);
+    QTRY_COMPARE(player->position(), 0);
+    QTest::keyClick(m_window, Qt::Key_L);
+    QTRY_VERIFY(qAbs(player->position() - 5000) < 100);
+    QTest::keyClick(m_window, Qt::Key_J);
+    QTRY_COMPARE(player->position(), 0);
+    m_window->showMinimized();
+    QTest::qWait(100);
+    m_window->showNormal();
+    QTest::qWait(200);
+    QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+    m_window->showMinimized();
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    m_window->showNormal();
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+    // Basic controls must remain within the narrow window.
+    m_window->resize(560, 420);
+    QTest::qWait(100);
+    for (const QString& name : {QStringLiteral("videoPlayButton"),
+                                QStringLiteral("videoSoundButton"),
+                                QStringLiteral("playbackSpeedButton")}) {
+      QQuickItem* control = item(name);
+      QVERIFY(control->isVisible());
+      const QRectF bounds = control->mapRectToScene(control->boundingRect());
+      QVERIFY2(bounds.left() >= 0 && bounds.right() <= m_window->width(), qPrintable(name));
+    }
+    QVERIFY(item("detail")->property("playbackError").toString().isEmpty());
   }
 
   void theWindowRaisedNoQmlWarnings() {

@@ -67,6 +67,7 @@ Item {
 
     // On a half-screen tile the pills and the search cannot share a row, so
     // the search and sort drop to a second line rather than overlap.
+    readonly property bool separateBrowse: root.width < 620
     readonly property bool wrapped: root.width < kinds.width + 40 + 90 + sortButton.width + 60
     implicitHeight: wrapped ? 76 : 40
 
@@ -135,6 +136,10 @@ Item {
 
         PillButton {
             id: libraryButton
+            // Keep Browse reachable when the kind filters fill a narrow row.
+            parent: root.separateBrowse ? root : kinds
+            x: root.separateBrowse ? 20 : 0
+            y: root.separateBrowse ? 43 : 0
             label: root.width < 700 ? (Captures.duplicatesOnly ? "Dupes  ▾"
                                       : Captures.similarOnly ? "Similar  ▾" : "Browse  ▾")
                    : (Captures.duplicatesOnly ? "Duplicates  ▾"

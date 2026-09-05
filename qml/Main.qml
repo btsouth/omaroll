@@ -485,6 +485,7 @@ ApplicationWindow {
                 if (Captures.isVideoAt(row)) {
                     library.currentIndex = row
                     root.openDetail(row)
+                    detail.videoPausedForRender = true
                     break
                 }
             }
