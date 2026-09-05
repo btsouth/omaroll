@@ -50,6 +50,8 @@
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
+#include <QMouseEvent>
+#include <QPointingDevice>
 #include <QScopeGuard>
 #include <QSettings>
 #include <QStyleHints>
@@ -160,8 +162,14 @@ private slots:
                                           [&](const QString& suffix) {
                                             return warning.toString().endsWith(suffix);
                                           });
+        const bool disposable = std::any_of(
+            m_disposablePaths.cbegin(), m_disposablePaths.cend(), [&](const QString& path) {
+              return warning.toString().contains(QStringLiteral("No thumbnail for ") + path);
+            });
         if (expected != m_expectedQmlWarnings.end()) {
           m_expectedQmlWarnings.erase(expected);
+        } else if (disposable) {
+          // Files a test removes while tiles or the viewer still ask for them.
         } else {
           m_warnings.append(warning.toString());
         }
@@ -1735,6 +1743,282 @@ private slots:
     QVERIFY(item("detail")->property("playbackError").toString().isEmpty());
   }
 
+  // A tiled window changes width, which rebuilds the grid layout, and new
+  // captures keep arriving while it is open. Every visible tile must still
+  // describe the row it sits at, and opening it must open that file.
+  void tilesStayMappedAfterResizeAndRescan() {
+    QQuickItem* grid = item("library");
+    QQuickItem* detail = item("detail");
+    const QString pictures = QFileInfo(m_oddPath).absolutePath();
+    const QString source = pictures + QStringLiteral("/alpine-dawn.jpg");
+    QStringList added;
+    auto cleanup = qScopeGuard([&] {
+      for (const QString& path : added) {
+        QFile::remove(path);
+      }
+      m_captures->refresh();
+      QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(added.value(0)) < 0, 15000);
+      m_window->resize(1280, 820);
+      QTest::qWait(400);
+    });
+
+    struct Stale {
+      QQuickItem* card;
+      int index;
+      QString path;
+    };
+    QList<Stale> stale;
+    auto checkCards = [&](const char* stage) {
+      QTest::qWait(400);
+      stale.clear();
+      int checked = 0;
+      QHash<QPoint, QString> positions;
+      QQuickItem* view = find(grid, [](QQuickItem* candidate) {
+        return candidate->property("cellWidth").isValid();
+      });
+      std::function<void(QQuickItem*)> walk = [&](QQuickItem* node) {
+        for (QQuickItem* child : node->childItems()) {
+          if (child->property("dragPaths").isValid() && child->isVisible() &&
+              child->parentItem() && child->parentItem()->property("index").isValid()) {
+            const int index = child->parentItem()->property("index").toInt();
+            const QString path = child->property("path").toString();
+            if (path != m_library->pathAt(index)) {
+              QQuickItem* live = nullptr;
+              QMetaObject::invokeMethod(view, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, live),
+                                        Q_ARG(int, index));
+              const QPointF at = child->mapToScene(QPointF(child->width() / 2, child->height() / 2));
+              qInfo() << stage << "tile" << index << "shows" << path << "but the row holds"
+                      << m_library->pathAt(index) << "at" << at << "live delegate:"
+                      << (live == child->parentItem());
+              stale.append({child, index, path});
+              ++checked;
+              walk(child);
+              continue;
+            }
+            const QPoint at = child->mapToScene(QPointF(0, 0)).toPoint();
+            QVERIFY2(!positions.contains(at) || positions.value(at) == path,
+                     qPrintable(QStringLiteral("%1: %2 and %3 overlap at %4,%5")
+                                    .arg(QLatin1String(stage), positions.value(at), path)
+                                    .arg(at.x())
+                                    .arg(at.y())));
+            positions.insert(at, path);
+            QQuickItem* image = find(child, [](QQuickItem* candidate) {
+              return candidate->property("sourceSize").isValid() &&
+                     candidate->property("source").isValid();
+            });
+            if (image) {
+              const QString url =
+                  QUrl::fromPercentEncoding(image->property("source").toUrl().toString().toUtf8());
+              QVERIFY2(url.isEmpty() || url.contains(path),
+                       qPrintable(QStringLiteral("%1: tile %2 requests %3 for %4")
+                                      .arg(QLatin1String(stage))
+                                      .arg(index)
+                                      .arg(url, path)));
+            }
+            ++checked;
+          }
+          walk(child);
+        }
+      };
+      walk(m_window->contentItem());
+      QVERIFY2(stale.isEmpty(),
+               qPrintable(QStringLiteral("%1: %2 tile(s) show a file their row no longer holds")
+                              .arg(QLatin1String(stage))
+                              .arg(stale.size())));
+      QVERIFY2(checked >= 4, qPrintable(QStringLiteral("%1: only %2 tiles visible")
+                                            .arg(QLatin1String(stage))
+                                            .arg(checked)));
+    };
+
+    // The delegate the view itself shows for a row. cardFor() can answer a
+    // pooled delegate that still reports itself visible but takes no clicks.
+    auto liveCardAt = [&](int row) -> QQuickItem* {
+      QQuickItem* view = find(grid, [](QQuickItem* candidate) {
+        return candidate->property("cellWidth").isValid();
+      });
+      QQuickItem* cell = nullptr;
+      QMetaObject::invokeMethod(view, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, cell),
+                                Q_ARG(int, row));
+      return cell ? find(cell, [](QQuickItem* candidate) {
+        return candidate->property("dragPaths").isValid();
+      }) : nullptr;
+    };
+    auto openByRightClick = [&](int row, const char* stage) {
+      QQuickItem* card = nullptr;
+      QTRY_VERIFY_WITH_TIMEOUT((card = liveCardAt(row)) != nullptr, 5000);
+      QCOMPARE(card->property("path").toString(), pathAt(row));
+      if (centre(card).y() <= 0 || centre(card).y() >= m_window->height()) {
+        QQuickItem* view = find(grid, [](QQuickItem* candidate) {
+          return candidate->property("cellWidth").isValid();
+        });
+        // GridView.Contain
+        QMetaObject::invokeMethod(view, "positionViewAtIndex", Q_ARG(int, row), Q_ARG(int, 4));
+      }
+      QTRY_VERIFY_WITH_TIMEOUT(centre(card).y() > 0 && centre(card).y() < m_window->height(),
+                               5000);
+      click(card, Qt::RightButton);
+      settle();
+      QTRY_VERIFY2_WITH_TIMEOUT(
+          detail->isVisible(),
+          qPrintable(QStringLiteral("%1: right click on row %2 at %3,%4 (card %5x%6, window %7x%8, "
+                                    "grid enabled %9, sheet open %10, popup %11) opened nothing")
+                         .arg(QLatin1String(stage))
+                         .arg(row)
+                         .arg(centre(card).x())
+                         .arg(centre(card).y())
+                         .arg(card->width())
+                         .arg(card->height())
+                         .arg(m_window->width())
+                         .arg(m_window->height())
+                         .arg(grid->isEnabled())
+                         .arg(prop("anySheetOpen").toBool())
+                         .arg(prop("popupOpen").toBool())),
+          5000);
+      QVERIFY2(detail->property("path").toString() == pathAt(row),
+               qPrintable(QStringLiteral("%1: clicked %2, viewer opened %3")
+                              .arg(QLatin1String(stage), pathAt(row),
+                                   detail->property("path").toString())));
+      invoke("dismissTopLayer");
+      QTRY_VERIFY(!detail->isVisible());
+    };
+
+    // Tiled beside another window: fewer columns, layout rebuilt.
+    m_window->resize(1005, 545);
+    checkCards("after narrowing");
+    openByRightClick(2, "after narrowing");
+
+    // New screenshots land while the window is open and sort to the top.
+    const int before = m_library->rowCount();
+    for (int i = 1; i <= 3; ++i) {
+      const QString target =
+          pictures + QStringLiteral("/screenshot-2099-01-0%1_10-00-00.jpg").arg(i);
+      QVERIFY(QFile::copy(source, target));
+      added.append(QFileInfo(target).canonicalFilePath());
+      m_disposablePaths.append(added.last());
+    }
+    m_captures->refresh();
+    QTRY_COMPARE_WITH_TIMEOUT(m_library->rowCount(), before + 3, 15000);
+    checkCards("after rescan");
+    openByRightClick(0, "after rescan");
+    openByRightClick(4, "after rescan");
+
+    // Back to a wide window, more columns.
+    m_window->resize(1280, 820);
+    checkCards("after widening");
+    openByRightClick(3, "after widening");
+
+    // Background metadata moves a row to the top, re-sorting in place.
+    int movable = -1;
+    for (int candidate = 2; candidate < m_library->rowCount(); ++candidate) {
+      const int sourceRow = m_captures->rowOf(pathAt(candidate));
+      if (sourceRow >= 0 && !m_captures->recordAt(sourceRow).hasProducerTimestamp) {
+        movable = candidate;
+        break;
+      }
+    }
+    QVERIFY(movable > 0);
+    const QString movedPath = pathAt(movable);
+    const CaptureRecord movedRecord = m_captures->recordAt(m_captures->rowOf(movedPath));
+    const auto restoreDate = qScopeGuard([&] {
+      m_captures->applyCapturedDates({{movedPath, movedRecord.modified, movedRecord.bytes,
+                                       movedRecord.captured, movedRecord.device,
+                                       movedRecord.inode}});
+    });
+    m_captures->applyCapturedDates({{movedPath, movedRecord.modified, movedRecord.bytes,
+                                     QDateTime::currentDateTime().addYears(80), movedRecord.device,
+                                     movedRecord.inode}});
+    QTRY_COMPARE(m_library->rowOf(movedPath), 0);
+    checkCards("after date reorder");
+    openByRightClick(0, "after date reorder");
+    openByRightClick(movable, "after date reorder");
+
+    // Ctrl+wheel tile size change.
+    const int tileWidth = m_settings->tileWidth();
+    const auto restoreTiles = qScopeGuard([&] { m_settings->setTileWidth(tileWidth); });
+    m_settings->setTileWidth(tileWidth + 120);
+    checkCards("after larger tiles");
+    openByRightClick(1, "after larger tiles");
+
+    // Scroll to the end, let the library change while the top rows are
+    // pooled, then scroll back so those pooled delegates are reused.
+    QQuickItem* view = find(grid, [](QQuickItem* candidate) {
+      return candidate->property("cellWidth").isValid();
+    });
+    QVERIFY(view);
+    view->setProperty("contentY", view->property("contentHeight").toReal());
+    QTest::qWait(300);
+    checkCards("after scrolling down");
+    const int beforeMore = m_library->rowCount();
+    for (int i = 4; i <= 6; ++i) {
+      const QString target =
+          pictures + QStringLiteral("/screenshot-2099-01-0%1_10-00-00.jpg").arg(i);
+      QVERIFY(QFile::copy(source, target));
+      added.append(QFileInfo(target).canonicalFilePath());
+      m_disposablePaths.append(added.last());
+    }
+    m_captures->refresh();
+    QTRY_COMPARE_WITH_TIMEOUT(m_library->rowCount(), beforeMore + 3, 15000);
+    view->setProperty("contentY", 0);
+    QTRY_COMPARE(view->property("contentY").toReal(), 0.0);
+    checkCards("after scrolling back");
+    openByRightClick(2, "after scrolling back");
+    grid->setProperty("currentIndex", 0);
+  }
+
+  // A small tiled window with large tiles cuts the visible rows off at the
+  // bottom. Double-clicking a partly visible tile must open that tile, not
+  // whatever the view scrolled under the pointer after the first click.
+  void doubleClickOnAPartlyVisibleTileOpensThatTile() {
+    QQuickItem* grid = item("library");
+    QQuickItem* detail = item("detail");
+    const int tileWidth = m_settings->tileWidth();
+    const auto restore = qScopeGuard([&] {
+      invoke("dismissTopLayer");
+      m_settings->setTileWidth(tileWidth);
+      m_window->resize(1280, 820);
+      QTest::qWait(300);
+    });
+    m_window->resize(1005, 545);
+    m_settings->setTileWidth(440);
+    QTest::qWait(500);
+    QQuickItem* view = find(grid, [](QQuickItem* candidate) {
+      return candidate->property("cellWidth").isValid();
+    });
+    QVERIFY(view);
+    // The first tile in the row that is cut off at the bottom of the viewport,
+    // located from the view's own geometry so pooled delegates cannot mislead.
+    const qreal cellHeight = view->property("cellHeight").toReal();
+    const qreal cellWidth = view->property("cellWidth").toReal();
+    const int columns = grid->property("columns").toInt();
+    const int cutRow = static_cast<int>(std::floor(view->height() / cellHeight));
+    const int index = cutRow * columns;
+    QVERIFY2(index < m_library->rowCount(), "not enough rows to cut one off");
+    QVERIFY2(cutRow * cellHeight < view->height() && (cutRow + 1) * cellHeight > view->height(),
+             "row is not partly visible at this size");
+    const QString path = pathAt(index);
+    const QPointF inView(cellWidth / 2, cutRow * cellHeight + 40);
+    int hit = -1;
+    QVERIFY(QMetaObject::invokeMethod(view, "indexAt", Q_RETURN_ARG(int, hit),
+                                      Q_ARG(qreal, inView.x()),
+                                      Q_ARG(qreal, inView.y() +
+                                                       view->property("contentY").toReal())));
+    QCOMPARE(hit, index);
+    const qreal before = view->property("contentY").toReal();
+    const QPoint at = view->mapToScene(inView).toPoint();
+    // A human double-click: the first click's side effects get time to land
+    // before the second click arrives. QTest::mouseClick pushes its timestamps
+    // past the double-click interval on every release, so send raw events.
+    humanDoubleClick(at, 140);
+    qInfo() << "after double-click: currentIndex" << grid->property("currentIndex").toInt()
+            << "detail visible" << detail->isVisible()
+            << "path" << detail->property("path").toString();
+    QTest::qWait(400);
+    const qreal after = view->property("contentY").toReal();
+    qInfo() << "contentY before" << before << "after" << after << "tile" << index << path;
+    QTRY_VERIFY(detail->isVisible());
+    QCOMPARE(detail->property("path").toString(), path);
+  }
+
   void theWindowRaisedNoQmlWarnings() {
     QVERIFY2(m_warnings.isEmpty(), qPrintable(m_warnings.join(QLatin1Char('\n'))));
   }
@@ -1806,6 +2090,30 @@ private:
     return target->mapToScene(QPointF(target->width() / 2, target->height() / 2)).toPoint();
   }
 
+  void sendMouse(QEvent::Type type, const QPoint& at, ulong timestamp) {
+    const QPointF local(at);
+    const QPointF global = m_window->mapToGlobal(at);
+    const Qt::MouseButtons buttons =
+        type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton;
+    QMouseEvent event(type, local, local, global, Qt::LeftButton, buttons, Qt::NoModifier,
+                      QPointingDevice::primaryPointingDevice());
+    event.setTimestamp(timestamp);
+    QCoreApplication::sendEvent(m_window, &event);
+  }
+
+  // Two clicks a human interval apart, with the event loop running between
+  // them so whatever the first click triggers has happened by the second.
+  void humanDoubleClick(const QPoint& at, int gapMs) {
+    const ulong start = static_cast<ulong>(QDateTime::currentMSecsSinceEpoch());
+    sendMouse(QEvent::MouseButtonPress, at, start);
+    sendMouse(QEvent::MouseButtonRelease, at, start + 40);
+    QTest::qWait(gapMs);
+    const ulong second = start + 40 + static_cast<ulong>(gapMs);
+    sendMouse(QEvent::MouseButtonPress, at, second);
+    sendMouse(QEvent::MouseButtonRelease, at, second + 40);
+    QTest::qWait(30);
+  }
+
   void click(QQuickItem* target, Qt::MouseButton button = Qt::LeftButton) {
     QVERIFY(target);
     QTest::mouseClick(m_window, button, Qt::NoModifier, centre(target));
@@ -1852,6 +2160,7 @@ private:
   QQuickWindow* m_window = nullptr;
   QStringList m_warnings;
   QStringList m_expectedQmlWarnings;
+  QStringList m_disposablePaths;
   QString m_oddPath;
   QString m_pdfPath;
 };

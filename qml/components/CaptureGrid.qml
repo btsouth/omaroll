@@ -166,10 +166,17 @@ FocusScope {
             }
             const selected = grid.currentIndex
             const scroll = grid.contentY
+            // Drop the delegate pool across the reattach. Delegates pooled
+            // before the model went away and taken back for the same row
+            // afterwards kept their old file while their index pointed at
+            // the row's new one, so the tile showed one capture and opened
+            // another.
+            grid.reuseItems = false
             root.layoutReady = false
             Qt.callLater(function () {
                 root.layoutReady = true
                 Qt.callLater(function () {
+                    grid.reuseItems = true
                     grid.currentIndex = Math.min(selected, grid.count - 1)
                     grid.contentY = Math.max(0, Math.min(scroll, grid.contentHeight - grid.height))
                 })
