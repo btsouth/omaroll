@@ -1,18 +1,26 @@
 # Project status and handoff
 
-Snapshot: 5 September 2026 UTC, with 1.6.0 prepared after the v1.5.0 release and
-the feature merges that followed. Check the linked PRs and release before resuming.
+Snapshot: 5 September 2026 UTC, after the v1.6.0 release. Check the linked PRs and release before resuming.
 
 ## Released
 
-[v1.5.0](https://github.com/btsouth/omaroll/releases/tag/v1.5.0) is the latest
+[v1.6.0](https://github.com/btsouth/omaroll/releases/tag/v1.6.0) is the latest
 public release, tagged from
-[PR #7](https://github.com/btsouth/omaroll/pull/7) (64ddae8) after a desktop
-test on the real Omarchy session. The Release workflow published the source
-archive, Arch package, PKGBUILD and checksums; all four were downloaded and
-verified. The viewer supports still and animated images, embedded video
-controls, PDF paging, OCR/QR, albums, tags, saved collections and duplicate
-review. The README describes the supported formats and workflows.
+[PR #19](https://github.com/btsouth/omaroll/pull/19) (3f4d437) after a desktop
+test of every change since 1.5.0 on the real Omarchy session. The Release
+workflow published the source archive, Arch package, PKGBUILD and checksums;
+all four were downloaded and verified against SHA256SUMS. It adds star
+ratings, captions, nested tags, camera and lens browsing, Tab cycling of the
+sections and a held first frame when a video ends. The local sanitizer pass
+reported only NVIDIA CUDA and VAAPI driver allocations from FFmpeg
+initialization, none in Omaroll, and no UBSan findings.
+
+[v1.5.0](https://github.com/btsouth/omaroll/releases/tag/v1.5.0) preceded it
+the same day, tagged from
+[PR #7](https://github.com/btsouth/omaroll/pull/7) (64ddae8). The viewer supports
+still and animated images, embedded video controls, PDF paging, OCR/QR, albums,
+tags, saved collections and duplicate review. The README describes the
+supported formats and workflows.
 
 ## What 1.5.0 bundled
 
@@ -47,7 +55,7 @@ of 949.9 to 257.2 ms for an image-ready submitted frame and 1181.2 to 471.9 ms
 for a ready grid. These are offscreen NVIDIA measurements from main entry,
 not compositor presentation or general performance guarantees.
 
-## 1.6.0 candidate
+## What 1.6.0 bundled
 
 Four feature PRs landed after the release, each squash merged with green CI and
 passing core and UI suites in the sandbox. All were tested on the real Omarchy
@@ -56,7 +64,7 @@ desktop on 5 September 2026, which found three problems fixed in
 ambiguous shortcut), [PR #17](https://github.com/btsouth/omaroll/pull/17)
 (caption save depended on focus; a finished video left a blank stage) and
 [PR #18](https://github.com/btsouth/omaroll/pull/18) (header count wording).
-Version 1.6.0 carries all of it:
+Version 1.6.0 carries all of it, plus the 1.6.0 preparation in PR #19:
 
 - [PR #11](https://github.com/btsouth/omaroll/pull/11): Tab and Shift+Tab cycle
   the section pills.
@@ -68,7 +76,8 @@ Version 1.6.0 carries all of it:
 - [PR #14](https://github.com/btsouth/omaroll/pull/14): tags nest with a slash
   and files take a caption in the viewer that is searched with names and text.
 
-The changelog lists them under 1.6.0. Semantic search and face
+The changelog lists them under 1.6.0. A 31 second demo recording of the
+release lives at ~/Videos/omaroll-1.6.0-demo.mp4 on the development desktop. Semantic search and face
 recognition were considered against Lightroom and Immich and deferred
 (SBS-1139); do not add ML dependencies without a fresh decision.
 
@@ -81,7 +90,7 @@ recognition were considered against Lightroom and Immich and deferred
    passes do not close this gate.
 3. Continue performance work (SBS-1122): warm navigation, larger and mixed
    libraries, Wayland presentation, GPU memory and realistic regression budgets.
-4. Desktop test the four unreleased features before the next tag, then start
+4. Start
    safe image corrections (SBS-1126): crop, rotate and resize with Save a
    copy, collision handling and a metadata/color policy. Reuse Omarchy helpers
    where they satisfy the workflow. Comparison and organization improvements
@@ -89,7 +98,8 @@ recognition were considered against Lightroom and Immich and deferred
 5. Watch the Omarchy package submission for upstream feedback.
 
 [Official package PR #295](https://github.com/omacom/omarchy-pkgs/pull/295)
-remains open and was refreshed to v1.5.0 after the release. Earlier edge, rc
+remains open and still points at v1.5.0; refreshing it to v1.6.0 is the next
+packaging step. Earlier edge, rc
 and stable package builds passed; upstream acceptance is pending. Repository inclusion, default
 installation and MIME defaults are separate upstream decisions.
 
