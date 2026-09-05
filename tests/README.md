@@ -10,7 +10,8 @@ ctest --test-dir build/release --output-on-failure
 
 The tests create disposable media and settings. The checked-in
 [viewer fixtures](fixtures/viewer/README.md) exercise actual decoders without
-downloads. UI input goes to the test window, not the live desktop.
+downloads. UI input goes to the test window, not the live desktop. CTest disables
+the PulseAudio connection so automated playback does not use the user's speakers.
 
 ## Rendered video
 
