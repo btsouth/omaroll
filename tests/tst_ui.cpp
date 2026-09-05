@@ -2003,6 +2003,19 @@ private slots:
                                       Q_ARG(qreal, inView.y() +
                                                        view->property("contentY").toReal())));
     QCOMPARE(hit, index);
+    // Wait for the relayout after the size changes to settle: the live
+    // delegate for the row must be under the click point and carry its file.
+    QQuickItem* cell = nullptr;
+    QTRY_VERIFY_WITH_TIMEOUT(
+        (QMetaObject::invokeMethod(view, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, cell),
+                                   Q_ARG(int, index)),
+         cell != nullptr && cell->mapRectToItem(view, QRectF(0, 0, cell->width(), cell->height()))
+                                .contains(inView) &&
+         find(cell, [](QQuickItem* candidate) {
+           return candidate->property("dragPaths").isValid();
+         })->property("path").toString() == path),
+        5000);
+    QTest::qWait(200);
     const qreal before = view->property("contentY").toReal();
     const QPoint at = view->mapToScene(inView).toPoint();
     // A human double-click: the first click's side effects get time to land
