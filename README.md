@@ -67,6 +67,11 @@ on them.
   rating. Ratings are stored with favourites and never touch the file.
 - **Adds lightweight tags.** Tag any selection and browse it without moving or
   copying files. Tags follow in-app renames and can be combined with saved views.
+  Name a tag `Travel/Japan` to nest it under `Travel`; choosing the parent shows
+  everything beneath it.
+- **Captions files.** Type a caption in the viewer and it shows on the tile and
+  matches in search, alongside filenames and picture text. Captions are stored
+  with the other marks and never written into the file.
 - **Knows what each file is.** Omarchy stamps its captures with a predictable
   name, so a screenshot is a Screenshot even though it lives in `~/Pictures`
   next to every other image.
