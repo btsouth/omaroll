@@ -2008,14 +2008,18 @@ private slots:
     // Wait for the relayout after the size changes to settle: the live
     // delegate for the row must be under the click point and carry its file.
     QQuickItem* cell = nullptr;
+    const auto cardPath = [&](QQuickItem* node) -> QString {
+      QQuickItem* card = node ? find(node, [](QQuickItem* candidate) {
+        return candidate->property("dragPaths").isValid();
+      }) : nullptr;
+      return card ? card->property("path").toString() : QString();
+    };
     QTRY_VERIFY_WITH_TIMEOUT(
         (QMetaObject::invokeMethod(view, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, cell),
                                    Q_ARG(int, index)),
          cell != nullptr && cell->mapRectToItem(view, QRectF(0, 0, cell->width(), cell->height()))
                                 .contains(inView) &&
-         find(cell, [](QQuickItem* candidate) {
-           return candidate->property("dragPaths").isValid();
-         })->property("path").toString() == path),
+         cardPath(cell) == path),
         5000);
     // Under xcb the resize arrives asynchronously and can trigger a second
     // relayout, which detaches the model for a moment. Click only once the
@@ -2126,9 +2130,13 @@ private:
   // QTest::mouseClick only pushes its timestamps past the double-click
   // interval when no delay is given, so explicit delays keep the pair a
   // double-click as far as Qt is concerned.
+  // The gap is applied before the second press and again before its release,
+  // so it stays well under a quarter of the platform's double-click interval.
   void humanDoubleClick(const QPoint& at, int gapMs) {
+    const int gap =
+        qMin(gapMs, QGuiApplication::styleHints()->mouseDoubleClickInterval() / 4);
     QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, at, 1);
-    QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, at, gapMs);
+    QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, at, gap);
     QTest::qWait(30);
   }
 
