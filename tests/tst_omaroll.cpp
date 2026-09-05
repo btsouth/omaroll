@@ -627,6 +627,28 @@ private slots:
     QCOMPARE(settings.tagsForPath(original), QStringList {tag});
     QCOMPARE(settings.tagItemCount(tag), 1);
 
+    // A slash nests. The parent's paths and count include the child's, the
+    // names come back in tree order, and creating a deep tag fills in the
+    // levels above it. Deleting a parent takes its children with it.
+    const QString child = tag + QStringLiteral("/ Japan ");
+    const QString other = dir.filePath(QStringLiteral("other.png"));
+    QVERIFY(image.save(other, "PNG"));
+    QVERIFY(settings.createTag(child));
+    const QString childName = tag + QStringLiteral("/Japan");
+    QVERIFY(settings.tagNames().contains(childName));
+    QVERIFY(!settings.createTag(QStringLiteral(" / / ")));
+    QVERIFY(settings.addTag(childName, {other}));
+    QCOMPARE(settings.tagPaths(childName), QStringList {other});
+    QCOMPARE(settings.tagPaths(tag), QStringList({original, other}));
+    QCOMPARE(settings.tagItemCount(tag), 2);
+    QVERIFY(settings.tagNames().indexOf(tag) < settings.tagNames().indexOf(childName));
+    const QString deep = QStringLiteral("Auto ") + suffix + QStringLiteral("/Level/Leaf");
+    QVERIFY(settings.createTag(deep));
+    QVERIFY(settings.tagNames().contains(QStringLiteral("Auto ") + suffix));
+    QVERIFY(settings.tagNames().contains(QStringLiteral("Auto ") + suffix + QStringLiteral("/Level")));
+    settings.deleteTag(QStringLiteral("Auto ") + suffix);
+    QVERIFY(!settings.tagNames().contains(deep));
+
     QVariantMap view;
     view.insert(QStringLiteral("kind"), CaptureRecord::Picture);
     view.insert(QStringLiteral("favorites"), true);
@@ -634,17 +656,18 @@ private slots:
     QVERIFY(settings.saveSmartCollection(collection, view));
 
     AppSettings restored;
-    QCOMPARE(restored.tagPaths(tag), QStringList {original});
+    QCOMPARE(restored.tagPaths(tag), QStringList({original, other}));
     QCOMPARE(restored.smartCollection(collection), view);
     QVERIFY(QFile::rename(original, renamed));
     restored.relocatePath(original, renamed);
-    QCOMPARE(restored.tagPaths(tag), QStringList {renamed});
+    QCOMPARE(restored.tagPaths(tag), QStringList({renamed, other}));
     QCOMPARE(restored.tagsForPath(renamed), QStringList {tag});
 
     AppSettings finalRestore;
-    QCOMPARE(finalRestore.tagPaths(tag), QStringList {renamed});
+    QCOMPARE(finalRestore.tagPaths(tag), QStringList({renamed, other}));
     QCOMPARE(finalRestore.smartCollection(collection), view);
     finalRestore.deleteTag(tag);
+    QVERIFY(!finalRestore.tagNames().contains(childName));
     finalRestore.deleteSmartCollection(collection);
   }
 
@@ -1136,6 +1159,17 @@ private slots:
     proxy.setSearchText(QStringLiteral("beach overdue"));
     QCOMPARE(proxy.count(), 1);
     QCOMPARE(proxy.pathAt(0), beachPath);
+    proxy.setSearchText({});
+
+    // A caption is searched like the filename and the picture text.
+    settings.setCaption(beachPath, QStringLiteral("Sunset from the pier"));
+    QTRY_COMPARE_WITH_TIMEOUT(model.recordAt(model.rowOf(beachPath)).caption,
+                              QStringLiteral("Sunset from the pier"), 1000);
+    proxy.setSearchText(QStringLiteral("pier"));
+    QCOMPARE(proxy.count(), 1);
+    QCOMPARE(proxy.pathAt(0), beachPath);
+    settings.setCaption(beachPath, QString());
+    QTRY_COMPARE_WITH_TIMEOUT(proxy.count(), 0, 1000);
     proxy.setSearchText({});
 
     rescanned.clear();
@@ -2744,6 +2778,9 @@ private slots:
     QCOMPARE(settings.rating(original), 4);
     QCOMPARE(settings.ratedCount(), 1);
 
+    settings.setCaption(original, QStringLiteral("  Boarding pass  "));
+    QCOMPARE(settings.caption(original), QStringLiteral("Boarding pass"));
+
     ActionLauncher launcher;
     QVERIFY(!launcher.renameFile(original, QString()).value(QStringLiteral("ok")).toBool());
     QVERIFY(!launcher.renameFile(original, QStringLiteral("bad/name"))
@@ -2768,6 +2805,9 @@ private slots:
     QVERIFY(settings.isHidden(newPath));
     QCOMPARE(settings.rating(newPath), 4);
     QCOMPARE(settings.rating(original), 0);
+
+    QCOMPARE(settings.caption(newPath), QStringLiteral("Boarding pass"));
+    QVERIFY(settings.caption(original).isEmpty());
     QCOMPARE(settings.albumPaths(album), QStringList {newPath});
     AppSettings restored;
     QVERIFY(restored.isFavorite(newPath));
@@ -2783,6 +2823,12 @@ private slots:
     QCOMPARE(settings.ratedCount(), 0);
     QVERIFY(!settings.markedPaths().contains(newPath) || settings.isFavorite(newPath));
 
+
+    QCOMPARE(restored.caption(newPath), QStringLiteral("Boarding pass"));
+    QCOMPARE(restored.albumPaths(album), QStringList {newPath});
+
+    settings.setCaption(newPath, QString());
+    QVERIFY(settings.caption(newPath).isEmpty());
     settings.toggleFavorite(newPath);
     settings.toggleHidden(newPath);
     settings.deleteAlbum(album);

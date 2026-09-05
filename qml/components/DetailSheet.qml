@@ -29,6 +29,7 @@ Item {
     property double stamp: 0
     property bool favorite: false
     property int rating: 0
+    property string caption: ""
     property int kind: 0
     property string playbackError: ""
     property bool canNavigate: false
@@ -115,6 +116,7 @@ Item {
 
     signal actionTriggered(string id)
     signal rateRequested(int stars)
+    signal captionEdited(string text)
     signal navigateRequested(int direction)
     signal fullScreenRequested(bool enabled)
 
@@ -1324,6 +1326,65 @@ Item {
                                                              ? 0 : index + 1)
                             }
                         }
+                    }
+                }
+
+                // Caption. Enter or leaving the field saves; Escape puts the
+                // saved text back and returns to the picture.
+                Rectangle {
+                    width: parent.width
+                    height: 26
+                    radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
+                    color: root.shade(Theme.foreground, captionField.activeFocus ? 0.10 : 0.05)
+                    border.width: 1
+                    border.color: captionField.activeFocus
+                                  ? root.shade(Theme.accent, 0.6)
+                                  : root.shade(Theme.foreground, 0.12)
+
+                    TextInput {
+                        id: captionField
+                        objectName: "viewerCaption"
+                        anchors.fill: parent
+                        anchors.leftMargin: 8
+                        anchors.rightMargin: 8
+                        verticalAlignment: TextInput.AlignVCenter
+                        clip: true
+                        activeFocusOnTab: false
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 11
+                        color: Theme.foreground
+                        selectionColor: root.shade(Theme.accent, 0.5)
+                        selectedTextColor: Theme.brightForeground
+                        // Typing breaks a plain binding, so follow the saved
+                        // caption explicitly when the file or its marks change.
+                        readonly property string saved: root.caption
+                        onSavedChanged: text = saved
+                        Component.onCompleted: text = saved
+                        onEditingFinished: {
+                            if (text.trim() !== root.caption) {
+                                root.captionEdited(text.trim())
+                            }
+                        }
+                        Keys.onEscapePressed: {
+                            text = root.caption
+                            root.focusPreview()
+                        }
+                        Keys.onReturnPressed: root.focusPreview()
+                        Keys.onEnterPressed: root.focusPreview()
+                    }
+
+                    Text {
+                        anchors.fill: captionField
+                        verticalAlignment: Text.AlignVCenter
+                        visible: captionField.text === "" && !captionField.activeFocus
+                        text: "Add a caption"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 11
+                        color: root.shade(Theme.foreground, 0.35)
+                    }
+
+                    TapHandler {
+                        onTapped: captionField.forceActiveFocus()
                     }
                 }
 

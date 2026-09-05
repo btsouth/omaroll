@@ -18,6 +18,8 @@ constexpr auto kHidden = "library/hidden";
 // One "stars:path" entry per rated file, so the ini stays readable by hand.
 constexpr auto kRatings = "library/ratings";
 constexpr int kMaximumRating = 5;
+constexpr auto kCaptions = "library/captions";
+constexpr int kMaximumCaptionLength = 500;
 constexpr auto kShowHidden = "library/showHidden";
 constexpr auto kSortMode = "library/sortMode";
 constexpr auto kKindFilter = "library/kindFilter";
@@ -51,6 +53,35 @@ QString normalizedFolder(const QString& path, bool mustExist) {
 QString normalizedAlbumName(const QString& name) {
   const QString normalized = name.simplified().left(60);
   return normalized.contains(QLatin1Char('/')) ? QString() : normalized;
+}
+
+// "travel / japan /" becomes "travel/japan". Empty segments are dropped, so
+// a stray slash cannot create a nameless level.
+QString normalizedTagName(const QString& name) {
+  QStringList segments;
+  for (const QString& part : name.split(QLatin1Char('/'))) {
+    const QString segment = part.simplified();
+    if (!segment.isEmpty()) {
+      segments.append(segment);
+    }
+  }
+  return segments.join(QLatin1Char('/')).left(80);
+}
+
+bool tagLessThan(const QString& first, const QString& second) {
+  const QStringList a = first.split(QLatin1Char('/'));
+  const QStringList b = second.split(QLatin1Char('/'));
+  for (qsizetype index = 0; index < qMin(a.size(), b.size()); ++index) {
+    if (const int order = a.at(index).compare(b.at(index), Qt::CaseInsensitive); order != 0) {
+      return order < 0;
+    }
+  }
+  return a.size() < b.size();
+}
+
+bool tagIsUnder(const QString& candidate, const QString& parent) {
+  return candidate.size() > parent.size() && candidate.startsWith(parent) &&
+         candidate.at(parent.size()) == QLatin1Char('/');
 }
 
 } // namespace
@@ -109,6 +140,14 @@ AppSettings::AppSettings(QObject* parent)
     }
   }
 
+  const QVariantMap captions = m_settings.value(kCaptions).toMap();
+  for (auto it = captions.cbegin(); it != captions.cend(); ++it) {
+    const QString text = it.value().toString().trimmed().left(kMaximumCaptionLength);
+    if (!it.key().isEmpty() && !text.isEmpty()) {
+      m_captions.insert(it.key(), text);
+    }
+  }
+
   m_showHidden = m_settings.value(kShowHidden, false).toBool();
   m_sortMode = qBound(0, m_settings.value(kSortMode, 0).toInt(), 5);
   m_kindFilter = qBound(-1, m_settings.value(kKindFilter, -1).toInt(), 5);
@@ -138,9 +177,10 @@ AppSettings::AppSettings(QObject* parent)
   m_slideshowVideos = m_settings.value(kSlideshowVideos, false).toBool();
   const QVariantMap storedAlbums = m_settings.value(kAlbums).toMap();
   const auto restoreCollections = [this](const QVariantMap& storedCollections,
-                                         QMap<QString, QList<AlbumEntry>>& target) {
+                                         QMap<QString, QList<AlbumEntry>>& target,
+                                         QString (*normalize)(const QString&)) {
     for (auto it = storedCollections.cbegin(); it != storedCollections.cend(); ++it) {
-      const QString name = normalizedAlbumName(it.key());
+      const QString name = normalize(it.key());
       if (name.isEmpty()) {
         continue;
       }
@@ -176,8 +216,8 @@ AppSettings::AppSettings(QObject* parent)
       target.insert(name, entries);
     }
   };
-  restoreCollections(storedAlbums, m_albums);
-  restoreCollections(m_settings.value(kTags).toMap(), m_tags);
+  restoreCollections(storedAlbums, m_albums, normalizedAlbumName);
+  restoreCollections(m_settings.value(kTags).toMap(), m_tags, normalizedTagName);
 
   const QVariantMap storedSmart = m_settings.value(kSmartCollections).toMap();
   for (auto it = storedSmart.cbegin(); it != storedSmart.cend(); ++it) {
@@ -326,6 +366,10 @@ void AppSettings::relocatePath(const QString& oldPath, const QString& newPath) {
   }
   if (const int stars = m_ratings.take(oldPath); stars > 0) {
     m_ratings.insert(newPath, stars);
+    marksChangedValue = true;
+  }
+  if (const QString text = m_captions.take(oldPath); !text.isEmpty()) {
+    m_captions.insert(newPath, text);
     marksChangedValue = true;
   }
   if (marksChangedValue) {
@@ -494,15 +538,25 @@ void AppSettings::removeUnavailableFromAlbum(const QString& name) {
 
 QStringList AppSettings::tagNames() const {
   QStringList names = m_tags.keys();
-  names.sort(Qt::CaseInsensitive);
+  std::sort(names.begin(), names.end(), tagLessThan);
   return names;
 }
 
 QStringList AppSettings::tagPaths(const QString& name) const {
   QStringList paths;
-  for (const AlbumEntry& entry : m_tags.value(name)) {
-    if (entry.resolved) {
-      paths.append(entry.path);
+  QSet<QString> seen;
+  const auto collect = [&](const QList<AlbumEntry>& entries) {
+    for (const AlbumEntry& entry : entries) {
+      if (entry.resolved && !seen.contains(entry.path)) {
+        paths.append(entry.path);
+        seen.insert(entry.path);
+      }
+    }
+  };
+  collect(m_tags.value(name));
+  for (auto it = m_tags.cbegin(); it != m_tags.cend(); ++it) {
+    if (tagIsUnder(it.key(), name)) {
+      collect(it.value());
     }
   }
   return paths;
@@ -522,11 +576,11 @@ QStringList AppSettings::tagsForPath(const QString& path) const {
 }
 
 int AppSettings::tagItemCount(const QString& name) const {
-  return static_cast<int>(m_tags.value(name).size());
+  return static_cast<int>(tagPaths(name).size());
 }
 
 bool AppSettings::createTag(const QString& name) {
-  const QString normalized = normalizedAlbumName(name);
+  const QString normalized = normalizedTagName(name);
   if (normalized.isEmpty()) {
     return false;
   }
@@ -535,14 +589,35 @@ bool AppSettings::createTag(const QString& name) {
       return false;
     }
   }
-  m_tags.insert(normalized, {});
+  // Every ancestor exists too, so the tree in Browse has no gaps and a
+  // parent can be chosen to see everything under it.
+  const QStringList segments = normalized.split(QLatin1Char('/'));
+  for (qsizetype depth = 1; depth <= segments.size(); ++depth) {
+    const QString level = segments.first(depth).join(QLatin1Char('/'));
+    bool present = false;
+    for (const QString& existing : m_tags.keys()) {
+      if (existing.compare(level, Qt::CaseInsensitive) == 0) {
+        present = true;
+        break;
+      }
+    }
+    if (!present) {
+      m_tags.insert(level, {});
+    }
+  }
   persistTags();
   emit tagsChanged();
   return true;
 }
 
 void AppSettings::deleteTag(const QString& name) {
-  if (m_tags.remove(name) == 0) {
+  int removed = m_tags.remove(name);
+  for (const QString& existing : m_tags.keys()) {
+    if (tagIsUnder(existing, name)) {
+      removed += m_tags.remove(existing);
+    }
+  }
+  if (removed == 0) {
     return;
   }
   persistTags();
@@ -824,6 +899,25 @@ void AppSettings::setRating(const QStringList& paths, int rating) {
   emit marksChanged();
 }
 
+QString AppSettings::caption(const QString& path) const { return m_captions.value(path); }
+
+void AppSettings::setCaption(const QString& path, const QString& text) {
+  if (path.isEmpty()) {
+    return;
+  }
+  const QString clean = text.trimmed().left(kMaximumCaptionLength);
+  if (m_captions.value(path) == clean) {
+    return;
+  }
+  if (clean.isEmpty()) {
+    m_captions.remove(path);
+  } else {
+    m_captions.insert(path, clean);
+  }
+  persistMarks();
+  emit marksChanged();
+}
+
 void AppSettings::toggleHidden(const QString& path) {
   if (path.isEmpty()) {
     return;
@@ -868,6 +962,9 @@ QStringList AppSettings::markedPaths() const {
   for (auto it = m_ratings.cbegin(); it != m_ratings.cend(); ++it) {
     all.insert(it.key());
   }
+  for (auto it = m_captions.cbegin(); it != m_captions.cend(); ++it) {
+    all.insert(it.key());
+  }
   return QStringList(all.begin(), all.end());
 }
 
@@ -877,6 +974,7 @@ void AppSettings::forgetMarks(const QStringList& paths) {
     changed = m_favorites.remove(path) || changed;
     changed = m_hidden.remove(path) || changed;
     changed = m_ratings.remove(path) > 0 || changed;
+    changed = m_captions.remove(path) > 0 || changed;
   }
   if (changed) {
     persistMarks();
@@ -893,4 +991,9 @@ void AppSettings::persistMarks() {
   }
   ratings.sort();
   m_settings.setValue(kRatings, ratings);
+  QVariantMap captions;
+  for (auto it = m_captions.cbegin(); it != m_captions.cend(); ++it) {
+    captions.insert(it.key(), it.value());
+  }
+  m_settings.setValue(kCaptions, captions);
 }

@@ -536,7 +536,9 @@ FocusScope {
                     visible: (root.section === 1 || root.section === 3 || root.section === 4)
                              && choices.currentIndex >= 0
                     label: "Delete selected"
-                    toolTip: "Remove this collection. Files are not deleted."
+                    toolTip: root.section === 3
+                             ? "Remove this tag and any tags nested under it. Files are not deleted."
+                             : "Remove this collection. Files are not deleted."
                     onClicked: root.deleteCurrentChoice()
                 }
             }
@@ -628,8 +630,13 @@ FocusScope {
                     readonly property bool objectChoice: dateChoice || cameraChoice
                     readonly property string value: objectChoice ? String(modelData.value)
                                                                       : String(modelData)
+                    // Tags draw as a tree while the whole list shows; a search
+                    // can hide a parent, so matches show their full path.
+                    readonly property int tagDepth: root.section === 3 && root.query === ""
+                                                    ? value.split("/").length - 1 : 0
                     readonly property string choiceLabel: objectChoice ? String(modelData.label)
-                                                                            : value
+                                                          : tagDepth > 0
+                                                            ? value.split("/").pop() : value
                     readonly property bool selectedChoice:
                         root.section === 0 ? Captures.folderFilter === value
                         : root.section === 1 ? Captures.albumFilter === value
@@ -666,7 +673,7 @@ FocusScope {
                             text: root.section === 0 ? root.nameForPath(choiceRow.value)
                                                      : choiceRow.choiceLabel
                             leftPadding: choiceRow.dateChoice && choiceRow.modelData.type === "day"
-                                         ? 18 : 0
+                                         ? 18 : 18 * choiceRow.tagDepth
                             elide: Text.ElideRight
                             font.family: Theme.fontFamily
                             font.pixelSize: 11
@@ -676,6 +683,7 @@ FocusScope {
 
                         Text {
                             width: parent.width
+                            leftPadding: 18 * choiceRow.tagDepth
                             text: root.section === 0
                                   ? root.contextForPath(choiceRow.value) + "  ·  "
                                     + root.formatCount(choiceRow.itemCount)

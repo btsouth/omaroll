@@ -25,6 +25,7 @@ enum Role {
   CameraRole,
   LensRole,
   RatingRole,
+  CaptionRole,
   // Added by CaptureFilterModel while a search result needs OCR context.
   OcrSnippetRole,
 };

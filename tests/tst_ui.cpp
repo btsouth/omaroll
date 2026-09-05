@@ -61,7 +61,6 @@
 #include <QVideoFrame>
 #include <QtTest>
 
-#include <functional>
 #include <algorithm>
 
 class UiTest : public QObject {
@@ -758,6 +757,33 @@ private slots:
     QTRY_COMPARE(m_settings->rating(first), 0);
     QTest::keyClick(m_window, Qt::Key_Escape);
     QTRY_VERIFY(!detail->isVisible());
+  }
+
+  void viewerCaptionSavesOnEnterAndShowsOnTheTile() {
+    QQuickItem* detail = item("detail");
+    const QString first = pathAt(0);
+    openDetail(0);
+    QTRY_VERIFY(detail->isVisible());
+    QQuickItem* field = detail->findChild<QQuickItem*>(QStringLiteral("viewerCaption"));
+    QVERIFY(field);
+    field->forceActiveFocus();
+    QTRY_VERIFY(field->hasActiveFocus());
+    typeText(QStringLiteral("Trip notes"));
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_COMPARE(m_settings->caption(first), QStringLiteral("Trip notes"));
+    QTRY_COMPARE(detail->property("caption").toString(), QStringLiteral("Trip notes"));
+    QVERIFY(!field->hasActiveFocus());
+    // Enter handed focus back to the picture, so the viewer's own keys work.
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!detail->isVisible());
+    QTRY_COMPARE(m_library->data(m_library->index(0, 0), CaptureRoles::CaptionRole).toString(),
+                 QStringLiteral("Trip notes"));
+    // The grid may still be rebuilding delegates from an earlier filter
+    // change, so give the tile a moment to pick the caption up.
+    QTRY_VERIFY(cardFor(first) != nullptr);
+    QTRY_COMPARE(cardFor(first)->property("caption").toString(), QStringLiteral("Trip notes"));
+    m_settings->setCaption(first, QString());
+    QTRY_VERIFY(m_settings->caption(first).isEmpty());
   }
 
   void exactDuplicatesOpenAsAGroupedReviewView() {
@@ -2176,8 +2202,11 @@ private:
 
   QQuickItem* cardFor(const QString& path) const {
     return find(m_window->contentItem(), [&path](QQuickItem* candidate) {
+      // A relayout releases the previous delegates a moment after the new
+      // ones appear; those keep a -1 index and must not answer for the tile.
       return candidate->property("dragPaths").isValid() &&
-             candidate->property("path").toString() == path && candidate->isVisible();
+             candidate->property("path").toString() == path && candidate->isVisible() &&
+             candidate->parentItem() && candidate->parentItem()->property("index").toInt() >= 0;
     });
   }
 

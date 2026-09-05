@@ -96,6 +96,8 @@ public:
   Q_INVOKABLE void removeUnavailableFromAlbum(const QString& name);
   void reconcileAlbums(const QList<CaptureRecord>& records);
 
+  // Tags nest with a slash: "Travel/Japan" sits under "Travel". Names come
+  // back in tree order, and a parent's paths include every descendant's.
   [[nodiscard]] QStringList tagNames() const;
   Q_INVOKABLE [[nodiscard]] QStringList tagPaths(const QString& name) const;
   Q_INVOKABLE [[nodiscard]] QStringList tagsForPath(const QString& path) const;
@@ -122,6 +124,10 @@ public:
   Q_INVOKABLE [[nodiscard]] int rating(const QString& path) const;
   Q_INVOKABLE void setRating(const QStringList& paths, int rating);
   [[nodiscard]] int ratedCount() const { return static_cast<int>(m_ratings.size()); }
+  // A short free-text caption. Searched with filenames and picture text.
+  // Empty removes the entry.
+  Q_INVOKABLE [[nodiscard]] QString caption(const QString& path) const;
+  Q_INVOKABLE void setCaption(const QString& path, const QString& text);
 
   // Keep user-owned organization attached when an explicit in-app rename
   // changes the path. Discovery itself remains read-only.
@@ -180,6 +186,7 @@ private:
   QSet<QString> m_favorites;
   QSet<QString> m_hidden;
   QHash<QString, int> m_ratings;
+  QHash<QString, QString> m_captions;
 
   bool m_showHidden = false;
   int m_sortMode = 0;

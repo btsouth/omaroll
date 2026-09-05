@@ -53,6 +53,7 @@ struct CaptureRecord {
   bool hidden = false;
   // Stars, 1 to 5; zero is unrated.
   int rating = 0;
+  QString caption;
 
   [[nodiscard]] bool isVideo() const { return video; }
   [[nodiscard]] bool isDocument() const { return document || kind == Document; }

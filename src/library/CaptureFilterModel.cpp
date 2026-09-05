@@ -1012,8 +1012,9 @@ bool CaptureFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex& sour
   if (!m_searchTerms.isEmpty()) {
     const QString name = record.fileName.toCaseFolded();
     const QString text = m_ocrFolded.value(record.path);
+    const QString caption = record.caption.toCaseFolded();
     for (const QString& term : m_searchTerms) {
-      if (!name.contains(term) && !text.contains(term)) {
+      if (!name.contains(term) && !text.contains(term) && !caption.contains(term)) {
         return false;
       }
     }

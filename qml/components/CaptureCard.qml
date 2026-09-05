@@ -23,6 +23,7 @@ Item {
     property bool checked: false
     property bool selectionMode: false
     property string ocrSnippet: ""
+    property string caption: ""
     property bool thumbnailReady: false
     readonly property bool thumbnailPresented: thumbnail.status === Image.Ready
                                                && thumbnail.opacity >= 0.999
@@ -189,7 +190,7 @@ Item {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            height: root.ocrSnippet !== "" ? 52 : 30
+            height: root.ocrSnippet !== "" || root.caption !== "" ? 52 : 30
             visible: root.thumbnailReady
             color: Qt.rgba(0, 0, 0, 0.72)
         }
@@ -201,8 +202,9 @@ Item {
             anchors.leftMargin: 8
             anchors.rightMargin: 8
             anchors.bottomMargin: 2
-            visible: root.ocrSnippet !== "" && root.thumbnailReady
-            text: root.ocrSnippet
+            // A search match outranks the caption on the one line there is.
+            visible: (root.ocrSnippet !== "" || root.caption !== "") && root.thumbnailReady
+            text: root.ocrSnippet !== "" ? root.ocrSnippet : root.caption
             elide: Text.ElideRight
             font.family: Theme.fontFamily
             font.pixelSize: 10

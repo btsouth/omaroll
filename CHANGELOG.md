@@ -11,6 +11,10 @@
 - Star ratings. Rate a file from the viewer or with Alt+1 to Alt+5, sort by
   Top rated, and narrow any view to a minimum rating from Browse. Saved views
   keep the choice.
+- Nested tags. A tag named Travel/Japan sits under Travel in Browse, and
+  choosing the parent shows everything beneath it.
+- Captions. Add a short caption in the viewer; it shows on the tile and is
+  searched with filenames and picture text.
 
 ## 1.5.0
 

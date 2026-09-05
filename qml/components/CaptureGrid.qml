@@ -284,6 +284,7 @@ FocusScope {
             required property bool hidden
             required property double stamp
             required property string ocrSnippet
+            required property string caption
 
             width: grid.cellWidth
             height: grid.cellHeight
@@ -305,6 +306,7 @@ FocusScope {
                 rating: cell.rating
                 hiddenMark: cell.hidden
                 ocrSnippet: cell.ocrSnippet
+                caption: cell.caption
                 selected: grid.currentIndex === cell.index
                 checked: root.isChecked(cell.path)
                 selectionMode: root.checkedCount > 0

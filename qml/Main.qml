@@ -466,6 +466,7 @@ ApplicationWindow {
             // while it is open.
             detail.favorite = Settings.isFavorite(detail.path)
             detail.rating = Settings.rating(detail.path)
+            detail.caption = Settings.caption(detail.path)
         }
     }
 
@@ -833,6 +834,7 @@ ApplicationWindow {
         detail.stamp = Captures.stampAt(index)
         detail.favorite = Settings.isFavorite(detail.path)
         detail.rating = Settings.rating(detail.path)
+        detail.caption = Settings.caption(detail.path)
         detail.canNavigate = root.adjacentViewerPath(detail.path, 1) !== ""
         detail.open()
         if (detail.isVideo || detail.isDocument) {
@@ -1001,6 +1003,10 @@ ApplicationWindow {
     DetailSheet {
         id: detail
         onRateRequested: function (stars) { root.rate(stars) }
+        onCaptionEdited: function (text) {
+            Settings.setCaption(detail.path, text)
+            root.say(text !== "" ? "Caption saved" : "Caption removed")
+        }
         objectName: "detail"
         selectionLabel: root.viewerPaths.indexOf(detail.path) < 0 ? ""
                         : (root.viewerPaths.indexOf(detail.path) + 1)
