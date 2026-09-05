@@ -50,8 +50,6 @@
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
-#include <QMouseEvent>
-#include <QPointingDevice>
 #include <QScopeGuard>
 #include <QSettings>
 #include <QStyleHints>
@@ -2019,9 +2017,8 @@ private slots:
     const qreal before = view->property("contentY").toReal();
     const QPoint at = view->mapToScene(inView).toPoint();
     // A human double-click: the first click's side effects get time to land
-    // before the second click arrives. QTest::mouseClick pushes its timestamps
-    // past the double-click interval on every release, so send raw events.
-    humanDoubleClick(at, 140);
+    // before the second click arrives.
+    humanDoubleClick(at, 100);
     qInfo() << "after double-click: currentIndex" << grid->property("currentIndex").toInt()
             << "detail visible" << detail->isVisible()
             << "path" << detail->property("path").toString();
@@ -2103,27 +2100,14 @@ private:
     return target->mapToScene(QPointF(target->width() / 2, target->height() / 2)).toPoint();
   }
 
-  void sendMouse(QEvent::Type type, const QPoint& at, ulong timestamp) {
-    const QPointF local(at);
-    const QPointF global = m_window->mapToGlobal(at);
-    const Qt::MouseButtons buttons =
-        type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton;
-    QMouseEvent event(type, local, local, global, Qt::LeftButton, buttons, Qt::NoModifier,
-                      QPointingDevice::primaryPointingDevice());
-    event.setTimestamp(timestamp);
-    QCoreApplication::sendEvent(m_window, &event);
-  }
-
   // Two clicks a human interval apart, with the event loop running between
   // them so whatever the first click triggers has happened by the second.
+  // QTest::mouseClick only pushes its timestamps past the double-click
+  // interval when no delay is given, so explicit delays keep the pair a
+  // double-click as far as Qt is concerned.
   void humanDoubleClick(const QPoint& at, int gapMs) {
-    const ulong start = static_cast<ulong>(QDateTime::currentMSecsSinceEpoch());
-    sendMouse(QEvent::MouseButtonPress, at, start);
-    sendMouse(QEvent::MouseButtonRelease, at, start + 40);
-    QTest::qWait(gapMs);
-    const ulong second = start + 40 + static_cast<ulong>(gapMs);
-    sendMouse(QEvent::MouseButtonPress, at, second);
-    sendMouse(QEvent::MouseButtonRelease, at, second + 40);
+    QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, at, 1);
+    QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, at, gapMs);
     QTest::qWait(30);
   }
 
