@@ -8,17 +8,15 @@
 
 namespace {
 
-QString home() { return QDir::homePath(); }
-
 QString normalizedUserDir(QString value) {
   if (value.startsWith(QStringLiteral("$HOME"))) {
-    value.replace(0, 5, home());
+    value.replace(0, 5, QDir::homePath());
   } else if (QDir::isRelativePath(value)) {
-    value = home() + QLatin1Char('/') + value;
+    value = QDir::homePath() + QLatin1Char('/') + value;
   }
   // xdg-user-dirs uses $HOME to mean "disabled". Scanning it recursively
   // would pull media from repositories, caches and unrelated applications.
-  return QDir::cleanPath(value) == QDir::cleanPath(home()) ? QString() : value;
+  return QDir::cleanPath(value) == QDir::cleanPath(QDir::homePath()) ? QString() : value;
 }
 
 // XDG user dirs live in a shell-fragment file rather than anywhere Qt reads, and
@@ -32,7 +30,7 @@ QString xdgUserDir(const QString& key) {
   }
 
   const QString configHome = qEnvironmentVariable("XDG_CONFIG_HOME").isEmpty()
-                                 ? home() + QStringLiteral("/.config")
+                                 ? QDir::homePath() + QStringLiteral("/.config")
                                  : qEnvironmentVariable("XDG_CONFIG_HOME");
 
   QFile file(configHome + QStringLiteral("/user-dirs.dirs"));
@@ -65,7 +63,7 @@ QString resolve(const QString& override, const QString& xdgKey, const QString& f
   if (!xdg.isEmpty()) {
     return xdg;
   }
-  return home() + QLatin1Char('/') + fallbackLeaf;
+  return QDir::homePath() + QLatin1Char('/') + fallbackLeaf;
 }
 
 } // namespace
