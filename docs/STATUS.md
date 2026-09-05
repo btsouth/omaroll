@@ -1,6 +1,7 @@
 # Project status and handoff
 
-Snapshot: 5 September 2026 UTC, after the v1.5.0 release. Check the linked PRs and release before resuming.
+Snapshot: 5 September 2026 UTC, after the v1.5.0 release and four feature merges
+to main. Check the linked PRs and release before resuming.
 
 ## Released
 
@@ -46,6 +47,26 @@ of 949.9 to 257.2 ms for an image-ready submitted frame and 1181.2 to 471.9 ms
 for a ready grid. These are offscreen NVIDIA measurements from main entry,
 not compositor presentation or general performance guarantees.
 
+## Unreleased on main
+
+Four feature PRs landed after the release, each squash merged with green CI and
+passing core and UI suites in the sandbox. None has had a physical desktop test
+yet, so they are not part of any tag until that gate is passed:
+
+- [PR #11](https://github.com/btsouth/omaroll/pull/11): Tab and Shift+Tab cycle
+  the section pills.
+- [PR #12](https://github.com/btsouth/omaroll/pull/12): the metadata pass reads
+  camera and lens as well as dates, Browse gains a Cameras section, and
+  MediaDateIndex became MediaMetadataIndex with a new cache file.
+- [PR #13](https://github.com/btsouth/omaroll/pull/13): star ratings with Alt+1
+  to Alt+5, a Top rated sort and a minimum rating filter in Browse.
+- [PR #14](https://github.com/btsouth/omaroll/pull/14): tags nest with a slash
+  and files take a caption in the viewer that is searched with names and text.
+
+The changelog carries them under Unreleased. Semantic search and face
+recognition were considered against Lightroom and Immich and deferred
+(SBS-1139); do not add ML dependencies without a fresh decision.
+
 ## Next decisions and release gates
 
 1. Keep new changes in separate focused PRs off main, following
@@ -55,7 +76,8 @@ not compositor presentation or general performance guarantees.
    passes do not close this gate.
 3. Continue performance work (SBS-1122): warm navigation, larger and mixed
    libraries, Wayland presentation, GPU memory and realistic regression budgets.
-4. Start safe image corrections (SBS-1126): crop, rotate and resize with Save a
+4. Desktop test the four unreleased features before the next tag, then start
+   safe image corrections (SBS-1126): crop, rotate and resize with Save a
    copy, collision handling and a metadata/color policy. Reuse Omarchy helpers
    where they satisfy the workflow. Comparison and organization improvements
    follow in the [roadmap](ROADMAP.md).
@@ -80,8 +102,8 @@ video tracks and subtitles. No media downloads are needed for those checks.
 Physical audio testing remains a deliberate desktop acceptance activity.
 
 Linear is the active task tracker. Access it through Toolport. SBS-1093 is the
-parent roadmap; SBS-1121 and SBS-1122 remain in progress, and SBS-1126 is the
-next feature to start.
+parent roadmap; SBS-1121 and SBS-1122 remain in progress, SBS-1138 and
+SBS-1140 to SBS-1142 are done, and SBS-1126 is the next feature to start.
 Notes under `build/roadmap-review/` are historical and ignored by Git. This
 file is the committed handoff. No further implementation, merge or release
 work is scheduled by closing this session.
