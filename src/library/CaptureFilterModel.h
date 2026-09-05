@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDate>
+#include <QCollator>
 #include <QHash>
 #include <QSet>
 #include <QSortFilterProxyModel>
@@ -193,6 +194,7 @@ private:
 
   int m_kindFilter = kAllKinds;
   int m_sortMode = NewestFirst;
+  QCollator m_nameCollator;
   QString m_searchText;
   QStringList m_searchTerms;
   QString m_folderFilter;

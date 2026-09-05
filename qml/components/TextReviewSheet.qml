@@ -6,6 +6,7 @@ Item {
 
     property string path: ""
     property string fileName: ""
+    property string copyMessage: ""
     readonly property bool loading: TextIndex.reviewPath === root.path && TextIndex.reviewing
     readonly property string errorMessage: TextIndex.reviewPath === root.path
                                                    ? TextIndex.reviewError : ""
@@ -21,6 +22,7 @@ Item {
     }
 
     function open(filePath, name) {
+        copyMessage = ""
         path = filePath
         fileName = name
         textArea.text = ""
@@ -31,11 +33,13 @@ Item {
     }
 
     function retry() {
+        copyMessage = ""
         textArea.text = ""
         TextIndex.recognize(path, true)
     }
 
     function close() {
+        copyMessage = ""
         TextIndex.cancelReview()
         visible = false
     }
@@ -43,6 +47,7 @@ Item {
     function copySelection() {
         if (textArea.selectedText !== "") {
             textArea.copy()
+            confirmCopy("Copied selection")
         }
     }
 
@@ -54,6 +59,19 @@ Item {
         textArea.copy()
         textArea.select(0, 0)
         textArea.forceActiveFocus()
+        confirmCopy("Copied all text")
+    }
+
+    function confirmCopy(message) {
+        copyMessage = message
+        copyStatus.Accessible.announce(message, Accessible.Polite)
+        copyMessageTimer.restart()
+    }
+
+    Timer {
+        id: copyMessageTimer
+        interval: 3000
+        onTriggered: root.copyMessage = ""
     }
 
     function shade(base, amount) {
@@ -139,7 +157,7 @@ Item {
             anchors.left: title.left
             anchors.right: title.right
             anchors.top: subtitle.bottom
-            anchors.bottom: controls.top
+            anchors.bottom: copyStatus.top
             anchors.topMargin: 16
             anchors.bottomMargin: 14
             radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
@@ -185,6 +203,22 @@ Item {
                 font.pixelSize: 13
                 color: root.errorMessage !== "" ? Theme.red : Theme.mutedText
             }
+        }
+
+        Text {
+            id: copyStatus
+            objectName: "ocrCopyStatus"
+            anchors.left: title.left
+            anchors.right: title.right
+            anchors.bottom: controls.top
+            anchors.bottomMargin: 10
+            height: 16
+            text: root.copyMessage
+            font.family: Theme.fontFamily
+            font.pixelSize: 11
+            color: Theme.accent
+            Accessible.role: Accessible.StaticText
+            Accessible.name: text
         }
 
         Row {

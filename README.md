@@ -287,8 +287,9 @@ graph rather than the screen, so an overlapping window cannot spoil the shot.
   by default, configurable from 64MB to 1GB, and pruned least-recently-used.
   Embedded media dates use a small identity-checked index in the same cache
   root, so unchanged files are not inspected again on every launch.
-  Settings live in `~/.config/omaroll`.
-  Both are safe to delete at any time.
+  Settings and organization live in `~/.config/omaroll`. Deleting that directory
+  also removes albums, tags, favorites and saved views. Back it up first if you
+  want to keep them. The thumbnail cache can be deleted and regenerated.
 
 ## Development
 
@@ -297,6 +298,9 @@ cmake -S . -B build -G Ninja
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
+
+See [validation](tests/README.md) for the OpenGL media checks and
+[the roadmap](docs/ROADMAP.md) for upcoming work.
 
 For a focused release check on an Omarchy desktop:
 

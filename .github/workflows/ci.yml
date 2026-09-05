@@ -18,7 +18,7 @@ jobs:
           appstream base-devel cmake desktop-file-utils ffmpeg ffmpegthumbnailer
           git imagemagick kimageformats libavif libheif ninja pkgconf poppler qt6-base
           qt6-declarative qt6-imageformats qt6-multimedia qt6-svg qt6-wayland
-          wl-clipboard xdg-desktop-portal xdg-utils
+          wl-clipboard xdg-desktop-portal xdg-utils mesa xorg-server-xvfb xorg-xauth
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Configure
         run: cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -26,6 +26,16 @@ jobs:
         run: cmake --build build/release
       - name: Test
         run: ctest --test-dir build/release --output-on-failure
+      - name: Test rendered media with Mesa OpenGL
+        run: xvfb-run -a bash tests/run-opengl.sh build/release
+      - name: Save rendered views
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: opengl-renders
+          path: build/release/opengl-renders/*.png
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Validate metadata
         run: |
           desktop-file-validate packaging/io.github.tsouth89.omaroll.desktop
