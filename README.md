@@ -242,6 +242,18 @@ You can also choose Omaroll from a file manager's **Open With** menu and set it
 as the default for the media types you want. A single file opens directly in the
 viewer, with previous and next navigation through other media in that folder.
 
+Current main also supports ordered file selections (unreleased since 1.4.0):
+
+```bash
+omaroll first.jpg ~/Pictures/second.png third.webp
+omaroll -- ./-unusual-name.png
+```
+
+Multiple files stay in the supplied order across folders, including when an
+existing window receives them. Explicitly selected hidden files can be opened
+without scanning every surrounding folder. The viewer shows your position in
+the selection and skips removed files.
+
 ### Transparency
 
 Omaroll paints its own translucent chrome from your theme and draws every
@@ -295,11 +307,12 @@ graph rather than the screen, so an overlapping window cannot spoil the shot.
 ## Development
 
 ```bash
-cmake -S . -B build -G Ninja
-cmake --build build
-ctest --test-dir build --output-on-failure
+cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build/release
+bash tests/run-isolated.sh build/release
 ```
 
+See [current project status](docs/STATUS.md) for released, merged and draft work.
 See [validation](tests/README.md) for the OpenGL media checks and
 [the roadmap](docs/ROADMAP.md) for upcoming work.
 

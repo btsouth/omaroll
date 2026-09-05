@@ -19,21 +19,22 @@ does not block Qt's native PipeWire backend.
 ## Rendered video
 
 Qt's software scene graph can decode video without displaying it. Run the
-OpenGL suite as well. On a headless Arch machine, install `imagemagick`, `mesa`,
+OpenGL suite as well. In a disposable headless Arch CI container, install `imagemagick`, `mesa`,
 `xorg-server-xvfb` and `xorg-xauth`, then run:
 
 ```sh
 xvfb-run -a bash tests/run-opengl.sh build/release
 ```
 
-With a working local display, run it inside the local audio sandbox:
+On the development desktop, always run it inside the local audio sandbox:
 
 ```sh
 bash tests/run-isolated.sh build/release bash tests/run-opengl.sh build/release
 ```
 
 It uses
-offscreen Qt and software OpenGL, uses the disconnected audio backend, runs the full
+offscreen Qt and requests software OpenGL (some drivers use hardware instead),
+uses the disconnected audio backend, runs the full
 UI suite and renders narrow grid, video and OCR views. The video-track test
 requires actual colored pixels in the rendered video area. Inspect the PNGs in
 `build/release/opengl-renders/` for layout changes.
@@ -114,6 +115,9 @@ Use `xvfb-run -a` around the startup command on headless CI hosts that need an
 X display for Mesa. These measurements are informational, not CI timing gates.
 Wayland presentation, cold disk reads, large photographs, animation and warm
 viewer navigation require separate measurements.
+
+The [startup follow-up](../docs/performance/2026-09-05-startup/README.md) records
+content-ready timing and the deferred-video comparison.
 
 A [recorded development baseline](../docs/performance/2026-09-05/README.md)
 includes raw results and the measurements still outstanding.
