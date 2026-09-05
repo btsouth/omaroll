@@ -91,6 +91,8 @@ Fixture creation is excluded. The output records the fixture hash and size.
 at entry to `main`, excluding process spawning and dynamic loading before main:
 
 - `application`, `theme`, `services`, `qml`: cumulative setup milestones.
+  `services` is recorded after image providers and context properties are
+  registered, immediately before QML loading.
 - `first_frame`: first scene-graph frame submitted.
 - `image_frame`: frame submitted after the requested still image reports a
   successful decode and has nonzero display dimensions.

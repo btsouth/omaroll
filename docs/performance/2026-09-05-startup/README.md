@@ -24,18 +24,18 @@ and [after.json](after.json).
 
 | Median time from main entry | Eager video setup | Deferred video setup |
 | --- | ---: | ---: |
-| QML loaded, single-image launch | 810.3 ms | 78.7 ms |
-| Requested image frame submitted | 949.9 ms | 259.9 ms |
-| QML loaded, library launch | 837.6 ms | 77.1 ms |
-| Ready viewport frame submitted | 1181.2 ms | 440.9 ms |
+| QML loaded, single-image launch | 810.3 ms | 76.7 ms |
+| Requested image frame submitted | 949.9 ms | 257.2 ms |
+| QML loaded, library launch | 837.6 ms | 77.9 ms |
+| Ready viewport frame submitted | 1181.2 ms | 471.9 ms |
 
 Process RSS after eight seconds ranged from 328.1 to 328.7 MiB before and
-250.0 to 251.0 MiB after. This excludes GPU memory. No CPU ticks were observed
+252.7 to 254.8 MiB after. This excludes GPU memory. No CPU ticks were observed
 in the five-second idle samples; that is not a claim of zero ongoing work.
 
 A separate [photographic fixture check](photo.json) used 100 copies of the
 1536x1024 `alpine-dawn.jpg` demo image. One launch per mode reached an image
-frame at 258.3 ms and a ready grid at 443.6 ms. This checks that the probe works
+frame at 287.4 ms and a ready grid at 470.2 ms. This checks that the probe works
 with JPEG photography; one sample is not a comparative benchmark.
 
 ## Reproduce
@@ -52,7 +52,11 @@ TMPDIR="$PWD/build/release/benchmark-fixtures" \
 The before comparison was built with the original `DetailSheet.qml` from
 `3f8703b`, plus the new `imageReady` property, while retaining this PR's tracing
 and other readiness checks. The after comparison uses the deferred player and
-output. See [metric definitions](../../../tests/README.md#performance).
+output. The `services` mark in the after samples is recorded immediately
+before QML loading, after image providers and context properties are
+registered. The before samples recorded it before that registration; the
+difference measured under 1 ms here and does not affect the table above.
+See [metric definitions](../../../tests/README.md#performance).
 
 ## Limits and remaining work
 

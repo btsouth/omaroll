@@ -36,7 +36,7 @@ a human review. The documentation handoff follows in the same PR. Check CI on
 its latest head before merging.
 
 [Local measurements](performance/2026-09-05-startup/README.md) record medians
-of 949.9 to 259.9 ms for an image-ready submitted frame and 1181.2 to 440.9 ms
+of 949.9 to 257.2 ms for an image-ready submitted frame and 1181.2 to 471.9 ms
 for a ready grid. These are offscreen NVIDIA measurements from main entry,
 not compositor presentation or general performance guarantees.
 

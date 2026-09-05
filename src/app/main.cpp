@@ -387,7 +387,6 @@ int main(int argc, char* argv[]) {
   QObject::connect(&actions, &ActionLauncher::outputSettled, &captures, &CaptureModel::releasePath);
 
   QQmlApplicationEngine engine;
-  startup.mark("services");
   auto* thumbnailProvider = new ThumbnailProvider;
   auto* matteProvider = new MatteProvider;
   auto* pdfProvider = new PdfProvider;
@@ -424,6 +423,7 @@ int main(int argc, char* argv[]) {
       &engine, &QQmlApplicationEngine::objectCreationFailed, &application,
       [] { QCoreApplication::exit(1); }, Qt::QueuedConnection);
 
+  startup.mark("services");
   engine.loadFromModule("Omaroll", "Main");
   startup.mark("qml");
   if (engine.rootObjects().isEmpty()) {

@@ -3,38 +3,38 @@
     "mode": "single-image",
     "graphics": "NVIDIA Corporation RENDERER: NVIDIA GeForce RTX 4070 SUPER/PCIe/SSE2 VERSION: 4.6.0 NVIDIA 610.57.04",
     "main_entry_stages_ms": {
-      "application": 3.635587,
-      "theme": 19.472175,
-      "services": 21.44246,
-      "qml": 77.540491,
-      "first_frame": 238.173088,
-      "image_frame": 258.262549
+      "application": 3.669137,
+      "theme": 20.018315,
+      "services": 22.762163,
+      "qml": 77.07202,
+      "first_frame": 267.385411,
+      "image_frame": 287.377976
     },
     "fixture": "alpine-dawn.jpg",
     "fixture_bytes": 211749,
     "fixture_sha256": "04b8b2c33bb520c27ebf8781a9b686034d3fefeec528c9ad824307a2ebddd1b0",
     "files": 100,
     "idle_cpu_percent_one_core": 0.0,
-    "rss_kib": 283888,
-    "peak_rss_kib": 283888
+    "rss_kib": 289608,
+    "peak_rss_kib": 289608
   },
   {
     "mode": "library",
     "graphics": "NVIDIA Corporation RENDERER: NVIDIA GeForce RTX 4070 SUPER/PCIe/SSE2 VERSION: 4.6.0 NVIDIA 610.57.04",
     "main_entry_stages_ms": {
-      "application": 3.561671,
-      "theme": 18.711665,
-      "services": 20.764967,
-      "qml": 71.074866,
-      "first_frame": 224.296897,
-      "grid_frame": 443.64381
+      "application": 4.227888,
+      "theme": 21.174106,
+      "services": 23.785227,
+      "qml": 84.292744,
+      "first_frame": 255.026307,
+      "grid_frame": 470.23651
     },
     "fixture": "alpine-dawn.jpg",
     "fixture_bytes": 211749,
     "fixture_sha256": "04b8b2c33bb520c27ebf8781a9b686034d3fefeec528c9ad824307a2ebddd1b0",
     "files": 100,
     "idle_cpu_percent_one_core": 0.0,
-    "rss_kib": 273276,
-    "peak_rss_kib": 273276
+    "rss_kib": 277020,
+    "peak_rss_kib": 277020
   }
 ]
