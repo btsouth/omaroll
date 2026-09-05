@@ -3,6 +3,7 @@
 #include "matte/MatteComposer.h"
 
 #include <QImageReader>
+#include <QMetaObject>
 #include <QRunnable>
 #include <QThread>
 #include <QUrl>
@@ -32,10 +33,19 @@ public:
 
   void cancel() override { m_cancelled.store(true); }
 
+  // Qt's pixmap reader deletes the response with deleteLater() as soon as
+  // finished() reaches it, and the response lives on the reader thread.
+  // Emitting straight from the pool thread lets that deletion land while the
+  // emit is still unwinding, which is a use-after-free. Posting the emit to the
+  // response's own thread serializes it with the deletion.
+  void finishOnOwnThread() {
+    QMetaObject::invokeMethod(this, [this] { emit finished(); }, Qt::QueuedConnection);
+  }
+
   void run() override {
     if (m_cancelled.load()) {
       m_error = QStringLiteral("Cancelled");
-      emit finished();
+      finishOnOwnThread();
       return;
     }
     QImageReader reader(m_path);
@@ -54,7 +64,7 @@ public:
     const QImage source = reader.read();
     if (source.isNull()) {
       m_error = QStringLiteral("Could not read %1").arg(m_path);
-      emit finished();
+      finishOnOwnThread();
       return;
     }
 
@@ -63,7 +73,7 @@ public:
                                static_cast<MatteComposer::Aspect>(m_aspect), m_padding);
     if (composed.isNull()) {
       m_error = QStringLiteral("Could not compose a matte");
-      emit finished();
+      finishOnOwnThread();
       return;
     }
 
@@ -73,7 +83,7 @@ public:
     }
 
     m_image = composed;
-    emit finished();
+    finishOnOwnThread();
   }
 
 private:
