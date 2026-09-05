@@ -880,6 +880,58 @@ private slots:
 
   // --- Filtering and sorting -------------------------------------------
 
+  void namesSortNaturally_data() {
+    QTest::addColumn<QString>("localeName");
+    QTest::newRow("minimal-environment") << QStringLiteral("C");
+    QTest::newRow("english") << QStringLiteral("en_US");
+    QTest::newRow("german") << QStringLiteral("de_DE");
+  }
+
+  void namesSortNaturally() {
+    QFETCH(QString, localeName);
+    const QLocale previousLocale;
+    const auto restoreLocale = qScopeGuard([&] { QLocale::setDefault(previousLocale); });
+    QLocale::setDefault(QLocale(localeName));
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    for (const char* variable : {"OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR",
+                                 "XDG_PICTURES_DIR", "XDG_VIDEOS_DIR", "XDG_DOWNLOAD_DIR"}) {
+      QVERIFY(qputenv(variable, dir.path().toUtf8()));
+    }
+    const QStringList names = {QStringLiteral("photo10.png"), QStringLiteral("photo2.png"),
+                              QStringLiteral("Photo02.png"), QStringLiteral("photo1.png"),
+                              QStringLiteral("旅行10.png"), QStringLiteral("旅行2.png")};
+    QImage image(8, 8, QImage::Format_RGB32);
+    image.fill(Qt::gray);
+    for (const QString& name : names) {
+      QVERIFY(image.save(dir.filePath(name)));
+    }
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("other"))));
+    QVERIFY(image.save(dir.filePath(QStringLiteral("other/photo2.png"))));
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    CaptureFilterModel proxy;
+    proxy.setSourceModel(&model);
+    proxy.setSortMode(CaptureFilterModel::NameAscending);
+    QTRY_COMPARE_WITH_TIMEOUT(proxy.count(), 7, 5000);
+    const auto row = [&](const QString& name) { return proxy.rowOf(dir.filePath(name)); };
+    QVERIFY(row(QStringLiteral("photo1.png")) < row(QStringLiteral("photo2.png")));
+    QVERIFY(row(QStringLiteral("photo2.png")) < row(QStringLiteral("photo10.png")));
+    QVERIFY(row(QStringLiteral("Photo02.png")) < row(QStringLiteral("photo10.png")));
+    QVERIFY(row(QStringLiteral("旅行2.png")) < row(QStringLiteral("旅行10.png")));
+    QVERIFY(row(QStringLiteral("other/photo2.png")) < row(QStringLiteral("photo2.png")));
+    QStringList firstOrder;
+    for (int i = 0; i < proxy.count(); ++i) {
+      firstOrder.append(proxy.pathAt(i));
+    }
+    proxy.setSortMode(CaptureFilterModel::NewestFirst);
+    proxy.setSortMode(CaptureFilterModel::NameAscending);
+    for (int i = 0; i < proxy.count(); ++i) {
+      QCOMPARE(proxy.pathAt(i), firstOrder.at(i));
+    }
+  }
+
   void filterModelSortsAndFilters() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

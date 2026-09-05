@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Sort numbered filenames naturally, so image2 appears before image10.
+- Confirm copying extracted text visually and through accessibility announcements.
+- Run real video rendering checks under Mesa OpenGL in CI and release validation.
+
 ## 1.4.0
 
 ### Added

@@ -46,6 +46,7 @@
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QSGRendererInterface>
 #include <QScopeGuard>
 #include <QSettings>
 #include <QStyleHints>
@@ -897,16 +898,20 @@ private slots:
     QTRY_COMPARE(editor->property("selectedText").toString(), QStringLiteral("First"));
     click(item("copyOcrSelection"));
     QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("First"));
+    QCOMPARE(item("ocrCopyStatus")->property("text").toString(), QStringLiteral("Copied selection"));
+    QCOMPARE(editor->property("selectedText").toString(), QStringLiteral("First"));
 
     editor->setProperty("text", QStringLiteral("Corrected locally"));
     click(item("copyAllOcrText"));
     QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("Corrected locally"));
+    QCOMPARE(item("ocrCopyStatus")->property("text").toString(), QStringLiteral("Copied all text"));
     QCOMPARE(QFileInfo(path).size(), before.size());
     QCOMPARE(QFileInfo(path).lastModified(), before.lastModified());
 
     QTest::keyClick(m_window, Qt::Key_Escape);
     QTRY_VERIFY(!sheet->isVisible());
     QVERIFY(m_textIndex->reviewPath().isEmpty());
+    QCOMPARE(item("ocrCopyStatus")->property("text").toString(), QString());
   }
 
   void qrActionAppearsOnlyAfterDetectionAndCopiesThroughTheSecurePath() {
@@ -1511,6 +1516,33 @@ private slots:
     QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
     QTRY_COMPARE(player->audioTracks().size(), 2);
     QTRY_COMPARE(player->subtitleTracks().size(), 1);
+    if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
+      QCOMPARE(QQuickWindow::graphicsApi(), QSGRendererInterface::OpenGL);
+      // A decoded frame can exist while VideoOutput renders black. Sample
+      // the rendered test pattern, whose saturated bars distinguish it from
+      // the dark viewer background and transport controls.
+      const auto renderedVideoHasColor = [&] {
+        QQuickItem* output = item("videoOutput");
+        const QImage frame = m_window->grabWindow();
+        if (frame.isNull()) return false;
+        const qreal scale = frame.devicePixelRatio();
+        const QRectF scene = output->mapRectToScene(output->property("contentRect").toRectF());
+        const QRect bounds = QRectF(scene.topLeft() * scale, scene.size() * scale)
+                                  .toAlignedRect().intersected(frame.rect());
+        if (bounds.isEmpty()) return false;
+        int colorful = 0;
+        int samples = 0;
+        for (int y = bounds.top(); y <= bounds.bottom(); y += 8) {
+          for (int x = bounds.left(); x <= bounds.right(); x += 8) {
+            const QColor pixel = frame.pixelColor(x, y);
+            colorful += pixel.saturation() > 150 && pixel.value() > 120;
+            ++samples;
+          }
+        }
+        return colorful > samples / 10;
+      };
+      QTRY_VERIFY_WITH_TIMEOUT(renderedVideoHasColor(), 5000);
+    }
     QAudioFormat audioFormat;
     audioFormat.setSampleRate(48000);
     audioFormat.setChannelCount(1);

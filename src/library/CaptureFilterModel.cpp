@@ -15,6 +15,13 @@
 #include <utility>
 
 CaptureFilterModel::CaptureFilterModel(QObject* parent) : QSortFilterProxyModel(parent) {
+  // Qt's C-locale collator ignores numeric mode. Keep natural ordering when
+  // launched from a minimal environment as well as a localized desktop.
+  if (m_nameCollator.locale().language() == QLocale::C) {
+    m_nameCollator.setLocale(QLocale(QLocale::English, QLocale::UnitedStates));
+  }
+  m_nameCollator.setCaseSensitivity(Qt::CaseInsensitive);
+  m_nameCollator.setNumericMode(true);
   setDynamicSortFilter(true);
   // lessThan() reads the roles it needs directly, so no single sort role fits;
   // sorting column 0 just gives the proxy something to order.
@@ -778,7 +785,7 @@ bool CaptureFilterModel::recordLessThan(const CaptureRecord& first,
   case SmallestFirst:
     return first.bytes != second.bytes ? first.bytes < second.bytes : pathOrder();
   case NameAscending:
-    if (const int names = QString::compare(first.fileName, second.fileName, Qt::CaseInsensitive);
+    if (const int names = m_nameCollator.compare(first.fileName, second.fileName);
         names != 0) {
       return names < 0;
     }
