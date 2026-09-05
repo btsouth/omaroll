@@ -2,6 +2,7 @@
 
 #include "pdf/PdfSupport.h"
 
+#include <QMetaObject>
 #include <QRunnable>
 #include <QThread>
 #include <QUrl>
@@ -20,17 +21,26 @@ public:
   }
   QString errorString() const override { return m_error; }
   void cancel() override { m_cancelled.store(true); }
+
+  // Qt's pixmap reader deletes the response with deleteLater() as soon as
+  // finished() reaches it, and the response lives on the reader thread.
+  // Emitting straight from the pool thread lets that deletion land while the
+  // emit is still unwinding, which is a use-after-free. Posting the emit to the
+  // response's own thread serializes it with the deletion.
+  void finishOnOwnThread() {
+    QMetaObject::invokeMethod(this, [this] { emit finished(); }, Qt::QueuedConnection);
+  }
   void run() override {
     if (m_cancelled.load()) {
       m_error = QStringLiteral("Cancelled");
-      emit finished();
+      finishOnOwnThread();
       return;
     }
     m_image = PdfSupport::renderPage(m_path, m_page, m_target);
     if (m_image.isNull()) {
       m_error = QStringLiteral("Could not render PDF page");
     }
-    emit finished();
+    finishOnOwnThread();
   }
 
 private:
