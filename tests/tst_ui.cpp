@@ -55,6 +55,7 @@
 #include <QStyleHints>
 #include <QTemporaryDir>
 #include <QThreadPool>
+#include <QTextStream>
 #include <QVideoSink>
 #include <QVideoFrame>
 #include <QtTest>
@@ -66,8 +67,6 @@ class UiTest : public QObject {
 
 private slots:
   void initTestCase() {
-    QVERIFY2(QMediaDevices::audioOutputs().isEmpty(),
-             "Refusing playback tests with audio outputs available");
     QVERIFY(m_scratch.isValid());
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
@@ -1803,6 +1802,10 @@ int main(int argc, char* argv[]) {
   disableHeadlessAudio();
   qputenv("QT_QPA_PLATFORM", "offscreen");
   QGuiApplication application(argc, argv);
+  if (!QMediaDevices::audioOutputs().isEmpty()) {
+    QTextStream(stderr) << "Refusing playback tests with audio outputs available\n";
+    return 1;
+  }
   UiTest test;
   QTEST_SET_MAIN_SOURCE_PATH
   return QTest::qExec(&test, argc, argv);
