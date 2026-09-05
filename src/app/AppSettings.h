@@ -18,12 +18,15 @@ struct CaptureRecord;
 // defaults, never to make the app work, so nothing here is required for a first
 // run to show a full library.
 //
-// Favourites and hidden entries are keyed by absolute path. A file that moves
-// loses its mark, which is the honest behaviour for a library that never
+// Favourites, ratings and hidden entries are keyed by absolute path. A file
+// that moves loses its mark, which is the honest behaviour for a library that never
 // modifies or tracks the files it reads.
 class AppSettings final : public QObject {
   Q_OBJECT
   Q_PROPERTY(bool showHidden READ showHidden WRITE setShowHidden NOTIFY showHiddenChanged)
+  // How many files carry a rating, so the Browse sheet can leave the rating
+  // row out of a library nobody has rated.
+  Q_PROPERTY(int ratedCount READ ratedCount NOTIFY marksChanged)
   Q_PROPERTY(int sortMode READ sortMode WRITE setSortMode NOTIFY sortModeChanged)
   Q_PROPERTY(int kindFilter READ kindFilter WRITE setKindFilter NOTIFY kindFilterChanged)
   Q_PROPERTY(
@@ -115,6 +118,11 @@ public:
   Q_INVOKABLE void toggleFavorite(const QString& path);
   Q_INVOKABLE void toggleHidden(const QString& path);
 
+  // Stars, 1 to 5. Zero is unrated and is not stored.
+  Q_INVOKABLE [[nodiscard]] int rating(const QString& path) const;
+  Q_INVOKABLE void setRating(const QStringList& paths, int rating);
+  [[nodiscard]] int ratedCount() const { return static_cast<int>(m_ratings.size()); }
+
   // Keep user-owned organization attached when an explicit in-app rename
   // changes the path. Discovery itself remains read-only.
   Q_INVOKABLE void relocatePath(const QString& oldPath, const QString& newPath);
@@ -171,6 +179,7 @@ private:
   QSettings m_settings;
   QSet<QString> m_favorites;
   QSet<QString> m_hidden;
+  QHash<QString, int> m_ratings;
 
   bool m_showHidden = false;
   int m_sortMode = 0;

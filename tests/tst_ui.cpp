@@ -19,6 +19,7 @@
 #include "library/CaptureModel.h"
 #include "library/DuplicateIndex.h"
 #include "library/MediaMetadataIndex.h"
+#include "library/CaptureRoles.h"
 #include "library/MediaInspector.h"
 #include "library/SimilarityIndex.h"
 #include "matte/MatteComposer.h"
@@ -735,6 +736,28 @@ private slots:
     // rather than sending an Escape that would now close the window.
     item("library")->forceActiveFocus();
     QTRY_VERIFY(item("library")->hasActiveFocus());
+  }
+
+  void altDigitsRateTheHighlightedTileAndTheViewer() {
+    item("library")->setProperty("currentIndex", 0);
+    item("library")->forceActiveFocus();
+    const QString first = pathAt(0);
+    QTest::keyClick(m_window, Qt::Key_3, Qt::AltModifier);
+    QTRY_COMPARE(m_settings->rating(first), 3);
+    QTRY_COMPARE(m_library->data(m_library->index(0, 0), CaptureRoles::RatingRole).toInt(), 3);
+
+    // The viewer shows the same stars and Alt+0 clears them there.
+    QQuickItem* detail = item("detail");
+    openDetail(0);
+    QTRY_VERIFY(detail->isVisible());
+    QTRY_COMPARE(detail->property("rating").toInt(), 3);
+    QTest::keyClick(m_window, Qt::Key_5, Qt::AltModifier);
+    QTRY_COMPARE(m_settings->rating(first), 5);
+    QTRY_COMPARE(detail->property("rating").toInt(), 5);
+    QTest::keyClick(m_window, Qt::Key_0, Qt::AltModifier);
+    QTRY_COMPARE(m_settings->rating(first), 0);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!detail->isVisible());
   }
 
   void exactDuplicatesOpenAsAGroupedReviewView() {

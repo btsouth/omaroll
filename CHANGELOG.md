@@ -8,6 +8,9 @@
 - Browse a photo library by camera and lens. The metadata pass that reads
   capture dates now records the camera and lens too, and saved views keep
   the choice. Libraries without camera photos do not show the section.
+- Star ratings. Rate a file from the viewer or with Alt+1 to Alt+5, sort by
+  Top rated, and narrow any view to a minimum rating from Browse. Saved views
+  keep the choice.
 
 ## 1.5.0
 

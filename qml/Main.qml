@@ -308,6 +308,7 @@ ApplicationWindow {
         Captures.setTagFilter("", [])
         Captures.cameraFilter = ""
         Captures.lensFilter = ""
+        Captures.minimumRating = 0
         Captures.clearSmartCollection()
         Captures.setAlbumFilter("", [])
         Captures.folderFilter = folder === undefined ? "" : folder
@@ -432,6 +433,19 @@ ApplicationWindow {
             return row >= 0 && Captures.isDocumentAt(row)
         })
     }
+    // Stars go to the file in the viewer, else the selection, else the
+    // highlighted tile. Zero clears.
+    function rate(stars) {
+        const paths = detail.visible ? [detail.path]
+                      : library.checkedCount > 0 ? library.checkedPaths()
+                                                 : [root.currentPath()]
+        if (paths.length === 0 || paths[0] === "") {
+            return
+        }
+        Settings.setRating(paths, stars)
+        root.say(stars > 0 ? "Rated " + "★".repeat(stars)
+                           : "Rating cleared")
+    }
     function markChecked(which) {
         const paths = library.checkedPaths()
         if (which === "favorite") {
@@ -451,6 +465,7 @@ ApplicationWindow {
             // The star in the viewer's sidebar follows a favourite toggled
             // while it is open.
             detail.favorite = Settings.isFavorite(detail.path)
+            detail.rating = Settings.rating(detail.path)
         }
     }
 
@@ -817,6 +832,7 @@ ApplicationWindow {
         detail.sizeLabel = Captures.sizeLabelAt(index)
         detail.stamp = Captures.stampAt(index)
         detail.favorite = Settings.isFavorite(detail.path)
+        detail.rating = Settings.rating(detail.path)
         detail.canNavigate = root.adjacentViewerPath(detail.path, 1) !== ""
         detail.open()
         if (detail.isVideo || detail.isDocument) {
@@ -984,6 +1000,7 @@ ApplicationWindow {
 
     DetailSheet {
         id: detail
+        onRateRequested: function (stars) { root.rate(stars) }
         objectName: "detail"
         selectionLabel: root.viewerPaths.indexOf(detail.path) < 0 ? ""
                         : (root.viewerPaths.indexOf(detail.path) + 1)
@@ -1449,6 +1466,21 @@ ApplicationWindow {
         sequences: ["Shift+Tab", "Backtab", "Shift+Backtab"]
         enabled: !root.anySheetOpen && !root.popupOpen && !filters.searchActive
         onActivated: filters.cycleSection(-1)
+    }
+    // Alt with a digit rates. Plain digits already jump between sections,
+    // and the viewer keeps 0 and 1 for zoom, so the modifier is the same in
+    // both places.
+    Repeater {
+        model: 6
+        Item {
+            id: ratingKey
+            required property int index
+            Shortcut {
+                sequences: ["Alt+" + ratingKey.index]
+                enabled: !root.modalOpen && !root.popupOpen && !filters.searchActive
+                onActivated: root.rate(ratingKey.index)
+            }
+        }
     }
     Shortcut {
         sequences: ["Ctrl+A"]

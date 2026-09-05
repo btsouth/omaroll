@@ -282,6 +282,8 @@ QVariant CaptureModel::data(const QModelIndex& index, int role) const {
     return record.camera;
   case CaptureRoles::LensRole:
     return record.lens;
+  case CaptureRoles::RatingRole:
+    return record.rating;
   default:
     return {};
   }
@@ -306,6 +308,7 @@ QHash<int, QByteArray> CaptureModel::roleNames() const {
       {CaptureRoles::HiddenRole, "hidden"},
       {CaptureRoles::CameraRole, "camera"},
       {CaptureRoles::LensRole, "lens"},
+      {CaptureRoles::RatingRole, "rating"},
   };
 }
 
@@ -467,6 +470,7 @@ void CaptureModel::adoptResults(ScanResult result) {
     for (CaptureRecord& record : scanned) {
       record.favorite = m_settings->isFavorite(record.path);
       record.hidden = m_settings->isHidden(record.path);
+      record.rating = m_settings->rating(record.path);
     }
   }
 
@@ -607,13 +611,17 @@ void CaptureModel::applyMarks() {
     CaptureRecord& record = m_records[row];
     const bool favorite = m_settings->isFavorite(record.path);
     const bool hidden = m_settings->isHidden(record.path);
-    if (favorite == record.favorite && hidden == record.hidden) {
+    const int rating = m_settings->rating(record.path);
+    if (favorite == record.favorite && hidden == record.hidden && rating == record.rating) {
       continue;
     }
     record.favorite = favorite;
     record.hidden = hidden;
+    record.rating = rating;
     const QModelIndex changed = index(static_cast<int>(row), 0);
-    emit dataChanged(changed, changed, {CaptureRoles::FavoriteRole, CaptureRoles::HiddenRole});
+    emit dataChanged(changed, changed,
+                     {CaptureRoles::FavoriteRole, CaptureRoles::HiddenRole,
+                      CaptureRoles::RatingRole});
   }
 }
 

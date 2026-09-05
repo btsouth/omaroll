@@ -1209,6 +1209,30 @@ private slots:
     proxy.clearSmartCollection();
     proxy.setCameraFilter({});
     proxy.setLensFilter({});
+
+    // Ratings come from the settings marks, filter by a minimum and sort
+    // highest first; a saved view keeps the minimum.
+    settings.setRating({beach}, 4);
+    QTRY_COMPARE_WITH_TIMEOUT(model.recordAt(model.rowOf(beach)).rating, 4, 1000);
+    proxy.setMinimumRating(3);
+    QCOMPARE(proxy.count(), 1);
+    QCOMPARE(proxy.pathAt(0), beach);
+    proxy.setMinimumRating(5);
+    QCOMPARE(proxy.count(), 0);
+    const QVariantMap ratedView = proxy.currentView();
+    QCOMPARE(ratedView.value(QStringLiteral("minRating")).toInt(), 5);
+    proxy.setMinimumRating(0);
+    QCOMPARE(proxy.count(), 5);
+    proxy.setSortMode(CaptureFilterModel::RatingFirst);
+    QCOMPARE(proxy.pathAt(0), beach);
+    proxy.setSortMode(CaptureFilterModel::NewestFirst);
+    proxy.applyView(QStringLiteral("Five stars"), ratedView);
+    QCOMPARE(proxy.minimumRating(), 5);
+    QCOMPARE(proxy.count(), 0);
+    proxy.clearSmartCollection();
+    proxy.setMinimumRating(0);
+    settings.setRating({beach}, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(model.recordAt(model.rowOf(beach)).rating, 0, 1000);
     QCOMPARE(proxy.count(), 5);
 
     const QString forest = dir.filePath(QStringLiteral("album/forest.png"));
@@ -2716,6 +2740,9 @@ private slots:
     QVERIFY(settings.addToAlbum(album, {original}));
     settings.toggleFavorite(original);
     settings.toggleHidden(original);
+    settings.setRating({original}, 4);
+    QCOMPARE(settings.rating(original), 4);
+    QCOMPARE(settings.ratedCount(), 1);
 
     ActionLauncher launcher;
     QVERIFY(!launcher.renameFile(original, QString()).value(QStringLiteral("ok")).toBool());
@@ -2739,11 +2766,22 @@ private slots:
     settings.relocatePath(original, newPath);
     QVERIFY(settings.isFavorite(newPath));
     QVERIFY(settings.isHidden(newPath));
+    QCOMPARE(settings.rating(newPath), 4);
+    QCOMPARE(settings.rating(original), 0);
     QCOMPARE(settings.albumPaths(album), QStringList {newPath});
     AppSettings restored;
     QVERIFY(restored.isFavorite(newPath));
     QVERIFY(restored.isHidden(newPath));
+    QCOMPARE(restored.rating(newPath), 4);
     QCOMPARE(restored.albumPaths(album), QStringList {newPath});
+
+    // Out-of-range stars clamp, and zero forgets the entry entirely.
+    settings.setRating({newPath}, 9);
+    QCOMPARE(settings.rating(newPath), 5);
+    settings.setRating({newPath}, 0);
+    QCOMPARE(settings.rating(newPath), 0);
+    QCOMPARE(settings.ratedCount(), 0);
+    QVERIFY(!settings.markedPaths().contains(newPath) || settings.isFavorite(newPath));
 
     settings.toggleFavorite(newPath);
     settings.toggleHidden(newPath);
