@@ -19,6 +19,11 @@ Item {
     property string timeLabel: ""
     property string sizeLabel: ""
     property bool isVideo: false
+    // Keep playback state after first use, but do not initialize the multimedia
+    // backend just to browse pictures. Loader creation is synchronous.
+    readonly property var player: playerLoader.item
+    readonly property var audio: player ? player.audioOutput : null
+    onIsVideoChanged: if (isVideo) playerLoader.active = true
     property bool isDocument: false
     property int pdfPage: 1
     property double stamp: 0
@@ -34,6 +39,10 @@ Item {
     property real imageSourceWidth: 0
     property real imageSourceHeight: 0
     property bool stillReady: false
+    readonly property bool imageReady: visible && !isVideo && !isDocument
+                                       && stillLoader.item !== null
+                                       && stillLoader.item.status === Image.Ready
+                                       && stillLoader.width > 0 && stillLoader.height > 0
     property bool fullScreen: false
     property bool showInfo: true
     property bool slideshowRunning: false
@@ -51,14 +60,14 @@ Item {
                                                                 : root.imageSourceHeight)
     readonly property string dimensionsLabel: root.mediaWidth > 0 && root.mediaHeight > 0
                                                ? root.mediaWidth + " × " + root.mediaHeight : ""
-    readonly property string durationLabel: root.isVideo && player.duration > 0
+    readonly property string durationLabel: root.isVideo && player && player.duration > 0
                                              ? root.formatDuration(player.duration) : ""
-    readonly property real playbackPosition: player.position
-    readonly property int playbackState: player.playbackState
-    readonly property real playbackRate: player.playbackRate
-    readonly property real playbackVolume: audio.volume
-    readonly property bool playbackMuted: audio.muted
-    readonly property int playbackLoops: player.loops
+    readonly property real playbackPosition: player ? player.position : 0
+    readonly property int playbackState: player ? player.playbackState : MediaPlayer.StoppedState
+    readonly property real playbackRate: player ? player.playbackRate : 1
+    readonly property real playbackVolume: audio ? audio.volume : 0.8
+    readonly property bool playbackMuted: audio ? audio.muted : false
+    readonly property int playbackLoops: player ? player.loops : 1
     readonly property bool isAnimatedImage: !root.isVideo && !root.isDocument
                                              && (root.fileName.toLowerCase().endsWith(".gif")
                                                  || root.fileName.toLowerCase().endsWith(".webp"))
@@ -515,7 +524,7 @@ Item {
                 asynchronous: true
                 smooth: true
                 mipmap: true
-                visible: root.isVideo && !player.hasVideo
+                visible: root.isVideo && !(player && player.hasVideo)
                 sourceSize: Qt.size(Math.round(stage.width * Screen.devicePixelRatio),
                                     Math.round(stage.height * Screen.devicePixelRatio))
                 source: root.path === "" ? ""
@@ -693,40 +702,45 @@ Item {
             // A recording plays in place with the normal controls expected of
             // a default media viewer. Specialist editing can still be handed
             // to the action list without weakening playback here.
-            MediaPlayer {
-                id: player
-                objectName: "videoPlayer"
-                source: root.visible && root.isVideo && root.path !== ""
-                        ? Library.fileUrl(root.path) : ""
-                videoOutput: output
-                audioOutput: AudioOutput {
-                    id: audio
-                    volume: 0.8
-                    muted: false
-                }
-                loops: 1
-                onSourceChanged: {
-                    if (source.toString() !== "") {
-                        play()
-                    }
-                }
-                // A clip the ffmpeg backend cannot decode must say so rather
-                // than sit behind a dead play button.
-                onErrorOccurred: function (error, errorString) {
-                    root.playbackError = errorString !== "" ? errorString : "Could not play this file"
-                    if (root.slideshowRunning) {
-                        slideshowErrorTimer.restart()
-                    }
-                }
-                onPositionChanged: {
-                    if (root.videoPausedForRender && player.position >= 1000
-                            && playbackState === MediaPlayer.PlayingState) {
-                        pause()
-                    }
-                }
-                onMediaStatusChanged: {
-                    if (mediaStatus === MediaPlayer.EndOfMedia && root.slideshowRunning) {
-                        root.requestNavigation(1)
+            Loader {
+                id: playerLoader
+                active: false
+                sourceComponent: Component {
+                    MediaPlayer {
+                        id: mediaPlayer
+                        objectName: "videoPlayer"
+                        source: root.visible && root.isVideo && root.path !== ""
+                                ? Library.fileUrl(root.path) : ""
+                        videoOutput: videoSurface.item
+                        audioOutput: AudioOutput {
+                            volume: 0.8
+                            muted: false
+                        }
+                        loops: 1
+                        onSourceChanged: {
+                            if (source.toString() !== "") {
+                                play()
+                            }
+                        }
+                        // A clip the ffmpeg backend cannot decode must say so rather
+                        // than sit behind a dead play button.
+                        onErrorOccurred: function (error, errorString) {
+                            root.playbackError = errorString !== "" ? errorString : "Could not play this file"
+                            if (root.slideshowRunning) {
+                                slideshowErrorTimer.restart()
+                            }
+                        }
+                        onPositionChanged: {
+                            if (root.videoPausedForRender && mediaPlayer.position >= 1000
+                                    && playbackState === MediaPlayer.PlayingState) {
+                                pause()
+                            }
+                        }
+                        onMediaStatusChanged: {
+                            if (mediaStatus === MediaPlayer.EndOfMedia && root.slideshowRunning) {
+                                root.requestNavigation(1)
+                            }
+                        }
                     }
                 }
             }
@@ -761,14 +775,27 @@ Item {
                 color: Theme.red
             }
 
-            VideoOutput {
+            Item {
                 id: output
-                objectName: "videoOutput"
                 anchors.fill: parent
                 anchors.margins: 16
                 anchors.bottomMargin: 56
-                fillMode: VideoOutput.PreserveAspectFit
-                visible: root.isVideo && player.hasVideo
+                visible: root.isVideo && player && player.hasVideo
+                readonly property rect sourceRect: videoSurface.item
+                                                   ? videoSurface.item.sourceRect : Qt.rect(0, 0, 0, 0)
+                readonly property QtObject videoSink: videoSurface.item ? videoSurface.item.videoSink : null
+
+                // VideoOutput creates a backend video sink even while hidden.
+                // Defer it alongside the player, preserving the stage geometry.
+                Loader {
+                    id: videoSurface
+                    anchors.fill: parent
+                    active: playerLoader.active
+                    sourceComponent: VideoOutput {
+                        objectName: "videoOutput"
+                        fillMode: VideoOutput.PreserveAspectFit
+                    }
+                }
 
                 TapHandler {
                     onDoubleTapped: root.setFullScreen(!root.fullScreen)
@@ -1031,8 +1058,8 @@ Item {
                     objectName: "videoPlayButton"
                     anchors.left: parent.left
                     anchors.verticalCenter: parent.verticalCenter
-                    label: player.playbackState === MediaPlayer.PlayingState ? "❚❚" : "▶"
-                    toolTip: player.playbackState === MediaPlayer.PlayingState ? "Pause" : "Play"
+                    label: root.playbackState === MediaPlayer.PlayingState ? "❚❚" : "▶"
+                    toolTip: root.playbackState === MediaPlayer.PlayingState ? "Pause" : "Play"
                     shortcut: "Space"
                     onClicked: root.toggleVideoPlayback()
                 }
@@ -1046,7 +1073,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     height: parent.height
 
-                    readonly property real fraction: player.duration > 0
+                    readonly property real fraction: player && player.duration > 0
                                                      ? player.position / player.duration : 0
 
                     Rectangle {
@@ -1069,7 +1096,7 @@ Item {
                     }
 
                     function seekTo(x) {
-                        if (player.duration > 0) {
+                        if (player && player.duration > 0) {
                             player.position = Math.max(0, Math.min(1, x / width)) * player.duration
                         }
                     }
@@ -1090,7 +1117,7 @@ Item {
                     anchors.right: mediaControls.left
                     anchors.rightMargin: 12
                     anchors.verticalCenter: parent.verticalCenter
-                    text: transport.clock(player.position) + " / " + transport.clock(player.duration)
+                    text: transport.clock(root.playbackPosition) + " / " + transport.clock(player ? player.duration : 0)
                     font.family: Theme.fontFamily
                     font.pixelSize: 11
                     color: Theme.mutedText
@@ -1103,36 +1130,36 @@ Item {
                     spacing: 6
 
                     PillButton {
-                        visible: player.audioTracks.length > 1 && transport.width >= 520
-                        label: "Audio " + (player.activeAudioTrack + 1)
+                        visible: player && player.audioTracks.length > 1 && transport.width >= 520
+                        label: "Audio " + (player ? player.activeAudioTrack + 1 : 1)
                         toolTip: "Switch audio track"
                         onClicked: root.cycleAudioTrack()
                     }
                     PillButton {
-                        visible: player.subtitleTracks.length > 0 && transport.width >= 440
+                        visible: player && player.subtitleTracks.length > 0 && transport.width >= 440
                         objectName: "subtitleButton"
                         label: "CC"
-                        toolTip: player.activeSubtitleTrack >= 0
+                        toolTip: player && player.activeSubtitleTrack >= 0
                                  ? "Turn subtitles off" : "Choose subtitles"
-                        active: player.activeSubtitleTrack >= 0
+                        active: player && player.activeSubtitleTrack >= 0
                         onClicked: root.cycleSubtitleTrack()
                     }
                     PillButton {
                         id: speedButton
                         objectName: "playbackSpeedButton"
-                        label: Number(player.playbackRate.toFixed(2)) + "×"
+                        label: Number(root.playbackRate.toFixed(2)) + "×"
                         toolTip: "Playback speed"
                         shortcut: "[  ]"
-                        active: Math.abs(player.playbackRate - 1) > 0.01
+                        active: Math.abs(root.playbackRate - 1) > 0.01
                         onClicked: root.cyclePlaybackRate()
                     }
                     PillButton {
                         id: soundButton
                         objectName: "videoSoundButton"
-                        label: audio.muted ? "Muted" : Math.round(audio.volume * 100) + "%"
-                        toolTip: audio.muted ? "Unmute" : "Mute"
+                        label: root.playbackMuted ? "Muted" : Math.round(root.playbackVolume * 100) + "%"
+                        toolTip: root.playbackMuted ? "Unmute" : "Mute"
                         shortcut: "M"
-                        active: !audio.muted
+                        active: !root.playbackMuted
                         onClicked: audio.muted = !audio.muted
                     }
                 }
@@ -1169,7 +1196,7 @@ Item {
 
             Rectangle {
                 id: slideshowVideoProgress
-                visible: root.isVideo && root.slideshowRunning && player.duration > 0
+                visible: root.isVideo && root.slideshowRunning && player && player.duration > 0
                 anchors.left: parent.left
                 anchors.right: topControlsPanel.left
                 anchors.leftMargin: 16
@@ -1181,7 +1208,8 @@ Item {
                 color: root.shade(Theme.foreground, 0.14)
 
                 Rectangle {
-                    width: parent.width * Math.max(0, Math.min(1, player.position / player.duration))
+                    width: player && player.duration > 0
+                           ? parent.width * Math.max(0, Math.min(1, player.position / player.duration)) : 0
                     height: parent.height
                     radius: parent.radius
                     color: root.shade(Theme.accent, 0.78)

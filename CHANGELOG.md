@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Defer video setup until a video is opened, reducing startup work for images and the library.
+
 - Keep automated playback and headless renders off physical audio devices, including native PipeWire.
 
 - Open multiple selected files in order, including across folders and in an already-running window.

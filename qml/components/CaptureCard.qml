@@ -23,6 +23,8 @@ Item {
     property bool selectionMode: false
     property string ocrSnippet: ""
     property bool thumbnailReady: false
+    readonly property bool thumbnailPresented: thumbnail.status === Image.Ready
+                                               && thumbnail.opacity >= 0.999
     // What leaves when this tile is dragged out. The grid sets it to the whole
     // selection when this tile is part of one.
     property var dragPaths: [path]

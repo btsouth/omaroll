@@ -80,14 +80,35 @@ and twenty cold-cache then warm-cache thumbnails. Peak memory belongs to the
 benchmark process, which also creates fixtures; it is not application memory.
 
 The startup probe launches the actual executable six times using offscreen Qt
-and OpenGL, recording the actual graphics driver. The software-rendering
-environment request is not honored by every driver. Each launch gets fresh
-application settings and a fresh thumbnail cache, with 100 copies of the transparent PNG fixture. It
-records receipt of Qt's first completed scene-graph rendering log after the
-renderer has done work, then samples idle CPU between seconds three and eight.
-This is a diagnostic first-frame measurement. It does not establish when the
-requested image or useful grid becomes visible. Zero measured idle CPU means
-no CPU ticks were observed during that short interval.
+and OpenGL, recording the actual graphics driver. Each launch gets fresh
+settings and a fresh thumbnail cache, with 100 copies of the transparent PNG.
+Use `--fixture resources/demo/alpine-dawn.jpg` to measure a photographic image,
+`--files N` to change the library size, and `--runs N` for repeated samples.
+Fixture creation is excluded. The output records the fixture hash and size.
+
+`OMAROLL_STARTUP_TRACE=1` enables diagnostic JSON lines on stderr. Timings start
+at entry to `main`, excluding process spawning and dynamic loading before main:
+
+- `application`, `theme`, `services`, `qml`: cumulative setup milestones.
+- `first_frame`: first scene-graph frame submitted.
+- `image_frame`: frame submitted after the requested still image reports a
+  successful decode and has nonzero display dimensions.
+- `grid_frame`: frame submitted after scanning settles and every cell
+  intersecting the viewport has a decoded thumbnail at full opacity. An empty
+  library, missing delegate, failed decode or fading thumbnail does not qualify.
+
+Readiness is sampled on the GUI thread before scene synchronization, latched
+at synchronization, then reported at Qt's
+[afterFrameEnd](https://doc.qt.io/qt-6/qquickwindow.html#afterFrameEnd) signal.
+These are content-ready submitted frames, not pixel readbacks or proof of
+presentation by Hyprland. The UI tests separately exercise failed images,
+thumbnail fading and rendered media. Normal launches do not enable tracing.
+
+The probe fails if required milestones are absent within its eight-second
+observation window. CI checks that evidence arrives and retains the JSON; it
+sets no speed threshold. Idle CPU is sampled between seconds three and eight.
+Zero means no CPU ticks were observed in that interval. Do not run benchmarks
+concurrently with builds or other tests.
 
 Use `xvfb-run -a` around the startup command on headless CI hosts that need an
 X display for Mesa. These measurements are informational, not CI timing gates.

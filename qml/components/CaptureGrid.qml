@@ -29,6 +29,23 @@ FocusScope {
     signal deleteRequested(string path)
     signal detailRequested(int index)
 
+    // Include every intersecting cell, including the partial bottom row.
+    // Cached offscreen delegates do not count, nor does an empty library.
+    function viewportReady() {
+        if (!visible || !layoutReady || grid.count === 0 || grid.width <= 0 || grid.height <= 0)
+            return false
+        const firstRow = Math.max(0, Math.floor(grid.contentY / grid.cellHeight))
+        const lastRow = Math.ceil((grid.contentY + grid.height) / grid.cellHeight)
+        const first = firstRow * columns
+        const end = Math.min(grid.count, lastRow * columns)
+        if (first >= end) return false
+        for (let i = first; i < end; ++i) {
+            const cell = grid.itemAtIndex(i)
+            if (!cell || !cell.thumbnailPresented) return false
+        }
+        return true
+    }
+
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
     }
@@ -245,6 +262,7 @@ FocusScope {
 
         delegate: Item {
             id: cell
+            readonly property bool thumbnailPresented: card.thumbnailPresented
 
             required property int index
             required property string path
@@ -263,6 +281,7 @@ FocusScope {
             height: grid.cellHeight
 
             CaptureCard {
+                id: card
                 anchors.fill: parent
                 anchors.margins: Math.round(root.cellSpacing / 2)
 
