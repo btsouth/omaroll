@@ -693,6 +693,50 @@ private slots:
     QTRY_VERIFY(!m_library->property("favoritesOnly").toBool());
   }
 
+  void tabCyclesTheSectionsAndWraps() {
+    QTest::keyClick(m_window, Qt::Key_1);
+    QTRY_COMPARE(m_library->property("kindFilter").toInt(), -1);
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QTRY_COMPARE(m_library->property("kindFilter").toInt(), 0);
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QTRY_COMPARE(m_library->property("kindFilter").toInt(), 1);
+    QTest::keyClick(m_window, Qt::Key_Tab, Qt::ShiftModifier);
+    QTRY_COMPARE(m_library->property("kindFilter").toInt(), 0);
+    QTest::keyClick(m_window, Qt::Key_Backtab, Qt::ShiftModifier);
+    QTRY_COMPARE(m_library->property("kindFilter").toInt(), -1);
+    // Backwards from All wraps to the last section, PDFs.
+    QTest::keyClick(m_window, Qt::Key_Backtab, Qt::ShiftModifier);
+    QTRY_COMPARE(m_library->property("kindFilter").toInt(), 5);
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QTRY_COMPARE(m_library->property("kindFilter").toInt(), -1);
+
+    // Downloads joins the cycle only while it is scanned.
+    const bool downloads = m_settings->scanDownloads();
+    m_settings->setScanDownloads(true);
+    QTest::keyClick(m_window, Qt::Key_5);
+    QTRY_COMPARE(m_library->property("kindFilter").toInt(), 3);
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QTRY_COMPARE(m_library->property("kindFilter").toInt(), 4);
+    m_settings->setScanDownloads(false);
+    QTRY_COMPARE(m_library->property("kindFilter").toInt(), -1);
+    QTest::keyClick(m_window, Qt::Key_5);
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QTRY_COMPARE(m_library->property("kindFilter").toInt(), 5);
+    m_settings->setScanDownloads(downloads);
+
+    // The search field keeps Tab for itself.
+    QTest::keyClick(m_window, Qt::Key_1);
+    QTest::keyClick(m_window, Qt::Key_Slash);
+    QTRY_VERIFY(item("filters")->property("searchActive").toBool());
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QTest::qWait(50);
+    QCOMPARE(m_library->property("kindFilter").toInt(), -1);
+    // Tab has traversed out of the field, so hand the grid its focus back
+    // rather than sending an Escape that would now close the window.
+    item("library")->forceActiveFocus();
+    QTRY_VERIFY(item("library")->hasActiveFocus());
+  }
+
   void exactDuplicatesOpenAsAGroupedReviewView() {
     QObject* browser = m_window->findChild<QObject*>(QStringLiteral("libraryBrowser"));
     QVERIFY(browser);

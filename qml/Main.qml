@@ -1435,6 +1435,19 @@ ApplicationWindow {
             }
         }
     }
+    // Tab walks the sections the way it walks tabs in a browser. The window
+    // owns it, so it does not traverse the pills; those keep the number keys
+    // and the mouse. The search field, sheets and menus own their own Tab.
+    Shortcut {
+        sequences: ["Tab"]
+        enabled: !root.anySheetOpen && !root.popupOpen && !filters.searchActive
+        onActivated: filters.cycleSection(1)
+    }
+    Shortcut {
+        sequences: ["Shift+Tab", "Backtab", "Shift+Backtab"]
+        enabled: !root.anySheetOpen && !root.popupOpen && !filters.searchActive
+        onActivated: filters.cycleSection(-1)
+    }
     Shortcut {
         sequences: ["Ctrl+A"]
         enabled: !root.anySheetOpen
