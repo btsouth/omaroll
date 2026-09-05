@@ -37,6 +37,11 @@ class CaptureFilterModel final : public QSortFilterProxyModel {
   Q_PROPERTY(QString modifiedAfter READ modifiedAfter NOTIFY dateRangeChanged)
   Q_PROPERTY(QVariantList dateBuckets READ dateBuckets NOTIFY dateBucketsChanged)
   Q_PROPERTY(
+      QString cameraFilter READ cameraFilter WRITE setCameraFilter NOTIFY cameraFilterChanged)
+  Q_PROPERTY(QString lensFilter READ lensFilter WRITE setLensFilter NOTIFY lensFilterChanged)
+  Q_PROPERTY(QVariantList cameras READ cameras NOTIFY camerasChanged)
+  Q_PROPERTY(QVariantList lenses READ lenses NOTIFY camerasChanged)
+  Q_PROPERTY(
       QString smartCollectionFilter READ smartCollectionFilter NOTIFY smartCollectionFilterChanged)
   Q_PROPERTY(bool showHidden READ showHidden WRITE setShowHidden NOTIFY showHiddenChanged)
   Q_PROPERTY(
@@ -97,6 +102,16 @@ public:
   Q_INVOKABLE void clearDateRange();
   [[nodiscard]] QVariantList dateBuckets() const { return m_dateBuckets; }
   Q_INVOKABLE QVariantList dateDays(const QString& monthKey) const;
+
+  // Camera and lens names as the metadata index resolved them. The choice
+  // lists carry {name, count} rows, most used first, and stay empty for a
+  // library of screenshots so the Browse sheet can leave them out.
+  [[nodiscard]] QString cameraFilter() const { return m_cameraFilter; }
+  void setCameraFilter(const QString& camera);
+  [[nodiscard]] QString lensFilter() const { return m_lensFilter; }
+  void setLensFilter(const QString& lens);
+  [[nodiscard]] QVariantList cameras() const { return m_cameras; }
+  [[nodiscard]] QVariantList lenses() const { return m_lenses; }
 
   [[nodiscard]] QString smartCollectionFilter() const { return m_smartCollectionFilter; }
   Q_INVOKABLE QVariantMap currentView() const;
@@ -171,6 +186,9 @@ signals:
   void tagFilterChanged();
   void dateRangeChanged();
   void dateBucketsChanged();
+  void cameraFilterChanged();
+  void lensFilterChanged();
+  void camerasChanged();
   void smartCollectionFilterChanged();
   void showHiddenChanged();
   void duplicatesOnlyChanged();
@@ -187,6 +205,7 @@ private:
   void endFilterUpdate();
   [[nodiscard]] bool rebuildFolderIndex();
   [[nodiscard]] bool rebuildDateIndex();
+  [[nodiscard]] bool rebuildCameraIndex();
   void rebuildDuplicateOrdinals();
   [[nodiscard]] const CaptureRecord& sourceRecord(int sourceRow) const;
   [[nodiscard]] bool recordLessThan(const CaptureRecord& first, const CaptureRecord& second) const;
@@ -211,6 +230,10 @@ private:
   qint64 m_modifiedAfterMs = 0;
   QVariantList m_dateBuckets;
   QHash<QString, QVariantList> m_dateDays;
+  QString m_cameraFilter;
+  QString m_lensFilter;
+  QVariantList m_cameras;
+  QVariantList m_lenses;
   QString m_smartCollectionFilter;
   bool m_favoritesOnly = false;
   bool m_showHidden = false;

@@ -59,6 +59,9 @@ on them.
 - **Saves useful views.** Any combination of search, kind, folder, date, tag,
   favourites, hidden files, and sort order can become a smart collection that
   updates as files change.
+- **Browses by camera.** Photos and videos with embedded camera details can
+  be filtered by camera or lens from Browse, and a saved view remembers the
+  choice. A library of screenshots never shows the section.
 - **Adds lightweight tags.** Tag any selection and browse it without moving or
   copying files. Tags follow in-app renames and can be combined with saved views.
 - **Knows what each file is.** Omarchy stamps its captures with a predictable

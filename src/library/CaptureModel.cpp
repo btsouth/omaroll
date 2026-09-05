@@ -278,6 +278,10 @@ QVariant CaptureModel::data(const QModelIndex& index, int role) const {
     return record.favorite;
   case CaptureRoles::HiddenRole:
     return record.hidden;
+  case CaptureRoles::CameraRole:
+    return record.camera;
+  case CaptureRoles::LensRole:
+    return record.lens;
   default:
     return {};
   }
@@ -300,6 +304,8 @@ QHash<int, QByteArray> CaptureModel::roleNames() const {
       {CaptureRoles::IsDocumentRole, "isDocument"},
       {CaptureRoles::FavoriteRole, "favorite"},
       {CaptureRoles::HiddenRole, "hidden"},
+      {CaptureRoles::CameraRole, "camera"},
+      {CaptureRoles::LensRole, "lens"},
   };
 }
 
@@ -322,42 +328,56 @@ int CaptureModel::rowOf(const QString& path) const {
   return -1;
 }
 
-void CaptureModel::applyCapturedDates(const QList<CapturedDateUpdate>& updates) {
+void CaptureModel::applyMetadata(const QList<MetadataUpdate>& updates) {
   if (updates.isEmpty() || m_records.isEmpty()) {
     return;
   }
 
   int firstChanged = m_records.size();
   int lastChanged = -1;
-  for (const CapturedDateUpdate& update : updates) {
-    if (!update.captured.isValid()) {
-      continue;
-    }
+  bool dateChanged = false;
+  bool cameraChanged = false;
+  for (const MetadataUpdate& update : updates) {
     const int row = rowOf(update.path);
     if (row < 0) {
       continue;
     }
     CaptureRecord& record = m_records[row];
-    if (record.hasProducerTimestamp) {
-      continue;
-    }
     if (record.modified != update.modified || record.bytes != update.bytes ||
         record.device != update.device || record.inode != update.inode) {
       continue;
     }
-    m_capturedDates.insert(record.path, update);
-    if (record.captured == update.captured) {
+    m_metadata.insert(record.path, update);
+    bool changed = false;
+    if (update.captured.isValid() && !record.hasProducerTimestamp &&
+        record.captured != update.captured) {
+      record.captured = update.captured;
+      dateChanged = true;
+      changed = true;
+    }
+    if (record.camera != update.camera || record.lens != update.lens) {
+      record.camera = update.camera;
+      record.lens = update.lens;
+      cameraChanged = true;
+      changed = true;
+    }
+    if (!changed) {
       continue;
     }
-    record.captured = update.captured;
     firstChanged = qMin(firstChanged, row);
-    lastChanged = row;
+    lastChanged = qMax(lastChanged, row);
   }
 
   if (lastChanged >= 0) {
-    emit dataChanged(index(firstChanged), index(lastChanged),
-                     {CaptureRoles::CapturedRole, CaptureRoles::DayKeyRole,
-                      CaptureRoles::DayLabelRole, CaptureRoles::TimeLabelRole});
+    QList<int> roles;
+    if (dateChanged) {
+      roles.append({CaptureRoles::CapturedRole, CaptureRoles::DayKeyRole,
+                    CaptureRoles::DayLabelRole, CaptureRoles::TimeLabelRole});
+    }
+    if (cameraChanged) {
+      roles.append({CaptureRoles::CameraRole, CaptureRoles::LensRole});
+    }
+    emit dataChanged(index(firstChanged), index(lastChanged), roles);
   }
 }
 
@@ -450,28 +470,32 @@ void CaptureModel::adoptResults(ScanResult result) {
     }
   }
 
-  // Keep already-resolved metadata dates through ordinary watcher rescans.
-  // Without this, every new screenshot would briefly put copied photos back
-  // on their mtime dates until the date cache was applied again.
-  QSet<QString> liveDatePaths;
-  liveDatePaths.reserve(scanned.size());
+  // Keep already-resolved metadata through ordinary watcher rescans. Without
+  // this, every new screenshot would briefly put copied photos back on their
+  // mtime dates, and drop their cameras, until the cache was applied again.
+  QSet<QString> livePaths;
+  livePaths.reserve(scanned.size());
   for (CaptureRecord& record : scanned) {
-    const auto known = m_capturedDates.constFind(record.path);
-    if (known == m_capturedDates.cend()) {
+    const auto known = m_metadata.constFind(record.path);
+    if (known == m_metadata.cend()) {
       continue;
     }
-    if (!record.hasProducerTimestamp && known->modified == record.modified &&
-        known->bytes == record.bytes && known->device == record.device &&
-        known->inode == record.inode && known->captured.isValid()) {
-      record.captured = known->captured;
-      liveDatePaths.insert(record.path);
+    if (known->modified != record.modified || known->bytes != record.bytes ||
+        known->device != record.device || known->inode != record.inode) {
+      continue;
     }
+    if (!record.hasProducerTimestamp && known->captured.isValid()) {
+      record.captured = known->captured;
+    }
+    record.camera = known->camera;
+    record.lens = known->lens;
+    livePaths.insert(record.path);
   }
-  for (auto it = m_capturedDates.begin(); it != m_capturedDates.end();) {
-    if (liveDatePaths.contains(it.key())) {
+  for (auto it = m_metadata.begin(); it != m_metadata.end();) {
+    if (livePaths.contains(it.key())) {
       ++it;
     } else {
-      it = m_capturedDates.erase(it);
+      it = m_metadata.erase(it);
     }
   }
 

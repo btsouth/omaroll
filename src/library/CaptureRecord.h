@@ -26,6 +26,10 @@ struct CaptureRecord {
   // their mtime fallback replaced later by embedded metadata without making
   // capture discovery wait for ImageMagick or ffprobe.
   bool hasProducerTimestamp = false;
+  // Filled in later from embedded metadata, the same way as the date. Empty
+  // for screenshots, recordings and anything without EXIF.
+  QString camera;
+  QString lens;
   qint64 bytes = 0;
   // mtime in milliseconds. Part of the thumbnail identity, so a file rewritten
   // in place (a recording finalised by omarchy-capture-screenrecording) gets a

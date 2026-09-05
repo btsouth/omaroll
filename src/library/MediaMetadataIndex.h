@@ -9,23 +9,34 @@
 #include <QSet>
 #include <QTimer>
 
-// Reads the original capture date embedded in general photos and videos.
+// Reads embedded metadata from general photos and videos: the original
+// capture date, and the camera and lens that took them.
 //
 // Discovery itself stays a fast filesystem walk. Once a scan lands, this
 // class checks small image batches with ImageMagick and videos one at a time
 // with ffprobe, then replaces only mtime fallbacks. Omarchy's timestamped
-// capture names always remain authoritative. Results, including "no embedded
-// date", are cached by path and filesystem identity so an unchanged library
-// is not probed every launch.
-class MediaDateIndex final : public QObject {
+// capture names always remain authoritative. Results, including "nothing
+// embedded", are cached by path and filesystem identity so an unchanged
+// library is not probed every launch.
+class MediaMetadataIndex final : public QObject {
   Q_OBJECT
   Q_PROPERTY(bool indexing READ indexing NOTIFY indexingChanged)
   Q_PROPERTY(int completed READ completed NOTIFY progressChanged)
   Q_PROPERTY(int total READ total NOTIFY progressChanged)
 
 public:
-  explicit MediaDateIndex(CaptureModel* model, QObject* parent = nullptr);
-  ~MediaDateIndex() override;
+  // What one probe found. Empty strings and an invalid date mean the file
+  // carries nothing, which is still worth caching.
+  struct Details {
+    QDateTime captured;
+    QString camera;
+    QString lens;
+
+    bool operator==(const Details& other) const = default;
+  };
+
+  explicit MediaMetadataIndex(CaptureModel* model, QObject* parent = nullptr);
+  ~MediaMetadataIndex() override;
 
   [[nodiscard]] bool indexing() const { return m_indexing; }
   [[nodiscard]] int completed() const { return m_completed; }
@@ -33,7 +44,11 @@ public:
 
   [[nodiscard]] static QString cachePath();
   [[nodiscard]] static QDateTime parseImageDate(const QByteArray& output);
+  [[nodiscard]] static Details parseImageDetails(const QByteArray& output);
   [[nodiscard]] static QDateTime parseVideoDate(const QByteArray& output);
+  [[nodiscard]] static Details parseVideoDetails(const QByteArray& output);
+  // "Apple iPhone 12", or just the model when the maker already leads it.
+  [[nodiscard]] static QString cameraName(const QString& make, const QString& model);
 
 signals:
   void indexingChanged();
@@ -52,7 +67,7 @@ private:
   struct Entry {
     qint64 modified = 0;
     qint64 bytes = 0;
-    QDateTime captured;
+    Details details;
     quint64 device = 0;
     quint64 inode = 0;
   };
@@ -62,9 +77,11 @@ private:
   void finishCurrent(bool successful);
   [[nodiscard]] bool isCurrent(const Candidate& candidate) const;
   [[nodiscard]] bool stillCurrent(const Candidate& candidate) const;
-  [[nodiscard]] static QHash<int, QDateTime> parseImageBatch(
-      const QByteArray& output, QSet<int>* completed);
-  void adopt(const Candidate& candidate, const QDateTime& captured);
+  [[nodiscard]] static QHash<int, Details> parseImageBatch(const QByteArray& output,
+                                                           QSet<int>* completed);
+  void adopt(const Candidate& candidate, const Details& details);
+  [[nodiscard]] static CaptureModel::MetadataUpdate updateFor(const Candidate& candidate,
+                                                              const Details& details);
   void setIndexing(bool value);
   void resetProgress(int total);
   void advanceProgress(int amount = 1);
@@ -77,7 +94,7 @@ private:
   QString m_videoProgram;
   QHash<QString, Entry> m_entries;
   QList<Candidate> m_queue;
-  QHash<QString, CaptureModel::CapturedDateUpdate> m_pendingDates;
+  QHash<QString, CaptureModel::MetadataUpdate> m_pendingUpdates;
   QHash<QString, QString> m_failed;
   QList<Candidate> m_current;
   QProcess m_process;

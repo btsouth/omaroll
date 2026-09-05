@@ -33,8 +33,8 @@ add_library(omaroll_core STATIC
   src/library/MediaInspector.h
   src/library/SimilarityIndex.cpp
   src/library/SimilarityIndex.h
-  src/library/MediaDateIndex.cpp
-  src/library/MediaDateIndex.h
+  src/library/MediaMetadataIndex.cpp
+  src/library/MediaMetadataIndex.h
   src/sources/CaptureScanner.cpp
   src/sources/CaptureScanner.h
   src/sources/CaptureLocations.cpp

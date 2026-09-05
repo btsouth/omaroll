@@ -223,7 +223,7 @@ FocusScope {
         displaced: Transition {
             NumberAnimation {
                 properties: "x,y"
-                duration: MediaDates.indexing ? 0 : 200
+                duration: MediaMetadata.indexing ? 0 : 200
                 easing.type: Easing.OutQuad
             }
         }

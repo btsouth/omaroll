@@ -10,7 +10,7 @@
 #include "library/CaptureFilterModel.h"
 #include "library/CaptureModel.h"
 #include "library/DuplicateIndex.h"
-#include "library/MediaDateIndex.h"
+#include "library/MediaMetadataIndex.h"
 #include "library/MediaInspector.h"
 #include "library/SimilarityIndex.h"
 #include "matte/MatteComposer.h"
@@ -324,7 +324,7 @@ int main(int argc, char* argv[]) {
   CaptureModel captures(&settings);
   // Demo and render order is deliberately fixed. Real libraries are enriched
   // in the background after their fast filesystem scan lands.
-  MediaDateIndex mediaDates(demo ? nullptr : &captures);
+  MediaMetadataIndex mediaMetadata(demo ? nullptr : &captures);
 
   // QML only ever sees the proxy, so sorting and filtering can change without
   // any delegate knowing.
@@ -413,7 +413,7 @@ int main(int argc, char* argv[]) {
   engine.rootContext()->setContextProperty(QStringLiteral("Similarities"), &similarities);
   engine.rootContext()->setContextProperty(QStringLiteral("MediaInfo"), &mediaInfo);
   engine.rootContext()->setContextProperty(QStringLiteral("PdfInfo"), &pdfInfo);
-  engine.rootContext()->setContextProperty(QStringLiteral("MediaDates"), &mediaDates);
+  engine.rootContext()->setContextProperty(QStringLiteral("MediaMetadata"), &mediaMetadata);
   engine.rootContext()->setContextProperty(QStringLiteral("Tailscale"), &tailscale);
   engine.rootContext()->setContextProperty(QStringLiteral("DemoMode"), demo);
   engine.rootContext()->setContextProperty(QStringLiteral("InitialPaths"), request.files);

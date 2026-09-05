@@ -1,4 +1,4 @@
-#include "library/MediaDateIndex.h"
+#include "library/MediaMetadataIndex.h"
 
 #include <QDataStream>
 #include <QDir>
@@ -17,7 +17,7 @@
 namespace {
 
 constexpr quint32 kCacheMagic = 0x4f4d4431; // OMD1
-constexpr quint16 kCacheVersion = 2;
+constexpr quint16 kCacheVersion = 3;
 constexpr qint64 kMaximumCacheBytes = 16LL * 1024 * 1024;
 constexpr quint32 kMaximumCacheEntries = 100'000;
 constexpr int kImageBatchSize = 32;
@@ -75,13 +75,23 @@ QDateTime dateFromTags(const QJsonObject& tags) {
   return {};
 }
 
+QString tagValue(const QJsonObject& tags, const QStringList& keys) {
+  for (const QString& key : keys) {
+    const QString value = cleanValue(tags.value(key).toString());
+    if (!value.isEmpty()) {
+      return value;
+    }
+  }
+  return {};
+}
+
 QString identityKey(qint64 modified, qint64 bytes, quint64 device, quint64 inode) {
   return QStringLiteral("%1:%2:%3:%4").arg(modified).arg(bytes).arg(device).arg(inode);
 }
 
 } // namespace
 
-MediaDateIndex::MediaDateIndex(CaptureModel* model, QObject* parent)
+MediaMetadataIndex::MediaMetadataIndex(CaptureModel* model, QObject* parent)
     : QObject(parent), m_model(model),
       m_imageProgram(QStandardPaths::findExecutable(QStringLiteral("magick"))),
       m_videoProgram(QStandardPaths::findExecutable(QStringLiteral("ffprobe"))) {
@@ -100,12 +110,12 @@ MediaDateIndex::MediaDateIndex(CaptureModel* model, QObject* parent)
 
   m_syncTimer.setSingleShot(true);
   m_syncTimer.setInterval(100);
-  connect(&m_syncTimer, &QTimer::timeout, this, &MediaDateIndex::sync);
+  connect(&m_syncTimer, &QTimer::timeout, this, &MediaMetadataIndex::sync);
 
   m_saveTimer.setSingleShot(true);
   // Batch many quick metadata reads into one small atomic cache write.
   m_saveTimer.setInterval(5000);
-  connect(&m_saveTimer, &QTimer::timeout, this, &MediaDateIndex::saveCache);
+  connect(&m_saveTimer, &QTimer::timeout, this, &MediaMetadataIndex::saveCache);
 
   if (m_model) {
     connect(m_model, &CaptureModel::countChanged, &m_syncTimer, qOverload<>(&QTimer::start));
@@ -115,7 +125,7 @@ MediaDateIndex::MediaDateIndex(CaptureModel* model, QObject* parent)
   }
 }
 
-MediaDateIndex::~MediaDateIndex() {
+MediaMetadataIndex::~MediaMetadataIndex() {
   disconnect(&m_process, nullptr, this, nullptr);
   if (m_process.state() != QProcess::NotRunning) {
     m_process.kill();
@@ -126,11 +136,11 @@ MediaDateIndex::~MediaDateIndex() {
   }
 }
 
-QString MediaDateIndex::cachePath() {
-  return cacheHome() + QStringLiteral("/omaroll/media-dates.index");
+QString MediaMetadataIndex::cachePath() {
+  return cacheHome() + QStringLiteral("/omaroll/media-metadata.index");
 }
 
-QDateTime MediaDateIndex::parseImageDate(const QByteArray& output) {
+QDateTime MediaMetadataIndex::parseImageDate(const QByteArray& output) {
   const QStringList fields = QString::fromUtf8(output).split(QLatin1Char('\n'), Qt::KeepEmptyParts);
   for (int index = 0; index < 2; ++index) {
     const QDateTime parsed = exifDate(fields.value(index));
@@ -141,9 +151,30 @@ QDateTime MediaDateIndex::parseImageDate(const QByteArray& output) {
   return {};
 }
 
-QHash<int, QDateTime> MediaDateIndex::parseImageBatch(const QByteArray& output,
-                                                      QSet<int>* completed) {
-  QHash<int, QDateTime> dates;
+QString MediaMetadataIndex::cameraName(const QString& make, const QString& model) {
+  const QString cleanMake = cleanValue(make).simplified();
+  const QString cleanModel = cleanValue(model).simplified();
+  if (cleanModel.isEmpty()) {
+    return cleanMake;
+  }
+  if (cleanMake.isEmpty() || cleanModel.startsWith(cleanMake, Qt::CaseInsensitive)) {
+    return cleanModel;
+  }
+  return cleanMake + QLatin1Char(' ') + cleanModel;
+}
+
+MediaMetadataIndex::Details MediaMetadataIndex::parseImageDetails(const QByteArray& output) {
+  const QStringList fields = QString::fromUtf8(output).split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+  Details details;
+  details.captured = parseImageDate(output);
+  details.camera = cameraName(fields.value(2), fields.value(3));
+  details.lens = cleanValue(fields.value(4)).simplified();
+  return details;
+}
+
+QHash<int, MediaMetadataIndex::Details> MediaMetadataIndex::parseImageBatch(
+    const QByteArray& output, QSet<int>* completed) {
+  QHash<int, Details> results;
   const QStringList lines = QString::fromUtf8(output).split(QLatin1Char('\n'), Qt::KeepEmptyParts);
   const QString prefix = QString::fromLatin1(kImageRecordPrefix);
   for (int line = 0; line < lines.size(); ++line) {
@@ -156,14 +187,18 @@ QHash<int, QDateTime> MediaDateIndex::parseImageBatch(const QByteArray& output,
       continue;
     }
     completed->insert(index);
-    const QString fields =
-        lines.value(line + 1) + QLatin1Char('\n') + lines.value(line + 2) + QLatin1Char('\n');
-    dates.insert(index, parseImageDate(fields.toUtf8()));
+    // Everything up to the next record marker belongs to this file. Fields
+    // stay positional, so a short record simply has empty trailing fields.
+    QStringList fields;
+    for (int next = line + 1; next < lines.size() && !lines.at(next).startsWith(prefix); ++next) {
+      fields.append(lines.at(next));
+    }
+    results.insert(index, parseImageDetails(fields.join(QLatin1Char('\n')).toUtf8()));
   }
-  return dates;
+  return results;
 }
 
-QDateTime MediaDateIndex::parseVideoDate(const QByteArray& output) {
+QDateTime MediaMetadataIndex::parseVideoDate(const QByteArray& output) {
   QJsonParseError error;
   const QJsonDocument document = QJsonDocument::fromJson(output, &error);
   if (error.error != QJsonParseError::NoError || !document.isObject()) {
@@ -185,12 +220,34 @@ QDateTime MediaDateIndex::parseVideoDate(const QByteArray& output) {
   return {};
 }
 
-void MediaDateIndex::sync() {
+MediaMetadataIndex::Details MediaMetadataIndex::parseVideoDetails(const QByteArray& output) {
+  Details details;
+  details.captured = parseVideoDate(output);
+  QJsonParseError error;
+  const QJsonDocument document = QJsonDocument::fromJson(output, &error);
+  if (error.error != QJsonParseError::NoError || !document.isObject()) {
+    return details;
+  }
+  const QJsonObject tags =
+      document.object().value(QStringLiteral("format")).toObject().value(QStringLiteral("tags")).toObject();
+  details.camera = cameraName(
+      tagValue(tags, {QStringLiteral("com.apple.quicktime.make"), QStringLiteral("make")}),
+      tagValue(tags, {QStringLiteral("com.apple.quicktime.model"), QStringLiteral("model")}));
+  return details;
+}
+
+CaptureModel::MetadataUpdate MediaMetadataIndex::updateFor(const Candidate& candidate,
+                                                           const Details& details) {
+  return {candidate.path,   candidate.modified, candidate.bytes, details.captured,
+          candidate.device, candidate.inode,    details.camera,  details.lens};
+}
+
+void MediaMetadataIndex::sync() {
   if (!m_model) {
     return;
   }
 
-  QList<CaptureModel::CapturedDateUpdate> cachedDates;
+  QList<CaptureModel::MetadataUpdate> cachedUpdates;
   m_queue.clear();
   // Group images so one ImageMagick process can inspect a bounded batch.
   // Each group remains newest-first in the model's scan order.
@@ -208,9 +265,8 @@ void MediaDateIndex::sync() {
       if (known != m_entries.cend() && known->modified == record.modified &&
           known->bytes == record.bytes && known->device == record.device &&
           known->inode == record.inode) {
-        if (known->captured.isValid()) {
-          cachedDates.append({record.path, record.modified, record.bytes, known->captured,
-                              record.device, record.inode});
+        if (known->details != Details {}) {
+          cachedUpdates.append(updateFor(candidate, known->details));
         }
         continue;
       }
@@ -230,12 +286,12 @@ void MediaDateIndex::sync() {
     }
   }
 
-  if (m_indexing || !m_current.isEmpty() || !m_pendingDates.isEmpty()) {
-    for (const CaptureModel::CapturedDateUpdate& update : std::as_const(cachedDates)) {
-      m_pendingDates.insert(update.path, update);
+  if (m_indexing || !m_current.isEmpty() || !m_pendingUpdates.isEmpty()) {
+    for (const CaptureModel::MetadataUpdate& update : std::as_const(cachedUpdates)) {
+      m_pendingUpdates.insert(update.path, update);
     }
   } else {
-    m_model->applyCapturedDates(cachedDates);
+    m_model->applyMetadata(cachedUpdates);
   }
   resetProgress(m_queue.size() + m_current.size());
   setIndexing(!m_current.isEmpty() || !m_queue.isEmpty());
@@ -245,14 +301,14 @@ void MediaDateIndex::sync() {
   processNext();
 }
 
-void MediaDateIndex::processNext() {
+void MediaMetadataIndex::processNext() {
   if (m_process.state() != QProcess::NotRunning || !m_current.isEmpty()) {
     return;
   }
   if (m_queue.isEmpty()) {
-    if (!m_pendingDates.isEmpty()) {
-      m_model->applyCapturedDates(m_pendingDates.values());
-      m_pendingDates.clear();
+    if (!m_pendingUpdates.isEmpty()) {
+      m_model->applyMetadata(m_pendingUpdates.values());
+      m_pendingUpdates.clear();
     }
     setIndexing(false);
     return;
@@ -261,7 +317,7 @@ void MediaDateIndex::processNext() {
   const Candidate first = m_queue.takeFirst();
   if (!stillCurrent(first)) {
     advanceProgress();
-    QTimer::singleShot(0, this, &MediaDateIndex::processNext);
+    QTimer::singleShot(0, this, &MediaMetadataIndex::processNext);
     return;
   }
 
@@ -282,7 +338,8 @@ void MediaDateIndex::processNext() {
   if (first.video) {
     m_process.setArguments(
         {QStringLiteral("-v"), QStringLiteral("error"), QStringLiteral("-show_entries"),
-         QStringLiteral("format_tags=creation_time,com.apple.quicktime.creationdate:"
+         QStringLiteral("format_tags=creation_time,com.apple.quicktime.creationdate,"
+                        "com.apple.quicktime.make,com.apple.quicktime.model,make,model:"
                         "stream_tags=creation_time,com.apple.quicktime.creationdate"),
          QStringLiteral("-of"), QStringLiteral("json"), first.path});
     m_timeout.setInterval(kVideoProbeTimeoutMs);
@@ -292,7 +349,8 @@ void MediaDateIndex::processNext() {
     for (int index = 0; index < m_current.size(); ++index) {
       arguments.append({QStringLiteral("-format"),
                         QStringLiteral("%1%2\\n%[EXIF:DateTimeOriginal]\\n"
-                                       "%[EXIF:DateTimeDigitized]\\n")
+                                       "%[EXIF:DateTimeDigitized]\\n%[EXIF:Make]\\n"
+                                       "%[EXIF:Model]\\n%[EXIF:LensModel]\\n")
                             .arg(QString::fromLatin1(kImageRecordPrefix))
                             .arg(index),
                         m_current.at(index).path});
@@ -304,7 +362,7 @@ void MediaDateIndex::processNext() {
   m_timeout.start();
 }
 
-void MediaDateIndex::finishCurrent(bool successful) {
+void MediaMetadataIndex::finishCurrent(bool successful) {
   if (m_current.isEmpty()) {
     return;
   }
@@ -315,7 +373,7 @@ void MediaDateIndex::finishCurrent(bool successful) {
   if (batch.first().video) {
     const Candidate& candidate = batch.first();
     if (successful && stillCurrent(candidate)) {
-      adopt(candidate, parseVideoDate(output));
+      adopt(candidate, parseVideoDetails(output));
     } else if (stillCurrent(candidate)) {
       m_failed.insert(candidate.path, identityKey(candidate.modified, candidate.bytes,
                                                   candidate.device, candidate.inode));
@@ -323,11 +381,11 @@ void MediaDateIndex::finishCurrent(bool successful) {
     advanceProgress();
   } else {
     QSet<int> completed;
-    const QHash<int, QDateTime> dates = parseImageBatch(output, &completed);
+    const QHash<int, Details> results = parseImageBatch(output, &completed);
     for (int index = 0; index < batch.size(); ++index) {
       const Candidate& candidate = batch.at(index);
       if (completed.contains(index) && stillCurrent(candidate)) {
-        adopt(candidate, dates.value(index));
+        adopt(candidate, results.value(index));
       } else if (stillCurrent(candidate)) {
         m_failed.insert(candidate.path, identityKey(candidate.modified, candidate.bytes,
                                                     candidate.device, candidate.inode));
@@ -335,10 +393,10 @@ void MediaDateIndex::finishCurrent(bool successful) {
     }
     advanceProgress(static_cast<int>(batch.size()));
   }
-  QTimer::singleShot(0, this, &MediaDateIndex::processNext);
+  QTimer::singleShot(0, this, &MediaMetadataIndex::processNext);
 }
 
-bool MediaDateIndex::isCurrent(const Candidate& candidate) const {
+bool MediaMetadataIndex::isCurrent(const Candidate& candidate) const {
   return std::any_of(m_current.cbegin(), m_current.cend(), [&candidate](const Candidate& current) {
     return current.path == candidate.path && current.modified == candidate.modified &&
            current.bytes == candidate.bytes && current.device == candidate.device &&
@@ -346,7 +404,7 @@ bool MediaDateIndex::isCurrent(const Candidate& candidate) const {
   });
 }
 
-bool MediaDateIndex::stillCurrent(const Candidate& candidate) const {
+bool MediaMetadataIndex::stillCurrent(const Candidate& candidate) const {
   if (!m_model) {
     return false;
   }
@@ -360,19 +418,18 @@ bool MediaDateIndex::stillCurrent(const Candidate& candidate) const {
          record.device == candidate.device && record.inode == candidate.inode;
 }
 
-void MediaDateIndex::adopt(const Candidate& candidate, const QDateTime& captured) {
-  m_entries.insert(candidate.path, {candidate.modified, candidate.bytes, captured, candidate.device,
+void MediaMetadataIndex::adopt(const Candidate& candidate, const Details& details) {
+  m_entries.insert(candidate.path, {candidate.modified, candidate.bytes, details, candidate.device,
                                     candidate.inode});
   m_failed.remove(candidate.path);
   m_cacheDirty = true;
   scheduleSave();
-  if (captured.isValid()) {
-    m_pendingDates.insert(candidate.path, {candidate.path, candidate.modified, candidate.bytes,
-                                           captured, candidate.device, candidate.inode});
+  if (details != Details {}) {
+    m_pendingUpdates.insert(candidate.path, updateFor(candidate, details));
   }
 }
 
-void MediaDateIndex::setIndexing(bool value) {
+void MediaMetadataIndex::setIndexing(bool value) {
   if (m_indexing == value) {
     return;
   }
@@ -380,7 +437,7 @@ void MediaDateIndex::setIndexing(bool value) {
   emit indexingChanged();
 }
 
-void MediaDateIndex::resetProgress(int total) {
+void MediaMetadataIndex::resetProgress(int total) {
   total = qMax(0, total);
   if (m_completed == 0 && m_total == total) {
     return;
@@ -390,7 +447,7 @@ void MediaDateIndex::resetProgress(int total) {
   emit progressChanged();
 }
 
-void MediaDateIndex::advanceProgress(int amount) {
+void MediaMetadataIndex::advanceProgress(int amount) {
   if (m_completed >= m_total) {
     return;
   }
@@ -398,7 +455,7 @@ void MediaDateIndex::advanceProgress(int amount) {
   emit progressChanged();
 }
 
-void MediaDateIndex::loadCache() {
+void MediaMetadataIndex::loadCache() {
   QFile file(cachePath());
   if (!file.open(QIODevice::ReadOnly) || file.size() > kMaximumCacheBytes) {
     return;
@@ -419,8 +476,8 @@ void MediaDateIndex::loadCache() {
   for (quint32 index = 0; index < count; ++index) {
     QString path;
     Entry entry;
-    stream >> path >> entry.modified >> entry.bytes >> entry.captured >> entry.device >>
-        entry.inode;
+    stream >> path >> entry.modified >> entry.bytes >> entry.details.captured >>
+        entry.details.camera >> entry.details.lens >> entry.device >> entry.inode;
     if (stream.status() != QDataStream::Ok || path.isEmpty()) {
       return;
     }
@@ -431,13 +488,13 @@ void MediaDateIndex::loadCache() {
   }
 }
 
-void MediaDateIndex::scheduleSave() {
+void MediaMetadataIndex::scheduleSave() {
   if (!m_saveTimer.isActive()) {
     m_saveTimer.start();
   }
 }
 
-void MediaDateIndex::saveCache() {
+void MediaMetadataIndex::saveCache() {
   if (!m_cacheDirty) {
     return;
   }
@@ -467,8 +524,11 @@ void MediaDateIndex::saveCache() {
   qint64 estimatedBytes = 64;
   for (const QString& key : std::as_const(ordered)) {
     // QDataStream stores QString as UTF-16 plus fixed-size identity fields.
-    // The extra margin covers QDateTime's zone representation and framing.
-    const qint64 entryBytes = 256 + qint64(key.size()) * 2;
+    // The extra margin covers QDateTime's zone representation, the camera
+    // and lens names, and framing.
+    const Entry& sized = m_entries[key];
+    const qint64 entryBytes =
+        320 + qint64(key.size() + sized.details.camera.size() + sized.details.lens.size()) * 2;
     if (retained.size() >= static_cast<int>(kMaximumCacheEntries) ||
         estimatedBytes + entryBytes > kMaximumCacheBytes) {
       continue;
@@ -493,7 +553,8 @@ void MediaDateIndex::saveCache() {
   stream << kCacheMagic << kCacheVersion << static_cast<quint32>(retained.size());
   for (const QString& key : std::as_const(retained)) {
     const Entry entry = m_entries.value(key);
-    stream << key << entry.modified << entry.bytes << entry.captured << entry.device << entry.inode;
+    stream << key << entry.modified << entry.bytes << entry.details.captured
+           << entry.details.camera << entry.details.lens << entry.device << entry.inode;
   }
   if (stream.status() == QDataStream::Ok && file.size() <= kMaximumCacheBytes && file.commit()) {
     QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner);

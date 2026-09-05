@@ -18,7 +18,7 @@
 #include "library/CaptureFilterModel.h"
 #include "library/CaptureModel.h"
 #include "library/DuplicateIndex.h"
-#include "library/MediaDateIndex.h"
+#include "library/MediaMetadataIndex.h"
 #include "library/MediaInspector.h"
 #include "library/SimilarityIndex.h"
 #include "matte/MatteComposer.h"
@@ -143,7 +143,7 @@ private slots:
             [this] { m_library->setSimilarGroups(m_similarities->groups()); });
     m_mediaInfo = new MediaInspector(this);
     m_pdfInfo = new PdfInspector(this);
-    m_mediaDates = new MediaDateIndex(nullptr, this);
+    m_mediaMetadata = new MediaMetadataIndex(nullptr, this);
     m_actions = new ActionLauncher(this);
     m_registry = new ActionRegistry(m_actions, this);
     m_tailscale = new TailscalePeers(this);
@@ -195,7 +195,7 @@ private slots:
     context->setContextProperty(QStringLiteral("Similarities"), m_similarities);
     context->setContextProperty(QStringLiteral("MediaInfo"), m_mediaInfo);
     context->setContextProperty(QStringLiteral("PdfInfo"), m_pdfInfo);
-    context->setContextProperty(QStringLiteral("MediaDates"), m_mediaDates);
+    context->setContextProperty(QStringLiteral("MediaMetadata"), m_mediaMetadata);
     context->setContextProperty(QStringLiteral("Tailscale"), m_tailscale);
     context->setContextProperty(QStringLiteral("DemoMode"), true);
     context->setContextProperty(QStringLiteral("InitialPaths"), QStringList());
@@ -1122,14 +1122,14 @@ private slots:
     const CaptureRecord record = m_captures->recordAt(sourceRow);
     QVERIFY(!record.hasProducerTimestamp);
     const QDateTime enriched = record.captured.addSecs(-61);
-    m_captures->applyCapturedDates(
+    m_captures->applyMetadata(
         {{path, record.modified, record.bytes, enriched, record.device, record.inode}});
     QTRY_COMPARE(detail->property("dayLabel").toString(),
                  m_captures->dayLabelAt(m_captures->rowOf(path)));
     QTRY_COMPARE(detail->property("timeLabel").toString(),
                  m_library->timeLabelAt(m_library->rowOf(path)));
 
-    m_captures->applyCapturedDates(
+    m_captures->applyMetadata(
         {{path, record.modified, record.bytes, record.captured, record.device, record.inode}});
     QTRY_COMPARE(detail->property("timeLabel").toString(),
                  m_library->timeLabelAt(m_library->rowOf(path)));
@@ -1154,14 +1154,14 @@ private slots:
     const int sourceRow = m_captures->rowOf(selectedPath);
     const CaptureRecord record = m_captures->recordAt(sourceRow);
     const QDateTime moved = QDateTime::currentDateTime().addDays(1);
-    m_captures->applyCapturedDates(
+    m_captures->applyMetadata(
         {{selectedPath, record.modified, record.bytes, moved, record.device, record.inode}});
 
     QTRY_VERIFY(!reordered.isEmpty());
     QTRY_COMPARE(m_library->rowOf(selectedPath), 0);
     QTRY_COMPARE(pathAt(grid->property("currentIndex").toInt()), selectedPath);
 
-    m_captures->applyCapturedDates({{selectedPath, record.modified, record.bytes, record.captured,
+    m_captures->applyMetadata({{selectedPath, record.modified, record.bytes, record.captured,
                                      record.device, record.inode}});
     QTRY_COMPARE(pathAt(grid->property("currentIndex").toInt()), selectedPath);
   }
@@ -1962,11 +1962,11 @@ private slots:
     const QString movedPath = pathAt(movable);
     const CaptureRecord movedRecord = m_captures->recordAt(m_captures->rowOf(movedPath));
     const auto restoreDate = qScopeGuard([&] {
-      m_captures->applyCapturedDates({{movedPath, movedRecord.modified, movedRecord.bytes,
+      m_captures->applyMetadata({{movedPath, movedRecord.modified, movedRecord.bytes,
                                        movedRecord.captured, movedRecord.device,
                                        movedRecord.inode}});
     });
-    m_captures->applyCapturedDates({{movedPath, movedRecord.modified, movedRecord.bytes,
+    m_captures->applyMetadata({{movedPath, movedRecord.modified, movedRecord.bytes,
                                      QDateTime::currentDateTime().addYears(80), movedRecord.device,
                                      movedRecord.inode}});
     QTRY_COMPARE(m_library->rowOf(movedPath), 0);
@@ -2222,7 +2222,7 @@ private:
   SimilarityIndex* m_similarities = nullptr;
   MediaInspector* m_mediaInfo = nullptr;
   PdfInspector* m_pdfInfo = nullptr;
-  MediaDateIndex* m_mediaDates = nullptr;
+  MediaMetadataIndex* m_mediaMetadata = nullptr;
   ThumbnailProvider* m_thumbnails = nullptr;
   MatteProvider* m_mattes = nullptr;
   PdfProvider* m_pdfs = nullptr;
