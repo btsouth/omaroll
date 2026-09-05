@@ -16,14 +16,6 @@
 #include <cmath>
 
 namespace {
-QString defaultStateHome() {
-  return QDir::homePath() + QStringLiteral("/.local/state");
-}
-
-QString defaultConfigHome() {
-  return QDir::homePath() + QStringLiteral("/.config");
-}
-
 QJsonObject hyprlandOption(const QString &option) {
   const QString executable =
       QStandardPaths::findExecutable(QStringLiteral("hyprctl"));
@@ -52,7 +44,8 @@ double linearChannel(double channel) {
 } // namespace
 
 OmarchyTheme::OmarchyTheme(QObject *parent)
-    : OmarchyTheme(defaultStateHome(), defaultConfigHome(), parent) {}
+    : OmarchyTheme(QDir::homePath() + QStringLiteral("/.local/state"),
+                   QDir::homePath() + QStringLiteral("/.config"), parent) {}
 
 OmarchyTheme::OmarchyTheme(QString stateHome, QString configHome,
                            QObject *parent)
