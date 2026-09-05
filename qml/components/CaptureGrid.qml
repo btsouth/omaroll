@@ -28,6 +28,11 @@ FocusScope {
     signal chosen(int index)
     signal deleteRequested(string path)
     signal detailRequested(int index)
+    // Tab and Shift+Tab walk the sections. Handled here as key events rather
+    // than window shortcuts: on a real keyboard Shift+Tab arrives as Backtab,
+    // and Qt's shortcut matcher also offers plain Tab for that key, so two
+    // shortcuts match, the press counts as ambiguous, and neither fires.
+    signal sectionStepRequested(int step)
 
     // Include every intersecting cell, including the partial bottom row.
     // Cached offscreen delegates do not count, nor does an empty library.
@@ -369,6 +374,14 @@ FocusScope {
                 break
             case Qt.Key_L:
                 grid.moveCurrentIndexRight()
+                event.accepted = true
+                break
+            case Qt.Key_Tab:
+                root.sectionStepRequested(event.modifiers & Qt.ShiftModifier ? -1 : 1)
+                event.accepted = true
+                break
+            case Qt.Key_Backtab:
+                root.sectionStepRequested(-1)
                 event.accepted = true
                 break
             case Qt.Key_Home:

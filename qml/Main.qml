@@ -775,6 +775,10 @@ ApplicationWindow {
         anchors.bottomMargin: 4
         focus: !root.anySheetOpen
         enabled: !root.anySheetOpen && !root.popupOpen
+        // Tab walks the sections the way it walks tabs in a browser, while
+        // the grid has the keyboard. The search field, sheets and menus keep
+        // their own Tab because the grid never sees it then.
+        onSectionStepRequested: function (step) { filters.cycleSection(step) }
 
         model: Captures
         visible: Captures.count > 0
@@ -1459,19 +1463,6 @@ ApplicationWindow {
                 onActivated: filters.selectSection(sectionKey.index)
             }
         }
-    }
-    // Tab walks the sections the way it walks tabs in a browser. The window
-    // owns it, so it does not traverse the pills; those keep the number keys
-    // and the mouse. The search field, sheets and menus own their own Tab.
-    Shortcut {
-        sequences: ["Tab"]
-        enabled: !root.anySheetOpen && !root.popupOpen && !filters.searchActive
-        onActivated: filters.cycleSection(1)
-    }
-    Shortcut {
-        sequences: ["Shift+Tab", "Backtab", "Shift+Backtab"]
-        enabled: !root.anySheetOpen && !root.popupOpen && !filters.searchActive
-        onActivated: filters.cycleSection(-1)
     }
     // Alt with a digit rates. Plain digits already jump between sections,
     // and the viewer keeps 0 and 1 for zoom, so the modifier is the same in
