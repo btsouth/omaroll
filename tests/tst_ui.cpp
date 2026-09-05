@@ -2013,15 +2013,32 @@ private slots:
            return candidate->property("dragPaths").isValid();
          })->property("path").toString() == path),
         5000);
-    QTest::qWait(200);
+    // Under xcb the resize arrives asynchronously and can trigger a second
+    // relayout, which detaches the model for a moment. Click only once the
+    // same live delegate has stayed put for a while.
+    bool stable = false;
+    for (int attempt = 0; attempt < 20 && !stable; ++attempt) {
+      QQuickItem* seen = cell;
+      QTest::qWait(300);
+      QMetaObject::invokeMethod(view, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, cell),
+                                Q_ARG(int, index));
+      stable = cell && cell == seen && grid->property("layoutReady").toBool() &&
+               grid->isEnabled() &&
+               cell->mapRectToItem(view, QRectF(0, 0, cell->width(), cell->height()))
+                   .contains(inView);
+    }
+    QVERIFY2(stable, "grid layout never settled");
     const qreal before = view->property("contentY").toReal();
     const QPoint at = view->mapToScene(inView).toPoint();
     // A human double-click: the first click's side effects get time to land
     // before the second click arrives.
     humanDoubleClick(at, 100);
     qInfo() << "after double-click: currentIndex" << grid->property("currentIndex").toInt()
-            << "detail visible" << detail->isVisible()
-            << "path" << detail->property("path").toString();
+            << "detail visible" << detail->isVisible() << "path"
+            << detail->property("path").toString() << "window" << m_window->size() << "view"
+            << view->size() << "at" << at << "layoutReady" << grid->property("layoutReady")
+            << "enabled" << grid->isEnabled() << "sheet" << prop("anySheetOpen")
+            << "popup" << prop("popupOpen") << "count" << grid->property("count");
     QTest::qWait(400);
     const qreal after = view->property("contentY").toReal();
     qInfo() << "contentY before" << before << "after" << after << "tile" << index << path;
