@@ -1,6 +1,6 @@
 # Project status and handoff
 
-Snapshot: 5 September 2026 UTC, after PR #6 merged. Check the linked PRs and release before resuming.
+Snapshot: 5 September 2026 UTC, after PR #8 merged. Check the linked PRs and release before resuming.
 
 ## Released
 
@@ -23,11 +23,15 @@ Main carries the 1.5.0 version, changelog and AppStream entry. It bundles:
 - [PR #6](https://github.com/btsouth/omaroll/pull/6): deferred video player and
   display until a video is opened, plus startup readiness tracing and a
   benchmark probe. The first video still pays the initialization cost.
+- [PR #8](https://github.com/btsouth/omaroll/pull/8): async image responses
+  emit `finished()` on their own thread, fixing a use-after-free that the
+  pixmap reader's `deleteLater()` could trigger while the pool thread was
+  still unwinding the emit.
 
 CodeRabbit reviewed PR #6 with one minor finding, which was fixed before the
 squash merge. Core, UI, sanitizer and OpenGL checks passed locally and in CI.
-One intermittent SIGSEGV in `omaroll_ui_tests` occurred once locally and did
-not reproduce in three reruns; its core dump is unexplained.
+The intermittent SIGSEGV in `omaroll_ui_tests` seen once on 2026-09-04 was
+traced through its core dump to the response lifetime race fixed in PR #8.
 
 [Local measurements](performance/2026-09-05-startup/README.md) record medians
 of 949.9 to 257.2 ms for an image-ready submitted frame and 1181.2 to 471.9 ms

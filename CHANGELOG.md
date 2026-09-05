@@ -20,6 +20,11 @@
   validation, and automated playback stays off physical audio devices,
   including native PipeWire.
 
+### Fixed
+
+- Thumbnail, PDF and matte image responses no longer risk a crash when a
+  request is cancelled or finishes during fast scrolling or a tile size change.
+
 ## 1.4.0
 
 ### Added
