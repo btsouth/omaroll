@@ -306,6 +306,8 @@ ApplicationWindow {
         Captures.similarOnly = false
         Captures.clearDateRange()
         Captures.setTagFilter("", [])
+        Captures.cameraFilter = ""
+        Captures.lensFilter = ""
         Captures.clearSmartCollection()
         Captures.setAlbumFilter("", [])
         Captures.folderFilter = folder === undefined ? "" : folder
@@ -593,11 +595,11 @@ ApplicationWindow {
                     if (library.checkedCount > 0) {
                         return library.checkedCount + " selected"
                     }
-                    if (MediaDates.indexing) {
-                        return MediaDates.total > 0
-                               ? "Reading media dates · " + MediaDates.completed
-                                 + " of " + MediaDates.total
-                               : "Reading media dates…"
+                    if (MediaMetadata.indexing) {
+                        return MediaMetadata.total > 0
+                               ? "Reading media details · " + MediaMetadata.completed
+                                 + " of " + MediaMetadata.total
+                               : "Reading media details…"
                     }
                     if (Captures.count === 0) {
                         return "Nothing to show"

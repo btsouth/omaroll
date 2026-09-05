@@ -5,6 +5,9 @@
 ### Added
 
 - Tab and Shift+Tab step through the sections, wrapping at either end.
+- Browse a photo library by camera and lens. The metadata pass that reads
+  capture dates now records the camera and lens too, and saved views keep
+  the choice. Libraries without camera photos do not show the section.
 
 ## 1.5.0
 

@@ -12,7 +12,7 @@
 #include "library/CaptureModel.h"
 #include "library/CaptureRoles.h"
 #include "library/DuplicateIndex.h"
-#include "library/MediaDateIndex.h"
+#include "library/MediaMetadataIndex.h"
 #include "library/MediaInspector.h"
 #include "library/SimilarityIndex.h"
 #include "matte/HueExtractor.h"
@@ -1178,6 +1178,39 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(!proxy.dateBuckets().isEmpty(), 1000);
     QCOMPARE(proxy.dateDays(QStringLiteral("2026-08")).size(), 5);
 
+    // Camera and lens filters come from the metadata index. The choice lists
+    // count the library, not the current view, and the filter survives a
+    // saved view round trip.
+    QVERIFY(proxy.cameras().isEmpty());
+    const CaptureRecord& beachRecord = model.recordAt(model.rowOf(beach));
+    model.applyMetadata({{beach, beachRecord.modified, beachRecord.bytes, {}, beachRecord.device,
+                          beachRecord.inode, QStringLiteral("Sony ILCE-7M3"),
+                          QStringLiteral("FE 24-70mm F2.8 GM")}});
+    QTRY_COMPARE_WITH_TIMEOUT(proxy.cameras().size(), 1, 1000);
+    QCOMPARE(proxy.cameras().first().toMap().value(QStringLiteral("name")).toString(),
+             QStringLiteral("Sony ILCE-7M3"));
+    QCOMPARE(proxy.cameras().first().toMap().value(QStringLiteral("count")).toInt(), 1);
+    QCOMPARE(proxy.lenses().size(), 1);
+    proxy.setCameraFilter(QStringLiteral("Sony ILCE-7M3"));
+    QCOMPARE(proxy.count(), 1);
+    QCOMPARE(proxy.pathAt(0), beach);
+    proxy.setLensFilter(QStringLiteral("Some other lens"));
+    QCOMPARE(proxy.count(), 0);
+    proxy.setLensFilter(QStringLiteral("FE 24-70mm F2.8 GM"));
+    QCOMPARE(proxy.count(), 1);
+    const QVariantMap cameraView = proxy.currentView();
+    QCOMPARE(cameraView.value(QStringLiteral("camera")).toString(), QStringLiteral("Sony ILCE-7M3"));
+    proxy.setCameraFilter({});
+    proxy.setLensFilter({});
+    QCOMPARE(proxy.count(), 5);
+    proxy.applyView(QStringLiteral("Sony shots"), cameraView);
+    QCOMPARE(proxy.cameraFilter(), QStringLiteral("Sony ILCE-7M3"));
+    QCOMPARE(proxy.count(), 1);
+    proxy.clearSmartCollection();
+    proxy.setCameraFilter({});
+    proxy.setLensFilter({});
+    QCOMPARE(proxy.count(), 5);
+
     const QString forest = dir.filePath(QStringLiteral("album/forest.png"));
     proxy.setTagFilter(QStringLiteral("Review"), {beach, forest});
     QCOMPARE(proxy.count(), 2);
@@ -1998,19 +2031,52 @@ private slots:
   }
 
   void embeddedMediaDatesParseWithoutChangingWallClockPhotoTime() {
-    QCOMPARE(MediaDateIndex::parseImageDate("2020:05:06 07:08:09\n2019:01:02 03:04:05\n"),
+    QCOMPARE(MediaMetadataIndex::parseImageDate("2020:05:06 07:08:09\n2019:01:02 03:04:05\n"),
              QDateTime(QDate(2020, 5, 6), QTime(7, 8, 9)));
-    QCOMPARE(MediaDateIndex::parseImageDate("\n2019:01:02 03:04:05\n"),
+    QCOMPARE(MediaMetadataIndex::parseImageDate("\n2019:01:02 03:04:05\n"),
              QDateTime(QDate(2019, 1, 2), QTime(3, 4, 5)));
-    QVERIFY(!MediaDateIndex::parseImageDate("undefined\n\n").isValid());
+    QVERIFY(!MediaMetadataIndex::parseImageDate("undefined\n\n").isValid());
 
     const QByteArray video = R"({
       "streams": [{"tags":{"creation_time":"2018-04-03T02:01:00"}}],
       "format": {"tags":{"com.apple.quicktime.creationdate":"2021-08-09T10:11:12"}}
     })";
-    QCOMPARE(MediaDateIndex::parseVideoDate(video),
+    QCOMPARE(MediaMetadataIndex::parseVideoDate(video),
              QDateTime(QDate(2021, 8, 9), QTime(10, 11, 12)));
-    QVERIFY(!MediaDateIndex::parseVideoDate("not json").isValid());
+    QVERIFY(!MediaMetadataIndex::parseVideoDate("not json").isValid());
+  }
+
+  void embeddedCameraNamesParseAndNormalize() {
+    QCOMPARE(MediaMetadataIndex::cameraName(QStringLiteral("Apple"), QStringLiteral("iPhone 12")),
+             QStringLiteral("Apple iPhone 12"));
+    // Canon and Nikon repeat the maker in the model; do not print it twice.
+    QCOMPARE(MediaMetadataIndex::cameraName(QStringLiteral("Canon"),
+                                            QStringLiteral("Canon EOS R6")),
+             QStringLiteral("Canon EOS R6"));
+    QCOMPARE(MediaMetadataIndex::cameraName(QStringLiteral("SONY  "), QString()),
+             QStringLiteral("SONY"));
+    QCOMPARE(MediaMetadataIndex::cameraName(QStringLiteral("undefined"), QStringLiteral("X-T5")),
+             QStringLiteral("X-T5"));
+    QVERIFY(MediaMetadataIndex::cameraName({}, {}).isEmpty());
+
+    const MediaMetadataIndex::Details image = MediaMetadataIndex::parseImageDetails(
+        "2020:05:06 07:08:09\n\nFUJIFILM\nX-T5\nXF16-55mmF2.8 R LM WR\n");
+    QCOMPARE(image.captured, QDateTime(QDate(2020, 5, 6), QTime(7, 8, 9)));
+    QCOMPARE(image.camera, QStringLiteral("FUJIFILM X-T5"));
+    QCOMPARE(image.lens, QStringLiteral("XF16-55mmF2.8 R LM WR"));
+    // A record cut short by the producer still parses positionally.
+    const MediaMetadataIndex::Details bare = MediaMetadataIndex::parseImageDetails("\n\n");
+    QVERIFY(!bare.captured.isValid());
+    QVERIFY(bare.camera.isEmpty());
+    QVERIFY(bare.lens.isEmpty());
+    QCOMPARE(bare, MediaMetadataIndex::Details {});
+
+    const MediaMetadataIndex::Details video = MediaMetadataIndex::parseVideoDetails(
+        "{\"format\":{\"tags\":{\"creation_time\":\"2021-08-09T10:11:12\","
+        "\"com.apple.quicktime.make\":\"Apple\",\"com.apple.quicktime.model\":\"iPhone 12\"}}}");
+    QCOMPARE(video.captured, QDateTime(QDate(2021, 8, 9), QTime(10, 11, 12)));
+    QCOMPARE(video.camera, QStringLiteral("Apple iPhone 12"));
+    QVERIFY(MediaMetadataIndex::parseVideoDetails("not json").camera.isEmpty());
   }
 
   void generalMediaDatesAreEnrichedOnceAndProducerDatesAlwaysWin() {
@@ -2046,7 +2112,8 @@ private slots:
                  "    printf '\\036OMAROLL_DATE:%s\\n' \"$index\"\n"
                  "    case \"$3\" in\n"
                  "      *undated*) printf '\\n\\n' ;;\n"
-                 "      *) printf '2020:05:06 07:08:09\\n\\n' ;;\n"
+                 "      *) printf '2020:05:06 07:08:09\\n\\nApple\\niPhone 12\\n"
+                 "iPhone 12 back camera\\n' ;;\n"
                  "    esac\n"
                  "    index=$((index + 1))\n"
                  "    shift 3\n"
@@ -2063,7 +2130,8 @@ private slots:
     ffprobe.write("#!/bin/sh\n"
                   "printf '%s\\n' "
                   "'{\"format\":{\"tags\":{\"creation_time\":\"2021-08-09T10:"
-                  "11:12\"}}}'\n"
+                  "11:12\",\"com.apple.quicktime.make\":\"Apple\","
+                  "\"com.apple.quicktime.model\":\"iPhone 12\"}}}'\n"
                   "printf 'video\\n' >> \"$OMAROLL_DATE_TEST_LOG\"\n");
     ffprobe.close();
     QVERIFY(ffprobe.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
@@ -2089,7 +2157,7 @@ private slots:
     clip.write("test video");
     clip.close();
 
-    QFile::remove(MediaDateIndex::cachePath());
+    QFile::remove(MediaMetadataIndex::cachePath());
     AppSettings settings;
     settings.setScanDownloads(false);
     CaptureModel model(&settings);
@@ -2104,7 +2172,7 @@ private slots:
     const QDateTime undatedFallback = model.recordAt(model.rowOf(undated)).captured;
 
     {
-      MediaDateIndex dates(&model);
+      MediaMetadataIndex dates(&model);
       QTRY_COMPARE_WITH_TIMEOUT(dates.total(), 3, 2000);
       QTRY_VERIFY_WITH_TIMEOUT(!dates.indexing(), 3000);
       QCOMPARE(dates.completed(), 3);
@@ -2115,14 +2183,21 @@ private slots:
       QCOMPARE(model.recordAt(model.rowOf(capture)).captured,
                QDateTime(QDate(2026, 8, 31), QTime(10, 0)));
       QCOMPARE(model.recordAt(model.rowOf(undated)).captured, undatedFallback);
+      // The same probe fills in the camera, so a photo library can be browsed
+      // by camera without a second pass over the files.
+      QCOMPARE(model.recordAt(model.rowOf(photo)).camera, QStringLiteral("Apple iPhone 12"));
+      QCOMPARE(model.recordAt(model.rowOf(photo)).lens, QStringLiteral("iPhone 12 back camera"));
+      QCOMPARE(model.recordAt(model.rowOf(video)).camera, QStringLiteral("Apple iPhone 12"));
+      QVERIFY(model.recordAt(model.rowOf(undated)).camera.isEmpty());
+      QVERIFY(model.recordAt(model.rowOf(capture)).camera.isEmpty());
 
       // A result for an older version of the file cannot reorder the live row.
-      model.applyCapturedDates({{photo, 0, 0, QDateTime(QDate(1990, 1, 1), QTime(0, 0)), 0, 0}});
+      model.applyMetadata({{photo, 0, 0, QDateTime(QDate(1990, 1, 1), QTime(0, 0)), 0, 0}});
       QCOMPARE(model.recordAt(model.rowOf(photo)).captured,
                QDateTime(QDate(2020, 5, 6), QTime(7, 8, 9)));
       // Embedded metadata can never override a producer timestamp.
       const CaptureRecord& producer = model.recordAt(model.rowOf(capture));
-      model.applyCapturedDates(
+      model.applyMetadata(
           {{capture, producer.modified, producer.bytes, QDateTime(QDate(1990, 1, 1), QTime(0, 0)),
             producer.device, producer.inode}});
       QCOMPARE(model.recordAt(model.rowOf(capture)).captured,
@@ -2137,6 +2212,7 @@ private slots:
                QDateTime(QDate(2020, 5, 6), QTime(7, 8, 9)));
       QCOMPARE(model.recordAt(model.rowOf(video)).captured,
                QDateTime(QDate(2021, 8, 9), QTime(10, 11, 12)));
+      QCOMPARE(model.recordAt(model.rowOf(photo)).camera, QStringLiteral("Apple iPhone 12"));
     }
 
     QFile firstLog(logPath);
@@ -2145,18 +2221,25 @@ private slots:
     firstLog.close();
     QCOMPARE(firstRuns.count("image\n"), 1);
     QCOMPARE(firstRuns.count("video\n"), 1);
-    const QFileInfo dateCache(MediaDateIndex::cachePath());
+    const QFileInfo dateCache(MediaMetadataIndex::cachePath());
     QVERIFY(dateCache.isFile());
     const QFileDevice::Permissions publicPermissions =
         QFileDevice::ReadGroup | QFileDevice::WriteGroup | QFileDevice::ExeGroup |
         QFileDevice::ReadOther | QFileDevice::WriteOther | QFileDevice::ExeOther;
     QCOMPARE(dateCache.permissions() & publicPermissions, QFileDevice::Permissions());
 
-    // The second index applies its private cache and starts no process.
+    // The second index applies its private cache and starts no process. A
+    // fresh model gets its cameras from that cache too.
     {
-      MediaDateIndex cached(&model);
+      CaptureModel fresh(&settings);
+      QSignalSpy freshScan(&fresh, &CaptureModel::countChanged);
+      QVERIFY(freshScan.wait(5000));
+      MediaMetadataIndex cached(&fresh);
       QTest::qWait(300);
       QVERIFY(!cached.indexing());
+      QCOMPARE(fresh.recordAt(fresh.rowOf(photo)).camera, QStringLiteral("Apple iPhone 12"));
+      QCOMPARE(fresh.recordAt(fresh.rowOf(photo)).captured,
+               QDateTime(QDate(2020, 5, 6), QTime(7, 8, 9)));
     }
     QFile secondLog(logPath);
     QVERIFY(secondLog.open(QIODevice::ReadOnly));
@@ -2238,7 +2321,7 @@ private slots:
     QSignalSpy dateChanges(&model, &QAbstractItemModel::dataChanged);
 
     {
-      MediaDateIndex dates(&model);
+      MediaMetadataIndex dates(&model);
       QTRY_COMPARE_WITH_TIMEOUT(dates.total(), paths.size(), 2000);
       QTRY_VERIFY_WITH_TIMEOUT(!dates.indexing(), 5000);
       QCOMPARE(dates.completed(), paths.size());

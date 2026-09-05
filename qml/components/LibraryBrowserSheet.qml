@@ -21,10 +21,26 @@ FocusScope {
         }
         return rows
     }
+    // Cameras first, then lenses, each most used first. Rows carry their
+    // type so one list can filter on either field.
+    readonly property var cameraChoices: {
+        const rows = []
+        for (const camera of Captures.cameras) {
+            rows.push({type: "camera", value: camera.name, label: camera.name,
+                       count: camera.count})
+        }
+        for (const lens of Captures.lenses) {
+            rows.push({type: "lens", value: lens.name, label: lens.name, count: lens.count})
+        }
+        return rows
+    }
+    readonly property bool hasCameras: Captures.cameras.length > 0
+                                       || Captures.lenses.length > 0
     readonly property var sourceChoices: section === 0 ? Captures.folders
                                          : section === 1 ? Settings.albumNames
                                          : section === 2 ? dateChoices
                                          : section === 3 ? Settings.tagNames
+                                         : section === 5 ? cameraChoices
                                          : Settings.smartCollectionNames
     readonly property var filteredChoices: {
         if (query === "") {
@@ -57,6 +73,7 @@ FocusScope {
         section = Captures.albumFilter !== "" ? 1
                   : Captures.dateFrom !== "" || Captures.modifiedAfter !== "" ? 2
                   : Captures.tagFilter !== "" ? 3
+                  : Captures.cameraFilter !== "" || Captures.lensFilter !== "" ? 5
                   : Captures.smartCollectionFilter !== "" ? 4 : 0
         folderSearch.text = ""
         query = ""
@@ -76,6 +93,8 @@ FocusScope {
         Captures.folderFilter = ""
         Captures.setAlbumFilter("", [])
         Captures.setTagFilter("", [])
+        Captures.cameraFilter = ""
+        Captures.lensFilter = ""
         Captures.clearDateRange()
         Captures.clearSmartCollection()
     }
@@ -118,6 +137,16 @@ FocusScope {
     function showTag(name) {
         clearLibraryView()
         Captures.setTagFilter(name, Settings.tagPaths(name))
+        close()
+    }
+
+    function showCamera(choice) {
+        clearLibraryView()
+        if (choice.type === "lens") {
+            Captures.lensFilter = String(choice.value)
+        } else {
+            Captures.cameraFilter = String(choice.value)
+        }
         close()
     }
 
@@ -180,7 +209,9 @@ FocusScope {
         const selected = section === 0 ? Captures.folderFilter
                          : section === 1 ? Captures.albumFilter
                          : section === 3 ? Captures.tagFilter
-                         : section === 4 ? Captures.smartCollectionFilter : ""
+                         : section === 4 ? Captures.smartCollectionFilter
+                         : section === 5 ? (Captures.cameraFilter !== ""
+                                            ? Captures.cameraFilter : Captures.lensFilter) : ""
         if (selected !== "") {
             for (let index = 0; index < filteredChoices.length; index++) {
                 const choice = filteredChoices[index]
@@ -217,12 +248,14 @@ FocusScope {
         else if (section === 1) showAlbum(String(choice))
         else if (section === 2) showDate(choice)
         else if (section === 3) showTag(String(choice))
+        else if (section === 5) showCamera(choice)
         else showSmart(String(choice))
     }
 
     function deleteCurrentChoice() {
         const index = choices.currentIndex
-        if (index < 0 || index >= choices.count || section === 0 || section === 2) {
+        if (index < 0 || index >= choices.count || section === 0 || section === 2
+                || section === 5) {
             return
         }
         const name = String(choices.model[index])
@@ -307,7 +340,9 @@ FocusScope {
 
             Text {
                 width: parent.width
-                text: "Browse folders, dates, albums, tags, saved views, and review sets."
+                text: root.hasCameras
+                      ? "Browse folders, dates, albums, tags, cameras, saved views, and review sets."
+                      : "Browse folders, dates, albums, tags, saved views, and review sets."
                 wrapMode: Text.WordWrap
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
@@ -322,6 +357,7 @@ FocusScope {
                     active: Captures.folderFilter === "" && Captures.albumFilter === ""
                             && Captures.tagFilter === "" && Captures.dateFrom === ""
                             && Captures.dateTo === "" && Captures.modifiedAfter === ""
+                            && Captures.cameraFilter === "" && Captures.lensFilter === ""
                             && Captures.smartCollectionFilter === ""
                             && !Captures.duplicatesOnly && !Captures.similarOnly
                     onClicked: root.showAll()
@@ -435,6 +471,14 @@ FocusScope {
                     onClicked: { root.section = 3; folderSearch.forceActiveFocus() }
                 }
                 PillButton {
+                    // Only a library with photos from a real camera earns this
+                    // section; a screenshot library never sees it.
+                    visible: root.hasCameras || root.section === 5
+                    label: "Cameras  " + root.formatCount(Captures.cameras.length)
+                    active: root.section === 5
+                    onClicked: { root.section = 5; folderSearch.forceActiveFocus() }
+                }
+                PillButton {
                     label: "Smart  " + root.formatCount(Settings.smartCollectionNames.length)
                     active: root.section === 4
                     onClicked: { root.section = 4; folderSearch.forceActiveFocus() }
@@ -507,7 +551,9 @@ FocusScope {
                     text: root.section === 0 ? "Find a folder"
                           : root.section === 1 ? "Find an album"
                           : root.section === 2 ? "Find a date"
-                          : root.section === 3 ? "Find a tag" : "Find a smart collection"
+                          : root.section === 3 ? "Find a tag"
+                          : root.section === 5 ? "Find a camera or lens"
+                                               : "Find a smart collection"
                     font.family: Theme.fontFamily
                     font.pixelSize: 12
                     color: root.shade(Theme.foreground, 0.35)
@@ -533,6 +579,7 @@ FocusScope {
                           : root.section === 1 ? "No matching albums"
                           : root.section === 2 ? "No matching dates"
                           : root.section === 3 ? "No matching tags"
+                          : root.section === 5 ? "No matching cameras or lenses"
                                                : "No matching smart collections"
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
@@ -546,22 +593,27 @@ FocusScope {
                     required property var modelData
                     required property int index
                     readonly property bool dateChoice: root.section === 2
-                    readonly property string value: dateChoice ? String(modelData.value)
-                                                                    : String(modelData)
-                    readonly property string choiceLabel: dateChoice ? String(modelData.label)
-                                                                          : value
+                    readonly property bool cameraChoice: root.section === 5
+                    readonly property bool objectChoice: dateChoice || cameraChoice
+                    readonly property string value: objectChoice ? String(modelData.value)
+                                                                      : String(modelData)
+                    readonly property string choiceLabel: objectChoice ? String(modelData.label)
+                                                                            : value
                     readonly property bool selectedChoice:
                         root.section === 0 ? Captures.folderFilter === value
                         : root.section === 1 ? Captures.albumFilter === value
                         : root.section === 2 ? Captures.dateFrom === String(modelData.from)
                                              && Captures.dateTo === String(modelData.to)
                         : root.section === 3 ? Captures.tagFilter === value
+                        : root.section === 5 ? (modelData.type === "lens"
+                                                ? Captures.lensFilter === value
+                                                : Captures.cameraFilter === value)
                                              : Captures.smartCollectionFilter === value
                     readonly property int itemCount: root.section === 0
                                                      ? Captures.folderItemCount(value)
                                                      : root.section === 1
                                                      ? Settings.albumPaths(value).length
-                                                     : root.section === 2 ? Number(modelData.count)
+                                                     : objectChoice ? Number(modelData.count)
                                                      : root.section === 3
                                                      ? Settings.tagItemCount(value) : 0
                     width: choices.width - 10
@@ -598,7 +650,11 @@ FocusScope {
                                     + root.formatCount(choiceRow.itemCount)
                                     + (choiceRow.itemCount === 1 ? " item" : " items")
                                   : root.section === 4 ? "Dynamic saved view"
-                                  : root.formatCount(choiceRow.itemCount)
+                                  : (choiceRow.cameraChoice
+                                     ? (choiceRow.modelData.type === "lens" ? "Lens  ·  "
+                                                                            : "Camera  ·  ")
+                                     : "")
+                                    + root.formatCount(choiceRow.itemCount)
                                     + (choiceRow.itemCount === 1 ? " item" : " items")
                             elide: Text.ElideMiddle
                             font.family: Theme.fontFamily

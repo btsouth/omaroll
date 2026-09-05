@@ -158,6 +158,8 @@ Item {
                       : Captures.similarOnly ? "Similar pictures  ▾"
                       : Captures.smartCollectionFilter !== "" ? Captures.smartCollectionFilter + "  ▾"
                       : Captures.tagFilter !== "" ? "#" + Captures.tagFilter + "  ▾"
+                      : Captures.cameraFilter !== "" ? Captures.cameraFilter + "  ▾"
+                      : Captures.lensFilter !== "" ? Captures.lensFilter + "  ▾"
                       : Captures.dateFrom !== "" || Captures.modifiedAfter !== "" ? "Date  ▾"
                       : Captures.albumFilter !== "" ? Captures.albumFilter + "  ▾"
                       : Captures.folderFilter !== ""
@@ -165,6 +167,7 @@ Item {
             active: Captures.folderFilter !== "" || Captures.albumFilter !== ""
                     || Captures.duplicatesOnly
                     || Captures.similarOnly || Captures.tagFilter !== ""
+                    || Captures.cameraFilter !== "" || Captures.lensFilter !== ""
                     || Captures.dateFrom !== "" || Captures.modifiedAfter !== ""
                     || Captures.smartCollectionFilter !== ""
                     || root.browserOpen

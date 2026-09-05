@@ -54,18 +54,21 @@ public:
   // for a QVariant per role per comparison across the whole library.
   [[nodiscard]] const CaptureRecord& recordAt(int row) const { return m_records.at(row); }
 
-  struct CapturedDateUpdate {
+  struct MetadataUpdate {
     QString path;
     qint64 modified = 0;
     qint64 bytes = 0;
     QDateTime captured;
     quint64 device = 0;
     quint64 inode = 0;
+    QString camera;
+    QString lens;
   };
 
-  // Replaces mtime fallbacks with dates read from embedded media metadata.
-  // File identity is checked again here because extraction is asynchronous.
-  void applyCapturedDates(const QList<CapturedDateUpdate>& updates);
+  // Replaces mtime fallbacks with dates read from embedded media metadata and
+  // records the camera and lens. File identity is checked again here because
+  // extraction is asynchronous.
+  void applyMetadata(const QList<MetadataUpdate>& updates);
 
   // A directory handed to omaroll on the command line or by "Open with",
   // scanned alongside the usual roots for this session only.
@@ -137,7 +140,7 @@ private:
   QList<CaptureRecord> m_records;
   QHash<QString, int> m_rowsByPath;
   bool m_rowIndexValid = true;
-  QHash<QString, CapturedDateUpdate> m_capturedDates;
+  QHash<QString, MetadataUpdate> m_metadata;
   QFileSystemWatcher m_watcher;
   QFutureWatcher<ScanResult> m_scanWatcher;
   // Set on teardown so a scan in flight stops walking instead of finishing a

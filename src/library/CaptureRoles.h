@@ -22,6 +22,8 @@ enum Role {
   IsDocumentRole,
   FavoriteRole,
   HiddenRole,
+  CameraRole,
+  LensRole,
   // Added by CaptureFilterModel while a search result needs OCR context.
   OcrSnippetRole,
 };

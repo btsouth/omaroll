@@ -36,11 +36,15 @@ CaptureFilterModel::CaptureFilterModel(QObject* parent) : QSortFilterProxyModel(
   connect(&m_folderIndexTimer, &QTimer::timeout, this, [this] {
     const bool folderIndexChanged = rebuildFolderIndex();
     const bool datesChanged = rebuildDateIndex();
+    const bool camerasChanged = rebuildCameraIndex();
     if (folderIndexChanged) {
       emit foldersChanged();
     }
     if (datesChanged) {
       emit dateBucketsChanged();
+    }
+    if (camerasChanged) {
+      emit this->camerasChanged();
     }
   });
   m_duplicateOrderTimer.setSingleShot(true);
@@ -80,6 +84,9 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
     m_dateBuckets.clear();
     m_dateDays.clear();
     emit dateBucketsChanged();
+    m_cameras.clear();
+    m_lenses.clear();
+    emit camerasChanged();
     return;
   }
 
@@ -116,7 +123,9 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
                   m_folderIndexTimer.start();
                 }
                 if (roles.isEmpty() || roles.contains(CaptureRoles::CapturedRole) ||
-                    roles.contains(CaptureRoles::StampRole)) {
+                    roles.contains(CaptureRoles::StampRole) ||
+                    roles.contains(CaptureRoles::CameraRole) ||
+                    roles.contains(CaptureRoles::LensRole)) {
                   m_folderIndexTimer.start();
                 }
                 if ((!m_duplicateGroups.isEmpty() || !m_similarGroups.isEmpty()) &&
@@ -129,8 +138,10 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
               }));
   (void)rebuildFolderIndex();
   (void)rebuildDateIndex();
+  (void)rebuildCameraIndex();
   emit foldersChanged();
   emit dateBucketsChanged();
+  emit camerasChanged();
 }
 
 void CaptureFilterModel::beginFilterUpdate() {
@@ -445,6 +456,77 @@ QVariantList CaptureFilterModel::dateDays(const QString& monthKey) const {
   return m_dateDays.value(monthKey);
 }
 
+namespace {
+
+QVariantList countedChoices(const QHash<QString, int>& counts) {
+  QStringList names = counts.keys();
+  std::sort(names.begin(), names.end(), [&counts](const QString& a, const QString& b) {
+    if (counts.value(a) != counts.value(b)) {
+      return counts.value(a) > counts.value(b);
+    }
+    return a.compare(b, Qt::CaseInsensitive) < 0;
+  });
+  QVariantList rows;
+  rows.reserve(names.size());
+  for (const QString& name : std::as_const(names)) {
+    QVariantMap row;
+    row.insert(QStringLiteral("name"), name);
+    row.insert(QStringLiteral("count"), counts.value(name));
+    rows.append(row);
+  }
+  return rows;
+}
+
+} // namespace
+
+bool CaptureFilterModel::rebuildCameraIndex() {
+  QHash<QString, int> cameraCounts;
+  QHash<QString, int> lensCounts;
+  if (sourceModel()) {
+    for (int row = 0; row < sourceModel()->rowCount(); ++row) {
+      const CaptureRecord& record = sourceRecord(row);
+      if (!record.camera.isEmpty()) {
+        ++cameraCounts[record.camera];
+      }
+      if (!record.lens.isEmpty()) {
+        ++lensCounts[record.lens];
+      }
+    }
+  }
+  QVariantList cameras = countedChoices(cameraCounts);
+  QVariantList lenses = countedChoices(lensCounts);
+  if (cameras == m_cameras && lenses == m_lenses) {
+    return false;
+  }
+  m_cameras = std::move(cameras);
+  m_lenses = std::move(lenses);
+  return true;
+}
+
+void CaptureFilterModel::setCameraFilter(const QString& camera) {
+  if (m_cameraFilter == camera) {
+    return;
+  }
+  beginFilterUpdate();
+  m_cameraFilter = camera;
+  endFilterUpdate();
+  clearSmartCollection();
+  emit cameraFilterChanged();
+  emit countChanged();
+}
+
+void CaptureFilterModel::setLensFilter(const QString& lens) {
+  if (m_lensFilter == lens) {
+    return;
+  }
+  beginFilterUpdate();
+  m_lensFilter = lens;
+  endFilterUpdate();
+  clearSmartCollection();
+  emit lensFilterChanged();
+  emit countChanged();
+}
+
 QVariantMap CaptureFilterModel::currentView() const {
   QVariantMap view;
   view.insert(QStringLiteral("search"), m_searchText);
@@ -457,6 +539,8 @@ QVariantMap CaptureFilterModel::currentView() const {
   view.insert(QStringLiteral("dateField"), m_dateField);
   view.insert(QStringLiteral("modifiedAfter"), m_modifiedAfter);
   view.insert(QStringLiteral("tag"), m_tagFilter);
+  view.insert(QStringLiteral("camera"), m_cameraFilter);
+  view.insert(QStringLiteral("lens"), m_lensFilter);
   view.insert(QStringLiteral("sort"), m_sortMode);
   return view;
 }
@@ -479,6 +563,8 @@ void CaptureFilterModel::applyView(const QString& name, const QVariantMap& view,
   m_modifiedAfterMs = QDateTime::fromString(m_modifiedAfter, Qt::ISODate).toMSecsSinceEpoch();
   m_tagFilter = view.value(QStringLiteral("tag")).toString();
   m_tagPaths = QSet<QString>(tagPaths.begin(), tagPaths.end());
+  m_cameraFilter = view.value(QStringLiteral("camera")).toString();
+  m_lensFilter = view.value(QStringLiteral("lens")).toString();
   m_sortMode = qBound(0, view.value(QStringLiteral("sort"), NewestFirst).toInt(),
                       static_cast<int>(NameAscending));
   m_albumFilter.clear();
@@ -495,6 +581,8 @@ void CaptureFilterModel::applyView(const QString& name, const QVariantMap& view,
   emit showHiddenChanged();
   emit dateRangeChanged();
   emit tagFilterChanged();
+  emit cameraFilterChanged();
+  emit lensFilterChanged();
   emit sortModeChanged();
   emit albumFilterChanged();
   emit duplicatesOnlyChanged();
@@ -860,6 +948,12 @@ bool CaptureFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex& sour
     return false;
   }
   if (!m_tagFilter.isEmpty() && !m_tagPaths.contains(record.path)) {
+    return false;
+  }
+  if (!m_cameraFilter.isEmpty() && record.camera != m_cameraFilter) {
+    return false;
+  }
+  if (!m_lensFilter.isEmpty() && record.lens != m_lensFilter) {
     return false;
   }
   if (m_modifiedAfterMs > 0 && record.modified <= m_modifiedAfterMs) {
