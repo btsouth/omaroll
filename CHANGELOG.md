@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep automated playback and headless renders off physical audio devices, including native PipeWire.
+
 - Open multiple selected files in order, including across folders and in an already-running window.
 - Open explicitly selected hidden files without scanning their surrounding folders.
 

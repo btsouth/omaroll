@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Measure a real executable's first scene-graph frame and idle resource use.
 
-Offscreen Mesa only. First frame does not prove the image or grid is ready.
+Offscreen OpenGL, with the actual driver recorded. First frame does not prove the image or grid is ready.
 No personal files, settings, cache, instance socket or physical audio are used.
 """
 import argparse
@@ -37,9 +37,10 @@ def sample(binary, fixture, mode):
             env[name] = str(scratch / "empty")
         env.update(QT_QPA_PLATFORM="offscreen", QT_QPA_PLATFORMTHEME="",
                    QT_QUICK_BACKEND="rhi", QSG_RHI_BACKEND="opengl",
-                   LIBGL_ALWAYS_SOFTWARE="1", PULSE_SERVER="unix:/nonexistent",
+                   LIBGL_ALWAYS_SOFTWARE="1", QT_AUDIO_BACKEND="pulseaudio",
+                   PULSE_SERVER="unix:/nonexistent", PIPEWIRE_REMOTE="omaroll-no-audio",
                    WAYLAND_DISPLAY=scratch.name, QT_FORCE_STDERR_LOGGING="1",
-                   QSG_RENDER_TIMING="1")
+                   QSG_RENDER_TIMING="1", QSG_INFO="1")
         args = [str(binary)]
         if mode == "single-image":
             args.append(str(pictures / "image0.png"))
@@ -48,6 +49,7 @@ def sample(binary, fixture, mode):
                                    stderr=subprocess.PIPE)
         first_frame = None
         scene_seen = False
+        graphics = None
         idle_start = None
         pending = b""
         try:
@@ -63,6 +65,8 @@ def sample(binary, fixture, mode):
                         lines = pending.split(b"\n")
                         pending = lines.pop()
                         for line in lines:
+                            if b"OpenGL VENDOR: " in line:
+                                graphics = line.split(b"OpenGL VENDOR: ", 1)[1].decode(errors="replace")
                             if b"time in renderer: total=" in line:
                                 scene_seen = True
                             if scene_seen and first_frame is None and b"frame rendered in" in line:
@@ -72,9 +76,9 @@ def sample(binary, fixture, mode):
                 status = Path(f"/proc/{process.pid}/status").read_text().splitlines()
                 memory = {line.split(":")[0]: int(line.split()[1])
                           for line in status if line.startswith(("VmRSS:", "VmHWM:"))}
-                if first_frame is None:
+                if first_frame is None or graphics is None:
                     raise RuntimeError("No scene-graph render timing received; check Mesa and Qt logging")
-                return dict(mode=mode, first_scene_frame_ms=first_frame,
+                return dict(mode=mode, graphics=graphics, first_scene_frame_ms=first_frame,
                             idle_cpu_percent_one_core=100 * idle_cpu / idle_wall,
                             rss_kib=memory["VmRSS"], peak_rss_kib=memory["VmHWM"])
         finally:

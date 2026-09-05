@@ -24,23 +24,28 @@ The synthetic library contains distinct 1000x750 solid-color PNG files in
 folders of 500. These results do not measure high-resolution photography,
 video thumbnails, remote drives, OCR or a complete rendered library.
 
-| Actual executable, offscreen Mesa software OpenGL | Median of three launches |
+| Actual executable, offscreen NVIDIA OpenGL | Median of three launches |
 | --- | ---: |
-| First scene-graph frame, single-image launch | 1019.5 ms |
-| First scene-graph frame, library launch | 941.4 ms |
+| First scene-graph frame, single-image launch | 1073.1 ms |
+| First scene-graph frame, library launch | 1110.7 ms |
 
 Each launch used 100 small PNG fixtures, fresh settings and an empty thumbnail
-cache. Observed process RSS after eight seconds ranged from 325.8 to 330.2 MiB.
+cache. Observed process RSS after eight seconds ranged from 328.1 to 328.8 MiB.
 Between seconds three and eight, CPU use was 0 to 0.20% of one core. Zero means
 no CPU ticks were observed in that short sample.
 
+The startup samples were repeated inside the local audio sandbox after fixing
+Qt audio isolation. Qt reports an NVIDIA GeForce RTX 4070 SUPER, driver
+610.57.04. The software-rendering environment request did not select Mesa on
+this host; the probe now records the actual driver in every sample.
+
 The first scene-graph frame can precede the requested image or useful grid.
-It is not an image-ready measurement. Mesa software rendering is also not a
-substitute for native GPU/Hyprland results. The thumbnail cache's default disk
+It is not an image-ready measurement or a substitute for Hyprland presentation
+measurements. The thumbnail cache's default disk
 ceiling is 256 MiB; this is separate from process memory.
 
 Next measurements: first requested image actually visible, first useful grid,
-warm viewer navigation, larger real photographs and native GPU memory/startup.
+warm viewer navigation, larger real photographs, Wayland presentation and GPU memory.
 Keep the performance issue open until those measurements and repeatable
 regression budgets are recorded. Investigate startup before claiming faster
 opening or setting timing gates from the scanner numbers.

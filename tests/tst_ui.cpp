@@ -14,6 +14,7 @@
 #include "actions/TailscalePeers.h"
 #include "app/AppSettings.h"
 #include "app/DemoLibrary.h"
+#include "app/HeadlessAudio.h"
 #include "library/CaptureFilterModel.h"
 #include "library/CaptureModel.h"
 #include "library/DuplicateIndex.h"
@@ -31,6 +32,8 @@
 
 #include <QAudioBuffer>
 #include <QAudioBufferOutput>
+#include <QAudioDevice>
+#include <QMediaDevices>
 #include <QClipboard>
 #include <QDir>
 #include <QFile>
@@ -63,6 +66,8 @@ class UiTest : public QObject {
 
 private slots:
   void initTestCase() {
+    QVERIFY2(QMediaDevices::audioOutputs().isEmpty(),
+             "Refusing playback tests with audio outputs available");
     QVERIFY(m_scratch.isValid());
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
@@ -1795,6 +1800,7 @@ private:
 // session this would open a real window on the desktop, be resized by the
 // tiling compositor, and click the wrong things.
 int main(int argc, char* argv[]) {
+  disableHeadlessAudio();
   qputenv("QT_QPA_PLATFORM", "offscreen");
   QGuiApplication application(argc, argv);
   UiTest test;

@@ -2,6 +2,7 @@
 #include "actions/ActionRegistry.h"
 #include "actions/TailscalePeers.h"
 #include "app/AppSettings.h"
+#include "app/HeadlessAudio.h"
 #include "app/SingleInstance.h"
 #include "app/OpenRequest.h"
 #include <QLocalSocket>
@@ -3040,13 +3041,31 @@ private slots:
     QCOMPARE(argv, (QStringList {QStringLiteral("laptop.tail.ts.net"), first, second}));
   }
 
-  void clipToGifRunsTheRealTranscoderEndToEnd() {
+  void clipToGifRunsRealConversionWithoutDesktopSideEffects() {
     if (QStandardPaths::findExecutable(QStringLiteral("omarchy-transcode")).isEmpty() ||
         QStandardPaths::findExecutable(QStringLiteral("ffmpeg")).isEmpty()) {
       QSKIP("omarchy-transcode or ffmpeg not installed");
     }
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
+
+    // Keep the real conversion, but never notify the desktop or replace the
+    // user's clipboard from an automated test. The session bus stays blocked
+    // when this suite runs in the local sandbox.
+    const QString bin = dir.filePath(QStringLiteral("bin"));
+    QVERIFY(QDir().mkpath(bin));
+    for (const QString& name : {QStringLiteral("omarchy-notification-send"), QStringLiteral("wl-copy")}) {
+      QFile helper(bin + QLatin1Char('/') + name);
+      QVERIFY(helper.open(QIODevice::WriteOnly));
+      helper.write(name == QStringLiteral("wl-copy") ? "#!/bin/sh\ncat >/dev/null\n"
+                                                     : "#!/bin/sh\nexit 0\n");
+      helper.close();
+      QVERIFY(helper.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                    QFileDevice::ExeOwner));
+    }
+    const QByteArray previousPath = qgetenv("PATH");
+    const auto restorePath = qScopeGuard([&] { qputenv("PATH", previousPath); });
+    QVERIFY(qputenv("PATH", bin.toUtf8() + ':' + previousPath));
 
     const QString source = dir.filePath(QStringLiteral("screenrecording-2026-09-02_09-00-00.mp4"));
     QProcess ffmpeg;
@@ -3326,5 +3345,11 @@ private:
   QTemporaryDir m_scratch;
 };
 
-QTEST_MAIN(OmarollTest)
+int main(int argc, char* argv[]) {
+  disableHeadlessAudio();
+  QGuiApplication application(argc, argv);
+  OmarollTest test;
+  QTEST_SET_MAIN_SOURCE_PATH
+  return QTest::qExec(&test, argc, argv);
+}
 #include "tst_omaroll.moc"

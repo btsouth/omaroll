@@ -3,6 +3,7 @@
 #include "actions/TailscalePeers.h"
 #include "app/AppSettings.h"
 #include "app/DemoLibrary.h"
+#include "app/HeadlessAudio.h"
 #include "app/OpenRequest.h"
 #include "app/SingleInstance.h"
 #include "library/CaptureFilterModel.h"
@@ -26,6 +27,8 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QIcon>
+#include <QAudioDevice>
+#include <QMediaDevices>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
@@ -193,6 +196,7 @@ int main(int argc, char* argv[]) {
       break;
     }
     if (argument == "--render" || argument.startsWith("--render=")) {
+      disableHeadlessAudio();
       // Omarchy exports QT_QPA_PLATFORM=wayland session-wide, so this is
       // unconditional. OMAROLL_RENDER_PLATFORM overrides it for checking
       // something the offscreen platform cannot draw, such as video frames.
@@ -220,6 +224,10 @@ int main(int argc, char* argv[]) {
 
   const QString renderPath = optionValue(arguments, QStringLiteral("--render"));
   const bool rendering = !renderPath.isEmpty();
+  if (rendering && !QMediaDevices::audioOutputs().isEmpty()) {
+    QTextStream(stderr) << "omaroll: refusing a headless render with audio outputs available\n";
+    return 1;
+  }
   if (!rendering && (optionPresent(arguments, QStringLiteral("--render-view")) ||
                      optionPresent(arguments, QStringLiteral("--render-size")))) {
     qWarning().noquote() << "omaroll: --render-view and --render-size require --render";
