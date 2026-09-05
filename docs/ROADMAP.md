@@ -12,7 +12,6 @@ See [current status and handoff](STATUS.md) for release boundaries and evidence.
   already running in CI. Local tests stay audio-isolated.
 - Verify installed behavior on Omarchy: file-manager opening, scaling,
   clipboard, drag/drop, window state and physical audio.
-- Review draft PR #6 for deferred video setup and content-ready startup timing.
 - Extend recorded startup and 10k/50k library baselines with warm navigation,
   larger/mixed libraries, compositor presentation and regression budgets.
 - Maintain the [Omarchy package submission](https://github.com/omacom/omarchy-pkgs/pull/295).

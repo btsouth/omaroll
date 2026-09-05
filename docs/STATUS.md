@@ -1,39 +1,33 @@
 # Project status and handoff
 
-Snapshot: 5 September 2026 UTC. Check the linked PRs and release before resuming.
+Snapshot: 5 September 2026 UTC, after PR #6 merged. Check the linked PRs and release before resuming.
 
 ## Released
 
 [v1.4.0](https://github.com/btsouth/omaroll/releases/tag/v1.4.0) remains the latest
-public release. No newer tag or package was published during this session.
+public release. 1.5.0 is prepared but not tagged or published.
 The viewer supports still and animated images, embedded video controls, PDF
 paging, OCR/QR, albums, tags, saved collections and duplicate review. The
 README describes the supported formats and workflows.
 
-## Merged, awaiting a release
+## Prepared: 1.5.0, not yet tagged
 
-Main is at `3f8703b` in this snapshot:
+Main carries the 1.5.0 version, changelog and AppStream entry. It bundles:
 
 - [PR #3](https://github.com/btsouth/omaroll/pull/3): home-directory wrapper cleanup.
 - [PR #4](https://github.com/btsouth/omaroll/pull/4): natural filename sorting,
   accessible OCR copy feedback and rendered media checks in CI/release validation.
 - [PR #5](https://github.com/btsouth/omaroll/pull/5): ordered multi-file opening,
   selection forwarding to an existing window, performance baselines and isolated
-  media tests. Selected files remain discoverable after supported file actions.
+  media tests.
+- [PR #6](https://github.com/btsouth/omaroll/pull/6): deferred video player and
+  display until a video is opened, plus startup readiness tracing and a
+  benchmark probe. The first video still pays the initialization cost.
 
-## Open for review
-
-[Draft PR #6](https://github.com/btsouth/omaroll/pull/6), branch
-`codex/startup-readiness`, defers both the video player and display until a video
-is opened. It also measures a decoded image or fully loaded viewport followed
-by frame submission. The first video still pays the initialization cost.
-
-Application changes are committed at `79f59fc`. At that commit, 88 core checks,
-52 UI checks, ASan/UBSan, OpenGL rendering and GitHub CI/CodeQL passed. The
-startup probe also passed under sanitizers and in CI on Mesa llvmpipe.
-CodeRabbit skipped review because the PR is a draft; automated checks are not
-a human review. The documentation handoff follows in the same PR. Check CI on
-its latest head before merging.
+CodeRabbit reviewed PR #6 with one minor finding, which was fixed before the
+squash merge. Core, UI, sanitizer and OpenGL checks passed locally and in CI.
+One intermittent SIGSEGV in `omaroll_ui_tests` occurred once locally and did
+not reproduce in three reruns; its core dump is unexplained.
 
 [Local measurements](performance/2026-09-05-startup/README.md) record medians
 of 949.9 to 257.2 ms for an image-ready submitted frame and 1181.2 to 471.9 ms
@@ -42,8 +36,9 @@ not compositor presentation or general performance guarantees.
 
 ## Next decisions and release gates
 
-1. Review PR #6 and address feedback. Leave it open until review and merge are
-   explicitly requested. Keep subsequent changes in separate focused PRs.
+1. Try the 1.5.0 candidate on the real Omarchy desktop, then tag `v1.5.0`
+   following [RELEASING.md](../RELEASING.md). Keep new changes in separate
+   focused PRs.
 2. Finish installed Omarchy acceptance (SBS-1121): file-manager selections,
    clipboard, drag/drop, scaling, window state and physical audio. Headless
    passes do not close this gate.
@@ -53,8 +48,7 @@ not compositor presentation or general performance guarantees.
    copy, collision handling and a metadata/color policy. Reuse Omarchy helpers
    where they satisfy the workflow. Comparison and organization improvements
    follow in the [roadmap](ROADMAP.md).
-5. Choose and validate the next release only after review and acceptance.
-   Follow [RELEASING.md](../RELEASING.md); no new version is selected yet.
+5. After 1.5.0 ships, refresh the Omarchy package submission to it.
 
 [Official package PR #295](https://github.com/omacom/omarchy-pkgs/pull/295)
 remains open and targets v1.4.0. Earlier edge, rc and stable package builds
@@ -75,7 +69,8 @@ video tracks and subtitles. No media downloads are needed for those checks.
 Physical audio testing remains a deliberate desktop acceptance activity.
 
 Linear is the active task tracker. Access it through Toolport. SBS-1093 is the
-parent roadmap; SBS-1125 is done, while SBS-1121 and SBS-1122 remain in progress.
+parent roadmap; SBS-1121 and SBS-1122 remain in progress, and SBS-1126 is the
+next feature to start.
 Notes under `build/roadmap-review/` are historical and ignored by Git. This
 file is the committed handoff. No further implementation, merge or release
 work is scheduled by closing this session.
