@@ -1,6 +1,6 @@
 # Project status and handoff
 
-Snapshot: 5 September 2026 UTC, after PR #8 merged. Check the linked PRs and release before resuming.
+Snapshot: 5 September 2026 UTC, after PR #9 merged. Check the linked PRs and release before resuming.
 
 ## Released
 
@@ -27,6 +27,10 @@ Main carries the 1.5.0 version, changelog and AppStream entry. It bundles:
   emit `finished()` on their own thread, fixing a use-after-free that the
   pixmap reader's `deleteLater()` could trigger while the pool thread was
   still unwinding the emit.
+- [PR #9](https://github.com/btsouth/omaroll/pull/9): grid delegates are
+  rebuilt rather than reused across the tile relayout, fixing tiles that kept
+  a previous file's thumbnail and opened a different file in small tiled
+  windows. Found in the desktop test of the 1.5.0 candidate.
 
 CodeRabbit reviewed PR #6 with one minor finding, which was fixed before the
 squash merge. Core, UI, sanitizer and OpenGL checks passed locally and in CI.

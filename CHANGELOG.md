@@ -24,6 +24,8 @@
 
 - Thumbnail, PDF and matte image responses no longer risk a crash when a
   request is cancelled or finishes during fast scrolling or a tile size change.
+- Tiles no longer keep a previous file's thumbnail after the window or tile
+  size changes, which could open a different file than the one shown.
 
 ## 1.4.0
 
