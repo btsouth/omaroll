@@ -172,7 +172,7 @@ and put on your clipboard.
 | `N` | Rename, preserving the extension |
 | `Y` · `S` · `F` | Clipboard · Send · Show in files |
 | `V` · `Ctrl+H` | Favourite · Hide |
-| `1`-`8` | Jump to a section |
+| `1`-`8` · `Tab` `Shift+Tab` | Jump to a section · next · previous section |
 | `Page Up` `Page Down` in a PDF preview | Previous · next page |
 | `X` · `Ctrl+A` | Select · Select all |
 | with a selection | `V` `Ctrl+H` `Y` `S` `Del` act on every checked file |

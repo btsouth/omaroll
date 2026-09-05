@@ -36,6 +36,18 @@ Item {
 
     function sectionShortcut(index) { return String(index + 1) }
 
+    // Tab walks the sections in the order the pills show them and wraps.
+    // Favourites is orthogonal to the kind and stays out of the cycle.
+    function cycleSection(step) {
+        const kinds = [kindAll, kindScreenshot, kindRecording, kindPicture, kindVideo,
+                       kindDocument]
+        if (Settings.scanDownloads) {
+            kinds.splice(5, 0, kindDownload)
+        }
+        const current = Math.max(0, kinds.indexOf(Captures.kindFilter))
+        Captures.kindFilter = kinds[(current + step + kinds.length) % kinds.length]
+    }
+
     readonly property var sortLabels: ["Newest", "Oldest", "Largest", "Smallest", "Name"]
 
     // True while the search field owns the keyboard, so window-level

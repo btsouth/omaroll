@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Tab and Shift+Tab step through the sections, wrapping at either end.
+
 ## 1.5.0
 
 ### Added
