@@ -79,10 +79,11 @@ jobs:
           QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
             omaroll --render /tmp/omaroll-package-smoke.png --render-view grid --render-size 560x420
           test -s /tmp/omaroll-package-smoke.png
+          rm -f /tmp/omaroll-package-video.png
           xvfb-run -a env QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=rhi \
             QSG_RHI_BACKEND=opengl LIBGL_ALWAYS_SOFTWARE=1 PULSE_SERVER=unix:/nonexistent \
             timeout 30 omaroll --render /tmp/omaroll-package-video.png --render-view video
-          test -s /tmp/omaroll-package-video.png
+          test "$(magick identify -format '%m %wx%h' /tmp/omaroll-package-video.png)" = 'PNG 1280x820'
           pacman -U --noconfirm "$package_file"
           pacman -R --noconfirm omaroll
           test ! -e /usr/bin/omaroll

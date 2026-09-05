@@ -13,7 +13,8 @@ export PULSE_SERVER=unix:/nonexistent
 
 timeout 180 "$build_dir/omaroll_ui_tests"
 for view in grid video ocr; do
+  rm -f -- "$output_dir/$view.png"
   timeout 30 "$build_dir/omaroll" --render "$output_dir/$view.png" \
     --render-view "$view" --render-size 560x420
-  test -s "$output_dir/$view.png"
+  test "$(magick identify -format '%m %wx%h' "$output_dir/$view.png")" = 'PNG 560x420'
 done

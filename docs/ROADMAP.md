@@ -14,7 +14,7 @@ result. Discovery stays read-only and core use stays offline.
 
 ## Complete image workflows
 
-- Natural filename sorting and opening multiple selected files.
+- Open multiple selected files.
 - Crop, rotate and resize with Save a copy and safe collision handling.
 - Copy a selected region and compare images with synchronized zoom.
 - Verify orientation, color profiles, transparency and large-image behavior.

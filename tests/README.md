@@ -16,7 +16,7 @@ the PulseAudio connection so automated playback does not use the user's speakers
 ## Rendered video
 
 Qt's software scene graph can decode video without displaying it. Run the
-OpenGL suite as well. On a headless Arch machine, install `mesa`,
+OpenGL suite as well. On a headless Arch machine, install `imagemagick`, `mesa`,
 `xorg-server-xvfb` and `xorg-xauth`, then run:
 
 ```sh
