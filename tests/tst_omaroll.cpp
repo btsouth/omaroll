@@ -990,6 +990,37 @@ private slots:
     settings.setFavorite({moved}, false);
   }
 
+  void videoPlaybackPreferencesAndResumePersist() {
+    const QString movie = QStringLiteral("/tmp/omaroll-resume-movie-%1.mp4")
+                              .arg(QRandomGenerator::global()->generate());
+    AppSettings settings;
+    settings.setVideoVolume(0.35);
+    settings.setVideoMuted(true);
+    settings.setVideoPosition(movie, 125000);
+    QCOMPARE(settings.videoPosition(movie), 125000);
+
+    // A spot at the very start is not worth offering; storing one below the
+    // threshold clears an existing marker.
+    const QString clip = movie + QStringLiteral(".short");
+    settings.setVideoPosition(clip, 1200);
+    QCOMPARE(settings.videoPosition(clip), 0);
+    settings.setVideoPosition(movie, 900);
+    QCOMPARE(settings.videoPosition(movie), 0);
+    settings.setVideoPosition(movie, 42000);
+
+    AppSettings reloaded;
+    QVERIFY(qAbs(reloaded.videoVolume() - 0.35) < 0.001);
+    QVERIFY(reloaded.videoMuted());
+    QCOMPARE(reloaded.videoPosition(movie), 42000);
+
+    reloaded.clearVideoPosition(movie);
+    QCOMPARE(reloaded.videoPosition(movie), 0);
+
+    reloaded.setVideoVolume(0.8);
+    reloaded.setVideoMuted(false);
+    reloaded.setVideoPosition(movie, 0);
+  }
+
   void addingOverAnUnavailableAlbumEntryReplacesIt() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

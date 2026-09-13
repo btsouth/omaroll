@@ -107,9 +107,13 @@ runner:
   now store the file's identity when marked and follow an external move or
   rename through `AppSettings::reconcileMarks`, which runs before the dead-path
   sweep. Albums and tags already had this; marks did not.
+- **SBS-1132 playback memory.** Volume and mute persist, and a video reopened
+  part-way offers Resume or Start over from a saved spot (pruned to 500
+  entries). Playback that reaches the end clears the spot.
 
 Remaining after this branch: region copy (SBS-1127 remainder), orientation and
-color verification fixtures (SBS-1128), and the video/PDF depth items.
+color verification fixtures (SBS-1128), external subtitles (SBS-1133) and PDF
+depth (SBS-1134).
 
 ## Next decisions and release gates
 

@@ -16,6 +16,9 @@
 - Compare pictures side by side with synchronized zoom and pan (K). It uses the
   checked selection, or the open picture's exact duplicates and then its
   visually similar set, and shows each file's name.
+- Remember video playback. Volume and mute are kept across files and sessions,
+  and a video reopened part-way through offers Resume or Start over instead of
+  always starting from the beginning. Watching to the end clears the spot.
 
 ### Changed
 

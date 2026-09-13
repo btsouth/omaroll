@@ -41,7 +41,9 @@ See [current status and handoff](STATUS.md) for release boundaries and evidence.
 
 ## Video and PDF depth
 
-- Remember playback preferences and offer resumable playback.
+- Remember playback preferences and offer resumable playback. Done: volume and
+  mute persist, and a reopened video offers Resume or Start over from its
+  saved spot.
 - Load external subtitles and expose clear track choices.
 - Add PDF text selection, search, page navigation, links and printing.
 

@@ -42,6 +42,13 @@ constexpr auto kAlbums = "library/albums";
 constexpr auto kTags = "library/tags";
 constexpr auto kSmartCollections = "library/smartCollections";
 constexpr auto kLastVisit = "library/lastVisit";
+constexpr auto kVideoVolume = "playback/volume";
+constexpr auto kVideoMuted = "playback/muted";
+constexpr auto kVideoPositions = "playback/positions";
+// Resume spots beyond a few minutes are the useful ones; too many entries and
+// the file grows for no benefit.
+constexpr int kMaximumResumeEntries = 500;
+constexpr qint64 kMinimumResumeMs = 5000;
 constexpr auto kOrganizationFormat = "omaroll.organization";
 
 QString normalizedFolder(const QString& path, bool mustExist) {
@@ -181,6 +188,16 @@ AppSettings::AppSettings(QObject* parent)
   m_tileWidth =
       qBound(kMinimumTileWidth, m_settings.value(kTileWidth, 240).toInt(), kMaximumTileWidth);
   m_slideshowVideos = m_settings.value(kSlideshowVideos, false).toBool();
+  m_videoVolume = qBound(0.0, m_settings.value(kVideoVolume, 0.8).toDouble(), 1.0);
+  m_videoMuted = m_settings.value(kVideoMuted, false).toBool();
+  const QVariantMap storedPositions = m_settings.value(kVideoPositions).toMap();
+  for (auto it = storedPositions.cbegin(); it != storedPositions.cend(); ++it) {
+    const qint64 position = it.value().toLongLong();
+    if (!it.key().isEmpty() && position >= kMinimumResumeMs) {
+      m_videoPositions.insert(it.key(), position);
+      m_videoRecency.append(it.key());
+    }
+  }
   const QVariantMap storedAlbums = m_settings.value(kAlbums).toMap();
   const auto restoreCollections = [this](const QVariantMap& storedCollections,
                                          QMap<QString, QList<AlbumEntry>>& target,
@@ -373,6 +390,62 @@ void AppSettings::setSlideshowVideos(bool value) {
   m_slideshowVideos = value;
   m_settings.setValue(kSlideshowVideos, value);
   emit slideshowVideosChanged();
+}
+
+qint64 AppSettings::videoPosition(const QString& path) const {
+  return m_videoPositions.value(path, 0);
+}
+
+void AppSettings::setVideoPosition(const QString& path, qint64 milliseconds) {
+  if (path.isEmpty()) {
+    return;
+  }
+  if (milliseconds < kMinimumResumeMs) {
+    clearVideoPosition(path);
+    return;
+  }
+  m_videoPositions.insert(path, milliseconds);
+  m_videoRecency.removeAll(path);
+  m_videoRecency.prepend(path);
+  while (m_videoRecency.size() > kMaximumResumeEntries) {
+    m_videoPositions.remove(m_videoRecency.takeLast());
+  }
+  QVariantMap stored;
+  for (auto it = m_videoPositions.cbegin(); it != m_videoPositions.cend(); ++it) {
+    stored.insert(it.key(), it.value());
+  }
+  m_settings.setValue(kVideoPositions, stored);
+}
+
+void AppSettings::clearVideoPosition(const QString& path) {
+  if (m_videoPositions.remove(path) == 0 && !m_videoRecency.contains(path)) {
+    return;
+  }
+  m_videoRecency.removeAll(path);
+  QVariantMap stored;
+  for (auto it = m_videoPositions.cbegin(); it != m_videoPositions.cend(); ++it) {
+    stored.insert(it.key(), it.value());
+  }
+  m_settings.setValue(kVideoPositions, stored);
+}
+
+void AppSettings::setVideoVolume(qreal value) {
+  const qreal bounded = qBound(0.0, value, 1.0);
+  if (qFuzzyCompare(m_videoVolume, bounded)) {
+    return;
+  }
+  m_videoVolume = bounded;
+  m_settings.setValue(kVideoVolume, bounded);
+  emit videoVolumeChanged();
+}
+
+void AppSettings::setVideoMuted(bool value) {
+  if (m_videoMuted == value) {
+    return;
+  }
+  m_videoMuted = value;
+  m_settings.setValue(kVideoMuted, value);
+  emit videoMutedChanged();
 }
 
 void AppSettings::relocatePath(const QString& oldPath, const QString& newPath) {

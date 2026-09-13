@@ -45,6 +45,9 @@ class AppSettings final : public QObject {
   Q_PROPERTY(int tileWidth READ tileWidth WRITE setTileWidth NOTIFY tileWidthChanged)
   Q_PROPERTY(bool slideshowVideos READ slideshowVideos WRITE setSlideshowVideos NOTIFY
                  slideshowVideosChanged)
+  // Video playback preferences, remembered across files and sessions.
+  Q_PROPERTY(qreal videoVolume READ videoVolume WRITE setVideoVolume NOTIFY videoVolumeChanged)
+  Q_PROPERTY(bool videoMuted READ videoMuted WRITE setVideoMuted NOTIFY videoMutedChanged)
   Q_PROPERTY(QStringList albumNames READ albumNames NOTIFY albumsChanged)
   Q_PROPERTY(QStringList tagNames READ tagNames NOTIFY tagsChanged)
   Q_PROPERTY(
@@ -84,6 +87,17 @@ public:
   void setTileWidth(int width);
   [[nodiscard]] bool slideshowVideos() const { return m_slideshowVideos; }
   void setSlideshowVideos(bool value);
+
+  // Where a video was last left, in milliseconds. Zero means no saved spot.
+  // Entries are pruned so a long-lived library does not grow forever.
+  Q_INVOKABLE [[nodiscard]] qint64 videoPosition(const QString& path) const;
+  Q_INVOKABLE void setVideoPosition(const QString& path, qint64 milliseconds);
+  Q_INVOKABLE void clearVideoPosition(const QString& path);
+
+  [[nodiscard]] qreal videoVolume() const { return m_videoVolume; }
+  void setVideoVolume(qreal value);
+  [[nodiscard]] bool videoMuted() const { return m_videoMuted; }
+  void setVideoMuted(bool value);
 
   [[nodiscard]] QStringList albumNames() const;
   Q_INVOKABLE [[nodiscard]] QStringList albumPaths(const QString& name) const;
@@ -182,6 +196,8 @@ signals:
   void thumbnailCacheMbChanged();
   void tileWidthChanged();
   void slideshowVideosChanged();
+  void videoVolumeChanged();
+  void videoMutedChanged();
   void albumsChanged();
   void tagsChanged();
   void smartCollectionsChanged();
@@ -233,6 +249,11 @@ private:
   int m_thumbnailCacheMb = 256;
   int m_tileWidth = 240;
   bool m_slideshowVideos = false;
+  qreal m_videoVolume = 0.8;
+  bool m_videoMuted = false;
+  // Resume spots, most recently touched first in m_videoRecency.
+  QHash<QString, qint64> m_videoPositions;
+  QList<QString> m_videoRecency;
   QMap<QString, QList<AlbumEntry>> m_albums;
   QMap<QString, QList<AlbumEntry>> m_tags;
   QMap<QString, QVariantMap> m_smartCollections;
