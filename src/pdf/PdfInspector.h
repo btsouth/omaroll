@@ -35,10 +35,14 @@ public:
   // Searches the inspected document with pdftotext, asynchronously.
   Q_INVOKABLE void find(const QString& query);
   Q_INVOKABLE void clearSearch();
+  // Extracts one page's text and copies it to the clipboard.
+  Q_INVOKABLE void copyPageText(int page);
 
 signals:
   void changed();
   void matchesChanged();
+  void textCopied(int page);
+  void textCopyFailed(const QString& message);
 
 private:
   QProcess m_process;
@@ -52,4 +56,8 @@ private:
   QTimer m_searchTimeout;
   QVariantList m_matches;
   QString m_query;
+
+  QProcess m_textProcess;
+  QTimer m_textTimeout;
+  int m_textPage = 0;
 };

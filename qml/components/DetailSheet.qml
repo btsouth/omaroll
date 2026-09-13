@@ -1034,6 +1034,12 @@ Item {
                         root.pdfMatchIndex = 0
                     }
                 }
+                function onTextCopied(page) {
+                    root.statusRequested("Copied page " + page + " text")
+                }
+                function onTextCopyFailed(message) {
+                    root.statusRequested(message)
+                }
             }
 
             // PDF text search. Page navigation stays in the row below it.
@@ -1135,6 +1141,55 @@ Item {
                     onClicked: if (root.pdfPage < PdfInfo.pageCount) {
                         root.stillReady = false
                         root.pdfPage++
+                    }
+                }
+
+                PillButton {
+                    objectName: "pdfCopyPageText"
+                    label: "Copy page text"
+                    toolTip: "Copy this page's text to the clipboard"
+                    enabled: PdfInfo.textSearchAvailable
+                    onClicked: PdfInfo.copyPageText(root.pdfPage)
+                }
+
+                // Jump straight to a page by number.
+                Rectangle {
+                    width: 54
+                    height: 28
+                    anchors.verticalCenter: parent.verticalCenter
+                    radius: Theme.cornerRadius > 0 ? Math.min(4, Theme.cornerRadius) : 3
+                    color: root.shade(Theme.foreground, 0.06)
+                    border.width: 1
+                    border.color: pdfPageInput.activeFocus ? root.shade(Theme.accent, 0.65)
+                                                           : root.shade(Theme.foreground, 0.16)
+
+                    TextInput {
+                        id: pdfPageInput
+                        objectName: "pdfPageInput"
+                        anchors.fill: parent
+                        horizontalAlignment: TextInput.AlignHCenter
+                        verticalAlignment: TextInput.AlignVCenter
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 11
+                        color: Theme.foreground
+                        inputMethodHints: Qt.ImhDigitsOnly
+                        validator: IntValidator { bottom: 1; top: Math.max(1, PdfInfo.pageCount) }
+                        onAccepted: {
+                            const value = parseInt(text)
+                            if (value >= 1 && value <= PdfInfo.pageCount) {
+                                root.stillReady = false
+                                root.pdfPage = value
+                            }
+                            text = ""
+                        }
+                    }
+                    Text {
+                        anchors.centerIn: parent
+                        visible: pdfPageInput.text === ""
+                        text: "Page #"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 10
+                        color: root.shade(Theme.foreground, 0.35)
                     }
                 }
             }

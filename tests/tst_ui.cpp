@@ -1755,6 +1755,22 @@ private slots:
       QTRY_COMPARE(detail->property("pdfPage").toInt(), 1);
     }
 
+    // Copy page text reports an outcome; whether the text extracts depends on
+    // the environment, so only the outcome is asserted.
+    if (!pdftotext.isEmpty()) {
+      QSignalSpy copied(m_pdfInfo, &PdfInspector::textCopied);
+      QSignalSpy copyFailed(m_pdfInfo, &PdfInspector::textCopyFailed);
+      click(item("pdfCopyPageText"));
+      QTRY_VERIFY_WITH_TIMEOUT(copied.size() + copyFailed.size() >= 1, 8000);
+    }
+
+    // Jump straight to a page by number.
+    QQuickItem* pageInput = item("pdfPageInput");
+    QVERIFY(pageInput);
+    pageInput->setProperty("text", QStringLiteral("2"));
+    QVERIFY(QMetaObject::invokeMethod(pageInput, "accepted"));
+    QTRY_COMPARE(detail->property("pdfPage").toInt(), 2);
+
     invoke("dismissTopLayer");
     QVERIFY(QFile::remove(m_pdfPath));
     m_captures->refresh();
