@@ -1086,6 +1086,19 @@ private slots:
     QVERIFY(subtitles.files(video).isEmpty());
   }
 
+  void pdfSearchMatchesAcrossPagesAndWhitespace() {
+    const QString text = QStringLiteral("Invoice total: 42") + QChar(0x0C)
+                         + QStringLiteral("Notes\nINVOICE\nnothing\nTOTAL") + QChar(0x0C)
+                         + QStringLiteral("Unrelated") + QChar(0x0C);
+    QCOMPARE(PdfSupport::findPages(text, QStringLiteral("invoice total")), QList<int>({1}));
+    // A phrase split across a line break still matches.
+    QCOMPARE(PdfSupport::findPages(text, QStringLiteral("Invoice\n   total")), QList<int>({1}));
+    QCOMPARE(PdfSupport::findPages(text, QStringLiteral("invoice")), QList<int>({1, 2}));
+    QCOMPARE(PdfSupport::findPages(text, QStringLiteral("unrelated")), QList<int>({3}));
+    QVERIFY(PdfSupport::findPages(text, QStringLiteral("absent")).isEmpty());
+    QVERIFY(PdfSupport::findPages(text, QString()).isEmpty());
+  }
+
   void addingOverAnUnavailableAlbumEntryReplacesIt() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

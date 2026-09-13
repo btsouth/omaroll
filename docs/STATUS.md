@@ -83,9 +83,9 @@ recognition were considered against Lightroom and Immich and deferred
 
 ## In progress after 1.6.0
 
-A `feature/image-corrections` branch carries the next three deliverables, all
+A stacked set of feature branches off `main` carries the next deliverables, all
 with core and UI tests green through `tests/run-isolated.sh` plus the OpenGL
-runner:
+runner and every layer in a draft PR:
 
 - **SBS-1126 safe image corrections.** `src/edit/ImageEditor` and
   `EditProvider` implement orient, crop, quarter turns, flips and resize, then
@@ -115,9 +115,14 @@ runner:
   position; the CC control cycles Off, embedded tracks and sidecars, and the
   cue is drawn over the video. The transport controls were re-anchored, since
   the positioner did not lay out the late-appearing CC button.
+- **SBS-1134 PDF search.** `PdfInspector::find` runs pdftotext and
+  `PdfSupport::findPages` matches across pages, case- and whitespace-insensitive;
+  the viewer gains a find box, a match count and previous/next match that turn
+  the page. Text selection, links and printing remain.
 
 Remaining after this branch: region copy (SBS-1127 remainder), orientation and
-color verification fixtures (SBS-1128), and PDF depth (SBS-1134).
+color verification fixtures (SBS-1128), and the rest of PDF depth (selection,
+links, printing).
 
 ## Next decisions and release gates
 

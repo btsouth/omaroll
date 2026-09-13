@@ -1,5 +1,7 @@
 #include "pdf/PdfInspector.h"
 
+#include "pdf/PdfSupport.h"
+
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QStandardPaths>
@@ -39,12 +41,34 @@ PdfInspector::PdfInspector(QObject* parent) : QObject(parent) {
       emit changed();
     }
   });
+
+  m_searchTimeout.setSingleShot(true);
+  m_searchTimeout.setInterval(20'000);
+  connect(&m_searchTimeout, &QTimer::timeout, &m_searchProcess, &QProcess::kill);
+  connect(&m_searchProcess, &QProcess::finished, this,
+          [this](int exitCode, QProcess::ExitStatus status) {
+            m_searchTimeout.stop();
+            if (status != QProcess::NormalExit || exitCode != 0) {
+              return;
+            }
+            const QString text = QString::fromUtf8(m_searchProcess.readAllStandardOutput());
+            const QList<int> pages = PdfSupport::findPages(text, m_query);
+            m_matches.clear();
+            for (const int page : pages) {
+              m_matches.append(page);
+            }
+            emit matchesChanged();
+          });
 }
 
 PdfInspector::~PdfInspector() {
   if (m_process.state() != QProcess::NotRunning) {
     m_process.kill();
     m_process.waitForFinished(1000);
+  }
+  if (m_searchProcess.state() != QProcess::NotRunning) {
+    m_searchProcess.kill();
+    m_searchProcess.waitForFinished(1000);
   }
 }
 
@@ -60,6 +84,7 @@ void PdfInspector::inspect(const QString& path) {
     m_process.kill();
     m_process.waitForFinished(1000);
   }
+  clearSearch();
   m_path = path;
   m_pageCount = 0;
   m_error.clear();
@@ -80,9 +105,39 @@ void PdfInspector::clear() {
   if (m_process.state() != QProcess::NotRunning) {
     m_process.kill();
   }
+  clearSearch();
   m_path.clear();
   m_pageCount = 0;
   m_loading = false;
   m_error.clear();
   emit changed();
+}
+
+void PdfInspector::find(const QString& query) {
+  m_query = query.simplified();
+  m_matches.clear();
+  emit matchesChanged();
+  if (m_path.isEmpty() || m_query.isEmpty() || m_pageCount <= 0 ||
+      !PdfSupport::textAvailable()) {
+    return;
+  }
+  if (m_searchProcess.state() != QProcess::NotRunning) {
+    m_searchProcess.kill();
+    m_searchProcess.waitForFinished(500);
+  }
+  m_searchProcess.start(QStandardPaths::findExecutable(QStringLiteral("pdftotext")),
+                        {QStringLiteral("-layout"), m_path, QStringLiteral("-")});
+  m_searchTimeout.start();
+}
+
+void PdfInspector::clearSearch() {
+  m_searchTimeout.stop();
+  if (m_searchProcess.state() != QProcess::NotRunning) {
+    m_searchProcess.kill();
+  }
+  m_query.clear();
+  if (!m_matches.isEmpty()) {
+    m_matches.clear();
+    emit matchesChanged();
+  }
 }
