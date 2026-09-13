@@ -715,6 +715,15 @@ private slots:
     QVERIFY(settings.addTag(child, {other}));
     QCOMPARE(settings.tagPaths(tag), QStringList({file, other}));
 
+    // Saved views hold the tag by name, so a rename must follow them too.
+    const QString view = QStringLiteral("View ") + suffix;
+    QVariantMap viewMap;
+    viewMap.insert(QStringLiteral("tag"), tag);
+    QVERIFY(settings.saveSmartCollection(view, viewMap));
+    QVariantMap childView;
+    childView.insert(QStringLiteral("tag"), child);
+    QVERIFY(settings.saveSmartCollection(view + QStringLiteral("-child"), childView));
+
     QVERIFY(settings.renameTag(tag, tagTarget));
     QVERIFY(!settings.tagNames().contains(tag));
     QVERIFY(!settings.tagNames().contains(child));
@@ -723,6 +732,11 @@ private slots:
     QCOMPARE(settings.tagPaths(tagTarget), QStringList({file, other}));
     QCOMPARE(settings.tagPaths(tagTarget + QStringLiteral("/Japan")), QStringList {other});
     QCOMPARE(settings.tagsForPath(file), QStringList {tagTarget});
+    QCOMPARE(settings.smartCollection(view).value(QStringLiteral("tag")).toString(), tagTarget);
+    QCOMPARE(settings.smartCollection(view + QStringLiteral("-child"))
+                 .value(QStringLiteral("tag"))
+                 .toString(),
+             tagTarget + QStringLiteral("/Japan"));
 
     // Renaming into its own subtree, or onto an existing tag, is refused.
     QVERIFY(!settings.renameTag(tagTarget, tagTarget + QStringLiteral("/Nested")));
@@ -741,6 +755,8 @@ private slots:
     restored.deleteAlbum(otherAlbum);
     restored.deleteTag(tagTarget);
     restored.deleteTag(existing);
+    restored.deleteSmartCollection(view);
+    restored.deleteSmartCollection(view + QStringLiteral("-child"));
   }
 
   void organizationBackupRoundTripsAndRejectsBadFiles() {
@@ -818,12 +834,56 @@ private slots:
     QVERIFY(!restored.importOrganization(foreign).value(QStringLiteral("ok")).toBool());
     QCOMPARE(restored.albumPaths(album), QStringList {file});
 
+    // One of ours but missing sections: refused rather than read as empty
+    // collections, which would wipe the profile and still call it success.
+    const QString incomplete = dir.filePath(QStringLiteral("incomplete.json"));
+    {
+      QFile handle(incomplete);
+      QVERIFY(handle.open(QIODevice::WriteOnly));
+      handle.write("{\"format\":\"omaroll.organization\",\"version\":1,\"albums\":{}}");
+    }
+    QVERIFY(!restored.importOrganization(incomplete).value(QStringLiteral("ok")).toBool());
+    QCOMPARE(restored.albumPaths(album), QStringList {file});
+    QVERIFY(restored.isFavorite(file));
+
     restored.deleteAlbum(album);
     restored.deleteTag(tag);
     restored.deleteSmartCollection(collection);
     restored.setFavorite({file}, false);
     restored.setRating({file}, 0);
     restored.setCaption(file, QString());
+  }
+
+  void importedOrganizationNormalizesNamesAndFillsAncestors() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString file = dir.filePath(QStringLiteral("member.png"));
+    QImage(10, 10, QImage::Format_RGB32).save(file);
+    const QString backup = dir.filePath(QStringLiteral("odd.json"));
+    {
+      QFile handle(backup);
+      QVERIFY(handle.open(QIODevice::WriteOnly));
+      const QByteArray payload =
+          QByteArrayLiteral("{\"format\":\"omaroll.organization\",\"version\":1,")
+          + QByteArrayLiteral("\"albums\":{\"Bad/Name\":[]},\"tags\":{\"Travel//Japan\":[{\"path\":\"")
+          + file.toUtf8()
+          + QByteArrayLiteral("\",\"bytes\":0}]},\"favorites\":[],\"hidden\":[],\"ratings\":{},")
+          + QByteArrayLiteral("\"captions\":{},\"smartCollections\":{}}");
+      handle.write(payload);
+    }
+
+    AppSettings settings;
+    settings.deleteTag(QStringLiteral("Travel"));
+    const QVariantMap result = settings.importOrganization(backup);
+    QVERIFY2(result.value(QStringLiteral("ok")).toBool(),
+             qPrintable(result.value(QStringLiteral("message")).toString()));
+    // A slash cannot appear in an album name anywhere else, so it is dropped.
+    QVERIFY(!settings.albumNames().contains(QStringLiteral("Bad/Name")));
+    // The doubled slash collapses and the required parent tag is created.
+    QVERIFY(settings.tagNames().contains(QStringLiteral("Travel")));
+    QVERIFY(settings.tagNames().contains(QStringLiteral("Travel/Japan")));
+    QCOMPARE(settings.tagPaths(QStringLiteral("Travel/Japan")), QStringList {file});
+    settings.deleteTag(QStringLiteral("Travel"));
   }
 
   void addingOverAnUnavailableAlbumEntryReplacesIt() {

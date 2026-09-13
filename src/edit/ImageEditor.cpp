@@ -220,9 +220,24 @@ void ImageEditor::saveCopy(const QString& path, int quarterTurns, bool flipHoriz
       if (result.isNull()) {
         error = QStringLiteral("That correction left nothing to save");
       } else {
-        output = availableOutputPath(source);
         const QByteArray format = writableFormat(source);
-        if (!writeImage(result, output, format)) {
+        // Reserve the name before writing. availableOutputPath() alone races
+        // another instance picking the same free name, and QSaveFile's commit
+        // would then replace that file. NewOnly makes the reservation
+        // exclusive.
+        for (int attempt = 0; attempt < 64 && output.isEmpty(); ++attempt) {
+          const QString candidate = availableOutputPath(source);
+          QFile reservation(candidate);
+          if (reservation.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+            reservation.close();
+            output = candidate;
+          }
+        }
+        if (output.isEmpty()) {
+          error = QStringLiteral("Could not find a free name beside %1")
+                      .arg(QFileInfo(source).fileName());
+        } else if (!writeImage(result, output, format)) {
+          QFile::remove(output);
           error = QFileInfo(source).absoluteDir().exists()
                       ? QStringLiteral("Could not write %1").arg(QFileInfo(output).fileName())
                       : QStringLiteral("The folder for %1 is no longer there")

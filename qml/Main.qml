@@ -41,6 +41,11 @@ ApplicationWindow {
     // unforgivable.
     property string pendingDeletePath: ""
     property var pendingDeleteBatch: []
+    // While a collection rename is in flight the old name is gone from the
+    // model before the new one is known, so the filter-clearing handlers are
+    // held off and onSaved repoints the active filter instead.
+    property bool renamingCollection: false
+    property string renameFilterBefore: ""
     property int visibilityBeforeViewerFullScreen: Window.Windowed
     property bool viewerFolderOnly: false
 
@@ -261,7 +266,7 @@ ApplicationWindow {
         target: Settings
         function onScanDownloadsChanged() { root.reconcileFilter() }
         function onAlbumsChanged() {
-            if (Captures.albumFilter === "") {
+            if (root.renamingCollection || Captures.albumFilter === "") {
                 return
             }
             if (Settings.albumNames.indexOf(Captures.albumFilter) < 0) {
@@ -272,7 +277,7 @@ ApplicationWindow {
             }
         }
         function onTagsChanged() {
-            if (Captures.tagFilter === "") {
+            if (root.renamingCollection || Captures.tagFilter === "") {
                 return
             }
             if (Settings.tagNames.indexOf(Captures.tagFilter) < 0) {
@@ -1050,16 +1055,20 @@ ApplicationWindow {
         objectName: "albumNameSheet"
         onSaved: function (name, count, mode) {
             if (mode === "albumRename") {
-                if (Captures.albumFilter === albumNameSheet.renameFrom) {
+                if (root.renameFilterBefore === albumNameSheet.renameFrom) {
                     Captures.setAlbumFilter(name, Settings.albumPaths(name))
                 }
+                root.renamingCollection = false
+                root.renameFilterBefore = ""
                 root.say("Renamed album to " + name)
                 return
             }
             if (mode === "tagRename") {
-                if (Captures.tagFilter === albumNameSheet.renameFrom) {
+                if (root.renameFilterBefore === albumNameSheet.renameFrom) {
                     Captures.setTagFilter(name, Settings.tagPaths(name))
                 }
+                root.renamingCollection = false
+                root.renameFilterBefore = ""
                 root.say("Renamed tag to " + name)
                 return
             }
@@ -1080,7 +1089,12 @@ ApplicationWindow {
                          + " to " + name)
             }
         }
-        onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
+        // A cancelled rename must not leave the filter handlers held off.
+        onVisibleChanged: if (!visible) {
+            root.renamingCollection = false
+            root.renameFilterBefore = ""
+            root.restoreFocusAfterSheet()
+        }
     }
 
     Menu {
@@ -1318,6 +1332,8 @@ ApplicationWindow {
         onCreateAlbumRequested: Qt.callLater(function () { albumNameSheet.open([]) })
         onCreateTagRequested: Qt.callLater(function () { albumNameSheet.open([], "tag") })
         onRenameCollectionRequested: Qt.callLater(function () {
+            root.renamingCollection = true
+            root.renameFilterBefore = mode === "album" ? Captures.albumFilter : Captures.tagFilter
             albumNameSheet.openRename(mode, name)
         })
         onSaveSmartCollectionRequested: Qt.callLater(function () {

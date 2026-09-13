@@ -538,6 +538,12 @@ Item {
                     topPadding: 9
                     text: {
                         const base = root.croppedWidth + " × " + root.croppedHeight
+                        if (root.targetWidth > 0 && root.targetHeight > 0) {
+                            // The writer keeps the aspect ratio, so this is a
+                            // bounding box, not the saved size.
+                            return "Fit within " + root.targetWidth + " × " + root.targetHeight
+                                   + "  ·  source " + base
+                        }
                         if (root.targetWidth > 0 || root.targetHeight > 0) {
                             return "Output " + (root.targetWidth > 0 ? root.targetWidth : "auto")
                                    + " × " + (root.targetHeight > 0 ? root.targetHeight : "auto")

@@ -13,9 +13,28 @@ Item {
     property string folderMessage: ""
     property string textCacheMessage: ""
     property string organizationMessage: ""
+    property bool organizationOk: false
+    // Set once a backup file has been chosen; the restore runs only after the
+    // user confirms, since it replaces the current organization.
+    property string pendingRestorePath: ""
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
+    }
+
+    function applyPendingRestore() {
+        if (root.pendingRestorePath === "") {
+            return
+        }
+        const result = Settings.importOrganization(root.pendingRestorePath)
+        root.pendingRestorePath = ""
+        root.organizationOk = result.ok
+        root.organizationMessage = result.message
+        if (result.ok) {
+            Captures.setAlbumFilter("", [])
+            Captures.setTagFilter("", [])
+            Captures.clearSmartCollection()
+        }
     }
 
     // FileDialog hands back a file:// url; the C++ side wants a plain path.
@@ -42,6 +61,8 @@ Item {
         folderMessage = ""
         textCacheMessage = ""
         organizationMessage = ""
+        organizationOk = false
+        pendingRestorePath = ""
         visible = true
         forceActiveFocus()
     }
@@ -670,26 +691,45 @@ Item {
                     Text {
                         width: parent.width
                         wrapMode: Text.WordWrap
-                        text: root.organizationMessage !== "" ? root.organizationMessage
-                              : "Save albums, tags, ratings, captions and saved views "
-                                + "to a file, or restore them. Media files are untouched."
+                        text: root.pendingRestorePath !== ""
+                              ? "Restore replaces the current organization. This cannot be undone."
+                              : (root.organizationMessage !== "" ? root.organizationMessage
+                                 : "Save albums, tags, ratings, captions and saved views "
+                                   + "to a file, or restore them. Media files are untouched.")
                         font.family: Theme.fontFamily
                         font.pixelSize: 10
-                        color: root.organizationMessage !== "" ? Theme.red : Theme.mutedText
+                        color: (root.pendingRestorePath !== ""
+                                || (root.organizationMessage !== "" && !root.organizationOk))
+                               ? Theme.red : Theme.mutedText
                     }
                 }
 
                 PillButton {
                     id: backupButton
+                    visible: root.pendingRestorePath === ""
                     anchors.verticalCenter: parent.verticalCenter
                     label: "Back up"
                     onClicked: backupDialog.open()
                 }
                 PillButton {
                     id: restoreButton
+                    visible: root.pendingRestorePath === ""
                     anchors.verticalCenter: parent.verticalCenter
                     label: "Restore"
                     onClicked: restoreDialog.open()
+                }
+                PillButton {
+                    visible: root.pendingRestorePath !== ""
+                    anchors.verticalCenter: parent.verticalCenter
+                    active: true
+                    label: "Replace organization"
+                    onClicked: root.applyPendingRestore()
+                }
+                PillButton {
+                    visible: root.pendingRestorePath !== ""
+                    anchors.verticalCenter: parent.verticalCenter
+                    label: "Cancel"
+                    onClicked: root.pendingRestorePath = ""
                 }
             }
 
@@ -733,6 +773,7 @@ Item {
         nameFilters: ["Omaroll backup (*.json)"]
         onAccepted: {
             const result = Settings.exportOrganization(root.localPath(selectedFile))
+            root.organizationOk = result.ok
             root.organizationMessage = result.message
         }
     }
@@ -743,13 +784,9 @@ Item {
         fileMode: FileDialog.OpenFile
         nameFilters: ["Omaroll backup (*.json)"]
         onAccepted: {
-            const result = Settings.importOrganization(root.localPath(selectedFile))
-            root.organizationMessage = result.message
-            if (result.ok) {
-                Captures.setAlbumFilter("", [])
-                Captures.setTagFilter("", [])
-                Captures.clearSmartCollection()
-            }
+            // Chosen, not applied: the restore waits for confirmation below.
+            root.pendingRestorePath = root.localPath(selectedFile)
+            root.organizationMessage = ""
         }
     }
 

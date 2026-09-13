@@ -702,7 +702,24 @@ bool AppSettings::renameTag(const QString& oldName, const QString& newName) {
   for (auto it = moved.cbegin(); it != moved.cend(); ++it) {
     m_tags.insert(it.key(), it.value());
   }
+  // Saved views hold the tag by name, so a rename has to follow it or the
+  // view reopens onto an empty tag.
+  bool viewsChanged = false;
+  for (auto view = m_smartCollections.begin(); view != m_smartCollections.end(); ++view) {
+    const QString viewTag = view.value().value(QStringLiteral("tag")).toString();
+    if (viewTag == oldName) {
+      view.value().insert(QStringLiteral("tag"), target);
+      viewsChanged = true;
+    } else if (tagIsUnder(viewTag, oldName)) {
+      view.value().insert(QStringLiteral("tag"), target + viewTag.mid(oldName.size()));
+      viewsChanged = true;
+    }
+  }
   persistTags();
+  if (viewsChanged) {
+    persistSmartCollections();
+    emit smartCollectionsChanged();
+  }
   emit tagsChanged();
   return true;
 }
@@ -1022,11 +1039,31 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
              QStringLiteral("This backup needs a newer version of Omaroll")}};
   }
 
+  // Every required member must be present and the right shape. A header-only
+  // or partly damaged file is refused outright rather than read as empty
+  // collections, which would wipe the profile and still report success.
+  const auto memberIs = [&root](const char* key, QJsonValue::Type type) {
+    return root.value(QString::fromLatin1(key)).type() == type;
+  };
+  if (!memberIs("albums", QJsonValue::Object) || !memberIs("tags", QJsonValue::Object) ||
+      !memberIs("favorites", QJsonValue::Array) || !memberIs("hidden", QJsonValue::Array) ||
+      !memberIs("ratings", QJsonValue::Object) || !memberIs("captions", QJsonValue::Object) ||
+      !memberIs("smartCollections", QJsonValue::Object)) {
+    return {{QStringLiteral("ok"), false},
+            {QStringLiteral("message"), QStringLiteral("This backup is incomplete")}};
+  }
+
   // Decode into temporaries. Nothing here mutates state, so a malformed file
-  // cannot leave a half-restored profile behind.
-  const auto decodeEntries = [](const QJsonObject& collections) {
+  // cannot leave a half-restored profile behind. Keys are normalized the way
+  // startup normalizes them, so an imported name survives a restart.
+  const auto decodeEntries = [](const QJsonObject& collections,
+                                QString (*normalize)(const QString&)) {
     QMap<QString, QList<AlbumEntry>> decoded;
     for (auto it = collections.begin(); it != collections.end(); ++it) {
+      const QString name = normalize(it.key());
+      if (name.isEmpty() || !it.value().isArray()) {
+        continue;
+      }
       QList<AlbumEntry> entries;
       for (const QJsonValue& value : it.value().toArray()) {
         const QJsonObject row = value.toObject();
@@ -1043,13 +1080,31 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
         entry.inode = row.value(QStringLiteral("inode")).toString().toULongLong();
         entries.append(entry);
       }
-      decoded.insert(it.key(), entries);
+      if (decoded.contains(name)) {
+        decoded[name].append(entries);
+      } else {
+        decoded.insert(name, entries);
+      }
     }
     return decoded;
   };
 
-  QMap<QString, QList<AlbumEntry>> albums = decodeEntries(root.value(QStringLiteral("albums")).toObject());
-  QMap<QString, QList<AlbumEntry>> tags = decodeEntries(root.value(QStringLiteral("tags")).toObject());
+  QMap<QString, QList<AlbumEntry>> albums =
+      decodeEntries(root.value(QStringLiteral("albums")).toObject(), normalizedAlbumName);
+  QMap<QString, QList<AlbumEntry>> tags =
+      decodeEntries(root.value(QStringLiteral("tags")).toObject(), normalizedTagName);
+  // createTag always fills in a tag's ancestors; an imported tree keeps the
+  // same invariant, or a child would be unreachable in Browse.
+  const QStringList importedTagNames = tags.keys();
+  for (const QString& name : importedTagNames) {
+    const QStringList segments = name.split(QLatin1Char('/'));
+    for (qsizetype depth = 1; depth < segments.size(); ++depth) {
+      const QString ancestor = segments.first(depth).join(QLatin1Char('/'));
+      if (!tags.contains(ancestor)) {
+        tags.insert(ancestor, {});
+      }
+    }
+  }
 
   QSet<QString> favorites;
   for (const QJsonValue& value : root.value(QStringLiteral("favorites")).toArray()) {
@@ -1067,7 +1122,7 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
   const QJsonObject ratingObject = root.value(QStringLiteral("ratings")).toObject();
   for (auto it = ratingObject.begin(); it != ratingObject.end(); ++it) {
     const int stars = it.value().toInt();
-    if (stars >= 1 && stars <= kMaximumRating) {
+    if (!it.key().isEmpty() && stars >= 1 && stars <= kMaximumRating) {
       ratings.insert(it.key(), stars);
     }
   }
@@ -1075,7 +1130,7 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
   const QJsonObject captionObject = root.value(QStringLiteral("captions")).toObject();
   for (auto it = captionObject.begin(); it != captionObject.end(); ++it) {
     const QString text = it.value().toString().left(kMaximumCaptionLength);
-    if (!text.isEmpty()) {
+    if (!it.key().isEmpty() && !text.isEmpty()) {
       captions.insert(it.key(), text);
     }
   }
