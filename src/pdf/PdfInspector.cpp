@@ -76,6 +76,10 @@ bool PdfInspector::available() const {
   return !QStandardPaths::findExecutable(QStringLiteral("pdfinfo")).isEmpty();
 }
 
+bool PdfInspector::textSearchAvailable() const {
+  return PdfSupport::textAvailable();
+}
+
 void PdfInspector::inspect(const QString& path) {
   if (m_path == path && (m_loading || m_pageCount > 0)) {
     return;

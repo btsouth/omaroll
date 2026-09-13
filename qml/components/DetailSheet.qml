@@ -1043,7 +1043,7 @@ Item {
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: 100
                 spacing: 8
-                visible: root.isDocument && PdfInfo.available
+                visible: root.isDocument && PdfInfo.available && PdfInfo.textSearchAvailable
 
                 Rectangle {
                     width: 220

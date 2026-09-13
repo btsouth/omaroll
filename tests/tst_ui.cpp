@@ -28,6 +28,7 @@
 #include "edit/ImageEditor.h"
 #include "pdf/PdfInspector.h"
 #include "pdf/PdfProvider.h"
+#include "pdf/PdfSupport.h"
 #include "search/OcrIndex.h"
 #include "subtitles/SubtitleIndex.h"
 #include "search/QrDetector.h"
@@ -1703,17 +1704,20 @@ private slots:
     QTRY_COMPARE(detail->property("pdfPage").toInt(), 2);
 
     // Text search finds a phrase across pages and the viewer follows the
-    // current match. "e" is in both page texts.
-    QQuickItem* search = item("pdfSearchInput");
-    QVERIFY(search);
-    search->setProperty("text", QStringLiteral("e"));
-    QVERIFY(QMetaObject::invokeMethod(detail, "findInPdf"));
-    QTRY_COMPARE_WITH_TIMEOUT(m_pdfInfo->matchCount(), 2, 8000);
-    QTRY_COMPARE(detail->property("pdfPage").toInt(), 1);
-    QVERIFY(QMetaObject::invokeMethod(detail, "stepPdfMatch", Q_ARG(QVariant, 1)));
-    QTRY_COMPARE(detail->property("pdfPage").toInt(), 2);
-    QVERIFY(QMetaObject::invokeMethod(detail, "stepPdfMatch", Q_ARG(QVariant, 1)));
-    QTRY_COMPARE(detail->property("pdfPage").toInt(), 1);
+    // current match. "e" is in both page texts. Search needs pdftotext, which
+    // is not part of every build environment.
+    if (PdfSupport::textAvailable()) {
+      QQuickItem* search = item("pdfSearchInput");
+      QVERIFY(search);
+      search->setProperty("text", QStringLiteral("e"));
+      QVERIFY(QMetaObject::invokeMethod(detail, "findInPdf"));
+      QTRY_COMPARE_WITH_TIMEOUT(m_pdfInfo->matchCount(), 2, 8000);
+      QTRY_COMPARE(detail->property("pdfPage").toInt(), 1);
+      QVERIFY(QMetaObject::invokeMethod(detail, "stepPdfMatch", Q_ARG(QVariant, 1)));
+      QTRY_COMPARE(detail->property("pdfPage").toInt(), 2);
+      QVERIFY(QMetaObject::invokeMethod(detail, "stepPdfMatch", Q_ARG(QVariant, 1)));
+      QTRY_COMPARE(detail->property("pdfPage").toInt(), 1);
+    }
 
     invoke("dismissTopLayer");
     QVERIFY(QFile::remove(m_pdfPath));
