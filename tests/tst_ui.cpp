@@ -28,6 +28,7 @@
 #include "edit/ImageEditor.h"
 #include "pdf/PdfInspector.h"
 #include "pdf/PdfProvider.h"
+#include "pdf/PdfSupport.h"
 #include "search/OcrIndex.h"
 #include "subtitles/SubtitleIndex.h"
 #include "search/QrDetector.h"
@@ -48,6 +49,7 @@
 #include <QMediaMetaData>
 #include <QPainter>
 #include <QPdfWriter>
+#include <QProcess>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickItem>
@@ -56,6 +58,7 @@
 #include <QSGRendererInterface>
 #include <QScopeGuard>
 #include <QSettings>
+#include <QStandardPaths>
 #include <QStyleHints>
 #include <QTemporaryDir>
 #include <QThreadPool>
@@ -1701,6 +1704,32 @@ private slots:
     QCOMPARE(detail->property("pdfPage").toInt(), 1);
     QTest::keyClick(m_window, Qt::Key_PageDown);
     QTRY_COMPARE(detail->property("pdfPage").toInt(), 2);
+
+    // Search needs pdftotext and a fixture with an extractable text layer. A
+    // headless build image can rasterise the QPdfWriter output without one, so
+    // probe the file first rather than assert on text that is not there.
+    const QString pdftotext = QStandardPaths::findExecutable(QStringLiteral("pdftotext"));
+    QString extractedText;
+    if (!pdftotext.isEmpty()) {
+      QProcess probe;
+      probe.start(pdftotext, {QStringLiteral("-layout"), m_pdfPath, QStringLiteral("-")});
+      if (probe.waitForFinished(10000)) {
+        extractedText = QString::fromUtf8(probe.readAllStandardOutput());
+      }
+    }
+    if (!extractedText.trimmed().isEmpty()) {
+      QQuickItem* search = item("pdfSearchInput");
+      QVERIFY(search);
+      search->setProperty("text", QStringLiteral("e"));
+      QVERIFY(QMetaObject::invokeMethod(detail, "findInPdf"));
+      QTRY_COMPARE_WITH_TIMEOUT(m_pdfInfo->matchCount(), 2, 8000);
+      QTRY_COMPARE(detail->property("pdfPage").toInt(), 1);
+      QVERIFY(QMetaObject::invokeMethod(detail, "stepPdfMatch", Q_ARG(QVariant, 1)));
+      QTRY_COMPARE(detail->property("pdfPage").toInt(), 2);
+      QVERIFY(QMetaObject::invokeMethod(detail, "stepPdfMatch", Q_ARG(QVariant, 1)));
+      QTRY_COMPARE(detail->property("pdfPage").toInt(), 1);
+    }
+
     invoke("dismissTopLayer");
     QVERIFY(QFile::remove(m_pdfPath));
     m_captures->refresh();

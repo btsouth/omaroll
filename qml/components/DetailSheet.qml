@@ -26,6 +26,7 @@ Item {
     onIsVideoChanged: if (isVideo) playerLoader.active = true
     property bool isDocument: false
     property int pdfPage: 1
+    property int pdfMatchIndex: 0
     property double stamp: 0
     property bool favorite: false
     property int rating: 0
@@ -324,6 +325,26 @@ Item {
 
     function seekVideo(milliseconds) {
         player.position = Math.max(0, Math.min(player.duration, player.position + milliseconds))
+    }
+
+    function findInPdf() {
+        PdfInfo.find(pdfSearch.text)
+    }
+
+    function stepPdfMatch(delta) {
+        const matches = PdfInfo.matches
+        if (matches.length === 0) {
+            return
+        }
+        let index = root.pdfMatchIndex + delta
+        if (index < 0) {
+            index = matches.length - 1
+        } else if (index >= matches.length) {
+            index = 0
+        }
+        root.pdfMatchIndex = index
+        root.stillReady = false
+        root.pdfPage = matches[index]
     }
 
     function adjustVolume(amount) {
@@ -999,6 +1020,89 @@ Item {
                 toolTip: "Next"
                 shortcut: root.viewerShortcuts.next.label
                 onClicked: root.requestNavigation(1)
+            }
+
+            // A new result set jumps to its first page.
+            Connections {
+                target: PdfInfo
+                function onMatchesChanged() {
+                    if (PdfInfo.matchCount > 0) {
+                        root.pdfMatchIndex = 0
+                        root.stillReady = false
+                        root.pdfPage = PdfInfo.matches[0]
+                    } else {
+                        root.pdfMatchIndex = 0
+                    }
+                }
+            }
+
+            // PDF text search. Page navigation stays in the row below it.
+            Row {
+                objectName: "pdfSearchRow"
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 100
+                spacing: 8
+                visible: root.isDocument && PdfInfo.available && PdfInfo.textSearchAvailable
+
+                Rectangle {
+                    width: 220
+                    height: 28
+                    radius: Theme.cornerRadius > 0 ? Math.min(4, Theme.cornerRadius) : 3
+                    color: root.shade(Theme.foreground, 0.06)
+                    border.width: 1
+                    border.color: pdfSearch.activeFocus ? root.shade(Theme.accent, 0.65)
+                                                        : root.shade(Theme.foreground, 0.16)
+
+                    TextInput {
+                        id: pdfSearch
+                        objectName: "pdfSearchInput"
+                        anchors.fill: parent
+                        anchors.leftMargin: 8
+                        anchors.rightMargin: 8
+                        verticalAlignment: TextInput.AlignVCenter
+                        clip: true
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 11
+                        color: Theme.foreground
+                        selectionColor: root.shade(Theme.accent, 0.5)
+                        selectedTextColor: Theme.brightForeground
+                        Keys.onReturnPressed: root.findInPdf()
+                        Keys.onEnterPressed: root.findInPdf()
+                    }
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.left: parent.left
+                        anchors.leftMargin: 8
+                        visible: pdfSearch.text === ""
+                        text: "Find in document"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 11
+                        color: root.shade(Theme.foreground, 0.35)
+                    }
+                }
+                PillButton {
+                    label: "Find"
+                    onClicked: root.findInPdf()
+                }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: PdfInfo.matchCount > 0
+                    text: (root.pdfMatchIndex + 1) + " / " + PdfInfo.matchCount
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 11
+                    color: Theme.foreground
+                }
+                PillButton {
+                    visible: PdfInfo.matchCount > 0
+                    label: "Previous match"
+                    onClicked: root.stepPdfMatch(-1)
+                }
+                PillButton {
+                    visible: PdfInfo.matchCount > 0
+                    label: "Next match"
+                    onClicked: root.stepPdfMatch(1)
+                }
             }
 
             Row {

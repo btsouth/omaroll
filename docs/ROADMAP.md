@@ -48,6 +48,8 @@ See [current status and handoff](STATUS.md) for release boundaries and evidence.
   `.vtt` beside the video joins the CC cycle with a language label and renders
   over the video; embedded named tracks keep working.
 - Add PDF text selection, search, page navigation, links and printing.
+  Partial: page navigation and text search (with a match count and jump to
+  each match) are done. Text selection, links and printing remain.
 
 Each phase ships in useful increments. Repository inclusion, installation by
 default and MIME defaults are separate upstream decisions. Image defaults are

@@ -2,13 +2,47 @@
 
 #include <QFileInfo>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QTemporaryDir>
+
+namespace {
+
+QString normalized(const QString& text) {
+  QString out = text;
+  out.replace(QRegularExpression(QStringLiteral("\\s+")), QStringLiteral(" "));
+  return out.trimmed();
+}
+
+} // namespace
 
 namespace PdfSupport {
 
 bool available() {
   return !QStandardPaths::findExecutable(QStringLiteral("pdftoppm")).isEmpty();
+}
+
+bool textAvailable() {
+  return !QStandardPaths::findExecutable(QStringLiteral("pdftotext")).isEmpty();
+}
+
+QList<int> findPages(const QString& documentText, const QString& query) {
+  QList<int> pages;
+  const QString needle = normalized(query).toCaseFolded();
+  if (needle.isEmpty()) {
+    return pages;
+  }
+  const QStringList pageTexts = documentText.split(QChar(0x0C));
+  for (qsizetype index = 0; index < pageTexts.size(); ++index) {
+    const QString& page = pageTexts.at(index);
+    if (page.trimmed().isEmpty()) {
+      continue;
+    }
+    if (normalized(page).toCaseFolded().contains(needle)) {
+      pages.append(static_cast<int>(index) + 1);
+    }
+  }
+  return pages;
 }
 
 QImage renderPage(const QString& path, int page, const QSize& target) {

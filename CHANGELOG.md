@@ -22,6 +22,9 @@
 - External subtitles. A `.srt` or `.vtt` beside a video is offered alongside any
   embedded tracks, labelled by its language tag (movie.en.srt shows as
   English), and drawn over the video as playback reaches each cue.
+- Find text in a PDF. The viewer's PDF controls gain a search box; each match
+  is a page you can step through, with a count, and the page turns as you move
+  between matches.
 
 ### Changed
 
