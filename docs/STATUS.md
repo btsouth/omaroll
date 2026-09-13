@@ -122,6 +122,9 @@ runner and every layer in a draft PR:
 - **SBS-1127 region copy.** The crop editor's Copy region puts the selected
   area, after rotation and flip, on the clipboard through `ClipboardImage`
   without writing a file. Synchronized-zoom comparison is delivered separately.
+- **SBS-1128 orientation and color checks.** Tests cover an EXIF-oriented JPEG,
+  read upright and baked into a correction copy, and an ICC profile surviving a
+  JPEG correction. Transparency and very large images are still to verify.
 
 Remaining after this branch: region copy (SBS-1127 remainder), orientation and
 color verification fixtures (SBS-1128), and the rest of PDF depth (selection,

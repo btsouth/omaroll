@@ -26,6 +26,9 @@ See [current status and handoff](STATUS.md) for release boundaries and evidence.
   and the Compare action (K) shows the selection, or the open file's
   duplicate/similar set, with one shared zoom and pan.
 - Verify orientation, color profiles, transparency and large-image behavior.
+  Partial: tests now cover an EXIF-oriented JPEG being read upright and baked
+  into a correction copy, and an ICC profile surviving one. Transparency and
+  very large images remain.
 
 ## Trustworthy organization
 
