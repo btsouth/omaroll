@@ -34,6 +34,10 @@ public:
   [[nodiscard]] int groupCount() const;
   [[nodiscard]] const QHash<QString, QString>& groups() const { return m_groups; }
 
+  // Every path in this picture's similar set, itself included, sorted. Empty
+  // when it is not part of a set.
+  Q_INVOKABLE [[nodiscard]] QStringList groupPaths(const QString& path) const;
+
   void setActive(bool active);
   Q_INVOKABLE void refresh();
 

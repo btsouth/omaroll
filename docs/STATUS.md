@@ -100,10 +100,13 @@ runner:
   `importOrganization` write and read a versioned JSON snapshot (albums, tags,
   favourites, hidden, ratings, captions, saved views) atomically, validating
   the whole file before any change. Settings gains Back up and Restore.
+- **SBS-1127 comparison.** `CompareSheet.qml` shows the checked selection, or
+  the open picture's exact-duplicate then visually-similar set, side by side
+  with one shared zoom and pan, driven by a new `SimilarityIndex::groupPaths`.
 
-Remaining after this branch: region copy and synchronized-zoom comparison
-(SBS-1127), orientation/color verification fixtures (SBS-1128), recovery of
-marks through external moves (SBS-1131), and the video/PDF depth items.
+Remaining after this branch: region copy (SBS-1127 remainder), orientation and
+color verification fixtures (SBS-1128), recovery of marks through external
+moves (SBS-1131), and the video/PDF depth items.
 
 ## Next decisions and release gates
 

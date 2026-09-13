@@ -2223,6 +2223,10 @@ private slots:
     QVERIFY(proxy.rowOf(recompressed) >= 0);
     QCOMPARE(proxy.rowOf(different), -1);
     QCOMPARE(proxy.gridLabelAt(0), QStringLiteral("Similar set 1 of 1"));
+    // The compare view needs the whole set, itself included, and an unrelated
+    // picture reports none.
+    QCOMPARE(similarities.groupPaths(original), QStringList({original, recompressed}));
+    QVERIFY(similarities.groupPaths(different).isEmpty());
   }
 
   void duplicateSetsStayTogetherAndFollowTheChosenSort() {
@@ -3844,6 +3848,9 @@ private slots:
     QVERIFY(registry.isNative(QStringLiteral("corrections")));
     QVERIFY(registry.appliesTo(QStringLiteral("corrections"), false));
     QVERIFY(!registry.appliesTo(QStringLiteral("corrections"), true));
+    QVERIFY(registry.isNative(QStringLiteral("compare")));
+    QVERIFY(registry.appliesTo(QStringLiteral("compare"), false));
+    QVERIFY(!registry.appliesTo(QStringLiteral("compare"), true));
   }
 
 private:

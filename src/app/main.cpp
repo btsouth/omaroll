@@ -148,8 +148,8 @@ Options:
   --render <file.png>    Render the window to a PNG and exit. Draws offscreen,
                          so no compositor can resize it or overlap it.
   --render-view <view>   Which view to render: grid, detail, video, slideshow,
-                         matte, corrections, export, rename, OCR, duplicates,
-                         browser or settings.
+                         matte, corrections, compare, export, rename, OCR,
+                         duplicates, browser or settings.
   --render-size <WxH>    Window size, from 560x420 to 7680x4320. Default 1280x820.
   --version              Print the version and exit.
   --help                 Show this message.)"
@@ -243,8 +243,9 @@ int main(int argc, char* argv[]) {
   static const QStringList renderViews = {
       QStringLiteral("grid"),       QStringLiteral("detail"),  QStringLiteral("video"),
       QStringLiteral("slideshow"),  QStringLiteral("matte"),   QStringLiteral("corrections"),
-      QStringLiteral("export"),     QStringLiteral("rename"),  QStringLiteral("ocr"),
-      QStringLiteral("duplicates"), QStringLiteral("browser"), QStringLiteral("settings")};
+      QStringLiteral("compare"),    QStringLiteral("export"),  QStringLiteral("rename"),
+      QStringLiteral("ocr"),        QStringLiteral("duplicates"), QStringLiteral("browser"),
+      QStringLiteral("settings")};
   if (!renderView.isEmpty() && !renderViews.contains(renderView)) {
     qWarning().noquote() << "omaroll: unknown render view:" << renderView;
     return 2;

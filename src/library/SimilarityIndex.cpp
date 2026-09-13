@@ -96,6 +96,21 @@ int SimilarityIndex::groupCount() const {
   return QSet<QString>(m_groups.cbegin(), m_groups.cend()).size();
 }
 
+QStringList SimilarityIndex::groupPaths(const QString& path) const {
+  const QString group = m_groups.value(path);
+  if (group.isEmpty()) {
+    return {};
+  }
+  QStringList paths;
+  for (auto it = m_groups.cbegin(); it != m_groups.cend(); ++it) {
+    if (it.value() == group) {
+      paths.append(it.key());
+    }
+  }
+  paths.sort(Qt::CaseSensitive);
+  return paths;
+}
+
 void SimilarityIndex::setActive(bool active) {
   if (m_active == active) {
     return;

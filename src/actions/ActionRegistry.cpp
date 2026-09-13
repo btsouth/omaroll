@@ -168,6 +168,13 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .shortcut = u"Q"_s,
        .media = Still},
 
+      // Native: side-by-side comparison with synchronized zoom. QML gathers
+      // the selection, or the open picture's duplicate/similar set.
+      {.id = u"compare"_s,
+       .label = u"Compare side by side"_s,
+       .shortcut = u"K"_s,
+       .media = Still},
+
       // tensaku-edit, Omarchy's wrapper, saves over the input. Fine for the
       // screenshot it was written for, not for a photo omaroll also offers
       // this on, so the default calls tensaku itself with the wrapper's own

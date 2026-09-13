@@ -21,7 +21,9 @@ See [current status and handoff](STATUS.md) for release boundaries and evidence.
 - Crop, rotate and resize with Save a copy and safe collision handling. Done:
   the viewer's Crop, rotate, resize action writes `<name>-edited.<ext>` beside
   the original, preserving the ICC profile and baking in EXIF orientation.
-- Copy a selected region and compare images with synchronized zoom.
+- Copy a selected region and compare images with synchronized zoom. Compare is
+  done: the Compare action (K) shows the checked selection or the open file's
+  duplicate/similar set with one shared zoom and pan. Region copy remains.
 - Verify orientation, color profiles, transparency and large-image behavior.
 
 ## Trustworthy organization
