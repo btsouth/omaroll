@@ -25,6 +25,8 @@
 - Find text in a PDF. The viewer's PDF controls gain a search box; each match
   is a page you can step through, with a count, and the page turns as you move
   between matches.
+- Copy a PDF page's text to the clipboard, and jump straight to a page by
+  typing its number in the PDF controls.
 
 ### Changed
 

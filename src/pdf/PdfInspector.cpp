@@ -1,5 +1,6 @@
 #include "pdf/PdfInspector.h"
 
+#include "edit/ClipboardText.h"
 #include "pdf/PdfSupport.h"
 
 #include <QFileInfo>
@@ -59,6 +60,26 @@ PdfInspector::PdfInspector(QObject* parent) : QObject(parent) {
             }
             emit matchesChanged();
           });
+
+  m_textTimeout.setSingleShot(true);
+  m_textTimeout.setInterval(20'000);
+  connect(&m_textTimeout, &QTimer::timeout, &m_textProcess, &QProcess::kill);
+  connect(&m_textProcess, &QProcess::finished, this,
+          [this](int exitCode, QProcess::ExitStatus status) {
+            m_textTimeout.stop();
+            if (status != QProcess::NormalExit || exitCode != 0) {
+              emit textCopyFailed(QStringLiteral("Could not read this page"));
+              return;
+            }
+            const QString text = QString::fromUtf8(m_textProcess.readAllStandardOutput()).trimmed();
+            if (text.isEmpty()) {
+              emit textCopyFailed(QStringLiteral("No text on this page"));
+            } else if (!ClipboardText::offer(text)) {
+              emit textCopyFailed(QStringLiteral("The clipboard is not reachable"));
+            } else {
+              emit textCopied(m_textPage);
+            }
+          });
 }
 
 PdfInspector::~PdfInspector() {
@@ -69,6 +90,10 @@ PdfInspector::~PdfInspector() {
   if (m_searchProcess.state() != QProcess::NotRunning) {
     m_searchProcess.kill();
     m_searchProcess.waitForFinished(1000);
+  }
+  if (m_textProcess.state() != QProcess::NotRunning) {
+    m_textProcess.kill();
+    m_textProcess.waitForFinished(1000);
   }
 }
 
@@ -109,6 +134,10 @@ void PdfInspector::clear() {
   if (m_process.state() != QProcess::NotRunning) {
     m_process.kill();
   }
+  m_textTimeout.stop();
+  if (m_textProcess.state() != QProcess::NotRunning) {
+    m_textProcess.kill();
+  }
   clearSearch();
   m_path.clear();
   m_pageCount = 0;
@@ -144,4 +173,21 @@ void PdfInspector::clearSearch() {
     m_matches.clear();
     emit matchesChanged();
   }
+}
+
+void PdfInspector::copyPageText(int page) {
+  if (m_path.isEmpty() || page < 1 || (m_pageCount > 0 && page > m_pageCount) ||
+      !PdfSupport::textAvailable()) {
+    emit textCopyFailed(QStringLiteral("No text to copy"));
+    return;
+  }
+  if (m_textProcess.state() != QProcess::NotRunning) {
+    m_textProcess.kill();
+    m_textProcess.waitForFinished(500);
+  }
+  m_textPage = page;
+  m_textProcess.start(QStandardPaths::findExecutable(QStringLiteral("pdftotext")),
+                      {QStringLiteral("-f"), QString::number(page), QStringLiteral("-l"),
+                       QString::number(page), m_path, QStringLiteral("-")});
+  m_textTimeout.start();
 }

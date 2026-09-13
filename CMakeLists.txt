@@ -49,6 +49,8 @@ add_library(omaroll_core STATIC
   src/edit/ImageEditor.h
   src/edit/ClipboardImage.cpp
   src/edit/ClipboardImage.h
+  src/edit/ClipboardText.cpp
+  src/edit/ClipboardText.h
   src/edit/EditProvider.cpp
   src/edit/EditProvider.h
   src/matte/HueExtractor.cpp

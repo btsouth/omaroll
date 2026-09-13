@@ -1138,6 +1138,38 @@ private slots:
     QVERIFY(PdfSupport::findPages(text, QString()).isEmpty());
   }
 
+  void pdfPageTextCopyReportsAnOutcome() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("page.pdf"));
+    {
+      QPdfWriter writer(path);
+      writer.setResolution(96);
+      QPainter painter(&writer);
+      QVERIFY(painter.isActive());
+      painter.drawText(QPoint(100, 140), QStringLiteral("Hello Omaroll"));
+      painter.end();
+    }
+
+    PdfInspector inspector;
+    inspector.inspect(path);
+    QTRY_COMPARE_WITH_TIMEOUT(inspector.pageCount(), 1, 8000);
+
+    QSignalSpy copied(&inspector, &PdfInspector::textCopied);
+    QSignalSpy failed(&inspector, &PdfInspector::textCopyFailed);
+    inspector.copyPageText(1);
+    // Whether the environment can extract the text or not, exactly one
+    // outcome has to arrive; never both and never neither.
+    QTRY_VERIFY_WITH_TIMEOUT(copied.size() + failed.size() >= 1, 8000);
+    QCOMPARE(copied.size() + failed.size(), 1);
+
+    // Without a document it refuses immediately.
+    PdfInspector empty;
+    QSignalSpy emptyFailed(&empty, &PdfInspector::textCopyFailed);
+    empty.copyPageText(1);
+    QCOMPARE(emptyFailed.size(), 1);
+  }
+
   void addingOverAnUnavailableAlbumEntryReplacesIt() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

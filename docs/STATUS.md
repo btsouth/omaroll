@@ -115,10 +115,11 @@ runner and every layer in a draft PR:
   position; the CC control cycles Off, embedded tracks and sidecars, and the
   cue is drawn over the video. The transport controls were re-anchored, since
   the positioner did not lay out the late-appearing CC button.
-- **SBS-1134 PDF search.** `PdfInspector::find` runs pdftotext and
+- **SBS-1134 PDF work.** `PdfInspector::find` runs pdftotext and
   `PdfSupport::findPages` matches across pages, case- and whitespace-insensitive;
   the viewer gains a find box, a match count and previous/next match that turn
-  the page. Text selection, links and printing remain.
+  the page, a page-number jump, and Copy page text through `ClipboardText`.
+  Range selection, links and printing remain.
 - **SBS-1127 region copy.** The crop editor's Copy region puts the selected
   area, after rotation and flip, on the clipboard through `ClipboardImage`
   without writing a file. Synchronized-zoom comparison is delivered separately.
