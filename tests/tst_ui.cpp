@@ -341,6 +341,31 @@ private slots:
     QTRY_VERIFY(!sheet->isVisible());
   }
 
+  void correctionSheetCopiesTheSelectedRegion() {
+    const QString path = m_scratch.filePath(QStringLiteral("region-disposable.png"));
+    QImage source(80, 60, QImage::Format_RGB32);
+    source.fill(Qt::darkGreen);
+    QVERIFY(source.save(path));
+    const auto cleanup = qScopeGuard([&] {
+      invoke("dismissTopLayer");
+      QFile::remove(path);
+      m_window->resize(1280, 820);
+    });
+
+    QQuickItem* sheet = item("correctionSheet");
+    QSignalSpy copied(sheet, SIGNAL(copied()));
+    perform(QStringLiteral("corrections"), path);
+    QTRY_VERIFY(sheet->isVisible());
+    QTRY_COMPARE(item("correctionPreview")->property("status").toInt(), 1);
+
+    QQuickItem* copyButton = item("correctionCopyRegion");
+    QVERIFY(copyButton);
+    click(copyButton);
+    QTRY_COMPARE_WITH_TIMEOUT(copied.size(), 1, 15000);
+    // Copying does not write a file, so the sheet stays open for another pick.
+    QVERIFY(sheet->isVisible());
+  }
+
   void correctionControlsApplyAndSaveACopy() {
     const QString path = m_scratch.filePath(QStringLiteral("correction-disposable.png"));
     QImage source(80, 60, QImage::Format_RGB32);

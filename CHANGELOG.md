@@ -38,6 +38,8 @@
   atomically; restore validates the whole file before changing anything, so a
   bad or truncated file leaves the current profile intact. Media files are
   never touched.
+- Copy a selected region. In the crop editor, Copy region puts just the cropped
+  area (after any rotation or flip) on the clipboard, without writing a file.
 
 ## 1.6.0
 

@@ -119,6 +119,9 @@ runner and every layer in a draft PR:
   `PdfSupport::findPages` matches across pages, case- and whitespace-insensitive;
   the viewer gains a find box, a match count and previous/next match that turn
   the page. Text selection, links and printing remain.
+- **SBS-1127 region copy.** The crop editor's Copy region puts the selected
+  area, after rotation and flip, on the clipboard through `ClipboardImage`
+  without writing a file. Synchronized-zoom comparison is delivered separately.
 
 Remaining after this branch: region copy (SBS-1127 remainder), orientation and
 color verification fixtures (SBS-1128), and the rest of PDF depth (selection,

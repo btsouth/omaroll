@@ -1310,6 +1310,7 @@ ApplicationWindow {
             root.say("Saved a corrected copy beside the original")
             Library.refresh()
         }
+        onCopied: root.say("Region copied to the clipboard")
         onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
     }
 

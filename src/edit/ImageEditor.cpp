@@ -1,5 +1,7 @@
 #include "edit/ImageEditor.h"
 
+#include "edit/ClipboardImage.h"
+
 #include <QColorSpace>
 #include <QDir>
 #include <QFile>
@@ -255,6 +257,68 @@ void ImageEditor::saveCopy(const QString& path, int quarterTurns, bool flipHoriz
             emit failed(error);
           } else {
             emit saved(output);
+          }
+        },
+        Qt::QueuedConnection);
+  });
+}
+
+void ImageEditor::copyRegion(const QString& path, int quarterTurns, bool flipHorizontal,
+                             bool flipVertical, qreal cropX, qreal cropY, qreal cropWidth,
+                             qreal cropHeight) {
+  if (m_busy) {
+    emit failed(QStringLiteral("Still working on the last correction"));
+    return;
+  }
+  const QFileInfo info(path);
+  if (!info.exists()) {
+    emit failed(QStringLiteral("That file is no longer there"));
+    return;
+  }
+
+  m_busy = true;
+  emit busyChanged();
+
+  const QString source = path;
+  const int turns = quarterTurns;
+  const bool flipH = flipHorizontal;
+  const bool flipV = flipVertical;
+  const qreal cx = cropX;
+  const qreal cy = cropY;
+  const qreal cw = cropWidth;
+  const qreal ch = cropHeight;
+
+  (void)QtConcurrent::run([this, source, turns, flipH, flipV, cx, cy, cw, ch] {
+    QString error;
+    QImage image = readOriented(source);
+    if (image.isNull()) {
+      error = QStringLiteral("Could not read %1").arg(QFileInfo(source).fileName());
+    } else {
+      Transform transform;
+      transform.quarterTurns = turns;
+      transform.flipHorizontal = flipH;
+      transform.flipVertical = flipV;
+      transform.cropX = cx;
+      transform.cropY = cy;
+      transform.cropW = cw;
+      transform.cropH = ch;
+      const QImage region = apply(image, transform);
+      if (region.isNull() || region.width() < 1 || region.height() < 1) {
+        error = QStringLiteral("That selection left nothing to copy");
+      } else if (!ClipboardImage::offer(region)) {
+        error = QStringLiteral("The clipboard is not reachable");
+      }
+    }
+
+    QMetaObject::invokeMethod(
+        this,
+        [this, error] {
+          m_busy = false;
+          emit busyChanged();
+          if (!error.isEmpty()) {
+            emit failed(error);
+          } else {
+            emit copied();
           }
         },
         Qt::QueuedConnection);
