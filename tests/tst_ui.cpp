@@ -24,6 +24,8 @@
 #include "library/SimilarityIndex.h"
 #include "matte/MatteComposer.h"
 #include "matte/MatteProvider.h"
+#include "edit/EditProvider.h"
+#include "edit/ImageEditor.h"
 #include "pdf/PdfInspector.h"
 #include "pdf/PdfProvider.h"
 #include "search/OcrIndex.h"
@@ -148,6 +150,7 @@ private slots:
     m_registry = new ActionRegistry(m_actions, this);
     m_tailscale = new TailscalePeers(this);
     m_matte = new MatteComposer(this);
+    m_imageEditor = new ImageEditor(this);
     m_textIndex = new OcrIndex(m_captures, this);
     m_qr = new QrDetector(m_captures, this);
     connect(m_actions, &ActionLauncher::outputPending, m_captures, &CaptureModel::holdPath);
@@ -176,9 +179,11 @@ private slots:
     m_engine->addImportPath(QStringLiteral(OMAROLL_QML_IMPORT_PATH));
     m_thumbnails = new ThumbnailProvider;
     m_mattes = new MatteProvider;
+    m_edits = new EditProvider;
     m_pdfs = new PdfProvider;
     m_engine->addImageProvider(QLatin1String(ThumbnailProvider::kProviderId), m_thumbnails);
     m_engine->addImageProvider(QLatin1String(MatteProvider::kProviderId), m_mattes);
+    m_engine->addImageProvider(QLatin1String(EditProvider::kProviderId), m_edits);
     m_engine->addImageProvider(QLatin1String(PdfProvider::kProviderId), m_pdfs);
 
     QQmlContext* context = m_engine->rootContext();
@@ -189,6 +194,7 @@ private slots:
     context->setContextProperty(QStringLiteral("Settings"), m_settings);
     context->setContextProperty(QStringLiteral("Registry"), m_registry);
     context->setContextProperty(QStringLiteral("Matte"), m_matte);
+    context->setContextProperty(QStringLiteral("ImageEdit"), m_imageEditor);
     context->setContextProperty(QStringLiteral("TextIndex"), m_textIndex);
     context->setContextProperty(QStringLiteral("Qr"), m_qr);
     context->setContextProperty(QStringLiteral("Duplicates"), m_duplicates);
@@ -218,6 +224,7 @@ private slots:
   void cleanupTestCase() {
     m_thumbnails->shutdown();
     m_mattes->shutdown();
+    m_edits->shutdown();
     m_pdfs->shutdown();
     delete m_engine;
     m_engine = nullptr;
@@ -293,6 +300,65 @@ private slots:
     QVERIFY(!find(item("matteSheet"), [](QQuickItem* child) {
       return child->property("source").toString().startsWith(QStringLiteral("image://matte/"));
     }));
+  }
+
+  void correctionControlsApplyAndSaveACopy() {
+    const QString path = m_scratch.filePath(QStringLiteral("correction-disposable.png"));
+    QImage source(80, 60, QImage::Format_RGB32);
+    source.fill(Qt::red);
+    QVERIFY(source.save(path));
+    const int baselineRows = m_captures->rowCount();
+    const auto cleanup = qScopeGuard([&] {
+      invoke("dismissTopLayer");
+      QFile::remove(path);
+      for (int suffix = 0; suffix < 4; ++suffix) {
+        const QString out = suffix == 0
+                                ? m_scratch.filePath(QStringLiteral("correction-disposable-edited.png"))
+                                : m_scratch.filePath(
+                                      QStringLiteral("correction-disposable-edited-%1.png").arg(suffix + 1));
+        // A tile was built for the saved copy; removing it makes that tile's
+        // thumbnail request fail while it is still on screen.
+        m_disposablePaths.append(out);
+        QFile::remove(out);
+      }
+      // The saved copy joined the shared library model. Drop it again before
+      // the next test, or pathAt(0) hands it a file that no longer exists.
+      QMetaObject::invokeMethod(m_captures, "refresh");
+      for (int waited = 0; waited < 50 && m_captures->rowCount() > baselineRows; ++waited) {
+        QTest::qWait(100);
+      }
+      m_window->resize(1280, 820);
+    });
+
+    QQuickItem* sheet = item("correctionSheet");
+    perform(QStringLiteral("corrections"), path);
+    QTRY_VERIFY(sheet->isVisible());
+    QTRY_COMPARE(item("correctionPreview")->property("status").toInt(), 1);
+
+    QCOMPARE(sheet->property("quarterTurns").toInt(), 0);
+    click(pill(sheet, QStringLiteral("Rotate right")));
+    QCOMPARE(sheet->property("quarterTurns").toInt(), 1);
+    QVERIFY(sheet->isVisible());
+
+    click(pill(sheet, QStringLiteral("Flip H")));
+    QVERIFY(sheet->property("flipHorizontal").toBool());
+    QVERIFY(sheet->isVisible());
+
+    click(pill(sheet, QStringLiteral("50%")));
+    QVERIFY(sheet->property("targetWidth").toInt() > 0);
+
+    QQuickItem* save = item("correctionSave");
+    QVERIFY(save);
+    click(save);
+    QTRY_VERIFY_WITH_TIMEOUT(!sheet->isVisible(), 15000);
+
+    const QString output = m_scratch.filePath(QStringLiteral("correction-disposable-edited.png"));
+    QVERIFY2(QFileInfo::exists(output), qPrintable(output));
+    QVERIFY(QFileInfo::exists(path));
+    const QImage copy(output);
+    QVERIFY(!copy.isNull());
+    // Rotated from 80x60 to 60x80, then scaled to half: 30x40.
+    QCOMPARE(copy.size(), QSize(30, 40));
   }
 
   void rightClickOnASheetStaysOnTheSheet() {
@@ -2296,6 +2362,7 @@ private:
   ActionRegistry* m_registry = nullptr;
   TailscalePeers* m_tailscale = nullptr;
   MatteComposer* m_matte = nullptr;
+  ImageEditor* m_imageEditor = nullptr;
   OcrIndex* m_textIndex = nullptr;
   QrDetector* m_qr = nullptr;
   DuplicateIndex* m_duplicates = nullptr;
@@ -2305,6 +2372,7 @@ private:
   MediaMetadataIndex* m_mediaMetadata = nullptr;
   ThumbnailProvider* m_thumbnails = nullptr;
   MatteProvider* m_mattes = nullptr;
+  EditProvider* m_edits = nullptr;
   PdfProvider* m_pdfs = nullptr;
   QQmlApplicationEngine* m_engine = nullptr;
   QQuickWindow* m_window = nullptr;

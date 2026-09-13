@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Crop, rotate, flip and resize a picture as a copy. The viewer's action list
+  gains Crop, rotate, resize (Q): a live preview with a draggable crop frame,
+  quarter turns and flips, and an optional output size. The original is never
+  modified; the copy is written beside it as `<name>-edited.<ext>`, numbered on
+  repeat. EXIF orientation is baked in, the ICC profile is kept, and collision
+  or write failures leave the original untouched.
+- Rename an album or a tag without losing its membership. Renaming a tag also
+  renames every tag nested under it (Travel/Japan follows Travel). A name that
+  clashes with an existing collection is refused.
+- Back up and restore the organization as a versioned JSON file: albums, tags,
+  favourites, hidden files, ratings, captions and saved views. Export writes
+  atomically; restore validates the whole file before changing anything, so a
+  bad or truncated file leaves the current profile intact. Media files are
+  never touched.
+
 ## 1.6.0
 
 ### Added

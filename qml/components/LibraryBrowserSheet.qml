@@ -60,6 +60,7 @@ FocusScope {
     signal createAlbumRequested()
     signal createTagRequested()
     signal saveSmartCollectionRequested()
+    signal renameCollectionRequested(string mode, string name)
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
@@ -265,6 +266,16 @@ FocusScope {
         else Settings.deleteSmartCollection(name)
         folderMessage = "Deleted " + name
         Qt.callLater(syncCurrentChoice)
+    }
+
+    function renameCurrentChoice() {
+        const index = choices.currentIndex
+        if (index < 0 || index >= choices.count || (root.section !== 1 && root.section !== 3)) {
+            return
+        }
+        const name = String(choices.model[index])
+        root.close()
+        root.renameCollectionRequested(root.section === 1 ? "album" : "tag", name)
     }
 
     visible: false
@@ -531,6 +542,14 @@ FocusScope {
                     visible: root.section === 4
                     label: "+ Save view"
                     onClicked: { root.close(); root.saveSmartCollectionRequested() }
+                }
+                PillButton {
+                    visible: (root.section === 1 || root.section === 3) && choices.currentIndex >= 0
+                    label: "Rename selected"
+                    toolTip: root.section === 3
+                             ? "Rename this tag and any tags nested under it."
+                             : "Rename this album. Its membership is kept."
+                    onClicked: root.renameCurrentChoice()
                 }
                 PillButton {
                     visible: (root.section === 1 || root.section === 3 || root.section === 4)

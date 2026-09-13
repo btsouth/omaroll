@@ -12,9 +12,16 @@ Item {
     signal createAlbumRequested()
     property string folderMessage: ""
     property string textCacheMessage: ""
+    property string organizationMessage: ""
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
+    }
+
+    // FileDialog hands back a file:// url; the C++ side wants a plain path.
+    function localPath(url) {
+        const text = String(url)
+        return text.indexOf("file://") === 0 ? decodeURIComponent(text.substring(7)) : text
     }
 
     function nextValue(values, current) {
@@ -34,6 +41,7 @@ Item {
     function open() {
         folderMessage = ""
         textCacheMessage = ""
+        organizationMessage = ""
         visible = true
         forceActiveFocus()
     }
@@ -639,6 +647,52 @@ Item {
                 color: root.shade(Theme.foreground, 0.12)
             }
 
+            Rectangle {
+                width: parent.width
+                height: 1
+                color: root.shade(Theme.foreground, 0.12)
+            }
+
+            Row {
+                width: parent.width
+                spacing: 12
+
+                Column {
+                    width: parent.width - backupButton.width - restoreButton.width - 24
+                    spacing: 2
+
+                    Text {
+                        text: "Back up and restore"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 12
+                        color: Theme.foreground
+                    }
+                    Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        text: root.organizationMessage !== "" ? root.organizationMessage
+                              : "Save albums, tags, ratings, captions and saved views "
+                                + "to a file, or restore them. Media files are untouched."
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 10
+                        color: root.organizationMessage !== "" ? Theme.red : Theme.mutedText
+                    }
+                }
+
+                PillButton {
+                    id: backupButton
+                    anchors.verticalCenter: parent.verticalCenter
+                    label: "Back up"
+                    onClicked: backupDialog.open()
+                }
+                PillButton {
+                    id: restoreButton
+                    anchors.verticalCenter: parent.verticalCenter
+                    label: "Restore"
+                    onClicked: restoreDialog.open()
+                }
+            }
+
             Row {
                 anchors.right: parent.right
                 spacing: 8
@@ -668,6 +722,34 @@ Item {
             root.folderMessage = Settings.addLibraryFolder(selectedFolder)
                                  ? "Folder added"
                                  : "That folder is already added, unavailable, or is your home folder"
+        }
+    }
+
+    FileDialog {
+        id: backupDialog
+        title: "Back up Omaroll organization"
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "json"
+        nameFilters: ["Omaroll backup (*.json)"]
+        onAccepted: {
+            const result = Settings.exportOrganization(root.localPath(selectedFile))
+            root.organizationMessage = result.message
+        }
+    }
+
+    FileDialog {
+        id: restoreDialog
+        title: "Restore Omaroll organization"
+        fileMode: FileDialog.OpenFile
+        nameFilters: ["Omaroll backup (*.json)"]
+        onAccepted: {
+            const result = Settings.importOrganization(root.localPath(selectedFile))
+            root.organizationMessage = result.message
+            if (result.ok) {
+                Captures.setAlbumFilter("", [])
+                Captures.setTagFilter("", [])
+                Captures.clearSmartCollection()
+            }
         }
     }
 
