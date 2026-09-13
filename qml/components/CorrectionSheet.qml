@@ -42,6 +42,7 @@ Item {
         : ""
 
     signal saved(string outputPath)
+    signal copied()
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
@@ -114,6 +115,15 @@ Item {
                            root.targetWidth, root.targetHeight)
     }
 
+    function copyRegion() {
+        if (preview.status !== Image.Ready || saving) {
+            return
+        }
+        errorText = ""
+        ImageEdit.copyRegion(root.path, root.quarterTurns, root.flipHorizontal,
+                             root.flipVertical, root.cropX, root.cropY, root.cropW, root.cropH)
+    }
+
     visible: false
     anchors.fill: parent
     focus: visible
@@ -124,6 +134,9 @@ Item {
             root.saving = false
             root.saved(outputPath)
             root.close()
+        }
+        function onCopied() {
+            root.copied()
         }
         function onFailed(message) {
             root.saving = false
@@ -577,6 +590,13 @@ Item {
             PillButton {
                 label: "Cancel"
                 onClicked: root.close()
+            }
+            PillButton {
+                objectName: "correctionCopyRegion"
+                label: "Copy region"
+                toolTip: "Copy the cropped region to the clipboard"
+                active: !root.saving && preview.status === Image.Ready
+                onClicked: root.copyRegion()
             }
             PillButton {
                 objectName: "correctionSave"

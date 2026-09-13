@@ -47,6 +47,8 @@ add_library(omaroll_core STATIC
   src/actions/TailscalePeers.h
   src/edit/ImageEditor.cpp
   src/edit/ImageEditor.h
+  src/edit/ClipboardImage.cpp
+  src/edit/ClipboardImage.h
   src/edit/EditProvider.cpp
   src/edit/EditProvider.h
   src/matte/HueExtractor.cpp

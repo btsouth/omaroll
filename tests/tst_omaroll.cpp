@@ -4055,6 +4055,25 @@ private slots:
     QCOMPARE(editor.orientedSize(dir.filePath(QStringLiteral("missing.png"))), QSize());
   }
 
+  void correctionsCopyARegionToTheClipboard() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(QStringLiteral("region.png"));
+    QVERIFY(QImage(64, 48, QImage::Format_RGB32).save(source, "PNG"));
+
+    ImageEditor editor;
+    QSignalSpy copied(&editor, &ImageEditor::copied);
+    QSignalSpy failed(&editor, &ImageEditor::failed);
+    // A quarter of the image: it has to come back without error.
+    editor.copyRegion(source, 0, false, false, 0.5, 0.5, 0.5, 0.5);
+    QTRY_COMPARE_WITH_TIMEOUT(copied.size(), 1, 15000);
+    QCOMPARE(failed.size(), 0);
+
+    editor.copyRegion(dir.filePath(QStringLiteral("missing.png")), 0, false, false, 0, 0, 1, 1);
+    QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 5000);
+    QVERIFY(!failed.first().first().toString().isEmpty());
+  }
+
   void correctionsActionIsNativeAndForStills() {
     ActionLauncher launcher;
     ActionRegistry registry(&launcher);

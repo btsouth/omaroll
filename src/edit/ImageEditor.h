@@ -68,6 +68,12 @@ public:
                             bool flipVertical, qreal cropX, qreal cropY, qreal cropWidth,
                             qreal cropHeight, int targetWidth, int targetHeight);
 
+  // Copies the selected region (same pipeline, no resize) to the clipboard.
+  // Emits copied() or failed(). Nothing is written to disk.
+  Q_INVOKABLE void copyRegion(const QString& path, int quarterTurns, bool flipHorizontal,
+                              bool flipVertical, qreal cropX, qreal cropY, qreal cropWidth,
+                              qreal cropHeight);
+
   // The pure pipeline, shared with the preview provider and unit tests.
   [[nodiscard]] static QImage apply(const QImage& source, const Transform& transform);
 
@@ -79,6 +85,7 @@ public:
 
 signals:
   void saved(const QString& outputPath);
+  void copied();
   void failed(const QString& message);
   void busyChanged();
 
