@@ -49,6 +49,7 @@
 #include <QMediaMetaData>
 #include <QPainter>
 #include <QPdfWriter>
+#include <QProcess>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickItem>
@@ -57,6 +58,7 @@
 #include <QSGRendererInterface>
 #include <QScopeGuard>
 #include <QSettings>
+#include <QStandardPaths>
 #include <QStyleHints>
 #include <QTemporaryDir>
 #include <QThreadPool>
@@ -1703,10 +1705,19 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_PageDown);
     QTRY_COMPARE(detail->property("pdfPage").toInt(), 2);
 
-    // Text search finds a phrase across pages and the viewer follows the
-    // current match. "e" is in both page texts. Search needs pdftotext, which
-    // is not part of every build environment.
-    if (PdfSupport::textAvailable()) {
+    // Search needs pdftotext and a fixture with an extractable text layer. A
+    // headless build image can rasterise the QPdfWriter output without one, so
+    // probe the file first rather than assert on text that is not there.
+    const QString pdftotext = QStandardPaths::findExecutable(QStringLiteral("pdftotext"));
+    QString extractedText;
+    if (!pdftotext.isEmpty()) {
+      QProcess probe;
+      probe.start(pdftotext, {QStringLiteral("-layout"), m_pdfPath, QStringLiteral("-")});
+      if (probe.waitForFinished(10000)) {
+        extractedText = QString::fromUtf8(probe.readAllStandardOutput());
+      }
+    }
+    if (!extractedText.trimmed().isEmpty()) {
       QQuickItem* search = item("pdfSearchInput");
       QVERIFY(search);
       search->setProperty("text", QStringLiteral("e"));
