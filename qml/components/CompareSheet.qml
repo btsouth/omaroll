@@ -177,7 +177,14 @@ Item {
                             mipmap: true
                             scale: root.zoom
                             transformOrigin: Item.Center
-                            transform: Translate { x: root.panX; y: root.panY }
+                            // The transform list is applied before scale, so
+                            // divide by zoom to keep the pan in screen pixels
+                            // and make the picture follow the pointer 1:1 at
+                            // every zoom level.
+                            transform: Translate {
+                                x: root.panX / root.zoom
+                                y: root.panY / root.zoom
+                            }
                         }
 
                         Text {
