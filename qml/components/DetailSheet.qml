@@ -67,8 +67,15 @@ Item {
     readonly property real playbackPosition: player ? player.position : 0
     readonly property int playbackState: player ? player.playbackState : MediaPlayer.StoppedState
     readonly property real playbackRate: player ? player.playbackRate : 1
-    readonly property real playbackVolume: audio ? audio.volume : 0.8
-    readonly property bool playbackMuted: audio ? audio.muted : false
+    readonly property real playbackVolume: audio ? audio.volume : Settings.videoVolume
+    readonly property bool playbackMuted: audio ? audio.muted : Settings.videoMuted
+    // A saved spot offered when a video is reopened; the marker is taken as
+    // soon as the media is loaded.
+    property bool resumeAvailable: false
+    property real resumePosition: 0
+    // Set when a video is opened, so the resume spot is offered once and not
+    // again by the reload a seek causes.
+    property bool resumePending: false
     readonly property int playbackLoops: player ? player.loops : 1
     readonly property bool isAnimatedImage: !root.isVideo && !root.isDocument
                                              && (root.fileName.toLowerCase().endsWith(".gif")
@@ -218,6 +225,9 @@ Item {
 
     function open() {
         videoPausedForRender = false
+        resumeAvailable = false
+        resumePosition = 0
+        resumePending = true
         const keepActionFocus = visible && actionNavigationActive
         const previousActionId = focusedActionId
         playbackError = ""
@@ -293,10 +303,31 @@ Item {
     }
 
     function adjustVolume(amount) {
-        audio.volume = Math.max(0, Math.min(1, audio.volume + amount))
-        if (audio.volume > 0) {
-            audio.muted = false
+        const next = Math.max(0, Math.min(1, Settings.videoVolume + amount))
+        Settings.videoVolume = next
+        if (next > 0) {
+            Settings.videoMuted = false
         }
+    }
+
+    function resumeVideo() {
+        if (!player) {
+            return
+        }
+        const end = player.duration > 0 ? player.duration - 1 : root.resumePosition
+        player.position = Math.max(0, Math.min(root.resumePosition, end))
+        player.play()
+        resumeAvailable = false
+    }
+
+    function restartVideo() {
+        if (!player) {
+            return
+        }
+        player.position = 0
+        Settings.clearVideoPosition(root.path)
+        player.play()
+        resumeAvailable = false
     }
 
     function adjustPlaybackRate(amount) {
@@ -717,8 +748,8 @@ Item {
                                 ? Library.fileUrl(root.path) : ""
                         videoOutput: videoSurface.item
                         audioOutput: AudioOutput {
-                            volume: 0.8
-                            muted: false
+                            volume: Settings.videoVolume
+                            muted: Settings.videoMuted
                         }
                         loops: 1
                         onSourceChanged: {
@@ -740,7 +771,25 @@ Item {
                                 pause()
                             }
                         }
+                        // Remember the spot when the user pauses; the timer
+                        // covers long uninterrupted playback.
+                        onPlaybackStateChanged: {
+                            if (playbackState === MediaPlayer.PausedState && duration > 0
+                                    && position >= 5000 && position < duration - 3000) {
+                                Settings.setVideoPosition(root.path, Math.round(position))
+                            }
+                        }
                         onMediaStatusChanged: {
+                            if (mediaStatus === MediaPlayer.LoadedMedia && root.isVideo
+                                    && root.resumePending && !root.slideshowRunning) {
+                                root.resumePending = false
+                                const saved = Settings.videoPosition(root.path)
+                                if (saved >= 5000 && (duration <= 0 || saved < duration - 3000)) {
+                                    root.resumePosition = saved
+                                    root.resumeAvailable = true
+                                    pause()
+                                }
+                            }
                             if (mediaStatus !== MediaPlayer.EndOfMedia) {
                                 return
                             }
@@ -754,7 +803,26 @@ Item {
                             // picture stays and the play button means replay.
                             pause()
                             position = 0
+                            Settings.clearVideoPosition(root.path)
+                            root.resumeAvailable = false
+                            root.resumePending = false
                         }
+                    }
+                }
+            }
+
+            // Periodically records the playback spot, so a long clip is still
+            // resumable if the window is closed without pausing first.
+            Timer {
+                id: resumeTimer
+                interval: 5000
+                repeat: true
+                running: root.visible && root.isVideo && player !== null
+                         && player.playbackState === MediaPlayer.PlayingState
+                onTriggered: {
+                    if (player.duration > 0 && player.position >= 5000
+                            && player.position < player.duration - 3000) {
+                        Settings.setVideoPosition(root.path, Math.round(player.position))
                     }
                 }
             }
@@ -1041,6 +1109,29 @@ Item {
                 }
             }
 
+            // A saved spot is offered, not applied: the viewer stays on the
+            // first frame until the user chooses to resume.
+            Row {
+                id: resumePrompt
+                objectName: "resumePrompt"
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: transport.top
+                anchors.bottomMargin: 14
+                spacing: 8
+                visible: root.isVideo && root.resumeAvailable && !root.slideshowRunning
+
+                PillButton {
+                    objectName: "resumeButton"
+                    label: "Resume " + transport.clock(root.resumePosition)
+                    active: true
+                    onClicked: root.resumeVideo()
+                }
+                PillButton {
+                    label: "Start over"
+                    onClicked: root.restartVideo()
+                }
+            }
+
             // Transport: play/pause, scrub, clock, tracks, speed, and sound.
             Item {
                 id: transport
@@ -1174,7 +1265,7 @@ Item {
                         toolTip: root.playbackMuted ? "Unmute" : "Mute"
                         shortcut: "M"
                         active: !root.playbackMuted
-                        onClicked: audio.muted = !audio.muted
+                        onClicked: Settings.videoMuted = !Settings.videoMuted
                     }
                 }
             }
@@ -1692,7 +1783,7 @@ Item {
             return
         }
         if (root.isVideo && event.key === Qt.Key_M) {
-            audio.muted = !audio.muted
+            Settings.videoMuted = !Settings.videoMuted
             event.accepted = true
             return
         }

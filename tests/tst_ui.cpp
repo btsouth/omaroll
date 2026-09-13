@@ -244,6 +244,15 @@ private slots:
     item("library")->setProperty("currentIndex", 0);
     item("library")->forceActiveFocus();
     QTRY_VERIFY(item("library")->hasActiveFocus());
+    // Playback preferences and resume spots persist, so a test that mutes or
+    // seeks would otherwise change the next test's starting state.
+    m_settings->setVideoVolume(0.8);
+    m_settings->setVideoMuted(false);
+    for (int row = 0; row < m_library->rowCount(); ++row) {
+      if (m_library->isVideoAt(row)) {
+        m_settings->clearVideoPosition(m_library->pathAt(row));
+      }
+    }
   }
 
   void matteControlsKeepTheSheetOpen() {
