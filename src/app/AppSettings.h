@@ -115,6 +115,12 @@ public:
   Q_INVOKABLE void removeTag(const QString& name, const QStringList& paths);
   void reconcileTags(const QList<CaptureRecord>& records);
 
+  // Repoints favourites, hidden, ratings and captions when their file was
+  // moved or renamed outside Omaroll, matching the same inode/device size or
+  // content fingerprint that albums and tags already use. Runs before dead
+  // marks are forgotten, so a moved file keeps everything.
+  void reconcileMarks(const QList<CaptureRecord>& records);
+
   [[nodiscard]] QStringList smartCollectionNames() const;
   Q_INVOKABLE [[nodiscard]] QVariantMap smartCollection(const QString& name) const;
   Q_INVOKABLE bool saveSmartCollection(const QString& name, const QVariantMap& view);
@@ -198,6 +204,11 @@ private:
   void persistAlbums();
   void persistTags();
   void persistSmartCollections();
+  void persistMarkIdentities();
+  // Records (or forgets) the on-disk identity behind a path's marks, so the
+  // mark can be found again after an external move.
+  void refreshMarkIdentity(const QString& path);
+  [[nodiscard]] bool pathHasMark(const QString& path) const;
   bool reconcileCollectionMap(QMap<QString, QList<AlbumEntry>>& collections,
                               const QList<CaptureRecord>& records);
   [[nodiscard]] static AlbumEntry identityFor(const QString& path);
@@ -207,6 +218,9 @@ private:
   QSet<QString> m_hidden;
   QHash<QString, int> m_ratings;
   QHash<QString, QString> m_captions;
+  // Identity of marked files, keyed by their path, for move recovery. Only
+  // paths with at least one mark are kept.
+  QHash<QString, AlbumEntry> m_markIdentities;
 
   bool m_showHidden = false;
   int m_sortMode = 0;

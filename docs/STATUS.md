@@ -103,10 +103,13 @@ runner:
 - **SBS-1127 comparison.** `CompareSheet.qml` shows the checked selection, or
   the open picture's exact-duplicate then visually-similar set, side by side
   with one shared zoom and pan, driven by a new `SimilarityIndex::groupPaths`.
+- **SBS-1131 marks recovery.** Favourites, hidden flags, ratings and captions
+  now store the file's identity when marked and follow an external move or
+  rename through `AppSettings::reconcileMarks`, which runs before the dead-path
+  sweep. Albums and tags already had this; marks did not.
 
 Remaining after this branch: region copy (SBS-1127 remainder), orientation and
-color verification fixtures (SBS-1128), recovery of marks through external
-moves (SBS-1131), and the video/PDF depth items.
+color verification fixtures (SBS-1128), and the video/PDF depth items.
 
 ## Next decisions and release gates
 

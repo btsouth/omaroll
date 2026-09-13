@@ -34,6 +34,9 @@ See [current status and handoff](STATUS.md) for release boundaries and evidence.
 - Rename albums and tags without losing membership. Done: renaming moves the
   membership with the name, and a nested tag rename carries its children.
 - Recover predictably from disconnected drives and changed file locations.
+  Partial: favourites, hidden flags, ratings and captions now follow an
+  external move or rename by inode or content fingerprint, matching what
+  albums and tags already did.
 - Make organization changes reversible and duplicate review easier.
 
 ## Video and PDF depth

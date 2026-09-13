@@ -886,6 +886,110 @@ private slots:
     settings.deleteTag(QStringLiteral("Travel"));
   }
 
+  void marksFollowAFileMovedOutsideOmaroll() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString original = dir.filePath(QStringLiteral("moved.png"));
+    QImage image(40, 30, QImage::Format_RGB32);
+    image.fill(Qt::cyan);
+    QVERIFY(image.save(original, "PNG"));
+
+    AppSettings settings;
+    settings.setFavorite({original}, true);
+    settings.setRating({original}, 5);
+    settings.setCaption(original, QStringLiteral("Keep me"));
+    settings.setHidden({original}, true);
+    QVERIFY(settings.isFavorite(original));
+
+    // Renamed outside the app. The inode is unchanged, so the identity match
+    // finds it and every mark follows.
+    const QString renamed = dir.filePath(QStringLiteral("moved-renamed.png"));
+    QVERIFY(QFile::rename(original, renamed));
+    CaptureRecord renamedRecord;
+    renamedRecord.path = renamed;
+    renamedRecord.bytes = QFileInfo(renamed).size();
+    renamedRecord.modified = QFileInfo(renamed).lastModified().toMSecsSinceEpoch();
+    settings.reconcileMarks({renamedRecord});
+
+    QVERIFY(!settings.isFavorite(original));
+    QVERIFY(settings.isFavorite(renamed));
+    QVERIFY(settings.isHidden(renamed));
+    QCOMPARE(settings.rating(renamed), 5);
+    QCOMPARE(settings.caption(renamed), QStringLiteral("Keep me"));
+
+    // A copy to a new inode with the original removed is the cross-filesystem
+    // move: same size, new inode, so the content fingerprint has to match.
+    const QString copied = dir.filePath(QStringLiteral("moved-copied.png"));
+    QVERIFY(QFile::copy(renamed, copied));
+    QVERIFY(QFile::remove(renamed));
+    CaptureRecord copiedRecord;
+    copiedRecord.path = copied;
+    copiedRecord.bytes = QFileInfo(copied).size();
+    copiedRecord.modified = QFileInfo(copied).lastModified().toMSecsSinceEpoch();
+    settings.reconcileMarks({copiedRecord});
+
+    QVERIFY(settings.isFavorite(copied));
+    QCOMPARE(settings.rating(copied), 5);
+    QCOMPARE(settings.caption(copied), QStringLiteral("Keep me"));
+
+    // The recovery survives a reload.
+    AppSettings reloaded;
+    QVERIFY(reloaded.isFavorite(copied));
+    QVERIFY(reloaded.isHidden(copied));
+    QCOMPARE(reloaded.rating(copied), 5);
+
+    // An equal-sized but different file must not steal the mark. Two
+    // uncompressed BMPs of the same dimensions are byte-for-byte the same
+    // length, so only the content fingerprint can tell them apart.
+    QImage other(40, 30, QImage::Format_RGB32);
+    other.fill(Qt::magenta);
+    const QString bmpA = dir.filePath(QStringLiteral("same-size-a.bmp"));
+    const QString bmpB = dir.filePath(QStringLiteral("same-size-b.bmp"));
+    QVERIFY(QImage(40, 30, QImage::Format_RGB32).save(bmpA, "BMP"));
+    QVERIFY(other.save(bmpB, "BMP"));
+    QCOMPARE(QFileInfo(bmpA).size(), QFileInfo(bmpB).size());
+    settings.setFavorite({bmpA}, true);
+    QVERIFY(QFile::remove(bmpA));
+    CaptureRecord decoyRecord;
+    decoyRecord.path = bmpB;
+    decoyRecord.bytes = QFileInfo(bmpB).size();
+    decoyRecord.modified = QFileInfo(bmpB).lastModified().toMSecsSinceEpoch();
+    settings.reconcileMarks({decoyRecord});
+    QVERIFY(!settings.isFavorite(bmpB));
+    QVERIFY(settings.isFavorite(copied));
+
+    settings.setFavorite({copied}, false);
+    settings.setRating({copied}, 0);
+    settings.setCaption(copied, QString());
+    settings.setHidden({copied}, false);
+    settings.setFavorite({bmpA, bmpB}, false);
+  }
+
+  void marksFollowAnExternalMoveThroughAScan() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    for (const char* name : {"OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR",
+                             "XDG_PICTURES_DIR", "XDG_VIDEOS_DIR"}) {
+      QVERIFY(qputenv(name, dir.path().toUtf8()));
+    }
+    const QString original = dir.filePath(QStringLiteral("scan-moved.png"));
+    QVERIFY(QImage(48, 32, QImage::Format_RGB32).save(original, "PNG"));
+
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QTRY_VERIFY_WITH_TIMEOUT(model.rowCount() >= 1, 5000);
+    settings.setFavorite({original}, true);
+
+    const QString moved = dir.filePath(QStringLiteral("scan-moved-again.png"));
+    QVERIFY(QFile::rename(original, moved));
+    model.refresh();
+    // The scan's reconcile step, not the caller, has to carry the mark.
+    QTRY_VERIFY_WITH_TIMEOUT(settings.isFavorite(moved), 5000);
+    QVERIFY(!settings.isFavorite(original));
+    settings.setFavorite({moved}, false);
+  }
+
   void addingOverAnUnavailableAlbumEntryReplacesIt() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
