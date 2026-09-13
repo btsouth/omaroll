@@ -4165,6 +4165,8 @@ private slots:
     const QImage result(saved.first().first().toString());
     QVERIFY(!result.isNull());
     QVERIFY2(result.colorSpace().isValid(), "the copy lost its colour profile");
+    // Not just valid: the same profile, so a swap to sRGB would fail too.
+    QCOMPARE(result.colorSpace(), space);
   }
 
   void correctionsCopyARegionToTheClipboard() {
