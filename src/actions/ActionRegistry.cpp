@@ -160,6 +160,14 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .media = Still,
        .primary = true},
 
+      // Native: a quick, non-destructive correction saved as a copy beside the
+      // original. Nothing on Omarchy offers crop/rotate/resize without opening
+      // a full editor over the file.
+      {.id = u"corrections"_s,
+       .label = u"Crop, rotate, resize"_s,
+       .shortcut = u"Q"_s,
+       .media = Still},
+
       // tensaku-edit, Omarchy's wrapper, saves over the input. Fine for the
       // screenshot it was written for, not for a photo omaroll also offers
       // this on, so the default calls tensaku itself with the wrapper's own

@@ -13,6 +13,8 @@
 #include "library/MediaMetadataIndex.h"
 #include "library/MediaInspector.h"
 #include "library/SimilarityIndex.h"
+#include "edit/EditProvider.h"
+#include "edit/ImageEditor.h"
 #include "matte/MatteComposer.h"
 #include "matte/MatteProvider.h"
 #include "pdf/PdfInspector.h"
@@ -146,7 +148,8 @@ Options:
   --render <file.png>    Render the window to a PNG and exit. Draws offscreen,
                          so no compositor can resize it or overlap it.
   --render-view <view>   Which view to render: grid, detail, video, slideshow,
-                         matte, export, rename, OCR, duplicates, browser or settings.
+                         matte, corrections, export, rename, OCR, duplicates,
+                         browser or settings.
   --render-size <WxH>    Window size, from 560x420 to 7680x4320. Default 1280x820.
   --version              Print the version and exit.
   --help                 Show this message.)"
@@ -238,10 +241,10 @@ int main(int argc, char* argv[]) {
   }
   const QString renderView = optionValue(arguments, QStringLiteral("--render-view"));
   static const QStringList renderViews = {
-      QStringLiteral("grid"),      QStringLiteral("detail"),  QStringLiteral("video"),
-      QStringLiteral("slideshow"), QStringLiteral("matte"),   QStringLiteral("export"),
-      QStringLiteral("rename"),    QStringLiteral("ocr"),     QStringLiteral("duplicates"),
-      QStringLiteral("browser"),   QStringLiteral("settings")};
+      QStringLiteral("grid"),       QStringLiteral("detail"),  QStringLiteral("video"),
+      QStringLiteral("slideshow"),  QStringLiteral("matte"),   QStringLiteral("corrections"),
+      QStringLiteral("export"),     QStringLiteral("rename"),  QStringLiteral("ocr"),
+      QStringLiteral("duplicates"), QStringLiteral("browser"), QStringLiteral("settings")};
   if (!renderView.isEmpty() && !renderViews.contains(renderView)) {
     qWarning().noquote() << "omaroll: unknown render view:" << renderView;
     return 2;
@@ -379,6 +382,7 @@ int main(int argc, char* argv[]) {
   ActionRegistry registry(&actions);
   TailscalePeers tailscale;
   MatteComposer matte;
+  ImageEditor imageEditor;
 
   // A tracked tool's half-written output stays out of the library until the
   // run settles; writing to an existing file fires no directory event, so the
@@ -389,14 +393,17 @@ int main(int argc, char* argv[]) {
   QQmlApplicationEngine engine;
   auto* thumbnailProvider = new ThumbnailProvider;
   auto* matteProvider = new MatteProvider;
+  auto* editProvider = new EditProvider;
   auto* pdfProvider = new PdfProvider;
   engine.addImageProvider(QLatin1String(ThumbnailProvider::kProviderId), thumbnailProvider);
   engine.addImageProvider(QLatin1String(MatteProvider::kProviderId), matteProvider);
+  engine.addImageProvider(QLatin1String(EditProvider::kProviderId), editProvider);
   engine.addImageProvider(QLatin1String(PdfProvider::kProviderId), pdfProvider);
   QObject::connect(&application, &QCoreApplication::aboutToQuit, &application,
-                   [thumbnailProvider, matteProvider, pdfProvider] {
+                   [thumbnailProvider, matteProvider, editProvider, pdfProvider] {
                      thumbnailProvider->shutdown();
                      matteProvider->shutdown();
+                     editProvider->shutdown();
                      pdfProvider->shutdown();
                      QThreadPool::globalInstance()->waitForDone();
                    });
@@ -407,6 +414,7 @@ int main(int argc, char* argv[]) {
   engine.rootContext()->setContextProperty(QStringLiteral("Settings"), &settings);
   engine.rootContext()->setContextProperty(QStringLiteral("Registry"), &registry);
   engine.rootContext()->setContextProperty(QStringLiteral("Matte"), &matte);
+  engine.rootContext()->setContextProperty(QStringLiteral("ImageEdit"), &imageEditor);
   engine.rootContext()->setContextProperty(QStringLiteral("TextIndex"), &textIndex);
   engine.rootContext()->setContextProperty(QStringLiteral("Qr"), &qrDetector);
   engine.rootContext()->setContextProperty(QStringLiteral("Duplicates"), &duplicates);

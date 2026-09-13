@@ -7,22 +7,52 @@ Item {
     property string mode: "album"
     property var savedView: ({})
     property string errorMessage: ""
+    // Set when the sheet is renaming an existing collection rather than
+    // creating one. Membership moves with the name.
+    property bool renaming: false
+    property string renameFrom: ""
     signal saved(string name, int count, string mode)
 
     function open(files, requestedMode, view) {
         paths = files === undefined ? [] : files
         mode = requestedMode === undefined ? "album" : requestedMode
         savedView = view === undefined ? ({}) : view
+        renaming = false
+        renameFrom = ""
         errorMessage = ""
         nameInput.text = ""
         visible = true
         nameInput.forceActiveFocus()
     }
 
+    function openRename(requestedMode, oldName) {
+        paths = []
+        mode = requestedMode === undefined ? "album" : requestedMode
+        savedView = ({})
+        renaming = true
+        renameFrom = oldName
+        errorMessage = ""
+        nameInput.text = oldName
+        visible = true
+        nameInput.forceActiveFocus()
+        nameInput.selectAll()
+    }
+
     function close() { visible = false }
 
     function save() {
         const name = nameInput.text.trim().replace(/\s+/g, " ")
+        if (renaming) {
+            const renamed = mode === "tag" ? Settings.renameTag(renameFrom, name)
+                                           : Settings.renameAlbum(renameFrom, name)
+            if (!renamed) {
+                errorMessage = "That name is taken or invalid."
+                return
+            }
+            root.saved(name, 0, mode + "Rename")
+            root.close()
+            return
+        }
         const created = mode === "tag" ? Settings.createTag(name)
                         : mode === "smart" ? Settings.saveSmartCollection(name, savedView)
                                            : Settings.createAlbum(name)
@@ -98,7 +128,8 @@ Item {
             spacing: 12
 
             Text {
-                text: root.mode === "smart" ? "Save smart collection"
+                text: root.renaming ? "Rename " + root.mode
+                      : root.mode === "smart" ? "Save smart collection"
                       : root.paths.length > 0
                       ? "Add to a new " + root.mode : "New " + root.mode
                 font.family: Theme.fontFamily
@@ -140,7 +171,8 @@ Item {
                     anchors.left: parent.left
                     anchors.leftMargin: 10
                     visible: nameInput.text === ""
-                    text: root.mode === "smart" ? "Collection name"
+                    text: root.renaming ? "New name"
+                          : root.mode === "smart" ? "Collection name"
                           : root.mode.charAt(0).toUpperCase() + root.mode.slice(1) + " name"
                     font.family: Theme.fontFamily
                     font.pixelSize: 12
@@ -169,7 +201,8 @@ Item {
                 }
                 PillButton {
                     id: createButton
-                    label: root.mode === "smart" ? "Save" : "Create"
+                    label: root.renaming ? "Rename"
+                          : root.mode === "smart" ? "Save" : "Create"
                     active: true
                     onClicked: root.save()
                 }

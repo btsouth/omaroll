@@ -8,6 +8,10 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSaveFile>
 #include <QVariantMap>
 
 #include <sys/stat.h>
@@ -37,6 +41,7 @@ constexpr auto kAlbums = "library/albums";
 constexpr auto kTags = "library/tags";
 constexpr auto kSmartCollections = "library/smartCollections";
 constexpr auto kLastVisit = "library/lastVisit";
+constexpr auto kOrganizationFormat = "omaroll.organization";
 
 QString normalizedFolder(const QString& path, bool mustExist) {
   const QFileInfo info(path);
@@ -458,6 +463,26 @@ void AppSettings::deleteAlbum(const QString& name) {
   emit albumsChanged();
 }
 
+bool AppSettings::renameAlbum(const QString& oldName, const QString& newName) {
+  const QString target = normalizedAlbumName(newName);
+  if (target.isEmpty() || !m_albums.contains(oldName)) {
+    return false;
+  }
+  if (target != oldName) {
+    for (const QString& existing : m_albums.keys()) {
+      if (existing != oldName && existing.compare(target, Qt::CaseInsensitive) == 0) {
+        return false;
+      }
+    }
+  }
+  // Membership moves with the name; nothing is re-resolved, so a rename cannot
+  // lose an entry the way a delete-and-recreate would.
+  m_albums.insert(target, m_albums.take(oldName));
+  persistAlbums();
+  emit albumsChanged();
+  return true;
+}
+
 bool AppSettings::addToAlbum(const QString& name, const QStringList& paths) {
   auto it = m_albums.find(name);
   if (it == m_albums.end()) {
@@ -622,6 +647,81 @@ void AppSettings::deleteTag(const QString& name) {
   }
   persistTags();
   emit tagsChanged();
+}
+
+bool AppSettings::renameTag(const QString& oldName, const QString& newName) {
+  const QString target = normalizedTagName(newName);
+  if (target.isEmpty() || target == oldName || !m_tags.contains(oldName)) {
+    return false;
+  }
+  // Renaming a tag into its own subtree would make the move ambiguous.
+  if (tagIsUnder(target, oldName)) {
+    return false;
+  }
+
+  QList<QPair<QString, QString>> moves;
+  QSet<QString> sources;
+  for (const QString& key : m_tags.keys()) {
+    if (key == oldName) {
+      moves.append({key, target});
+      sources.insert(key);
+    } else if (tagIsUnder(key, oldName)) {
+      moves.append({key, target + key.mid(oldName.size())});
+      sources.insert(key);
+    }
+  }
+  if (moves.isEmpty()) {
+    return false;
+  }
+
+  // A new name must not land on a tag that is staying where it is, or the
+  // rename would silently swallow it.
+  QSet<QString> targetsLower;
+  for (const auto& move : moves) {
+    targetsLower.insert(move.second.toLower());
+  }
+  for (const QString& key : m_tags.keys()) {
+    if (!sources.contains(key) && targetsLower.contains(key.toLower())) {
+      return false;
+    }
+  }
+
+  QMap<QString, QList<AlbumEntry>> moved;
+  for (const auto& move : moves) {
+    moved.insert(move.second, m_tags.take(move.first));
+  }
+  // Keep the tree gapless: every ancestor of the new name exists, as creating
+  // a tag guarantees.
+  const QStringList segments = target.split(QLatin1Char('/'));
+  for (qsizetype depth = 1; depth <= segments.size(); ++depth) {
+    const QString level = segments.first(depth).join(QLatin1Char('/'));
+    if (!m_tags.contains(level) && !moved.contains(level)) {
+      m_tags.insert(level, {});
+    }
+  }
+  for (auto it = moved.cbegin(); it != moved.cend(); ++it) {
+    m_tags.insert(it.key(), it.value());
+  }
+  // Saved views hold the tag by name, so a rename has to follow it or the
+  // view reopens onto an empty tag.
+  bool viewsChanged = false;
+  for (auto view = m_smartCollections.begin(); view != m_smartCollections.end(); ++view) {
+    const QString viewTag = view.value().value(QStringLiteral("tag")).toString();
+    if (viewTag == oldName) {
+      view.value().insert(QStringLiteral("tag"), target);
+      viewsChanged = true;
+    } else if (tagIsUnder(viewTag, oldName)) {
+      view.value().insert(QStringLiteral("tag"), target + viewTag.mid(oldName.size()));
+      viewsChanged = true;
+    }
+  }
+  persistTags();
+  if (viewsChanged) {
+    persistSmartCollections();
+    emit smartCollectionsChanged();
+  }
+  emit tagsChanged();
+  return true;
 }
 
 bool AppSettings::addTag(const QString& name, const QStringList& paths) {
@@ -814,6 +914,280 @@ void AppSettings::reconcileTags(const QList<CaptureRecord>& records) {
     persistTags();
     emit tagsChanged();
   }
+}
+
+QVariantMap AppSettings::exportOrganization(const QString& path) const {
+  if (path.isEmpty()) {
+    return {{QStringLiteral("ok"), false},
+            {QStringLiteral("message"), QStringLiteral("Choose a file to write the backup to")}};
+  }
+
+  const auto encodeEntries = [](const QMap<QString, QList<AlbumEntry>>& collections) {
+    QJsonObject out;
+    for (auto it = collections.cbegin(); it != collections.cend(); ++it) {
+      QJsonArray rows;
+      for (const AlbumEntry& entry : it.value()) {
+        QJsonObject row;
+        row.insert(QStringLiteral("path"), entry.path);
+        row.insert(QStringLiteral("bytes"), entry.bytes);
+        row.insert(QStringLiteral("modified"), entry.modified);
+        // SHA-256 is binary; base64 keeps it exact through JSON.
+        row.insert(QStringLiteral("fingerprint"),
+                   QString::fromLatin1(entry.fingerprint.toBase64()));
+        row.insert(QStringLiteral("device"), QString::number(entry.device));
+        row.insert(QStringLiteral("inode"), QString::number(entry.inode));
+        rows.append(row);
+      }
+      out.insert(it.key(), rows);
+    }
+    return out;
+  };
+
+  QJsonObject root;
+  root.insert(QStringLiteral("format"), QString::fromLatin1(kOrganizationFormat));
+  root.insert(QStringLiteral("version"), kOrganizationVersion);
+  root.insert(QStringLiteral("exportedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+  root.insert(QStringLiteral("albums"), encodeEntries(m_albums));
+  root.insert(QStringLiteral("tags"), encodeEntries(m_tags));
+
+  QStringList favorites(m_favorites.cbegin(), m_favorites.cend());
+  favorites.sort();
+  QJsonArray favoriteArray;
+  for (const QString& value : std::as_const(favorites)) {
+    favoriteArray.append(value);
+  }
+  root.insert(QStringLiteral("favorites"), favoriteArray);
+
+  QStringList hidden(m_hidden.cbegin(), m_hidden.cend());
+  hidden.sort();
+  QJsonArray hiddenArray;
+  for (const QString& value : std::as_const(hidden)) {
+    hiddenArray.append(value);
+  }
+  root.insert(QStringLiteral("hidden"), hiddenArray);
+
+  QJsonObject ratings;
+  for (auto it = m_ratings.cbegin(); it != m_ratings.cend(); ++it) {
+    ratings.insert(it.key(), it.value());
+  }
+  root.insert(QStringLiteral("ratings"), ratings);
+
+  QJsonObject captions;
+  for (auto it = m_captions.cbegin(); it != m_captions.cend(); ++it) {
+    captions.insert(it.key(), it.value());
+  }
+  root.insert(QStringLiteral("captions"), captions);
+
+  QVariantMap smart;
+  for (auto it = m_smartCollections.cbegin(); it != m_smartCollections.cend(); ++it) {
+    smart.insert(it.key(), it.value());
+  }
+  root.insert(QStringLiteral("smartCollections"), QJsonObject::fromVariantMap(smart));
+
+  QSaveFile file(path);
+  if (!file.open(QIODevice::WriteOnly)) {
+    return {{QStringLiteral("ok"), false},
+            {QStringLiteral("message"),
+             QStringLiteral("Could not write %1").arg(QFileInfo(path).fileName())}};
+  }
+  const QByteArray payload = QJsonDocument(root).toJson(QJsonDocument::Indented);
+  if (file.write(payload) != payload.size() || !file.commit()) {
+    return {{QStringLiteral("ok"), false},
+            {QStringLiteral("message"),
+             QStringLiteral("Could not write %1").arg(QFileInfo(path).fileName())}};
+  }
+
+  const int marks = m_favorites.size() + m_hidden.size() + m_ratings.size() + m_captions.size();
+  QVariantMap result;
+  result.insert(QStringLiteral("ok"), true);
+  result.insert(QStringLiteral("message"),
+                QStringLiteral("Backed up %1 album%2, %3 tag%4 and %5 item%6")
+                    .arg(m_albums.size())
+                    .arg(m_albums.size() == 1 ? QString() : QStringLiteral("s"))
+                    .arg(m_tags.size())
+                    .arg(m_tags.size() == 1 ? QString() : QStringLiteral("s"))
+                    .arg(marks)
+                    .arg(marks == 1 ? QString() : QStringLiteral("s")));
+  result.insert(QStringLiteral("albums"), m_albums.size());
+  result.insert(QStringLiteral("tags"), m_tags.size());
+  result.insert(QStringLiteral("marks"), marks);
+  return result;
+}
+
+QVariantMap AppSettings::importOrganization(const QString& path) {
+  QFile file(path);
+  if (!file.open(QIODevice::ReadOnly)) {
+    return {{QStringLiteral("ok"), false},
+            {QStringLiteral("message"),
+             QStringLiteral("Could not open %1").arg(QFileInfo(path).fileName())}};
+  }
+  QJsonParseError parseError;
+  const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parseError);
+  if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+    return {{QStringLiteral("ok"), false},
+            {QStringLiteral("message"), QStringLiteral("That is not a valid backup file")}};
+  }
+  const QJsonObject root = document.object();
+  if (root.value(QStringLiteral("format")).toString() != QLatin1String(kOrganizationFormat)) {
+    return {{QStringLiteral("ok"), false},
+            {QStringLiteral("message"), QStringLiteral("That is not an Omaroll backup")}};
+  }
+  const int version = root.value(QStringLiteral("version")).toInt();
+  if (version <= 0 || version > kOrganizationVersion) {
+    return {{QStringLiteral("ok"), false},
+            {QStringLiteral("message"),
+             QStringLiteral("This backup needs a newer version of Omaroll")}};
+  }
+
+  // Every required member must be present and the right shape. A header-only
+  // or partly damaged file is refused outright rather than read as empty
+  // collections, which would wipe the profile and still report success.
+  const auto memberIs = [&root](const char* key, QJsonValue::Type type) {
+    return root.value(QString::fromLatin1(key)).type() == type;
+  };
+  if (!memberIs("albums", QJsonValue::Object) || !memberIs("tags", QJsonValue::Object) ||
+      !memberIs("favorites", QJsonValue::Array) || !memberIs("hidden", QJsonValue::Array) ||
+      !memberIs("ratings", QJsonValue::Object) || !memberIs("captions", QJsonValue::Object) ||
+      !memberIs("smartCollections", QJsonValue::Object)) {
+    return {{QStringLiteral("ok"), false},
+            {QStringLiteral("message"), QStringLiteral("This backup is incomplete")}};
+  }
+
+  // Decode into temporaries. Nothing here mutates state, so a malformed file
+  // cannot leave a half-restored profile behind. Keys are normalized the way
+  // startup normalizes them, so an imported name survives a restart.
+  const auto decodeEntries = [](const QJsonObject& collections,
+                                QString (*normalize)(const QString&)) {
+    QMap<QString, QList<AlbumEntry>> decoded;
+    for (auto it = collections.begin(); it != collections.end(); ++it) {
+      const QString name = normalize(it.key());
+      if (name.isEmpty() || !it.value().isArray()) {
+        continue;
+      }
+      QList<AlbumEntry> entries;
+      for (const QJsonValue& value : it.value().toArray()) {
+        const QJsonObject row = value.toObject();
+        AlbumEntry entry;
+        entry.path = row.value(QStringLiteral("path")).toString();
+        if (entry.path.isEmpty()) {
+          continue;
+        }
+        entry.bytes = row.value(QStringLiteral("bytes")).toVariant().toLongLong();
+        entry.modified = row.value(QStringLiteral("modified")).toVariant().toLongLong();
+        entry.fingerprint =
+            QByteArray::fromBase64(row.value(QStringLiteral("fingerprint")).toString().toLatin1());
+        entry.device = row.value(QStringLiteral("device")).toString().toULongLong();
+        entry.inode = row.value(QStringLiteral("inode")).toString().toULongLong();
+        entries.append(entry);
+      }
+      if (decoded.contains(name)) {
+        decoded[name].append(entries);
+      } else {
+        decoded.insert(name, entries);
+      }
+    }
+    return decoded;
+  };
+
+  QMap<QString, QList<AlbumEntry>> albums =
+      decodeEntries(root.value(QStringLiteral("albums")).toObject(), normalizedAlbumName);
+  QMap<QString, QList<AlbumEntry>> tags =
+      decodeEntries(root.value(QStringLiteral("tags")).toObject(), normalizedTagName);
+  // createTag always fills in a tag's ancestors; an imported tree keeps the
+  // same invariant, or a child would be unreachable in Browse.
+  const QStringList importedTagNames = tags.keys();
+  for (const QString& name : importedTagNames) {
+    const QStringList segments = name.split(QLatin1Char('/'));
+    for (qsizetype depth = 1; depth < segments.size(); ++depth) {
+      const QString ancestor = segments.first(depth).join(QLatin1Char('/'));
+      if (!tags.contains(ancestor)) {
+        tags.insert(ancestor, {});
+      }
+    }
+  }
+
+  QSet<QString> favorites;
+  for (const QJsonValue& value : root.value(QStringLiteral("favorites")).toArray()) {
+    if (!value.toString().isEmpty()) {
+      favorites.insert(value.toString());
+    }
+  }
+  QSet<QString> hidden;
+  for (const QJsonValue& value : root.value(QStringLiteral("hidden")).toArray()) {
+    if (!value.toString().isEmpty()) {
+      hidden.insert(value.toString());
+    }
+  }
+  QHash<QString, int> ratings;
+  const QJsonObject ratingObject = root.value(QStringLiteral("ratings")).toObject();
+  for (auto it = ratingObject.begin(); it != ratingObject.end(); ++it) {
+    const int stars = it.value().toInt();
+    if (!it.key().isEmpty() && stars >= 1 && stars <= kMaximumRating) {
+      ratings.insert(it.key(), stars);
+    }
+  }
+  QHash<QString, QString> captions;
+  const QJsonObject captionObject = root.value(QStringLiteral("captions")).toObject();
+  for (auto it = captionObject.begin(); it != captionObject.end(); ++it) {
+    const QString text = it.value().toString().left(kMaximumCaptionLength);
+    if (!it.key().isEmpty() && !text.isEmpty()) {
+      captions.insert(it.key(), text);
+    }
+  }
+  QMap<QString, QVariantMap> smartCollections;
+  const QJsonObject smartObject = root.value(QStringLiteral("smartCollections")).toObject();
+  for (auto it = smartObject.begin(); it != smartObject.end(); ++it) {
+    if (it.value().isObject()) {
+      smartCollections.insert(it.key(), it.value().toObject().toVariantMap());
+    }
+  }
+
+  // An entry whose file is present right now shows up immediately; the next
+  // scan repairs anything that moved. The stored identity is kept so a move
+  // can still be matched by inode or fingerprint.
+  const auto resolvePresent = [](QMap<QString, QList<AlbumEntry>>& collections) {
+    for (auto it = collections.begin(); it != collections.end(); ++it) {
+      for (AlbumEntry& entry : *it) {
+        const QFileInfo info(entry.path);
+        entry.resolved = info.isFile() && info.isReadable();
+      }
+    }
+  };
+  resolvePresent(albums);
+  resolvePresent(tags);
+
+  m_albums = std::move(albums);
+  m_tags = std::move(tags);
+  m_smartCollections = std::move(smartCollections);
+  m_favorites = std::move(favorites);
+  m_hidden = std::move(hidden);
+  m_ratings = std::move(ratings);
+  m_captions = std::move(captions);
+
+  persistAlbums();
+  persistTags();
+  persistSmartCollections();
+  persistMarks();
+  emit albumsChanged();
+  emit tagsChanged();
+  emit smartCollectionsChanged();
+  emit marksChanged();
+
+  const int marks = m_favorites.size() + m_hidden.size() + m_ratings.size() + m_captions.size();
+  QVariantMap result;
+  result.insert(QStringLiteral("ok"), true);
+  result.insert(QStringLiteral("message"),
+                QStringLiteral("Restored %1 album%2, %3 tag%4 and %5 item%6")
+                    .arg(m_albums.size())
+                    .arg(m_albums.size() == 1 ? QString() : QStringLiteral("s"))
+                    .arg(m_tags.size())
+                    .arg(m_tags.size() == 1 ? QString() : QStringLiteral("s"))
+                    .arg(marks)
+                    .arg(marks == 1 ? QString() : QStringLiteral("s")));
+  result.insert(QStringLiteral("albums"), m_albums.size());
+  result.insert(QStringLiteral("tags"), m_tags.size());
+  result.insert(QStringLiteral("marks"), marks);
+  return result;
 }
 
 void AppSettings::persistAlbums() {

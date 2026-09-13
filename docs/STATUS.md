@@ -81,6 +81,30 @@ release lives at ~/Videos/omaroll-1.6.0-demo.mp4 on the development desktop. Sem
 recognition were considered against Lightroom and Immich and deferred
 (SBS-1139); do not add ML dependencies without a fresh decision.
 
+## In progress after 1.6.0
+
+A `feature/image-corrections` branch carries the next three deliverables, all
+with core and UI tests green through `tests/run-isolated.sh` plus the OpenGL
+runner:
+
+- **SBS-1126 safe image corrections.** `src/edit/ImageEditor` and
+  `EditProvider` implement orient, crop, quarter turns, flips and resize, then
+  Save a copy with numbered collision handling and ICC preservation. The
+  viewer's new Crop, rotate, resize (Q) action opens `CorrectionSheet.qml`,
+  a preview from `image://edit/` with a draggable crop frame. The original is
+  never written.
+- **SBS-1130 collection rename.** `AppSettings::renameAlbum` and `renameTag`
+  move membership with the name; a nested tag rename carries its descendants.
+  Browse gains Rename selected.
+- **SBS-1129 organization backup.** `AppSettings::exportOrganization` and
+  `importOrganization` write and read a versioned JSON snapshot (albums, tags,
+  favourites, hidden, ratings, captions, saved views) atomically, validating
+  the whole file before any change. Settings gains Back up and Restore.
+
+Remaining after this branch: region copy and synchronized-zoom comparison
+(SBS-1127), orientation/color verification fixtures (SBS-1128), recovery of
+marks through external moves (SBS-1131), and the video/PDF depth items.
+
 ## Next decisions and release gates
 
 1. Keep new changes in separate focused PRs off main, following

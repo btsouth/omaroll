@@ -91,6 +91,9 @@ public:
   Q_INVOKABLE [[nodiscard]] int unavailableAlbumItemCount(const QString& name) const;
   Q_INVOKABLE bool createAlbum(const QString& name);
   Q_INVOKABLE void deleteAlbum(const QString& name);
+  // Moves an album's membership to a new name. False when the target already
+  // exists or the name is unusable; membership is never lost on failure.
+  Q_INVOKABLE bool renameAlbum(const QString& oldName, const QString& newName);
   Q_INVOKABLE bool addToAlbum(const QString& name, const QStringList& paths);
   Q_INVOKABLE void removeFromAlbum(const QString& name, const QStringList& paths);
   Q_INVOKABLE void removeUnavailableFromAlbum(const QString& name);
@@ -104,6 +107,10 @@ public:
   Q_INVOKABLE [[nodiscard]] int tagItemCount(const QString& name) const;
   Q_INVOKABLE bool createTag(const QString& name);
   Q_INVOKABLE void deleteTag(const QString& name);
+  // Renames a tag and every tag nested under it, so "Travel/Japan" becomes
+  // "Trips/Japan" when "Travel" becomes "Trips". False on a name clash; the
+  // existing tree is left untouched.
+  Q_INVOKABLE bool renameTag(const QString& oldName, const QString& newName);
   Q_INVOKABLE bool addTag(const QString& name, const QStringList& paths);
   Q_INVOKABLE void removeTag(const QString& name, const QStringList& paths);
   void reconcileTags(const QList<CaptureRecord>& records);
@@ -112,6 +119,19 @@ public:
   Q_INVOKABLE [[nodiscard]] QVariantMap smartCollection(const QString& name) const;
   Q_INVOKABLE bool saveSmartCollection(const QString& name, const QVariantMap& view);
   Q_INVOKABLE void deleteSmartCollection(const QString& name);
+
+  // A versioned, portable snapshot of everything the user organized: albums,
+  // tags, favourites, hidden files, ratings, captions and smart collections.
+  // Media files themselves are never read or changed. exportOrganization writes
+  // atomically; importOrganization validates the whole file before touching any
+  // state, so a bad file leaves the current profile exactly as it was. Both
+  // return {ok, message}.
+  static constexpr int kOrganizationVersion = 1;
+  Q_INVOKABLE [[nodiscard]] QVariantMap exportOrganization(const QString& path) const;
+  // Restores by replacing the current organization. Callers should confirm
+  // first; the original files on disk are untouched either way.
+  Q_INVOKABLE [[nodiscard]] QVariantMap importOrganization(const QString& path);
+
   [[nodiscard]] QString previousVisit() const { return m_previousVisit; }
 
   Q_INVOKABLE [[nodiscard]] bool isFavorite(const QString& path) const;

@@ -18,14 +18,19 @@ See [current status and handoff](STATUS.md) for release boundaries and evidence.
 
 ## Complete image workflows
 
-- Crop, rotate and resize with Save a copy and safe collision handling.
+- Crop, rotate and resize with Save a copy and safe collision handling. Done:
+  the viewer's Crop, rotate, resize action writes `<name>-edited.<ext>` beside
+  the original, preserving the ICC profile and baking in EXIF orientation.
 - Copy a selected region and compare images with synchronized zoom.
 - Verify orientation, color profiles, transparency and large-image behavior.
 
 ## Trustworthy organization
 
-- Back up and restore albums, tags, favorites and smart collections.
-- Rename albums and tags without losing membership.
+- Back up and restore albums, tags, favorites and smart collections. Done:
+  a versioned JSON backup covers albums, tags, favourites, hidden files,
+  ratings, captions and saved views, validated before any change on restore.
+- Rename albums and tags without losing membership. Done: renaming moves the
+  membership with the name, and a nested tag rename carries its children.
 - Recover predictably from disconnected drives and changed file locations.
 - Make organization changes reversible and duplicate review easier.
 

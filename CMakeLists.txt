@@ -45,6 +45,10 @@ add_library(omaroll_core STATIC
   src/actions/ActionRegistry.h
   src/actions/TailscalePeers.cpp
   src/actions/TailscalePeers.h
+  src/edit/ImageEditor.cpp
+  src/edit/ImageEditor.h
+  src/edit/EditProvider.cpp
+  src/edit/EditProvider.h
   src/matte/HueExtractor.cpp
   src/matte/HueExtractor.h
   src/matte/MatteComposer.cpp
@@ -120,6 +124,7 @@ set(OMAROLL_QML_FILES
   qml/components/ConfirmSheet.qml
   qml/components/DetailSheet.qml
   qml/components/MatteSheet.qml
+  qml/components/CorrectionSheet.qml
   qml/components/SettingsSheet.qml
   qml/components/AlbumNameSheet.qml
   qml/components/ExportSheet.qml

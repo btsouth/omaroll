@@ -41,6 +41,11 @@ ApplicationWindow {
     // unforgivable.
     property string pendingDeletePath: ""
     property var pendingDeleteBatch: []
+    // While a collection rename is in flight the old name is gone from the
+    // model before the new one is known, so the filter-clearing handlers are
+    // held off and onSaved repoints the active filter instead.
+    property bool renamingCollection: false
+    property string renameFilterBefore: ""
     property int visibilityBeforeViewerFullScreen: Window.Windowed
     property bool viewerFolderOnly: false
 
@@ -49,6 +54,7 @@ ApplicationWindow {
     // grabs, so a scrim alone does not stop a tap on a sheet's control from
     // also reaching the tile, pill or viewer button under it.
     readonly property bool modalOpen: confirm.visible || matteSheet.visible
+                                      || correctionSheet.visible
                                       || libraryBrowser.visible || settingsSheet.visible
                                       || albumNameSheet.visible
                                       || exportSheet.visible || renameSheet.visible
@@ -153,6 +159,9 @@ ApplicationWindow {
             matteSheet.fileName = path.substring(path.lastIndexOf("/") + 1)
             matteSheet.open()
             return
+        case "corrections":
+            correctionSheet.open(path, path.substring(path.lastIndexOf("/") + 1))
+            return
         case "tailscale":
             tailscaleSheet.open([path])
             return
@@ -229,6 +238,8 @@ ApplicationWindow {
             settingsSheet.close()
         } else if (matteSheet.visible) {
             matteSheet.close()
+        } else if (correctionSheet.visible) {
+            correctionSheet.close()
         } else if (albumNameSheet.visible) {
             albumNameSheet.close()
         } else if (detail.visible) {
@@ -255,7 +266,7 @@ ApplicationWindow {
         target: Settings
         function onScanDownloadsChanged() { root.reconcileFilter() }
         function onAlbumsChanged() {
-            if (Captures.albumFilter === "") {
+            if (root.renamingCollection || Captures.albumFilter === "") {
                 return
             }
             if (Settings.albumNames.indexOf(Captures.albumFilter) < 0) {
@@ -266,7 +277,7 @@ ApplicationWindow {
             }
         }
         function onTagsChanged() {
-            if (Captures.tagFilter === "") {
+            if (root.renamingCollection || Captures.tagFilter === "") {
                 return
             }
             if (Settings.tagNames.indexOf(Captures.tagFilter) < 0) {
@@ -533,6 +544,8 @@ ApplicationWindow {
             }
         } else if (view === "matte") {
             root.perform("matte", Captures.pathAt(0))
+        } else if (view === "corrections") {
+            root.perform("corrections", Captures.pathAt(0))
         } else if (view === "export") {
             root.perform("export", Captures.pathAt(0))
         } else if (view === "rename") {
@@ -1041,6 +1054,24 @@ ApplicationWindow {
         id: albumNameSheet
         objectName: "albumNameSheet"
         onSaved: function (name, count, mode) {
+            if (mode === "albumRename") {
+                if (root.renameFilterBefore === albumNameSheet.renameFrom) {
+                    Captures.setAlbumFilter(name, Settings.albumPaths(name))
+                }
+                root.renamingCollection = false
+                root.renameFilterBefore = ""
+                root.say("Renamed album to " + name)
+                return
+            }
+            if (mode === "tagRename") {
+                if (root.renameFilterBefore === albumNameSheet.renameFrom) {
+                    Captures.setTagFilter(name, Settings.tagPaths(name))
+                }
+                root.renamingCollection = false
+                root.renameFilterBefore = ""
+                root.say("Renamed tag to " + name)
+                return
+            }
             if (mode === "smart") {
                 const view = Settings.smartCollection(name)
                 Captures.applyView(name, view,
@@ -1058,7 +1089,12 @@ ApplicationWindow {
                          + " to " + name)
             }
         }
-        onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
+        // A cancelled rename must not leave the filter handlers held off.
+        onVisibleChanged: if (!visible) {
+            root.renamingCollection = false
+            root.renameFilterBefore = ""
+            root.restoreFocusAfterSheet()
+        }
     }
 
     Menu {
@@ -1234,6 +1270,17 @@ ApplicationWindow {
         onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
     }
 
+    CorrectionSheet {
+        id: correctionSheet
+        objectName: "correctionSheet"
+        onSaved: function (outputPath) {
+            Library.addExtraFiles([outputPath])
+            root.say("Saved a corrected copy beside the original")
+            Library.refresh()
+        }
+        onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
+    }
+
     ExportSheet {
         id: exportSheet
         objectName: "exportSheet"
@@ -1284,6 +1331,11 @@ ApplicationWindow {
         // following event-loop turn so its text field wins that handoff.
         onCreateAlbumRequested: Qt.callLater(function () { albumNameSheet.open([]) })
         onCreateTagRequested: Qt.callLater(function () { albumNameSheet.open([], "tag") })
+        onRenameCollectionRequested: Qt.callLater(function () {
+            root.renamingCollection = true
+            root.renameFilterBefore = mode === "album" ? Captures.albumFilter : Captures.tagFilter
+            albumNameSheet.openRename(mode, name)
+        })
         onSaveSmartCollectionRequested: Qt.callLater(function () {
             albumNameSheet.open([], "smart", Captures.currentView())
         })
@@ -1377,6 +1429,11 @@ ApplicationWindow {
         sequences: [Registry.shortcutFor("matte")]
         enabled: !root.anySheetOpen
         onActivated: root.perform("matte", root.currentPath())
+    }
+    Shortcut {
+        sequences: [Registry.shortcutFor("corrections")]
+        enabled: !root.anySheetOpen
+        onActivated: root.perform("corrections", root.currentPath())
     }
     Shortcut {
         sequences: [Registry.shortcutFor("trim")]

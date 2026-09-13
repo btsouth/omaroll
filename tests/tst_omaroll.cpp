@@ -15,6 +15,7 @@
 #include "library/MediaMetadataIndex.h"
 #include "library/MediaInspector.h"
 #include "library/SimilarityIndex.h"
+#include "edit/ImageEditor.h"
 #include "matte/HueExtractor.h"
 #include "matte/MatteComposer.h"
 #include "pdf/PdfInspector.h"
@@ -27,6 +28,7 @@
 #include "thumbs/ThumbnailCache.h"
 
 #include <QClipboard>
+#include <QColorSpace>
 #include <QImageReader>
 #include <QPainter>
 #include <QPdfWriter>
@@ -669,6 +671,219 @@ private slots:
     finalRestore.deleteTag(tag);
     QVERIFY(!finalRestore.tagNames().contains(childName));
     finalRestore.deleteSmartCollection(collection);
+  }
+
+  void renamingCollectionsMovesMembershipAndNests() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString suffix = QString::number(QRandomGenerator::global()->generate());
+    const QString album = QStringLiteral("Album ") + suffix;
+    const QString albumTarget = QStringLiteral("Album renamed ") + suffix;
+    const QString otherAlbum = QStringLiteral("Other ") + suffix;
+
+    const QString file = dir.filePath(QStringLiteral("member.png"));
+    QImage(10, 10, QImage::Format_RGB32).save(file);
+    const QString other = dir.filePath(QStringLiteral("other.png"));
+    QImage(10, 10, QImage::Format_RGB32).save(other);
+
+    AppSettings settings;
+    settings.deleteAlbum(album);
+    settings.deleteAlbum(albumTarget);
+    settings.deleteAlbum(otherAlbum);
+    QVERIFY(settings.createAlbum(album));
+    QVERIFY(settings.addToAlbum(album, {file}));
+
+    // Renaming keeps the membership and drops the old key.
+    QVERIFY(settings.renameAlbum(album, albumTarget));
+    QVERIFY(!settings.albumNames().contains(album));
+    QCOMPARE(settings.albumPaths(albumTarget), QStringList {file});
+
+    // A clash is refused, and the existing album is left whole.
+    QVERIFY(settings.createAlbum(otherAlbum));
+    QVERIFY(!settings.renameAlbum(albumTarget, otherAlbum));
+    QCOMPARE(settings.albumPaths(albumTarget), QStringList {file});
+    QCOMPARE(settings.albumPaths(otherAlbum), QStringList {});
+
+    // Tags: renaming a parent renames every nested tag and keeps membership.
+    const QString tag = QStringLiteral("Travel ") + suffix;
+    const QString child = tag + QStringLiteral("/Japan");
+    const QString tagTarget = QStringLiteral("Trips ") + suffix;
+    settings.deleteTag(tag);
+    settings.deleteTag(tagTarget);
+    QVERIFY(settings.createTag(child));
+    QVERIFY(settings.addTag(tag, {file}));
+    QVERIFY(settings.addTag(child, {other}));
+    QCOMPARE(settings.tagPaths(tag), QStringList({file, other}));
+
+    // Saved views hold the tag by name, so a rename must follow them too.
+    const QString view = QStringLiteral("View ") + suffix;
+    QVariantMap viewMap;
+    viewMap.insert(QStringLiteral("tag"), tag);
+    QVERIFY(settings.saveSmartCollection(view, viewMap));
+    QVariantMap childView;
+    childView.insert(QStringLiteral("tag"), child);
+    QVERIFY(settings.saveSmartCollection(view + QStringLiteral("-child"), childView));
+
+    QVERIFY(settings.renameTag(tag, tagTarget));
+    QVERIFY(!settings.tagNames().contains(tag));
+    QVERIFY(!settings.tagNames().contains(child));
+    QVERIFY(settings.tagNames().contains(tagTarget));
+    QVERIFY(settings.tagNames().contains(tagTarget + QStringLiteral("/Japan")));
+    QCOMPARE(settings.tagPaths(tagTarget), QStringList({file, other}));
+    QCOMPARE(settings.tagPaths(tagTarget + QStringLiteral("/Japan")), QStringList {other});
+    QCOMPARE(settings.tagsForPath(file), QStringList {tagTarget});
+    QCOMPARE(settings.smartCollection(view).value(QStringLiteral("tag")).toString(), tagTarget);
+    QCOMPARE(settings.smartCollection(view + QStringLiteral("-child"))
+                 .value(QStringLiteral("tag"))
+                 .toString(),
+             tagTarget + QStringLiteral("/Japan"));
+
+    // Renaming into its own subtree, or onto an existing tag, is refused.
+    QVERIFY(!settings.renameTag(tagTarget, tagTarget + QStringLiteral("/Nested")));
+    const QString existing = QStringLiteral("Existing ") + suffix;
+    settings.deleteTag(existing);
+    QVERIFY(settings.createTag(existing));
+    QVERIFY(!settings.renameTag(tagTarget, existing));
+    QCOMPARE(settings.tagPaths(tagTarget), QStringList({file, other}));
+
+    // Both renames survive a reload.
+    AppSettings restored;
+    QCOMPARE(restored.albumPaths(albumTarget), QStringList {file});
+    QCOMPARE(restored.tagPaths(tagTarget + QStringLiteral("/Japan")), QStringList {other});
+
+    restored.deleteAlbum(albumTarget);
+    restored.deleteAlbum(otherAlbum);
+    restored.deleteTag(tagTarget);
+    restored.deleteTag(existing);
+    restored.deleteSmartCollection(view);
+    restored.deleteSmartCollection(view + QStringLiteral("-child"));
+  }
+
+  void organizationBackupRoundTripsAndRejectsBadFiles() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString suffix = QString::number(QRandomGenerator::global()->generate());
+    const QString album = QStringLiteral("Backup album ") + suffix;
+    const QString tag = QStringLiteral("Backup tag ") + suffix;
+    const QString child = tag + QStringLiteral("/Japan");
+    const QString collection = QStringLiteral("Backup view ") + suffix;
+    const QString file = dir.filePath(QStringLiteral("a.png"));
+    QImage(10, 10, QImage::Format_RGB32).save(file);
+
+    AppSettings settings;
+    settings.deleteAlbum(album);
+    settings.deleteTag(tag);
+    settings.deleteSmartCollection(collection);
+    QVERIFY(settings.createAlbum(album));
+    QVERIFY(settings.addToAlbum(album, {file}));
+    QVERIFY(settings.createTag(child));
+    QVERIFY(settings.addTag(tag, {file}));
+    settings.setFavorite({file}, true);
+    settings.setRating({file}, 4);
+    settings.setCaption(file, QStringLiteral("A caption"));
+    QVariantMap view;
+    view.insert(QStringLiteral("favorites"), true);
+    view.insert(QStringLiteral("tag"), tag);
+    QVERIFY(settings.saveSmartCollection(collection, view));
+
+    const QString backup = dir.filePath(QStringLiteral("backup.json"));
+    const QVariantMap exported = settings.exportOrganization(backup);
+    QVERIFY2(exported.value(QStringLiteral("ok")).toBool(),
+             qPrintable(exported.value(QStringLiteral("message")).toString()));
+    QVERIFY(QFileInfo::exists(backup));
+
+    // A profile with none of it gets it all back from the file.
+    AppSettings restored;
+    restored.deleteAlbum(album);
+    restored.deleteTag(tag);
+    restored.deleteSmartCollection(collection);
+    restored.setFavorite({file}, false);
+    restored.setRating({file}, 0);
+    restored.setCaption(file, QString());
+    QVERIFY(!restored.albumNames().contains(album));
+    QVERIFY(!restored.tagNames().contains(child));
+
+    const QVariantMap imported = restored.importOrganization(backup);
+    QVERIFY2(imported.value(QStringLiteral("ok")).toBool(),
+             qPrintable(imported.value(QStringLiteral("message")).toString()));
+    QCOMPARE(restored.albumPaths(album), QStringList {file});
+    QCOMPARE(restored.tagPaths(tag), QStringList {file});
+    QVERIFY(restored.isFavorite(file));
+    QCOMPARE(restored.rating(file), 4);
+    QCOMPARE(restored.caption(file), QStringLiteral("A caption"));
+    QCOMPARE(restored.smartCollection(collection), view);
+
+    // A malformed file is refused and changes nothing.
+    const QString broken = dir.filePath(QStringLiteral("broken.json"));
+    {
+      QFile handle(broken);
+      QVERIFY(handle.open(QIODevice::WriteOnly));
+      handle.write("{not json");
+    }
+    QVERIFY(!restored.importOrganization(broken).value(QStringLiteral("ok")).toBool());
+    QCOMPARE(restored.albumPaths(album), QStringList {file});
+    QVERIFY(restored.isFavorite(file));
+
+    // Valid JSON that is not one of ours is refused as well.
+    const QString foreign = dir.filePath(QStringLiteral("foreign.json"));
+    {
+      QFile handle(foreign);
+      QVERIFY(handle.open(QIODevice::WriteOnly));
+      handle.write("{\"version\":1}");
+    }
+    QVERIFY(!restored.importOrganization(foreign).value(QStringLiteral("ok")).toBool());
+    QCOMPARE(restored.albumPaths(album), QStringList {file});
+
+    // One of ours but missing sections: refused rather than read as empty
+    // collections, which would wipe the profile and still call it success.
+    const QString incomplete = dir.filePath(QStringLiteral("incomplete.json"));
+    {
+      QFile handle(incomplete);
+      QVERIFY(handle.open(QIODevice::WriteOnly));
+      handle.write("{\"format\":\"omaroll.organization\",\"version\":1,\"albums\":{}}");
+    }
+    QVERIFY(!restored.importOrganization(incomplete).value(QStringLiteral("ok")).toBool());
+    QCOMPARE(restored.albumPaths(album), QStringList {file});
+    QVERIFY(restored.isFavorite(file));
+
+    restored.deleteAlbum(album);
+    restored.deleteTag(tag);
+    restored.deleteSmartCollection(collection);
+    restored.setFavorite({file}, false);
+    restored.setRating({file}, 0);
+    restored.setCaption(file, QString());
+  }
+
+  void importedOrganizationNormalizesNamesAndFillsAncestors() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString file = dir.filePath(QStringLiteral("member.png"));
+    QImage(10, 10, QImage::Format_RGB32).save(file);
+    const QString backup = dir.filePath(QStringLiteral("odd.json"));
+    {
+      QFile handle(backup);
+      QVERIFY(handle.open(QIODevice::WriteOnly));
+      const QByteArray payload =
+          QByteArrayLiteral("{\"format\":\"omaroll.organization\",\"version\":1,")
+          + QByteArrayLiteral("\"albums\":{\"Bad/Name\":[]},\"tags\":{\"Travel//Japan\":[{\"path\":\"")
+          + file.toUtf8()
+          + QByteArrayLiteral("\",\"bytes\":0}]},\"favorites\":[],\"hidden\":[],\"ratings\":{},")
+          + QByteArrayLiteral("\"captions\":{},\"smartCollections\":{}}");
+      handle.write(payload);
+    }
+
+    AppSettings settings;
+    settings.deleteTag(QStringLiteral("Travel"));
+    const QVariantMap result = settings.importOrganization(backup);
+    QVERIFY2(result.value(QStringLiteral("ok")).toBool(),
+             qPrintable(result.value(QStringLiteral("message")).toString()));
+    // A slash cannot appear in an album name anywhere else, so it is dropped.
+    QVERIFY(!settings.albumNames().contains(QStringLiteral("Bad/Name")));
+    // The doubled slash collapses and the required parent tag is created.
+    QVERIFY(settings.tagNames().contains(QStringLiteral("Travel")));
+    QVERIFY(settings.tagNames().contains(QStringLiteral("Travel/Japan")));
+    QCOMPARE(settings.tagPaths(QStringLiteral("Travel/Japan")), QStringList {file});
+    settings.deleteTag(QStringLiteral("Travel"));
   }
 
   void addingOverAnUnavailableAlbumEntryReplacesIt() {
@@ -3506,6 +3721,129 @@ private slots:
                                                    MatteComposer::Original, 0.08);
       QVERIFY2(!result.isNull(), qPrintable(QStringLiteral("matte %1 was null").arg(matte)));
     }
+  }
+
+  // --- Quick image corrections ------------------------------------------
+
+  void correctionsRotateFlipCropAndResize() {
+    QImage source(4, 2, QImage::Format_ARGB32);
+    source.fill(Qt::transparent);
+    // Distinct colours so a wrong turn or flip is visible.
+    source.setPixelColor(0, 0, QColor(Qt::red));
+    source.setPixelColor(3, 0, QColor(Qt::green));
+    source.setPixelColor(0, 1, QColor(Qt::blue));
+    source.setPixelColor(3, 1, QColor(Qt::yellow));
+
+    // A clockwise quarter turn swaps the dimensions and carries the top-left
+    // pixel to the top-right.
+    ImageEditor::Transform turn;
+    turn.quarterTurns = 1;
+    const QImage turned = ImageEditor::apply(source, turn);
+    QCOMPARE(turned.size(), QSize(2, 4));
+    QCOMPARE(turned.pixelColor(1, 0), QColor(Qt::red));
+    QCOMPARE(turned.pixelColor(1, 3), QColor(Qt::green));
+
+    // Crop the turned frame, then resize to a fatter target: aspect is kept.
+    turn.cropW = 1.0;
+    turn.cropH = 0.5;
+    turn.targetWidth = 10;
+    turn.targetHeight = 10;
+    const QImage cropped = ImageEditor::apply(source, turn);
+    QCOMPARE(cropped.size(), QSize(10, 10));
+    QCOMPARE(cropped.pixelColor(0, 0), QColor(Qt::blue));
+    QCOMPARE(cropped.pixelColor(9, 0), QColor(Qt::red));
+
+    // A horizontal flip mirrors left to right.
+    ImageEditor::Transform mirror;
+    mirror.flipHorizontal = true;
+    const QImage flipped = ImageEditor::apply(source, mirror);
+    QCOMPARE(flipped.pixelColor(0, 0), QColor(Qt::green));
+    QCOMPARE(flipped.pixelColor(3, 0), QColor(Qt::red));
+  }
+
+  void correctionsSaveAsCopyKeepsTheOriginal() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(QStringLiteral("photo.png"));
+    QImage image(6, 4, QImage::Format_RGB32);
+    image.fill(Qt::darkCyan);
+    QVERIFY(image.save(source, "PNG"));
+    QFile original(source);
+    QVERIFY(original.open(QIODevice::ReadOnly));
+    const QByteArray originalBytes = original.readAll();
+    original.close();
+
+    ImageEditor editor;
+    QSignalSpy saved(&editor, &ImageEditor::saved);
+    QSignalSpy failed(&editor, &ImageEditor::failed);
+    editor.saveCopy(source, 1, false, false, 0, 0, 1, 1, 0, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, 15000);
+    QCOMPARE(failed.size(), 0);
+    const QString output = saved.first().first().toString();
+    QVERIFY(output.endsWith(QStringLiteral("-edited.png")));
+    QVERIFY(QFileInfo::exists(output));
+    // The corner was at (0,0) on a 6x4; turned clockwise it is 4x6 and the
+    // top-left corner moved to the top-right.
+    QCOMPARE(QImage(output).size(), QSize(4, 6));
+
+    // The original is byte-for-byte untouched.
+    QFile verify(source);
+    QVERIFY(verify.open(QIODevice::ReadOnly));
+    QCOMPARE(verify.readAll(), originalBytes);
+
+    // A second correction of the same file makes its own numbered copy.
+    QSignalSpy savedAgain(&editor, &ImageEditor::saved);
+    editor.saveCopy(source, 0, false, false, 0, 0, 1, 1, 0, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(savedAgain.size(), 1, 15000);
+    QVERIFY(savedAgain.first().first().toString().endsWith(QStringLiteral("-edited-2.png")));
+  }
+
+  void correctionsCarryTheColourProfile() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(QStringLiteral("wide.png"));
+    QImage image(8, 8, QImage::Format_RGB32);
+    image.fill(QColor(10, 20, 30));
+    const QColorSpace space(QColorSpace::DisplayP3);
+    image.setColorSpace(space);
+    QVERIFY(image.save(source, "PNG"));
+
+    ImageEditor editor;
+    QSignalSpy saved(&editor, &ImageEditor::saved);
+    editor.saveCopy(source, 0, true, false, 0, 0, 1, 1, 0, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, 15000);
+    QCOMPARE(saved.size(), 1);
+    const QImage result(saved.first().first().toString());
+    QVERIFY(!result.isNull());
+    QVERIFY2(result.colorSpace().isValid(), "the copy lost its colour profile");
+    QCOMPARE(result.colorSpace(), space);
+  }
+
+  void correctionsRefuseAMissingFile() {
+    ImageEditor editor;
+    QSignalSpy failed(&editor, &ImageEditor::failed);
+    editor.saveCopy(QStringLiteral("/tmp/omaroll-does-not-exist-9e8a.png"), 0, false, false, 0, 0, 1, 1,
+                    0, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 5000);
+    QVERIFY(!failed.first().first().toString().isEmpty());
+  }
+
+  void correctionsReportTheOrientedSize() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(QStringLiteral("plain.png"));
+    QVERIFY(QImage(7, 3, QImage::Format_RGB32).save(source, "PNG"));
+    ImageEditor editor;
+    QCOMPARE(editor.orientedSize(source), QSize(7, 3));
+    QCOMPARE(editor.orientedSize(dir.filePath(QStringLiteral("missing.png"))), QSize());
+  }
+
+  void correctionsActionIsNativeAndForStills() {
+    ActionLauncher launcher;
+    ActionRegistry registry(&launcher);
+    QVERIFY(registry.isNative(QStringLiteral("corrections")));
+    QVERIFY(registry.appliesTo(QStringLiteral("corrections"), false));
+    QVERIFY(!registry.appliesTo(QStringLiteral("corrections"), true));
   }
 
 private:
