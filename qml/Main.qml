@@ -55,6 +55,7 @@ ApplicationWindow {
     // also reaching the tile, pill or viewer button under it.
     readonly property bool modalOpen: confirm.visible || matteSheet.visible
                                       || correctionSheet.visible
+                                      || compareSheet.visible
                                       || libraryBrowser.visible || settingsSheet.visible
                                       || albumNameSheet.visible
                                       || exportSheet.visible || renameSheet.visible
@@ -162,6 +163,26 @@ ApplicationWindow {
         case "corrections":
             correctionSheet.open(path, path.substring(path.lastIndexOf("/") + 1))
             return
+        case "compare": {
+            // A checked selection wins; otherwise compare the open picture
+            // with its exact duplicates, then its visually similar set.
+            let candidates = library.checkedCount > 1 ? library.checkedPaths() : []
+            if (candidates.length < 2) {
+                const copies = Duplicates.groupPaths(path)
+                candidates = copies.length > 1 ? copies : Similarities.groupPaths(path)
+            }
+            const still = candidates.filter(function (candidate) {
+                const candidateRow = Captures.rowOf(candidate)
+                return candidateRow >= 0 && !Captures.isVideoAt(candidateRow)
+                       && !Captures.isDocumentAt(candidateRow)
+            })
+            if (still.length < 2) {
+                root.say("Select two or more pictures, or open one with copies to compare")
+                return
+            }
+            compareSheet.open(still)
+            return
+        }
         case "tailscale":
             tailscaleSheet.open([path])
             return
@@ -240,6 +261,8 @@ ApplicationWindow {
             matteSheet.close()
         } else if (correctionSheet.visible) {
             correctionSheet.close()
+        } else if (compareSheet.visible) {
+            compareSheet.close()
         } else if (albumNameSheet.visible) {
             albumNameSheet.close()
         } else if (detail.visible) {
@@ -546,6 +569,14 @@ ApplicationWindow {
             root.perform("matte", Captures.pathAt(0))
         } else if (view === "corrections") {
             root.perform("corrections", Captures.pathAt(0))
+        } else if (view === "compare") {
+            const stills = []
+            for (let row = 0; row < library.count && stills.length < 2; ++row) {
+                if (!Captures.isVideoAt(row) && !Captures.isDocumentAt(row)) {
+                    stills.push(Captures.pathAt(row))
+                }
+            }
+            compareSheet.open(stills)
         } else if (view === "export") {
             root.perform("export", Captures.pathAt(0))
         } else if (view === "rename") {
@@ -1281,6 +1312,12 @@ ApplicationWindow {
         onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
     }
 
+    CompareSheet {
+        id: compareSheet
+        objectName: "compareSheet"
+        onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
+    }
+
     ExportSheet {
         id: exportSheet
         objectName: "exportSheet"
@@ -1434,6 +1471,11 @@ ApplicationWindow {
         sequences: [Registry.shortcutFor("corrections")]
         enabled: !root.anySheetOpen
         onActivated: root.perform("corrections", root.currentPath())
+    }
+    Shortcut {
+        sequences: [Registry.shortcutFor("compare")]
+        enabled: !root.anySheetOpen
+        onActivated: root.perform("compare", root.currentPath())
     }
     Shortcut {
         sequences: [Registry.shortcutFor("trim")]

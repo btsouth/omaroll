@@ -13,6 +13,9 @@
 - Rename an album or a tag without losing its membership. Renaming a tag also
   renames every tag nested under it (Travel/Japan follows Travel). A name that
   clashes with an existing collection is refused.
+- Compare pictures side by side with synchronized zoom and pan (K). It uses the
+  checked selection, or the open picture's exact duplicates and then its
+  visually similar set, and shows each file's name.
 - Back up and restore the organization as a versioned JSON file: albums, tags,
   favourites, hidden files, ratings, captions and saved views. Export writes
   atomically; restore validates the whole file before changing anything, so a

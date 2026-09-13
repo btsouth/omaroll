@@ -302,6 +302,30 @@ private slots:
     }));
   }
 
+  void compareSheetShowsTheSetAndSharesOneZoom() {
+    QQuickItem* sheet = item("compareSheet");
+    QStringList pair{pathAt(0), pathAt(1)};
+    QVERIFY(QMetaObject::invokeMethod(sheet, "open", Q_ARG(QVariant, QVariant(pair))));
+    QTRY_VERIFY(sheet->isVisible());
+    QCOMPARE(sheet->property("imageCount").toInt(), 2);
+
+    QQuickItem* repeater = find(sheet, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("compareRepeater");
+    });
+    QVERIFY(repeater);
+    QCOMPARE(repeater->property("count").toInt(), 2);
+
+    // One zoom property drives both pictures; reset returns them to fit.
+    sheet->setProperty("zoom", 2.0);
+    QCOMPARE(sheet->property("zoom").toDouble(), 2.0);
+    QVERIFY(QMetaObject::invokeMethod(sheet, "reset"));
+    QCOMPARE(sheet->property("zoom").toDouble(), 1.0);
+    QCOMPARE(sheet->property("panX").toDouble(), 0.0);
+
+    invoke("dismissTopLayer");
+    QTRY_VERIFY(!sheet->isVisible());
+  }
+
   void correctionControlsApplyAndSaveACopy() {
     const QString path = m_scratch.filePath(QStringLiteral("correction-disposable.png"));
     QImage source(80, 60, QImage::Format_RGB32);
