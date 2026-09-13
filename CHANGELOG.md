@@ -16,6 +16,14 @@
 - Compare pictures side by side with synchronized zoom and pan (K). It uses the
   checked selection, or the open picture's exact duplicates and then its
   visually similar set, and shows each file's name.
+
+### Changed
+
+- Favourites, hidden flags, ratings and captions now follow a file that was
+  moved or renamed outside Omaroll, using the same inode or content-fingerprint
+  recovery that albums and tags already had. A file that is genuinely gone
+  still has its marks dropped, and an equal-sized unrelated file is not
+  mistaken for it.
 - Back up and restore the organization as a versioned JSON file: albums, tags,
   favourites, hidden files, ratings, captions and saved views. Export writes
   atomically; restore validates the whole file before changing anything, so a

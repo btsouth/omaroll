@@ -467,6 +467,9 @@ void CaptureModel::adoptResults(ScanResult result) {
   }
 
   if (m_settings) {
+    // Move recovery first: a file renamed outside Omaroll keeps its marks
+    // before the dead-path sweep drops them.
+    m_settings->reconcileMarks(scanned);
     m_settings->forgetMarks(result.deadMarks);
     m_settings->reconcileAlbums(scanned);
     m_settings->reconcileTags(scanned);

@@ -23,6 +23,7 @@ constexpr auto kHidden = "library/hidden";
 constexpr auto kRatings = "library/ratings";
 constexpr int kMaximumRating = 5;
 constexpr auto kCaptions = "library/captions";
+constexpr auto kMarkIdentities = "library/markIdentities";
 constexpr int kMaximumCaptionLength = 500;
 constexpr auto kShowHidden = "library/showHidden";
 constexpr auto kSortMode = "library/sortMode";
@@ -231,6 +232,25 @@ AppSettings::AppSettings(QObject* parent)
       m_smartCollections.insert(name, it.value().toMap());
     }
   }
+
+  // Identities behind marks, so a file moved outside Omaroll keeps its
+  // favourite, rating and caption on the next scan.
+  const QVariantMap storedMarkIdentities = m_settings.value(kMarkIdentities).toMap();
+  for (auto it = storedMarkIdentities.cbegin(); it != storedMarkIdentities.cend(); ++it) {
+    if (it.key().isEmpty()) {
+      continue;
+    }
+    const QVariantMap stored = it.value().toMap();
+    AlbumEntry entry;
+    entry.path = it.key();
+    entry.bytes = stored.value(QStringLiteral("bytes"), -1).toLongLong();
+    entry.modified = stored.value(QStringLiteral("modified")).toLongLong();
+    entry.fingerprint = stored.value(QStringLiteral("fingerprint")).toByteArray();
+    entry.device = stored.value(QStringLiteral("device")).toString().toULongLong();
+    entry.inode = stored.value(QStringLiteral("inode")).toString().toULongLong();
+    m_markIdentities.insert(it.key(), entry);
+  }
+
   m_previousVisit = m_settings.value(kLastVisit).toString();
   m_settings.setValue(kLastVisit, QDateTime::currentDateTime().toString(Qt::ISODate));
 }
@@ -376,6 +396,13 @@ void AppSettings::relocatePath(const QString& oldPath, const QString& newPath) {
   if (const QString text = m_captions.take(oldPath); !text.isEmpty()) {
     m_captions.insert(newPath, text);
     marksChangedValue = true;
+  }
+  // The move recovery identity follows the mark to its new path.
+  if (const auto identity = m_markIdentities.take(oldPath); identity.resolved) {
+    const AlbumEntry moved = identityFor(newPath);
+    if (moved.resolved) {
+      m_markIdentities.insert(newPath, moved);
+    }
   }
   if (marksChangedValue) {
     persistMarks();
@@ -1246,6 +1273,7 @@ void AppSettings::toggleFavorite(const QString& path) {
   if (!m_favorites.remove(path)) {
     m_favorites.insert(path);
   }
+  refreshMarkIdentity(path);
   persistMarks();
   emit marksChanged();
 }
@@ -1269,6 +1297,9 @@ void AppSettings::setRating(const QStringList& paths, int rating) {
   if (!changed) {
     return;
   }
+  for (const QString& path : paths) {
+    refreshMarkIdentity(path);
+  }
   persistMarks();
   emit marksChanged();
 }
@@ -1288,6 +1319,7 @@ void AppSettings::setCaption(const QString& path, const QString& text) {
   } else {
     m_captions.insert(path, clean);
   }
+  refreshMarkIdentity(path);
   persistMarks();
   emit marksChanged();
 }
@@ -1299,6 +1331,7 @@ void AppSettings::toggleHidden(const QString& path) {
   if (!m_hidden.remove(path)) {
     m_hidden.insert(path);
   }
+  refreshMarkIdentity(path);
   persistMarks();
   emit marksChanged();
 }
@@ -1320,12 +1353,18 @@ void mark(QSet<QString>& marks, const QStringList& paths, bool on) {
 
 void AppSettings::setFavorite(const QStringList& paths, bool on) {
   mark(m_favorites, paths, on);
+  for (const QString& path : paths) {
+    refreshMarkIdentity(path);
+  }
   persistMarks();
   emit marksChanged();
 }
 
 void AppSettings::setHidden(const QStringList& paths, bool on) {
   mark(m_hidden, paths, on);
+  for (const QString& path : paths) {
+    refreshMarkIdentity(path);
+  }
   persistMarks();
   emit marksChanged();
 }
@@ -1349,9 +1388,11 @@ void AppSettings::forgetMarks(const QStringList& paths) {
     changed = m_hidden.remove(path) || changed;
     changed = m_ratings.remove(path) > 0 || changed;
     changed = m_captions.remove(path) > 0 || changed;
+    changed = m_markIdentities.remove(path) > 0 || changed;
   }
   if (changed) {
     persistMarks();
+    persistMarkIdentities();
   }
 }
 
@@ -1370,4 +1411,184 @@ void AppSettings::persistMarks() {
     captions.insert(it.key(), it.value());
   }
   m_settings.setValue(kCaptions, captions);
+}
+
+bool AppSettings::pathHasMark(const QString& path) const {
+  return m_favorites.contains(path) || m_hidden.contains(path) || m_ratings.contains(path) ||
+         m_captions.contains(path);
+}
+
+void AppSettings::persistMarkIdentities() {
+  QVariantMap stored;
+  for (auto it = m_markIdentities.cbegin(); it != m_markIdentities.cend(); ++it) {
+    const AlbumEntry& entry = it.value();
+    QVariantMap row;
+    row.insert(QStringLiteral("bytes"), entry.bytes);
+    row.insert(QStringLiteral("modified"), entry.modified);
+    row.insert(QStringLiteral("fingerprint"), entry.fingerprint);
+    row.insert(QStringLiteral("device"), QString::number(entry.device));
+    row.insert(QStringLiteral("inode"), QString::number(entry.inode));
+    stored.insert(it.key(), row);
+  }
+  m_settings.setValue(kMarkIdentities, stored);
+}
+
+void AppSettings::refreshMarkIdentity(const QString& path) {
+  if (path.isEmpty()) {
+    return;
+  }
+  if (!pathHasMark(path)) {
+    if (m_markIdentities.remove(path) > 0) {
+      persistMarkIdentities();
+    }
+    return;
+  }
+  if (m_markIdentities.contains(path)) {
+    return;
+  }
+  const AlbumEntry identity = identityFor(path);
+  if (identity.resolved) {
+    m_markIdentities.insert(path, identity);
+    persistMarkIdentities();
+  }
+}
+
+void AppSettings::reconcileMarks(const QList<CaptureRecord>& records) {
+  // Marks saved before move recovery existed have no stored identity yet.
+  // Record one for every live marked file, so a later move can be recovered.
+  bool backfilled = false;
+  for (const CaptureRecord& record : records) {
+    if (pathHasMark(record.path) && !m_markIdentities.contains(record.path)) {
+      const AlbumEntry identity = identityFor(record.path);
+      if (identity.resolved) {
+        m_markIdentities.insert(record.path, identity);
+        backfilled = true;
+      }
+    }
+  }
+  if (backfilled) {
+    persistMarkIdentities();
+  }
+  if (m_markIdentities.isEmpty()) {
+    return;
+  }
+
+  struct Candidate {
+    QString path;
+    qint64 bytes = 0;
+    qint64 modified = 0;
+    quint64 device = 0;
+    quint64 inode = 0;
+  };
+  QList<Candidate> candidates;
+  candidates.reserve(records.size());
+  QSet<QString> live;
+  live.reserve(records.size());
+  for (const CaptureRecord& record : records) {
+    quint64 device = record.device;
+    quint64 inode = record.inode;
+    if (device == 0 && inode == 0) {
+      struct stat status {};
+      if (::stat(QFile::encodeName(record.path).constData(), &status) == 0) {
+        device = status.st_dev;
+        inode = status.st_ino;
+      }
+    }
+    candidates.append({record.path, record.bytes, record.modified, device, inode});
+    live.insert(record.path);
+  }
+
+  // Decide every move before applying any, so two walking marks cannot chase
+  // each other's path mid-loop.
+  QList<QPair<QString, QString>> moves;
+  for (auto it = m_markIdentities.cbegin(); it != m_markIdentities.cend(); ++it) {
+    const QString& oldPath = it.key();
+    if (live.contains(oldPath)) {
+      continue;
+    }
+    const AlbumEntry& identity = it.value();
+
+    QString match;
+    int found = 0;
+    if (identity.device != 0 && identity.inode != 0) {
+      for (const Candidate& candidate : std::as_const(candidates)) {
+        if (candidate.inode == identity.inode && candidate.bytes == identity.bytes &&
+            (candidate.device == identity.device || candidate.modified == identity.modified)) {
+          match = candidate.path;
+          if (++found > 1) {
+            break;
+          }
+        }
+      }
+    }
+    if (found != 1 && !identity.fingerprint.isEmpty()) {
+      QList<Candidate> possible;
+      for (const Candidate& candidate : std::as_const(candidates)) {
+        if (candidate.bytes == identity.bytes && candidate.modified == identity.modified) {
+          possible.append(candidate);
+        }
+      }
+      if (possible.isEmpty()) {
+        for (const Candidate& candidate : std::as_const(candidates)) {
+          if (candidate.bytes == identity.bytes) {
+            possible.append(candidate);
+          }
+        }
+      }
+      // Same guard as albums and tags: a directory full of equal-sized files
+      // must not stall the UI fingerprinting everything.
+      if (possible.size() <= 128) {
+        match.clear();
+        found = 0;
+        for (const Candidate& candidate : std::as_const(possible)) {
+          if (identityFor(candidate.path).fingerprint == identity.fingerprint) {
+            match = candidate.path;
+            if (++found > 1) {
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    if (found == 1 && !match.isEmpty()) {
+      moves.append({oldPath, match});
+    }
+  }
+
+  if (moves.isEmpty()) {
+    return;
+  }
+
+  for (const auto& move : std::as_const(moves)) {
+    const QString& from = move.first;
+    const QString& to = move.second;
+    if (m_favorites.remove(from)) {
+      m_favorites.insert(to);
+    }
+    if (m_hidden.remove(from)) {
+      m_hidden.insert(to);
+    }
+    const auto rating = m_ratings.find(from);
+    if (rating != m_ratings.end()) {
+      m_ratings[to] = qMax(m_ratings.value(to, 0), rating.value());
+      m_ratings.erase(rating);
+    }
+    const auto caption = m_captions.find(from);
+    if (caption != m_captions.end()) {
+      if (!m_captions.contains(to)) {
+        m_captions.insert(to, caption.value());
+      }
+      m_captions.erase(caption);
+    }
+    m_markIdentities.remove(from);
+    const AlbumEntry identity = identityFor(to);
+    if (identity.resolved) {
+      m_markIdentities.insert(to, identity);
+    }
+  }
+
+  persistMarks();
+  persistMarkIdentities();
+  emit marksChanged();
 }
