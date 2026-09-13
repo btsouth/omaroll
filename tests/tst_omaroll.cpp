@@ -22,6 +22,7 @@
 #include "pdf/PdfSupport.h"
 #include "search/OcrIndex.h"
 #include "search/QrDetector.h"
+#include "subtitles/SubtitleIndex.h"
 #include "sources/CaptureLocations.h"
 #include "sources/CaptureScanner.h"
 #include "theme/OmarchyTheme.h"
@@ -1019,6 +1020,70 @@ private slots:
     reloaded.setVideoVolume(0.8);
     reloaded.setVideoMuted(false);
     reloaded.setVideoPosition(movie, 0);
+  }
+
+  void externalSubtitlesParseAndAnswerByPosition() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString video = dir.filePath(QStringLiteral("clip.mp4"));
+    {
+      QFile file(video);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("not really a video");
+    }
+    const QString srt = dir.filePath(QStringLiteral("clip.srt"));
+    {
+      QFile file(srt);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write(
+          "1\n00:00:01,000 --> 00:00:03,500\nHello <i>world</i>\n\n"
+          "2\n00:00:04,000 --> 00:00:05,000\nSecond line\nsecond row\n\n");
+    }
+    const QString vtt = dir.filePath(QStringLiteral("clip.en.vtt"));
+    {
+      QFile file(vtt);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("WEBVTT\n\nNOTE ignore me\n\n00:01.000 --> 00:02.000\nVTT cue\n\n");
+    }
+
+    SubtitleIndex subtitles;
+    const QStringList files = subtitles.files(video);
+    QCOMPARE(files.size(), 2);
+    QVERIFY(files.contains(srt));
+    QVERIFY(files.contains(vtt));
+
+    QCOMPARE(subtitles.label(srt), QStringLiteral("Subtitles"));
+    QCOMPARE(subtitles.label(vtt), QStringLiteral("English"));
+    QCOMPARE(subtitles.cueCount(srt), 2);
+
+    // Markup is stripped, cues answer at their boundaries, and the gap between
+    // cues is silent.
+    QCOMPARE(subtitles.textAt(srt, 2000), QStringLiteral("Hello world"));
+    QCOMPARE(subtitles.textAt(srt, 3500), QStringLiteral("Hello world"));
+    QCOMPARE(subtitles.textAt(srt, 3600), QString());
+    QCOMPARE(subtitles.textAt(srt, 4200), QStringLiteral("Second line\nsecond row"));
+
+    // A WebVTT cue with no hours, and its note skipped.
+    QCOMPARE(subtitles.textAt(vtt, 1500), QStringLiteral("VTT cue"));
+    QCOMPARE(subtitles.textAt(vtt, 2500), QString());
+  }
+
+  void externalSubtitlesIgnoreUnrelatedSidecars() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString video = dir.filePath(QStringLiteral("movie.mp4"));
+    {
+      QFile file(video);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("x");
+    }
+    for (const char* name : {"movie2.srt", "other.srt", "movie.txt"}) {
+      QFile file(dir.filePath(QLatin1String(name)));
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("1\n00:00:00,000 --> 00:00:01,000\nx\n\n");
+    }
+    SubtitleIndex subtitles;
+    QVERIFY(subtitles.files(video).isEmpty());
   }
 
   void addingOverAnUnavailableAlbumEntryReplacesIt() {

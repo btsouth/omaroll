@@ -21,6 +21,7 @@
 #include "pdf/PdfProvider.h"
 #include "search/OcrIndex.h"
 #include "search/QrDetector.h"
+#include "subtitles/SubtitleIndex.h"
 #include "sources/CaptureScanner.h"
 #include "theme/OmarchyTheme.h"
 #include "thumbs/ThumbnailCache.h"
@@ -336,6 +337,7 @@ int main(int argc, char* argv[]) {
   library.setSourceModel(&captures);
   OcrIndex textIndex(&captures);
   QrDetector qrDetector(&captures);
+  SubtitleIndex subtitles;
   QObject::connect(&library, &CaptureFilterModel::searchTextChanged, &textIndex,
                    [&] { textIndex.setSearchText(library.searchText()); });
   QObject::connect(&textIndex, &OcrIndex::textReady, &library, &CaptureFilterModel::setOcrText);
@@ -418,6 +420,7 @@ int main(int argc, char* argv[]) {
   engine.rootContext()->setContextProperty(QStringLiteral("ImageEdit"), &imageEditor);
   engine.rootContext()->setContextProperty(QStringLiteral("TextIndex"), &textIndex);
   engine.rootContext()->setContextProperty(QStringLiteral("Qr"), &qrDetector);
+  engine.rootContext()->setContextProperty(QStringLiteral("Subtitles"), &subtitles);
   engine.rootContext()->setContextProperty(QStringLiteral("Duplicates"), &duplicates);
   engine.rootContext()->setContextProperty(QStringLiteral("Similarities"), &similarities);
   engine.rootContext()->setContextProperty(QStringLiteral("MediaInfo"), &mediaInfo);

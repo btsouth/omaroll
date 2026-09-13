@@ -29,6 +29,7 @@
 #include "pdf/PdfInspector.h"
 #include "pdf/PdfProvider.h"
 #include "search/OcrIndex.h"
+#include "subtitles/SubtitleIndex.h"
 #include "search/QrDetector.h"
 #include "theme/OmarchyTheme.h"
 #include "thumbs/ThumbnailProvider.h"
@@ -153,6 +154,7 @@ private slots:
     m_imageEditor = new ImageEditor(this);
     m_textIndex = new OcrIndex(m_captures, this);
     m_qr = new QrDetector(m_captures, this);
+    m_subtitles = new SubtitleIndex(this);
     connect(m_actions, &ActionLauncher::outputPending, m_captures, &CaptureModel::holdPath);
     connect(m_actions, &ActionLauncher::outputSettled, m_captures, &CaptureModel::releasePath);
 
@@ -197,6 +199,7 @@ private slots:
     context->setContextProperty(QStringLiteral("ImageEdit"), m_imageEditor);
     context->setContextProperty(QStringLiteral("TextIndex"), m_textIndex);
     context->setContextProperty(QStringLiteral("Qr"), m_qr);
+    context->setContextProperty(QStringLiteral("Subtitles"), m_subtitles);
     context->setContextProperty(QStringLiteral("Duplicates"), m_duplicates);
     context->setContextProperty(QStringLiteral("Similarities"), m_similarities);
     context->setContextProperty(QStringLiteral("MediaInfo"), m_mediaInfo);
@@ -527,6 +530,53 @@ private slots:
     QVERIFY(fit->mapToScene(QPointF(0, 0)).x() >= 0);
     m_window->resize(1280, 820);
     QTRY_VERIFY(item("actualSizeButton")->isVisible());
+  }
+
+  void externalSidecarSubtitlesShowOnTheVideo() {
+    int videoRow = -1;
+    for (int row = 0; row < m_library->rowCount(); ++row) {
+      if (m_library->isVideoAt(row)) {
+        videoRow = row;
+        break;
+      }
+    }
+    QVERIFY(videoRow >= 0);
+    const QString video = m_library->pathAt(videoRow);
+    const QFileInfo info(video);
+    const QString sidecar = info.dir().filePath(info.completeBaseName() + QStringLiteral(".srt"));
+    {
+      QFile file(sidecar);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("1\n00:00:01,000 --> 00:00:06,000\nSidecar cue text\n\n");
+    }
+    const auto cleanup = qScopeGuard([&] {
+      QFile::remove(sidecar);
+      invoke("dismissTopLayer");
+      m_captures->refresh();
+      m_window->resize(1280, 820);
+    });
+
+    openDetail(videoRow);
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY_WITH_TIMEOUT(
+        detail->property("subtitleFiles").toStringList().contains(sidecar), 5000);
+
+    // Cycle the one subtitle control until the sidecar is chosen; some videos
+    // also carry an embedded track ahead of it.
+    for (int step = 0; step < 6
+                       && detail->property("externalSubtitle").toString() != sidecar; ++step) {
+      click(item("subtitleButton"));
+      QTest::qWait(50);
+    }
+    QCOMPARE(detail->property("externalSubtitle").toString(), sidecar);
+
+    auto* player = m_window->findChild<QMediaPlayer*>(QStringLiteral("videoPlayer"));
+    QVERIFY(player);
+    player->setPosition(2000);
+    QQuickItem* overlay = item("subtitleOverlay");
+    QVERIFY(overlay);
+    QTRY_VERIFY_WITH_TIMEOUT(overlay->property("text").toString().contains(
+                                 QStringLiteral("Sidecar cue text")), 5000);
   }
 
   void videoViewerHasDefaultPlayerKeyboardAndPointerControls() {
@@ -2398,6 +2448,7 @@ private:
   ImageEditor* m_imageEditor = nullptr;
   OcrIndex* m_textIndex = nullptr;
   QrDetector* m_qr = nullptr;
+  SubtitleIndex* m_subtitles = nullptr;
   DuplicateIndex* m_duplicates = nullptr;
   SimilarityIndex* m_similarities = nullptr;
   MediaInspector* m_mediaInfo = nullptr;

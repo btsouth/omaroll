@@ -110,10 +110,14 @@ runner:
 - **SBS-1132 playback memory.** Volume and mute persist, and a video reopened
   part-way offers Resume or Start over from a saved spot (pruned to 500
   entries). Playback that reaches the end clears the spot.
+- **SBS-1133 external subtitles.** `src/subtitles/SubtitleIndex` finds a `.srt`
+  or `.vtt` beside a video, parses it into cached cues and answers by playback
+  position; the CC control cycles Off, embedded tracks and sidecars, and the
+  cue is drawn over the video. The transport controls were re-anchored, since
+  the positioner did not lay out the late-appearing CC button.
 
 Remaining after this branch: region copy (SBS-1127 remainder), orientation and
-color verification fixtures (SBS-1128), external subtitles (SBS-1133) and PDF
-depth (SBS-1134).
+color verification fixtures (SBS-1128), and PDF depth (SBS-1134).
 
 ## Next decisions and release gates
 

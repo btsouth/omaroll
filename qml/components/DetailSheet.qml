@@ -76,6 +76,24 @@ Item {
     // Set when a video is opened, so the resume spot is offered once and not
     // again by the reload a seek causes.
     property bool resumePending: false
+    // Sidecar subtitle files beside the video, and the one currently chosen.
+    // External cues are drawn by omaroll; embedded tracks are drawn by the
+    // backend.
+    property var subtitleFiles: []
+    property string externalSubtitle: ""
+    property int subtitleChoice: 0
+    readonly property string externalCueText: externalSubtitle !== "" && player
+        ? Subtitles.textAt(externalSubtitle, Math.round(player.position)) : ""
+    readonly property string subtitleOverlayText: externalSubtitle !== ""
+        ? externalCueText
+        : (output.videoSink ? output.videoSink.subtitleText : "")
+    readonly property bool hasSubtitleChoices: (player && player.subtitleTracks.length > 0)
+                                               || subtitleFiles.length > 0
+    readonly property string subtitleChoiceLabel: {
+        const choices = root.subtitleChoices()
+        return root.subtitleChoice >= 0 && root.subtitleChoice < choices.length
+                ? choices[root.subtitleChoice].label : ""
+    }
     readonly property int playbackLoops: player ? player.loops : 1
     readonly property bool isAnimatedImage: !root.isVideo && !root.isDocument
                                              && (root.fileName.toLowerCase().endsWith(".gif")
@@ -126,6 +144,9 @@ Item {
     signal captionEdited(string text)
     signal navigateRequested(int direction)
     signal fullScreenRequested(bool enabled)
+    // The status line lives on the window, not here; asking for a message
+    // through a signal keeps that binding intact.
+    signal statusRequested(string message)
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
@@ -228,6 +249,9 @@ Item {
         resumeAvailable = false
         resumePosition = 0
         resumePending = true
+        externalSubtitle = ""
+        subtitleChoice = 0
+        subtitleFiles = Subtitles.files(path)
         const keepActionFocus = visible && actionNavigationActive
         const previousActionId = focusedActionId
         playbackError = ""
@@ -345,13 +369,64 @@ Item {
         player.playbackRate = rates[0]
     }
 
+    // Off, then each embedded track, then each sidecar file. Cycling the one
+    // list keeps a single control for both kinds.
+    function subtitleChoices() {
+        const choices = [{kind: "off", label: "Off", index: -1, path: ""}]
+        if (player) {
+            const tracks = player.subtitleTracks
+            for (let i = 0; i < tracks.length; ++i) {
+                choices.push({kind: "embedded", label: root.embeddedTrackLabel(tracks[i], i),
+                              index: i, path: ""})
+            }
+        }
+        for (let i = 0; i < root.subtitleFiles.length; ++i) {
+            choices.push({kind: "external", label: Subtitles.label(root.subtitleFiles[i]),
+                          index: -1, path: root.subtitleFiles[i]})
+        }
+        return choices
+    }
+
+    function embeddedTrackLabel(track, index) {
+        try {
+            const language = track.stringValue(QMediaMetaData.Language)
+            if (language && language.length > 0) {
+                return language.toUpperCase()
+            }
+        } catch (error) {
+            // A value without stringValue falls back to the ordinal.
+        }
+        return "Track " + (index + 1)
+    }
+
     function cycleSubtitleTrack() {
-        const count = player.subtitleTracks.length
-        if (count === 0) {
+        const choices = subtitleChoices()
+        if (choices.length <= 1) {
             return
         }
-        player.activeSubtitleTrack = player.activeSubtitleTrack + 1 >= count
-                                     ? -1 : player.activeSubtitleTrack + 1
+        subtitleChoice = (subtitleChoice + 1) % choices.length
+        applySubtitleChoice()
+    }
+
+    function applySubtitleChoice() {
+        const choices = subtitleChoices()
+        if (subtitleChoice < 0 || subtitleChoice >= choices.length) {
+            subtitleChoice = 0
+        }
+        const choice = choices[subtitleChoice]
+        if (choice.kind === "embedded") {
+            // The backend draws embedded tracks; clear the sidecar so the two
+            // overlays cannot both show.
+            player.activeSubtitleTrack = choice.index
+            externalSubtitle = ""
+        } else if (choice.kind === "external") {
+            player.activeSubtitleTrack = -1
+            externalSubtitle = choice.path
+        } else {
+            player.activeSubtitleTrack = -1
+            externalSubtitle = ""
+        }
+        statusRequested(choice.kind === "off" ? "Subtitles off" : "Subtitles: " + choice.label)
     }
 
     function cycleAudioTrack() {
@@ -885,13 +960,13 @@ Item {
             }
 
             Text {
+                objectName: "subtitleOverlay"
                 anchors.horizontalCenter: output.horizontalCenter
                 anchors.bottom: output.bottom
                 anchors.bottomMargin: 24
                 width: Math.max(0, output.width - 80)
-                visible: root.isVideo && output.videoSink
-                         && output.videoSink.subtitleText !== ""
-                text: output.videoSink ? output.videoSink.subtitleText : ""
+                visible: root.isVideo && root.subtitleOverlayText !== ""
+                text: root.subtitleOverlayText
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.Wrap
                 font.family: Theme.fontFamily
@@ -1228,29 +1303,54 @@ Item {
                     color: Theme.mutedText
                 }
 
-                Row {
+                // Explicit anchors rather than a Row: an optional control that
+                // appears late (a sidecar subtitle) was not being laid out by
+                // the positioner and ended up on top of its neighbour. Widths
+                // collapse to zero when a control is unavailable, so the chain
+                // still closes up.
+                Item {
                     id: mediaControls
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
-                    spacing: 6
+                    implicitHeight: 26
+                    readonly property int audioGap: audioButton.width > 0 && subtitleButton.width > 0
+                                                    ? 6 : 0
+                    readonly property int subtitleGap: subtitleButton.width > 0 ? 6 : 0
+                    implicitWidth: audioButton.width + audioGap + subtitleButton.width
+                                   + subtitleGap + speedButton.width + 6 + soundButton.width
 
                     PillButton {
-                        visible: player && player.audioTracks.length > 1 && transport.width >= 520
+                        id: audioButton
+                        visible: true
+                        width: player && player.audioTracks.length > 1 && transport.width >= 520
+                               ? implicitWidth : 0
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
                         label: "Audio " + (player ? player.activeAudioTrack + 1 : 1)
                         toolTip: "Switch audio track"
                         onClicked: root.cycleAudioTrack()
                     }
                     PillButton {
-                        visible: player && player.subtitleTracks.length > 0 && transport.width >= 440
+                        id: subtitleButton
+                        visible: true
+                        width: root.hasSubtitleChoices && transport.width >= 440
+                               ? implicitWidth : 0
+                        anchors.left: audioButton.right
+                        anchors.leftMargin: mediaControls.audioGap
+                        anchors.verticalCenter: parent.verticalCenter
                         objectName: "subtitleButton"
                         label: "CC"
-                        toolTip: player && player.activeSubtitleTrack >= 0
-                                 ? "Turn subtitles off" : "Choose subtitles"
-                        active: player && player.activeSubtitleTrack >= 0
+                        toolTip: root.subtitleChoice > 0
+                                 ? "Subtitles: " + root.subtitleChoiceLabel
+                                 : "Choose subtitles"
+                        active: root.subtitleChoice > 0
                         onClicked: root.cycleSubtitleTrack()
                     }
                     PillButton {
                         id: speedButton
+                        anchors.left: subtitleButton.right
+                        anchors.leftMargin: mediaControls.subtitleGap
+                        anchors.verticalCenter: parent.verticalCenter
                         objectName: "playbackSpeedButton"
                         label: Number(root.playbackRate.toFixed(2)) + "×"
                         toolTip: "Playback speed"
@@ -1260,6 +1360,9 @@ Item {
                     }
                     PillButton {
                         id: soundButton
+                        anchors.left: speedButton.right
+                        anchors.leftMargin: 6
+                        anchors.verticalCenter: parent.verticalCenter
                         objectName: "videoSoundButton"
                         label: root.playbackMuted ? "Muted" : Math.round(root.playbackVolume * 100) + "%"
                         toolTip: root.playbackMuted ? "Unmute" : "Mute"
