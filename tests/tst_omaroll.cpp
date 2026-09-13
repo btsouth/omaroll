@@ -30,6 +30,8 @@
 
 #include <QClipboard>
 #include <QColorSpace>
+#include <QBuffer>
+#include <QImageIOHandler>
 #include <QImageReader>
 #include <QPainter>
 #include <QPdfWriter>
@@ -39,6 +41,43 @@
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QtTest>
+
+namespace {
+
+// A JPEG carrying a single EXIF Orientation tag. Qt cannot write one, and the
+// alternatives (ImageMagick, exiftool) are not guaranteed on a build machine,
+// so the APP1 segment is assembled by hand and inserted after the SOI marker.
+QByteArray withExifOrientation(const QByteArray& jpeg, quint16 orientation) {
+  if (jpeg.size() < 2 || static_cast<quint8>(jpeg.at(0)) != 0xFF ||
+      static_cast<quint8>(jpeg.at(1)) != 0xD8) {
+    return jpeg;
+  }
+  QByteArray payload;
+  payload.append("Exif\0\0", 6);
+  QByteArray tiff;
+  const quint16 length = static_cast<quint16>(2 + 6 + 8 + 18);
+  QByteArray app1;
+  app1.append(static_cast<char>(0xFF));
+  app1.append(static_cast<char>(0xE1));
+  app1.append(static_cast<char>((length >> 8) & 0xFF));
+  app1.append(static_cast<char>(length & 0xFF));
+  tiff.append("MM", 2);                        // big-endian
+  tiff.append("\x00\x2A", 2);                  // 42
+  tiff.append("\x00\x00\x00\x08", 4);          // IFD0 at offset 8
+  tiff.append("\x00\x01", 2);                  // one entry
+  tiff.append("\x01\x12", 2);                  // Orientation
+  tiff.append("\x00\x03", 2);                  // SHORT
+  tiff.append("\x00\x00\x00\x01", 4);          // count 1
+  tiff.append(static_cast<char>((orientation >> 8) & 0xFF));
+  tiff.append(static_cast<char>(orientation & 0xFF));
+  tiff.append("\x00\x00", 2);                  // value padded to 4 bytes
+  tiff.append("\x00\x00\x00\x00", 4);          // no next IFD
+  app1.append(payload);
+  app1.append(tiff);
+  return jpeg.left(2) + app1 + jpeg.mid(2);
+}
+
+} // namespace
 
 class OmarollTest : public QObject {
   Q_OBJECT
@@ -4053,6 +4092,81 @@ private slots:
     ImageEditor editor;
     QCOMPARE(editor.orientedSize(source), QSize(7, 3));
     QCOMPARE(editor.orientedSize(dir.filePath(QStringLiteral("missing.png"))), QSize());
+  }
+
+  void orientationIsAppliedAndBakedIntoACopy() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QImage source(40, 20, QImage::Format_RGB32);
+    source.fill(Qt::red);
+    for (int y = 0; y < source.height(); ++y) {
+      for (int x = source.width() / 2; x < source.width(); ++x) {
+        source.setPixelColor(x, y, Qt::blue);
+      }
+    }
+    QByteArray jpeg;
+    {
+      QBuffer buffer(&jpeg);
+      QVERIFY(buffer.open(QIODevice::WriteOnly));
+      QVERIFY(source.save(&buffer, "JPG"));
+    }
+    const QString path = dir.filePath(QStringLiteral("oriented.jpg"));
+    {
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write(withExifOrientation(jpeg, 6)); // rotate 90 clockwise
+    }
+
+    // The reader reports the tag and hands back the upright image: 40x20
+    // becomes 20x40.
+    QImageReader reader(path);
+    reader.setAutoTransform(true);
+    QVERIFY((reader.transformation() & QImageIOHandler::TransformationRotate90) != 0);
+    const QImage oriented = reader.read();
+    QCOMPARE(oriented.size(), QSize(20, 40));
+
+    // The editor's size helper agrees with the reader.
+    ImageEditor editor;
+    QCOMPARE(editor.orientedSize(path), QSize(20, 40));
+
+    // A saved copy bakes the orientation in: the tag is gone and the pixels
+    // stay upright.
+    QSignalSpy saved(&editor, &ImageEditor::saved);
+    editor.saveCopy(path, 0, false, false, 0, 0, 1, 1, 0, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, 15000);
+    const QString output = saved.first().first().toString();
+    QImageReader copyReader(output);
+    QCOMPARE(copyReader.transformation(), QImageIOHandler::Transformations(
+                                              QImageIOHandler::TransformationNone));
+    const QImage copy = copyReader.read();
+    QCOMPARE(copy.size(), QSize(20, 40));
+    // A clockwise turn sends the source's left half to the top half. JPEG is
+    // lossy, so check the dominant channel rather than exact colours.
+    const QColor top = copy.pixelColor(copy.width() / 2, 2);
+    QVERIFY2(top.red() > 200 && top.blue() < 80, qPrintable(top.name()));
+    const QColor bottom = copy.pixelColor(copy.width() / 2, copy.height() - 3);
+    QVERIFY2(bottom.blue() > 200 && bottom.red() < 80, qPrintable(bottom.name()));
+  }
+
+  void colourProfileSurvivesAJPEGCorrection() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(QStringLiteral("profile.jpg"));
+    QImage image(32, 24, QImage::Format_RGB32);
+    image.fill(QColor(30, 40, 50));
+    const QColorSpace space(QColorSpace::DisplayP3);
+    image.setColorSpace(space);
+    QVERIFY(image.save(source, "JPG", 95));
+
+    ImageEditor editor;
+    QSignalSpy saved(&editor, &ImageEditor::saved);
+    editor.saveCopy(source, 0, false, false, 0, 0, 1, 1, 0, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, 15000);
+    const QImage result(saved.first().first().toString());
+    QVERIFY(!result.isNull());
+    QVERIFY2(result.colorSpace().isValid(), "the copy lost its colour profile");
+    // Not just valid: the same profile, so a swap to sRGB would fail too.
+    QCOMPARE(result.colorSpace(), space);
   }
 
   void correctionsCopyARegionToTheClipboard() {
