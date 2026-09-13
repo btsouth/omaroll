@@ -65,6 +65,8 @@ add_library(omaroll_core STATIC
   src/search/OcrIndex.h
   src/search/QrDetector.cpp
   src/search/QrDetector.h
+  src/subtitles/SubtitleIndex.cpp
+  src/subtitles/SubtitleIndex.h
   src/thumbs/ThumbnailCache.cpp
   src/thumbs/ThumbnailCache.h
   src/thumbs/ThumbnailProvider.cpp

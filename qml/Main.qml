@@ -1057,6 +1057,7 @@ ApplicationWindow {
             Settings.setCaption(detail.path, text)
             root.say(text !== "" ? "Caption saved" : "Caption removed")
         }
+        onStatusRequested: function (message) { root.say(message) }
         objectName: "detail"
         selectionLabel: root.viewerPaths.indexOf(detail.path) < 0 ? ""
                         : (root.viewerPaths.indexOf(detail.path) + 1)

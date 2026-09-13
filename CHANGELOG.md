@@ -19,6 +19,9 @@
 - Remember video playback. Volume and mute are kept across files and sessions,
   and a video reopened part-way through offers Resume or Start over instead of
   always starting from the beginning. Watching to the end clears the spot.
+- External subtitles. A `.srt` or `.vtt` beside a video is offered alongside any
+  embedded tracks, labelled by its language tag (movie.en.srt shows as
+  English), and drawn over the video as playback reaches each cue.
 
 ### Changed
 

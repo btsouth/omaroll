@@ -44,7 +44,9 @@ See [current status and handoff](STATUS.md) for release boundaries and evidence.
 - Remember playback preferences and offer resumable playback. Done: volume and
   mute persist, and a reopened video offers Resume or Start over from its
   saved spot.
-- Load external subtitles and expose clear track choices.
+- Load external subtitles and expose clear track choices. Done: a `.srt` or
+  `.vtt` beside the video joins the CC cycle with a language label and renders
+  over the video; embedded named tracks keep working.
 - Add PDF text selection, search, page navigation, links and printing.
 
 Each phase ships in useful increments. Repository inclusion, installation by
