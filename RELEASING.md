@@ -1,6 +1,6 @@
 # Releasing Omaroll
 
-Start with [current status](docs/STATUS.md). v1.6.0 is the latest published
+Start with [current status](docs/STATUS.md). v1.7.0 is the latest published
 release. A version is released only when its tag is pushed after desktop
 acceptance.
 

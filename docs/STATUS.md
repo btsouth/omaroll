@@ -1,6 +1,7 @@
 # Project status and handoff
 
-Snapshot: 5 September 2026 UTC, after the v1.6.0 release. Check the linked PRs and release before resuming.
+Snapshot: 14 September 2026 UTC, at the v1.7.0 release candidate. Check the
+tag and release, and the latest PRs, before resuming.
 
 ## Released
 
@@ -81,11 +82,11 @@ release lives at ~/Videos/omaroll-1.6.0-demo.mp4 on the development desktop. Sem
 recognition were considered against Lightroom and Immich and deferred
 (SBS-1139); do not add ML dependencies without a fresh decision.
 
-## In progress after 1.6.0
+## What 1.7.0 bundles
 
-A stacked set of feature branches off `main` carries the next deliverables, all
-with core and UI tests green through `tests/run-isolated.sh` plus the OpenGL
-runner and every layer in a draft PR:
+1.7.0 carries everything below, all merged to `main` in PRs #21 through #29
+with core and UI tests green through `tests/run-isolated.sh` and the OpenGL
+runner:
 
 - **SBS-1126 safe image corrections.** `src/edit/ImageEditor` and
   `EditProvider` implement orient, crop, quarter turns, flips and resize, then
@@ -140,16 +141,14 @@ links, printing).
    passes do not close this gate.
 3. Continue performance work (SBS-1122): warm navigation, larger and mixed
    libraries, Wayland presentation, GPU memory and realistic regression budgets.
-4. Start
-   safe image corrections (SBS-1126): crop, rotate and resize with Save a
-   copy, collision handling and a metadata/color policy. Reuse Omarchy helpers
-   where they satisfy the workflow. Comparison and organization improvements
-   follow in the [roadmap](ROADMAP.md).
+4. Finish PDF depth (SBS-1134): range text selection, links and printing. The
+   rest of SBS-1128 (transparency and very large images) and any organization
+   refinements follow in the [roadmap](ROADMAP.md).
 5. Watch the Omarchy package submission for upstream feedback.
 
 [Official package PR #295](https://github.com/omacom/omarchy-pkgs/pull/295)
-remains open and still points at v1.5.0; refreshing it to v1.6.0 is the next
-packaging step. Earlier edge, rc
+remains open and points at v1.6.0; refreshing it to v1.7.0 is the next
+packaging step once the release is published. Earlier edge, rc
 and stable package builds passed; upstream acceptance is pending. Repository inclusion, default
 installation and MIME defaults are separate upstream decisions.
 
