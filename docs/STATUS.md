@@ -1,20 +1,30 @@
 # Project status and handoff
 
-Snapshot: 14 September 2026 UTC, at the v1.7.0 release candidate. Check the
-tag and release, and the latest PRs, before resuming.
+Snapshot: 14 September 2026 UTC, after the v1.7.0 release. Check the tag and
+release, and the latest PRs, before resuming.
 
 ## Released
 
-[v1.6.0](https://github.com/btsouth/omaroll/releases/tag/v1.6.0) is the latest
+[v1.7.0](https://github.com/btsouth/omaroll/releases/tag/v1.7.0) is the latest
 public release, tagged from
-[PR #19](https://github.com/btsouth/omaroll/pull/19) (3f4d437) after a desktop
-test of every change since 1.5.0 on the real Omarchy session. The Release
-workflow published the source archive, Arch package, PKGBUILD and checksums;
-all four were downloaded and verified against SHA256SUMS. It adds star
-ratings, captions, nested tags, camera and lens browsing, Tab cycling of the
-sections and a held first frame when a video ends. The local sanitizer pass
-reported only NVIDIA CUDA and VAAPI driver allocations from FFmpeg
-initialization, none in Omaroll, and no UBSan findings.
+[PR #30](https://github.com/btsouth/omaroll/pull/30) (0c9fb44). The Release
+workflow built the Arch package, tested install, upgrade, reinstall and
+removal, and published the source archive, package, PKGBUILD and checksums
+with signed provenance; all four were downloaded and verified against
+SHA256SUMS. It bundles image corrections and region copy, side-by-side compare,
+album and tag rename, organization backup and restore, favourites, ratings and
+captions that follow external moves, remembered video volume and resume,
+sidecar subtitles, and PDF search, page jump and page-text copy. The release
+candidate passed the Release build, the isolated core and UI suites, the
+OpenGL media runner, metadata validation, a staged install, a full ASan/UBSan
+run with every deterministic render inspected. Physical desktop acceptance
+(installed behaviour, clipboard, drag/drop, scaling and audio) was not recorded
+for this tag; it remains tracked in SBS-1121.
+
+[v1.6.0](https://github.com/btsouth/omaroll/releases/tag/v1.6.0) preceded it,
+tagged from [PR #19](https://github.com/btsouth/omaroll/pull/19) (3f4d437). It
+adds star ratings, captions, nested tags, camera and lens browsing, Tab cycling
+of the sections and a held first frame when a video ends.
 
 [v1.5.0](https://github.com/btsouth/omaroll/releases/tag/v1.5.0) preceded it
 the same day, tagged from
@@ -148,7 +158,7 @@ links, printing).
 
 [Official package PR #295](https://github.com/omacom/omarchy-pkgs/pull/295)
 remains open and points at v1.6.0; refreshing it to v1.7.0 is the next
-packaging step once the release is published. Earlier edge, rc
+packaging step. Earlier edge, rc
 and stable package builds passed; upstream acceptance is pending. Repository inclusion, default
 installation and MIME defaults are separate upstream decisions.
 
