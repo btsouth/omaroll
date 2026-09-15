@@ -168,6 +168,13 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .shortcut = u"Q"_s,
        .media = Still},
 
+      // Native: the same rotate/flip/resize over a whole selection, each as a
+      // copy. QML gathers the checked files.
+      {.id = u"correctionsbatch"_s,
+       .label = u"Correct a selection"_s,
+       .shortcut = u"B"_s,
+       .media = Still},
+
       // Native: side-by-side comparison with synchronized zoom. QML gathers
       // the selection, or the open picture's duplicate/similar set.
       {.id = u"compare"_s,

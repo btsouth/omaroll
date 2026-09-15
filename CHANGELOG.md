@@ -14,6 +14,8 @@
   centred rectangle of that ratio when the preset is chosen.
 - Straighten. A fine ±15° level control in the correction editor, scaled to
   fill the frame so no empty corners show, applied before the crop.
+- Correct a selection. Rotate, flip or resize several selected pictures at
+  once (B), each written as its own copy with the existing collision handling.
 
 ## 1.7.0
 

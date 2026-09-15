@@ -4288,6 +4288,34 @@ private slots:
     QCOMPARE(result.colorSpace(), space);
   }
 
+  void correctionsApplyToASelectionAsCopies() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString first = dir.filePath(QStringLiteral("a.png"));
+    const QString second = dir.filePath(QStringLiteral("b.png"));
+    QVERIFY(QImage(80, 40, QImage::Format_RGB32).save(first, "PNG"));
+    QVERIFY(QImage(60, 30, QImage::Format_RGB32).save(second, "PNG"));
+
+    ImageEditor editor;
+    QSignalSpy finished(&editor, &ImageEditor::batchFinished);
+    QSignalSpy progress(&editor, &ImageEditor::batchProgress);
+    editor.saveCopies({first, second}, 1, false, false, 0, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 20000);
+    QCOMPARE(finished.first().at(0).toInt(), 2);
+    QCOMPARE(finished.first().at(1).toInt(), 0);
+    QVERIFY(progress.size() >= 2);
+    QCOMPARE(QImage(dir.filePath(QStringLiteral("a-edited.png"))).size(), QSize(40, 80));
+    QCOMPARE(QImage(dir.filePath(QStringLiteral("b-edited.png"))).size(), QSize(30, 60));
+
+    // A missing file counts as a failure and does not stop the run.
+    editor.saveCopies({first, dir.filePath(QStringLiteral("missing.png"))}, 0, false, false, 0, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 2, 20000);
+    QCOMPARE(finished.last().at(0).toInt(), 1);
+    QCOMPARE(finished.last().at(1).toInt(), 1);
+    // The existing copy was not overwritten; the new one is numbered.
+    QVERIFY(QFileInfo::exists(dir.filePath(QStringLiteral("a-edited-2.png"))));
+  }
+
   void straightenFillsTheFrameWithoutEmptyCorners() {
     QImage source(80, 40, QImage::Format_RGB32);
     source.fill(Qt::darkGreen);

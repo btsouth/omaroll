@@ -5,6 +5,7 @@
 #include <QRect>
 #include <QSize>
 #include <QString>
+#include <QStringList>
 
 // Quick, non-destructive image corrections.
 //
@@ -78,6 +79,12 @@ public:
                               bool flipVertical, qreal straightenDegrees, qreal cropX, qreal cropY,
                               qreal cropWidth, qreal cropHeight);
 
+  // Writes a copy of every path with the same rotate/flip/resize (no crop and
+  // no straighten), one at a time, each with the existing collision handling.
+  // Emits batchProgress after each file and batchFinished at the end.
+  Q_INVOKABLE void saveCopies(const QStringList& paths, int quarterTurns, bool flipHorizontal,
+                              bool flipVertical, int targetWidth, int targetHeight);
+
   // The pure pipeline, shared with the preview provider and unit tests.
   [[nodiscard]] static QImage apply(const QImage& source, const Transform& transform);
 
@@ -92,6 +99,8 @@ signals:
   void copied();
   void failed(const QString& message);
   void busyChanged();
+  void batchProgress(int done, int total);
+  void batchFinished(int succeeded, int failed);
 
 private:
   bool m_busy = false;

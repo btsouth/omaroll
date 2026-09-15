@@ -18,8 +18,8 @@ them under the `v1.8.0` milestone.
 - **Straighten and crop aspect presets.** Done: Free/Original/1:1/4:3/3:2/16:9
   crop presets hold the crop to the chosen ratio, and a ±15° straighten control
   fills the frame so no empty corners show.
-- **Batch apply corrections.** Rotate, resize and format a whole selection at
-  once, each as its own copy with the existing collision handling.
+- **Batch apply corrections.** Done: rotate, flip or resize a whole selection
+  at once (B), each as its own copy with the existing collision handling.
 - Finish the remaining verification: transparency and very large images.
 
 ### PDF reading
