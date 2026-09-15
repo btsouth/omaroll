@@ -1,12 +1,25 @@
 # Project status and handoff
 
-Snapshot: 15 September 2026 UTC, at the v1.8.0 release candidate. Check the tag
-and release, and the latest PRs, before resuming.
+Snapshot: 15 September 2026 UTC, after the v1.8.0 release. Check the tag and
+release, and the latest PRs, before resuming.
 
 ## Released
 
-[v1.7.0](https://github.com/btsouth/omaroll/releases/tag/v1.7.0) is the latest
+[v1.8.0](https://github.com/btsouth/omaroll/releases/tag/v1.8.0) is the latest
 public release, tagged from
+[PR #45](https://github.com/btsouth/omaroll/pull/45) (8f216b8). The Release
+workflow built the Arch package, tested install, upgrade, reinstall and
+removal, and published the source archive, package, PKGBUILD and checksums
+with signed provenance; all four were downloaded and verified against
+SHA256SUMS. It bundles the ten PRs listed under "1.8.0" below. The candidate
+passed the Release build, the isolated core and UI suites, the OpenGL media
+runner, metadata validation, a staged install, a full ASan/UBSan run with
+every deterministic render inspected. Physical desktop acceptance (installed
+behaviour, clipboard, drag/drop, scaling and audio) was not recorded for this
+tag; it remains tracked in SBS-1121.
+
+[v1.7.0](https://github.com/btsouth/omaroll/releases/tag/v1.7.0) preceded it,
+tagged from
 [PR #30](https://github.com/btsouth/omaroll/pull/30) (0c9fb44). The Release
 workflow built the Arch package, tested install, upgrade, reinstall and
 removal, and published the source archive, package, PKGBUILD and checksums
@@ -33,10 +46,10 @@ still and animated images, embedded video controls, PDF paging, OCR/QR, albums,
 tags, saved collections and duplicate review. The README describes the
 supported formats and workflows.
 
-## 1.8.0 in progress (merged to main, unreleased)
+## What 1.8.0 bundles
 
-Ten focused PRs landed after 1.7.0, each squash merged with green CI, the
-isolated core and UI suites and the OpenGL runner:
+1.8.0 bundles ten focused PRs, each squash merged with green CI, the isolated
+core and UI suites and the OpenGL runner:
 
 - [PR #33](https://github.com/btsouth/omaroll/pull/33): lossless JPEG rotate and
   flip through jpegtran, with fallbacks for crops, resizes, non-JPEG and
@@ -220,7 +233,7 @@ links, printing).
 6. Watch the Omarchy package submission for upstream feedback.
 
 [Official package PR #295](https://github.com/omacom/omarchy-pkgs/pull/295)
-remains open and points at v1.7.0; upstream acceptance is pending. Earlier
+remains open and points at v1.8.0; upstream acceptance is pending. Earlier
 edge, rc and stable package builds passed. Repository inclusion, default
 installation and MIME defaults are separate upstream decisions.
 
