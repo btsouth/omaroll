@@ -27,6 +27,12 @@ Item {
     property bool isDocument: false
     property int pdfPage: 1
     property int pdfMatchIndex: 0
+    // True scrolls the pages continuously at the window width; false fits one
+    // whole page in the stage, where the zoom and pan controls apply.
+    property bool pdfFitWidth: true
+    // Set while a scroll updates the current page, so the page-changed handler
+    // does not reposition the list back onto a page boundary.
+    property bool pdfScrollFromList: false
     property double stamp: 0
     property bool favorite: false
     property int rating: 0
@@ -345,6 +351,14 @@ Item {
         root.pdfMatchIndex = index
         root.stillReady = false
         root.pdfPage = matches[index]
+    }
+
+    function scrollPdfToPage(page) {
+        if (pdfList.count === 0) {
+            return
+        }
+        const index = Math.max(0, Math.min(page - 1, pdfList.count - 1))
+        pdfList.positionViewAtIndex(index, ListView.Beginning)
     }
 
     function adjustVolume(amount) {
@@ -671,7 +685,7 @@ Item {
                 anchors.fill: parent
                 anchors.margins: 16
                 anchors.bottomMargin: 54
-                visible: !root.isVideo
+                visible: !root.isVideo && !(root.isDocument && root.pdfFitWidth)
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
                 interactive: contentWidth > width || contentHeight > height
@@ -752,6 +766,84 @@ Item {
                 TapHandler {
                     onDoubleTapped: root.imageZoom > 1
                                     ? root.resetImageView() : root.adjustImageZoom(2)
+                }
+            }
+
+            // Continuous PDF: the pages scroll at the window width. Zoom and
+            // pan belong to the fit-page mode above.
+            Item {
+                id: pdfScroll
+                objectName: "pdfScroll"
+                anchors.fill: parent
+                anchors.margins: 16
+                anchors.bottomMargin: 54
+                visible: root.isDocument && root.pdfFitWidth
+
+                ListView {
+                    id: pdfList
+                    objectName: "pdfPageList"
+                    anchors.fill: parent
+                    clip: true
+                    spacing: 10
+                    model: PdfInfo.pageCount
+                    onMovementEnded: {
+                        // indexAt returns -1 in the gap between delegates, so
+                        // look past the spacing before giving up.
+                        let first = indexAt(contentX, contentY + 1)
+                        if (first < 0) {
+                            first = indexAt(contentX, contentY + spacing + 1)
+                        }
+                        if (first >= 0) {
+                            // Mark this as a scroll-originated change so the
+                            // page-changed handler does not snap the list back
+                            // to the page beginning.
+                            root.pdfScrollFromList = true
+                            root.pdfPage = first + 1
+                            root.pdfScrollFromList = false
+                        }
+                    }
+                    delegate: Item {
+                        id: pageCell
+                        required property int index
+                        width: pdfList.width
+                        height: {
+                            const image = pageImage
+                            if (image.status === Image.Ready && image.sourceSize.width > 0) {
+                                return Math.max(1, width * image.sourceSize.height / image.sourceSize.width)
+                            }
+                            // A4 while the page renders, so the list has a shape.
+                            return Math.max(1, width * 1.4142)
+                        }
+                        Rectangle {
+                            anchors.fill: parent
+                            color: "white"
+                        }
+                        Image {
+                            id: pageImage
+                            objectName: "pdfPageImage"
+                            anchors.fill: parent
+                            source: root.visible && root.pdfFitWidth && root.path !== ""
+                                    ? "image://pdf/" + (pageCell.index + 1) + "~" + root.stamp
+                                      + encodeURIComponent(root.path)
+                                    : ""
+                            sourceSize: Qt.size(Math.max(600, Math.round(width
+                                                        * Screen.devicePixelRatio)), 0)
+                            asynchronous: true
+                            smooth: true
+                            fillMode: Image.PreserveAspectFit
+                            onStatusChanged: {
+                                if (!root.stillReady && (status === Image.Ready || status === Image.Error)) {
+                                    root.stillReady = true
+                                }
+                                if (status === Image.Error) {
+                                    root.playbackError = PdfInfo.available
+                                                         ? "Could not display this PDF page"
+                                                         : "PDF support needs Poppler"
+                                }
+                            }
+                        }
+                    }
+                    ScrollBar.vertical: ScrollBar {}
                 }
             }
 
@@ -1042,6 +1134,21 @@ Item {
                 }
             }
 
+            // Keep the continuous list on the current page.
+            Connections {
+                target: root
+                function onPdfPageChanged() {
+                    if (root.isDocument && root.pdfFitWidth && !root.pdfScrollFromList) {
+                        root.scrollPdfToPage(root.pdfPage)
+                    }
+                }
+                function onPdfFitWidthChanged() {
+                    if (root.isDocument && root.pdfFitWidth) {
+                        root.scrollPdfToPage(root.pdfPage)
+                    }
+                }
+            }
+
             // PDF text search. Page navigation stays in the row below it.
             Row {
                 objectName: "pdfSearchRow"
@@ -1142,6 +1249,19 @@ Item {
                         root.stillReady = false
                         root.pdfPage++
                     }
+                }
+
+                PillButton {
+                    objectName: "pdfFitPage"
+                    label: "Fit page"
+                    active: !root.pdfFitWidth
+                    onClicked: root.pdfFitWidth = false
+                }
+                PillButton {
+                    objectName: "pdfFitWidth"
+                    label: "Fit width"
+                    active: root.pdfFitWidth
+                    onClicked: root.pdfFitWidth = true
                 }
 
                 PillButton {

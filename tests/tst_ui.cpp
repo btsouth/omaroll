@@ -1866,6 +1866,18 @@ private slots:
     QVERIFY(QMetaObject::invokeMethod(pageInput, "accepted"));
     QTRY_COMPARE(detail->property("pdfPage").toInt(), 2);
 
+    // Continuous fit-width is the default; fit-page swaps the surfaces.
+    QVERIFY(detail->property("pdfFitWidth").toBool());
+    QQuickItem* list = item("pdfPageList");
+    QCOMPARE(list->property("count").toInt(), 2);
+    QVERIFY(item("pdfScroll")->isVisible());
+    click(item("pdfFitPage"));
+    QVERIFY(!detail->property("pdfFitWidth").toBool());
+    QVERIFY(!item("pdfScroll")->isVisible());
+    click(item("pdfFitWidth"));
+    QVERIFY(detail->property("pdfFitWidth").toBool());
+    QVERIFY(item("pdfScroll")->isVisible());
+
     invoke("dismissTopLayer");
     QVERIFY(QFile::remove(m_pdfPath));
     m_captures->refresh();
