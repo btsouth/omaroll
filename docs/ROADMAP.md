@@ -20,7 +20,9 @@ them under the `v1.8.0` milestone.
   fills the frame so no empty corners show.
 - **Batch apply corrections.** Done: rotate, flip or resize a whole selection
   at once (B), each as its own copy with the existing collision handling.
-- Finish the remaining verification: transparency and very large images.
+- Finish the remaining verification: transparency and very large images. Done:
+  tests cover a transparent PNG keeping its alpha through a correction copy and
+  a 400-megapixel resize staying inside the output budget.
 
 ### PDF reading
 

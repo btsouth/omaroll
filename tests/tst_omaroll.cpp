@@ -4128,6 +4128,44 @@ private slots:
     QCOMPARE(editor.orientedSize(dir.filePath(QStringLiteral("missing.png"))), QSize());
   }
 
+  void transparencySurvivesACorrectionCopy() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(QStringLiteral("alpha.png"));
+    QImage image(40, 20, QImage::Format_ARGB32);
+    image.fill(Qt::transparent);
+    for (int y = 0; y < image.height(); ++y) {
+      for (int x = 0; x < image.width() / 2; ++x) {
+        image.setPixelColor(x, y, QColor(255, 0, 0, 255));
+      }
+    }
+    QVERIFY(image.save(source, "PNG"));
+
+    ImageEditor editor;
+    QSignalSpy saved(&editor, &ImageEditor::saved);
+    editor.saveCopy(source, 0, false, false, 0.0, 0, 0, 1, 1, 0, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, 15000);
+    const QImage copy(saved.first().first().toString());
+    QVERIFY(copy.hasAlphaChannel());
+    QCOMPARE(copy.pixelColor(5, 10).alpha(), 255);
+    QCOMPARE(copy.pixelColor(35, 10).alpha(), 0);
+  }
+
+  void largeImageResizeStaysWithinTheBudget() {
+    // A 400-megapixel request must be clamped, and the aspect ratio kept.
+    QImage large(6000, 4000, QImage::Format_RGB32);
+    large.fill(Qt::black);
+    ImageEditor::Transform transform;
+    transform.targetWidth = 20000;
+    transform.targetHeight = 20000;
+    const QImage result = ImageEditor::apply(large, transform);
+    QVERIFY(!result.isNull());
+    const qint64 pixels = static_cast<qint64>(result.width()) * result.height();
+    QVERIFY2(pixels <= ImageEditor::kMaxOutputPixels, qPrintable(QString::number(pixels)));
+    const qreal ratio = qreal(result.width()) / result.height();
+    QVERIFY2(qAbs(ratio - 6000.0 / 4000.0) < 0.01, qPrintable(QString::number(ratio)));
+  }
+
   void orientationIsAppliedAndBakedIntoACopy() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
