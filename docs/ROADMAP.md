@@ -6,55 +6,74 @@ result. Discovery stays read-only and core use stays offline.
 
 See [current status and handoff](STATUS.md) for release boundaries and evidence.
 
-## Reliability and package adoption
+## 1.8.0 plan
 
+Each item ships as its own focused PR with tests, in this order. Linear tracks
+them under the `v1.8.0` milestone.
+
+### Image quality for photographers
+
+- **Lossless JPEG rotate and flip.** Rotate or flip a JPEG copy without
+  recompressing the pixels, with a fallback to the recompressing pipeline when
+  the source is not a plain JPEG.
+- **Straighten and crop aspect presets.** A fine straighten control (about
+  ±15°, scaled to avoid empty corners) and Free/Original/1:1/4:3/3:2/16:9 crop
+  presets in the correction editor.
+- **Batch apply corrections.** Rotate, resize and format a whole selection at
+  once, each as its own copy with the existing collision handling.
+- Finish the remaining verification: transparency and very large images.
+
+### PDF reading
+
+- **Continuous scroll and fit modes** (fit width / fit page) with cached nearby
+  pages.
+- **Links** extracted per page and opened from the viewer.
+- **Range text selection** over a per-word text layer, with Copy page text as
+  the fallback.
+- **Printing** for pictures and PDFs through the system print path.
+
+### Organization
+
+- **XMP sidecar read** (and optional write) so tags, ratings and captions are
+  portable; pairs with backup and restore.
+- **Undo** for album/tag removal, hide, rating and caption changes.
+- **Duplicate and similar review flow:** keep or reject each item and jump to
+  the next set. Similarity never deletes automatically.
+
+### Video
+
+- **Subtitle offset and styling**, and a named track picker instead of cycling.
+- **Chapters, a play queue and loop**, remembering position across the queue.
+
+### Desktop integration
+
+- **Slideshow options:** interval, shuffle and a simple transition.
+- **Target-monitor fullscreen.**
+- **Offline Places** from EXIF GPS with a small bundled geodata table; no map.
+
+### Reliability, scale and adoption
+
+- Extend the benchmarks with warm navigation and 50k mixed libraries, record
+  Wayland presentation and GPU memory on the desktop, and set regression
+  budgets.
 - Maintain the animated-image, video-track, subtitle and rendered-pixel checks
   already running in CI. Local tests stay audio-isolated.
-- Verify installed behavior on Omarchy: file-manager opening, scaling,
-  clipboard, drag/drop, window state and physical audio.
-- Extend recorded startup and 10k/50k library baselines with warm navigation,
-  larger/mixed libraries, compositor presentation and regression budgets.
+- Finish installed Omarchy acceptance: file-manager opening, scaling,
+  clipboard, drag/drop, window state and physical audio (SBS-1121).
 - Maintain the [Omarchy package submission](https://github.com/omacom/omarchy-pkgs/pull/295).
 
-## Complete image workflows
+## Shipped
 
-- Crop, rotate and resize with Save a copy and safe collision handling. Done:
-  the viewer's Crop, rotate, resize action writes `<name>-edited.<ext>` beside
-  the original, preserving the ICC profile and baking in EXIF orientation.
-- Copy a selected region and compare images with synchronized zoom. Both are
-  done: the crop editor's Copy region puts the cropped area on the clipboard,
-  and the Compare action (K) shows the selection, or the open file's
-  duplicate/similar set, with one shared zoom and pan.
-- Verify orientation, color profiles, transparency and large-image behavior.
-  Partial: tests now cover an EXIF-oriented JPEG being read upright and baked
-  into a correction copy, and an ICC profile surviving one. Transparency and
-  very large images remain.
-
-## Trustworthy organization
-
-- Back up and restore albums, tags, favorites and smart collections. Done:
-  a versioned JSON backup covers albums, tags, favourites, hidden files,
-  ratings, captions and saved views, validated before any change on restore.
-- Rename albums and tags without losing membership. Done: renaming moves the
-  membership with the name, and a nested tag rename carries its children.
-- Recover predictably from disconnected drives and changed file locations.
-  Partial: favourites, hidden flags, ratings and captions now follow an
-  external move or rename by inode or content fingerprint, matching what
-  albums and tags already did.
-- Make organization changes reversible and duplicate review easier.
-
-## Video and PDF depth
-
-- Remember playback preferences and offer resumable playback. Done: volume and
-  mute persist, and a reopened video offers Resume or Start over from its
-  saved spot.
-- Load external subtitles and expose clear track choices. Done: a `.srt` or
-  `.vtt` beside the video joins the CC cycle with a language label and renders
-  over the video; embedded named tracks keep working.
-- Add PDF text selection, search, page navigation, links and printing.
-  Partial: page navigation, a page-number jump, text search (with a match count
-  and jump to each match) and copying a page's text are done. Range selection,
-  links and printing remain.
+- Crop, rotate, flip and resize with Save a copy, Copy region and safe
+  collision handling; orientation baked in and ICC preserved.
+- Compare with synchronized zoom and pan, from the selection or a
+  duplicate/similar set.
+- Albums, nested tags, captions, ratings, favourites, hidden files and saved
+  views, with rename that keeps membership and a versioned backup/restore.
+- Favourites, ratings and captions follow an external move or rename.
+- Video volume, mute and resume; sidecar `.srt`/`.vtt` subtitles.
+- PDF page navigation, page-number jump, text search with match stepping, and
+  Copy page text.
 
 Each phase ships in useful increments. Repository inclusion, installation by
 default and MIME defaults are separate upstream decisions. Image defaults are
