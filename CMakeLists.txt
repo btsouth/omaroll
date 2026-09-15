@@ -47,6 +47,8 @@ add_library(omaroll_core STATIC
   src/actions/TailscalePeers.h
   src/edit/ImageEditor.cpp
   src/edit/ImageEditor.h
+  src/edit/JpegTransform.cpp
+  src/edit/JpegTransform.h
   src/edit/ClipboardImage.cpp
   src/edit/ClipboardImage.h
   src/edit/ClipboardText.cpp

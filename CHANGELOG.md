@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Lossless rotate and flip. A JPEG rotated or flipped with no crop or resize is
+  written without recompressing the pixels (through jpegtran where available),
+  so a turn no longer costs quality; every other correction recompresses as
+  before. An image with an EXIF orientation tag still takes the recompressing
+  path, which bakes the tag in.
+
 ## 1.7.0
 
 ### Added

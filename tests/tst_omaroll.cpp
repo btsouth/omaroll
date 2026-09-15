@@ -16,6 +16,7 @@
 #include "library/MediaInspector.h"
 #include "library/SimilarityIndex.h"
 #include "edit/ImageEditor.h"
+#include "edit/JpegTransform.h"
 #include "matte/HueExtractor.h"
 #include "matte/MatteComposer.h"
 #include "pdf/PdfInspector.h"
@@ -40,6 +41,7 @@
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QTemporaryDir>
+#include <QTransform>
 #include <QtTest>
 
 namespace {
@@ -4178,6 +4180,91 @@ private slots:
     QVERIFY2(top.red() > 200 && top.blue() < 80, qPrintable(top.name()));
     const QColor bottom = copy.pixelColor(copy.width() / 2, copy.height() - 3);
     QVERIFY2(bottom.blue() > 200 && bottom.red() < 80, qPrintable(bottom.name()));
+  }
+
+  void jpegRotationIsLosslessWhenPossible() {
+    if (!JpegTransform::available()) {
+      QSKIP("jpegtran is not installed");
+    }
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(QStringLiteral("lossless.jpg"));
+    // Dimensions that are a whole number of blocks, so -perfect can rotate.
+    QImage image(240, 160, QImage::Format_RGB32);
+    for (int y = 0; y < image.height(); ++y) {
+      for (int x = 0; x < image.width(); ++x) {
+        image.setPixelColor(x, y, QColor(x % 256, y % 256, (x + y) % 256));
+      }
+    }
+    QVERIFY(image.save(source, "JPG", 95));
+    const QImage decoded(source);
+    QVERIFY(!decoded.isNull());
+
+    ImageEditor editor;
+    QSignalSpy saved(&editor, &ImageEditor::saved);
+    editor.saveCopy(source, 1, false, false, 0, 0, 1, 1, 0, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, 15000);
+    const QString turned = saved.first().first().toString();
+    const QImage turnedImage(turned);
+    QCOMPARE(turnedImage.size(), QSize(160, 240));
+
+    // The turn is the expected one (rounding of a rotated IDCT can differ by a
+    // hair, so allow a small tolerance here).
+    const QImage expected = decoded.transformed(QTransform().rotate(90), Qt::FastTransformation);
+    int maxDifference = 0;
+    for (int y = 0; y < turnedImage.height(); ++y) {
+      for (int x = 0; x < turnedImage.width(); ++x) {
+        const QColor a = turnedImage.pixelColor(x, y);
+        const QColor b = expected.pixelColor(x, y);
+        maxDifference = qMax(maxDifference,
+                             qMax(qMax(qAbs(a.red() - b.red()), qAbs(a.green() - b.green())),
+                                  qAbs(a.blue() - b.blue())));
+      }
+    }
+    QVERIFY2(maxDifference <= 6, qPrintable(QString::number(maxDifference)));
+
+    // Losslessness: the inverse turn returns the original pixels exactly. A
+    // recompressing path would lose a little on each pass.
+    QSignalSpy back(&editor, &ImageEditor::saved);
+    editor.saveCopy(turned, 3, false, false, 0, 0, 1, 1, 0, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(back.size(), 1, 15000);
+    QCOMPARE(QImage(back.first().first().toString()), decoded);
+  }
+
+  void jpegLosslessIsSkippedWhenItCannotApply() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    // A PNG is not a JPEG, so the recompressing path runs and still rotates.
+    const QString png = dir.filePath(QStringLiteral("plain.png"));
+    QVERIFY(QImage(48, 24, QImage::Format_RGB32).save(png, "PNG"));
+    ImageEditor editor;
+    QSignalSpy saved(&editor, &ImageEditor::saved);
+    editor.saveCopy(png, 1, false, false, 0, 0, 1, 1, 0, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, 15000);
+    QCOMPARE(QImage(saved.first().first().toString()).size(), QSize(24, 48));
+
+    // An EXIF-oriented JPEG must not go lossless: the orientation has to be
+    // baked in, which needs the decode path.
+    const QString jpeg = dir.filePath(QStringLiteral("oriented.jpg"));
+    QImage oriented(40, 20, QImage::Format_RGB32);
+    oriented.fill(Qt::red);
+    QByteArray bytes;
+    {
+      QBuffer buffer(&bytes);
+      QVERIFY(buffer.open(QIODevice::WriteOnly));
+      QVERIFY(oriented.save(&buffer, "JPG"));
+    }
+    {
+      QFile file(jpeg);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write(withExifOrientation(bytes, 6));
+    }
+    QSignalSpy rotated(&editor, &ImageEditor::saved);
+    editor.saveCopy(jpeg, 1, false, false, 0, 0, 1, 1, 0, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(rotated.size(), 1, 15000);
+    const QImage result(rotated.first().first().toString());
+    // The 40x20 source is oriented to 20x40, then turned once: 40x20.
+    QCOMPARE(result.size(), QSize(40, 20));
   }
 
   void colourProfileSurvivesAJPEGCorrection() {
