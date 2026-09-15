@@ -45,6 +45,11 @@ class AppSettings final : public QObject {
   Q_PROPERTY(int tileWidth READ tileWidth WRITE setTileWidth NOTIFY tileWidthChanged)
   Q_PROPERTY(bool slideshowVideos READ slideshowVideos WRITE setSlideshowVideos NOTIFY
                  slideshowVideosChanged)
+  // Slideshow timing and order.
+  Q_PROPERTY(int slideshowIntervalSeconds READ slideshowIntervalSeconds WRITE
+                 setSlideshowIntervalSeconds NOTIFY slideshowIntervalSecondsChanged)
+  Q_PROPERTY(bool slideshowShuffle READ slideshowShuffle WRITE setSlideshowShuffle NOTIFY
+                 slideshowShuffleChanged)
   // Video playback preferences, remembered across files and sessions.
   Q_PROPERTY(qreal videoVolume READ videoVolume WRITE setVideoVolume NOTIFY videoVolumeChanged)
   Q_PROPERTY(bool videoMuted READ videoMuted WRITE setVideoMuted NOTIFY videoMutedChanged)
@@ -87,6 +92,10 @@ public:
   void setTileWidth(int width);
   [[nodiscard]] bool slideshowVideos() const { return m_slideshowVideos; }
   void setSlideshowVideos(bool value);
+  [[nodiscard]] int slideshowIntervalSeconds() const { return m_slideshowIntervalSeconds; }
+  void setSlideshowIntervalSeconds(int seconds);
+  [[nodiscard]] bool slideshowShuffle() const { return m_slideshowShuffle; }
+  void setSlideshowShuffle(bool value);
 
   // Where a video was last left, in milliseconds. Zero means no saved spot.
   // Entries are pruned so a long-lived library does not grow forever.
@@ -201,6 +210,8 @@ signals:
   void thumbnailCacheMbChanged();
   void tileWidthChanged();
   void slideshowVideosChanged();
+  void slideshowIntervalSecondsChanged();
+  void slideshowShuffleChanged();
   void videoVolumeChanged();
   void videoMutedChanged();
   void albumsChanged();
@@ -268,6 +279,8 @@ private:
   int m_thumbnailCacheMb = 256;
   int m_tileWidth = 240;
   bool m_slideshowVideos = false;
+  int m_slideshowIntervalSeconds = 4;
+  bool m_slideshowShuffle = false;
   qreal m_videoVolume = 0.8;
   bool m_videoMuted = false;
   // Resume spots, most recently touched first in m_videoRecency.

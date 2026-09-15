@@ -24,6 +24,8 @@
   ratings and captions, one action at a time.
 - Subtitle timing. Sidecar subtitles can be nudged earlier or later by half a
   second to fix a track that is out of sync.
+- Slideshow options. The slideshow interval is configurable (2 to 20 seconds)
+  and a shuffle mode picks a random picture instead of the next in order.
 
 ## 1.7.0
 

@@ -413,6 +413,76 @@ Item {
                 spacing: 12
 
                 Column {
+                    width: parent.width - slideshowIntervalButton.width - 12
+                    spacing: 2
+
+                    Text {
+                        text: "Slideshow interval"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 12
+                        color: Theme.foreground
+                    }
+                    Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        text: "How long each picture stays before the next."
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 10
+                        color: Theme.mutedText
+                    }
+                }
+
+                PillButton {
+                    id: slideshowIntervalButton
+                    anchors.verticalCenter: parent.verticalCenter
+                    label: Settings.slideshowIntervalSeconds + " s"
+                    onClicked: {
+                        const stops = [2, 3, 4, 5, 8, 12, 20]
+                        const next = (stops.indexOf(Settings.slideshowIntervalSeconds) + 1)
+                                     % stops.length
+                        Settings.slideshowIntervalSeconds = stops[next]
+                    }
+                }
+            }
+
+            Row {
+                width: parent.width
+                spacing: 12
+
+                Column {
+                    width: parent.width - slideshowShuffleButton.width - 12
+                    spacing: 2
+
+                    Text {
+                        text: "Shuffle slideshow"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 12
+                        color: Theme.foreground
+                    }
+                    Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        text: "Pick a random picture each time instead of the next in order."
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 10
+                        color: Theme.mutedText
+                    }
+                }
+
+                PillButton {
+                    id: slideshowShuffleButton
+                    anchors.verticalCenter: parent.verticalCenter
+                    label: Settings.slideshowShuffle ? "On" : "Off"
+                    active: Settings.slideshowShuffle
+                    onClicked: Settings.slideshowShuffle = !Settings.slideshowShuffle
+                }
+            }
+
+            Row {
+                width: parent.width
+                spacing: 12
+
+                Column {
                     width: parent.width - newAlbumButton.width - 12
                     spacing: 2
 

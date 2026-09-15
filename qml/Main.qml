@@ -907,6 +907,35 @@ ApplicationWindow {
     }
 
     function navigateDetail(direction) {
+        // Shuffled slideshow picks any other eligible picture rather than the
+        // next one in order.
+        if (detail.slideshowRunning && Settings.slideshowShuffle) {
+            const count = root.viewerPaths.length || Captures.count
+            const eligible = []
+            for (let index = 0; index < count; ++index) {
+                const candidate = root.viewerPaths.length ? root.viewerPaths[index]
+                                                          : Captures.pathAt(index)
+                if (candidate === detail.path) {
+                    continue
+                }
+                const candidateRow = Captures.rowOf(candidate)
+                if (candidateRow < 0) {
+                    continue
+                }
+                if (!Settings.slideshowVideos && Captures.isVideoAt(candidateRow)) {
+                    continue
+                }
+                eligible.push(candidateRow)
+            }
+            if (eligible.length > 0) {
+                const row = eligible[Math.floor(Math.random() * eligible.length)]
+                library.currentIndex = row
+                root.openDetail(row)
+                return
+            }
+            detail.setSlideshow(false)
+            return
+        }
         let path = root.adjacentViewerPath(detail.path, direction)
         let row = Captures.rowOf(path)
         if (detail.slideshowRunning && !Settings.slideshowVideos) {

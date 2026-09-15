@@ -1074,6 +1074,24 @@ private slots:
     settings.setFavorite({moved}, false);
   }
 
+  void slideshowOptionsPersistAndClamp() {
+    AppSettings settings;
+    settings.setSlideshowIntervalSeconds(8);
+    settings.setSlideshowShuffle(true);
+
+    AppSettings reloaded;
+    QCOMPARE(reloaded.slideshowIntervalSeconds(), 8);
+    QVERIFY(reloaded.slideshowShuffle());
+
+    reloaded.setSlideshowIntervalSeconds(0);
+    QCOMPARE(reloaded.slideshowIntervalSeconds(), 2);
+    reloaded.setSlideshowIntervalSeconds(1000);
+    QCOMPARE(reloaded.slideshowIntervalSeconds(), 20);
+
+    reloaded.setSlideshowIntervalSeconds(4);
+    reloaded.setSlideshowShuffle(false);
+  }
+
   void videoPlaybackPreferencesAndResumePersist() {
     const QString movie = QStringLiteral("/tmp/omaroll-resume-movie-%1.mp4")
                               .arg(QRandomGenerator::global()->generate());

@@ -54,7 +54,9 @@ them under the `v1.8.0` milestone.
 
 ### Desktop integration
 
-- **Slideshow options:** interval, shuffle and a simple transition.
+- **Slideshow options:** interval, shuffle and a simple transition. Interval
+  and shuffle are done. A transition was dropped: a fade over the existing
+  image would fight reduced-motion and add animation for its own sake.
 - **Target-monitor fullscreen.**
 - **Offline Places** from EXIF GPS with a small bundled geodata table; no map.
 
