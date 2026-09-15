@@ -62,7 +62,7 @@ Item {
     // The window's status line, repeated here: the footer sits under the
     // backdrop, so a result said there while the viewer is open goes unread.
     property string status: ""
-    readonly property int slideshowInterval: 4000
+    readonly property int slideshowInterval: Settings.slideshowIntervalSeconds * 1000
     readonly property int mediaWidth: Math.round(root.isVideo ? output.sourceRect.width
                                                                : root.imageSourceWidth)
     readonly property int mediaHeight: Math.round(root.isVideo ? output.sourceRect.height
