@@ -1560,6 +1560,15 @@ ApplicationWindow {
         onActivated: library.checkedCount > 0 ? root.markChecked("favorite")
                                               : root.perform("favorite", root.currentPath())
     }
+    // Undo the destructive organization marks, from the grid or the viewer.
+    Shortcut {
+        sequences: ["Ctrl+Z"]
+        enabled: !root.modalOpen && Settings.canUndo()
+        onActivated: {
+            Settings.undo()
+            root.say("Undone")
+        }
+    }
     // Ctrl rather than a bare H, which the grid uses for vim-style movement.
     // Modified keys are not swallowed by the search field, so guard it.
     Shortcut {

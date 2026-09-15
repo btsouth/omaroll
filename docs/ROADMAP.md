@@ -38,7 +38,9 @@ them under the `v1.8.0` milestone.
 
 - **XMP sidecar read** (and optional write) so tags, ratings and captions are
   portable; pairs with backup and restore.
-- **Undo** for album/tag removal, hide, rating and caption changes.
+- **Undo** for album/tag removal, hide, rating and caption changes. Partial:
+  Ctrl+Z undoes favourites, hidden flags, ratings and captions; album and tag
+  membership changes are not undoable yet.
 - **Duplicate and similar review flow:** keep or reject each item and jump to
   the next set. Similarity never deletes automatically.
 
