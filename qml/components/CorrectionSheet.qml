@@ -23,6 +23,10 @@ Item {
     property real cropY: 0
     property real cropW: 1
     property real cropH: 1
+    // Zero means a free crop; otherwise the width/height ratio the crop is
+    // held to while it is dragged.
+    property real cropAspect: 0
+    property string cropAspectLabel: "Free"
 
     // Zero means "keep the corrected size".
     property int targetWidth: 0
@@ -84,9 +88,40 @@ Item {
         cropY = 0
         cropW = 1
         cropH = 1
+        cropAspect = 0
+        cropAspectLabel = "Free"
         targetWidth = 0
         targetHeight = 0
         errorText = ""
+    }
+
+    // Sets the crop to the largest centred rectangle of a ratio. Zero is a
+    // free crop, which snaps back to the whole frame.
+    function resetCropToAspect(ratio, label) {
+        cropAspect = ratio
+        cropAspectLabel = label === undefined ? (ratio <= 0 ? "Free" : "") : label
+        const pw = preview.paintedWidth
+        const ph = preview.paintedHeight
+        if (ratio <= 0) {
+            cropX = 0
+            cropY = 0
+            cropW = 1
+            cropH = 1
+            return
+        }
+        if (pw <= 0 || ph <= 0) {
+            return
+        }
+        let w = 1
+        let h = w * pw / (ratio * ph)
+        if (h > 1) {
+            h = 1
+            w = h * ratio * ph / pw
+        }
+        cropX = (1 - w) / 2
+        cropY = (1 - h) / 2
+        cropW = w
+        cropH = h
     }
 
     function rotate(delta) {
@@ -289,6 +324,22 @@ Item {
                     root.cropY = (top - cy) / py
                     root.cropW = (right - left) / px
                     root.cropH = (bottom - top) / py
+                    // Hold a chosen aspect: derive the height from the width,
+                    // then shrink to stay inside the frame.
+                    if (root.cropAspect > 0) {
+                        let w = root.cropW
+                        let h = w * px / (root.cropAspect * py)
+                        if (root.cropY + h > 1) {
+                            h = 1 - root.cropY
+                            w = h * root.cropAspect * py / px
+                        }
+                        if (root.cropX + w > 1) {
+                            w = 1 - root.cropX
+                            h = w * px / (root.cropAspect * py)
+                        }
+                        root.cropW = w
+                        root.cropH = h
+                    }
                 }
 
                 // Dim everything outside the crop.
@@ -464,16 +515,46 @@ Item {
                 }
                 PillButton {
                     label: "Full frame"
-                    onClicked: {
-                        root.cropX = 0
-                        root.cropY = 0
-                        root.cropW = 1
-                        root.cropH = 1
-                    }
+                    onClicked: root.resetCropToAspect(0, "Free")
                 }
                 PillButton {
                     label: "Reset"
                     onClicked: root.reset()
+                }
+
+                Item { width: 12; height: 1 }
+
+                PillButton {
+                    label: "Free"
+                    active: root.cropAspectLabel === "Free"
+                    onClicked: root.resetCropToAspect(0, "Free")
+                }
+                PillButton {
+                    label: "Original"
+                    active: root.cropAspectLabel === "Original"
+                    onClicked: root.resetCropToAspect(
+                                   root.workingHeight > 0
+                                   ? root.workingWidth / root.workingHeight : 0, "Original")
+                }
+                PillButton {
+                    label: "1:1"
+                    active: root.cropAspectLabel === "1:1"
+                    onClicked: root.resetCropToAspect(1, "1:1")
+                }
+                PillButton {
+                    label: "4:3"
+                    active: root.cropAspectLabel === "4:3"
+                    onClicked: root.resetCropToAspect(4 / 3, "4:3")
+                }
+                PillButton {
+                    label: "3:2"
+                    active: root.cropAspectLabel === "3:2"
+                    onClicked: root.resetCropToAspect(3 / 2, "3:2")
+                }
+                PillButton {
+                    label: "16:9"
+                    active: root.cropAspectLabel === "16:9"
+                    onClicked: root.resetCropToAspect(16 / 9, "16:9")
                 }
 
                 Item { width: 12; height: 1 }

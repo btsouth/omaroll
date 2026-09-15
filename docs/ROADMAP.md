@@ -13,12 +13,12 @@ them under the `v1.8.0` milestone.
 
 ### Image quality for photographers
 
-- **Lossless JPEG rotate and flip.** Rotate or flip a JPEG copy without
-  recompressing the pixels, with a fallback to the recompressing pipeline when
-  the source is not a plain JPEG.
-- **Straighten and crop aspect presets.** A fine straighten control (about
-  ±15°, scaled to avoid empty corners) and Free/Original/1:1/4:3/3:2/16:9 crop
-  presets in the correction editor.
+- **Lossless JPEG rotate and flip.** Done: a JPEG rotated or flipped with no
+  crop or resize is written without recompressing the pixels.
+- **Straighten and crop aspect presets.** Free/Original/1:1/4:3/3:2/16:9 crop
+  presets are done: the crop is held to the chosen ratio and snaps to the
+  largest centred rectangle when selected. The fine straighten control (about
+  ±15°, scaled to avoid empty corners) remains.
 - **Batch apply corrections.** Rotate, resize and format a whole selection at
   once, each as its own copy with the existing collision handling.
 - Finish the remaining verification: transparency and very large images.

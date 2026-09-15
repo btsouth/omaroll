@@ -341,6 +341,42 @@ private slots:
     QTRY_VERIFY(!sheet->isVisible());
   }
 
+  void correctionCropAspectPresets() {
+    const QString path = m_scratch.filePath(QStringLiteral("aspect-disposable.png"));
+    QVERIFY(QImage(120, 80, QImage::Format_RGB32).save(path));
+    const auto cleanup = qScopeGuard([&] {
+      invoke("dismissTopLayer");
+      QFile::remove(path);
+      m_window->resize(1280, 820);
+    });
+
+    QQuickItem* sheet = item("correctionSheet");
+    perform(QStringLiteral("corrections"), path);
+    QTRY_VERIFY(sheet->isVisible());
+    QQuickItem* preview = item("correctionPreview");
+    QTRY_COMPARE(preview->property("status").toInt(), 1);
+
+    const auto cropRatio = [&] {
+      const double pw = preview->property("paintedWidth").toDouble();
+      const double ph = preview->property("paintedHeight").toDouble();
+      const double w = sheet->property("cropW").toDouble() * pw;
+      const double h = sheet->property("cropH").toDouble() * ph;
+      return h > 0 ? w / h : 0.0;
+    };
+
+    click(pill(sheet, QStringLiteral("1:1")));
+    QCOMPARE(sheet->property("cropAspectLabel").toString(), QStringLiteral("1:1"));
+    QVERIFY2(qAbs(cropRatio() - 1.0) < 0.02, qPrintable(QString::number(cropRatio())));
+
+    click(pill(sheet, QStringLiteral("16:9")));
+    QVERIFY2(qAbs(cropRatio() - 16.0 / 9.0) < 0.02, qPrintable(QString::number(cropRatio())));
+
+    click(pill(sheet, QStringLiteral("Free")));
+    QCOMPARE(sheet->property("cropAspect").toDouble(), 0.0);
+    QCOMPARE(sheet->property("cropW").toDouble(), 1.0);
+    QCOMPARE(sheet->property("cropH").toDouble(), 1.0);
+  }
+
   void correctionSheetCopiesTheSelectedRegion() {
     const QString path = m_scratch.filePath(QStringLiteral("region-disposable.png"));
     QImage source(80, 60, QImage::Format_RGB32);

@@ -9,6 +9,9 @@
   so a turn no longer costs quality; every other correction recompresses as
   before. An image with an EXIF orientation tag still takes the recompressing
   path, which bakes the tag in.
+- Crop aspect presets. The correction editor holds the crop to Free, Original,
+  1:1, 4:3, 3:2 or 16:9 while the frame is dragged, snapping to the largest
+  centred rectangle of that ratio when the preset is chosen.
 
 ## 1.7.0
 
