@@ -30,6 +30,9 @@ Item {
     // True scrolls the pages continuously at the window width; false fits one
     // whole page in the stage, where the zoom and pan controls apply.
     property bool pdfFitWidth: true
+    // Set while a scroll updates the current page, so the page-changed handler
+    // does not reposition the list back onto a page boundary.
+    property bool pdfScrollFromList: false
     property double stamp: 0
     property bool favorite: false
     property int rating: 0
@@ -784,9 +787,19 @@ Item {
                     spacing: 10
                     model: PdfInfo.pageCount
                     onMovementEnded: {
-                        const first = indexAt(contentX, contentY + 1)
+                        // indexAt returns -1 in the gap between delegates, so
+                        // look past the spacing before giving up.
+                        let first = indexAt(contentX, contentY + 1)
+                        if (first < 0) {
+                            first = indexAt(contentX, contentY + spacing + 1)
+                        }
                         if (first >= 0) {
+                            // Mark this as a scroll-originated change so the
+                            // page-changed handler does not snap the list back
+                            // to the page beginning.
+                            root.pdfScrollFromList = true
                             root.pdfPage = first + 1
+                            root.pdfScrollFromList = false
                         }
                     }
                     delegate: Item {
@@ -821,6 +834,11 @@ Item {
                             onStatusChanged: {
                                 if (!root.stillReady && (status === Image.Ready || status === Image.Error)) {
                                     root.stillReady = true
+                                }
+                                if (status === Image.Error) {
+                                    root.playbackError = PdfInfo.available
+                                                         ? "Could not display this PDF page"
+                                                         : "PDF support needs Poppler"
                                 }
                             }
                         }
@@ -1120,7 +1138,7 @@ Item {
             Connections {
                 target: root
                 function onPdfPageChanged() {
-                    if (root.isDocument && root.pdfFitWidth) {
+                    if (root.isDocument && root.pdfFitWidth && !root.pdfScrollFromList) {
                         root.scrollPdfToPage(root.pdfPage)
                     }
                 }
