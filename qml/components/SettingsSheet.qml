@@ -437,7 +437,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     label: Settings.slideshowIntervalSeconds + " s"
                     onClicked: {
-                        const stops = [2, 3, 5, 8, 12, 20]
+                        const stops = [2, 3, 4, 5, 8, 12, 20]
                         const next = (stops.indexOf(Settings.slideshowIntervalSeconds) + 1)
                                      % stops.length
                         Settings.slideshowIntervalSeconds = stops[next]

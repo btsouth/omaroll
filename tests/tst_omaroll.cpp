@@ -1084,9 +1084,9 @@ private slots:
     QVERIFY(reloaded.slideshowShuffle());
 
     reloaded.setSlideshowIntervalSeconds(0);
-    QCOMPARE(reloaded.slideshowIntervalSeconds(), 1);
+    QCOMPARE(reloaded.slideshowIntervalSeconds(), 2);
     reloaded.setSlideshowIntervalSeconds(1000);
-    QCOMPARE(reloaded.slideshowIntervalSeconds(), 60);
+    QCOMPARE(reloaded.slideshowIntervalSeconds(), 20);
 
     reloaded.setSlideshowIntervalSeconds(4);
     reloaded.setSlideshowShuffle(false);

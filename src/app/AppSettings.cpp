@@ -190,7 +190,7 @@ AppSettings::AppSettings(QObject* parent)
   m_tileWidth =
       qBound(kMinimumTileWidth, m_settings.value(kTileWidth, 240).toInt(), kMaximumTileWidth);
   m_slideshowVideos = m_settings.value(kSlideshowVideos, false).toBool();
-  m_slideshowIntervalSeconds = qBound(1, m_settings.value(kSlideshowInterval, 4).toInt(), 60);
+  m_slideshowIntervalSeconds = qBound(2, m_settings.value(kSlideshowInterval, 4).toInt(), 20);
   m_slideshowShuffle = m_settings.value(kSlideshowShuffle, false).toBool();
   m_videoVolume = qBound(0.0, m_settings.value(kVideoVolume, 0.8).toDouble(), 1.0);
   m_videoMuted = m_settings.value(kVideoMuted, false).toBool();
@@ -397,7 +397,7 @@ void AppSettings::setSlideshowVideos(bool value) {
 }
 
 void AppSettings::setSlideshowIntervalSeconds(int seconds) {
-  const int bounded = qBound(1, seconds, 60);
+  const int bounded = qBound(2, seconds, 20);
   if (m_slideshowIntervalSeconds == bounded) {
     return;
   }

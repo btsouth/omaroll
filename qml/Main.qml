@@ -913,11 +913,11 @@ ApplicationWindow {
             const count = root.viewerPaths.length || Captures.count
             const eligible = []
             for (let index = 0; index < count; ++index) {
-                if (index === library.currentIndex) {
-                    continue
-                }
                 const candidate = root.viewerPaths.length ? root.viewerPaths[index]
                                                           : Captures.pathAt(index)
+                if (candidate === detail.path) {
+                    continue
+                }
                 const candidateRow = Captures.rowOf(candidate)
                 if (candidateRow < 0) {
                     continue
