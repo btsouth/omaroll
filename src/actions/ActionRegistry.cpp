@@ -288,6 +288,16 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
       // that picks the machine is the step, and S stays LocalSend.
       tailscaleRow(),
 
+      // CUPS prints the file as it is: a whole PDF, or a picture on a page.
+      // A missing lp greys the row out rather than hiding it.
+      {.id = u"print"_s,
+       .label = u"Print"_s,
+       .program = u"lp"_s,
+       .arguments = {u"{path}"_s},
+       .packageHint = u"cups"_s,
+       .media = Printable,
+       .confirmation = u"Sent to the printer"_s},
+
       {.id = u"files"_s,
        .label = u"Show in files"_s,
        .program = u"nautilus"_s,
@@ -371,6 +381,9 @@ bool ActionRegistry::applies(const Definition& definition, bool video, bool docu
     return document;
   case Media::Visual:
     return !document;
+  case Media::Printable:
+    // Pictures and documents print; a video does not.
+    return !video;
   case Media::Any:
     return true;
   }
