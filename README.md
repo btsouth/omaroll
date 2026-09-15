@@ -93,13 +93,23 @@ on them.
   and they go together.
 - **Previews in place.** Enter opens a capture large with every action beside
   it. Images fit, display at actual size, zoom, pan, rotate, flip, and animate.
-  PDFs render in place with page navigation. Videos play with sound and include
-  seeking, volume, speed, audio track, and subtitle controls. File details
+  PDFs scroll continuously at the window width, or fit a whole page, with text
+  search, a page jump and copy page text. Videos play with sound and include
+  seeking, volume, speed, audio track, subtitle controls and a ±0.5 s timing
+  nudge for sidecar subtitles. File details
   include dimensions, duration, image format, camera and exposure data when
   present, plus video codec, frame rate, bitrate and audio.
+- **Corrects a picture as a copy.** Crop with aspect presets, rotate, flip,
+  straighten and resize in a live preview, then Save a copy or Copy just the
+  region. A JPEG rotate with no crop or resize is written losslessly. The
+  original is never changed, and a batch action corrects a whole selection at
+  once.
 - **Presents any collection.** Start a fullscreen slideshow from a folder,
-  album, search or filtered library. Images advance automatically. Videos are
+  album, search or filtered library. Images advance automatically at a
+  configurable interval, in order or shuffled. Videos are
   skipped by default, or can play through when enabled in Settings.
+- **Undoes a mark.** Ctrl+Z steps back through favourites, hidden flags,
+  ratings and captions, one action at a time.
 - **Acts on a selection.** Check a few tiles and send, copy, favourite, hide,
   convert, or trash them together, or Taildrop them to another of your machines.
 - **Fits the tiles to you.** Ctrl and the wheel, or Ctrl with plus and minus,
@@ -128,6 +138,10 @@ Every handler below already ships with Omarchy.
 | Image | Edit · View | `pinta` · `imv` |
 | Image | Set as background | `omarchy-theme-bg-set` |
 | Image | Copy detected QR content | `zbarimg` |
+| Image | Crop, rotate, resize · Copy region | native |
+| Image | Correct a selection | native |
+| Image | Compare side by side | native |
+| Image or PDF | Print | `lp` (CUPS) |
 | PDF | Open document *(default)* | `sushi` |
 | Any | Rename in place | native, extension preserved |
 | Image or video | Copy image | `omarchy-clipboard-paste-file` |
@@ -183,6 +197,9 @@ and put on your clipboard.
 | `N` | Rename, preserving the extension |
 | `Y` · `S` · `F` | Clipboard · Send · Show in files |
 | `V` · `Ctrl+H` | Favourite · Hide |
+| `Q` · `B` | Crop, rotate, resize the open picture · correct the whole selection |
+| `K` | Compare the selection, or the open picture's copies |
+| `Ctrl+Z` | Undo the last favourite, hide, rating or caption change |
 | `1`-`8` · `Tab` `Shift+Tab` | Jump to a section · next · previous section |
 | `Alt+1`-`Alt+5` · `Alt+0` | Rate · clear rating, in the grid or the viewer |
 | `Page Up` `Page Down` in a PDF preview | Previous · next page |
