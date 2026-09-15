@@ -4,78 +4,66 @@ Omaroll should cover everyday media viewing and organization on Omarchy:
 open files quickly, find them again, make a quick correction, and share the
 result. Discovery stays read-only and core use stays offline.
 
-See [current status and handoff](STATUS.md) for release boundaries and evidence.
+See [current status and handoff](STATUS.md) for release boundaries, evidence
+and the list of things we decided not to build.
 
-## 1.8.0 plan
+## 1.8.0 (merged to main, unreleased)
 
-Each item ships as its own focused PR with tests, in this order. Linear tracks
-them under the `v1.8.0` milestone.
+Ten focused PRs, each squash merged with green CI, the isolated core and UI
+suites and the OpenGL runner:
 
-### Image quality for photographers
+- Lossless JPEG rotate and flip (jpegtran, with fallbacks for crops, resizes,
+  non-JPEG and EXIF-oriented sources).
+- Crop aspect presets (Free/Original/1:1/4:3/3:2/16:9) held while the frame is
+  dragged, and a ±15° straighten that fills the frame.
+- Correct a selection (B): rotate, flip or resize a whole selection as copies.
+- Verification that a transparent PNG keeps its alpha and a 400-megapixel
+  resize stays inside the output budget.
+- PDF continuous scroll with Fit width / Fit page modes.
+- Print pictures and PDFs through CUPS `lp`.
+- Ctrl+Z undo for favourites, hidden flags, ratings and captions.
+- Sidecar subtitle timing nudge (±0.5 s).
+- Slideshow interval and shuffle options.
 
-- **Lossless JPEG rotate and flip.** Done: a JPEG rotated or flipped with no
-  crop or resize is written without recompressing the pixels.
-- **Straighten and crop aspect presets.** Done: Free/Original/1:1/4:3/3:2/16:9
-  crop presets hold the crop to the chosen ratio, and a ±15° straighten control
-  fills the frame so no empty corners show.
-- **Batch apply corrections.** Done: rotate, flip or resize a whole selection
-  at once (B), each as its own copy with the existing collision handling.
-- Finish the remaining verification: transparency and very large images. Done:
-  tests cover a transparent PNG keeping its alpha through a correction copy and
-  a 400-megapixel resize staying inside the output budget.
+Nothing else is scheduled for 1.8.0. Cutting the release is the remaining work:
+bump the version, AppStream entry, changelog and README, run the Release and
+sanitizer validation, test the candidate on the real desktop, then tag and
+verify the published artifacts.
 
-### PDF reading
+## Open questions
 
-- **Continuous scroll and fit modes.** Done: pages scroll at the window width
-  by default, with a Fit page mode for whole-page reading and zoom/pan.
-- **Links** extracted per page and opened from the viewer.
-- **Range text selection** over a per-word text layer, with Copy page text as
-  the fallback.
-- **Printing** for pictures and PDFs through the system print path. Done: a
-  Print action hands the file to CUPS and is greyed out when lp is absent.
+- **PDF links and on-page text selection.** Both need a Poppler link/text API
+  that the pdftoppm-based integration does not expose. The choice is either
+  Poppler's link API (not available through the CLI we use) or adopting the
+  QtPdf module, which adds `qt6-pdf` to the CI, release and PKGBUILD
+  dependency lists. Decide this before building either.
+- **Physical desktop gates.** Installed field acceptance and Wayland/GPU
+  presentation numbers and regression budgets need the real Omarchy session.
 
-### Organization
+## Not doing (decided, with reasons)
 
-- **XMP sidecar read** (and optional write) so tags, ratings and captions are
-  portable; pairs with backup and restore.
-- **Undo** for album/tag removal, hide, rating and caption changes. Partial:
-  Ctrl+Z undoes favourites, hidden flags, ratings and captions; album and tag
-  membership changes are not undoable yet.
-- **Duplicate and similar review flow:** keep or reject each item and jump to
-  the next set. Similarity never deletes automatically.
+Do not add these without a fresh decision; they are bloat or duplication:
 
-### Video
+- **XMP sidecar read/write.** Niche here; writing sidecars breaks the
+  read-only organization ethos, and the versioned JSON backup covers
+  portability.
+- **Video chapters, play queue and loop.** Serious playback is delegated to
+  `mpv`; rebuilding a player duplicates it.
+- **Subtitle styling and a separate named-track picker.** Tracks are already
+  named in the CC cycle and the default rendering is readable.
+- **Offline Places from EXIF GPS.** A bundled geodata table is package weight
+  for a niche view.
+- **PDF selectable-text panel.** Duplicated the existing Copy page text action.
+- **A duplicate/similar review flow.** Already covered by the duplicate and
+  similar filters, the Keep selected action and the compare view.
+- **Target-monitor fullscreen.** Hyprland owns window placement; forcing a
+  screen is fragile.
 
-- **Subtitle offset and styling**, and a named track picker instead of cycling.
-  Offset is done for sidecar subtitles (±0.5 s steps). Styling and a separate
-  picker were dropped: the tracks are already named in the CC cycle and the
-  default rendering is readable, so they would be surface for its own sake.
-- **Chapters, a play queue and loop**, remembering position across the queue.
-
-### Desktop integration
-
-- **Slideshow options:** interval, shuffle and a simple transition. Interval
-  and shuffle are done. A transition was dropped: a fade over the existing
-  image would fight reduced-motion and add animation for its own sake.
-- **Target-monitor fullscreen.**
-- **Offline Places** from EXIF GPS with a small bundled geodata table; no map.
-
-### Reliability, scale and adoption
-
-- Extend the benchmarks with warm navigation and 50k mixed libraries, record
-  Wayland presentation and GPU memory on the desktop, and set regression
-  budgets.
-- Maintain the animated-image, video-track, subtitle and rendered-pixel checks
-  already running in CI. Local tests stay audio-isolated.
-- Finish installed Omarchy acceptance: file-manager opening, scaling,
-  clipboard, drag/drop, window state and physical audio (SBS-1121).
-- Maintain the [Omarchy package submission](https://github.com/omacom/omarchy-pkgs/pull/295).
-
-## Shipped
+## Shipped before 1.8.0
 
 - Crop, rotate, flip and resize with Save a copy, Copy region and safe
   collision handling; orientation baked in and ICC preserved.
-- Compare with synchronized zoom and pan, from the selection or a
+- Compare with synchronized zoom and pan, from a selection or a
   duplicate/similar set.
 - Albums, nested tags, captions, ratings, favourites, hidden files and saved
   views, with rename that keeps membership and a versioned backup/restore.
@@ -84,10 +72,19 @@ them under the `v1.8.0` milestone.
 - PDF page navigation, page-number jump, text search with match stepping, and
   Copy page text.
 
-Each phase ships in useful increments. Repository inclusion, installation by
-default and MIME defaults are separate upstream decisions. Image defaults are
-the first adoption target; video and PDF need their own acceptance checks.
-Advanced editing remains available through Omarchy's existing tools.
+## Reliability, scale and adoption
+
+- Maintain the animated-image, video-track, subtitle and rendered-pixel checks
+  already running in CI. Local tests stay audio-isolated.
+- Extend the benchmarks with warm navigation and 50k mixed libraries where
+  they can run headless; the Wayland presentation and GPU memory numbers need
+  the desktop.
+- Maintain the [Omarchy package submission](https://github.com/omacom/omarchy-pkgs/pull/295),
+  which currently points at v1.7.0.
+
+Repository inclusion, installation by default and MIME defaults are separate
+upstream decisions. Advanced editing remains available through Omarchy's
+existing tools.
 
 Report concrete missing workflows and reproducible problems in
 [GitHub issues](https://github.com/btsouth/omaroll/issues).

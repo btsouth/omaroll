@@ -1,7 +1,8 @@
 # Project status and handoff
 
-Snapshot: 14 September 2026 UTC, after the v1.7.0 release. Check the tag and
-release, and the latest PRs, before resuming.
+Snapshot: 15 September 2026 UTC. v1.7.0 is the latest release; 1.8.0 work is
+merged to `main` but unreleased. Check the latest PRs and the release before
+resuming.
 
 ## Released
 
@@ -32,6 +33,71 @@ the same day, tagged from
 still and animated images, embedded video controls, PDF paging, OCR/QR, albums,
 tags, saved collections and duplicate review. The README describes the
 supported formats and workflows.
+
+## 1.8.0 in progress (merged to main, unreleased)
+
+Ten focused PRs landed after 1.7.0, each squash merged with green CI, the
+isolated core and UI suites and the OpenGL runner:
+
+- [PR #33](https://github.com/btsouth/omaroll/pull/33): lossless JPEG rotate and
+  flip through jpegtran, with fallbacks for crops, resizes, non-JPEG and
+  EXIF-oriented sources.
+- [PR #34](https://github.com/btsouth/omaroll/pull/34): crop aspect presets
+  (Free/Original/1:1/4:3/3:2/16:9) held while the frame is dragged.
+- [PR #35](https://github.com/btsouth/omaroll/pull/35): a ±15° straighten that
+  fills the frame so no empty corners show.
+- [PR #36](https://github.com/btsouth/omaroll/pull/36): Correct a selection (B),
+  rotate/flip/resize a whole selection as copies.
+- [PR #37](https://github.com/btsouth/omaroll/pull/37): PDF continuous scroll
+  with Fit width / Fit page modes.
+- [PR #38](https://github.com/btsouth/omaroll/pull/38): Print pictures and PDFs
+  through CUPS `lp`.
+- [PR #39](https://github.com/btsouth/omaroll/pull/39): verification for
+  transparency and very large images in corrections.
+- [PR #40](https://github.com/btsouth/omaroll/pull/40): Ctrl+Z undo for
+  favourites, hidden flags, ratings and captions.
+- [PR #41](https://github.com/btsouth/omaroll/pull/41): sidecar subtitle timing
+  nudge (±0.5 s).
+- [PR #42](https://github.com/btsouth/omaroll/pull/42): slideshow interval and
+  shuffle options.
+
+The changelog carries all of it under `## Unreleased`.
+
+## Decisions: what we are not building
+
+These came up in the 1.8.0 plan and were deliberately dropped to keep the app
+full-featured without bloat. Do not add them without a fresh decision:
+
+- **XMP sidecar read/write.** Niche for this app, writing sidecars breaks the
+  read-only organization ethos, and the versioned JSON backup already covers
+  portability.
+- **Video chapters, play queue and loop.** Serious playback is delegated to
+  `mpv` through the Play action; rebuilding a player duplicates it.
+- **Subtitle styling and a separate named-track picker.** Tracks are already
+  named in the CC cycle and the default rendering is readable, so these are
+  surface without new capability.
+- **Offline Places from EXIF GPS.** A bundled geodata table is package weight
+  for a niche view in a general viewer.
+- **PDF selectable-text panel.** It duplicated the existing Copy page text
+  action; a second text affordance is not worth it. (A proper on-page range
+  selection is a separate question, below.)
+- **A duplicate/similar review flow.** Already covered: duplicate and similar
+  filters, a Keep selected action that trashes the other copies with a
+  confirmation, and the compare view.
+- **Target-monitor fullscreen.** Hyprland owns window placement, so forcing a
+  screen is fragile; leave it to the compositor.
+
+## Open questions
+
+- **PDF links and on-page text selection.** Both need a Poppler link/text API
+  that the pdftoppm-based integration does not expose. The choice is either
+  Poppler's link API (not available through the CLI we use) or adopting the
+  QtPdf module, which adds `qt6-pdf` to the CI, release and PKGBUILD
+  dependency lists. This is the integration decision SBS-1134 recorded; make
+  it before building either.
+- **Physical desktop gates.** SBS-1121 field acceptance and SBS-1122
+  Wayland/GPU presentation numbers and regression budgets need the real
+  Omarchy session. Headless runs cannot close them.
 
 ## What 1.5.0 bundled
 
@@ -146,20 +212,22 @@ links, printing).
 
 1. Keep new changes in separate focused PRs off main, following
    [RELEASING.md](../RELEASING.md) for the next tag.
-2. Finish installed Omarchy acceptance (SBS-1121): file-manager selections,
+2. Decide the PDF integration (Poppler link API versus the QtPdf dependency)
+   before building PDF links or on-page text selection. See Open questions.
+3. Finish installed Omarchy acceptance (SBS-1121): file-manager selections,
    clipboard, drag/drop, scaling, window state and physical audio. Headless
    passes do not close this gate.
-3. Continue performance work (SBS-1122): warm navigation, larger and mixed
+4. Continue performance work (SBS-1122): warm navigation, larger and mixed
    libraries, Wayland presentation, GPU memory and realistic regression budgets.
-4. Finish PDF depth (SBS-1134): range text selection, links and printing. The
-   rest of SBS-1128 (transparency and very large images) and any organization
-   refinements follow in the [roadmap](ROADMAP.md).
-5. Watch the Omarchy package submission for upstream feedback.
+5. Prepare and cut 1.8.0: bump the version, AppStream entry, changelog and
+   README, run the Release and sanitizer validation, test the candidate on the
+   real desktop, then tag. Nothing is scheduled for 1.8.0 beyond the ten merged
+   PRs and the two open questions.
+6. Watch the Omarchy package submission for upstream feedback.
 
 [Official package PR #295](https://github.com/omacom/omarchy-pkgs/pull/295)
-remains open and points at v1.6.0; refreshing it to v1.7.0 is the next
-packaging step. Earlier edge, rc
-and stable package builds passed; upstream acceptance is pending. Repository inclusion, default
+remains open and points at v1.7.0; upstream acceptance is pending. Earlier
+edge, rc and stable package builds passed. Repository inclusion, default
 installation and MIME defaults are separate upstream decisions.
 
 ## Safe continuation
@@ -176,8 +244,8 @@ video tracks and subtitles. No media downloads are needed for those checks.
 Physical audio testing remains a deliberate desktop acceptance activity.
 
 Linear is the active task tracker. Access it through Toolport. SBS-1093 is the
-parent roadmap; SBS-1121 and SBS-1122 remain in progress, SBS-1138 and
-SBS-1140 to SBS-1142 are done, and SBS-1126 is the next feature to start.
-Notes under `build/roadmap-review/` are historical and ignored by Git. This
-file is the committed handoff. No further implementation, merge or release
-work is scheduled by closing this session.
+parent roadmap; SBS-1121 (field acceptance) and SBS-1122 (performance) remain
+in progress and need the desktop, SBS-1134 (PDF depth) stays open pending the
+integration decision, and the v1.8.0 milestone carries the shipped items. Notes
+under `build/roadmap-review/` are historical and ignored by Git. This file is
+the committed handoff.
