@@ -30,9 +30,6 @@ Item {
     // True scrolls the pages continuously at the window width; false fits one
     // whole page in the stage, where the zoom and pan controls apply.
     property bool pdfFitWidth: true
-    // The selectable page-text panel, and the text it shows.
-    property bool pdfShowText: false
-    property string pdfPageText: ""
     // Set while a scroll updates the current page, so the page-changed handler
     // does not reposition the list back onto a page boundary.
     property bool pdfScrollFromList: false
@@ -855,80 +852,6 @@ Item {
                 }
             }
 
-            // Selectable text for the current page, the light-weight answer to
-            // text selection: pick any range and copy it.
-            Rectangle {
-                id: pdfTextPanel
-                objectName: "pdfTextPanel"
-                visible: root.isDocument && root.pdfShowText
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                anchors.margins: 16
-                anchors.bottomMargin: 54
-                height: Math.min(320, Math.max(120, stage.height * 0.45))
-                radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 4
-                color: root.shade(Theme.darkerBackground, 0.96)
-                border.width: 1
-                border.color: root.shade(Theme.foreground, 0.20)
-
-                Item {
-                    id: pdfTextHeader
-                    anchors.top: parent.top
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.margins: 10
-                    height: 26
-
-                    Text {
-                        anchors.left: parent.left
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: "Page " + root.pdfPage + " text"
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 11
-                        font.weight: Font.DemiBold
-                        color: Theme.brightForeground
-                    }
-                    Row {
-                        anchors.right: parent.right
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: 8
-                        PillButton {
-                            label: "Copy selection"
-                            onClicked: pdfTextArea.copy()
-                        }
-                        PillButton {
-                            label: "Close"
-                            onClicked: root.pdfShowText = false
-                        }
-                    }
-                }
-
-                ScrollView {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: pdfTextHeader.bottom
-                    anchors.bottom: parent.bottom
-                    anchors.margins: 10
-                    clip: true
-
-                    TextEdit {
-                        id: pdfTextArea
-                        objectName: "pdfTextArea"
-                        width: parent.width
-                        readOnly: true
-                        selectByMouse: true
-                        wrapMode: TextEdit.Wrap
-                        text: root.pdfPageText
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 12
-                        color: Theme.foreground
-                        selectionColor: root.shade(Theme.accent, 0.5)
-                        selectedTextColor: Theme.brightForeground
-                    }
-                }
-            }
-
             Component {
                 id: staticStill
                 Image {
@@ -1214,11 +1137,6 @@ Item {
                 function onTextCopyFailed(message) {
                     root.statusRequested(message)
                 }
-                function onPageTextChanged(page, text) {
-                    if (page === root.pdfPage) {
-                        root.pdfPageText = text
-                    }
-                }
             }
 
             // Keep the continuous list on the current page.
@@ -1227,9 +1145,6 @@ Item {
                 function onPdfPageChanged() {
                     if (root.isDocument && root.pdfFitWidth && !root.pdfScrollFromList) {
                         root.scrollPdfToPage(root.pdfPage)
-                    }
-                    if (root.pdfShowText) {
-                        PdfInfo.loadPageText(root.pdfPage)
                     }
                 }
                 function onPdfFitWidthChanged() {
@@ -1352,20 +1267,6 @@ Item {
                     label: "Fit width"
                     active: root.pdfFitWidth
                     onClicked: root.pdfFitWidth = true
-                }
-                PillButton {
-                    objectName: "pdfTextToggle"
-                    label: "Text"
-                    toolTip: "Show this page's text so a range can be selected"
-                    active: root.pdfShowText
-                    enabled: PdfInfo.textSearchAvailable
-                    onClicked: {
-                        root.pdfShowText = !root.pdfShowText
-                        if (root.pdfShowText) {
-                            root.pdfPageText = ""
-                            PdfInfo.loadPageText(root.pdfPage)
-                        }
-                    }
                 }
 
                 PillButton {

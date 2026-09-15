@@ -1214,31 +1214,6 @@ private slots:
     QCOMPARE(emptyFailed.size(), 1);
   }
 
-  void pdfPageTextLoadsForThePanel() {
-    if (!PdfSupport::textAvailable()) {
-      QSKIP("pdftotext is not installed");
-    }
-    QTemporaryDir dir;
-    QVERIFY(dir.isValid());
-    const QString path = dir.filePath(QStringLiteral("panel.pdf"));
-    {
-      QPdfWriter writer(path);
-      writer.setResolution(96);
-      QPainter painter(&writer);
-      painter.drawText(QPoint(100, 140), QStringLiteral("Hello Omaroll"));
-      painter.end();
-    }
-
-    PdfInspector inspector;
-    inspector.inspect(path);
-    QTRY_COMPARE_WITH_TIMEOUT(inspector.pageCount(), 1, 8000);
-
-    QSignalSpy text(&inspector, &PdfInspector::pageTextChanged);
-    inspector.loadPageText(1);
-    QTRY_VERIFY_WITH_TIMEOUT(text.size() >= 1, 8000);
-    QCOMPARE(text.first().at(0).toInt(), 1);
-  }
-
   void addingOverAnUnavailableAlbumEntryReplacesIt() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
