@@ -40,24 +40,20 @@ verify the published artifacts.
 - **Physical desktop gates.** Installed field acceptance and Wayland/GPU
   presentation numbers and regression budgets need the real Omarchy session.
 
-## Not doing (decided, with reasons)
+## Out of scope
 
-Do not add these without a fresh decision; they are bloat or duplication:
+Considered for 1.8.0 and left out; revisit only with a fresh decision:
 
-- **XMP sidecar read/write.** Niche here; writing sidecars breaks the
-  read-only organization ethos, and the versioned JSON backup covers
-  portability.
-- **Video chapters, play queue and loop.** Serious playback is delegated to
-  `mpv`; rebuilding a player duplicates it.
-- **Subtitle styling and a separate named-track picker.** Tracks are already
-  named in the CC cycle and the default rendering is readable.
-- **Offline Places from EXIF GPS.** A bundled geodata table is package weight
-  for a niche view.
-- **PDF selectable-text panel.** Duplicated the existing Copy page text action.
-- **A duplicate/similar review flow.** Already covered by the duplicate and
-  similar filters, the Keep selected action and the compare view.
-- **Target-monitor fullscreen.** Hyprland owns window placement; forcing a
-  screen is fragile.
+- **XMP sidecars.** The versioned JSON backup already covers portability, and
+  writing sidecars would go against the read-only organization policy.
+- **Video chapters, play queue and loop.** Playback is delegated to `mpv`.
+- **Subtitle styling and a separate track picker.** Tracks are already named
+  and the default rendering is readable.
+- **Offline Places from EXIF GPS.** Needs a bundled geodata table.
+- **PDF selectable-text panel.** Copy page text already covers it.
+- **A duplicate/similar review flow.** Provided by the filters, Keep selected
+  and compare.
+- **Target-monitor fullscreen.** Hyprland owns window placement.
 
 ## Shipped before 1.8.0
 
