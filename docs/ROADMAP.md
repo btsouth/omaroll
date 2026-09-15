@@ -24,8 +24,8 @@ them under the `v1.8.0` milestone.
 
 ### PDF reading
 
-- **Continuous scroll and fit modes** (fit width / fit page) with cached nearby
-  pages.
+- **Continuous scroll and fit modes.** Done: pages scroll at the window width
+  by default, with a Fit page mode for whole-page reading and zoom/pan.
 - **Links** extracted per page and opened from the viewer.
 - **Range text selection** over a per-word text layer, with Copy page text as
   the fallback.

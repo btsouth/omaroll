@@ -16,6 +16,8 @@
   fill the frame so no empty corners show, applied before the crop.
 - Correct a selection. Rotate, flip or resize several selected pictures at
   once (B), each written as its own copy with the existing collision handling.
+- PDF continuous scroll. Pages scroll at the window width by default, with a
+  Fit page mode for reading a whole page with zoom and pan.
 
 ## 1.7.0
 
