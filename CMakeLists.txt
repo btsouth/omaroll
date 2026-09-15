@@ -133,6 +133,7 @@ set(OMAROLL_QML_FILES
   qml/components/DetailSheet.qml
   qml/components/MatteSheet.qml
   qml/components/CorrectionSheet.qml
+  qml/components/BatchCorrectionSheet.qml
   qml/components/CompareSheet.qml
   qml/components/SettingsSheet.qml
   qml/components/AlbumNameSheet.qml

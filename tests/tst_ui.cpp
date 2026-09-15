@@ -341,6 +341,38 @@ private slots:
     QTRY_VERIFY(!sheet->isVisible());
   }
 
+  void batchCorrectionSheetAppliesToTheSelection() {
+    const QString first = m_scratch.filePath(QStringLiteral("batch-a.png"));
+    const QString second = m_scratch.filePath(QStringLiteral("batch-b.png"));
+    QVERIFY(QImage(80, 40, QImage::Format_RGB32).save(first));
+    QVERIFY(QImage(60, 30, QImage::Format_RGB32).save(second));
+    const QString firstCopy = m_scratch.filePath(QStringLiteral("batch-a-edited.png"));
+    const QString secondCopy = m_scratch.filePath(QStringLiteral("batch-b-edited.png"));
+    const auto cleanup = qScopeGuard([&] {
+      invoke("dismissTopLayer");
+      QFile::remove(first);
+      QFile::remove(second);
+      QFile::remove(firstCopy);
+      QFile::remove(secondCopy);
+      m_window->resize(1280, 820);
+    });
+
+    QQuickItem* sheet = item("batchCorrectionSheet");
+    QVERIFY(QMetaObject::invokeMethod(sheet, "open",
+                                      Q_ARG(QVariant, QVariant(QStringList{first, second}))));
+    QTRY_VERIFY(sheet->isVisible());
+    click(pill(sheet, QStringLiteral("Rotate right")));
+    QQuickItem* apply = item("batchApply");
+    QVERIFY(apply);
+    click(apply);
+    QTRY_VERIFY_WITH_TIMEOUT(!sheet->isVisible(), 20000);
+
+    QVERIFY(QFileInfo::exists(firstCopy));
+    QCOMPARE(QImage(firstCopy).size(), QSize(40, 80));
+    QVERIFY(QFileInfo::exists(secondCopy));
+    QCOMPARE(QImage(secondCopy).size(), QSize(30, 60));
+  }
+
   void correctionStraightenSliderDrivesThePreview() {
     const QString path = m_scratch.filePath(QStringLiteral("straighten-disposable.png"));
     QVERIFY(QImage(120, 80, QImage::Format_RGB32).save(path));

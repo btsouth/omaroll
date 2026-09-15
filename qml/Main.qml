@@ -55,6 +55,7 @@ ApplicationWindow {
     // also reaching the tile, pill or viewer button under it.
     readonly property bool modalOpen: confirm.visible || matteSheet.visible
                                       || correctionSheet.visible
+                                      || batchSheet.visible
                                       || compareSheet.visible
                                       || libraryBrowser.visible || settingsSheet.visible
                                       || albumNameSheet.visible
@@ -163,6 +164,15 @@ ApplicationWindow {
         case "corrections":
             correctionSheet.open(path, path.substring(path.lastIndexOf("/") + 1))
             return
+        case "correctionsbatch": {
+            const checked = library.checkedCount > 1 ? library.checkedPaths() : []
+            if (checked.length < 2) {
+                root.say("Select two or more pictures to correct together")
+                return
+            }
+            batchSheet.open(checked)
+            return
+        }
         case "compare": {
             // A checked selection wins; otherwise compare the open picture
             // with its exact duplicates, then its visually similar set.
@@ -261,6 +271,8 @@ ApplicationWindow {
             matteSheet.close()
         } else if (correctionSheet.visible) {
             correctionSheet.close()
+        } else if (batchSheet.visible) {
+            batchSheet.close()
         } else if (compareSheet.visible) {
             compareSheet.close()
         } else if (albumNameSheet.visible) {
@@ -1314,6 +1326,18 @@ ApplicationWindow {
         onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
     }
 
+    BatchCorrectionSheet {
+        id: batchSheet
+        objectName: "batchCorrectionSheet"
+        onFinished: function (succeeded, failed) {
+            Library.refresh()
+            root.say(failed > 0
+                     ? "Corrected " + succeeded + " of " + (succeeded + failed) + " files"
+                     : "Saved corrected copies beside the originals")
+        }
+        onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
+    }
+
     CompareSheet {
         id: compareSheet
         objectName: "compareSheet"
@@ -1473,6 +1497,11 @@ ApplicationWindow {
         sequences: [Registry.shortcutFor("corrections")]
         enabled: !root.anySheetOpen
         onActivated: root.perform("corrections", root.currentPath())
+    }
+    Shortcut {
+        sequences: [Registry.shortcutFor("correctionsbatch")]
+        enabled: !root.anySheetOpen
+        onActivated: root.perform("correctionsbatch", root.currentPath())
     }
     Shortcut {
         sequences: [Registry.shortcutFor("compare")]

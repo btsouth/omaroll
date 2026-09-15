@@ -89,6 +89,20 @@ bool writeImage(const QImage& image, const QString& output, const QByteArray& fo
   return file.commit();
 }
 
+// Reserves a free edited name with an exclusive create, so another instance
+// cannot claim it between selection and write.
+QString reserveOutputName(const QString& sourcePath) {
+  for (int attempt = 0; attempt < 64; ++attempt) {
+    const QString candidate = ImageEditor::availableOutputPath(sourcePath);
+    QFile reservation(candidate);
+    if (reservation.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+      reservation.close();
+      return candidate;
+    }
+  }
+  return {};
+}
+
 } // namespace
 
 ImageEditor::ImageEditor(QObject* parent) : QObject(parent) {}
@@ -229,21 +243,6 @@ void ImageEditor::saveCopy(const QString& path, int quarterTurns, bool flipHoriz
     QString output;
     const QByteArray format = writableFormat(source);
 
-    // Reserve a name before writing. availableOutputPath() alone races another
-    // instance picking the same free name, and QSaveFile's commit would then
-    // replace that file. NewOnly makes the reservation exclusive.
-    const auto reserveName = [&source]() -> QString {
-      for (int attempt = 0; attempt < 64; ++attempt) {
-        const QString candidate = availableOutputPath(source);
-        QFile reservation(candidate);
-        if (reservation.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
-          reservation.close();
-          return candidate;
-        }
-      }
-      return {};
-    };
-
     // A quarter turn or flip with no crop and no resize on a plain JPEG is done
     // losslessly by jpegtran: the pixels are never decoded or re-encoded. An
     // image with an EXIF orientation tag is left to the recompressing path,
@@ -255,7 +254,7 @@ void ImageEditor::saveCopy(const QString& path, int quarterTurns, bool flipHoriz
         noResize && JpegTransform::available()) {
       QImageReader probe(source);
       if (probe.transformation() == QImageIOHandler::TransformationNone) {
-        const QString candidate = reserveName();
+        const QString candidate = reserveOutputName(source);
         if (!candidate.isEmpty()) {
           if (JpegTransform::apply(source, candidate, turns, flipH, flipV)) {
             output = candidate;
@@ -287,7 +286,7 @@ void ImageEditor::saveCopy(const QString& path, int quarterTurns, bool flipHoriz
         if (result.isNull()) {
           error = QStringLiteral("That correction left nothing to save");
         } else {
-          output = reserveName();
+          output = reserveOutputName(source);
           if (output.isEmpty()) {
             error = QStringLiteral("Could not find a free name beside %1")
                         .arg(QFileInfo(source).fileName());
@@ -376,6 +375,73 @@ void ImageEditor::copyRegion(const QString& path, int quarterTurns, bool flipHor
           } else {
             emit copied();
           }
+        },
+        Qt::QueuedConnection);
+  });
+}
+
+void ImageEditor::saveCopies(const QStringList& paths, int quarterTurns, bool flipHorizontal,
+                             bool flipVertical, int targetWidth, int targetHeight) {
+  if (m_busy) {
+    emit failed(QStringLiteral("Still working on the last correction"));
+    return;
+  }
+  if (paths.isEmpty()) {
+    emit batchFinished(0, 0);
+    return;
+  }
+
+  m_busy = true;
+  emit busyChanged();
+
+  const QStringList sources = paths;
+  const int turns = quarterTurns;
+  const bool flipH = flipHorizontal;
+  const bool flipV = flipVertical;
+  const int targetW = targetWidth;
+  const int targetH = targetHeight;
+
+  (void)QtConcurrent::run([this, sources, turns, flipH, flipV, targetW, targetH] {
+    int succeeded = 0;
+    int failedCount = 0;
+    int done = 0;
+    const int total = static_cast<int>(sources.size());
+    for (const QString& source : sources) {
+      ++done;
+      const QImage image = readOriented(source);
+      if (image.isNull()) {
+        ++failedCount;
+      } else {
+        Transform transform;
+        transform.quarterTurns = turns;
+        transform.flipHorizontal = flipH;
+        transform.flipVertical = flipV;
+        transform.targetWidth = targetW;
+        transform.targetHeight = targetH;
+        const QImage result = apply(image, transform);
+        if (result.isNull()) {
+          ++failedCount;
+        } else {
+          const QString output = reserveOutputName(source);
+          if (output.isEmpty() || !writeImage(result, output, writableFormat(source))) {
+            if (!output.isEmpty()) {
+              QFile::remove(output);
+            }
+            ++failedCount;
+          } else {
+            ++succeeded;
+          }
+        }
+      }
+      QMetaObject::invokeMethod(this, [this, done, total] { emit batchProgress(done, total); },
+                                Qt::QueuedConnection);
+    }
+    QMetaObject::invokeMethod(
+        this,
+        [this, succeeded, failedCount] {
+          m_busy = false;
+          emit busyChanged();
+          emit batchFinished(succeeded, failedCount);
         },
         Qt::QueuedConnection);
   });
