@@ -341,6 +341,33 @@ private slots:
     QTRY_VERIFY(!sheet->isVisible());
   }
 
+  void correctionStraightenSliderDrivesThePreview() {
+    const QString path = m_scratch.filePath(QStringLiteral("straighten-disposable.png"));
+    QVERIFY(QImage(120, 80, QImage::Format_RGB32).save(path));
+    const auto cleanup = qScopeGuard([&] {
+      invoke("dismissTopLayer");
+      QFile::remove(path);
+      m_window->resize(1280, 820);
+    });
+
+    QQuickItem* sheet = item("correctionSheet");
+    perform(QStringLiteral("corrections"), path);
+    QTRY_VERIFY(sheet->isVisible());
+    QTRY_COMPARE(item("correctionPreview")->property("status").toInt(), 1);
+
+    QQuickItem* slider = item("straightenSlider");
+    QVERIFY(slider);
+    slider->setProperty("value", 7.5);
+    QVERIFY(QMetaObject::invokeMethod(slider, "moved"));
+    QCOMPARE(sheet->property("straighten").toDouble(), 7.5);
+    // The preview id carries the angle in tenths of a degree.
+    QVERIFY(item("correctionPreview")->property("source").toUrl().toString().contains(".75"));
+
+    click(pill(sheet, QStringLiteral("Reset")));
+    QCOMPARE(sheet->property("straighten").toDouble(), 0.0);
+    QCOMPARE(slider->property("value").toDouble(), 0.0);
+  }
+
   void correctionCropAspectPresets() {
     const QString path = m_scratch.filePath(QStringLiteral("aspect-disposable.png"));
     QVERIFY(QImage(120, 80, QImage::Format_RGB32).save(path));

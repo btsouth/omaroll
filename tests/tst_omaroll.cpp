@@ -4066,7 +4066,7 @@ private slots:
     ImageEditor editor;
     QSignalSpy saved(&editor, &ImageEditor::saved);
     QSignalSpy failed(&editor, &ImageEditor::failed);
-    editor.saveCopy(source, 1, false, false, 0, 0, 1, 1, 0, 0);
+    editor.saveCopy(source, 1, false, false, 0, 0, 0, 1, 1, 0, 0);
     QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, 15000);
     QCOMPARE(failed.size(), 0);
     const QString output = saved.first().first().toString();
@@ -4083,7 +4083,7 @@ private slots:
 
     // A second correction of the same file makes its own numbered copy.
     QSignalSpy savedAgain(&editor, &ImageEditor::saved);
-    editor.saveCopy(source, 0, false, false, 0, 0, 1, 1, 0, 0);
+    editor.saveCopy(source, 0, false, false, 0, 0, 0, 1, 1, 0, 0);
     QTRY_COMPARE_WITH_TIMEOUT(savedAgain.size(), 1, 15000);
     QVERIFY(savedAgain.first().first().toString().endsWith(QStringLiteral("-edited-2.png")));
   }
@@ -4100,7 +4100,7 @@ private slots:
 
     ImageEditor editor;
     QSignalSpy saved(&editor, &ImageEditor::saved);
-    editor.saveCopy(source, 0, true, false, 0, 0, 1, 1, 0, 0);
+    editor.saveCopy(source, 0, true, false, 0, 0, 0, 1, 1, 0, 0);
     QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, 15000);
     QCOMPARE(saved.size(), 1);
     const QImage result(saved.first().first().toString());
@@ -4112,8 +4112,8 @@ private slots:
   void correctionsRefuseAMissingFile() {
     ImageEditor editor;
     QSignalSpy failed(&editor, &ImageEditor::failed);
-    editor.saveCopy(QStringLiteral("/tmp/omaroll-does-not-exist-9e8a.png"), 0, false, false, 0, 0, 1, 1,
-                    0, 0);
+    editor.saveCopy(QStringLiteral("/tmp/omaroll-does-not-exist-9e8a.png"), 0, false, false, 0, 0, 0,
+                    1, 1, 0, 0);
     QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 5000);
     QVERIFY(!failed.first().first().toString().isEmpty());
   }
@@ -4166,7 +4166,7 @@ private slots:
     // A saved copy bakes the orientation in: the tag is gone and the pixels
     // stay upright.
     QSignalSpy saved(&editor, &ImageEditor::saved);
-    editor.saveCopy(path, 0, false, false, 0, 0, 1, 1, 0, 0);
+    editor.saveCopy(path, 0, false, false, 0, 0, 0, 1, 1, 0, 0);
     QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, 15000);
     const QString output = saved.first().first().toString();
     QImageReader copyReader(output);
@@ -4202,7 +4202,7 @@ private slots:
 
     ImageEditor editor;
     QSignalSpy saved(&editor, &ImageEditor::saved);
-    editor.saveCopy(source, 1, false, false, 0, 0, 1, 1, 0, 0);
+    editor.saveCopy(source, 1, false, false, 0, 0, 0, 1, 1, 0, 0);
     QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, 15000);
     const QString turned = saved.first().first().toString();
     const QImage turnedImage(turned);
@@ -4226,7 +4226,7 @@ private slots:
     // Losslessness: the inverse turn returns the original pixels exactly. A
     // recompressing path would lose a little on each pass.
     QSignalSpy back(&editor, &ImageEditor::saved);
-    editor.saveCopy(turned, 3, false, false, 0, 0, 1, 1, 0, 0);
+    editor.saveCopy(turned, 3, false, false, 0, 0, 0, 1, 1, 0, 0);
     QTRY_COMPARE_WITH_TIMEOUT(back.size(), 1, 15000);
     QCOMPARE(QImage(back.first().first().toString()), decoded);
   }
@@ -4239,7 +4239,7 @@ private slots:
     QVERIFY(QImage(48, 24, QImage::Format_RGB32).save(png, "PNG"));
     ImageEditor editor;
     QSignalSpy saved(&editor, &ImageEditor::saved);
-    editor.saveCopy(png, 1, false, false, 0, 0, 1, 1, 0, 0);
+    editor.saveCopy(png, 1, false, false, 0, 0, 0, 1, 1, 0, 0);
     QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, 15000);
     QCOMPARE(QImage(saved.first().first().toString()).size(), QSize(24, 48));
 
@@ -4260,7 +4260,7 @@ private slots:
       file.write(withExifOrientation(bytes, 6));
     }
     QSignalSpy rotated(&editor, &ImageEditor::saved);
-    editor.saveCopy(jpeg, 1, false, false, 0, 0, 1, 1, 0, 0);
+    editor.saveCopy(jpeg, 1, false, false, 0, 0, 0, 1, 1, 0, 0);
     QTRY_COMPARE_WITH_TIMEOUT(rotated.size(), 1, 15000);
     const QImage result(rotated.first().first().toString());
     // The 40x20 source is oriented to 20x40, then turned once: 40x20.
@@ -4279,13 +4279,38 @@ private slots:
 
     ImageEditor editor;
     QSignalSpy saved(&editor, &ImageEditor::saved);
-    editor.saveCopy(source, 0, false, false, 0, 0, 1, 1, 0, 0);
+    editor.saveCopy(source, 0, false, false, 0, 0, 0, 1, 1, 0, 0);
     QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, 15000);
     const QImage result(saved.first().first().toString());
     QVERIFY(!result.isNull());
     QVERIFY2(result.colorSpace().isValid(), "the copy lost its colour profile");
     // Not just valid: the same profile, so a swap to sRGB would fail too.
     QCOMPARE(result.colorSpace(), space);
+  }
+
+  void straightenFillsTheFrameWithoutEmptyCorners() {
+    QImage source(80, 40, QImage::Format_RGB32);
+    source.fill(Qt::darkGreen);
+
+    ImageEditor::Transform turned;
+    turned.straightenDegrees = 10.0;
+    const QImage result = ImageEditor::apply(source, turned);
+    // The frame keeps its size and the crop rectangle still means the same.
+    QCOMPARE(result.size(), source.size());
+    // Filled, not letterboxed: the corner comes from inside the picture, so it
+    // is still the source colour rather than black.
+    const QColor corner = result.pixelColor(1, 1);
+    QVERIFY2(corner.green() > 80, qPrintable(corner.name()));
+
+    // Zero degrees is the identity.
+    QCOMPARE(ImageEditor::apply(source, ImageEditor::Transform{}), source);
+
+    // A straighten before the crop keeps the crop's proportions.
+    ImageEditor::Transform cropped;
+    cropped.straightenDegrees = 5.0;
+    cropped.cropW = 0.5;
+    cropped.cropH = 0.5;
+    QCOMPARE(ImageEditor::apply(source, cropped).size(), QSize(40, 20));
   }
 
   void correctionsCopyARegionToTheClipboard() {
@@ -4298,11 +4323,11 @@ private slots:
     QSignalSpy copied(&editor, &ImageEditor::copied);
     QSignalSpy failed(&editor, &ImageEditor::failed);
     // A quarter of the image: it has to come back without error.
-    editor.copyRegion(source, 0, false, false, 0.5, 0.5, 0.5, 0.5);
+    editor.copyRegion(source, 0, false, false, 0, 0.5, 0.5, 0.5, 0.5);
     QTRY_COMPARE_WITH_TIMEOUT(copied.size(), 1, 15000);
     QCOMPARE(failed.size(), 0);
 
-    editor.copyRegion(dir.filePath(QStringLiteral("missing.png")), 0, false, false, 0, 0, 1, 1);
+    editor.copyRegion(dir.filePath(QStringLiteral("missing.png")), 0, false, false, 0, 0, 0, 1, 1);
     QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 5000);
     QVERIFY(!failed.first().first().toString().isEmpty());
   }

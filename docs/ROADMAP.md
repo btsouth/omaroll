@@ -15,10 +15,9 @@ them under the `v1.8.0` milestone.
 
 - **Lossless JPEG rotate and flip.** Done: a JPEG rotated or flipped with no
   crop or resize is written without recompressing the pixels.
-- **Straighten and crop aspect presets.** Free/Original/1:1/4:3/3:2/16:9 crop
-  presets are done: the crop is held to the chosen ratio and snaps to the
-  largest centred rectangle when selected. The fine straighten control (about
-  ±15°, scaled to avoid empty corners) remains.
+- **Straighten and crop aspect presets.** Done: Free/Original/1:1/4:3/3:2/16:9
+  crop presets hold the crop to the chosen ratio, and a ±15° straighten control
+  fills the frame so no empty corners show.
 - **Batch apply corrections.** Rotate, resize and format a whole selection at
   once, each as its own copy with the existing collision handling.
 - Finish the remaining verification: transparency and very large images.

@@ -16,6 +16,8 @@ Item {
     property int quarterTurns: 0
     property bool flipHorizontal: false
     property bool flipVertical: false
+    // A fine straighten angle in degrees, applied before the crop.
+    property real straighten: 0
 
     // Fractions of the rotated-and-flipped frame, so the crop means the same
     // thing at preview resolution and at full resolution.
@@ -42,7 +44,8 @@ Item {
     readonly property int croppedHeight: Math.max(1, Math.round(workingHeight * cropH))
     readonly property var previewSource: root.visible && root.path !== "" && !root.saving
         ? "image://edit/" + root.quarterTurns + "." + (root.flipHorizontal ? 1 : 0)
-          + "." + (root.flipVertical ? 1 : 0) + encodeURIComponent(root.path)
+          + "." + (root.flipVertical ? 1 : 0) + "." + Math.round(root.straighten * 10)
+          + encodeURIComponent(root.path)
         : ""
 
     signal saved(string outputPath)
@@ -58,6 +61,7 @@ Item {
         quarterTurns = 0
         flipHorizontal = false
         flipVertical = false
+        straighten = 0
         cropX = 0
         cropY = 0
         cropW = 1
@@ -84,6 +88,7 @@ Item {
         quarterTurns = 0
         flipHorizontal = false
         flipVertical = false
+        straighten = 0
         cropX = 0
         cropY = 0
         cropW = 1
@@ -146,7 +151,7 @@ Item {
         saving = true
         errorText = ""
         ImageEdit.saveCopy(root.path, root.quarterTurns, root.flipHorizontal, root.flipVertical,
-                           root.cropX, root.cropY, root.cropW, root.cropH,
+                           root.straighten, root.cropX, root.cropY, root.cropW, root.cropH,
                            root.targetWidth, root.targetHeight)
     }
 
@@ -156,7 +161,8 @@ Item {
         }
         errorText = ""
         ImageEdit.copyRegion(root.path, root.quarterTurns, root.flipHorizontal,
-                             root.flipVertical, root.cropX, root.cropY, root.cropW, root.cropH)
+                             root.flipVertical, root.straighten, root.cropX, root.cropY,
+                             root.cropW, root.cropH)
     }
 
     visible: false
@@ -177,6 +183,13 @@ Item {
             root.saving = false
             root.errorText = message
         }
+    }
+
+    // Moving the slider breaks its own value binding, so keep it in step when
+    // the angle changes another way, such as Reset.
+    Connections {
+        target: root
+        function onStraightenChanged() { straightenSlider.value = root.straighten }
     }
 
     WheelHandler {
@@ -520,6 +533,37 @@ Item {
                 PillButton {
                     label: "Reset"
                     onClicked: root.reset()
+                }
+
+                Row {
+                    width: 210
+                    spacing: 6
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "Straighten"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 11
+                        color: Theme.mutedText
+                    }
+                    Slider {
+                        id: straightenSlider
+                        objectName: "straightenSlider"
+                        width: 130
+                        anchors.verticalCenter: parent.verticalCenter
+                        from: -15
+                        to: 15
+                        stepSize: 0.5
+                        value: root.straighten
+                        onMoved: root.straighten = value
+                    }
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 36
+                        text: root.straighten.toFixed(1) + "°"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 11
+                        color: Theme.foreground
+                    }
                 }
 
                 Item { width: 12; height: 1 }

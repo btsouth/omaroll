@@ -14,6 +14,7 @@
 #include <QSaveFile>
 #include <QTransform>
 #include <QtConcurrent>
+#include <QtMath>
 
 #include <cmath>
 
@@ -118,6 +119,26 @@ QImage ImageEditor::apply(const QImage& source, const Transform& transform) {
     image = image.mirrored(transform.flipHorizontal, transform.flipVertical);
 #endif
   }
+  if (!qFuzzyIsNull(transform.straightenDegrees)) {
+    // Rotate about the centre and scale just enough to fill the original
+    // frame, then crop the centre back out, so straightening never leaves
+    // empty corners. The scale is the larger of the two the coverage needs.
+    const qreal radians = qDegreesToRadians(transform.straightenDegrees);
+    const qreal c = qAbs(qCos(radians));
+    const qreal s = qAbs(qSin(radians));
+    const qreal w = image.width();
+    const qreal h = image.height();
+    const qreal scale = qMax((w * c + h * s) / w, (w * s + h * c) / h);
+    QTransform turn;
+    turn.translate(w / 2.0, h / 2.0);
+    turn.rotate(transform.straightenDegrees);
+    turn.scale(scale, scale);
+    turn.translate(-w / 2.0, -h / 2.0);
+    const QImage turned = image.transformed(turn, Qt::SmoothTransformation);
+    const QRect centre((turned.width() - image.width()) / 2,
+                       (turned.height() - image.height()) / 2, image.width(), image.height());
+    image = turned.copy(centre.intersected(turned.rect()));
+  }
   if (transform.cropW > 0.0 && transform.cropH > 0.0) {
     const QRect crop(qRound(transform.cropX * image.width()),
                      qRound(transform.cropY * image.height()), qRound(transform.cropW * image.width()),
@@ -175,8 +196,8 @@ QSize ImageEditor::orientedSize(const QString& path) const {
 }
 
 void ImageEditor::saveCopy(const QString& path, int quarterTurns, bool flipHorizontal,
-                           bool flipVertical, qreal cropX, qreal cropY, qreal cropWidth,
-                           qreal cropHeight, int targetWidth, int targetHeight) {
+                           bool flipVertical, qreal straightenDegrees, qreal cropX, qreal cropY,
+                           qreal cropWidth, qreal cropHeight, int targetWidth, int targetHeight) {
   if (m_busy) {
     emit failed(QStringLiteral("Still saving the last correction"));
     return;
@@ -194,6 +215,7 @@ void ImageEditor::saveCopy(const QString& path, int quarterTurns, bool flipHoriz
   const int turns = quarterTurns;
   const bool flipH = flipHorizontal;
   const bool flipV = flipVertical;
+  const qreal straighten = straightenDegrees;
   const qreal cx = cropX;
   const qreal cy = cropY;
   const qreal cw = cropWidth;
@@ -201,7 +223,8 @@ void ImageEditor::saveCopy(const QString& path, int quarterTurns, bool flipHoriz
   const int targetW = targetWidth;
   const int targetH = targetHeight;
 
-  (void)QtConcurrent::run([this, source, turns, flipH, flipV, cx, cy, cw, ch, targetW, targetH] {
+  (void)QtConcurrent::run([this, source, turns, flipH, flipV, straighten, cx, cy, cw, ch, targetW,
+                           targetH] {
     QString error;
     QString output;
     const QByteArray format = writableFormat(source);
@@ -228,8 +251,8 @@ void ImageEditor::saveCopy(const QString& path, int quarterTurns, bool flipHoriz
     const bool fullFrame = cx == 0.0 && cy == 0.0 && cw == 1.0 && ch == 1.0;
     const bool noResize = targetW <= 0 && targetH <= 0;
     const bool turned = (((turns % 4) + 4) % 4) != 0 || flipH || flipV;
-    if (format == QByteArrayLiteral("jpg") && turned && fullFrame && noResize &&
-        JpegTransform::available()) {
+    if (format == QByteArrayLiteral("jpg") && turned && qFuzzyIsNull(straighten) && fullFrame &&
+        noResize && JpegTransform::available()) {
       QImageReader probe(source);
       if (probe.transformation() == QImageIOHandler::TransformationNone) {
         const QString candidate = reserveName();
@@ -252,6 +275,7 @@ void ImageEditor::saveCopy(const QString& path, int quarterTurns, bool flipHoriz
         transform.quarterTurns = turns;
         transform.flipHorizontal = flipH;
         transform.flipVertical = flipV;
+        transform.straightenDegrees = straighten;
         transform.cropX = cx;
         transform.cropY = cy;
         transform.cropW = cw;
@@ -294,8 +318,8 @@ void ImageEditor::saveCopy(const QString& path, int quarterTurns, bool flipHoriz
 }
 
 void ImageEditor::copyRegion(const QString& path, int quarterTurns, bool flipHorizontal,
-                             bool flipVertical, qreal cropX, qreal cropY, qreal cropWidth,
-                             qreal cropHeight) {
+                             bool flipVertical, qreal straightenDegrees, qreal cropX, qreal cropY,
+                             qreal cropWidth, qreal cropHeight) {
   if (m_busy) {
     emit failed(QStringLiteral("Still working on the last correction"));
     return;
@@ -313,12 +337,13 @@ void ImageEditor::copyRegion(const QString& path, int quarterTurns, bool flipHor
   const int turns = quarterTurns;
   const bool flipH = flipHorizontal;
   const bool flipV = flipVertical;
+  const qreal straighten = straightenDegrees;
   const qreal cx = cropX;
   const qreal cy = cropY;
   const qreal cw = cropWidth;
   const qreal ch = cropHeight;
 
-  (void)QtConcurrent::run([this, source, turns, flipH, flipV, cx, cy, cw, ch] {
+  (void)QtConcurrent::run([this, source, turns, flipH, flipV, straighten, cx, cy, cw, ch] {
     QString error;
     QImage image = readOriented(source);
     if (image.isNull()) {
@@ -328,6 +353,7 @@ void ImageEditor::copyRegion(const QString& path, int quarterTurns, bool flipHor
       transform.quarterTurns = turns;
       transform.flipHorizontal = flipH;
       transform.flipVertical = flipV;
+      transform.straightenDegrees = straighten;
       transform.cropX = cx;
       transform.cropY = cy;
       transform.cropW = cw;

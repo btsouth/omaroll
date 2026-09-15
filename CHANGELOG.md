@@ -12,6 +12,8 @@
 - Crop aspect presets. The correction editor holds the crop to Free, Original,
   1:1, 4:3, 3:2 or 16:9 while the frame is dragged, snapping to the largest
   centred rectangle of that ratio when the preset is chosen.
+- Straighten. A fine ±15° level control in the correction editor, scaled to
+  fill the frame so no empty corners show, applied before the crop.
 
 ## 1.7.0
 
