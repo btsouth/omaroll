@@ -47,6 +47,9 @@ them under the `v1.8.0` milestone.
 ### Video
 
 - **Subtitle offset and styling**, and a named track picker instead of cycling.
+  Offset is done for sidecar subtitles (±0.5 s steps). Styling and a separate
+  picker were dropped: the tracks are already named in the CC cycle and the
+  default rendering is readable, so they would be surface for its own sake.
 - **Chapters, a play queue and loop**, remembering position across the queue.
 
 ### Desktop integration

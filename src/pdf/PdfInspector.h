@@ -37,12 +37,16 @@ public:
   Q_INVOKABLE void clearSearch();
   // Extracts one page's text and copies it to the clipboard.
   Q_INVOKABLE void copyPageText(int page);
+  // Extracts one page's text and hands it back through pageTextChanged, for
+  // the selectable text panel.
+  Q_INVOKABLE void loadPageText(int page);
 
 signals:
   void changed();
   void matchesChanged();
   void textCopied(int page);
   void textCopyFailed(const QString& message);
+  void pageTextChanged(int page, const QString& text);
 
 private:
   QProcess m_process;
@@ -60,4 +64,7 @@ private:
   QProcess m_textProcess;
   QTimer m_textTimeout;
   int m_textPage = 0;
+  // True when the running extraction should go to the clipboard, false when it
+  // should be handed back to the text panel.
+  bool m_textCopy = false;
 };

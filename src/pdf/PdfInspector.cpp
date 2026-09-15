@@ -67,17 +67,27 @@ PdfInspector::PdfInspector(QObject* parent) : QObject(parent) {
   connect(&m_textProcess, &QProcess::finished, this,
           [this](int exitCode, QProcess::ExitStatus status) {
             m_textTimeout.stop();
+            const bool copy = m_textCopy;
+            const int page = m_textPage;
             if (status != QProcess::NormalExit || exitCode != 0) {
-              emit textCopyFailed(QStringLiteral("Could not read this page"));
+              if (copy) {
+                emit textCopyFailed(QStringLiteral("Could not read this page"));
+              } else {
+                emit pageTextChanged(page, QString());
+              }
               return;
             }
             const QString text = QString::fromUtf8(m_textProcess.readAllStandardOutput()).trimmed();
+            if (!copy) {
+              emit pageTextChanged(page, text);
+              return;
+            }
             if (text.isEmpty()) {
               emit textCopyFailed(QStringLiteral("No text on this page"));
             } else if (!ClipboardText::offer(text)) {
               emit textCopyFailed(QStringLiteral("The clipboard is not reachable"));
             } else {
-              emit textCopied(m_textPage);
+              emit textCopied(page);
             }
           });
 }
@@ -185,6 +195,25 @@ void PdfInspector::copyPageText(int page) {
     m_textProcess.kill();
     m_textProcess.waitForFinished(500);
   }
+  m_textCopy = true;
+  m_textPage = page;
+  m_textProcess.start(QStandardPaths::findExecutable(QStringLiteral("pdftotext")),
+                      {QStringLiteral("-f"), QString::number(page), QStringLiteral("-l"),
+                       QString::number(page), m_path, QStringLiteral("-")});
+  m_textTimeout.start();
+}
+
+void PdfInspector::loadPageText(int page) {
+  if (m_path.isEmpty() || page < 1 || (m_pageCount > 0 && page > m_pageCount) ||
+      !PdfSupport::textAvailable()) {
+    emit pageTextChanged(page, QString());
+    return;
+  }
+  if (m_textProcess.state() != QProcess::NotRunning) {
+    m_textProcess.kill();
+    m_textProcess.waitForFinished(500);
+  }
+  m_textCopy = false;
   m_textPage = page;
   m_textProcess.start(QStandardPaths::findExecutable(QStringLiteral("pdftotext")),
                       {QStringLiteral("-f"), QString::number(page), QStringLiteral("-l"),

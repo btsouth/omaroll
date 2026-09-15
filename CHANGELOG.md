@@ -22,6 +22,8 @@
   print path (CUPS), and is greyed out with an install hint when it is absent.
 - Undo organization marks. Ctrl+Z steps back through favourites, hidden flags,
   ratings and captions, one action at a time.
+- Subtitle timing. Sidecar subtitles can be nudged earlier or later by half a
+  second to fix a track that is out of sync.
 
 ## 1.7.0
 

@@ -700,6 +700,14 @@ private slots:
     QVERIFY(overlay);
     QTRY_VERIFY_WITH_TIMEOUT(overlay->property("text").toString().contains(
                                  QStringLiteral("Sidecar cue text")), 5000);
+
+    // Sub + shifts the lookup past the cue; Sub − brings it back.
+    QQuickItem* sheet = item("detail");
+    sheet->setProperty("subtitleOffsetMs", 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(overlay->property("text").toString().isEmpty(), 2000);
+    sheet->setProperty("subtitleOffsetMs", 0);
+    QTRY_VERIFY_WITH_TIMEOUT(overlay->property("text").toString().contains(
+                                 QStringLiteral("Sidecar cue text")), 2000);
   }
 
   void videoViewerHasDefaultPlayerKeyboardAndPointerControls() {
