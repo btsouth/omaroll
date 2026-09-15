@@ -1343,6 +1343,7 @@ void AppSettings::toggleFavorite(const QString& path) {
   if (path.isEmpty()) {
     return;
   }
+  pushMarksUndo();
   if (!m_favorites.remove(path)) {
     m_favorites.insert(path);
   }
@@ -1355,6 +1356,7 @@ int AppSettings::rating(const QString& path) const { return m_ratings.value(path
 
 void AppSettings::setRating(const QStringList& paths, int rating) {
   const int stars = qBound(0, rating, kMaximumRating);
+  pushMarksUndo();
   bool changed = false;
   for (const QString& path : paths) {
     if (path.isEmpty()) {
@@ -1387,6 +1389,7 @@ void AppSettings::setCaption(const QString& path, const QString& text) {
   if (m_captions.value(path) == clean) {
     return;
   }
+  pushMarksUndo();
   if (clean.isEmpty()) {
     m_captions.remove(path);
   } else {
@@ -1401,6 +1404,7 @@ void AppSettings::toggleHidden(const QString& path) {
   if (path.isEmpty()) {
     return;
   }
+  pushMarksUndo();
   if (!m_hidden.remove(path)) {
     m_hidden.insert(path);
   }
@@ -1425,6 +1429,7 @@ void mark(QSet<QString>& marks, const QStringList& paths, bool on) {
 } // namespace
 
 void AppSettings::setFavorite(const QStringList& paths, bool on) {
+  pushMarksUndo();
   mark(m_favorites, paths, on);
   for (const QString& path : paths) {
     refreshMarkIdentity(path);
@@ -1434,6 +1439,7 @@ void AppSettings::setFavorite(const QStringList& paths, bool on) {
 }
 
 void AppSettings::setHidden(const QStringList& paths, bool on) {
+  pushMarksUndo();
   mark(m_hidden, paths, on);
   for (const QString& path : paths) {
     refreshMarkIdentity(path);
@@ -1504,6 +1510,42 @@ void AppSettings::persistMarkIdentities() {
     stored.insert(it.key(), row);
   }
   m_settings.setValue(kMarkIdentities, stored);
+}
+
+void AppSettings::pushMarksUndo() {
+  if (m_undoing) {
+    return;
+  }
+  MarksSnapshot snapshot;
+  snapshot.favorites = m_favorites;
+  snapshot.hidden = m_hidden;
+  snapshot.ratings = m_ratings;
+  snapshot.captions = m_captions;
+  snapshot.identities = m_markIdentities;
+  m_undoStack.append(std::move(snapshot));
+  constexpr int kMaximumUndo = 64;
+  while (m_undoStack.size() > kMaximumUndo) {
+    m_undoStack.removeFirst();
+  }
+  emit undoChanged();
+}
+
+void AppSettings::undo() {
+  if (m_undoStack.isEmpty()) {
+    return;
+  }
+  MarksSnapshot snapshot = m_undoStack.takeLast();
+  m_undoing = true;
+  m_favorites = std::move(snapshot.favorites);
+  m_hidden = std::move(snapshot.hidden);
+  m_ratings = std::move(snapshot.ratings);
+  m_captions = std::move(snapshot.captions);
+  m_markIdentities = std::move(snapshot.identities);
+  persistMarks();
+  persistMarkIdentities();
+  emit marksChanged();
+  m_undoing = false;
+  emit undoChanged();
 }
 
 void AppSettings::refreshMarkIdentity(const QString& path) {

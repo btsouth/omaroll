@@ -1007,6 +1007,48 @@ private slots:
     settings.setFavorite({bmpA, bmpB}, false);
   }
 
+  void undoRestoresThePreviousMarks() {
+    const QString path = QStringLiteral("/tmp/omaroll-undo-%1.png")
+                             .arg(QRandomGenerator::global()->generate());
+    AppSettings settings;
+    settings.setFavorite({path}, false);
+    settings.setRating({path}, 0);
+    settings.setCaption(path, QString());
+    settings.setHidden({path}, false);
+    while (settings.canUndo()) {
+      settings.undo();
+    }
+    QVERIFY(!settings.canUndo());
+
+    settings.setRating({path}, 4);
+    settings.setFavorite({path}, true);
+    settings.toggleHidden(path);
+    settings.setCaption(path, QStringLiteral("note"));
+    QCOMPARE(settings.rating(path), 4);
+    QVERIFY(settings.isFavorite(path));
+    QVERIFY(settings.isHidden(path));
+    QCOMPARE(settings.caption(path), QStringLiteral("note"));
+
+    // Undo newest first, one action at a time.
+    settings.undo();
+    QCOMPARE(settings.caption(path), QString());
+    settings.undo();
+    QVERIFY(!settings.isHidden(path));
+    settings.undo();
+    QVERIFY(!settings.isFavorite(path));
+    settings.undo();
+    QCOMPARE(settings.rating(path), 0);
+    QVERIFY(!settings.canUndo());
+
+    settings.setFavorite({path}, false);
+    settings.setRating({path}, 0);
+    settings.setCaption(path, QString());
+    settings.setHidden({path}, false);
+    while (settings.canUndo()) {
+      settings.undo();
+    }
+  }
+
   void marksFollowAnExternalMoveThroughAScan() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

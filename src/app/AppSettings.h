@@ -160,6 +160,11 @@ public:
   Q_INVOKABLE void toggleFavorite(const QString& path);
   Q_INVOKABLE void toggleHidden(const QString& path);
 
+  // Undo for the destructive organization actions: favourites, hidden files,
+  // ratings and captions. One step per action, capped, cleared by nothing else.
+  Q_INVOKABLE [[nodiscard]] bool canUndo() const { return !m_undoStack.isEmpty(); }
+  Q_INVOKABLE void undo();
+
   // Stars, 1 to 5. Zero is unrated and is not stored.
   Q_INVOKABLE [[nodiscard]] int rating(const QString& path) const;
   Q_INVOKABLE void setRating(const QStringList& paths, int rating);
@@ -204,6 +209,7 @@ signals:
   // One signal for "a mark changed", so the model can refresh its flags without
   // caring which one it was.
   void marksChanged();
+  void undoChanged();
 
 private:
   struct AlbumEntry {
@@ -221,6 +227,9 @@ private:
   void persistTags();
   void persistSmartCollections();
   void persistMarkIdentities();
+  // Snapshots the marks (and their identities) before a destructive change, so
+  // undo can put them back exactly.
+  void pushMarksUndo();
   // Records (or forgets) the on-disk identity behind a path's marks, so the
   // mark can be found again after an external move.
   void refreshMarkIdentity(const QString& path);
@@ -237,6 +246,16 @@ private:
   // Identity of marked files, keyed by their path, for move recovery. Only
   // paths with at least one mark are kept.
   QHash<QString, AlbumEntry> m_markIdentities;
+
+  struct MarksSnapshot {
+    QSet<QString> favorites;
+    QSet<QString> hidden;
+    QHash<QString, int> ratings;
+    QHash<QString, QString> captions;
+    QHash<QString, AlbumEntry> identities;
+  };
+  QList<MarksSnapshot> m_undoStack;
+  bool m_undoing = false;
 
   bool m_showHidden = false;
   int m_sortMode = 0;

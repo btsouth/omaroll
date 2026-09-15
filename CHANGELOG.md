@@ -20,6 +20,8 @@
   Fit page mode for reading a whole page with zoom and pan.
 - Print. A Print action for pictures and PDFs hands the file to the system
   print path (CUPS), and is greyed out with an install hint when it is absent.
+- Undo organization marks. Ctrl+Z steps back through favourites, hidden flags,
+  ratings and captions, one action at a time.
 
 ## 1.7.0
 
