@@ -1,6 +1,7 @@
 #include "edit/ImageEditor.h"
 
 #include "edit/ClipboardImage.h"
+#include "edit/JpegTransform.h"
 
 #include <QColorSpace>
 #include <QDir>
@@ -203,47 +204,76 @@ void ImageEditor::saveCopy(const QString& path, int quarterTurns, bool flipHoriz
   (void)QtConcurrent::run([this, source, turns, flipH, flipV, cx, cy, cw, ch, targetW, targetH] {
     QString error;
     QString output;
-    QImage image = readOriented(source);
-    if (image.isNull()) {
-      error = QStringLiteral("Could not read %1").arg(QFileInfo(source).fileName());
-    } else {
-      Transform transform;
-      transform.quarterTurns = turns;
-      transform.flipHorizontal = flipH;
-      transform.flipVertical = flipV;
-      transform.cropX = cx;
-      transform.cropY = cy;
-      transform.cropW = cw;
-      transform.cropH = ch;
-      transform.targetWidth = targetW;
-      transform.targetHeight = targetH;
+    const QByteArray format = writableFormat(source);
 
-      const QImage result = apply(image, transform);
-      if (result.isNull()) {
-        error = QStringLiteral("That correction left nothing to save");
-      } else {
-        const QByteArray format = writableFormat(source);
-        // Reserve the name before writing. availableOutputPath() alone races
-        // another instance picking the same free name, and QSaveFile's commit
-        // would then replace that file. NewOnly makes the reservation
-        // exclusive.
-        for (int attempt = 0; attempt < 64 && output.isEmpty(); ++attempt) {
-          const QString candidate = availableOutputPath(source);
-          QFile reservation(candidate);
-          if (reservation.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
-            reservation.close();
+    // Reserve a name before writing. availableOutputPath() alone races another
+    // instance picking the same free name, and QSaveFile's commit would then
+    // replace that file. NewOnly makes the reservation exclusive.
+    const auto reserveName = [&source]() -> QString {
+      for (int attempt = 0; attempt < 64; ++attempt) {
+        const QString candidate = availableOutputPath(source);
+        QFile reservation(candidate);
+        if (reservation.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+          reservation.close();
+          return candidate;
+        }
+      }
+      return {};
+    };
+
+    // A quarter turn or flip with no crop and no resize on a plain JPEG is done
+    // losslessly by jpegtran: the pixels are never decoded or re-encoded. An
+    // image with an EXIF orientation tag is left to the recompressing path,
+    // which bakes the tag in correctly.
+    const bool fullFrame = cx == 0.0 && cy == 0.0 && cw == 1.0 && ch == 1.0;
+    const bool noResize = targetW <= 0 && targetH <= 0;
+    const bool turned = (((turns % 4) + 4) % 4) != 0 || flipH || flipV;
+    if (format == QByteArrayLiteral("jpg") && turned && fullFrame && noResize &&
+        JpegTransform::available()) {
+      QImageReader probe(source);
+      if (probe.transformation() == QImageIOHandler::TransformationNone) {
+        const QString candidate = reserveName();
+        if (!candidate.isEmpty()) {
+          if (JpegTransform::apply(source, candidate, turns, flipH, flipV)) {
             output = candidate;
+          } else {
+            QFile::remove(candidate);
           }
         }
-        if (output.isEmpty()) {
-          error = QStringLiteral("Could not find a free name beside %1")
-                      .arg(QFileInfo(source).fileName());
-        } else if (!writeImage(result, output, format)) {
-          QFile::remove(output);
-          error = QFileInfo(source).absoluteDir().exists()
-                      ? QStringLiteral("Could not write %1").arg(QFileInfo(output).fileName())
-                      : QStringLiteral("The folder for %1 is no longer there")
-                            .arg(QFileInfo(source).fileName());
+      }
+    }
+
+    if (output.isEmpty() && error.isEmpty()) {
+      const QImage image = readOriented(source);
+      if (image.isNull()) {
+        error = QStringLiteral("Could not read %1").arg(QFileInfo(source).fileName());
+      } else {
+        Transform transform;
+        transform.quarterTurns = turns;
+        transform.flipHorizontal = flipH;
+        transform.flipVertical = flipV;
+        transform.cropX = cx;
+        transform.cropY = cy;
+        transform.cropW = cw;
+        transform.cropH = ch;
+        transform.targetWidth = targetW;
+        transform.targetHeight = targetH;
+
+        const QImage result = apply(image, transform);
+        if (result.isNull()) {
+          error = QStringLiteral("That correction left nothing to save");
+        } else {
+          output = reserveName();
+          if (output.isEmpty()) {
+            error = QStringLiteral("Could not find a free name beside %1")
+                        .arg(QFileInfo(source).fileName());
+          } else if (!writeImage(result, output, format)) {
+            QFile::remove(output);
+            error = QFileInfo(source).absoluteDir().exists()
+                        ? QStringLiteral("Could not write %1").arg(QFileInfo(output).fileName())
+                        : QStringLiteral("The folder for %1 is no longer there")
+                              .arg(QFileInfo(source).fileName());
+          }
         }
       }
     }
