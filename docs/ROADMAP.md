@@ -5,9 +5,9 @@ open files quickly, find them again, make a quick correction, and share the
 result. Discovery stays read-only and core use stays offline.
 
 See [current status and handoff](STATUS.md) for release boundaries, evidence
-and the list of things we decided not to build.
+and the scope decisions.
 
-## 1.8.0 (merged to main, unreleased)
+## 1.8.0 (released)
 
 Ten focused PRs, each squash merged with green CI, the isolated core and UI
 suites and the OpenGL runner:
@@ -25,10 +25,9 @@ suites and the OpenGL runner:
 - Sidecar subtitle timing nudge (±0.5 s).
 - Slideshow interval and shuffle options.
 
-Nothing else is scheduled for 1.8.0. Cutting the release is the remaining work:
-bump the version, AppStream entry, changelog and README, run the Release and
-sanitizer validation, test the candidate on the real desktop, then tag and
-verify the published artifacts.
+[Released](https://github.com/btsouth/omaroll/releases/tag/v1.8.0) from PR #45
+(8f216b8); the published artifacts were verified against SHA256SUMS. Physical
+desktop acceptance was not recorded for this tag and remains in SBS-1121.
 
 ## Open questions
 
@@ -76,7 +75,7 @@ Considered for 1.8.0 and left out; revisit only with a fresh decision:
   they can run headless; the Wayland presentation and GPU memory numbers need
   the desktop.
 - Maintain the [Omarchy package submission](https://github.com/omacom/omarchy-pkgs/pull/295),
-  which currently points at v1.7.0.
+  which currently points at v1.8.0.
 
 Repository inclusion, installation by default and MIME defaults are separate
 upstream decisions. Advanced editing remains available through Omarchy's
