@@ -89,8 +89,12 @@ Item {
     property var subtitleFiles: []
     property string externalSubtitle: ""
     property int subtitleChoice: 0
+    // A timing nudge for sidecar subtitles, which are the ones omaroll draws
+    // itself. Positive shows the cue later.
+    property int subtitleOffsetMs: 0
     readonly property string externalCueText: externalSubtitle !== "" && player
-        ? Subtitles.textAt(externalSubtitle, Math.round(player.position)) : ""
+        ? Subtitles.textAt(externalSubtitle, Math.round(player.position) - root.subtitleOffsetMs)
+        : ""
     readonly property string subtitleOverlayText: externalSubtitle !== ""
         ? externalCueText
         : (output.videoSink ? output.videoSink.subtitleText : "")
@@ -258,6 +262,7 @@ Item {
         resumePending = true
         externalSubtitle = ""
         subtitleChoice = 0
+        subtitleOffsetMs = 0
         subtitleFiles = Subtitles.files(path)
         const keepActionFocus = visible && actionNavigationActive
         const previousActionId = focusedActionId
@@ -1580,6 +1585,38 @@ Item {
                     font.family: Theme.fontFamily
                     font.pixelSize: 11
                     color: Theme.mutedText
+                }
+
+                // A timing nudge for sidecar subtitles only, which omaroll draws.
+                Row {
+                    id: subtitleOffsetControls
+                    visible: root.externalSubtitle !== ""
+                    anchors.right: mediaControls.left
+                    anchors.rightMargin: 8
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 6
+
+                    PillButton {
+                        objectName: "subtitleEarlier"
+                        label: "Sub −"
+                        toolTip: "Show subtitles earlier"
+                        onClicked: root.subtitleOffsetMs = Math.max(-10000, root.subtitleOffsetMs - 500)
+                    }
+                    PillButton {
+                        objectName: "subtitleLater"
+                        label: "Sub +"
+                        toolTip: "Show subtitles later"
+                        onClicked: root.subtitleOffsetMs = Math.min(10000, root.subtitleOffsetMs + 500)
+                    }
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: root.subtitleOffsetMs !== 0
+                        text: (root.subtitleOffsetMs > 0 ? "+" : "")
+                              + (root.subtitleOffsetMs / 1000).toFixed(1) + "s"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 11
+                        color: Theme.mutedText
+                    }
                 }
 
                 // Explicit anchors rather than a Row: an optional control that
