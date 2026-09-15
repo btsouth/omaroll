@@ -40,6 +40,10 @@ public:
     int quarterTurns = 0;
     bool flipHorizontal = false;
     bool flipVertical = false;
+    // A fine straighten angle in degrees, applied after the quarter turns and
+    // flips. The image is scaled to fill the frame so no empty corners show,
+    // and cropped back to the original size.
+    qreal straightenDegrees = 0.0;
     // Normalized (0..1) fractions of the rotated-and-flipped frame, matching
     // what the editor overlay shows. A non-positive width or height means the
     // whole frame.
@@ -65,14 +69,14 @@ public:
   // values are fractions (0..1) of the rotated-and-flipped frame; width or
   // height of zero means the full frame. Emits saved() or failed().
   Q_INVOKABLE void saveCopy(const QString& path, int quarterTurns, bool flipHorizontal,
-                            bool flipVertical, qreal cropX, qreal cropY, qreal cropWidth,
-                            qreal cropHeight, int targetWidth, int targetHeight);
+                            bool flipVertical, qreal straightenDegrees, qreal cropX, qreal cropY,
+                            qreal cropWidth, qreal cropHeight, int targetWidth, int targetHeight);
 
   // Copies the selected region (same pipeline, no resize) to the clipboard.
   // Emits copied() or failed(). Nothing is written to disk.
   Q_INVOKABLE void copyRegion(const QString& path, int quarterTurns, bool flipHorizontal,
-                              bool flipVertical, qreal cropX, qreal cropY, qreal cropWidth,
-                              qreal cropHeight);
+                              bool flipVertical, qreal straightenDegrees, qreal cropX, qreal cropY,
+                              qreal cropWidth, qreal cropHeight);
 
   // The pure pipeline, shared with the preview provider and unit tests.
   [[nodiscard]] static QImage apply(const QImage& source, const Transform& transform);

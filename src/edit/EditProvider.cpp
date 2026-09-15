@@ -19,9 +19,10 @@ constexpr int kFallbackEdge = 720;
 
 class EditResponse final : public QQuickImageResponse, public QRunnable {
 public:
-  EditResponse(QString path, int quarterTurns, bool flipHorizontal, bool flipVertical, QSize target)
+  EditResponse(QString path, int quarterTurns, bool flipHorizontal, bool flipVertical,
+               qreal straightenDegrees, QSize target)
       : m_path(std::move(path)), m_quarterTurns(quarterTurns), m_flipH(flipHorizontal),
-        m_flipV(flipVertical), m_target(target) {
+        m_flipV(flipVertical), m_straighten(straightenDegrees), m_target(target) {
     setAutoDelete(false);
   }
 
@@ -70,6 +71,7 @@ public:
     transform.quarterTurns = m_quarterTurns;
     transform.flipHorizontal = m_flipH;
     transform.flipVertical = m_flipV;
+    transform.straightenDegrees = m_straighten;
     QImage preview = ImageEditor::apply(source, transform);
     if (preview.isNull()) {
       m_error = QStringLiteral("Could not preview this image");
@@ -91,6 +93,7 @@ private:
   int m_quarterTurns = 0;
   bool m_flipH = false;
   bool m_flipV = false;
+  qreal m_straighten = 0.0;
   QSize m_target;
   QImage m_image;
   QString m_error;
@@ -113,6 +116,7 @@ QQuickImageResponse* EditProvider::requestImageResponse(const QString& id,
   int quarterTurns = 0;
   bool flipH = false;
   bool flipV = false;
+  qreal straighten = 0.0;
   const QString decoded = QUrl::fromPercentEncoding(id.toUtf8());
   QString path = decoded;
 
@@ -128,6 +132,10 @@ QQuickImageResponse* EditProvider::requestImageResponse(const QString& id,
     if (head.size() >= 3) {
       flipV = head.at(2) == QLatin1String("1");
     }
+    if (head.size() >= 4) {
+      // Straighten travels as tenths of a degree, so the id stays integral.
+      straighten = head.at(3).toInt() / 10.0;
+    }
     path = decoded.mid(separator);
   }
 
@@ -136,7 +144,7 @@ QQuickImageResponse* EditProvider::requestImageResponse(const QString& id,
     target = QSize(kFallbackEdge, kFallbackEdge);
   }
 
-  auto* response = new EditResponse(path, quarterTurns, flipH, flipV, target);
+  auto* response = new EditResponse(path, quarterTurns, flipH, flipV, straighten, target);
   m_pool.start(response);
   return response;
 }
