@@ -63,29 +63,24 @@ isolated core and UI suites and the OpenGL runner:
 
 The changelog carries all of it under `## Unreleased`.
 
-## Decisions: what we are not building
+## Scope decisions
 
-These came up in the 1.8.0 plan and were deliberately dropped to keep the app
-full-featured without bloat. Do not add them without a fresh decision:
+These were considered for 1.8.0 and left out, so they are not revisited without
+a fresh decision:
 
-- **XMP sidecar read/write.** Niche for this app, writing sidecars breaks the
-  read-only organization ethos, and the versioned JSON backup already covers
-  portability.
-- **Video chapters, play queue and loop.** Serious playback is delegated to
-  `mpv` through the Play action; rebuilding a player duplicates it.
-- **Subtitle styling and a separate named-track picker.** Tracks are already
-  named in the CC cycle and the default rendering is readable, so these are
-  surface without new capability.
-- **Offline Places from EXIF GPS.** A bundled geodata table is package weight
-  for a niche view in a general viewer.
-- **PDF selectable-text panel.** It duplicated the existing Copy page text
-  action; a second text affordance is not worth it. (A proper on-page range
-  selection is a separate question, below.)
-- **A duplicate/similar review flow.** Already covered: duplicate and similar
-  filters, a Keep selected action that trashes the other copies with a
-  confirmation, and the compare view.
-- **Target-monitor fullscreen.** Hyprland owns window placement, so forcing a
-  screen is fragile; leave it to the compositor.
+- **XMP sidecars.** The versioned JSON backup already covers portability, and
+  writing sidecars would go against the read-only organization policy.
+- **Video chapters, play queue and loop.** Playback is delegated to `mpv`, so
+  the viewer stays a viewer.
+- **Subtitle styling and a separate track picker.** Tracks are already named in
+  the CC cycle and the default rendering is readable.
+- **Offline Places from EXIF GPS.** Needs a bundled geodata table the app does
+  not otherwise carry.
+- **PDF selectable-text panel.** Copy page text already covers it; on-page
+  range selection is the separate open question below.
+- **A duplicate/similar review flow.** Already provided by the duplicate and
+  similar filters, the Keep selected action and the compare view.
+- **Target-monitor fullscreen.** Hyprland owns window placement.
 
 ## Open questions
 
