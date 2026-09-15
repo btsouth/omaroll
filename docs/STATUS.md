@@ -1,8 +1,7 @@
 # Project status and handoff
 
-Snapshot: 15 September 2026 UTC. v1.7.0 is the latest release; 1.8.0 work is
-merged to `main` but unreleased. Check the latest PRs and the release before
-resuming.
+Snapshot: 15 September 2026 UTC, at the v1.8.0 release candidate. Check the tag
+and release, and the latest PRs, before resuming.
 
 ## Released
 
