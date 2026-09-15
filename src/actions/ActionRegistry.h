@@ -24,7 +24,7 @@ class ActionRegistry final : public QObject {
   Q_OBJECT
 
 public:
-  enum class Media { Still, Moving, Document, Visual, Any };
+  enum class Media { Still, Moving, Document, Visual, Printable, Any };
 
   // How the handler's result reaches the user. Most tools open a window or
   // send their own notification; the two recognisers only print to stdout, so

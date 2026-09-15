@@ -4360,6 +4360,14 @@ private slots:
     QVERIFY(!failed.first().first().toString().isEmpty());
   }
 
+  void printActionCoversPicturesAndDocuments() {
+    ActionLauncher launcher;
+    ActionRegistry registry(&launcher);
+    QVERIFY(registry.appliesToKind(QStringLiteral("print"), false, false));
+    QVERIFY(registry.appliesToKind(QStringLiteral("print"), false, true));
+    QVERIFY(!registry.appliesToKind(QStringLiteral("print"), true, false));
+  }
+
   void correctionsActionIsNativeAndForStills() {
     ActionLauncher launcher;
     ActionRegistry registry(&launcher);

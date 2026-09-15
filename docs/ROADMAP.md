@@ -29,7 +29,8 @@ them under the `v1.8.0` milestone.
 - **Links** extracted per page and opened from the viewer.
 - **Range text selection** over a per-word text layer, with Copy page text as
   the fallback.
-- **Printing** for pictures and PDFs through the system print path.
+- **Printing** for pictures and PDFs through the system print path. Done: a
+  Print action hands the file to CUPS and is greyed out when lp is absent.
 
 ### Organization
 
