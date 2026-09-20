@@ -35,9 +35,18 @@ bash tests/run-isolated.sh build/release bash tests/run-opengl.sh build/release
 It uses
 offscreen Qt and requests software OpenGL (some drivers use hardware instead),
 uses the disconnected audio backend, runs the full
-UI suite and renders narrow grid, video and OCR views. The video-track test
-requires actual colored pixels in the rendered video area. Inspect the PNGs in
-`build/release/opengl-renders/` for layout changes.
+UI suite and renders the view matrix below. The video-track test requires
+actual colored pixels in the rendered video area.
+
+The render matrix covers every view in the dark palette, the views that carry
+the most chrome in the light palette, and grid, detail, video, document and OCR
+in the smallest window the app allows. Each render runs with a disposable
+profile pointed at a theme fixture under `tests/fixtures/themes/`, so the
+palette is the fixture's rather than whatever this machine happens to use, and
+the PNGs are comparable between runs. Add a view to the lists at the end of
+`tests/run-opengl.sh` when it gains a surface worth looking at in a second
+palette; each render costs about twelve seconds of deliberate settling.
+Inspect the PNGs in `build/release/opengl-renders/` for layout changes.
 
 CI runs both suites. Release validation additionally installs the package,
 renders its video view under Xvfb, and checks upgrade, reinstall and removal.

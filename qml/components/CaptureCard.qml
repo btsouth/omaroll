@@ -172,7 +172,7 @@ Item {
             text: root.isVideo ? "▶" : (root.isDocument ? "PDF" : "▦")
             font.family: Theme.fontFamily
             font.pixelSize: 22
-            color: root.shade(Theme.foreground, 0.28)
+            color: Theme.mutedText
         }
 
         // Hidden entries stay legible but visibly set aside, so "show hidden"

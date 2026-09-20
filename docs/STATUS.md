@@ -108,6 +108,15 @@ a fresh decision:
 - **Physical desktop gates.** SBS-1121 field acceptance and SBS-1122
   Wayland/GPU presentation numbers and regression budgets need the real
   Omarchy session. Headless runs cannot close them.
+- **Light and dark review.** The render matrix now covers every view in the dark
+  palette, the chrome-heavy views in the light palette, and the smallest window,
+  each against a checked-in theme fixture, so the repository's own rule about
+  checking both themes and narrow windows is executable rather than remembered.
+  What it found is fixed: secondary text drawn at fixed alphas that read as
+  blank on a light theme, PDF pages with no edge on a light background, and
+  document rows that collided on a narrow stage. The look of those fixes on the
+  real desktop still belongs to the field acceptance above; the renders record
+  layout and colour, not the compositor's blend.
 
 ## What 1.5.0 bundled
 

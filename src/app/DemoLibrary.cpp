@@ -100,6 +100,14 @@ Layout build() {
               base.addSecs(-(index * 17 + 8) * 3600));
   }
 
+  // One document, so the PDF surfaces are rendered and reviewed like the rest of
+  // the window: the page list, the find row and the page controls. It sits in
+  // the last day with the other demo media, but not at the top of the grid: the
+  // first tile stays a picture. The name is deliberately not one a test builds.
+  copyMedia(QStringLiteral(":/omaroll/demo/quiet-horizons-guide.pdf"),
+            layout.pictures + QStringLiteral("/quiet-horizons-guide.pdf"),
+            base.addSecs(-3 * 3600));
+
   return layout;
 }
 

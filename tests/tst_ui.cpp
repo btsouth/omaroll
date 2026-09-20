@@ -1801,6 +1801,8 @@ private slots:
   }
 
   void pdfPreviewPagesInPlaceAndOffersDocumentActions() {
+    const QSize previousSize = widenForDocumentChrome();
+    const auto restoreSize = qScopeGuard([&] { m_window->resize(previousSize); });
     {
       QPdfWriter writer(m_pdfPath);
       writer.setResolution(96);
@@ -1892,6 +1894,8 @@ private slots:
   }
 
   void pdfTextSelectionPicksTheWordsDraggedOver() {
+    const QSize previousSize = widenForDocumentChrome();
+    const auto restoreSize = qScopeGuard([&] { m_window->resize(previousSize); });
     // Letter, not A4: its aspect differs from the placeholder the list draws
     // while a page renders, so the page-cell geometry below is measured rather
     // than assumed. The file is checked in, because a build image without fonts
@@ -2064,6 +2068,94 @@ private slots:
     QVERIFY(QFile::remove(m_pdfPath));
     m_captures->refresh();
     QTRY_COMPARE_WITH_TIMEOUT(m_library->rowOf(m_pdfPath), -1, 5000);
+  }
+
+  void narrowWindowKeepsTheDocumentControlsThatFit() {
+    // The document rows carry words, so they give way as the window narrows.
+    // What a reader still needs stays: the page, its navigation and the way into
+    // text selection. The pills that need more room or repeat the action list
+    // step aside. The assertions follow the rows' own flags rather than absolute
+    // widths, because the label metrics differ between this desktop and CI.
+    const QString source = QFINDTESTDATA("fixtures/pdf/letter-pages.pdf");
+    QVERIFY(!source.isEmpty());
+    // The window belongs to the suite, and rows shrink their labels when it is
+    // narrow, so put back exactly the size this test found.
+    const QSize previousSize = m_window->size();
+    const QString path =
+        QFileInfo(m_pdfPath).absolutePath() + QStringLiteral("/narrow-pages.pdf");
+    QVERIFY(QFile::copy(source, path));
+    // The tiles and the viewer keep asking for this file's thumbnail after it is
+    // removed, which is a disposable fixture rather than a QML warning.
+    m_disposablePaths.append(path);
+    m_captures->refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(path) >= 0, 5000);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openPath", Q_ARG(QVariant, path)));
+    // Leave nothing behind on any exit path: opening one file narrows the library
+    // to its folder, which would hide the videos from later tests, and a leftover
+    // file would too. The window belongs to the suite and rows shrink their
+    // labels when it is narrow, so put back exactly the size this test found.
+    const auto restoreState = qScopeGuard([&] {
+      m_window->resize(previousSize);
+      invoke("dismissTopLayer");
+      m_library->setFolderFilter(QString());
+      QFile::remove(path);
+      m_captures->refresh();
+    });
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->isVisible());
+    QTRY_COMPARE_WITH_TIMEOUT(m_pdfInfo->path(), path, 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(!m_pdfInfo->loading(), 5000);
+
+    // A page in the fit-width list carries an edge of its own: white paper on a
+    // light theme has nothing else to separate it from the stage behind it.
+    QQuickItem* edge = item("pdfPageEdge");
+    QVERIFY(edge);
+    QVERIFY(edge->isVisible());
+
+    QQuickItem* copyPageText = item("pdfCopyPageText");
+    QQuickItem* pageInput = item("pdfPageInput");
+    QQuickItem* selectText = item("pdfSelectText");
+    QQuickItem* copySelection = item("pdfCopySelection");
+    QVERIFY(copyPageText && pageInput && selectText && copySelection);
+
+    // The smallest window the app allows. Each row gives way on its own width:
+    // the search row narrows and drops the pill Ctrl+C stands in for, the page
+    // row shortens its labels and drops what needs the most room.
+    m_window->resize(560, 420);
+    QTest::qWait(150);
+    qInfo() << "document chrome at" << m_window->size()
+            << "search row" << item("pdfSearchRow")->property("implicitWidth").toReal()
+            << "page row" << item("pdfPageRow")->property("implicitWidth").toReal()
+            << "search compact" << detail->property("compactPdfSearch").toBool()
+            << "page compact" << detail->property("compactPdfPage").toBool()
+            << "page narrow" << detail->property("narrowPdfPage").toBool();
+    QTRY_VERIFY_WITH_TIMEOUT(detail->property("compactPdfSearch").toBool(), 3000);
+    QTRY_VERIFY(detail->property("compactPdfPage").toBool());
+    QTRY_VERIFY(!copyPageText->isVisible());
+    QTRY_VERIFY(!pageInput->isVisible());
+    QVERIFY(!copySelection->isVisible());
+    QVERIFY(item("pdfPageRow")->isVisible());
+    QVERIFY(selectText->isVisible());
+
+    // A wide window keeps every control, in any font metric: the labels are the
+    // first thing to shorten, and nothing is dropped until even those do not fit.
+    m_window->resize(1600, 900);
+    QTRY_VERIFY_WITH_TIMEOUT(copyPageText->isVisible(), 3000);
+    QTRY_VERIFY(pageInput->isVisible());
+    QVERIFY(selectText->isVisible());
+    QVERIFY(copySelection->isVisible());
+
+    // The fitted page carries the same edge over the page sheet.
+    clickSettled(item("pdfFitPage"));
+    QVERIFY(!detail->property("pdfFitWidth").toBool());
+    QQuickItem* fittedEdge = item("pdfFittedPageEdge");
+    QVERIFY(fittedEdge);
+    QVERIFY(fittedEdge->isVisible());
+
+    invoke("dismissTopLayer");
+    QVERIFY(QFile::remove(path));
+    m_captures->refresh();
+    QTRY_COMPARE_WITH_TIMEOUT(m_library->rowOf(path), -1, 5000);
   }
 
   void albumFromASelection() {
@@ -2770,6 +2862,15 @@ private:
     QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, at, 1);
     QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, at, gap);
     QTest::qWait(30);
+  }
+
+  // The document rows drop their wordier pills when the stage is narrow, and the
+  // label metrics differ between this desktop and CI, so a test that needs those
+  // pills gives the window room first and puts the size back afterwards.
+  QSize widenForDocumentChrome() {
+    const QSize previous = m_window->size();
+    m_window->resize(qMax(m_window->width(), 1600), qMax(m_window->height(), 900));
+    return previous;
   }
 
   void click(QQuickItem* target, Qt::MouseButton button = Qt::LeftButton) {

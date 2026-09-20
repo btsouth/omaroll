@@ -233,7 +233,7 @@ Item {
                 text: TextIndex.available ? "Search names + text  /" : "Search  /"
                 font.family: Theme.fontFamily
                 font.pixelSize: 12
-                color: root.shade(Theme.foreground, 0.35)
+                color: Theme.mutedText
             }
         }
 

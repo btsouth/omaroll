@@ -11,3 +11,15 @@ The three video excerpts are dedicated to the public domain under CC0 1.0:
 
 The bundled excerpts were trimmed to five seconds, scaled to 1280 by 720,
 encoded as H.264, and had their audio removed.
+
+`quiet-horizons-guide.pdf` is generated for the demo library by
+`tests/fixtures/pdf/generate.cpp`, which also writes the test fixtures:
+
+```sh
+g++ -std=c++20 -fPIC -no-pie tests/fixtures/pdf/generate.cpp -o /tmp/mkpdf \
+    $(pkg-config --cflags --libs Qt6Gui Qt6Core)
+QT_QPA_PLATFORM=offscreen /tmp/mkpdf tests/fixtures/pdf resources/demo
+```
+
+It is what the viewer's page list, find row and page controls are rendered and
+reviewed against.

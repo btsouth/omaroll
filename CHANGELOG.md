@@ -8,6 +8,23 @@
   see each selected line highlighted, then copy those words with Copy
   selection or Ctrl+C. The words come from the same Poppler tool the document
   search uses, so nothing new is installed and the file is never changed.
+- The demo library now carries a two-page document, so the page list, the find
+  row and the page controls are rendered and reviewed like every other view.
+
+### Changed
+
+- Secondary text now takes its colour from the theme's own muted colour, which
+  the theme backend already picks for at least 3:1 contrast, rather than from a
+  fixed alpha. The status line, section labels, placeholders, empty rating stars
+  and the action shortcuts were drawn at 0.28 to 0.42 alpha, which measured
+  about 1.7:1 on a light theme and read as blank.
+- PDF pages are drawn with a hairline edge. White paper on a light theme had
+  nothing to separate it from the stage behind it.
+- On a narrow window the document rows keep the page, its navigation, the fit
+  choice and text selection: the page turns become arrows, the search box
+  narrows, and the pills that need more room or repeat the action list (match
+  stepping, Copy page text, the page number box, Copy selection) wait until the
+  window is wider. Ctrl+C still copies a selection.
 
 ### Fixed
 
@@ -15,6 +32,9 @@
   rendered, and a fitted page was stretched to the aspect of the stage box it
   was requested in. Both read the size asked of the renderer instead of the
   page's own size.
+- The document control rows overlapped each other and ran under the details
+  panel on a narrow window; they now measure their labels in the theme font and
+  shrink before they collide.
 
 ## 1.8.0
 

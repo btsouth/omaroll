@@ -103,6 +103,7 @@ qt_add_resources(omaroll_core "omaroll_demo_media"
     resources/demo/dew-ferns.jpg
     resources/demo/forest-falls.jpg
     resources/demo/green-road.jpg
+    resources/demo/quiet-horizons-guide.pdf
     resources/demo/ocean-surface.mp4
     resources/demo/rain-courtyard.jpg
     resources/demo/rain-reading-room.jpg

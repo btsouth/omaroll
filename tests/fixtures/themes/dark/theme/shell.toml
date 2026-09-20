@@ -1,0 +1,12 @@
+# Omarchy shell surface values for the dark render fixture: a launcher surface
+# and its transparency, so the app's surface alpha path is exercised.
+
+[bar]
+background       = "#15171e"
+background-alpha = 1.0
+text             = "#d9dce6"
+
+[launcher]
+background       = "#15171e"
+background-alpha = 0.82
+text             = "#d9dce6"

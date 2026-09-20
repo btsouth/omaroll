@@ -176,7 +176,7 @@ Item {
                           : root.mode.charAt(0).toUpperCase() + root.mode.slice(1) + " name"
                     font.family: Theme.fontFamily
                     font.pixelSize: 12
-                    color: root.shade(Theme.foreground, 0.35)
+                    color: Theme.mutedText
                 }
             }
 

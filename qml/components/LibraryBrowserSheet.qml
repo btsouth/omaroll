@@ -441,7 +441,7 @@ FocusScope {
                 text: "SOURCES"
                 font.family: Theme.fontFamily
                 font.pixelSize: 9
-                color: root.shade(Theme.foreground, 0.42)
+                color: Theme.mutedText
             }
 
             Flow {
@@ -608,7 +608,7 @@ FocusScope {
                                                : "Find a smart collection"
                     font.family: Theme.fontFamily
                     font.pixelSize: 12
-                    color: root.shade(Theme.foreground, 0.35)
+                    color: Theme.mutedText
                 }
             }
 

@@ -1,0 +1,28 @@
+# A dark palette written for the render matrix, in Omarchy's colors.toml shape.
+# Original values, covered by this repository's MIT license; no third-party theme
+# files are copied.
+
+mode = "dark"
+
+accent = "#8fa8f0"
+selection = "#2f3a55"
+muted = "#5d6577"
+
+background = "#15171e"
+dark_background = "#101218"
+darker_background = "#0b0c10"
+lighter_background = "#252a37"
+
+foreground = "#d9dce6"
+dark_foreground = "#b9bfcd"
+light_foreground = "#e6e8ef"
+bright_foreground = "#ffffff"
+
+red = "#e8697d"
+yellow = "#d9a95c"
+orange = "#e08a5a"
+green = "#8fc07a"
+cyan = "#6fb8c9"
+blue = "#8fa8f0"
+magenta = "#b58ad6"
+brown = "#a17c68"
