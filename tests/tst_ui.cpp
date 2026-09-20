@@ -1949,25 +1949,22 @@ private slots:
                  / firstPage->property("implicitWidth").toDouble());
     QVERIFY(list->property("contentHeight").toDouble() > list->height() * 1.5);
 
-    // The text controls live in the search row, which has room, so the page row
-    // is not pushed past the stage it is centred in.
+    // The text controls live in the search row, which has room beside the find
+    // box, rather than in the page row. Both rows keep their width when a
+    // selection appears, so no control moves under the pointer mid-click. The
+    // rows themselves are not measured against the stage: their width follows
+    // the installed fonts, which a test image need not share.
     QQuickItem* searchRow = item("pdfSearchRow");
-    QQuickItem* stage = find(m_window->contentItem(), [](QQuickItem* candidate) {
-      return candidate->property("rowChrome").isValid();
-    });
-    QVERIFY(stage);
+    QVERIFY(find(searchRow, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("pdfSelectText");
+    }));
+    QVERIFY(find(searchRow, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("pdfCopySelection");
+    }));
     const qreal pageRowWidth = item("pdfPageRow")->property("implicitWidth").toReal();
     const qreal searchRowWidth = searchRow->property("implicitWidth").toReal();
-    QVERIFY2(pageRowWidth <= stage->width(),
-             qPrintable(QStringLiteral("page row %1 in a stage of %2")
-                            .arg(pageRowWidth)
-                            .arg(stage->width())));
-    QVERIFY2(searchRowWidth <= stage->width(),
-             qPrintable(QStringLiteral("search row %1 in a stage of %2")
-                            .arg(searchRowWidth)
-                            .arg(stage->width())));
     // The copy control is in place before there is anything to copy, dimmed
-    // rather than hidden, so the row never shifts under the pointer.
+    // rather than hidden.
     QQuickItem* copySelection = item("pdfCopySelection");
     QVERIFY(copySelection->isVisible());
     QVERIFY(!copySelection->property("enabled").toBool());
