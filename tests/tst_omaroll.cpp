@@ -1364,9 +1364,9 @@ private slots:
 
   void pdfSelectionCopiesTheDraggedWords() {
     const QString page = QFINDTESTDATA("fixtures/pdf/text-page.pdf");
-    if (page.isEmpty()) {
-      QSKIP("the PDF fixture is missing");
-    }
+    // A missing fixture is a broken checkout, not a reason to report this
+    // passing: the assertions below are the only coverage of the page words.
+    QVERIFY(!page.isEmpty());
     if (!PdfSupport::textAvailable()) {
       QSKIP("pdftotext is not installed");
     }
@@ -1472,9 +1472,9 @@ private slots:
 
   void pdfSelectionCancelledReadIsNotAFailure() {
     const QString page = QFINDTESTDATA("fixtures/pdf/text-page.pdf");
-    if (page.isEmpty()) {
-      QSKIP("the PDF fixture is missing");
-    }
+    // A missing fixture is a broken checkout, not a reason to report this
+    // passing: the assertions below are the only coverage of the page words.
+    QVERIFY(!page.isEmpty());
     if (!PdfSupport::textAvailable()) {
       QSKIP("pdftotext is not installed");
     }
@@ -1502,9 +1502,9 @@ private slots:
 
   void pdfPageRenderTakesAnOpenDimension() {
     const QString page = QFINDTESTDATA("fixtures/pdf/text-page.pdf");
-    if (page.isEmpty()) {
-      QSKIP("the PDF fixture is missing");
-    }
+    // A missing fixture is a broken checkout, not a reason to report this
+    // passing: the assertions below are the only coverage of the page words.
+    QVERIFY(!page.isEmpty());
     if (!PdfSupport::available()) {
       QSKIP("Poppler is not installed");
     }
