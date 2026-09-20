@@ -45,7 +45,7 @@ done
 # The smallest window the app allows, where the chrome has the least room. A
 # document is rendered there in both palettes: that corner is where the rows
 # collided and where a light background leaves a page nothing to sit against.
-for view in grid detail video ocr; do
+for view in grid detail video ocr document; do
   render dark "$view" 560x420
 done
 render light document 560x420

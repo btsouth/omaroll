@@ -1801,6 +1801,8 @@ private slots:
   }
 
   void pdfPreviewPagesInPlaceAndOffersDocumentActions() {
+    const QSize previousSize = widenForDocumentChrome();
+    const auto restoreSize = qScopeGuard([&] { m_window->resize(previousSize); });
     {
       QPdfWriter writer(m_pdfPath);
       writer.setResolution(96);
@@ -1892,6 +1894,8 @@ private slots:
   }
 
   void pdfTextSelectionPicksTheWordsDraggedOver() {
+    const QSize previousSize = widenForDocumentChrome();
+    const auto restoreSize = qScopeGuard([&] { m_window->resize(previousSize); });
     // Letter, not A4: its aspect differs from the placeholder the list draws
     // while a page renders, so the page-cell geometry below is measured rather
     // than assumed. The file is checked in, because a build image without fonts
@@ -2086,9 +2090,17 @@ private slots:
     m_captures->refresh();
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(path) >= 0, 5000);
     QVERIFY(QMetaObject::invokeMethod(m_window, "openPath", Q_ARG(QVariant, path)));
-    // Opening one file narrows the library to its folder; leaving that behind
-    // would hide the videos from the next test's view.
-    const auto restoreFilter = qScopeGuard([&] { m_library->setFolderFilter(QString()); });
+    // Leave nothing behind on any exit path: opening one file narrows the library
+    // to its folder, which would hide the videos from later tests, and a leftover
+    // file would too. The window belongs to the suite and rows shrink their
+    // labels when it is narrow, so put back exactly the size this test found.
+    const auto restoreState = qScopeGuard([&] {
+      m_window->resize(previousSize);
+      invoke("dismissTopLayer");
+      m_library->setFolderFilter(QString());
+      QFile::remove(path);
+      m_captures->refresh();
+    });
     QQuickItem* detail = item("detail");
     QTRY_VERIFY(detail->isVisible());
     QTRY_COMPARE_WITH_TIMEOUT(m_pdfInfo->path(), path, 3000);
@@ -2106,18 +2118,22 @@ private slots:
     QQuickItem* copySelection = item("pdfCopySelection");
     QVERIFY(copyPageText && pageInput && selectText && copySelection);
 
-    // The smallest window the app allows.
+    // The smallest window the app allows. Each row gives way on its own width:
+    // the search row narrows and drops the pill Ctrl+C stands in for, the page
+    // row shortens its labels and drops what needs the most room.
     m_window->resize(560, 420);
-    QTRY_VERIFY_WITH_TIMEOUT(detail->property("compactPdfChrome").toBool(), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(detail->property("compactPdfSearch").toBool(), 3000);
+    QTRY_VERIFY(detail->property("compactPdfPage").toBool());
     QTRY_VERIFY(!copyPageText->isVisible());
     QTRY_VERIFY(!pageInput->isVisible());
     QVERIFY(!copySelection->isVisible());
     QVERIFY(item("pdfPageRow")->isVisible());
     QVERIFY(selectText->isVisible());
 
-    // A wide window has room for the whole row again.
-    m_window->resize(1280, 820);
-    QTRY_VERIFY_WITH_TIMEOUT(!detail->property("compactPdfChrome").toBool(), 3000);
+    // A wide window has room for both rows again, in any font metric.
+    m_window->resize(1600, 900);
+    QTRY_VERIFY_WITH_TIMEOUT(!detail->property("compactPdfPage").toBool(), 3000);
+    QTRY_VERIFY(!detail->property("compactPdfSearch").toBool());
     QTRY_VERIFY(copyPageText->isVisible());
     QTRY_VERIFY(pageInput->isVisible());
     QVERIFY(selectText->isVisible());
@@ -2128,9 +2144,8 @@ private slots:
     QVERIFY(!detail->property("pdfFitWidth").toBool());
     QQuickItem* fittedEdge = item("pdfFittedPageEdge");
     QVERIFY(fittedEdge);
-    QTRY_VERIFY(fittedEdge->isVisible());
+    QVERIFY(fittedEdge->isVisible());
 
-    m_window->resize(previousSize);
     invoke("dismissTopLayer");
     QVERIFY(QFile::remove(path));
     m_captures->refresh();
@@ -2841,6 +2856,15 @@ private:
     QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, at, 1);
     QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, at, gap);
     QTest::qWait(30);
+  }
+
+  // The document rows drop their wordier pills when the stage is narrow, and the
+  // label metrics differ between this desktop and CI, so a test that needs those
+  // pills gives the window room first and puts the size back afterwards.
+  QSize widenForDocumentChrome() {
+    const QSize previous = m_window->size();
+    m_window->resize(qMax(m_window->width(), 1600), qMax(m_window->height(), 900));
+    return previous;
   }
 
   void click(QQuickItem* target, Qt::MouseButton button = Qt::LeftButton) {

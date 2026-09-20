@@ -131,16 +131,18 @@ Item {
         || stage.width < stage.rowChrome + wideTopMeasure.implicitWidth
            + (root.isVideo && !root.slideshowRunning ? transport.minimumWidth
                                                       : wideImageMeasure.implicitWidth)
-    // A document's rows carry words, so they give way in order as the stage
-    // narrows. The match steppers go first, while the row they share still fits
-    // whole; on a genuinely narrow window the rows keep the page, its
-    // navigation, the fit choice and the text selection, and the rest waits for
-    // a wider window. Ctrl+C still copies a selection. The widths come from
-    // hidden copies of the labels, so the decision follows the theme font.
+    // A document's rows carry words, so each gives way as its own row runs out of
+    // stage. The match steppers go first, while the row they share still fits
+    // whole; the search row then narrows and drops the pill Ctrl+C stands in for;
+    // the page row shortens its labels and drops the pills that need the most
+    // room. The widths come from hidden copies of the labels, so the decision
+    // follows the theme font rather than a guess.
     readonly property bool pdfDropMatches: root.isDocument
         && stage.width < 24 + pdfSearchMeasure.implicitWidth
-    readonly property bool compactPdfChrome: root.isDocument
+    readonly property bool compactPdfSearch: root.isDocument
         && stage.width < 24 + pdfSearchCoreMeasure.implicitWidth
+    readonly property bool compactPdfPage: root.isDocument
+        && stage.width < 24 + pdfPageMeasure.implicitWidth
     readonly property var viewerShortcuts: ({
         previous: { key: Qt.Key_Left, label: "Left" },
         next: { key: Qt.Key_Right, label: "Right" },
@@ -1306,7 +1308,7 @@ Item {
                 visible: root.isDocument && PdfInfo.available && PdfInfo.textSearchAvailable
 
                 Rectangle {
-                    width: root.compactPdfChrome ? 110 : 220
+                    width: root.compactPdfSearch ? 110 : 220
                     height: 28
                     radius: Theme.cornerRadius > 0 ? Math.min(4, Theme.cornerRadius) : 3
                     color: root.shade(Theme.foreground, 0.06)
@@ -1387,7 +1389,7 @@ Item {
                     toolTip: "Copy the selected words to the clipboard"
                     // On a narrow stage the row has room for entering the mode
                     // but not for this pill; Ctrl+C still copies the selection.
-                    visible: !root.compactPdfChrome
+                    visible: !root.compactPdfSearch
                     // It stays in place and dims until there is something to
                     // copy, so the row never shifts under the pointer.
                     enabled: PdfInfo.hasSelection
@@ -1404,7 +1406,7 @@ Item {
                 visible: root.isDocument
 
                 PillButton {
-                    label: root.compactPdfChrome ? "←" : "Previous page"
+                    label: root.compactPdfPage ? "←" : "Previous page"
                     toolTip: "Previous page"
                     enabled: root.pdfPage > 1
                     onClicked: if (root.pdfPage > 1) {
@@ -1422,7 +1424,7 @@ Item {
                     color: Theme.foreground
                 }
                 PillButton {
-                    label: root.compactPdfChrome ? "→" : "Next page"
+                    label: root.compactPdfPage ? "→" : "Next page"
                     toolTip: "Next page"
                     enabled: PdfInfo.pageCount > 0 && root.pdfPage < PdfInfo.pageCount
                     onClicked: if (root.pdfPage < PdfInfo.pageCount) {
@@ -1433,14 +1435,14 @@ Item {
 
                 PillButton {
                     objectName: "pdfFitPage"
-                    label: root.compactPdfChrome ? "⛶" : "Fit page"
+                    label: root.compactPdfPage ? "⛶" : "Fit page"
                     toolTip: "Fit page"
                     active: !root.pdfFitWidth
                     onClicked: root.pdfFitWidth = false
                 }
                 PillButton {
                     objectName: "pdfFitWidth"
-                    label: root.compactPdfChrome ? "↔" : "Fit width"
+                    label: root.compactPdfPage ? "↔" : "Fit width"
                     toolTip: "Fit width"
                     active: root.pdfFitWidth
                     onClicked: root.pdfFitWidth = true
@@ -1450,7 +1452,7 @@ Item {
                     objectName: "pdfCopyPageText"
                     label: "Copy page text"
                     toolTip: "Copy this page's text to the clipboard"
-                    visible: !root.compactPdfChrome
+                    visible: !root.compactPdfPage
                     enabled: PdfInfo.textSearchAvailable
                     onClicked: PdfInfo.copyPageText(root.pdfPage)
                 }
@@ -1459,7 +1461,7 @@ Item {
                 Rectangle {
                     width: 54
                     height: 28
-                    visible: !root.compactPdfChrome
+                    visible: !root.compactPdfPage
                     anchors.verticalCenter: parent.verticalCenter
                     radius: Theme.cornerRadius > 0 ? Math.min(4, Theme.cornerRadius) : 3
                     color: root.shade(Theme.foreground, 0.06)
