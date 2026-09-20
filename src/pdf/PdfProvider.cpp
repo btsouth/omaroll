@@ -77,7 +77,10 @@ QQuickImageResponse* PdfProvider::requestImageResponse(const QString& id,
     path = decoded.mid(separator);
   }
   QSize target = requestedSize;
-  if (!target.isValid() || target.isEmpty()) {
+  // One dimension may be left open on purpose: the caller asks for the width it
+  // draws at and takes the page's own height. Only a request that says nothing
+  // at all falls back to a default box.
+  if (target.width() <= 0 && target.height() <= 0) {
     target = QSize(1200, 1200);
   }
   auto* response = new PdfResponse(path, page, target);

@@ -1681,8 +1681,9 @@ ApplicationWindow {
         enabled: root.anySheetOpen || !filters.searchActive
         onActivated: {
             // Text selected in a PDF is the first thing Escape leaves behind,
-            // so leaving it does not also close the viewer.
-            if (detail.visible && detail.leaveTextSelection()) {
+            // but only when the viewer itself is the top layer: a sheet that
+            // sits over it keeps the first Escape.
+            if (!root.modalOpen && detail.visible && detail.leaveTextSelection()) {
                 return
             }
             if (root.anySheetOpen) {

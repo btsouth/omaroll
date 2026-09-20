@@ -31,6 +31,8 @@ QList<QList<int>> groupLines(const PdfSupport::PdfPageText& page, const QList<in
       continue;
     }
     const QRectF box = page.words.at(index).box;
+    // The first word on a line fixes it, so the grouping does not drift as the
+    // selection grows.
     const bool newLine =
         lines.isEmpty()
         || qAbs(box.center().y() - lineCenter) > kLineTolerance * qMax(box.height(), lineHeight);
@@ -40,8 +42,6 @@ QList<QList<int>> groupLines(const PdfSupport::PdfPageText& page, const QList<in
       lineHeight = box.height();
       continue;
     }
-    const qsizetype count = lines.last().size();
-    lineCenter = (lineCenter * count + box.center().y()) / (count + 1);
     lineHeight = qMax(lineHeight, box.height());
     lines.last().append(index);
   }
@@ -89,13 +89,26 @@ QImage renderPage(const QString& path, int page, const QSize& target) {
     return {};
   }
   const QString prefix = temporary.filePath(QStringLiteral("page"));
-  const int edge = qBound(128, qMax(target.width(), target.height()), 3840);
+  QStringList arguments{QStringLiteral("-f"), QString::number(qMax(1, page)),
+                        QStringLiteral("-l"), QString::number(qMax(1, page)),
+                        QStringLiteral("-singlefile")};
+  // One dimension may be left open, and that is the useful request for a page
+  // drawn in a column: ask for the width it is drawn at and take whatever
+  // height the page needs, so a tall page stays as sharp as a short one.
+  if (target.width() > 0 && target.height() > 0) {
+    arguments << QStringLiteral("-scale-to")
+              << QString::number(qBound(128, qMax(target.width(), target.height()), 3840));
+  } else if (target.width() > 0) {
+    arguments << QStringLiteral("-scale-to-x") << QString::number(qBound(128, target.width(), 3840))
+              << QStringLiteral("-scale-to-y") << QStringLiteral("-1");
+  } else {
+    arguments << QStringLiteral("-scale-to-y")
+              << QString::number(qBound(128, target.height(), 3840))
+              << QStringLiteral("-scale-to-x") << QStringLiteral("-1");
+  }
+  arguments << QStringLiteral("-png") << path << prefix;
   QProcess process;
-  process.start(executable,
-                {QStringLiteral("-f"), QString::number(qMax(1, page)),
-                 QStringLiteral("-l"), QString::number(qMax(1, page)),
-                 QStringLiteral("-singlefile"), QStringLiteral("-scale-to"),
-                 QString::number(edge), QStringLiteral("-png"), path, prefix});
+  process.start(executable, arguments);
   if (!process.waitForFinished(12000) || process.exitStatus() != QProcess::NormalExit ||
       process.exitCode() != 0) {
     return {};
@@ -130,6 +143,13 @@ PdfPageText parsePageWords(const QByteArray& xml) {
       continue;
     }
     const QXmlStreamAttributes attributes = reader.attributes();
+    // A word without its box cannot be placed, so it is left out rather than
+    // pinned to the page's corner by a zero default.
+    const bool placed =
+        attributes.hasAttribute(QStringLiteral("xMin"))
+        && attributes.hasAttribute(QStringLiteral("yMin"))
+        && attributes.hasAttribute(QStringLiteral("xMax"))
+        && attributes.hasAttribute(QStringLiteral("yMax"));
     const QPointF topLeft(attributes.value(QStringLiteral("xMin")).toDouble(),
                           attributes.value(QStringLiteral("yMin")).toDouble());
     const QPointF bottomRight(attributes.value(QStringLiteral("xMax")).toDouble(),
@@ -137,7 +157,7 @@ PdfPageText parsePageWords(const QByteArray& xml) {
     PdfWord word;
     word.box = QRectF(topLeft, bottomRight);
     word.text = reader.readElementText();
-    if (!word.text.isEmpty() && word.box.width() > 0 && word.box.height() > 0) {
+    if (placed && !word.text.isEmpty() && word.box.width() > 0 && word.box.height() > 0) {
       page.words.append(word);
     }
   }
@@ -183,11 +203,18 @@ QList<QRectF> wordLines(const PdfPageText& page, const QList<int>& indexes) {
   if (page.pageSize.width() <= 0 || page.pageSize.height() <= 0) {
     return lines;
   }
+  const QRectF sheet(0, 0, page.pageSize.width(), page.pageSize.height());
   for (const QList<int>& line : groupLines(page, indexes)) {
     QRectF box;
     for (const int index : line) {
       const QRectF word = page.words.at(index).box;
       box = box.isNull() ? word : box.united(word);
+    }
+    // A highlight belongs on the page: poppler can report a box that reaches
+    // past the edge, so it is clipped rather than drawn outside the sheet.
+    box = box.intersected(sheet);
+    if (box.isEmpty()) {
+      continue;
     }
     lines.append(QRectF(box.x() / page.pageSize.width(), box.y() / page.pageSize.height(),
                         box.width() / page.pageSize.width(),

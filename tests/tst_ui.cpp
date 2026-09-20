@@ -48,6 +48,7 @@
 #include <QMediaPlayer>
 #include <QMediaMetaData>
 #include <QPainter>
+#include <QPageSize>
 #include <QPdfWriter>
 #include <QProcess>
 #include <QQmlApplicationEngine>
@@ -1893,8 +1894,12 @@ private slots:
 
   void pdfTextSelectionPicksTheWordsDraggedOver() {
     {
+      // Letter, not A4: its aspect differs from the placeholder the list draws
+      // while a page renders, so the page-cell geometry below is measured rather
+      // than assumed.
       QPdfWriter writer(m_pdfPath);
       writer.setResolution(96);
+      writer.setPageSize(QPageSize(QPageSize::Letter));
       QPainter painter(&writer);
       QVERIFY(painter.isActive());
       painter.drawText(QPoint(100, 140), QStringLiteral("Omaroll selection"));
@@ -1964,6 +1969,29 @@ private slots:
                  / firstPage->property("implicitWidth").toDouble());
     QVERIFY(list->property("contentHeight").toDouble() > list->height() * 1.5);
 
+    // The text controls live in the search row, which has room, so the page row
+    // is not pushed past the stage it is centred in.
+    QQuickItem* searchRow = item("pdfSearchRow");
+    QQuickItem* stage = find(m_window->contentItem(), [](QQuickItem* candidate) {
+      return candidate->property("rowChrome").isValid();
+    });
+    QVERIFY(stage);
+    const qreal pageRowWidth = item("pdfPageRow")->property("implicitWidth").toReal();
+    const qreal searchRowWidth = searchRow->property("implicitWidth").toReal();
+    QVERIFY2(pageRowWidth <= stage->width(),
+             qPrintable(QStringLiteral("page row %1 in a stage of %2")
+                            .arg(pageRowWidth)
+                            .arg(stage->width())));
+    QVERIFY2(searchRowWidth <= stage->width(),
+             qPrintable(QStringLiteral("search row %1 in a stage of %2")
+                            .arg(searchRowWidth)
+                            .arg(stage->width())));
+    // The copy control is in place before there is anything to copy, dimmed
+    // rather than hidden, so the row never shifts under the pointer.
+    QQuickItem* copySelection = item("pdfCopySelection");
+    QVERIFY(copySelection->isVisible());
+    QVERIFY(!copySelection->property("enabled").toBool());
+
     // The words sit high on the page, so a drag down the page crosses them.
     const auto dragRect = [](QQuickItem* target) {
       return std::pair<QPointF, QPointF>(
@@ -2001,9 +2029,10 @@ private slots:
              qPrintable(m_pdfInfo->selectionText()));
     QVERIFY(!m_pdfInfo->selectionRects().isEmpty());
 
-    // The copy control only appears once there is something to copy.
-    QQuickItem* copySelection = item("pdfCopySelection");
-    QTRY_VERIFY(copySelection->isVisible());
+    // The copy control wakes up with the selection, without the row moving.
+    QTRY_VERIFY_WITH_TIMEOUT(copySelection->property("enabled").toBool(), 3000);
+    QCOMPARE(item("pdfPageRow")->property("implicitWidth").toReal(), pageRowWidth);
+    QCOMPARE(searchRow->property("implicitWidth").toReal(), searchRowWidth);
     QSignalSpy copied(m_pdfInfo, &PdfInspector::selectionCopied);
     QSignalSpy failed(m_pdfInfo, &PdfInspector::selectionFailed);
     clickSettled(copySelection);

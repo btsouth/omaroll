@@ -68,6 +68,7 @@ signals:
 private:
   void startPageWords(int page);
   void applyPendingSelection();
+  void resetPageWords();
 
   QProcess m_process;
   QTimer m_timeout;

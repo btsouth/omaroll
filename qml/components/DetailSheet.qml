@@ -549,10 +549,11 @@ Item {
         animationPlaying = true
         imageSourceWidth = 0
         imageSourceHeight = 0
+        // The mode and its selection belong to the document that was open.
+        pdfSelectMode = false
         if (isDocument) {
             PdfInfo.inspect(path)
         } else {
-            pdfSelectMode = false
             PdfInfo.clear()
             MediaInfo.inspect(path, isVideo)
         }
@@ -854,12 +855,11 @@ Item {
                                     ? "image://pdf/" + (pageCell.index + 1) + "~" + root.stamp
                                       + encodeURIComponent(root.path)
                                     : ""
-                            // The column's width, with room for a portrait page,
-                            // so the page is rendered at the size it is drawn at.
+                            // Ask for the width it is drawn at: the renderer
+                            // supplies the height the page itself needs, so a
+                            // tall page stays as sharp as a short one.
                             sourceSize: Qt.size(Math.max(600, Math.round(width
-                                                        * Screen.devicePixelRatio)),
-                                                Math.max(800, Math.round(width * 1.4142
-                                                        * Screen.devicePixelRatio)))
+                                                        * Screen.devicePixelRatio)), 0)
                             asynchronous: true
                             smooth: true
                             fillMode: Image.PreserveAspectFit
@@ -923,9 +923,10 @@ Item {
                     fillMode: Image.Stretch
                     onStatusChanged: {
                         if (status === Image.Ready) {
-                            // The loaded page's size, not sourceSize: that is the
-                            // request, which for this surface is a square box, and
-                            // a page fitted to a square would be distorted.
+                            // The loaded page's own size, not sourceSize: that is
+                            // the request, which for this surface describes the
+                            // stage box, and a page fitted to that box's aspect
+                            // instead of its own would be distorted.
                             root.imageSourceWidth = implicitWidth
                             root.imageSourceHeight = implicitHeight
                             root.stillReady = true
@@ -1200,6 +1201,13 @@ Item {
                     if (root.isDocument && root.pdfFitWidth && !root.pdfScrollFromList) {
                         root.scrollPdfToPage(root.pdfPage)
                     }
+                    // One page at a time is shown when it is fitted, so a
+                    // selection made on the page before would highlight nothing
+                    // while still being copied. The continuous view is
+                    // deliberately the other way: scrolling keeps it.
+                    if (root.isDocument && !root.pdfFitWidth) {
+                        PdfInfo.clearSelection()
+                    }
                 }
                 function onPdfFitWidthChanged() {
                     if (root.isDocument && root.pdfFitWidth) {
@@ -1275,9 +1283,37 @@ Item {
                     label: "Next match"
                     onClicked: root.stepPdfMatch(1)
                 }
+
+                // The same text work the row above does, one page's words at a
+                // time. They live here rather than in the page row, which is
+                // already wider than the stage it is centred in.
+                PillButton {
+                    objectName: "pdfSelectText"
+                    label: "Select text"
+                    toolTip: "Drag over the page to pick words, then copy the selection"
+                    active: root.pdfSelectMode
+                    onClicked: {
+                        if (root.pdfSelectMode) {
+                            root.leaveTextSelection()
+                        } else {
+                            root.pdfSelectMode = true
+                            root.statusRequested("Drag over the page to select text")
+                        }
+                    }
+                }
+                PillButton {
+                    objectName: "pdfCopySelection"
+                    label: "Copy selection"
+                    toolTip: "Copy the selected words to the clipboard"
+                    // It stays in place and dims until there is something to
+                    // copy, so the row never shifts under the pointer.
+                    enabled: PdfInfo.hasSelection
+                    onClicked: PdfInfo.copySelection()
+                }
             }
 
             Row {
+                objectName: "pdfPageRow"
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: 62
@@ -1329,32 +1365,6 @@ Item {
                     toolTip: "Copy this page's text to the clipboard"
                     enabled: PdfInfo.textSearchAvailable
                     onClicked: PdfInfo.copyPageText(root.pdfPage)
-                }
-
-                // Selecting words on the page, then copying just those. The
-                // copy control only appears once there is something to copy,
-                // so the row stays as short as it was.
-                PillButton {
-                    objectName: "pdfSelectText"
-                    label: "Select text"
-                    toolTip: "Drag over the page to pick words, then copy the selection"
-                    active: root.pdfSelectMode
-                    enabled: PdfInfo.textSearchAvailable
-                    onClicked: {
-                        if (root.pdfSelectMode) {
-                            root.leaveTextSelection()
-                        } else {
-                            root.pdfSelectMode = true
-                            root.statusRequested("Drag over the page to select text")
-                        }
-                    }
-                }
-                PillButton {
-                    objectName: "pdfCopySelection"
-                    label: "Copy selection"
-                    toolTip: "Copy the selected words to the clipboard"
-                    visible: PdfInfo.hasSelection
-                    onClicked: PdfInfo.copySelection()
                 }
 
                 // Jump straight to a page by number.
@@ -2213,6 +2223,13 @@ Item {
             return
         }
         if (event.key === Qt.Key_Escape) {
+            // The window owns Escape through its own shortcut; this is the
+            // fallback for the paths that shortcut does not cover, and it
+            // leaves a text selection the same way.
+            if (root.leaveTextSelection()) {
+                event.accepted = true
+                return
+            }
             root.dismiss()
             event.accepted = true
             return

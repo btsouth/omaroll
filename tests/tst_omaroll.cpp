@@ -1372,6 +1372,9 @@ private slots:
       QPainter painter(&writer);
       QVERIFY(painter.isActive());
       painter.drawText(QPoint(100, 140), QStringLiteral("Omaroll selection"));
+      // A second line, so a drag over one line is measurably not the drag over
+      // the whole page.
+      painter.drawText(QPoint(100, 200), QStringLiteral("Second line"));
       painter.end();
     }
     if (!PdfSupport::textAvailable()) {
@@ -1397,19 +1400,18 @@ private slots:
     QCOMPARE(inspector.pageCount(), 1);
     QVERIFY(!inspector.hasSelection());
 
-    // A drag over the page selects the words on it. The first one on a page has
-    // to wait for the page's words to be read; a later one is answered from the
-    // cached page.
+    // A drag over the page selects the words on it, which the first one on a
+    // page has to wait for.
     inspector.updateSelection(1, 0.0, 0.0, 1.0, 1.0);
     QTRY_VERIFY_WITH_TIMEOUT(inspector.hasSelection(), 8000);
     QVERIFY(changed.size() >= 1);
     QCOMPARE(failed.size(), 0);
     QCOMPARE(inspector.selectionPage(), 1);
     QVERIFY(inspector.selectionText().contains(QStringLiteral("Omaroll")));
-    QVERIFY(inspector.selectionText().contains(QStringLiteral("selection")));
+    QVERIFY(inspector.selectionText().contains(QStringLiteral("Second")));
 
     const QVariantList rects = inspector.selectionRects();
-    QVERIFY(!rects.isEmpty());
+    QCOMPARE(rects.size(), 2); // one highlight per line
     for (const QVariant& value : rects) {
       const QRectF box = value.toRectF();
       QVERIFY(box.width() > 0 && box.height() > 0);
@@ -1417,22 +1419,33 @@ private slots:
     }
     const QString wholePage = inspector.selectionText();
 
-    // Dragging over one line's own box keeps just that line, read from the
-    // words already cached for this page.
-    const QRectF line = rects.first().toRectF();
-    inspector.updateSelection(1, line.left(), line.top(), line.right(), line.bottom());
-    QCOMPARE(failed.size(), 0);
+    // The viewer clears the selection as a new press begins the next drag, so
+    // the drag below arrives after a clear and still has to be answered from the
+    // page's words rather than read again. It is strictly shorter, so it cannot
+    // pass on a selection left over from the drag above.
+    inspector.clearSelection();
+    QVERIFY(!inspector.hasSelection());
+    const QRectF firstLine = rects.first().toRectF();
+    inspector.updateSelection(1, firstLine.left(), firstLine.top(), firstLine.right(),
+                              firstLine.bottom());
     QVERIFY(inspector.hasSelection());
+    QCOMPARE(failed.size(), 0);
+    QVERIFY(inspector.selectionText().size() < wholePage.size());
     QVERIFY(wholePage.contains(inspector.selectionText()));
     QCOMPARE(inspector.selectionRects().size(), 1);
 
-    // Copying reports one outcome, never none and never two.
+    // Copying reports one outcome, never none and never two, and the count is
+    // the words that were selected rather than a number of its own.
     QSignalSpy copied(&inspector, &PdfInspector::selectionCopied);
+    const int selectedWords =
+        inspector.selectionText().split(QRegularExpression(QStringLiteral("\\s+")),
+                                       Qt::SkipEmptyParts).size();
+    QVERIFY(selectedWords >= 2);
     inspector.copySelection();
     QTRY_VERIFY_WITH_TIMEOUT(copied.size() + failed.size() >= 1, 8000);
     QCOMPARE(copied.size() + failed.size(), 1);
     if (copied.size() == 1) {
-      QVERIFY(copied.first().first().toInt() >= 2);
+      QCOMPARE(copied.first().first().toInt(), selectedWords);
     }
 
     // A drag that touches no words says so and leaves nothing selected.
@@ -1458,9 +1471,14 @@ private slots:
     QCOMPARE(failed.size(), 1);
     QCOMPARE(copied.size(), 0);
 
-    // An empty drag is a click, not a selection.
+    // An empty drag is a click: it clears what is there and reports nothing.
+    // The selection is made first, so this cannot pass on an empty state alone.
+    inspector.updateSelection(1, 0.0, 0.0, 1.0, 1.0);
+    QTRY_VERIFY_WITH_TIMEOUT(inspector.hasSelection(), 8000);
+    failed.clear();
     inspector.updateSelection(1, 0.5, 0.5, 0.5, 0.5);
     QVERIFY(!inspector.hasSelection());
+    QCOMPARE(failed.size(), 0);
 
     // A page outside the document is refused, and so is a document-less
     // inspector.
@@ -1471,6 +1489,77 @@ private slots:
     QSignalSpy detachedFailed(&detached, &PdfInspector::selectionFailed);
     detached.updateSelection(1, 0.0, 0.0, 1.0, 1.0);
     QCOMPARE(detachedFailed.size(), 1);
+  }
+
+  void pdfSelectionCancelledReadIsNotAFailure() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("cancel.pdf"));
+    {
+      QPdfWriter writer(path);
+      writer.setResolution(96);
+      QPainter painter(&writer);
+      QVERIFY(painter.isActive());
+      painter.drawText(QPoint(100, 140), QStringLiteral("Omaroll selection"));
+      painter.end();
+    }
+    if (!PdfSupport::textAvailable()) {
+      QSKIP("pdftotext is not installed");
+    }
+
+    PdfInspector inspector;
+    QSignalSpy failed(&inspector, &PdfInspector::selectionFailed);
+    inspector.inspect(path);
+    QTRY_COMPARE_WITH_TIMEOUT(inspector.pageCount(), 1, 8000);
+
+    // A drag that lands while the page's words are still being read, then a
+    // clear: a press or a closed viewer does exactly this, and cancelling a read
+    // is not something to report as a failure.
+    inspector.updateSelection(1, 0.0, 0.0, 1.0, 1.0);
+    inspector.clearSelection();
+    QTest::qWait(500);
+    QCOMPARE(failed.size(), 0);
+    QVERIFY(!inspector.hasSelection());
+
+    // The page can still be read afterwards.
+    inspector.updateSelection(1, 0.0, 0.0, 1.0, 1.0);
+    QTRY_VERIFY_WITH_TIMEOUT(inspector.hasSelection(), 8000);
+    QCOMPARE(failed.size(), 0);
+    QVERIFY(inspector.selectionText().contains(QStringLiteral("Omaroll")));
+  }
+
+  void pdfPageRenderTakesAnOpenDimension() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("page.pdf"));
+    {
+      QPdfWriter writer(path);
+      writer.setResolution(96);
+      QPainter painter(&writer);
+      QVERIFY(painter.isActive());
+      painter.drawText(QPoint(100, 140), QStringLiteral("Omaroll selection"));
+      painter.end();
+    }
+    if (!PdfSupport::available()) {
+      QSKIP("Poppler is not installed");
+    }
+
+    // A page drawn in a column is asked for by width, and takes its own height.
+    const QImage wide = PdfSupport::renderPage(path, 1, QSize(600, 0));
+    QVERIFY(!wide.isNull());
+    QCOMPARE(wide.width(), 600);
+    QVERIFY(wide.height() > wide.width()); // the fixture page is portrait
+
+    const QImage tall = PdfSupport::renderPage(path, 1, QSize(0, 500));
+    QVERIFY(!tall.isNull());
+    QCOMPARE(tall.height(), 500);
+    QVERIFY(tall.width() < tall.height());
+
+    // A request for a box still fits inside it.
+    const QImage box = PdfSupport::renderPage(path, 1, QSize(400, 400));
+    QVERIFY(!box.isNull());
+    QVERIFY(box.width() <= 400 && box.height() <= 400);
+    QCOMPARE(qMax(box.width(), box.height()), 400);
   }
 
   void addingOverAnUnavailableAlbumEntryReplacesIt() {

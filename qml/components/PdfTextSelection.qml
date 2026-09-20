@@ -61,6 +61,15 @@ Item {
         border.color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.55)
     }
 
+    // Leaving the mode takes the marquee with it, including the one held while
+    // a page's words were still being read.
+    onSelectingChanged: {
+        if (!selecting) {
+            dragging = false
+            pending = false
+        }
+    }
+
     Connections {
         target: PdfInfo
         // The answer arrived, whatever it was: the marquee has served its
@@ -78,7 +87,7 @@ Item {
         anchors.fill: parent
         enabled: root.selecting
         acceptedButtons: Qt.LeftButton
-        cursorShape: root.selecting ? Qt.IBeamCursor : Qt.ArrowCursor
+        cursorShape: Qt.IBeamCursor
         // Keep this drag: the page underneath must not pan or flick away while
         // the reader is selecting across it, and the wheel still scrolls the
         // document because the surface itself stays live.

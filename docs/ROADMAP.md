@@ -10,11 +10,12 @@ and the scope decisions.
 ## Unreleased
 
 - Select text in a PDF: drag across a page, see the selected lines highlighted,
-  and copy just those words. The boxes come from `pdftotext -bbox`, which the
-  document search already depends on, so no new package is involved.
+  and copy just those words. The boxes come from `pdftotext -bbox`, a mode of
+  the same Poppler tool the document search and page-text copy already run, so
+  no new package is involved.
 - Fix the two PDF surfaces reading the renderer's requested size as if it were
   the page's own size, which collapsed every page in the continuous view once
-  it rendered and stretched a fitted page into a square.
+  it rendered and stretched a fitted page to the stage box's aspect.
 
 ## 1.8.0 (released)
 

@@ -90,14 +90,38 @@ PdfInspector::PdfInspector(QObject* parent) : QObject(parent) {
             const int page = m_wordsPage;
             m_wordsPage = 0;
             if (status != QProcess::NormalExit || exitCode != 0) {
-              if (m_pendingPage == page) {
+              // A cancelled read (the selection was dropped, the document
+              // changed) leaves the page at zero and is not a failure.
+              if (page > 0 && m_pendingPage == page) {
                 emit selectionFailed(QStringLiteral("Could not read this page's text"));
               }
               return;
             }
-            m_pageWords = PdfSupport::parsePageWords(m_wordsProcess.readAllStandardOutput());
-            m_wordsLoadedPage = page;
+            const PdfSupport::PdfPageText words =
+                PdfSupport::parsePageWords(m_wordsProcess.readAllStandardOutput());
+            if (words.pageSize.width() > 0) {
+              m_pageWords = words;
+              m_wordsLoadedPage = page;
+            } else if (m_pendingPage == page) {
+              // Only a page that parsed is remembered: an unreadable one is
+              // read again next time rather than cached as empty.
+              emit selectionFailed(QStringLiteral("Could not read this page's text"));
+            }
             applyPendingSelection();
+          });
+  connect(&m_wordsProcess, &QProcess::errorOccurred, this,
+          [this](QProcess::ProcessError error) {
+            if (error != QProcess::FailedToStart) {
+              return;
+            }
+            m_wordsTimeout.stop();
+            // finished() never arrives for a process that did not start, so the
+            // page has to be released here or it would never be read again.
+            const int page = m_wordsPage;
+            m_wordsPage = 0;
+            if (page > 0 && m_pendingPage == page) {
+              emit selectionFailed(QStringLiteral("PDF support needs Poppler"));
+            }
           });
 }
 
@@ -138,6 +162,7 @@ void PdfInspector::inspect(const QString& path) {
   }
   clearSearch();
   clearSelection();
+  resetPageWords();
   m_path = path;
   m_pageCount = 0;
   m_error.clear();
@@ -164,6 +189,7 @@ void PdfInspector::clear() {
   }
   clearSearch();
   clearSelection();
+  resetPageWords();
   m_path.clear();
   m_pageCount = 0;
   m_loading = false;
@@ -287,8 +313,6 @@ void PdfInspector::clearSelection() {
     m_wordsProcess.kill();
   }
   m_wordsPage = 0;
-  m_wordsLoadedPage = 0;
-  m_pageWords = {};
   m_pendingPage = 0;
   m_pendingArea = QRectF();
   const bool had = !m_selectionText.isEmpty() || !m_selectionRects.isEmpty() ||
@@ -300,6 +324,12 @@ void PdfInspector::clearSelection() {
   if (had) {
     emit selectionChanged();
   }
+}
+
+// Drops the page of words: they belong to one document and one page.
+void PdfInspector::resetPageWords() {
+  m_wordsLoadedPage = 0;
+  m_pageWords = {};
 }
 
 void PdfInspector::copySelection() {

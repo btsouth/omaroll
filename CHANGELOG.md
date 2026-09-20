@@ -12,8 +12,9 @@
 ### Fixed
 
 - The continuous PDF view collapsed each page to a sliver as soon as the page
-  rendered, and a fitted page was stretched to a square. Both read the size
-  asked of the renderer instead of the page's own size.
+  rendered, and a fitted page was stretched to the aspect of the stage box it
+  was requested in. Both read the size asked of the renderer instead of the
+  page's own size.
 
 ## 1.8.0
 
