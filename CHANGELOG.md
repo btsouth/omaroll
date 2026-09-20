@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Select text in a PDF. Drag across a page to pick the words under the pointer,
+  see each selected line highlighted, then copy those words with Copy
+  selection or Ctrl+C. The words come from the same Poppler tool the document
+  search uses, so nothing new is installed and the file is never changed.
+
+### Fixed
+
+- The continuous PDF view collapsed each page to a sliver as soon as the page
+  rendered, and a fitted page was stretched to the aspect of the stage box it
+  was requested in. Both read the size asked of the renderer instead of the
+  page's own size.
+
 ## 1.8.0
 
 ### Added

@@ -131,6 +131,7 @@ set(OMAROLL_QML_FILES
   qml/components/PillButton.qml
   qml/components/ConfirmSheet.qml
   qml/components/DetailSheet.qml
+  qml/components/PdfTextSelection.qml
   qml/components/MatteSheet.qml
   qml/components/CorrectionSheet.qml
   qml/components/BatchCorrectionSheet.qml
