@@ -73,7 +73,7 @@ core and UI suites and the OpenGL runner:
 - [PR #42](https://github.com/btsouth/omaroll/pull/42): slideshow interval and
   shuffle options.
 
-The changelog carries all of it under `## Unreleased`.
+The changelog carries all of it under `## 1.8.0`.
 
 ## Scope decisions
 
@@ -226,16 +226,17 @@ links, printing).
    passes do not close this gate.
 4. Continue performance work (SBS-1122): warm navigation, larger and mixed
    libraries, Wayland presentation, GPU memory and realistic regression budgets.
-5. Prepare and cut 1.8.0: bump the version, AppStream entry, changelog and
-   README, run the Release and sanitizer validation, test the candidate on the
-   real desktop, then tag. Nothing is scheduled for 1.8.0 beyond the ten merged
-   PRs and the two open questions.
+5. Choose the next release scope before preparing another tag. Nothing is
+   scheduled beyond the merged 1.8.0 work and the open questions above, so pick
+   the work first, then bump the version, AppStream entry, changelog and README
+   and run the Release and sanitizer validation.
 6. Watch the Omarchy package submission for upstream feedback.
 
 [Official package PR #295](https://github.com/omacom/omarchy-pkgs/pull/295)
-remains open and points at v1.8.0; upstream acceptance is pending. Earlier
-edge, rc and stable package builds passed. Repository inclusion, default
-installation and MIME defaults are separate upstream decisions.
+points at v1.8.0. An upstream reviewer approved it and it is merge-clean;
+acceptance and merging are the reviewers' call. Earlier edge, rc and stable
+package builds passed. Repository inclusion, default installation and MIME
+defaults are separate upstream decisions.
 
 ## Safe continuation
 
