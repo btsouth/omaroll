@@ -1363,39 +1363,18 @@ private slots:
   }
 
   void pdfSelectionCopiesTheDraggedWords() {
-    QTemporaryDir dir;
-    QVERIFY(dir.isValid());
-    const QString path = dir.filePath(QStringLiteral("selection.pdf"));
-    {
-      QPdfWriter writer(path);
-      writer.setResolution(96);
-      QPainter painter(&writer);
-      QVERIFY(painter.isActive());
-      painter.drawText(QPoint(100, 140), QStringLiteral("Omaroll selection"));
-      // A second line, so a drag over one line is measurably not the drag over
-      // the whole page.
-      painter.drawText(QPoint(100, 200), QStringLiteral("Second line"));
-      painter.end();
+    const QString page = QFINDTESTDATA("fixtures/pdf/text-page.pdf");
+    if (page.isEmpty()) {
+      QSKIP("the PDF fixture is missing");
     }
     if (!PdfSupport::textAvailable()) {
       QSKIP("pdftotext is not installed");
-    }
-    // Reading words needs a text layer; a build image that can rasterise the
-    // page without one has nothing to select.
-    {
-      QProcess probe;
-      probe.start(QStandardPaths::findExecutable(QStringLiteral("pdftotext")),
-                  {QStringLiteral("-layout"), path, QStringLiteral("-")});
-      const bool read = probe.waitForFinished(10000);
-      if (!read || QString::fromUtf8(probe.readAllStandardOutput()).trimmed().isEmpty()) {
-        QSKIP("this PDF has no extractable text layer");
-      }
     }
 
     PdfInspector inspector;
     QSignalSpy changed(&inspector, &PdfInspector::selectionChanged);
     QSignalSpy failed(&inspector, &PdfInspector::selectionFailed);
-    inspector.inspect(path);
+    inspector.inspect(page);
     QTRY_VERIFY_WITH_TIMEOUT(!inspector.loading(), 8000);
     QCOMPARE(inspector.pageCount(), 1);
     QVERIFY(!inspector.hasSelection());
@@ -1492,16 +1471,9 @@ private slots:
   }
 
   void pdfSelectionCancelledReadIsNotAFailure() {
-    QTemporaryDir dir;
-    QVERIFY(dir.isValid());
-    const QString path = dir.filePath(QStringLiteral("cancel.pdf"));
-    {
-      QPdfWriter writer(path);
-      writer.setResolution(96);
-      QPainter painter(&writer);
-      QVERIFY(painter.isActive());
-      painter.drawText(QPoint(100, 140), QStringLiteral("Omaroll selection"));
-      painter.end();
+    const QString page = QFINDTESTDATA("fixtures/pdf/text-page.pdf");
+    if (page.isEmpty()) {
+      QSKIP("the PDF fixture is missing");
     }
     if (!PdfSupport::textAvailable()) {
       QSKIP("pdftotext is not installed");
@@ -1509,7 +1481,7 @@ private slots:
 
     PdfInspector inspector;
     QSignalSpy failed(&inspector, &PdfInspector::selectionFailed);
-    inspector.inspect(path);
+    inspector.inspect(page);
     QTRY_COMPARE_WITH_TIMEOUT(inspector.pageCount(), 1, 8000);
 
     // A drag that lands while the page's words are still being read, then a
@@ -1529,34 +1501,27 @@ private slots:
   }
 
   void pdfPageRenderTakesAnOpenDimension() {
-    QTemporaryDir dir;
-    QVERIFY(dir.isValid());
-    const QString path = dir.filePath(QStringLiteral("page.pdf"));
-    {
-      QPdfWriter writer(path);
-      writer.setResolution(96);
-      QPainter painter(&writer);
-      QVERIFY(painter.isActive());
-      painter.drawText(QPoint(100, 140), QStringLiteral("Omaroll selection"));
-      painter.end();
+    const QString page = QFINDTESTDATA("fixtures/pdf/text-page.pdf");
+    if (page.isEmpty()) {
+      QSKIP("the PDF fixture is missing");
     }
     if (!PdfSupport::available()) {
       QSKIP("Poppler is not installed");
     }
 
     // A page drawn in a column is asked for by width, and takes its own height.
-    const QImage wide = PdfSupport::renderPage(path, 1, QSize(600, 0));
+    const QImage wide = PdfSupport::renderPage(page, 1, QSize(600, 0));
     QVERIFY(!wide.isNull());
     QCOMPARE(wide.width(), 600);
     QVERIFY(wide.height() > wide.width()); // the fixture page is portrait
 
-    const QImage tall = PdfSupport::renderPage(path, 1, QSize(0, 500));
+    const QImage tall = PdfSupport::renderPage(page, 1, QSize(0, 500));
     QVERIFY(!tall.isNull());
     QCOMPARE(tall.height(), 500);
     QVERIFY(tall.width() < tall.height());
 
     // A request for a box still fits inside it.
-    const QImage box = PdfSupport::renderPage(path, 1, QSize(400, 400));
+    const QImage box = PdfSupport::renderPage(page, 1, QSize(400, 400));
     QVERIFY(!box.isNull());
     QVERIFY(box.width() <= 400 && box.height() <= 400);
     QCOMPARE(qMax(box.width(), box.height()), 400);

@@ -48,7 +48,6 @@
 #include <QMediaPlayer>
 #include <QMediaMetaData>
 #include <QPainter>
-#include <QPageSize>
 #include <QPdfWriter>
 #include <QProcess>
 #include <QQmlApplicationEngine>
@@ -1893,34 +1892,15 @@ private slots:
   }
 
   void pdfTextSelectionPicksTheWordsDraggedOver() {
-    {
-      // Letter, not A4: its aspect differs from the placeholder the list draws
-      // while a page renders, so the page-cell geometry below is measured rather
-      // than assumed.
-      QPdfWriter writer(m_pdfPath);
-      writer.setResolution(96);
-      writer.setPageSize(QPageSize(QPageSize::Letter));
-      QPainter painter(&writer);
-      QVERIFY(painter.isActive());
-      painter.drawText(QPoint(100, 140), QStringLiteral("Omaroll selection"));
-      QVERIFY(writer.newPage());
-      painter.drawText(QPoint(100, 140), QStringLiteral("Second page"));
-      painter.end();
-    }
+    // Letter, not A4: its aspect differs from the placeholder the list draws
+    // while a page renders, so the page-cell geometry below is measured rather
+    // than assumed. The file is checked in, because a build image without fonts
+    // cannot write a text layer for a drag to find.
+    const QString source = QFINDTESTDATA("fixtures/pdf/letter-pages.pdf");
+    QVERIFY(!source.isEmpty());
+    QVERIFY(QFile::copy(source, m_pdfPath));
     if (!PdfSupport::textAvailable()) {
       QSKIP("pdftotext is not installed");
-    }
-    // A drag can only find words the file actually carries.
-    {
-      QProcess probe;
-      probe.start(QStandardPaths::findExecutable(QStringLiteral("pdftotext")),
-                  {QStringLiteral("-bbox"), QStringLiteral("-f"), QStringLiteral("1"),
-                   QStringLiteral("-l"), QStringLiteral("1"), m_pdfPath, QStringLiteral("-")});
-      const bool read = probe.waitForFinished(10000);
-      if (!read
-          || PdfSupport::parsePageWords(probe.readAllStandardOutput()).words.isEmpty()) {
-        QSKIP("this PDF has no extractable text layer");
-      }
     }
 
     // The clipboard the app is handed is a stub script, so the log starts empty

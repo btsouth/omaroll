@@ -250,7 +250,8 @@ sockets, and stubs test notifications and clipboard helpers. Preserve this
 isolation; do not change host audio settings to make a test pass.
 
 The checked-in fixtures cover GIF, animated/still WebP, transparency, TGA,
-video tracks and subtitles. No media downloads are needed for those checks.
+video tracks, subtitles and PDF pages with a text layer. No media downloads are
+needed for those checks.
 Physical audio testing remains a deliberate desktop acceptance activity.
 
 Linear is the active task tracker. Access it through Toolport. SBS-1093 is the
