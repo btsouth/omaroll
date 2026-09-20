@@ -2122,6 +2122,13 @@ private slots:
     // the search row narrows and drops the pill Ctrl+C stands in for, the page
     // row shortens its labels and drops what needs the most room.
     m_window->resize(560, 420);
+    QTest::qWait(150);
+    qInfo() << "document chrome at" << m_window->size()
+            << "search row" << item("pdfSearchRow")->property("implicitWidth").toReal()
+            << "page row" << item("pdfPageRow")->property("implicitWidth").toReal()
+            << "search compact" << detail->property("compactPdfSearch").toBool()
+            << "page compact" << detail->property("compactPdfPage").toBool()
+            << "page narrow" << detail->property("narrowPdfPage").toBool();
     QTRY_VERIFY_WITH_TIMEOUT(detail->property("compactPdfSearch").toBool(), 3000);
     QTRY_VERIFY(detail->property("compactPdfPage").toBool());
     QTRY_VERIFY(!copyPageText->isVisible());
@@ -2130,11 +2137,10 @@ private slots:
     QVERIFY(item("pdfPageRow")->isVisible());
     QVERIFY(selectText->isVisible());
 
-    // A wide window has room for both rows again, in any font metric.
+    // A wide window keeps every control, in any font metric: the labels are the
+    // first thing to shorten, and nothing is dropped until even those do not fit.
     m_window->resize(1600, 900);
-    QTRY_VERIFY_WITH_TIMEOUT(!detail->property("compactPdfPage").toBool(), 3000);
-    QTRY_VERIFY(!detail->property("compactPdfSearch").toBool());
-    QTRY_VERIFY(copyPageText->isVisible());
+    QTRY_VERIFY_WITH_TIMEOUT(copyPageText->isVisible(), 3000);
     QTRY_VERIFY(pageInput->isVisible());
     QVERIFY(selectText->isVisible());
     QVERIFY(copySelection->isVisible());

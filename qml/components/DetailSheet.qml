@@ -133,16 +133,18 @@ Item {
                                                       : wideImageMeasure.implicitWidth)
     // A document's rows carry words, so each gives way as its own row runs out of
     // stage. The match steppers go first, while the row they share still fits
-    // whole; the search row then narrows and drops the pill Ctrl+C stands in for;
-    // the page row shortens its labels and drops the pills that need the most
-    // room. The widths come from hidden copies of the labels, so the decision
-    // follows the theme font rather than a guess.
+    // whole. The page row shortens its labels before it loses anything: the arrow
+    // and glyph labels cost nothing, while the page box and Copy page text are
+    // only dropped when even those do not fit. The widths come from hidden copies
+    // of the labels, so the decision follows the theme font rather than a guess.
     readonly property bool pdfDropMatches: root.isDocument
         && stage.width < 24 + pdfSearchMeasure.implicitWidth
     readonly property bool compactPdfSearch: root.isDocument
         && stage.width < 24 + pdfSearchCoreMeasure.implicitWidth
     readonly property bool compactPdfPage: root.isDocument
         && stage.width < 24 + pdfPageMeasure.implicitWidth
+    readonly property bool narrowPdfPage: root.compactPdfPage
+        && stage.width < 24 + pdfPageGlyphMeasure.implicitWidth
     readonly property var viewerShortcuts: ({
         previous: { key: Qt.Key_Left, label: "Left" },
         next: { key: Qt.Key_Right, label: "Right" },
@@ -727,6 +729,20 @@ Item {
                     PillButton { label: modelData }
                 }
                 Rectangle { width: 54; height: 28 }
+            }
+            // The page row after the labels have shortened: the arrows and glyphs
+            // cost nothing, so this is what has to fit before the page box and
+            // Copy page text are dropped.
+            Row {
+                id: pdfPageGlyphMeasure
+                visible: false
+                spacing: 8
+                Repeater {
+                    model: ["←", "→", "⛶", "↔", "Copy page text"]
+                    PillButton { label: modelData }
+                }
+                Rectangle { width: 54; height: 28 }
+                PillButton { label: "Page 1 of 2" }
             }
 
             // A recording shows its thumbnail until the first decoded frame.
@@ -1452,7 +1468,9 @@ Item {
                     objectName: "pdfCopyPageText"
                     label: "Copy page text"
                     toolTip: "Copy this page's text to the clipboard"
-                    visible: !root.compactPdfPage
+                    // Only the smallest stages drop it: this action has no other
+                    // home, so it goes after every shortened label has been tried.
+                    visible: !root.narrowPdfPage
                     enabled: PdfInfo.textSearchAvailable
                     onClicked: PdfInfo.copyPageText(root.pdfPage)
                 }
@@ -1461,7 +1479,7 @@ Item {
                 Rectangle {
                     width: 54
                     height: 28
-                    visible: !root.compactPdfPage
+                    visible: !root.narrowPdfPage
                     anchors.verticalCenter: parent.verticalCenter
                     radius: Theme.cornerRadius > 0 ? Math.min(4, Theme.cornerRadius) : 3
                     color: root.shade(Theme.foreground, 0.06)
