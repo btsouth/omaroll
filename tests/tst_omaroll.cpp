@@ -1232,6 +1232,247 @@ private slots:
     QCOMPARE(emptyFailed.size(), 1);
   }
 
+  void pdfSelectionPicksTheWordsUnderTheArea() {
+    const PdfSupport::PdfPageText page = twoLinePage();
+    // Normalized areas, as the viewer sends them: the page is 600x800 points,
+    // so the first line spans y 0.125 to 0.1375.
+    QCOMPARE(PdfSupport::wordsTouched(page, QRectF(0.16, 0.12, 0.02, 0.03)), QList<int>({0}));
+    QCOMPARE(PdfSupport::wordsTouched(page, QRectF(0.0, 0.0, 1.0, 1.0)), QList<int>({0, 1, 2, 3}));
+    // A drag that ends before the second line leaves it out.
+    QCOMPARE(PdfSupport::wordsTouched(page, QRectF(0.0, 0.12, 1.0, 0.006)), QList<int>({0, 1}));
+    // Nothing under the pointer, an empty area, and an area that only touches
+    // a word's edge select nothing at all.
+    QVERIFY(PdfSupport::wordsTouched(page, QRectF(0.8, 0.8, 0.1, 0.1)).isEmpty());
+    QVERIFY(PdfSupport::wordsTouched(page, QRectF()).isEmpty());
+    QVERIFY(PdfSupport::wordsTouched(page, QRectF(0.0, 0.125, 0.5, 0.0)).isEmpty());
+    QVERIFY(PdfSupport::wordsTouched(page, QRectF(0.0, 0.125, 0.1666, 0.001)).isEmpty());
+
+    // Reading order comes back as given, and out-of-range indexes are ignored
+    // rather than read past the end.
+    QCOMPARE(PdfSupport::wordsText(page, {0, 1, 2, 3}),
+             QStringLiteral("Invoice total\nPaid today"));
+    QCOMPARE(PdfSupport::wordsText(page, {2, 3}), QStringLiteral("Paid today"));
+    QCOMPARE(PdfSupport::wordsText(page, {1}), QStringLiteral("total"));
+    QCOMPARE(PdfSupport::wordsText(page, {1, 7}), QStringLiteral("total"));
+    QVERIFY(PdfSupport::wordsText(page, {}).isEmpty());
+
+    // One highlight per line, in normalized page coordinates.
+    const QList<QRectF> lines = PdfSupport::wordLines(page, {0, 1, 2, 3});
+    QCOMPARE(lines.size(), 2);
+    QCOMPARE(lines.at(0), QRectF(100.0 / 600, 100.0 / 800, 104.0 / 600, 10.0 / 800));
+    QCOMPARE(lines.at(1), QRectF(100.0 / 600, 120.0 / 800, 84.0 / 600, 10.0 / 800));
+    QVERIFY(PdfSupport::wordLines(page, {}).isEmpty());
+  }
+
+  void pdfSelectionKeepsLinesApartWhenTheGapIsReal() {
+    PdfSupport::PdfPageText page;
+    page.pageSize = QSizeF(600, 800);
+    const auto add = [&page](qreal y, qreal height) {
+      PdfSupport::PdfWord word;
+      word.box = QRectF(100, y, 50, height);
+      word.text = QStringLiteral("x");
+      page.words.append(word);
+    };
+    // A tall heading and a word whose centre sits inside it share a line; a
+    // line a whole height below does not.
+    add(100, 20);
+    add(104, 10);
+    add(140, 10);
+    QCOMPARE(PdfSupport::wordsText(page, {0, 1, 2}), QStringLiteral("x x\nx"));
+
+    // Two columns keep their own lines. Words are joined in the document's
+    // flow order, which is the order pdftotext emits and the order the file
+    // itself reads, so a column-major page stays column-major here.
+    PdfSupport::PdfPageText columns;
+    columns.pageSize = QSizeF(600, 800);
+    const auto addColumn = [&columns](qreal x, qreal y) {
+      PdfSupport::PdfWord word;
+      word.box = QRectF(x, y, 50, 10);
+      word.text = QStringLiteral("w");
+      columns.words.append(word);
+    };
+    addColumn(100, 100);
+    addColumn(100, 120);
+    addColumn(400, 100);
+    QCOMPARE(PdfSupport::wordsText(columns, {0, 1, 2}), QStringLiteral("w\nw\nw"));
+    // Two words on one visual line that are adjacent in flow order share it.
+    QCOMPARE(PdfSupport::wordsText(columns, {2, 0, 1}), QStringLiteral("w w\nw"));
+    QCOMPARE(PdfSupport::wordLines(columns, {2, 0, 1}).size(), 2);
+  }
+
+  void pdfSelectionReadsBboxOutput() {
+    // The shape of what `pdftotext -bbox` writes, including the header, the
+    // entities the reader has to turn back into text, and a second page that
+    // must be left alone.
+    const QByteArray xml =
+        QStringLiteral(
+            "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\" "
+            "\"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\">\n"
+            "<html xmlns=\"http://www.w3.org/1999/xhtml\">\n"
+            "<head><title></title><meta name=\"Producer\" content=\"Skia/PDF m120\"/></head>\n"
+            "<body><doc>\n"
+            "  <page width=\"595.919980\" height=\"842.880000\">\n"
+            "    <word xMin=\"143.027342\" yMin=\"53.028806\" xMax=\"198.536861\" "
+            "yMax=\"68.110837\">INVOICE</word>\n"
+            "    <word xMin=\"20.999999\" yMin=\"116.352534\" xMax=\"51.511228\" "
+            "yMax=\"126.407221\">GitHub,</word>\n"
+            "    <word xMin=\"54.011716\" yMin=\"116.352534\" xMax=\"68.518063\" "
+            "yMax=\"126.407221\">Inc.</word>\n"
+            "    <word xMin=\"20.999999\" yMin=\"126.852534\" xMax=\"46.521970\" "
+            "yMax=\"136.907221\">Tom&amp;Jerry</word>\n"
+            "  </page>\n"
+            "  <page width=\"595.919980\" height=\"842.880000\">\n"
+            "    <word xMin=\"1\" yMin=\"1\" xMax=\"2\" yMax=\"2\">later page</word>\n"
+            "  </page>\n"
+            "</doc></body></html>")
+            .toUtf8();
+
+    const PdfSupport::PdfPageText page = PdfSupport::parsePageWords(xml);
+    QCOMPARE(page.pageSize, QSizeF(595.919980, 842.880000));
+    QCOMPARE(page.words.size(), 4);
+    QCOMPARE(page.words.at(0).text, QStringLiteral("INVOICE"));
+    QCOMPARE(page.words.at(0).box, QRectF(143.027342, 53.028806, 198.536861 - 143.027342,
+                                           68.110837 - 53.028806));
+    QCOMPARE(page.words.at(3).text, QStringLiteral("Tom&Jerry"));
+    // Only the first page of the input is read.
+    for (const PdfSupport::PdfWord& word : page.words) {
+      QVERIFY(word.text != QStringLiteral("later page"));
+    }
+
+    // The heading is its own line, and the address lines below it are two more.
+    QCOMPARE(PdfSupport::wordsText(page, {0, 1, 2, 3}),
+             QStringLiteral("INVOICE\nGitHub, Inc.\nTom&Jerry"));
+    const QList<QRectF> lines = PdfSupport::wordLines(page, {0, 1, 2, 3});
+    QCOMPARE(lines.size(), 3);
+    // Normalized, so the highlight can be drawn at any zoom.
+    QVERIFY(qAbs(lines.at(1).width() * page.pageSize.width() - (68.518063 - 20.999999)) < 1e-6);
+
+    // A page that cannot be read is refused whole: a half-read page would place
+    // every word wrongly.
+    QVERIFY(PdfSupport::parsePageWords(QByteArray()).pageSize.isEmpty());
+    QVERIFY(PdfSupport::parsePageWords("<html><body><doc>").pageSize.isEmpty());
+    QVERIFY(PdfSupport::parsePageWords("<page width=\"0\" height=\"0\"/>").pageSize.isEmpty());
+    QVERIFY(PdfSupport::parsePageWords("<page width=\"600\" height=\"800\"><word xMin=\"1\"")
+                .pageSize.isEmpty());
+    // A page with no words in it is a real answer: an image-only page.
+    const PdfSupport::PdfPageText scanned =
+        PdfSupport::parsePageWords("<page width=\"600\" height=\"800\"/>");
+    QCOMPARE(scanned.pageSize, QSizeF(600, 800));
+    QVERIFY(scanned.words.isEmpty());
+    QVERIFY(PdfSupport::wordsText(scanned, {0}).isEmpty());
+  }
+
+  void pdfSelectionCopiesTheDraggedWords() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("selection.pdf"));
+    {
+      QPdfWriter writer(path);
+      writer.setResolution(96);
+      QPainter painter(&writer);
+      QVERIFY(painter.isActive());
+      painter.drawText(QPoint(100, 140), QStringLiteral("Omaroll selection"));
+      painter.end();
+    }
+    if (!PdfSupport::textAvailable()) {
+      QSKIP("pdftotext is not installed");
+    }
+    // Reading words needs a text layer; a build image that can rasterise the
+    // page without one has nothing to select.
+    {
+      QProcess probe;
+      probe.start(QStandardPaths::findExecutable(QStringLiteral("pdftotext")),
+                  {QStringLiteral("-layout"), path, QStringLiteral("-")});
+      const bool read = probe.waitForFinished(10000);
+      if (!read || QString::fromUtf8(probe.readAllStandardOutput()).trimmed().isEmpty()) {
+        QSKIP("this PDF has no extractable text layer");
+      }
+    }
+
+    PdfInspector inspector;
+    QSignalSpy changed(&inspector, &PdfInspector::selectionChanged);
+    QSignalSpy failed(&inspector, &PdfInspector::selectionFailed);
+    inspector.inspect(path);
+    QTRY_VERIFY_WITH_TIMEOUT(!inspector.loading(), 8000);
+    QCOMPARE(inspector.pageCount(), 1);
+    QVERIFY(!inspector.hasSelection());
+
+    // A drag over the page selects the words on it. The first one on a page has
+    // to wait for the page's words to be read; a later one is answered from the
+    // cached page.
+    inspector.updateSelection(1, 0.0, 0.0, 1.0, 1.0);
+    QTRY_VERIFY_WITH_TIMEOUT(inspector.hasSelection(), 8000);
+    QVERIFY(changed.size() >= 1);
+    QCOMPARE(failed.size(), 0);
+    QCOMPARE(inspector.selectionPage(), 1);
+    QVERIFY(inspector.selectionText().contains(QStringLiteral("Omaroll")));
+    QVERIFY(inspector.selectionText().contains(QStringLiteral("selection")));
+
+    const QVariantList rects = inspector.selectionRects();
+    QVERIFY(!rects.isEmpty());
+    for (const QVariant& value : rects) {
+      const QRectF box = value.toRectF();
+      QVERIFY(box.width() > 0 && box.height() > 0);
+      QVERIFY(box.left() >= 0 && box.top() >= 0 && box.right() <= 1 && box.bottom() <= 1);
+    }
+    const QString wholePage = inspector.selectionText();
+
+    // Dragging over one line's own box keeps just that line, read from the
+    // words already cached for this page.
+    const QRectF line = rects.first().toRectF();
+    inspector.updateSelection(1, line.left(), line.top(), line.right(), line.bottom());
+    QCOMPARE(failed.size(), 0);
+    QVERIFY(inspector.hasSelection());
+    QVERIFY(wholePage.contains(inspector.selectionText()));
+    QCOMPARE(inspector.selectionRects().size(), 1);
+
+    // Copying reports one outcome, never none and never two.
+    QSignalSpy copied(&inspector, &PdfInspector::selectionCopied);
+    inspector.copySelection();
+    QTRY_VERIFY_WITH_TIMEOUT(copied.size() + failed.size() >= 1, 8000);
+    QCOMPARE(copied.size() + failed.size(), 1);
+    if (copied.size() == 1) {
+      QVERIFY(copied.first().first().toInt() >= 2);
+    }
+
+    // A drag that touches no words says so and leaves nothing selected.
+    failed.clear();
+    copied.clear();
+    inspector.updateSelection(1, 0.05, 0.90, 0.95, 0.99);
+    QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 8000);
+    QVERIFY(!inspector.hasSelection());
+    QVERIFY(inspector.selectionRects().isEmpty());
+
+    // Clearing drops the words and the highlight; copying afterwards says
+    // there is nothing to copy rather than putting an empty string on the
+    // clipboard.
+    inspector.updateSelection(1, 0.0, 0.0, 1.0, 1.0);
+    QTRY_VERIFY_WITH_TIMEOUT(inspector.hasSelection(), 8000);
+    inspector.clearSelection();
+    QVERIFY(!inspector.hasSelection());
+    QVERIFY(inspector.selectionRects().isEmpty());
+    QCOMPARE(inspector.selectionPage(), 0);
+    failed.clear();
+    copied.clear();
+    inspector.copySelection();
+    QCOMPARE(failed.size(), 1);
+    QCOMPARE(copied.size(), 0);
+
+    // An empty drag is a click, not a selection.
+    inspector.updateSelection(1, 0.5, 0.5, 0.5, 0.5);
+    QVERIFY(!inspector.hasSelection());
+
+    // A page outside the document is refused, and so is a document-less
+    // inspector.
+    failed.clear();
+    inspector.updateSelection(2, 0.0, 0.0, 1.0, 1.0);
+    QCOMPARE(failed.size(), 1);
+    PdfInspector detached;
+    QSignalSpy detachedFailed(&detached, &PdfInspector::selectionFailed);
+    detached.updateSelection(1, 0.0, 0.0, 1.0, 1.0);
+    QCOMPARE(detachedFailed.size(), 1);
+  }
+
   void addingOverAnUnavailableAlbumEntryReplacesIt() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -4479,6 +4720,23 @@ private slots:
 
 private:
   QTemporaryDir m_scratch;
+
+  // A page laid out in code, in page points: two lines of two words each.
+  static PdfSupport::PdfPageText twoLinePage() {
+    PdfSupport::PdfPageText page;
+    page.pageSize = QSizeF(600, 800);
+    const auto add = [&page](qreal x, qreal y, qreal width, const char* text) {
+      PdfSupport::PdfWord word;
+      word.box = QRectF(x, y, width, 10);
+      word.text = QString::fromLatin1(text);
+      page.words.append(word);
+    };
+    add(100, 100, 40, "Invoice");
+    add(144, 100, 60, "total");
+    add(100, 120, 50, "Paid");
+    add(154, 120, 30, "today");
+    return page;
+  }
 };
 
 int main(int argc, char* argv[]) {

@@ -7,6 +7,15 @@ result. Discovery stays read-only and core use stays offline.
 See [current status and handoff](STATUS.md) for release boundaries, evidence
 and the scope decisions.
 
+## Unreleased
+
+- Select text in a PDF: drag across a page, see the selected lines highlighted,
+  and copy just those words. The boxes come from `pdftotext -bbox`, which the
+  document search already depends on, so no new package is involved.
+- Fix the two PDF surfaces reading the renderer's requested size as if it were
+  the page's own size, which collapsed every page in the continuous view once
+  it rendered and stretched a fitted page into a square.
+
 ## 1.8.0 (released)
 
 Ten focused PRs, each squash merged with green CI, the isolated core and UI
@@ -31,13 +40,18 @@ desktop acceptance was not recorded for this tag and remains in SBS-1121.
 
 ## Open questions
 
-- **PDF links and on-page text selection.** Both need a Poppler link/text API
-  that the pdftoppm-based integration does not expose. The choice is either
-  Poppler's link API (not available through the CLI we use) or adopting the
-  QtPdf module, which adds `qt6-pdf` to the CI, release and PKGBUILD
-  dependency lists. Decide this before building either.
+- **PDF links.** On-page text selection is delivered, since `pdftotext -bbox`
+  already reports a box per word. Links are what remains, and the two options
+  are now measured rather than assumed. QtPdf provides link, bookmark and
+  search models, but on Arch it ships inside `qt6-webengine` (282 MiB
+  installed on the development desktop) and its QML module is not installed
+  there, so it would be used through its C++ API. Linking `poppler-qt6`
+  instead costs about 270 KiB and gives links, word boxes, an outline and
+  in-process page rendering, but its bindings are GPL, so linking them would
+  relicense the application. Decide this before building it.
 - **Physical desktop gates.** Installed field acceptance and Wayland/GPU
   presentation numbers and regression budgets need the real Omarchy session.
+  Headless runs cannot close them.
 
 ## Out of scope
 

@@ -30,6 +30,9 @@ Item {
     // True scrolls the pages continuously at the window width; false fits one
     // whole page in the stage, where the zoom and pan controls apply.
     property bool pdfFitWidth: true
+    // While text selection is on, a drag on the page picks the words under the
+    // pointer instead of panning or scrolling.
+    property bool pdfSelectMode: false
     // Set while a scroll updates the current page, so the page-changed handler
     // does not reposition the list back onto a page boundary.
     property bool pdfScrollFromList: false
@@ -511,7 +514,22 @@ Item {
         actionNavigationActive = false
         focusedActionId = ""
         actions.currentIndex = -1
+        // The selection belongs to the document that was open.
+        pdfSelectMode = false
+        PdfInfo.clearSelection()
         visible = false
+    }
+
+    // Leaves PDF text selection behind and says whether it did. Escape asks
+    // this first, so the first Escape after a selection leaves the selection
+    // and the second closes the viewer.
+    function leaveTextSelection() {
+        if (!pdfSelectMode) {
+            return false
+        }
+        pdfSelectMode = false
+        PdfInfo.clearSelection()
+        return true
     }
 
     function dismiss() {
@@ -534,6 +552,7 @@ Item {
         if (isDocument) {
             PdfInfo.inspect(path)
         } else {
+            pdfSelectMode = false
             PdfInfo.clear()
             MediaInfo.inspect(path, isVideo)
         }
@@ -813,8 +832,12 @@ Item {
                         width: pdfList.width
                         height: {
                             const image = pageImage
-                            if (image.status === Image.Ready && image.sourceSize.width > 0) {
-                                return Math.max(1, width * image.sourceSize.height / image.sourceSize.width)
+                            // The loaded page's own size, not the request: the
+                            // request carries a width and leaves the height
+                            // zero, so measuring it would collapse every cell to
+                            // a sliver the moment the page arrived.
+                            if (image.status === Image.Ready && image.implicitWidth > 0) {
+                                return Math.max(1, width * image.implicitHeight / image.implicitWidth)
                             }
                             // A4 while the page renders, so the list has a shape.
                             return Math.max(1, width * 1.4142)
@@ -831,8 +854,12 @@ Item {
                                     ? "image://pdf/" + (pageCell.index + 1) + "~" + root.stamp
                                       + encodeURIComponent(root.path)
                                     : ""
+                            // The column's width, with room for a portrait page,
+                            // so the page is rendered at the size it is drawn at.
                             sourceSize: Qt.size(Math.max(600, Math.round(width
-                                                        * Screen.devicePixelRatio)), 0)
+                                                        * Screen.devicePixelRatio)),
+                                                Math.max(800, Math.round(width * 1.4142
+                                                        * Screen.devicePixelRatio)))
                             asynchronous: true
                             smooth: true
                             fillMode: Image.PreserveAspectFit
@@ -845,6 +872,13 @@ Item {
                                                          ? "Could not display this PDF page"
                                                          : "PDF support needs Poppler"
                                 }
+                            }
+
+                            PdfTextSelection {
+                                objectName: "pdfSelectionScroll"
+                                anchors.fill: parent
+                                page: pageCell.index + 1
+                                selecting: root.pdfSelectMode
                             }
                         }
                     }
@@ -889,8 +923,11 @@ Item {
                     fillMode: Image.Stretch
                     onStatusChanged: {
                         if (status === Image.Ready) {
-                            root.imageSourceWidth = sourceSize.width
-                            root.imageSourceHeight = sourceSize.height
+                            // The loaded page's size, not sourceSize: that is the
+                            // request, which for this surface is a square box, and
+                            // a page fitted to a square would be distorted.
+                            root.imageSourceWidth = implicitWidth
+                            root.imageSourceHeight = implicitHeight
                             root.stillReady = true
                         } else if (status === Image.Error) {
                             root.playbackError = PdfInfo.available
@@ -898,6 +935,16 @@ Item {
                                                  : "PDF support needs Poppler"
                             root.stillReady = true
                         }
+                    }
+
+                    // The fit-page surface, where the page can also be zoomed
+                    // and panned. The layer sits on the image, so a highlight
+                    // follows both without any of that being recomputed here.
+                    PdfTextSelection {
+                        objectName: "pdfSelectionStill"
+                        anchors.fill: parent
+                        page: root.pdfPage
+                        selecting: root.pdfSelectMode
                     }
                 }
             }
@@ -1137,6 +1184,13 @@ Item {
                 function onTextCopyFailed(message) {
                     root.statusRequested(message)
                 }
+                function onSelectionCopied(words) {
+                    root.statusRequested("Copied " + words
+                                         + (words === 1 ? " selected word" : " selected words"))
+                }
+                function onSelectionFailed(message) {
+                    root.statusRequested(message)
+                }
             }
 
             // Keep the continuous list on the current page.
@@ -1275,6 +1329,32 @@ Item {
                     toolTip: "Copy this page's text to the clipboard"
                     enabled: PdfInfo.textSearchAvailable
                     onClicked: PdfInfo.copyPageText(root.pdfPage)
+                }
+
+                // Selecting words on the page, then copying just those. The
+                // copy control only appears once there is something to copy,
+                // so the row stays as short as it was.
+                PillButton {
+                    objectName: "pdfSelectText"
+                    label: "Select text"
+                    toolTip: "Drag over the page to pick words, then copy the selection"
+                    active: root.pdfSelectMode
+                    enabled: PdfInfo.textSearchAvailable
+                    onClicked: {
+                        if (root.pdfSelectMode) {
+                            root.leaveTextSelection()
+                        } else {
+                            root.pdfSelectMode = true
+                            root.statusRequested("Drag over the page to select text")
+                        }
+                    }
+                }
+                PillButton {
+                    objectName: "pdfCopySelection"
+                    label: "Copy selection"
+                    toolTip: "Copy the selected words to the clipboard"
+                    visible: PdfInfo.hasSelection
+                    onClicked: PdfInfo.copySelection()
                 }
 
                 // Jump straight to a page by number.
@@ -2122,6 +2202,13 @@ Item {
         }
         if (event.key === root.viewerShortcuts.info.key) {
             root.showInfo = !root.showInfo
+            event.accepted = true
+            return
+        }
+        // Ctrl+C copies the words picked on the page rather than the file.
+        if (root.isDocument && PdfInfo.hasSelection && event.key === Qt.Key_C
+                && (event.modifiers & Qt.ControlModifier)) {
+            PdfInfo.copySelection()
             event.accepted = true
             return
         }

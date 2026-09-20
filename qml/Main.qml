@@ -1680,6 +1680,11 @@ ApplicationWindow {
         sequences: ["Escape"]
         enabled: root.anySheetOpen || !filters.searchActive
         onActivated: {
+            // Text selected in a PDF is the first thing Escape leaves behind,
+            // so leaving it does not also close the viewer.
+            if (detail.visible && detail.leaveTextSelection()) {
+                return
+            }
             if (root.anySheetOpen) {
                 root.dismissTopLayer()
             } else if (library.checkedCount > 0) {

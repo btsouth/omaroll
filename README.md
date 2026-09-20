@@ -94,7 +94,8 @@ on them.
 - **Previews in place.** Enter opens a capture large with every action beside
   it. Images fit, display at actual size, zoom, pan, rotate, flip, and animate.
   PDFs scroll continuously at the window width, or fit a whole page, with text
-  search, a page jump and copy page text. Videos play with sound and include
+  search, a page jump, copy page text, and Select text to drag over the page
+  and copy just the words you picked. Videos play with sound and include
   seeking, volume, speed, audio track, subtitle controls and a ±0.5 s timing
   nudge for sidecar subtitles. File details
   include dimensions, duration, image format, camera and exposure data when
@@ -203,13 +204,15 @@ and put on your clipboard.
 | `1`-`8` · `Tab` `Shift+Tab` | Jump to a section · next · previous section |
 | `Alt+1`-`Alt+5` · `Alt+0` | Rate · clear rating, in the grid or the viewer |
 | `Page Up` `Page Down` in a PDF preview | Previous · next page |
+| `Select text` in a PDF, then drag | Pick the words under the pointer |
+| `Ctrl+C` with words picked | Copy them |
 | `X` · `Ctrl+A` | Select · Select all |
 | with a selection | `V` `Ctrl+H` `Y` `S` `Del` act on every checked file |
 | `Ctrl` + wheel · `Ctrl` `+` `-` `0` | Bigger or smaller tiles · reset |
 | drag | Drop the file, or the whole selection, into another app |
 | `Del` | Move to Trash, with confirm |
 | `/` · `R` | Search filenames and picture text · Rescan |
-| `Esc` | Clear selection, then close |
+| `Esc` | Leave a PDF text selection, clear the tile selection, then close |
 
 The same letters work inside the preview. "Open with Omaroll" on a picture or
 video from any file manager opens it straight into its actions, with previous

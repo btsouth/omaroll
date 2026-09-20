@@ -1891,6 +1891,175 @@ private slots:
     QTRY_COMPARE_WITH_TIMEOUT(m_library->rowOf(m_pdfPath), -1, 5000);
   }
 
+  void pdfTextSelectionPicksTheWordsDraggedOver() {
+    {
+      QPdfWriter writer(m_pdfPath);
+      writer.setResolution(96);
+      QPainter painter(&writer);
+      QVERIFY(painter.isActive());
+      painter.drawText(QPoint(100, 140), QStringLiteral("Omaroll selection"));
+      QVERIFY(writer.newPage());
+      painter.drawText(QPoint(100, 140), QStringLiteral("Second page"));
+      painter.end();
+    }
+    if (!PdfSupport::textAvailable()) {
+      QSKIP("pdftotext is not installed");
+    }
+    // A drag can only find words the file actually carries.
+    {
+      QProcess probe;
+      probe.start(QStandardPaths::findExecutable(QStringLiteral("pdftotext")),
+                  {QStringLiteral("-bbox"), QStringLiteral("-f"), QStringLiteral("1"),
+                   QStringLiteral("-l"), QStringLiteral("1"), m_pdfPath, QStringLiteral("-")});
+      const bool read = probe.waitForFinished(10000);
+      if (!read
+          || PdfSupport::parsePageWords(probe.readAllStandardOutput()).words.isEmpty()) {
+        QSKIP("this PDF has no extractable text layer");
+      }
+    }
+
+    // The clipboard the app is handed is a stub script, so the log starts empty
+    // and proves what a copy actually put there.
+    QFile::remove(m_scratch.filePath(QStringLiteral("clipboard.log")));
+    m_captures->refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(m_pdfPath) >= 0, 5000);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openPath", Q_ARG(QVariant, m_pdfPath)));
+    const auto restoreFilter = qScopeGuard([&] { m_library->setFolderFilter(QString()); });
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->isVisible());
+    QTRY_COMPARE_WITH_TIMEOUT(m_pdfInfo->path(), m_pdfPath, 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(m_pdfInfo->pageCount(), 2, 8000);
+    QTRY_VERIFY_WITH_TIMEOUT(detail->property("stillReady").toBool(), 10000);
+    QCOMPARE(detail->property("pdfSelectMode").toBool(), false);
+
+    QQuickItem* list = item("pdfPageList");
+    QQuickItem* firstPage = item("pdfPageImage");
+    QVERIFY(firstPage);
+    QVERIFY(list->property("interactive").toBool());
+    QQuickItem* layer = [&] {
+      for (QQuickItem* page : list->childItems()) {
+        if (QQuickItem* found = find(page, [](QQuickItem* candidate) {
+              return candidate->objectName() == QStringLiteral("pdfSelectionScroll");
+            })) {
+          return found;
+        }
+      }
+      return static_cast<QQuickItem*>(nullptr);
+    }();
+    QVERIFY(layer);
+    QVERIFY(!layer->property("selecting").toBool());
+    QCOMPARE(layer->property("page").toInt(), 1);
+
+    QTRY_COMPARE_WITH_TIMEOUT(firstPage->property("status").toInt(), 1, 10000);
+    QTest::qWait(200);
+    // The page cell follows the loaded page, not the requested size: a
+    // regression here collapses the continuous view to a sliver per page.
+    QVERIFY2(firstPage->height() > firstPage->width() * 1.2,
+             qPrintable(QStringLiteral("page cell %1x%2")
+                            .arg(firstPage->width())
+                            .arg(firstPage->height())));
+    QVERIFY(firstPage->property("implicitWidth").toDouble() > 0);
+    QCOMPARE(firstPage->height(),
+             firstPage->width() * firstPage->property("implicitHeight").toDouble()
+                 / firstPage->property("implicitWidth").toDouble());
+    QVERIFY(list->property("contentHeight").toDouble() > list->height() * 1.5);
+
+    // The words sit high on the page, so a drag down the page crosses them.
+    const auto dragRect = [](QQuickItem* target) {
+      return std::pair<QPointF, QPointF>(
+          QPointF(target->width() * 0.04, target->height() * 0.08),
+          QPointF(target->width() * 0.62, target->height() * 0.18));
+    };
+
+    // With the mode off the drag belongs to the list, and nothing is selected.
+    const auto [offFrom, offTo] = dragRect(firstPage);
+    dragBetween(firstPage, offFrom, offTo);
+    QVERIFY(!m_pdfInfo->hasSelection());
+    settle(list);
+
+    clickSettled(item("pdfSelectText"));
+    QCOMPARE(detail->property("pdfSelectMode").toBool(), true);
+    QCOMPARE(layer->property("selecting").toBool(), true);
+
+    // A press that never moves is a click, not a selection.
+    click(firstPage, Qt::LeftButton,
+          QPoint(static_cast<int>(firstPage->width() * 0.05),
+                 static_cast<int>(firstPage->height() * 0.10)));
+    QVERIFY(!m_pdfInfo->hasSelection());
+
+    // One that does move picks the words under it, and the page does not
+    // flick away from under the drag: selecting is not scrolling.
+    settle(list);
+    const qreal beforeDrag = list->property("contentY").toReal();
+    const auto [from, to] = dragRect(firstPage);
+    dragBetween(firstPage, from, to);
+    QTRY_VERIFY_WITH_TIMEOUT(m_pdfInfo->hasSelection(), 8000);
+    QVERIFY(!list->property("moving").toBool());
+    QCOMPARE(list->property("contentY").toReal(), beforeDrag);
+    QCOMPARE(m_pdfInfo->selectionPage(), 1);
+    QVERIFY2(m_pdfInfo->selectionText().contains(QStringLiteral("Omaroll")),
+             qPrintable(m_pdfInfo->selectionText()));
+    QVERIFY(!m_pdfInfo->selectionRects().isEmpty());
+
+    // The copy control only appears once there is something to copy.
+    QQuickItem* copySelection = item("pdfCopySelection");
+    QTRY_VERIFY(copySelection->isVisible());
+    QSignalSpy copied(m_pdfInfo, &PdfInspector::selectionCopied);
+    QSignalSpy failed(m_pdfInfo, &PdfInspector::selectionFailed);
+    clickSettled(copySelection);
+    QTRY_VERIFY_WITH_TIMEOUT(!copied.isEmpty(), 8000);
+    QCOMPARE(failed.size(), 0);
+
+    // The clipboard the app was handed received the words themselves.
+    QFile clipboard(m_scratch.filePath(QStringLiteral("clipboard.log")));
+    QVERIFY(clipboard.open(QIODevice::ReadOnly));
+    const QByteArray copiedText = clipboard.readAll();
+    QVERIFY2(copiedText.contains("Omaroll"), copiedText.constData());
+
+    // The wheel still moves through the document while the mode is on, so the
+    // rest of a page and the pages below it stay reachable.
+    const qreal beforeWheel = list->property("contentY").toReal();
+    wheelOver(list, 3);
+    QTRY_VERIFY_WITH_TIMEOUT(list->property("contentY").toReal() > beforeWheel, 3000);
+    // And the selection survives a scroll.
+    QVERIFY(m_pdfInfo->hasSelection());
+
+    // Escape leaves selection mode and closes nothing.
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTest::qWait(60);
+    QCOMPARE(detail->property("pdfSelectMode").toBool(), false);
+    QVERIFY(detail->isVisible());
+    QVERIFY(!m_pdfInfo->hasSelection());
+
+    // The fitted page carries a layer of its own, over the same words.
+    clickSettled(item("pdfFitPage"));
+    QVERIFY(!detail->property("pdfFitWidth").toBool());
+    clickSettled(item("pdfSelectText"));
+    QCOMPARE(detail->property("pdfSelectMode").toBool(), true);
+    QQuickItem* stillLayer = item("pdfSelectionStill");
+    QVERIFY(stillLayer);
+    QCOMPARE(stillLayer->property("selecting").toBool(), true);
+    QCOMPARE(stillLayer->property("page").toInt(), detail->property("pdfPage").toInt());
+    QQuickItem* stillPage = stillLayer->parentItem();
+    QVERIFY(stillPage);
+    const auto [stillFrom, stillTo] = dragRect(stillPage);
+    dragBetween(stillPage, stillFrom, stillTo);
+    QTRY_VERIFY_WITH_TIMEOUT(m_pdfInfo->hasSelection(), 8000);
+    QCOMPARE(m_pdfInfo->selectionPage(), detail->property("pdfPage").toInt());
+
+    // Turning the mode off leaves the mode and the page behind as they were.
+    clickSettled(item("pdfSelectText"));
+    QCOMPARE(detail->property("pdfSelectMode").toBool(), false);
+    QVERIFY(!m_pdfInfo->hasSelection());
+    clickSettled(item("pdfFitWidth"));
+
+    invoke("dismissTopLayer");
+    QTRY_VERIFY_WITH_TIMEOUT(!m_pdfInfo->hasSelection(), 3000);
+    QVERIFY(QFile::remove(m_pdfPath));
+    m_captures->refresh();
+    QTRY_COMPARE_WITH_TIMEOUT(m_library->rowOf(m_pdfPath), -1, 5000);
+  }
+
   void albumFromASelection() {
     QTest::keyClick(m_window, Qt::Key_X);
     QTRY_COMPARE(item("library")->property("checkedCount").toInt(), 1);
@@ -2607,6 +2776,54 @@ private:
     QVERIFY(target);
     QTest::mouseClick(m_window, button, Qt::NoModifier, target->mapToScene(at).toPoint());
     QTest::qWait(30);
+  }
+
+  // A pill in a row that re-centres when its contents change moves under the
+  // pointer: click only once it has its place, as the header pills need.
+  void clickSettled(QQuickItem* target) {
+    QVERIFY(target);
+    QTRY_VERIFY(centre(target).x() > 0 && centre(target).x() < m_window->width());
+    QTest::qWait(120);
+    click(target);
+  }
+
+  // Waits for a flickable to stop, so a position read is not taken mid-flick.
+  void settle(QQuickItem* flickable) {
+    QVERIFY(flickable);
+    QTRY_VERIFY_WITH_TIMEOUT(!flickable->property("moving").toBool(), 5000);
+    QTest::qWait(50);
+  }
+
+  // A press, a few moves and a release in the target's own coordinates, the
+  // way a drag arrives. QTest sends the moves through the window, so the item
+  // under the pointer gets them in the order a hand would produce.
+  void dragBetween(QQuickItem* target, QPointF from, QPointF to) {
+    QVERIFY(target);
+    const QPoint start = target->mapToScene(from).toPoint();
+    const QPoint end = target->mapToScene(to).toPoint();
+    QTest::mousePress(m_window, Qt::LeftButton, Qt::NoModifier, start);
+    QTest::qWait(20);
+    constexpr int kSteps = 4;
+    for (int step = 1; step <= kSteps; ++step) {
+      const QPointF at = QPointF(start)
+                         + (QPointF(end) - QPointF(start))
+                               * (static_cast<qreal>(step) / static_cast<qreal>(kSteps));
+      QTest::mouseMove(m_window, at.toPoint());
+      QTest::qWait(20);
+    }
+    QTest::mouseRelease(m_window, Qt::LeftButton, Qt::NoModifier, end);
+    QTest::qWait(30);
+  }
+
+  // One wheel notch over the target: negative notches scroll the content down.
+  void wheelOver(QQuickItem* target, int notches) {
+    QVERIFY(target);
+    const QPointF at = target->mapToScene(QPointF(target->width() / 2, target->height() / 2));
+    QWheelEvent event(at, m_window->mapToGlobal(at.toPoint()), QPoint(),
+                      QPoint(0, -120 * notches), Qt::NoButton, Qt::NoModifier,
+                      Qt::NoScrollPhase, false);
+    QCoreApplication::sendEvent(m_window, &event);
+    QTest::qWait(80);
   }
 
   void typeText(const QString& text) {

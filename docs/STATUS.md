@@ -96,12 +96,15 @@ a fresh decision:
 
 ## Open questions
 
-- **PDF links and on-page text selection.** Both need a Poppler link/text API
-  that the pdftoppm-based integration does not expose. The choice is either
-  Poppler's link API (not available through the CLI we use) or adopting the
-  QtPdf module, which adds `qt6-pdf` to the CI, release and PKGBUILD
-  dependency lists. This is the integration decision SBS-1134 recorded; make
-  it before building either.
+- **PDF links.** On-page text selection is delivered: `pdftotext -bbox` already
+  reports a box per word, so it needed no new dependency. Links are what
+  remains, and the two options are now measured. QtPdf has link, bookmark and
+  search models, but on Arch it arrives inside `qt6-webengine`, 282 MiB
+  installed, with no QML QtPdf module installed there, so it would be used
+  through its C++ API. Linking `poppler-qt6` instead costs about 270 KiB and
+  gives links, word boxes, an outline and in-process rendering, but its
+  bindings are GPL, which would relicense the application. This is the
+  integration decision SBS-1134 recorded; make it before building either.
 - **Physical desktop gates.** SBS-1121 field acceptance and SBS-1122
   Wayland/GPU presentation numbers and regression budgets need the real
   Omarchy session. Headless runs cannot close them.
