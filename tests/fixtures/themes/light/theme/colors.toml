@@ -1,0 +1,28 @@
+# A light palette written for the render matrix, in Omarchy's colors.toml shape.
+# Original values, covered by this repository's MIT license; no third-party theme
+# files are copied.
+
+mode = "light"
+
+accent = "#2f63d6"
+selection = "#bcc6e0"
+muted = "#6a7285"
+
+background = "#f3f4f7"
+dark_background = "#e9eaee"
+darker_background = "#dfe1e6"
+lighter_background = "#ffffff"
+
+foreground = "#33384a"
+dark_foreground = "#4a5063"
+light_foreground = "#5c6377"
+bright_foreground = "#14161c"
+
+red = "#c33b52"
+yellow = "#a5751f"
+orange = "#c4652c"
+green = "#3f7d45"
+cyan = "#2b7f95"
+blue = "#2f63d6"
+magenta = "#8a4bb5"
+brown = "#8a6250"

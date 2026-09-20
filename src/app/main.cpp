@@ -242,7 +242,8 @@ int main(int argc, char* argv[]) {
   }
   const QString renderView = optionValue(arguments, QStringLiteral("--render-view"));
   static const QStringList renderViews = {
-      QStringLiteral("grid"),       QStringLiteral("detail"),  QStringLiteral("video"),
+      QStringLiteral("grid"),       QStringLiteral("detail"),  QStringLiteral("document"),
+      QStringLiteral("video"),
       QStringLiteral("slideshow"),  QStringLiteral("matte"),   QStringLiteral("corrections"),
       QStringLiteral("compare"),    QStringLiteral("export"),  QStringLiteral("rename"),
       QStringLiteral("ocr"),        QStringLiteral("duplicates"), QStringLiteral("browser"),

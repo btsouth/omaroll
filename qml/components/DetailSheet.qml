@@ -131,6 +131,16 @@ Item {
         || stage.width < stage.rowChrome + wideTopMeasure.implicitWidth
            + (root.isVideo && !root.slideshowRunning ? transport.minimumWidth
                                                       : wideImageMeasure.implicitWidth)
+    // A document's rows carry words, so they give way in order as the stage
+    // narrows. The match steppers go first, while the row they share still fits
+    // whole; on a genuinely narrow window the rows keep the page, its
+    // navigation, the fit choice and the text selection, and the rest waits for
+    // a wider window. Ctrl+C still copies a selection. The widths come from
+    // hidden copies of the labels, so the decision follows the theme font.
+    readonly property bool pdfDropMatches: root.isDocument
+        && stage.width < 24 + pdfSearchMeasure.implicitWidth
+    readonly property bool compactPdfChrome: root.isDocument
+        && stage.width < 24 + pdfSearchCoreMeasure.implicitWidth
     readonly property var viewerShortcuts: ({
         previous: { key: Qt.Key_Left, label: "Left" },
         next: { key: Qt.Key_Right, label: "Right" },
@@ -683,6 +693,39 @@ Item {
                     PillButton { label: modelData }
                 }
             }
+            // The document rows at full width, and the search row as it stands
+            // once the match steppers have given way. Above the document
+            // threshold each of these fits beside the stage margins.
+            Row {
+                id: pdfSearchMeasure
+                visible: false
+                spacing: 8
+                Rectangle { width: 220; height: 28 }
+                Repeater {
+                    model: ["Find", "Previous match", "Next match", "Select text", "Copy selection"]
+                    PillButton { label: modelData }
+                }
+            }
+            Row {
+                id: pdfSearchCoreMeasure
+                visible: false
+                spacing: 8
+                Rectangle { width: 220; height: 28 }
+                Repeater {
+                    model: ["Find", "Select text", "Copy selection"]
+                    PillButton { label: modelData }
+                }
+            }
+            Row {
+                id: pdfPageMeasure
+                visible: false
+                spacing: 8
+                Repeater {
+                    model: ["Previous page", "Next page", "Fit page", "Fit width", "Copy page text"]
+                    PillButton { label: modelData }
+                }
+                Rectangle { width: 54; height: 28 }
+            }
 
             // A recording shows its thumbnail until the first decoded frame.
             Image {
@@ -757,6 +800,19 @@ Item {
                         source: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAQMAAAAlPW0iAAAABlBMVEVFUExmZmbID7WAAAAAEElEQVQI12NgYGQgHv3/BwAEowINzPTc0QAAAABJRU5ErkJggg=="
                     }
 
+                    // A document's page is paper, not a transparent surface:
+                    // without a sheet and an edge it would disappear into a
+                    // light theme. The checkerboard stays for everything else.
+                    Rectangle {
+                        objectName: "pdfPageSheet"
+                        anchors.centerIn: parent
+                        width: transparencyGrid.width
+                        height: transparencyGrid.height
+                        rotation: root.imageRotation
+                        visible: root.isDocument
+                        color: "white"
+                    }
+
                     Loader {
                         id: stillLoader
                         anchors.centerIn: parent
@@ -775,6 +831,20 @@ Item {
                         sourceComponent: root.isDocument ? pdfStill
                                          : suffix.endsWith(".gif") || suffix.endsWith(".webp")
                                          ? animatedStill : staticStill
+                    }
+
+                    // The fitted page covers the sheet above, so its edge goes on
+                    // top of it for the same reason the list's edge does.
+                    Rectangle {
+                        objectName: "pdfFittedPageEdge"
+                        anchors.centerIn: parent
+                        width: stillLoader.width
+                        height: stillLoader.height
+                        rotation: root.imageRotation
+                        visible: root.isDocument
+                        color: "transparent"
+                        border.width: 1
+                        border.color: root.shade(Theme.foreground, 0.45)
                     }
                 }
 
@@ -880,6 +950,16 @@ Item {
                                 page: pageCell.index + 1
                                 selecting: root.pdfSelectMode
                             }
+                        }
+                        // The page covers the cell, so its edge is drawn over the
+                        // page rather than under it. White paper on a light theme
+                        // has nothing else to separate it from the stage.
+                        Rectangle {
+                            objectName: "pdfPageEdge"
+                            anchors.fill: parent
+                            color: "transparent"
+                            border.width: 1
+                            border.color: root.shade(Theme.foreground, 0.45)
                         }
                     }
                     ScrollBar.vertical: ScrollBar {}
@@ -1226,7 +1306,7 @@ Item {
                 visible: root.isDocument && PdfInfo.available && PdfInfo.textSearchAvailable
 
                 Rectangle {
-                    width: 220
+                    width: root.compactPdfChrome ? 110 : 220
                     height: 28
                     radius: Theme.cornerRadius > 0 ? Math.min(4, Theme.cornerRadius) : 3
                     color: root.shade(Theme.foreground, 0.06)
@@ -1258,7 +1338,7 @@ Item {
                         text: "Find in document"
                         font.family: Theme.fontFamily
                         font.pixelSize: 11
-                        color: root.shade(Theme.foreground, 0.35)
+                        color: Theme.mutedText
                     }
                 }
                 PillButton {
@@ -1267,19 +1347,19 @@ Item {
                 }
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    visible: PdfInfo.matchCount > 0
+                    visible: PdfInfo.matchCount > 0 && !root.pdfDropMatches
                     text: (root.pdfMatchIndex + 1) + " / " + PdfInfo.matchCount
                     font.family: Theme.fontFamily
                     font.pixelSize: 11
                     color: Theme.foreground
                 }
                 PillButton {
-                    visible: PdfInfo.matchCount > 0
+                    visible: PdfInfo.matchCount > 0 && !root.pdfDropMatches
                     label: "Previous match"
                     onClicked: root.stepPdfMatch(-1)
                 }
                 PillButton {
-                    visible: PdfInfo.matchCount > 0
+                    visible: PdfInfo.matchCount > 0 && !root.pdfDropMatches
                     label: "Next match"
                     onClicked: root.stepPdfMatch(1)
                 }
@@ -1305,6 +1385,9 @@ Item {
                     objectName: "pdfCopySelection"
                     label: "Copy selection"
                     toolTip: "Copy the selected words to the clipboard"
+                    // On a narrow stage the row has room for entering the mode
+                    // but not for this pill; Ctrl+C still copies the selection.
+                    visible: !root.compactPdfChrome
                     // It stays in place and dims until there is something to
                     // copy, so the row never shifts under the pointer.
                     enabled: PdfInfo.hasSelection
@@ -1321,7 +1404,8 @@ Item {
                 visible: root.isDocument
 
                 PillButton {
-                    label: "Previous page"
+                    label: root.compactPdfChrome ? "←" : "Previous page"
+                    toolTip: "Previous page"
                     enabled: root.pdfPage > 1
                     onClicked: if (root.pdfPage > 1) {
                         root.stillReady = false
@@ -1338,7 +1422,8 @@ Item {
                     color: Theme.foreground
                 }
                 PillButton {
-                    label: "Next page"
+                    label: root.compactPdfChrome ? "→" : "Next page"
+                    toolTip: "Next page"
                     enabled: PdfInfo.pageCount > 0 && root.pdfPage < PdfInfo.pageCount
                     onClicked: if (root.pdfPage < PdfInfo.pageCount) {
                         root.stillReady = false
@@ -1348,13 +1433,15 @@ Item {
 
                 PillButton {
                     objectName: "pdfFitPage"
-                    label: "Fit page"
+                    label: root.compactPdfChrome ? "⛶" : "Fit page"
+                    toolTip: "Fit page"
                     active: !root.pdfFitWidth
                     onClicked: root.pdfFitWidth = false
                 }
                 PillButton {
                     objectName: "pdfFitWidth"
-                    label: "Fit width"
+                    label: root.compactPdfChrome ? "↔" : "Fit width"
+                    toolTip: "Fit width"
                     active: root.pdfFitWidth
                     onClicked: root.pdfFitWidth = true
                 }
@@ -1363,6 +1450,7 @@ Item {
                     objectName: "pdfCopyPageText"
                     label: "Copy page text"
                     toolTip: "Copy this page's text to the clipboard"
+                    visible: !root.compactPdfChrome
                     enabled: PdfInfo.textSearchAvailable
                     onClicked: PdfInfo.copyPageText(root.pdfPage)
                 }
@@ -1371,6 +1459,7 @@ Item {
                 Rectangle {
                     width: 54
                     height: 28
+                    visible: !root.compactPdfChrome
                     anchors.verticalCenter: parent.verticalCenter
                     radius: Theme.cornerRadius > 0 ? Math.min(4, Theme.cornerRadius) : 3
                     color: root.shade(Theme.foreground, 0.06)
@@ -1404,7 +1493,7 @@ Item {
                         text: "Page #"
                         font.family: Theme.fontFamily
                         font.pixelSize: 10
-                        color: root.shade(Theme.foreground, 0.35)
+                        color: Theme.mutedText
                     }
                 }
             }
@@ -1927,7 +2016,7 @@ Item {
                             readonly property bool lit: index < root.rating
                             text: "★"
                             font.pixelSize: 15
-                            color: lit ? Theme.yellow : root.shade(Theme.foreground, 0.28)
+                            color: lit ? Theme.yellow : Theme.mutedText
                             Accessible.role: Accessible.Button
                             Accessible.name: (index + 1) + (index === 0 ? " star" : " stars")
 
@@ -2001,7 +2090,7 @@ Item {
                         text: "Add a caption"
                         font.family: Theme.fontFamily
                         font.pixelSize: 11
-                        color: root.shade(Theme.foreground, 0.35)
+                        color: Theme.mutedText
                     }
 
                     TapHandler {
@@ -2033,7 +2122,7 @@ Item {
                 font.family: Theme.fontFamily
                 font.pixelSize: 9
                 font.weight: Font.DemiBold
-                color: root.shade(Theme.foreground, 0.38)
+                color: Theme.mutedText
             }
 
             // Actions, from the registry
@@ -2106,7 +2195,7 @@ Item {
                         font.pixelSize: 12
                         font.weight: row.primary ? Font.DemiBold : Font.Normal
                         color: !row.usable
-                               ? root.shade(Theme.foreground, 0.32)
+                               ? Theme.mutedText
                                : (row.primary ? Theme.accent : Theme.foreground)
                     }
 
@@ -2118,7 +2207,7 @@ Item {
                         text: row.modelData.shortcut
                         font.family: Theme.fontFamily
                         font.pixelSize: 10
-                        color: root.shade(Theme.foreground, 0.35)
+                        color: Theme.mutedText
                     }
 
                     HoverHandler {

@@ -2066,6 +2066,77 @@ private slots:
     QTRY_COMPARE_WITH_TIMEOUT(m_library->rowOf(m_pdfPath), -1, 5000);
   }
 
+  void narrowWindowKeepsTheDocumentControlsThatFit() {
+    // The document rows carry words, so they give way as the window narrows.
+    // What a reader still needs stays: the page, its navigation and the way into
+    // text selection. The pills that need more room or repeat the action list
+    // step aside. The assertions follow the rows' own flags rather than absolute
+    // widths, because the label metrics differ between this desktop and CI.
+    const QString source = QFINDTESTDATA("fixtures/pdf/letter-pages.pdf");
+    QVERIFY(!source.isEmpty());
+    // The window belongs to the suite, and rows shrink their labels when it is
+    // narrow, so put back exactly the size this test found.
+    const QSize previousSize = m_window->size();
+    const QString path =
+        QFileInfo(m_pdfPath).absolutePath() + QStringLiteral("/narrow-pages.pdf");
+    QVERIFY(QFile::copy(source, path));
+    // The tiles and the viewer keep asking for this file's thumbnail after it is
+    // removed, which is a disposable fixture rather than a QML warning.
+    m_disposablePaths.append(path);
+    m_captures->refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(path) >= 0, 5000);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openPath", Q_ARG(QVariant, path)));
+    // Opening one file narrows the library to its folder; leaving that behind
+    // would hide the videos from the next test's view.
+    const auto restoreFilter = qScopeGuard([&] { m_library->setFolderFilter(QString()); });
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->isVisible());
+    QTRY_COMPARE_WITH_TIMEOUT(m_pdfInfo->path(), path, 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(!m_pdfInfo->loading(), 5000);
+
+    // A page in the fit-width list carries an edge of its own: white paper on a
+    // light theme has nothing else to separate it from the stage behind it.
+    QQuickItem* edge = item("pdfPageEdge");
+    QVERIFY(edge);
+    QVERIFY(edge->isVisible());
+
+    QQuickItem* copyPageText = item("pdfCopyPageText");
+    QQuickItem* pageInput = item("pdfPageInput");
+    QQuickItem* selectText = item("pdfSelectText");
+    QQuickItem* copySelection = item("pdfCopySelection");
+    QVERIFY(copyPageText && pageInput && selectText && copySelection);
+
+    // The smallest window the app allows.
+    m_window->resize(560, 420);
+    QTRY_VERIFY_WITH_TIMEOUT(detail->property("compactPdfChrome").toBool(), 3000);
+    QTRY_VERIFY(!copyPageText->isVisible());
+    QTRY_VERIFY(!pageInput->isVisible());
+    QVERIFY(!copySelection->isVisible());
+    QVERIFY(item("pdfPageRow")->isVisible());
+    QVERIFY(selectText->isVisible());
+
+    // A wide window has room for the whole row again.
+    m_window->resize(1280, 820);
+    QTRY_VERIFY_WITH_TIMEOUT(!detail->property("compactPdfChrome").toBool(), 3000);
+    QTRY_VERIFY(copyPageText->isVisible());
+    QTRY_VERIFY(pageInput->isVisible());
+    QVERIFY(selectText->isVisible());
+    QVERIFY(copySelection->isVisible());
+
+    // The fitted page carries the same edge over the page sheet.
+    clickSettled(item("pdfFitPage"));
+    QVERIFY(!detail->property("pdfFitWidth").toBool());
+    QQuickItem* fittedEdge = item("pdfFittedPageEdge");
+    QVERIFY(fittedEdge);
+    QTRY_VERIFY(fittedEdge->isVisible());
+
+    m_window->resize(previousSize);
+    invoke("dismissTopLayer");
+    QVERIFY(QFile::remove(path));
+    m_captures->refresh();
+    QTRY_COMPARE_WITH_TIMEOUT(m_library->rowOf(path), -1, 5000);
+  }
+
   void albumFromASelection() {
     QTest::keyClick(m_window, Qt::Key_X);
     QTRY_COMPARE(item("library")->property("checkedCount").toInt(), 1);

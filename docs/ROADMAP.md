@@ -16,6 +16,21 @@ and the scope decisions.
 - Fix the two PDF surfaces reading the renderer's requested size as if it were
   the page's own size, which collapsed every page in the continuous view once
   it rendered and stretched a fitted page to the stage box's aspect.
+- Secondary text takes the theme's muted colour, which the theme backend
+  already picks for at least 3:1 contrast, instead of fixed alphas that measured
+  about 1.7:1 on a light theme: the status line, section labels, placeholders,
+  empty rating stars and action shortcuts.
+- PDF pages draw a hairline edge, so white paper reads as a sheet on a light
+  theme rather than merging with the stage behind it.
+- The document control rows give way in order on a narrow window, measured in
+  the theme font: the match steppers first, then the pills the action list
+  repeats or that need more room, with the page, its navigation, the fit choice
+  and text selection kept to the smallest window the app allows.
+- The render matrix covers every view in the dark palette, the chrome-heavy
+  views in the light palette, and the smallest window, each against a theme
+  fixture under `tests/fixtures/themes/` so the palette does not depend on the
+  machine. The demo library gains a document, so the PDF surfaces are rendered
+  and reviewed like every other view.
 
 ## 1.8.0 (released)
 

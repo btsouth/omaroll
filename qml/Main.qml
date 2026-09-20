@@ -577,6 +577,16 @@ ApplicationWindow {
                     break
                 }
             }
+        } else if (view === "document") {
+            // The demo library's PDF, so the page surfaces are rendered and
+            // reviewed like every other view.
+            for (let row = 0; row < library.count; row++) {
+                if (Captures.isDocumentAt(row)) {
+                    library.currentIndex = row
+                    root.openDetail(row)
+                    break
+                }
+            }
         } else if (view === "matte") {
             root.perform("matte", Captures.pathAt(0))
         } else if (view === "corrections") {
@@ -1075,7 +1085,7 @@ ApplicationWindow {
             font.family: Theme.fontFamily
             font.pixelSize: 11
             color: notice.text !== "" || making !== ""
-                   ? Theme.accent : root.shade(Theme.foreground, 0.42)
+                   ? Theme.accent : Theme.mutedText
             Behavior on color { ColorAnimation { duration: 180 } }
         }
 
@@ -1087,7 +1097,7 @@ ApplicationWindow {
             text: Library.scanning ? "Scanning…" : Theme.themeName
             font.family: Theme.fontFamily
             font.pixelSize: 11
-            color: root.shade(Theme.foreground, 0.32)
+            color: Theme.mutedText
         }
     }
 
