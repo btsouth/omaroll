@@ -1707,6 +1707,8 @@ Item {
                 readonly property int scrubMinimum: 120
                 readonly property real minimumWidth: playButton.implicitWidth + 14 + scrubMinimum
                                                      + 14 + clockLabel.implicitWidth + 12
+                                                     + (subtitleOffsetControls.visible
+                                                        ? subtitleOffsetControls.implicitWidth + 8 : 0)
                                                      + mediaControls.implicitWidth
 
                 function clock(ms) {
@@ -1730,7 +1732,9 @@ Item {
                 Item {
                     id: scrub
                     anchors.left: playButton.right
-                    anchors.right: clockLabel.visible ? clockLabel.left : mediaControls.left
+                    anchors.right: clockLabel.visible ? clockLabel.left
+                                 : subtitleOffsetControls.visible ? subtitleOffsetControls.left
+                                 : mediaControls.left
                     anchors.leftMargin: 14
                     anchors.rightMargin: 14
                     anchors.verticalCenter: parent.verticalCenter
@@ -1775,9 +1779,11 @@ Item {
 
                 Text {
                     id: clockLabel
+                    objectName: "videoClock"
                     // The clock goes first when the transport is short of room.
                     visible: transport.width >= transport.minimumWidth
-                    anchors.right: mediaControls.left
+                    anchors.right: subtitleOffsetControls.visible ? subtitleOffsetControls.left
+                                                                  : mediaControls.left
                     anchors.rightMargin: 12
                     anchors.verticalCenter: parent.verticalCenter
                     text: transport.clock(root.playbackPosition) + " / " + transport.clock(player ? player.duration : 0)
@@ -1787,9 +1793,12 @@ Item {
                 }
 
                 // A timing nudge for sidecar subtitles only, which omaroll draws.
+                // It sits between the clock and the track controls, and leaves
+                // with the CC button it belongs to when the row runs short.
                 Row {
                     id: subtitleOffsetControls
-                    visible: root.externalSubtitle !== ""
+                    objectName: "subtitleOffsetControls"
+                    visible: root.externalSubtitle !== "" && transport.width >= 440
                     anchors.right: mediaControls.left
                     anchors.rightMargin: 8
                     anchors.verticalCenter: parent.verticalCenter
@@ -1822,9 +1831,11 @@ Item {
                 // appears late (a sidecar subtitle) was not being laid out by
                 // the positioner and ended up on top of its neighbour. Widths
                 // collapse to zero when a control is unavailable, so the chain
-                // still closes up.
+                // still closes up; a collapsed control must also be hidden, or
+                // its centred label is still drawn over the clock.
                 Item {
                     id: mediaControls
+                    objectName: "videoMediaControls"
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
                     implicitHeight: 26
@@ -1836,7 +1847,7 @@ Item {
 
                     PillButton {
                         id: audioButton
-                        visible: true
+                        visible: width > 0
                         width: player && player.audioTracks.length > 1 && transport.width >= 520
                                ? implicitWidth : 0
                         anchors.left: parent.left
@@ -1847,7 +1858,7 @@ Item {
                     }
                     PillButton {
                         id: subtitleButton
-                        visible: true
+                        visible: width > 0
                         width: root.hasSubtitleChoices && transport.width >= 440
                                ? implicitWidth : 0
                         anchors.left: audioButton.right

@@ -693,6 +693,16 @@ private slots:
     }
     QCOMPARE(detail->property("externalSubtitle").toString(), sidecar);
 
+    // The timing nudge for a sidecar sits beside the clock, not on it, and
+    // leaves with the CC button when the row runs short.
+    QTRY_VERIFY(item("subtitleOffsetControls")->isVisible());
+    QTRY_VERIFY(item("videoClock")->isVisible());
+    QCOMPARE(labelOverClock(), QString());
+    m_window->resize(560, 420);
+    QTRY_VERIFY(!item("subtitleOffsetControls")->isVisible());
+    m_window->resize(1280, 820);
+    QTRY_VERIFY(item("subtitleOffsetControls")->isVisible());
+
     auto* player = m_window->findChild<QMediaPlayer*>(QStringLiteral("videoPlayer"));
     QVERIFY(player);
     player->setPosition(2000);
@@ -724,6 +734,14 @@ private slots:
                               static_cast<int>(QMediaPlayer::PlayingState), 5000);
     QCOMPARE(detail->property("playbackLoops").toInt(), 1);
     QVERIFY(!detail->property("playbackMuted").toBool());
+
+    // A control collapsed for want of a second audio track or a subtitle must
+    // not leave its label drawn over the clock.
+    auto* firstPlayer = m_window->findChild<QMediaPlayer*>(QStringLiteral("videoPlayer"));
+    QVERIFY(firstPlayer);
+    QVERIFY2(firstPlayer->audioTracks().size() < 2, "the Audio button must be collapsed here");
+    QTRY_VERIFY(item("videoClock")->isVisible());
+    QCOMPARE(labelOverClock(), QString());
 
     QSignalSpy action(detail, SIGNAL(actionTriggered(QString)));
     QTest::keyClick(m_window, Qt::Key_Space);
@@ -2816,6 +2834,28 @@ private:
       qFatal("no item named %s", qPrintable(objectName));
     }
     return found;
+  }
+
+  // The label of any visible video control drawn over the clock, or an empty
+  // string when the clock stands clear.
+  QString labelOverClock() const {
+    QQuickItem* clock = item(QStringLiteral("videoClock"));
+    const QRectF clockBounds = clock->mapRectToScene(clock->boundingRect());
+    QString covering;
+    std::function<void(QQuickItem*)> walk = [&](QQuickItem* node) {
+      for (QQuickItem* child : node->childItems()) {
+        if (!child->isVisible() || !covering.isEmpty()) continue;
+        const QString text = child->property("text").toString();
+        if (!text.isEmpty() &&
+            child->mapRectToScene(child->boundingRect()).intersects(clockBounds)) {
+          covering = text;
+        }
+        walk(child);
+      }
+    };
+    walk(item(QStringLiteral("subtitleOffsetControls")));
+    walk(item(QStringLiteral("videoMediaControls")));
+    return covering;
   }
 
   // A visible PillButton by its label or its compact-mode tooltip.
