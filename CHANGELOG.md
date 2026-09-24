@@ -35,6 +35,14 @@
 - The document control rows overlapped each other and ran under the details
   panel on a narrow window; they now measure their labels in the theme font and
   shrink before they collide.
+- The video clock read "0:02 / 0:0" with a label over the rest on a video with
+  fewer than two audio tracks. The Audio and CC buttons collapsed to zero width
+  but stayed visible, so their centred labels were still drawn over the clock;
+  they are now hidden when there is nothing to choose. The Sub − and Sub +
+  timing buttons for a sidecar subtitle also sat on the clock; the clock now
+  stands to their left, and they leave with the CC button on a narrow window,
+  or before they would squeeze the scrub bar below its minimum. Their offset
+  label now sits to their left, so a click no longer moves or hides them.
 
 ## 1.8.0
 
