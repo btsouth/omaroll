@@ -1798,7 +1798,7 @@ Item {
                 Row {
                     id: subtitleOffsetControls
                     objectName: "subtitleOffsetControls"
-                    visible: root.externalSubtitle !== "" && transport.width >= 440
+                    visible: root.externalSubtitle !== "" && subtitleButton.width > 0
                     anchors.right: mediaControls.left
                     anchors.rightMargin: 8
                     anchors.verticalCenter: parent.verticalCenter

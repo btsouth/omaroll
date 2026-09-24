@@ -737,9 +737,9 @@ private slots:
 
     // A control collapsed for want of a second audio track or a subtitle must
     // not leave its label drawn over the clock.
-    auto* firstPlayer = m_window->findChild<QMediaPlayer*>(QStringLiteral("videoPlayer"));
-    QVERIFY(firstPlayer);
-    QVERIFY2(firstPlayer->audioTracks().size() < 2, "the Audio button must be collapsed here");
+    auto* player = m_window->findChild<QMediaPlayer*>(QStringLiteral("videoPlayer"));
+    QVERIFY(player);
+    QVERIFY2(player->audioTracks().size() < 2, "the Audio button must be collapsed here");
     QTRY_VERIFY(item("videoClock")->isVisible());
     QCOMPARE(labelOverClock(), QString());
 
@@ -774,8 +774,6 @@ private slots:
 
     // Closing and visiting a picture must stop decoding, but retain the player
     // and its session controls when the next video is opened.
-    auto* player = m_window->findChild<QMediaPlayer*>(QStringLiteral("videoPlayer"));
-    QVERIFY(player);
     const double retainedVolume = detail->property("playbackVolume").toDouble();
     invoke("dismissTopLayer");
     openDetail(m_library->rowOf(QFileInfo(m_oddPath).canonicalFilePath()));
