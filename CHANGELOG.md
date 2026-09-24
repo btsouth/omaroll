@@ -40,7 +40,9 @@
   but stayed visible, so their centred labels were still drawn over the clock;
   they are now hidden when there is nothing to choose. The Sub − and Sub +
   timing buttons for a sidecar subtitle also sat on the clock; the clock now
-  stands to their left, and they leave with the CC button on a narrow window.
+  stands to their left, and they leave with the CC button on a narrow window,
+  or before they would squeeze the scrub bar below its minimum. Their offset
+  label now sits to their left, so a click no longer moves or hides them.
 
 ## 1.8.0
 

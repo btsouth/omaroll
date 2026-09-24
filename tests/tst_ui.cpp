@@ -700,6 +700,31 @@ private slots:
     QCOMPARE(labelOverClock(), QString());
     m_window->resize(560, 420);
     QTRY_VERIFY(!item("subtitleOffsetControls")->isVisible());
+    // Nor does it squeeze the scrub below its minimum on the way down.
+    for (int width = 1280; width >= 560; width -= 20) {
+      m_window->resize(width, 820);
+      QCoreApplication::processEvents();
+      if (item("subtitleOffsetControls")->isVisible()) {
+        QVERIFY2(item("videoScrub")->width() >= 120,
+                 qPrintable(QStringLiteral("scrub too narrow at %1 px").arg(width)));
+      }
+    }
+    // At the narrowest width that shows it, a nudge neither hides the
+    // buttons nor slides them out from under the pointer.
+    int narrowest = 560;
+    for (; narrowest <= 1280 && !item("subtitleOffsetControls")->isVisible(); narrowest += 2) {
+      m_window->resize(narrowest, 820);
+      QCoreApplication::processEvents();
+    }
+    QVERIFY(item("subtitleOffsetControls")->isVisible());
+    QQuickItem* later = item("subtitleLater");
+    const QPointF laterAt = later->mapToScene(QPointF(0, 0));
+    click(later);
+    QTRY_COMPARE(detail->property("subtitleOffsetMs").toInt(), 500);
+    QCoreApplication::processEvents();
+    QVERIFY(item("subtitleOffsetControls")->isVisible());
+    QCOMPARE(later->mapToScene(QPointF(0, 0)), laterAt);
+    detail->setProperty("subtitleOffsetMs", 0);
     m_window->resize(1280, 820);
     QTRY_VERIFY(item("subtitleOffsetControls")->isVisible());
 

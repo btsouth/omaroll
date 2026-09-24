@@ -1708,8 +1708,21 @@ Item {
                 readonly property real minimumWidth: playButton.implicitWidth + 14 + scrubMinimum
                                                      + 14 + clockLabel.implicitWidth + 12
                                                      + (subtitleOffsetControls.visible
-                                                        ? subtitleOffsetControls.implicitWidth + 8 : 0)
+                                                        ? subtitleOffsetWidth + 8 : 0)
                                                      + mediaControls.implicitWidth
+                // Measured from the parts, which keep their size while hidden,
+                // so the nudge's own visibility can depend on it. The clock
+                // makes room for the label as shown; the nudge itself counts
+                // the label at its widest, so a click that shows it cannot
+                // push the nudge off the row.
+                readonly property real subtitleOffsetWidth: subtitleEarlier.implicitWidth + 6
+                                                            + subtitleLater.implicitWidth
+                                                            + (subtitleOffsetLabel.visible
+                                                               ? 6 + subtitleOffsetLabel.implicitWidth : 0)
+                readonly property real subtitleOffsetWidest: subtitleEarlier.implicitWidth + 6
+                                                             + subtitleLater.implicitWidth + 6
+                                                             + Math.ceil(Math.max(widestEarlier.advanceWidth,
+                                                                                  widestLater.advanceWidth))
 
                 function clock(ms) {
                     const total = Math.max(0, Math.round(ms / 1000))
@@ -1731,6 +1744,7 @@ Item {
 
                 Item {
                     id: scrub
+                    objectName: "videoScrub"
                     anchors.left: playButton.right
                     anchors.right: clockLabel.visible ? clockLabel.left
                                  : subtitleOffsetControls.visible ? subtitleOffsetControls.left
@@ -1794,29 +1808,26 @@ Item {
 
                 // A timing nudge for sidecar subtitles only, which omaroll draws.
                 // It sits between the clock and the track controls, and leaves
-                // with the CC button it belongs to when the row runs short.
+                // with the CC button it belongs to, or before the scrub would
+                // shrink below its minimum, when the row runs short.
                 Row {
                     id: subtitleOffsetControls
                     objectName: "subtitleOffsetControls"
                     visible: root.externalSubtitle !== "" && subtitleButton.width > 0
+                             && transport.width >= playButton.implicitWidth + 14
+                                + transport.scrubMinimum + 14
+                                + transport.subtitleOffsetWidest + 8
+                                + mediaControls.implicitWidth
                     anchors.right: mediaControls.left
                     anchors.rightMargin: 8
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 6
 
-                    PillButton {
-                        objectName: "subtitleEarlier"
-                        label: "Sub −"
-                        toolTip: "Show subtitles earlier"
-                        onClicked: root.subtitleOffsetMs = Math.max(-10000, root.subtitleOffsetMs - 500)
-                    }
-                    PillButton {
-                        objectName: "subtitleLater"
-                        label: "Sub +"
-                        toolTip: "Show subtitles later"
-                        onClicked: root.subtitleOffsetMs = Math.min(10000, root.subtitleOffsetMs + 500)
-                    }
+                    // First in the row, which is anchored on its right, so
+                    // the label grows leftward and the buttons stay put.
                     Text {
+                        id: subtitleOffsetLabel
+                        objectName: "subtitleOffsetLabel"
                         anchors.verticalCenter: parent.verticalCenter
                         visible: root.subtitleOffsetMs !== 0
                         text: (root.subtitleOffsetMs > 0 ? "+" : "")
@@ -1824,6 +1835,31 @@ Item {
                         font.family: Theme.fontFamily
                         font.pixelSize: 11
                         color: Theme.mutedText
+
+                        TextMetrics {
+                            id: widestEarlier
+                            font: subtitleOffsetLabel.font
+                            text: "-10.0s"
+                        }
+                        TextMetrics {
+                            id: widestLater
+                            font: subtitleOffsetLabel.font
+                            text: "+10.0s"
+                        }
+                    }
+                    PillButton {
+                        id: subtitleEarlier
+                        objectName: "subtitleEarlier"
+                        label: "Sub −"
+                        toolTip: "Show subtitles earlier"
+                        onClicked: root.subtitleOffsetMs = Math.max(-10000, root.subtitleOffsetMs - 500)
+                    }
+                    PillButton {
+                        id: subtitleLater
+                        objectName: "subtitleLater"
+                        label: "Sub +"
+                        toolTip: "Show subtitles later"
+                        onClicked: root.subtitleOffsetMs = Math.min(10000, root.subtitleOffsetMs + 500)
                     }
                 }
 
