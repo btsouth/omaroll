@@ -492,242 +492,343 @@ Item {
             }
         }
 
+        // One labelled row per job. On a wide sheet the result ends the Crop
+        // row and the actions end the Resize row; a narrow one gives them a
+        // line of their own under the groups. A row wraps only within itself,
+        // so a narrow window folds a group onto a second line instead of
+        // scattering every control across the sheet.
         Item {
             id: controls
+            objectName: "correctionControls"
             anchors.bottom: parent.bottom
             anchors.left: parent.left
             anchors.right: parent.right
-            height: controlFlow.implicitHeight + 30
+            anchors.leftMargin: 20
+            anchors.rightMargin: 20
+            anchors.bottomMargin: 12
+            height: rows.height
 
-            Flow {
-                id: controlFlow
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.leftMargin: 20
-                anchors.rightMargin: 20
-                spacing: 6
+            // Room for the longest result beside the ratios and the actions
+            // beside the resize controls.
+            readonly property bool wide: width >= 940
+            // The smallest windows drop the row labels and narrow the slider
+            // and the size fields, so each group keeps to as few lines as it
+            // can and the preview keeps its height.
+            readonly property bool compact: width < 720
+            readonly property int labelWidth: compact ? 0 : 64
+            readonly property int rowWidth: width - labelWidth
 
-                PillButton {
-                    label: "Rotate left"
-                    onClicked: root.rotate(-1)
+            Column {
+                id: rows
+                width: parent.width
+                spacing: controls.compact ? 6 : 8
+
+                Row {
+                    id: cropRow
+                    width: parent.width
+
+                    Text {
+                        visible: !controls.compact
+                        width: controls.labelWidth
+                        height: 26
+                        verticalAlignment: Text.AlignVCenter
+                        text: "Crop"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 11
+                        color: Theme.mutedText
+                    }
+
+                    Flow {
+                        width: controls.rowWidth
+                               - (controls.wide ? result.width + 16 : 0)
+                        spacing: 6
+
+                        // Ratio zero is a free crop. Original is worked out when
+                        // clicked, because a quarter turn swaps the frame's sides.
+                        Repeater {
+                            model: [
+                                { label: "Free", ratio: 0 },
+                                { label: "Original", ratio: -1 },
+                                { label: "1:1", ratio: 1 },
+                                { label: "4:3", ratio: 4 / 3 },
+                                { label: "3:4", ratio: 3 / 4 },
+                                { label: "3:2", ratio: 3 / 2 },
+                                { label: "2:3", ratio: 2 / 3 },
+                                { label: "16:9", ratio: 16 / 9 },
+                                { label: "9:16", ratio: 9 / 16 }
+                            ]
+
+                            PillButton {
+                                required property var modelData
+                                label: modelData.label
+                                active: root.cropAspectLabel === modelData.label
+                                onClicked: root.resetCropToAspect(
+                                               modelData.ratio >= 0
+                                               ? modelData.ratio
+                                               : (root.workingHeight > 0
+                                                  ? root.workingWidth / root.workingHeight : 0),
+                                               modelData.label)
+                            }
+                        }
+                    }
                 }
-                PillButton {
-                    label: "Rotate right"
-                    onClicked: root.rotate(1)
+
+                Row {
+                    id: rotateRow
+                    width: parent.width
+
+                    Text {
+                        visible: !controls.compact
+                        width: controls.labelWidth
+                        height: 26
+                        verticalAlignment: Text.AlignVCenter
+                        text: "Rotate"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 11
+                        color: Theme.mutedText
+                    }
+
+                    Flow {
+                        width: controls.rowWidth
+                        spacing: 6
+
+                        PillButton {
+                            label: "Rotate left"
+                            onClicked: root.rotate(-1)
+                        }
+                        PillButton {
+                            label: "Rotate right"
+                            onClicked: root.rotate(1)
+                        }
+                        PillButton {
+                            label: "Flip H"
+                            active: root.flipHorizontal
+                            onClicked: root.flipHorizontal = !root.flipHorizontal
+                        }
+                        PillButton {
+                            label: "Flip V"
+                            active: root.flipVertical
+                            onClicked: root.flipVertical = !root.flipVertical
+                        }
+
+                        Item { width: 12; height: 1 }
+
+                        Row {
+                            height: 26
+                            spacing: 6
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "Straighten"
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 11
+                                color: Theme.mutedText
+                            }
+                            Slider {
+                                id: straightenSlider
+                                objectName: "straightenSlider"
+                                width: controls.compact ? 100 : 130
+                                // The row's height, not the style's taller
+                                // default, so a wrapped row cannot reach the
+                                // buttons above it.
+                                height: 26
+                                anchors.verticalCenter: parent.verticalCenter
+                                from: -15
+                                to: 15
+                                stepSize: 0.5
+                                value: root.straighten
+                                onMoved: root.straighten = value
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 36
+                                text: root.straighten.toFixed(1) + "°"
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 11
+                                color: Theme.foreground
+                            }
+                        }
+                    }
                 }
-                PillButton {
-                    label: "Flip H"
-                    active: root.flipHorizontal
-                    onClicked: root.flipHorizontal = !root.flipHorizontal
+
+                Row {
+                    id: resizeRow
+                    width: parent.width
+
+                    Text {
+                        visible: !controls.compact
+                        width: controls.labelWidth
+                        height: 26
+                        verticalAlignment: Text.AlignVCenter
+                        text: "Resize"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 11
+                        color: Theme.mutedText
+                    }
+
+                    Flow {
+                        width: controls.rowWidth - (controls.wide ? actions.width + 16 : 0)
+                        spacing: 6
+
+                        PillButton {
+                            label: "Original size"
+                            active: root.targetWidth === 0 && root.targetHeight === 0
+                            onClicked: root.setScale(0)
+                        }
+                        PillButton {
+                            label: "75%"
+                            onClicked: root.setScale(75)
+                        }
+                        PillButton {
+                            label: "50%"
+                            onClicked: root.setScale(50)
+                        }
+                        PillButton {
+                            label: "25%"
+                            onClicked: root.setScale(25)
+                        }
+
+                        Item { width: 12; height: 1 }
+
+                        Row {
+                            spacing: 6
+                            TextField {
+                                id: widthField
+                                objectName: "correctionWidth"
+                                width: controls.compact ? 72 : 92
+                                height: 26
+                                topPadding: 0
+                                bottomPadding: 0
+                                verticalAlignment: TextInput.AlignVCenter
+                                placeholderText: "W"
+                                text: root.targetWidth > 0 ? String(root.targetWidth) : ""
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 12
+                                color: Theme.brightForeground
+                                inputMethodHints: Qt.ImhDigitsOnly
+                                validator: IntValidator { bottom: 1; top: 40000 }
+                                background: Rectangle {
+                                    color: root.shade(Theme.darkerBackground, 0.6)
+                                    radius: Theme.cornerRadius > 0 ? Math.min(4, Theme.cornerRadius) : 3
+                                    border.width: 1
+                                    border.color: root.shade(Theme.foreground, 0.2)
+                                }
+                                onEditingFinished: root.targetWidth = text === "" ? 0 : parseInt(text)
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "×"
+                                color: Theme.mutedText
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 12
+                            }
+                            TextField {
+                                id: heightField
+                                objectName: "correctionHeight"
+                                width: controls.compact ? 72 : 92
+                                height: 26
+                                topPadding: 0
+                                bottomPadding: 0
+                                verticalAlignment: TextInput.AlignVCenter
+                                placeholderText: "H"
+                                text: root.targetHeight > 0 ? String(root.targetHeight) : ""
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 12
+                                color: Theme.brightForeground
+                                inputMethodHints: Qt.ImhDigitsOnly
+                                validator: IntValidator { bottom: 1; top: 40000 }
+                                background: Rectangle {
+                                    color: root.shade(Theme.darkerBackground, 0.6)
+                                    radius: Theme.cornerRadius > 0 ? Math.min(4, Theme.cornerRadius) : 3
+                                    border.width: 1
+                                    border.color: root.shade(Theme.foreground, 0.2)
+                                }
+                                onEditingFinished: root.targetHeight = text === "" ? 0 : parseInt(text)
+                            }
+                        }
+                    }
                 }
-                PillButton {
-                    label: "Flip V"
-                    active: root.flipVertical
-                    onClicked: root.flipVertical = !root.flipVertical
+
+                Item {
+                    id: footer
+                    visible: !controls.wide
+                    width: parent.width
+                    height: 26
                 }
-                PillButton {
-                    label: "Full frame"
-                    onClicked: root.resetCropToAspect(0, "Free")
+            }
+
+            Text {
+                id: result
+                objectName: "correctionResult"
+                x: controls.wide ? controls.width - width : 0
+                y: (controls.wide ? cropRow.y : footer.y) + (26 - height) / 2
+                // Capped when wide, so a long error elides rather than
+                // squeezing the ratios off their row.
+                width: controls.wide ? Math.min(Math.ceil(resultMetrics.advanceWidth),
+                                                controls.width * 0.4)
+                                     : controls.width - actions.width - 12
+                elide: Text.ElideRight
+                text: {
+                    if (root.errorText !== "") {
+                        return root.errorText
+                    }
+                    const base = root.croppedWidth + " × " + root.croppedHeight
+                    if (root.targetWidth > 0 && root.targetHeight > 0) {
+                        // The writer keeps the aspect ratio, so this is a
+                        // bounding box, not the saved size.
+                        return "Fit within " + root.targetWidth + " × " + root.targetHeight
+                               + "  ·  source " + base
+                    }
+                    if (root.targetWidth > 0 || root.targetHeight > 0) {
+                        return "Output " + (root.targetWidth > 0 ? root.targetWidth : "auto")
+                               + " × " + (root.targetHeight > 0 ? root.targetHeight : "auto")
+                               + "  ·  source " + base
+                    }
+                    return "Output " + base
                 }
+                font.family: Theme.fontFamily
+                font.pixelSize: 11
+                color: root.errorText !== "" ? Theme.red : Theme.mutedText
+
+                // Measured apart from the Text, whose own implicit width
+                // follows its width once it elides.
+                TextMetrics {
+                    id: resultMetrics
+                    font: result.font
+                    text: result.text
+                }
+            }
+
+            Row {
+                id: actions
+                objectName: "correctionActions"
+                x: controls.width - width
+                y: controls.wide ? resizeRow.y : footer.y
+                spacing: 8
+
                 PillButton {
                     label: "Reset"
                     onClicked: root.reset()
                 }
 
-                Row {
-                    width: 210
-                    spacing: 6
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: "Straighten"
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 11
-                        color: Theme.mutedText
-                    }
-                    Slider {
-                        id: straightenSlider
-                        objectName: "straightenSlider"
-                        width: 130
-                        anchors.verticalCenter: parent.verticalCenter
-                        from: -15
-                        to: 15
-                        stepSize: 0.5
-                        value: root.straighten
-                        onMoved: root.straighten = value
-                    }
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: 36
-                        text: root.straighten.toFixed(1) + "°"
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 11
-                        color: Theme.foreground
-                    }
-                }
-
-                Item { width: 12; height: 1 }
+                Item { width: 4; height: 1 }
 
                 PillButton {
-                    label: "Free"
-                    active: root.cropAspectLabel === "Free"
-                    onClicked: root.resetCropToAspect(0, "Free")
+                    label: "Cancel"
+                    onClicked: root.close()
                 }
                 PillButton {
-                    label: "Original"
-                    active: root.cropAspectLabel === "Original"
-                    onClicked: root.resetCropToAspect(
-                                   root.workingHeight > 0
-                                   ? root.workingWidth / root.workingHeight : 0, "Original")
+                    objectName: "correctionCopyRegion"
+                    label: "Copy region"
+                    toolTip: "Copy the cropped region to the clipboard"
+                    active: !root.saving && preview.status === Image.Ready
+                    onClicked: root.copyRegion()
                 }
                 PillButton {
-                    label: "1:1"
-                    active: root.cropAspectLabel === "1:1"
-                    onClicked: root.resetCropToAspect(1, "1:1")
+                    objectName: "correctionSave"
+                    label: root.saving ? "Saving…" : "Save a copy"
+                    active: !root.saving && preview.status === Image.Ready
+                    onClicked: root.save()
                 }
-                PillButton {
-                    label: "4:3"
-                    active: root.cropAspectLabel === "4:3"
-                    onClicked: root.resetCropToAspect(4 / 3, "4:3")
-                }
-                PillButton {
-                    label: "3:2"
-                    active: root.cropAspectLabel === "3:2"
-                    onClicked: root.resetCropToAspect(3 / 2, "3:2")
-                }
-                PillButton {
-                    label: "16:9"
-                    active: root.cropAspectLabel === "16:9"
-                    onClicked: root.resetCropToAspect(16 / 9, "16:9")
-                }
-
-                Item { width: 12; height: 1 }
-
-                PillButton {
-                    label: "Original size"
-                    active: root.targetWidth === 0 && root.targetHeight === 0
-                    onClicked: root.setScale(0)
-                }
-                PillButton {
-                    label: "75%"
-                    onClicked: root.setScale(75)
-                }
-                PillButton {
-                    label: "50%"
-                    onClicked: root.setScale(50)
-                }
-                PillButton {
-                    label: "25%"
-                    onClicked: root.setScale(25)
-                }
-
-                Item { width: 12; height: 1 }
-
-                Row {
-                    spacing: 6
-                    TextField {
-                        id: widthField
-                        objectName: "correctionWidth"
-                        width: 92
-                        placeholderText: "W"
-                        text: root.targetWidth > 0 ? String(root.targetWidth) : ""
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 12
-                        color: Theme.brightForeground
-                        inputMethodHints: Qt.ImhDigitsOnly
-                        validator: IntValidator { bottom: 1; top: 40000 }
-                        background: Rectangle {
-                            color: root.shade(Theme.darkerBackground, 0.6)
-                            radius: Theme.cornerRadius > 0 ? Math.min(4, Theme.cornerRadius) : 3
-                            border.width: 1
-                            border.color: root.shade(Theme.foreground, 0.2)
-                        }
-                        onEditingFinished: root.targetWidth = text === "" ? 0 : parseInt(text)
-                    }
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: "×"
-                        color: Theme.mutedText
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 12
-                    }
-                    TextField {
-                        id: heightField
-                        objectName: "correctionHeight"
-                        width: 92
-                        placeholderText: "H"
-                        text: root.targetHeight > 0 ? String(root.targetHeight) : ""
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 12
-                        color: Theme.brightForeground
-                        inputMethodHints: Qt.ImhDigitsOnly
-                        validator: IntValidator { bottom: 1; top: 40000 }
-                        background: Rectangle {
-                            color: root.shade(Theme.darkerBackground, 0.6)
-                            radius: Theme.cornerRadius > 0 ? Math.min(4, Theme.cornerRadius) : 3
-                            border.width: 1
-                            border.color: root.shade(Theme.foreground, 0.2)
-                        }
-                        onEditingFinished: root.targetHeight = text === "" ? 0 : parseInt(text)
-                    }
-                }
-
-                Text {
-                    topPadding: 9
-                    text: {
-                        const base = root.croppedWidth + " × " + root.croppedHeight
-                        if (root.targetWidth > 0 && root.targetHeight > 0) {
-                            // The writer keeps the aspect ratio, so this is a
-                            // bounding box, not the saved size.
-                            return "Fit within " + root.targetWidth + " × " + root.targetHeight
-                                   + "  ·  source " + base
-                        }
-                        if (root.targetWidth > 0 || root.targetHeight > 0) {
-                            return "Output " + (root.targetWidth > 0 ? root.targetWidth : "auto")
-                                   + " × " + (root.targetHeight > 0 ? root.targetHeight : "auto")
-                                   + "  ·  source " + base
-                        }
-                        return "Output " + base
-                    }
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 11
-                    color: Theme.mutedText
-                }
-            }
-        }
-
-        Row {
-            anchors.right: parent.right
-            anchors.rightMargin: 20
-            anchors.bottom: parent.bottom
-            anchors.bottomMargin: 8
-            spacing: 8
-
-            Text {
-                anchors.verticalCenter: parent.verticalCenter
-                visible: root.errorText !== ""
-                text: root.errorText
-                font.family: Theme.fontFamily
-                font.pixelSize: 11
-                color: Theme.red
-            }
-
-            PillButton {
-                label: "Cancel"
-                onClicked: root.close()
-            }
-            PillButton {
-                objectName: "correctionCopyRegion"
-                label: "Copy region"
-                toolTip: "Copy the cropped region to the clipboard"
-                active: !root.saving && preview.status === Image.Ready
-                onClicked: root.copyRegion()
-            }
-            PillButton {
-                objectName: "correctionSave"
-                label: root.saving ? "Saving…" : "Save a copy"
-                active: !root.saving && preview.status === Image.Ready
-                onClicked: root.save()
             }
         }
     }

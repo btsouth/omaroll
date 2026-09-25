@@ -6,6 +6,12 @@ result. Discovery stays read-only and core use stays offline.
 
 See [project status](STATUS.md) for the latest release and current work.
 
+## Unreleased
+
+- Portrait crop presets (3:4, 2:3, 9:16), and the correction controls grouped
+  into Crop, Rotate and Resize rows that wrap only within themselves, with the
+  output and the actions beside them when the sheet is wide.
+
 ## 1.9.0 (released)
 
 - A quick image and video viewer that opens files without building the library,

@@ -51,7 +51,7 @@ done
 for view in grid detail document corrections compare duplicates browser settings viewer viewer-info viewer-menu; do
   renders+=("light $view 1280x820")
 done
-for view in grid detail video ocr document viewer viewer-video; do
+for view in grid detail video ocr document corrections viewer viewer-video; do
   renders+=("dark $view 560x420")
 done
 renders+=("light document 560x420")

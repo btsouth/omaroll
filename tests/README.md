@@ -40,7 +40,7 @@ actual colored pixels in the rendered video area.
 
 The render matrix covers every view in the dark palette, the views that carry
 the most chrome in the light palette, and grid, detail, video, document, OCR
-and the viewer in the smallest window the app allows. The viewer views open a
+the correction sheet and the viewer in the smallest window the app allows. The viewer views open a
 demo file the way a file manager would, with the controls held up. Each render runs with a disposable
 profile pointed at a theme fixture under `tests/fixtures/themes/`, so the
 palette is the fixture's rather than whatever this machine happens to use, and
