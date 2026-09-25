@@ -10,6 +10,10 @@
   search uses, so nothing new is installed and the file is never changed.
 - The demo library now carries a two-page document, so the page list, the find
   row and the page controls are rendered and reviewed like every other view.
+- Portrait crop presets: 3:4, 2:3 and 9:16 sit beside their landscape
+  partners in Crop, rotate, resize. A held landscape ratio could not be turned
+  upright, so a portrait, a poster or a phone-screen crop had to be drawn by
+  hand.
 
 ### Changed
 
@@ -25,6 +29,12 @@
   narrows, and the pills that need more room or repeat the action list (match
   stepping, Copy page text, the page number box, Copy selection) wait until the
   window is wider. Ctrl+C still copies a selection.
+- The Crop, rotate, resize controls are grouped into labelled Crop, Rotate and
+  Resize rows instead of one strip that wrapped wherever it ran out of room.
+  On a wide sheet the output size ends the Crop row and Reset, Cancel, Copy
+  region and Save a copy end the Resize row; a narrow one gives them a line of
+  their own, and the smallest window drops the row labels. Full frame is gone:
+  it did exactly what Free does.
 
 ### Fixed
 

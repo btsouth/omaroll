@@ -9,6 +9,9 @@ and the scope decisions.
 
 ## Unreleased
 
+- Portrait crop presets (3:4, 2:3, 9:16), and the correction controls grouped
+  into Crop, Rotate and Resize rows that wrap only within themselves, with the
+  output and the actions beside them when the sheet is wide.
 - Select text in a PDF: drag across a page, see the selected lines highlighted,
   and copy just those words. The boxes come from `pdftotext -bbox`, a mode of
   the same Poppler tool the document search and page-text copy already run, so
