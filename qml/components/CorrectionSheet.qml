@@ -492,11 +492,12 @@ Item {
             }
         }
 
-        // One labelled row per job. On a wide sheet the result ends the Crop
-        // row and the actions end the Resize row; a narrow one gives them a
-        // line of their own under the groups. A row wraps only within itself,
-        // so a narrow window folds a group onto a second line instead of
-        // scattering every control across the sheet.
+        // One flow for every control. With room, a zero-height break starts
+        // each job on its own labelled line, the result ends the Crop line and
+        // the actions end the Resize line. The smallest windows drop the
+        // labels and breaks, so the groups pack onto shared lines with a rule
+        // between them and the preview keeps its height; the result and the
+        // actions then take a line of their own.
         Item {
             id: controls
             objectName: "correctionControls"
@@ -506,252 +507,246 @@ Item {
             anchors.leftMargin: 20
             anchors.rightMargin: 20
             anchors.bottomMargin: 12
-            height: rows.height
+            height: flow.height + (wide ? 0 : footerGap + 26)
 
             // Room for the longest result beside the ratios and the actions
             // beside the resize controls.
             readonly property bool wide: width >= 940
-            // The smallest windows drop the row labels and narrow the slider
-            // and the size fields, so each group keeps to as few lines as it
-            // can and the preview keeps its height.
             readonly property bool compact: width < 720
-            readonly property int labelWidth: compact ? 0 : 64
-            readonly property int rowWidth: width - labelWidth
+            readonly property int labelWidth: 64
+            // The same gap a break leaves between two groups.
+            readonly property int footerGap: 2 * flow.spacing + 1
 
-            Column {
-                id: rows
+            component GroupLabel: Text {
+                visible: !controls.compact
+                width: controls.labelWidth
+                height: 26
+                verticalAlignment: Text.AlignVCenter
+                font.family: Theme.fontFamily
+                font.pixelSize: 11
+                color: Theme.mutedText
+            }
+            // A positioner skips an item with no height, so a break is 1 px.
+            component LineBreak: Item {
+                visible: !controls.compact
+                width: flow.width
+                height: 1
+            }
+            // Drawn only between groups on one line: a rule the next group
+            // wrapped away from, or one that opens a line, stays blank.
+            component GroupRule: Item {
+                property Item next
+                visible: controls.compact
+                width: 9
+                height: 26
+                opacity: x > 0 && next && x + width + flow.spacing + next.width <= flow.width
+                         ? 1 : 0
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: 1
+                    height: 18
+                    color: root.shade(Theme.foreground, 0.2)
+                }
+            }
+
+            Flow {
+                id: flow
                 width: parent.width
-                spacing: controls.compact ? 6 : 8
+                spacing: 6
 
-                Row {
-                    id: cropRow
-                    width: parent.width
+                GroupLabel {
+                    id: cropLabel
+                    text: "Crop"
+                }
 
-                    Text {
-                        visible: !controls.compact
-                        width: controls.labelWidth
-                        height: 26
-                        verticalAlignment: Text.AlignVCenter
-                        text: "Crop"
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 11
-                        color: Theme.mutedText
-                    }
+                // Ratio zero is a free crop. Original is worked out when
+                // clicked, because a quarter turn swaps the frame's sides.
+                Repeater {
+                    model: [
+                        { label: "Free", ratio: 0 },
+                        { label: "Original", ratio: -1 },
+                        { label: "1:1", ratio: 1 },
+                        { label: "4:3", ratio: 4 / 3 },
+                        { label: "3:4", ratio: 3 / 4 },
+                        { label: "3:2", ratio: 3 / 2 },
+                        { label: "2:3", ratio: 2 / 3 },
+                        { label: "16:9", ratio: 16 / 9 },
+                        { label: "9:16", ratio: 9 / 16 }
+                    ]
 
-                    Flow {
-                        width: controls.rowWidth
-                               - (controls.wide ? result.width + 16 : 0)
-                        spacing: 6
-
-                        // Ratio zero is a free crop. Original is worked out when
-                        // clicked, because a quarter turn swaps the frame's sides.
-                        Repeater {
-                            model: [
-                                { label: "Free", ratio: 0 },
-                                { label: "Original", ratio: -1 },
-                                { label: "1:1", ratio: 1 },
-                                { label: "4:3", ratio: 4 / 3 },
-                                { label: "3:4", ratio: 3 / 4 },
-                                { label: "3:2", ratio: 3 / 2 },
-                                { label: "2:3", ratio: 2 / 3 },
-                                { label: "16:9", ratio: 16 / 9 },
-                                { label: "9:16", ratio: 9 / 16 }
-                            ]
-
-                            PillButton {
-                                required property var modelData
-                                label: modelData.label
-                                active: root.cropAspectLabel === modelData.label
-                                onClicked: root.resetCropToAspect(
-                                               modelData.ratio >= 0
-                                               ? modelData.ratio
-                                               : (root.workingHeight > 0
-                                                  ? root.workingWidth / root.workingHeight : 0),
-                                               modelData.label)
-                            }
-                        }
+                    PillButton {
+                        required property var modelData
+                        label: modelData.label
+                        active: root.cropAspectLabel === modelData.label
+                        onClicked: root.resetCropToAspect(
+                                       modelData.ratio >= 0
+                                       ? modelData.ratio
+                                       : (root.workingHeight > 0
+                                          ? root.workingWidth / root.workingHeight : 0),
+                                       modelData.label)
                     }
                 }
 
-                Row {
-                    id: rotateRow
-                    width: parent.width
-
-                    Text {
-                        visible: !controls.compact
-                        width: controls.labelWidth
-                        height: 26
-                        verticalAlignment: Text.AlignVCenter
-                        text: "Rotate"
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 11
-                        color: Theme.mutedText
-                    }
-
-                    Flow {
-                        width: controls.rowWidth
-                        spacing: 6
-
-                        PillButton {
-                            label: "Rotate left"
-                            onClicked: root.rotate(-1)
-                        }
-                        PillButton {
-                            label: "Rotate right"
-                            onClicked: root.rotate(1)
-                        }
-                        PillButton {
-                            label: "Flip H"
-                            active: root.flipHorizontal
-                            onClicked: root.flipHorizontal = !root.flipHorizontal
-                        }
-                        PillButton {
-                            label: "Flip V"
-                            active: root.flipVertical
-                            onClicked: root.flipVertical = !root.flipVertical
-                        }
-
-                        Item { width: 12; height: 1 }
-
-                        Row {
-                            height: 26
-                            spacing: 6
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: "Straighten"
-                                font.family: Theme.fontFamily
-                                font.pixelSize: 11
-                                color: Theme.mutedText
-                            }
-                            Slider {
-                                id: straightenSlider
-                                objectName: "straightenSlider"
-                                width: controls.compact ? 100 : 130
-                                // The row's height, not the style's taller
-                                // default, so a wrapped row cannot reach the
-                                // buttons above it.
-                                height: 26
-                                anchors.verticalCenter: parent.verticalCenter
-                                from: -15
-                                to: 15
-                                stepSize: 0.5
-                                value: root.straighten
-                                onMoved: root.straighten = value
-                            }
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: 36
-                                text: root.straighten.toFixed(1) + "°"
-                                font.family: Theme.fontFamily
-                                font.pixelSize: 11
-                                color: Theme.foreground
-                            }
-                        }
-                    }
-                }
-
-                Row {
-                    id: resizeRow
-                    width: parent.width
-
-                    Text {
-                        visible: !controls.compact
-                        width: controls.labelWidth
-                        height: 26
-                        verticalAlignment: Text.AlignVCenter
-                        text: "Resize"
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 11
-                        color: Theme.mutedText
-                    }
-
-                    Flow {
-                        width: controls.rowWidth - (controls.wide ? actions.width + 16 : 0)
-                        spacing: 6
-
-                        PillButton {
-                            label: "Original size"
-                            active: root.targetWidth === 0 && root.targetHeight === 0
-                            onClicked: root.setScale(0)
-                        }
-                        PillButton {
-                            label: "75%"
-                            onClicked: root.setScale(75)
-                        }
-                        PillButton {
-                            label: "50%"
-                            onClicked: root.setScale(50)
-                        }
-                        PillButton {
-                            label: "25%"
-                            onClicked: root.setScale(25)
-                        }
-
-                        Item { width: 12; height: 1 }
-
-                        Row {
-                            spacing: 6
-                            TextField {
-                                id: widthField
-                                objectName: "correctionWidth"
-                                width: controls.compact ? 72 : 92
-                                height: 26
-                                topPadding: 0
-                                bottomPadding: 0
-                                verticalAlignment: TextInput.AlignVCenter
-                                placeholderText: "W"
-                                text: root.targetWidth > 0 ? String(root.targetWidth) : ""
-                                font.family: Theme.fontFamily
-                                font.pixelSize: 12
-                                color: Theme.brightForeground
-                                inputMethodHints: Qt.ImhDigitsOnly
-                                validator: IntValidator { bottom: 1; top: 40000 }
-                                background: Rectangle {
-                                    color: root.shade(Theme.darkerBackground, 0.6)
-                                    radius: Theme.cornerRadius > 0 ? Math.min(4, Theme.cornerRadius) : 3
-                                    border.width: 1
-                                    border.color: root.shade(Theme.foreground, 0.2)
-                                }
-                                onEditingFinished: root.targetWidth = text === "" ? 0 : parseInt(text)
-                            }
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: "×"
-                                color: Theme.mutedText
-                                font.family: Theme.fontFamily
-                                font.pixelSize: 12
-                            }
-                            TextField {
-                                id: heightField
-                                objectName: "correctionHeight"
-                                width: controls.compact ? 72 : 92
-                                height: 26
-                                topPadding: 0
-                                bottomPadding: 0
-                                verticalAlignment: TextInput.AlignVCenter
-                                placeholderText: "H"
-                                text: root.targetHeight > 0 ? String(root.targetHeight) : ""
-                                font.family: Theme.fontFamily
-                                font.pixelSize: 12
-                                color: Theme.brightForeground
-                                inputMethodHints: Qt.ImhDigitsOnly
-                                validator: IntValidator { bottom: 1; top: 40000 }
-                                background: Rectangle {
-                                    color: root.shade(Theme.darkerBackground, 0.6)
-                                    radius: Theme.cornerRadius > 0 ? Math.min(4, Theme.cornerRadius) : 3
-                                    border.width: 1
-                                    border.color: root.shade(Theme.foreground, 0.2)
-                                }
-                                onEditingFinished: root.targetHeight = text === "" ? 0 : parseInt(text)
-                            }
-                        }
-                    }
-                }
-
+                // Keeps the end of the Crop line clear for the result.
                 Item {
-                    id: footer
-                    visible: !controls.wide
-                    width: parent.width
+                    visible: controls.wide
+                    width: result.width + 10
+                    height: 26
+                }
+
+                LineBreak {}
+                GroupRule { next: rotateLeft }
+
+                GroupLabel {
+                    text: "Rotate"
+                }
+                PillButton {
+                    id: rotateLeft
+                    label: controls.compact ? "↺" : "Rotate left"
+                    toolTip: "Rotate left"
+                    onClicked: root.rotate(-1)
+                }
+                PillButton {
+                    label: controls.compact ? "↻" : "Rotate right"
+                    toolTip: "Rotate right"
+                    onClicked: root.rotate(1)
+                }
+                PillButton {
+                    label: "Flip H"
+                    active: root.flipHorizontal
+                    onClicked: root.flipHorizontal = !root.flipHorizontal
+                }
+                PillButton {
+                    label: "Flip V"
+                    active: root.flipVertical
+                    onClicked: root.flipVertical = !root.flipVertical
+                }
+
+                Row {
+                    height: 26
+                    spacing: 6
+                    leftPadding: controls.compact ? 0 : 12
+                    Text {
+                        visible: !controls.compact
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "Straighten"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 11
+                        color: Theme.mutedText
+                    }
+                    Slider {
+                        id: straightenSlider
+                        objectName: "straightenSlider"
+                        width: controls.compact ? 100 : 130
+                        // The row's height, not the style's taller default,
+                        // so a wrapped line cannot reach the buttons above it.
+                        height: 26
+                        anchors.verticalCenter: parent.verticalCenter
+                        from: -15
+                        to: 15
+                        stepSize: 0.5
+                        value: root.straighten
+                        onMoved: root.straighten = value
+                    }
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 36
+                        text: root.straighten.toFixed(1) + "°"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 11
+                        color: Theme.foreground
+                    }
+                }
+
+                LineBreak {}
+                GroupRule { next: originalSize }
+
+                GroupLabel {
+                    id: resizeLabel
+                    text: "Resize"
+                }
+                PillButton {
+                    id: originalSize
+                    label: controls.compact ? "100%" : "Original size"
+                    toolTip: "Original size"
+                    active: root.targetWidth === 0 && root.targetHeight === 0
+                    onClicked: root.setScale(0)
+                }
+                PillButton {
+                    label: "75%"
+                    onClicked: root.setScale(75)
+                }
+                PillButton {
+                    label: "50%"
+                    onClicked: root.setScale(50)
+                }
+                PillButton {
+                    label: "25%"
+                    onClicked: root.setScale(25)
+                }
+
+                Row {
+                    spacing: 6
+                    leftPadding: controls.compact ? 0 : 12
+                    TextField {
+                        id: widthField
+                        objectName: "correctionWidth"
+                        width: controls.compact ? 64 : 92
+                        height: 26
+                        topPadding: 0
+                        bottomPadding: 0
+                        verticalAlignment: TextInput.AlignVCenter
+                        placeholderText: "W"
+                        text: root.targetWidth > 0 ? String(root.targetWidth) : ""
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 12
+                        color: Theme.brightForeground
+                        inputMethodHints: Qt.ImhDigitsOnly
+                        validator: IntValidator { bottom: 1; top: 40000 }
+                        background: Rectangle {
+                            color: root.shade(Theme.darkerBackground, 0.6)
+                            radius: Theme.cornerRadius > 0 ? Math.min(4, Theme.cornerRadius) : 3
+                            border.width: 1
+                            border.color: root.shade(Theme.foreground, 0.2)
+                        }
+                        onEditingFinished: root.targetWidth = text === "" ? 0 : parseInt(text)
+                    }
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "×"
+                        color: Theme.mutedText
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 12
+                    }
+                    TextField {
+                        id: heightField
+                        objectName: "correctionHeight"
+                        width: controls.compact ? 64 : 92
+                        height: 26
+                        topPadding: 0
+                        bottomPadding: 0
+                        verticalAlignment: TextInput.AlignVCenter
+                        placeholderText: "H"
+                        text: root.targetHeight > 0 ? String(root.targetHeight) : ""
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 12
+                        color: Theme.brightForeground
+                        inputMethodHints: Qt.ImhDigitsOnly
+                        validator: IntValidator { bottom: 1; top: 40000 }
+                        background: Rectangle {
+                            color: root.shade(Theme.darkerBackground, 0.6)
+                            radius: Theme.cornerRadius > 0 ? Math.min(4, Theme.cornerRadius) : 3
+                            border.width: 1
+                            border.color: root.shade(Theme.foreground, 0.2)
+                        }
+                        onEditingFinished: root.targetHeight = text === "" ? 0 : parseInt(text)
+                    }
+                }
+
+                // Keeps the end of the Resize line clear for the actions.
+                Item {
+                    visible: controls.wide
+                    width: actions.width + 10
                     height: 26
                 }
             }
@@ -760,9 +755,9 @@ Item {
                 id: result
                 objectName: "correctionResult"
                 x: controls.wide ? controls.width - width : 0
-                y: (controls.wide ? cropRow.y : footer.y) + (26 - height) / 2
+                y: (controls.wide ? cropLabel.y : actions.y) + (26 - height) / 2
                 // Capped when wide, so a long error elides rather than
-                // squeezing the ratios off their row.
+                // squeezing the ratios off their line.
                 width: controls.wide ? Math.min(Math.ceil(resultMetrics.advanceWidth),
                                                 controls.width * 0.4)
                                      : controls.width - actions.width - 12
@@ -802,7 +797,7 @@ Item {
                 id: actions
                 objectName: "correctionActions"
                 x: controls.width - width
-                y: controls.wide ? resizeRow.y : footer.y
+                y: controls.wide ? resizeLabel.y : flow.height + controls.footerGap
                 spacing: 8
 
                 PillButton {
