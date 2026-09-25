@@ -430,10 +430,81 @@ private slots:
     click(pill(sheet, QStringLiteral("16:9")));
     QVERIFY2(qAbs(cropRatio() - 16.0 / 9.0) < 0.02, qPrintable(QString::number(cropRatio())));
 
+    // Portrait presets on a landscape picture: the frame is height-bound.
+    click(pill(sheet, QStringLiteral("9:16")));
+    QCOMPARE(sheet->property("cropAspectLabel").toString(), QStringLiteral("9:16"));
+    QVERIFY2(qAbs(cropRatio() - 9.0 / 16.0) < 0.02, qPrintable(QString::number(cropRatio())));
+    QCOMPARE(sheet->property("cropH").toDouble(), 1.0);
+
+    click(pill(sheet, QStringLiteral("2:3")));
+    QVERIFY2(qAbs(cropRatio() - 2.0 / 3.0) < 0.02, qPrintable(QString::number(cropRatio())));
+
+    click(pill(sheet, QStringLiteral("3:4")));
+    QVERIFY2(qAbs(cropRatio() - 3.0 / 4.0) < 0.02, qPrintable(QString::number(cropRatio())));
+
     click(pill(sheet, QStringLiteral("Free")));
     QCOMPARE(sheet->property("cropAspect").toDouble(), 0.0);
     QCOMPARE(sheet->property("cropW").toDouble(), 1.0);
     QCOMPARE(sheet->property("cropH").toDouble(), 1.0);
+  }
+
+  void correctionControlsKeepClearOfEachOther() {
+    const QString path = m_scratch.filePath(QStringLiteral("layout-disposable.png"));
+    QVERIFY(QImage(120, 80, QImage::Format_RGB32).save(path));
+    const auto cleanup = qScopeGuard([&] {
+      invoke("dismissTopLayer");
+      QFile::remove(path);
+      m_window->resize(1280, 820);
+    });
+
+    QQuickItem* sheet = item("correctionSheet");
+    perform(QStringLiteral("corrections"), path);
+    QTRY_VERIFY(sheet->isVisible());
+    QTRY_COMPARE(item("correctionPreview")->property("status").toInt(), 1);
+    QQuickItem* controls = item("correctionControls");
+
+    // Wide, the result ends the ratio row and the actions end the resize row;
+    // in the smallest window both drop to a line of their own. Either way no
+    // control may cover another or leave the sheet's panel.
+    for (const QSize size : {QSize(1280, 820), QSize(560, 420)}) {
+      m_window->resize(size);
+      QTRY_COMPARE(controls->property("wide").toBool(), size.width() >= 1280);
+      QTest::qWait(50);
+
+      QList<QQuickItem*> parts;
+      find(controls, [&parts](QQuickItem* candidate) {
+        const bool control = candidate->property("floating").isValid() ||
+                             candidate->objectName() == QStringLiteral("correctionResult") ||
+                             candidate->objectName() == QStringLiteral("straightenSlider") ||
+                             candidate->objectName().startsWith(QStringLiteral("correctionWidth")) ||
+                             candidate->objectName().startsWith(QStringLiteral("correctionHeight"));
+        if (control && candidate->isVisible() && candidate->width() > 0) {
+          parts.append(candidate);
+        }
+        return false;
+      });
+      QVERIFY(parts.size() >= 20);
+
+      const auto rect = [](QQuickItem* part) {
+        return part->mapRectToScene(QRectF(0, 0, part->width(), part->height()));
+      };
+      const QRectF panel = rect(controls->parentItem());
+      for (qsizetype i = 0; i < parts.size(); ++i) {
+        const QRectF a = rect(parts[i]);
+        QVERIFY2(panel.contains(a), qPrintable(parts[i]->property("label").toString()));
+        for (qsizetype j = i + 1; j < parts.size(); ++j) {
+          const QRectF overlap = a.intersected(rect(parts[j]));
+          const auto name = [&rect](QQuickItem* part) {
+            const QRectF r = rect(part);
+            return part->objectName() + QLatin1Char(' ') + part->property("label").toString() +
+                   QStringLiteral(" %1,%2 %3x%4").arg(r.x()).arg(r.y()).arg(r.width()).arg(r.height());
+          };
+          QVERIFY2(overlap.width() < 1 || overlap.height() < 1,
+                   qPrintable(QStringLiteral("%1x%2: ").arg(size.width()).arg(size.height()) +
+                              name(parts[i]) + QStringLiteral(" / ") + name(parts[j])));
+        }
+      }
+    }
   }
 
   void correctionSheetCopiesTheSelectedRegion() {
