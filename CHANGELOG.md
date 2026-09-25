@@ -33,8 +33,9 @@
   Resize rows instead of one strip that wrapped wherever it ran out of room.
   On a wide sheet the output size ends the Crop row and Reset, Cancel, Copy
   region and Save a copy end the Resize row; a narrow one gives them a line of
-  their own, and the smallest window drops the row labels. Full frame is gone:
-  it did exactly what Free does.
+  their own. The smallest window drops the row labels and packs the groups onto
+  shared lines with a rule between them, so the preview keeps its height. Full
+  frame is gone: it did exactly what Free does.
 
 ### Fixed
 
