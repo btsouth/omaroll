@@ -11,15 +11,6 @@
 
 #include <algorithm>
 
-namespace {
-
-QString suffixOf(const QString& name) {
-  const qsizetype dot = name.lastIndexOf(QLatin1Char('.'));
-  return dot < 0 ? QString() : name.mid(dot + 1);
-}
-
-} // namespace
-
 ViewerSession::ViewerSession(QObject* parent) : QObject(parent) {
   // A burst of writes (a download landing, a batch export) settles before the
   // folder is read again.
@@ -48,13 +39,12 @@ QString ViewerSession::folder() const {
   return current.isEmpty() ? QString() : QFileInfo(current).absolutePath();
 }
 
-bool ViewerSession::isVideo() const { return CaptureScanner::isVideo(suffixOf(path())); }
+bool ViewerSession::isVideo() const { return CaptureScanner::isVideo(m_mediaSuffix); }
 
 bool ViewerSession::isAnimated() const {
   // The same rule the library viewer uses: these two may hold several frames,
   // and AnimatedImage shows a single-frame file just as well.
-  const QString suffix = suffixOf(path()).toLower();
-  return suffix == u"gif" || suffix == u"webp";
+  return m_mediaSuffix == u"gif" || m_mediaSuffix == u"webp";
 }
 
 void ViewerSession::open(const QStringList& paths) {
@@ -117,11 +107,11 @@ QUrl ViewerSession::neighbourUrl(int offset) const {
 }
 
 bool ViewerSession::neighbourIsVideo(int offset) const {
-  return CaptureScanner::isVideo(suffixOf(neighbourUrl(offset).toLocalFile()));
+  return CaptureScanner::isVideo(CaptureScanner::mediaSuffix(neighbourUrl(offset).toLocalFile()));
 }
 
 bool ViewerSession::neighbourIsAnimated(int offset) const {
-  const QString suffix = suffixOf(neighbourUrl(offset).toLocalFile()).toLower();
+  const QString suffix = CaptureScanner::mediaSuffix(neighbourUrl(offset).toLocalFile());
   return suffix == u"gif" || suffix == u"webp";
 }
 
@@ -156,7 +146,7 @@ void ViewerSession::openInLibrary() {
 }
 
 bool ViewerSession::isViewable(const QString& path) {
-  const QString suffix = suffixOf(QFileInfo(path).fileName());
+  const QString suffix = CaptureScanner::mediaSuffix(path);
   return CaptureScanner::isImage(suffix) || CaptureScanner::isVideo(suffix);
 }
 
@@ -174,7 +164,7 @@ QStringList ViewerSession::siblings(const QString& folder, const QString& keep) 
     if (name.startsWith(QLatin1Char('.')) && !(keepHere && name == kept)) {
       continue;
     }
-    const QString suffix = suffixOf(name);
+    const QString suffix = CaptureScanner::mediaSuffix(directory.filePath(name));
     if (CaptureScanner::isImage(suffix) || CaptureScanner::isVideo(suffix)) {
       names.append(name);
     }
@@ -226,14 +216,19 @@ QSize ViewerSession::preferredWindowSize(const QSize& available) {
 void ViewerSession::setSequence(const QStringList& paths, int index) {
   const QString before = path();
   const int beforeIndex = m_index;
+  const QString beforeSuffix = m_mediaSuffix;
+  const double beforeStamp = m_stamp;
   const bool listChanged = paths != m_paths;
   m_paths = paths;
   m_index = paths.isEmpty() ? -1 : std::clamp(index, 0, int(paths.size()) - 1);
   if (listChanged) {
     emit sequenceChanged();
   }
-  if (path() != before || m_index != beforeIndex) {
-    refreshDetails();
+  // A filename without an extension can change medium when replaced. Reopen
+  // and directory relists must refresh it even when the sequence is unchanged.
+  refreshDetails();
+  if (path() != before || m_index != beforeIndex || m_mediaSuffix != beforeSuffix ||
+      m_stamp != beforeStamp) {
     emit currentChanged();
   }
 }
@@ -248,6 +243,7 @@ void ViewerSession::setIndex(int index) {
 }
 
 void ViewerSession::refreshDetails() {
+  m_mediaSuffix = CaptureScanner::mediaSuffix(path());
   const QFileInfo info(path());
   if (path().isEmpty() || !info.exists()) {
     m_stamp = 0;

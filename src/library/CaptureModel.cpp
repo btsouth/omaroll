@@ -215,7 +215,7 @@ void CaptureModel::addExtraFiles(const QStringList& paths) {
   const qsizetype before = m_extraFiles.size();
   for (const QString& path : paths) {
     const QFileInfo info(path);
-    if (info.isFile() && CaptureScanner::isSupported(info.suffix())) {
+    if (info.isFile() && CaptureScanner::isSupported(CaptureScanner::mediaSuffix(path))) {
       m_extraFiles.insert(info.canonicalFilePath());
     }
   }
@@ -558,7 +558,8 @@ void CaptureModel::adoptResults(ScanResult result) {
       kept.insert(record.path);
       if (record.modified == fresh.modified && record.bytes == fresh.bytes &&
           record.kind == fresh.kind && record.video == fresh.video &&
-          record.document == fresh.document && record.captured == fresh.captured &&
+          record.document == fresh.document && record.animated == fresh.animated &&
+          record.captured == fresh.captured &&
           record.hasProducerTimestamp == fresh.hasProducerTimestamp &&
           record.favorite == fresh.favorite && record.hidden == fresh.hidden) {
         continue;

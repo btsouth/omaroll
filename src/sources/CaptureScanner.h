@@ -10,7 +10,7 @@
 
 // Walks the watched roots and turns files into CaptureRecords.
 //
-// Classification is filename-pattern first, then extension. That order is the
+// Classification is filename-pattern first, then medium. That order is the
 // whole reason sections are possible: Omarchy writes screenshots into the same
 // directory as every other image, so only the name separates "a screenshot I
 // took" from "a photo I downloaded".
@@ -44,4 +44,8 @@ public:
   [[nodiscard]] static bool isVideo(const QString& suffix);
   [[nodiscard]] static bool isDocument(const QString& suffix);
   [[nodiscard]] static bool isSupported(const QString& suffix);
+
+  // Existing extensions stay authoritative. Without one, inspect at most
+  // 16 KiB of a regular file and accept only recognized image/video types.
+  [[nodiscard]] static QString mediaSuffix(const QString& path);
 };

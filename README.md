@@ -72,6 +72,9 @@ omaroll ~/Pictures
 omaroll --library photo.jpg
 ```
 
+Images and videos without a filename extension are recognized from their file
+headers. Their names stay unchanged; unrelated files are ignored.
+
 Several files can be opened together, in the order given:
 
 ```bash

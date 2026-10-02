@@ -107,6 +107,7 @@ private:
   double m_stamp = 0;
   QString m_sizeLabel;
   QString m_dateLabel;
+  QString m_mediaSuffix;
   // The folder being shown and the opened file, for relisting after a change.
   QString m_folder;
   QString m_opened;

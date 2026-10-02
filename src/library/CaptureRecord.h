@@ -35,7 +35,8 @@ struct CaptureRecord {
   // in place (a recording finalised by omarchy-capture-screenrecording) gets a
   // fresh tile rather than the cached old one.
   qint64 modified = 0;
-  // The medium, decided by extension. Kept apart from kind because a Download
+  // The medium, decided by extension or an extensionless file's header.
+  // Kept apart from kind because a Download
   // can be either, and everything that plays, scrubs or trims keys off this.
   bool video = false;
   // Documents currently means PDF. Kept separate from Kind because a PDF in
@@ -54,6 +55,8 @@ struct CaptureRecord {
   // Stars, 1 to 5; zero is unrated.
   int rating = 0;
   QString caption;
+  // GIF/WebP use the animated image component, including extensionless files.
+  bool animated = false;
 
   [[nodiscard]] bool isVideo() const { return video; }
   [[nodiscard]] bool isDocument() const { return document || kind == Document; }
