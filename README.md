@@ -43,12 +43,12 @@ on them.
 ## What it does
 
 - **Opens a file and gets out of the way.** A picture or video opened from the
-  file manager fills a window in its own shape. Pictures get one bar of the
-  usual controls (zoom, actual size, previous, slideshow, next, rotate and
-  delete) and videos a thin bar of their own, both fading when the pointer
-  rests. The arrow keys step through the folder in name order, and the next
-  picture is decoded before you ask for it. Nothing is scanned to get there.
-  Enter hands the file to the library when you want the rest.
+  file manager opens in a normal-sized window and fills it. Pictures get one
+  bar of the usual controls (zoom, actual size, previous, slideshow, next,
+  rotate and delete) and videos a thin bar of their own, both fading when the
+  pointer rests. The arrow keys step through the folder in name order, and the
+  next picture is decoded before you ask for it. Nothing is scanned to get
+  there. Enter hands the file to the library when you want the rest.
 - **Sees everything you already have.** Screenshots, recordings, pictures,
   videos, PDFs and downloads, grouped by day, newest first. Add any other folder to
   the library from Browse or Settings, then search and switch between sources,
@@ -341,8 +341,8 @@ o.window("^(io\\.github\\.tsouth89\\.omaroll)$", { opacity = "1 1" })
 ```
 
 The same file can float the viewer, centred, the way Omarchy floats imv and
-mpv. The viewer then opens at a size that fits the picture, and the library
-keeps its tile:
+mpv. The viewer then opens at most of the screen's size, and the library keeps
+its tile:
 
 ```lua
 o.window({ class = "^(io\\.github\\.tsouth89\\.omaroll)$", title = ".* · Omaroll" }, { float = true })

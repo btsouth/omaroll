@@ -329,11 +329,10 @@ public:
   void open(const QStringList& files) {
     m_session.open(files);
     if (!m_window->isVisible()) {
-      // A floating window opens around the picture. A tiling compositor
-      // ignores the request and gives the window its tile instead.
+      // A floating window opens at this size. A tiling compositor ignores
+      // the request and gives the window its tile instead.
       if (const QScreen* screen = m_window->screen()) {
-        m_window->resize(ViewerSession::preferredWindowSize(
-            files.first(), screen->availableGeometry().size(), screen->devicePixelRatio()));
+        m_window->resize(ViewerSession::preferredWindowSize(screen->availableGeometry().size()));
       }
       m_window->setWindowStates(Qt::WindowNoState);
       m_window->show();

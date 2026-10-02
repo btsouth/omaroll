@@ -83,11 +83,9 @@ public:
   // out, except |keep|, which is always listed: it is the file the user opened.
   [[nodiscard]] static QStringList siblings(const QString& folder, const QString& keep = {});
 
-  // A floating window in the picture's own shape, in logical pixels: scaled
-  // down to fit most of |available|, or up to a comfortable size when the
-  // picture is small. Videos and unreadable files get a 16:9 frame.
-  [[nodiscard]] static QSize preferredWindowSize(const QString& path, const QSize& available,
-                                                 qreal devicePixelRatio);
+  // The viewer's window in logical pixels: most of |available|, landscape,
+  // the same for every file, with each picture fitted inside it.
+  [[nodiscard]] static QSize preferredWindowSize(const QSize& available);
 
 signals:
   void currentChanged();

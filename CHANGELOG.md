@@ -10,8 +10,8 @@
   order, the next picture is decoded ahead, and the wheel and a pinch zoom
   around the pointer. Pictures get one bar of the usual controls (zoom, actual
   size, previous, slideshow, next, rotate and delete) and videos a thin bar of
-  their own. The window takes the first picture's shape, and a small picture
-  is scaled up to fill it. Nothing is scanned to open a file; Enter hands it
+  their own. The window opens at most of the screen's size, the same for
+  every file, and each picture is fitted inside it, a small one scaled up. Nothing is scanned to open a file; Enter hands it
   to the library. Folders, PDFs and a plain launch
   still open the library, and so does `--library` with any file.
 - The viewer's window can float centred like imv and mpv; the rule ships in

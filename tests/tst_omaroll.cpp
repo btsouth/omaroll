@@ -372,37 +372,18 @@ private slots:
     QCOMPARE(library.first().first().toString(), QStringLiteral("/x/1.png"));
   }
 
-  void viewerWindowHugsThePicture() {
-    QTemporaryDir dir;
-    QVERIFY(dir.isValid());
-    const QString wide = dir.filePath(QStringLiteral("wide.png"));
-    QImage(3000, 1000, QImage::Format_RGB32).save(wide);
-    const QString small = dir.filePath(QStringLiteral("small.png"));
-    QImage(200, 100, QImage::Format_RGB32).save(small);
-    const QString retina = dir.filePath(QStringLiteral("retina.png"));
-    QImage(1600, 1200, QImage::Format_RGB32).save(retina);
-    const QSize screen(1920, 1080);
-
-    // Scaled into most of the screen, keeping the picture's shape.
-    const QSize fitted = ViewerSession::preferredWindowSize(wide, screen, 1);
-    QVERIFY(fitted.width() <= qRound(1920 * 0.82) && fitted.height() <= qRound(1080 * 0.82));
-    QVERIFY(qAbs(double(fitted.width()) / fitted.height() - 3.0) < 0.02);
-    // A small picture keeps its shape at a comfortable size, rather than
-    // sitting in a fixed frame much bigger than it.
-    QCOMPARE(ViewerSession::preferredWindowSize(small, screen, 1), QSize(480, 240));
-    const QString square = dir.filePath(QStringLiteral("square.jpg"));
-    QImage(400, 400, QImage::Format_RGB32).save(square);
-    QCOMPARE(ViewerSession::preferredWindowSize(square, QSize(1536, 864), 1.25), QSize(480, 480));
-    // No more than four source pixels per screen pixel, then the minimum.
-    const QString icon = dir.filePath(QStringLiteral("icon.png"));
-    QImage(16, 16, QImage::Format_ARGB32).save(icon);
-    QCOMPARE(ViewerSession::preferredWindowSize(icon, screen, 1), QSize(360, 240));
-    // Logical size on a scaled screen.
-    QCOMPARE(ViewerSession::preferredWindowSize(retina, screen, 2), QSize(800, 600));
-    // Videos and unreadable files get a 16:9 frame.
-    QCOMPARE(ViewerSession::preferredWindowSize(dir.filePath(QStringLiteral("clip.mp4")), screen, 1),
-             QSize(1152, 648));
+  void viewerWindowIsTheSameNormalSizeForEveryFile() {
+    // Most of a 16:9 screen, in its shape.
+    QCOMPARE(ViewerSession::preferredWindowSize(QSize(1920, 1080)), QSize(1536, 864));
+    QCOMPARE(ViewerSession::preferredWindowSize(QSize(1536, 864)), QSize(1229, 691));
+    // An ultrawide gets 16:9 rather than a letterbox strip.
+    QCOMPARE(ViewerSession::preferredWindowSize(QSize(3440, 1440)), QSize(2048, 1152));
+    // A portrait screen still gets a landscape window, 4:3 across its width.
+    QCOMPARE(ViewerSession::preferredWindowSize(QSize(1080, 1920)), QSize(864, 648));
+    QCOMPARE(ViewerSession::preferredWindowSize(QSize(700, 500)), QSize(640, 480));
+    QCOMPARE(ViewerSession::preferredWindowSize(QSize()), QSize(1180, 780));
   }
+
 
   void disabledXdgPictureDirectoryDoesNotScanHome() {
     const QByteArray previous = qgetenv("XDG_PICTURES_DIR");

@@ -6,17 +6,12 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
-#include <QImageIOHandler>
-#include <QImageReader>
 #include <QLocale>
 #include <QtConcurrent>
 
 #include <algorithm>
 
 namespace {
-
-// The long side a small picture's window grows to, in logical pixels.
-constexpr qreal kComfortableLongSide = 480;
 
 QString suffixOf(const QString& name) {
   const qsizetype dot = name.lastIndexOf(QLatin1Char('.'));
@@ -210,41 +205,20 @@ QStringList ViewerSession::siblings(const QString& folder, const QString& keep) 
   return paths;
 }
 
-QSize ViewerSession::preferredWindowSize(const QString& path, const QSize& available,
-                                         qreal devicePixelRatio) {
+QSize ViewerSession::preferredWindowSize(const QSize& available) {
   if (!available.isValid() || available.isEmpty()) {
     return QSize(1180, 780);
   }
-  const qreal ratio = std::max<qreal>(1, devicePixelRatio);
-  const QSizeF room = QSizeF(available) * 0.82;
-  QSizeF media;
-  if (!CaptureScanner::isVideo(suffixOf(path))) {
-    QImageReader reader(path);
-    QSize size = reader.size();
-    if (size.isValid() && (reader.transformation() & QImageIOHandler::TransformationRotate90)) {
-      size.transpose();
-    }
-    if (size.isValid() && !size.isEmpty()) {
-      media = QSizeF(size) / ratio;
-    }
+  // The same normal window for every file: most of the screen, landscape,
+  // between 4:3 and 16:9. A floating window cannot change shape once it is up,
+  // so one shaped like the first picture squeezed every picture after it.
+  const QSizeF room = QSizeF(available) * 0.8;
+  const qreal aspect = std::clamp(room.width() / room.height(), 4.0 / 3.0, 16.0 / 9.0);
+  QSizeF window(room.height() * aspect, room.height());
+  if (window.width() > room.width()) {
+    window = QSizeF(room.width(), room.width() / aspect);
   }
-  if (media.isEmpty()) {
-    media = QSizeF(16, 9).scaled(QSizeF(available) * 0.6, Qt::KeepAspectRatio);
-  }
-  if (media.width() > room.width() || media.height() > room.height()) {
-    media = media.scaled(room, Qt::KeepAspectRatio);
-  } else {
-    // A small picture gets a window of a comfortable size in its own shape,
-    // which the viewer fills by scaling it up, rather than a stamp in a big
-    // empty frame. Never past four source pixels per screen pixel.
-    const qreal longer = std::max(media.width(), media.height());
-    if (longer < kComfortableLongSide) {
-      media *= std::min(kComfortableLongSide / longer, qreal(4));
-    }
-  }
-  // The header's name and buttons need some room; anything narrower than this
-  // gets a band either side instead.
-  return media.toSize().expandedTo(QSize(360, 240)).boundedTo(available);
+  return window.toSize().expandedTo(QSize(640, 480)).boundedTo(available);
 }
 
 void ViewerSession::setSequence(const QStringList& paths, int index) {
