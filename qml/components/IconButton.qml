@@ -11,6 +11,8 @@ Item {
     id: root
 
     property string icon: ""
+    // A few controls read better as a word than as a glyph: "1:1", "Fit".
+    property string label: ""
     property string toolTip: ""
     property string shortcut: ""
     property bool active: false
@@ -23,7 +25,7 @@ Item {
 
     signal clicked()
 
-    implicitWidth: 34
+    implicitWidth: root.label !== "" ? Math.max(34, labelMetrics.advanceWidth + 18) : 34
     implicitHeight: 34
     opacity: root.enabled ? 1 : 0.42
     Accessible.role: Accessible.Button
@@ -33,6 +35,14 @@ Item {
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
+    }
+
+    TextMetrics {
+        id: labelMetrics
+        text: root.label
+        font.family: Theme.fontFamily
+        font.pixelSize: 12
+        font.weight: Font.DemiBold
     }
 
     Rectangle {
@@ -46,8 +56,19 @@ Item {
         Behavior on color { ColorAnimation { duration: 120; easing.type: Easing.OutQuad } }
     }
 
+    Text {
+        anchors.centerIn: parent
+        visible: root.label !== ""
+        text: root.label
+        font.family: Theme.fontFamily
+        font.pixelSize: 12
+        font.weight: Font.DemiBold
+        color: root.active || root.hovered ? Theme.brightForeground : Theme.foreground
+    }
+
     Icon {
         anchors.centerIn: parent
+        visible: root.label === ""
         name: root.icon
         size: root.iconSize
         color: root.active ? Theme.brightForeground

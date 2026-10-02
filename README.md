@@ -43,10 +43,12 @@ on them.
 ## What it does
 
 - **Opens a file and gets out of the way.** A picture or video opened from the
-  file manager shows edge to edge in its own window. The controls fade when the
-  pointer rests, the arrow keys step through the folder in name order, and the
-  next picture is decoded before you ask for it. Nothing is scanned to get
-  there. Enter hands the file to the library when you want the rest.
+  file manager fills a window in its own shape. Pictures get one bar of the
+  usual controls (zoom, actual size, previous, slideshow, next, rotate and
+  delete) and videos a thin bar of their own, both fading when the pointer
+  rests. The arrow keys step through the folder in name order, and the next
+  picture is decoded before you ask for it. Nothing is scanned to get there.
+  Enter hands the file to the library when you want the rest.
 - **Sees everything you already have.** Screenshots, recordings, pictures,
   videos, PDFs and downloads, grouped by day, newest first. Add any other folder to
   the library from Browse or Settings, then search and switch between sources,
@@ -277,8 +279,10 @@ omaroll photo.jpg
 omaroll clip.mp4
 ```
 
-A picture or video opens in the viewer: the media fills the window, and the
-name, the other files and the menu appear when the pointer moves. The arrow keys
+A picture or video opens in the viewer: the media fills the window, a small
+picture included, and the name, the controls and the menu appear when the
+pointer moves. Rotating turns the view only; a rotated copy is saved from the
+library. The arrow keys
 step through the pictures and videos in that folder, in the order a file manager
 shows them. Folders, PDFs and a plain `omaroll` open the library, and so does
 `--library` with any file:
@@ -307,7 +311,7 @@ so a favourite or rating set in one shows in the other.
 | `Home` `End` | First · last file, or the start · end of a video |
 | wheel · pinch · `+` `-` | Zoom around the pointer |
 | `0` · `1` · double click | Fit · actual size · toggle between them |
-| `R` · `Shift+R` | Rotate the view, never the file |
+| `R` · `Shift+R` | Rotate right · left, the view only, never the file |
 | `Space` · `K` · click | Play · pause a video or animation |
 | `J` `L` · `↑` `↓` · `M` | Seek ten seconds · volume · mute |
 | `[` `]` · `Backspace` · `C` | Speed · normal speed · cycle subtitles |

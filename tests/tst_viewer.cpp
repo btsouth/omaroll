@@ -164,6 +164,108 @@ private slots:
              QStringLiteral("shot 2.jpg"));
   }
 
+  // A small picture fills the window rather than sitting at its real size in
+  // the middle of it, and the real size is still one key away. The edges keep
+  // the theme's translucency, but the picture's own area never shows the
+  // desktop through it, even where a PNG is transparent.
+  void aSmallPictureFillsTheWindowAndStaysOpaque() {
+    const QString folder = m_scratch.filePath(QStringLiteral("small"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString path = folder + QStringLiteral("/headshot.png");
+    QImage picture(400, 300, QImage::Format_ARGB32);
+    picture.fill(QColor(200, 60, 40));
+    for (int y = 0; y < picture.height(); ++y) {
+      for (int x = 0; x < picture.width() / 2; ++x) {
+        picture.setPixelColor(x, y, Qt::transparent);
+      }
+    }
+    QVERIFY(picture.save(path));
+    open({path});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    const qreal actual = 1.0 / m_window->devicePixelRatio();
+    QVERIFY(prop("fitScale").toReal() > actual);
+    QCOMPARE(prop("viewScale").toReal(), 0.0);
+    QVERIFY(qAbs(prop("displayHeight").toReal() - m_window->height()) < 1);
+
+    QTest::keyClick(m_window, Qt::Key_1);
+    QCOMPARE(prop("effectiveScale").toReal(), actual);
+    QVERIFY(prop("viewScale").toReal() > 0);
+    QTest::keyClick(m_window, Qt::Key_0);
+    QCOMPARE(prop("viewScale").toReal(), 0.0);
+
+    // 4:3 in a 3:2 window leaves a band either side. The pointer rests in
+    // the middle, off the header, so the controls fade for the grab.
+    m_window->setProperty("chromeTimeout", 50);
+    QTest::mouseMove(m_window, QPoint(m_window->width() / 2, m_window->height() * 2 / 3));
+    QTRY_VERIFY(!prop("chromeShown").toBool());
+    QTRY_VERIFY(!item(QStringLiteral("viewerHeader"))->isVisible());
+    QTest::qWait(100);
+    const QImage frame = m_window->grabWindow();
+    QVERIFY(!frame.isNull());
+    const qreal scale = frame.devicePixelRatio();
+    const auto at = [&](qreal x, qreal y) { return frame.pixelColor(QPointF(x * scale, y * scale).toPoint()); };
+    const qreal left = (m_window->width() - prop("displayWidth").toReal()) / 2;
+    const qreal middleY = m_window->height() / 2.0;
+    QCOMPARE(at(left + 20, middleY).alpha(), 255);
+    const QColor red = at(m_window->width() - left - 20, middleY);
+    QVERIFY2(red.alpha() == 255 && red.red() > 150 && red.green() < 100,
+             qPrintable(red.name(QColor::HexArgb)));
+    if (m_theme->surfaceAlpha() < 0.99) {
+      QVERIFY2(at(4, middleY).alpha() < 255, qPrintable(at(4, middleY).name(QColor::HexArgb)));
+    }
+  }
+
+  void theToolbarHasTheCommonPictureControls() {
+    const QString folder = m_scratch.filePath(QStringLiteral("toolbar"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString first = folder + QStringLiteral("/a.jpg");
+    const QString second = folder + QStringLiteral("/b.jpg");
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), first));
+    QVERIFY(QFile::copy(media(QStringLiteral("shot 2.jpg")), second));
+    open({first});
+    QTRY_COMPARE(m_session->count(), 2);
+    QTRY_VERIFY(prop("imageReady").toBool());
+    m_window->setProperty("chromePinned", true);
+    QQuickItem* toolbar = item(QStringLiteral("viewerToolbar"));
+    QTRY_VERIFY(toolbar->isVisible());
+
+    click(item(QStringLiteral("viewerRotateRight")));
+    QCOMPARE(prop("viewRotation").toInt(), 90);
+    click(item(QStringLiteral("viewerRotateLeft")));
+    click(item(QStringLiteral("viewerRotateLeft")));
+    QCOMPARE(prop("viewRotation").toInt(), 270);
+    click(item(QStringLiteral("viewerRotateRight")));
+    QCOMPARE(prop("viewRotation").toInt(), 0);
+
+    QQuickItem* fit = item(QStringLiteral("viewerFitToggle"));
+    QCOMPARE(fit->property("label").toString(), QStringLiteral("1:1"));
+    click(item(QStringLiteral("viewerZoomIn")));
+    QVERIFY(prop("viewScale").toReal() > prop("fitScale").toReal());
+    QCOMPARE(fit->property("label").toString(), QStringLiteral("Fit"));
+    click(fit);
+    QCOMPARE(prop("viewScale").toReal(), 0.0);
+    click(fit);
+    QCOMPARE(prop("effectiveScale").toReal(), 1.0 / m_window->devicePixelRatio());
+    click(item(QStringLiteral("viewerZoomOut")));
+    click(item(QStringLiteral("viewerZoomOut")));
+    QCOMPARE(prop("viewScale").toReal(), 0.0);
+
+    click(item(QStringLiteral("viewerTrashButton")));
+    QQuickItem* confirm = item(QStringLiteral("viewerConfirm"));
+    QVERIFY(confirm->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QVERIFY(!confirm->isVisible());
+    QVERIFY(QFile::exists(first));
+
+    // The toolbar never sits over a video; the video has its own bar.
+    m_window->setProperty("chromePinned", false);
+    open({media(QStringLiteral("clip.mp4"))});
+    QVERIFY(!toolbar->isVisible());
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    player->pause();
+  }
+
   void stepsThroughTheFolderInNameOrder() {
     open({media(QStringLiteral("shot 2.jpg"))});
     // The folder is read off the GUI thread; the opened file shows first.
@@ -193,11 +295,13 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_PageDown);
     QCOMPARE(m_session->path(), m_order.at(1));
 
-    // The edge buttons do the same.
+    // The toolbar's buttons do the same, and stand in for the side arrows a
+    // video keeps.
     m_window->setProperty("chromePinned", true);
-    click(item(QStringLiteral("viewerNext")));
+    QVERIFY(!item(QStringLiteral("viewerNext"))->isVisible());
+    click(item(QStringLiteral("viewerToolbarNext")));
     QCOMPARE(m_session->path(), m_order.at(2));
-    click(item(QStringLiteral("viewerPrevious")));
+    click(item(QStringLiteral("viewerToolbarPrevious")));
     QCOMPARE(m_session->path(), m_order.at(1));
     m_window->setProperty("chromePinned", false);
   }

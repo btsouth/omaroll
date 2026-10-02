@@ -15,6 +15,9 @@
 
 namespace {
 
+// The long side a small picture's window grows to, in logical pixels.
+constexpr qreal kComfortableLongSide = 480;
+
 QString suffixOf(const QString& name) {
   const qsizetype dot = name.lastIndexOf(QLatin1Char('.'));
   return dot < 0 ? QString() : name.mid(dot + 1);
@@ -209,10 +212,10 @@ QStringList ViewerSession::siblings(const QString& folder, const QString& keep) 
 
 QSize ViewerSession::preferredWindowSize(const QString& path, const QSize& available,
                                          qreal devicePixelRatio) {
-  const QSize minimum(640, 480);
   if (!available.isValid() || available.isEmpty()) {
     return QSize(1180, 780);
   }
+  const qreal ratio = std::max<qreal>(1, devicePixelRatio);
   const QSizeF room = QSizeF(available) * 0.82;
   QSizeF media;
   if (!CaptureScanner::isVideo(suffixOf(path))) {
@@ -222,7 +225,7 @@ QSize ViewerSession::preferredWindowSize(const QString& path, const QSize& avail
       size.transpose();
     }
     if (size.isValid() && !size.isEmpty()) {
-      media = QSizeF(size) / std::max<qreal>(1, devicePixelRatio);
+      media = QSizeF(size) / ratio;
     }
   }
   if (media.isEmpty()) {
@@ -230,8 +233,18 @@ QSize ViewerSession::preferredWindowSize(const QString& path, const QSize& avail
   }
   if (media.width() > room.width() || media.height() > room.height()) {
     media = media.scaled(room, Qt::KeepAspectRatio);
+  } else {
+    // A small picture gets a window of a comfortable size in its own shape,
+    // which the viewer fills by scaling it up, rather than a stamp in a big
+    // empty frame. Never past four source pixels per screen pixel.
+    const qreal longer = std::max(media.width(), media.height());
+    if (longer < kComfortableLongSide) {
+      media *= std::min(kComfortableLongSide / longer, qreal(4));
+    }
   }
-  return media.toSize().expandedTo(minimum).boundedTo(available);
+  // The header's name and buttons need some room; anything narrower than this
+  // gets a band either side instead.
+  return media.toSize().expandedTo(QSize(360, 240)).boundedTo(available);
 }
 
 void ViewerSession::setSequence(const QStringList& paths, int index) {

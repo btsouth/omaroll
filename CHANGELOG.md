@@ -7,9 +7,12 @@
 - A quick viewer. A picture or video opened from the file manager fills a
   window of its own, with the name, the other files and a menu that fade in
   when the pointer moves. The arrow keys step through the folder in name
-  order, the next picture is decoded ahead, the wheel and a pinch zoom around
-  the pointer, and videos get one thin bar of controls. Nothing is scanned to
-  open a file; Enter hands it to the library. Folders, PDFs and a plain launch
+  order, the next picture is decoded ahead, and the wheel and a pinch zoom
+  around the pointer. Pictures get one bar of the usual controls (zoom, actual
+  size, previous, slideshow, next, rotate and delete) and videos a thin bar of
+  their own. The window takes the first picture's shape, and a small picture
+  is scaled up to fill it. Nothing is scanned to open a file; Enter hands it
+  to the library. Folders, PDFs and a plain launch
   still open the library, and so does `--library` with any file.
 - The viewer's window can float centred like imv and mpv; the rule ships in
   `/usr/share/omaroll/hypr/omaroll.lua`.

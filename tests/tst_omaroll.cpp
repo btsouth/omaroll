@@ -387,9 +387,17 @@ private slots:
     const QSize fitted = ViewerSession::preferredWindowSize(wide, screen, 1);
     QVERIFY(fitted.width() <= qRound(1920 * 0.82) && fitted.height() <= qRound(1080 * 0.82));
     QVERIFY(qAbs(double(fitted.width()) / fitted.height() - 3.0) < 0.02);
-    // Small pictures get the viewer's minimum around them.
-    QCOMPARE(ViewerSession::preferredWindowSize(small, screen, 1), QSize(640, 480));
-    // One source pixel per device pixel on a scaled screen.
+    // A small picture keeps its shape at a comfortable size, rather than
+    // sitting in a fixed frame much bigger than it.
+    QCOMPARE(ViewerSession::preferredWindowSize(small, screen, 1), QSize(480, 240));
+    const QString square = dir.filePath(QStringLiteral("square.jpg"));
+    QImage(400, 400, QImage::Format_RGB32).save(square);
+    QCOMPARE(ViewerSession::preferredWindowSize(square, QSize(1536, 864), 1.25), QSize(480, 480));
+    // No more than four source pixels per screen pixel, then the minimum.
+    const QString icon = dir.filePath(QStringLiteral("icon.png"));
+    QImage(16, 16, QImage::Format_ARGB32).save(icon);
+    QCOMPARE(ViewerSession::preferredWindowSize(icon, screen, 1), QSize(360, 240));
+    // Logical size on a scaled screen.
     QCOMPARE(ViewerSession::preferredWindowSize(retina, screen, 2), QSize(800, 600));
     // Videos and unreadable files get a 16:9 frame.
     QCOMPARE(ViewerSession::preferredWindowSize(dir.filePath(QStringLiteral("clip.mp4")), screen, 1),

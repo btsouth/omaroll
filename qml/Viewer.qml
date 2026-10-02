@@ -12,8 +12,9 @@ ApplicationWindow {
 
     width: 1180
     height: 780
-    minimumWidth: 480
-    minimumHeight: 320
+    // Small enough for a small picture's window, which keeps its shape.
+    minimumWidth: 320
+    minimumHeight: 240
     // Shown from C++ once the first file is set and the window is sized.
     visible: false
     // The file, then the app. Qt appends the app name to any title that does
@@ -22,6 +23,8 @@ ApplicationWindow {
     // title against ".* · Omaroll" floats this window and leaves the library
     // tiled.
     title: Session.fileName !== "" ? Session.fileName + " · Omaroll" : "Omaroll"
+    // The window paints nothing; the canvas below carries the theme's alpha,
+    // as the library's does, and the picture itself is always drawn opaque.
     color: "transparent"
 
     // How long the pointer may rest before the controls fade.
@@ -84,11 +87,13 @@ ApplicationWindow {
     readonly property bool sideways: root.viewRotation === 90 || root.viewRotation === 270
     readonly property real rotatedWidth: root.sideways ? root.sourceHeight : root.sourceWidth
     readonly property real rotatedHeight: root.sideways ? root.sourceWidth : root.sourceHeight
-    // Fitted, but never past one source pixel per device pixel: a small
-    // picture shows at its real size rather than blown up and soft.
+    // Fitted to the window, scaling a small picture up the way imv and mpv do,
+    // but never past four source pixels per screen pixel, where an icon would
+    // turn to mush. Actual size is one key away.
     readonly property real fitScale: root.rotatedWidth > 0 && root.rotatedHeight > 0
-        ? Math.min(stage.width / root.rotatedWidth, stage.height / root.rotatedHeight, 1 / root.dpr)
+        ? Math.min(stage.width / root.rotatedWidth, stage.height / root.rotatedHeight, 4 / root.dpr)
         : 0
+    readonly property real actualScale: 1 / root.dpr
     readonly property real effectiveScale: root.viewScale > 0 ? root.viewScale : root.fitScale
     readonly property real displayWidth: root.rotatedWidth * root.effectiveScale
     readonly property real displayHeight: root.rotatedHeight * root.effectiveScale
@@ -100,6 +105,7 @@ ApplicationWindow {
                                         || actionMenu.visible || confirm.visible
                                         || header.hovered || transport.hovered
                                         || previousButton.hovered || nextButton.hovered
+                                        || toolbar.hovered
                                         || transport.scrubbing
                                         || (Session.isVideo && !root.playing && !root.slideshowRunning)
     readonly property bool pointerHidden: !root.chromeShown
@@ -151,9 +157,12 @@ ApplicationWindow {
         if (Session.isVideo || root.fitScale <= 0) {
             return
         }
+        // Out as far as the fitted size, or the real size when a small
+        // picture is scaled up to fit; in to 32 pixels per source pixel.
+        const minimum = Math.min(root.fitScale, root.actualScale)
         const maximum = Math.max(root.fitScale * 2, 32 / root.dpr)
-        const next = Math.max(root.fitScale, Math.min(maximum, target))
-        if (next <= root.fitScale * 1.001) {
+        const next = Math.max(minimum, Math.min(maximum, target))
+        if (Math.abs(next - root.fitScale) <= root.fitScale * 0.001) {
             root.viewScale = 0
             zoomBadge.flash()
             return
@@ -176,7 +185,17 @@ ApplicationWindow {
     }
 
     function showActualSize(x, y) {
-        root.zoomTo(1 / root.dpr, x, y)
+        root.zoomTo(root.actualScale, x, y)
+    }
+
+    // The toolbar's 1:1 / Fit button.
+    function toggleFit() {
+        if (root.viewScale > 0) {
+            root.viewScale = 0
+            zoomBadge.flash()
+        } else {
+            root.showActualSize()
+        }
     }
 
     function rotate(clockwise) {
@@ -563,8 +582,8 @@ ApplicationWindow {
         onTriggered: if (root.slideshowRunning && root.visible) root.advanceSlideshow()
     }
 
-    // The canvas. Windowed, it is the theme's translucent surface, like the
-    // library; full screen there is nothing behind it worth showing.
+    // The canvas: the theme's translucent surface, like the library. Full
+    // screen there is nothing behind it worth showing, so it is solid there.
     Rectangle {
         anchors.fill: parent
         visible: root.fullScreen
@@ -601,6 +620,18 @@ ApplicationWindow {
                 x: (still.contentWidth - width) / 2
                 y: (still.contentHeight - height) / 2
 
+                // The picture's own area is solid, so a transparent PNG shows
+                // the theme's surface rather than the desktop through it.
+                Rectangle {
+                    objectName: "viewerPictureBacking"
+                    anchors.centerIn: parent
+                    width: stillLoader.width
+                    height: stillLoader.height
+                    rotation: root.viewRotation
+                    visible: root.stillReady && !root.imageError
+                    color: Theme.surfaceBackground
+                }
+
                 Loader {
                     id: stillLoader
                     anchors.centerIn: parent
@@ -629,8 +660,9 @@ ApplicationWindow {
                 source: root.visible && !Session.isVideo ? Session.url : ""
                 asynchronous: true
                 autoTransform: true
-                // Pixels stay crisp once zoomed well past their real size.
-                smooth: root.effectiveScale * root.dpr < 2
+                // Smooth while fitted, even when a small picture is scaled up;
+                // crisp pixels once zoomed well past their real size.
+                smooth: root.viewScale === 0 || root.effectiveScale * root.dpr < 2
                 mipmap: true
                 fillMode: Image.Stretch
                 // A preloaded neighbour is simply there; one that had to be
@@ -658,7 +690,7 @@ ApplicationWindow {
                 autoTransform: true
                 cache: false
                 playing: root.visible && root.animationPlaying
-                smooth: root.effectiveScale * root.dpr < 2
+                smooth: root.viewScale === 0 || root.effectiveScale * root.dpr < 2
                 fillMode: Image.Stretch
             }
         }
@@ -846,9 +878,12 @@ ApplicationWindow {
                     } else if (root.viewScale > 0) {
                         root.viewScale = 0
                     } else {
+                        // To the real size and back; a picture already shown
+                        // at its real size zooms to twice that instead.
                         const at = stage.mapFromItem(null, eventPoint.scenePosition)
-                        root.zoomTo(root.fitScale >= 1 / root.dpr ? root.fitScale * 2
-                                                                  : 1 / root.dpr, at.x, at.y)
+                        const actual = Math.abs(root.fitScale - root.actualScale)
+                                       > root.actualScale * 0.01
+                        root.zoomTo(actual ? root.actualScale : root.fitScale * 2, at.x, at.y)
                     }
                 }
             }
@@ -1084,7 +1119,8 @@ ApplicationWindow {
             anchors.left: parent.left
             anchors.leftMargin: 14
             anchors.verticalCenter: parent.verticalCenter
-            visible: Session.count > 1
+            // Pictures step from the toolbar; a video's bar has no room for it.
+            visible: Session.isVideo && Session.count > 1
             raised: true
             implicitWidth: 40
             implicitHeight: 40
@@ -1101,7 +1137,7 @@ ApplicationWindow {
             // Clear of the details card while it is open.
             anchors.rightMargin: root.infoOpen ? infoPanel.width + 28 : 14
             anchors.verticalCenter: parent.verticalCenter
-            visible: Session.count > 1
+            visible: Session.isVideo && Session.count > 1
             raised: true
             implicitWidth: 40
             implicitHeight: 40
@@ -1110,6 +1146,28 @@ ApplicationWindow {
             toolTip: "Next"
             shortcut: Session.isVideo ? "Page Down" : "Right"
             onClicked: root.step(1)
+        }
+
+        ViewerToolbar {
+            id: toolbar
+            objectName: "viewerToolbar"
+            visible: !Session.isVideo
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 16
+            compact: parent.width < 460
+            fitted: root.viewScale === 0
+            canStep: Session.count > 1
+            slideshowRunning: root.slideshowRunning
+            onZoomOut: root.zoomBy(1 / 1.25)
+            onZoomIn: root.zoomBy(1.25)
+            onToggleFit: root.toggleFit()
+            onPrevious: root.step(-1)
+            onNext: root.step(1)
+            onSlideshow: root.setSlideshow(!root.slideshowRunning)
+            onRotateLeft: root.rotate(false)
+            onRotateRight: root.rotate(true)
+            onTrash: root.requestTrash()
         }
 
         ViewerTransport {
@@ -1141,7 +1199,8 @@ ApplicationWindow {
         objectName: "viewerZoomBadge"
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
-        anchors.bottomMargin: 22
+        // Above the toolbar, which is up while the zoom is changing.
+        anchors.bottomMargin: toolbar.visible ? toolbar.height + 26 : 22
         width: zoomText.implicitWidth + 20
         height: zoomText.implicitHeight + 10
         radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, height / 2) : 3
