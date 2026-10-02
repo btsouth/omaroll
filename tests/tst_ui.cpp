@@ -2564,6 +2564,8 @@ private slots:
 
   void anExtensionlessLibraryPreviewFollowsAChangeOfMedium() {
     const QString path = QFileInfo(m_oddPath).dir().filePath(QStringLiteral("same-name-media"));
+    // Replaced under the tiles and the open preview, which may still ask.
+    m_disposablePaths.append(path);
     const auto cleanup = qScopeGuard([&] {
       invoke("dismissTopLayer");
       QFile::remove(path);
