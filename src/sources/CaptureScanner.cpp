@@ -9,6 +9,8 @@
 #include <QRegularExpression>
 #include <QSet>
 
+#include <algorithm>
+
 #include <sys/stat.h>
 
 namespace {
@@ -135,23 +137,94 @@ bool CaptureScanner::isSupported(const QString& suffix) {
 
 namespace {
 
-// A CodecID element (0x86) whose value starts with "V_", as in V_VP9 or
-// V_MPEG4/ISO/AVC. Audio-only Matroska carries only A_ codecs.
-bool hasMatroskaVideoTrack(const QByteArray& header) {
-  for (qsizetype at = header.indexOf('\x86'); at >= 0; at = header.indexOf('\x86', at + 1)) {
-    if (at + 1 >= header.size()) {
-      break;
+// One EBML variable-length number. Element IDs keep their length marker;
+// sizes drop it, and a size of all ones means "unknown", which live
+// recorders write for the segment.
+bool readVint(const QByteArray& data, qsizetype& at, quint64& value, bool keepMarker,
+              bool* unknown = nullptr) {
+  if (at >= data.size()) {
+    return false;
+  }
+  const auto first = static_cast<unsigned char>(data.at(at));
+  int width = 1;
+  while (width <= 8 && !(first & (0x80 >> (width - 1)))) {
+    ++width;
+  }
+  if (width > 8 || at + width > data.size()) {
+    return false;
+  }
+  const unsigned char payload = 0xFF >> width;
+  quint64 result = keepMarker ? first : (first & payload);
+  bool allOnes = (first & payload) == payload;
+  for (int i = 1; i < width; ++i) {
+    const auto byte = static_cast<unsigned char>(data.at(at + i));
+    result = (result << 8) | byte;
+    allOnes = allOnes && byte == 0xFF;
+  }
+  at += width;
+  value = result;
+  if (unknown) {
+    *unknown = !keepMarker && allOnes;
+  }
+  return true;
+}
+
+constexpr quint64 kSegment = 0x18538067;
+constexpr quint64 kTracks = 0x1654AE6B;
+constexpr quint64 kTrackEntry = 0xAE;
+constexpr quint64 kTrackType = 0x83;
+constexpr quint64 kCodecId = 0x86;
+
+// A track entry is video by its type (1) or a codec ID such as V_VP9.
+bool isVideoTrack(const QByteArray& data, qsizetype at, qsizetype end) {
+  while (at < end) {
+    quint64 id = 0;
+    quint64 size = 0;
+    if (!readVint(data, at, id, true) || !readVint(data, at, size, false)) {
+      return false;
     }
-    const auto lead = static_cast<unsigned char>(header.at(at + 1));
-    int width = 1;
-    while (width <= 8 && !(lead & (0x80 >> (width - 1)))) {
-      ++width;
+    const qsizetype length = qsizetype(std::min<quint64>(size, quint64(end - at)));
+    if (id == kTrackType && length == 1) {
+      return data.at(at) == 1;
     }
-    if (width <= 8 && header.mid(at + 1 + width, 2) == "V_") {
+    if (id == kCodecId && data.mid(at, std::min<qsizetype>(length, 2)) == "V_") {
       return true;
     }
+    at += length;
   }
   return false;
+}
+
+// Walks only Segment and Tracks on the way to the track entries, skipping
+// everything else by its size, all within the header that was read.
+bool hasVideoTrackIn(const QByteArray& data, qsizetype at, qsizetype end, int depth) {
+  while (at < end) {
+    quint64 id = 0;
+    quint64 size = 0;
+    bool unknown = false;
+    if (!readVint(data, at, id, true) || !readVint(data, at, size, false, &unknown)) {
+      return false;
+    }
+    const qsizetype stop = unknown || size > quint64(end - at) ? end : at + qsizetype(size);
+    if (id == kTrackEntry && depth == 2) {
+      if (isVideoTrack(data, at, stop)) {
+        return true;
+      }
+    } else if ((id == kSegment && depth == 0) || (id == kTracks && depth == 1)) {
+      if (hasVideoTrackIn(data, at, stop, depth + 1)) {
+        return true;
+      }
+    } else if (unknown) {
+      // Nothing past an element of unknown size can be found.
+      return false;
+    }
+    at = stop;
+  }
+  return false;
+}
+
+bool hasMatroskaVideoTrack(const QByteArray& header) {
+  return hasVideoTrackIn(header, 0, header.size(), 0);
 }
 
 } // namespace

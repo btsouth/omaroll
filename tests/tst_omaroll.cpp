@@ -313,9 +313,30 @@ private slots:
     QCOMPARE(ImageEditor::outputPathFor(paths.at(0)), paths.at(0) + QStringLiteral("-edited.png"));
   }
 
+  // A minimal Matroska header: one track of the given type and codec, in a
+  // segment of unknown size as a live recorder writes it.
+  static QByteArray matroska(char trackType, const QByteArray& codec) {
+    const QByteArray entry = QByteArray::fromHex("8381") + QByteArray(1, trackType) +
+                             QByteArray(1, '\x86') + QByteArray(1, char(0x80 | codec.size())) + codec;
+    const QByteArray tracks = QByteArray(1, '\xae') + QByteArray(1, char(0x80 | entry.size())) + entry;
+    return QByteArray::fromHex("1a45dfa38b4282886d6174726f736b61") +
+           QByteArray::fromHex("1853806701ffffffffffffff") + QByteArray::fromHex("1654ae6b") +
+           QByteArray(1, char(0x80 | tracks.size())) + tracks;
+  }
+
   void extensionlessDetectionRejectsNonMediaAndKeepsExtensionsAuthoritative() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
+    for (const auto& [type, codec] : {std::pair{char(1), QByteArray("V_VP9")},
+                                      std::pair{char(1), QByteArray("V_MPEG4/ISO/AVC")}}) {
+      const QString video = dir.filePath(QStringLiteral("live-recording"));
+      QFile file(video);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write(matroska(type, codec));
+      file.close();
+      QCOMPARE(CaptureScanner::mediaSuffix(video), QStringLiteral("mkv"));
+      QVERIFY(QFile::remove(video));
+    }
     const QList<QByteArray> contents{
         {}, "ordinary text", QByteArray(1024, '\x01'),
         QByteArray::fromHex("7f454c4602010100000000000000000002003e00"),
@@ -324,7 +345,10 @@ private slots:
         QByteArray("RIFF\x24\x00\x00\x00WAVEfmt ", 16),
         // Audio-only Matroska: generic container type, no V_ codec.
         QByteArray::fromHex("1a45dfa3934282886d6174726f736b61") +
-            QByteArray::fromHex("8685") + "A_AAC"};
+            QByteArray::fromHex("8685") + "A_AAC",
+        // Audio-only again, with "86 82 V_" in a Void element after the track.
+        // Only a CodecID inside a track entry counts.
+        matroska(2, "A_AAC") + QByteArray::fromHex("ec848682565f")};
     for (int i = 0; i < contents.size(); ++i) {
       const QString path = dir.filePath(QStringLiteral("not-media-%1").arg(i));
       QFile file(path);
