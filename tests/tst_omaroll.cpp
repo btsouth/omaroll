@@ -372,6 +372,28 @@ private slots:
     QCOMPARE(library.first().first().toString(), QStringLiteral("/x/1.png"));
   }
 
+  // Once the last file is gone the session stops watching, so a file that
+  // lands in the folder later cannot refill a viewer that has closed.
+  void viewerStopsWatchingOnceItsLastFileIsGone() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString only = dir.filePath(QStringLiteral("only.png"));
+    QVERIFY(QImage(4, 4, QImage::Format_RGB32).save(only));
+    ViewerSession session;
+    QSignalSpy emptied(&session, &ViewerSession::emptied);
+    session.open({only});
+    QTRY_VERIFY(!session.path().isEmpty());
+    QTest::qWait(100);
+    QVERIFY(QFile::remove(only));
+    session.forget(only);
+    QCOMPARE(session.count(), 0);
+    QCOMPARE(emptied.size(), 1);
+    QVERIFY(QImage(4, 4, QImage::Format_RGB32).save(dir.filePath(QStringLiteral("later.png"))));
+    QTest::qWait(900);
+    QCOMPARE(session.count(), 0);
+    QCOMPARE(emptied.size(), 1);
+  }
+
   void viewerWindowIsTheSameNormalSizeForEveryFile() {
     // Most of a 16:9 screen, in its shape.
     QCOMPARE(ViewerSession::preferredWindowSize(QSize(1920, 1080)), QSize(1536, 864));

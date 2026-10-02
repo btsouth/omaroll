@@ -133,7 +133,9 @@ void ViewerSession::forget(const QString& path) {
   QStringList remaining = m_paths;
   remaining.removeAt(removed);
   if (remaining.isEmpty()) {
-    setSequence({}, -1);
+    // Stop watching too, or a file landing in the folder later would refill
+    // a viewer that has already closed.
+    clear();
     emit emptied();
     return;
   }
@@ -277,7 +279,7 @@ void ViewerSession::applyListing(const QStringList& listed) {
     // An unreadable folder still shows the file that was opened. A folder
     // that emptied under the window has nothing left to show.
     if (current.isEmpty() || !QFileInfo::exists(current)) {
-      setSequence({}, -1);
+      clear();
       emit emptied();
     }
     return;

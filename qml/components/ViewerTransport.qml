@@ -300,13 +300,19 @@ Rectangle {
     WheelHandler {
         target: null
         acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+        // In proportion to the scroll: a wheel notch is 5%, and a touchpad
+        // swipe's many small events add up to the distance swiped rather than
+        // 5% each. An event with no vertical movement changes nothing.
         onWheel: function (event) {
             const delta = event.angleDelta.y !== 0 ? event.angleDelta.y : event.pixelDelta.y
-            Settings.videoVolume = Math.max(0, Math.min(1, Settings.videoVolume + (delta > 0 ? 0.05 : -0.05)))
+            event.accepted = true
+            if (delta === 0) {
+                return
+            }
+            Settings.videoVolume = Math.max(0, Math.min(1, Settings.videoVolume + 0.05 * delta / 120))
             if (Settings.videoVolume > 0) {
                 Settings.videoMuted = false
             }
-            event.accepted = true
         }
     }
 }
