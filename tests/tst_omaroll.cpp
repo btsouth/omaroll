@@ -7,6 +7,7 @@
 #include "app/SingleInstance.h"
 #include "app/OpenRequest.h"
 #include <QLocalSocket>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include "library/CaptureFilterModel.h"
@@ -29,6 +30,7 @@
 #include "sources/CaptureScanner.h"
 #include "theme/OmarchyTheme.h"
 #include "thumbs/ThumbnailCache.h"
+#include "viewer/HyprlandPlacement.h"
 #include "viewer/ViewerSession.h"
 
 #include <QClipboard>
@@ -545,6 +547,49 @@ private slots:
     QTest::qWait(900);
     QCOMPARE(session.count(), 0);
     QCOMPARE(emptied.size(), 1);
+  }
+
+  // Only this process's viewers on the active workspace decide placement:
+  // the library, other processes and other workspaces are left alone, and
+  // nothing but a hex address ever reaches a dispatch.
+  void hyprlandTilesOnlyThisProcessesViewersOnTheActiveWorkspace() {
+    const auto client = [](const char* address, qint64 pid, const char* title, int workspace,
+                           bool floating) {
+      return QJsonObject{{"address", address},
+                         {"pid", pid},
+                         {"class", HyprlandPlacement::kWindowClass},
+                         {"title", QString::fromUtf8(title)},
+                         {"mapped", true},
+                         {"floating", floating},
+                         {"workspace", QJsonObject{{"id", workspace}, {"name", "x"}}}};
+    };
+    QJsonArray clients{
+        client("0xa1", 42, "first.jpg · Omaroll", 1, true),
+        client("0xa2", 42, "second.jpg · Omaroll", 1, false),
+        client("0xa3", 42, "Omaroll", 1, true),
+        client("0xa4", 7, "other.jpg · Omaroll", 1, true),
+        client("0xa5", 42, "elsewhere.jpg · Omaroll", 2, true),
+        client("0xzz\"; rm", 42, "odd.jpg · Omaroll", 1, true)};
+    QJsonObject foreign = client("0xa6", 42, "foreign.jpg · Omaroll", 1, true);
+    foreign.insert("class", "org.gnome.Loupe");
+    clients.append(foreign);
+    const QByteArray list = QJsonDocument(clients).toJson();
+    const auto workspace = [](int id) { return QJsonDocument(QJsonObject{{"id", id}}).toJson(); };
+
+    HyprlandPlacement::Plan plan = HyprlandPlacement::plan(list, workspace(1), 42);
+    QCOMPARE(plan.viewers, 3);
+    QVERIFY(plan.tileNew());
+    QCOMPARE(plan.floating, QStringList{QStringLiteral("0xa1")});
+
+    plan = HyprlandPlacement::plan(list, workspace(2), 42);
+    QCOMPARE(plan.viewers, 1);
+    QCOMPARE(plan.floating, QStringList{QStringLiteral("0xa5")});
+
+    // Only the library here, or nothing of ours: the new viewer floats.
+    QVERIFY(!HyprlandPlacement::plan(list, workspace(3), 42).tileNew());
+    QVERIFY(!HyprlandPlacement::plan(list, workspace(1), 99).tileNew());
+    QVERIFY(!HyprlandPlacement::plan(list, "not json", 42).tileNew());
+    QVERIFY(!HyprlandPlacement::plan("[", workspace(1), 42).tileNew());
   }
 
   void viewerWindowIsTheSameNormalSizeForEveryFile() {
@@ -2121,8 +2166,9 @@ private slots:
 
   // The real binary, end to end: a picture opens in the viewer without the
   // library, a plain second launch brings the library up in the same process,
-  // and another picture goes to the running viewer. Nothing along the way may
-  // raise a QML error.
+  // another picture opens a second viewer beside the first, and the first is
+  // asked for again. Nothing along the way may raise a QML error; which
+  // window each request reaches is covered by the viewer tests.
   void executableOpensPicturesInTheViewerAndTheLibraryOnRequest_data() {
     QTest::addColumn<bool>("extensionless");
     QTest::newRow("with-extensions") << false;
@@ -2185,6 +2231,8 @@ private slots:
     forward({});
     settle();
     forward({QStringLiteral("--"), second});
+    settle();
+    forward({QStringLiteral("--"), first});
     settle();
     forward({QStringLiteral("--library"), QStringLiteral("--"), second});
     settle();

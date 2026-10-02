@@ -27,6 +27,7 @@
 #include "thumbs/ThumbnailCache.h"
 #include "thumbs/ThumbnailProvider.h"
 #include "viewer/ViewerSession.h"
+#include "viewer/ViewerWindows.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -308,50 +309,6 @@ private:
   QQuickWindow* m_window = nullptr;
 };
 
-// The quick viewer: one window, reused for every file opened from outside.
-class ViewerWindow {
-public:
-  explicit ViewerWindow(QQmlEngine& engine) : m_context(engine.rootContext()) {
-    // Not "Viewer": that name is the window's own QML type, and a type name
-    // wins over a context property.
-    m_context.setContextProperty(QStringLiteral("Session"), &m_session);
-    m_context.setContextProperty(QStringLiteral("MediaInfo"), &m_mediaInfo);
-    m_context.setContextProperty(QStringLiteral("Subtitles"), &m_subtitles);
-    m_window = createWindow(engine, m_context, "Viewer", m_root);
-  }
-
-  ViewerWindow(const ViewerWindow&) = delete;
-  ViewerWindow& operator=(const ViewerWindow&) = delete;
-
-  [[nodiscard]] QQuickWindow* window() const { return m_window; }
-  [[nodiscard]] ViewerSession& session() { return m_session; }
-
-  void open(const QStringList& files) {
-    m_session.open(files);
-    if (!m_window->isVisible()) {
-      // A floating window opens at this size. A tiling compositor ignores
-      // the request and gives the window its tile instead.
-      if (const QScreen* screen = m_window->screen()) {
-        m_window->resize(ViewerSession::preferredWindowSize(screen->availableGeometry().size()));
-      }
-      m_window->setWindowStates(Qt::WindowNoState);
-      m_window->show();
-    }
-    if (QGuiApplication::platformName() != u"offscreen") {
-      m_window->raise();
-      m_window->requestActivate();
-    }
-  }
-
-private:
-  ViewerSession m_session;
-  MediaInspector m_mediaInfo;
-  SubtitleIndex m_subtitles;
-  QQmlContext m_context;
-  std::unique_ptr<QObject> m_root;
-  QQuickWindow* m_window = nullptr;
-};
-
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -556,7 +513,7 @@ int main(int argc, char* argv[]) {
                      pdfProvider->shutdown();
                      QThreadPool::globalInstance()->waitForDone();
                    });
-  // Both windows share these. Each window's own services live in its context.
+  // Every window shares these. Each window's own services live in its context.
   engine.rootContext()->setContextProperty(QStringLiteral("Theme"), &theme);
   engine.rootContext()->setContextProperty(QStringLiteral("Actions"), &actions);
   engine.rootContext()->setContextProperty(QStringLiteral("Settings"), &settings);
@@ -565,9 +522,9 @@ int main(int argc, char* argv[]) {
 
   startup.mark("services");
 
-  // Declared after the engine, so both windows go before it does.
+  // Declared after the engine, so every window goes before it does.
   std::unique_ptr<LibraryWindow> libraryWindow;
-  std::unique_ptr<ViewerWindow> viewerWindow;
+  ViewerWindows viewers(engine);
 
   const auto openLibrary = [&](const OpenRequest& opened) -> QQuickWindow* {
     if (libraryWindow) {
@@ -583,29 +540,19 @@ int main(int argc, char* argv[]) {
     return libraryWindow->window();
   };
 
-  const auto openViewer = [&](const QStringList& files) -> QQuickWindow* {
-    if (!viewerWindow) {
-      viewerWindow = std::make_unique<ViewerWindow>(engine);
-      if (!viewerWindow->window()) {
-        viewerWindow.reset();
-        return nullptr;
-      }
-      // The viewer hands a file to the library, then steps aside. The library
-      // is up before the viewer closes, so closing it never ends the app.
-      QObject::connect(&viewerWindow->session(), &ViewerSession::libraryRequested, &application,
-                       [&](const QString& path) {
-                         OpenRequest opened;
-                         opened.files = {path};
-                         if (QQuickWindow* library = openLibrary(opened)) {
-                           library->raise();
-                           library->requestActivate();
-                           viewerWindow->window()->close();
-                         }
-                       });
-    }
-    viewerWindow->open(files);
-    return viewerWindow->window();
-  };
+  // A viewer hands a file to the library, then steps aside. The library is
+  // up before the viewer closes, so closing it never ends the app.
+  QObject::connect(&viewers, &ViewerWindows::libraryRequested, &application,
+                   [&](const QString& path, QQuickWindow* viewer) {
+                     OpenRequest opened;
+                     opened.files = {path};
+                     if (QQuickWindow* library = openLibrary(opened)) {
+                       library->raise();
+                       library->requestActivate();
+                       viewer->close();
+                     }
+                   });
+  const auto openViewer = [&](const QStringList& files) { return viewers.open(files); };
 
   const bool startInViewer = rendering ? renderingViewer : opensInViewer(request, preferLibrary);
   QQuickWindow* window = startInViewer
@@ -624,10 +571,9 @@ int main(int argc, char* argv[]) {
           const OpenRequest opened = OpenRequest::fromPaths(paths);
           if (!opened.error.isEmpty()) {
             // Said in whichever window is in front; both have a status line.
-            QQuickWindow* shown = viewerWindow && viewerWindow->window()->isVisible()
-                                      ? viewerWindow->window()
-                                  : libraryWindow ? libraryWindow->window()
-                                                  : nullptr;
+            QQuickWindow* shown = viewers.frontmost() ? viewers.frontmost()
+                                  : libraryWindow   ? libraryWindow->window()
+                                                    : nullptr;
             if (shown) {
               QMetaObject::invokeMethod(shown, "say", Q_ARG(QVariant, opened.error));
             } else {

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(Omaroll VERSION 1.9.1 LANGUAGES CXX)
+project(Omaroll VERSION 1.10.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -79,8 +79,12 @@ add_library(omaroll_core STATIC
   src/thumbs/ThumbnailProvider.h
   src/theme/OmarchyTheme.cpp
   src/theme/OmarchyTheme.h
+  src/viewer/HyprlandPlacement.cpp
+  src/viewer/HyprlandPlacement.h
   src/viewer/ViewerSession.cpp
   src/viewer/ViewerSession.h
+  src/viewer/ViewerWindows.cpp
+  src/viewer/ViewerWindows.h
 )
 
 target_include_directories(omaroll_core PUBLIC src)

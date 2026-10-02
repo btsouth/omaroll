@@ -16,7 +16,9 @@
 #include "subtitles/SubtitleIndex.h"
 #include "theme/OmarchyTheme.h"
 #include "thumbs/ThumbnailProvider.h"
+#include "viewer/HyprlandPlacement.h"
 #include "viewer/ViewerSession.h"
+#include "viewer/ViewerWindows.h"
 
 #include <QAudioDevice>
 #include <QDir>
@@ -759,6 +761,130 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_Return);
     QTRY_VERIFY(!QFile::exists(second));
     QTRY_VERIFY(!m_window->isVisible());
+  }
+
+  // Each file opened from outside gets a viewer of its own. Asking again for
+  // what one already shows brings that one forward, a selection stays one
+  // viewer, and closing leaves the rest alone with one closed viewer kept.
+  // A viewer opened beside another maps under the plain title, so Hyprland's
+  // float rule leaves it tiled, and then takes its own.
+  void severalViewersOpenSideBySideAndCloseCleanly() {
+    ViewerWindows viewers(*m_engine);
+    int queries = 0;
+    viewers.setPlacementQuery([&queries] {
+      ++queries;
+      HyprlandPlacement::Plan plan;
+      plan.viewers = 1;
+      return plan;
+    });
+    const QString first = media(QStringLiteral("Shot 1.jpg"));
+    const QString second = media(QStringLiteral("shot 2.jpg"));
+    QQuickWindow* a = viewers.open({first});
+    QVERIFY(a);
+    QCOMPARE(queries, 0);
+    QCOMPARE(a->title(), QStringLiteral("Shot 1.jpg · Omaroll"));
+    QQuickWindow* b = viewers.open({second});
+    QVERIFY(b && a != b);
+    QCOMPARE(b->title(), QStringLiteral("Omaroll"));
+    QVERIFY(QTest::qWaitForWindowExposed(a));
+    QVERIFY(QTest::qWaitForWindowExposed(b));
+    QTRY_COMPARE(b->title(), QStringLiteral("shot 2.jpg · Omaroll"));
+    // Asked once before mapping and once after, for opens that raced.
+    QTRY_COMPARE(queries, 2);
+    QCOMPARE(viewers.visibleWindows(), (QList<QQuickWindow*>{a, b}));
+    QCOMPARE(viewers.sessionOf(a)->path(), first);
+    QCOMPARE(viewers.sessionOf(b)->path(), second);
+
+    // Each steps through its folder on its own.
+    QTRY_COMPARE(viewers.sessionOf(b)->count(), 4);
+    QVERIFY(viewers.sessionOf(b)->step(1));
+    QCOMPARE(viewers.sessionOf(a)->path(), first);
+    QCOMPARE(viewers.sessionOf(b)->path(), media(QStringLiteral("shot 10.jpg")));
+
+    QCOMPARE(viewers.frontmost(), b);
+    QVERIFY(b->property("frontmost").toBool());
+    QVERIFY(!a->property("frontmost").toBool());
+    QCOMPARE(viewers.open({first}), a);
+    QCOMPARE(viewers.windowCount(), 2);
+    QCOMPARE(viewers.frontmost(), a);
+    QVERIFY(!b->property("frontmost").toBool());
+
+    // Several files at once are one viewer, found again the same way.
+    QQuickWindow* c = viewers.open({first, second});
+    QVERIFY(c && c != a && c != b);
+    QCOMPARE(viewers.sessionOf(c)->count(), 2);
+    QCOMPARE(viewers.open({first, second}), c);
+    QCOMPARE(viewers.windowCount(), 3);
+
+    // A message that belongs to no viewer appears once, in the one used last.
+    emit m_actions->failed(QStringLiteral("Could not open that"));
+    QCOMPARE(c->property("status").toString(), QStringLiteral("Could not open that"));
+    QVERIFY(a->property("status").toString().isEmpty());
+    QVERIFY(b->property("status").toString().isEmpty());
+
+    // The handoff to the library names the viewer it came from.
+    QSignalSpy library(&viewers, &ViewerWindows::libraryRequested);
+    viewers.sessionOf(b)->openInLibrary();
+    QCOMPARE(library.size(), 1);
+    QCOMPARE(library.first().at(0).toString(), media(QStringLiteral("shot 10.jpg")));
+    QCOMPARE(library.first().at(1).value<QQuickWindow*>(), b);
+
+    // Closing two leaves the first, keeps one closed viewer and frees the other.
+    b->close();
+    c->close();
+    QTRY_COMPARE(viewers.windowCount(), 2);
+    QCOMPARE(viewers.visibleWindows(), QList<QQuickWindow*>{a});
+    QCOMPARE(viewers.frontmost(), a);
+    QVERIFY(a->property("frontmost").toBool());
+
+    // The kept one is reused, with nothing of its last file left behind.
+    QQuickWindow* d = viewers.open({media(QStringLiteral("shot 10.jpg"))});
+    QVERIFY(d && d != a);
+    QCOMPARE(viewers.windowCount(), 2);
+    QTRY_COMPARE(viewers.sessionOf(d)->count(), 4);
+    QTRY_COMPARE(d->title(), QStringLiteral("shot 10.jpg · Omaroll"));
+
+    a->close();
+    d->close();
+    QTRY_COMPARE(viewers.windowCount(), 1);
+    QCOMPARE(viewers.frontmost(), nullptr);
+    QVERIFY(viewers.visibleWindows().isEmpty());
+  }
+
+  // Of the viewers showing a video, only the one used last is heard; the
+  // others keep playing silently and the saved mute setting is untouched.
+  // A picture in front leaves the sound where it was.
+  void onlyTheVideoUsedLastIsHeard() {
+    ViewerWindows viewers(*m_engine);
+    viewers.setPlacementQuery([] { return HyprlandPlacement::Plan{}; });
+    const QString clip = media(QStringLiteral("clip.mp4"));
+    const QString picture = media(QStringLiteral("Shot 1.jpg"));
+    QQuickWindow* first = viewers.open({clip});
+    QQuickWindow* second = viewers.open({clip, picture});
+    QVERIFY(first && second && first != second);
+    QVERIFY(second->property("audible").toBool());
+    QVERIFY(!first->property("audible").toBool());
+
+    QCOMPARE(viewers.open({clip}), first);
+    QVERIFY(first->property("audible").toBool());
+    QVERIFY(!second->property("audible").toBool());
+
+    QQuickWindow* still = viewers.open({media(QStringLiteral("shot 2.jpg"))});
+    QCOMPARE(viewers.frontmost(), still);
+    QVERIFY(first->property("audible").toBool());
+    QVERIFY(!second->property("audible").toBool());
+
+    // Stepping the heard viewer off its video hands the sound on.
+    QTRY_COMPARE(viewers.sessionOf(first)->count(), 4);
+    QVERIFY(viewers.sessionOf(first)->step(1));
+    QVERIFY(!viewers.sessionOf(first)->isVideo());
+    QVERIFY(second->property("audible").toBool());
+    QVERIFY(!m_settings->videoMuted());
+
+    for (QQuickWindow* window : viewers.visibleWindows()) {
+      window->close();
+    }
+    QTRY_VERIFY(viewers.visibleWindows().isEmpty());
   }
 
   void theWindowRaisedNoQmlWarnings() {
