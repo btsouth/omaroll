@@ -6,6 +6,7 @@
 #include <QFileInfo>
 #include <QHash>
 #include <QMimeDatabase>
+#include <QMutex>
 #include <QRegularExpression>
 #include <QSet>
 
@@ -227,20 +228,8 @@ bool hasMatroskaVideoTrack(const QByteArray& header) {
   return hasVideoTrackIn(header, 0, header.size(), 0);
 }
 
-} // namespace
-
-QString CaptureScanner::mediaSuffix(const QString& path) {
-  if (path.isEmpty()) {
-    return {};
-  }
-  const QFileInfo info(path);
-  const QString suffix = info.suffix().toLower();
-  if (!suffix.isEmpty()) {
-    return suffix;
-  }
-  if (!info.isFile() || !info.isReadable()) {
-    return {};
-  }
+// The medium of an extensionless file, from its first 16 KiB.
+QString sniffedSuffix(const QString& path) {
   QFile file(path);
   if (!file.open(QIODevice::ReadOnly)) {
     return {};
@@ -270,6 +259,47 @@ QString CaptureScanner::mediaSuffix(const QString& path) {
     return hasMatroskaVideoTrack(header) ? QStringLiteral("mkv") : QString();
   }
   return formats.value(mime);
+}
+
+} // namespace
+
+QString CaptureScanner::mediaSuffix(const QString& path) {
+  if (path.isEmpty()) {
+    return {};
+  }
+  const QFileInfo info(path);
+  const QString suffix = info.suffix().toLower();
+  if (!suffix.isEmpty()) {
+    return suffix;
+  }
+  if (!info.isFile() || !info.isReadable() || info.size() == 0) {
+    return {};
+  }
+  // Rescans and viewer steps ask again for the same files; read each one
+  // once until it changes.
+  struct Known {
+    qint64 modified = 0;
+    qint64 bytes = 0;
+    QString suffix;
+  };
+  static QMutex mutex;
+  static QHash<QString, Known> known;
+  const qint64 modified = info.lastModified().toMSecsSinceEpoch();
+  const qint64 bytes = info.size();
+  {
+    const QMutexLocker lock(&mutex);
+    const auto found = known.constFind(path);
+    if (found != known.cend() && found->modified == modified && found->bytes == bytes) {
+      return found->suffix;
+    }
+  }
+  const QString sniffed = sniffedSuffix(path);
+  const QMutexLocker lock(&mutex);
+  if (known.size() >= 4096) {
+    known.clear();
+  }
+  known.insert(path, {modified, bytes, sniffed});
+  return sniffed;
 }
 
 bool CaptureScanner::classifyByName(const QString& fileName, CaptureRecord::Kind& kind,
