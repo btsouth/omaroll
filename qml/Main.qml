@@ -893,6 +893,7 @@ ApplicationWindow {
         // Clearing the path first means neither ever sees the new path paired
         // with the previous kind, which handed an image to the video player
         // for a moment on every step from a recording to a picture.
+        detail.finishCaptionEdit()
         detail.path = ""
         detail.isVideo = Captures.isVideoAt(index)
         detail.isDocument = Captures.isDocumentAt(index)
@@ -1690,10 +1691,9 @@ ApplicationWindow {
         sequences: ["Escape"]
         enabled: root.anySheetOpen || !filters.searchActive
         onActivated: {
-            // Text selected in a PDF is the first thing Escape leaves behind,
-            // but only when the viewer itself is the top layer: a sheet that
-            // sits over it keeps the first Escape.
-            if (!root.modalOpen && detail.visible && detail.leaveTextSelection()) {
+            // Unwind the viewer's editor/menu before PDF selection or preview.
+            // A nested sheet keeps Escape until it closes.
+            if (!root.modalOpen && detail.visible && detail.dismissTransient()) {
                 return
             }
             if (root.anySheetOpen) {

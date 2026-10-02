@@ -56,7 +56,15 @@ Item {
                                        && stillLoader.item.status === Image.Ready
                                        && stillLoader.width > 0 && stillLoader.height > 0
     property bool fullScreen: false
-    property bool showInfo: true
+    // The inspector is on demand: a preview opens on the media alone and the
+    // details surface appears only when asked for.
+    property bool showInfo: false
+    // The top header carries the file name and the whole action menu, so it
+    // stays while the inspector is closed and in full screen. A slideshow is
+    // the one mode that shows nothing but the media.
+    readonly property bool headerShown: !root.slideshowRunning
+    // Codec, bitrate and the rest of the stream table sit behind a disclosure.
+    property bool technicalExpanded: false
     property bool slideshowRunning: false
     property bool slideshowPausedForRender: false
     property bool videoPausedForRender: false
@@ -206,12 +214,45 @@ Item {
         return rows.filter(function (row) { return row.id !== "qr" || root.qrDetected })
     }
 
+    // Primary actions in the inspector; the full registry stays in the menu.
+    readonly property var primaryActionIds: root.isDocument ? ["open-document"]
+                                             : root.isVideo ? ["trim", "frame"]
+                                                            : [Settings.imagePrimaryAction,
+                                                               Settings.imagePrimaryAction === "corrections"
+                                                               ? "matte" : "corrections"]
+    readonly property var primaryActionRows: {
+        const rows = Registry.actionsForKind(root.isVideo, root.isDocument)
+        const out = []
+        for (const id of root.primaryActionIds) {
+            for (const row of rows) {
+                if (row.id === id) {
+                    out.push(row)
+                    break
+                }
+            }
+        }
+        return out
+    }
+    // Videos name the action for what it is; the registry's "Play" is mpv, and
+    // must not read as embedded playback.
+    readonly property var primaryActionLabels: ({ frame: "Save frame" })
+    function primaryLabel(row) {
+        return root.primaryActionLabels[row.id] !== undefined
+               ? root.primaryActionLabels[row.id] : row.label
+    }
+
+    function invokeAction(id) {
+        // Nested sheets restore the focused row when they return. Immediate
+        // actions finish the menu interaction and return to the preview.
+        if (actionNavigationActive && ["export", "tailscale", "ocr"].indexOf(id) < 0) {
+            focusPreview()
+        }
+        actionTriggered(id)
+    }
+
     function focusAction(index) {
         if (index < 0 || index >= actions.count || !actions.model[index].available) {
             return false
-        }
-        if (!showInfo) {
-            showInfo = true
         }
         actionNavigationActive = true
         actions.currentIndex = index
@@ -286,7 +327,9 @@ Item {
         playbackError = ""
         pdfPage = 1
         if (!visible) {
-            showInfo = true
+            // A preview opens on the media alone: the inspector is asked for.
+            showInfo = false
+            technicalExpanded = false
             slideshowRunning = false
         }
         resetImageView()
@@ -347,11 +390,13 @@ Item {
         if (player.playbackState === MediaPlayer.PlayingState) {
             player.pause()
         } else {
+            root.resumeAvailable = false
             player.play()
         }
     }
 
     function seekVideo(milliseconds) {
+        root.resumeAvailable = false
         player.position = Math.max(0, Math.min(player.duration, player.position + milliseconds))
     }
 
@@ -396,19 +441,19 @@ Item {
             return
         }
         const end = player.duration > 0 ? player.duration - 1 : root.resumePosition
+        resumeAvailable = false
         player.position = Math.max(0, Math.min(root.resumePosition, end))
         player.play()
-        resumeAvailable = false
     }
 
     function restartVideo() {
         if (!player) {
             return
         }
+        resumeAvailable = false
         player.position = 0
         Settings.clearVideoPosition(root.path)
         player.play()
-        resumeAvailable = false
     }
 
     function adjustPlaybackRate(amount) {
@@ -500,8 +545,13 @@ Item {
         if (slideshowRunning === enabled) {
             return
         }
+        if (enabled) {
+            finishCaptionEdit()
+            focusPreview()
+        }
         slideshowRunning = enabled
         if (enabled) {
+            resumeAvailable = false
             showInfo = false
             setFullScreen(true)
             if (isVideo && !Settings.slideshowVideos) {
@@ -523,6 +573,7 @@ Item {
     }
 
     function close() {
+        finishCaptionEdit()
         setSlideshow(false)
         setFullScreen(false)
         actionNavigationActive = false
@@ -546,11 +597,33 @@ Item {
         return true
     }
 
+    function finishCaptionEdit() {
+        if (captionField.activeFocus) {
+            captionField.finish()
+        }
+    }
+
+    function dismissTransient() {
+        if (captionField.activeFocus) {
+            captionField.text = root.caption
+            captionField.focus = false
+            focusPreview()
+            return true
+        }
+        if (actionNavigationActive) {
+            focusPreview()
+            return true
+        }
+        return leaveTextSelection()
+    }
+
     function dismiss() {
+        if (dismissTransient()) {
+            return
+        }
         if (slideshowRunning) {
             setSlideshow(false)
             setFullScreen(false)
-            showInfo = true
         } else if (fullScreen) {
             setFullScreen(false)
         } else {
@@ -583,8 +656,8 @@ Item {
         }
     }
     onShowInfoChanged: {
-        if (!showInfo && actionNavigationActive) {
-            focusPreview()
+        if (!showInfo) {
+            finishCaptionEdit()
         }
     }
 
@@ -653,11 +726,99 @@ Item {
             preventStealing: true
         }
 
+        // Header. Always up except during a slideshow, so the file name, the
+        // favourite, the inspector and the whole action menu stay reachable in
+        // full screen and in a narrow window.
+        Rectangle {
+            id: previewHeader
+            objectName: "viewerHeader"
+            visible: root.headerShown
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.topMargin: 1
+            anchors.leftMargin: 1
+            anchors.rightMargin: 1
+            height: 46
+            color: root.shade(Theme.background, 0.45)
+
+            Rectangle {
+                anchors.bottom: parent.bottom
+                width: parent.width
+                height: 1
+                color: root.shade(Theme.foreground, 0.12)
+            }
+
+            Column {
+                anchors.left: parent.left
+                anchors.leftMargin: 14
+                anchors.right: headerButtons.left
+                anchors.rightMargin: 12
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 1
+
+                Text {
+                    objectName: "viewerHeaderName"
+                    width: Math.max(0, parent.width)
+                    text: root.fileName
+                    elide: Text.ElideMiddle
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 15
+                    font.weight: Font.DemiBold
+                    color: Theme.brightForeground
+                }
+
+                Text {
+                    objectName: "viewerSelectionLabel"
+                    width: Math.max(0, parent.width)
+                    visible: root.selectionLabel !== ""
+                    text: root.selectionLabel
+                    elide: Text.ElideRight
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 11
+                    color: Theme.mutedText
+                }
+            }
+
+            Row {
+                id: headerButtons
+                anchors.right: parent.right
+                anchors.rightMargin: 10
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 4
+
+                IconButton {
+                    objectName: "viewerFavouriteButton"
+                    icon: root.favorite ? "star-filled" : "star"
+                    active: root.favorite
+                    toolTip: root.favorite ? "Remove from favourites" : "Add to favourites"
+                    shortcut: "V"
+                    onClicked: root.actionTriggered("favorite")
+                }
+                IconButton {
+                    objectName: "viewerInfoButton"
+                    icon: "info"
+                    active: root.showInfo
+                    toolTip: root.showInfo ? "Hide details" : "Show details"
+                    shortcut: root.viewerShortcuts.info.label
+                    onClicked: root.showInfo = !root.showInfo
+                }
+                IconButton {
+                    objectName: "viewerOverflowButton"
+                    icon: "more"
+                    active: root.actionNavigationActive
+                    toolTip: "All actions"
+                    onClicked: root.actionNavigationActive ? root.focusPreview()
+                                                           : root.focusFirstAction()
+                }
+            }
+        }
+
         // Preview
         Rectangle {
             id: stage
             anchors.left: parent.left
-            anchors.top: parent.top
+            anchors.top: root.headerShown ? previewHeader.bottom : parent.top
             anchors.bottom: parent.bottom
             anchors.right: sidebar.left
             anchors.margins: 1
@@ -666,6 +827,9 @@ Item {
             // Margins around the bottom row: 16 either side, 12 between the
             // groups, 10 of padding inside the slideshow group's panel.
             readonly property int rowChrome: 16 + 12 + 10 + 16
+            readonly property real videoFooterHeight: 56
+                + (root.slideshowRunning ? 0 : (resumePrompt.visible ? resumePrompt.height + 10 : 0)
+                   + (topControlsPanel.stacked ? 44 : 0))
 
             // Nothing here reads compactControls, which keeps it loop-free.
             Row {
@@ -673,8 +837,8 @@ Item {
                 visible: false
                 spacing: 6
                 Repeater {
-                    model: root.isVideo ? ["Start slideshow", "Hide details", "Fullscreen"]
-                                        : ["Start slideshow", "Hide details"]
+                    model: root.isVideo ? ["Fullscreen"]
+                                        : ["Start slideshow"]
                     PillButton { label: modelData }
                 }
             }
@@ -750,7 +914,7 @@ Item {
                 id: videoPoster
                 anchors.fill: parent
                 anchors.margins: 16
-                anchors.bottomMargin: 56
+                anchors.bottomMargin: stage.videoFooterHeight
                 fillMode: Image.PreserveAspectFit
                 asynchronous: true
                 smooth: true
@@ -1136,6 +1300,12 @@ Item {
                         // Remember the spot when the user pauses; the timer
                         // covers long uninterrupted playback.
                         onPlaybackStateChanged: {
+                            // Loading can start playback after LoadedMedia's
+                            // pause request. Hold until the saved-spot choice.
+                            if (playbackState === MediaPlayer.PlayingState && root.resumeAvailable) {
+                                pause()
+                                return
+                            }
                             if (playbackState === MediaPlayer.PausedState && duration > 0
                                     && position >= 5000 && position < duration - 3000) {
                                 Settings.setVideoPosition(root.path, Math.round(position))
@@ -1223,7 +1393,7 @@ Item {
                 id: output
                 anchors.fill: parent
                 anchors.margins: 16
-                anchors.bottomMargin: 56
+                anchors.bottomMargin: stage.videoFooterHeight
                 visible: root.isVideo && player && player.hasVideo
                 readonly property rect sourceRect: videoSurface.item
                                                    ? videoSurface.item.sourceRect : Qt.rect(0, 0, 0, 0)
@@ -1543,10 +1713,12 @@ Item {
 
             Rectangle {
                 id: topControlsPanel
+                readonly property bool stacked: root.isVideo && !root.slideshowRunning
+                                                && stage.width < transport.minimumWidth + width + 44
                 anchors.bottom: parent.bottom
                 anchors.right: parent.right
                 anchors.rightMargin: 16
-                anchors.bottomMargin: 11
+                anchors.bottomMargin: stacked ? 62 + (resumePrompt.visible ? resumePrompt.height + 10 : 0) : 11
                 width: topControls.implicitWidth + 10
                 height: topControls.implicitHeight + 10
                 radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 4
@@ -1562,6 +1734,8 @@ Item {
                     spacing: 6
 
                     PillButton {
+                        objectName: "viewerSlideshowButton"
+                        visible: !root.isVideo || root.slideshowRunning
                         enabled: root.canNavigate
                         label: root.compactControls
                                ? (root.slideshowRunning ? "Ⅱ" : "▶")
@@ -1570,14 +1744,6 @@ Item {
                         shortcut: root.viewerShortcuts.slideshow.label
                         active: root.slideshowRunning
                         onClicked: root.setSlideshow(!root.slideshowRunning)
-                    }
-                    PillButton {
-                        label: root.compactControls ? "i"
-                                               : (root.showInfo ? "Hide details" : "Show details")
-                        toolTip: root.showInfo ? "Hide details" : "Show details"
-                        shortcut: root.viewerShortcuts.info.label
-                        active: root.showInfo
-                        onClicked: root.showInfo = !root.showInfo
                     }
                     PillButton {
                         visible: root.isVideo || root.slideshowRunning
@@ -1690,14 +1856,16 @@ Item {
                 }
             }
 
-            // A saved spot is offered, not applied: the viewer stays on the
-            // first frame until the user chooses to resume.
-            Row {
+            // Reserve a row below the picture for the saved spot, so the
+            // choice never covers video content or stacked playback controls.
+            Flow {
                 id: resumePrompt
                 objectName: "resumePrompt"
-                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.left: parent.left
+                anchors.leftMargin: 16
+                width: parent.width - 32
                 anchors.bottom: transport.top
-                anchors.bottomMargin: 14
+                anchors.bottomMargin: 10
                 spacing: 8
                 visible: root.isVideo && root.resumeAvailable && !root.slideshowRunning
 
@@ -1708,7 +1876,8 @@ Item {
                     onClicked: root.resumeVideo()
                 }
                 PillButton {
-                    label: "Start over"
+                    objectName: "restartVideoButton"
+                    label: "Restart"
                     onClicked: root.restartVideo()
                 }
             }
@@ -1718,19 +1887,25 @@ Item {
                 id: transport
                 visible: root.isVideo && !root.slideshowRunning
                 anchors.left: parent.left
-                anchors.right: topControlsPanel.left
+                anchors.right: topControlsPanel.stacked ? parent.right : topControlsPanel.left
                 anchors.bottom: parent.bottom
                 anchors.leftMargin: 16
-                anchors.rightMargin: 12
+                anchors.rightMargin: topControlsPanel.stacked ? 16 : 12
                 anchors.bottomMargin: 16
-                height: 28
+                height: 40
 
                 // Keep the scrub useful at the minimum window width. Track
                 // selectors appear only when the file has alternatives.
                 readonly property int scrubMinimum: 120
-                readonly property real minimumWidth: playButton.implicitWidth + 14 + scrubMinimum
+                // Measure offered controls independently of their visibility,
+                // so fitting the row never feeds its width back into itself.
+                readonly property real fullMediaWidth: speedButton.implicitWidth + 6
+                    + soundButton.implicitWidth
+                    + (player && player.audioTracks.length > 1 ? audioButton.implicitWidth + 4 : 0)
+                    + (root.hasSubtitleChoices ? subtitleButton.implicitWidth + 4 : 0)
+                readonly property real minimumWidth: playButton.width + 14 + scrubMinimum
                                                      + 14 + clockLabel.implicitWidth + 12
-                                                     + mediaControls.implicitWidth
+                                                     + fullMediaWidth
 
                 function clock(ms) {
                     const total = Math.max(0, Math.round(ms / 1000))
@@ -1739,12 +1914,14 @@ Item {
                     return minutes + ":" + (seconds < 10 ? "0" : "") + seconds
                 }
 
-                PillButton {
+                IconButton {
                     id: playButton
                     objectName: "videoPlayButton"
                     anchors.left: parent.left
                     anchors.verticalCenter: parent.verticalCenter
-                    label: root.playbackState === MediaPlayer.PlayingState ? "❚❚" : "▶"
+                    height: 30
+                    icon: root.playbackState === MediaPlayer.PlayingState ? "pause" : "play"
+                    iconSize: 16
                     toolTip: root.playbackState === MediaPlayer.PlayingState ? "Pause" : "Play"
                     shortcut: "Space"
                     onClicked: root.toggleVideoPlayback()
@@ -1752,6 +1929,7 @@ Item {
 
                 Item {
                     id: scrub
+                    objectName: "videoSeek"
                     anchors.left: playButton.right
                     anchors.right: clockLabel.visible ? clockLabel.left : mediaControls.left
                     anchors.leftMargin: 14
@@ -1783,6 +1961,7 @@ Item {
 
                     function seekTo(x) {
                         if (player && player.duration > 0) {
+                            root.resumeAvailable = false
                             player.position = Math.max(0, Math.min(1, x / width)) * player.duration
                         }
                     }
@@ -1851,61 +2030,73 @@ Item {
                     id: mediaControls
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
-                    implicitHeight: 26
+                    implicitHeight: 30
                     readonly property int audioGap: audioButton.width > 0 && subtitleButton.width > 0
-                                                    ? 6 : 0
-                    readonly property int subtitleGap: subtitleButton.width > 0 ? 6 : 0
+                                                    ? 4 : 0
+                    readonly property int subtitleGap: subtitleButton.width > 0 ? 4 : 0
                     implicitWidth: audioButton.width + audioGap + subtitleButton.width
                                    + subtitleGap + speedButton.width + 6 + soundButton.width
 
-                    PillButton {
+                    // A timestamped icon row rather than a line of outlined
+                    // mini pills: the track selectors appear only when the
+                    // file offers alternatives and collapse to zero width
+                    // otherwise, which keeps the chain closed.
+                    IconButton {
                         id: audioButton
                         objectName: "audioTrackButton"
                         visible: width > 0
                         width: player && player.audioTracks.length > 1 && transport.width >= 520
                                ? implicitWidth : 0
+                        height: 30
                         anchors.left: parent.left
                         anchors.verticalCenter: parent.verticalCenter
                         label: "Audio " + (player ? player.activeAudioTrack + 1 : 1)
                         toolTip: "Switch audio track"
                         onClicked: root.cycleAudioTrack()
                     }
-                    PillButton {
+                    IconButton {
                         id: subtitleButton
+                        objectName: "subtitleButton"
                         visible: width > 0
                         width: root.hasSubtitleChoices && transport.width >= 440
                                ? implicitWidth : 0
+                        height: 30
                         anchors.left: audioButton.right
                         anchors.leftMargin: mediaControls.audioGap
                         anchors.verticalCenter: parent.verticalCenter
-                        objectName: "subtitleButton"
-                        label: "CC"
+                        icon: "captions"
+                        iconSize: 16
                         toolTip: root.subtitleChoice > 0
                                  ? "Subtitles: " + root.subtitleChoiceLabel
                                  : "Choose subtitles"
                         active: root.subtitleChoice > 0
                         onClicked: root.cycleSubtitleTrack()
                     }
-                    PillButton {
+                    IconButton {
                         id: speedButton
                         anchors.left: subtitleButton.right
                         anchors.leftMargin: mediaControls.subtitleGap
                         anchors.verticalCenter: parent.verticalCenter
                         objectName: "playbackSpeedButton"
+                        height: 30
                         label: Number(root.playbackRate.toFixed(2)) + "×"
                         toolTip: "Playback speed"
                         shortcut: "[  ]"
                         active: Math.abs(root.playbackRate - 1) > 0.01
                         onClicked: root.cyclePlaybackRate()
                     }
-                    PillButton {
+                    IconButton {
                         id: soundButton
                         anchors.left: speedButton.right
                         anchors.leftMargin: 6
                         anchors.verticalCenter: parent.verticalCenter
                         objectName: "videoSoundButton"
-                        label: root.playbackMuted ? "Muted" : Math.round(root.playbackVolume * 100) + "%"
-                        toolTip: root.playbackMuted ? "Unmute" : "Mute"
+                        height: 30
+                        icon: root.playbackMuted || root.playbackVolume === 0
+                              ? "volume-muted" : "volume"
+                        iconSize: 16
+                        toolTip: root.playbackMuted ? "Unmute"
+                                 : "Volume " + Math.round(root.playbackVolume * 100) + "% · Mute"
                         shortcut: "M"
                         active: !root.playbackMuted
                         onClicked: Settings.videoMuted = !Settings.videoMuted
@@ -1963,17 +2154,20 @@ Item {
                     color: root.shade(Theme.accent, 0.78)
                 }
             }
+
         }
 
-        // Sidebar
+        // Inspector. On demand, scrollable and spaced: the media keeps the
+        // room the old metadata-and-action wall used to take.
         Item {
             id: sidebar
+            objectName: "viewerInspector"
             visible: root.showInfo
             anchors.right: parent.right
-            anchors.top: parent.top
+            anchors.top: root.headerShown ? previewHeader.bottom : parent.top
             anchors.bottom: parent.bottom
             anchors.margins: 1
-            width: root.showInfo ? (panel.width < 700 ? 220 : 280) : 0
+            width: root.showInfo ? (panel.width < 760 ? 240 : 300) : 0
 
             Rectangle {
                 anchors.left: parent.left
@@ -1983,205 +2177,348 @@ Item {
                 color: root.shade(Theme.foreground, 0.12)
             }
 
-            Column {
-                id: metadataColumn
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.margins: 18
-                spacing: 4
+            Flickable {
+                anchors.fill: parent
+                anchors.margins: 1
+                contentWidth: width
+                contentHeight: inspectorColumn.implicitHeight + 36
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-                Text {
-                    objectName: "viewerSelectionLabel"
-                    width: parent.width
-                    visible: root.selectionLabel !== ""
-                    text: root.selectionLabel
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 11
-                    color: Theme.mutedText
-                    elide: Text.ElideRight
-                }
-
-                Text {
-                    width: parent.width
-                    text: (root.favorite ? "★ " : "") + root.fileName
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 13
-                    font.weight: Font.DemiBold
-                    color: Theme.brightForeground
-                    elide: Text.ElideMiddle
-                }
-
-                Text {
-                    width: parent.width
-                    text: root.kindLabel + "  ·  " + root.sizeLabel
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 11
-                    color: Theme.mutedText
-                }
-
-                Text {
-                    width: parent.width
-                    text: root.dayLabel + "  ·  " + root.timeLabel
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 11
-                    color: Theme.mutedText
-                }
-
-                Text {
-                    objectName: "mediaMetadata"
-                    width: parent.width
-                    visible: root.technicalLabel !== ""
-                    text: root.technicalLabel
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 11
-                    color: Theme.mutedText
-                }
-
-                Text {
-                    width: parent.width
-                    visible: MediaInfo.path === root.path && MediaInfo.loading
-                    text: "Reading details…"
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 11
-                    color: Theme.mutedText
-                }
-
-                // Rating. Click a star to set it, or the lit star again to
-                // clear. Alt+1 to Alt+5 and Alt+0 do the same from the keyboard.
-                Row {
-                    objectName: "viewerRating"
-                    spacing: 2
-
-                    Repeater {
-                        model: 5
-
-                        Text {
-                            required property int index
-                            readonly property bool lit: index < root.rating
-                            text: "★"
-                            font.pixelSize: 15
-                            color: lit ? Theme.yellow : Theme.mutedText
-                            Accessible.role: Accessible.Button
-                            Accessible.name: (index + 1) + (index === 0 ? " star" : " stars")
-
-                            TapHandler {
-                                onTapped: root.rateRequested(index + 1 === root.rating
-                                                             ? 0 : index + 1)
-                            }
-                        }
-                    }
-                }
-
-                // Caption. Enter or leaving the field saves; Escape puts the
-                // saved text back and returns to the picture.
-                Rectangle {
-                    width: parent.width
-                    height: 26
-                    radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
-                    color: root.shade(Theme.foreground, captionField.activeFocus ? 0.10 : 0.05)
-                    border.width: 1
-                    border.color: captionField.activeFocus
-                                  ? root.shade(Theme.accent, 0.6)
-                                  : root.shade(Theme.foreground, 0.12)
-
-                    TextInput {
-                        id: captionField
-                        objectName: "viewerCaption"
-                        anchors.fill: parent
-                        anchors.leftMargin: 8
-                        anchors.rightMargin: 8
-                        verticalAlignment: TextInput.AlignVCenter
-                        clip: true
-                        activeFocusOnTab: false
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 11
-                        color: Theme.foreground
-                        selectionColor: root.shade(Theme.accent, 0.5)
-                        selectedTextColor: Theme.brightForeground
-                        // Typing breaks a plain binding, so follow the saved
-                        // caption explicitly when the file or its marks change.
-                        readonly property string saved: root.caption
-                        onSavedChanged: text = saved
-                        Component.onCompleted: text = saved
-                        function commit() {
-                            if (text.trim() !== root.caption) {
-                                root.captionEdited(text.trim())
-                            }
-                        }
-                        // Enter saves outright. Handing focus back to the
-                        // sheet is not enough on its own: a focus scope
-                        // returns focus to its current item, which is this
-                        // field, so the focus-out save would never fire.
-                        function finish() {
-                            commit()
-                            focus = false
-                            root.focusPreview()
-                        }
-                        onEditingFinished: commit()
-                        Keys.onEscapePressed: {
-                            text = root.caption
-                            focus = false
-                            root.focusPreview()
-                        }
-                        Keys.onReturnPressed: finish()
-                        Keys.onEnterPressed: finish()
-                    }
+                Column {
+                    id: inspectorColumn
+                    x: 18
+                    y: 18
+                    width: parent.width - 36
+                    spacing: 12
 
                     Text {
-                        anchors.fill: captionField
-                        verticalAlignment: Text.AlignVCenter
-                        visible: captionField.text === "" && !captionField.activeFocus
-                        text: "Add a caption"
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 11
-                        color: Theme.mutedText
-                    }
-
-                    TapHandler {
-                        onTapped: captionField.forceActiveFocus()
-                    }
-                }
-
-                Repeater {
-                    model: MediaInfo.path === root.path ? MediaInfo.lines : []
-                    Text {
-                        required property string modelData
-                        width: metadataColumn.width
-                        text: modelData
+                        objectName: "viewerKindLabel"
+                        width: parent.width
+                        visible: text !== ""
+                        text: root.kindLabel
                         elide: Text.ElideRight
                         font.family: Theme.fontFamily
                         font.pixelSize: 11
                         color: Theme.mutedText
                     }
+
+                    Text {
+                        objectName: "viewerInfoName"
+                        width: parent.width
+                        text: root.fileName
+                        elide: Text.ElideMiddle
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 16
+                        font.weight: Font.DemiBold
+                        color: Theme.brightForeground
+                    }
+
+                    Column {
+                        width: parent.width
+                        spacing: 3
+
+                        Text {
+                            objectName: "mediaMetadata"
+                            width: parent.width
+                            visible: root.technicalLabel !== ""
+                            text: root.technicalLabel
+                            elide: Text.ElideRight
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 13
+                            color: Theme.foreground
+                        }
+
+                        Text {
+                            objectName: "viewerDateLabel"
+                            width: parent.width
+                            visible: text !== ""
+                            text: [root.dayLabel + (sidebar.width >= 280 ? " " + root.timeLabel : ""),
+                                   root.sizeLabel].filter(function (part) {
+                                return part !== "" && part.trim() !== ""
+                            }).join("  ·  ")
+                            elide: Text.ElideRight
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 13
+                            color: Theme.mutedText
+                        }
+
+                        Text {
+                            objectName: "pdfInfoLabel"
+                            width: parent.width
+                            visible: root.isDocument && PdfInfo.pageCount === 0
+                            text: PdfInfo.error !== "" ? PdfInfo.error
+                                  : (PdfInfo.available ? "Reading pages…"
+                                                      : "PDF support needs Poppler")
+                            elide: Text.ElideRight
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 13
+                            color: PdfInfo.error !== "" ? Theme.red : Theme.mutedText
+                        }
+                    }
+
+                    Flow {
+                        objectName: "viewerPrimaryActions"
+                        width: parent.width
+                        spacing: 6
+                        visible: root.primaryActionRows.length > 0
+
+                        Repeater {
+                            model: root.primaryActionRows
+                            PillButton {
+                                required property var modelData
+                                label: root.primaryLabel(modelData)
+                                toolTip: modelData.available ? root.primaryLabel(modelData)
+                                         : root.primaryLabel(modelData) + " needs " + modelData.hint
+                                shortcut: modelData.shortcut
+                                enabled: modelData.available
+                                onClicked: root.actionTriggered(modelData.id)
+                            }
+                        }
+                    }
+
+                    // Rating. Click a star to set it, or the lit star again to
+                    // clear. Alt+1 to Alt+5 and Alt+0 do the same from the keyboard.
+                    Row {
+                        objectName: "viewerRating"
+                        spacing: 2
+
+                        Repeater {
+                            model: 5
+
+                            Item {
+                                required property int index
+                                width: 28
+                                height: 28
+                                readonly property bool lit: index < root.rating
+                                Accessible.role: Accessible.Button
+                                Accessible.name: (index + 1) + (index === 0 ? " star" : " stars")
+
+                                Icon {
+                                    anchors.centerIn: parent
+                                    name: parent.lit ? "star-filled" : "star"
+                                    size: 20
+                                    color: parent.lit ? Theme.yellow : Theme.mutedText
+                                }
+
+                                HoverHandler { cursorShape: Qt.PointingHandCursor }
+                                TapHandler {
+                                    onTapped: root.rateRequested(index + 1 === root.rating
+                                                                 ? 0 : index + 1)
+                                }
+                            }
+                        }
+                    }
+
+                    // Caption. It rests as text and the editor appears on
+                    // demand. Enter or leaving the field saves, Escape reverts.
+                    Item {
+                        id: captionBox
+                        width: parent.width
+                        height: Math.max(30, captionField.contentHeight + 12)
+
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 4) : 3
+                            color: captionField.activeFocus ? root.shade(Theme.foreground, 0.10)
+                                   : captionHover.hovered ? root.shade(Theme.foreground, 0.05)
+                                                          : "transparent"
+                            border.width: captionField.activeFocus ? 1 : 0
+                            border.color: root.shade(Theme.accent, 0.6)
+                            Behavior on color { ColorAnimation { duration: 120 } }
+                        }
+
+                        TextInput {
+                            id: captionField
+                            objectName: "viewerCaption"
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 8
+                            anchors.topMargin: 6
+                            wrapMode: TextInput.Wrap
+                            clip: true
+                            activeFocusOnTab: false
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 13
+                            color: Theme.foreground
+                            selectionColor: root.shade(Theme.accent, 0.5)
+                            selectedTextColor: Theme.brightForeground
+                            // Typing breaks a plain binding, so follow the saved
+                            // caption explicitly when the file or its marks change.
+                            readonly property string saved: root.caption
+                            onSavedChanged: text = saved
+                            Component.onCompleted: text = saved
+                            function commit() {
+                                if (text.trim() !== root.caption) {
+                                    root.captionEdited(text.trim())
+                                }
+                            }
+                            // Enter saves outright. Handing focus back to the
+                            // sheet is not enough on its own: a focus scope
+                            // returns focus to its current item, which is this
+                            // field, so the focus-out save would never fire.
+                            function finish() {
+                                commit()
+                                focus = false
+                                root.focusPreview()
+                            }
+                            onEditingFinished: commit()
+                            Keys.onEscapePressed: {
+                                text = root.caption
+                                focus = false
+                                root.focusPreview()
+                            }
+                            Keys.onReturnPressed: finish()
+                            Keys.onEnterPressed: finish()
+                        }
+
+                        Text {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 8
+                            y: 6
+                            visible: captionField.text === "" && !captionField.activeFocus
+                            text: "Add a caption"
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 13
+                            color: Theme.mutedText
+                        }
+
+                        HoverHandler {
+                            id: captionHover
+                            cursorShape: Qt.IBeamCursor
+                        }
+                        TapHandler {
+                            onTapped: captionField.forceActiveFocus()
+                        }
+                    }
+
+                    // Technical details: codec, bitrate and stream lines,
+                    // collapsed until asked for so the surface stays calm.
+                    Column {
+                        width: parent.width
+                        spacing: 2
+
+                        Item {
+                            id: technicalToggle
+                            objectName: "viewerTechnicalToggle"
+                            width: parent.width
+                            height: 30
+
+                            Row {
+                                anchors.left: parent.left
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 6
+
+                                Icon {
+                                    name: "chevron-right"
+                                    size: 14
+                                    rotation: root.technicalExpanded ? 90 : 0
+                                    transformOrigin: Item.Center
+                                    color: Theme.mutedText
+                                }
+                                Text {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: "Technical details"
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: 13
+                                    color: Theme.foreground
+                                }
+                            }
+
+                            HoverHandler { id: techHover; cursorShape: Qt.PointingHandCursor }
+                            TapHandler { onTapped: root.technicalExpanded = !root.technicalExpanded }
+                            ToolTip {
+                                visible: techHover.hovered
+                                text: root.technicalExpanded
+                                      ? "Hide codec and stream details"
+                                      : "Show codec and stream details"
+                                delay: 500
+                            }
+                        }
+
+                        Column {
+                            id: technicalDetails
+                            objectName: "viewerTechnicalDetails"
+                            width: parent.width
+                            visible: root.technicalExpanded
+                            spacing: 3
+
+                            Text {
+                                width: parent.width
+                                visible: MediaInfo.path === root.path && MediaInfo.loading
+                                text: "Reading details…"
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 13
+                                color: Theme.mutedText
+                            }
+
+                            Repeater {
+                                model: MediaInfo.path === root.path ? MediaInfo.lines : []
+                                Text {
+                                    required property string modelData
+                                    width: technicalDetails.width
+                                    text: modelData
+                                    elide: Text.ElideRight
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: 13
+                                    color: Theme.mutedText
+                                }
+                            }
+                        }
+                    }
                 }
             }
+        }
 
-            Text {
-                id: actionsHeading
-                anchors.left: parent.left
-                anchors.leftMargin: 20
-                anchors.top: metadataColumn.bottom
-                anchors.topMargin: 14
-                text: "ACTIONS"
-                font.family: Theme.fontFamily
-                font.pixelSize: 9
-                font.weight: Font.DemiBold
-                color: Theme.mutedText
+        // Consume the dismissal click before it can play media or change a mark.
+        MouseArea {
+            anchors.fill: parent
+            visible: root.actionNavigationActive
+            z: 1
+            acceptedButtons: Qt.AllButtons
+            onClicked: root.focusPreview()
+            WheelHandler {
+                target: null
+                onWheel: function (event) { event.accepted = true }
+            }
+        }
+
+        // Action menu. The whole registry, on demand, under the header like an
+        // overflow: secondary, destructive and external actions with their
+        // shortcuts kept quiet on the right.
+        Rectangle {
+            id: actionPopup
+            z: 2
+            objectName: "viewerActionPopup"
+            visible: root.actionNavigationActive
+            anchors.top: root.headerShown ? previewHeader.bottom : parent.top
+            anchors.topMargin: 6
+            anchors.right: parent.right
+            anchors.rightMargin: 10
+            width: Math.min(280, panel.width - 40)
+            height: Math.min(380, Math.max(140, panel.height - (root.headerShown ? 62 : 20)))
+            radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 4
+            color: root.shade(Theme.background, 0.98)
+            border.width: 1
+            border.color: root.shade(Theme.foreground, 0.18)
+
+            MouseArea {
+                anchors.fill: parent
+                acceptedButtons: Qt.AllButtons
+                preventStealing: true
             }
 
             // Actions, from the registry
             ListView {
                 id: actions
                 objectName: "viewerActions"
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: actionsHeading.bottom
-                anchors.bottom: parent.bottom
-                anchors.topMargin: 4
-                anchors.bottomMargin: 14
-                anchors.leftMargin: 10
-                anchors.rightMargin: 10
+                anchors.fill: parent
+                anchors.margins: 6
                 clip: true
                 spacing: 1
                 ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
@@ -2201,18 +2538,24 @@ Item {
                     readonly property bool primary: modelData.id ===
                                                     Registry.primaryActionForKind(
                                                         root.isVideo, root.isDocument)
+                    readonly property bool destructive: modelData.id === "trash"
+                                                        || modelData.id === "hide"
+                    // mpv is an external player; say so rather than let "Play"
+                    // read as embedded playback.
+                    readonly property string displayLabel: modelData.id === "play"
+                                                           ? "Open in mpv" : modelData.label
                     readonly property string shortcut: modelData.shortcut
                     readonly property string toolTipText: modelData.shortcut !== ""
-                                                           ? modelData.label + "  ·  "
+                                                           ? row.displayLabel + "  ·  "
                                                              + modelData.shortcut
-                                                           : ""
+                                                           : row.displayLabel
 
                     Accessible.role: Accessible.Button
-                    Accessible.name: modelData.label
+                    Accessible.name: row.displayLabel
                     Accessible.description: modelData.shortcut !== ""
                                             ? "Shortcut " + modelData.shortcut : ""
                     Accessible.ignored: !row.usable
-                    Accessible.onPressAction: if (row.usable) root.actionTriggered(row.modelData.id)
+                    Accessible.onPressAction: if (row.usable) root.invokeAction(row.modelData.id)
 
                     Rectangle {
                         anchors.fill: parent
@@ -2234,13 +2577,14 @@ Item {
                         anchors.right: shortcut.left
                         anchors.rightMargin: 8
                         elide: Text.ElideRight
-                        text: row.modelData.label
+                        text: row.displayLabel
                               + (row.usable ? "" : "  ·  needs " + row.modelData.hint)
                         font.family: Theme.fontFamily
                         font.pixelSize: 12
                         font.weight: row.primary ? Font.DemiBold : Font.Normal
                         color: !row.usable
                                ? Theme.mutedText
+                               : row.destructive ? Theme.red
                                : (row.primary ? Theme.accent : Theme.foreground)
                     }
 
@@ -2270,7 +2614,7 @@ Item {
                         enabled: row.usable
                         onSingleTapped: {
                             root.focusAction(row.index)
-                            root.actionTriggered(row.modelData.id)
+                            root.invokeAction(row.modelData.id)
                         }
                     }
 
@@ -2294,7 +2638,7 @@ Item {
                         }
                         if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
                                 || event.key === Qt.Key_Space) {
-                            root.actionTriggered(row.modelData.id)
+                            root.invokeAction(row.modelData.id)
                             event.accepted = true
                         }
                     }
@@ -2360,10 +2704,6 @@ Item {
             // The window owns Escape through its own shortcut; this is the
             // fallback for the paths that shortcut does not cover, and it
             // leaves a text selection the same way.
-            if (root.leaveTextSelection()) {
-                event.accepted = true
-                return
-            }
             root.dismiss()
             event.accepted = true
             return
@@ -2472,7 +2812,7 @@ Item {
         }
         for (const row of actions.model) {
             if (row.shortcut === label && row.available) {
-                root.actionTriggered(row.id)
+                root.invokeAction(row.id)
                 event.accepted = true
                 return
             }
