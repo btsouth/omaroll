@@ -17,19 +17,19 @@ telemetry.
 
 [Install](#install-or-update) · [Open files](#open-files) · [Features](#features) · [Contributing](CONTRIBUTING.md)
 
-[![The library over the Ethereal theme, with the wallpaper showing through the chrome](docs/library.png)](https://btsouth.github.io/omaroll/docs/omaroll-demo.mp4)
+[![The library over the Ethereal theme, with the wallpaper showing through the chrome](docs/library.png)](https://btsouth.github.io/omaroll/docs/omaroll-demo.mp4?v=1.9.1)
 
-[Watch the 29-second demo](https://btsouth.github.io/omaroll/docs/omaroll-demo.mp4)
+[Watch the 29-second demo](https://btsouth.github.io/omaroll/docs/omaroll-demo.mp4?v=1.9.1)
 
 ## Install or update
 
 Requires x86_64 Omarchy or Arch Linux with Qt 6.8+ and Poppler.
 
 ```bash
-curl -fLO https://github.com/btsouth/omaroll/releases/download/v1.9.0/omaroll-1.9.0-1-x86_64.pkg.tar.zst \
-     -fLO https://github.com/btsouth/omaroll/releases/download/v1.9.0/SHA256SUMS
+curl -fLO https://github.com/btsouth/omaroll/releases/download/v1.9.1/omaroll-1.9.1-1-x86_64.pkg.tar.zst \
+     -fLO https://github.com/btsouth/omaroll/releases/download/v1.9.1/SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
-sudo pacman -U ./omaroll-1.9.0-1-x86_64.pkg.tar.zst
+sudo pacman -U ./omaroll-1.9.1-1-x86_64.pkg.tar.zst
 ```
 
 Run the same commands for a newer release to update. The package is prepared for
@@ -46,7 +46,7 @@ source build, see [Development](#development).
 The release includes build provenance. To verify the package with GitHub CLI:
 
 ```bash
-gh attestation verify omaroll-1.9.0-1-x86_64.pkg.tar.zst --repo btsouth/omaroll
+gh attestation verify omaroll-1.9.1-1-x86_64.pkg.tar.zst --repo btsouth/omaroll
 ```
 
 ## Open files
@@ -176,7 +176,10 @@ An action whose program is missing is shown greyed with the package to install,
 rather than hidden. The medium decides the list, not the folder: a downloaded
 clip gets the recording actions and a downloaded photo gets the image actions.
 
-![Every action for one capture](docs/detail.png)
+Gallery previews open with a compact header. Toggle the inspector for ratings,
+captions and file details, or use the overflow menu for other actions.
+
+![The gallery preview with its inspector tucked away](docs/detail.png)
 
 ## Mattes
 

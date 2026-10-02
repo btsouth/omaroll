@@ -2,12 +2,13 @@
 
 ## Latest release
 
-[Omaroll 1.9.0](https://github.com/btsouth/omaroll/releases/tag/v1.9.0) was
-published on 2 October 2026 from tag `v1.9.0` (commit `f630c53`).
+[Omaroll 1.9.1](https://github.com/btsouth/omaroll/releases/tag/v1.9.1), dated
+2 October 2026, includes the polished gallery preview and video controls.
 
-It adds a quick image and video viewer, PDF text selection, theme readability
-and narrow-window improvements, and fixes the library preview's track labels
-and wheel handling. See the [changelog](../CHANGELOG.md#190) for the full scope.
+The inspector opens on demand, secondary actions move into an overflow menu,
+and saved-position choices stay below the video. It builds on 1.9.0's quick
+image/video viewer and PDF text selection. See the
+[changelog](../CHANGELOG.md#191) for the full scope.
 
 The release provides an x86_64 Arch package, source archive and PKGBUILD, with
 checksums and signed build provenance. Installation and verification commands
@@ -18,7 +19,7 @@ are in the [README](../README.md#install-or-update).
 Use the [open pull requests](https://github.com/btsouth/omaroll/pulls) for work
 under review, and the [roadmap](ROADMAP.md) for scope and future decisions.
 Changes for the next release should remain in focused pull requests; the
-published tag identifies the 1.9.0 source.
+published tag identifies the 1.9.1 source.
 
 The [Omarchy package submission](https://github.com/omacom/omarchy-pkgs/pull/295)
 is still under review. Repository inclusion, default installation and MIME
