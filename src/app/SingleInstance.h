@@ -9,10 +9,12 @@ class SingleInstance final : public QObject {
 
 public:
   explicit SingleInstance(const QString& serverName = {}, QObject* parent = nullptr);
-  [[nodiscard]] bool claimOrNotify(const QStringList& paths = {});
+  // |library| asks the running instance for the library window even when every
+  // path could open in the viewer, as --library does on the command line.
+  [[nodiscard]] bool claimOrNotify(const QStringList& paths = {}, bool library = false);
 
 signals:
-  void activationRequested(const QStringList& paths);
+  void activationRequested(const QStringList& paths, bool library);
 
 private:
   QString m_serverName;

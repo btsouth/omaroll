@@ -3,6 +3,18 @@
 Snapshot: 15 September 2026 UTC, after the v1.8.0 release. Check the tag and
 release, and the latest PRs, before resuming.
 
+## In progress
+
+The `quick-viewer` branch splits Omaroll into two front doors in one process.
+Pictures and videos from outside open in a new viewer window (`qml/Viewer.qml`,
+`src/viewer/ViewerSession`) that never builds the library; folders, PDFs, a
+plain launch and `--library` open the library as before. The library's services
+moved into a lazily built `LibraryWindow` in `main.cpp`, and each window has its
+own QML context over the shared theme, settings and actions. The viewer has its
+own suite (`tests/tst_viewer.cpp`) and render views (`viewer`, `viewer-video`,
+`viewer-info`, `viewer-menu`). Physical desktop acceptance of the viewer, and
+whether the library's own detail sheet should become the viewer, are open.
+
 ## Released
 
 [v1.8.0](https://github.com/btsouth/omaroll/releases/tag/v1.8.0) is the latest
