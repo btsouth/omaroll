@@ -390,11 +390,13 @@ Item {
         if (player.playbackState === MediaPlayer.PlayingState) {
             player.pause()
         } else {
+            root.resumeAvailable = false
             player.play()
         }
     }
 
     function seekVideo(milliseconds) {
+        root.resumeAvailable = false
         player.position = Math.max(0, Math.min(player.duration, player.position + milliseconds))
     }
 
@@ -1951,6 +1953,7 @@ Item {
 
                     function seekTo(x) {
                         if (player && player.duration > 0) {
+                            root.resumeAvailable = false
                             player.position = Math.max(0, Math.min(1, x / width)) * player.duration
                         }
                     }

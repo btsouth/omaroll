@@ -2720,6 +2720,17 @@ private slots:
     click(item("restartVideoButton"));
     QTRY_VERIFY(!detail->property("resumeAvailable").toBool());
     QTRY_VERIFY(player->position() < 2000 && player->playbackState() == QMediaPlayer::PlayingState);
+    player->pause();
+    detail->setProperty("resumeAvailable", true);
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTRY_VERIFY(!detail->property("resumeAvailable").toBool());
+    player->pause();
+    detail->setProperty("resumeAvailable", true);
+    QTest::keyClick(m_window, Qt::Key_L);
+    QTRY_VERIFY(!detail->property("resumeAvailable").toBool());
+    detail->setProperty("resumeAvailable", true);
+    click(seek);
+    QTRY_VERIFY(!detail->property("resumeAvailable").toBool());
     QVERIFY(item("detail")->property("playbackError").toString().isEmpty());
   }
 
