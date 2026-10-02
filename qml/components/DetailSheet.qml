@@ -1686,10 +1686,12 @@ Item {
 
             Rectangle {
                 id: topControlsPanel
+                readonly property bool stacked: root.isVideo && !root.slideshowRunning
+                                                && stage.width < transport.minimumWidth + width + 44
                 anchors.bottom: parent.bottom
                 anchors.right: parent.right
                 anchors.rightMargin: 16
-                anchors.bottomMargin: 11
+                anchors.bottomMargin: stacked ? 62 : 11
                 width: topControls.implicitWidth + 10
                 height: topControls.implicitHeight + 10
                 radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 4
@@ -1853,10 +1855,10 @@ Item {
                 id: transport
                 visible: root.isVideo && !root.slideshowRunning
                 anchors.left: parent.left
-                anchors.right: topControlsPanel.left
+                anchors.right: topControlsPanel.stacked ? parent.right : topControlsPanel.left
                 anchors.bottom: parent.bottom
                 anchors.leftMargin: 16
-                anchors.rightMargin: 12
+                anchors.rightMargin: topControlsPanel.stacked ? 16 : 12
                 anchors.bottomMargin: 16
                 height: 40
 
@@ -1889,6 +1891,7 @@ Item {
 
                 Item {
                     id: scrub
+                    objectName: "videoSeek"
                     anchors.left: playButton.right
                     anchors.right: clockLabel.visible ? clockLabel.left : mediaControls.left
                     anchors.leftMargin: 14
@@ -2166,9 +2169,7 @@ Item {
                         objectName: "viewerInfoName"
                         width: parent.width
                         text: root.fileName
-                        wrapMode: Text.WrapAnywhere
-                        maximumLineCount: 2
-                        elide: Text.ElideRight
+                        elide: Text.ElideMiddle
                         font.family: Theme.fontFamily
                         font.pixelSize: 16
                         font.weight: Font.DemiBold
@@ -2194,7 +2195,7 @@ Item {
                             objectName: "viewerDateLabel"
                             width: parent.width
                             visible: text !== ""
-                            text: [root.dayLabel + " " + root.timeLabel,
+                            text: [root.dayLabel + (sidebar.width >= 280 ? " " + root.timeLabel : ""),
                                    root.sizeLabel].filter(function (part) {
                                 return part !== "" && part.trim() !== ""
                             }).join("  ·  ")

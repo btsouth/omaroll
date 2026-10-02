@@ -2661,6 +2661,24 @@ private slots:
       const QRectF bounds = control->mapRectToScene(control->boundingRect());
       QVERIFY2(bounds.left() >= 0 && bounds.right() <= m_window->width(), qPrintable(name));
     }
+    // The inspector leaves much less room than the closed preview. Seeking
+    // must still have a useful target rather than a negative-width hit area.
+    item("detail")->setProperty("showInfo", true);
+    QQuickItem* seek = item("videoSeek");
+    QTRY_VERIFY(seek->isVisible() && seek->width() >= 60);
+    const QRectF seekBounds = seek->mapRectToScene(seek->boundingRect());
+    for (const QString& name : {QStringLiteral("videoPlayButton"),
+                                QStringLiteral("videoSoundButton"),
+                                QStringLiteral("playbackSpeedButton")}) {
+      QQuickItem* control = item(name);
+      const QRectF bounds = control->mapRectToScene(control->boundingRect());
+      QVERIFY(bounds.left() >= 0 && bounds.right() <= m_window->width());
+      QVERIFY(!bounds.intersects(seekBounds));
+    }
+    player->pause();
+    QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier,
+                     seek->mapToScene(QPointF(seek->width() * 0.75, seek->height() / 2)).toPoint());
+    QTRY_VERIFY(player->position() > player->duration() / 2);
     QVERIFY(item("detail")->property("playbackError").toString().isEmpty());
   }
 
