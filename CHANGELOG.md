@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.10.0
 
 ### Added
 
@@ -8,6 +8,8 @@
   can be open at once. Opening a file that is already up brings its viewer
   forward. On Hyprland, a second viewer on a workspace tiles with the ones
   there instead of floating on top of them.
+- With several videos open, only the viewer used last is heard. The others
+  keep playing muted, and the saved mute setting is unchanged.
 
 ### Fixed
 
