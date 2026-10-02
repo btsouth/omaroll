@@ -824,6 +824,9 @@ Item {
             // Margins around the bottom row: 16 either side, 12 between the
             // groups, 10 of padding inside the slideshow group's panel.
             readonly property int rowChrome: 16 + 12 + 10 + 16
+            readonly property real videoFooterHeight: 56
+                + (root.slideshowRunning ? 0 : (resumePrompt.visible ? resumePrompt.height + 10 : 0)
+                   + (topControlsPanel.stacked ? 44 : 0))
 
             // Nothing here reads compactControls, which keeps it loop-free.
             Row {
@@ -831,7 +834,7 @@ Item {
                 visible: false
                 spacing: 6
                 Repeater {
-                    model: root.isVideo ? ["Start slideshow", "Fullscreen"]
+                    model: root.isVideo ? ["Fullscreen"]
                                         : ["Start slideshow"]
                     PillButton { label: modelData }
                 }
@@ -908,7 +911,7 @@ Item {
                 id: videoPoster
                 anchors.fill: parent
                 anchors.margins: 16
-                anchors.bottomMargin: 56
+                anchors.bottomMargin: stage.videoFooterHeight
                 fillMode: Image.PreserveAspectFit
                 asynchronous: true
                 smooth: true
@@ -1381,7 +1384,7 @@ Item {
                 id: output
                 anchors.fill: parent
                 anchors.margins: 16
-                anchors.bottomMargin: 56
+                anchors.bottomMargin: stage.videoFooterHeight
                 visible: root.isVideo && player && player.hasVideo
                 readonly property rect sourceRect: videoSurface.item
                                                    ? videoSurface.item.sourceRect : Qt.rect(0, 0, 0, 0)
@@ -1706,7 +1709,7 @@ Item {
                 anchors.bottom: parent.bottom
                 anchors.right: parent.right
                 anchors.rightMargin: 16
-                anchors.bottomMargin: stacked ? 62 : 11
+                anchors.bottomMargin: stacked ? 62 + (resumePrompt.visible ? resumePrompt.height + 10 : 0) : 11
                 width: topControls.implicitWidth + 10
                 height: topControls.implicitHeight + 10
                 radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 4
@@ -1722,6 +1725,8 @@ Item {
                     spacing: 6
 
                     PillButton {
+                        objectName: "viewerSlideshowButton"
+                        visible: !root.isVideo || root.slideshowRunning
                         enabled: root.canNavigate
                         label: root.compactControls
                                ? (root.slideshowRunning ? "Ⅱ" : "▶")
@@ -1842,14 +1847,15 @@ Item {
                 }
             }
 
-            // A saved spot is offered, not applied: the viewer stays on the
-            // first frame until the user chooses to resume.
+            // Reserve a row below the picture for the saved spot, so the
+            // choice never covers video content or stacked playback controls.
             Row {
                 id: resumePrompt
                 objectName: "resumePrompt"
-                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.left: parent.left
+                anchors.leftMargin: 16
                 anchors.bottom: transport.top
-                anchors.bottomMargin: 14
+                anchors.bottomMargin: 10
                 spacing: 8
                 visible: root.isVideo && root.resumeAvailable && !root.slideshowRunning
 
@@ -1860,7 +1866,8 @@ Item {
                     onClicked: root.resumeVideo()
                 }
                 PillButton {
-                    label: "Start over"
+                    objectName: "restartVideoButton"
+                    label: "Restart"
                     onClicked: root.restartVideo()
                 }
             }

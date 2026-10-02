@@ -2695,6 +2695,31 @@ private slots:
     QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier,
                      seek->mapToScene(QPointF(seek->width() * 0.75, seek->height() / 2)).toPoint());
     QTRY_VERIFY(player->position() > player->duration() / 2);
+    // A saved spot belongs below the picture, including with the inspector
+    // open at minimum size. Slideshow is absent from ordinary video playback.
+    QQuickItem* detail = item("detail");
+    QVERIFY(!item("viewerSlideshowButton")->isVisible());
+    detail->setProperty("resumePosition", 7000);
+    detail->setProperty("resumeAvailable", true);
+    for (const QSize size : {QSize(560, 420), QSize(1280, 820)}) {
+      m_window->resize(size);
+      settle();
+      QQuickItem* prompt = item("resumePrompt");
+      const QRectF bounds = prompt->mapRectToScene(prompt->boundingRect());
+      QQuickItem* output = item("videoOutput");
+      QVERIFY(prompt->isVisible());
+      QVERIFY(bounds.left() >= 0 && bounds.right() <= output->mapToScene(QPointF(output->width(), 0)).x());
+      QVERIFY(bounds.top() >= output->mapToScene(QPointF(0, output->height())).y());
+      QVERIFY(bounds.bottom() <= seek->mapToScene(QPointF()).y());
+    }
+    click(item("resumeButton"));
+    QTRY_VERIFY(!detail->property("resumeAvailable").toBool());
+    QTRY_VERIFY(player->position() >= 6900 && player->playbackState() == QMediaPlayer::PlayingState);
+    player->pause();
+    detail->setProperty("resumeAvailable", true);
+    click(item("restartVideoButton"));
+    QTRY_VERIFY(!detail->property("resumeAvailable").toBool());
+    QTRY_VERIFY(player->position() < 2000 && player->playbackState() == QMediaPlayer::PlayingState);
     QVERIFY(item("detail")->property("playbackError").toString().isEmpty());
   }
 
