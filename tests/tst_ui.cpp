@@ -49,6 +49,7 @@
 #include <QMediaMetaData>
 #include <QPainter>
 #include <QPdfWriter>
+#include <QPointingDevice>
 #include <QProcess>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -653,6 +654,46 @@ private slots:
     QVERIFY(fit->mapToScene(QPointF(0, 0)).x() >= 0);
     m_window->resize(1280, 820);
     QTRY_VERIFY(item("actualSizeButton")->isVisible());
+  }
+
+  // Qt on Wayland can report a mouse wheel as a touchpad. Its notches must
+  // still zoom the picture in the viewer; only a phased swipe pans it.
+  void imageViewerWheelZoomsWhateverQtCallsTheDevice() {
+    int imageRow = -1;
+    for (int row = 0; row < m_library->rowCount(); ++row) {
+      if (!m_library->isVideoAt(row) && !m_library->isDocumentAt(row)) {
+        imageRow = row;
+        break;
+      }
+    }
+    QVERIFY(imageRow >= 0);
+    openDetail(imageRow);
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->property("stillReady").toBool());
+    QVERIFY(QMetaObject::invokeMethod(detail, "resetImageView"));
+    QCOMPARE(detail->property("imageZoom").toDouble(), 1.0);
+
+    QPointingDevice touchpad(QStringLiteral("touchpad"), 4243, QInputDevice::DeviceType::TouchPad,
+                             QPointingDevice::PointerType::Finger,
+                             QInputDevice::Capability::Position | QInputDevice::Capability::Scroll,
+                             1, 3);
+    const QPointF at(m_window->width() * 0.4, m_window->height() / 2.0);
+    QWheelEvent notch(at, m_window->mapToGlobal(at.toPoint()), QPoint(), QPoint(0, 120),
+                      Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false,
+                      Qt::MouseEventNotSynthesized, &touchpad);
+    QCoreApplication::sendEvent(m_window, &notch);
+    QTRY_VERIFY(qAbs(detail->property("imageZoom").toDouble() - 1.2) < 0.001);
+
+    // A two-finger swipe with pixel deltas pans rather than zooming.
+    for (const Qt::ScrollPhase phase : {Qt::ScrollBegin, Qt::ScrollUpdate, Qt::ScrollEnd}) {
+      QWheelEvent swipe(at, m_window->mapToGlobal(at.toPoint()), QPoint(0, -40), QPoint(0, -40),
+                        Qt::NoButton, Qt::NoModifier, phase, false,
+                        Qt::MouseEventNotSynthesized, &touchpad);
+      QCoreApplication::sendEvent(m_window, &swipe);
+    }
+    QTest::qWait(50);
+    QVERIFY(qAbs(detail->property("imageZoom").toDouble() - 1.2) < 0.001);
+    QVERIFY(QMetaObject::invokeMethod(detail, "resetImageView"));
   }
 
   void externalSidecarSubtitlesShowOnTheVideo() {

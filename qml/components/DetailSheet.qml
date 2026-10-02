@@ -866,9 +866,26 @@ Item {
                     }
                 }
 
+                // Qt on Wayland can report a mouse wheel as a touchpad, which
+                // the default devices left out, so those wheels never zoomed.
+                // Wheels and swipes are told apart by what the events do: a
+                // touchpad swipe comes in phases with pixel deltas and pans;
+                // a wheel notch has no phase and zooms.
                 WheelHandler {
                     target: null
+                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                     onWheel: function (event) {
+                        if (event.phase !== Qt.NoScrollPhase
+                                && (event.pixelDelta.x !== 0 || event.pixelDelta.y !== 0)) {
+                            stillViewport.contentX = Math.max(0, Math.min(
+                                stillViewport.contentWidth - stillViewport.width,
+                                stillViewport.contentX - event.pixelDelta.x))
+                            stillViewport.contentY = Math.max(0, Math.min(
+                                stillViewport.contentHeight - stillViewport.height,
+                                stillViewport.contentY - event.pixelDelta.y))
+                            event.accepted = true
+                            return
+                        }
                         const delta = event.angleDelta.y !== 0
                                       ? event.angleDelta.y : event.pixelDelta.y
                         root.adjustImageZoom(delta > 0 ? 1.2 : 1 / 1.2)
