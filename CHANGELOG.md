@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- Each picture or video opened from outside gets its own viewer, so several
+  can be open at once. Opening a file that is already up brings its viewer
+  forward. On Hyprland, a second viewer on a workspace tiles with the ones
+  there instead of floating on top of them.
+
 ### Fixed
 
 - Images and videos without filename extensions open using bounded content

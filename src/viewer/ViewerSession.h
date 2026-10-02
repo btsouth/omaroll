@@ -50,6 +50,8 @@ public:
   [[nodiscard]] int index() const { return m_index; }
   [[nodiscard]] int count() const { return int(m_paths.size()); }
   [[nodiscard]] bool selection() const { return m_selection; }
+  // Every file this viewer steps through, in order.
+  [[nodiscard]] QStringList sequence() const { return m_paths; }
 
   // Paths must already be canonical, as OpenRequest makes them.
   Q_INVOKABLE void open(const QStringList& paths);

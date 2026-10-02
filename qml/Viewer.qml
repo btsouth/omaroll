@@ -22,7 +22,16 @@ ApplicationWindow {
     // sees. The library's is "Omaroll" alone, so a rule matching the whole
     // title against ".* · Omaroll" floats this window and leaves the library
     // tiled.
-    title: Session.fileName !== "" ? Session.fileName + " · Omaroll" : "Omaroll"
+    // A viewer opened beside another maps under the plain title so that rule
+    // leaves it tiled, then takes its own; see HyprlandPlacement.
+    title: Session.fileName !== "" && !root.mapTiled ? Session.fileName + " · Omaroll" : "Omaroll"
+    property bool mapTiled: false
+    // With several viewers open, messages that belong to no viewer in
+    // particular appear only in the one used last.
+    property bool frontmost: true
+    // Only one viewer's video is heard: the one used last. The others keep
+    // playing silently, and the saved mute setting is left alone.
+    property bool audible: true
     // The window paints nothing; the canvas below carries the theme's alpha,
     // as the library's does, and the picture itself is always drawn opaque.
     color: "transparent"
@@ -632,8 +641,8 @@ ApplicationWindow {
 
     Connections {
         target: Actions
-        function onFailed(message) { if (root.visible) root.say(message) }
-        function onReported(message) { if (root.visible) root.say(message) }
+        function onFailed(message) { if (root.visible && root.frontmost) root.say(message) }
+        function onReported(message) { if (root.visible && root.frontmost) root.say(message) }
     }
 
     Timer {
@@ -832,7 +841,7 @@ ApplicationWindow {
                     videoOutput: videoSurface.item
                     audioOutput: AudioOutput {
                         volume: Settings.videoVolume
-                        muted: Settings.videoMuted
+                        muted: Settings.videoMuted || !root.audible
                     }
                     onSourceChanged: {
                         root.videoError = ""

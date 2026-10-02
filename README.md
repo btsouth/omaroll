@@ -84,9 +84,10 @@ omaroll -- ./-unusual-name.png
 
 Multiple files stay in the supplied order across folders, including when an
 existing window receives them. Explicitly selected hidden files can be opened
-without scanning every surrounding folder. One viewer window is reused for
-every file opened while it is up, and the library and viewer share one process,
-so a favourite or rating set in one shows in the other.
+without scanning every surrounding folder. Each file opened from outside gets
+its own viewer, so two pictures can sit side by side; opening one that is
+already up brings its viewer forward. The library and viewers share one
+process, so a favourite or rating set in one shows in the others.
 
 <details>
 <summary>Viewer shortcuts</summary>
@@ -283,6 +284,14 @@ its tile:
 o.window({ class = "^(io\\.github\\.tsouth89\\.omaroll)$", title = ".* · Omaroll" }, { float = true })
 o.window({ class = "^(io\\.github\\.tsouth89\\.omaroll)$", title = ".* · Omaroll" }, { center = true })
 ```
+
+When a second viewer opens on the same workspace, Omaroll tiles it and the
+viewers already there, so your layout arranges them instead of stacking them in
+the middle. They stay tiled as the others close; the next viewer opened on its
+own floats again.
+A viewer opened this way maps under the library's title, "Omaroll", for a
+moment before taking its own, so rules you have keyed on that exact title also
+apply to it.
 
 ## Try it without your own files
 

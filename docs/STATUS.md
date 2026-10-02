@@ -16,8 +16,9 @@ are in the [README](../README.md#install-or-update).
 
 ## Current work
 
-Extensionless image/video opening is being validated for the next release,
-including folder navigation, animations and the handoff to the library.
+Extensionless image/video opening and multiple viewers are in review for the
+next release. A second viewer on a Hyprland workspace tiles with the first
+instead of floating over it.
 
 Use the [open pull requests](https://github.com/btsouth/omaroll/pulls) for work
 under review, and the [roadmap](ROADMAP.md) for scope and future decisions.

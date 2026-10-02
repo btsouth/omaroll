@@ -79,8 +79,12 @@ add_library(omaroll_core STATIC
   src/thumbs/ThumbnailProvider.h
   src/theme/OmarchyTheme.cpp
   src/theme/OmarchyTheme.h
+  src/viewer/HyprlandPlacement.cpp
+  src/viewer/HyprlandPlacement.h
   src/viewer/ViewerSession.cpp
   src/viewer/ViewerSession.h
+  src/viewer/ViewerWindows.cpp
+  src/viewer/ViewerWindows.h
 )
 
 target_include_directories(omaroll_core PUBLIC src)
