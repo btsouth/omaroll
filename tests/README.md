@@ -68,6 +68,37 @@ and results for:
 Use the fixtures and a disposable folder for operations that modify files.
 Keep untested environments explicit in the release report.
 
+### Functional acceptance checklist
+
+Use disposable media for operations that change files. Check the library and
+quick viewer separately, including both themes and narrow windows.
+
+1. Launch `omaroll --demo` and verify the grid, folder filters, search, sort,
+   selection, and Settings at both tiled and floating window sizes.
+2. Open a real image from the file manager. Verify previous and next stay in its
+   folder, then test fit, actual size, deep zoom, pan, rotate, fullscreen,
+   animation pause and `F5` slideshow. Press Enter to open the library preview
+   and check its horizontal and vertical flips.
+3. Open a real video. Verify play and pause, sound, volume, seeking, playback
+   speed, audio tracks, subtitles, technical details, Save current frame,
+   double-click fullscreen, and the transition to the next item in a slideshow.
+4. Create an album, rename and move one member inside a watched folder, and
+   verify it remains in the album. Move it outside the library and verify it is
+   shown as unavailable instead of being matched to another file.
+5. Put an exact copy of a disposable image in another watched folder. Open
+   Browse, choose Exact duplicates, keep one selected copy, and verify only the
+   other byte-for-byte copies move to Trash after confirmation.
+6. Resize or recompress a disposable image, open Similar pictures, and verify
+   the pair is grouped without either file being modified.
+7. Add a tag and saved view, restart Omaroll, and verify both persist. Rename a
+   tagged file inside Omaroll and verify its tag follows it.
+8. Open a multipage PDF from the file manager and verify thumbnails, page
+   navigation, continuous scrolling, fit page, text search, word selection and
+   copying. Check details, rename, organize, send and Trash actions.
+9. Switch Omarchy themes while Omaroll is open and confirm the chrome updates
+   without changing the media colors.
+10. Move a disposable file to Trash and restore it from the desktop Trash.
+
 ## Performance
 
 The optional benchmarks keep their files, settings and cache in disposable

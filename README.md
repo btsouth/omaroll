@@ -4,135 +4,145 @@
 
 # Omaroll
 
-**Your media, in one beautiful library.**
+**A quick viewer and a home for your media.**
 
-A fast, beautiful image, video, and PDF viewer that turns your media folders into a
-library. Open a picture or a video and it fills a clean window of its own, with
-the rest of its folder a keypress away. Open Omaroll itself and you get the
-library: photos, videos, documents, downloads, albums, tags, and custom folders
-together.
+Open a picture or video in its own viewer, with the rest of its folder an arrow
+key away. Open Omaroll itself to browse photos, videos, PDFs, screenshots and
+recordings together, with albums, tags and search. Your files stay where they are.
 
-> Omaroll is an independent community project. It is not an official Omarchy
-> application.
+Built for Omarchy. Browsing and organization work locally, without accounts or
+telemetry.
+
+> Omaroll is an independent community project, not an official Omarchy application.
+
+[Install](#install-or-update) · [Open files](#open-files) · [Features](#features) · [Contributing](CONTRIBUTING.md)
 
 [![The library over the Ethereal theme, with the wallpaper showing through the chrome](docs/library.png)](https://btsouth.github.io/omaroll/docs/omaroll-demo.mp4)
 
-[Watch the 25 second demo](https://btsouth.github.io/omaroll/docs/omaroll-demo.mp4)
+[Watch the 25-second demo](https://btsouth.github.io/omaroll/docs/omaroll-demo.mp4)
 
----
+## Install or update
 
-## Why
+Requires x86_64 Omarchy or Arch Linux with Qt 6.8+ and Poppler.
 
-Omarchy ships an unusually good capture stack and then drops the output into a
-folder. `omarchy-capture-screenshot`, `omarchy-capture-screenrecording`, omacut,
-tensaku, pinta, tesseract, `omarchy-transcode` are all there and all good. What
-is missing is the two steps after capture: finding the thing again, and doing
-the obvious next thing with it.
-
-```
-$ ls ~/Videos
-screenrecording-2026-08-30_20-10-45.mp4
-screenrecording-2026-08-30_20-10-59.mp4
-screenrecording-2026-08-30_20-11-49.mp4
-...
+```bash
+curl -fLO https://github.com/btsouth/omaroll/releases/download/v1.9.0/omaroll-1.9.0-1-x86_64.pkg.tar.zst \
+     -fLO https://github.com/btsouth/omaroll/releases/download/v1.9.0/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+sudo pacman -U ./omaroll-1.9.0-1-x86_64.pkg.tar.zst
 ```
 
-Omaroll is the wire between the tools that make captures and the tools that act
-on them.
+Run the same commands for a newer release to update. The package is prepared for
+the Omarchy repository so installation and updates can move to normal `pacman`
+updates after inclusion.
 
-## What it does
+If you prefer a browser, download the package and `SHA256SUMS` from the
+[latest release](https://github.com/btsouth/omaroll/releases/latest), put them
+in the same folder, then run the last two commands above from that folder.
 
-- **Opens a file and gets out of the way.** A picture or video opened from the
-  file manager opens in a normal-sized window and fills it. Pictures get one
-  bar of the usual controls (zoom, actual size, previous, slideshow, next,
-  rotate and delete) and videos a thin bar of their own, both fading when the
-  pointer rests. The arrow keys step through the folder in name order, and the
-  next picture is decoded before you ask for it. Nothing is scanned to get
-  there. Enter hands the file to the library when you want the rest.
-- **Sees everything you already have.** Screenshots, recordings, pictures,
-  videos, PDFs and downloads, grouped by day, newest first. Add any other folder to
-  the library from Browse or Settings, then search and switch between sources,
-  folders, and albums from the library bar.
-  Photos and videos use their embedded original date when available, with the
-  file modification time only as a fallback. Omaroll never imports or copies
-  media into its own storage. Large libraries use bounded metadata batches,
-  lazy thumbnails, and worker-thread rescans.
-- **Builds real albums.** Select files, add them to a named collection, and
-  browse it beside your folders. Albums never move or copy media. If an album
-  file is renamed or moved within the library, Omaroll repairs the entry by
-  file and content identity. Files moved elsewhere and ambiguous duplicates
-  stay unavailable rather than matching the wrong copy.
-- **Browses time directly.** Open a month or day, jump to today or this week,
-  find recently modified files, or see what changed since the previous visit.
-- **Saves useful views.** Any combination of search, kind, folder, date, tag,
-  favourites, minimum rating, hidden files, and sort order can become a smart collection that
-  updates as files change.
-- **Browses by camera.** Photos and videos with embedded camera details can
-  be filtered by camera or lens from Browse, and a saved view remembers the
-  choice. A library of screenshots never shows the section.
-- **Rates what matters.** Give any file one to five stars from the viewer or
-  with `Alt+1` to `Alt+5`, sort by rating, and narrow any view to a minimum
-  rating. Ratings are stored with favourites and never touch the file.
-- **Adds lightweight tags.** Tag any selection and browse it without moving or
-  copying files. Tags follow in-app renames and can be combined with saved views.
-  Name a tag `Travel/Japan` to nest it under `Travel`; choosing the parent shows
-  everything beneath it.
-- **Captions files.** Type a caption in the viewer and it shows on the tile and
-  matches in search, alongside filenames and picture text. Captions are stored
-  with the other marks and never written into the file.
-- **Knows what each file is.** Omarchy stamps its captures with a predictable
-  name, so a screenshot is a Screenshot even though it lives in `~/Pictures`
-  next to every other image.
-- **Finds words inside pictures.** Search checks filenames immediately, then
-  adds matches from screenshots and photos as local Tesseract indexing
-  progresses with a visible count. The private cache is reused until a file
-  changes and can be cleared from Settings.
-- **Reviews exact duplicates safely.** Choose Exact duplicates under Browse to
-  compare same-size candidates by content. Matching sets stay together for
-  review. Choose which one to keep and Omaroll moves only the other exact
-  copies to Trash after confirmation.
-- **Finds similar pictures.** A local perceptual comparison groups resized and
-  recompressed versions for review without changing or removing anything.
-- **Hands off specialist work.** Trim goes to omacut, annotate to tensaku,
-  convert to `omarchy-transcode`, text to tesseract, and setting a background
-  to Omarchy. Optional actions can still open mpv or imv when you want them.
-- **Drags out as the real file.** Pull a thumbnail into a Discord message, a
-  browser upload or a Nautilus window and the file lands there. Select several
-  and they go together.
-- **Previews in place.** In the library, Enter opens a capture large with every
-  action beside it. Images fit, display at actual size, zoom, pan, rotate, flip, and animate.
-  PDFs scroll continuously at the window width, or fit a whole page, with text
-  search, a page jump, copy page text, and Select text to drag over the page
-  and copy just the words you picked. Videos play with sound and include
-  seeking, volume, speed, audio track, subtitle controls and a ±0.5 s timing
-  nudge for sidecar subtitles. File details
-  include dimensions, duration, image format, camera and exposure data when
-  present, plus video codec, frame rate, bitrate and audio.
-- **Corrects a picture as a copy.** Crop with aspect presets, rotate, flip,
-  straighten and resize in a live preview, then Save a copy or Copy just the
-  region. A JPEG rotate with no crop or resize is written losslessly. The
-  original is never changed, and a batch action corrects a whole selection at
-  once.
-- **Presents any collection.** Start a fullscreen slideshow from a folder,
-  album, search or filtered library. Images advance automatically at a
-  configurable interval, in order or shuffled. Videos are
-  skipped by default, or can play through when enabled in Settings.
-- **Undoes a mark.** Ctrl+Z steps back through favourites, hidden flags,
-  ratings and captions, one action at a time.
-- **Acts on a selection.** Check a few tiles and send, copy, favourite, hide,
-  convert, or trash them together, or Taildrop them to another of your machines.
-- **Fits the tiles to you.** Ctrl and the wheel, or Ctrl with plus and minus,
-  make the grid tiles bigger or smaller, and the size sticks.
-- **Makes a screenshot postable.** The one thing Omaroll builds itself: six
-  finished backgrounds derived from the image's own dominant colour. Pick one,
-  it is on your clipboard and saved beside the original.
-- **Follows your theme.** Reads the active Omarchy palette, launcher surface,
-  font, corner radius and transparency, then cross-fades when you change theme.
-  No restart.
+On another Arch Wayland desktop, install `qt6-wayland` if it is missing. For a
+source build, see [Development](#development).
 
-## Actions
+The release includes build provenance. To verify the package with GitHub CLI:
 
-Every handler below already ships with Omarchy.
+```bash
+gh attestation verify omaroll-1.9.0-1-x86_64.pkg.tar.zst --repo btsouth/omaroll
+```
+
+## Open files
+
+Set Omaroll as the default for pictures and videos, or open one from a
+terminal:
+
+```bash
+omaroll photo.jpg
+omaroll clip.mp4
+```
+
+A picture or video opens in the viewer: the media fills the window, a small
+picture included, and the name, the controls and the menu appear when the
+pointer moves. Rotating turns the view only; a rotated copy is saved from the
+library. Pictures and videos in the folder are listed by filename. Use the arrows
+to step through pictures, or Page Up and Page Down to change files while a video
+is playing. Folders, PDFs and a plain `omaroll` open the library, and so does
+`--library` with any file:
+
+```bash
+omaroll ~/Pictures
+omaroll --library photo.jpg
+```
+
+Several files can be opened together, in the order given:
+
+```bash
+omaroll first.jpg ~/Pictures/second.png third.webp
+omaroll -- ./-unusual-name.png
+```
+
+Multiple files stay in the supplied order across folders, including when an
+existing window receives them. Explicitly selected hidden files can be opened
+without scanning every surrounding folder. One viewer window is reused for
+every file opened while it is up, and the library and viewer share one process,
+so a favourite or rating set in one shows in the other.
+
+<details>
+<summary>Viewer shortcuts</summary>
+
+| Key in the viewer | Does |
+|---|---|
+| `←` `→` · `Page Up` `Page Down` | Previous · next file. On a video the arrows seek instead |
+| `Home` `End` | First · last file, or the start · end of a video |
+| wheel · pinch | Zoom around the pointer |
+| `+` `-` | Zoom in · out |
+| drag · two-finger scroll | Move around a zoomed picture, down a long screenshot |
+| `0` · `1` · double click | Fit · actual size · toggle between them |
+| `R` · `Shift+R` | Rotate right · left, the view only, never the file |
+| `Space` · `K` | Play · pause a video or animation |
+| click a video | Play · pause |
+| `J` `L` · `↑` `↓` · `M` | Seek ten seconds · volume · mute |
+| `[` `]` · `Backspace` · `C` | Speed · normal speed · cycle subtitles |
+| `F` · `F11` · double click a video | Full screen |
+| `F5` | Slideshow |
+| `I` | Details: size, date, rating, camera or codec |
+| `V` · `Alt+1`-`Alt+5` · `Ctrl+Z` | Favourite · rate · undo |
+| `Y` · `S` · `A` | Copy · send · annotate |
+| `T` · `G` · `P` | Trim · save the current frame · open in mpv |
+| `Del` | Move to Trash, with confirm |
+| right click · menu button | Everything else that suits the file |
+| `Enter` · grid button | Open the file in the library |
+| `Esc` | Leave the slideshow or full screen, close the details, then close |
+
+</details>
+
+## Features
+
+- **Browse your media.** See files by day, source or folder; filter by kind,
+  date, camera or lens, and resize the grid. Original photo and video dates are
+  used when available. Add folders without importing or copying their files.
+- **Organize without changing originals.** Albums, nested tags, captions,
+  favourites, ratings and saved searches live in Omaroll's settings. Undo marks
+  with Ctrl+Z, and back up or restore your organization from Settings.
+- **Find words in pictures.** Search filenames immediately, then add local
+  Tesseract results as indexing progresses. Reuse or clear the private text cache.
+- **Preview images, video and PDFs.** Zoom, pan, rotate and flip pictures;
+  play video with sound, seeking, speed, audio tracks and subtitles; search PDF
+  text, select words to copy, and switch between continuous scrolling and fit page.
+- **Make corrections as copies.** Crop with aspect presets, straighten,
+  rotate, flip and resize one image or a selection. Save a copy or copy a region.
+  Lossless JPEG turns use `jpegtran` when possible; other corrections save a
+  recompressed copy.
+- **Review duplicates.** Compare exact copies or similar pictures side by side.
+  Choose a copy to keep and send the other exact duplicates to Trash after confirmation.
+- **Share and hand off.** Drag actual files into another app, copy images or
+  text, send with LocalSend or Taildrop, and open specialist tools for trimming,
+  annotation, conversion and editing.
+- **Present and finish.** Run a fullscreen slideshow, choose a screenshot
+  background for sharing, and follow your Omarchy palette and font as they change.
+
+## Library actions
+
+The library offers actions for the current file or selection. Omaroll handles
+organization and safe copies itself, and delegates specialist work to these tools.
 
 | Capture | Action | Handler |
 |---|---|---|
@@ -174,13 +184,16 @@ clip gets the recording actions and a downloaded photo gets the image actions.
 
 Adaptive and Deep are gradients built from the capture's dominant hue, Aurora is
 a soft mesh, Slate and Paper are neutrals, Pop is the complementary hue, and None
-is the raw capture so the picker is never a tax. Deterministic per file: the same
+keeps the raw capture. Deterministic per file: the same
 screenshot always offers the same six.
 
 The original is never touched. The composite is written as a new file beside it
 and put on your clipboard.
 
-## Keyboard
+## Library shortcuts
+
+<details>
+<summary>Library and in-library preview shortcuts</summary>
 
 | Key | Does |
 |---|---|
@@ -222,10 +235,12 @@ and put on your clipboard.
 | `/` · `R` | Search filenames and picture text · Rescan |
 | `Esc` | Leave a PDF text selection, clear the tile selection, then close |
 
+</details>
+
 The same letters work inside the preview. A folder handed to `omaroll` opens as
 a recursive folder view for that session. Pictures and videos opened from a
 file manager go to the viewer instead; its keys are listed under
-[Use it as a viewer](#use-it-as-a-viewer).
+[Open files](#open-files).
 
 ## Formats
 
@@ -240,94 +255,7 @@ the file to mpv.
 
 Documents: PDF. Thumbnails, previews, and page counts use Poppler locally.
 
-## Install
-
-Requires Omarchy or Arch with Qt 6.8+ and Poppler.
-
-```bash
-curl -fLO https://github.com/btsouth/omaroll/releases/download/v1.9.0/omaroll-1.9.0-1-x86_64.pkg.tar.zst \
-     -fLO https://github.com/btsouth/omaroll/releases/download/v1.9.0/SHA256SUMS
-sha256sum -c --ignore-missing SHA256SUMS
-sudo pacman -U ./omaroll-1.9.0-1-x86_64.pkg.tar.zst
-```
-
-Run the same commands for a newer release to update. The package is prepared for
-the Omarchy repository so installation and updates can move to normal `pacman`
-updates after inclusion.
-
-If you prefer a browser, download the package and `SHA256SUMS` from the
-[latest release](https://github.com/btsouth/omaroll/releases/latest), put them
-in the same folder, then run the last two commands above from that folder.
-
-To build from source instead:
-
-```bash
-git clone https://github.com/btsouth/omaroll
-cd omaroll
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-sudo cmake --install build
-```
-
-## Use it as a viewer
-
-Set Omaroll as the default for pictures and videos, or open one from a
-terminal:
-
-```bash
-omaroll photo.jpg
-omaroll clip.mp4
-```
-
-A picture or video opens in the viewer: the media fills the window, a small
-picture included, and the name, the controls and the menu appear when the
-pointer moves. Rotating turns the view only; a rotated copy is saved from the
-library. The arrow keys
-step through the pictures and videos in that folder, in the order a file manager
-shows them. Folders, PDFs and a plain `omaroll` open the library, and so does
-`--library` with any file:
-
-```bash
-omaroll ~/Pictures
-omaroll --library photo.jpg
-```
-
-Several files can be opened together, in the order given:
-
-```bash
-omaroll first.jpg ~/Pictures/second.png third.webp
-omaroll -- ./-unusual-name.png
-```
-
-Multiple files stay in the supplied order across folders, including when an
-existing window receives them. Explicitly selected hidden files can be opened
-without scanning every surrounding folder. One viewer window is reused for
-every file opened while it is up, and the library and viewer share one process,
-so a favourite or rating set in one shows in the other.
-
-| Key in the viewer | Does |
-|---|---|
-| `←` `→` · `Page Up` `Page Down` | Previous · next file. On a video the arrows seek instead |
-| `Home` `End` | First · last file, or the start · end of a video |
-| wheel · pinch · `+` `-` | Zoom smoothly around the pointer |
-| drag · two-finger scroll | Move around a zoomed picture, down a long screenshot |
-| `0` · `1` · double click | Fit · actual size · toggle between them |
-| `R` · `Shift+R` | Rotate right · left, the view only, never the file |
-| `Space` · `K` · click | Play · pause a video or animation |
-| `J` `L` · `↑` `↓` · `M` | Seek ten seconds · volume · mute |
-| `[` `]` · `Backspace` · `C` | Speed · normal speed · cycle subtitles |
-| `F` · `F11` · double click a video | Full screen |
-| `F5` | Slideshow |
-| `I` | Details: size, date, rating, camera or codec |
-| `V` · `Alt+1`-`Alt+5` · `Ctrl+Z` | Favourite · rate · undo |
-| `Y` · `S` · `A` | Copy · send · annotate |
-| `T` · `G` · `P` | Trim · save the current frame · open in mpv |
-| `Del` | Move to Trash, with confirm |
-| right click · menu button | Everything else that suits the file |
-| `Enter` · grid button | Open the file in the library |
-| `Esc` | Leave the slideshow or full screen, close the details, then close |
-
-### Transparency
+## Theme and window rules
 
 Omaroll paints its own translucent chrome from your theme and draws every
 thumbnail fully opaque on top. Omarchy dims all windows slightly by default,
@@ -364,8 +292,8 @@ in this repository is made.
 omaroll --render shot.png --render-view matte
 ```
 
-Renders a view to a PNG and exits. Views include `grid`, `detail`, `video`,
-`slideshow`, `matte`, `export`, `rename`, `duplicates`, and `settings`. It grabs the scene
+Renders a view to a PNG and exits. Views include `grid`, `detail`, `document`, `video`, `matte`, `viewer` and
+`viewer-video`; see [validation](tests/README.md) for the full render matrix. It grabs the scene
 graph rather than the screen, so an overlapping window cannot spoil the shot.
 
 ## Design notes
@@ -388,41 +316,30 @@ graph rather than the screen, so an overlapping window cannot spoil the shot.
 
 ## Development
 
+On Arch, install the build and runtime dependencies:
+
 ```bash
+sudo pacman -S --needed git base-devel cmake ninja pkgconf bubblewrap \
+  qt6-base qt6-declarative qt6-multimedia qt6-imageformats qt6-svg qt6-wayland \
+  kimageformats libavif libheif hicolor-icon-theme xdg-desktop-portal \
+  ffmpegthumbnailer poppler wl-clipboard xdg-utils
+```
+
+```bash
+git clone https://github.com/btsouth/omaroll.git
+cd omaroll
 cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build/release
 bash tests/run-isolated.sh build/release
 ```
 
-See [current project status](docs/STATUS.md) for released, merged and draft work.
-See [validation](tests/README.md) for the OpenGL media checks and
-[the roadmap](docs/ROADMAP.md) for upcoming work.
+To install a source build, run `sudo cmake --install build/release`. Use the
+release package above if you want installation managed by pacman.
 
-For a focused release check on an Omarchy desktop:
-
-1. Launch `omaroll --demo` and verify the grid, folder filters, search, sort,
-   selection, and Settings at both tiled and floating window sizes.
-2. Open a real image from the file manager. Verify previous and next stay in its
-   folder, then test fit, actual size, deep zoom, pan, rotate, both flips,
-   fullscreen, animation pause, and `F5` slideshow.
-3. Open a real video. Verify play and pause, sound, volume, seeking, playback
-   speed, audio tracks, subtitles, technical details, Save current frame,
-   double-click fullscreen, and the transition to the next item in a slideshow.
-4. Create an album, rename and move one member inside a watched folder, and
-   verify it remains in the album. Move it outside the library and verify it is
-   shown as unavailable instead of being matched to another file.
-5. Put an exact copy of a disposable image in another watched folder. Open
-   Browse, choose Exact duplicates, keep one selected copy, and verify only the
-   other byte-for-byte copies move to Trash after confirmation.
-6. Resize or recompress a disposable image, open Similar pictures, and verify
-   the pair is grouped without either file being modified.
-7. Add a tag and saved view, restart Omaroll, and verify both persist. Rename a
-   tagged file inside Omaroll and verify its tag follows it.
-8. Open a multipage PDF from the file manager and verify thumbnails, page
-   navigation, details, rename, organize, send, and Trash actions.
-9. Switch Omarchy themes while Omaroll is open and confirm the chrome updates
-   without changing the media colors.
-10. Move a disposable file to Trash and restore it from the desktop Trash.
+See [Contributing](CONTRIBUTING.md), [validation and desktop acceptance](tests/README.md),
+[project status](docs/STATUS.md), [the roadmap](docs/ROADMAP.md), and
+[the release process](RELEASING.md). Use disposable media for checks that rename,
+edit or trash files.
 
 ## License
 
