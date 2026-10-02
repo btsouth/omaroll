@@ -441,19 +441,19 @@ Item {
             return
         }
         const end = player.duration > 0 ? player.duration - 1 : root.resumePosition
+        resumeAvailable = false
         player.position = Math.max(0, Math.min(root.resumePosition, end))
         player.play()
-        resumeAvailable = false
     }
 
     function restartVideo() {
         if (!player) {
             return
         }
+        resumeAvailable = false
         player.position = 0
         Settings.clearVideoPosition(root.path)
         player.play()
-        resumeAvailable = false
     }
 
     function adjustPlaybackRate(amount) {
@@ -1299,6 +1299,12 @@ Item {
                         // Remember the spot when the user pauses; the timer
                         // covers long uninterrupted playback.
                         onPlaybackStateChanged: {
+                            // Loading can start playback after LoadedMedia's
+                            // pause request. Hold until the saved-spot choice.
+                            if (playbackState === MediaPlayer.PlayingState && root.resumeAvailable) {
+                                pause()
+                                return
+                            }
                             if (playbackState === MediaPlayer.PausedState && duration > 0
                                     && position >= 5000 && position < duration - 3000) {
                                 Settings.setVideoPosition(root.path, Math.round(position))

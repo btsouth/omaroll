@@ -2567,10 +2567,17 @@ private slots:
     });
     m_captures->refresh();
     QTRY_VERIFY(m_library->rowOf(path) >= 0);
+    m_settings->setVideoPosition(path, 7000);
     openDetail(m_library->rowOf(path));
     auto* player = m_window->findChild<QMediaPlayer*>(QStringLiteral("videoPlayer"));
     QVERIFY(player);
+    QTRY_VERIFY(item("detail")->property("resumeAvailable").toBool());
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    QTest::qWait(200);
+    QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    click(item("resumeButton"));
     QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+    player->setPosition(0);
     QTRY_COMPARE(player->audioTracks().size(), 2);
     QTRY_COMPARE(player->subtitleTracks().size(), 1);
     if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
