@@ -7,7 +7,7 @@
 - Portrait crop presets: 3:4, 2:3 and 9:16 sit beside their landscape
   partners in Crop, rotate, resize. A held landscape ratio could not be turned
   upright, so a portrait, a poster or a phone-screen crop had to be drawn by
-  hand.
+  hand. Thanks to @diogochaves ([#51](https://github.com/btsouth/omaroll/pull/51)).
 
 ### Changed
 
@@ -17,7 +17,8 @@
   region and Save a copy end the Resize row; a narrow one gives them a line of
   their own. The smallest window drops the row labels and packs the groups onto
   shared lines with a rule between them, so the preview keeps its height. Full
-  frame is gone: it did exactly what Free does.
+  frame is gone: it did exactly what Free does. Thanks to @diogochaves
+  ([#51](https://github.com/btsouth/omaroll/pull/51)).
 
 ### Fixed
 
@@ -25,7 +26,7 @@
   clock. The clock now stands to their left, and they leave with the CC button
   on a narrow window, or before they would squeeze the scrub bar below its
   minimum. Their offset label sits to their left, so a click no longer moves
-  or hides them.
+  or hides them. Thanks to @diogochaves ([#50](https://github.com/btsouth/omaroll/pull/50)).
 
 ## 1.10.0
 
