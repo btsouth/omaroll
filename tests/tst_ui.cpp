@@ -49,6 +49,7 @@
 #include <QMediaMetaData>
 #include <QPainter>
 #include <QPdfWriter>
+#include <QPointingDevice>
 #include <QProcess>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -655,6 +656,49 @@ private slots:
     QTRY_VERIFY(item("actualSizeButton")->isVisible());
   }
 
+  // Qt on Wayland can report a mouse wheel as a touchpad. Its notches must
+  // still zoom the picture in the viewer; only a phased swipe pans it.
+  void imageViewerWheelZoomsWhateverQtCallsTheDevice() {
+    int imageRow = -1;
+    for (int row = 0; row < m_library->rowCount(); ++row) {
+      if (!m_library->isVideoAt(row) && !m_library->isDocumentAt(row)) {
+        imageRow = row;
+        break;
+      }
+    }
+    QVERIFY(imageRow >= 0);
+    openDetail(imageRow);
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->property("stillReady").toBool());
+    QVERIFY(QMetaObject::invokeMethod(detail, "resetImageView"));
+    QCOMPARE(detail->property("imageZoom").toDouble(), 1.0);
+
+    QPointingDevice touchpad(QStringLiteral("touchpad"), 4243, QInputDevice::DeviceType::TouchPad,
+                             QPointingDevice::PointerType::Finger,
+                             QInputDevice::Capability::Position | QInputDevice::Capability::Scroll,
+                             1, 3);
+    const QPointF at(m_window->width() * 0.4, m_window->height() / 2.0);
+    QWheelEvent notch(at, m_window->mapToGlobal(at.toPoint()), QPoint(), QPoint(0, 120),
+                      Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false,
+                      Qt::MouseEventNotSynthesized, &touchpad);
+    QCoreApplication::sendEvent(m_window, &notch);
+    QTRY_VERIFY(qAbs(detail->property("imageZoom").toDouble() - 1.2) < 0.001);
+
+    // A two-finger swipe pans rather than zooming. Gesture boundaries have
+    // no movement; Qt still delivers ScrollEnd while the handler is active.
+    for (const Qt::ScrollPhase phase : {Qt::ScrollBegin, Qt::ScrollUpdate, Qt::ScrollEnd}) {
+      const QPoint delta = phase == Qt::ScrollUpdate ? QPoint(0, -40) : QPoint();
+      QWheelEvent swipe(at, m_window->mapToGlobal(at.toPoint()), delta, delta,
+                        Qt::NoButton, Qt::NoModifier, phase, false,
+                        Qt::MouseEventNotSynthesized, &touchpad);
+      QCoreApplication::sendEvent(m_window, &swipe);
+      QVERIFY(qAbs(detail->property("imageZoom").toDouble() - 1.2) < 0.001);
+    }
+    QTest::qWait(50);
+    QVERIFY(qAbs(detail->property("imageZoom").toDouble() - 1.2) < 0.001);
+    QVERIFY(QMetaObject::invokeMethod(detail, "resetImageView"));
+  }
+
   void externalSidecarSubtitlesShowOnTheVideo() {
     int videoRow = -1;
     for (int row = 0; row < m_library->rowCount(); ++row) {
@@ -723,6 +767,10 @@ private slots:
     QTRY_COMPARE_WITH_TIMEOUT(detail->property("playbackState").toInt(),
                               static_cast<int>(QMediaPlayer::PlayingState), 5000);
     QCOMPARE(detail->property("playbackLoops").toInt(), 1);
+    // A clip with one audio track and no subtitles offers neither control.
+    // Their labels painted over the clock while their width was zero.
+    QVERIFY(!item("audioTrackButton")->isVisible());
+    QVERIFY(!item("subtitleButton")->isVisible());
     QVERIFY(!detail->property("playbackMuted").toBool());
 
     QSignalSpy action(detail, SIGNAL(actionTriggered(QString)));
