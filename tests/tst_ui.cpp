@@ -614,6 +614,10 @@ private slots:
     QVERIFY(imageRow >= 0);
     openDetail(imageRow);
     QQuickItem* detail = item("detail");
+    // The narrow-stage checks below are about the media giving way when the
+    // inspector takes its room, so ask for the inspector first.
+    detail->setProperty("showInfo", true);
+    QTRY_VERIFY(item("viewerInspector")->isVisible());
     QTRY_VERIFY(detail->property("stillReady").toBool());
     QTRY_COMPARE(item("transparencyGrid")->property("status").toInt(), 1);
 
@@ -1091,6 +1095,9 @@ private slots:
     const QString first = pathAt(0);
     openDetail(0);
     QTRY_VERIFY(detail->isVisible());
+    // The caption editor lives in the on-demand inspector.
+    detail->setProperty("showInfo", true);
+    QTRY_VERIFY(item("viewerInspector")->isVisible());
     QQuickItem* field = detail->findChild<QQuickItem*>(QStringLiteral("viewerCaption"));
     QVERIFY(field);
     field->forceActiveFocus();
@@ -1129,6 +1136,135 @@ private slots:
     QTRY_COMPARE(cardFor(first)->property("caption").toString(), QStringLiteral("Trip notes"));
     m_settings->setCaption(first, QString());
     QTRY_VERIFY(m_settings->caption(first).isEmpty());
+  }
+
+  // The preview opens clean: media and the header, with the inspector and the
+  // action menu hidden until they are asked for.
+  void viewerOpensWithTheInspectorAndActionMenuClosed() {
+    QQuickItem* detail = item("detail");
+    openDetail(0);
+    QTRY_VERIFY(detail->isVisible());
+    QVERIFY(!detail->property("showInfo").toBool());
+    QVERIFY(!detail->property("actionNavigationActive").toBool());
+    QTRY_VERIFY(item("viewerInspector")->property("width").toReal() == 0);
+    QVERIFY(!item("viewerActionPopup")->isVisible());
+    QVERIFY(!item("viewerPrimaryActions")->isVisible());
+    // The header carries the file name and the way in to everything else.
+    QVERIFY(item("viewerHeader")->isVisible());
+    QVERIFY(item("viewerInfoButton")->isVisible());
+    QVERIFY(item("viewerOverflowButton")->isVisible());
+    QCOMPARE(item("viewerHeaderName")->property("text").toString(),
+             detail->property("fileName").toString());
+
+    // The info toggle brings the inspector in and out without closing preview.
+    click(item("viewerInfoButton"));
+    QTRY_VERIFY(detail->property("showInfo").toBool());
+    QTRY_VERIFY(item("viewerInspector")->width() > 0);
+    click(item("viewerInfoButton"));
+    QTRY_VERIFY(!detail->property("showInfo").toBool());
+    QVERIFY(detail->isVisible());
+  }
+
+  // Tab opens the otherwise hidden action menu; arrows move through available
+  // rows, Escape closes it and hands focus back without closing the preview.
+  void hiddenActionMenuNavigatesAndEscapeReturnsToPreview() {
+    QQuickItem* detail = item("detail");
+    openDetail(0);
+    QTRY_VERIFY(detail->isVisible());
+    QVERIFY(!item("viewerActionPopup")->isVisible());
+
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QTRY_VERIFY(detail->property("actionNavigationActive").toBool());
+    QTRY_VERIFY(item("viewerActionPopup")->isVisible());
+    QTRY_VERIFY(activeViewerAction() != nullptr);
+    QCOMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_matte"));
+
+    QTest::keyClick(m_window, Qt::Key_Down);
+    QTRY_COMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_corrections"));
+    QTest::keyClick(m_window, Qt::Key_Up);
+    QTRY_COMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_matte"));
+
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!detail->property("actionNavigationActive").toBool());
+    QVERIFY(detail->isVisible());
+    QTRY_VERIFY(detail->hasActiveFocus());
+    QVERIFY(!item("viewerActionPopup")->isVisible());
+
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QTRY_VERIFY(item("viewerActionPopup")->isVisible());
+    const bool favourite = detail->property("favorite").toBool();
+    click(item("viewerFavouriteButton"));
+    QTRY_VERIFY(!item("viewerActionPopup")->isVisible());
+    QCOMPARE(detail->property("favorite").toBool(), favourite);
+    QVERIFY(detail->isVisible());
+  }
+
+  // Escape while editing a caption reverts the text and keeps the preview open.
+  void viewerCaptionEscapeCancelsTheEdit() {
+    QQuickItem* detail = item("detail");
+    const QString first = pathAt(0);
+    m_settings->setCaption(first, QString());
+    openDetail(0);
+    QTRY_VERIFY(detail->isVisible());
+    detail->setProperty("showInfo", true);
+    QTRY_VERIFY(item("viewerInspector")->isVisible());
+    QQuickItem* field = detail->findChild<QQuickItem*>(QStringLiteral("viewerCaption"));
+    QVERIFY(field);
+    field->forceActiveFocus();
+    QTRY_VERIFY(field->hasActiveFocus());
+    typeText(QStringLiteral("Do not keep"));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!field->hasActiveFocus());
+    QVERIFY(detail->isVisible());
+    QVERIFY(m_settings->caption(first).isEmpty());
+    QCOMPARE(field->property("text").toString(), QString());
+  }
+
+  void viewerCaptionSavesBeforeFileSwitchAndInspectorClose() {
+    QQuickItem* detail = item("detail");
+    const QString first = pathAt(0);
+    const QString second = pathAt(1);
+    const QString firstCaption = m_settings->caption(first);
+    const QString secondCaption = m_settings->caption(second);
+    openDetail(0);
+    detail->setProperty("showInfo", true);
+    QQuickItem* field = item("viewerCaption");
+    field->forceActiveFocus();
+    QTRY_VERIFY(field->hasActiveFocus());
+    field->setProperty("text", QStringLiteral("First file notes"));
+    openDetail(1);
+    QTRY_COMPARE(m_settings->caption(first), QStringLiteral("First file notes"));
+    QCOMPARE(m_settings->caption(second), secondCaption);
+    QTRY_COMPARE(field->property("text").toString(), secondCaption);
+    field->forceActiveFocus();
+    QTRY_VERIFY(field->hasActiveFocus());
+    field->setProperty("text", QStringLiteral("Second file notes"));
+    click(item("viewerInfoButton"));
+    QTRY_VERIFY(!detail->property("showInfo").toBool());
+    QTRY_COMPARE(m_settings->caption(second), QStringLiteral("Second file notes"));
+    QVERIFY(detail->isVisible());
+    QTRY_VERIFY(detail->hasActiveFocus());
+    m_settings->setCaption(first, firstCaption);
+    m_settings->setCaption(second, secondCaption);
+  }
+
+  // Codec, bitrate and stream lines sit behind a disclosure, off the surface.
+  void viewerTechnicalDetailsExpandOnDemand() {
+    QQuickItem* detail = item("detail");
+    openDetail(0);
+    QTRY_VERIFY(detail->isVisible());
+    detail->setProperty("showInfo", true);
+    QTRY_VERIFY(item("viewerInspector")->isVisible());
+    QTRY_VERIFY_WITH_TIMEOUT(m_mediaInfo->path() == pathAt(0) && !m_mediaInfo->loading(), 5000);
+    QVERIFY(!detail->property("technicalExpanded").toBool());
+    QVERIFY(!item("viewerTechnicalDetails")->isVisible());
+    click(item("viewerTechnicalToggle"));
+    QTRY_VERIFY(detail->property("technicalExpanded").toBool());
+    QVERIFY(item("viewerTechnicalDetails")->isVisible());
+    QQuickItem* line = find(item("viewerTechnicalDetails"), [](QQuickItem* candidate) {
+      return candidate->property("text").toString().startsWith(QStringLiteral("JPEG"));
+    });
+    QVERIFY(line);
   }
 
   void exactDuplicatesOpenAsAGroupedReviewView() {
@@ -1468,6 +1604,10 @@ private slots:
                          candidate->hasActiveFocus();
                 }) != nullptr);
 
+    // The menu scrolls to whatever is focused, so ask for the QR row before
+    // reaching for it; the row only exists once zbar has decoded the file.
+    QVERIFY(QMetaObject::invokeMethod(detail, "focusActionById",
+                                      Q_ARG(QVariant, QStringLiteral("qr"))));
     QQuickItem* qrAction = nullptr;
     QTRY_VERIFY((qrAction = find(detail, [](QQuickItem* candidate) {
                    return candidate->objectName() == QStringLiteral("viewerAction_qr") &&
@@ -1493,6 +1633,9 @@ private slots:
     openDetail(0);
     QTRY_VERIFY(detail->isVisible());
     QTRY_VERIFY_WITH_TIMEOUT(detail->property("stillReady").toBool(), 10000);
+    // The inspector is on demand now; ask for it before reading the details.
+    detail->setProperty("showInfo", true);
+    QTRY_VERIFY(item("viewerInspector")->isVisible());
     QQuickItem* metadata = item("mediaMetadata");
     QTRY_VERIFY(metadata->isVisible());
     const QString label = metadata->property("text").toString();
@@ -1875,9 +2018,16 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(!m_pdfInfo->loading(), 5000);
     QCOMPARE(m_pdfInfo->pageCount(), 2);
     QTRY_VERIFY_WITH_TIMEOUT(detail->property("stillReady").toBool(), 10000);
-    QVERIFY(find(detail, [](QQuickItem* candidate) {
-      return candidate->objectName() == QStringLiteral("viewerAction_open-document");
-    }));
+    // The action menu is hidden until asked for; open it to prove the document
+    // action is offered (present even when its program is missing), then put
+    // the menu away again.
+    detail->setProperty("actionNavigationActive", true);
+    QTRY_VERIFY(find(detail, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("viewerAction_open-document") &&
+             candidate->isVisible();
+    }) != nullptr);
+    QMetaObject::invokeMethod(detail, "focusPreview");
+    QTRY_VERIFY(!detail->property("actionNavigationActive").toBool());
     QCOMPARE(detail->property("pdfPage").toInt(), 1);
     QTest::keyClick(m_window, Qt::Key_PageDown);
     QTRY_COMPARE(detail->property("pdfPage").toInt(), 2);
@@ -2153,6 +2303,10 @@ private slots:
     QTRY_VERIFY(detail->isVisible());
     QTRY_COMPARE_WITH_TIMEOUT(m_pdfInfo->path(), path, 3000);
     QTRY_VERIFY_WITH_TIMEOUT(!m_pdfInfo->loading(), 5000);
+    // The document rows give way against the stage; with the inspector open
+    // the stage is as narrow here as it was when the rows were first built.
+    detail->setProperty("showInfo", true);
+    QTRY_VERIFY(item("viewerInspector")->isVisible());
 
     // A page in the fit-width list carries an edge of its own: white paper on a
     // light theme has nothing else to separate it from the stage behind it.
@@ -2450,7 +2604,7 @@ private slots:
     const auto detachAudio = qScopeGuard([&] { player->setAudioBufferOutput(nullptr); });
     QTRY_VERIFY(frequency > 350 && frequency < 530);
     const int audioTrack = player->activeAudioTrack();
-    click(pill(item("detail"), QStringLiteral("Switch audio track")));
+    click(item("audioTrackButton"));
     QTRY_COMPARE(player->activeAudioTrack(), (audioTrack + 1) % 2);
     QTRY_VERIFY(frequency > 760 && frequency < 1000);
     const int subtitleTrack = player->activeSubtitleTrack();
