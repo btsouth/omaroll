@@ -8,11 +8,8 @@ and release, and the latest PRs, before resuming.
 1.9.0 bundles [PR #52](https://github.com/btsouth/omaroll/pull/52), the quick
 viewer, and [PR #53](https://github.com/btsouth/omaroll/pull/53), two fixes to
 the library's preview, on top of the PDF text selection and theme renders
-merged since 1.8.0. Brandon used a package of #52 and #53 on his desktop and
-called it release ready; the final candidate adds only CodeRabbit's review
-fixes, the library wheel fix and this version metadata after that. The
-candidate passed CI, a full ASan/UBSan run of every suite and the OpenGL render
-matrix in an Arch container.
+merged since 1.8.0. It includes the quick viewer's review fixes and ignores
+zero-delta touchpad gesture boundaries so panning does not change image zoom.
 
 #52 splits Omaroll into two front doors in one process.
 Pictures and videos from outside open in a new viewer window (`qml/Viewer.qml`,
@@ -21,8 +18,8 @@ plain launch and `--library` open the library as before. The library's services
 moved into a lazily built `LibraryWindow` in `main.cpp`, and each window has its
 own QML context over the shared theme, settings and actions. The viewer has its
 own suite (`tests/tst_viewer.cpp`) and render views (`viewer`, `viewer-video`,
-`viewer-info`, `viewer-menu`). Physical desktop acceptance of the viewer, and
-whether the library's own detail sheet should become the viewer, are open.
+`viewer-info`, `viewer-menu`). Physical desktop coverage remains tracked below;
+headless validation does not establish hardware behavior.
 
 ## Released
 
