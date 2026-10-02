@@ -19,7 +19,7 @@ telemetry.
 
 [![The library over the Ethereal theme, with the wallpaper showing through the chrome](docs/library.png)](https://btsouth.github.io/omaroll/docs/omaroll-demo.mp4)
 
-[Watch the 25-second demo](https://btsouth.github.io/omaroll/docs/omaroll-demo.mp4)
+[Watch the 29-second demo](https://btsouth.github.io/omaroll/docs/omaroll-demo.mp4)
 
 ## Install or update
 
