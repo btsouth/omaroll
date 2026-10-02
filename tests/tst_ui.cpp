@@ -1197,6 +1197,16 @@ private slots:
     QTRY_VERIFY(!item("viewerActionPopup")->isVisible());
     QCOMPARE(detail->property("favorite").toBool(), favourite);
     QVERIFY(detail->isVisible());
+
+    QVERIFY(QMetaObject::invokeMethod(detail, "focusActionById",
+                                    Q_ARG(QVariant, QStringLiteral("favorite"))));
+    QTRY_VERIFY(activeViewerAction() && activeViewerAction()->objectName() ==
+                                       QStringLiteral("viewerAction_favorite"));
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!item("viewerActionPopup")->isVisible());
+    QTRY_COMPARE(detail->property("favorite").toBool(), !favourite);
+    QVERIFY(detail->isVisible());
+    m_settings->setFavorite({pathAt(0)}, favourite);
   }
 
   // Escape while editing a caption reverts the text and keeps the preview open.

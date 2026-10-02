@@ -217,7 +217,9 @@ Item {
     // Primary actions in the inspector; the full registry stays in the menu.
     readonly property var primaryActionIds: root.isDocument ? ["open-document"]
                                              : root.isVideo ? ["trim", "frame"]
-                                                            : ["matte", "corrections"]
+                                                            : [Settings.imagePrimaryAction,
+                                                               Settings.imagePrimaryAction === "corrections"
+                                                               ? "matte" : "corrections"]
     readonly property var primaryActionRows: {
         const rows = Registry.actionsForKind(root.isVideo, root.isDocument)
         const out = []
@@ -237,6 +239,15 @@ Item {
     function primaryLabel(row) {
         return root.primaryActionLabels[row.id] !== undefined
                ? root.primaryActionLabels[row.id] : row.label
+    }
+
+    function invokeAction(id) {
+        // Nested sheets restore the focused row when they return. Immediate
+        // actions finish the menu interaction and return to the preview.
+        if (actionNavigationActive && ["export", "tailscale", "ocr"].indexOf(id) < 0) {
+            focusPreview()
+        }
+        actionTriggered(id)
     }
 
     function focusAction(index) {
@@ -1865,9 +1876,15 @@ Item {
                 // Keep the scrub useful at the minimum window width. Track
                 // selectors appear only when the file has alternatives.
                 readonly property int scrubMinimum: 120
+                // Measure offered controls independently of their visibility,
+                // so fitting the row never feeds its width back into itself.
+                readonly property real fullMediaWidth: speedButton.implicitWidth + 6
+                    + soundButton.implicitWidth
+                    + (player && player.audioTracks.length > 1 ? audioButton.implicitWidth + 4 : 0)
+                    + (root.hasSubtitleChoices ? subtitleButton.implicitWidth + 4 : 0)
                 readonly property real minimumWidth: playButton.width + 14 + scrubMinimum
                                                      + 14 + clockLabel.implicitWidth + 12
-                                                     + mediaControls.implicitWidth
+                                                     + fullMediaWidth
 
                 function clock(ms) {
                     const total = Math.max(0, Math.round(ms / 1000))
@@ -2208,14 +2225,10 @@ Item {
                         Text {
                             objectName: "pdfInfoLabel"
                             width: parent.width
-                            visible: root.isDocument
-                            text: !root.isDocument ? ""
-                                  : PdfInfo.pageCount > 0
-                                    ? PdfInfo.pageCount
-                                      + (PdfInfo.pageCount === 1 ? " page" : " pages")
-                                    : (PdfInfo.error !== "" ? PdfInfo.error
-                                       : (PdfInfo.available ? "Reading pages…"
-                                                            : "PDF support needs Poppler"))
+                            visible: root.isDocument && PdfInfo.pageCount === 0
+                            text: PdfInfo.error !== "" ? PdfInfo.error
+                                  : (PdfInfo.available ? "Reading pages…"
+                                                      : "PDF support needs Poppler")
                             elide: Text.ElideRight
                             font.family: Theme.fontFamily
                             font.pixelSize: 13
@@ -2520,7 +2533,7 @@ Item {
                     Accessible.description: modelData.shortcut !== ""
                                             ? "Shortcut " + modelData.shortcut : ""
                     Accessible.ignored: !row.usable
-                    Accessible.onPressAction: if (row.usable) root.actionTriggered(row.modelData.id)
+                    Accessible.onPressAction: if (row.usable) root.invokeAction(row.modelData.id)
 
                     Rectangle {
                         anchors.fill: parent
@@ -2579,7 +2592,7 @@ Item {
                         enabled: row.usable
                         onSingleTapped: {
                             root.focusAction(row.index)
-                            root.actionTriggered(row.modelData.id)
+                            root.invokeAction(row.modelData.id)
                         }
                     }
 
@@ -2603,7 +2616,7 @@ Item {
                         }
                         if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
                                 || event.key === Qt.Key_Space) {
-                            root.actionTriggered(row.modelData.id)
+                            root.invokeAction(row.modelData.id)
                             event.accepted = true
                         }
                     }
@@ -2777,7 +2790,7 @@ Item {
         }
         for (const row of actions.model) {
             if (row.shortcut === label && row.available) {
-                root.actionTriggered(row.id)
+                root.invokeAction(row.id)
                 event.accepted = true
                 return
             }
