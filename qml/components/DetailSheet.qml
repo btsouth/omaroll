@@ -543,6 +543,10 @@ Item {
         if (slideshowRunning === enabled) {
             return
         }
+        if (enabled) {
+            finishCaptionEdit()
+            focusPreview()
+        }
         slideshowRunning = enabled
         if (enabled) {
             showInfo = false

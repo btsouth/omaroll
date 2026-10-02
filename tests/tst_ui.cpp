@@ -1258,7 +1258,7 @@ private slots:
     m_settings->setCaption(second, secondCaption);
   }
 
-  // Codec, bitrate and stream lines sit behind a disclosure, off the surface.
+  // Additional file metadata stays hidden until the disclosure is expanded.
   void viewerTechnicalDetailsExpandOnDemand() {
     QQuickItem* detail = item("detail");
     openDetail(0);
@@ -1895,10 +1895,16 @@ private slots:
     QQuickItem* detail = item("detail");
     openDetail(0);
     QTRY_VERIFY(detail->isVisible());
+    detail->setProperty("showInfo", true);
+    QTRY_VERIFY(item("viewerInspector")->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QTRY_VERIFY(item("viewerActionPopup")->isVisible());
     QTest::keyClick(m_window, Qt::Key_F5);
     QTRY_VERIFY(detail->property("slideshowRunning").toBool());
     QVERIFY(detail->property("fullScreen").toBool());
     QVERIFY(!detail->property("showInfo").toBool());
+    QVERIFY(!detail->property("actionNavigationActive").toBool());
+    QVERIFY(!item("viewerActionPopup")->isVisible());
     QTest::keyClick(m_window, Qt::Key_Escape);
     QTRY_VERIFY(!detail->property("slideshowRunning").toBool());
     QVERIFY(!detail->property("fullScreen").toBool());
