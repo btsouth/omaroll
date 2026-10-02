@@ -2,3 +2,6 @@ build/
 .cache/
 compile_commands.json
 *.user
+
+# Source- and compiler-validated CI build cache
+.ccache/
