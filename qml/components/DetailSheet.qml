@@ -888,6 +888,12 @@ Item {
                         }
                         const delta = event.angleDelta.y !== 0
                                       ? event.angleDelta.y : event.pixelDelta.y
+                        // ScrollBegin and ScrollEnd may carry no movement.
+                        // Consume them without treating zero as a zoom out.
+                        if (delta === 0) {
+                            event.accepted = true
+                            return
+                        }
                         root.adjustImageZoom(delta > 0 ? 1.2 : 1 / 1.2)
                         event.accepted = true
                     }

@@ -684,12 +684,15 @@ private slots:
     QCoreApplication::sendEvent(m_window, &notch);
     QTRY_VERIFY(qAbs(detail->property("imageZoom").toDouble() - 1.2) < 0.001);
 
-    // A two-finger swipe with pixel deltas pans rather than zooming.
+    // A two-finger swipe pans rather than zooming. Gesture boundaries have
+    // no movement; Qt still delivers ScrollEnd while the handler is active.
     for (const Qt::ScrollPhase phase : {Qt::ScrollBegin, Qt::ScrollUpdate, Qt::ScrollEnd}) {
-      QWheelEvent swipe(at, m_window->mapToGlobal(at.toPoint()), QPoint(0, -40), QPoint(0, -40),
+      const QPoint delta = phase == Qt::ScrollUpdate ? QPoint(0, -40) : QPoint();
+      QWheelEvent swipe(at, m_window->mapToGlobal(at.toPoint()), delta, delta,
                         Qt::NoButton, Qt::NoModifier, phase, false,
                         Qt::MouseEventNotSynthesized, &touchpad);
       QCoreApplication::sendEvent(m_window, &swipe);
+      QVERIFY(qAbs(detail->property("imageZoom").toDouble() - 1.2) < 0.001);
     }
     QTest::qWait(50);
     QVERIFY(qAbs(detail->property("imageZoom").toDouble() - 1.2) < 0.001);
