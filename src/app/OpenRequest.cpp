@@ -25,7 +25,7 @@ OpenRequest OpenRequest::fromPaths(const QStringList& paths) {
           result.error = QStringLiteral("choose a media folder, not your home or filesystem root");
         }
       }
-    } else if (!info.isFile() || !CaptureScanner::isSupported(info.suffix())) {
+    } else if (!info.isFile() || !CaptureScanner::isSupported(CaptureScanner::mediaSuffix(path))) {
       result.error = QStringLiteral("unsupported media file: %1").arg(path);
     } else {
       const QString canonical = info.canonicalFilePath();

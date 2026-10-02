@@ -158,6 +158,7 @@ public:
   Q_INVOKABLE int kindAt(int row) const;
   Q_INVOKABLE bool isVideoAt(int row) const;
   Q_INVOKABLE bool isDocumentAt(int row) const;
+  Q_INVOKABLE bool isAnimatedAt(int row) const;
   Q_INVOKABLE qint64 stampAt(int row) const;
   Q_INVOKABLE QString ocrSnippetAt(int row) const;
 

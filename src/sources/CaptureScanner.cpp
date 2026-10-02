@@ -4,6 +4,8 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
+#include <QMimeDatabase>
 #include <QRegularExpression>
 #include <QSet>
 
@@ -131,6 +133,72 @@ bool CaptureScanner::isSupported(const QString& suffix) {
   return isImage(suffix) || isVideo(suffix) || isDocument(suffix);
 }
 
+namespace {
+
+// A CodecID element (0x86) whose value starts with "V_", as in V_VP9 or
+// V_MPEG4/ISO/AVC. Audio-only Matroska carries only A_ codecs.
+bool hasMatroskaVideoTrack(const QByteArray& header) {
+  for (qsizetype at = header.indexOf('\x86'); at >= 0; at = header.indexOf('\x86', at + 1)) {
+    if (at + 1 >= header.size()) {
+      break;
+    }
+    const auto lead = static_cast<unsigned char>(header.at(at + 1));
+    int width = 1;
+    while (width <= 8 && !(lead & (0x80 >> (width - 1)))) {
+      ++width;
+    }
+    if (width <= 8 && header.mid(at + 1 + width, 2) == "V_") {
+      return true;
+    }
+  }
+  return false;
+}
+
+} // namespace
+
+QString CaptureScanner::mediaSuffix(const QString& path) {
+  if (path.isEmpty()) {
+    return {};
+  }
+  const QFileInfo info(path);
+  const QString suffix = info.suffix().toLower();
+  if (!suffix.isEmpty()) {
+    return suffix;
+  }
+  if (!info.isFile() || !info.isReadable()) {
+    return {};
+  }
+  QFile file(path);
+  if (!file.open(QIODevice::ReadOnly)) {
+    return {};
+  }
+  // Explicit MIME names prevent generic binary, XML, audio or archive types
+  // from inheriting a media extension through a broad glob or alias.
+  static const QHash<QString, QString> formats = {
+      {"image/png", "png"}, {"image/jpeg", "jpg"}, {"image/webp", "webp"},
+      {"image/gif", "gif"}, {"image/bmp", "bmp"}, {"image/avif", "avif"},
+      {"image/heic", "heic"}, {"image/heif", "heif"}, {"image/tiff", "tiff"},
+      {"image/svg+xml", "svg"}, {"image/vnd.microsoft.icon", "ico"},
+      {"image/jxl", "jxl"}, {"image/jp2", "jp2"}, {"image/x-jp2-codestream", "j2k"},
+      {"image/qoi", "qoi"}, {"image/vnd.adobe.photoshop", "psd"},
+      {"image/vnd.ms-dds", "dds"}, {"image/x-exr", "exr"},
+      {"video/mp4", "mp4"}, {"video/x-m4v", "m4v"}, {"video/x-matroska", "mkv"},
+      {"video/webm", "webm"}, {"video/quicktime", "mov"}, {"video/x-msvideo", "avi"},
+      {"video/x-ms-wmv", "wmv"}, {"video/x-flv", "flv"}, {"video/mpeg", "mpeg"},
+      {"video/ogg", "ogv"}, {"video/3gpp", "3gp"}, {"video/mp2t", "mts"},
+      // Canonical names newer shared-mime-info reports for the aliases above.
+      {"video/vnd.avi", "avi"}, {"video/x-theora+ogg", "ogv"}, {"video/3gpp2", "3gp"},
+  };
+  const QByteArray header = file.read(16 * 1024);
+  const QString mime = QMimeDatabase().mimeTypeForData(header).name();
+  // Newer shared-mime-info reports generic Matroska without saying whether it
+  // holds video, so require a track whose CodecID is a video codec.
+  if (mime == u"application/x-matroska") {
+    return hasMatroskaVideoTrack(header) ? QStringLiteral("mkv") : QString();
+  }
+  return formats.value(mime);
+}
+
 bool CaptureScanner::classifyByName(const QString& fileName, CaptureRecord::Kind& kind,
                                     QDateTime& captured) {
   for (const NamePattern& pattern : namePatterns()) {
@@ -220,7 +288,7 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots, const std::a
           continue;
         }
 
-        const QString suffix = entry.suffix();
+        const QString suffix = mediaSuffix(entry.absoluteFilePath());
         const bool image = isImage(suffix);
         const bool video = isVideo(suffix);
         const bool document = isDocument(suffix);
@@ -244,6 +312,7 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots, const std::a
         record.modified = entry.lastModified().toMSecsSinceEpoch();
         record.video = video;
         record.document = document;
+        record.animated = image && (suffix == u"gif" || suffix == u"webp");
         record.captured = entry.lastModified();
         struct stat status {};
         if (::stat(QFile::encodeName(canonicalFile).constData(), &status) == 0) {

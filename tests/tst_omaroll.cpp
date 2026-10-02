@@ -2,6 +2,7 @@
 #include "actions/ActionRegistry.h"
 #include "actions/TailscalePeers.h"
 #include "app/AppSettings.h"
+#include "app/DemoLibrary.h"
 #include "app/HeadlessAudio.h"
 #include "app/SingleInstance.h"
 #include "app/OpenRequest.h"
@@ -39,6 +40,7 @@
 #include <QPdfWriter>
 #include <QProcess>
 #include <QScopeGuard>
+#include <QSaveFile>
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -246,6 +248,133 @@ private slots:
     QVERIFY(!ViewerSession::canOpen({QStringLiteral("/x/a.png"), QStringLiteral("/x/doc.pdf")}));
     QVERIFY(!ViewerSession::canOpen({QStringLiteral("/x/doc.PDF")}));
     QVERIFY(!ViewerSession::canOpen({}));
+  }
+
+  void extensionlessMediaOpensNavigatesAndAppearsInTheLibrary() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString folder = dir.filePath(QStringLiteral("pictures.with.dots"));
+    QVERIFY(QDir().mkpath(folder));
+    const DemoLibrary::Layout demo = DemoLibrary::build();
+    const QStringList originals{
+        QFINDTESTDATA("fixtures/viewer/transparent.png"),
+        demo.pictures + QStringLiteral("/alpine-dawn.jpg"),
+        QFINDTESTDATA("fixtures/viewer/animated.gif"),
+        QFINDTESTDATA("fixtures/viewer/animated.webp"),
+        demo.videos + QStringLiteral("/ocean-surface.mp4"),
+        QFINDTESTDATA("fixtures/viewer/tracks.mkv")};
+    QStringList paths;
+    for (int i = 0; i < originals.size(); ++i) {
+      QVERIFY(!originals.at(i).isEmpty());
+      const QString path = folder + QStringLiteral("/media %1 # 雪").arg(i);
+      QVERIFY(QFile::copy(originals.at(i), path));
+      paths.append(path);
+    }
+    const OpenRequest opened = OpenRequest::fromPaths(paths);
+    QVERIFY2(opened.error.isEmpty(), qPrintable(opened.error));
+    QCOMPARE(opened.files, paths);
+    QVERIFY(ViewerSession::canOpen(paths));
+    QCOMPARE(ViewerSession::siblings(folder), paths);
+    const auto records = CaptureScanner::scan({{folder, 1}});
+    QCOMPARE(records.size(), paths.size());
+    ViewerSession viewer;
+    viewer.open(paths);
+    AppSettings settings;
+    CaptureModel model(&settings);
+    model.addExtraFiles(paths);
+    CaptureFilterModel proxy;
+    proxy.setSourceModel(&model);
+    for (int i = 0; i < paths.size(); ++i) {
+      const bool video = i >= 4;
+      const bool animated = i == 2 || i == 3;
+      QVERIFY(viewer.jump(i) || i == 0);
+      QCOMPARE(viewer.isVideo(), video);
+      QCOMPARE(viewer.isAnimated(), animated);
+      const int next = (i + 1) % paths.size();
+      QCOMPARE(viewer.neighbourIsVideo(1), next >= 4);
+      QCOMPARE(viewer.neighbourIsAnimated(1), next == 2 || next == 3);
+      QTRY_VERIFY_WITH_TIMEOUT(model.rowOf(paths.at(i)) >= 0, 5000);
+      const auto& record = model.recordAt(model.rowOf(paths.at(i)));
+      QCOMPARE(record.fileName, QFileInfo(paths.at(i)).fileName());
+      QCOMPARE(record.isVideo(), video);
+      QCOMPARE(record.animated, animated);
+      QCOMPARE(proxy.isAnimatedAt(proxy.rowOf(paths.at(i))), animated);
+      QVERIFY2(!ThumbnailCache::thumbnail(paths.at(i), QSize(64, 64), 1).isNull(),
+               qPrintable(paths.at(i)));
+      if (!video) {
+        QImageReader reader(paths.at(i));
+        QVERIFY2(!reader.read().isNull(), qPrintable(reader.errorString()));
+      }
+    }
+    QVERIFY(!proxy.isAnimatedAt(-1));
+    QVERIFY(!proxy.isAnimatedAt(proxy.rowCount()));
+    // Edited copies keep the detected format rather than falling back to PNG.
+    QCOMPARE(ImageEditor::outputPathFor(paths.at(1)), paths.at(1) + QStringLiteral("-edited.jpg"));
+    QCOMPARE(ImageEditor::outputPathFor(paths.at(0)), paths.at(0) + QStringLiteral("-edited.png"));
+  }
+
+  void extensionlessDetectionRejectsNonMediaAndKeepsExtensionsAuthoritative() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QList<QByteArray> contents{
+        {}, "ordinary text", QByteArray(1024, '\x01'),
+        QByteArray::fromHex("7f454c4602010100000000000000000002003e00"),
+        QByteArray::fromHex("504b03041400000008000000000000000000"),
+        "<?xml version=\"1.0\"?><document>not an image</document>",
+        QByteArray("RIFF\x24\x00\x00\x00WAVEfmt ", 16),
+        // Audio-only Matroska: generic container type, no V_ codec.
+        QByteArray::fromHex("1a45dfa3934282886d6174726f736b61") +
+            QByteArray::fromHex("8685") + "A_AAC"};
+    for (int i = 0; i < contents.size(); ++i) {
+      const QString path = dir.filePath(QStringLiteral("not-media-%1").arg(i));
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      QCOMPARE(file.write(contents.at(i)), contents.at(i).size());
+      file.close();
+      QVERIFY(!OpenRequest::fromPaths({path}).error.isEmpty());
+      QVERIFY(!ViewerSession::canOpen({path}));
+    }
+    const QString disguised = dir.filePath(QStringLiteral("image.txt"));
+    QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/viewer/transparent.png"), disguised));
+    QVERIFY(!OpenRequest::fromPaths({disguised}).error.isEmpty());
+    QVERIFY(!ViewerSession::canOpen({disguised}));
+    QVERIFY(CaptureScanner::scan({{dir.path(), 1}}).isEmpty());
+    QVERIFY(CaptureScanner::mediaSuffix(dir.path()).isEmpty());
+    QVERIFY(CaptureScanner::mediaSuffix(dir.filePath("missing")).isEmpty());
+  }
+
+  void extensionlessViewerRefreshesReplacedFilesOnReopenAndRelist() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("same-name"));
+    QImage picture(24, 16, QImage::Format_RGB32);
+    picture.fill(Qt::darkCyan);
+    QVERIFY(picture.save(path, "PNG"));
+    ViewerSession viewer;
+    viewer.open({path});
+    QTRY_COMPARE(viewer.count(), 1);
+    QVERIFY(!viewer.isVideo());
+    QVERIFY(!viewer.isAnimated());
+    const auto replaceWith = [&](const QString& source) {
+      QFile input(source);
+      QVERIFY(input.open(QIODevice::ReadOnly));
+      QSaveFile output(path);
+      QVERIFY(output.open(QIODevice::WriteOnly));
+      const QByteArray bytes = input.readAll();
+      QCOMPARE(output.write(bytes), bytes.size());
+      QVERIFY(output.commit());
+    };
+    const auto demo = DemoLibrary::build();
+    replaceWith(demo.videos + QStringLiteral("/ocean-surface.mp4"));
+    viewer.open({path});
+    QVERIFY(viewer.isVideo());
+    QVERIFY(!viewer.isAnimated());
+    replaceWith(QFINDTESTDATA("fixtures/viewer/animated.gif"));
+    QTRY_VERIFY_WITH_TIMEOUT(viewer.isAnimated(), 5000);
+    QVERIFY(!viewer.isVideo());
+    viewer.clear();
+    QVERIFY(!viewer.isVideo());
+    QVERIFY(!viewer.isAnimated());
   }
 
   void viewerListsPicturesAndVideosInNaturalNameOrder_data() {
@@ -1970,15 +2099,24 @@ private slots:
   // library, a plain second launch brings the library up in the same process,
   // and another picture goes to the running viewer. Nothing along the way may
   // raise a QML error.
+  void executableOpensPicturesInTheViewerAndTheLibraryOnRequest_data() {
+    QTest::addColumn<bool>("extensionless");
+    QTest::newRow("with-extensions") << false;
+    QTest::newRow("without-extensions") << true;
+  }
+
   void executableOpensPicturesInTheViewerAndTheLibraryOnRequest() {
+    QFETCH(bool, extensionless);
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
-    const QString first = dir.filePath(QStringLiteral("first # 1.png"));
-    const QString second = dir.filePath(QStringLiteral("second.png"));
+    const QString first = dir.filePath(extensionless ? QStringLiteral("first # 1")
+                                                    : QStringLiteral("first # 1.png"));
+    const QString second = dir.filePath(extensionless ? QStringLiteral("second")
+                                                     : QStringLiteral("second.jpg"));
     QImage picture(64, 48, QImage::Format_RGB32);
     picture.fill(Qt::darkCyan);
-    QVERIFY(picture.save(first));
-    QVERIFY(picture.save(second));
+    QVERIFY(picture.save(first, "PNG"));
+    QVERIFY(picture.save(second, "JPEG"));
     auto environment = QProcessEnvironment::systemEnvironment();
     for (const QString& name : {QStringLiteral("HOME"), QStringLiteral("XDG_CONFIG_HOME"),
                                 QStringLiteral("XDG_DATA_HOME"), QStringLiteral("XDG_CACHE_HOME"),

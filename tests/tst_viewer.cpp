@@ -165,6 +165,35 @@ private slots:
              QStringLiteral("shot 2.jpg"));
   }
 
+  void extensionlessPicturesDecodeAndAnimationsPlay_data() {
+    QTest::addColumn<QString>("fixture");
+    QTest::addColumn<bool>("animated");
+    QTest::newRow("png") << QStringLiteral("transparent.png") << false;
+    QTest::newRow("gif") << QStringLiteral("animated.gif") << true;
+    QTest::newRow("webp") << QStringLiteral("animated.webp") << true;
+  }
+
+  void extensionlessPicturesDecodeAndAnimationsPlay() {
+    QFETCH(QString, fixture);
+    QFETCH(bool, animated);
+    const QString source = QFINDTESTDATA(qPrintable("fixtures/viewer/" + fixture));
+    QVERIFY(!source.isEmpty());
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("picture without extension"));
+    QVERIFY(QFile::copy(source, path));
+    open({path});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QVERIFY(prop("playbackError").toString().isEmpty());
+    QCOMPARE(m_session->isAnimated(), animated);
+    if (animated) {
+      QQuickItem* image = item(QStringLiteral("viewerAnimation"));
+      QTRY_VERIFY(image->property("currentFrame").toInt() >= 3);
+    }
+    m_window->close();
+    m_session->clear();
+  }
+
   // A small picture fills the window rather than sitting at its real size in
   // the middle of it, and the real size is still one key away. The edges keep
   // the theme's translucency, but the picture's own area never shows the
@@ -531,12 +560,20 @@ private slots:
   // The checked-in test pattern: saturated bars, two audio tracks and a
   // subtitle track. Under OpenGL the bars must reach the screen, not just a
   // decoded frame in memory.
+  void videoFrameRendersAndSubtitlesCycle_data() {
+    QTest::addColumn<bool>("extensionless");
+    QTest::newRow("with-extension") << false;
+    QTest::newRow("without-extension") << true;
+  }
+
   void videoFrameRendersAndSubtitlesCycle() {
+    QFETCH(bool, extensionless);
     const QString source = QFINDTESTDATA("fixtures/viewer/tracks.mkv");
     QVERIFY(!source.isEmpty());
     const QString folder = m_scratch.filePath(QStringLiteral("tracks"));
     QVERIFY(QDir().mkpath(folder));
-    const QString path = folder + QStringLiteral("/tracks.mkv");
+    const QString path = folder + (extensionless ? QStringLiteral("/tracks-without-extension")
+                                                : QStringLiteral("/tracks.mkv"));
     QVERIFY(QFile::exists(path) || QFile::copy(source, path));
     open({path});
     QMediaPlayer* player = nullptr;

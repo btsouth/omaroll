@@ -642,7 +642,7 @@ private slots:
 
     // Animated files reserve Space for playback instead of launching the
     // default image action. The actual decoder binding uses the same state.
-    detail->setProperty("fileName", QStringLiteral("animation.gif"));
+    detail->setProperty("isAnimatedImage", true);
     detail->setProperty("animationPlaying", true);
     QSignalSpy action(detail, SIGNAL(actionTriggered(QString)));
     QTest::keyClick(m_window, Qt::Key_Space);
@@ -2501,15 +2501,22 @@ private slots:
   // Fixture copies live until demo teardown so thumbnail workers can finish.
   void realAnimationsPauseResumeAndKeepTheirFrame_data() {
     QTest::addColumn<QString>("name");
-    QTest::newRow("gif") << QStringLiteral("animated.gif");
-    QTest::newRow("webp") << QStringLiteral("animated.webp");
+    QTest::addColumn<bool>("extensionless");
+    QTest::newRow("gif") << QStringLiteral("animated.gif") << false;
+    QTest::newRow("webp") << QStringLiteral("animated.webp") << false;
+    QTest::newRow("extensionless-gif") << QStringLiteral("animated.gif") << true;
+    QTest::newRow("extensionless-webp") << QStringLiteral("animated.webp") << true;
   }
 
   void realAnimationsPauseResumeAndKeepTheirFrame() {
     QFETCH(QString, name);
+    QFETCH(bool, extensionless);
     const QString source = QFINDTESTDATA(qPrintable("fixtures/viewer/" + name));
     QVERIFY(!source.isEmpty());
-    const QString path = QFileInfo(m_oddPath).dir().filePath(name);
+    const QString path = QFileInfo(m_oddPath).dir().filePath(
+        extensionless ? QStringLiteral("without-extension-") + QFileInfo(name).baseName()
+                       + (name.endsWith(u"gif") ? QStringLiteral("-gif") : QStringLiteral("-webp"))
+                      : name);
     QVERIFY(QFile::copy(source, path));
     const auto cleanup = qScopeGuard([&] {
       invoke("dismissTopLayer");
@@ -2553,6 +2560,36 @@ private slots:
     QTRY_COMPARE(item("animatedImage")->property("status").toInt(), 1);
     QCOMPARE(item("animatedImage")->property("frameCount").toInt(), 1);
     QVERIFY(item("detail")->property("playbackError").toString().isEmpty());
+  }
+
+  void anExtensionlessLibraryPreviewFollowsAChangeOfMedium() {
+    const QString path = QFileInfo(m_oddPath).dir().filePath(QStringLiteral("same-name-media"));
+    const auto cleanup = qScopeGuard([&] {
+      invoke("dismissTopLayer");
+      QFile::remove(path);
+      m_captures->refresh();
+    });
+    const QString still = QFINDTESTDATA("fixtures/viewer/transparent.png");
+    const QString video = QFINDTESTDATA("fixtures/viewer/tracks.mkv");
+    QVERIFY(QFile::copy(still, path));
+    m_captures->refresh();
+    QTRY_VERIFY(m_library->rowOf(path) >= 0);
+    openDetail(m_library->rowOf(path));
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->property("imageReady").toBool());
+    QVERIFY(!detail->property("isVideo").toBool());
+    QVERIFY(QFile::remove(path));
+    QVERIFY(QFile::copy(video, path));
+    m_captures->refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(detail->property("isVideo").toBool(), 5000);
+    QVERIFY(detail->isVisible());
+    QCOMPARE(detail->property("path").toString(), path);
+    QVERIFY(QFile::remove(path));
+    QVERIFY(QFile::copy(still, path));
+    m_captures->refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(!detail->property("isVideo").toBool(), 5000);
+    QTRY_VERIFY(detail->property("imageReady").toBool());
+    QVERIFY(detail->isVisible());
   }
 
   void videoTracksSeekingAndMinimizeRestore() {

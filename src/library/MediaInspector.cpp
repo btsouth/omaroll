@@ -1,4 +1,5 @@
 #include "library/MediaInspector.h"
+#include "sources/CaptureScanner.h"
 
 #include <QDateTime>
 #include <QFileInfo>
@@ -136,7 +137,7 @@ void MediaInspector::inspect(const QString& path, bool video) {
   auto* process = new QProcess(this);
   m_process = process;
   const quint64 generation = m_generation;
-  const QString suffix = QFileInfo(path).suffix();
+  const QString suffix = CaptureScanner::mediaSuffix(path);
   process->setProcessChannelMode(QProcess::SeparateChannels);
   setLoading(true);
 

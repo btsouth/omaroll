@@ -745,6 +745,11 @@ bool CaptureFilterModel::isDocumentAt(int row) const {
   return data(index(row, 0), CaptureRoles::IsDocumentRole).toBool();
 }
 
+bool CaptureFilterModel::isAnimatedAt(int row) const {
+  const QModelIndex source = mapToSource(index(row, 0));
+  return source.isValid() && sourceRecord(source.row()).animated;
+}
+
 qint64 CaptureFilterModel::stampAt(int row) const {
   return data(index(row, 0), CaptureRoles::StampRole).toLongLong();
 }

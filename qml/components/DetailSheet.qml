@@ -117,9 +117,7 @@ Item {
                 ? choices[root.subtitleChoice].label : ""
     }
     readonly property int playbackLoops: player ? player.loops : 1
-    readonly property bool isAnimatedImage: !root.isVideo && !root.isDocument
-                                             && (root.fileName.toLowerCase().endsWith(".gif")
-                                                 || root.fileName.toLowerCase().endsWith(".webp"))
+    property bool isAnimatedImage: false
     readonly property real displayedImageScale: stillViewport.fittedScale * root.imageZoom
     readonly property string mediaTechnical: root.dimensionsLabel !== "" && root.durationLabel !== ""
                                              ? root.dimensionsLabel + "  ·  " + root.durationLabel
@@ -1009,9 +1007,8 @@ Item {
                             xScale: root.imageFlipHorizontal ? -1 : 1
                             yScale: root.imageFlipVertical ? -1 : 1
                         }
-                        readonly property string suffix: root.fileName.toLowerCase()
                         sourceComponent: root.isDocument ? pdfStill
-                                         : suffix.endsWith(".gif") || suffix.endsWith(".webp")
+                                         : root.isAnimatedImage
                                          ? animatedStill : staticStill
                     }
 

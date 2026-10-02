@@ -399,9 +399,21 @@ ApplicationWindow {
         if (row < 0) {
             return
         }
+        const video = Captures.isVideoAt(row)
+        const document = Captures.isDocumentAt(row)
+        const animated = Captures.isAnimatedAt(row)
+        if (detail.isVideo !== video || detail.isDocument !== document
+                || detail.isAnimatedImage !== animated) {
+            const path = detail.path
+            detail.path = ""
+            detail.isVideo = video
+            detail.isDocument = document
+            detail.isAnimatedImage = animated
+            detail.path = path
+            detail.open()
+        }
         detail.fileName = Captures.fileNameAt(row)
         detail.kind = Captures.kindAt(row)
-        detail.isDocument = Captures.isDocumentAt(row)
         detail.kindLabel = Captures.kindLabelAt(row)
         detail.dayLabel = Captures.dayLabelAt(row)
         detail.timeLabel = Captures.timeLabelAt(row)
@@ -897,6 +909,7 @@ ApplicationWindow {
         detail.path = ""
         detail.isVideo = Captures.isVideoAt(index)
         detail.isDocument = Captures.isDocumentAt(index)
+        detail.isAnimatedImage = Captures.isAnimatedAt(index)
         detail.path = Captures.pathAt(index)
         detail.fileName = Captures.fileNameAt(index)
         detail.kind = Captures.kindAt(index)

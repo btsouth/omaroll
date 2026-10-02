@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Images and videos without filename extensions open using bounded content
+  detection. Folder navigation, library previews, animations and thumbnails
+  use the same detected format; unrelated files remain excluded.
+
 ## 1.9.1
 
 ### Changed

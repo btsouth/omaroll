@@ -2,6 +2,7 @@
 
 #include "edit/ClipboardImage.h"
 #include "edit/JpegTransform.h"
+#include "sources/CaptureScanner.h"
 
 #include <QColorSpace>
 #include <QDir>
@@ -20,11 +21,12 @@
 
 namespace {
 
-// The format to write, derived from the source suffix but only when Qt can
-// actually encode it; otherwise PNG, which is always available.
+// The format to write, derived from the source suffix (or an extensionless
+// file's header) but only when Qt can actually encode it; otherwise PNG, which
+// is always available.
 QByteArray writableFormat(const QString& sourcePath) {
   static const QList<QByteArray> supported = QImageWriter::supportedImageFormats();
-  QByteArray extension = QFileInfo(sourcePath).suffix().toLower().toUtf8();
+  QByteArray extension = CaptureScanner::mediaSuffix(sourcePath).toUtf8();
   if (extension == "jpeg") {
     extension = "jpg";
   }

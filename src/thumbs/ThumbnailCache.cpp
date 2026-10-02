@@ -243,7 +243,7 @@ QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
     }
   }
 
-  const QString suffix = QFileInfo(renderPath).suffix();
+  const QString suffix = CaptureScanner::mediaSuffix(renderPath);
   QImage rendered =
       CaptureScanner::isVideo(suffix)      ? renderVideo(renderPath, pixelSize, seekPercent)
       : CaptureScanner::isDocument(suffix) ? PdfSupport::renderPage(renderPath, 1, pixelSize * 2)
