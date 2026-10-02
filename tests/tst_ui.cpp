@@ -2864,8 +2864,11 @@ private slots:
         // GridView.Contain
         QMetaObject::invokeMethod(view, "positionViewAtIndex", Q_ARG(int, row), Q_ARG(int, 4));
       }
-      QTRY_VERIFY_WITH_TIMEOUT(centre(card).y() > 0 && centre(card).y() < m_window->height(),
-                               5000);
+      // Relayout may destroy the delegate while the wait processes events.
+      QTRY_VERIFY_WITH_TIMEOUT((card = liveCardAt(row)) != nullptr && centre(card).y() > 0
+                                   && centre(card).y() < m_window->height(), 5000);
+      const QPoint clickPosition = centre(card);
+      const QSizeF cardSize = card->size();
       click(card, Qt::RightButton);
       settle();
       QTRY_VERIFY2_WITH_TIMEOUT(
@@ -2874,10 +2877,10 @@ private slots:
                                     "grid enabled %9, sheet open %10, popup %11) opened nothing")
                          .arg(QLatin1String(stage))
                          .arg(row)
-                         .arg(centre(card).x())
-                         .arg(centre(card).y())
-                         .arg(card->width())
-                         .arg(card->height())
+                         .arg(clickPosition.x())
+                         .arg(clickPosition.y())
+                         .arg(cardSize.width())
+                         .arg(cardSize.height())
                          .arg(m_window->width())
                          .arg(m_window->height())
                          .arg(grid->isEnabled())
