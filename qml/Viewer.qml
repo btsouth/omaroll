@@ -145,15 +145,24 @@ ApplicationWindow {
     }
 
     function resetView() {
+        zoomAnimation.stop()
         root.viewScale = 0
         root.viewRotation = 0
         still.contentX = 0
         still.contentY = 0
     }
 
-    // Zooms around a point in the stage, so whatever is under the pointer
-    // stays under it. Without a point, around the centre.
-    function zoomTo(target, x, y) {
+    // Zoom eases toward a goal rather than jumping. Each wheel notch, key,
+    // button or double click moves the goal, and the picture follows it over
+    // a short curve around the same point, so whatever is under the pointer
+    // stays under it. Without a point, around the centre. A pinch follows the
+    // fingers directly instead.
+    property real zoomGoal: 0
+    property point zoomAnchor: Qt.point(0, 0)
+    property real easedScale: 0
+    readonly property bool zooming: zoomAnimation.running
+
+    function zoomTo(target, x, y, instant) {
         if (Session.isVideo || root.fitScale <= 0) {
             return
         }
@@ -161,27 +170,67 @@ ApplicationWindow {
         // picture is scaled up to fit; in to 32 pixels per source pixel.
         const minimum = Math.min(root.fitScale, root.actualScale)
         const maximum = Math.max(root.fitScale * 2, 32 / root.dpr)
-        const next = Math.max(minimum, Math.min(maximum, target))
-        if (Math.abs(next - root.fitScale) <= root.fitScale * 0.001) {
-            root.viewScale = 0
-            zoomBadge.flash()
+        root.zoomGoal = Math.max(minimum, Math.min(maximum, target))
+        root.zoomAnchor = Qt.point(x === undefined ? still.width / 2 : x,
+                                   y === undefined ? still.height / 2 : y)
+        zoomBadge.flash()
+        zoomAnimation.stop()
+        if (instant === true) {
+            root.applyScale(root.zoomGoal, root.zoomAnchor.x, root.zoomAnchor.y)
+            root.settleZoom()
             return
         }
-        const px = x === undefined ? still.width / 2 : x
-        const py = y === undefined ? still.height / 2 : y
-        const before = root.effectiveScale
-        const boxX = (still.contentX + px - frame.x) / before
-        const boxY = (still.contentY + py - frame.y) / before
-        root.viewScale = next
-        still.contentX = Math.max(0, Math.min(still.contentWidth - still.width,
-                                              frame.x + boxX * next - px))
-        still.contentY = Math.max(0, Math.min(still.contentHeight - still.height,
-                                              frame.y + boxY * next - py))
-        zoomBadge.flash()
+        zoomAnimation.from = root.effectiveScale
+        zoomAnimation.to = root.zoomGoal
+        zoomAnimation.start()
     }
 
-    function zoomBy(factor, x, y) {
-        root.zoomTo(root.effectiveScale * factor, x, y)
+    // Notches that arrive while the picture is still moving add to the goal,
+    // not to wherever the picture happens to be on the way.
+    function zoomBy(factor, x, y, instant) {
+        const base = zoomAnimation.running ? root.zoomGoal : root.effectiveScale
+        root.zoomTo(base * factor, x, y, instant)
+    }
+
+    function fitToWindow() {
+        root.zoomTo(root.fitScale)
+    }
+
+    // One step of a zoom: the new scale, with the point under the anchor kept
+    // where it was.
+    function applyScale(scale, px, py) {
+        const before = root.effectiveScale
+        if (before <= 0) {
+            return
+        }
+        const boxX = (still.contentX + px - frame.x) / before
+        const boxY = (still.contentY + py - frame.y) / before
+        root.viewScale = scale
+        still.contentX = Math.max(0, Math.min(still.contentWidth - still.width,
+                                              frame.x + boxX * scale - px))
+        still.contentY = Math.max(0, Math.min(still.contentHeight - still.height,
+                                              frame.y + boxY * scale - py))
+    }
+
+    // Arriving back at the fitted size goes back to following the window.
+    function settleZoom() {
+        if (Math.abs(root.viewScale - root.fitScale) <= root.fitScale * 0.001) {
+            root.viewScale = 0
+        }
+    }
+
+    NumberAnimation {
+        id: zoomAnimation
+        target: root
+        property: "easedScale"
+        duration: 180
+        easing.type: Easing.OutCubic
+        onFinished: root.settleZoom()
+    }
+    onEasedScaleChanged: {
+        if (zoomAnimation.running) {
+            root.applyScale(root.easedScale, root.zoomAnchor.x, root.zoomAnchor.y)
+        }
     }
 
     function showActualSize(x, y) {
@@ -191,8 +240,7 @@ ApplicationWindow {
     // The toolbar's 1:1 / Fit button.
     function toggleFit() {
         if (root.viewScale > 0) {
-            root.viewScale = 0
-            zoomBadge.flash()
+            root.fitToWindow()
         } else {
             root.showActualSize()
         }
@@ -203,6 +251,7 @@ ApplicationWindow {
             return
         }
         root.viewRotation = (root.viewRotation + (clockwise ? 90 : 270)) % 360
+        zoomAnimation.stop()
         root.viewScale = 0
     }
 
@@ -607,10 +656,32 @@ ApplicationWindow {
             visible: !Session.isVideo
             clip: true
             boundsBehavior: Flickable.StopAtBounds
+            // A drag follows the pointer; a flick glides a little and stops,
+            // rather than sailing down a long screenshot.
+            flickDeceleration: 4000
+            maximumFlickVelocity: 4000
             interactive: root.viewScale > 0
                          && (contentWidth > width + 0.5 || contentHeight > height + 0.5)
             contentWidth: Math.max(width, root.displayWidth)
             contentHeight: Math.max(height, root.displayHeight)
+
+            // A double click zooms to the real size and back; a picture
+            // already shown at its real size zooms to twice that instead. Being
+            // inside the Flickable, it hands the press over once it becomes a
+            // drag, so a zoomed picture still pans.
+            TapHandler {
+                acceptedButtons: Qt.LeftButton
+                onDoubleTapped: function (eventPoint) {
+                    if (root.viewScale > 0) {
+                        root.fitToWindow()
+                        return
+                    }
+                    const at = stage.mapFromItem(null, eventPoint.scenePosition)
+                    const actual = Math.abs(root.fitScale - root.actualScale)
+                                   > root.actualScale * 0.01
+                    root.zoomTo(actual ? root.actualScale : root.fitScale * 2, at.x, at.y)
+                }
+            }
 
             Item {
                 id: frame
@@ -850,6 +921,7 @@ ApplicationWindow {
         // and the controls above accept their own clicks first.
         Item {
             id: gestures
+            objectName: "viewerGestures"
             anchors.fill: parent
 
             // Pointer movement over the window brings the controls back.
@@ -857,7 +929,11 @@ ApplicationWindow {
             // changes, a playing video included, so only a real move counts.
             HoverHandler {
                 property point last: Qt.point(-1, -1)
-                cursorShape: root.pointerHidden ? Qt.BlankCursor : Qt.ArrowCursor
+                // A zoomed picture can be dragged, and the hand says so.
+                cursorShape: root.pointerHidden ? Qt.BlankCursor
+                             : still.interactive ? (still.dragging ? Qt.ClosedHandCursor
+                                                                   : Qt.OpenHandCursor)
+                             : Qt.ArrowCursor
                 onPointChanged: {
                     const at = point.position
                     if (Math.abs(at.x - last.x) >= 1 || Math.abs(at.y - last.y) >= 1) {
@@ -867,25 +943,15 @@ ApplicationWindow {
                 }
             }
 
-            // Click plays or pauses a video; a double click goes full screen,
-            // or on a picture zooms to its real size and back.
+            // On a video a click plays or pauses and a double click goes full
+            // screen. Pictures take their clicks inside the pan area below:
+            // a handler up here takes the press for itself, and a drag on a
+            // zoomed picture would never reach it.
             TapHandler {
                 acceptedButtons: Qt.LeftButton
-                onSingleTapped: if (Session.isVideo) root.togglePlayback()
-                onDoubleTapped: function (eventPoint) {
-                    if (Session.isVideo) {
-                        root.setFullScreen(!root.fullScreen)
-                    } else if (root.viewScale > 0) {
-                        root.viewScale = 0
-                    } else {
-                        // To the real size and back; a picture already shown
-                        // at its real size zooms to twice that instead.
-                        const at = stage.mapFromItem(null, eventPoint.scenePosition)
-                        const actual = Math.abs(root.fitScale - root.actualScale)
-                                       > root.actualScale * 0.01
-                        root.zoomTo(actual ? root.actualScale : root.fitScale * 2, at.x, at.y)
-                    }
-                }
+                enabled: Session.isVideo
+                onSingleTapped: root.togglePlayback()
+                onDoubleTapped: root.setFullScreen(!root.fullScreen)
             }
             TapHandler {
                 acceptedButtons: Qt.RightButton
@@ -900,9 +966,17 @@ ApplicationWindow {
             WheelHandler {
                 target: null
                 enabled: !Session.isVideo
+                // The default takes mice only, and Qt reports some wheels on
+                // Wayland as a touchpad, which then never reached this.
+                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                 onWheel: function (event) {
                     const at = still.mapFromItem(null, point.scenePosition)
-                    const touchpad = event.pixelDelta.x !== 0 || event.pixelDelta.y !== 0
+                    // Told apart by what the events do, not by the device's
+                    // label: Qt can call a wheel a touchpad, and a wheel can
+                    // carry pixel deltas. A touchpad swipe comes in phases
+                    // with pixel deltas; a wheel notch has no phase.
+                    const touchpad = event.phase !== Qt.NoScrollPhase
+                                     && (event.pixelDelta.x !== 0 || event.pixelDelta.y !== 0)
                     if (touchpad && !(event.modifiers & Qt.ControlModifier)) {
                         if (root.viewScale > 0) {
                             still.contentX = Math.max(0, Math.min(still.contentWidth - still.width,
@@ -915,7 +989,7 @@ ApplicationWindow {
                     }
                     const delta = event.angleDelta.y !== 0 ? event.angleDelta.y : event.pixelDelta.y
                     if (delta !== 0) {
-                        root.zoomBy(Math.pow(1.2, delta / 120), at.x, at.y)
+                        root.zoomBy(Math.pow(1.15, delta / 120), at.x, at.y)
                     }
                     event.accepted = true
                 }
@@ -931,7 +1005,7 @@ ApplicationWindow {
                         return
                     }
                     const at = still.mapFromItem(null, centroid.scenePosition)
-                    root.zoomBy(activeScale / last, at.x, at.y)
+                    root.zoomBy(activeScale / last, at.x, at.y, true)
                     last = activeScale
                 }
             }
@@ -1498,7 +1572,7 @@ ApplicationWindow {
                     root.zoomBy(1 / 1.25)
                     break
                 case Qt.Key_0:
-                    if (!video) root.viewScale = 0
+                    if (!video) root.fitToWindow()
                     break
                 case Qt.Key_1:
                     if (!video) root.showActualSize()

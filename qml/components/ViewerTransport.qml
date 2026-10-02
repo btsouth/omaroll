@@ -299,6 +299,7 @@ Rectangle {
     // The wheel over the bar sets the volume, the way it does in most players.
     WheelHandler {
         target: null
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
         onWheel: function (event) {
             const delta = event.angleDelta.y !== 0 ? event.angleDelta.y : event.pixelDelta.y
             Settings.videoVolume = Math.max(0, Math.min(1, Settings.videoVolume + (delta > 0 ? 0.05 : -0.05)))

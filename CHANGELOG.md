@@ -7,8 +7,8 @@
 - A quick viewer. A picture or video opened from the file manager fills a
   window of its own, with the name, the other files and a menu that fade in
   when the pointer moves. The arrow keys step through the folder in name
-  order, the next picture is decoded ahead, and the wheel and a pinch zoom
-  around the pointer. Pictures get one bar of the usual controls (zoom, actual
+  order, the next picture is decoded ahead, the wheel and a pinch zoom
+  smoothly around the pointer, and a zoomed picture moves with a drag. Pictures get one bar of the usual controls (zoom, actual
   size, previous, slideshow, next, rotate and delete) and videos a thin bar of
   their own. The window opens at most of the screen's size, the same for
   every file, and each picture is fitted inside it, a small one scaled up. Nothing is scanned to open a file; Enter hands it

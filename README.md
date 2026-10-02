@@ -309,7 +309,8 @@ so a favourite or rating set in one shows in the other.
 |---|---|
 | `←` `→` · `Page Up` `Page Down` | Previous · next file. On a video the arrows seek instead |
 | `Home` `End` | First · last file, or the start · end of a video |
-| wheel · pinch · `+` `-` | Zoom around the pointer |
+| wheel · pinch · `+` `-` | Zoom smoothly around the pointer |
+| drag · two-finger scroll | Move around a zoomed picture, down a long screenshot |
 | `0` · `1` · double click | Fit · actual size · toggle between them |
 | `R` · `Shift+R` | Rotate right · left, the view only, never the file |
 | `Space` · `K` · click | Play · pause a video or animation |

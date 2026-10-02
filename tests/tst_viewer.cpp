@@ -25,6 +25,7 @@
 #include <QMediaDevices>
 #include <QMediaMetaData>
 #include <QMediaPlayer>
+#include <QPointingDevice>
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
@@ -188,10 +189,10 @@ private slots:
     QVERIFY(qAbs(prop("displayHeight").toReal() - m_window->height()) < 1);
 
     QTest::keyClick(m_window, Qt::Key_1);
-    QCOMPARE(prop("effectiveScale").toReal(), actual);
+    QTRY_COMPARE(prop("effectiveScale").toReal(), actual);
     QVERIFY(prop("viewScale").toReal() > 0);
     QTest::keyClick(m_window, Qt::Key_0);
-    QCOMPARE(prop("viewScale").toReal(), 0.0);
+    QTRY_COMPARE(prop("viewScale").toReal(), 0.0);
 
     // 4:3 in a 3:2 window leaves a band either side. The pointer rests in
     // the middle, off the header, so the controls fade for the grab.
@@ -240,15 +241,16 @@ private slots:
     QQuickItem* fit = item(QStringLiteral("viewerFitToggle"));
     QCOMPARE(fit->property("label").toString(), QStringLiteral("1:1"));
     click(item(QStringLiteral("viewerZoomIn")));
+    QTRY_VERIFY(!prop("zooming").toBool());
     QVERIFY(prop("viewScale").toReal() > prop("fitScale").toReal());
     QCOMPARE(fit->property("label").toString(), QStringLiteral("Fit"));
     click(fit);
-    QCOMPARE(prop("viewScale").toReal(), 0.0);
+    QTRY_COMPARE(prop("viewScale").toReal(), 0.0);
     click(fit);
-    QCOMPARE(prop("effectiveScale").toReal(), 1.0 / m_window->devicePixelRatio());
+    QTRY_COMPARE(prop("effectiveScale").toReal(), 1.0 / m_window->devicePixelRatio());
     click(item(QStringLiteral("viewerZoomOut")));
     click(item(QStringLiteral("viewerZoomOut")));
-    QCOMPARE(prop("viewScale").toReal(), 0.0);
+    QTRY_COMPARE(prop("viewScale").toReal(), 0.0);
 
     click(item(QStringLiteral("viewerTrashButton")));
     QQuickItem* confirm = item(QStringLiteral("viewerConfirm"));
@@ -365,27 +367,35 @@ private slots:
     QVERIFY(fit > 0);
 
     QTest::keyClick(m_window, Qt::Key_Plus);
-    QVERIFY(prop("viewScale").toReal() > fit);
+    QTRY_VERIFY(prop("viewScale").toReal() > fit);
     QTest::keyClick(m_window, Qt::Key_0);
-    QCOMPARE(prop("viewScale").toReal(), 0.0);
+    QTRY_COMPARE(prop("viewScale").toReal(), 0.0);
     QTest::keyClick(m_window, Qt::Key_1);
-    QCOMPARE(prop("effectiveScale").toReal(), 1.0 / m_window->devicePixelRatio());
+    QTRY_COMPARE(prop("effectiveScale").toReal(), 1.0 / m_window->devicePixelRatio());
     QCOMPARE(prop("zoomPercent").toInt(), 100);
     QTest::keyClick(m_window, Qt::Key_0);
+    QTRY_COMPARE(prop("viewScale").toReal(), 0.0);
 
-    // The point under the pointer stays under it through a wheel zoom.
+    // A wheel notch eases in rather than jumping, and notches that arrive
+    // while it moves add up.
     QQuickItem* frame = item(QStringLiteral("viewerFrame"));
     const QPointF at(m_window->width() * 0.3, m_window->height() * 0.6);
     const QPointF before = frame->mapFromScene(at) / prop("effectiveScale").toReal();
-    wheel(at, 2);
-    QVERIFY(prop("viewScale").toReal() > fit);
+    wheel(at, 1, 0);
+    QVERIFY(prop("zooming").toBool());
+    const qreal midway = prop("effectiveScale").toReal();
+    QVERIFY(midway < fit * 1.15 - 0.001);
+    wheel(at, 1);
+    QTRY_VERIFY(!prop("zooming").toBool());
+    QVERIFY(qAbs(prop("effectiveScale").toReal() - fit * 1.15 * 1.15) < 0.001);
+    // The point under the pointer stays under it the whole way.
     const QPointF after = frame->mapFromScene(at) / prop("effectiveScale").toReal();
     QVERIFY2(qAbs(before.x() - after.x()) < 1.5 && qAbs(before.y() - after.y()) < 1.5,
              qPrintable(QStringLiteral("%1,%2 became %3,%4")
                             .arg(before.x()).arg(before.y()).arg(after.x()).arg(after.y())));
     // Zooming back out past the fit returns to fitting the window.
     wheel(at, -8);
-    QCOMPARE(prop("viewScale").toReal(), 0.0);
+    QTRY_COMPARE(prop("viewScale").toReal(), 0.0);
 
     // A double click zooms to the real size and back.
     doubleClick(at.toPoint());
@@ -401,6 +411,75 @@ private slots:
     // A new file starts upright and fitted.
     QTest::keyClick(m_window, Qt::Key_Right);
     QCOMPARE(prop("viewRotation").toInt(), 0);
+  }
+
+  // Qt on Wayland can report a mouse wheel as coming from a touchpad. The
+  // notches must still zoom; only a phased swipe pans.
+  void aWheelReportedAsATouchpadStillZooms() {
+    open({media(QStringLiteral("Shot 1.jpg"))});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    const qreal fit = prop("fitScale").toReal();
+    QPointingDevice touchpad(QStringLiteral("touchpad"), 4242, QInputDevice::DeviceType::TouchPad,
+                             QPointingDevice::PointerType::Finger,
+                             QInputDevice::Capability::Position | QInputDevice::Capability::Scroll,
+                             1, 3);
+    const QPointF at(m_window->width() / 2.0, m_window->height() / 2.0);
+    QWheelEvent notch(at, m_window->mapToGlobal(at.toPoint()), QPoint(), QPoint(0, 120),
+                      Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false,
+                      Qt::MouseEventNotSynthesized, &touchpad);
+    QCoreApplication::sendEvent(m_window, &notch);
+    QTRY_VERIFY(!prop("zooming").toBool());
+    QVERIFY(qAbs(prop("effectiveScale").toReal() - fit * 1.15) < 0.001);
+    QTest::keyClick(m_window, Qt::Key_0);
+    QTRY_COMPARE(prop("viewScale").toReal(), 0.0);
+  }
+
+  // A long screenshot, zoomed in, moves with the mouse: drag up to go down
+  // the picture. At the fitted size there is nothing to move.
+  void draggingAZoomedLongPictureMovesAlongIt() {
+    const QString folder = m_scratch.filePath(QStringLiteral("long"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString path = folder + QStringLiteral("/long.png");
+    QImage picture(600, 4000, QImage::Format_RGB32);
+    picture.fill(QColor(40, 90, 160));
+    QVERIFY(picture.save(path));
+    open({path});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QQuickItem* still = item(QStringLiteral("viewerStill"));
+    QVERIFY(!still->property("interactive").toBool());
+
+    QTest::keyClick(m_window, Qt::Key_1);
+    QTRY_VERIFY(!prop("zooming").toBool());
+    QTRY_VERIFY(still->property("interactive").toBool());
+    const qreal top = still->property("contentY").toReal();
+    const QPoint from(m_window->width() / 2, m_window->height() * 3 / 4);
+    const QPoint to(from.x(), m_window->height() / 4);
+    QTest::mousePress(m_window, Qt::LeftButton, Qt::NoModifier, from);
+    QTest::qWait(20);
+    for (int step = 1; step <= 8; ++step) {
+      QTest::mouseMove(m_window, from + (to - from) * step / 8);
+      QTest::qWait(20);
+    }
+    QTest::mouseRelease(m_window, Qt::LeftButton, Qt::NoModifier, to);
+    QTRY_VERIFY(!still->property("moving").toBool());
+    const qreal moved = still->property("contentY").toReal() - top;
+    QVERIFY2(moved > (from.y() - to.y()) * 0.6, qPrintable(QString::number(moved)));
+    // A release after a drag is not a tap: still zoomed, nothing toggled.
+    QVERIFY(prop("viewScale").toReal() > 0);
+
+    // A two-finger touchpad scroll moves along it too, rather than zooming.
+    // QTest's timestamps make that drag a fast flick, so this goes back up.
+    const qreal scale = prop("effectiveScale").toReal();
+    const qreal before = still->property("contentY").toReal();
+    QVERIFY(before > 300);
+    const QPointF middle(m_window->width() / 2.0, m_window->height() / 2.0);
+    for (const Qt::ScrollPhase phase : {Qt::ScrollBegin, Qt::ScrollUpdate, Qt::ScrollEnd}) {
+      QWheelEvent swipe(middle, m_window->mapToGlobal(middle.toPoint()), QPoint(0, 120),
+                        QPoint(0, 120), Qt::NoButton, Qt::NoModifier, phase, false);
+      QCoreApplication::sendEvent(m_window, &swipe);
+    }
+    QTRY_VERIFY(still->property("contentY").toReal() < before - 100);
+    QCOMPARE(prop("effectiveScale").toReal(), scale);
   }
 
   void videoPlaysWithPlayerKeysAndOneThinBar() {
@@ -718,12 +797,16 @@ private:
     QTest::qWait(30);
   }
 
-  // Mouse wheel notches over a point; positive zooms in.
-  void wheel(const QPointF& at, int notches) {
-    QWheelEvent event(at, m_window->mapToGlobal(at.toPoint()), QPoint(), QPoint(0, 120 * notches),
-                      Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+  // Mouse wheel notches over a point; positive zooms in. Like a wheel on
+  // Wayland, it carries pixel deltas as well as the angle.
+  void wheel(const QPointF& at, int notches, int waitMs = 40) {
+    QWheelEvent event(at, m_window->mapToGlobal(at.toPoint()), QPoint(0, 15 * notches),
+                      QPoint(0, 120 * notches), Qt::NoButton, Qt::NoModifier,
+                      Qt::NoScrollPhase, false);
     QCoreApplication::sendEvent(m_window, &event);
-    QTest::qWait(40);
+    if (waitMs > 0) {
+      QTest::qWait(waitMs);
+    }
   }
 
   QTemporaryDir m_scratch;
