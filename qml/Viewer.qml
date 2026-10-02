@@ -558,7 +558,7 @@ ApplicationWindow {
             root.externalSubtitle = ""
             root.subtitleChoice = 0
             if (Session.isVideo) {
-                playerLoader.active = true
+                root.startPlayerSoon()
                 root.subtitleFiles = Subtitles.files(Session.path)
             } else {
                 root.subtitleFiles = []
@@ -573,6 +573,29 @@ ApplicationWindow {
         function onEmptied() {
             root.close()
         }
+    }
+
+    // The multimedia backend and audio take a noticeable moment to start, and
+    // creating the player is synchronous. A video's window shows first, with
+    // its thumbnail, and the player starts once that frame is on screen, so a
+    // video opens as quickly as a picture. The timer covers a frame that never
+    // comes, such as a window still hidden.
+    function startPlayerSoon() {
+        if (!playerLoader.active) {
+            playerStart.restart()
+        }
+    }
+    function startPlayer() {
+        playerStart.stop()
+        if (Session.isVideo && !playerLoader.active) {
+            playerLoader.active = true
+        }
+    }
+    onFrameSwapped: if (playerStart.running) root.startPlayer()
+    Timer {
+        id: playerStart
+        interval: 250
+        onTriggered: root.startPlayer()
     }
 
     onInfoOpenChanged: {
