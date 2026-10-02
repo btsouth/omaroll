@@ -1,8 +1,16 @@
 name: CI
 
 on:
+  # Branches are covered by their pull request; pushing to a PR branch would
+  # otherwise run everything twice.
   push:
+    branches: [main]
   pull_request:
+
+# A newer push to the same pull request replaces the run in progress.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
