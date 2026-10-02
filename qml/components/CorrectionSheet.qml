@@ -509,9 +509,30 @@ Item {
             anchors.bottomMargin: 12
             height: flow.height + (wide ? 0 : footerGap + 26)
 
-            // Room for the longest result beside the ratios and the actions
-            // beside the resize controls.
-            readonly property bool wide: width >= 940
+            // Room for the result beside the ratios and the actions beside
+            // the resize controls, measured in the theme's font: a wider
+            // face needs more room than any fixed width would allow.
+            readonly property bool wide: width >= Math.max(cropLineWidth, resizeLineWidth)
+            readonly property real ratiosWidth: {
+                let total = 0
+                for (let i = 0; i < ratioPresets.count; ++i) {
+                    const preset = ratioPresets.itemAt(i)
+                    if (preset) {
+                        total += preset.implicitWidth + flow.spacing
+                    }
+                }
+                return total
+            }
+            readonly property real cropLineWidth: labelWidth + flow.spacing + ratiosWidth
+                                                  + Math.min(Math.ceil(resultMetrics.advanceWidth),
+                                                             width * 0.4) + 10
+            readonly property real resizeLineWidth: labelWidth + flow.spacing
+                                                    + originalSize.implicitWidth + flow.spacing
+                                                    + scale75.implicitWidth + flow.spacing
+                                                    + scale50.implicitWidth + flow.spacing
+                                                    + scale25.implicitWidth + flow.spacing
+                                                    + sizeFields.implicitWidth + flow.spacing
+                                                    + actions.implicitWidth + 10
             readonly property bool compact: width < 720
             readonly property int labelWidth: 64
             // The same gap a break leaves between two groups.
@@ -562,6 +583,7 @@ Item {
                 // Ratio zero is a free crop. Original is worked out when
                 // clicked, because a quarter turn swaps the frame's sides.
                 Repeater {
+                    id: ratioPresets
                     model: [
                         { label: "Free", ratio: 0 },
                         { label: "Original", ratio: -1 },
@@ -673,19 +695,23 @@ Item {
                     onClicked: root.setScale(0)
                 }
                 PillButton {
+                    id: scale75
                     label: "75%"
                     onClicked: root.setScale(75)
                 }
                 PillButton {
+                    id: scale50
                     label: "50%"
                     onClicked: root.setScale(50)
                 }
                 PillButton {
+                    id: scale25
                     label: "25%"
                     onClicked: root.setScale(25)
                 }
 
                 Row {
+                    id: sizeFields
                     spacing: 6
                     leftPadding: controls.compact ? 0 : 12
                     TextField {
@@ -813,14 +839,15 @@ Item {
                 }
                 PillButton {
                     objectName: "correctionCopyRegion"
-                    label: "Copy region"
+                    label: controls.compact ? "Copy" : "Copy region"
                     toolTip: "Copy the cropped region to the clipboard"
                     active: !root.saving && preview.status === Image.Ready
                     onClicked: root.copyRegion()
                 }
                 PillButton {
                     objectName: "correctionSave"
-                    label: root.saving ? "Saving…" : "Save a copy"
+                    label: root.saving ? "Saving…" : controls.compact ? "Save" : "Save a copy"
+                    toolTip: "Save a corrected copy beside the original"
                     active: !root.saving && preview.status === Image.Ready
                     onClicked: root.save()
                 }
