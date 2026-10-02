@@ -1,11 +1,20 @@
 # Project status and handoff
 
-Snapshot: 15 September 2026 UTC, after the v1.8.0 release. Check the tag and
-release, and the latest PRs, before resuming.
+Snapshot: 2 October 2026 UTC, at the v1.9.0 release candidate. Check the tag
+and release, and the latest PRs, before resuming.
 
-## In progress
+## Release candidate
 
-The `quick-viewer` branch splits Omaroll into two front doors in one process.
+1.9.0 bundles [PR #52](https://github.com/btsouth/omaroll/pull/52), the quick
+viewer, and [PR #53](https://github.com/btsouth/omaroll/pull/53), two fixes to
+the library's preview, on top of the PDF text selection and theme renders
+merged since 1.8.0. Brandon used a package of #52 and #53 on his desktop and
+called it release ready; the final candidate adds only CodeRabbit's review
+fixes, the library wheel fix and this version metadata after that. The
+candidate passed CI, a full ASan/UBSan run of every suite and the OpenGL render
+matrix in an Arch container.
+
+#52 splits Omaroll into two front doors in one process.
 Pictures and videos from outside open in a new viewer window (`qml/Viewer.qml`,
 `src/viewer/ViewerSession`) that never builds the library; folders, PDFs, a
 plain launch and `--library` open the library as before. The library's services
