@@ -41,7 +41,7 @@ SingleInstance::SingleInstance(const QString& serverName, QObject* parent)
               paths.append(path);
             }
           }
-          emit activationRequested(paths);
+          emit activationRequested(paths, object.value(QStringLiteral("library")).toBool());
         }
         socket->disconnectFromServer();
       });
@@ -50,7 +50,7 @@ SingleInstance::SingleInstance(const QString& serverName, QObject* parent)
   });
 }
 
-bool SingleInstance::claimOrNotify(const QStringList& paths) {
+bool SingleInstance::claimOrNotify(const QStringList& paths, bool library) {
   if (m_server.listen(m_serverName)) {
     return true;
   }
@@ -60,6 +60,9 @@ bool SingleInstance::claimOrNotify(const QStringList& paths) {
   if (socket.waitForConnected(120)) {
     QJsonObject message;
     message.insert(QStringLiteral("paths"), QJsonArray::fromStringList(paths));
+    if (library) {
+      message.insert(QStringLiteral("library"), true);
+    }
     // An older running version can still open the first file after an upgrade.
     message.insert(QStringLiteral("path"), paths.value(0));
     socket.write(QJsonDocument(message).toJson(QJsonDocument::Compact) + '\n');

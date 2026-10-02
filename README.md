@@ -7,9 +7,10 @@
 **Your media, in one beautiful library.**
 
 A fast, beautiful image, video, and PDF viewer that turns your media folders into a
-library. Open one file and move through the rest of its folder, open a selection
-of files in order, or browse photos,
-videos, documents, downloads, albums, tags, and custom folders together.
+library. Open a picture or a video and it fills a clean window of its own, with
+the rest of its folder a keypress away. Open Omaroll itself and you get the
+library: photos, videos, documents, downloads, albums, tags, and custom folders
+together.
 
 > Omaroll is an independent community project. It is not an official Omarchy
 > application.
@@ -41,6 +42,13 @@ on them.
 
 ## What it does
 
+- **Opens a file and gets out of the way.** A picture or video opened from the
+  file manager opens in a normal-sized window and fills it. Pictures get one
+  bar of the usual controls (zoom, actual size, previous, slideshow, next,
+  rotate and delete) and videos a thin bar of their own, both fading when the
+  pointer rests. The arrow keys step through the folder in name order, and the
+  next picture is decoded before you ask for it. Nothing is scanned to get
+  there. Enter hands the file to the library when you want the rest.
 - **Sees everything you already have.** Screenshots, recordings, pictures,
   videos, PDFs and downloads, grouped by day, newest first. Add any other folder to
   the library from Browse or Settings, then search and switch between sources,
@@ -91,8 +99,8 @@ on them.
 - **Drags out as the real file.** Pull a thumbnail into a Discord message, a
   browser upload or a Nautilus window and the file lands there. Select several
   and they go together.
-- **Previews in place.** Enter opens a capture large with every action beside
-  it. Images fit, display at actual size, zoom, pan, rotate, flip, and animate.
+- **Previews in place.** In the library, Enter opens a capture large with every
+  action beside it. Images fit, display at actual size, zoom, pan, rotate, flip, and animate.
   PDFs scroll continuously at the window width, or fit a whole page, with text
   search, a page jump, copy page text, and Select text to drag over the page
   and copy just the words you picked. Videos play with sound and include
@@ -214,10 +222,10 @@ and put on your clipboard.
 | `/` · `R` | Search filenames and picture text · Rescan |
 | `Esc` | Leave a PDF text selection, clear the tile selection, then close |
 
-The same letters work inside the preview. "Open with Omaroll" on a picture or
-video from any file manager opens it straight into its actions, with previous
-and next controls for the other media in that folder. A folder handed to
-`omaroll` opens as a recursive folder view for that session.
+The same letters work inside the preview. A folder handed to `omaroll` opens as
+a recursive folder view for that session. Pictures and videos opened from a
+file manager go to the viewer instead; its keys are listed under
+[Use it as a viewer](#use-it-as-a-viewer).
 
 ## Formats
 
@@ -263,16 +271,26 @@ sudo cmake --install build
 
 ## Use it as a viewer
 
-Open any supported image, video, PDF, or folder from a terminal:
+Set Omaroll as the default for pictures and videos, or open one from a
+terminal:
 
 ```bash
 omaroll photo.jpg
-omaroll ~/Pictures
+omaroll clip.mp4
 ```
 
-You can also choose Omaroll from a file manager's **Open With** menu and set it
-as the default for the media types you want. A single file opens directly in the
-viewer, with previous and next navigation through other media in that folder.
+A picture or video opens in the viewer: the media fills the window, a small
+picture included, and the name, the controls and the menu appear when the
+pointer moves. Rotating turns the view only; a rotated copy is saved from the
+library. The arrow keys
+step through the pictures and videos in that folder, in the order a file manager
+shows them. Folders, PDFs and a plain `omaroll` open the library, and so does
+`--library` with any file:
+
+```bash
+omaroll ~/Pictures
+omaroll --library photo.jpg
+```
 
 Several files can be opened together, in the order given:
 
@@ -283,8 +301,31 @@ omaroll -- ./-unusual-name.png
 
 Multiple files stay in the supplied order across folders, including when an
 existing window receives them. Explicitly selected hidden files can be opened
-without scanning every surrounding folder. The viewer shows your position in
-the selection and skips removed files.
+without scanning every surrounding folder. One viewer window is reused for
+every file opened while it is up, and the library and viewer share one process,
+so a favourite or rating set in one shows in the other.
+
+| Key in the viewer | Does |
+|---|---|
+| `←` `→` · `Page Up` `Page Down` | Previous · next file. On a video the arrows seek instead |
+| `Home` `End` | First · last file, or the start · end of a video |
+| wheel · pinch · `+` `-` | Zoom smoothly around the pointer |
+| drag · two-finger scroll | Move around a zoomed picture, down a long screenshot |
+| `0` · `1` · double click | Fit · actual size · toggle between them |
+| `R` · `Shift+R` | Rotate right · left, the view only, never the file |
+| `Space` · `K` · click | Play · pause a video or animation |
+| `J` `L` · `↑` `↓` · `M` | Seek ten seconds · volume · mute |
+| `[` `]` · `Backspace` · `C` | Speed · normal speed · cycle subtitles |
+| `F` · `F11` · double click a video | Full screen |
+| `F5` | Slideshow |
+| `I` | Details: size, date, rating, camera or codec |
+| `V` · `Alt+1`-`Alt+5` · `Ctrl+Z` | Favourite · rate · undo |
+| `Y` · `S` · `A` | Copy · send · annotate |
+| `T` · `G` · `P` | Trim · save the current frame · open in mpv |
+| `Del` | Move to Trash, with confirm |
+| right click · menu button | Everything else that suits the file |
+| `Enter` · grid button | Open the file in the library |
+| `Esc` | Leave the slideshow or full screen, close the details, then close |
 
 ### Transparency
 
@@ -298,6 +339,15 @@ Hyprland config:
 ```lua
 o.window("^(io\\.github\\.tsouth89\\.omaroll)$", { tag = "-default-opacity" })
 o.window("^(io\\.github\\.tsouth89\\.omaroll)$", { opacity = "1 1" })
+```
+
+The same file can float the viewer, centred, the way Omarchy floats imv and
+mpv. The viewer then opens at most of the screen's size, and the library keeps
+its tile:
+
+```lua
+o.window({ class = "^(io\\.github\\.tsouth89\\.omaroll)$", title = ".* · Omaroll" }, { float = true })
+o.window({ class = "^(io\\.github\\.tsouth89\\.omaroll)$", title = ".* · Omaroll" }, { center = true })
 ```
 
 ## Try it without your own files

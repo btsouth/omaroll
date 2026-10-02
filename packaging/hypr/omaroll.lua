@@ -7,3 +7,10 @@
 -- default/hypr/apps/system.lua.
 o.window("^(io\\.github\\.tsouth89\\.omaroll)$", { tag = "-default-opacity" })
 o.window("^(io\\.github\\.tsouth89\\.omaroll)$", { opacity = "1 1" })
+
+-- The viewer floats centred, as imv and mpv do, at the size it asks for: most
+-- of the screen. Its title is "<file> · Omaroll" and the library's is
+-- "Omaroll" alone, so the library window keeps its tile. Hyprland matches the
+-- whole title, hence the leading ".*".
+o.window({ class = "^(io\\.github\\.tsouth89\\.omaroll)$", title = ".* · Omaroll" }, { float = true })
+o.window({ class = "^(io\\.github\\.tsouth89\\.omaroll)$", title = ".* · Omaroll" }, { center = true })

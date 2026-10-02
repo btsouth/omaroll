@@ -13,6 +13,7 @@ export OMAROLL_REQUIRE_OPENGL=1
 export QT_AUDIO_BACKEND=pulseaudio PULSE_SERVER=unix:/nonexistent PIPEWIRE_REMOTE=omaroll-no-audio
 
 timeout 180 "$build_dir/omaroll_ui_tests"
+timeout 120 "$build_dir/omaroll_viewer_tests"
 
 # Every render is its own process under a disposable profile, so it draws with
 # the fixture's palette rather than whatever theme this machine happens to use.
@@ -36,16 +37,16 @@ render() { # theme view size
 # that carry the most chrome, where a light background changes what is readable.
 # Each render costs about twelve seconds of deliberate settling, so the matrix is
 # worth keeping to the views that can actually differ.
-for view in grid detail document video slideshow matte corrections compare export rename ocr duplicates browser settings; do
+for view in grid detail document video slideshow matte corrections compare export rename ocr duplicates browser settings viewer viewer-video viewer-info viewer-menu; do
   render dark "$view" 1280x820
 done
-for view in grid detail document corrections compare duplicates browser settings; do
+for view in grid detail document corrections compare duplicates browser settings viewer viewer-info viewer-menu; do
   render light "$view" 1280x820
 done
 # The smallest window the app allows, where the chrome has the least room. A
 # document is rendered there in both palettes: that corner is where the rows
 # collided and where a light background leaves a page nothing to sit against.
-for view in grid detail video ocr document; do
+for view in grid detail video ocr document viewer viewer-video; do
   render dark "$view" 560x420
 done
 render light document 560x420

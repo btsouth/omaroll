@@ -28,6 +28,7 @@
 #include "sources/CaptureScanner.h"
 #include "theme/OmarchyTheme.h"
 #include "thumbs/ThumbnailCache.h"
+#include "viewer/ViewerSession.h"
 
 #include <QClipboard>
 #include <QColorSpace>
@@ -221,6 +222,190 @@ private slots:
     QTest::qWait(30);
     QVERIFY(activation.isEmpty());
   }
+
+  void singleInstanceForwardsTheLibraryRequest() {
+    const QString server = QStringLiteral("omaroll-library-%1").arg(QCoreApplication::applicationPid());
+    SingleInstance first(server);
+    QVERIFY(first.claimOrNotify());
+    QSignalSpy activation(&first, &SingleInstance::activationRequested);
+    const QString path = QStringLiteral("/tmp/a picture # 雪.png");
+    SingleInstance second(server);
+    QVERIFY(!second.claimOrNotify({path}, true));
+    QTRY_COMPARE(activation.size(), 1);
+    QCOMPARE(activation.first().at(0).toStringList(), QStringList{path});
+    QVERIFY(activation.first().at(1).toBool());
+    SingleInstance third(server);
+    QVERIFY(!third.claimOrNotify({path}));
+    QTRY_COMPARE(activation.size(), 2);
+    QVERIFY(!activation.last().at(1).toBool());
+  }
+
+  void viewerOpensOnlyPicturesAndVideos() {
+    QVERIFY(ViewerSession::canOpen({QStringLiteral("/x/a.png"), QStringLiteral("/x/b.MP4"),
+                                    QStringLiteral("/x/c.webp")}));
+    QVERIFY(!ViewerSession::canOpen({QStringLiteral("/x/a.png"), QStringLiteral("/x/doc.pdf")}));
+    QVERIFY(!ViewerSession::canOpen({QStringLiteral("/x/doc.PDF")}));
+    QVERIFY(!ViewerSession::canOpen({}));
+  }
+
+  void viewerListsPicturesAndVideosInNaturalNameOrder_data() {
+    QTest::addColumn<QString>("localeName");
+    QTest::newRow("minimal-environment") << QStringLiteral("C");
+    QTest::newRow("english") << QStringLiteral("en_US");
+    QTest::newRow("german") << QStringLiteral("de_DE");
+  }
+
+  void viewerListsPicturesAndVideosInNaturalNameOrder() {
+    QFETCH(QString, localeName);
+    const QLocale previousLocale;
+    const auto restoreLocale = qScopeGuard([&] { QLocale::setDefault(previousLocale); });
+    QLocale::setDefault(QLocale(localeName));
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    for (const QString& name :
+         {QStringLiteral("shot 10.png"), QStringLiteral("shot 2.png"), QStringLiteral("Shot 1.jpg"),
+          QStringLiteral("clip.mp4"), QStringLiteral("notes.pdf"), QStringLiteral("readme.txt"),
+          QStringLiteral(".hidden.png"), QStringLiteral("no-suffix")}) {
+      QFile file(dir.filePath(name));
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("fixture");
+    }
+    QVERIFY(QDir(dir.path()).mkdir(QStringLiteral("nested.png")));
+    const QStringList expected{dir.filePath(QStringLiteral("clip.mp4")),
+                               dir.filePath(QStringLiteral("Shot 1.jpg")),
+                               dir.filePath(QStringLiteral("shot 2.png")),
+                               dir.filePath(QStringLiteral("shot 10.png"))};
+    QCOMPARE(ViewerSession::siblings(dir.path(), dir.filePath(QStringLiteral("shot 2.png"))),
+             expected);
+    // The dotfile shows only when it is the one opened.
+    const QString hidden = dir.filePath(QStringLiteral(".hidden.png"));
+    const QStringList withHidden = ViewerSession::siblings(dir.path(), hidden);
+    QCOMPARE(withHidden.size(), expected.size() + 1);
+    QVERIFY(withHidden.contains(hidden));
+  }
+
+  void viewerStepsWrapsAndFollowsTheFolder() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto make = [&dir](const QString& name) {
+      QFile file(dir.filePath(name));
+      if (file.open(QIODevice::WriteOnly)) {
+        file.write("fixture");
+      }
+      return dir.filePath(name);
+    };
+    const QString a = make(QStringLiteral("a.png"));
+    const QString b = make(QStringLiteral("b.png"));
+    const QString c = make(QStringLiteral("c.mp4"));
+    QVERIFY(QFile::exists(a) && QFile::exists(b) && QFile::exists(c));
+
+    ViewerSession session;
+    session.open({b});
+    // The opened file shows before the folder has been read.
+    QCOMPARE(session.path(), b);
+    QCOMPARE(session.fileName(), QStringLiteral("b.png"));
+    QVERIFY(!session.isVideo());
+    QTRY_COMPARE(session.count(), 3);
+    QCOMPARE(session.index(), 1);
+    QVERIFY(!session.selection());
+
+    QVERIFY(session.step(1));
+    QCOMPARE(session.path(), c);
+    QVERIFY(session.isVideo());
+    QVERIFY(session.step(1));
+    QCOMPARE(session.path(), a);
+    QVERIFY(session.step(-1));
+    QCOMPARE(session.path(), c);
+    QCOMPARE(session.neighbourUrl(1), QUrl::fromLocalFile(a));
+    QCOMPARE(session.neighbourUrl(-1), QUrl::fromLocalFile(b));
+    QVERIFY(session.neighbourIsVideo(0) == false);
+    QVERIFY(session.jump(0));
+    QCOMPARE(session.path(), a);
+    QVERIFY(!session.jump(3));
+
+    // A file landing in the folder joins; the one on screen going away is
+    // replaced by whatever now sits in its place.
+    const QString d = make(QStringLiteral("d.png"));
+    QVERIFY(QFile::exists(d));
+    QTRY_COMPARE_WITH_TIMEOUT(session.count(), 4, 5000);
+    QCOMPARE(session.path(), a);
+    QVERIFY(QFile::remove(a));
+    QTRY_COMPARE_WITH_TIMEOUT(session.count(), 3, 5000);
+    QCOMPARE(session.path(), b);
+    QVERIFY(session.step(-1));
+    QCOMPARE(session.path(), d);
+
+    session.clear();
+    QCOMPARE(session.count(), 0);
+    QVERIFY(session.path().isEmpty());
+    QVERIFY(!session.step(1));
+  }
+
+  void viewerKeepsASelectionAndMovesOnFromATrashedFile() {
+    ViewerSession session;
+    QSignalSpy emptied(&session, &ViewerSession::emptied);
+    const QStringList paths{QStringLiteral("/x/3.png"), QStringLiteral("/x/1.png"),
+                            QStringLiteral("/y/2.mp4")};
+    session.open(paths);
+    QVERIFY(session.selection());
+    QCOMPARE(session.count(), 3);
+    QCOMPARE(session.path(), paths.at(0));
+    QVERIFY(session.jump(1));
+    session.forget(paths.at(1));
+    QCOMPARE(session.path(), paths.at(2));
+    QCOMPARE(session.index(), 1);
+    session.forget(paths.at(2));
+    QCOMPARE(session.path(), paths.at(0));
+    session.forget(QStringLiteral("/not/in/the/list.png"));
+    QCOMPARE(session.count(), 1);
+    QCOMPARE(emptied.size(), 0);
+    session.forget(paths.at(0));
+    QCOMPARE(session.count(), 0);
+    QCOMPARE(emptied.size(), 1);
+
+    QSignalSpy library(&session, &ViewerSession::libraryRequested);
+    session.openInLibrary();
+    QCOMPARE(library.size(), 0);
+    session.open({QStringLiteral("/x/1.png"), QStringLiteral("/x/3.png")});
+    session.openInLibrary();
+    QCOMPARE(library.size(), 1);
+    QCOMPARE(library.first().first().toString(), QStringLiteral("/x/1.png"));
+  }
+
+  // Once the last file is gone the session stops watching, so a file that
+  // lands in the folder later cannot refill a viewer that has closed.
+  void viewerStopsWatchingOnceItsLastFileIsGone() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString only = dir.filePath(QStringLiteral("only.png"));
+    QVERIFY(QImage(4, 4, QImage::Format_RGB32).save(only));
+    ViewerSession session;
+    QSignalSpy emptied(&session, &ViewerSession::emptied);
+    session.open({only});
+    QTRY_VERIFY(!session.path().isEmpty());
+    QTest::qWait(100);
+    QVERIFY(QFile::remove(only));
+    session.forget(only);
+    QCOMPARE(session.count(), 0);
+    QCOMPARE(emptied.size(), 1);
+    QVERIFY(QImage(4, 4, QImage::Format_RGB32).save(dir.filePath(QStringLiteral("later.png"))));
+    QTest::qWait(900);
+    QCOMPARE(session.count(), 0);
+    QCOMPARE(emptied.size(), 1);
+  }
+
+  void viewerWindowIsTheSameNormalSizeForEveryFile() {
+    // Most of a 16:9 screen, in its shape.
+    QCOMPARE(ViewerSession::preferredWindowSize(QSize(1920, 1080)), QSize(1536, 864));
+    QCOMPARE(ViewerSession::preferredWindowSize(QSize(1536, 864)), QSize(1229, 691));
+    // An ultrawide gets 16:9 rather than a letterbox strip.
+    QCOMPARE(ViewerSession::preferredWindowSize(QSize(3440, 1440)), QSize(2048, 1152));
+    // A portrait screen still gets a landscape window, 4:3 across its width.
+    QCOMPARE(ViewerSession::preferredWindowSize(QSize(1080, 1920)), QSize(864, 648));
+    QCOMPARE(ViewerSession::preferredWindowSize(QSize(700, 500)), QSize(640, 480));
+    QCOMPARE(ViewerSession::preferredWindowSize(QSize()), QSize(1180, 780));
+  }
+
 
   void disabledXdgPictureDirectoryDoesNotScanHome() {
     const QByteArray previous = qgetenv("XDG_PICTURES_DIR");
@@ -1778,6 +1963,74 @@ private slots:
                qPrintable(QStringLiteral("missing image decoder for %1; found: %2")
                               .arg(QString::fromLatin1(format),
                                    QString::fromLatin1(decoders.join(',')))));
+    }
+  }
+
+  // The real binary, end to end: a picture opens in the viewer without the
+  // library, a plain second launch brings the library up in the same process,
+  // and another picture goes to the running viewer. Nothing along the way may
+  // raise a QML error.
+  void executableOpensPicturesInTheViewerAndTheLibraryOnRequest() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString first = dir.filePath(QStringLiteral("first # 1.png"));
+    const QString second = dir.filePath(QStringLiteral("second.png"));
+    QImage picture(64, 48, QImage::Format_RGB32);
+    picture.fill(Qt::darkCyan);
+    QVERIFY(picture.save(first));
+    QVERIFY(picture.save(second));
+    auto environment = QProcessEnvironment::systemEnvironment();
+    for (const QString& name : {QStringLiteral("HOME"), QStringLiteral("XDG_CONFIG_HOME"),
+                                QStringLiteral("XDG_DATA_HOME"), QStringLiteral("XDG_CACHE_HOME"),
+                                QStringLiteral("XDG_PICTURES_DIR"), QStringLiteral("XDG_VIDEOS_DIR"),
+                                QStringLiteral("XDG_DOWNLOAD_DIR"), QStringLiteral("OMARCHY_SCREENSHOT_DIR"),
+                                QStringLiteral("OMARCHY_SCREENRECORD_DIR")})
+      environment.insert(name, dir.path());
+    environment.insert(QStringLiteral("WAYLAND_DISPLAY"), QFileInfo(dir.path()).fileName());
+    environment.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("offscreen"));
+    environment.insert(QStringLiteral("QT_QUICK_BACKEND"), QStringLiteral("software"));
+    environment.insert(QStringLiteral("QT_QPA_PLATFORMTHEME"), QString());
+    environment.insert(QStringLiteral("QT_FORCE_STDERR_LOGGING"), QStringLiteral("1"));
+    const QString binary = QCoreApplication::applicationDirPath() + QStringLiteral("/omaroll");
+
+    QProcess viewer;
+    viewer.setProcessEnvironment(environment);
+    viewer.setProcessChannelMode(QProcess::SeparateChannels);
+    viewer.start(binary, {QStringLiteral("--"), first});
+    QVERIFY(viewer.waitForStarted());
+    const auto stop = qScopeGuard([&] {
+      viewer.terminate();
+      if (!viewer.waitForFinished(3000)) {
+        viewer.kill();
+        viewer.waitForFinished();
+      }
+    });
+    QByteArray errors;
+    const auto settle = [&] {
+      QVERIFY2(!viewer.waitForFinished(1500), viewer.readAllStandardError().constData());
+      errors += viewer.readAllStandardError();
+    };
+    settle();
+
+    // Each later launch hands its request to the running process and exits.
+    const auto forward = [&](const QStringList& arguments) {
+      QProcess launch;
+      launch.setProcessEnvironment(environment);
+      launch.start(binary, arguments);
+      QVERIFY(launch.waitForFinished(5000));
+      QCOMPARE(launch.exitCode(), 0);
+    };
+    forward({});
+    settle();
+    forward({QStringLiteral("--"), second});
+    settle();
+    forward({QStringLiteral("--library"), QStringLiteral("--"), second});
+    settle();
+
+    for (const QByteArray& marker :
+         {QByteArray("qrc:"), QByteArray("TypeError"), QByteArray("ReferenceError"),
+          QByteArray("unsupported media file")}) {
+      QVERIFY2(!errors.contains(marker), errors.constData());
     }
   }
 

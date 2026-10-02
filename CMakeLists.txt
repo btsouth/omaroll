@@ -79,6 +79,8 @@ add_library(omaroll_core STATIC
   src/thumbs/ThumbnailProvider.h
   src/theme/OmarchyTheme.cpp
   src/theme/OmarchyTheme.h
+  src/viewer/ViewerSession.cpp
+  src/viewer/ViewerSession.h
 )
 
 target_include_directories(omaroll_core PUBLIC src)
@@ -123,6 +125,7 @@ qt_add_resources(omaroll "omaroll_icons"
 
 set(OMAROLL_QML_FILES
   qml/Main.qml
+  qml/Viewer.qml
   qml/components/CaptureCard.qml
   qml/components/CaptureGrid.qml
   qml/components/DayHeader.qml
@@ -143,6 +146,11 @@ set(OMAROLL_QML_FILES
   qml/components/RenameSheet.qml
   qml/components/TailscaleSheet.qml
   qml/components/TextReviewSheet.qml
+  qml/components/Icon.qml
+  qml/components/IconButton.qml
+  qml/components/ViewerInfoPanel.qml
+  qml/components/ViewerToolbar.qml
+  qml/components/ViewerTransport.qml
 )
 
 qt_add_qml_module(omaroll
@@ -214,5 +222,15 @@ if(BUILD_TESTING)
   # whose process-lifetime allocations make LeakSanitizer noisy. The core suite
   # retains leak detection; this real-window suite still runs ASan and UBSan.
   set_tests_properties(omaroll_ui_tests PROPERTIES ENVIRONMENT
+    "${omaroll_test_environment};ASAN_OPTIONS=detect_leaks=0")
+
+  # The quick viewer in its own process, so its window never competes with
+  # the library's for focus.
+  qt_add_executable(omaroll_viewer_tests tests/tst_viewer.cpp)
+  target_link_libraries(omaroll_viewer_tests PRIVATE omaroll_core Qt6::Multimedia Qt6::QuickControls2 Qt6::Test)
+  target_compile_definitions(omaroll_viewer_tests PRIVATE
+    OMAROLL_QML_IMPORT_PATH="${CMAKE_BINARY_DIR}/uitest-imports")
+  add_test(NAME omaroll_viewer_tests COMMAND omaroll_viewer_tests)
+  set_tests_properties(omaroll_viewer_tests PROPERTIES ENVIRONMENT
     "${omaroll_test_environment};ASAN_OPTIONS=detect_leaks=0")
 endif()

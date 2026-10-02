@@ -26,6 +26,7 @@
 #include "theme/OmarchyTheme.h"
 #include "thumbs/ThumbnailCache.h"
 #include "thumbs/ThumbnailProvider.h"
+#include "viewer/ViewerSession.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -34,14 +35,18 @@
 #include <QAudioDevice>
 #include <QMediaDevices>
 #include <QQmlApplicationEngine>
+#include <QQmlComponent>
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QRegularExpression>
+#include <QScreen>
 #include <QSettings>
 #include <QTextStream>
 #include <QThreadPool>
 #include <QTimer>
+
+#include <memory>
 
 namespace {
 
@@ -80,7 +85,8 @@ QString argumentError(const QStringList& arguments) {
   static const QStringList valueOptions = {
       QStringLiteral("--render"), QStringLiteral("--render-view"), QStringLiteral("--render-size")};
   static const QStringList flagOptions = {QStringLiteral("--demo"), QStringLiteral("--help"),
-                                          QStringLiteral("-h"), QStringLiteral("--version")};
+                                          QStringLiteral("-h"), QStringLiteral("--library"),
+                                          QStringLiteral("--version")};
   for (qsizetype index = 1; index < arguments.size(); ++index) {
     const QString& argument = arguments.at(index);
     if (argument == QStringLiteral("--")) {
@@ -138,24 +144,213 @@ void printUsage() {
 Usage:
   omaroll [options] [file ... | folder]
 
-A file is selected and opened in the detail view; its folder is added to the
-library if it is not already watched. Multiple files open as a selection in
-the supplied order. A folder is added to the library. Use -- before filenames
-that begin with a dash.
+Pictures and videos open in the viewer, which steps through the rest of their
+folder in name order. Multiple files open as a selection in the supplied
+order. A folder, a PDF, or no argument at all opens the library. Use -- before
+filenames that begin with a dash.
 
 Options:
+  --library              Open files in the library instead of the viewer. The
+                         file is selected and its folder is added to the
+                         library if it is not already watched.
   --demo                 Browse a deterministic fictional library instead of
                          your own files. Nothing personal appears on screen.
   --render <file.png>    Render the window to a PNG and exit. Draws offscreen,
                          so no compositor can resize it or overlap it.
   --render-view <view>   Which view to render: grid, detail, video, slideshow,
                          matte, corrections, compare, export, rename, OCR,
-                         duplicates, browser or settings.
+                         duplicates, browser, settings, viewer, viewer-video,
+                         viewer-info or viewer-menu.
   --render-size <WxH>    Window size, from 560x420 to 7680x4320. Default 1280x820.
   --version              Print the version and exit.
   --help                 Show this message.)"
                       << Qt::endl;
 }
+
+// Creates a window from the module in its own context, so the names it needs
+// sit beside the shared ones without leaking into the other window.
+QQuickWindow* createWindow(QQmlEngine& engine, QQmlContext& context, const char* type,
+                           std::unique_ptr<QObject>& root) {
+  QQmlComponent component(&engine);
+  component.loadFromModule("Omaroll", type);
+  root.reset(component.create(&context));
+  if (!root) {
+    for (const QQmlError& error : component.errors()) {
+      qWarning().noquote() << error.toString();
+    }
+    return nullptr;
+  }
+  return qobject_cast<QQuickWindow*>(root.get());
+}
+
+// Everything the library window needs. It is built the first time the library
+// is asked for, so a picture opened from the file manager reaches the screen
+// without a single watched folder being scanned.
+class LibraryWindow {
+public:
+  LibraryWindow(QQmlEngine& engine, AppSettings& settings, ActionLauncher& actions, bool demo,
+                const OpenRequest& request)
+      : m_captures(&settings),
+        // Demo and render order is deliberately fixed. Real libraries are
+        // enriched in the background after their fast filesystem scan lands.
+        m_mediaMetadata(demo ? nullptr : &m_captures),
+        m_textIndex(&m_captures),
+        m_qr(&m_captures),
+        m_duplicates(&m_captures),
+        m_similarities(&m_captures),
+        m_context(engine.rootContext()) {
+    // QML only ever sees the proxy, so sorting and filtering can change
+    // without any delegate knowing.
+    m_library.setSourceModel(&m_captures);
+    QObject::connect(&m_library, &CaptureFilterModel::searchTextChanged, &m_textIndex,
+                     [this] { m_textIndex.setSearchText(m_library.searchText()); });
+    QObject::connect(&m_textIndex, &OcrIndex::textReady, &m_library,
+                     &CaptureFilterModel::setOcrText);
+    QObject::connect(&m_library, &CaptureFilterModel::duplicatesOnlyChanged, &m_duplicates,
+                     [this] { m_duplicates.setActive(m_library.duplicatesOnly()); });
+    QObject::connect(&m_duplicates, &DuplicateIndex::groupsChanged, &m_library,
+                     [this] { m_library.setDuplicateGroups(m_duplicates.groups()); });
+    QObject::connect(&m_library, &CaptureFilterModel::similarOnlyChanged, &m_similarities,
+                     [this] { m_similarities.setActive(m_library.similarOnly()); });
+    QObject::connect(&m_similarities, &SimilarityIndex::groupsChanged, &m_library,
+                     [this] { m_library.setSimilarGroups(m_similarities.groups()); });
+
+    // Restore what the user last chose, then keep the two in step. Doing it
+    // here rather than in either class keeps the proxy unaware of persistence
+    // and the settings unaware of the model.
+    m_library.setSortMode(settings.sortMode());
+    m_library.setKindFilter(settings.kindFilter());
+    m_library.setShowHidden(settings.showHidden());
+    QObject::connect(&m_library, &CaptureFilterModel::sortModeChanged, &settings,
+                     [this, &settings] { settings.setSortMode(m_library.sortMode()); });
+    QObject::connect(&m_library, &CaptureFilterModel::kindFilterChanged, &settings,
+                     [this, &settings] { settings.setKindFilter(m_library.kindFilter()); });
+    QObject::connect(&m_library, &CaptureFilterModel::showHiddenChanged, &settings,
+                     [this, &settings] { settings.setShowHidden(m_library.showHidden()); });
+
+    add(request);
+
+    // A tracked tool's half-written output stays out of the library until the
+    // run settles; writing to an existing file fires no directory event, so
+    // the release also rescans to pick the finished file up.
+    QObject::connect(&actions, &ActionLauncher::outputPending, &m_captures,
+                     &CaptureModel::holdPath);
+    QObject::connect(&actions, &ActionLauncher::outputSettled, &m_captures,
+                     &CaptureModel::releasePath);
+
+    m_context.setContextProperty(QStringLiteral("Captures"), &m_library);
+    m_context.setContextProperty(QStringLiteral("Library"), &m_captures);
+    m_context.setContextProperty(QStringLiteral("Matte"), &m_matte);
+    m_context.setContextProperty(QStringLiteral("ImageEdit"), &m_imageEditor);
+    m_context.setContextProperty(QStringLiteral("TextIndex"), &m_textIndex);
+    m_context.setContextProperty(QStringLiteral("Qr"), &m_qr);
+    m_context.setContextProperty(QStringLiteral("Subtitles"), &m_subtitles);
+    m_context.setContextProperty(QStringLiteral("Duplicates"), &m_duplicates);
+    m_context.setContextProperty(QStringLiteral("Similarities"), &m_similarities);
+    m_context.setContextProperty(QStringLiteral("MediaInfo"), &m_mediaInfo);
+    m_context.setContextProperty(QStringLiteral("PdfInfo"), &m_pdfInfo);
+    m_context.setContextProperty(QStringLiteral("MediaMetadata"), &m_mediaMetadata);
+    m_context.setContextProperty(QStringLiteral("Tailscale"), &m_tailscale);
+    m_context.setContextProperty(QStringLiteral("InitialPaths"), request.files);
+    m_context.setContextProperty(QStringLiteral("InitialFolderPath"), request.folder);
+    m_window = createWindow(engine, m_context, "Main", m_root);
+  }
+
+  LibraryWindow(const LibraryWindow&) = delete;
+  LibraryWindow& operator=(const LibraryWindow&) = delete;
+
+  [[nodiscard]] QQuickWindow* window() const { return m_window; }
+
+  // A request for a window that already exists: bring it forward and open
+  // what was asked for, the same way the first launch would have.
+  void open(const OpenRequest& opened) {
+    m_window->show();
+    m_window->raise();
+    m_window->requestActivate();
+    add(opened);
+    if (!opened.folder.isEmpty()) {
+      QMetaObject::invokeMethod(m_window, "openFolder", Q_ARG(QVariant, opened.folder));
+    } else if (!opened.files.isEmpty()) {
+      QMetaObject::invokeMethod(m_window, "openPaths", Q_ARG(QVariant, opened.files));
+    }
+  }
+
+private:
+  // "Open with": a file is selected once the scan lands, and its folder joins
+  // the library if no watched root already covers it. A folder simply joins.
+  void add(const OpenRequest& opened) {
+    if (!opened.folder.isEmpty()) {
+      m_captures.setExtraRoot(opened.folder);
+    } else if (!opened.files.isEmpty()) {
+      m_captures.addExtraFiles(opened.files);
+      if (opened.files.size() == 1) {
+        m_captures.setExtraRoot(QFileInfo(opened.files.first()).canonicalPath());
+      }
+    }
+  }
+
+  CaptureModel m_captures;
+  MediaMetadataIndex m_mediaMetadata;
+  CaptureFilterModel m_library;
+  OcrIndex m_textIndex;
+  QrDetector m_qr;
+  SubtitleIndex m_subtitles;
+  DuplicateIndex m_duplicates;
+  SimilarityIndex m_similarities;
+  MediaInspector m_mediaInfo;
+  PdfInspector m_pdfInfo;
+  TailscalePeers m_tailscale;
+  MatteComposer m_matte;
+  ImageEditor m_imageEditor;
+  QQmlContext m_context;
+  // Last, so the window goes before the context and services it binds to.
+  std::unique_ptr<QObject> m_root;
+  QQuickWindow* m_window = nullptr;
+};
+
+// The quick viewer: one window, reused for every file opened from outside.
+class ViewerWindow {
+public:
+  explicit ViewerWindow(QQmlEngine& engine) : m_context(engine.rootContext()) {
+    // Not "Viewer": that name is the window's own QML type, and a type name
+    // wins over a context property.
+    m_context.setContextProperty(QStringLiteral("Session"), &m_session);
+    m_context.setContextProperty(QStringLiteral("MediaInfo"), &m_mediaInfo);
+    m_context.setContextProperty(QStringLiteral("Subtitles"), &m_subtitles);
+    m_window = createWindow(engine, m_context, "Viewer", m_root);
+  }
+
+  ViewerWindow(const ViewerWindow&) = delete;
+  ViewerWindow& operator=(const ViewerWindow&) = delete;
+
+  [[nodiscard]] QQuickWindow* window() const { return m_window; }
+  [[nodiscard]] ViewerSession& session() { return m_session; }
+
+  void open(const QStringList& files) {
+    m_session.open(files);
+    if (!m_window->isVisible()) {
+      // A floating window opens at this size. A tiling compositor ignores
+      // the request and gives the window its tile instead.
+      if (const QScreen* screen = m_window->screen()) {
+        m_window->resize(ViewerSession::preferredWindowSize(screen->availableGeometry().size()));
+      }
+      m_window->setWindowStates(Qt::WindowNoState);
+      m_window->show();
+    }
+    if (QGuiApplication::platformName() != u"offscreen") {
+      m_window->raise();
+      m_window->requestActivate();
+    }
+  }
+
+private:
+  ViewerSession m_session;
+  MediaInspector m_mediaInfo;
+  SubtitleIndex m_subtitles;
+  QQmlContext m_context;
+  std::unique_ptr<QObject> m_root;
+  QQuickWindow* m_window = nullptr;
+};
 
 } // namespace
 
@@ -247,7 +442,8 @@ int main(int argc, char* argv[]) {
       QStringLiteral("slideshow"),  QStringLiteral("matte"),   QStringLiteral("corrections"),
       QStringLiteral("compare"),    QStringLiteral("export"),  QStringLiteral("rename"),
       QStringLiteral("ocr"),        QStringLiteral("duplicates"), QStringLiteral("browser"),
-      QStringLiteral("settings")};
+      QStringLiteral("settings"),   QStringLiteral("viewer"),  QStringLiteral("viewer-video"),
+      QStringLiteral("viewer-info"), QStringLiteral("viewer-menu")};
   if (!renderView.isEmpty() && !renderViews.contains(renderView)) {
     qWarning().noquote() << "omaroll: unknown render view:" << renderView;
     return 2;
@@ -276,18 +472,31 @@ int main(int argc, char* argv[]) {
   }
   const QStringList requestedPaths =
       request.folder.isEmpty() ? request.files : QStringList{request.folder};
+  const bool preferLibrary = optionPresent(arguments, QStringLiteral("--library"));
+  // Pictures and videos from outside open in the viewer. Folders, documents,
+  // a plain launch and an explicit --library open the library.
+  const auto opensInViewer = [](const OpenRequest& opened, bool library) {
+    return !library && opened.folder.isEmpty() && ViewerSession::canOpen(opened.files);
+  };
 
   // A render is a one-shot batch job and a demo is a throwaway window; neither
   // should take over, or be refused by, a real session's instance.
   SingleInstance instance;
   if (!rendering && !demo) {
-    if (!instance.claimOrNotify(requestedPaths)) {
+    if (!instance.claimOrNotify(requestedPaths, preferLibrary)) {
       return 0;
     }
   }
 
+  // The viewer renders open a demo file the way a file manager would.
+  const bool renderingViewer = renderView.startsWith(QStringLiteral("viewer"));
+  QStringList viewerRenderFiles;
+
   if (demo) {
     const DemoLibrary::Layout layout = DemoLibrary::build();
+    viewerRenderFiles = {renderView == QStringLiteral("viewer-video")
+                             ? layout.videos + QStringLiteral("/ocean-surface.mp4")
+                             : layout.pictures + QStringLiteral("/alpine-dawn.jpg")};
     // Give the duplicate render one real match without making the normal demo
     // library intentionally repetitive. This path exists only for visual QA.
     if (renderView == QStringLiteral("duplicates")) {
@@ -327,72 +536,8 @@ int main(int argc, char* argv[]) {
   QObject::connect(&settings, &AppSettings::thumbnailCacheMbChanged, &application,
                    pruneThumbnailCache);
 
-  CaptureModel captures(&settings);
-  // Demo and render order is deliberately fixed. Real libraries are enriched
-  // in the background after their fast filesystem scan lands.
-  MediaMetadataIndex mediaMetadata(demo ? nullptr : &captures);
-
-  // QML only ever sees the proxy, so sorting and filtering can change without
-  // any delegate knowing.
-  CaptureFilterModel library;
-  library.setSourceModel(&captures);
-  OcrIndex textIndex(&captures);
-  QrDetector qrDetector(&captures);
-  SubtitleIndex subtitles;
-  QObject::connect(&library, &CaptureFilterModel::searchTextChanged, &textIndex,
-                   [&] { textIndex.setSearchText(library.searchText()); });
-  QObject::connect(&textIndex, &OcrIndex::textReady, &library, &CaptureFilterModel::setOcrText);
-  DuplicateIndex duplicates(&captures);
-  QObject::connect(&library, &CaptureFilterModel::duplicatesOnlyChanged, &duplicates,
-                   [&] { duplicates.setActive(library.duplicatesOnly()); });
-  QObject::connect(&duplicates, &DuplicateIndex::groupsChanged, &library,
-                   [&] { library.setDuplicateGroups(duplicates.groups()); });
-  SimilarityIndex similarities(&captures);
-  QObject::connect(&library, &CaptureFilterModel::similarOnlyChanged, &similarities,
-                   [&] { similarities.setActive(library.similarOnly()); });
-  QObject::connect(&similarities, &SimilarityIndex::groupsChanged, &library,
-                   [&] { library.setSimilarGroups(similarities.groups()); });
-  MediaInspector mediaInfo;
-  PdfInspector pdfInfo;
-
-  // Restore what the user last chose, then keep the two in step. Doing it here
-  // rather than in either class keeps the proxy unaware of persistence and the
-  // settings unaware of the model.
-  library.setSortMode(settings.sortMode());
-  library.setKindFilter(settings.kindFilter());
-  library.setShowHidden(settings.showHidden());
-  QObject::connect(&library, &CaptureFilterModel::sortModeChanged,
-                   [&] { settings.setSortMode(library.sortMode()); });
-  QObject::connect(&library, &CaptureFilterModel::kindFilterChanged,
-                   [&] { settings.setKindFilter(library.kindFilter()); });
-  QObject::connect(&library, &CaptureFilterModel::showHiddenChanged,
-                   [&] { settings.setShowHidden(library.showHidden()); });
-
-  // "Open with": a file is selected once the scan lands, and its folder joins
-  // the library if no watched root already covers it. A folder simply joins.
-  const auto addRequest = [&captures](const OpenRequest& opened) {
-    if (!opened.folder.isEmpty()) {
-      captures.setExtraRoot(opened.folder);
-    } else {
-      captures.addExtraFiles(opened.files);
-      if (opened.files.size() == 1) {
-        captures.setExtraRoot(QFileInfo(opened.files.first()).canonicalPath());
-      }
-    }
-  };
-  addRequest(request);
-
   ActionLauncher actions;
   ActionRegistry registry(&actions);
-  TailscalePeers tailscale;
-  MatteComposer matte;
-  ImageEditor imageEditor;
-
-  // A tracked tool's half-written output stays out of the library until the
-  // run settles; writing to an existing file fires no directory event, so the
-  // release also rescans to pick the finished file up.
-  QObject::connect(&actions, &ActionLauncher::outputPending, &captures, &CaptureModel::holdPath);
-  QObject::connect(&actions, &ActionLauncher::outputSettled, &captures, &CaptureModel::releasePath);
 
   QQmlApplicationEngine engine;
   auto* thumbnailProvider = new ThumbnailProvider;
@@ -411,66 +556,94 @@ int main(int argc, char* argv[]) {
                      pdfProvider->shutdown();
                      QThreadPool::globalInstance()->waitForDone();
                    });
+  // Both windows share these. Each window's own services live in its context.
   engine.rootContext()->setContextProperty(QStringLiteral("Theme"), &theme);
-  engine.rootContext()->setContextProperty(QStringLiteral("Captures"), &library);
-  engine.rootContext()->setContextProperty(QStringLiteral("Library"), &captures);
   engine.rootContext()->setContextProperty(QStringLiteral("Actions"), &actions);
   engine.rootContext()->setContextProperty(QStringLiteral("Settings"), &settings);
   engine.rootContext()->setContextProperty(QStringLiteral("Registry"), &registry);
-  engine.rootContext()->setContextProperty(QStringLiteral("Matte"), &matte);
-  engine.rootContext()->setContextProperty(QStringLiteral("ImageEdit"), &imageEditor);
-  engine.rootContext()->setContextProperty(QStringLiteral("TextIndex"), &textIndex);
-  engine.rootContext()->setContextProperty(QStringLiteral("Qr"), &qrDetector);
-  engine.rootContext()->setContextProperty(QStringLiteral("Subtitles"), &subtitles);
-  engine.rootContext()->setContextProperty(QStringLiteral("Duplicates"), &duplicates);
-  engine.rootContext()->setContextProperty(QStringLiteral("Similarities"), &similarities);
-  engine.rootContext()->setContextProperty(QStringLiteral("MediaInfo"), &mediaInfo);
-  engine.rootContext()->setContextProperty(QStringLiteral("PdfInfo"), &pdfInfo);
-  engine.rootContext()->setContextProperty(QStringLiteral("MediaMetadata"), &mediaMetadata);
-  engine.rootContext()->setContextProperty(QStringLiteral("Tailscale"), &tailscale);
   engine.rootContext()->setContextProperty(QStringLiteral("DemoMode"), demo);
-  engine.rootContext()->setContextProperty(QStringLiteral("InitialPaths"), request.files);
-  engine.rootContext()->setContextProperty(QStringLiteral("InitialFolderPath"), request.folder);
-
-  QObject::connect(
-      &engine, &QQmlApplicationEngine::objectCreationFailed, &application,
-      [] { QCoreApplication::exit(1); }, Qt::QueuedConnection);
 
   startup.mark("services");
-  engine.loadFromModule("Omaroll", "Main");
+
+  // Declared after the engine, so both windows go before it does.
+  std::unique_ptr<LibraryWindow> libraryWindow;
+  std::unique_ptr<ViewerWindow> viewerWindow;
+
+  const auto openLibrary = [&](const OpenRequest& opened) -> QQuickWindow* {
+    if (libraryWindow) {
+      libraryWindow->open(opened);
+      return libraryWindow->window();
+    }
+    libraryWindow = std::make_unique<LibraryWindow>(engine, settings, actions, demo, opened);
+    if (!libraryWindow->window()) {
+      // The QML errors are already printed; a later request may try again.
+      libraryWindow.reset();
+      return nullptr;
+    }
+    return libraryWindow->window();
+  };
+
+  const auto openViewer = [&](const QStringList& files) -> QQuickWindow* {
+    if (!viewerWindow) {
+      viewerWindow = std::make_unique<ViewerWindow>(engine);
+      if (!viewerWindow->window()) {
+        viewerWindow.reset();
+        return nullptr;
+      }
+      // The viewer hands a file to the library, then steps aside. The library
+      // is up before the viewer closes, so closing it never ends the app.
+      QObject::connect(&viewerWindow->session(), &ViewerSession::libraryRequested, &application,
+                       [&](const QString& path) {
+                         OpenRequest opened;
+                         opened.files = {path};
+                         if (QQuickWindow* library = openLibrary(opened)) {
+                           library->raise();
+                           library->requestActivate();
+                           viewerWindow->window()->close();
+                         }
+                       });
+    }
+    viewerWindow->open(files);
+    return viewerWindow->window();
+  };
+
+  const bool startInViewer = rendering ? renderingViewer : opensInViewer(request, preferLibrary);
+  QQuickWindow* window = startInViewer
+                             ? openViewer(rendering ? viewerRenderFiles : request.files)
+                             : openLibrary(request);
   startup.mark("qml");
-  if (engine.rootObjects().isEmpty()) {
+  if (!window) {
     return 1;
   }
-  startup.watch(qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst()));
+  startup.watch(window);
 
   if (!rendering && !demo) {
-    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst());
-    QObject::connect(&instance, &SingleInstance::activationRequested, &application,
-                     [window, addRequest](const QStringList& paths) {
-                       const OpenRequest opened = OpenRequest::fromPaths(paths);
-                       if (!opened.error.isEmpty()) {
-                         QMetaObject::invokeMethod(window, "say", Q_ARG(QVariant, opened.error));
-                         return;
-                       }
-                       window->show();
-                       window->raise();
-                       window->requestActivate();
-                       addRequest(opened);
-                       if (!opened.folder.isEmpty()) {
-                         QMetaObject::invokeMethod(window, "openFolder", Q_ARG(QVariant, opened.folder));
-                       } else if (!opened.files.isEmpty()) {
-                         QMetaObject::invokeMethod(window, "openPaths", Q_ARG(QVariant, opened.files));
-                       }
-                     });
+    QObject::connect(
+        &instance, &SingleInstance::activationRequested, &application,
+        [&](const QStringList& paths, bool library) {
+          const OpenRequest opened = OpenRequest::fromPaths(paths);
+          if (!opened.error.isEmpty()) {
+            // Said in whichever window is in front; both have a status line.
+            QQuickWindow* shown = viewerWindow && viewerWindow->window()->isVisible()
+                                      ? viewerWindow->window()
+                                  : libraryWindow ? libraryWindow->window()
+                                                  : nullptr;
+            if (shown) {
+              QMetaObject::invokeMethod(shown, "say", Q_ARG(QVariant, opened.error));
+            } else {
+              qWarning().noquote() << "omaroll:" << opened.error;
+            }
+            return;
+          }
+          if (opensInViewer(opened, library)) {
+            openViewer(opened.files);
+          } else {
+            openLibrary(opened);
+          }
+        });
   }
 
   if (rendering) {
-    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst());
-    if (!window) {
-      return 1;
-    }
-
     const QString sizeText = renderSize;
     const QStringList parts = sizeText.split(QLatin1Char('x'), Qt::SkipEmptyParts);
     if (parts.size() == 2) {

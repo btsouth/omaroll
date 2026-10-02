@@ -4,6 +4,18 @@
 
 ### Added
 
+- A quick viewer. A picture or video opened from the file manager fills a
+  window of its own, with the name, the other files and a menu that fade in
+  when the pointer moves. The arrow keys step through the folder in name
+  order, the next picture is decoded ahead, the wheel and a pinch zoom
+  smoothly around the pointer, and a zoomed picture moves with a drag. Pictures get one bar of the usual controls (zoom, actual
+  size, previous, slideshow, next, rotate and delete) and videos a thin bar of
+  their own. The window opens at most of the screen's size, the same for
+  every file, and each picture is fitted inside it, a small one scaled up. Nothing is scanned to open a file; Enter hands it
+  to the library. Folders, PDFs and a plain launch
+  still open the library, and so does `--library` with any file.
+- The viewer's window can float centred like imv and mpv; the rule ships in
+  `/usr/share/omaroll/hypr/omaroll.lua`.
 - Select text in a PDF. Drag across a page to pick the words under the pointer,
   see each selected line highlighted, then copy those words with Copy
   selection or Ctrl+C. The words come from the same Poppler tool the document
@@ -13,6 +25,9 @@
 
 ### Changed
 
+- Opening a picture or video from outside no longer starts the library. The
+  library's services are built the first time it is asked for, in the same
+  process, so marks set in either window show in both.
 - Secondary text now takes its colour from the theme's own muted colour, which
   the theme backend already picks for at least 3:1 contrast, rather than from a
   fixed alpha. The status line, section labels, placeholders, empty rating stars
