@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- The Sub − and Sub + timing buttons for a sidecar subtitle sat on the video
+  clock. The clock now stands to their left, and they leave with the CC button
+  on a narrow window, or before they would squeeze the scrub bar below its
+  minimum. Their offset label sits to their left, so a click no longer moves
+  or hides them.
+
 ## 1.10.0
 
 ### Added
