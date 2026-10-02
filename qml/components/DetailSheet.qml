@@ -551,6 +551,7 @@ Item {
         }
         slideshowRunning = enabled
         if (enabled) {
+            resumeAvailable = false
             showInfo = false
             setFullScreen(true)
             if (isVideo && !Settings.slideshowVideos) {

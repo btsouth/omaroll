@@ -2743,6 +2743,13 @@ private slots:
     detail->setProperty("resumeAvailable", true);
     click(seek);
     QTRY_VERIFY(!detail->property("resumeAvailable").toBool());
+    detail->setProperty("resumeAvailable", true);
+    QTest::keyClick(m_window, Qt::Key_F5);
+    QTRY_VERIFY(detail->property("slideshowRunning").toBool());
+    QVERIFY(!detail->property("resumeAvailable").toBool());
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!detail->property("slideshowRunning").toBool());
     QVERIFY(item("detail")->property("playbackError").toString().isEmpty());
   }
 
