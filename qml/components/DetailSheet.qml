@@ -1857,11 +1857,12 @@ Item {
 
             // Reserve a row below the picture for the saved spot, so the
             // choice never covers video content or stacked playback controls.
-            Row {
+            Flow {
                 id: resumePrompt
                 objectName: "resumePrompt"
                 anchors.left: parent.left
                 anchors.leftMargin: 16
+                width: parent.width - 32
                 anchors.bottom: transport.top
                 anchors.bottomMargin: 10
                 spacing: 8

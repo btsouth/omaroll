@@ -2718,6 +2718,11 @@ private slots:
       QVERIFY(bounds.left() >= 0 && bounds.right() <= output->mapToScene(QPointF(output->width(), 0)).x());
       QVERIFY(bounds.top() >= output->mapToScene(QPointF(0, output->height())).y());
       QVERIFY(bounds.bottom() <= seek->mapToScene(QPointF()).y());
+      for (const QString& name : {QStringLiteral("resumeButton"), QStringLiteral("restartVideoButton")}) {
+        QQuickItem* button = item(name);
+        const QRectF buttonBounds = button->mapRectToScene(button->boundingRect());
+        QVERIFY(bounds.contains(buttonBounds));
+      }
     }
     click(item("resumeButton"));
     QTRY_VERIFY(!detail->property("resumeAvailable").toBool());
