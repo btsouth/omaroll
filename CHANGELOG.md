@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.9.1
+
+### Changed
+
+- Gallery previews give the picture more room, with a compact filename header
+  and an inspector available on demand. Ratings, captions and primary actions
+  stay easy to reach; technical details expand when needed, and secondary
+  actions live in an overflow menu.
+- Video controls keep a useful seek target with the inspector open in a narrow
+  window. The slideshow button appears for pictures and active slideshows,
+  leaving ordinary video playback with its own controls.
+- The README demo and preview screenshot show the polished gallery.
+
+### Fixed
+
+- Resume and Restart choices sit below the video and wrap when space is tight.
+  A saved position holds playback until a choice is made; starting playback,
+  seeking or a slideshow dismisses the offer.
+- Caption edits are saved before navigation, and nested actions return keyboard
+  focus to the preview.
+
 ## 1.9.0
 
 ### Added
