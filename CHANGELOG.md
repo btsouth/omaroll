@@ -28,6 +28,9 @@
 
 ### Fixed
 
+- A video with one audio track and no subtitles showed "Audio 1" and "CC"
+  drawn over the clock in the preview's controls. Those pills now hide when
+  there is nothing to switch, rather than only shrinking to no width.
 - The continuous PDF view collapsed each page to a sliver as soon as the page
   rendered, and a fitted page was stretched to the aspect of the stage box it
   was requested in. Both read the size asked of the renderer instead of the

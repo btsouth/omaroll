@@ -1822,7 +1822,8 @@ Item {
                 // appears late (a sidecar subtitle) was not being laid out by
                 // the positioner and ended up on top of its neighbour. Widths
                 // collapse to zero when a control is unavailable, so the chain
-                // still closes up.
+                // still closes up, and the pill hides with its width: a pill
+                // with no width still paints its label, over the clock.
                 Item {
                     id: mediaControls
                     anchors.right: parent.right
@@ -1836,7 +1837,8 @@ Item {
 
                     PillButton {
                         id: audioButton
-                        visible: true
+                        objectName: "audioTrackButton"
+                        visible: width > 0
                         width: player && player.audioTracks.length > 1 && transport.width >= 520
                                ? implicitWidth : 0
                         anchors.left: parent.left
@@ -1847,7 +1849,7 @@ Item {
                     }
                     PillButton {
                         id: subtitleButton
-                        visible: true
+                        visible: width > 0
                         width: root.hasSubtitleChoices && transport.width >= 440
                                ? implicitWidth : 0
                         anchors.left: audioButton.right

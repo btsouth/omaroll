@@ -723,6 +723,10 @@ private slots:
     QTRY_COMPARE_WITH_TIMEOUT(detail->property("playbackState").toInt(),
                               static_cast<int>(QMediaPlayer::PlayingState), 5000);
     QCOMPARE(detail->property("playbackLoops").toInt(), 1);
+    // A clip with one audio track and no subtitles offers neither control.
+    // Their labels painted over the clock while their width was zero.
+    QVERIFY(!item("audioTrackButton")->isVisible());
+    QVERIFY(!item("subtitleButton")->isVisible());
     QVERIFY(!detail->property("playbackMuted").toBool());
 
     QSignalSpy action(detail, SIGNAL(actionTriggered(QString)));
