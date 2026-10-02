@@ -866,11 +866,34 @@ Item {
                     }
                 }
 
+                // Qt on Wayland can report a mouse wheel as a touchpad, which
+                // the default devices left out, so those wheels never zoomed.
+                // Wheels and swipes are told apart by what the events do: a
+                // touchpad swipe comes in phases with pixel deltas and pans;
+                // a wheel notch has no phase and zooms.
                 WheelHandler {
                     target: null
+                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                     onWheel: function (event) {
+                        if (event.phase !== Qt.NoScrollPhase
+                                && (event.pixelDelta.x !== 0 || event.pixelDelta.y !== 0)) {
+                            stillViewport.contentX = Math.max(0, Math.min(
+                                stillViewport.contentWidth - stillViewport.width,
+                                stillViewport.contentX - event.pixelDelta.x))
+                            stillViewport.contentY = Math.max(0, Math.min(
+                                stillViewport.contentHeight - stillViewport.height,
+                                stillViewport.contentY - event.pixelDelta.y))
+                            event.accepted = true
+                            return
+                        }
                         const delta = event.angleDelta.y !== 0
                                       ? event.angleDelta.y : event.pixelDelta.y
+                        // ScrollBegin and ScrollEnd may carry no movement.
+                        // Consume them without treating zero as a zoom out.
+                        if (delta === 0) {
+                            event.accepted = true
+                            return
+                        }
                         root.adjustImageZoom(delta > 0 ? 1.2 : 1 / 1.2)
                         event.accepted = true
                     }
@@ -1822,7 +1845,8 @@ Item {
                 // appears late (a sidecar subtitle) was not being laid out by
                 // the positioner and ended up on top of its neighbour. Widths
                 // collapse to zero when a control is unavailable, so the chain
-                // still closes up.
+                // still closes up, and the pill hides with its width: a pill
+                // with no width still paints its label, over the clock.
                 Item {
                     id: mediaControls
                     anchors.right: parent.right
@@ -1836,7 +1860,8 @@ Item {
 
                     PillButton {
                         id: audioButton
-                        visible: true
+                        objectName: "audioTrackButton"
+                        visible: width > 0
                         width: player && player.audioTracks.length > 1 && transport.width >= 520
                                ? implicitWidth : 0
                         anchors.left: parent.left
@@ -1847,7 +1872,7 @@ Item {
                     }
                     PillButton {
                         id: subtitleButton
-                        visible: true
+                        visible: width > 0
                         width: root.hasSubtitleChoices && transport.width >= 440
                                ? implicitWidth : 0
                         anchors.left: audioButton.right
