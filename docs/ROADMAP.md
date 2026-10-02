@@ -4,33 +4,23 @@ Omaroll should cover everyday media viewing and organization on Omarchy:
 open files quickly, find them again, make a quick correction, and share the
 result. Discovery stays read-only and core use stays offline.
 
-See [current status and handoff](STATUS.md) for release boundaries, evidence
-and the scope decisions.
+See [project status](STATUS.md) for the latest release and current work.
 
-## Unreleased
+## 1.9.0 (released)
 
-- Select text in a PDF: drag across a page, see the selected lines highlighted,
-  and copy just those words. The boxes come from `pdftotext -bbox`, a mode of
-  the same Poppler tool the document search and page-text copy already run, so
-  no new package is involved.
-- Fix the two PDF surfaces reading the renderer's requested size as if it were
-  the page's own size, which collapsed every page in the continuous view once
-  it rendered and stretched a fitted page to the stage box's aspect.
-- Secondary text takes the theme's muted colour, which the theme backend
-  already picks for at least 3:1 contrast, instead of fixed alphas that measured
-  about 1.7:1 on a light theme: the status line, section labels, placeholders,
-  empty rating stars and action shortcuts.
-- PDF pages draw a hairline edge, so white paper reads as a sheet on a light
-  theme rather than merging with the stage behind it.
-- The document control rows give way in order on a narrow window, measured in
-  the theme font: the match steppers first, then the pills the action list
-  repeats or that need more room, with the page, its navigation, the fit choice
-  and text selection kept to the smallest window the app allows.
-- The render matrix covers every view in the dark palette, the chrome-heavy
-  views in the light palette, and the smallest window, each against a theme
-  fixture under `tests/fixtures/themes/` so the palette does not depend on the
-  machine. The demo library gains a document, so the PDF surfaces are rendered
-  and reviewed like every other view.
+- A quick image and video viewer that opens files without building the library,
+  browses neighboring files, zooms and pans, plays video, and opens the library
+  on Enter.
+- PDF text selection: drag across a page and copy just the selected words.
+- Correct PDF page sizing, readable secondary text in both themes, and document
+  controls that fit narrow windows.
+- Hidden unavailable audio and subtitle controls, plus wheel and touchpad
+  handling that keeps panning separate from zoom.
+- A demo PDF and a render matrix covering every view in the dark palette,
+  the main controls in the light palette, and narrow windows.
+
+See the [release](https://github.com/btsouth/omaroll/releases/tag/v1.9.0)
+and [changelog](../CHANGELOG.md#190).
 
 ## 1.8.0 (released)
 
@@ -63,8 +53,8 @@ desktop acceptance was not recorded for this tag and remains in SBS-1121.
   installed on the development desktop) and its QML module is not installed
   there, so it would be used through its C++ API. Linking `poppler-qt6`
   instead costs about 270 KiB and gives links, word boxes, an outline and
-  in-process page rendering, but its bindings are GPL, so linking them would
-  relicense the application. Decide this before building it.
+  in-process page rendering, but its bindings are GPL. Review the dependency
+  footprint and license compatibility with Omaroll before choosing an integration.
 - **Physical desktop gates.** Installed field acceptance and Wayland/GPU
   presentation numbers and regression budgets need the real Omarchy session.
   Headless runs cannot close them.
@@ -75,7 +65,8 @@ Considered for 1.8.0 and left out; revisit only with a fresh decision:
 
 - **XMP sidecars.** The versioned JSON backup already covers portability, and
   writing sidecars would go against the read-only organization policy.
-- **Video chapters, play queue and loop.** Playback is delegated to `mpv`.
+- **Video chapters, play queue and loop.** The viewer plays video; these
+  additional controls are outside the current scope.
 - **Subtitle styling and a separate track picker.** Tracks are already named
   and the default rendering is readable.
 - **Offline Places from EXIF GPS.** Needs a bundled geodata table.
@@ -105,7 +96,7 @@ Considered for 1.8.0 and left out; revisit only with a fresh decision:
   they can run headless; the Wayland presentation and GPU memory numbers need
   the desktop.
 - Maintain the [Omarchy package submission](https://github.com/omacom/omarchy-pkgs/pull/295),
-  which currently points at v1.8.0.
+  and keep it aligned with published releases.
 
 Repository inclusion, installation by default and MIME defaults are separate
 upstream decisions. Advanced editing remains available through Omarchy's

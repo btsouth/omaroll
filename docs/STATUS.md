@@ -1,290 +1,39 @@
-# Project status and handoff
+# Project status
 
-Snapshot: 2 October 2026 UTC, at the v1.9.0 release candidate. Check the tag
-and release, and the latest PRs, before resuming.
+## Latest release
 
-## Release candidate
+[Omaroll 1.9.0](https://github.com/btsouth/omaroll/releases/tag/v1.9.0) was
+published on 2 October 2026 from tag `v1.9.0` (commit `f630c53`).
 
-1.9.0 bundles [PR #52](https://github.com/btsouth/omaroll/pull/52), the quick
-viewer, and [PR #53](https://github.com/btsouth/omaroll/pull/53), two fixes to
-the library's preview, on top of the PDF text selection and theme renders
-merged since 1.8.0. It includes the quick viewer's review fixes and ignores
-zero-delta touchpad gesture boundaries so panning does not change image zoom.
+It adds a quick image and video viewer, PDF text selection, theme readability
+and narrow-window improvements, and fixes the library preview's track labels
+and wheel handling. See the [changelog](../CHANGELOG.md#190) for the full scope.
 
-#52 splits Omaroll into two front doors in one process.
-Pictures and videos from outside open in a new viewer window (`qml/Viewer.qml`,
-`src/viewer/ViewerSession`) that never builds the library; folders, PDFs, a
-plain launch and `--library` open the library as before. The library's services
-moved into a lazily built `LibraryWindow` in `main.cpp`, and each window has its
-own QML context over the shared theme, settings and actions. The viewer has its
-own suite (`tests/tst_viewer.cpp`) and render views (`viewer`, `viewer-video`,
-`viewer-info`, `viewer-menu`). Physical desktop coverage remains tracked below;
-headless validation does not establish hardware behavior.
+The release provides an x86_64 Arch package, source archive and PKGBUILD, with
+checksums and signed build provenance. Installation and verification commands
+are in the [README](../README.md#install-or-update).
 
-## Released
+## Current work
 
-[v1.8.0](https://github.com/btsouth/omaroll/releases/tag/v1.8.0) is the latest
-public release, tagged from
-[PR #45](https://github.com/btsouth/omaroll/pull/45) (8f216b8). The Release
-workflow built the Arch package, tested install, upgrade, reinstall and
-removal, and published the source archive, package, PKGBUILD and checksums
-with signed provenance; all four were downloaded and verified against
-SHA256SUMS. It bundles the ten PRs listed under "1.8.0" below. The candidate
-passed the Release build, the isolated core and UI suites, the OpenGL media
-runner, metadata validation, a staged install, a full ASan/UBSan run with
-every deterministic render inspected. Physical desktop acceptance (installed
-behaviour, clipboard, drag/drop, scaling and audio) was not recorded for this
-tag; it remains tracked in SBS-1121.
+Use the [open pull requests](https://github.com/btsouth/omaroll/pulls) for work
+under review, and the [roadmap](ROADMAP.md) for scope and future decisions.
+Changes for the next release should remain in focused pull requests; the
+published tag identifies the 1.9.0 source.
 
-[v1.7.0](https://github.com/btsouth/omaroll/releases/tag/v1.7.0) preceded it,
-tagged from
-[PR #30](https://github.com/btsouth/omaroll/pull/30) (0c9fb44). The Release
-workflow built the Arch package, tested install, upgrade, reinstall and
-removal, and published the source archive, package, PKGBUILD and checksums
-with signed provenance; all four were downloaded and verified against
-SHA256SUMS. It bundles image corrections and region copy, side-by-side compare,
-album and tag rename, organization backup and restore, favourites, ratings and
-captions that follow external moves, remembered video volume and resume,
-sidecar subtitles, and PDF search, page jump and page-text copy. The release
-candidate passed the Release build, the isolated core and UI suites, the
-OpenGL media runner, metadata validation, a staged install, a full ASan/UBSan
-run with every deterministic render inspected. Physical desktop acceptance
-(installed behaviour, clipboard, drag/drop, scaling and audio) was not recorded
-for this tag; it remains tracked in SBS-1121.
+The [Omarchy package submission](https://github.com/omacom/omarchy-pkgs/pull/295)
+is still under review. Repository inclusion, default installation and MIME
+associations are separate upstream decisions.
 
-[v1.6.0](https://github.com/btsouth/omaroll/releases/tag/v1.6.0) preceded it,
-tagged from [PR #19](https://github.com/btsouth/omaroll/pull/19) (3f4d437). It
-adds star ratings, captions, nested tags, camera and lens browsing, Tab cycling
-of the sections and a held first frame when a video ends.
+## Validation and remaining coverage
 
-[v1.5.0](https://github.com/btsouth/omaroll/releases/tag/v1.5.0) preceded it
-the same day, tagged from
-[PR #7](https://github.com/btsouth/omaroll/pull/7) (64ddae8). The viewer supports
-still and animated images, embedded video controls, PDF paging, OCR/QR, albums,
-tags, saved collections and duplicate review. The README describes the
-supported formats and workflows.
+CI covers the core, library UI and quick viewer suites, rendered video with
+OpenGL, dark and light themes, and narrow windows. Release validation also
+checks package installation, upgrade, reinstall and removal.
 
-## What 1.8.0 bundles
+Headless checks do not establish physical audio, multiple-monitor behavior,
+fractional scaling or Wayland presentation performance. Use the
+[desktop acceptance checklist](../tests/README.md#desktop-acceptance) for that
+coverage, with disposable files for operations that change media.
 
-1.8.0 bundles ten focused PRs, each squash merged with green CI, the isolated
-core and UI suites and the OpenGL runner:
-
-- [PR #33](https://github.com/btsouth/omaroll/pull/33): lossless JPEG rotate and
-  flip through jpegtran, with fallbacks for crops, resizes, non-JPEG and
-  EXIF-oriented sources.
-- [PR #34](https://github.com/btsouth/omaroll/pull/34): crop aspect presets
-  (Free/Original/1:1/4:3/3:2/16:9) held while the frame is dragged.
-- [PR #35](https://github.com/btsouth/omaroll/pull/35): a ±15° straighten that
-  fills the frame so no empty corners show.
-- [PR #36](https://github.com/btsouth/omaroll/pull/36): Correct a selection (B),
-  rotate/flip/resize a whole selection as copies.
-- [PR #37](https://github.com/btsouth/omaroll/pull/37): PDF continuous scroll
-  with Fit width / Fit page modes.
-- [PR #38](https://github.com/btsouth/omaroll/pull/38): Print pictures and PDFs
-  through CUPS `lp`.
-- [PR #39](https://github.com/btsouth/omaroll/pull/39): verification for
-  transparency and very large images in corrections.
-- [PR #40](https://github.com/btsouth/omaroll/pull/40): Ctrl+Z undo for
-  favourites, hidden flags, ratings and captions.
-- [PR #41](https://github.com/btsouth/omaroll/pull/41): sidecar subtitle timing
-  nudge (±0.5 s).
-- [PR #42](https://github.com/btsouth/omaroll/pull/42): slideshow interval and
-  shuffle options.
-
-The changelog carries all of it under `## 1.8.0`.
-
-## Scope decisions
-
-These were considered for 1.8.0 and left out, so they are not revisited without
-a fresh decision:
-
-- **XMP sidecars.** The versioned JSON backup already covers portability, and
-  writing sidecars would go against the read-only organization policy.
-- **Video chapters, play queue and loop.** Playback is delegated to `mpv`, so
-  the viewer stays a viewer.
-- **Subtitle styling and a separate track picker.** Tracks are already named in
-  the CC cycle and the default rendering is readable.
-- **Offline Places from EXIF GPS.** Needs a bundled geodata table the app does
-  not otherwise carry.
-- **PDF selectable-text panel.** Copy page text already covers it; on-page
-  range selection is the separate open question below.
-- **A duplicate/similar review flow.** Already provided by the duplicate and
-  similar filters, the Keep selected action and the compare view.
-- **Target-monitor fullscreen.** Hyprland owns window placement.
-
-## Open questions
-
-- **PDF links.** On-page text selection is delivered: `pdftotext -bbox` already
-  reports a box per word, so it needed no new dependency. Links are what
-  remains, and the two options are now measured. QtPdf has link, bookmark and
-  search models, but on Arch it arrives inside `qt6-webengine`, 282 MiB
-  installed, with no QML QtPdf module installed there, so it would be used
-  through its C++ API. Linking `poppler-qt6` instead costs about 270 KiB and
-  gives links, word boxes, an outline and in-process rendering, but its
-  bindings are GPL, which would relicense the application. This is the
-  integration decision SBS-1134 recorded; make it before building either.
-- **Physical desktop gates.** SBS-1121 field acceptance and SBS-1122
-  Wayland/GPU presentation numbers and regression budgets need the real
-  Omarchy session. Headless runs cannot close them.
-- **Light and dark review.** The render matrix now covers every view in the dark
-  palette, the chrome-heavy views in the light palette, and the smallest window,
-  each against a checked-in theme fixture, so the repository's own rule about
-  checking both themes and narrow windows is executable rather than remembered.
-  What it found is fixed: secondary text drawn at fixed alphas that read as
-  blank on a light theme, PDF pages with no edge on a light background, and
-  document rows that collided on a narrow stage. The look of those fixes on the
-  real desktop still belongs to the field acceptance above; the renders record
-  layout and colour, not the compositor's blend.
-
-## What 1.5.0 bundled
-
-Main carries the 1.5.0 version, changelog and AppStream entry. It bundles:
-
-- [PR #3](https://github.com/btsouth/omaroll/pull/3): home-directory wrapper cleanup.
-- [PR #4](https://github.com/btsouth/omaroll/pull/4): natural filename sorting,
-  accessible OCR copy feedback and rendered media checks in CI/release validation.
-- [PR #5](https://github.com/btsouth/omaroll/pull/5): ordered multi-file opening,
-  selection forwarding to an existing window, performance baselines and isolated
-  media tests.
-- [PR #6](https://github.com/btsouth/omaroll/pull/6): deferred video player and
-  display until a video is opened, plus startup readiness tracing and a
-  benchmark probe. The first video still pays the initialization cost.
-- [PR #8](https://github.com/btsouth/omaroll/pull/8): async image responses
-  emit `finished()` on their own thread, fixing a use-after-free that the
-  pixmap reader's `deleteLater()` could trigger while the pool thread was
-  still unwinding the emit.
-- [PR #9](https://github.com/btsouth/omaroll/pull/9): grid delegates are
-  rebuilt rather than reused across the tile relayout, fixing tiles that kept
-  a previous file's thumbnail and opened a different file in small tiled
-  windows. Found in the desktop test of the 1.5.0 candidate, which also
-  covered image, video with live audio, PDF and multi-file forwarding.
-
-CodeRabbit reviewed PR #6 with one minor finding, which was fixed before the
-squash merge. Core, UI, sanitizer and OpenGL checks passed locally and in CI.
-The intermittent SIGSEGV in `omaroll_ui_tests` seen once on 2026-09-04 was
-traced through its core dump to the response lifetime race fixed in PR #8.
-
-[Local measurements](performance/2026-09-05-startup/README.md) record medians
-of 949.9 to 257.2 ms for an image-ready submitted frame and 1181.2 to 471.9 ms
-for a ready grid. These are offscreen NVIDIA measurements from main entry,
-not compositor presentation or general performance guarantees.
-
-## What 1.6.0 bundled
-
-Four feature PRs landed after the release, each squash merged with green CI and
-passing core and UI suites in the sandbox. All were tested on the real Omarchy
-desktop on 5 September 2026, which found three problems fixed in
-[PR #16](https://github.com/btsouth/omaroll/pull/16) (Shift+Tab was an
-ambiguous shortcut), [PR #17](https://github.com/btsouth/omaroll/pull/17)
-(caption save depended on focus; a finished video left a blank stage) and
-[PR #18](https://github.com/btsouth/omaroll/pull/18) (header count wording).
-Version 1.6.0 carries all of it, plus the 1.6.0 preparation in PR #19:
-
-- [PR #11](https://github.com/btsouth/omaroll/pull/11): Tab and Shift+Tab cycle
-  the section pills.
-- [PR #12](https://github.com/btsouth/omaroll/pull/12): the metadata pass reads
-  camera and lens as well as dates, Browse gains a Cameras section, and
-  MediaDateIndex became MediaMetadataIndex with a new cache file.
-- [PR #13](https://github.com/btsouth/omaroll/pull/13): star ratings with Alt+1
-  to Alt+5, a Top rated sort and a minimum rating filter in Browse.
-- [PR #14](https://github.com/btsouth/omaroll/pull/14): tags nest with a slash
-  and files take a caption in the viewer that is searched with names and text.
-
-The changelog lists them under 1.6.0. A 31 second demo recording of the
-release lives at ~/Videos/omaroll-1.6.0-demo.mp4 on the development desktop. Semantic search and face
-recognition were considered against Lightroom and Immich and deferred
-(SBS-1139); do not add ML dependencies without a fresh decision.
-
-## What 1.7.0 bundles
-
-1.7.0 carries everything below, all merged to `main` in PRs #21 through #29
-with core and UI tests green through `tests/run-isolated.sh` and the OpenGL
-runner:
-
-- **SBS-1126 safe image corrections.** `src/edit/ImageEditor` and
-  `EditProvider` implement orient, crop, quarter turns, flips and resize, then
-  Save a copy with numbered collision handling and ICC preservation. The
-  viewer's new Crop, rotate, resize (Q) action opens `CorrectionSheet.qml`,
-  a preview from `image://edit/` with a draggable crop frame. The original is
-  never written.
-- **SBS-1130 collection rename.** `AppSettings::renameAlbum` and `renameTag`
-  move membership with the name; a nested tag rename carries its descendants.
-  Browse gains Rename selected.
-- **SBS-1129 organization backup.** `AppSettings::exportOrganization` and
-  `importOrganization` write and read a versioned JSON snapshot (albums, tags,
-  favourites, hidden, ratings, captions, saved views) atomically, validating
-  the whole file before any change. Settings gains Back up and Restore.
-- **SBS-1127 comparison.** `CompareSheet.qml` shows the checked selection, or
-  the open picture's exact-duplicate then visually-similar set, side by side
-  with one shared zoom and pan, driven by a new `SimilarityIndex::groupPaths`.
-- **SBS-1131 marks recovery.** Favourites, hidden flags, ratings and captions
-  now store the file's identity when marked and follow an external move or
-  rename through `AppSettings::reconcileMarks`, which runs before the dead-path
-  sweep. Albums and tags already had this; marks did not.
-- **SBS-1132 playback memory.** Volume and mute persist, and a video reopened
-  part-way offers Resume or Start over from a saved spot (pruned to 500
-  entries). Playback that reaches the end clears the spot.
-- **SBS-1133 external subtitles.** `src/subtitles/SubtitleIndex` finds a `.srt`
-  or `.vtt` beside a video, parses it into cached cues and answers by playback
-  position; the CC control cycles Off, embedded tracks and sidecars, and the
-  cue is drawn over the video. The transport controls were re-anchored, since
-  the positioner did not lay out the late-appearing CC button.
-- **SBS-1134 PDF work.** `PdfInspector::find` runs pdftotext and
-  `PdfSupport::findPages` matches across pages, case- and whitespace-insensitive;
-  the viewer gains a find box, a match count and previous/next match that turn
-  the page, a page-number jump, and Copy page text through `ClipboardText`.
-  Range selection, links and printing remain.
-- **SBS-1127 region copy.** The crop editor's Copy region puts the selected
-  area, after rotation and flip, on the clipboard through `ClipboardImage`
-  without writing a file. Synchronized-zoom comparison is delivered separately.
-- **SBS-1128 orientation and color checks.** Tests cover an EXIF-oriented JPEG,
-  read upright and baked into a correction copy, and an ICC profile surviving a
-  JPEG correction. Transparency and very large images are still to verify.
-
-Remaining after this branch: region copy (SBS-1127 remainder), orientation and
-color verification fixtures (SBS-1128), and the rest of PDF depth (selection,
-links, printing).
-
-## Next decisions and release gates
-
-1. Keep new changes in separate focused PRs off main, following
-   [RELEASING.md](../RELEASING.md) for the next tag.
-2. Decide the PDF integration (Poppler link API versus the QtPdf dependency)
-   before building PDF links or on-page text selection. See Open questions.
-3. Finish installed Omarchy acceptance (SBS-1121): file-manager selections,
-   clipboard, drag/drop, scaling, window state and physical audio. Headless
-   passes do not close this gate.
-4. Continue performance work (SBS-1122): warm navigation, larger and mixed
-   libraries, Wayland presentation, GPU memory and realistic regression budgets.
-5. Choose the next release scope before preparing another tag. Nothing is
-   scheduled beyond the merged 1.8.0 work and the open questions above, so pick
-   the work first, then bump the version, AppStream entry, changelog and README
-   and run the Release and sanitizer validation.
-6. Watch the Omarchy package submission for upstream feedback.
-
-[Official package PR #295](https://github.com/omacom/omarchy-pkgs/pull/295)
-points at v1.8.0. An upstream reviewer approved it and it is merge-clean;
-acceptance and merging are the reviewers' call. Earlier edge, rc and stable
-package builds passed. Repository inclusion, default installation and MIME
-defaults are separate upstream decisions.
-
-## Safe continuation
-
-Use [the validation commands](../tests/README.md), always through
-`tests/run-isolated.sh` on this desktop. Earlier tests played 440/880 Hz fixture
-tones because blocking PulseAudio alone did not block Qt's native PipeWire
-backend. PR #5 isolates both backends, hides physical audio devices and session
-sockets, and stubs test notifications and clipboard helpers. Preserve this
-isolation; do not change host audio settings to make a test pass.
-
-The checked-in fixtures cover GIF, animated/still WebP, transparency, TGA,
-video tracks, subtitles and PDF pages with a text layer. No media downloads are
-needed for those checks.
-Physical audio testing remains a deliberate desktop acceptance activity.
-
-Linear is the active task tracker. Access it through Toolport. SBS-1093 is the
-parent roadmap; SBS-1121 (field acceptance) and SBS-1122 (performance) remain
-in progress and need the desktop, SBS-1134 (PDF depth) stays open pending the
-integration decision, and the v1.8.0 milestone carries the shipped items. Notes
-under `build/roadmap-review/` are historical and ignored by Git. This file is
-the committed handoff.
+PDF text selection is shipped. PDF links still need a dependency and licensing
+decision before implementation; see the [roadmap](ROADMAP.md#open-questions).
