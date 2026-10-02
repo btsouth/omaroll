@@ -492,28 +492,123 @@ Item {
             }
         }
 
+        // One flow for every control. With room, a zero-height break starts
+        // each job on its own labelled line, the result ends the Crop line and
+        // the actions end the Resize line. The smallest windows drop the
+        // labels and breaks, so the groups pack onto shared lines with a rule
+        // between them and the preview keeps its height; the result and the
+        // actions then take a line of their own.
         Item {
             id: controls
+            objectName: "correctionControls"
             anchors.bottom: parent.bottom
             anchors.left: parent.left
             anchors.right: parent.right
-            height: controlFlow.implicitHeight + 30
+            anchors.leftMargin: 20
+            anchors.rightMargin: 20
+            anchors.bottomMargin: 12
+            height: flow.height + (wide ? 0 : footerGap + 26)
+
+            // Room for the longest result beside the ratios and the actions
+            // beside the resize controls.
+            readonly property bool wide: width >= 940
+            readonly property bool compact: width < 720
+            readonly property int labelWidth: 64
+            // The same gap a break leaves between two groups.
+            readonly property int footerGap: 2 * flow.spacing + 1
+
+            component GroupLabel: Text {
+                visible: !controls.compact
+                width: controls.labelWidth
+                height: 26
+                verticalAlignment: Text.AlignVCenter
+                font.family: Theme.fontFamily
+                font.pixelSize: 11
+                color: Theme.mutedText
+            }
+            // A positioner skips an item with no height, so a break is 1 px.
+            component LineBreak: Item {
+                visible: !controls.compact
+                width: flow.width
+                height: 1
+            }
+            // Drawn only between groups on one line: a rule the next group
+            // wrapped away from, or one that opens a line, stays blank.
+            component GroupRule: Item {
+                property Item next
+                visible: controls.compact
+                width: 9
+                height: 26
+                opacity: x > 0 && next && x + width + flow.spacing + next.width <= flow.width
+                         ? 1 : 0
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: 1
+                    height: 18
+                    color: root.shade(Theme.foreground, 0.2)
+                }
+            }
 
             Flow {
-                id: controlFlow
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.leftMargin: 20
-                anchors.rightMargin: 20
+                id: flow
+                width: parent.width
                 spacing: 6
 
+                GroupLabel {
+                    id: cropLabel
+                    text: "Crop"
+                }
+
+                // Ratio zero is a free crop. Original is worked out when
+                // clicked, because a quarter turn swaps the frame's sides.
+                Repeater {
+                    model: [
+                        { label: "Free", ratio: 0 },
+                        { label: "Original", ratio: -1 },
+                        { label: "1:1", ratio: 1 },
+                        { label: "4:3", ratio: 4 / 3 },
+                        { label: "3:4", ratio: 3 / 4 },
+                        { label: "3:2", ratio: 3 / 2 },
+                        { label: "2:3", ratio: 2 / 3 },
+                        { label: "16:9", ratio: 16 / 9 },
+                        { label: "9:16", ratio: 9 / 16 }
+                    ]
+
+                    PillButton {
+                        required property var modelData
+                        label: modelData.label
+                        active: root.cropAspectLabel === modelData.label
+                        onClicked: root.resetCropToAspect(
+                                       modelData.ratio >= 0
+                                       ? modelData.ratio
+                                       : (root.workingHeight > 0
+                                          ? root.workingWidth / root.workingHeight : 0),
+                                       modelData.label)
+                    }
+                }
+
+                // Keeps the end of the Crop line clear for the result.
+                Item {
+                    visible: controls.wide
+                    width: result.width + 10
+                    height: 26
+                }
+
+                LineBreak {}
+                GroupRule { next: rotateLeft }
+
+                GroupLabel {
+                    text: "Rotate"
+                }
                 PillButton {
-                    label: "Rotate left"
+                    id: rotateLeft
+                    label: controls.compact ? "↺" : "Rotate left"
+                    toolTip: "Rotate left"
                     onClicked: root.rotate(-1)
                 }
                 PillButton {
-                    label: "Rotate right"
+                    label: controls.compact ? "↻" : "Rotate right"
+                    toolTip: "Rotate right"
                     onClicked: root.rotate(1)
                 }
                 PillButton {
@@ -526,19 +621,13 @@ Item {
                     active: root.flipVertical
                     onClicked: root.flipVertical = !root.flipVertical
                 }
-                PillButton {
-                    label: "Full frame"
-                    onClicked: root.resetCropToAspect(0, "Free")
-                }
-                PillButton {
-                    label: "Reset"
-                    onClicked: root.reset()
-                }
 
                 Row {
-                    width: 210
+                    height: 26
                     spacing: 6
+                    leftPadding: controls.compact ? 0 : 12
                     Text {
+                        visible: !controls.compact
                         anchors.verticalCenter: parent.verticalCenter
                         text: "Straighten"
                         font.family: Theme.fontFamily
@@ -548,7 +637,10 @@ Item {
                     Slider {
                         id: straightenSlider
                         objectName: "straightenSlider"
-                        width: 130
+                        width: controls.compact ? 100 : 130
+                        // The row's height, not the style's taller default,
+                        // so a wrapped line cannot reach the buttons above it.
+                        height: 26
                         anchors.verticalCenter: parent.verticalCenter
                         from: -15
                         to: 15
@@ -566,45 +658,17 @@ Item {
                     }
                 }
 
-                Item { width: 12; height: 1 }
+                LineBreak {}
+                GroupRule { next: originalSize }
 
-                PillButton {
-                    label: "Free"
-                    active: root.cropAspectLabel === "Free"
-                    onClicked: root.resetCropToAspect(0, "Free")
+                GroupLabel {
+                    id: resizeLabel
+                    text: "Resize"
                 }
                 PillButton {
-                    label: "Original"
-                    active: root.cropAspectLabel === "Original"
-                    onClicked: root.resetCropToAspect(
-                                   root.workingHeight > 0
-                                   ? root.workingWidth / root.workingHeight : 0, "Original")
-                }
-                PillButton {
-                    label: "1:1"
-                    active: root.cropAspectLabel === "1:1"
-                    onClicked: root.resetCropToAspect(1, "1:1")
-                }
-                PillButton {
-                    label: "4:3"
-                    active: root.cropAspectLabel === "4:3"
-                    onClicked: root.resetCropToAspect(4 / 3, "4:3")
-                }
-                PillButton {
-                    label: "3:2"
-                    active: root.cropAspectLabel === "3:2"
-                    onClicked: root.resetCropToAspect(3 / 2, "3:2")
-                }
-                PillButton {
-                    label: "16:9"
-                    active: root.cropAspectLabel === "16:9"
-                    onClicked: root.resetCropToAspect(16 / 9, "16:9")
-                }
-
-                Item { width: 12; height: 1 }
-
-                PillButton {
-                    label: "Original size"
+                    id: originalSize
+                    label: controls.compact ? "100%" : "Original size"
+                    toolTip: "Original size"
                     active: root.targetWidth === 0 && root.targetHeight === 0
                     onClicked: root.setScale(0)
                 }
@@ -621,14 +685,17 @@ Item {
                     onClicked: root.setScale(25)
                 }
 
-                Item { width: 12; height: 1 }
-
                 Row {
                     spacing: 6
+                    leftPadding: controls.compact ? 0 : 12
                     TextField {
                         id: widthField
                         objectName: "correctionWidth"
-                        width: 92
+                        width: controls.compact ? 64 : 92
+                        height: 26
+                        topPadding: 0
+                        bottomPadding: 0
+                        verticalAlignment: TextInput.AlignVCenter
                         placeholderText: "W"
                         text: root.targetWidth > 0 ? String(root.targetWidth) : ""
                         font.family: Theme.fontFamily
@@ -654,7 +721,11 @@ Item {
                     TextField {
                         id: heightField
                         objectName: "correctionHeight"
-                        width: 92
+                        width: controls.compact ? 64 : 92
+                        height: 26
+                        topPadding: 0
+                        bottomPadding: 0
+                        verticalAlignment: TextInput.AlignVCenter
                         placeholderText: "H"
                         text: root.targetHeight > 0 ? String(root.targetHeight) : ""
                         font.family: Theme.fontFamily
@@ -672,62 +743,87 @@ Item {
                     }
                 }
 
-                Text {
-                    topPadding: 9
-                    text: {
-                        const base = root.croppedWidth + " × " + root.croppedHeight
-                        if (root.targetWidth > 0 && root.targetHeight > 0) {
-                            // The writer keeps the aspect ratio, so this is a
-                            // bounding box, not the saved size.
-                            return "Fit within " + root.targetWidth + " × " + root.targetHeight
-                                   + "  ·  source " + base
-                        }
-                        if (root.targetWidth > 0 || root.targetHeight > 0) {
-                            return "Output " + (root.targetWidth > 0 ? root.targetWidth : "auto")
-                                   + " × " + (root.targetHeight > 0 ? root.targetHeight : "auto")
-                                   + "  ·  source " + base
-                        }
-                        return "Output " + base
-                    }
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 11
-                    color: Theme.mutedText
+                // Keeps the end of the Resize line clear for the actions.
+                Item {
+                    visible: controls.wide
+                    width: actions.width + 10
+                    height: 26
                 }
             }
-        }
-
-        Row {
-            anchors.right: parent.right
-            anchors.rightMargin: 20
-            anchors.bottom: parent.bottom
-            anchors.bottomMargin: 8
-            spacing: 8
 
             Text {
-                anchors.verticalCenter: parent.verticalCenter
-                visible: root.errorText !== ""
-                text: root.errorText
+                id: result
+                objectName: "correctionResult"
+                x: controls.wide ? controls.width - width : 0
+                y: (controls.wide ? cropLabel.y : actions.y) + (26 - height) / 2
+                // Capped when wide, so a long error elides rather than
+                // squeezing the ratios off their line.
+                width: controls.wide ? Math.min(Math.ceil(resultMetrics.advanceWidth),
+                                                controls.width * 0.4)
+                                     : controls.width - actions.width - 12
+                elide: Text.ElideRight
+                text: {
+                    if (root.errorText !== "") {
+                        return root.errorText
+                    }
+                    const base = root.croppedWidth + " × " + root.croppedHeight
+                    if (root.targetWidth > 0 && root.targetHeight > 0) {
+                        // The writer keeps the aspect ratio, so this is a
+                        // bounding box, not the saved size.
+                        return "Fit within " + root.targetWidth + " × " + root.targetHeight
+                               + "  ·  source " + base
+                    }
+                    if (root.targetWidth > 0 || root.targetHeight > 0) {
+                        return "Output " + (root.targetWidth > 0 ? root.targetWidth : "auto")
+                               + " × " + (root.targetHeight > 0 ? root.targetHeight : "auto")
+                               + "  ·  source " + base
+                    }
+                    return "Output " + base
+                }
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
-                color: Theme.red
+                color: root.errorText !== "" ? Theme.red : Theme.mutedText
+
+                // Measured apart from the Text, whose own implicit width
+                // follows its width once it elides.
+                TextMetrics {
+                    id: resultMetrics
+                    font: result.font
+                    text: result.text
+                }
             }
 
-            PillButton {
-                label: "Cancel"
-                onClicked: root.close()
-            }
-            PillButton {
-                objectName: "correctionCopyRegion"
-                label: "Copy region"
-                toolTip: "Copy the cropped region to the clipboard"
-                active: !root.saving && preview.status === Image.Ready
-                onClicked: root.copyRegion()
-            }
-            PillButton {
-                objectName: "correctionSave"
-                label: root.saving ? "Saving…" : "Save a copy"
-                active: !root.saving && preview.status === Image.Ready
-                onClicked: root.save()
+            Row {
+                id: actions
+                objectName: "correctionActions"
+                x: controls.width - width
+                y: controls.wide ? resizeLabel.y : flow.height + controls.footerGap
+                spacing: 8
+
+                PillButton {
+                    label: "Reset"
+                    onClicked: root.reset()
+                }
+
+                Item { width: 4; height: 1 }
+
+                PillButton {
+                    label: "Cancel"
+                    onClicked: root.close()
+                }
+                PillButton {
+                    objectName: "correctionCopyRegion"
+                    label: "Copy region"
+                    toolTip: "Copy the cropped region to the clipboard"
+                    active: !root.saving && preview.status === Image.Ready
+                    onClicked: root.copyRegion()
+                }
+                PillButton {
+                    objectName: "correctionSave"
+                    label: root.saving ? "Saving…" : "Save a copy"
+                    active: !root.saving && preview.status === Image.Ready
+                    onClicked: root.save()
+                }
             }
         }
     }

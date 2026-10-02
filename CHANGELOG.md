@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Added
+
+- Portrait crop presets: 3:4, 2:3 and 9:16 sit beside their landscape
+  partners in Crop, rotate, resize. A held landscape ratio could not be turned
+  upright, so a portrait, a poster or a phone-screen crop had to be drawn by
+  hand.
+
+### Changed
+
+- The Crop, rotate, resize controls are grouped into labelled Crop, Rotate and
+  Resize rows instead of one strip that wrapped wherever it ran out of room.
+  On a wide sheet the output size ends the Crop row and Reset, Cancel, Copy
+  region and Save a copy end the Resize row; a narrow one gives them a line of
+  their own. The smallest window drops the row labels and packs the groups onto
+  shared lines with a rule between them, so the preview keeps its height. Full
+  frame is gone: it did exactly what Free does.
+
 ### Fixed
 
 - The Sub − and Sub + timing buttons for a sidecar subtitle sat on the video
