@@ -402,11 +402,12 @@ private slots:
                                    QStringLiteral("env sh -c \"editor {path}\""),
                                    QStringLiteral("env -S \"sh -c 'editor {path}'\""),
                                    QStringLiteral("env --split-string=\"sh -c 'editor {path}'\""),
+                                   QStringLiteral("env -vS \"sh -c 'editor {path}'\""),
                                    QStringLiteral("sh -c")}) {
       QVERIFY(!editors.customCommandAvailable(command));
       QVERIFY(!editors.launchCustom(command, rawFixture()));
     }
-    QCOMPARE(messages.count(), 6);
+    QCOMPARE(messages.count(), 7);
     for (const auto& message : messages)
       QCOMPARE(message.first().toString(), QStringLiteral("Use a direct editor command or wrapper script"));
     QVERIFY(!QFileInfo::exists(m_log));

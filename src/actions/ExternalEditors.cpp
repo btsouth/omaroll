@@ -85,10 +85,9 @@ bool ExternalEditors::parseCustomCommand(const QString& command, QString* progra
   // including a shell invoked through env or another command wrapper. Use a
   // script executable that receives the path as an ordinary argument instead.
   const QStringList shells{u"sh"_s, u"bash"_s, u"dash"_s, u"zsh"_s, u"fish"_s,
-                           u"ksh"_s, u"csh"_s, u"tcsh"_s};
+                           u"ksh"_s, u"csh"_s, u"tcsh"_s, u"env"_s};
   for (const QString& token : QProcess::splitCommand(command)) {
-    if (shells.contains(QFileInfo(token).fileName()) || token.startsWith(u"--split-string"_s)
-        || token.startsWith(u"-S"_s)) return false;
+    if (shells.contains(QFileInfo(token).fileName())) return false;
   }
 
   if (program != nullptr) {

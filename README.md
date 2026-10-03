@@ -209,7 +209,7 @@ Right click opens actions for the pointed file or its existing selection.
 Camera RAWs can open in darktable, RawTherapee, ART, digiKam, GIMP or a custom
 command. Choose an editor from the menu, use its star to save a preference,
 or enable **Always ask**. Custom commands accept `{path}` in an argument of a direct editor command;
-without it, Omaroll appends the file path. Shell commands and `env --split-string` are
+without it, Omaroll appends the file path. Shell commands and `env` wrappers are
 refused. Use a wrapper script for shell logic. Use double quotes around arguments
 containing spaces. Omaroll passes arguments directly without a shell.
 
