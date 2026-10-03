@@ -43,7 +43,7 @@ Menu {
             readonly property bool separator: modelData.separator === true
             objectName: separator ? "" : root.entryPrefix + modelData.id
             enabled: !separator && modelData.available !== false
-            height: separator ? 9 : 30
+            height: separator ? 9 : modelData.available === false && modelData.hint ? 46 : 30
             opacity: enabled || separator ? 1 : 0.55
             contentItem: Item {
                 Rectangle {
@@ -60,12 +60,27 @@ Menu {
                     anchors.right: shortcutText.left
                     anchors.rightMargin: 8
                     anchors.verticalCenter: parent.verticalCenter
-                    text: entry.separator ? "" : entry.modelData.label + (entry.modelData.available === false && entry.modelData.hint ? " · needs " + entry.modelData.hint : "")
+                    anchors.verticalCenterOffset: entry.modelData.available === false && entry.modelData.hint ? -7 : 0
+                    text: entry.separator ? "" : entry.modelData.label
                     elide: Text.ElideRight
                     font.family: Theme.fontFamily
                     font.pixelSize: 12
                     color: entry.modelData.id === "trash" ? Theme.red
                            : entry.highlighted ? Theme.brightForeground : Theme.foreground
+                }
+                Text {
+                    visible: !entry.separator && entry.modelData.available === false && !!entry.modelData.hint
+                    anchors.left: parent.left
+                    anchors.leftMargin: 12
+                    anchors.right: parent.right
+                    anchors.rightMargin: 12
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: 5
+                    text: "Needs " + (entry.modelData.hint || "")
+                    elide: Text.ElideRight
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 10
+                    color: Theme.mutedText
                 }
                 Text {
                     id: shortcutText
@@ -85,6 +100,10 @@ Menu {
                        ? root.shade(Theme.foreground, 0.09) : "transparent"
                 radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 3) : 0
             }
+            ToolTip.visible: hovered && !separator
+            ToolTip.delay: 600
+            ToolTip.text: modelData.label + (modelData.available === false && modelData.hint
+                                           ? " · needs " + modelData.hint : "")
             onTriggered: root.triggered(entry.modelData.id)
         }
     }

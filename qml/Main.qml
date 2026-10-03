@@ -1001,9 +1001,9 @@ ApplicationWindow {
         if (canExport) rows.push({id: "export", label: "Convert / resize", group: "Edit and finish", available: Registry.available("export"), hint: "Omarchy"})
         if (paths.length > 1 && root.allCorrectable(paths)) rows.push({id: "correctionsbatch", label: "Correct selected pictures", group: "Edit and finish", available: true})
         rows.push({id: "organize", label: "Albums and tags…", group: "Organize"},
-                  {id: "favorite", label: paths.every(function(p) { return Settings.isFavorite(p) }) ? "Unfavourite selected files" : "Favourite selected files", group: "Organize"},
-                  {id: "hide", label: paths.every(function(p) { return Settings.isHidden(p) }) ? "Unhide selected files" : "Hide selected files", group: "Organize"},
-                  {id: "trash", label: "Move selected files to Trash", group: "Organize"})
+                  {id: "favorite", label: paths.every(function(p) { return Settings.isFavorite(p) }) ? "Unfavourite" : "Favourite", group: "Organize"},
+                  {id: "hide", label: paths.every(function(p) { return Settings.isHidden(p) }) ? "Unhide" : "Hide", group: "Organize"},
+                  {id: "trash", label: "Move to Trash", group: "Organize"})
         return rows
     }
 

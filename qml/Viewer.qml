@@ -1555,7 +1555,7 @@ ApplicationWindow {
                 readonly property bool separator: modelData.separator === true
                 objectName: separator ? "" : "viewerMenu_" + modelData.id
                 enabled: !separator && modelData.available !== false
-                height: separator ? 9 : 30
+                height: separator ? 9 : modelData.available === false && modelData.hint ? 46 : 30
                 opacity: enabled || separator ? 1 : 0.55
                 contentItem: Item {
                     Rectangle {
@@ -1572,13 +1572,27 @@ ApplicationWindow {
                         anchors.right: shortcutText.left
                         anchors.rightMargin: 8
                         anchors.verticalCenter: parent.verticalCenter
+                        anchors.verticalCenterOffset: entry.modelData.available === false && entry.modelData.hint ? -7 : 0
                         text: entry.separator ? "" : entry.modelData.label
-                              + (entry.modelData.available === false ? " · needs " + entry.modelData.hint : "")
                         elide: Text.ElideRight
                         font.family: Theme.fontFamily
                         font.pixelSize: 12
                         color: entry.modelData.id === "trash" ? Theme.red
                                : entry.highlighted ? Theme.brightForeground : Theme.foreground
+                    }
+                    Text {
+                        visible: !entry.separator && entry.modelData.available === false && !!entry.modelData.hint
+                        anchors.left: parent.left
+                        anchors.leftMargin: 12
+                        anchors.right: parent.right
+                        anchors.rightMargin: 12
+                        anchors.bottom: parent.bottom
+                        anchors.bottomMargin: 5
+                        text: "Needs " + (entry.modelData.hint || "")
+                        elide: Text.ElideRight
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 10
+                        color: Theme.mutedText
                     }
                     Text {
                         id: shortcutText

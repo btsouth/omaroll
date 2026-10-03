@@ -1376,12 +1376,12 @@ private slots:
     };
     m_settings->setFavorite(paths, false);
     m_settings->setHidden(paths, false);
-    QCOMPARE(entries().value("favorite").toMap().value("label").toString(), QStringLiteral("Favourite selected files"));
-    QCOMPARE(entries().value("hide").toMap().value("label").toString(), QStringLiteral("Hide selected files"));
+    QCOMPARE(entries().value("favorite").toMap().value("label").toString(), QStringLiteral("Favourite"));
+    QCOMPARE(entries().value("hide").toMap().value("label").toString(), QStringLiteral("Hide"));
     m_settings->setFavorite(paths, true);
     m_settings->setHidden(paths, true);
-    QCOMPARE(entries().value("favorite").toMap().value("label").toString(), QStringLiteral("Unfavourite selected files"));
-    QCOMPARE(entries().value("hide").toMap().value("label").toString(), QStringLiteral("Unhide selected files"));
+    QCOMPARE(entries().value("favorite").toMap().value("label").toString(), QStringLiteral("Unfavourite"));
+    QCOMPARE(entries().value("hide").toMap().value("label").toString(), QStringLiteral("Unhide"));
     QCOMPARE(entries().value("copy").toMap().value("available").toBool(), m_registry->available(QStringLiteral("copy")));
     QCOMPARE(entries().value("copy").toMap().value("hint").toString(), QStringLiteral("wl-clipboard"));
   }
