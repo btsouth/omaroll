@@ -1099,6 +1099,9 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_B);
     QVERIFY(!m_settings->viewerFilmstrip());
     QTRY_VERIFY(!strip->isVisible());
+    QObject* list = m_window->findChild<QObject*>(QStringLiteral("viewerFilmstripList"));
+    QVERIFY(list);
+    QTRY_COMPARE(list->property("count").toInt(), 0);
     QTest::keyClick(m_window, Qt::Key_B);
     QVERIFY(m_settings->viewerFilmstrip());
     QTRY_VERIFY(strip->isVisible());
@@ -1111,6 +1114,47 @@ private slots:
     QTRY_VERIFY(prop("imageReady").toBool());
     QCOMPARE(m_session->count(), 1);
     QVERIFY(!strip->isVisible());
+  }
+
+  void filmstripRefreshesWhenFolderPathsChangeWithoutChangingCount() {
+    const QString folder = m_scratch.filePath(QStringLiteral("filmstrip-refresh"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString first = folder + QStringLiteral("/a.png");
+    const QString second = folder + QStringLiteral("/b.png");
+    const QString renamed = folder + QStringLiteral("/0.png");
+    QImage image(20, 20, QImage::Format_RGB32);
+    image.fill(Qt::red);
+    QVERIFY(image.save(first));
+    QVERIFY(image.save(second));
+    m_settings->setViewerFilmstrip(true);
+    m_window->setProperty("chromePinned", true);
+    const auto restore = qScopeGuard([this] {
+      m_window->setProperty("chromePinned", false);
+      m_settings->setViewerFilmstrip(false);
+    });
+    open({first});
+    QTRY_COMPARE(m_session->count(), 2);
+    QQuickItem* picture = nullptr;
+    QTRY_VERIFY((picture = find(m_window->contentItem(), [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("viewerFilmstripPicture0");
+    })));
+    const QUrl before = picture->property("source").toUrl();
+    QVERIFY(!before.isEmpty());
+    const quint64 revision = m_session->sequenceRevision();
+    QVERIFY(QFile::rename(second, renamed));
+    QTRY_VERIFY(m_session->sequenceRevision() > revision);
+    QCOMPARE(m_session->count(), 2);
+    QTRY_COMPARE(picture->property("source").toUrl(),
+                 QUrl(m_session->thumbnailUrl(0, m_window->devicePixelRatio())));
+    QVERIFY(picture->property("source").toUrl() != before);
+
+    // Replacing the current file also refreshes its thumbnail URL.
+    const quint64 replacementRevision = m_session->sequenceRevision();
+    QVERIFY(QFile::remove(first));
+    image.fill(Qt::blue);
+    QVERIFY(image.save(first));
+    QTRY_VERIFY(m_session->sequenceRevision() > replacementRevision);
+    QCOMPARE(m_session->count(), 2);
   }
 
   void theMenuOffersOnlyWhatSuitsTheFile() {

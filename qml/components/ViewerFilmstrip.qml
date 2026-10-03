@@ -44,7 +44,7 @@ Rectangle {
         spacing: root.spacing
         clip: true
         boundsBehavior: Flickable.StopAtBounds
-        model: root.count
+        model: root.visible ? root.count : 0
         currentIndex: root.currentIndex
         // Keeps the open file centred, gliding rather than jumping as the
         // arrows move through the folder.
@@ -71,6 +71,7 @@ Rectangle {
 
             Image {
                 id: picture
+                objectName: "viewerFilmstripPicture" + tile.index
                 anchors.fill: parent
                 anchors.margins: 2
                 fillMode: Image.PreserveAspectCrop
@@ -78,14 +79,20 @@ Rectangle {
                 smooth: true
                 // The provider applies the ratio from the URL once.
                 sourceSize: Qt.size(Math.round(width), Math.round(height))
-                source: Session.thumbnailUrl(tile.index, root.devicePixelRatio)
+                source: {
+                    const revision = Session.sequenceRevision;
+                    return Session.thumbnailUrl(tile.index, root.devicePixelRatio);
+                }
                 opacity: tile.current || tap.hovered ? 1 : 0.62
                 Behavior on opacity { NumberAnimation { duration: 120 } }
             }
 
             Text {
                 anchors.centerIn: parent
-                visible: Session.isVideoAt(tile.index)
+                visible: {
+                    const revision = Session.sequenceRevision;
+                    return Session.isVideoAt(tile.index);
+                }
                 text: "▶"
                 font.pixelSize: 13
                 color: "#ffffff"

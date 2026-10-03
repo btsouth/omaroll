@@ -309,6 +309,9 @@ void ViewerSession::setSequence(const QStringList& paths, int index) {
       m_stamp != beforeStamp || m_contentVersion != beforeVersion) {
     emit currentChanged();
   }
+  // Relisting may replace indexed files without changing the count.
+  ++m_sequenceRevision;
+  emit sequenceRevisionChanged();
   // Even an unchanged current file may have new or replaced neighbours.
   refreshPreloads();
 }
