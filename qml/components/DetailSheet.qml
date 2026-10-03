@@ -12,6 +12,23 @@ Item {
     id: root
 
     property string path: ""
+    property bool canCompare: false
+    readonly property bool contextMenuOpen: imageContextMenu.visible
+    property int actionsRevision: 0
+
+    Connections {
+        target: Captures
+        ignoreUnknownSignals: true
+        function onDataChanged() { root.actionsRevision++ }
+        function onRowsInserted() { root.actionsRevision++ }
+        function onRowsRemoved() { root.actionsRevision++ }
+        function onModelReset() { root.actionsRevision++ }
+        function onPairRawJpegChanged() { root.actionsRevision++ }
+    }
+    Connections {
+        target: Settings
+        function onMarksChanged() { root.actionsRevision++ }
+    }
     property string fileName: ""
     property string selectionLabel: ""
     property string kindLabel: ""
@@ -208,22 +225,37 @@ Item {
     }
 
     function visibleActions() {
+        void root.actionsRevision
         const rows = Registry.actionsForKind(root.isVideo, root.isDocument, root.path)
-        return rows.filter(function (row) { return row.id !== "qr" || root.qrDetected })
+        const companion = Captures.companionPathAt(Captures.rowOf(root.path))
+        if (companion !== "") {
+            rows.unshift({id: "companion", label: "View " + companion.substring(companion.lastIndexOf(".") + 1).toUpperCase() + " companion",
+                          available: true, native: true, shortcut: "", hint: "", primary: false, group: "File"})
+        }
+        for (const row of rows) {
+            if (row.id === "favorite") row.label = Settings.isFavorite(root.path) ? "Unfavourite" : "Favourite"
+            if (row.id === "hide") row.label = Settings.isHidden(root.path) ? "Unhide" : "Hide"
+        }
+        return rows.filter(function (row) {
+            return row.id !== "correctionsbatch" && (row.id !== "qr" || root.qrDetected)
+                && (row.id !== "compare" || root.canCompare)
+        })
     }
 
     // Primary actions in the inspector; the full registry stays in the menu.
+    readonly property string preferredAction: root.isDocument ? "open-document"
+        : root.isVideo ? Settings.videoPrimaryAction : Settings.imagePrimaryAction
     readonly property var primaryActionIds: root.isDocument ? ["open-document"]
-                                             : root.isVideo ? ["trim", "frame"]
-                                                            : [Settings.imagePrimaryAction,
-                                                               Settings.imagePrimaryAction === "corrections"
-                                                               ? "matte" : "corrections"]
+        : root.isVideo ? [Settings.videoPrimaryAction === "play" ? "play" : "trim", "frame"]
+        : [Settings.imagePrimaryAction === "preview"
+           ? (Registry.available("omaframe") && Registry.appliesToKind("omaframe", root.isVideo, root.isDocument, root.path) ? "omaframe" : "matte")
+           : Settings.imagePrimaryAction, "corrections"]
     readonly property var primaryActionRows: {
         const rows = Registry.actionsForKind(root.isVideo, root.isDocument, root.path)
         const out = []
         for (const id of root.primaryActionIds) {
             for (const row of rows) {
-                if (row.id === id) {
+                if (row.id === id && !out.some(function(previous) { return previous.id === id })) {
                     out.push(row)
                     break
                 }
@@ -2593,6 +2625,18 @@ Item {
                 ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
                 model: root.visible ? root.visibleActions() : []
+                section.property: "group"
+                section.criteria: ViewSection.FullString
+                section.delegate: Text {
+                    required property string section
+                    width: actions.width
+                    height: 24
+                    text: section
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 10
+                    color: Theme.mutedText
+                    verticalAlignment: Text.AlignVCenter
+                }
 
                 delegate: FocusScope {
                     id: row
@@ -2604,9 +2648,7 @@ Item {
                     activeFocusOnTab: false
 
                     readonly property bool usable: modelData.available
-                    readonly property bool primary: modelData.id ===
-                                                    Registry.primaryActionForKind(
-                                                        root.isVideo, root.isDocument)
+                    readonly property bool primary: modelData.id === root.preferredAction
                     readonly property bool destructive: modelData.id === "trash"
                                                         || modelData.id === "hide"
                     // mpv is an external player; say so rather than let "Play"
@@ -2735,7 +2777,41 @@ Item {
         return (event.modifiers & Qt.ControlModifier) ? "Ctrl+" + letter : letter
     }
 
+    Connections {
+        target: root
+        function onPathChanged() { imageContextMenu.close() }
+    }
+    ActionMenu {
+        id: imageContextMenu
+        objectName: "detailContextMenu"
+        entryPrefix: "detailContextAction_"
+        conditionalEntriesVisible: root.qrDetected
+        onTriggered: function(id) { root.invokeAction(id) }
+        onClosed: root.restoreFocus()
+    }
+    function openImageContextMenu(x, y) {
+        imageContextMenu.entries = imageContextMenu.grouped(root.visibleActions().filter(function(row) { return row.id !== "qr" }))
+        const qr = Registry.actionsForKind(root.isVideo, root.isDocument, root.path)
+            .find(function(row) { return row.id === "qr" })
+        if (qr) imageContextMenu.entries = imageContextMenu.entries.concat([
+            {separator: true, conditional: true}, Object.assign({}, qr, {conditional: true})])
+        imageContextMenu.popup(stage, x, y)
+    }
+    TapHandler {
+        parent: stage
+        acceptedButtons: Qt.RightButton
+        onSingleTapped: function(point) { root.openImageContextMenu(point.position.x, point.position.y) }
+    }
+
+
     Keys.onPressed: function (event) {
+        if (!(event.modifiers & (Qt.ControlModifier | Qt.AltModifier))
+                && (event.key === Qt.Key_D || event.key === Qt.Key_O)
+                && Registry.appliesToKind("develop", root.isVideo, root.isDocument, root.path)) {
+            root.invokeAction(event.modifiers & Qt.ShiftModifier ? "choose-editor" : "develop")
+            event.accepted = true
+            return
+        }
         if (event.key === Qt.Key_Backtab
                 || (event.key === Qt.Key_Tab && (event.modifiers & Qt.ShiftModifier))) {
             root.focusPreview()

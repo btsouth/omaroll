@@ -11,6 +11,7 @@
 
 #include "actions/ActionLauncher.h"
 #include "actions/ActionRegistry.h"
+#include "actions/ExternalEditors.h"
 #include "actions/TailscalePeers.h"
 #include "app/AppSettings.h"
 #include "app/DemoLibrary.h"
@@ -295,6 +296,7 @@ private slots:
     context->setContextProperty(QStringLiteral("Actions"), m_actions);
     context->setContextProperty(QStringLiteral("Settings"), m_settings);
     context->setContextProperty(QStringLiteral("Registry"), m_registry);
+    context->setContextProperty(QStringLiteral("Editors"), new ExternalEditors(m_actions, m_engine));
     context->setContextProperty(QStringLiteral("Matte"), m_matte);
     context->setContextProperty(QStringLiteral("ImageEdit"), m_imageEditor);
     context->setContextProperty(QStringLiteral("TextIndex"), m_textIndex);
@@ -337,6 +339,9 @@ private slots:
 
   // Every test starts from the plain grid with nothing selected.
   void init() {
+    for (const auto& name : {QStringLiteral("libraryContextMenu"), QStringLiteral("detailContextMenu")}) {
+      if (QObject* menu = m_window->findChild<QObject*>(name)) QMetaObject::invokeMethod(menu, "close");
+    }
     for (int guard = 0; guard < 8 && prop("anySheetOpen").toBool(); ++guard) {
       invoke("dismissTopLayer");
       QTest::qWait(20);
@@ -391,6 +396,23 @@ private slots:
     QVERIFY(!item("detail")->isVisible());
     QCOMPARE(item("library")->property("currentIndex").toInt(), 0);
     QCOMPARE(item("library")->property("checkedCount").toInt(), 0);
+  }
+
+  void backgroundRetryIsClearedWhenTheCompositionChanges() {
+    QQuickItem* sheet = item("matteSheet");
+    perform(QStringLiteral("matte"), pathAt(0));
+    QTRY_VERIFY(sheet->isVisible());
+    sheet->setProperty("retryCopy", true);
+    sheet->setProperty("saveMessage", QStringLiteral("Retry copy"));
+    sheet->setProperty("aspect", (sheet->property("aspect").toInt() + 1) % 3);
+    QVERIFY(!sheet->property("retryCopy").toBool());
+    QVERIFY(sheet->property("saveMessage").toString().isEmpty());
+    sheet->setProperty("retryCopy", true);
+    sheet->setProperty("selected", (sheet->property("selected").toInt() + 1) % 7);
+    QVERIFY(!sheet->property("retryCopy").toBool());
+    sheet->setProperty("retryCopy", true);
+    sheet->setProperty("paddingPercent", sheet->property("paddingPercent").toInt() == 12 ? 16 : 12);
+    QVERIFY(!sheet->property("retryCopy").toBool());
   }
 
   void closedMatteDoesNotReloadItsPreviousFile() {
@@ -838,17 +860,12 @@ private slots:
           }
         }
         function removeRowAbove() { captures.remove(0, 2) }
-        // Let the grid's initial 80 ms width relayout finish before attaching
-        // records, so this test holds only requests from the settled geometry.
-        Timer {
-          interval: 120; running: true
-          onTriggered: {
-            for (let i = 0; i < 100; ++i) {
-              captures.append({ path: "/thumbnail-test/" + i + ".png", fileName: "",
-                                kindLabel: "", timeLabel: "", sizeLabel: "", isVideo: false,
-                                isDocument: false, favorite: false, rating: 0, hidden: false,
-                                stamp: 1, ocrSnippet: "", caption: "", rawFormat: "" })
-            }
+        function populate() {
+          for (let i = 0; i < 100; ++i) {
+            captures.append({ path: "/thumbnail-test/" + i + ".png", fileName: "",
+                              kindLabel: "", timeLabel: "", sizeLabel: "", isVideo: false,
+                              isDocument: false, favorite: false, rating: 0, hidden: false,
+                              stamp: 1, ocrSnippet: "", caption: "", rawFormat: "" })
           }
         }
       }
@@ -874,6 +891,20 @@ private slots:
               << "contentY" << view->property("contentY") << "originY" << view->property("originY");
       provider->dump();
     });
+    // Wait for geometry and its pending relayout, rather than racing an
+    // independent timer against window exposure on the OpenGL backend.
+    QTRY_COMPARE(gallery->width(), qreal(window->width()));
+    QTRY_COMPARE(view->property("cellWidth").toInt(), m_settings->tileWidth());
+    QObject* relayout = nullptr;
+    for (QObject* child : gallery->findChildren<QObject*>()) {
+      if (child->property("interval").toInt() == 80 && child->property("running").isValid()) {
+        relayout = child;
+        break;
+      }
+    }
+    QVERIFY(relayout);
+    QTRY_VERIFY(!relayout->property("running").toBool());
+    QVERIFY(QMetaObject::invokeMethod(window, "populate"));
     const qreal cellHeight = view->property("cellHeight").toReal();
     QCOMPARE(gallery->property("columns").toInt(), 2);
     const auto viewportReady = [&] {
@@ -1280,14 +1311,248 @@ private slots:
     QCOMPARE(detail->property("playbackVolume").toDouble(), retainedVolume);
   }
 
-  void rightClickOnATileOpensThatTile() {
-    QQuickItem* card = cardFor(pathAt(1));
-    QVERIFY(card);
-    click(card, Qt::RightButton);
-    settle();
+  void rightClickOpensActionsForThePointedTileAndPreservesSelection() {
+    QQuickItem* grid = item("library");
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("libraryContextMenu"));
+    QVERIFY(menu);
+    const QString first = pathAt(0), second = pathAt(1), third = pathAt(2);
+    QVERIFY(QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, first)));
+    QVERIFY(QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, second)));
+    click(cardFor(second), Qt::RightButton);
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QVERIFY(!item("detail")->isVisible());
+    const auto targets = [&] { return menu->property("targets").value<QJSValue>().toVariant().toStringList(); };
+    QVERIFY(targets().contains(first));
+    QVERIFY(targets().contains(second));
+    QCOMPARE(targets().size(), 2);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!menu->property("visible").toBool());
+    click(cardFor(third), Qt::RightButton);
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QCOMPARE(targets(), QStringList{third});
+    QCOMPARE(grid->property("checkedCount").toInt(), 2);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!menu->property("visible").toBool());
+    QTRY_VERIFY(grid->hasActiveFocus());
+  }
+
+  void contextSelectionIsCapturedAndNarrowActionsRemainReachable() {
+    QQuickItem* grid = item("library");
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("libraryContextMenu"));
+    const QString first = pathAt(0), second = pathAt(1);
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, first));
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, second));
+    m_window->resize(560, 420);
+    const auto cleanup = qScopeGuard([&] { QMetaObject::invokeMethod(menu, "close"); m_window->resize(1280, 820); });
+    QTRY_VERIFY(item("selectionActionsButton")->isVisible());
+    QTest::qWait(100);
+    click(item("selectionActionsButton"));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    const QVariantList entries = menu->property("entries").value<QJSValue>().toVariant().toList();
+    QVERIFY(std::any_of(entries.begin(), entries.end(), [](const QVariant& row) {
+      return row.toMap().value(QStringLiteral("id")) == QStringLiteral("tailscale");
+    }));
+    QMetaObject::invokeMethod(grid, "clearChecked");
+    const QStringList targets = menu->property("targets").value<QJSValue>().toVariant().toStringList();
+    QCOMPARE(targets.size(), 2);
+    QVERIFY(targets.contains(first) && targets.contains(second));
+    QMetaObject::invokeMethod(menu, "close");
+  }
+
+  void compareAppearsForImageSelectionsAndUsesTheCapturedPair() {
+    QStringList images;
+    QString video;
+    for (int row = 0; row < m_library->rowCount(); ++row) {
+      if (m_library->isVideoAt(row)) video = pathAt(row);
+      else if (!m_library->isDocumentAt(row)) images.append(pathAt(row));
+    }
+    QVERIFY(images.size() >= 2 && !video.isEmpty());
+    const QString first = images[0], second = images[1];
+    QQuickItem* grid = item("library");
+    QObject* menu = m_window->findChild<QObject*>("libraryContextMenu");
+    QVERIFY(menu);
+    const auto hasCompare = [&] {
+      const auto rows = menu->property("entries").value<QJSValue>().toVariant().toList();
+      return std::any_of(rows.begin(), rows.end(), [](const QVariant& row) {
+        return row.toMap().value("id").toString() == QStringLiteral("compare");
+      });
+    };
+    QVERIFY(m_duplicates->groupPaths(first).size() < 2);
+    QVERIFY(m_similarities->groupPaths(first).size() < 2);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openContextMenu",
+        Q_ARG(QVariant, m_library->rowOf(first)), Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QVERIFY(!hasCompare());
+    QMetaObject::invokeMethod(menu, "close");
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, first));
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, second));
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openContextMenu",
+        Q_ARG(QVariant, m_library->rowOf(second)), Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QVERIFY(hasCompare());
+    const QStringList captured = menu->property("targets").value<QJSValue>().toVariant().toStringList();
+    QMetaObject::invokeMethod(grid, "clearChecked");
+    // Trigger the actual MenuItem after selection changes.
+    QQuickItem* action = item("contextAction_compare");
+    QVERIFY(action);
+    QVERIFY(QMetaObject::invokeMethod(action, "click"));
+    QTRY_VERIFY(item("compareSheet")->isVisible());
+    QCOMPARE(item("compareSheet")->property("paths").value<QJSValue>().toVariant().toStringList(), captured);
+    invoke("dismissTopLayer");
+    QMetaObject::invokeMethod(menu, "close");
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, first));
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, video));
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openContextMenu",
+        Q_ARG(QVariant, m_library->rowOf(first)), Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QVERIFY(!hasCompare());
+  }
+
+  void contextMenuShortcutsUseCapturedTargets() {
+    QStringList images;
+    for (int row = 0; row < m_library->rowCount(); ++row) {
+      const QString path = pathAt(row);
+      if (path.endsWith(".jpg") || path.endsWith(".png")) images.append(path);
+    }
+    QVERIFY(images.size() >= 3);
+    const QString a = images[0], b = images[1], c = images[2];
+    const QStringList paths{a, b, c};
+    const auto cleanup = qScopeGuard([&] { m_settings->setFavorite(paths, false); m_settings->setHidden(paths, false); });
+    m_settings->setFavorite(paths, false);
+    m_settings->setHidden(paths, false);
+    QQuickItem* grid = item("library");
+    QObject* menu = m_window->findChild<QObject*>("libraryContextMenu");
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, a));
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, b));
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openContextMenu",
+        Q_ARG(QVariant, m_library->rowOf(c)), Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QTest::keyClick(m_window, Qt::Key_V);
+    QTRY_VERIFY(m_settings->isFavorite(c));
+    QVERIFY(!m_settings->isFavorite(a) && !m_settings->isFavorite(b));
+    QTRY_VERIFY(!menu->property("visible").toBool());
+    m_settings->setFavorite(paths, false);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openContextMenu",
+        Q_ARG(QVariant, m_library->rowOf(a)), Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QMetaObject::invokeMethod(grid, "clearChecked");
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, c));
+    QTest::keyClick(m_window, Qt::Key_V);
+    QTRY_VERIFY(m_settings->isFavorite(a) && m_settings->isFavorite(b));
+    QVERIFY(!m_settings->isFavorite(c));
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openContextMenu",
+        Q_ARG(QVariant, m_library->rowOf(a)), Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QTest::keyClick(m_window, Qt::Key_H, Qt::ControlModifier);
+    QTRY_VERIFY(m_settings->isHidden(a));
+    QVERIFY(!m_settings->isHidden(b) && !m_settings->isHidden(c));
+  }
+
+  void menusOfferOnlyUsefulExistingActions() {
+    QStringList images;
+    QString video, document;
+    for (int row = 0; row < m_library->rowCount(); ++row) {
+      const QString path = pathAt(row);
+      if (m_library->isVideoAt(row)) video = path;
+      else if (m_library->isDocumentAt(row)) document = path;
+      else if (path.endsWith(".jpg")) images.append(path);
+    }
+    QVERIFY(images.size() >= 3 && !video.isEmpty() && !document.isEmpty());
+    const auto ids = [&](const QStringList& paths) {
+      QVariant result;
+      QMetaObject::invokeMethod(m_window, "selectionEntries", Q_RETURN_ARG(QVariant, result), Q_ARG(QVariant, QVariant(paths)));
+      QStringList out;
+      for (const QVariant& row : result.toList()) out.append(row.toMap().value("id").toString());
+      return out;
+    };
+    QVERIFY(ids({images[0]}).contains("preview"));
+    QVERIFY(ids({images[0]}).contains("organize"));
+    QVERIFY(ids({images[0]}).contains("omaframe"));
+    QVERIFY(ids({document}).contains("copy"));
+    QVERIFY(!ids({video}).contains("frame"));
+    QVERIFY(ids({images[0], images[1]}).contains("print"));
+    QVERIFY(ids({images[0], document}).contains("print"));
+    QVERIFY(!ids({images[0], video}).contains("print"));
+    QQuickItem* grid = item("library");
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, images[0]));
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, images[1]));
+    openDetail(m_library->rowOf(images[2]));
     QQuickItem* detail = item("detail");
     QTRY_VERIFY(detail->isVisible());
-    QCOMPARE(detail->property("path").toString(), pathAt(1));
+    QVariant result;
+    QVERIFY(QMetaObject::invokeMethod(m_window, "previewSelection", Q_RETURN_ARG(QVariant, result), Q_ARG(QVariant, images[2])));
+    QVERIFY(result.toList().isEmpty());
+    QVERIFY(QMetaObject::invokeMethod(detail, "visibleActions", Q_RETURN_ARG(QVariant, result)));
+    for (const QVariant& row : result.toList()) QVERIFY(row.toMap().value("id").toString() != "correctionsbatch");
+    QVERIFY(QMetaObject::invokeMethod(detail, "actionTriggered", Q_ARG(QString, QStringLiteral("compare"))));
+    QVERIFY(!item("compareSheet")->isVisible());
+    // Grid bulk shortcuts still use the checked pair even if another tile is current.
+    perform("compare", images[2]);
+    QTRY_VERIFY(item("compareSheet")->isVisible());
+    QCOMPARE(item("compareSheet")->property("paths").value<QJSValue>().toVariant().toStringList(), QStringList({images[0], images[1]}));
+    invoke("dismissTopLayer");
+    openDetail(m_library->rowOf(video));
+    QVERIFY(QMetaObject::invokeMethod(detail, "visibleActions", Q_RETURN_ARG(QVariant, result)));
+    bool hasFrame = false;
+    for (const QVariant& row : result.toList()) hasFrame |= row.toMap().value("id").toString() == "frame";
+    QVERIFY(hasFrame);
+  }
+
+  void selectionLabelsMatchTheCapturedTargetsAndCopyDependency() {
+    const QStringList paths{pathAt(0), pathAt(1)};
+    const auto cleanup = qScopeGuard([&] {
+      m_settings->setFavorite(paths, false);
+      m_settings->setHidden(paths, false);
+    });
+    const auto entries = [&] {
+      QVariant result;
+      QMetaObject::invokeMethod(m_window, "selectionEntries", Q_RETURN_ARG(QVariant, result),
+                                Q_ARG(QVariant, QVariant(paths)));
+      const QVariantList rows = result.toList();
+      QVariantMap byId;
+      for (const QVariant& row : rows) byId.insert(row.toMap().value("id").toString(), row);
+      return byId;
+    };
+    m_settings->setFavorite(paths, false);
+    m_settings->setHidden(paths, false);
+    QCOMPARE(entries().value("favorite").toMap().value("label").toString(), QStringLiteral("Favourite"));
+    QCOMPARE(entries().value("hide").toMap().value("label").toString(), QStringLiteral("Hide"));
+    m_settings->setFavorite(paths, true);
+    m_settings->setHidden(paths, true);
+    QCOMPARE(entries().value("favorite").toMap().value("label").toString(), QStringLiteral("Unfavourite"));
+    QCOMPARE(entries().value("hide").toMap().value("label").toString(), QStringLiteral("Unhide"));
+    QCOMPARE(entries().value("copy").toMap().value("available").toBool(), m_registry->available(QStringLiteral("copy")));
+    QCOMPARE(entries().value("copy").toMap().value("hint").toString(), QStringLiteral("wl-clipboard"));
+  }
+
+  void mixedSelectionsCannotStartImageCorrection() {
+    QString image, video;
+    for (int row = 0; row < m_library->rowCount(); ++row) {
+      if (m_library->isVideoAt(row)) video = pathAt(row);
+      else if (!m_library->isDocumentAt(row)) image = pathAt(row);
+    }
+    QVERIFY(!image.isEmpty() && !video.isEmpty());
+    const QVariantList paths{image, video};
+    QVERIFY(QMetaObject::invokeMethod(m_window, "performForTargets", Q_ARG(QVariant, QStringLiteral("correctionsbatch")),
+        Q_ARG(QVariant, image), Q_ARG(QVariant, false), Q_ARG(QVariant, paths)));
+    QVERIFY(!item("batchCorrectionSheet")->isVisible());
+  }
+
+  void spaceCanUseNativeViewingAndLegacyFramingRemainsAvailable() {
+    const QString previous = m_settings->imagePrimaryAction();
+    const auto cleanup = qScopeGuard([&] { m_settings->setImagePrimaryAction(previous); });
+    m_settings->setImagePrimaryAction(QStringLiteral("preview"));
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTRY_VERIFY(item("detail")->isVisible());
+    QVERIFY(!item("matteSheet")->isVisible());
+    QVERIFY(QMetaObject::invokeMethod(item("detail"), "adjustImageZoom", Q_ARG(QVariant, 2.0)));
+    const double zoom = item("detail")->property("imageZoom").toDouble();
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QCOMPARE(item("detail")->property("imageZoom").toDouble(), zoom);
+    invoke("dismissTopLayer");
+    m_settings->setImagePrimaryAction(QStringLiteral("matte"));
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTRY_VERIFY(item("matteSheet")->isVisible());
   }
 
   void clickOutsideTheLibraryBrowserIsConsumed() {
@@ -1726,12 +1991,12 @@ private slots:
     QTRY_VERIFY(detail->property("actionNavigationActive").toBool());
     QTRY_VERIFY(item("viewerActionPopup")->isVisible());
     QTRY_VERIFY(activeViewerAction() != nullptr);
-    QCOMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_matte"));
+    QCOMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_copy"));
 
     QTest::keyClick(m_window, Qt::Key_Down);
-    QTRY_COMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_corrections"));
+    QTRY_VERIFY(activeViewerAction() && activeViewerAction()->objectName() != QStringLiteral("viewerAction_copy"));
     QTest::keyClick(m_window, Qt::Key_Up);
-    QTRY_COMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_matte"));
+    QTRY_COMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_copy"));
 
     QTest::keyClick(m_window, Qt::Key_Escape);
     QTRY_VERIFY(!detail->property("actionNavigationActive").toBool());
@@ -2016,11 +2281,11 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_Tab);
     QQuickItem* focused = activeViewerAction();
     QTRY_VERIFY(focused != nullptr);
-    QCOMPARE(focused->objectName(), QStringLiteral("viewerAction_matte"));
+    QCOMPARE(focused->objectName(), QStringLiteral("viewerAction_copy"));
     QVERIFY(focused->property("usable").toBool());
     QCOMPARE(focused->property("shortcut").toString(),
-             m_registry->shortcutFor(QStringLiteral("matte")));
-    QCOMPARE(focused->property("toolTipText").toString(), QStringLiteral("Make it postable  ·  M"));
+             m_registry->shortcutFor(QStringLiteral("copy")));
+    QCOMPARE(focused->property("toolTipText").toString(), QStringLiteral("Copy image  ·  Y"));
 
     QTest::keyClick(m_window, Qt::Key_Down);
     QQuickItem* next = activeViewerAction();
@@ -2029,7 +2294,7 @@ private slots:
     QVERIFY(next->property("usable").toBool());
     QTest::keyClick(m_window, Qt::Key_Up);
     QTRY_VERIFY(activeViewerAction() != nullptr);
-    QCOMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_matte"));
+    QCOMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_copy"));
 
     QTest::keyClick(m_window, Qt::Key_Tab, Qt::ShiftModifier);
     QTRY_VERIFY(detail->hasActiveFocus());
@@ -2062,7 +2327,9 @@ private slots:
     QMetaObject::invokeMethod(detail, "focusPreview");
     QTest::keyClick(m_window, Qt::Key_Tab);
     QTRY_VERIFY(activeViewerAction() != nullptr);
-    QCOMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_matte"));
+    QCOMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_copy"));
+    QVERIFY(QMetaObject::invokeMethod(detail, "focusActionById", Q_ARG(QVariant, QStringLiteral("matte"))));
+    QTRY_COMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_matte"));
     QTest::keyClick(m_window, Qt::Key_Return);
     QTRY_VERIFY(item("matteSheet")->isVisible());
     QVERIFY(!detail->isVisible());
@@ -2119,6 +2386,7 @@ private slots:
   }
 
   void qrActionAppearsOnlyAfterDetectionAndCopiesThroughTheSecurePath() {
+    const QString negativePath = pathAt(0);
     openDetail(0);
     QQuickItem* detail = item("detail");
     QTRY_VERIFY(detail->isVisible());
@@ -2136,12 +2404,68 @@ private slots:
     QImage image(19, 17, QImage::Format_RGB32);
     image.fill(Qt::white);
     QVERIFY(image.save(qrPath, "PNG"));
+    const auto removeFixture = qScopeGuard([&] {
+      if (QObject* popup = m_window->findChild<QObject*>("libraryContextMenu"))
+        QMetaObject::invokeMethod(popup, "close");
+      QMetaObject::invokeMethod(detail, "close");
+      QFile::remove(qrPath);
+      m_captures->refresh();
+    });
     m_captures->refresh();
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(qrPath) >= 0, 5000);
+    QObject* menu = m_window->findChild<QObject*>("libraryContextMenu");
+    QVERIFY(menu);
+    const auto openMenu = [&](const QString& path) {
+      return QMetaObject::invokeMethod(m_window, "openContextMenu",
+          Q_ARG(QVariant, m_library->rowOf(path)), Q_ARG(QVariant, 100), Q_ARG(QVariant, 100));
+    };
+    QVERIFY(openMenu(qrPath));
+    QTRY_VERIFY_WITH_TIMEOUT(menu->property("conditionalEntriesVisible").toBool(), 3000);
+    QQuickItem* rename = item("contextAction_rename");
+    QVERIFY(rename);
+    QQuickItem* contextQrAction = item("contextAction_qr");
+    QVERIFY(contextQrAction);
+    QQuickItem* qrSeparator = item("contextAction_conditionalSeparator");
+    QVERIFY(qrSeparator);
+    QTRY_VERIFY(contextQrAction->isVisible() && qrSeparator->isVisible());
+    QCOMPARE(contextQrAction->height(), 30.0);
+    QCOMPARE(qrSeparator->height(), 9.0);
+    const double renameY = rename->property("y").toDouble();
+    m_qr->inspect(negativePath);
+    QTRY_VERIFY(!menu->property("conditionalEntriesVisible").toBool());
+    QTRY_VERIFY(!contextQrAction->isVisible() && !qrSeparator->isVisible());
+    QCOMPARE(contextQrAction->height(), 0.0);
+    QCOMPARE(qrSeparator->height(), 0.0);
+    m_qr->inspect(qrPath);
+    QTRY_VERIFY(menu->property("conditionalEntriesVisible").toBool());
+    QCOMPARE(item("contextAction_rename"), rename);
+    QCOMPARE(rename->property("y").toDouble(), renameY);
+    QMetaObject::invokeMethod(menu, "close");
+    QVERIFY(openMenu(negativePath));
+    QTRY_VERIFY_WITH_TIMEOUT(!m_qr->checking(), 3000);
+    QVERIFY(!menu->property("conditionalEntriesVisible").toBool());
+    // A completion for another image must not reveal an action on this target.
+    m_qr->inspect(qrPath);
+    QTRY_VERIFY(m_qr->detected());
+    QVERIFY(!menu->property("conditionalEntriesVisible").toBool());
+    QMetaObject::invokeMethod(menu, "close");
     openDetail(m_library->rowOf(qrPath));
     QTRY_COMPARE(m_qr->path(), qrPath);
     QTRY_VERIFY_WITH_TIMEOUT(!m_qr->checking(), 3000);
     QVERIFY(m_qr->detected());
+    m_qr->inspect(negativePath);
+    QTRY_VERIFY(!detail->property("qrDetected").toBool());
+    QVERIFY(QMetaObject::invokeMethod(detail, "openImageContextMenu", Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
+    QObject* previewMenu = m_window->findChild<QObject*>("detailContextMenu");
+    QTRY_VERIFY(previewMenu->property("visible").toBool());
+    QQuickItem* previewRename = item("detailContextAction_rename");
+    QQuickItem* previewQr = item("detailContextAction_qr");
+    QVERIFY(!previewQr->isVisible());
+    QCOMPARE(previewQr->height(), 0.0);
+    m_qr->inspect(qrPath);
+    QTRY_VERIFY(previewQr->isVisible());
+    QCOMPARE(item("detailContextAction_rename"), previewRename);
+    QMetaObject::invokeMethod(previewMenu, "close");
 
     // Inserting or removing the asynchronous QR row must not move keyboard
     // focus onto a different action farther down the list.
@@ -2151,7 +2475,7 @@ private slots:
                   return candidate->objectName() == QStringLiteral("viewerAction_rename") &&
                          candidate->hasActiveFocus();
                 }) != nullptr);
-    m_qr->inspect(pathAt(0));
+    m_qr->inspect(negativePath);
     QTRY_VERIFY_WITH_TIMEOUT(!m_qr->checking(), 3000);
     QTRY_VERIFY(find(detail, [](QQuickItem* candidate) {
                   return candidate->objectName() == QStringLiteral("viewerAction_rename") &&
@@ -3149,6 +3473,229 @@ private slots:
 
   // A camera raw previews from its embedded JPEG, measures as the raw, and
   // offers only the actions that can open it.
+  void cancellingTheRawEditorChooserKeepsTheSavedCommand() {
+    if (!CameraRaw::isRaw(QStringLiteral("dng"))) QSKIP("Qt RAW support is unavailable");
+    QVERIFY(configureRawEditorRecorder());
+    auto* editors = qobject_cast<ExternalEditors*>(m_engine->rootContext()
+        ->contextProperty(QStringLiteral("Editors")).value<QObject*>());
+    QVERIFY(editors);
+    const QString saved = editors->customCommand();
+    editors->setCustomCommand(QString());
+    const QString raw = m_scratch.filePath(QStringLiteral("cancel-command.dng"));
+    QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/raw/camera.dng"), raw));
+    QObject* chooser = m_window->findChild<QObject*>(QStringLiteral("editorChooser"));
+    QVERIFY(chooser);
+    QVERIFY(QMetaObject::invokeMethod(chooser, "request", Q_ARG(QVariant, raw),
+                                     Q_ARG(QVariant, true)));
+    QTRY_VERIFY(chooser->property("visible").toBool());
+    QQuickItem* input = item("editorChooserCustomCommand");
+    input->forceActiveFocus();
+    QTest::keyClick(m_window, Qt::Key_A, Qt::ControlModifier);
+    typeText(QStringLiteral("unavailable-draft-editor {path}"));
+    QCOMPARE(chooser->property("customDraft").toString(), QStringLiteral("unavailable-draft-editor {path}"));
+    QCOMPARE(chooser->property("selectedId").toString(), QStringLiteral("custom"));
+    QVERIFY(QMetaObject::invokeMethod(chooser, "openSelected"));
+    QCOMPARE(editors->customCommand(), QString());
+    QVERIFY(chooser->property("visible").toBool());
+    QCOMPARE(editors->customCommand(), QString());
+    QVERIFY(!item("editorChooserDefault_custom")->isEnabled());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!chooser->property("visible").toBool());
+    QCOMPARE(editors->customCommand(), QString());
+    QVERIFY(!QFileInfo::exists(raw + QStringLiteral(".editor-open")));
+    QVERIFY(QMetaObject::invokeMethod(chooser, "request", Q_ARG(QVariant, raw),
+                                     Q_ARG(QVariant, true)));
+    QTRY_VERIFY(chooser->property("visible").toBool());
+    input->forceActiveFocus();
+    QTest::keyClick(m_window, Qt::Key_A, Qt::ControlModifier);
+    typeText(saved);
+    QCOMPARE(editors->customCommand(), QString());
+    QQuickItem* makeDefault = item("editorChooserDefault_custom");
+    QTRY_VERIFY(makeDefault->isEnabled());
+    QCOMPARE(chooser->property("hint").toString(), QString());
+    click(makeDefault);
+    QCOMPARE(editors->customCommand(), saved);
+    QCOMPARE(editors->preferredId(), QStringLiteral("custom"));
+    QCOMPARE(chooser->property("hint").toString(), QString());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!chooser->property("visible").toBool());
+    for (const QString& id : {QStringLiteral("develop"), QStringLiteral("choose-editor")}) {
+      perform(id, pathAt(0));
+      QCOMPARE(item("detail")->property("status").toString(), QStringLiteral("That action is for camera raws"));
+    }
+  }
+
+  void rawEditorButtonsRemainClickableAtNormalAndNarrowSizes() {
+    if (!CameraRaw::isRaw(QStringLiteral("dng"))) QSKIP("Qt RAW support is unavailable");
+    QVERIFY(configureRawEditorRecorder());
+    QObject* chooser = m_window->findChild<QObject*>(QStringLiteral("editorChooser"));
+    QVERIFY(chooser);
+    const auto restore = qScopeGuard([&] {
+      QMetaObject::invokeMethod(chooser, "close");
+      m_window->resize(1280, 820);
+    });
+    int index = 0;
+    for (const QSize& size : {QSize(1280, 820), QSize(560, 420)}) {
+      m_window->resize(size);
+      const QString raw = m_scratch.filePath(QStringLiteral("footer%1.dng").arg(index++));
+      QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/raw/camera.dng"), raw));
+      for (const QString& buttonName : {QStringLiteral("editorChooserCancel"),
+                                        QStringLiteral("editorChooserOpen")}) {
+        QVERIFY(QMetaObject::invokeMethod(chooser, "request", Q_ARG(QVariant, raw),
+                                         Q_ARG(QVariant, true)));
+        QTRY_VERIFY(chooser->property("visible").toBool());
+        QQuickItem* scroller = item("editorChooserScroll");
+        // A resize updates popup geometry on the next polish pass. Scroll
+        // using the settled viewport instead of the previous window's height.
+        QTest::qWait(150);
+        scroller->setProperty("contentY", qMax(0.0, scroller->property("contentHeight").toDouble()
+                                                   - scroller->height()));
+        QQuickItem* button = item(buttonName);
+        QTRY_VERIFY(button->mapRectToItem(scroller, button->boundingRect()).bottom()
+                    <= scroller->height() + 1);
+        const QRectF rect = button->mapRectToItem(scroller, button->boundingRect());
+        QVERIFY2(rect.left() >= 0 && rect.right() <= scroller->width() + 1,
+                 qPrintable(QStringLiteral("%1 lies outside the chooser").arg(buttonName)));
+        click(button);
+        QTRY_VERIFY(!chooser->property("visible").toBool());
+      }
+      QTRY_VERIFY(QFileInfo::exists(raw + QStringLiteral(".editor-open")));
+    }
+  }
+
+  void rawDetailShortcutsChooseWithoutLaunchingAndOpenThePreferredEditor() {
+    if (!CameraRaw::isRaw(QStringLiteral("dng"))) QSKIP("Qt RAW support is unavailable");
+    QVERIFY(configureRawEditorRecorder());
+    const QString raw = QFileInfo(m_oddPath).absolutePath() + QStringLiteral("/shortcut.dng");
+    QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/raw/camera.dng"), raw));
+    m_captures->refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(raw) >= 0, 5000);
+    QQuickItem* detail = item("detail");
+    QObject* chooser = m_window->findChild<QObject*>(QStringLiteral("editorChooser"));
+    QVERIFY(chooser);
+    for (Qt::Key key : {Qt::Key_D, Qt::Key_O}) {
+      // External actions close detail. Each shortcut must start from the
+      // RAW preview again, rather than exercising the grid on the next key.
+      openDetail(m_library->rowOf(raw));
+      QTRY_VERIFY(detail->isVisible());
+      QCOMPARE(detail->property("path").toString(), raw);
+      QVERIFY(QMetaObject::invokeMethod(detail, "focusPreview"));
+      QTRY_VERIFY(detail->hasActiveFocus());
+      QTest::keyClick(m_window, key, Qt::ShiftModifier);
+      QTRY_VERIFY(chooser->property("visible").toBool());
+      QVERIFY(!QFileInfo::exists(raw + QStringLiteral(".editor-open")));
+      QVERIFY(QMetaObject::invokeMethod(chooser, "close"));
+      QTRY_VERIFY(!chooser->property("visible").toBool());
+    }
+    openDetail(m_library->rowOf(raw));
+    QTRY_VERIFY(detail->isVisible());
+    QCOMPARE(detail->property("path").toString(), raw);
+    QVERIFY(QMetaObject::invokeMethod(detail, "focusPreview"));
+    QTRY_VERIFY(detail->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_O);
+    QTRY_VERIFY(QFileInfo::exists(raw + QStringLiteral(".editor-open")));
+    QVERIFY(!chooser->property("visible").toBool());
+  }
+
+  void rawDetailCompanionActionsRefreshAfterScansAndPairingChanges() {
+    if (!CameraRaw::isRaw(QStringLiteral("dng"))) QSKIP("Qt RAW support is unavailable");
+    const QString folder = QFileInfo(m_oddPath).absolutePath();
+    const QString raw = folder + QStringLiteral("/live-pair.dng");
+    const QString jpeg = folder + QStringLiteral("/live-pair.jpg");
+    QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/raw/camera.dng"), raw));
+    m_captures->refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(raw) >= 0, 5000);
+    openDetail(m_library->rowOf(raw));
+    QObject* actions = item("detail")->findChild<QObject*>(QStringLiteral("viewerActions"));
+    QVERIFY(actions);
+    const int original = actions->property("count").toInt();
+    QImage image(48, 64, QImage::Format_RGB32);
+    image.fill(Qt::cyan);
+    QVERIFY(image.save(jpeg, "JPEG"));
+    m_captures->refresh();
+    QTRY_COMPARE(actions->property("count").toInt(), original + 1);
+    m_library->setPairRawJpeg(false);
+    QTRY_COMPARE(actions->property("count").toInt(), original);
+    m_library->setPairRawJpeg(true);
+    QTRY_COMPARE(actions->property("count").toInt(), original + 1);
+    QVERIFY(QFile::remove(jpeg));
+    m_captures->refresh();
+    QTRY_COMPARE(actions->property("count").toInt(), original);
+    QVERIFY(image.save(jpeg, "JPEG"));
+    const QString ambiguous = folder + QStringLiteral("/LIVE-PAIR.jpeg");
+    QVERIFY(image.save(ambiguous, "JPEG"));
+    m_captures->refresh();
+    QTRY_COMPARE(m_captures->companionPathAt(m_captures->rowOf(raw)), QString());
+    QTRY_COMPARE(actions->property("count").toInt(), original);
+  }
+
+  void theRawEditorChooserBelongsToItsRequestingWindowAndFile() {
+    if (!CameraRaw::isRaw(QStringLiteral("dng"))) QSKIP("Qt RAW support is unavailable");
+    const QString first = QFileInfo(m_oddPath).absolutePath() + QStringLiteral("/first.dng");
+    const QString second = QFileInfo(m_oddPath).absolutePath() + QStringLiteral("/second.dng");
+    const QString fixture = QFINDTESTDATA("fixtures/raw/camera.dng");
+    QVERIFY(QFile::copy(fixture, first));
+    QVERIFY(QFile::copy(fixture, second));
+    QObject* chooser = m_window->findChild<QObject*>(QStringLiteral("editorChooser"));
+    QVERIFY(chooser);
+    QQmlComponent component(m_engine);
+    component.loadFromModule("Omaroll", "EditorChooser");
+    std::unique_ptr<QObject> other(component.createWithInitialProperties(
+        {{QStringLiteral("parent"), QVariant::fromValue(m_window->contentItem())}},
+        m_engine->rootContext()));
+    QVERIFY2(other, qPrintable(component.errorString()));
+    QVERIFY(QMetaObject::invokeMethod(chooser, "request", Q_ARG(QVariant, first),
+                                     Q_ARG(QVariant, true)));
+    QTRY_VERIFY(chooser->property("visible").toBool());
+    QVERIFY(!other->property("visible").toBool());
+    QCOMPARE(chooser->property("path").toString(), first);
+    QVERIFY(QMetaObject::invokeMethod(other.get(), "request", Q_ARG(QVariant, second),
+                                     Q_ARG(QVariant, true)));
+    QTRY_VERIFY(other->property("visible").toBool());
+    QCOMPARE(chooser->property("path").toString(), first);
+    QCOMPARE(other->property("path").toString(), second);
+    QVERIFY(QMetaObject::invokeMethod(other.get(), "close"));
+    QVERIFY(QMetaObject::invokeMethod(chooser, "close"));
+  }
+
+  void pinnedFoldersRemainShortcutsWithoutRemovingTheirSource() {
+    QVERIFY(m_settings->pinFolderPath(QFileInfo(m_oddPath).absolutePath()));
+    QQuickItem* pins = item("pinnedFolders");
+    QTRY_VERIFY(pins->isVisible());
+    const QString folder = m_settings->pinnedFolders().first();
+    QVERIFY(QMetaObject::invokeMethod(pins, "chosen", Q_ARG(QString, folder)));
+    QCOMPARE(m_library->folderFilter(), folder);
+    m_settings->unpinFolder(folder);
+    QTRY_VERIFY(!pins->isVisible());
+    QVERIFY(m_settings->libraryFolders().contains(folder));
+    QCOMPARE(m_library->folderFilter(), folder);
+  }
+
+  void theLibraryCompanionActionOpensTheRequestedOriginal() {
+    if (!CameraRaw::isRaw(QStringLiteral("dng"))) QSKIP("Qt RAW support is unavailable");
+    const QString folder = QFileInfo(m_oddPath).absolutePath();
+    const QString raw = folder + QStringLiteral("/paired.dng");
+    const QString jpeg = folder + QStringLiteral("/paired.jpg");
+    QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/raw/camera.dng"), raw));
+    QImage image(48, 64, QImage::Format_RGB32);
+    image.fill(Qt::cyan);
+    QVERIFY(image.save(jpeg, "JPEG"));
+    m_captures->refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(raw) >= 0, 5000);
+    QTRY_COMPARE(m_library->rowOf(jpeg), -1);
+    openDetail(m_library->rowOf(raw));
+    QVERIFY(QMetaObject::invokeMethod(m_window, "perform", Q_ARG(QVariant, "companion"),
+                                     Q_ARG(QVariant, raw), Q_ARG(QVariant, false)));
+    QQuickItem* detail = item("detail");
+    QTRY_COMPARE(detail->property("path").toString(), jpeg);
+    QVERIFY(m_library->rowOf(jpeg) >= 0);
+    QCOMPARE(m_library->rowOf(raw), -1);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "perform", Q_ARG(QVariant, "companion"),
+                                     Q_ARG(QVariant, jpeg), Q_ARG(QVariant, false)));
+    QTRY_COMPARE(detail->property("path").toString(), raw);
+    QVERIFY(QFileInfo::exists(raw) && QFileInfo::exists(jpeg));
+  }
+
   void aCameraRawPreviewsAtItsOwnSizeWithItsOwnActions() {
     if (!CameraRaw::isRaw(QStringLiteral("dng"))) {
       QSKIP("Qt has no camera raw decoder here (kimageformats with LibRaw)");
@@ -3175,8 +3722,8 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(detail->property("imageReady").toBool(), 10000);
     QVERIFY(detail->property("playbackError").toString().isEmpty());
     // The preview is 24x32 once upright; the raw is 48x64.
-    QCOMPARE(detail->property("mediaWidth").toInt(), 48);
-    QCOMPARE(detail->property("mediaHeight").toInt(), 64);
+    QTRY_COMPARE(detail->property("mediaWidth").toInt(), 48);
+    QTRY_COMPARE(detail->property("mediaHeight").toInt(), 64);
     // A late size result for another version of this path must be ignored.
     m_captures->rawSizeRead(path, QUrl(QStringLiteral("image://raw/old-version")),
                            QSize(480, 640));
@@ -3553,6 +4100,13 @@ private slots:
       const QPoint clickPosition = centre(card);
       const QSizeF cardSize = card->size();
       click(card, Qt::RightButton);
+      QObject* menu = m_window->findChild<QObject*>(QStringLiteral("libraryContextMenu"));
+      QTRY_VERIFY(menu && menu->property("visible").toBool());
+      const QStringList targets = menu->property("targets").value<QJSValue>().toVariant().toStringList();
+      QCOMPARE(targets, QStringList{pathAt(row)});
+      QTest::keyClick(m_window, Qt::Key_Escape);
+      QTRY_VERIFY(!menu->property("visible").toBool());
+      QTest::keyClick(m_window, Qt::Key_Return);
       settle();
       QTRY_VERIFY2_WITH_TIMEOUT(
           detail->isVisible(),
@@ -3752,6 +4306,34 @@ private slots:
     QCOMPARE(detail->property("path").toString(), path);
   }
 
+  void pendingBackgroundCannotAttachToAnotherImagesSheet() {
+    const QString first = m_scratch.filePath(QStringLiteral("pending-background-a.png"));
+    const QString second = m_scratch.filePath(QStringLiteral("pending-background-b.png"));
+    QImage source(80, 60, QImage::Format_RGB32);
+    source.fill(Qt::red);
+    QVERIFY(source.save(first));
+    source.fill(Qt::blue);
+    QVERIFY(source.save(second));
+    QSignalSpy finished(m_matte, &MatteComposer::finished);
+    perform(QStringLiteral("matte"), first);
+    QTRY_COMPARE(item("mattePreview")->property("status").toInt(), 1);
+    QVERIFY(QMetaObject::invokeMethod(item("matteSheet"), "save"));
+    QVERIFY(m_matte->busy());
+    // Synchronous calls occur before completion delivery, without racing a sleep.
+    invoke("dismissTopLayer");
+    perform(QStringLiteral("matte"), second);
+    QVERIFY(!item("matteSheet")->isVisible());
+    QCOMPARE(item("matteSheet")->property("path").toString(), first);
+    QTRY_VERIFY_WITH_TIMEOUT(!finished.isEmpty(), 10000);
+    QVERIFY(!item("matteSheet")->isVisible());
+    // The library indexes the saved copy. Keep it until the disposable profile
+    // is destroyed, so an active delegate never points at a deleted fixture.
+    perform(QStringLiteral("matte"), second);
+    QTRY_VERIFY(item("matteSheet")->isVisible());
+    QCOMPARE(item("matteSheet")->property("path").toString(), second);
+    QVERIFY(!item("matteSheet")->property("retryCopy").toBool());
+  }
+
   void theWindowRaisedNoQmlWarnings() {
     QVERIFY2(m_warnings.isEmpty(), qPrintable(m_warnings.join(QLatin1Char('\n'))));
   }
@@ -3760,6 +4342,21 @@ private:
   QVariant prop(const char* name) const { return m_window->property(name); }
 
   void invoke(const char* method) { QMetaObject::invokeMethod(m_window, method); }
+
+  bool configureRawEditorRecorder() {
+    const QString script = m_scratch.filePath(QStringLiteral("raw-editor-recorder"));
+    QFile handler(script);
+    if (!handler.open(QIODevice::WriteOnly)) return false;
+    handler.write("#!/bin/sh\nprintf '%s' \"$1\" > \"$1.editor-open\"\n");
+    handler.close();
+    if (!handler.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                               QFileDevice::ExeOwner)) return false;
+    auto* editors = qobject_cast<ExternalEditors*>(m_engine->rootContext()
+        ->contextProperty(QStringLiteral("Editors")).value<QObject*>());
+    if (!editors) return false;
+    editors->setCustomCommand(QLatin1Char('"') + script + QLatin1Char('"'));
+    return editors->setPreferred(QStringLiteral("custom"));
+  }
 
   void perform(const QString& id, const QString& path) {
     QMetaObject::invokeMethod(m_window, "perform", Q_ARG(QVariant, id), Q_ARG(QVariant, path),

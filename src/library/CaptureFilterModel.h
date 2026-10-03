@@ -49,6 +49,7 @@ class CaptureFilterModel final : public QSortFilterProxyModel {
   Q_PROPERTY(
       bool duplicatesOnly READ duplicatesOnly WRITE setDuplicatesOnly NOTIFY duplicatesOnlyChanged)
   Q_PROPERTY(bool similarOnly READ similarOnly WRITE setSimilarOnly NOTIFY similarOnlyChanged)
+  Q_PROPERTY(bool pairRawJpeg READ pairRawJpeg WRITE setPairRawJpeg NOTIFY pairRawJpegChanged)
   Q_PROPERTY(int count READ count NOTIFY countChanged)
   Q_PROPERTY(bool empty READ empty NOTIFY countChanged)
   // How many rows the source holds regardless of the current filter, so the
@@ -139,6 +140,11 @@ public:
   [[nodiscard]] bool similarOnly() const { return m_similarOnly; }
   void setSimilarOnly(bool value);
   void setSimilarGroups(const QHash<QString, QString>& groups);
+  [[nodiscard]] bool pairRawJpeg() const { return m_pairRawJpeg; }
+  void setPairRawJpeg(bool value);
+  // Explicitly opened files take precedence over the default RAW card. Both
+  // members explicitly selected means both physical rows remain visible.
+  Q_INVOKABLE void setExplicitPaths(const QStringList& paths);
 
   [[nodiscard]] int count() const { return rowCount(); }
   [[nodiscard]] bool empty() const { return rowCount() == 0; }
@@ -147,6 +153,7 @@ public:
   // this side rather than letting callers reach past the proxy with an index
   // that means something else there.
   Q_INVOKABLE QString pathAt(int row) const;
+  Q_INVOKABLE QString companionPathAt(int row) const;
   Q_INVOKABLE QString fileNameAt(int row) const;
   Q_INVOKABLE QString dayLabelAt(int row) const;
   // The floating grid label is a day in the normal library and a match-set
@@ -201,6 +208,7 @@ signals:
   void showHiddenChanged();
   void duplicatesOnlyChanged();
   void similarOnlyChanged();
+  void pairRawJpegChanged();
   void countChanged();
 
 protected:
@@ -211,6 +219,8 @@ protected:
 private:
   void beginFilterUpdate();
   void endFilterUpdate();
+  void rebuildPairing();
+  [[nodiscard]] bool matchesFilters(const CaptureRecord& record) const;
   [[nodiscard]] bool rebuildFolderIndex();
   [[nodiscard]] bool rebuildDateIndex();
   [[nodiscard]] bool rebuildCameraIndex();
@@ -248,6 +258,10 @@ private:
   bool m_showHidden = false;
   bool m_duplicatesOnly = false;
   bool m_similarOnly = false;
+  bool m_pairRawJpeg = true;
+  QSet<QString> m_groupedOutPaths;
+  QSet<QString> m_explicitPaths;
+  QTimer m_pairingTimer;
   QHash<QString, QString> m_duplicateGroups;
   QHash<QString, QString> m_similarGroups;
   QHash<QString, int> m_duplicateOrdinals;

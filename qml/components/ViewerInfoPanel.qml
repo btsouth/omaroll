@@ -172,7 +172,7 @@ Rectangle {
                 }
                 ToolTip {
                     visible: folderMouse.containsMouse
-                    text: "Show in files"
+                    text: "Open containing folder"
                     delay: 500
                 }
             }

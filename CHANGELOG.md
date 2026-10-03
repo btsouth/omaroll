@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.13.0
 
 ### Added
 
@@ -22,6 +22,35 @@
 - The viewer can show a filmstrip of the folder above its controls. B or the
   menu turns it on, a click on a thumbnail opens that file, and the choice is
   kept.
+
+- Matching RAW/JPEG files are grouped, with companion switching and format
+  badges. Both originals and explicitly opened files remain accessible.
+- Save a preferred RAW editor, choose one each time, or use a custom command.
+- Pin folders for quick access.
+- Open existing images in Omaframe for annotation and frames.
+- Right-click files and selections for grouped actions, including native viewing,
+  albums and tags, file copying, and printing supported selections.
+
+### Changed
+
+- New profiles use built-in viewing for Space. Upgrades keep their preferences.
+- Make it postable is now Add background, available without Omaframe.
+- QR copying appears only after detecting a code in the inspected image.
+- Open containing folder uses your default file manager.
+
+### Fixed
+
+- Compare uses the captured image selection and appears only when usable.
+  Preview actions exclude unrelated selections and unsupported batch operations.
+- Menu shortcuts use captured targets. Slideshow menus hold their target until
+  dismissed and resume correctly, including skipped videos.
+- Background saving and copying report separate results. Retry copy reuses the
+  saved image without recomposing or making another file.
+- Image copying and print submission wait for the helper result before reporting
+  success. Failed actions show an error.
+- Editing a custom command selects it. Canceling or failing to launch keeps the
+  saved command. Shell command strings are refused; wrapper
+  scripts can receive the path as a separate argument.
 
 ## 1.12.0
 

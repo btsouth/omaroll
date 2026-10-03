@@ -1,5 +1,6 @@
 #include "actions/ActionLauncher.h"
 #include "actions/ActionRegistry.h"
+#include "actions/ExternalEditors.h"
 #include "actions/TailscalePeers.h"
 #include "app/AppSettings.h"
 #include "app/DemoLibrary.h"
@@ -161,6 +162,7 @@ Options:
                          so no compositor can resize it or overlap it.
   --render-view <view>   Which view to render: grid, detail, video, slideshow,
                          matte, corrections, compare, export, rename, OCR,
+                         editors, pins, context-menu, selection-menu,
                          duplicates, browser, settings, viewer, viewer-video,
                          viewer-info or viewer-menu.
   --render-size <WxH>    Window size, from 560x420 to 7680x4320. Default 1280x820.
@@ -223,6 +225,9 @@ public:
     m_library.setSortMode(settings.sortMode());
     m_library.setKindFilter(settings.kindFilter());
     m_library.setShowHidden(settings.showHidden());
+    m_library.setPairRawJpeg(settings.pairRawJpeg());
+    QObject::connect(&settings, &AppSettings::pairRawJpegChanged, &m_library,
+                     [this, &settings] { m_library.setPairRawJpeg(settings.pairRawJpeg()); });
     QObject::connect(&m_library, &CaptureFilterModel::sortModeChanged, &settings,
                      [this, &settings] { settings.setSortMode(m_library.sortMode()); });
     QObject::connect(&m_library, &CaptureFilterModel::kindFilterChanged, &settings,
@@ -400,7 +405,9 @@ int main(int argc, char* argv[]) {
       QStringLiteral("slideshow"),  QStringLiteral("matte"),   QStringLiteral("corrections"),
       QStringLiteral("compare"),    QStringLiteral("export"),  QStringLiteral("rename"),
       QStringLiteral("ocr"),        QStringLiteral("duplicates"), QStringLiteral("browser"),
-      QStringLiteral("settings"),   QStringLiteral("viewer"),  QStringLiteral("viewer-video"),
+      QStringLiteral("settings"),   QStringLiteral("editors"), QStringLiteral("pins"),
+      QStringLiteral("context-menu"), QStringLiteral("selection-menu"),
+      QStringLiteral("viewer"),  QStringLiteral("viewer-video"),
       QStringLiteral("viewer-info"), QStringLiteral("viewer-menu")};
   if (!renderView.isEmpty() && !renderViews.contains(renderView)) {
     qWarning().noquote() << "omaroll: unknown render view:" << renderView;
@@ -496,6 +503,7 @@ int main(int argc, char* argv[]) {
 
   ActionLauncher actions;
   ActionRegistry registry(&actions);
+  ExternalEditors editors(&actions);
 
   QQmlApplicationEngine engine;
   auto* thumbnailProvider = new ThumbnailProvider;
@@ -522,6 +530,7 @@ int main(int argc, char* argv[]) {
   engine.rootContext()->setContextProperty(QStringLiteral("Actions"), &actions);
   engine.rootContext()->setContextProperty(QStringLiteral("Settings"), &settings);
   engine.rootContext()->setContextProperty(QStringLiteral("Registry"), &registry);
+  engine.rootContext()->setContextProperty(QStringLiteral("Editors"), &editors);
   engine.rootContext()->setContextProperty(QStringLiteral("DemoMode"), demo);
 
   startup.mark("services");

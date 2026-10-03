@@ -30,7 +30,7 @@ public:
   // How the handler's result reaches the user. Most tools open a window or
   // send their own notification; the two recognisers only print to stdout, so
   // omaroll has to catch that and put it somewhere useful.
-  enum class Result { Launch, TextToClipboard, SecretToClipboard, CopyFile };
+  enum class Result { Launch, TextToClipboard, SecretToClipboard, CopyFile, Submission };
 
   struct Definition {
     QString id = {};
@@ -52,7 +52,7 @@ public:
     // Legacy or internal rows remain runnable without cluttering the action
     // list. This preserves stable ids while a richer UI replaces a preset.
     bool visible = true;
-    // Shown first and bound to Enter for its medium.
+    // Historical primary action for the medium; user preferences live in AppSettings.
     bool primary = false;
     Result result = Result::Launch;
     // Said in the status line after a successful launch, for a tool that

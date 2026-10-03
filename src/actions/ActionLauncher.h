@@ -43,6 +43,12 @@ public:
   bool runDetached(const QString& program, const QStringList& arguments,
                    const QString& packageHint = {}, const QString& confirmation = {});
 
+  // Follow a submission with no output file (for example lp). True means
+  // accepted for launch, not completed. Only a normal zero exit confirms it;
+  // stderr explains failures. A hung submission is stopped after 30 seconds.
+  bool runSubmission(const QString& program, const QStringList& arguments,
+                     const QString& packageHint = {}, const QString& confirmation = {});
+
   // Launch and follow a tool that writes a new file beside the original.
   // A transcode can run for minutes with its output sitting at zero bytes, so
   // fire-and-forget left the user guessing whether anything happened. The
@@ -71,11 +77,13 @@ public:
                               const QString& confirmation, const QString& nothingFound);
 
   // One file on the clipboard as its own data, so it pastes as an image.
+  // PNG/JPEG copying is asynchronous; true means accepted. Completion is
+  // reported only after the clipboard tool exits successfully.
   Q_INVOKABLE bool copyFile(const QString& path);
 
   // Several files on the clipboard at once, as text/uri-list, which is what a
-  // paste into Nautilus or a browser upload expects. One file goes through the
-  // house helper instead so it pastes as image data.
+  // paste into Nautilus or a browser upload expects. copyFile uses image data
+  // for supported pictures instead.
   Q_INVOKABLE bool copyUris(const QStringList& paths);
 
   [[nodiscard]] static QString mimeTypeFor(const QString& path);
@@ -97,10 +105,14 @@ signals:
   // viewer opens on it; a footer flash alone reads as nothing happening.
   void outputAlreadyDone(const QString& path);
   void pendingOutputsChanged();
+  void submissionFinished(const QString& program, bool success, const QString& detail);
 
 private:
   [[nodiscard]] QString locate(const QString& program, const QString& packageHint);
   bool copyText(const QString& text, bool sensitive, const QString& mimeType = {});
+  bool startSubmission(const QString& program, const QStringList& arguments,
+                       const QString& packageHint, const QString& confirmation,
+                       const QString& inputPath, int timeoutMs);
 
   QSet<QString> m_pendingOutputs;
 };

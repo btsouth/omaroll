@@ -134,7 +134,7 @@ ApplicationWindow {
                                        && root.sourceWidth > 0
 
     readonly property bool chromeShown: root.chromePinned || root.pointerActive || root.infoOpen
-                                        || actionMenu.visible || confirm.visible
+                                        || actionMenu.visible || confirm.visible || editorChooser.visible
                                         || header.hovered || transport.hovered
                                         || previousButton.hovered || nextButton.hovered
                                         || toolbar.hovered || filmstrip.hovered
@@ -296,7 +296,7 @@ ApplicationWindow {
 
     // The slideshow waits for each picture to be on screen before timing it.
     function armSlideshow() {
-        if (root.slideshowRunning && !Session.isVideo && root.stillReady) {
+        if (root.slideshowRunning && !actionMenu.visible && !Session.isVideo && root.stillReady) {
             slideshowTimer.restart()
         }
     }
@@ -426,6 +426,7 @@ ApplicationWindow {
     // The next file for the slideshow: any other one when shuffling, and
     // never a video when the settings leave them out.
     function advanceSlideshow() {
+        if (actionMenu.visible) return
         const total = Session.count
         if (Settings.slideshowShuffle && total > 1) {
             const eligible = []
@@ -487,33 +488,37 @@ ApplicationWindow {
 
     // The keys a viewer is expected to have, and what the menu shows beside
     // each entry. They are this window's own: F is full screen here, as in
-    // every player, rather than the library's Show in files.
+    // every player, rather than the library's Open containing folder.
     readonly property var viewerShortcuts: ({
-        library: "Enter", copy: "Y", annotate: "A", develop: "D", send: "S", trim: "T", frame: "G",
+        library: "Enter", copy: "Y", annotate: "A", develop: "D", "choose-editor": "Shift+D", send: "S", trim: "T", frame: "G",
         play: "P", rotate: "R", slideshow: "F5", fullscreen: "F", info: "I", filmstrip: "B",
         favorite: "V", trash: "Del"
     })
 
     // Handed-off actions, in the order the menu offers them. Only what is
     // installed and suits the medium is shown.
-    readonly property var stillActions: ["develop", "copy", "annotate", "edit", "background", "send", "print", "files"]
+    readonly property var stillActions: ["develop", "choose-editor", "copy", "omaframe", "annotate", "edit", "background", "send", "print", "files"]
     readonly property var videoActions: ["frame", "trim", "copy", "play", "send", "files"]
 
     function menuEntries() {
         void root.marksVersion
         const video = Session.isVideo
         const entries = [{id: "library", label: "Open in library"}, {separator: true}]
+        if (Session.companionPath !== "") {
+            entries.push({id: "companion", label: Session.isRaw ? "View JPEG companion" : "View RAW companion"})
+        }
         const wanted = video ? root.videoActions : root.stillActions
         const rows = Registry.actionsForKind(video, false, Session.path)
-        for (const id of wanted) {
-            const row = rows.find(function (candidate) { return candidate.id === id })
-            if (!row || !row.available) {
-                continue
-            }
+        let group = ""
+        for (const row of rows) {
+            const id = row.id
+            if (wanted.indexOf(id) < 0) continue
+            if (group !== "" && row.group !== group) entries.push({separator: true})
+            group = row.group
             let label = row.label
             if (id === "copy" && video) label = "Copy file"
             if (id === "play") label = "Open in mpv"
-            entries.push({id: id, label: label})
+            entries.push({id: id, label: label, available: row.available, hint: row.hint})
         }
         entries.push({separator: true})
         if (!video) {
@@ -536,12 +541,24 @@ ApplicationWindow {
         return entries
     }
 
+    function performMenuAction(id) {
+        root.perform(id)
+        actionMenu.close()
+    }
+
     function perform(id) {
         const path = Session.path
         if (path === "") {
             return
         }
         switch (id) {
+        case "companion":
+            Session.switchCompanion()
+            return
+        case "develop":
+        case "choose-editor":
+            if (Session.isRaw) editorChooser.request(path, id === "choose-editor")
+            return
         case "library":
             Session.openInLibrary()
             return
@@ -622,6 +639,7 @@ ApplicationWindow {
             if (samePath && root.loadedMediaVersion === Session.contentVersion) {
                 return
             }
+            actionMenu.close()
             root.loadedMediaPath = Session.path
             root.loadedMediaVersion = Session.contentVersion
             if (samePath && Session.isVideo && root.player) {
@@ -1525,6 +1543,22 @@ ApplicationWindow {
         modal: true
         dim: false
         readonly property var entries: root.menuEntries()
+        onVisibleChanged: {
+            if (visible) {
+                slideshowTimer.stop()
+            } else if (root.slideshowRunning && Session.isVideo && !Settings.slideshowVideos
+                       && root.loadedMediaPath === Session.path) {
+                root.advanceSlideshow()
+            } else if (root.slideshowRunning && Session.isVideo
+                       && root.loadedMediaPath === Session.path
+                       && (root.videoError !== "" || (root.player
+                           && root.player.mediaStatus === MediaPlayer.EndOfMedia))) {
+                // A clip may finish or fail while its menu holds the target.
+                slideshowTimer.restart()
+            } else {
+                root.armSlideshow()
+            }
+        }
         onClosed: keys.forceActiveFocus()
 
         background: Rectangle {
@@ -1543,8 +1577,9 @@ ApplicationWindow {
                 required property var modelData
                 readonly property bool separator: modelData.separator === true
                 objectName: separator ? "" : "viewerMenu_" + modelData.id
-                enabled: !separator
-                height: separator ? 9 : 30
+                enabled: !separator && modelData.available !== false
+                height: separator ? 9 : modelData.available === false && modelData.hint ? 46 : 30
+                opacity: enabled || separator ? 1 : 0.55
                 contentItem: Item {
                     Rectangle {
                         visible: entry.separator
@@ -1560,12 +1595,27 @@ ApplicationWindow {
                         anchors.right: shortcutText.left
                         anchors.rightMargin: 8
                         anchors.verticalCenter: parent.verticalCenter
+                        anchors.verticalCenterOffset: entry.modelData.available === false && entry.modelData.hint ? -7 : 0
                         text: entry.separator ? "" : entry.modelData.label
                         elide: Text.ElideRight
                         font.family: Theme.fontFamily
                         font.pixelSize: 12
                         color: entry.modelData.id === "trash" ? Theme.red
                                : entry.highlighted ? Theme.brightForeground : Theme.foreground
+                    }
+                    Text {
+                        visible: !entry.separator && entry.modelData.available === false && !!entry.modelData.hint
+                        anchors.left: parent.left
+                        anchors.leftMargin: 12
+                        anchors.right: parent.right
+                        anchors.rightMargin: 12
+                        anchors.bottom: parent.bottom
+                        anchors.bottomMargin: 5
+                        text: "Needs " + (entry.modelData.hint || "")
+                        elide: Text.ElideRight
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 10
+                        color: Theme.mutedText
                     }
                     Text {
                         id: shortcutText
@@ -1585,9 +1635,14 @@ ApplicationWindow {
                            ? root.shade(Theme.foreground, 0.09) : "transparent"
                     radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 3) : 0
                 }
-                onTriggered: root.perform(entry.modelData.id)
+                onTriggered: root.performMenuAction(entry.modelData.id)
             }
         }
+    }
+
+    EditorChooser {
+        id: editorChooser
+        objectName: "editorChooser"
     }
 
     ConfirmSheet {
@@ -1615,6 +1670,10 @@ ApplicationWindow {
         focus: true
 
         Keys.onPressed: function (event) {
+            if (editorChooser.visible) {
+                event.accepted = false
+                return
+            }
             const control = (event.modifiers & Qt.ControlModifier) !== 0
             const alt = (event.modifiers & Qt.AltModifier) !== 0
             const shift = (event.modifiers & Qt.ShiftModifier) !== 0
@@ -1757,7 +1816,8 @@ ApplicationWindow {
                     root.perform("send")
                     break
                 case Qt.Key_D:
-                    if (Session.isRaw) root.perform("develop")
+                case Qt.Key_O:
+                    if (Session.isRaw) root.perform(event.modifiers & Qt.ShiftModifier ? "choose-editor" : "develop")
                     else handled = false
                     break
                 case Qt.Key_A:

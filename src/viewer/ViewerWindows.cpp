@@ -1,6 +1,7 @@
 #include "viewer/ViewerWindows.h"
 
 #include "library/MediaInspector.h"
+#include "app/AppSettings.h"
 #include "subtitles/SubtitleIndex.h"
 #include "viewer/HyprlandPlacement.h"
 #include "viewer/ViewerSession.h"
@@ -19,6 +20,12 @@ struct ViewerWindows::Viewer {
   explicit Viewer(QQmlEngine& engine) : context(engine.rootContext()) {
     // Not "Viewer": that name is the window's own QML type, and a type name
     // wins over a context property.
+    if (auto* settings = qobject_cast<AppSettings*>(
+            engine.rootContext()->contextProperty(QStringLiteral("Settings")).value<QObject*>())) {
+      session.setPairRawJpeg(settings->pairRawJpeg());
+      QObject::connect(settings, &AppSettings::pairRawJpegChanged, &session,
+                       [this, settings] { session.setPairRawJpeg(settings->pairRawJpeg()); });
+    }
     context.setContextProperty(QStringLiteral("Session"), &session);
     context.setContextProperty(QStringLiteral("MediaInfo"), &mediaInfo);
     context.setContextProperty(QStringLiteral("Subtitles"), &subtitles);

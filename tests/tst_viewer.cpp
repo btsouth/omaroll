@@ -9,6 +9,7 @@
 
 #include "actions/ActionLauncher.h"
 #include "actions/ActionRegistry.h"
+#include "actions/ExternalEditors.h"
 #include "app/AppSettings.h"
 #include "app/DemoLibrary.h"
 #include "app/HeadlessAudio.h"
@@ -118,6 +119,7 @@ private slots:
     shared->setContextProperty(QStringLiteral("Actions"), m_actions);
     shared->setContextProperty(QStringLiteral("Settings"), m_settings);
     shared->setContextProperty(QStringLiteral("Registry"), m_registry);
+    shared->setContextProperty(QStringLiteral("Editors"), new ExternalEditors(m_actions, m_engine));
     shared->setContextProperty(QStringLiteral("DemoMode"), true);
     // The same split main.cpp makes: the viewer's own services in its context.
     m_context = new QQmlContext(shared, this);
@@ -1164,6 +1166,59 @@ private slots:
     QCOMPARE(m_session->count(), 2);
   }
 
+  void filmstripShowsRawFormatsAndPairedBadgesInBothDirections() {
+    if (!CameraRaw::isRaw(QStringLiteral("dng"))) QSKIP("Qt RAW support is unavailable");
+    const QString folder = m_scratch.filePath(QStringLiteral("filmstrip-raw-pairs"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString raw = folder + QStringLiteral("/a.DNG");
+    const QString jpeg = folder + QStringLiteral("/a.jpg");
+    const QString loneRaw = folder + QStringLiteral("/b.dng");
+    const QString fixture = QFINDTESTDATA("fixtures/raw/camera.dng");
+    QVERIFY(QFile::copy(fixture, raw));
+    QVERIFY(QFile::copy(fixture, loneRaw));
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), jpeg));
+    QVERIFY(QFile::copy(media(QStringLiteral("clip.mp4")), folder + QStringLiteral("/clip.mp4")));
+    const bool previousPairing = m_session->pairRawJpeg();
+    const bool previousStrip = m_settings->viewerFilmstrip();
+    const auto restore = qScopeGuard([this, previousPairing, previousStrip] {
+      m_window->setProperty("chromePinned", false);
+      m_settings->setViewerFilmstrip(previousStrip);
+      m_session->setPairRawJpeg(previousPairing);
+    });
+    m_session->setPairRawJpeg(true);
+    m_settings->setViewerFilmstrip(true);
+    m_window->setProperty("chromePinned", true);
+    open({jpeg});
+    QTRY_COMPARE(m_session->count(), 3);
+    QCOMPARE(m_session->path(), jpeg);
+    const auto badge = [this](int index) {
+      const QString name = QStringLiteral("viewerFilmstripRawBadge%1").arg(index);
+      return find(m_window->contentItem(), [&name](QQuickItem* candidate) {
+        return candidate->objectName() == name;
+      });
+    };
+    const auto label = [&badge](int index) {
+      QQuickItem* current = badge(index);
+      return current ? current->property("label").toString() : QString();
+    };
+    QTRY_COMPARE(label(0), QStringLiteral("RAW+JPG"));
+    QVERIFY(badge(0)->isVisible());
+    QTRY_COMPARE(label(1), QStringLiteral("DNG"));
+    QVERIFY(badge(1)->isVisible());
+    QVERIFY(m_session->isVideoAt(2));
+    QTRY_VERIFY(badge(2));
+    QVERIFY(label(2).isEmpty());
+    QVERIFY(m_session->switchCompanion());
+    QCOMPARE(m_session->path(), raw);
+    // Switching can rebuild ListView delegates. Resolve the current tile on
+    // each check instead of keeping a pointer to the old QML object.
+    QTRY_COMPARE(label(0), QStringLiteral("RAW+JPG"));
+    m_session->setPairRawJpeg(false);
+    QCOMPARE(m_session->count(), 4);
+    QCOMPARE(m_session->path(), raw);
+    QTRY_COMPARE(label(0), QStringLiteral("DNG"));
+  }
+
   void theMenuOffersOnlyWhatSuitsTheFile() {
     open({media(QStringLiteral("Shot 1.jpg"))});
     QTRY_COMPARE(m_session->count(), int(m_order.size()));
@@ -1193,6 +1248,106 @@ private slots:
     const QStringList video = menuIds(menu);
     QVERIFY(!video.contains(QStringLiteral("rotate")));
     QVERIFY(video.contains(QStringLiteral("library")));
+  }
+
+  void slideshowMenuKeepsItsTargetAndResumesAfterAnAction() {
+    const QString first = media(QStringLiteral("Shot 1.jpg"));
+    const QString second = media(QStringLiteral("shot 2.jpg"));
+    const int interval = m_settings->slideshowIntervalSeconds();
+    const bool shuffle = m_settings->slideshowShuffle();
+    const bool firstFavorite = m_settings->isFavorite(first);
+    const bool secondFavorite = m_settings->isFavorite(second);
+    const auto restoreSettings = qScopeGuard([this, interval, shuffle, first, second,
+                                              firstFavorite, secondFavorite] {
+      m_settings->setSlideshowIntervalSeconds(interval);
+      m_settings->setSlideshowShuffle(shuffle);
+      m_settings->setFavorite({first}, firstFavorite);
+      m_settings->setFavorite({second}, secondFavorite);
+    });
+    m_settings->setSlideshowIntervalSeconds(2);
+    m_settings->setSlideshowShuffle(false);
+    m_settings->setFavorite({first, second}, false);
+    open({first, second});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QTest::keyClick(m_window, Qt::Key_F5);
+    QVERIFY(prop("slideshowRunning").toBool());
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("viewerMenu"));
+    QVERIFY(menu);
+    QTest::mouseClick(m_window, Qt::RightButton, Qt::NoModifier,
+                      QPoint(m_window->width() / 2, m_window->height() / 2));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QSignalSpy changed(m_session, &ViewerSession::currentChanged);
+    // Cross the real timer interval while the menu owns the action target.
+    QTest::qWait(2300);
+    // Video completion uses this same advancement entry point.
+    QVERIFY(QMetaObject::invokeMethod(m_window, "advanceSlideshow"));
+    QCOMPARE(changed.count(), 0);
+    QCOMPARE(m_session->path(), first);
+    QVERIFY(menu->property("visible").toBool());
+    QVERIFY(prop("slideshowRunning").toBool());
+    QVERIFY(QMetaObject::invokeMethod(item(QStringLiteral("viewerMenu_favorite")), "click"));
+    QTRY_VERIFY(!menu->property("visible").toBool());
+    QVERIFY(m_settings->isFavorite(first));
+    QVERIFY(!m_settings->isFavorite(second));
+    QTRY_COMPARE_WITH_TIMEOUT(m_session->path(), second, 4000);
+    QVERIFY(prop("slideshowRunning").toBool());
+  }
+
+  void slideshowMenuSkipsAnExcludedPausedVideo_data() {
+    QTest::addColumn<bool>("shuffle");
+    QTest::newRow("ordered") << false;
+    QTest::newRow("shuffled") << true;
+  }
+
+  void slideshowMenuSkipsAnExcludedPausedVideo() {
+    QFETCH(bool, shuffle);
+    const bool oldVideos = m_settings->slideshowVideos(), oldShuffle = m_settings->slideshowShuffle();
+    const auto restore = qScopeGuard([&] { m_settings->setSlideshowVideos(oldVideos); m_settings->setSlideshowShuffle(oldShuffle); });
+    m_settings->setSlideshowVideos(false);
+    m_settings->setSlideshowShuffle(shuffle);
+    const QString image = media(QStringLiteral("Shot 1.jpg"));
+    open({media(QStringLiteral("clip.mp4")), image});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    player->pause();
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("viewerMenu"));
+    QVERIFY(menu);
+    QTest::mouseClick(m_window, Qt::RightButton, Qt::NoModifier, QPoint(m_window->width() / 2, m_window->height() / 2));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QVERIFY(QMetaObject::invokeMethod(item(QStringLiteral("viewerMenu_slideshow")), "click"));
+    QTRY_COMPARE_WITH_TIMEOUT(m_session->path(), image, 1500);
+    QTRY_VERIFY(!menu->property("visible").toBool());
+    QVERIFY(prop("slideshowRunning").toBool());
+  }
+
+  void changingTheMenuTargetClosesIt_data() {
+    QTest::addColumn<bool>("replaceSession");
+    QTest::newRow("manual-navigation") << false;
+    QTest::newRow("replacement-open") << true;
+  }
+
+  void changingTheMenuTargetClosesIt() {
+    QFETCH(bool, replaceSession);
+    const QString first = media(QStringLiteral("Shot 1.jpg"));
+    const QString second = media(QStringLiteral("shot 2.jpg"));
+    open({first, second});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("viewerMenu"));
+    QVERIFY(menu);
+    QTest::mouseClick(m_window, Qt::RightButton, Qt::NoModifier,
+                      QPoint(m_window->width() / 2, m_window->height() / 2));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    if (replaceSession) {
+      m_session->open({second, first});
+    } else {
+      QVERIFY(QMetaObject::invokeMethod(m_window, "step", Q_ARG(QVariant, 1)));
+    }
+    QCOMPARE(m_session->path(), second);
+    QTRY_VERIFY(!menu->property("visible").toBool());
+    QTRY_VERIFY(item(QStringLiteral("viewerKeys"))->hasActiveFocus());
+    // The dismissed popup leaves the viewer's navigation controls usable.
+    QTest::keyClick(m_window, replaceSession ? Qt::Key_Right : Qt::Key_Left);
+    QCOMPARE(m_session->path(), first);
   }
 
   void favouriteAndRatingFromTheKeyboardShowInTheDetails() {

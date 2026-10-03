@@ -10,6 +10,9 @@
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QUrl>
+#include <QTimer>
+
+#include <memory>
 
 using namespace Qt::StringLiterals;
 
@@ -56,28 +59,11 @@ bool ActionLauncher::copyFile(const QString& path) {
     return copyUris({path});
   }
 
-  // The house helper first, which is exactly "wl-copy --type <mime> < file";
-  // the same call directly on a system without Omarchy.
-  const QString helper = QStandardPaths::findExecutable(u"omarchy-clipboard-paste-file"_s);
-  if (!helper.isEmpty()) {
-    return runDetached(helper, {u"--copy-only"_s, mimeTypeFor(path), path}, {},
-                       u"Copied to clipboard"_s);
-  }
-  const QString wlCopy = QStandardPaths::findExecutable(u"wl-copy"_s);
-  if (wlCopy.isEmpty()) {
-    emit failed(u"wl-copy is not installed. Try: sudo pacman -S wl-clipboard"_s);
-    return false;
-  }
-  QProcess process;
-  process.setStandardInputFile(path);
-  process.start(wlCopy, {u"--type"_s, mimeTypeFor(path)});
-  if (!process.waitForFinished(5000) || process.exitStatus() != QProcess::NormalExit ||
-      process.exitCode() != 0) {
-    emit failed(u"Could not copy %1"_s.arg(info.fileName()));
-    return false;
-  }
-  emit reported(u"Copied to clipboard"_s);
-  return true;
+  // The house helper's --copy-only branch can exit zero after wl-copy fails.
+  // Its copy operation is exactly this invocation, so track wl-copy directly
+  // to establish whether the selection was accepted.
+  return startSubmission(u"wl-copy"_s, {u"--type"_s, mime}, u"wl-clipboard"_s,
+                         u"Copied to clipboard"_s, path, 5000);
 }
 
 bool ActionLauncher::runDetached(const QString& program, const QStringList& arguments,
@@ -94,6 +80,77 @@ bool ActionLauncher::runDetached(const QString& program, const QStringList& argu
   if (!confirmation.isEmpty()) {
     emit reported(confirmation);
   }
+  return true;
+}
+
+bool ActionLauncher::runSubmission(const QString& program, const QStringList& arguments,
+                                   const QString& packageHint, const QString& confirmation) {
+  return startSubmission(program, arguments, packageHint, confirmation, {}, 30000);
+}
+
+bool ActionLauncher::startSubmission(const QString& program, const QStringList& arguments,
+                                     const QString& packageHint, const QString& confirmation,
+                                     const QString& inputPath, int timeoutMs) {
+  const QString executable = locate(program, packageHint);
+  if (executable.isEmpty()) return false;
+
+  auto* process = new QProcess(this);
+  process->setProgram(executable);
+  process->setArguments(arguments);
+  // No interactive stdin, and no shell interpolation of paths or arguments.
+  process->setStandardInputFile(inputPath.isEmpty() ? QProcess::nullDevice() : inputPath);
+  auto* timer = new QTimer(process);
+  timer->setSingleShot(true);
+  struct State {
+    QByteArray error;
+    QByteArray output;
+    bool timedOut = false;
+    bool settled = false;
+  };
+  auto state = std::make_shared<State>();
+  // Drain as data arrives, retaining only a bounded tail of diagnostics.
+  const auto drain = [process, state] {
+    state->error = (state->error + process->readAllStandardError()).right(4096);
+    state->output = (state->output + process->readAllStandardOutput()).right(4096);
+  };
+  connect(process, &QProcess::readyReadStandardError, this, drain);
+  connect(process, &QProcess::readyReadStandardOutput, this, drain);
+  const auto finish = [this, process, timer, state, drain, program, confirmation](bool success,
+                                                                              QString detail) {
+    if (state->settled) return;
+    state->settled = true;
+    timer->stop();
+    drain();
+    if (detail.isEmpty()) {
+      const QString text = QString::fromUtf8(success ? state->output : state->error).trimmed();
+      const QStringList lines = text.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+      if (!lines.isEmpty()) detail = lines.last().trimmed();
+    }
+    if (!success && detail.isEmpty()) detail = u"The tool did not finish successfully"_s;
+    process->deleteLater();
+    if (success) {
+      if (!confirmation.isEmpty()) emit reported(confirmation);
+    } else {
+      emit failed(u"%1: %2"_s.arg(QFileInfo(program).fileName(), detail));
+    }
+    emit submissionFinished(program, success, detail);
+  };
+  connect(process, &QProcess::errorOccurred, this,
+          [process, finish](QProcess::ProcessError error) {
+    // A crash emits finished too. A failed start does not.
+    if (error == QProcess::FailedToStart) finish(false, process->errorString());
+  });
+  connect(process, &QProcess::finished, this,
+          [state, finish](int code, QProcess::ExitStatus status) {
+    finish(!state->timedOut && status == QProcess::NormalExit && code == 0,
+           state->timedOut ? u"Timed out before completion"_s : QString());
+  });
+  connect(timer, &QTimer::timeout, process, [process, state] {
+    state->timedOut = true;
+    process->kill(); // finished owns the single terminal notification
+  });
+  process->start();
+  timer->start(timeoutMs);
   return true;
 }
 

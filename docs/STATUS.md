@@ -2,8 +2,8 @@
 
 ## Latest release
 
-[Omaroll 1.12.0](https://github.com/btsouth/omaroll/releases/tag/v1.12.0), dated
-3 October 2026. See the [changelog](../CHANGELOG.md#1120) for what it includes.
+[Omaroll 1.13.0](https://github.com/btsouth/omaroll/releases/tag/v1.13.0), dated
+3 October 2026. See the [changelog](../CHANGELOG.md#1130) for what it includes.
 
 The release provides an x86_64 Arch package, source archive and PKGBUILD, with
 checksums and signed build provenance. Installation and verification commands
@@ -11,14 +11,13 @@ are in the [README](../README.md#install-or-update).
 
 ## Current work
 
-Camera raw opening (ARW, CR3, DNG, NEF, RAF and the rest LibRaw reads) is
-merged for the next release, including thumbnails from the embedded preview,
-orientation, and the actions offered for a raw.
+Version 1.13.0 adds camera RAW viewing, RAW/JPEG companions, saved editor choices,
+folder pins, and Open in Omaframe for existing images. Right-click menus use
+captured file selections, QR copying appears after detection, and containing
+folders open in the default file manager. Clipboard and print actions report
+completion or failure. Corrections and Omaframe exports remain copies.
 
-Use the [open pull requests](https://github.com/btsouth/omaroll/pulls) for work
-under review, and the [roadmap](ROADMAP.md) for scope and future decisions.
-Changes for the next release should remain in focused pull requests; the
-published tag identifies the 1.12.0 source.
+Use the [roadmap](ROADMAP.md) for future work and open decisions.
 
 The [mixed-media baseline](performance/2026-10-02-mixed-media/README.md) records
 startup, whole-library jumps, viewer navigation and the preloading comparison.

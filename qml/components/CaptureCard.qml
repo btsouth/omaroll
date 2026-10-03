@@ -42,6 +42,7 @@ Item {
 
     signal activated()
     signal chosen()
+    signal contextRequested(real x, real y)
     signal toggleChecked()
 
     function shade(base, amount) {
@@ -410,7 +411,10 @@ Item {
         // click on a file means everywhere else on the desktop.
         TapHandler {
             acceptedButtons: Qt.RightButton
-            onSingleTapped: root.chosen()
+            onSingleTapped: function(point) {
+                const at = frame.mapToItem(null, point.position.x, point.position.y)
+                root.contextRequested(at.x, at.y)
+            }
         }
     }
 }

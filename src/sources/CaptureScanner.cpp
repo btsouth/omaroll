@@ -1,6 +1,7 @@
 #include "sources/CaptureScanner.h"
 
 #include "sources/CameraRaw.h"
+#include "sources/RawJpegPairs.h"
 
 #include <QDir>
 #include <QDirIterator>
@@ -464,5 +465,6 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots, const std::a
               return first.path < second.path;
             });
 
+  RawJpegPairs::assign(records);
   return records;
 }

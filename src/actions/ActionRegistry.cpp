@@ -7,6 +7,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
+#include <QMimeDatabase>
+#include <algorithm>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QVariantMap>
@@ -34,6 +36,7 @@ ActionRegistry::Definition annotateRow() {
             .program = configured,
             .arguments = {u"{path}"_s},
             .shortcut = u"A"_s,
+            .packageHint = QFileInfo(configured).fileName(),
             .media = Media::Still,
             .raws = false};
   }
@@ -96,34 +99,13 @@ ActionRegistry::Definition tailscaleRow() {
           .batch = true};
 }
 
-// Use the first installed RAW developer. Without one, the row names
-// darktable so the hint says what to install.
+// Native: the requesting window routes to the shared editor preferences and
+// owns the chooser. This remains usable even when no developer is installed.
 ActionRegistry::Definition developRow() {
-  using Media = ActionRegistry::Media;
-  struct Developer {
-    QString program;
-    QString label;
-  };
-  const QList<Developer> developers = {
-      {u"darktable"_s, u"Develop in darktable"_s},
-      {u"rawtherapee"_s, u"Develop in RawTherapee"_s},
-      {u"ART"_s, u"Develop in ART"_s},
-  };
-  Developer chosen = developers.first();
-  for (const Developer& developer : developers) {
-    if (!QStandardPaths::findExecutable(developer.program).isEmpty()) {
-      chosen = developer;
-      break;
-    }
-  }
   return {.id = u"develop"_s,
-          .label = chosen.label,
-          .program = chosen.program,
-          .arguments = {u"{path}"_s},
+          .label = u"Open in RAW editor"_s,
           .shortcut = u"D"_s,
-          .packageHint = u"darktable"_s,
-          .media = Media::Raw,
-          .primary = false};
+          .media = ActionRegistry::Media::Raw};
 }
 
 } // namespace
@@ -144,7 +126,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .primary = true},
 
       {.id = u"play"_s,
-       .label = u"Play"_s,
+       .label = u"Open in mpv"_s,
        .program = u"mpv"_s,
        .arguments = {u"{path}"_s},
        .shortcut = u"P"_s,
@@ -186,10 +168,9 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .output = u"{stem}-1080p.mp4"_s},
 
       // --- Screenshots and pictures ---------------------------------------
-      // The matte is the one thing omaroll builds itself, because nothing on
-      // Omarchy does it. No program, so QML handles it.
+      // A dependency-free background picker. Richer framing uses Omaframe.
       {.id = u"matte"_s,
-       .label = u"Make it postable"_s,
+       .label = u"Add background"_s,
        .shortcut = u"M"_s,
        .media = Still,
        .primary = true},
@@ -224,6 +205,17 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
       // flags and a new output name. A user who set their own editor gets it
       // with the bare path, as omarchy-capture-screenshot would hand it over.
       annotateRow(),
+
+      // Omaframe accepts an existing image and opens the same annotation,
+      // border and finish controls used for screenshots. It exports a new
+      // PNG; the handoff does not ask it to overwrite the source.
+      {.id = u"omaframe"_s,
+       .label = u"Open in Omaframe"_s,
+       .program = u"omaframe"_s,
+       .arguments = {u"{path}"_s},
+       .packageHint = u"omaframe"_s,
+       .media = Still,
+       .raws = false},
 
       // Same tesseract invocation omarchy-capture-text uses, minus its
       // single-block page mode: a whole screenshot has many blocks.
@@ -302,6 +294,10 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .output = u"{stem}-{resolution}.{format}"_s},
 
       developRow(),
+      {.id = u"choose-editor"_s,
+       .label = u"Choose RAW editor…"_s,
+       .shortcut = u"Shift+D"_s,
+       .media = Raw},
 
       // --- Anything -------------------------------------------------------
       {.id = u"open-document"_s,
@@ -320,7 +316,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .program = u"wl-copy"_s,
        .shortcut = u"Y"_s,
        .packageHint = u"wl-clipboard"_s,
-       .media = Visual,
+       .media = Any,
        .result = CopyFile},
 
       // The same path the Share menu and the Nautilus extension take: LocalSend
@@ -340,14 +336,15 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .packageHint = u"cups"_s,
        .media = Printable,
        .raws = false,
-       .confirmation = u"Sent to the printer"_s},
+       .result = Submission,
+       .confirmation = u"Print job submitted"_s},
 
       {.id = u"files"_s,
-       .label = u"Show in files"_s,
-       .program = u"nautilus"_s,
-       .arguments = {u"--select"_s, u"{path}"_s},
+       .label = u"Open containing folder"_s,
+       .program = u"xdg-open"_s,
+       .arguments = {u"{dir}"_s},
        .shortcut = u"F"_s,
-       .packageHint = u"nautilus"_s},
+       .packageHint = u"xdg-utils"_s},
 
       // Native: QML owns these.
       {.id = u"rename"_s, .label = u"Rename"_s, .shortcut = u"N"_s},
@@ -500,6 +497,7 @@ QVariantList ActionRegistry::actionsForKind(bool video, bool document,
                                             const QString& path) const {
   const bool raw = !path.isEmpty() && CameraRaw::isRawFile(path);
   QVariantList rows;
+  const QString mime = path.isEmpty() ? QString() : QMimeDatabase().mimeTypeForFile(path).name();
   for (const Definition& definition : m_definitions) {
     if (!definition.visible || !applies(definition, video, document, raw)) {
       continue;
@@ -508,7 +506,19 @@ QVariantList ActionRegistry::actionsForKind(bool video, bool document,
     const bool native = definition.program.isEmpty();
     QVariantMap row;
     row[u"id"_s] = definition.id;
-    row[u"label"_s] = definition.label;
+    row[u"label"_s] = definition.id == u"copy"_s
+        && (video || document || (!mime.isEmpty() && mime != u"image/png"_s && mime != u"image/jpeg"_s))
+        ? u"Copy file"_s : definition.label;
+    const QStringList common = {u"copy"_s, u"files"_s, u"print"_s, u"open-document"_s};
+    const QStringList editing = {u"omaframe"_s, u"corrections"_s, u"correctionsbatch"_s,
+        u"matte"_s, u"compare"_s, u"export"_s, u"trim"_s, u"frame"_s};
+    const QStringList organization = {u"rename"_s, u"favorite"_s, u"hide"_s, u"trash"_s};
+    row[u"group"_s] = common.contains(definition.id) ? u"File"_s
+        : editing.contains(definition.id) ? u"Edit and finish"_s
+        : organization.contains(definition.id) ? u"Organize"_s : u"Tools and sharing"_s;
+    row[u"order"_s] = common.contains(definition.id) ? common.indexOf(definition.id)
+        : editing.contains(definition.id) ? 100 + editing.indexOf(definition.id)
+        : organization.contains(definition.id) ? 300 + organization.indexOf(definition.id) : 200;
     row[u"shortcut"_s] = definition.shortcut;
     row[u"primary"_s] = definition.primary;
     row[u"native"_s] = native;
@@ -517,6 +527,9 @@ QVariantList ActionRegistry::actionsForKind(bool video, bool document,
     row[u"hint"_s] = definition.packageHint;
     rows.append(row);
   }
+  std::stable_sort(rows.begin(), rows.end(), [](const QVariant& a, const QVariant& b) {
+    return a.toMap().value(u"order"_s).toInt() < b.toMap().value(u"order"_s).toInt();
+  });
   return rows;
 }
 
@@ -637,6 +650,10 @@ bool ActionRegistry::launch(const Definition& definition, const QStringList& arg
                             const QString& output) {
   if (!output.isEmpty()) {
     return m_launcher->runTracked(definition.program, arguments, definition.packageHint, output);
+  }
+  if (definition.result == Result::Submission) {
+    return m_launcher->runSubmission(definition.program, arguments, definition.packageHint,
+                                     definition.confirmation);
   }
   return m_launcher->runDetached(definition.program, arguments, definition.packageHint,
                                  definition.confirmation);

@@ -19,6 +19,8 @@ struct CaptureRecord {
 
   QString path;
   QString fileName;
+  // A unique RAW/JPEG sibling. Both files remain independent source rows.
+  QString companionPath;
   Kind kind = Picture;
   // Parsed out of the filename when the producer stamped one, mtime otherwise.
   QDateTime captured;

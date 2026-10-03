@@ -37,10 +37,10 @@ command to start getting updates.
 To install one release without adding the repository:
 
 ```bash
-curl -fLO https://github.com/btsouth/omaroll/releases/download/v1.12.0/omaroll-1.12.0-1-x86_64.pkg.tar.zst \
-     -fLO https://github.com/btsouth/omaroll/releases/download/v1.12.0/SHA256SUMS
+curl -fLO https://github.com/btsouth/omaroll/releases/download/v1.13.0/omaroll-1.13.0-1-x86_64.pkg.tar.zst \
+     -fLO https://github.com/btsouth/omaroll/releases/download/v1.13.0/SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
-sudo pacman -U ./omaroll-1.12.0-1-x86_64.pkg.tar.zst
+sudo pacman -U ./omaroll-1.13.0-1-x86_64.pkg.tar.zst
 ```
 
 A package installed this way does not update on its own. Run the same commands
@@ -56,7 +56,7 @@ source build, see [Development](#development).
 The release includes build provenance. To verify the package with GitHub CLI:
 
 ```bash
-gh attestation verify omaroll-1.12.0-1-x86_64.pkg.tar.zst --repo btsouth/omaroll
+gh attestation verify omaroll-1.13.0-1-x86_64.pkg.tar.zst --repo btsouth/omaroll
 ```
 
 ## Open files
@@ -120,6 +120,7 @@ process, so a favourite or rating set in one shows in the others.
 | `F5` | Slideshow |
 | `I` | Details: size, date, rating, camera or codec |
 | `B` | Hide or show the filmstrip |
+| `D` · `Shift+D` | Open a RAW in the preferred editor · choose an editor |
 | `V` · `Alt+1`-`Alt+5` · `Ctrl+Z` | Favourite · rate · undo |
 | `Y` · `S` · `A` | Copy · send · annotate |
 | `T` · `G` · `P` | Trim · save the current frame · open in mpv |
@@ -164,32 +165,62 @@ organization and safe copies itself, and delegates specialist work to these tool
 |---|---|---|
 | Recording | Trim *(default)* | `omacut` |
 | Recording | Convert · resize | `omarchy-transcode` |
-| Recording | Play | `mpv` |
+| Recording | Open in mpv | `mpv` |
 | Recording | Save current frame | `ffmpeg`, from the viewer position |
-| Screenshot | **Make it postable** *(default)* | **native** |
+| Image | Add background | native, no external app required |
 | Screenshot | Annotate | `$OMARCHY_SCREENSHOT_EDITOR`; Tensaku by default |
+| Image | Open in Omaframe | `omaframe`: annotation, borders, backgrounds and frames |
 | Screenshot | Extract and select text | `tesseract` |
 | Image | Convert · resize | `omarchy-transcode` |
 | Image | Edit · View | `pinta` · `imv` |
 | Image | Set as background | `omarchy-theme-bg-set` |
-| Image | Copy detected QR content | `zbarimg` |
+| Image | Copy QR content (only after detection) | `zbarimg` |
 | Image | Crop, rotate, resize · Copy region | native |
 | Image | Correct a selection | native |
 | Image | Compare side by side | native |
 | Image or PDF | Print | `lp` (CUPS) |
 | PDF | Open document *(default)* | `sushi` |
+| Any | Open in Omaroll · Albums and tags | native |
 | Any | Rename in place | native, extension preserved |
-| Image or video | Copy image | `omarchy-clipboard-paste-file` |
+| Any | Copy image or file | `wl-copy`: PNG/JPEG pixels, otherwise file URIs |
 | Any | Send with LocalSend | `omarchy-menu-share` |
 | Any | Send to a machine | `omarchy-tailscale-send`, after picking the machine |
-| Any | Show in files | `nautilus` |
+| Any | Open containing folder | default file manager through `xdg-open` |
 | Any | Move to Trash | XDG trash, never `unlink` |
+
+Single-file menus include viewing and editing actions. Selection menus offer
+only actions supported for every selected file, including printing pictures
+and PDFs. Menu shortcuts act on the same captured targets as clicks.
 
 The image and video defaults, including whether slideshows include videos, can
 be changed in Settings.
 
 When `$OMARCHY_SCREENSHOT_EDITOR` is unset or set to `tensaku-edit`, Omaroll
 uses Tensaku directly with a new output path.
+
+**Open in Omaframe** is available for existing images in the library and quick
+viewer. It opens the image in Omaframe's studio for annotation or a frame,
+border and background. Omaframe saves a new PNG in its chosen output folder
+and copies it to the clipboard, leaving the source unchanged. This action
+does not change the configured annotation editor. You can choose it as the image action
+in Settings; Space runs that action. Enter and double click open the built-in preview.
+Right click opens actions for the pointed file or its existing selection.
+
+Camera RAWs can open in darktable, RawTherapee, ART, digiKam, GIMP or a custom
+command. Choose an editor from the menu, use its star to save a preference,
+or enable **Always ask**. Custom commands accept `{path}` in an argument of a direct editor command;
+without it, Omaroll appends the file path. Shell commands and `env` wrappers are
+refused. Use a wrapper script for shell logic. Use double quotes around arguments
+containing spaces. Omaroll passes arguments directly without a shell.
+
+Matching RAW and JPEG files in the same folder appear as one item by default.
+The companion action switches between the originals; rename and Trash act on
+the file being viewed. Ambiguous matches stay separate, and duplicate reviews
+show both files. Turn grouping off in Settings to show every file separately.
+
+Pin a folder in Settings or from its library view to add a shortcut above the
+grid. Pinning also adds that folder as a library source. Unpinning removes only
+the shortcut, leaving the source and files alone.
 
 An action whose program is missing is shown greyed with the package to install,
 rather than hidden. The medium decides the list, not the folder: a downloaded
@@ -220,8 +251,9 @@ and put on your clipboard.
 | Key | Does |
 |---|---|
 | arrows · `hjkl` | Move |
-| `Enter` · right click | Preview with every action for that capture |
-| `Space` on the grid or a still/PDF preview | Your default action for that kind, initially trim, matte, or open document |
+| `Enter` · double click | Open the built-in preview |
+| right click | Actions for that file or its selected files |
+| `Space` on the grid or a still/PDF preview | Your preferred action; built-in viewing for new installs, or open document for PDFs |
 | `Space` in a video or animated-image preview | Play · pause |
 | `←` `→` in a preview | Previous · next file in the same folder |
 | `J` `L` in a video preview | Seek backward · forward five seconds |
@@ -233,13 +265,13 @@ and put on your clipboard.
 | `F11` in a preview | Enter · leave fullscreen |
 | `F5` in a preview | Start · pause slideshow |
 | `I` in a preview | Show · hide file info and actions |
-| `M` | Make it postable |
+| `M` | Add background |
 | `T` · `P` | Trim · Play a recording |
 | `G` in a video preview | Save the current frame beside the recording |
 | `A` · `C` | Annotate · Extract text |
 | `E` | Convert or resize, including the selection |
 | `N` | Rename, preserving the extension |
-| `Y` · `S` · `F` | Clipboard · Send · Show in files |
+| `Y` · `S` · `F` | Clipboard · Send · Open containing folder |
 | `V` · `Ctrl+H` | Favourite · Hide |
 | `Q` · `B` | Crop, rotate, resize the open picture · correct the whole selection |
 | `K` | Compare the selection, or the open picture's copies |
