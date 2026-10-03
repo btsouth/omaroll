@@ -99,6 +99,7 @@ Popup {
 
     contentItem: Flickable {
         id: scroller
+        objectName: "editorChooserScroll"
 
         implicitWidth: root.availableWidth
         implicitHeight: Math.min(root.parent.height - 104, content.implicitHeight)
@@ -297,6 +298,7 @@ Popup {
                 spacing: 8
 
                 Item {
+                    id: alwaysAsk
                     width: 168
                     height: 24
 
@@ -348,12 +350,14 @@ Popup {
                 }
 
                 Item {
-                    width: Math.max(1, parent.width - cancelButton.width - openButton.width - 16)
+                    width: Math.max(0, parent.width - alwaysAsk.width
+                                    - cancelButton.width - openButton.width - parent.spacing * 3)
                     height: 1
                 }
 
                 PillButton {
                     id: cancelButton
+                    objectName: "editorChooserCancel"
                     anchors.verticalCenter: parent.verticalCenter
                     label: "Cancel"
                     onClicked: root.close()
@@ -361,6 +365,7 @@ Popup {
 
                 PillButton {
                     id: openButton
+                    objectName: "editorChooserOpen"
                     anchors.verticalCenter: parent.verticalCenter
                     label: "Open"
                     active: true

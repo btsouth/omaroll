@@ -12,6 +12,17 @@ Item {
     id: root
 
     property string path: ""
+    property int actionsRevision: 0
+
+    Connections {
+        target: Captures
+        ignoreUnknownSignals: true
+        function onDataChanged() { root.actionsRevision++ }
+        function onRowsInserted() { root.actionsRevision++ }
+        function onRowsRemoved() { root.actionsRevision++ }
+        function onModelReset() { root.actionsRevision++ }
+        function onPairRawJpegChanged() { root.actionsRevision++ }
+    }
     property string fileName: ""
     property string selectionLabel: ""
     property string kindLabel: ""
@@ -208,6 +219,7 @@ Item {
     }
 
     function visibleActions() {
+        void root.actionsRevision
         const rows = Registry.actionsForKind(root.isVideo, root.isDocument, root.path)
         const companion = Captures.companionPathAt(Captures.rowOf(root.path))
         if (companion !== "") {
@@ -2741,6 +2753,13 @@ Item {
     }
 
     Keys.onPressed: function (event) {
+        if (!(event.modifiers & (Qt.ControlModifier | Qt.AltModifier))
+                && (event.key === Qt.Key_D || event.key === Qt.Key_O)
+                && Registry.appliesToKind("develop", root.isVideo, root.isDocument, root.path)) {
+            root.invokeAction(event.modifiers & Qt.ShiftModifier ? "choose-editor" : "develop")
+            event.accepted = true
+            return
+        }
         if (event.key === Qt.Key_Backtab
                 || (event.key === Qt.Key_Tab && (event.modifiers & Qt.ShiftModifier))) {
             root.focusPreview()

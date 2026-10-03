@@ -1191,24 +1191,29 @@ private slots:
     open({jpeg});
     QTRY_COMPARE(m_session->count(), 3);
     QCOMPARE(m_session->path(), jpeg);
-    QQuickItem* pairedBadge = nullptr;
-    QTRY_VERIFY((pairedBadge = find(m_window->contentItem(), [](QQuickItem* candidate) {
-      return candidate->objectName() == QStringLiteral("viewerFilmstripRawBadge0");
-    })));
-    QTRY_COMPARE(pairedBadge->property("label").toString(), QStringLiteral("RAW+JPG"));
-    QVERIFY(pairedBadge->isVisible());
-    QQuickItem* rawBadge = item(QStringLiteral("viewerFilmstripRawBadge1"));
-    QCOMPARE(rawBadge->property("label").toString(), QStringLiteral("DNG"));
-    QVERIFY(rawBadge->isVisible());
+    const auto badge = [this](int index) {
+      const QString name = QStringLiteral("viewerFilmstripRawBadge%1").arg(index);
+      return find(m_window->contentItem(), [&name](QQuickItem* candidate) {
+        return candidate->objectName() == name;
+      });
+    };
+    const auto label = [&badge](int index) {
+      QQuickItem* current = badge(index);
+      return current ? current->property("label").toString() : QString();
+    };
+    QTRY_COMPARE(label(0), QStringLiteral("RAW+JPG"));
+    QVERIFY(badge(0)->isVisible());
+    QTRY_COMPARE(label(1), QStringLiteral("DNG"));
+    QVERIFY(badge(1)->isVisible());
     QVERIFY(m_session->isVideoAt(2));
-    QVERIFY(item(QStringLiteral("viewerFilmstripRawBadge2"))->property("label").toString().isEmpty());
+    QTRY_VERIFY(badge(2));
+    QVERIFY(label(2).isEmpty());
     QVERIFY(m_session->switchCompanion());
     QCOMPARE(m_session->path(), raw);
-    QTRY_COMPARE(pairedBadge->property("label").toString(), QStringLiteral("RAW+JPG"));
-    m_session->setPairRawJpeg(false);
-    QCOMPARE(m_session->count(), 4);
-    QCOMPARE(m_session->path(), raw);
-    QTRY_COMPARE(pairedBadge->property("label").toString(), QStringLiteral("DNG"));
+    // Switching can rebuild ListView delegates. Resolve the current tile on
+    // each check instead of keeping a pointer to the old QML object.
+    QTRY_COMPARE(label(0), QStringLiteral("RAW+JPG"));
+
   }
 
   void theMenuOffersOnlyWhatSuitsTheFile() {

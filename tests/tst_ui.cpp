@@ -3151,6 +3151,92 @@ private slots:
 
   // A camera raw previews from its embedded JPEG, measures as the raw, and
   // offers only the actions that can open it.
+  void rawEditorButtonsRemainClickableAtNormalAndNarrowSizes() {
+    if (!CameraRaw::isRaw(QStringLiteral("dng"))) QSKIP("Qt RAW support is unavailable");
+    QVERIFY(configureRawEditorRecorder());
+    QObject* chooser = m_window->findChild<QObject*>(QStringLiteral("editorChooser"));
+    QVERIFY(chooser);
+    int index = 0;
+    for (const QSize& size : {QSize(1280, 820), QSize(560, 420)}) {
+      m_window->resize(size);
+      const QString raw = m_scratch.filePath(QStringLiteral("footer%1.dng").arg(index++));
+      QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/raw/camera.dng"), raw));
+      for (const QString& buttonName : {QStringLiteral("editorChooserCancel"),
+                                        QStringLiteral("editorChooserOpen")}) {
+        QVERIFY(QMetaObject::invokeMethod(chooser, "request", Q_ARG(QVariant, raw),
+                                         Q_ARG(QVariant, true)));
+        QTRY_VERIFY(chooser->property("visible").toBool());
+        QQuickItem* scroller = item("editorChooserScroll");
+        scroller->setProperty("contentY", qMax(0.0, scroller->property("contentHeight").toDouble()
+                                                   - scroller->height()));
+        QQuickItem* button = item(buttonName);
+        const QRectF rect = button->mapRectToItem(scroller, button->boundingRect());
+        QVERIFY2(rect.left() >= 0 && rect.right() <= scroller->width() + 1,
+                 qPrintable(QStringLiteral("%1 lies outside the chooser").arg(buttonName)));
+        click(button);
+        QTRY_VERIFY(!chooser->property("visible").toBool());
+      }
+      QTRY_VERIFY(QFileInfo::exists(raw + QStringLiteral(".editor-open")));
+    }
+  }
+
+  void rawDetailShortcutsChooseWithoutLaunchingAndOpenThePreferredEditor() {
+    if (!CameraRaw::isRaw(QStringLiteral("dng"))) QSKIP("Qt RAW support is unavailable");
+    QVERIFY(configureRawEditorRecorder());
+    const QString raw = QFileInfo(m_oddPath).absolutePath() + QStringLiteral("/shortcut.dng");
+    QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/raw/camera.dng"), raw));
+    m_captures->refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(raw) >= 0, 5000);
+    openDetail(m_library->rowOf(raw));
+    QQuickItem* detail = item("detail");
+    QObject* chooser = m_window->findChild<QObject*>(QStringLiteral("editorChooser"));
+    QVERIFY(chooser);
+    for (Qt::Key key : {Qt::Key_D, Qt::Key_O}) {
+      QVERIFY(QMetaObject::invokeMethod(detail, "focusPreview"));
+      QTest::keyClick(m_window, key, Qt::ShiftModifier);
+      QTRY_VERIFY(chooser->property("visible").toBool());
+      QVERIFY(!QFileInfo::exists(raw + QStringLiteral(".editor-open")));
+      QVERIFY(QMetaObject::invokeMethod(chooser, "close"));
+      QTRY_VERIFY(!chooser->property("visible").toBool());
+    }
+    QVERIFY(QMetaObject::invokeMethod(detail, "focusPreview"));
+    QTest::keyClick(m_window, Qt::Key_O);
+    QTRY_VERIFY(QFileInfo::exists(raw + QStringLiteral(".editor-open")));
+    QVERIFY(!chooser->property("visible").toBool());
+  }
+
+  void rawDetailCompanionActionsRefreshAfterScansAndPairingChanges() {
+    if (!CameraRaw::isRaw(QStringLiteral("dng"))) QSKIP("Qt RAW support is unavailable");
+    const QString folder = QFileInfo(m_oddPath).absolutePath();
+    const QString raw = folder + QStringLiteral("/live-pair.dng");
+    const QString jpeg = folder + QStringLiteral("/live-pair.jpg");
+    QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/raw/camera.dng"), raw));
+    m_captures->refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(raw) >= 0, 5000);
+    openDetail(m_library->rowOf(raw));
+    QObject* actions = item("detail")->findChild<QObject*>(QStringLiteral("viewerActions"));
+    QVERIFY(actions);
+    const int original = actions->property("count").toInt();
+    QImage image(48, 64, QImage::Format_RGB32);
+    image.fill(Qt::cyan);
+    QVERIFY(image.save(jpeg, "JPEG"));
+    m_captures->refresh();
+    QTRY_COMPARE(actions->property("count").toInt(), original + 1);
+    m_library->setPairRawJpeg(false);
+    QTRY_COMPARE(actions->property("count").toInt(), original);
+    m_library->setPairRawJpeg(true);
+    QTRY_COMPARE(actions->property("count").toInt(), original + 1);
+    QVERIFY(QFile::remove(jpeg));
+    m_captures->refresh();
+    QTRY_COMPARE(actions->property("count").toInt(), original);
+    QVERIFY(image.save(jpeg, "JPEG"));
+    const QString ambiguous = folder + QStringLiteral("/LIVE-PAIR.jpeg");
+    QVERIFY(image.save(ambiguous, "JPEG"));
+    m_captures->refresh();
+    QTRY_COMPARE(m_captures->companionPathAt(m_captures->rowOf(raw)), QString());
+    QTRY_COMPARE(actions->property("count").toInt(), original);
+  }
+
   void theRawEditorChooserBelongsToItsRequestingWindowAndFile() {
     if (!CameraRaw::isRaw(QStringLiteral("dng"))) QSKIP("Qt RAW support is unavailable");
     const QString first = QFileInfo(m_oddPath).absolutePath() + QStringLiteral("/first.dng");
@@ -3829,6 +3915,21 @@ private:
   QVariant prop(const char* name) const { return m_window->property(name); }
 
   void invoke(const char* method) { QMetaObject::invokeMethod(m_window, method); }
+
+  bool configureRawEditorRecorder() {
+    const QString script = m_scratch.filePath(QStringLiteral("raw-editor-recorder"));
+    QFile handler(script);
+    if (!handler.open(QIODevice::WriteOnly)) return false;
+    handler.write("#!/bin/sh\nprintf '%s' \"$1\" > \"$1.editor-open\"\n");
+    handler.close();
+    if (!handler.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                               QFileDevice::ExeOwner)) return false;
+    auto* editors = qobject_cast<ExternalEditors*>(m_engine->rootContext()
+        ->contextProperty(QStringLiteral("Editors")).value<QObject*>());
+    if (!editors) return false;
+    editors->setCustomCommand(QLatin1Char('"') + script + QLatin1Char('"'));
+    return editors->setPreferred(QStringLiteral("custom"));
+  }
 
   void perform(const QString& id, const QString& path) {
     QMetaObject::invokeMethod(m_window, "perform", Q_ARG(QVariant, id), Q_ARG(QVariant, path),
