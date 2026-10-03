@@ -171,6 +171,30 @@ QUrl ViewerSession::neighbourImageUrl(int offset) const {
   return ::imageUrl(neighbour, FileVersion::key(neighbour));
 }
 
+QString ViewerSession::thumbnailUrl(int index, qreal devicePixelRatio) const {
+  if (index < 0 || index >= count()) {
+    return {};
+  }
+  const QString& file = m_paths.at(index);
+  const QFileInfo info(file);
+  // "image://thumbs/<ratio>[@<seek%>]~<stamp><encoded path>", as the grid
+  // asks for it, so a file already seen there is a disk-cache hit.
+  return QStringLiteral("image://thumbs/%1%2~%3%4")
+      .arg(devicePixelRatio > 0 ? devicePixelRatio : 1.0)
+      .arg(isVideoAt(index) ? QStringLiteral("@40") : QString())
+      .arg(info.lastModified().toMSecsSinceEpoch())
+      .arg(QString::fromUtf8(QUrl::toPercentEncoding(file)));
+}
+
+bool ViewerSession::isVideoAt(int index) const {
+  return index >= 0 && index < count() &&
+         CaptureScanner::isVideo(CaptureScanner::mediaSuffix(m_paths.at(index)));
+}
+
+QString ViewerSession::fileNameAt(int index) const {
+  return index >= 0 && index < count() ? QFileInfo(m_paths.at(index)).fileName() : QString();
+}
+
 bool ViewerSession::neighbourIsVideo(int offset) const {
   return CaptureScanner::isVideo(CaptureScanner::mediaSuffix(neighbourPath(offset)));
 }
@@ -304,6 +328,9 @@ void ViewerSession::setSequence(const QStringList& paths, int index) {
       m_stamp != beforeStamp || m_contentVersion != beforeVersion) {
     emit currentChanged();
   }
+  // Relisting may replace indexed files without changing the count.
+  ++m_sequenceRevision;
+  emit sequenceRevisionChanged();
   // Even an unchanged current file may have new or replaced neighbours.
   refreshPreloads();
 }
