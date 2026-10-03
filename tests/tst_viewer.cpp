@@ -610,6 +610,15 @@ private slots:
     QCOMPARE(prop("effectiveScale").toReal(), scale);
   }
 
+  void videoPosterUsesLogicalDimensions() {
+    open({media(QStringLiteral("clip.mp4"))});
+    QQuickItem* poster = item(QStringLiteral("viewerVideoPoster"));
+    QVERIFY(poster);
+    QVERIFY(!poster->property("source").toUrl().isEmpty());
+    QCOMPARE(poster->property("sourceSize").toSize(),
+             QSize(qRound(poster->width()), qRound(poster->height())));
+  }
+
   void videoPlaysWithPlayerKeysAndOneThinBar() {
     open({media(QStringLiteral("clip.mp4"))});
     QMediaPlayer* player = nullptr;

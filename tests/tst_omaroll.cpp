@@ -5352,6 +5352,13 @@ private slots:
     QCOMPARE(tile.width(), 200);
     QCOMPARE(tile.height(), 150);
 
+    // Provider URLs carry the screen ratio; callers supply logical sizes.
+    for (const qreal ratio : {1.0, 1.5, 2.0}) {
+      const QImage scaled = ThumbnailCache::thumbnail(path, QSize(100, 50), ratio);
+      QCOMPARE(scaled.width(), qRound(100 * ratio));
+      QVERIFY(qAbs(scaled.height() - 75 * ratio) <= 1);
+    }
+
     // A source smaller than the tile is left alone rather than blown up.
     const QImage small = ThumbnailCache::thumbnail(path, QSize(800, 800), 1.0);
     QCOMPARE(small.size(), image.size());

@@ -644,6 +644,32 @@ private slots:
     QCOMPARE(detail->property("path").toString(), shown);
   }
 
+  void videoPosterOnlyLoadsForAnOpenVideo() {
+    QQuickItem* poster = item("detailVideoPoster");
+    QVERIFY(poster);
+    openDetail(m_library->rowOf(QFileInfo(m_oddPath).canonicalFilePath()));
+    QVERIFY(poster->property("source").toUrl().isEmpty());
+
+    int documentRow = -1;
+    int videoRow = -1;
+    for (int row = 0; row < m_library->rowCount(); ++row) {
+      if (m_library->isDocumentAt(row)) documentRow = row;
+      if (m_library->isVideoAt(row)) videoRow = row;
+    }
+    QVERIFY(documentRow >= 0);
+    QVERIFY(videoRow >= 0);
+    invoke("dismissTopLayer");
+    openDetail(documentRow);
+    QVERIFY(poster->property("source").toUrl().isEmpty());
+    invoke("dismissTopLayer");
+    openDetail(videoRow);
+    QVERIFY(!poster->property("source").toUrl().isEmpty());
+    QCOMPARE(poster->property("sourceSize").toSize(),
+             QSize(qRound(poster->width()), qRound(poster->height())));
+    invoke("dismissTopLayer");
+    QTRY_VERIFY(poster->property("source").toUrl().isEmpty());
+  }
+
   void startupReadinessExcludesPlaceholdersAndFailedImages() {
     QQuickItem* grid = item("library");
     const auto viewportReady = [grid] {
@@ -665,9 +691,8 @@ private slots:
     QQuickItem* detail = item("detail");
     QTRY_VERIFY(detail->property("imageReady").toBool());
     const QString missing = m_scratch.filePath(QStringLiteral("missing-image.png"));
-    // Consume exactly the two decoder warnings this negative case provokes.
-    m_expectedQmlWarnings = {QStringLiteral("Cannot open: ") + QUrl::fromLocalFile(missing).toString(),
-                             QStringLiteral("No thumbnail for ") + missing};
+    // Only the still decoder runs; no hidden video poster requests this path.
+    m_expectedQmlWarnings = {QStringLiteral("Cannot open: ") + QUrl::fromLocalFile(missing).toString()};
     detail->setProperty("path", missing);
     QTRY_VERIFY(!detail->property("playbackError").toString().isEmpty());
     QVERIFY(detail->property("stillReady").toBool());
