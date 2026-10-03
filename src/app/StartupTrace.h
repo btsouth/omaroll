@@ -54,7 +54,8 @@ public:
       const int frame = state->synchronized | 1;
       for (const auto& [bit, name] : {std::pair{1, "first_frame"},
                                      std::pair{2, "image_frame"},
-                                     std::pair{4, "grid_frame"}}) {
+                                     std::pair{4, "grid_frame"},
+                                     std::pair{8, "poster_frame"}}) {
         if ((frame & bit) && !(state->reported & bit)) {
           trace.mark(name);
           state->reported |= bit;

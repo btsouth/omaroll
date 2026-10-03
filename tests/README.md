@@ -139,7 +139,11 @@ at entry to `main`, excluding process spawning and dynamic loading before main:
   registered, immediately before QML loading.
 - `first_frame`: first scene-graph frame submitted.
 - `image_frame`: frame submitted after the requested still image reports a
-  successful decode and has nonzero display dimensions.
+  successful decode and has nonzero display dimensions. For videos, the
+  existing milestone uses the player's `hasVideo` track flag; it does not
+  establish decoded pixels or presentation.
+- `poster_frame`: frame submitted with the quick viewer's video thumbnail
+  ready and visible, before the player takes over.
 - `grid_frame`: frame submitted after scanning settles and every cell
   intersecting the viewport has a decoded thumbnail at full opacity. An empty
   library, missing delegate, failed decode or fading thumbnail does not qualify.

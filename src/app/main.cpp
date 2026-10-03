@@ -371,6 +371,12 @@ int main(int argc, char* argv[]) {
     }
   }
 
+  // The chrome follows Omarchy directly. Avoid loading GTK just for its
+  // palette; native folder dialogs still use the configured portal chooser.
+  if (qgetenv("QT_QPA_PLATFORMTHEME") == "gtk3") {
+    qputenv("QT_QPA_PLATFORMTHEME", "xdgdesktopportal");
+  }
+
   QGuiApplication application(argc, argv);
   startup.mark("application");
   QIcon applicationIcon = QIcon::fromTheme(QStringLiteral("io.github.tsouth89.omaroll"));
