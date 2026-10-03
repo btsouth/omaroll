@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 1.12.0
+
+### Changed
+
+- Installation instructions use the signed package repository so Omaroll can
+  update with the rest of the system. Manual release downloads remain available.
+
 ### Fixed
 
 - Gallery thumbnails wait for valid dimensions and hide a previous file's
@@ -27,6 +34,11 @@
   unrelated ratings and captions.
 - Repeated conversion requests share one output check. A helper failure after
   writing media keeps the nonempty output beside the original for review.
+- Reused filesystem identities no longer transfer marks to unrelated files.
+  Recovery checks reuse versioned fingerprints, and legacy backups remain
+  importable when content fingerprints are unavailable.
+- Failed removal of invalid conversion outputs reports an error instead of
+  treating the file as a completed conversion.
 
 ## 1.11.0
 

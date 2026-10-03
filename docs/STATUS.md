@@ -2,8 +2,8 @@
 
 ## Latest release
 
-[Omaroll 1.11.0](https://github.com/btsouth/omaroll/releases/tag/v1.11.0), dated
-2 October 2026. See the [changelog](../CHANGELOG.md#1110) for what it includes.
+[Omaroll 1.12.0](https://github.com/btsouth/omaroll/releases/tag/v1.12.0), dated
+3 October 2026. See the [changelog](../CHANGELOG.md#1120) for what it includes.
 
 The release provides an x86_64 Arch package, source archive and PKGBUILD, with
 checksums and signed build provenance. Installation and verification commands
@@ -14,7 +14,7 @@ are in the [README](../README.md#install-or-update).
 Use the [open pull requests](https://github.com/btsouth/omaroll/pulls) for work
 under review, and the [roadmap](ROADMAP.md) for scope and future decisions.
 Changes for the next release should remain in focused pull requests; the
-published tag identifies the 1.11.0 source.
+published tag identifies the 1.12.0 source.
 
 The [mixed-media baseline](performance/2026-10-02-mixed-media/README.md) records
 startup, whole-library jumps, viewer navigation and the preloading comparison.
