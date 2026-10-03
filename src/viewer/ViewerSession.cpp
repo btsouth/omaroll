@@ -7,6 +7,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QImageReader>
 #include <QLocale>
 #include <QSet>
 #include <QtConcurrent>
@@ -42,6 +43,24 @@ ViewerSession::ViewerSession(QObject* parent) : QObject(parent) {
     if (m_listedGeneration == m_generation) {
       applyListing(m_listing.result());
     }
+  });
+  connect(&m_preloadProbe, &QFutureWatcher<PreloadResult>::finished, this, [this] {
+    m_preloadProbeRunning = false;
+    const PreloadResult result = m_preloadProbe.result();
+    if (result.generation != m_preloadGeneration) {
+      startPreloadProbe();
+      return;
+    }
+    std::array<QUrl, 2> urls;
+    for (size_t i = 0; i < urls.size(); ++i) {
+      const PreloadCandidate& candidate = result.candidates[i];
+      // A replacement after the header was read must not inherit its budget
+      // approval or cache identity. This checks metadata, never image headers.
+      if (!candidate.path.isEmpty() && FileVersion::key(candidate.path) == candidate.version) {
+        urls[i] = ::imageUrl(candidate.path, candidate.version);
+      }
+    }
+    setPreloadUrls(urls);
   });
 }
 
@@ -266,6 +285,8 @@ void ViewerSession::setSequence(const QStringList& paths, int index) {
       m_stamp != beforeStamp || m_contentVersion != beforeVersion) {
     emit currentChanged();
   }
+  // Even an unchanged current file may have new or replaced neighbours.
+  refreshPreloads();
 }
 
 void ViewerSession::setIndex(int index) {
@@ -275,6 +296,85 @@ void ViewerSession::setIndex(int index) {
   m_index = index;
   refreshDetails();
   emit currentChanged();
+  refreshPreloads();
+}
+
+void ViewerSession::setPreloadUrls(const std::array<QUrl, 2>& urls) {
+  if (urls == m_preloadUrls) return;
+  m_preloadUrls = urls;
+  emit preloadsChanged();
+}
+
+void ViewerSession::refreshPreloads() {
+  ++m_preloadGeneration;
+  m_pendingPreloadPaths = {neighbourUrl(1).toLocalFile(), neighbourUrl(-1).toLocalFile()};
+  // A two-file sequence wraps both directions onto the same picture. Also
+  // exclude duplicate paths in an explicit selection, including the current.
+  if (m_pendingPreloadPaths[0] == path()) m_pendingPreloadPaths[0].clear();
+  if (m_pendingPreloadPaths[1] == path() || m_pendingPreloadPaths[1] == m_pendingPreloadPaths[0]) {
+    m_pendingPreloadPaths[1].clear();
+  }
+  std::array<QUrl, 2> retained;
+  for (size_t i = 0; i < retained.size(); ++i) {
+    const QString& neighbour = m_pendingPreloadPaths[i];
+    if (neighbour.isEmpty()) continue;
+    for (const QUrl& approved : m_preloadUrls) {
+      if (approved.toLocalFile() == neighbour &&
+          approved == ::imageUrl(neighbour, FileVersion::key(neighbour))) {
+        retained[i] = approved;
+        break;
+      }
+    }
+  }
+  // Keep only still-relevant approvals while fresh headers are being probed.
+  // The displayed Image has already switched to its original-resolution URL.
+  setPreloadUrls(retained);
+  startPreloadProbe();
+}
+
+void ViewerSession::startPreloadProbe() {
+  if (m_preloadProbeRunning ||
+      (m_pendingPreloadPaths[0].isEmpty() && m_pendingPreloadPaths[1].isEmpty())) return;
+  m_preloadProbeRunning = true;
+  const auto paths = m_pendingPreloadPaths;
+  const quint64 generation = m_preloadGeneration;
+  m_preloadProbe.setFuture(QtConcurrent::run([paths, generation] {
+    return probePreloads(paths, generation);
+  }));
+}
+
+ViewerSession::PreloadResult ViewerSession::probePreloads(const std::array<QString, 2>& paths,
+                                                         quint64 generation) {
+  PreloadResult result;
+  result.generation = generation;
+  // A decoded-pixel estimate per session, not a process RSS limit. Decoder
+  // scratch space, graphics resources and Qt's shared image cache are outside
+  // this budget. Unknown formats reserve Qt's maximum 128 bits per pixel.
+  constexpr quint64 budget = 64 * 1024 * 1024;
+  quint64 remaining = budget;
+  for (size_t i = 0; i < paths.size(); ++i) {
+    const QString& path = paths[i];
+    if (path.isEmpty()) continue;
+    const QString version = FileVersion::key(path);
+    if (version.isEmpty()) continue;
+    const QString suffix = CaptureScanner::mediaSuffix(path);
+    if (!CaptureScanner::isImage(suffix) || suffix == u"gif" || suffix == u"webp") continue;
+    QImageReader reader(path);
+    if (!reader.canRead() || reader.supportsAnimation()) continue;
+    const QSize size = reader.size();
+    if (size.width() <= 0 || size.height() <= 0) continue;
+    const QImage::Format format = reader.imageFormat();
+    const int depth = QImage::toPixelFormat(format).bitsPerPixel();
+    const quint64 bytesPerPixel = depth <= 0 ? 16 : std::max(4, (depth + 7) / 8);
+    // Compare before multiplying so oversized or hostile headers cannot wrap.
+    const quint64 width = quint64(size.width());
+    const quint64 height = quint64(size.height());
+    if (width > remaining / bytesPerPixel / height) continue;
+    if (FileVersion::key(path) != version) continue;
+    remaining -= width * height * bytesPerPixel;
+    result.candidates[i] = {path, version};
+  }
+  return result;
 }
 
 void ViewerSession::refreshDetails() {

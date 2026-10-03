@@ -3,6 +3,9 @@
 #include <QQuickAsyncImageProvider>
 #include <QThreadPool>
 
+#include <atomic>
+#include <memory>
+
 // Serves thumbnails to QML off the GUI thread, so scrolling a large library
 // never blocks on a decode.
 //
@@ -15,11 +18,13 @@ public:
   static constexpr const char* kProviderId = "thumbs";
 
   ThumbnailProvider();
+  ~ThumbnailProvider() override;
   void shutdown();
 
   QQuickImageResponse* requestImageResponse(const QString& id,
                                             const QSize& requestedSize) override;
 
 private:
+  std::shared_ptr<std::atomic_bool> m_stopping = std::make_shared<std::atomic_bool>(false);
   QThreadPool m_pool;
 };

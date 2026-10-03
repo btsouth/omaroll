@@ -200,6 +200,12 @@ for the loader's fade to finish. Decoder errors, QML errors and 30-second
 operation timeouts fail the run. These are deliberate jumps, not continuous wheel scrolling. Retain stderr for actual `QSG_INFO`
 driver details beside JSON.
 
+Add `--burst-jumps 24` to issue gallery jumps 16 ms apart before the normal
+passes. The extra sample measures from the first input until the final viewport
+at the end of the library is ready. Intermediate viewports deliberately do not
+settle. Timer delivery can be delayed by rendering or other GUI work, so this
+measures the complete burst and final settling, not a fixed-duration input trace.
+
 The 10 ms heartbeat reports the largest interval between GUI callbacks, not
 pure blocking time. RSS samples belong to the whole benchmark process; its
 viewer phase follows the gallery phase and includes retained allocations.
@@ -214,6 +220,8 @@ disposable. Do not point these probes at personal media.
 
 The [startup follow-up](../docs/performance/2026-09-05-startup/README.md) records
 content-ready timing and the deferred-video comparison.
+The [bounded-work follow-up](../docs/performance/2026-10-03-bounded-media/README.md)
+records mixed-media navigation and rapid-jump comparisons.
 
 A [recorded development baseline](../docs/performance/2026-09-05/README.md)
 includes raw results and the measurements still outstanding.

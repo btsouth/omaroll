@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- The viewer bounds neighboring photo preloads while keeping originals at full
+  resolution. Canceled thumbnails stop obsolete helper work, and queued
+  requests finish during shutdown.
 - Gallery photo and document details avoid an unused video-poster decode.
   Gallery and viewer video posters apply display scaling once.
 - The gallery restores keyboard navigation after empty search results and
