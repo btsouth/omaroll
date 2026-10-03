@@ -10,9 +10,9 @@ See [project status](STATUS.md) for the latest release and current work.
 
 - Refine the quick viewer and library together: navigation, search, selection,
   clear feedback, and controls that work in narrow windows and both themes.
-- Build on the [bounded-work measurements](performance/2026-10-03-bounded-media/README.md)
-  to investigate visible-thumbnail priorities and continuous scrolling.
-  Keep submitted frames separate from desktop presentation and physical audio.
+- Use the [continuous-input comparison](performance/2026-10-03-gallery-loading/README.md)
+  when evaluating gallery scheduling. Preserve cached navigation and distinguish
+  submitted frames from desktop presentation and physical audio.
 - Improve desktop integration and reliability from reproducible problems and
   user feedback. Preserve originals and keep specialist editing in the
   existing tools.

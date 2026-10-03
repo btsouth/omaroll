@@ -38,6 +38,7 @@
 #include <QJsonObject>
 #include <QMediaDevices>
 #include <QMediaPlayer>
+#include <QPointingDevice>
 #include <QProcess>
 #include <QQmlComponent>
 #include <QQmlContext>
@@ -54,6 +55,7 @@
 #include <QTimer>
 #include <QVideoFrame>
 #include <QVideoSink>
+#include <QWheelEvent>
 #include <QtTest>
 
 #include <algorithm>
@@ -107,6 +109,10 @@ public:
   QString fatal;
   quint64 generation = 0;
   QQuickWindow* window = nullptr;
+  // GUI readiness is latched at sync and counted only for submitted frames.
+  // -1 disables observation; 0/1 indicate an incomplete/complete viewport.
+  std::function<int()> frameObservation;
+  std::atomic<quint64> observedFrames{0}, completeFrames{0};
 
   Measurements() {
     clock.start();
@@ -131,21 +137,38 @@ public:
   }
 
   void watch(QQuickWindow* target) {
-    struct State { std::atomic<quint64> ready{0}; quint64 synchronized = 0, reported = 0; };
+    struct State {
+      std::atomic<quint64> ready{0};
+      quint64 synchronized = 0, reported = 0;
+      std::atomic<int> observation{-1};
+      int synchronizedObservation = -1;
+    };
     auto state = std::make_shared<State>();
     connect(target, &QQuickWindow::afterAnimating, this, [this, target, state] {
       state->ready.store(active && window == target && fatal.isEmpty() && ready && ready()
                              ? generation : 0);
+      state->observation.store(active && window == target && frameObservation ? frameObservation() : -1);
     });
     connect(target, &QQuickWindow::beforeSynchronizing, target, [state] {
       state->synchronized = state->ready.load();
+      state->synchronizedObservation = state->observation.load();
     }, Qt::DirectConnection);
     connect(target, &QQuickWindow::afterFrameEnd, this, [this, state] {
+      if (state->synchronizedObservation >= 0) {
+        ++observedFrames;
+        if (state->synchronizedObservation == 1) ++completeFrames;
+      }
       const quint64 id = state->synchronized;
       if (!id || id == state->reported) return;
       state->reported = id;
       const qint64 submitted = clock.nsecsElapsed();
-      QMetaObject::invokeMethod(this, [this, id, submitted] {
+      const quint64 observed = observedFrames.load(), complete = completeFrames.load();
+      QMetaObject::invokeMethod(this, [this, id, submitted, observed, complete] {
+        if (active && id == generation && sample[u"operation"_s] == u"gallery_wheel"_s) {
+          sample[u"submitted_frames_during_input"_s] = qint64(observed);
+          sample[u"complete_viewport_frames_during_input"_s] = qint64(complete);
+          if (observed == 0) fatal = u"Synthetic touchpad input submitted no observed frames"_s;
+        }
         finish(id, submitted, u"ready"_s, {});
       }, Qt::QueuedConnection);
     }, Qt::DirectConnection);
@@ -225,6 +248,7 @@ int main(int argc, char** argv) {
                      {{u"without-prefetch"_s}, u"Diagnostic comparison: disable viewer neighbor preloads"_s},
                      {{u"steps"_s}, u"Gallery page jumps per pass"_s, u"count"_s, u"12"_s},
                      {{u"burst-jumps"_s}, u"Optional rapid gallery jumps, 16 ms apart, before the normal passes"_s, u"count"_s, u"0"_s},
+                     {{u"wheel-steps"_s}, u"Optional synthetic touchpad updates, 40 pixels every 16 ms, before normal passes"_s, u"count"_s, u"0"_s},
                      {{u"viewer-files"_s}, u"Ordered seed path, repeat for each file (default: seeds/ name order)"_s, u"file"_s}});
   parser.process(app);
   const QDir fixture(parser.value(u"library"_s));
@@ -232,9 +256,12 @@ int main(int argc, char** argv) {
   const int steps = parser.value(u"steps"_s).toInt(&validSteps);
   bool validBurst = false;
   const int burstJumps = parser.value(u"burst-jumps"_s).toInt(&validBurst);
+  bool validWheel = false;
+  const int wheelSteps = parser.value(u"wheel-steps"_s).toInt(&validWheel);
   if (!parser.isSet(u"library"_s) || !QFileInfo(fixture.filePath(u"library"_s)).isDir()
       || !validSteps || steps < 1 || steps > 1000 || !validBurst || burstJumps < 0
-      || burstJumps > 1000 || !parser.positionalArguments().isEmpty()) parser.showHelp(2);
+      || burstJumps > 1000 || !validWheel || wheelSteps < 0 || wheelSteps > 1000
+      || (wheelSteps > 0 && burstJumps > 0) || !parser.positionalArguments().isEmpty()) parser.showHelp(2);
   QStringList seeds = parser.values(u"viewer-files"_s), files;
   QJsonArray skippedSeeds;
   if (seeds.isEmpty()) {
@@ -327,6 +354,7 @@ int main(int argc, char** argv) {
                      {u"metadata_enabled"_s, true}, {u"viewer_order"_s, QJsonArray::fromStringList(files)}};
   result[u"viewer_prefetch_enabled"_s] = !parser.isSet(u"without-prefetch"_s);
   result[u"gallery_burst_jumps"_s] = burstJumps;
+  result[u"gallery_wheel_steps"_s] = wheelSteps;
   result[u"video_frame_verification"_s] = u"32x18 first-frame RGB reference; mean channel error <=12 and >=2 closer than every other video; references prepared outside timers"_s;
   std::function<void()> galleryNext, viewerNext;
   int galleryStep = 0, viewerStep = 0;
@@ -480,6 +508,67 @@ int main(int argc, char** argv) {
       result[u"gallery_maximum_content_y"_s] = maximumContentY;
       if (maximumContentY < steps * pageHeight || pageHeight <= 0) {
         run.failed = true; run.fatal = u"Fixture needs at least steps+1 gallery viewports"_s; QCoreApplication::quit();
+      } else if (wheelSteps > 0) {
+        auto* ticks = new QTimer(&run);
+        ticks->setInterval(16);
+        ticks->setTimerType(Qt::PreciseTimer);
+        auto dispatched = std::make_shared<int>(0);
+        auto inputClock = std::make_shared<QElapsedTimer>();
+        auto device = std::make_shared<QPointingDevice>(u"benchmark touchpad"_s, 4243,
+            QInputDevice::DeviceType::TouchPad, QPointingDevice::PointerType::Finger,
+            QInputDevice::Capability::Position | QInputDevice::Capability::Scroll, 1, 3);
+        const double before = viewport->property("contentY").toDouble();
+        const double expectedDisplacement = std::min(wheelSteps * 40.0, maximumContentY - before);
+        const QPointF at = viewport->mapToScene(QPointF(viewport->width() / 2, viewport->height() / 2));
+        auto sendWheel = [&, at, device, inputClock](Qt::ScrollPhase phase) {
+          const QPoint delta = phase == Qt::ScrollUpdate ? QPoint(0, -40) : QPoint();
+          // Qt's delivery agent skips angle-less ScrollUpdate events after
+          // an accepted event as compatibility duplicates. Supply both deltas;
+          // Flickable still uses pixelDelta for this phased, synthesized input.
+          QWheelEvent event(at, gallery->mapToGlobal(at.toPoint()), delta, delta,
+              Qt::NoButton, Qt::NoModifier, phase, false, Qt::MouseEventSynthesizedBySystem, device.get());
+          // Flickable computes velocity from event timestamps and treats
+          // platform-synthesized touchpad events as pixel deltas.
+          event.setTimestamp(inputClock->elapsed() + 1);
+          QCoreApplication::sendEvent(gallery, &event);
+        };
+        auto update = [&, ticks, dispatched, inputClock, sendWheel] {
+          sendWheel(Qt::ScrollUpdate);
+          if (++*dispatched == wheelSteps) {
+            ticks->stop();
+            sendWheel(Qt::ScrollEnd);
+            run.sample[u"input_delivery_ms"_s] = inputClock->nsecsElapsed() / 1e6;
+          }
+        };
+        QObject::connect(ticks, &QTimer::timeout, &run, update);
+        run.observedFrames = 0;
+        run.completeFrames = 0;
+        run.frameObservation = [&, dispatched] {
+          if (*dispatched == wheelSteps) return -1;
+          QVariant ready;
+          QMetaObject::invokeMethod(grid, "viewportReady", Q_RETURN_ARG(QVariant, ready));
+          return ready.toBool() ? 1 : 0;
+        };
+        run.measure(u"gallery_wheel"_s, u"cold_cache"_s, [&, ticks, inputClock, sendWheel, update] {
+          run.sample[u"requested_updates"_s] = wheelSteps;
+          run.sample[u"pixel_delta_per_update"_s] = -40;
+          run.sample[u"expected_displacement_px"_s] = expectedDisplacement;
+          inputClock->start();
+          sendWheel(Qt::ScrollBegin);
+          ticks->start();
+        }, [&, dispatched, before, expectedDisplacement] {
+          if (*dispatched != wheelSteps || viewport->property("moving").toBool()) return false;
+          const double displacement = viewport->property("contentY").toDouble() - before;
+          run.sample[u"scroll_displacement_px"_s] = displacement;
+          if (displacement < expectedDisplacement * 0.8) {
+            run.fatal = u"Synthetic touchpad input moved %1 px; expected at least %2 px"_s
+                .arg(displacement).arg(expectedDisplacement * 0.8);
+            return false;
+          }
+          QVariant ready;
+          QMetaObject::invokeMethod(grid, "viewportReady", Q_RETURN_ARG(QVariant, ready));
+          return !captures->scanning() && ready.toBool();
+        }, [&, ticks] { run.frameObservation = {}; ticks->deleteLater(); galleryNext(); });
       } else if (burstJumps == 0) galleryNext();
       else {
         // Measure from the first input through a ready final viewport. Earlier
