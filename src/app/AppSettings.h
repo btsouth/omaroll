@@ -123,6 +123,7 @@ public:
   Q_INVOKABLE void clearVideoPosition(const QString& path);
 
   [[nodiscard]] qreal videoVolume() const { return m_videoVolume; }
+  Q_INVOKABLE void prepareVideoPlayback() const;
   void setVideoVolume(qreal value);
   [[nodiscard]] bool videoMuted() const { return m_videoMuted; }
   void setVideoMuted(bool value);

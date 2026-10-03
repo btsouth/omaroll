@@ -16,6 +16,7 @@
 #include "app/AppSettings.h"
 #include "app/DemoLibrary.h"
 #include "app/HeadlessAudio.h"
+#include "app/VideoPlayback.h"
 #include "library/CaptureFilterModel.h"
 #include "library/CaptureModel.h"
 #include "library/DuplicateIndex.h"
@@ -4597,6 +4598,7 @@ private:
 // session this would open a real window on the desktop, be resized by the
 // tiling compositor, and click the wrong things.
 int main(int argc, char* argv[]) {
+  configureVideoPlayback();
   disableHeadlessAudio();
   qputenv("QT_QPA_PLATFORM", "offscreen");
   QGuiApplication application(argc, argv);

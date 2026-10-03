@@ -13,6 +13,7 @@
 #include "app/AppSettings.h"
 #include "app/DemoLibrary.h"
 #include "app/HeadlessAudio.h"
+#include "app/VideoPlayback.h"
 #include "library/MediaInspector.h"
 #include "sources/FileVersion.h"
 #include "subtitles/SubtitleIndex.h"
@@ -44,10 +45,14 @@
 #include <QMediaPlayer>
 #include <QPointingDevice>
 #include <QProcess>
+#include <QVideoFrame>
+#include <QVideoSink>
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
+#include <QQmlProperty>
 #include <QQuickItem>
+#include <QQuickImageProvider>
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
@@ -63,7 +68,39 @@
 
 #include <algorithm>
 #include <functional>
+#include <atomic>
 #include <memory>
+
+class StartupPosterProvider final : public QQuickImageProvider {
+public:
+  StartupPosterProvider() : QQuickImageProvider(QQuickImageProvider::Image) {}
+
+  QImage requestImage(const QString& id, QSize* size, const QSize&) override {
+    QThread::msleep(id.toULong());
+    QImage image(160, 90, QImage::Format_RGB32);
+    image.fill(QColor(30, 140, 210));
+    *size = image.size();
+    return image;
+  }
+};
+
+class StartupPlayerProbe final : public QObject {
+  Q_OBJECT
+public:
+  QQuickWindow* window = nullptr;
+  std::atomic<int> posterFrames{0};
+  int framesAtCreation = -1;
+  QQuickItem* poster = nullptr;
+  int posterStatusAtCreation = -1;
+
+public slots:
+  void playerChanged() {
+    if (window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))) {
+      framesAtCreation = posterFrames.load();
+      posterStatusAtCreation = poster->property("status").toInt();
+    }
+  }
+};
 
 // Collects PropertiesChanged and Seeked from the bus, which QSignalSpy cannot
 // attach to.
@@ -150,6 +187,7 @@ private slots:
     m_engine->addImportPath(QStringLiteral(OMAROLL_QML_IMPORT_PATH));
     m_thumbnails = new ThumbnailProvider;
     m_engine->addImageProvider(QLatin1String(ThumbnailProvider::kProviderId), m_thumbnails);
+    m_engine->addImageProvider(QStringLiteral("startup-poster"), new StartupPosterProvider);
     m_raws = new RawImageProvider;
     m_engine->addImageProvider(QLatin1String(RawImageProvider::kProviderId), m_raws);
 
@@ -529,6 +567,85 @@ private slots:
     QCOMPARE(requested.first().first().toString(), target);
     m_settings->setFavorite({target}, false);
     m_window->close();
+  }
+
+  void videoStartupSubmitsThePosterBeforeCreatingThePlayer_data() {
+    QTest::addColumn<QString>("posterSource");
+    QTest::addColumn<bool>("expectPoster");
+    QTest::newRow("asynchronous-poster") << QStringLiteral("image://startup-poster/90") << true;
+    QTest::newRow("slow-poster-fallback") << QStringLiteral("image://startup-poster/600") << false;
+    QTest::newRow("missing-poster-fallback") << QString() << false;
+  }
+
+  void videoStartupSubmitsThePosterBeforeCreatingThePlayer() {
+    QFETCH(QString, posterSource);
+    QFETCH(bool, expectPoster);
+    ViewerSession session;
+    QQmlContext context(m_context);
+    context.setContextProperty(QStringLiteral("Session"), &session);
+    QQmlComponent component(m_engine);
+    component.loadFromModule("Omaroll", "Viewer");
+    std::unique_ptr<QObject> root(component.beginCreate(&context));
+    QVERIFY2(root, qPrintable(component.errorString()));
+    auto* window = qobject_cast<QQuickWindow*>(root.get());
+    QVERIFY(window);
+    auto* poster = find(window->contentItem(), [](QQuickItem* item) {
+      return item->objectName() == QStringLiteral("viewerVideoPoster");
+    });
+    QVERIFY(poster);
+
+    std::atomic<bool> readyAtSync{false};
+    bool synchronized = false;
+    StartupPlayerProbe probe;
+    probe.window = window;
+    probe.poster = poster;
+    QVERIFY(connect(window, SIGNAL(playerChanged()), &probe, SLOT(playerChanged())));
+    const auto sample = connect(window, &QQuickWindow::afterAnimating, this, [&] {
+      readyAtSync.store(poster->property("status").toInt() == 1);
+    });
+    const auto sync = connect(window, &QQuickWindow::beforeSynchronizing, window, [&] {
+      synchronized = readyAtSync.load();
+    }, Qt::DirectConnection);
+    bool delayed = false;
+    const auto delay = connect(window, &QQuickWindow::beforeRendering, window, [&] {
+      // Let thumbnail readiness change while an older frame is still being
+      // rendered. A queued completion must retain that older frame's state.
+      if (expectPoster && !delayed && QThread::currentThread() != window->thread()) {
+        delayed = true;
+        QThread::msleep(150);
+      }
+    }, Qt::DirectConnection);
+    const auto submitted = connect(window, &QQuickWindow::afterFrameEnd, window, [&] {
+      if (synchronized) ++probe.posterFrames;
+    }, Qt::DirectConnection);
+    const auto disconnect = qScopeGuard([&] {
+      QObject::disconnect(sample);
+      QObject::disconnect(sync);
+      QObject::disconnect(delay);
+      QObject::disconnect(submitted);
+      window->hide();
+    });
+
+    // Component completion attaches the production watcher. Register our
+    // submission counter first, before it can queue startup to the GUI.
+    component.completeCreate();
+    QVERIFY2(!component.isError(), qPrintable(component.errorString()));
+    // Remove the normal source binding so session changes cannot replace the
+    // controlled thumbnail with a real decoder request.
+    QVERIFY(QQmlProperty::write(poster, QStringLiteral("source"), QUrl(posterSource)));
+    session.open({media(QStringLiteral("clip.mp4"))});
+    window->show();
+    QTRY_VERIFY_WITH_TIMEOUT(probe.framesAtCreation >= 0, 5000);
+    if (expectPoster) {
+      QVERIFY2(probe.framesAtCreation > 0,
+               qPrintable(QStringLiteral("The player started before a poster frame was submitted (status %1)")
+                              .arg(probe.posterStatusAtCreation)));
+    } else {
+      QCOMPARE(probe.framesAtCreation, 0);
+    }
+    auto* player = window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"));
+    QVERIFY(player);
+    QTRY_COMPARE_WITH_TIMEOUT(player->playbackState(), QMediaPlayer::PlayingState, 5000);
   }
 
   void replacedVideoReopensTheSamePath() {
@@ -1064,11 +1181,22 @@ private slots:
     player->pause();
   }
 
-  // The containers Omarchy hands to its default video player beyond the
-  // common ones, encoded here so the check needs no checked-in media.
+  // Video codecs and containers encoded here so the check needs no downloads.
   void lessCommonContainersPlay_data() {
     QTest::addColumn<QString>("name");
     QTest::addColumn<QStringList>("codec");
+    QTest::newRow("h264-mp4") << QStringLiteral("clip.mp4")
+                              << QStringList{QStringLiteral("libx264")};
+    QTest::newRow("hevc-mp4") << QStringLiteral("clip-hevc.mp4")
+                              << QStringList{QStringLiteral("libx265"), QStringLiteral("-threads"),
+                                             QStringLiteral("1"), QStringLiteral("-x265-params"),
+                                             QStringLiteral("pools=1:frame-threads=1")};
+    QTest::newRow("vp9-webm") << QStringLiteral("clip.webm")
+                              << QStringList{QStringLiteral("libvpx-vp9")};
+    QTest::newRow("mpeg4-avi") << QStringLiteral("clip.avi")
+                               << QStringList{QStringLiteral("mpeg4")};
+    QTest::newRow("mpeg2-mts") << QStringLiteral("clip.mts")
+                              << QStringList{QStringLiteral("mpeg2video")};
     QTest::newRow("asf") << QStringLiteral("clip.asf") << QStringList{QStringLiteral("wmv2")};
     QTest::newRow("ogm") << QStringLiteral("clip.ogm")
                          << QStringList{QStringLiteral("libtheora"), QStringLiteral("-f"),
@@ -1106,6 +1234,7 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(player->playbackState() == QMediaPlayer::PlayingState, 5000);
     QCOMPARE(player->error(), QMediaPlayer::NoError);
     QVERIFY(player->hasVideo());
+    QTRY_VERIFY_WITH_TIMEOUT(player->videoSink() && player->videoSink()->videoFrame().isValid(), 5000);
     if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
       QTRY_VERIFY_WITH_TIMEOUT(renderedVideoHasColor(), 5000);
     }
@@ -1990,6 +2119,7 @@ private:
 // Offscreen unconditionally, not just under ctest. Run by hand on a live
 // session this would open a real window on the desktop.
 int main(int argc, char* argv[]) {
+  configureVideoPlayback();
   disableHeadlessAudio();
   qputenv("QT_QPA_PLATFORM", "offscreen");
   QGuiApplication application(argc, argv);

@@ -1,4 +1,5 @@
 #include "actions/ActionLauncher.h"
+#include "app/VideoPlayback.h"
 
 #include <QClipboard>
 #include <QDir>
@@ -73,7 +74,11 @@ bool ActionLauncher::runDetached(const QString& program, const QStringList& argu
     return false;
   }
 
-  if (!QProcess::startDetached(executable, arguments)) {
+  QProcess process;
+  process.setProgram(executable);
+  process.setArguments(arguments);
+  process.setProcessEnvironment(externalProcessEnvironment());
+  if (!process.startDetached()) {
     emit failed(u"Could not start %1"_s.arg(program));
     return false;
   }
@@ -95,6 +100,7 @@ bool ActionLauncher::startSubmission(const QString& program, const QStringList& 
   if (executable.isEmpty()) return false;
 
   auto* process = new QProcess(this);
+  process->setProcessEnvironment(externalProcessEnvironment());
   process->setProgram(executable);
   process->setArguments(arguments);
   // No interactive stdin, and no shell interpolation of paths or arguments.
@@ -170,6 +176,7 @@ bool ActionLauncher::runTracked(const QString& program, const QStringList& argum
   }
 
   auto* process = new QProcess(this);
+  process->setProcessEnvironment(externalProcessEnvironment());
   process->setProgram(executable);
   process->setArguments(arguments);
 
@@ -254,6 +261,7 @@ bool ActionLauncher::copyText(const QString& text, bool sensitive, const QString
       arguments << u"--type"_s << mimeType;
     }
     QProcess process;
+    process.setProcessEnvironment(externalProcessEnvironment());
     process.start(wlCopy, arguments);
     process.write(text.toUtf8());
     process.closeWriteChannel();
@@ -307,6 +315,7 @@ bool ActionLauncher::captureTextToClipboard(const QString& program, const QStrin
   // Asynchronous: tesseract on a full-screen capture can take a few seconds,
   // and the window has to stay live while it works.
   auto* process = new QProcess(this);
+  process->setProcessEnvironment(externalProcessEnvironment());
   process->setProgram(executable);
   process->setArguments(arguments);
 

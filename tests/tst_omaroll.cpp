@@ -4,6 +4,7 @@
 #include "app/AppSettings.h"
 #include "app/DemoLibrary.h"
 #include "app/HeadlessAudio.h"
+#include "app/VideoPlayback.h"
 #include "app/SingleInstance.h"
 #include "app/OpenRequest.h"
 #include <QLocalSocket>
@@ -209,6 +210,66 @@ class OmarollTest : public QObject {
   Q_OBJECT
 
 private slots:
+  void playbackEnvironment_data() {
+    QTest::addColumn<bool>("decodeSet");
+    QTest::addColumn<QString>("decode");
+    QTest::addColumn<bool>("encodeSet");
+    QTest::addColumn<QString>("encode");
+    QTest::addColumn<bool>("cudaAvailable");
+    QTest::newRow("nvidia-defaults") << false << QString() << false << QString() << true;
+    QTest::newRow("no-cuda-defaults") << false << QString() << false << QString() << false;
+    QTest::newRow("custom-decoder") << true << QStringLiteral("vulkan") << false << QString() << false;
+    QTest::newRow("explicit-cuda") << true << QStringLiteral("cuda") << false << QString() << false;
+    QTest::newRow("custom-encoder") << false << QString() << true << QStringLiteral("vaapi") << false;
+    QTest::newRow("software") << true << QStringLiteral(",") << true << QStringLiteral(",") << false;
+    QTest::newRow("explicit-empty") << true << QStringLiteral("") << true << QStringLiteral("") << false;
+  }
+
+  void cudaPrecheckRejectsMissingPrerequisites() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString marker = directory.filePath(QStringLiteral("driver-marker"));
+    const QString library = directory.filePath(QStringLiteral("missing.so"));
+    QVERIFY(!VideoPlaybackEnvironment::cudaDriverAvailable(marker, library));
+    QFile file(marker);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.close();
+    QVERIFY(!VideoPlaybackEnvironment::cudaDriverAvailable(marker, library));
+  }
+
+  void playbackEnvironment() {
+    QFETCH(bool, decodeSet);
+    QFETCH(QString, decode);
+    QFETCH(bool, encodeSet);
+    QFETCH(QString, encode);
+    QFETCH(bool, cudaAvailable);
+    const QString decodeKey = QStringLiteral("QT_FFMPEG_DECODING_HW_DEVICE_TYPES");
+    const QString encodeKey = QStringLiteral("QT_FFMPEG_ENCODING_HW_DEVICE_TYPES");
+    QProcessEnvironment inherited;
+    inherited.insert(QStringLiteral("PULSE_SERVER"), QStringLiteral("unix:/nonexistent"));
+    if (decodeSet) inherited.insert(decodeKey, decode);
+    if (encodeSet) inherited.insert(encodeKey, encode);
+    const VideoPlaybackEnvironment policy(inherited);
+    auto playback = policy.playbackEnvironment(cudaAvailable);
+#ifdef Q_OS_LINUX
+    const QString defaultDecode = cudaAvailable ? QStringLiteral("cuda,vaapi") : QStringLiteral("vaapi");
+    QCOMPARE(playback.value(decodeKey), decodeSet ? decode : defaultDecode);
+    QCOMPARE(playback.value(encodeKey), encodeSet ? encode : QStringLiteral(","));
+#else
+    QCOMPARE(playback, inherited);
+#endif
+    // Preserve later safety/profile settings, while child apps receive the
+    // original hardware overrides, including unset versus explicitly empty.
+    playback.insert(QStringLiteral("PIPEWIRE_REMOTE"), QStringLiteral("omaroll-no-audio"));
+    const auto external = policy.externalEnvironment(playback);
+    QCOMPARE(external.contains(decodeKey), decodeSet);
+    QCOMPARE(external.contains(encodeKey), encodeSet);
+    if (decodeSet) QCOMPARE(external.value(decodeKey), decode);
+    if (encodeSet) QCOMPARE(external.value(encodeKey), encode);
+    QCOMPARE(external.value(QStringLiteral("PULSE_SERVER")), QStringLiteral("unix:/nonexistent"));
+    QCOMPARE(external.value(QStringLiteral("PIPEWIRE_REMOTE")), QStringLiteral("omaroll-no-audio"));
+  }
+
   // Settings and the thumbnail cache both write to the home directory. Point
   // them at a scratch tree so a test run cannot touch a real library's marks.
   void initTestCase() {

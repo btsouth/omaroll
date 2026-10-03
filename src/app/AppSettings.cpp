@@ -1,4 +1,5 @@
 #include "app/AppSettings.h"
+#include "app/VideoPlayback.h"
 
 #include "library/CaptureRecord.h"
 
@@ -527,6 +528,10 @@ void AppSettings::setVideoVolume(qreal value) {
   m_videoVolume = bounded;
   m_settings.setValue(kVideoVolume, bounded);
   emit videoVolumeChanged();
+}
+
+void AppSettings::prepareVideoPlayback() const {
+  configureVideoPlayback();
 }
 
 void AppSettings::setVideoMuted(bool value) {

@@ -155,7 +155,9 @@ ApplicationWindow {
     // Called by the opt-in startup trace, before scene synchronization.
     function startupReadiness() {
         if (root.imageReady) return 2
-        return Session.isVideo && root.player && root.player.hasVideo ? 2 : 0
+        const poster = Session.isVideo && videoPoster.visible && videoPoster.status === Image.Ready
+        return (Session.isVideo && root.player && root.player.hasVideo ? 2 : 0)
+            | (poster ? 8 : 0)
     }
 
     function revealChrome() {
@@ -673,27 +675,44 @@ ApplicationWindow {
         }
     }
 
-    // The multimedia backend and audio take a noticeable moment to start, and
-    // creating the player is synchronous. A video's window shows first, with
-    // its thumbnail, and the player starts once that frame is on screen, so a
-    // video opens as quickly as a picture. The timer covers a frame that never
-    // comes, such as a window still hidden.
+    // Creating the multimedia backend is synchronous. Let a frame containing
+    // the poster finish submission, then start the player on the next GUI
+    // turn. A missing or slow thumbnail must not prevent playback.
+    property int playerStartGeneration: 0
+    Component.onCompleted: Session.watchVideoStartup(root)
     function startPlayerSoon() {
         if (!playerLoader.active) {
+            ++root.playerStartGeneration
             playerStart.restart()
         }
+    }
+    function queuePlayerStart() {
+        playerStart.stop()
+        const generation = root.playerStartGeneration
+        Qt.callLater(function () {
+            if (generation === root.playerStartGeneration) root.startPlayer()
+        })
     }
     function startPlayer() {
         playerStart.stop()
         if (Session.isVideo && !playerLoader.active) {
+            Settings.prepareVideoPlayback()
             playerLoader.active = true
         }
     }
-    onFrameSwapped: if (playerStart.running) root.startPlayer()
+    function videoStartupReadiness() {
+        return playerStart.running && root.visible && Session.isVideo
+            && videoPoster.status === Image.Ready ? root.playerStartGeneration : 0
+    }
+    function startPlayerAfterPoster(generation) {
+        if (playerStart.running && generation === root.playerStartGeneration) {
+            root.queuePlayerStart()
+        }
+    }
     Timer {
         id: playerStart
         interval: 250
-        onTriggered: root.startPlayer()
+        onTriggered: root.queuePlayerStart()
     }
 
     onInfoOpenChanged: {
@@ -925,6 +944,7 @@ ApplicationWindow {
 
         // A recording shows its thumbnail until the first frame is decoded.
         Image {
+            id: videoPoster
             objectName: "viewerVideoPoster"
             anchors.fill: parent
             visible: Session.isVideo && !(root.player && root.player.hasVideo)

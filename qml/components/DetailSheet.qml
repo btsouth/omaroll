@@ -40,7 +40,10 @@ Item {
     // backend just to browse pictures. Loader creation is synchronous.
     readonly property var player: playerLoader.item
     readonly property var audio: player ? player.audioOutput : null
-    onIsVideoChanged: if (isVideo) playerLoader.active = true
+    onIsVideoChanged: if (isVideo) {
+        Settings.prepareVideoPlayback()
+        playerLoader.active = true
+    }
     property bool isDocument: false
     property int pdfPage: 1
     property int pdfMatchIndex: 0
