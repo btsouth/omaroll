@@ -5472,7 +5472,7 @@ private slots:
     const QString logPath = dir.filePath(QStringLiteral("folder.log"));
     QVERIFY(qputenv("PATH", dir.path().toUtf8()));
     QVERIFY(qputenv("OMAROLL_TEST_LOG", logPath.toUtf8()));
-    ActionLauncher launcher;
+    ActionLauncher launcher(nullptr, QDBusConnection(QString()));
     ActionRegistry registry(&launcher);
     QVERIFY(registry.available(QStringLiteral("files"))); // No Nautilus in PATH.
     QVERIFY(registry.run(QStringLiteral("files"), path));

@@ -749,6 +749,13 @@ private slots:
     const QString shown = detail->property("path").toString();
     QCOMPARE(shown, pathAt(0));
 
+    // Mouse side buttons navigate media without taking normal clicks.
+    const QPoint at = centre(detail);
+    QTest::mouseClick(m_window, Qt::ForwardButton, Qt::NoModifier, at);
+    QTRY_VERIFY(detail->property("path").toString() != shown);
+    QTest::mouseClick(m_window, Qt::BackButton, Qt::NoModifier, at);
+    QTRY_COMPARE(detail->property("path").toString(), shown);
+
     // Two quick clicks on Rotate: two rotations, and never the double-tap that
     // used to open whatever tile sat under the button.
     QQuickItem* rotate = nullptr;
@@ -1073,7 +1080,11 @@ private slots:
     QTRY_VERIFY(detail->property("stillReady").toBool());
     QTRY_COMPARE(item("transparencyGrid")->property("status").toInt(), 1);
 
-    click(item("actualSizeButton"));
+    QTest::keyClick(m_window, Qt::Key_1);
+    QTRY_VERIFY(qAbs(detail->property("displayedImageScale").toDouble() - 1.0) < 0.01);
+    QTest::keyClick(m_window, Qt::Key_1);
+    QTRY_COMPARE(detail->property("imageZoom").toDouble(), 1.0);
+    QTest::keyClick(m_window, Qt::Key_1);
     QTRY_VERIFY(qAbs(detail->property("displayedImageScale").toDouble() - 1.0) < 0.01);
     click(item("flipHorizontalButton"));
     click(item("flipVerticalButton"));

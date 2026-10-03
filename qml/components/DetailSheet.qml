@@ -413,6 +413,15 @@ Item {
         Qt.callLater(stillViewport.centerContent)
     }
 
+    function toggleActualImageSize() {
+        if (Math.abs(root.imageZoom - 1.0) <= 0.001) {
+            root.showActualImageSize()
+        } else {
+            root.imageZoom = 1.0
+            Qt.callLater(stillViewport.centerContent)
+        }
+    }
+
     function rotateImage() {
         imageRotation = (imageRotation + 90) % 360
         imageZoom = 1.0
@@ -2810,6 +2819,19 @@ Item {
         onSingleTapped: function(point) { root.openImageContextMenu(point.position.x, point.position.y) }
     }
 
+    // Mouse side buttons navigate the same files as Left and Right. This is
+    // deliberately only those two buttons: clicks, video controls and PDF
+    // selection keep their existing meaning.
+    MouseArea {
+        objectName: "detailSideButtonNavigation"
+        anchors.fill: parent
+        acceptedButtons: Qt.BackButton | Qt.ForwardButton
+        enabled: root.visible && root.canNavigate && !root.contextMenuOpen
+                 && !root.actionNavigationActive && !root.pdfSelectMode
+        onClicked: function (mouse) {
+            root.requestNavigation(mouse.button === Qt.BackButton ? -1 : 1)
+        }
+    }
 
     Keys.onPressed: function (event) {
         if (!(event.modifiers & (Qt.ControlModifier | Qt.AltModifier))
@@ -2897,7 +2919,7 @@ Item {
         }
         if (!root.isVideo && !root.isDocument
                 && event.key === root.viewerShortcuts.actual.key) {
-            root.showActualImageSize()
+            root.toggleActualImageSize()
             event.accepted = true
             return
         }

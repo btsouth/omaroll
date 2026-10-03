@@ -107,10 +107,12 @@ process, so a favourite or rating set in one shows in the others.
 |---|---|
 | `←` `→` · `Page Up` `Page Down` | Previous · next file. On a video the arrows seek instead |
 | `Home` `End` | First · last file, or the start · end of a video |
+| mouse back/forward buttons | Previous · next file |
+| `Ctrl+O` | Choose another application for the current file |
 | wheel · pinch | Zoom around the pointer |
 | `+` `-` | Zoom in · out |
 | drag · two-finger scroll | Move around a zoomed picture, down a long screenshot |
-| `0` · `1` · double click | Fit · actual size · toggle between them |
+| `0` · `1` or double click | Fit · toggle fit and actual size |
 | `R` · `Shift+R` | Rotate right · left, the view only, never the file |
 | `Space` · `K` | Play · pause a video or animation |
 | click a video | Play · pause |
@@ -185,7 +187,8 @@ organization and safe copies itself, and delegates specialist work to these tool
 | Any | Copy image or file | `wl-copy`: PNG/JPEG pixels, otherwise file URIs |
 | Any | Send with LocalSend | `omarchy-menu-share` |
 | Any | Send to a machine | `omarchy-tailscale-send`, after picking the machine |
-| Any | Open containing folder | default file manager through `xdg-open` |
+| Any | Show in file manager | select the file in the configured folder handler when supported, or open its folder through `xdg-open` |
+| Any | Open with… | desktop application chooser, without changing MIME defaults |
 | Any | Move to Trash | XDG trash, never `unlink` |
 
 Single-file menus include viewing and editing actions. Selection menus offer
@@ -260,7 +263,7 @@ and put on your clipboard.
 | `M` · `↑` `↓` or `9` `0` in a video preview | Mute · volume down/up |
 | `[` `]` · `Backspace` in a video preview | Change speed · reset speed |
 | `Home` `End` in a video preview | Start · end |
-| `+` `-` · `0` · `1` · `R` in an image preview | Zoom · fit · actual size · rotate |
+| `+` `-` · `0` · `1` · `R` in an image preview | Zoom · fit · toggle fit and actual size · rotate |
 | `Shift+H` `Shift+V` in an image preview | Flip horizontally · vertically |
 | `F11` in a preview | Enter · leave fullscreen |
 | `F5` in a preview | Start · pause slideshow |
@@ -270,8 +273,10 @@ and put on your clipboard.
 | `G` in a video preview | Save the current frame beside the recording |
 | `A` · `C` | Annotate · Extract text |
 | `E` | Convert or resize, including the selection |
+| mouse back/forward buttons in a preview | Previous · next file |
+| `Ctrl+O` | Choose another application for the current file |
 | `N` | Rename, preserving the extension |
-| `Y` · `S` · `F` | Clipboard · Send · Open containing folder |
+| `Y` · `S` · `F` | Clipboard · Send · Show in file manager |
 | `V` · `Ctrl+H` | Favourite · Hide |
 | `Q` · `B` | Crop, rotate, resize the open picture · correct the whole selection |
 | `K` | Compare the selection, or the open picture's copies |

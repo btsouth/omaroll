@@ -340,11 +340,12 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .confirmation = u"Print job submitted"_s},
 
       {.id = u"files"_s,
-       .label = u"Open containing folder"_s,
-       .program = u"xdg-open"_s,
-       .arguments = {u"{dir}"_s},
-       .shortcut = u"F"_s,
-       .packageHint = u"xdg-utils"_s},
+       .label = u"Show in file manager"_s,
+       .shortcut = u"F"_s},
+
+      {.id = u"open-with"_s,
+       .label = u"Open with…"_s,
+       .shortcut = u"Ctrl+O"_s},
 
       // Native: QML owns these.
       {.id = u"rename"_s, .label = u"Rename"_s, .shortcut = u"N"_s},
@@ -509,7 +510,7 @@ QVariantList ActionRegistry::actionsForKind(bool video, bool document,
     row[u"label"_s] = definition.id == u"copy"_s
         && (video || document || (!mime.isEmpty() && mime != u"image/png"_s && mime != u"image/jpeg"_s))
         ? u"Copy file"_s : definition.label;
-    const QStringList common = {u"copy"_s, u"files"_s, u"print"_s, u"open-document"_s};
+    const QStringList common = {u"copy"_s, u"files"_s, u"open-with"_s, u"print"_s, u"open-document"_s};
     const QStringList editing = {u"omaframe"_s, u"corrections"_s, u"correctionsbatch"_s,
         u"matte"_s, u"compare"_s, u"export"_s, u"trim"_s, u"frame"_s};
     const QStringList organization = {u"rename"_s, u"favorite"_s, u"hide"_s, u"trash"_s};
@@ -571,9 +572,12 @@ bool ActionRegistry::run(const QString& id, const QString& path) {
 bool ActionRegistry::run(const QString& id, const QStringList& paths,
                          const QVariantMap& placeholders) {
   const Definition* definition = find(id);
-  if (!definition || definition->program.isEmpty() || !m_launcher || paths.isEmpty()) {
+  if (!definition || !m_launcher || paths.isEmpty()) {
     return false;
   }
+  if (id == u"files"_s) return m_launcher->showInFolder(paths.first());
+  if (id == u"open-with"_s) return m_launcher->openWith(paths.first());
+  if (definition->program.isEmpty()) return false;
 
   if (definition->media == Media::Raw) {
     for (const QString& path : paths) {
