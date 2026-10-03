@@ -33,6 +33,8 @@
 #include "subtitles/SubtitleIndex.h"
 #include "search/QrDetector.h"
 #include "theme/OmarchyTheme.h"
+#include "sources/CameraRaw.h"
+#include "thumbs/RawImageProvider.h"
 #include "thumbs/ThumbnailProvider.h"
 
 #include <QAudioBuffer>
@@ -187,10 +189,12 @@ private slots:
     m_mattes = new MatteProvider;
     m_edits = new EditProvider;
     m_pdfs = new PdfProvider;
+    m_raws = new RawImageProvider;
     m_engine->addImageProvider(QLatin1String(ThumbnailProvider::kProviderId), m_thumbnails);
     m_engine->addImageProvider(QLatin1String(MatteProvider::kProviderId), m_mattes);
     m_engine->addImageProvider(QLatin1String(EditProvider::kProviderId), m_edits);
     m_engine->addImageProvider(QLatin1String(PdfProvider::kProviderId), m_pdfs);
+    m_engine->addImageProvider(QLatin1String(RawImageProvider::kProviderId), m_raws);
 
     QQmlContext* context = m_engine->rootContext();
     context->setContextProperty(QStringLiteral("Theme"), m_theme);
@@ -233,6 +237,7 @@ private slots:
     m_mattes->shutdown();
     m_edits->shutdown();
     m_pdfs->shutdown();
+    m_raws->shutdown();
     delete m_engine;
     m_engine = nullptr;
     QThreadPool::globalInstance()->waitForDone();
@@ -2677,6 +2682,51 @@ private slots:
     QVERIFY(item("detail")->property("playbackError").toString().isEmpty());
   }
 
+  // A camera raw previews from its embedded JPEG, measures as the raw, and
+  // offers only the actions that can open it.
+  void aCameraRawPreviewsAtItsOwnSizeWithItsOwnActions() {
+    if (!CameraRaw::isRaw(QStringLiteral("dng"))) {
+      QSKIP("Qt has no camera raw decoder here (kimageformats with LibRaw)");
+    }
+    const QString source = QFINDTESTDATA("fixtures/raw/camera.dng");
+    QVERIFY(!source.isEmpty());
+    const QString path = QFileInfo(m_oddPath).dir().filePath(QStringLiteral("DSC00042.DNG"));
+    QVERIFY(QFile::copy(source, path));
+    m_disposablePaths.append(path);
+    const auto cleanup = qScopeGuard([&] {
+      invoke("dismissTopLayer");
+      QFile::remove(path);
+      m_captures->refresh();
+    });
+    m_captures->refresh();
+    QTRY_VERIFY(m_library->rowOf(path) >= 0);
+    QTRY_VERIFY_WITH_TIMEOUT(cardFor(path) != nullptr, 5000);
+    openDetail(m_library->rowOf(path));
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY_WITH_TIMEOUT(detail->property("imageReady").toBool(), 10000);
+    QVERIFY(detail->property("playbackError").toString().isEmpty());
+    // The preview is 24x32 once upright; the raw is 48x64.
+    QCOMPARE(detail->property("mediaWidth").toInt(), 48);
+    QCOMPARE(detail->property("mediaHeight").toInt(), 64);
+    QVariant rows;
+    QVERIFY(QMetaObject::invokeMethod(detail, "visibleActions", Q_RETURN_ARG(QVariant, rows)));
+    QStringList ids;
+    for (const QVariant& row : rows.toList()) {
+      ids << row.toMap().value(QStringLiteral("id")).toString();
+    }
+    QVERIFY(ids.contains(QStringLiteral("matte")));
+    QVERIFY(ids.contains(QStringLiteral("export")));
+    QVERIFY(!ids.contains(QStringLiteral("corrections")));
+    QVERIFY(!ids.contains(QStringLiteral("annotate")));
+    QVERIFY(!ids.contains(QStringLiteral("print")));
+    // Asked for anyway, from the grid's shortcut, it declines with a reason.
+    QVERIFY(QMetaObject::invokeMethod(m_window, "perform", Q_ARG(QVariant, "corrections"),
+                                      Q_ARG(QVariant, path), Q_ARG(QVariant, QVariant())));
+    QTRY_COMPARE(detail->property("status").toString(),
+                 QStringLiteral("That one cannot open camera raws"));
+    QVERIFY(!item("correctionSheet")->isVisible());
+  }
+
   void anExtensionlessLibraryPreviewFollowsAChangeOfMedium() {
     const QString path = QFileInfo(m_oddPath).dir().filePath(QStringLiteral("same-name-media"));
     // Replaced under the tiles and the open preview, which may still ask.
@@ -3441,6 +3491,7 @@ private:
   QStringList m_warnings;
   QStringList m_expectedQmlWarnings;
   QStringList m_disposablePaths;
+  RawImageProvider* m_raws = nullptr;
   QString m_oddPath;
   QString m_pdfPath;
 };

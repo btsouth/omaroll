@@ -96,8 +96,13 @@ public:
   Q_INVOKABLE void checkDayRollover();
 
   // For Image.source. Concatenating "file://" onto a path breaks on any name
-  // with a '#' or '?' in it; this goes through the proper encoder.
+  // with a '#' or '?' in it; this goes through the proper encoder. A camera
+  // raw is shown from its embedded preview instead; see CameraRaw.
   Q_INVOKABLE QUrl fileUrl(const QString& path) const;
+
+  // A camera raw's own size, upright, which its preview may be smaller than.
+  // Invalid for anything else.
+  Q_INVOKABLE QSize rawSize(const QString& path) const;
 
   // text/uri-list for a drag: one fully encoded file: URL per line, CRLF
   // terminated as RFC 2483 asks, which is what Nautilus, browsers and Electron

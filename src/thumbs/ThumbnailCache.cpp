@@ -1,6 +1,7 @@
 #include "thumbs/ThumbnailCache.h"
 
 #include "pdf/PdfSupport.h"
+#include "sources/CameraRaw.h"
 #include "sources/CaptureScanner.h"
 
 #include <QCoreApplication>
@@ -118,6 +119,12 @@ QString ThumbnailCache::cacheKey(const QString& path, const QSize& pixelSize, in
 }
 
 QImage ThumbnailCache::renderImage(const QString& path, const QSize& pixelSize, int seekPercent) {
+  // The camera's own preview: a fraction of a second where demosaicing the
+  // raw takes seconds. The cover scale below brings it down to the tile.
+  if (CameraRaw::isRawFile(path)) {
+    return CameraRaw::readPreview(path, pixelSize);
+  }
+
   QImageReader reader(path);
   reader.setAutoTransform(true);
 

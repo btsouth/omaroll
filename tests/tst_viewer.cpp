@@ -14,7 +14,9 @@
 #include "app/HeadlessAudio.h"
 #include "library/MediaInspector.h"
 #include "subtitles/SubtitleIndex.h"
+#include "sources/CameraRaw.h"
 #include "theme/OmarchyTheme.h"
+#include "thumbs/RawImageProvider.h"
 #include "thumbs/ThumbnailProvider.h"
 #include "viewer/HyprlandPlacement.h"
 #include "viewer/ViewerSession.h"
@@ -103,6 +105,8 @@ private slots:
     m_engine->addImportPath(QStringLiteral(OMAROLL_QML_IMPORT_PATH));
     m_thumbnails = new ThumbnailProvider;
     m_engine->addImageProvider(QLatin1String(ThumbnailProvider::kProviderId), m_thumbnails);
+    m_raws = new RawImageProvider;
+    m_engine->addImageProvider(QLatin1String(RawImageProvider::kProviderId), m_raws);
 
     QQmlContext* shared = m_engine->rootContext();
     shared->setContextProperty(QStringLiteral("Theme"), m_theme);
@@ -132,6 +136,9 @@ private slots:
     m_root.reset();
     if (m_thumbnails) {
       m_thumbnails->shutdown();
+    }
+    if (m_raws) {
+      m_raws->shutdown();
     }
     delete m_engine;
     m_engine = nullptr;
@@ -887,6 +894,50 @@ private slots:
     QTRY_VERIFY(viewers.visibleWindows().isEmpty());
   }
 
+  // A camera raw opens on the camera's embedded preview, measured as the raw
+  // itself. Drawn larger than that preview, the raw is demosaiced and laid
+  // over it. Tools that cannot open a raw decline with a reason.
+  void aCameraRawOpensOnItsPreviewAndSharpensWhenEnlarged() {
+    if (!CameraRaw::isRaw(QStringLiteral("dng"))) {
+      QSKIP("Qt has no camera raw decoder here (kimageformats with LibRaw)");
+    }
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString camera = dir.filePath(QStringLiteral("DSC00041.DNG"));
+    const QString bare = dir.filePath(QStringLiteral("DSC00042.DNG"));
+    QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/raw/camera.dng"), camera));
+    QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/raw/no-preview.dng"), bare));
+
+    open({camera});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QVERIFY(m_session->isRaw());
+    QVERIFY(prop("playbackError").toString().isEmpty());
+    // The upright preview is 24x32; the raw, 48x64.
+    QCOMPARE(prop("loadedSize").toSize(), QSize(24, 32));
+    QCOMPARE(prop("sourceWidth").toReal(), 48.0);
+    QCOMPARE(prop("sourceHeight").toReal(), 64.0);
+    // Fitted to the window, the preview is far past its own pixels.
+    QVERIFY(prop("rawDetailWanted").toBool());
+    QQuickItem* detail = item(QStringLiteral("viewerRawDetail"));
+    QTRY_COMPARE(detail->property("status").toInt(), 1);
+    QCOMPARE(detail->property("sourceSize").toSize(), QSize(48, 64));
+    QCOMPARE(prop("rawDetailPath").toString(), camera);
+
+    QTest::keyClick(m_window, Qt::Key_A);
+    QTRY_COMPARE(prop("status").toString(), QStringLiteral("That one cannot open camera raws"));
+
+    // A raw without a preview gets the plugin's half-size decode, upright.
+    QTRY_COMPARE(m_session->count(), 2);
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTRY_COMPARE(m_session->path(), bare);
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QCOMPARE(prop("loadedSize").toSize(), QSize(24, 32));
+    QCOMPARE(prop("sourceWidth").toReal(), 48.0);
+    QTRY_COMPARE(detail->property("status").toInt(), 1);
+    m_window->close();
+    m_session->clear();
+  }
+
   void theWindowRaisedNoQmlWarnings() {
     QVERIFY2(m_warnings.isEmpty(), qPrintable(m_warnings.join(QLatin1Char('\n'))));
   }
@@ -983,6 +1034,7 @@ private:
   MediaInspector* m_mediaInfo = nullptr;
   SubtitleIndex* m_subtitles = nullptr;
   ThumbnailProvider* m_thumbnails = nullptr;
+  RawImageProvider* m_raws = nullptr;
   QQmlEngine* m_engine = nullptr;
   QQmlContext* m_context = nullptr;
   std::unique_ptr<QObject> m_root;

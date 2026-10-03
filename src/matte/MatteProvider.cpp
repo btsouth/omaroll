@@ -1,6 +1,7 @@
 #include "matte/MatteProvider.h"
 
 #include "matte/MatteComposer.h"
+#include "sources/CameraRaw.h"
 
 #include <QImageReader>
 #include <QMetaObject>
@@ -48,20 +49,29 @@ public:
       finishOnOwnThread();
       return;
     }
-    QImageReader reader(m_path);
-    reader.setAutoTransform(true);
-
-    const QSize original = reader.size();
-    if (original.isValid() && !original.isEmpty()) {
-      QSize scaled = original;
-      const int longest = std::max(original.width(), original.height());
-      if (longest > kPreviewSourceEdge) {
-        scaled = original.scaled(kPreviewSourceEdge, kPreviewSourceEdge, Qt::KeepAspectRatio);
+    QImage source;
+    if (CameraRaw::isRawFile(m_path)) {
+      // The camera's preview, as the library shows it and the matte saves it.
+      source = CameraRaw::readPreview(m_path, QSize(kPreviewSourceEdge, kPreviewSourceEdge));
+      if (std::max(source.width(), source.height()) > kPreviewSourceEdge) {
+        source = source.scaled(kPreviewSourceEdge, kPreviewSourceEdge, Qt::KeepAspectRatio,
+                               Qt::SmoothTransformation);
       }
-      reader.setScaledSize(scaled);
-    }
+    } else {
+      QImageReader reader(m_path);
+      reader.setAutoTransform(true);
 
-    const QImage source = reader.read();
+      const QSize original = reader.size();
+      if (original.isValid() && !original.isEmpty()) {
+        QSize scaled = original;
+        const int longest = std::max(original.width(), original.height());
+        if (longest > kPreviewSourceEdge) {
+          scaled = original.scaled(kPreviewSourceEdge, kPreviewSourceEdge, Qt::KeepAspectRatio);
+        }
+        reader.setScaledSize(scaled);
+      }
+      source = reader.read();
+    }
     if (source.isNull()) {
       m_error = QStringLiteral("Could not read %1").arg(m_path);
       finishOnOwnThread();

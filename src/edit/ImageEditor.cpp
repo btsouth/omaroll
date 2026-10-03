@@ -2,6 +2,7 @@
 
 #include "edit/ClipboardImage.h"
 #include "edit/JpegTransform.h"
+#include "sources/CameraRaw.h"
 #include "sources/CaptureScanner.h"
 
 #include <QColorSpace>
@@ -20,6 +21,10 @@
 #include <cmath>
 
 namespace {
+
+// Corrections write a copy in the source's format, and nothing here can write
+// a raw. Raw development belongs in darktable or RawTherapee.
+const QString kRawRefusal = QStringLiteral("Camera raws are not corrected here");
 
 // The format to write, derived from the source suffix (or an extensionless
 // file's header) but only when Qt can actually encode it; otherwise PNG, which
@@ -223,6 +228,10 @@ void ImageEditor::saveCopy(const QString& path, int quarterTurns, bool flipHoriz
     emit failed(QStringLiteral("That file is no longer there"));
     return;
   }
+  if (CameraRaw::isRawFile(path)) {
+    emit failed(kRawRefusal);
+    return;
+  }
 
   m_busy = true;
   emit busyChanged();
@@ -330,6 +339,10 @@ void ImageEditor::copyRegion(const QString& path, int quarterTurns, bool flipHor
     emit failed(QStringLiteral("That file is no longer there"));
     return;
   }
+  if (CameraRaw::isRawFile(path)) {
+    emit failed(kRawRefusal);
+    return;
+  }
 
   m_busy = true;
   emit busyChanged();
@@ -410,7 +423,9 @@ void ImageEditor::saveCopies(const QStringList& paths, int quarterTurns, bool fl
     const int total = static_cast<int>(sources.size());
     for (const QString& source : sources) {
       ++done;
-      const QImage image = readOriented(source);
+      // A raw in the selection is counted as not corrected rather than
+      // flattened into an 8-bit copy of the plugin's default rendering.
+      const QImage image = CameraRaw::isRawFile(source) ? QImage() : readOriented(source);
       if (image.isNull()) {
         ++failedCount;
       } else {

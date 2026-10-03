@@ -11,6 +11,10 @@ are in the [README](../README.md#install-or-update).
 
 ## Current work
 
+Camera raw opening (ARW, CR3, DNG, NEF, RAF and the rest LibRaw reads) is in
+review for the next release, including thumbnails from the embedded preview,
+orientation, and the actions offered for a raw.
+
 Use the [open pull requests](https://github.com/btsouth/omaroll/pulls) for work
 under review, and the [roadmap](ROADMAP.md) for scope and future decisions.
 Changes for the next release should remain in focused pull requests; the

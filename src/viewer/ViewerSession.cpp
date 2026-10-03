@@ -1,5 +1,6 @@
 #include "viewer/ViewerSession.h"
 
+#include "sources/CameraRaw.h"
 #include "sources/CaptureScanner.h"
 
 #include <QCollator>
@@ -27,10 +28,19 @@ ViewerSession::ViewerSession(QObject* parent) : QObject(parent) {
 
 ViewerSession::~ViewerSession() = default;
 
-QUrl ViewerSession::url() const {
-  const QString current = path();
-  return current.isEmpty() ? QUrl() : QUrl::fromLocalFile(current);
+namespace {
+
+// What an Image loads for |path|: the file, or a camera raw's preview.
+QUrl displayUrl(const QString& path) {
+  if (path.isEmpty()) {
+    return {};
+  }
+  return CameraRaw::isRawFile(path) ? CameraRaw::previewUrl(path) : QUrl::fromLocalFile(path);
 }
+
+} // namespace
+
+QUrl ViewerSession::url() const { return displayUrl(path()); }
 
 QString ViewerSession::fileName() const { return QFileInfo(path()).fileName(); }
 
@@ -40,6 +50,10 @@ QString ViewerSession::folder() const {
 }
 
 bool ViewerSession::isVideo() const { return CaptureScanner::isVideo(m_mediaSuffix); }
+
+bool ViewerSession::isRaw() const { return CameraRaw::isRaw(m_mediaSuffix); }
+
+QUrl ViewerSession::rawUrl() const { return isRaw() ? CameraRaw::fullUrl(path()) : QUrl(); }
 
 bool ViewerSession::isAnimated() const {
   // The same rule the library viewer uses: these two may hold several frames,
@@ -97,21 +111,23 @@ bool ViewerSession::jump(int index) {
   return true;
 }
 
-QUrl ViewerSession::neighbourUrl(int offset) const {
+QUrl ViewerSession::neighbourUrl(int offset) const { return displayUrl(neighbourPath(offset)); }
+
+QString ViewerSession::neighbourPath(int offset) const {
   const int total = count();
   if (total < 2 || offset == 0) {
     return {};
   }
   const int index = ((m_index + offset) % total + total) % total;
-  return index == m_index ? QUrl() : QUrl::fromLocalFile(m_paths.at(index));
+  return index == m_index ? QString() : m_paths.at(index);
 }
 
 bool ViewerSession::neighbourIsVideo(int offset) const {
-  return CaptureScanner::isVideo(CaptureScanner::mediaSuffix(neighbourUrl(offset).toLocalFile()));
+  return CaptureScanner::isVideo(CaptureScanner::mediaSuffix(neighbourPath(offset)));
 }
 
 bool ViewerSession::neighbourIsAnimated(int offset) const {
-  const QString suffix = CaptureScanner::mediaSuffix(neighbourUrl(offset).toLocalFile());
+  const QString suffix = CaptureScanner::mediaSuffix(neighbourPath(offset));
   return suffix == u"gif" || suffix == u"webp";
 }
 
@@ -245,6 +261,8 @@ void ViewerSession::setIndex(int index) {
 void ViewerSession::refreshDetails() {
   m_mediaSuffix = CaptureScanner::mediaSuffix(path());
   const QFileInfo info(path());
+  // Headers only, a few milliseconds; the preview is decoded off this thread.
+  m_rawSize = isRaw() ? CameraRaw::fullSize(path()) : QSize();
   if (path().isEmpty() || !info.exists()) {
     m_stamp = 0;
     m_sizeLabel.clear();

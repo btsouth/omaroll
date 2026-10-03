@@ -2,6 +2,7 @@
 
 #include "library/CaptureModel.h"
 #include "library/CaptureRoles.h"
+#include "sources/CameraRaw.h"
 
 #include <QFileInfo>
 #include <QImageReader>
@@ -169,14 +170,25 @@ QList<SimilarityIndex::Candidate> SimilarityIndex::candidates() const {
 
 SimilarityIndex::CachedHash SimilarityIndex::hashFile(const Candidate& candidate) {
   CachedHash result{candidate.bytes, candidate.modified};
-  QImageReader reader(candidate.path);
-  reader.setAutoTransform(true);
-  const QSize original = reader.size();
-  if (!original.isValid() || original.isEmpty()) {
-    return result;
+  QSize original;
+  QImage colour;
+  if (CameraRaw::isRawFile(candidate.path)) {
+    // The raw plugin cannot scale while decoding; its embedded preview is
+    // the quick way to the same 9x8.
+    original = CameraRaw::fullSize(candidate.path);
+    colour = CameraRaw::readPreview(candidate.path, QSize(9, 8))
+                 .scaled(9, 8, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                 .convertToFormat(QImage::Format_RGB32);
+  } else {
+    QImageReader reader(candidate.path);
+    reader.setAutoTransform(true);
+    original = reader.size();
+    if (!original.isValid() || original.isEmpty()) {
+      return result;
+    }
+    reader.setScaledSize(QSize(9, 8));
+    colour = reader.read().convertToFormat(QImage::Format_RGB32);
   }
-  reader.setScaledSize(QSize(9, 8));
-  const QImage colour = reader.read().convertToFormat(QImage::Format_RGB32);
   if (colour.width() != 9 || colour.height() != 8) {
     return result;
   }

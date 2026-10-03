@@ -57,7 +57,12 @@ struct CaptureRecord {
   QString caption;
   // GIF/WebP use the animated image component, including extensionless files.
   bool animated = false;
+  // A camera raw. Only Qt's raw plugin reads these, so the tools that open
+  // the file themselves (tesseract, zbarimg, Pinta and the like) are not
+  // offered for them.
+  bool raw = false;
 
   [[nodiscard]] bool isVideo() const { return video; }
   [[nodiscard]] bool isDocument() const { return document || kind == Document; }
+  [[nodiscard]] bool isRaw() const { return raw; }
 };

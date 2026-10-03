@@ -62,12 +62,32 @@ ApplicationWindow {
     // Read straight off the loaded image, so a picture that arrives from the
     // cache in the same turn as the file change can never be sized as the
     // previous one.
-    readonly property real sourceWidth: stillLoader.item !== null
-                                        && stillLoader.item.status === Image.Ready
-                                        ? stillLoader.item.implicitWidth : 0
-    readonly property real sourceHeight: stillLoader.item !== null
-                                         && stillLoader.item.status === Image.Ready
-                                         ? stillLoader.item.implicitHeight : 0
+    readonly property size loadedSize: stillLoader.item !== null
+                                       && stillLoader.item.status === Image.Ready
+                                       ? Qt.size(stillLoader.item.implicitWidth,
+                                                 stillLoader.item.implicitHeight)
+                                       : Qt.size(0, 0)
+    // A camera raw shows the camera's preview, which can be smaller than the
+    // raw. Measured by the raw instead, actual size and the details mean the
+    // raw's pixels and the preview stretches over them, unless the two
+    // disagree on shape, as a preview cropped differently would.
+    readonly property bool rawMeasured: Session.isRaw && root.loadedSize.width > 0
+        && Session.rawSize.width > 0 && Session.rawSize.height > 0
+        && Math.abs(Session.rawSize.width / Session.rawSize.height
+                    / (root.loadedSize.width / root.loadedSize.height) - 1) < 0.02
+    readonly property real sourceWidth: root.rawMeasured ? Session.rawSize.width
+                                                         : root.loadedSize.width
+    readonly property real sourceHeight: root.rawMeasured ? Session.rawSize.height
+                                                          : root.loadedSize.height
+    // Once that preview would be drawn larger than its own pixels, the raw is
+    // demosaiced in the background and laid over it. A preview the size of
+    // the raw, as most cameras write, never needs it.
+    readonly property bool rawDetailWanted: root.rawMeasured && root.imageReady
+        && root.loadedSize.width < Session.rawSize.width * 0.9
+        && root.effectiveScale * root.dpr * Session.rawSize.width > root.loadedSize.width * 1.05
+    // The file whose full decode last arrived, kept so zooming back out and
+    // in again does not drop it and decode it twice.
+    property string rawDetailPath: ""
     readonly property bool stillReady: stillLoader.item !== null
                                        && (stillLoader.item.status === Image.Ready
                                            || stillLoader.item.status === Image.Error)
@@ -454,7 +474,7 @@ ApplicationWindow {
         const video = Session.isVideo
         const entries = [{id: "library", label: "Open in library"}, {separator: true}]
         const wanted = video ? root.videoActions : root.stillActions
-        const rows = Registry.actionsForKind(video, false)
+        const rows = Registry.actionsForKind(video, false, Session.path)
         for (const id of wanted) {
             const row = rows.find(function (candidate) { return candidate.id === id })
             if (!row || !row.available) {
@@ -519,8 +539,10 @@ ApplicationWindow {
             return
         }
         default:
-            if (!Registry.appliesToKind(id, Session.isVideo, false)) {
-                root.say(Session.isVideo ? "That one is for pictures" : "That one is for videos")
+            if (!Registry.appliesToKind(id, Session.isVideo, false, path)) {
+                root.say(Session.isRaw && Registry.appliesToKind(id, false, false)
+                         ? "That one cannot open camera raws"
+                         : Session.isVideo ? "That one is for pictures" : "That one is for videos")
                 return
             }
             Registry.run(id, path)
@@ -779,6 +801,26 @@ ApplicationWindow {
                     }
                     if (status !== Image.Loading) {
                         waited = false
+                    }
+                }
+
+                // The full decode of a camera raw, over its preview.
+                Image {
+                    objectName: "viewerRawDetail"
+                    anchors.fill: parent
+                    source: root.visible && (root.rawDetailWanted
+                                             || root.rawDetailPath === Session.path)
+                            ? Session.rawUrl : ""
+                    asynchronous: true
+                    smooth: parent.smooth
+                    mipmap: true
+                    fillMode: Image.Stretch
+                    opacity: status === Image.Ready ? 1 : 0
+                    Behavior on opacity { NumberAnimation { duration: 140 } }
+                    onStatusChanged: {
+                        if (status === Image.Ready) {
+                            root.rawDetailPath = Session.path
+                        }
                     }
                 }
             }

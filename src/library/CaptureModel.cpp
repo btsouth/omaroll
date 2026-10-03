@@ -2,6 +2,7 @@
 
 #include "app/AppSettings.h"
 #include "library/CaptureRoles.h"
+#include "sources/CameraRaw.h"
 #include "sources/CaptureLocations.h"
 
 #include <QDir>
@@ -394,7 +395,11 @@ QString CaptureModel::dayLabelAt(int row) const {
   return dayLabel(m_records.at(row).captured.date());
 }
 
-QUrl CaptureModel::fileUrl(const QString& path) const { return QUrl::fromLocalFile(path); }
+QUrl CaptureModel::fileUrl(const QString& path) const {
+  return CameraRaw::isRawFile(path) ? CameraRaw::previewUrl(path) : QUrl::fromLocalFile(path);
+}
+
+QSize CaptureModel::rawSize(const QString& path) const { return CameraRaw::fullSize(path); }
 
 QString CaptureModel::uriList(const QStringList& paths) const {
   QString list;
@@ -559,6 +564,7 @@ void CaptureModel::adoptResults(ScanResult result) {
       if (record.modified == fresh.modified && record.bytes == fresh.bytes &&
           record.kind == fresh.kind && record.video == fresh.video &&
           record.document == fresh.document && record.animated == fresh.animated &&
+          record.raw == fresh.raw &&
           record.captured == fresh.captured &&
           record.hasProducerTimestamp == fresh.hasProducerTimestamp &&
           record.favorite == fresh.favorite && record.hidden == fresh.hidden) {

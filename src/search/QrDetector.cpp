@@ -47,7 +47,9 @@ void QrDetector::inspect(const QString& path) {
     return;
   }
   const int row = m_model->rowOf(path);
-  if (row < 0 || m_model->recordAt(row).isVideo() || m_model->recordAt(row).isDocument()) {
+  // zbarimg cannot read a camera raw; asking would only cost a failed run.
+  if (row < 0 || m_model->recordAt(row).isVideo() || m_model->recordAt(row).isDocument() ||
+      m_model->recordAt(row).isRaw()) {
     emit stateChanged();
     if (m_process.state() != QProcess::NotRunning) {
       m_process.kill();

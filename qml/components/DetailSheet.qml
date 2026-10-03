@@ -208,7 +208,7 @@ Item {
     }
 
     function visibleActions() {
-        const rows = Registry.actionsForKind(root.isVideo, root.isDocument)
+        const rows = Registry.actionsForKind(root.isVideo, root.isDocument, root.path)
         return rows.filter(function (row) { return row.id !== "qr" || root.qrDetected })
     }
 
@@ -219,7 +219,7 @@ Item {
                                                                Settings.imagePrimaryAction === "corrections"
                                                                ? "matte" : "corrections"]
     readonly property var primaryActionRows: {
-        const rows = Registry.actionsForKind(root.isVideo, root.isDocument)
+        const rows = Registry.actionsForKind(root.isVideo, root.isDocument, root.path)
         const out = []
         for (const id of root.primaryActionIds) {
             for (const row of rows) {
@@ -1180,8 +1180,14 @@ Item {
                     fillMode: Image.Stretch
                     onStatusChanged: {
                         if (status === Image.Ready) {
-                            root.imageSourceWidth = sourceSize.width
-                            root.imageSourceHeight = sourceSize.height
+                            // A camera raw shows its embedded preview; measure
+                            // it by the raw when the two have the same shape.
+                            const raw = Library.rawSize(root.path)
+                            const same = raw.width > 0 && raw.height > 0
+                                && Math.abs(raw.width / raw.height
+                                            / (sourceSize.width / sourceSize.height) - 1) < 0.02
+                            root.imageSourceWidth = same ? raw.width : sourceSize.width
+                            root.imageSourceHeight = same ? raw.height : sourceSize.height
                             root.stillReady = true
                         } else if (status === Image.Error) {
                             root.playbackError = "Could not display this image"

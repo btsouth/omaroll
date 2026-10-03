@@ -1,5 +1,7 @@
 #include "library/MediaMetadataIndex.h"
 
+#include "sources/CameraRaw.h"
+
 #include <QDataStream>
 #include <QDir>
 #include <QFile>
@@ -236,6 +238,15 @@ MediaMetadataIndex::Details MediaMetadataIndex::parseVideoDetails(const QByteArr
   return details;
 }
 
+MediaMetadataIndex::Details MediaMetadataIndex::rawDetails(const QString& path) {
+  const CameraRaw::Metadata metadata = CameraRaw::readMetadata(path);
+  Details details;
+  details.captured = metadata.taken;
+  details.camera = cameraName(metadata.make, metadata.model);
+  details.lens = metadata.lens.simplified();
+  return details;
+}
+
 CaptureModel::MetadataUpdate MediaMetadataIndex::updateFor(const Candidate& candidate,
                                                            const Details& details) {
   return {candidate.path,   candidate.modified, candidate.bytes, details.captured,
@@ -255,12 +266,13 @@ void MediaMetadataIndex::sync() {
     for (int row = 0; row < m_model->rowCount(); ++row) {
       const CaptureRecord& record = m_model->recordAt(row);
       if (record.isDocument() || record.isVideo() != videos || record.hasProducerTimestamp ||
-          (videos ? m_videoProgram.isEmpty() : m_imageProgram.isEmpty())) {
+          (videos ? m_videoProgram.isEmpty() : m_imageProgram.isEmpty() && !record.isRaw())) {
         continue;
       }
 
       const Candidate candidate {record.path,      record.modified, record.bytes,
-                                 record.isVideo(), record.device,   record.inode};
+                                 record.isVideo(), record.device,   record.inode,
+                                 record.isRaw()};
       const auto known = m_entries.constFind(record.path);
       if (known != m_entries.cend() && known->modified == record.modified &&
           known->bytes == record.bytes && known->device == record.device &&
@@ -321,9 +333,18 @@ void MediaMetadataIndex::processNext() {
     return;
   }
 
+  if (first.raw) {
+    // A few header reads, so no process and no batch.
+    adopt(first, rawDetails(first.path));
+    advanceProgress();
+    QTimer::singleShot(0, this, &MediaMetadataIndex::processNext);
+    return;
+  }
+
   m_current.append(first);
   if (!first.video) {
-    while (m_current.size() < kImageBatchSize && !m_queue.isEmpty() && !m_queue.first().video) {
+    while (m_current.size() < kImageBatchSize && !m_queue.isEmpty() && !m_queue.first().video &&
+           !m_queue.first().raw) {
       const Candidate candidate = m_queue.takeFirst();
       if (stillCurrent(candidate)) {
         m_current.append(candidate);

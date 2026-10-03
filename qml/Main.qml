@@ -148,9 +148,10 @@ ApplicationWindow {
         const row = Captures.rowOf(path)
         const video = knownVideo === undefined ? Captures.isVideoAt(row) : knownVideo
         const document = row >= 0 && Captures.isDocumentAt(row)
-        if (id !== "open" && !Registry.appliesToKind(id, video, document)) {
+        if (id !== "open" && !Registry.appliesToKind(id, video, document, path)) {
             root.say(document ? "That action does not apply to documents"
                      : video ? "That one is for screenshots and pictures"
+                     : Registry.appliesToKind(id, false, false) ? "That one cannot open camera raws"
                              : "That one is for recordings and videos")
             return
         }

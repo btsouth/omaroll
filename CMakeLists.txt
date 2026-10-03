@@ -35,6 +35,8 @@ add_library(omaroll_core STATIC
   src/library/SimilarityIndex.h
   src/library/MediaMetadataIndex.cpp
   src/library/MediaMetadataIndex.h
+  src/sources/CameraRaw.cpp
+  src/sources/CameraRaw.h
   src/sources/CaptureScanner.cpp
   src/sources/CaptureScanner.h
   src/sources/CaptureLocations.cpp
@@ -73,6 +75,8 @@ add_library(omaroll_core STATIC
   src/search/QrDetector.h
   src/subtitles/SubtitleIndex.cpp
   src/subtitles/SubtitleIndex.h
+  src/thumbs/RawImageProvider.cpp
+  src/thumbs/RawImageProvider.h
   src/thumbs/ThumbnailCache.cpp
   src/thumbs/ThumbnailCache.h
   src/thumbs/ThumbnailProvider.cpp
