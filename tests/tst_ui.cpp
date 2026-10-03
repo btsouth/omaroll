@@ -795,6 +795,9 @@ private slots:
   }
 
   void galleryThumbnailSizingRecyclingAndScrolledModelChanges() {
+    // Synthetic rows must not react to background layout/reset signals from
+    // the main test window's unrelated library.
+    CaptureFilterModel thumbnailCaptures;
     QQmlApplicationEngine engine;
     engine.addImportPath(QStringLiteral(OMAROLL_QML_IMPORT_PATH));
     auto* provider = new HeldThumbnailProvider;
@@ -802,7 +805,7 @@ private slots:
     auto* context = engine.rootContext();
     context->setContextProperty(QStringLiteral("Theme"), m_theme);
     context->setContextProperty(QStringLiteral("Settings"), m_settings);
-    context->setContextProperty(QStringLiteral("Captures"), m_library);
+    context->setContextProperty(QStringLiteral("Captures"), &thumbnailCaptures);
     context->setContextProperty(QStringLiteral("Library"), m_captures);
     context->setContextProperty(QStringLiteral("MediaMetadata"), m_mediaMetadata);
     QStringList warnings;
