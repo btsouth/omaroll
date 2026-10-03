@@ -1184,9 +1184,10 @@ Item {
                     // the raw when the two have the same shape.
                     Connections {
                         target: Library
-                        function onRawSizeRead(path, size) {
+                        function onRawSizeRead(path, source, size) {
                             const still = staticImage
-                            if (path !== root.path || still.status !== Image.Ready
+                            if (path !== root.path || source.toString() !== still.source.toString()
+                                    || still.status !== Image.Ready
                                     || size.width <= 0 || size.height <= 0) {
                                 return
                             }
@@ -1203,7 +1204,7 @@ Item {
                             root.imageSourceWidth = sourceSize.width
                             root.imageSourceHeight = sourceSize.height
                             root.stillReady = true
-                            Library.readRawSize(root.path)
+                            Library.readRawSize(root.path, source)
                         } else if (status === Image.Error) {
                             root.playbackError = "Could not display this image"
                             root.stillReady = true

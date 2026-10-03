@@ -399,12 +399,15 @@ QUrl CaptureModel::fileUrl(const QString& path) const {
   return CameraRaw::isRawFile(path) ? CameraRaw::previewUrl(path) : QUrl::fromLocalFile(path);
 }
 
-void CaptureModel::readRawSize(const QString& path) {
-  if (!CameraRaw::isRawFile(path)) {
+void CaptureModel::readRawSize(const QString& path, const QUrl& source) {
+  if (!CameraRaw::isRawFile(path) || source != fileUrl(path)) {
     return;
   }
   QtConcurrent::run([path] { return CameraRaw::fullSize(path); })
-      .then(this, [this, path](const QSize& size) { emit rawSizeRead(path, size); });
+      .then(this, [this, path, source](const QSize& size) {
+        // A replacement must not inherit an earlier file's dimensions.
+        if (source == fileUrl(path)) emit rawSizeRead(path, source, size);
+      });
 }
 
 QString CaptureModel::uriList(const QStringList& paths) const {
