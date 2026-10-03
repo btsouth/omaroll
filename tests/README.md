@@ -127,6 +127,9 @@ settings and a fresh thumbnail cache, with 100 copies of the transparent PNG.
 Use `--fixture resources/demo/alpine-dawn.jpg` to measure a photographic image,
 `--files N` to change the library size, and `--runs N` for repeated samples.
 Fixture creation is excluded. The output records the fixture hash and size.
+`observed_process_stages_ms` also records when the probe receives each milestone,
+measured from process launch. Those observations include spawning and dynamic
+loading, plus delivery of the trace; they do not measure compositor presentation.
 
 `OMAROLL_STARTUP_TRACE=1` enables diagnostic JSON lines on stderr. Timings start
 at entry to `main`, excluding process spawning and dynamic loading before main:
@@ -148,9 +151,10 @@ These are content-ready submitted frames, not pixel readbacks or proof of
 presentation by Hyprland. The UI tests separately exercise failed images,
 thumbnail fading and rendered media. Normal launches do not enable tracing.
 
-The probe fails if required milestones are absent within its eight-second
-observation window. CI checks that evidence arrives and retains the JSON; it
-sets no speed threshold. Idle CPU is sampled between seconds three and eight.
+The probe fails with recent application diagnostics if required milestones are
+absent within its eight-second observation window. CI checks that evidence
+arrives and retains the JSON; it sets no speed threshold. Idle CPU is sampled
+between seconds three and eight.
 Zero means no CPU ticks were observed in that interval. Do not run benchmarks
 concurrently with builds or other tests.
 

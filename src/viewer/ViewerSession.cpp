@@ -1,23 +1,43 @@
 #include "viewer/ViewerSession.h"
 
 #include "sources/CaptureScanner.h"
+#include "sources/FileVersion.h"
 
 #include <QCollator>
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
 #include <QLocale>
+#include <QSet>
 #include <QtConcurrent>
 
 #include <algorithm>
+
+namespace {
+QUrl imageUrl(const QString& path, const QString& version) {
+  if (path.isEmpty()) return {};
+  QUrl result = QUrl::fromLocalFile(path);
+  result.setQuery(QStringLiteral("omaroll=") + version);
+  return result;
+}
+} // namespace
 
 ViewerSession::ViewerSession(QObject* parent) : QObject(parent) {
   // A burst of writes (a download landing, a batch export) settles before the
   // folder is read again.
   m_relist.setSingleShot(true);
   m_relist.setInterval(400);
-  connect(&m_relist, &QTimer::timeout, this, &ViewerSession::startListing);
+  connect(&m_relist, &QTimer::timeout, this, [this] {
+    if (!m_selection) {
+      startListing();
+    } else if (QFileInfo::exists(path())) {
+      setSequence(m_paths, m_index);
+    } else {
+      forget(path());
+    }
+  });
   connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this, [this] { m_relist.start(); });
+  connect(&m_watcher, &QFileSystemWatcher::fileChanged, this, [this] { m_relist.start(); });
   connect(&m_listing, &QFutureWatcher<QStringList>::finished, this, [this] {
     if (m_listedGeneration == m_generation) {
       applyListing(m_listing.result());
@@ -31,6 +51,8 @@ QUrl ViewerSession::url() const {
   const QString current = path();
   return current.isEmpty() ? QUrl() : QUrl::fromLocalFile(current);
 }
+
+QUrl ViewerSession::imageUrl() const { return ::imageUrl(path(), m_contentVersion); }
 
 QString ViewerSession::fileName() const { return QFileInfo(path()).fileName(); }
 
@@ -104,6 +126,11 @@ QUrl ViewerSession::neighbourUrl(int offset) const {
   }
   const int index = ((m_index + offset) % total + total) % total;
   return index == m_index ? QUrl() : QUrl::fromLocalFile(m_paths.at(index));
+}
+
+QUrl ViewerSession::neighbourImageUrl(int offset) const {
+  const QString neighbour = neighbourUrl(offset).toLocalFile();
+  return ::imageUrl(neighbour, FileVersion::key(neighbour));
 }
 
 bool ViewerSession::neighbourIsVideo(int offset) const {
@@ -189,10 +216,17 @@ QStringList ViewerSession::siblings(const QString& folder, const QString& keep) 
   });
 
   QStringList paths;
+  QSet<QString> seen;
   paths.reserve(names.size());
   const QString prefix = directory.absolutePath() + QLatin1Char('/');
   for (const QString& name : std::as_const(names)) {
-    paths.append(prefix + name);
+    const QFileInfo file(prefix + name);
+    const QString canonical = file.canonicalFilePath();
+    const QString path = canonical.isEmpty() ? file.absoluteFilePath() : canonical;
+    if (!seen.contains(path)) {
+      seen.insert(path);
+      paths.append(path);
+    }
   }
   return paths;
 }
@@ -218,6 +252,7 @@ void ViewerSession::setSequence(const QStringList& paths, int index) {
   const int beforeIndex = m_index;
   const QString beforeSuffix = m_mediaSuffix;
   const double beforeStamp = m_stamp;
+  const QString beforeVersion = m_contentVersion;
   const bool listChanged = paths != m_paths;
   m_paths = paths;
   m_index = paths.isEmpty() ? -1 : std::clamp(index, 0, int(paths.size()) - 1);
@@ -228,7 +263,7 @@ void ViewerSession::setSequence(const QStringList& paths, int index) {
   // and directory relists must refresh it even when the sequence is unchanged.
   refreshDetails();
   if (path() != before || m_index != beforeIndex || m_mediaSuffix != beforeSuffix ||
-      m_stamp != beforeStamp) {
+      m_stamp != beforeStamp || m_contentVersion != beforeVersion) {
     emit currentChanged();
   }
 }
@@ -243,6 +278,8 @@ void ViewerSession::setIndex(int index) {
 }
 
 void ViewerSession::refreshDetails() {
+  m_contentVersion = FileVersion::key(path());
+  watchCurrentFile();
   m_mediaSuffix = CaptureScanner::mediaSuffix(path());
   const QFileInfo info(path());
   if (path().isEmpty() || !info.exists()) {
@@ -300,4 +337,12 @@ void ViewerSession::watchFolder(const QString& folder) {
   if (!folder.isEmpty()) {
     m_watcher.addPath(folder);
   }
+}
+
+void ViewerSession::watchCurrentFile() {
+  const QStringList watched = m_watcher.files();
+  const QString current = path();
+  if (watched == QStringList{current}) return;
+  if (!watched.isEmpty()) m_watcher.removePaths(watched);
+  if (!current.isEmpty() && QFileInfo::exists(current)) m_watcher.addPath(current);
 }

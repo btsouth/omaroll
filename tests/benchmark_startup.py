@@ -5,6 +5,7 @@ Offscreen OpenGL, with the actual driver recorded. Frames are submitted, not com
 No personal files, settings, cache, instance socket or physical audio are used.
 """
 import argparse
+from collections import deque
 import hashlib
 import json
 import os
@@ -49,6 +50,8 @@ def sample(binary, fixture, mode, file_count=100):
         process = subprocess.Popen(args, env=env, stdout=subprocess.DEVNULL,
                                    stderr=subprocess.PIPE)
         stages = {}
+        observed_stages = {}
+        diagnostics = deque(maxlen=30)
         graphics = None
         idle_start = None
         pending = b""
@@ -57,7 +60,12 @@ def sample(binary, fixture, mode, file_count=100):
                 selector.register(process.stderr, selectors.EVENT_READ)
                 while time.perf_counter() - started < 8:
                     if process.poll() is not None:
-                        raise RuntimeError(f"Omaroll exited early: {process.returncode}")
+                        # Include both the partial line already read and stderr
+                        # still buffered when the process exited.
+                        remaining = pending + process.stderr.read()
+                        diagnostics.extend(remaining.decode(errors="replace").splitlines())
+                        raise RuntimeError(f"Omaroll exited early: {process.returncode}\n"
+                                           + "\n".join(diagnostics))
                     if idle_start is None and time.perf_counter() - started >= 3:
                         idle_start = (time.perf_counter(), cpu_seconds(process.pid))
                     for key, _ in selector.select(timeout=0.05):
@@ -65,11 +73,14 @@ def sample(binary, fixture, mode, file_count=100):
                         lines = pending.split(b"\n")
                         pending = lines.pop()
                         for line in lines:
+                            diagnostics.append(line.decode(errors="replace"))
                             if b"OpenGL VENDOR: " in line:
                                 graphics = line.split(b"OpenGL VENDOR: ", 1)[1].decode(errors="replace")
                             if b"OMAROLL_STARTUP " in line:
                                 event = json.loads(line.split(b"OMAROLL_STARTUP ", 1)[1])
                                 stages[event["stage"]] = event["elapsed_ms"]
+                                observed_stages[event["stage"]] = round(
+                                    (time.perf_counter() - started) * 1000, 3)
                 idle_cpu = cpu_seconds(process.pid) - idle_start[1]
                 idle_wall = time.perf_counter() - idle_start[0]
                 status = Path(f"/proc/{process.pid}/status").read_text().splitlines()
@@ -78,8 +89,11 @@ def sample(binary, fixture, mode, file_count=100):
                 expected = "image_frame" if mode == "single-image" else "grid_frame"
                 required = {"application", "theme", "services", "qml", "first_frame", expected}
                 if required - stages.keys() or graphics is None:
-                    raise RuntimeError(f"Missing startup evidence: {required - stages.keys()}; graphics={graphics}")
+                    raise RuntimeError(
+                        f"Missing startup evidence: {required - stages.keys()}; graphics={graphics}\n"
+                        + "\n".join(diagnostics))
                 return dict(mode=mode, graphics=graphics, main_entry_stages_ms=stages,
+                            observed_process_stages_ms=observed_stages,
                             fixture=fixture.name, fixture_bytes=fixture.stat().st_size,
                             fixture_sha256=hashlib.sha256(fixture.read_bytes()).hexdigest(),
                             files=file_count,

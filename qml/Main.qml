@@ -296,6 +296,11 @@ ApplicationWindow {
         } else if (InitialFolderPath !== "") {
             root.openFolder(InitialFolderPath)
         }
+        Qt.callLater(function () {
+            if (!root.anySheetOpen && !root.popupOpen && !filters.searchActive) {
+                library.forceActiveFocus()
+            }
+        })
     }
     Connections {
         target: Settings
@@ -940,6 +945,11 @@ ApplicationWindow {
                 const candidate = root.viewerPaths.length ? root.viewerPaths[index]
                                                           : Captures.pathAt(index)
                 if (candidate === detail.path) {
+                    continue
+                }
+                if (root.viewerFolderOnly
+                        && candidate.substring(0, candidate.lastIndexOf("/"))
+                           !== detail.path.substring(0, detail.path.lastIndexOf("/"))) {
                     continue
                 }
                 const candidateRow = Captures.rowOf(candidate)

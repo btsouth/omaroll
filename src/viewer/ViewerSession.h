@@ -23,6 +23,8 @@ class ViewerSession final : public QObject {
   Q_OBJECT
   Q_PROPERTY(QString path READ path NOTIFY currentChanged)
   Q_PROPERTY(QUrl url READ url NOTIFY currentChanged)
+  Q_PROPERTY(QUrl imageUrl READ imageUrl NOTIFY currentChanged)
+  Q_PROPERTY(QString contentVersion READ contentVersion NOTIFY currentChanged)
   Q_PROPERTY(QString fileName READ fileName NOTIFY currentChanged)
   Q_PROPERTY(QString folder READ folder NOTIFY currentChanged)
   Q_PROPERTY(bool isVideo READ isVideo NOTIFY currentChanged)
@@ -40,6 +42,8 @@ public:
 
   [[nodiscard]] QString path() const { return m_paths.value(m_index); }
   [[nodiscard]] QUrl url() const;
+  [[nodiscard]] QUrl imageUrl() const;
+  [[nodiscard]] QString contentVersion() const { return m_contentVersion; }
   [[nodiscard]] QString fileName() const;
   [[nodiscard]] QString folder() const;
   [[nodiscard]] bool isVideo() const;
@@ -66,6 +70,7 @@ public:
 
   // The file |offset| steps away, for preloading the next picture.
   Q_INVOKABLE QUrl neighbourUrl(int offset) const;
+  Q_INVOKABLE QUrl neighbourImageUrl(int offset) const;
   Q_INVOKABLE bool neighbourIsVideo(int offset) const;
   Q_INVOKABLE bool neighbourIsAnimated(int offset) const;
 
@@ -102,6 +107,7 @@ private:
   void startListing();
   void applyListing(const QStringList& listed);
   void watchFolder(const QString& folder);
+  void watchCurrentFile();
 
   QStringList m_paths;
   int m_index = -1;
@@ -110,6 +116,7 @@ private:
   QString m_sizeLabel;
   QString m_dateLabel;
   QString m_mediaSuffix;
+  QString m_contentVersion;
   // The folder being shown and the opened file, for relisting after a change.
   QString m_folder;
   QString m_opened;

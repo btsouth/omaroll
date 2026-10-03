@@ -49,6 +49,9 @@
 #include <QTransform>
 #include <QtTest>
 
+#include <fcntl.h>
+#include <sys/stat.h>
+
 namespace {
 
 // A JPEG carrying a single EXIF Orientation tag. Qt cannot write one, and the
@@ -1311,6 +1314,361 @@ private slots:
     settings.deleteTag(QStringLiteral("Travel"));
   }
 
+  void organizationBackupRecoversMarksAfterAMove_data() {
+    QTest::addColumn<bool>("copyMove");
+    QTest::newRow("inode") << false;
+    QTest::newRow("fingerprint") << true;
+  }
+
+  void organizationBackupRecoversMarksAfterAMove() {
+    QFETCH(bool, copyMove);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto restoreProfile = qScopeGuard([this] {
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                         m_scratch.filePath(QStringLiteral("config")));
+    });
+    const QString original = dir.filePath(QStringLiteral("before.png"));
+    const QString moved = dir.filePath(QStringLiteral("after.png"));
+    const QString backup = dir.filePath(QStringLiteral("backup.json"));
+    QImage image(10, 10, QImage::Format_RGB32);
+    image.fill(Qt::green);
+    QVERIFY(image.save(original, "PNG"));
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                       dir.filePath(QStringLiteral("source-profile")));
+    {
+      AppSettings source;
+      source.setFavorite({original}, true);
+      source.setHidden({original}, true);
+      source.setRating({original}, 5);
+      source.setCaption(original, QStringLiteral("Moved before restore"));
+      QVERIFY(source.exportOrganization(backup).value(QStringLiteral("ok")).toBool());
+    }
+    if (copyMove) {
+      QVERIFY(QFile::copy(original, moved));
+      QVERIFY(QFile::remove(original));
+    } else {
+      QVERIFY(QFile::rename(original, moved));
+    }
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                       dir.filePath(QStringLiteral("fresh-profile")));
+    {
+      AppSettings restored;
+      QVERIFY(restored.markedPaths().isEmpty());
+      QVERIFY(restored.importOrganization(backup).value(QStringLiteral("ok")).toBool());
+    }
+    {
+      // Recovery after restarting must use identities persisted by import,
+      // without ever seeing the file at its original path in this profile.
+      AppSettings reloaded;
+      const auto records = CaptureScanner::scan(
+          {{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
+      QCOMPARE(records.size(), 1);
+      reloaded.reconcileMarks(records);
+      QVERIFY(!reloaded.markedPaths().contains(original));
+      QCOMPARE(reloaded.markedPaths(), QStringList {moved});
+      QVERIFY(reloaded.isFavorite(moved));
+      QVERIFY(reloaded.isHidden(moved));
+      QCOMPARE(reloaded.rating(moved), 5);
+      QCOMPARE(reloaded.caption(moved), QStringLiteral("Moved before restore"));
+    }
+  }
+
+  void legacyOrganizationBackupDoesNotReuseOldMarkIdentities() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                       dir.filePath(QStringLiteral("profile")));
+    const auto restoreProfile = qScopeGuard([this] {
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                         m_scratch.filePath(QStringLiteral("config")));
+    });
+    const QString original = dir.filePath(QStringLiteral("before.png"));
+    const QString moved = dir.filePath(QStringLiteral("after.png"));
+    const QString backup = dir.filePath(QStringLiteral("legacy.json"));
+    QImage image(10, 10, QImage::Format_RGB32);
+    image.fill(Qt::blue);
+    QVERIFY(image.save(original, "PNG"));
+    AppSettings settings;
+    settings.setFavorite({original}, true);
+    QVERIFY(settings.exportOrganization(backup).value(QStringLiteral("ok")).toBool());
+    QFile file(backup);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QJsonObject legacy = QJsonDocument::fromJson(file.readAll()).object();
+    file.close();
+    legacy.remove(QStringLiteral("markIdentities"));
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    const QByteArray payload = QJsonDocument(legacy).toJson();
+    QCOMPARE(file.write(payload), qint64(payload.size()));
+    file.close();
+    QVERIFY(QFile::rename(original, moved));
+    QVERIFY(settings.importOrganization(backup).value(QStringLiteral("ok")).toBool());
+    auto records = CaptureScanner::scan(
+        {{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
+    settings.reconcileMarks(records);
+    QVERIFY(settings.isFavorite(original));
+    QVERIFY(!settings.isFavorite(moved));
+
+    // Legacy marks can still acquire an identity when their file is present,
+    // then follow subsequent external renames as before.
+    QVERIFY(QFile::rename(moved, original));
+    records = CaptureScanner::scan(
+        {{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
+    settings.reconcileMarks(records);
+    QVERIFY(QFile::rename(original, moved));
+    records = CaptureScanner::scan(
+        {{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
+    settings.reconcileMarks(records);
+    QVERIFY(!settings.isFavorite(original));
+    QVERIFY(settings.isFavorite(moved));
+  }
+
+  void organizationBackupAcceptsLegacyMarkIdentities_data() {
+    QTest::addColumn<bool>("knownBytes");
+    QTest::newRow("empty-fingerprint") << true;
+    QTest::newRow("unknown-size") << false;
+  }
+
+  void organizationBackupAcceptsLegacyMarkIdentities() {
+    QFETCH(bool, knownBytes);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                       dir.filePath(QStringLiteral("profile")));
+    const auto restoreProfile = qScopeGuard([this] {
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                         m_scratch.filePath(QStringLiteral("config")));
+    });
+    const QString path = dir.filePath(QStringLiteral("unavailable.png"));
+    const QString backup = dir.filePath(QStringLiteral("backup.json"));
+    {
+      QSettings stored(QSettings::IniFormat, QSettings::UserScope,
+                       QStringLiteral("omaroll"), QStringLiteral("omaroll"));
+      stored.setValue(QStringLiteral("library/favorites"), QStringList{path});
+      stored.setValue(QStringLiteral("library/markIdentities"), QVariantMap{
+          {path, QVariantMap{{QStringLiteral("bytes"), knownBytes ? 10 : -1},
+                            {QStringLiteral("modified"), 1000},
+                            {QStringLiteral("fingerprint"), QByteArray()},
+                            {QStringLiteral("device"), QStringLiteral("1")},
+                            {QStringLiteral("inode"), QStringLiteral("2")}}}});
+      stored.sync();
+    }
+    AppSettings settings;
+    QVERIFY(settings.isFavorite(path));
+    QVERIFY(settings.exportOrganization(backup).value(QStringLiteral("ok")).toBool());
+    QFile file(backup);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const auto identities = QJsonDocument::fromJson(file.readAll()).object()
+                                .value(QStringLiteral("markIdentities")).toObject();
+    QCOMPARE(identities.contains(path), knownBytes);
+    if (knownBytes) {
+      QCOMPARE(identities.value(path).toObject().value(QStringLiteral("fingerprint")).toString(),
+               QString());
+    }
+    settings.setFavorite({path}, false);
+    QVERIFY(settings.importOrganization(backup).value(QStringLiteral("ok")).toBool());
+    QVERIFY(settings.isFavorite(path));
+    AppSettings restored;
+    QVERIFY(restored.isFavorite(path));
+  }
+
+  void invalidBackupMarkIdentitiesLeaveOrganizationUntouched() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                       dir.filePath(QStringLiteral("profile")));
+    const auto restoreProfile = qScopeGuard([this] {
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                         m_scratch.filePath(QStringLiteral("config")));
+    });
+    const QString path = dir.filePath(QStringLiteral("marked.png"));
+    const QString backup = dir.filePath(QStringLiteral("backup.json"));
+    const QString broken = dir.filePath(QStringLiteral("broken.json"));
+    QImage image(10, 10, QImage::Format_RGB32);
+    image.fill(Qt::red);
+    QVERIFY(image.save(path, "PNG"));
+    AppSettings settings;
+    settings.setFavorite({path}, true);
+    settings.setHidden({path}, true);
+    settings.setRating({path}, 4);
+    settings.setCaption(path, QStringLiteral("Unchanged"));
+    QVERIFY(settings.createAlbum(QStringLiteral("Keep album")));
+    QVERIFY(settings.addToAlbum(QStringLiteral("Keep album"), {path}));
+    QVERIFY(settings.createTag(QStringLiteral("Keep tag")));
+    QVERIFY(settings.addTag(QStringLiteral("Keep tag"), {path}));
+    QVERIFY(settings.saveSmartCollection(QStringLiteral("Keep view"),
+                                         {{QStringLiteral("favorites"), true}}));
+    QVERIFY(settings.exportOrganization(backup).value(QStringLiteral("ok")).toBool());
+    QFile file(backup);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QJsonObject expected = QJsonDocument::fromJson(file.readAll()).object();
+    file.close();
+    const QJsonObject identity =
+        expected.value(QStringLiteral("markIdentities")).toObject().value(path).toObject();
+    QVERIFY(!identity.isEmpty());
+
+    // Use otherwise valid replacement organization, so accepting any damaged
+    // identity would visibly wipe the current profile.
+    QJsonObject replacement = expected;
+    replacement.insert(QStringLiteral("albums"), QJsonObject());
+    replacement.insert(QStringLiteral("tags"), QJsonObject());
+    replacement.insert(QStringLiteral("hidden"), QJsonArray());
+    replacement.insert(QStringLiteral("ratings"), QJsonObject());
+    replacement.insert(QStringLiteral("captions"), QJsonObject());
+    replacement.insert(QStringLiteral("smartCollections"), QJsonObject());
+    QList<QJsonValue> malformed {QJsonValue(QJsonValue::Null), QJsonArray(),
+                                QJsonObject {{path, false}},
+                                QJsonObject {{QStringLiteral(""), identity}},
+                                QJsonObject {{dir.filePath(QStringLiteral("unmarked.png")), identity}}};
+    const QList<QPair<QString, QJsonValue>> invalidFields {
+        {QStringLiteral("bytes"), QJsonValue(QJsonValue::Undefined)},
+        {QStringLiteral("bytes"), -1},
+        {QStringLiteral("bytes"), 1.5},
+        {QStringLiteral("bytes"), 1e30},
+        {QStringLiteral("bytes"), QStringLiteral("10")},
+        {QStringLiteral("modified"), QJsonValue(QJsonValue::Undefined)},
+        {QStringLiteral("modified"), 0.5},
+        {QStringLiteral("modified"), -1e30},
+        {QStringLiteral("fingerprint"), QStringLiteral("not base64!")},
+        {QStringLiteral("fingerprint"), QString::fromLatin1(QByteArray(31, 'x').toBase64())},
+        {QStringLiteral("fingerprint"), 123},
+        {QStringLiteral("device"), 1},
+        {QStringLiteral("device"), QStringLiteral("-1")},
+        {QStringLiteral("device"), QStringLiteral("18446744073709551616")},
+        {QStringLiteral("inode"), QJsonValue(QJsonValue::Undefined)},
+        {QStringLiteral("inode"), QStringLiteral("invalid")}};
+    for (const auto& field : invalidFields) {
+      QJsonObject row = identity;
+      row.insert(field.first, field.second);
+      malformed.append(QJsonObject {{path, row}});
+    }
+
+    QSignalSpy marksChanged(&settings, &AppSettings::marksChanged);
+    QSignalSpy albumsChanged(&settings, &AppSettings::albumsChanged);
+    QSignalSpy tagsChanged(&settings, &AppSettings::tagsChanged);
+    QSignalSpy viewsChanged(&settings, &AppSettings::smartCollectionsChanged);
+    QSettings stored(QSettings::IniFormat, QSettings::UserScope,
+                     QStringLiteral("omaroll"), QStringLiteral("omaroll"));
+    stored.sync();
+    QVariantMap before;
+    for (const QString& key : stored.allKeys()) {
+      before.insert(key, stored.value(key));
+    }
+    expected.remove(QStringLiteral("exportedAt"));
+    for (const QJsonValue& value : malformed) {
+      replacement.insert(QStringLiteral("markIdentities"), value);
+      QFile damaged(broken);
+      QVERIFY(damaged.open(QIODevice::WriteOnly | QIODevice::Truncate));
+      const QByteArray payload = QJsonDocument(replacement).toJson();
+      QCOMPARE(damaged.write(payload), qint64(payload.size()));
+      damaged.close();
+      QVERIFY(!settings.importOrganization(broken).value(QStringLiteral("ok")).toBool());
+      QVERIFY(settings.exportOrganization(backup).value(QStringLiteral("ok")).toBool());
+      QVERIFY(file.open(QIODevice::ReadOnly));
+      QJsonObject after = QJsonDocument::fromJson(file.readAll()).object();
+      file.close();
+      after.remove(QStringLiteral("exportedAt"));
+      QCOMPARE(after, expected);
+      stored.sync();
+      QVariantMap persisted;
+      for (const QString& key : stored.allKeys()) {
+        persisted.insert(key, stored.value(key));
+      }
+      QCOMPARE(persisted, before);
+    }
+    QCOMPARE(marksChanged.size(), 0);
+    QCOMPARE(albumsChanged.size(), 0);
+    QCOMPARE(tagsChanged.size(), 0);
+    QCOMPARE(viewsChanged.size(), 0);
+  }
+
+  void externalRenameAtHashGrowthBoundaryKeepsUnrelatedMarks_data() {
+    QTest::addColumn<int>("markCount");
+    QTest::addColumn<bool>("markedDestination");
+    QHash<QString, int> probe;
+    probe.insert(QStringLiteral("first"), 1);
+    const int capacity = static_cast<int>(probe.capacity());
+    QTest::newRow("first-growth") << capacity << false;
+    QTest::newRow("second-growth") << capacity * 2 << false;
+    QTest::newRow("third-growth") << capacity * 4 << false;
+    QTest::newRow("destination-collision") << capacity << true;
+  }
+
+  void externalRenameAtHashGrowthBoundaryKeepsUnrelatedMarks() {
+    QFETCH(int, markCount);
+    QFETCH(bool, markedDestination);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                       dir.filePath(QStringLiteral("profile")));
+    const auto restoreProfile = qScopeGuard([this] {
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                         m_scratch.filePath(QStringLiteral("config")));
+    });
+    const QString original = dir.filePath(QStringLiteral("before.png"));
+    const QString moved = dir.filePath(QStringLiteral("after.png"));
+    QImage image(10, 10, QImage::Format_RGB32);
+    image.fill(Qt::yellow);
+    QVERIFY(image.save(original, "PNG"));
+    {
+      AppSettings source;
+      source.setRating({original}, 3);
+      source.setCaption(original, QStringLiteral("Source caption"));
+    }
+    QStringList ratings {QStringLiteral("3:") + original};
+    QVariantMap captions {{original, QStringLiteral("Source caption")}};
+    if (markedDestination) {
+      ratings.append(QStringLiteral("5:") + moved);
+      captions.insert(moved, QStringLiteral("Destination caption"));
+    }
+    QStringList unrelated;
+    while (ratings.size() < markCount) {
+      const QString path = dir.filePath(QStringLiteral("unrelated-%1.png").arg(ratings.size()));
+      ratings.append(QStringLiteral("2:") + path);
+      captions.insert(path, QStringLiteral("Caption for ") + path);
+      unrelated.append(path);
+    }
+    {
+      // Fill both hashes exactly to Qt's growth boundary without undo snapshots
+      // or pre-reservation masking insertion's iterator invalidation.
+      QSettings stored(QSettings::IniFormat, QSettings::UserScope,
+                       QStringLiteral("omaroll"), QStringLiteral("omaroll"));
+      stored.setValue(QStringLiteral("library/ratings"), ratings);
+      stored.setValue(QStringLiteral("library/captions"), captions);
+      stored.sync();
+    }
+    {
+      AppSettings settings;
+      QCOMPARE(settings.ratedCount(), markCount);
+      QVERIFY(QFile::rename(original, moved));
+      const auto records = CaptureScanner::scan(
+          {{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
+      QCOMPARE(records.size(), 1);
+      settings.reconcileMarks(records);
+      QCOMPARE(settings.rating(original), 0);
+      QVERIFY(settings.caption(original).isEmpty());
+      QCOMPARE(settings.rating(moved), markedDestination ? 5 : 3);
+      QCOMPARE(settings.caption(moved), markedDestination ? QStringLiteral("Destination caption")
+                                                          : QStringLiteral("Source caption"));
+      QCOMPARE(settings.ratedCount(), markedDestination ? markCount - 1 : markCount);
+      for (const QString& path : unrelated) {
+        QCOMPARE(settings.rating(path), 2);
+        QCOMPARE(settings.caption(path), QStringLiteral("Caption for ") + path);
+      }
+    }
+    AppSettings reloaded;
+    QCOMPARE(reloaded.rating(original), 0);
+    QVERIFY(reloaded.caption(original).isEmpty());
+    QCOMPARE(reloaded.rating(moved), markedDestination ? 5 : 3);
+    QCOMPARE(reloaded.caption(moved), markedDestination ? QStringLiteral("Destination caption")
+                                                      : QStringLiteral("Source caption"));
+    QCOMPARE(reloaded.ratedCount(), markedDestination ? markCount - 1 : markCount);
+    for (const QString& path : unrelated) {
+      QCOMPARE(reloaded.rating(path), 2);
+      QCOMPARE(reloaded.caption(path), QStringLiteral("Caption for ") + path);
+    }
+  }
+
   void marksFollowAFileMovedOutsideOmaroll() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -1388,6 +1746,167 @@ private slots:
     settings.setCaption(copied, QString());
     settings.setHidden({copied}, false);
     settings.setFavorite({bmpA, bmpB}, false);
+  }
+
+  void reusedInodeDoesNotStealMarks_data() {
+    QTest::addColumn<bool>("knownFingerprint");
+    QTest::newRow("known-content") << true;
+    QTest::newRow("legacy-identity") << false;
+  }
+
+  void reusedInodeDoesNotStealMarks() {
+    QFETCH(bool, knownFingerprint);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                       dir.filePath(QStringLiteral("profile")));
+    const auto restoreProfile = qScopeGuard([this] {
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                         m_scratch.filePath(QStringLiteral("config")));
+    });
+    const QString original = dir.filePath(QStringLiteral("original.bmp"));
+    const QString unrelated = dir.filePath(QStringLiteral("unrelated.bmp"));
+    for (const QString& path : {original, unrelated}) {
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      QCOMPARE(file.write(QByteArray(4096, path == original ? 'a' : 'b')), qint64(4096));
+    }
+    const auto records = CaptureScanner::scan(
+        {{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
+    QCOMPARE(records.size(), 2);
+    CaptureRecord reused;
+    for (const auto& record : records) {
+      if (record.path == original) reused = record;
+    }
+    QVERIFY(reused.inode != 0);
+    reused.path = unrelated; // Model an equal-sized file reusing the remembered inode.
+    {
+      AppSettings settings;
+      settings.setFavorite({original}, true);
+      settings.setHidden({original}, true);
+      settings.setRating({original}, 4);
+      settings.setCaption(original, QStringLiteral("Original caption"));
+    }
+    if (!knownFingerprint) {
+      QSettings stored(QSettings::IniFormat, QSettings::UserScope,
+                       QStringLiteral("omaroll"), QStringLiteral("omaroll"));
+      QVariantMap identities = stored.value(QStringLiteral("library/markIdentities")).toMap();
+      QVariantMap identity = identities.value(original).toMap();
+      identity.remove(QStringLiteral("fingerprint"));
+      identities.insert(original, identity);
+      stored.setValue(QStringLiteral("library/markIdentities"), identities);
+      stored.sync();
+    }
+    QVERIFY(QFile::remove(original));
+    {
+      AppSettings settings;
+      // Retain the unavailable mark through a scan before the inode reappears.
+      settings.reconcileMarks({});
+      settings.reconcileMarks({reused});
+      settings.reconcileMarks({reused});
+    }
+    AppSettings reloaded;
+    const QString marked = knownFingerprint ? original : unrelated;
+    const QString unmarked = knownFingerprint ? unrelated : original;
+    QVERIFY(reloaded.isFavorite(marked));
+    QVERIFY(reloaded.isHidden(marked));
+    QCOMPARE(reloaded.rating(marked), 4);
+    QCOMPARE(reloaded.caption(marked), QStringLiteral("Original caption"));
+    QVERIFY(!reloaded.isFavorite(unmarked));
+    QVERIFY(!reloaded.isHidden(unmarked));
+    QCOMPARE(reloaded.rating(unmarked), 0);
+    QVERIFY(reloaded.caption(unmarked).isEmpty());
+  }
+
+  void retainedMarkFingerprintCacheTracksContentAndMarkIdentity() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                       dir.filePath(QStringLiteral("profile")));
+    const auto restoreProfile = qScopeGuard([this] {
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                         m_scratch.filePath(QStringLiteral("config")));
+    });
+    const QString first = dir.filePath(QStringLiteral("first.bmp"));
+    const QString second = dir.filePath(QStringLiteral("second.bmp"));
+    const QString candidate = dir.filePath(QStringLiteral("candidate.bmp"));
+    for (const QString& path : {first, second}) {
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      QCOMPARE(file.write(QByteArray(4096, path == first ? 'a' : 'b')), qint64(4096));
+    }
+    AppSettings settings;
+    settings.setFavorite({first}, true);
+    settings.setHidden({second}, true);
+    QVERIFY(QFile::copy(second, candidate));
+    QVERIFY(QFile::remove(first));
+    QVERIFY(QFile::remove(second));
+    auto records = CaptureScanner::scan(
+        {{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
+    QCOMPARE(records.size(), 1);
+    settings.reconcileMarks(records);
+    // A mismatch against one mark must not suppress a match against another.
+    QVERIFY(settings.isFavorite(first));
+    QVERIFY(!settings.isFavorite(candidate));
+    QVERIFY(settings.isHidden(candidate));
+    settings.reconcileMarks(records);
+    QVERIFY(settings.isFavorite(first));
+
+    struct stat before {};
+    QVERIFY(::stat(QFile::encodeName(candidate).constData(), &before) == 0);
+    QTest::qWait(50);
+    QFile changed(candidate);
+    QVERIFY(changed.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    QCOMPARE(changed.write(QByteArray(4096, 'a')), qint64(4096));
+    changed.close();
+    const timespec times[] = {before.st_atim, before.st_mtim};
+    QVERIFY(::utimensat(AT_FDCWD, QFile::encodeName(candidate).constData(), times, 0) == 0);
+    // Same path, size, inode and exact mtime: ctime must invalidate the hash.
+    records = CaptureScanner::scan(
+        {{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
+    settings.reconcileMarks(records);
+    QVERIFY(!settings.isFavorite(first));
+    QVERIFY(settings.isFavorite(candidate));
+    QVERIFY(settings.isHidden(candidate));
+  }
+
+  void retainedMarksLeaveAmbiguousOrExcessiveFingerprintCandidatesUnresolved_data() {
+    QTest::addColumn<int>("candidateCount");
+    QTest::newRow("ambiguous") << 2;
+    QTest::newRow("bounded-fingerprinting") << 129;
+  }
+
+  void retainedMarksLeaveAmbiguousOrExcessiveFingerprintCandidatesUnresolved() {
+    QFETCH(int, candidateCount);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                       dir.filePath(QStringLiteral("profile")));
+    const auto restoreProfile = qScopeGuard([this] {
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                         m_scratch.filePath(QStringLiteral("config")));
+    });
+    const QString original = dir.filePath(QStringLiteral("original.bmp"));
+    QFile file(original);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(QByteArray(4096, 'a')), qint64(4096));
+    file.close();
+    AppSettings settings;
+    settings.setFavorite({original}, true);
+    for (int index = 0; index < candidateCount; ++index) {
+      const QString path = dir.filePath(QStringLiteral("candidate-%1.bmp").arg(index));
+      QVERIFY(QFile::copy(original, path));
+      QFile copy(path);
+      QVERIFY(copy.open(QIODevice::ReadWrite));
+      QVERIFY(copy.setFileTime(QDateTime::fromMSecsSinceEpoch(1000), QFileDevice::FileModificationTime));
+    }
+    QVERIFY(QFile::remove(original));
+    const auto records = CaptureScanner::scan(
+        {{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
+    QCOMPARE(records.size(), candidateCount);
+    settings.reconcileMarks(records);
+    settings.reconcileMarks(records);
+    QCOMPARE(settings.markedPaths(), QStringList{original});
   }
 
   void undoRestoresThePreviousMarks() {
@@ -3802,15 +4321,101 @@ private slots:
   void marksSurviveARootGoingAway() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
-    const QString kept = dir.filePath(QStringLiteral("kept.png"));
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                       dir.filePath(QStringLiteral("profile")));
+    const auto restoreProfile = qScopeGuard([this] {
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                         m_scratch.filePath(QStringLiteral("config")));
+    });
+    QMap<QByteArray, QByteArray> environment;
+    const auto restoreEnvironment = qScopeGuard([&] {
+      for (auto it = environment.cbegin(); it != environment.cend(); ++it) {
+        it.value().isNull() ? qunsetenv(it.key().constData())
+                            : qputenv(it.key().constData(), it.value());
+      }
+    });
+    for (const char* name : {"OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR",
+                             "XDG_PICTURES_DIR", "XDG_VIDEOS_DIR"}) {
+      environment.insert(name, qgetenv(name));
+      QVERIFY(qputenv(name, dir.filePath(QStringLiteral("automatic")).toUtf8()));
+    }
+
+    const QString root = dir.filePath(QStringLiteral("mounted"));
+    const QString offline = dir.filePath(QStringLiteral("offline"));
+    QVERIFY(QDir().mkpath(root));
+    const QString original = root + QStringLiteral("/kept.png");
+    const QString backup = dir.filePath(QStringLiteral("offline-backup.json"));
     QImage image(4, 4, QImage::Format_RGB32);
     image.fill(Qt::red);
-    QVERIFY(image.save(kept, "PNG"));
-    const QString gone = dir.filePath(QStringLiteral("deleted.png"));
+    QVERIFY(image.save(original, "PNG"));
+    {
+      AppSettings settings;
+      settings.setScanDownloads(false);
+      QVERIFY(settings.addLibraryFolder(QUrl::fromLocalFile(root)));
+      settings.setFavorite({original}, true);
+      settings.setHidden({original}, true);
+      settings.setRating({original}, 4);
+      settings.setCaption(original, QStringLiteral("Remember offline"));
+      CaptureModel model(&settings);
+      QTRY_VERIFY_WITH_TIMEOUT(!model.scanning(), 5000);
+      QCOMPARE(model.rowCount(), 1);
 
-    // A scan that saw neither, as happens when a root is unmounted or switched
-    // off in settings. Only the mark whose file is actually gone may go.
-    QCOMPARE(CaptureModel::missingMarks({kept, gone}, {}), QStringList {gone});
+      // Simulate an unmounted volume, including failed existence checks.
+      QVERIFY(QDir().rename(root, offline));
+      QVERIFY(!QFileInfo::exists(original));
+      model.refresh();
+      QTRY_VERIFY_WITH_TIMEOUT(!model.scanning(), 5000);
+      QCOMPARE(model.rowCount(), 0);
+      QVERIFY(settings.isFavorite(original));
+      QVERIFY(settings.isHidden(original));
+      QCOMPARE(settings.rating(original), 4);
+      QCOMPARE(settings.caption(original), QStringLiteral("Remember offline"));
+      QVERIFY(settings.exportOrganization(backup).value(QStringLiteral("ok")).toBool());
+    }
+    {
+      // Reload persisted organization while the volume is still unavailable.
+      AppSettings restored;
+      CaptureModel model(&restored);
+      QTRY_VERIFY_WITH_TIMEOUT(!model.scanning(), 5000);
+      QCOMPARE(model.rowCount(), 0);
+      QVERIFY(restored.isFavorite(original));
+      QVERIFY(restored.isHidden(original));
+      QCOMPARE(restored.rating(original), 4);
+      QCOMPARE(restored.caption(original), QStringLiteral("Remember offline"));
+    }
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                       dir.filePath(QStringLiteral("fresh-profile")));
+    QVERIFY(qputenv("XDG_PICTURES_DIR", root.toUtf8()));
+    {
+      AppSettings restored;
+      restored.setScanDownloads(false);
+      QVERIFY(restored.markedPaths().isEmpty());
+      QVERIFY(restored.importOrganization(backup).value(QStringLiteral("ok")).toBool());
+      CaptureModel model(&restored);
+      QTRY_VERIFY_WITH_TIMEOUT(!model.scanning(), 5000);
+      QCOMPARE(model.rowCount(), 0);
+      QVERIFY(restored.isFavorite(original));
+      QVERIFY(restored.isHidden(original));
+      QCOMPARE(restored.rating(original), 4);
+      QCOMPARE(restored.caption(original), QStringLiteral("Remember offline"));
+
+      // Return under a new filename. Recovery needs the preserved identity,
+      // since the original path never becomes available to backfill one.
+      QVERIFY(QFile::rename(offline + QStringLiteral("/kept.png"),
+                            offline + QStringLiteral("/renamed.png")));
+      QVERIFY(QDir().rename(offline, root));
+      const QString moved = root + QStringLiteral("/renamed.png");
+      model.refresh();
+      QTRY_VERIFY_WITH_TIMEOUT(!model.scanning(), 5000);
+      QCOMPARE(model.rowCount(), 1);
+      QVERIFY(!restored.markedPaths().contains(original));
+      QVERIFY(model.rowOf(moved) >= 0);
+      const CaptureRecord& record = model.recordAt(model.rowOf(moved));
+      QVERIFY(record.favorite);
+      QVERIFY(record.hidden);
+      QCOMPARE(record.rating, 4);
+      QCOMPARE(record.caption, QStringLiteral("Remember offline"));
+    }
   }
 
   void scanSkipsTheRecorderTransients() {
@@ -4299,7 +4904,7 @@ private slots:
              QStringLiteral("file\n/tmp/first capture.png\n/tmp/second # capture.mp4\n"));
   }
 
-  void trackedRunsReportSettleAndCleanUpAfterFailure() {
+  void trackedRunsReportSettleAndKeepNonemptyOutputAfterFailure() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
 
@@ -4341,8 +4946,8 @@ private slots:
     QTRY_COMPARE_WITH_TIMEOUT(settled.size(), 2, 3000);
     QCOMPARE(settled.last().at(1).toBool(), true);
 
-    // Failure: the partial write this run left behind is removed, and the
-    // tool's own last words are quoted rather than a bare exit code.
+    // Failure after writing: retain the output for review and report the
+    // tool's last words rather than a bare exit code.
     const QString broken = dir.filePath(QStringLiteral("clip-1080p.mp4"));
     QVERIFY(launcher.runTracked(
         QStringLiteral("sh"),
@@ -4351,8 +4956,129 @@ private slots:
         {}, broken));
     QTRY_COMPARE_WITH_TIMEOUT(settled.size(), 3, 3000);
     QCOMPARE(settled.last().at(1).toBool(), false);
-    QVERIFY(!QFileInfo::exists(broken));
+    QVERIFY(QFileInfo::exists(broken));
+    QVERIFY(failed.last().at(0).toString().contains(QStringLiteral("Kept clip-1080p.mp4")));
     QVERIFY(failed.last().at(0).toString().contains(QStringLiteral("boom")));
+  }
+
+  void completedMediaSurvivesAncillaryHelperFailure() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString fixture = dir.filePath(QStringLiteral("source.png"));
+    const QString output = dir.filePath(QStringLiteral("copy.png"));
+    QImage image(20, 16, QImage::Format_RGB32);
+    image.fill(Qt::green);
+    QVERIFY(image.save(fixture));
+    ActionLauncher launcher;
+    QSignalSpy settled(&launcher, &ActionLauncher::outputSettled);
+    QSignalSpy failed(&launcher, &ActionLauncher::failed);
+    QVERIFY(launcher.runTracked(QStringLiteral("sh"),
+      {QStringLiteral("-c"), QStringLiteral("cp \"$1\" \"$2\"; echo clipboard-failed >&2; exit 1"),
+       QStringLiteral("helper"), fixture, output}, {}, output));
+    QTRY_COMPARE_WITH_TIMEOUT(settled.size(), 1, 3000);
+    QVERIFY(!settled.first().at(1).toBool());
+    QCOMPARE(QImage(output), image);
+    QVERIFY(failed.first().first().toString().contains(QStringLiteral("clipboard-failed")));
+    QVERIFY(failed.first().first().toString().contains(QStringLiteral("Kept copy.png")));
+  }
+
+  void concurrentOutputProbesReserveTheOutput_data() {
+    QTest::addColumn<bool>("replaceDuringProbe");
+    QTest::newRow("duplicate-request") << false;
+    QTest::newRow("external-replacement") << true;
+  }
+
+  void concurrentOutputProbesReserveTheOutput() {
+    QFETCH(bool, replaceDuringProbe);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray previousPath = qgetenv("PATH");
+    const auto restorePath = qScopeGuard([&] { qputenv("PATH", previousPath); });
+    const auto script = [&](const QString& name, const QByteArray& contents) {
+      QFile file(dir.filePath(name));
+      if (!file.open(QIODevice::WriteOnly)) return false;
+      if (file.write(contents) != contents.size()) return false;
+      file.close();
+      return file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                 QFileDevice::ExeOwner);
+    };
+    QVERIFY(script(QStringLiteral("ffprobe"),
+      "#!/bin/sh\nprintf started > \"${3%/*}/probe-started\"\nsleep 0.3\nexit 1\n"));
+    QVERIFY(script(QStringLiteral("omarchy-transcode"),
+      "#!/bin/sh\nprintf run >> \"${1%/*}/conversions\"\nprintf fresh > \"${1%.*}-1080p.mp4\"\n"));
+    QVERIFY(qputenv("PATH", (dir.path().toUtf8() + ':' + previousPath)));
+    const QString source = dir.filePath(QStringLiteral("clip.mp4"));
+    const QString output = dir.filePath(QStringLiteral("clip-1080p.mp4"));
+    QFile file(output);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("truncated");
+    file.close();
+    ActionLauncher launcher;
+    ActionRegistry registry(&launcher);
+    QSignalSpy settled(&launcher, &ActionLauncher::outputSettled);
+    QSignalSpy reported(&launcher, &ActionLauncher::reported);
+    QVERIFY(registry.run(QStringLiteral("shrink"), source));
+    QVERIFY(registry.run(QStringLiteral("shrink"), source));
+    QVERIFY(reported.last().first().toString().contains(QStringLiteral("Still working on")));
+    // Wait until the asynchronous probe is running before replacing its input.
+    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(dir.filePath(QStringLiteral("probe-started"))), 3000);
+    if (replaceDuringProbe) {
+      QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+      file.write("user replacement must survive");
+      file.close();
+      QTRY_VERIFY_WITH_TIMEOUT(reported.last().first().toString().contains(
+        QStringLiteral("Output changed while checking")), 3000);
+      QCOMPARE(settled.size(), 0);
+      QVERIFY(!QFileInfo::exists(dir.filePath(QStringLiteral("conversions"))));
+    } else {
+      QTRY_COMPARE_WITH_TIMEOUT(settled.size(), 1, 3000);
+      QFile conversions(dir.filePath(QStringLiteral("conversions")));
+      QVERIFY(conversions.open(QIODevice::ReadOnly));
+      QCOMPARE(conversions.readAll(), QByteArray("run"));
+    }
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), replaceDuringProbe ? QByteArray("user replacement must survive")
+                                              : QByteArray("fresh"));
+  }
+
+  void rejectedOutputRemovalFailureDoesNotRevealOrLaunch() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray previousPath = qgetenv("PATH");
+    const auto restorePath = qScopeGuard([&] { qputenv("PATH", previousPath); });
+    QFile probe(dir.filePath(QStringLiteral("ffprobe")));
+    QVERIFY(probe.open(QIODevice::WriteOnly));
+    probe.write("#!/bin/sh\nexit 1\n");
+    probe.close();
+    QVERIFY(probe.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                 QFileDevice::ExeOwner));
+    QVERIFY(qputenv("PATH", dir.path().toUtf8()));
+    const QString source = dir.filePath(QStringLiteral("clip.mp4"));
+    const QString output = dir.filePath(QStringLiteral("clip-1080p.mp4"));
+    // A directory reliably makes QFile::remove fail, including under root.
+    QVERIFY(QDir().mkdir(output));
+    const QString child = output + QStringLiteral("/keep.txt");
+    QFile marker(child);
+    QVERIFY(marker.open(QIODevice::WriteOnly));
+    marker.write("keep");
+    marker.close();
+    QVERIFY(QFileInfo(output).size() > 0);
+    ActionLauncher launcher;
+    ActionRegistry registry(&launcher);
+    QSignalSpy failed(&launcher, &ActionLauncher::failed);
+    QSignalSpy alreadyDone(&launcher, &ActionLauncher::outputAlreadyDone);
+    QSignalSpy pending(&launcher, &ActionLauncher::outputPending);
+    QVERIFY(registry.run(QStringLiteral("shrink"), source));
+    QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 3000);
+    QVERIFY(failed.first().first().toString().contains(QStringLiteral("Could not remove invalid output")));
+    QCOMPARE(alreadyDone.size(), 0);
+    QCOMPARE(pending.size(), 0);
+    QVERIFY(QFileInfo::exists(child));
+    // The failed probe releases its reservation, so another request can retry.
+    QVERIFY(registry.run(QStringLiteral("shrink"), source));
+    QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 2, 3000);
+    QCOMPARE(alreadyDone.size(), 0);
+    QCOMPARE(pending.size(), 0);
   }
 
   void existingOutputsAreRevealedAndEmptyCorpsesCleared() {

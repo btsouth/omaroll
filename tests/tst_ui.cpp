@@ -1021,6 +1021,62 @@ private slots:
     QTRY_VERIFY(item("library")->hasActiveFocus());
   }
 
+  void browseKeepsSearchAndChoicesVisibleWithManySources() {
+    // Keep fixture files until suite teardown: queued decodes from a removed
+    // source may still finish after this test restores the library settings.
+    const QDir sources(m_scratch.filePath(QStringLiteral("browse-sources")));
+    QStringList paths;
+    const QSize previous = m_window->size();
+    const auto restore = qScopeGuard([&] {
+      invoke("dismissTopLayer");
+      for (const QString& path : paths) m_settings->removeLibraryFolder(path);
+      m_captures->refresh();
+      QTRY_VERIFY_WITH_TIMEOUT(!m_captures->scanning(), 5000);
+      m_window->resize(previous);
+    });
+    for (int index = 0; index < 12; ++index) {
+      const QString path = sources.filePath(QStringLiteral("source-folder-%1-photographs").arg(index));
+      QVERIFY(QDir().mkpath(path));
+      const QString picture = path + QStringLiteral("/picture.png");
+      QImage fixture(40, 30, QImage::Format_RGB32);
+      fixture.fill(Qt::blue);
+      QVERIFY(fixture.save(picture));
+      m_disposablePaths.append(picture);
+      QVERIFY(m_settings->addLibraryFolder(QUrl::fromLocalFile(path)));
+      paths.append(path);
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->folders().contains(paths.constLast()), 5000);
+    m_window->resize(560, 420);
+    QObject* browser = m_window->findChild<QObject*>(QStringLiteral("libraryBrowser"));
+    QVERIFY(QMetaObject::invokeMethod(browser, "open"));
+    QTRY_VERIFY(browser->property("visible").toBool());
+    QQuickItem* controls = item("libraryControls");
+    QQuickItem* choices = item("libraryChoices");
+    QQuickItem* search = item("librarySearch");
+    QTRY_VERIFY(controls->property("contentHeight").toReal() > controls->height());
+    QTRY_VERIFY(choices->height() >= 120);
+    QVERIFY(search->isVisible());
+    QTRY_VERIFY(search->hasActiveFocus());
+    QTRY_VERIFY(search->mapToScene(QPointF()).y() >= 0);
+    QTRY_VERIFY(search->mapToScene(QPointF()).y() + search->height() <= m_window->height());
+    QQuickItem* addFolder = item("browseAddFolder");
+    QVERIFY(addFolder->x() + addFolder->width() <= addFolder->parentItem()->width());
+    QTest::keyClick(m_window, Qt::Key_Tab, Qt::ShiftModifier);
+    QTRY_VERIFY(m_window->activeFocusItem() != search);
+    QQuickItem* focused = m_window->activeFocusItem();
+    QVERIFY(focused);
+    QTRY_VERIFY(focused->mapToItem(controls, QPointF()).y() >= 0);
+    QTRY_VERIFY(focused->mapToItem(controls, QPointF()).y() + focused->height()
+                <= controls->height());
+    search->forceActiveFocus();
+    search->setProperty("text", paths.constLast());
+    QTRY_COMPARE(choices->property("count").toInt(), 1);
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!browser->property("visible").toBool());
+    QCOMPARE(m_library->folderFilter(), paths.constLast());
+    m_library->setFolderFilter({});
+  }
+
   void favouriteFromTheViewerKeepsItOpen() {
     QQuickItem* detail = item("detail");
     openDetail(0);
@@ -1124,6 +1180,37 @@ private slots:
     QTRY_COMPARE(m_library->rowCount(), all);
     QVERIFY(m_library->property("searchText").toString().isEmpty());
     QTRY_VERIFY(item("library")->hasActiveFocus());
+  }
+
+  void emptySearchResultsRecoverKeyboardNavigation() {
+    QTest::keyClick(m_window, Qt::Key_Slash);
+    QTRY_VERIFY(item("filters")->property("searchActive").toBool());
+    typeText(QStringLiteral("no-media-matches-this-query"));
+    QTRY_COMPARE(m_library->count(), 0);
+    QTRY_COMPARE(item("library")->property("currentIndex").toInt(), -1);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(m_library->count() > 0);
+    QTRY_VERIFY(item("library")->property("currentIndex").toInt() >= 0);
+    QTRY_VERIFY(item("library")->hasActiveFocus());
+    const QString expected = pathAt(item("library")->property("currentIndex").toInt());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(item("detail")->isVisible());
+    QCOMPARE(item("detail")->property("path").toString(), expected);
+  }
+
+  void externalOpenKeepsTheSearchFieldInSync() {
+    QQuickItem* search = item("libraryFilterSearch");
+    QVERIFY(search);
+    m_library->setSearchText(QStringLiteral("alpine"));
+    QTRY_COMPARE(search->property("text").toString(), QStringLiteral("alpine"));
+    QTRY_COMPARE(m_library->count(), 1);
+    const QString path = pathAt(0);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openPath", Q_ARG(QVariant, path)));
+    QTRY_VERIFY(item("detail")->isVisible());
+    QCOMPARE(m_library->searchText(), QString());
+    QCOMPARE(search->property("text").toString(), QString());
+    invoke("dismissTopLayer");
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openFolder", Q_ARG(QVariant, QString())));
   }
 
   void sectionKeysSwitchTheFilter() {
@@ -1525,6 +1612,7 @@ private slots:
     QVERIFY(m_settings->smartCollectionNames().contains(QStringLiteral("Alpine pictures")));
     QCOMPARE(m_library->smartCollectionFilter(), QStringLiteral("Alpine pictures"));
     QCOMPARE(m_library->searchText(), QStringLiteral("alpine"));
+    QCOMPARE(item("libraryFilterSearch")->property("text").toString(), QStringLiteral("alpine"));
     QCOMPARE(m_library->sortMode(), CaptureFilterModel::NameAscending);
     QCOMPARE(m_library->count(), 1);
 
@@ -2062,6 +2150,41 @@ private slots:
     QQuickItem* preview = item("mattePreview");
     // Image.Ready
     QTRY_COMPARE_WITH_TIMEOUT(preview->property("status").toInt(), 1, 15000);
+  }
+
+  void shuffledFolderPreviewStaysInTheExactFolder() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("child"))));
+    const QString first = dir.filePath(QStringLiteral("first.png"));
+    const QString second = dir.filePath(QStringLiteral("second.png"));
+    const QString child = dir.filePath(QStringLiteral("child/third.png"));
+    QImage fixture(80, 60, QImage::Format_RGB32);
+    fixture.fill(Qt::blue);
+    for (const QString& path : {first, second, child}) {
+      QVERIFY(fixture.save(path));
+      m_disposablePaths.append(path);
+    }
+    const bool previousShuffle = m_settings->slideshowShuffle();
+    const auto restore = qScopeGuard([&] {
+      invoke("dismissTopLayer");
+      m_settings->setSlideshowShuffle(previousShuffle);
+      QMetaObject::invokeMethod(m_window, "openFolder", Q_ARG(QVariant, QString()));
+      m_captures->refresh();
+    });
+    m_captures->addExtraFiles({first, second, child});
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openPath", Q_ARG(QVariant, first)));
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->isVisible());
+    QVERIFY(prop("viewerFolderOnly").toBool());
+    m_settings->setSlideshowShuffle(true);
+    QVERIFY(QMetaObject::invokeMethod(detail, "setSlideshow", Q_ARG(QVariant, true)));
+    for (int index = 0; index < 12; ++index) {
+      const QString before = detail->property("path").toString();
+      QVERIFY(QMetaObject::invokeMethod(m_window, "navigateDetail", Q_ARG(QVariant, 1)));
+      QCOMPARE(detail->property("path").toString(), before == first ? second : first);
+      QVERIFY(detail->property("slideshowRunning").toBool());
+    }
   }
 
   void explicitSelectionNavigatesInOrderAcrossFolders() {

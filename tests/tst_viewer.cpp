@@ -24,6 +24,7 @@
 #include <QDir>
 #include <QFile>
 #include <QGuiApplication>
+#include <QJSValue>
 #include <QMediaDevices>
 #include <QMediaMetaData>
 #include <QMediaPlayer>
@@ -35,6 +36,7 @@
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
+#include <QScopeGuard>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QStyleHints>
@@ -147,6 +149,101 @@ private slots:
     m_window->setProperty("chromeTimeout", 2200);
     m_settings->setVideoMuted(false);
     m_settings->setVideoVolume(0.8);
+  }
+
+  void picturesReloadAfterSavesAndKeepTheirViewWhenSiblingsChange() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("z.png"));
+    QImage initial(40, 30, QImage::Format_RGB32);
+    initial.fill(Qt::red);
+    QVERIFY(initial.save(path));
+    open({path});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QTRY_COMPARE(prop("sourceWidth").toInt(), 40);
+    const QString version = m_session->contentVersion();
+    QImage updated(80, 60, QImage::Format_RGB32);
+    updated.fill(Qt::blue);
+    QVERIFY(updated.save(path));
+    QTRY_VERIFY_WITH_TIMEOUT(m_session->contentVersion() != version, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(prop("sourceWidth").toInt(), 80, 5000);
+    const QString temporary = dir.filePath(QStringLiteral("replacement.png"));
+    QImage replacement(120, 90, QImage::Format_RGB32);
+    replacement.fill(Qt::green);
+    QVERIFY(replacement.save(temporary));
+    QVERIFY(QFile::remove(path));
+    QVERIFY(QFile::rename(temporary, path));
+    QTRY_COMPARE_WITH_TIMEOUT(prop("sourceWidth").toInt(), 120, 5000);
+
+    QTest::keyClick(m_window, Qt::Key_R);
+    QTest::keyClick(m_window, Qt::Key_1);
+    QTRY_VERIFY(!prop("zooming").toBool());
+    const qreal scale = prop("viewScale").toReal();
+    const int rotation = prop("viewRotation").toInt();
+    const QString sibling = dir.filePath(QStringLiteral("a.png"));
+    QVERIFY(initial.save(sibling));
+    QTRY_COMPARE_WITH_TIMEOUT(m_session->count(), 2, 5000);
+    QCOMPARE(m_session->path(), path);
+    QCOMPARE(prop("viewScale").toReal(), scale);
+    QCOMPARE(prop("viewRotation").toInt(), rotation);
+    QVERIFY(QFile::remove(sibling));
+    QTRY_COMPARE_WITH_TIMEOUT(m_session->count(), 1, 5000);
+    QCOMPARE(prop("viewScale").toReal(), scale);
+    QCOMPARE(prop("viewRotation").toInt(), rotation);
+    m_window->close();
+  }
+
+  void siblingSymlinksUseTheLibraryIdentity() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString first = dir.filePath(QStringLiteral("a.png"));
+    const QString target = dir.filePath(QStringLiteral("z.png"));
+    const QString alias = dir.filePath(QStringLiteral("b.png"));
+    QImage image(40, 30, QImage::Format_RGB32);
+    image.fill(Qt::blue);
+    QVERIFY(image.save(first));
+    QVERIFY(image.save(target));
+    QVERIFY(QFile::link(target, alias));
+    open({first});
+    QTRY_COMPARE(m_session->count(), 2);
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QCOMPARE(m_session->path(), target);
+    QTest::keyClick(m_window, Qt::Key_V);
+    QVERIFY(m_settings->isFavorite(target));
+    QVERIFY(!m_settings->isFavorite(alias));
+    QSignalSpy requested(m_session, &ViewerSession::libraryRequested);
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QCOMPARE(requested.size(), 1);
+    QCOMPARE(requested.first().first().toString(), target);
+    m_settings->setFavorite({target}, false);
+    m_window->close();
+  }
+
+  void replacedVideoReopensTheSamePath() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("clip.mp4"));
+    QVERIFY(QFile::copy(media(QStringLiteral("clip.mp4")), path));
+    open({path});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY(player->duration() > 0);
+    QCOMPARE(player->subtitleTracks().size(), 0);
+    const QString version = m_session->contentVersion();
+    const QUrl url = player->source();
+    const QString replacement = QFINDTESTDATA("fixtures/viewer/tracks.mkv");
+    QVERIFY(!replacement.isEmpty());
+    // Atomic replacement keeps the old decoder's open descriptor valid until
+    // the watcher asks the player to reopen the unchanged local URL.
+    const QString staged = dir.filePath(QStringLiteral("replacement"));
+    QVERIFY(QFile::copy(replacement, staged));
+    QVERIFY(QFile::remove(path));
+    QVERIFY(QFile::rename(staged, path));
+    QTRY_VERIFY_WITH_TIMEOUT(m_session->contentVersion() != version, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(player->subtitleTracks().size(), 1, 5000);
+    QCOMPARE(player->source(), url);
+    QCOMPARE(m_session->path(), path);
+    m_window->close();
   }
 
   void opensAPictureFittedEdgeToEdge() {
@@ -559,6 +656,50 @@ private slots:
     QVERIFY(!item(QStringLiteral("viewerTransport"))->isVisible());
   }
 
+  void explicitSeeksClearSavedResumeState() {
+    open({media(QStringLiteral("clip.mp4"))});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY(player->duration() > 0);
+    player->pause();
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+
+    const auto markResume = [this, player] {
+      player->setPosition(1000);
+      m_window->setProperty("resumePosition", 1000);
+      m_window->setProperty("resumeAvailable", true);
+      m_window->setProperty("resumePending", true);
+    };
+
+    QQuickItem* scrub = item(QStringLiteral("viewerScrub"));
+    QVERIFY(scrub->width() > 0);
+    markResume();
+    QVERIFY(QMetaObject::invokeMethod(scrub, "seekTo",
+                                      Q_ARG(QVariant, scrub->width() * 0.75)));
+    QVERIFY(!prop("resumeAvailable").toBool());
+    QVERIFY(!prop("resumePending").toBool());
+    QTRY_VERIFY(player->position() > player->duration() / 2);
+
+    markResume();
+    QTest::keyClick(m_window, Qt::Key_Home);
+    QVERIFY(!prop("resumeAvailable").toBool());
+    QVERIFY(!prop("resumePending").toBool());
+    QTRY_COMPARE(player->position(), 0);
+
+    markResume();
+    QTest::keyClick(m_window, Qt::Key_End);
+    QVERIFY(!prop("resumeAvailable").toBool());
+    QVERIFY(!prop("resumePending").toBool());
+    QTRY_VERIFY(player->position() > player->duration() * 0.9);
+
+    // The arrow keys still seek by their difference from the current position.
+    markResume();
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QVERIFY(!prop("resumeAvailable").toBool());
+    QVERIFY(!prop("resumePending").toBool());
+    QTRY_VERIFY(player->position() > 4000);
+  }
+
   // The checked-in test pattern: saturated bars, two audio tracks and a
   // subtitle track. Under OpenGL the bars must reach the screen, not just a
   // decoded frame in memory.
@@ -730,6 +871,77 @@ private slots:
     QVERIFY(!prop("slideshowRunning").toBool());
     QTRY_VERIFY(!prop("fullScreen").toBool());
     QVERIFY(m_window->isVisible());
+  }
+
+  void shuffledSlideshowFindsTheOnlyPictureWithoutBouncingBetweenVideos() {
+    const QString folder = m_scratch.filePath(QStringLiteral("slideshow-shuffle"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString first = folder + QStringLiteral("/a.mp4");
+    const QString second = folder + QStringLiteral("/b.mp4");
+    const QString picture = folder + QStringLiteral("/only.jpg");
+    QVERIFY(QFile::copy(media(QStringLiteral("clip.mp4")), first));
+    QVERIFY(QFile::copy(media(QStringLiteral("clip.mp4")), second));
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), picture));
+
+    const bool videos = m_settings->slideshowVideos();
+    const bool shuffle = m_settings->slideshowShuffle();
+    const auto restoreSettings = qScopeGuard([this, videos, shuffle] {
+      m_settings->setSlideshowVideos(videos);
+      m_settings->setSlideshowShuffle(shuffle);
+    });
+    m_settings->setSlideshowVideos(false);
+    m_settings->setSlideshowShuffle(true);
+
+    // The old retry loop chooses index 1 forever with this value, bouncing
+    // between the videos and never visiting the picture at index 2.
+    QJSValue math = m_engine->globalObject().property(QStringLiteral("Math"));
+    const QJSValue random = math.property(QStringLiteral("random"));
+    const auto restoreRandom = qScopeGuard([math, random]() mutable {
+      math.setProperty(QStringLiteral("random"), random);
+    });
+    math.setProperty(QStringLiteral("random"),
+                     m_engine->evaluate(QStringLiteral("(function () { return 0; })")));
+
+    open({first, second, picture});
+    QCOMPARE(m_session->count(), 3);
+    QCOMPARE(m_session->index(), 0);
+    QVERIFY(m_session->isVideo());
+    QVERIFY(QMetaObject::invokeMethod(m_window, "setSlideshow", Q_ARG(QVariant, true)));
+    QCOMPARE(m_session->path(), picture);
+    QVERIFY(prop("slideshowRunning").toBool());
+    QVERIFY(prop("status").toString() != QStringLiteral("No pictures here for a slideshow"));
+    QVERIFY(QMetaObject::invokeMethod(m_window, "advanceSlideshow"));
+    QCOMPARE(m_session->path(), picture);
+    QVERIFY(prop("slideshowRunning").toBool());
+    QVERIFY(prop("status").toString() != QStringLiteral("No pictures here for a slideshow"));
+    QMetaObject::invokeMethod(m_window, "setSlideshow", Q_ARG(QVariant, false));
+  }
+
+  void orderedSlideshowStillStepsToTheOnlyPictureAmongVideos() {
+    const QString folder = m_scratch.filePath(QStringLiteral("slideshow-ordered"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString first = folder + QStringLiteral("/a.mp4");
+    const QString picture = folder + QStringLiteral("/b.jpg");
+    const QString second = folder + QStringLiteral("/c.mp4");
+    QVERIFY(QFile::copy(media(QStringLiteral("clip.mp4")), first));
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), picture));
+    QVERIFY(QFile::copy(media(QStringLiteral("clip.mp4")), second));
+
+    const bool videos = m_settings->slideshowVideos();
+    const bool shuffle = m_settings->slideshowShuffle();
+    const auto restoreSettings = qScopeGuard([this, videos, shuffle] {
+      m_settings->setSlideshowVideos(videos);
+      m_settings->setSlideshowShuffle(shuffle);
+    });
+    m_settings->setSlideshowVideos(false);
+    m_settings->setSlideshowShuffle(false);
+
+    open({first, picture, second});
+    QCOMPARE(m_session->count(), 3);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "setSlideshow", Q_ARG(QVariant, true)));
+    QCOMPARE(m_session->path(), picture);
+    QVERIFY(prop("slideshowRunning").toBool());
+    QMetaObject::invokeMethod(m_window, "setSlideshow", Q_ARG(QVariant, false));
   }
 
   void trashAsksFirstThenMovesOn() {
