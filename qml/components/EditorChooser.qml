@@ -258,6 +258,7 @@ Popup {
 
                 TextInput {
                     id: customInput
+                    objectName: "editorChooserCustomCommand"
                     anchors.fill: parent
                     anchors.leftMargin: 10
                     anchors.rightMargin: 10
@@ -273,7 +274,6 @@ Popup {
                         if (root.customDraft !== text) {
                             root.customDraft = text
                         }
-                        Editors.customCommand = text
                     }
                     Keys.onReturnPressed: root.openSelected()
                     Keys.onEnterPressed: root.openSelected()

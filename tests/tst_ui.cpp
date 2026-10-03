@@ -3151,6 +3151,36 @@ private slots:
 
   // A camera raw previews from its embedded JPEG, measures as the raw, and
   // offers only the actions that can open it.
+  void cancellingTheRawEditorChooserKeepsTheSavedCommand() {
+    if (!CameraRaw::isRaw(QStringLiteral("dng"))) QSKIP("Qt RAW support is unavailable");
+    QVERIFY(configureRawEditorRecorder());
+    auto* editors = qobject_cast<ExternalEditors*>(m_engine->rootContext()
+        ->contextProperty(QStringLiteral("Editors")).value<QObject*>());
+    QVERIFY(editors);
+    const QString saved = editors->customCommand();
+    const QString raw = m_scratch.filePath(QStringLiteral("cancel-command.dng"));
+    QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/raw/camera.dng"), raw));
+    QObject* chooser = m_window->findChild<QObject*>(QStringLiteral("editorChooser"));
+    QVERIFY(chooser);
+    QVERIFY(QMetaObject::invokeMethod(chooser, "request", Q_ARG(QVariant, raw),
+                                     Q_ARG(QVariant, true)));
+    QTRY_VERIFY(chooser->property("visible").toBool());
+    QQuickItem* input = item("editorChooserCustomCommand");
+    input->forceActiveFocus();
+    QTest::keyClick(m_window, Qt::Key_A, Qt::ControlModifier);
+    typeText(QStringLiteral("unavailable-draft-editor {path}"));
+    QCOMPARE(chooser->property("customDraft").toString(), QStringLiteral("unavailable-draft-editor {path}"));
+    QCOMPARE(editors->customCommand(), saved);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!chooser->property("visible").toBool());
+    QCOMPARE(editors->customCommand(), saved);
+    QVERIFY(!QFileInfo::exists(raw + QStringLiteral(".editor-open")));
+    for (const QString& id : {QStringLiteral("develop"), QStringLiteral("choose-editor")}) {
+      perform(id, pathAt(0));
+      QCOMPARE(item("detail")->property("status").toString(), QStringLiteral("That action is for camera raws"));
+    }
+  }
+
   void rawEditorButtonsRemainClickableAtNormalAndNarrowSizes() {
     if (!CameraRaw::isRaw(QStringLiteral("dng"))) QSKIP("Qt RAW support is unavailable");
     QVERIFY(configureRawEditorRecorder());

@@ -4857,10 +4857,11 @@ private slots:
     QVERIFY(!registry.available(QStringLiteral("annotate")));
     QCOMPARE(registry.shortcutFor(QStringLiteral("annotate")), QStringLiteral("A"));
     QVERIFY(registry.run(QStringLiteral("omaframe"), source));
-    QTRY_VERIFY(QFileInfo::exists(source + QStringLiteral(".args")));
-    QFile arguments(source + QStringLiteral(".args"));
-    QVERIFY(arguments.open(QIODevice::ReadOnly));
-    QCOMPARE(arguments.readAll(), QByteArray("1\n") + source.toUtf8() + '\n');
+    const auto recordedArguments = [&source] {
+      QFile arguments(source + QStringLiteral(".args"));
+      return arguments.open(QIODevice::ReadOnly) ? arguments.readAll() : QByteArray();
+    };
+    QTRY_COMPARE(recordedArguments(), QByteArray("1\n") + source.toUtf8() + '\n');
     QCOMPARE(fileHash(source), before);
     QVERIFY(!QFileInfo::exists(dir.filePath(QStringLiteral("injected"))));
     QCOMPARE(qgetenv("OMARCHY_SCREENSHOT_EDITOR"), QByteArray("configured-annotation-editor"));
