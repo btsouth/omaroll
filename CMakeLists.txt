@@ -204,6 +204,12 @@ if(BUILD_TESTING)
   set_tests_properties(omaroll_tests PROPERTIES ENVIRONMENT
     "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
 
+  qt_add_executable(omaroll_thumbnail_tests tests/tst_thumbnails.cpp)
+  target_link_libraries(omaroll_thumbnail_tests PRIVATE omaroll_core Qt6::Test)
+  add_test(NAME omaroll_thumbnail_tests COMMAND omaroll_thumbnail_tests)
+  set_tests_properties(omaroll_thumbnail_tests PROPERTIES ENVIRONMENT
+    "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
+
   # The UI suite loads the real Main.qml and drives it with synthetic input.
   # The module's files are compiled into the omaroll executable, so a second
   # process cannot import them from there; a qmldir over symlinks to the

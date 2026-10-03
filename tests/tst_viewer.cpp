@@ -13,6 +13,7 @@
 #include "app/DemoLibrary.h"
 #include "app/HeadlessAudio.h"
 #include "library/MediaInspector.h"
+#include "sources/FileVersion.h"
 #include "subtitles/SubtitleIndex.h"
 #include "theme/OmarchyTheme.h"
 #include "thumbs/ThumbnailProvider.h"
@@ -21,9 +22,11 @@
 #include "viewer/ViewerWindows.h"
 
 #include <QAudioDevice>
+#include <QDataStream>
 #include <QDir>
 #include <QFile>
 #include <QGuiApplication>
+#include <QImageReader>
 #include <QJSValue>
 #include <QMediaDevices>
 #include <QMediaMetaData>
@@ -191,6 +194,258 @@ private slots:
     QCOMPARE(prop("viewScale").toReal(), scale);
     QCOMPARE(prop("viewRotation").toInt(), rotation);
     m_window->close();
+  }
+
+  void neighbourPreloadsShareADecodedPixelBudget_data() {
+    QTest::addColumn<QSize>("nextSize");
+    QTest::addColumn<QSize>("previousSize");
+    QTest::addColumn<bool>("nextAllowed");
+    QTest::addColumn<bool>("previousAllowed");
+    QTest::newRow("small-pair") << QSize(400, 300) << QSize(800, 600) << true << true;
+    QTest::newRow("exact-budget") << QSize(4096, 4096) << QSize(1, 1) << true << false;
+    QTest::newRow("over-budget") << QSize(4096, 4097) << QSize(1, 1) << false << true;
+    QTest::newRow("combined-budget") << QSize(3072, 3072) << QSize(3072, 3072) << true << false;
+    QTest::newRow("large-first-keeps-small-second") << QSize(6000, 4000) << QSize(400, 300)
+                                                   << false << true;
+    QTest::newRow("hostile-dimensions") << QSize(2147483647, 2147483647) << QSize(400, 300)
+                                       << false << true;
+  }
+
+  void neighbourPreloadsShareADecodedPixelBudget() {
+    QFETCH(QSize, nextSize);
+    QFETCH(QSize, previousSize);
+    QFETCH(bool, nextAllowed);
+    QFETCH(bool, previousAllowed);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString current = media(QStringLiteral("Shot 1.jpg"));
+    const QString next = dir.filePath(QStringLiteral("next.bmp"));
+    const QString previous = dir.filePath(QStringLiteral("previous.bmp"));
+    // Headers alone exercise admission without allocating large decoded images.
+    QVERIFY(writeBitmapHeader(next, nextSize));
+    QVERIFY(writeBitmapHeader(previous, previousSize));
+    QCOMPARE(QImageReader(previous).size(), previousSize);
+    ViewerSession session;
+    session.open({current, next, previous});
+    QVERIFY(QThreadPool::globalInstance()->waitForDone(5000));
+    QCoreApplication::sendPostedEvents();
+    QCOMPARE(!session.nextPreloadUrl().isEmpty(), nextAllowed);
+    QCOMPARE(!session.previousPreloadUrl().isEmpty(), previousAllowed);
+    if (nextAllowed) QCOMPARE(session.nextPreloadUrl(), session.neighbourImageUrl(1));
+    if (previousAllowed) QCOMPARE(session.previousPreloadUrl(), session.neighbourImageUrl(-1));
+  }
+
+  void neighbourPreloadsSkipAnimationVideoAndUnknownDimensions_data() {
+    QTest::addColumn<QString>("fixture");
+    QTest::newRow("animation") << QStringLiteral("animated.gif");
+    QTest::newRow("animated-webp") << QStringLiteral("animated.webp");
+    QTest::newRow("still-webp-uses-animation-viewer") << QStringLiteral("still.webp");
+    QTest::newRow("video") << QStringLiteral("tracks.mkv");
+    QTest::newRow("unknown-header") << QString();
+  }
+
+  void neighbourPreloadsAccountForDecoderDepth_data() {
+    QTest::addColumn<QImage::Format>("format");
+    QTest::addColumn<QByteArray>("nextCodec");
+    QTest::addColumn<QByteArray>("previousCodec");
+    QTest::addColumn<int>("depth");
+    QTest::addColumn<bool>("previousAllowed");
+    QTest::newRow("jpeg-and-png-fit-together") << QImage::Format_RGB32 << QByteArray("JPG")
+                                             << QByteArray("PNG") << 32 << true;
+    QTest::newRow("rgba64-pair-exceeds-budget") << QImage::Format_RGBA64 << QByteArray("PNG")
+                                               << QByteArray("PNG") << 64 << false;
+  }
+
+  void neighbourPreloadsAccountForDecoderDepth() {
+    QFETCH(QImage::Format, format);
+    QFETCH(QByteArray, nextCodec);
+    QFETCH(QByteArray, previousCodec);
+    QFETCH(int, depth);
+    QFETCH(bool, previousAllowed);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString next = dir.filePath(QStringLiteral("next.") + QString::fromLatin1(nextCodec));
+    const QString previous = dir.filePath(QStringLiteral("previous.") + QString::fromLatin1(previousCodec));
+    {
+      // Six megapixels: 24 MB at 32 bits, 48 MB at 64 bits. Release the
+      // fixture writer's storage before probing the viewer's own policy.
+      QImage image(3000, 2000, format);
+      image.fill(Qt::red);
+      QVERIFY(image.save(next, nextCodec.constData()));
+      QVERIFY(image.save(previous, previousCodec.constData()));
+    }
+    QCOMPARE(QImage::toPixelFormat(QImageReader(next).imageFormat()).bitsPerPixel(), depth);
+    ViewerSession session;
+    session.open({media(QStringLiteral("Shot 1.jpg")), next, previous});
+    QVERIFY(QThreadPool::globalInstance()->waitForDone(5000));
+    QCoreApplication::sendPostedEvents();
+    QCOMPARE(session.nextPreloadUrl().toLocalFile(), next);
+    QCOMPARE(!session.previousPreloadUrl().isEmpty(), previousAllowed);
+  }
+
+  void neighbourPreloadsSkipAnimationVideoAndUnknownDimensions() {
+    QFETCH(QString, fixture);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    // Extensionless media also requires classification on the worker.
+    const QString next = dir.filePath(fixture.isEmpty() ? QStringLiteral("broken.png")
+                                                       : QStringLiteral("without extension"));
+    if (fixture.isEmpty()) {
+      QFile file(next);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      QCOMPARE(file.write("not an image"), qint64(12));
+    } else {
+      const QString source = QFINDTESTDATA(qPrintable("fixtures/viewer/" + fixture));
+      QVERIFY(!source.isEmpty());
+      QVERIFY(QFile::copy(source, next));
+    }
+    ViewerSession session;
+    const QString previous = media(QStringLiteral("shot 2.jpg"));
+    session.open({media(QStringLiteral("Shot 1.jpg")), next, previous});
+    QTRY_COMPARE(session.previousPreloadUrl().toLocalFile(), previous);
+    QVERIFY(session.nextPreloadUrl().isEmpty());
+  }
+
+  void wrappedNeighbourPreloadsAreUniqueAndExcludeTheCurrentPath() {
+    ViewerSession session;
+    const QString a = media(QStringLiteral("Shot 1.jpg"));
+    const QString b = media(QStringLiteral("shot 2.jpg"));
+    session.open({a, b});
+    QTRY_COMPARE(session.nextPreloadUrl().toLocalFile(), b);
+    QVERIFY(session.previousPreloadUrl().isEmpty());
+    session.open({a, a, b});
+    QTRY_COMPARE(session.previousPreloadUrl().toLocalFile(), b);
+    QVERIFY(session.nextPreloadUrl().isEmpty());
+    session.open({a, a});
+    QVERIFY(session.nextPreloadUrl().isEmpty());
+    QVERIFY(session.previousPreloadUrl().isEmpty());
+    session.clear();
+    QVERIFY(QThreadPool::globalInstance()->waitForDone(5000));
+    QCoreApplication::sendPostedEvents();
+    QVERIFY(session.nextPreloadUrl().isEmpty());
+    QVERIFY(session.previousPreloadUrl().isEmpty());
+  }
+
+  void replacedNeighbourCannotUseAnOldHeaderApproval() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString next = dir.filePath(QStringLiteral("next.bmp"));
+    QVERIFY(writeBitmapHeader(next, QSize(40, 30)));
+    ViewerSession session;
+    const QString previous = media(QStringLiteral("shot 2.jpg"));
+    const QStringList paths{media(QStringLiteral("Shot 1.jpg")), next, previous};
+    session.open(paths);
+    // Finish the probe without dispatching its GUI callback, then atomically
+    // replace the small neighbour with one that would exceed the budget.
+    QVERIFY(QThreadPool::globalInstance()->waitForDone(5000));
+    const QString staged = dir.filePath(QStringLiteral("staged.bmp"));
+    QVERIFY(writeBitmapHeader(staged, QSize(6000, 4000)));
+    const QString oldVersion = FileVersion::key(next);
+    QVERIFY(QFile::remove(next));
+    QVERIFY(QFile::rename(staged, next));
+    QVERIFY(FileVersion::key(next) != oldVersion);
+    QTRY_COMPARE(session.previousPreloadUrl().toLocalFile(), previous);
+    QVERIFY(session.nextPreloadUrl().isEmpty());
+    // Reopening an unchanged sequence must probe a newly saved version too.
+    QVERIFY(writeBitmapHeader(next, QSize(80, 60)));
+    session.open(paths);
+    QTRY_COMPARE(session.nextPreloadUrl(), session.neighbourImageUrl(1));
+    QVERIFY(session.nextPreloadUrl().query().contains(FileVersion::key(next)));
+  }
+
+  void obsoleteNeighbourResultsCannotSurviveNavigationOrClear() {
+    ViewerSession session;
+    const QString a = media(QStringLiteral("Shot 1.jpg"));
+    const QString b = media(QStringLiteral("shot 2.jpg"));
+    const QString c = media(QStringLiteral("shot 10.jpg"));
+    const QString d = media(QStringLiteral(".hidden.jpg"));
+    const QStringList paths{a, b, c, d};
+    session.open(paths);
+    QVERIFY(QThreadPool::globalInstance()->waitForDone(5000));
+    // Several requests arrive while a finished older probe awaits delivery.
+    for (int i = 0; i < 100; ++i) QVERIFY(session.jump(i % paths.size()));
+    QCOMPARE(session.path(), d);
+    bool obsoletePublished = false;
+    connect(&session, &ViewerSession::preloadsChanged, this, [&] {
+      obsoletePublished |= session.nextPreloadUrl().toLocalFile() == b ||
+                           session.previousPreloadUrl().toLocalFile() == d;
+    });
+    QTRY_COMPARE(session.nextPreloadUrl().toLocalFile(), a);
+    QTRY_COMPARE(session.previousPreloadUrl().toLocalFile(), c);
+    QVERIFY(!obsoletePublished);
+    session.open(paths);
+    QVERIFY(QThreadPool::globalInstance()->waitForDone(5000));
+    session.clear();
+    QSignalSpy changed(&session, &ViewerSession::preloadsChanged);
+    QCoreApplication::sendPostedEvents();
+    QCOMPARE(changed.size(), 0);
+    QVERIFY(session.nextPreloadUrl().isEmpty());
+    QVERIFY(session.previousPreloadUrl().isEmpty());
+  }
+
+  void neighbourPreloadsFollowSequenceRefreshesWithTheSameCurrentFile() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString a = dir.filePath(QStringLiteral("a.png"));
+    const QString b = dir.filePath(QStringLiteral("b.png"));
+    const QString z = dir.filePath(QStringLiteral("z.png"));
+    QImage image(40, 30, QImage::Format_RGBA64);
+    image.fill(Qt::red);
+    QVERIFY(image.save(a));
+    QVERIFY(image.save(z));
+    ViewerSession session;
+    session.open({a});
+    QTRY_COMPARE(session.count(), 2);
+    QTRY_COMPARE(session.nextPreloadUrl().toLocalFile(), z);
+    QVERIFY(session.previousPreloadUrl().isEmpty());
+    QSignalSpy current(&session, &ViewerSession::currentChanged);
+    QVERIFY(image.save(b));
+    QTRY_COMPARE_WITH_TIMEOUT(session.count(), 3, 5000);
+    QTRY_COMPARE(session.nextPreloadUrl().toLocalFile(), b);
+    QTRY_COMPARE(session.previousPreloadUrl().toLocalFile(), z);
+    QVERIFY(QFile::remove(b));
+    QTRY_COMPARE_WITH_TIMEOUT(session.count(), 2, 5000);
+    QTRY_COMPARE(session.nextPreloadUrl().toLocalFile(), z);
+    QVERIFY(session.previousPreloadUrl().isEmpty());
+    const QUrl oldUrl = session.nextPreloadUrl();
+    const QString staged = dir.filePath(QStringLiteral(".replacement"));
+    QVERIFY(image.save(staged, "PNG"));
+    QVERIFY(QFile::remove(z));
+    QVERIFY(QFile::rename(staged, z));
+    QTRY_VERIFY_WITH_TIMEOUT(session.nextPreloadUrl() != oldUrl, 5000);
+    QTRY_COMPARE(session.nextPreloadUrl(), session.neighbourImageUrl(1));
+    QCOMPARE(session.path(), a);
+    QCOMPARE(current.size(), 0);
+  }
+
+  void smallPreloadsReuseOriginalResolutionWhenStepping() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString a = dir.filePath(QStringLiteral("a.png"));
+    const QString b = dir.filePath(QStringLiteral("b.png"));
+    QImage first(400, 300, QImage::Format_RGBA64);
+    first.fill(Qt::red);
+    QImage second(480, 360, QImage::Format_RGBA64);
+    second.fill(Qt::blue);
+    QVERIFY(first.save(a));
+    QVERIFY(second.save(b));
+    open({a, b});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QQuickItem* prefetch = item(QStringLiteral("viewerPrefetch1"));
+    QTRY_COMPARE(prefetch->property("source").toUrl(), m_session->neighbourImageUrl(1));
+    QTRY_COMPARE(prefetch->property("status").toInt(), 1); // Image.Ready
+    QCOMPARE(prefetch->implicitWidth(), 480.0);
+    QCOMPARE(prefetch->implicitHeight(), 360.0);
+    QVERIFY(item(QStringLiteral("viewerPrefetch-1"))->property("source").toUrl().isEmpty());
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QQuickItem* displayed = item(QStringLiteral("viewerImage"));
+    QCOMPARE(displayed->property("status").toInt(), 1);
+    QVERIFY(!displayed->property("waited").toBool());
+    QCOMPARE(prop("sourceWidth").toInt(), 480);
+    QCOMPARE(prop("sourceHeight").toInt(), 360);
+    QTest::keyClick(m_window, Qt::Key_1);
+    QTRY_VERIFY(!prop("zooming").toBool());
+    QCOMPARE(prop("effectiveScale").toReal(), 1.0 / m_window->devicePixelRatio());
   }
 
   void siblingSymlinksUseTheLibraryIdentity() {
@@ -1113,6 +1368,18 @@ private slots:
   }
 
 private:
+  static bool writeBitmapHeader(const QString& path, const QSize& size) {
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) return false;
+    QDataStream stream(&file);
+    stream.setByteOrder(QDataStream::LittleEndian);
+    stream << quint16(0x4d42) << quint32(54) << quint16(0) << quint16(0) << quint32(54)
+           << quint32(40) << qint32(size.width()) << qint32(size.height()) << quint16(1)
+           << quint16(32) << quint32(0) << quint32(0) << qint32(0) << qint32(0)
+           << quint32(0) << quint32(0);
+    return stream.status() == QDataStream::Ok;
+  }
+
   QString media(const QString& name) const { return m_folder + QLatin1Char('/') + name; }
 
   QVariant prop(const char* name) const { return m_window->property(name); }

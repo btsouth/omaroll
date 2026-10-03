@@ -17,9 +17,11 @@ constexpr int kFallbackEdge = 320;
 
 class ThumbnailResponse final : public QQuickImageResponse, public QRunnable {
 public:
-  ThumbnailResponse(QString path, QSize logicalSize, qreal devicePixelRatio, int seekPercent)
+  ThumbnailResponse(QString path, QSize logicalSize, qreal devicePixelRatio, int seekPercent,
+                    std::shared_ptr<std::atomic_bool> stopping)
       : m_path(std::move(path)), m_logicalSize(logicalSize),
-        m_devicePixelRatio(devicePixelRatio), m_seekPercent(seekPercent) {
+        m_devicePixelRatio(devicePixelRatio), m_seekPercent(seekPercent),
+        m_stopping(std::move(stopping)) {
     setAutoDelete(false);
   }
 
@@ -30,8 +32,8 @@ public:
   [[nodiscard]] QString errorString() const override { return m_error; }
 
   // Qt cancels when the requesting Image goes away or changes source, which a
-  // fast scroll does constantly. Skipping the work keeps the pool on tiles
-  // that are still on screen.
+  // fast scroll does constantly. The cache checks this between decode stages
+  // and while waiting for a video helper, keeping the pool on current tiles.
   void cancel() override { m_cancelled.store(true); }
 
   // Qt's pixmap reader deletes the response with deleteLater() as soon as
@@ -44,17 +46,23 @@ public:
   }
 
   void run() override {
-    if (m_cancelled.load()) {
+    const ThumbnailCache::Cancellation cancelled{&m_cancelled, m_stopping.get()};
+    if (cancelled.isCancelled()) {
       m_error = QStringLiteral("Cancelled");
       finishOnOwnThread();
       return;
     }
-    m_image = ThumbnailCache::thumbnail(m_path, m_logicalSize, m_devicePixelRatio, m_seekPercent);
-    if (m_image.isNull()) {
+    QImage image = ThumbnailCache::thumbnail(m_path, m_logicalSize, m_devicePixelRatio,
+                                            m_seekPercent, cancelled);
+    if (cancelled.isCancelled()) {
+      m_error = QStringLiteral("Cancelled");
+    } else if (image.isNull()) {
       // A file that cannot be thumbnailed is ordinary: an unreadable codec, a
       // truncated download, a permission the user does not have. Report it and
       // let the delegate show its placeholder.
       m_error = QStringLiteral("No thumbnail for %1").arg(m_path);
+    } else {
+      m_image = std::move(image);
     }
     finishOnOwnThread();
   }
@@ -67,6 +75,7 @@ private:
   QImage m_image;
   QString m_error;
   std::atomic_bool m_cancelled{false};
+  std::shared_ptr<std::atomic_bool> m_stopping;
 };
 
 } // namespace
@@ -78,8 +87,13 @@ ThumbnailProvider::ThumbnailProvider() {
   m_pool.setMaxThreadCount(qBound(2, QThread::idealThreadCount() - 1, 4));
 }
 
+ThumbnailProvider::~ThumbnailProvider() { shutdown(); }
+
 void ThumbnailProvider::shutdown() {
-  m_pool.clear();
+  // Responses are owned by Qt until finished(), including queued jobs with
+  // autoDelete(false). Drain them with cancellation rather than dropping them
+  // via clear(), which would strand their completion and lifetime.
+  m_stopping->store(true);
   m_pool.waitForDone();
 }
 
@@ -134,7 +148,8 @@ QQuickImageResponse* ThumbnailProvider::requestImageResponse(const QString& id,
     logicalSize = QSize(kFallbackEdge, kFallbackEdge);
   }
 
-  auto* response = new ThumbnailResponse(path, logicalSize, devicePixelRatio, seekPercent);
+  auto* response = new ThumbnailResponse(path, logicalSize, devicePixelRatio, seekPercent,
+                                         m_stopping);
   m_pool.start(response);
   return response;
 }

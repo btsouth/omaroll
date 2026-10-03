@@ -224,13 +224,17 @@ int main(int argc, char** argv) {
   parser.addOptions({{{u"library"_s}, u"Generated fixture root containing library/ and seeds/"_s, u"root"_s},
                      {{u"without-prefetch"_s}, u"Diagnostic comparison: disable viewer neighbor preloads"_s},
                      {{u"steps"_s}, u"Gallery page jumps per pass"_s, u"count"_s, u"12"_s},
+                     {{u"burst-jumps"_s}, u"Optional rapid gallery jumps, 16 ms apart, before the normal passes"_s, u"count"_s, u"0"_s},
                      {{u"viewer-files"_s}, u"Ordered seed path, repeat for each file (default: seeds/ name order)"_s, u"file"_s}});
   parser.process(app);
   const QDir fixture(parser.value(u"library"_s));
   bool validSteps = false;
   const int steps = parser.value(u"steps"_s).toInt(&validSteps);
+  bool validBurst = false;
+  const int burstJumps = parser.value(u"burst-jumps"_s).toInt(&validBurst);
   if (!parser.isSet(u"library"_s) || !QFileInfo(fixture.filePath(u"library"_s)).isDir()
-      || !validSteps || steps < 1 || steps > 1000 || !parser.positionalArguments().isEmpty()) parser.showHelp(2);
+      || !validSteps || steps < 1 || steps > 1000 || !validBurst || burstJumps < 0
+      || burstJumps > 1000 || !parser.positionalArguments().isEmpty()) parser.showHelp(2);
   QStringList seeds = parser.values(u"viewer-files"_s), files;
   QJsonArray skippedSeeds;
   if (seeds.isEmpty()) {
@@ -322,6 +326,7 @@ int main(int argc, char** argv) {
                      {u"steps"_s, steps}, {u"qt"_s, QString::fromLatin1(qVersion())},
                      {u"metadata_enabled"_s, true}, {u"viewer_order"_s, QJsonArray::fromStringList(files)}};
   result[u"viewer_prefetch_enabled"_s] = !parser.isSet(u"without-prefetch"_s);
+  result[u"gallery_burst_jumps"_s] = burstJumps;
   result[u"video_frame_verification"_s] = u"32x18 first-frame RGB reference; mean channel error <=12 and >=2 closer than every other video; references prepared outside timers"_s;
   std::function<void()> galleryNext, viewerNext;
   int galleryStep = 0, viewerStep = 0;
@@ -475,7 +480,35 @@ int main(int argc, char** argv) {
       result[u"gallery_maximum_content_y"_s] = maximumContentY;
       if (maximumContentY < steps * pageHeight || pageHeight <= 0) {
         run.failed = true; run.fatal = u"Fixture needs at least steps+1 gallery viewports"_s; QCoreApplication::quit();
-      } else galleryNext();
+      } else if (burstJumps == 0) galleryNext();
+      else {
+        // Measure from the first input through a ready final viewport. Earlier
+        // targets deliberately do not settle, exercising obsolete requests.
+        auto* burst = new QTimer(&run);
+        burst->setInterval(16);
+        burst->setTimerType(Qt::PreciseTimer);
+        auto dispatched = std::make_shared<int>(0);
+        auto jump = [&, burst, dispatched] {
+          const int number = ++*dispatched;
+          const double target = number == burstJumps ? maximumContentY
+              : maximumContentY * ((number * 7) % 13) / 13;
+          viewport->setProperty("contentY", target);
+          QMetaObject::invokeMethod(viewport, "forceLayout");
+          if (number == burstJumps) burst->stop();
+        };
+        QObject::connect(burst, &QTimer::timeout, &run, jump);
+        run.measure(u"gallery_burst"_s, u"cold_cache"_s, [&, burst, jump] {
+          run.sample[u"requested_jumps"_s] = burstJumps;
+          jump();
+          if (burstJumps > 1) burst->start();
+        }, [&, dispatched] {
+          if (*dispatched != burstJumps) return false;
+          QVariant ready;
+          QMetaObject::invokeMethod(grid, "viewportReady", Q_RETURN_ARG(QVariant, ready));
+          return !captures->scanning()
+              && std::abs(viewport->property("contentY").toDouble() - maximumContentY) < 1 && ready.toBool();
+        }, [&, burst] { burst->deleteLater(); galleryNext(); });
+      }
     });
   });
   app.exec();

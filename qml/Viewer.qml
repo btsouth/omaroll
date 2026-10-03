@@ -835,7 +835,8 @@ ApplicationWindow {
             }
         }
 
-        // The pictures either side, decoded ahead so stepping is instant.
+        // Original-resolution neighbours admitted by the session's shared
+        // decoded-pixel budget. Their URLs match the displayed Image's cache.
         Repeater {
             model: [1, -1]
             Image {
@@ -844,13 +845,8 @@ ApplicationWindow {
                 visible: false
                 asynchronous: true
                 autoTransform: true
-                source: {
-                    void Session.index
-                    void Session.count
-                    return root.visible && !Session.neighbourIsVideo(modelData)
-                           && !Session.neighbourIsAnimated(modelData)
-                           ? Session.neighbourImageUrl(modelData) : ""
-                }
+                source: root.visible ? (modelData === 1 ? Session.nextPreloadUrl
+                                                       : Session.previousPreloadUrl) : ""
             }
         }
 

@@ -4,6 +4,8 @@
 #include <QSize>
 #include <QString>
 
+#include <atomic>
+
 // Produces and caches thumbnails on disk.
 //
 // The cache key includes the rendered pixel size, not just the file identity,
@@ -25,6 +27,24 @@ public:
   [[nodiscard]] static QImage thumbnail(const QString& path, const QSize& logicalSize,
                                         qreal devicePixelRatio, int seekPercent = 20);
 
+  struct Cancellation {
+    const std::atomic_bool* request = nullptr;
+    const std::atomic_bool* stopping = nullptr;
+
+    [[nodiscard]] bool isCancelled() const {
+      return (request && request->load()) || (stopping && stopping->load());
+    }
+  };
+
+  // Cooperative cancellation for asynchronous requests. The flags must outlive
+  // this call. Cancellation observed at a checkpoint returns an empty image
+  // without recording a decode failure or publishing a cache entry. Individual
+  // image/PDF decodes cannot be interrupted, but their results are discarded
+  // when cancellation arrives.
+  [[nodiscard]] static QImage thumbnail(const QString& path, const QSize& logicalSize,
+                                        qreal devicePixelRatio, int seekPercent,
+                                        Cancellation cancelled);
+
   [[nodiscard]] static QString cacheDirectory();
 
   // Cache ceiling. A thumbnail is always rebuildable, so bounding the directory
@@ -37,9 +57,9 @@ public:
 
 private:
   [[nodiscard]] static QImage renderImage(const QString& path, const QSize& pixelSize,
-                                          int seekPercent);
+                                          int seekPercent, Cancellation cancelled);
   [[nodiscard]] static QImage renderVideo(const QString& path, const QSize& pixelSize,
-                                          int seekPercent);
+                                          int seekPercent, Cancellation cancelled);
   [[nodiscard]] static QString cacheKey(const QString& path, const QSize& pixelSize,
                                         int seekPercent);
 };

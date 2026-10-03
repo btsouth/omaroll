@@ -7,6 +7,7 @@
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QHash>
 #include <QImageReader>
@@ -22,6 +23,34 @@
 #include <cmath>
 
 namespace {
+
+bool isCancelled(ThumbnailCache::Cancellation cancelled) {
+  return cancelled.isCancelled();
+}
+
+// Keep the existing helper deadline, but release a pool slot promptly when its
+// tile goes away. All QProcess operations stay on the worker that owns it.
+bool waitForVideo(QProcess& process, ThumbnailCache::Cancellation cancelled) {
+  constexpr int kTimeoutMs = 8000;
+  constexpr int kPollMs = 50;
+  QElapsedTimer elapsed;
+  elapsed.start();
+  while (!isCancelled(cancelled)) {
+    const int remaining = kTimeoutMs - int(elapsed.elapsed());
+    if (remaining <= 0) {
+      break;
+    }
+    if (process.state() == QProcess::NotRunning) {
+      return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+    }
+    process.waitForFinished(qMin(kPollMs, remaining));
+  }
+  if (process.state() != QProcess::NotRunning) {
+    process.kill();
+    process.waitForFinished(1000);
+  }
+  return false;
+}
 
 // Files that produced no thumbnail, remembered for a while so a recording
 // still being written, or a corrupt download in view, does not cost an
@@ -117,7 +146,11 @@ QString ThumbnailCache::cacheKey(const QString& path, const QSize& pixelSize, in
       QCryptographicHash::hash(identity.toUtf8(), QCryptographicHash::Md5).toHex());
 }
 
-QImage ThumbnailCache::renderImage(const QString& path, const QSize& pixelSize, int seekPercent) {
+QImage ThumbnailCache::renderImage(const QString& path, const QSize& pixelSize, int seekPercent,
+                                  Cancellation cancelled) {
+  if (isCancelled(cancelled)) {
+    return {};
+  }
   QImageReader reader(path);
   reader.setAutoTransform(true);
 
@@ -146,16 +179,27 @@ QImage ThumbnailCache::renderImage(const QString& path, const QSize& pixelSize, 
   if (frames > 1) {
     const int target = qBound(0, frames * qBound(0, seekPercent, 95) / 100, frames - 1);
     for (int skipped = 0; skipped < target; ++skipped) {
+      if (isCancelled(cancelled)) {
+        return {};
+      }
       if (!reader.jumpToNextImage() && reader.read().isNull()) {
         break;
       }
     }
   }
 
-  return reader.read();
+  if (isCancelled(cancelled)) {
+    return {};
+  }
+  QImage image = reader.read();
+  return isCancelled(cancelled) ? QImage{} : image;
 }
 
-QImage ThumbnailCache::renderVideo(const QString& path, const QSize& pixelSize, int seekPercent) {
+QImage ThumbnailCache::renderVideo(const QString& path, const QSize& pixelSize, int seekPercent,
+                                  Cancellation cancelled) {
+  if (isCancelled(cancelled)) {
+    return {};
+  }
   const QString executable = QStandardPaths::findExecutable(QStringLiteral("ffmpegthumbnailer"));
   if (executable.isEmpty()) {
     return {};
@@ -174,6 +218,9 @@ QImage ThumbnailCache::renderVideo(const QString& path, const QSize& pixelSize, 
   // a 1080p source.
   const int longest = std::min(2 * std::max(pixelSize.width(), pixelSize.height()), 1920);
 
+  if (isCancelled(cancelled)) {
+    return {};
+  }
   QProcess process;
   process.start(executable, {
                                 QStringLiteral("-i"),
@@ -188,17 +235,23 @@ QImage ThumbnailCache::renderVideo(const QString& path, const QSize& pixelSize, 
                                 QStringLiteral("8"),
                             });
 
-  if (!process.waitForFinished(8000) || process.exitStatus() != QProcess::NormalExit ||
-      process.exitCode() != 0) {
+  if (!waitForVideo(process, cancelled) || isCancelled(cancelled)) {
     return {};
   }
 
-  return QImage(output);
+  QImage image(output);
+  return isCancelled(cancelled) ? QImage{} : image;
 }
 
 QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
                                  qreal devicePixelRatio, int seekPercent) {
-  if (path.isEmpty() || !QFileInfo::exists(path)) {
+  return thumbnail(path, logicalSize, devicePixelRatio, seekPercent, {});
+}
+
+QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
+                                 qreal devicePixelRatio, int seekPercent,
+                                 Cancellation cancelled) {
+  if (isCancelled(cancelled) || path.isEmpty() || !QFileInfo::exists(path)) {
     return {};
   }
 
@@ -214,6 +267,9 @@ QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
   const QString cachePath = directory + QLatin1Char('/') + key + QStringLiteral(".jpg");
 
   QImage cached(cachePath);
+  if (isCancelled(cancelled)) {
+    return {};
+  }
   if (!cached.isNull()) {
     return cached;
   }
@@ -244,18 +300,30 @@ QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
   }
 
   const QString suffix = CaptureScanner::mediaSuffix(renderPath);
+  if (isCancelled(cancelled)) {
+    return {};
+  }
   QImage rendered =
-      CaptureScanner::isVideo(suffix)      ? renderVideo(renderPath, pixelSize, seekPercent)
+      CaptureScanner::isVideo(suffix)      ? renderVideo(renderPath, pixelSize, seekPercent, cancelled)
       : CaptureScanner::isDocument(suffix) ? PdfSupport::renderPage(renderPath, 1, pixelSize * 2)
-                                           : renderImage(renderPath, pixelSize, seekPercent);
+                                           : renderImage(renderPath, pixelSize, seekPercent, cancelled);
+  if (isCancelled(cancelled)) {
+    return {};
+  }
   if (rendered.isNull() && !CaptureScanner::isVideo(suffix) &&
       !CaptureScanner::isDocument(suffix)) {
     // Video bytes under an image name happen; ffmpegthumbnailer can read it.
-    rendered = renderVideo(renderPath, pixelSize, seekPercent);
+    rendered = renderVideo(renderPath, pixelSize, seekPercent, cancelled);
+  }
+  if (isCancelled(cancelled)) {
+    return {};
   }
   if (rendered.isNull() && renderPath != path) {
     // The source could not be read after all; the derived file stands alone.
-    rendered = renderImage(path, pixelSize, seekPercent);
+    rendered = renderImage(path, pixelSize, seekPercent, cancelled);
+  }
+  if (isCancelled(cancelled)) {
+    return {};
   }
   if (rendered.isNull()) {
     rememberFailure(key);
@@ -266,6 +334,9 @@ QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
   // overhang: otherwise expanding to cover would be an upscale.
   if (rendered.width() > pixelSize.width() && rendered.height() > pixelSize.height()) {
     rendered = rendered.scaled(pixelSize, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+  }
+  if (isCancelled(cancelled)) {
+    return {};
   }
 
   // A panorama covered on its short side is enormous on its long one; the
@@ -279,6 +350,9 @@ QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
     const int height = std::min(rendered.height(), maxHeight);
     rendered = rendered.copy((rendered.width() - width) / 2, (rendered.height() - height) / 2,
                              width, height);
+  }
+  if (isCancelled(cancelled)) {
+    return {};
   }
 
   // JPEG has no alpha and an odd source format (CMYK, 16-bit) is best settled
@@ -294,6 +368,9 @@ QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
   } else if (rendered.format() != QImage::Format_RGB32) {
     rendered = rendered.convertToFormat(QImage::Format_RGB32);
   }
+  if (isCancelled(cancelled)) {
+    return {};
+  }
 
   // Best effort. A cache that cannot be written still returns a correct image;
   // it just costs the decode again next time. Written beside and renamed into
@@ -304,7 +381,12 @@ QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
                               .arg(cachePath)
                               .arg(QCoreApplication::applicationPid())
                               .arg(reinterpret_cast<quintptr>(QThread::currentThreadId()));
-  if (rendered.save(staging, "JPG", kJpegQuality) && !QFile::rename(staging, cachePath)) {
+  const bool saved = rendered.save(staging, "JPG", kJpegQuality);
+  if (isCancelled(cancelled)) {
+    QFile::remove(staging);
+    return {};
+  }
+  if (!saved || !QFile::rename(staging, cachePath)) {
     QFile::remove(staging);
   }
 
