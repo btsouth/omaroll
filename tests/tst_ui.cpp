@@ -3177,6 +3177,11 @@ private slots:
     // The preview is 24x32 once upright; the raw is 48x64.
     QCOMPARE(detail->property("mediaWidth").toInt(), 48);
     QCOMPARE(detail->property("mediaHeight").toInt(), 64);
+    // A late size result for another version of this path must be ignored.
+    m_captures->rawSizeRead(path, QUrl(QStringLiteral("image://raw/old-version")),
+                           QSize(480, 640));
+    QCOMPARE(detail->property("mediaWidth").toInt(), 48);
+    QCOMPARE(detail->property("mediaHeight").toInt(), 64);
     QVariant rows;
     QVERIFY(QMetaObject::invokeMethod(detail, "visibleActions", Q_RETURN_ARG(QVariant, rows)));
     QStringList ids;
