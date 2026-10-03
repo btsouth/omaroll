@@ -3196,12 +3196,15 @@ private slots:
     QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/raw/camera.dng"), raw));
     m_captures->refresh();
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(raw) >= 0, 5000);
-    openDetail(m_library->rowOf(raw));
     QQuickItem* detail = item("detail");
-    QTRY_VERIFY(detail->isVisible());
     QObject* chooser = m_window->findChild<QObject*>(QStringLiteral("editorChooser"));
     QVERIFY(chooser);
     for (Qt::Key key : {Qt::Key_D, Qt::Key_O}) {
+      // External actions close detail. Each shortcut must start from the
+      // RAW preview again, rather than exercising the grid on the next key.
+      openDetail(m_library->rowOf(raw));
+      QTRY_VERIFY(detail->isVisible());
+      QCOMPARE(detail->property("path").toString(), raw);
       QVERIFY(QMetaObject::invokeMethod(detail, "focusPreview"));
       QTRY_VERIFY(detail->hasActiveFocus());
       QTest::keyClick(m_window, key, Qt::ShiftModifier);
@@ -3210,7 +3213,11 @@ private slots:
       QVERIFY(QMetaObject::invokeMethod(chooser, "close"));
       QTRY_VERIFY(!chooser->property("visible").toBool());
     }
+    openDetail(m_library->rowOf(raw));
+    QTRY_VERIFY(detail->isVisible());
+    QCOMPARE(detail->property("path").toString(), raw);
     QVERIFY(QMetaObject::invokeMethod(detail, "focusPreview"));
+    QTRY_VERIFY(detail->hasActiveFocus());
     QTest::keyClick(m_window, Qt::Key_O);
     QTRY_VERIFY(QFileInfo::exists(raw + QStringLiteral(".editor-open")));
     QVERIFY(!chooser->property("visible").toBool());

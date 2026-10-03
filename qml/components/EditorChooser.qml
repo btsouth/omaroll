@@ -110,6 +110,13 @@ Popup {
         clip: true
         boundsBehavior: Flickable.StopAtBounds
 
+        Keys.onPressed: function (event) {
+            if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                root.openSelected()
+                event.accepted = true
+            }
+        }
+
         ScrollBar.vertical: ScrollBar {
             id: verticalScrollBar
             policy: ScrollBar.AsNeeded
@@ -381,16 +388,6 @@ Popup {
         root.pickInitial()
         if (root.selectedId === "") {
             customInput.forceActiveFocus()
-        }
-    }
-
-    Keys.onPressed: function (event) {
-        if (event.key === Qt.Key_Escape) {
-            root.close()
-            event.accepted = true
-        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            root.openSelected()
-            event.accepted = true
         }
     }
 
