@@ -224,23 +224,25 @@ Item {
         const companion = Captures.companionPathAt(Captures.rowOf(root.path))
         if (companion !== "") {
             rows.unshift({id: "companion", label: "View " + companion.substring(companion.lastIndexOf(".") + 1).toUpperCase() + " companion",
-                          available: true, native: true, shortcut: "", hint: "", primary: false})
+                          available: true, native: true, shortcut: "", hint: "", primary: false, group: "File"})
         }
         return rows.filter(function (row) { return row.id !== "qr" || root.qrDetected })
     }
 
     // Primary actions in the inspector; the full registry stays in the menu.
+    readonly property string preferredAction: root.isDocument ? "open-document"
+        : root.isVideo ? Settings.videoPrimaryAction : Settings.imagePrimaryAction
     readonly property var primaryActionIds: root.isDocument ? ["open-document"]
-                                             : root.isVideo ? ["trim", "frame"]
-                                                            : [Settings.imagePrimaryAction,
-                                                               Settings.imagePrimaryAction === "corrections"
-                                                               ? "matte" : "corrections"]
+        : root.isVideo ? [Settings.videoPrimaryAction === "play" ? "play" : "trim", "frame"]
+        : [Settings.imagePrimaryAction === "preview"
+           ? (Registry.available("omaframe") && Registry.appliesToKind("omaframe", root.isVideo, root.isDocument, root.path) ? "omaframe" : "matte")
+           : Settings.imagePrimaryAction, "corrections"]
     readonly property var primaryActionRows: {
         const rows = Registry.actionsForKind(root.isVideo, root.isDocument, root.path)
         const out = []
         for (const id of root.primaryActionIds) {
             for (const row of rows) {
-                if (row.id === id) {
+                if (row.id === id && !out.some(function(previous) { return previous.id === id })) {
                     out.push(row)
                     break
                 }
@@ -2610,6 +2612,18 @@ Item {
                 ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
                 model: root.visible ? root.visibleActions() : []
+                section.property: "group"
+                section.criteria: ViewSection.FullString
+                section.delegate: Text {
+                    required property string section
+                    width: actions.width
+                    height: 24
+                    text: section
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 10
+                    color: Theme.mutedText
+                    verticalAlignment: Text.AlignVCenter
+                }
 
                 delegate: FocusScope {
                     id: row
@@ -2621,9 +2635,7 @@ Item {
                     activeFocusOnTab: false
 
                     readonly property bool usable: modelData.available
-                    readonly property bool primary: modelData.id ===
-                                                    Registry.primaryActionForKind(
-                                                        root.isVideo, root.isDocument)
+                    readonly property bool primary: modelData.id === root.preferredAction
                     readonly property bool destructive: modelData.id === "trash"
                                                         || modelData.id === "hide"
                     // mpv is an external player; say so rather than let "Play"
@@ -2751,6 +2763,27 @@ Item {
         }
         return (event.modifiers & Qt.ControlModifier) ? "Ctrl+" + letter : letter
     }
+
+    Connections {
+        target: root
+        function onPathChanged() { imageContextMenu.close() }
+    }
+    ActionMenu {
+        id: imageContextMenu
+        objectName: "detailContextMenu"
+        entryPrefix: "detailContextAction_"
+        onTriggered: function(id) { root.invokeAction(id) }
+        onClosed: root.restoreFocus()
+    }
+    TapHandler {
+        parent: stage
+        acceptedButtons: Qt.RightButton
+        onSingleTapped: function(point) {
+            imageContextMenu.entries = imageContextMenu.grouped(root.visibleActions())
+            imageContextMenu.popup(stage, point.position.x, point.position.y)
+        }
+    }
+
 
     Keys.onPressed: function (event) {
         if (!(event.modifiers & (Qt.ControlModifier | Qt.AltModifier))

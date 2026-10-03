@@ -167,7 +167,7 @@ organization and safe copies itself, and delegates specialist work to these tool
 | Recording | Convert · resize | `omarchy-transcode` |
 | Recording | Play | `mpv` |
 | Recording | Save current frame | `ffmpeg`, from the viewer position |
-| Screenshot | **Make it postable** *(default)* | **native** |
+| Image | Add background | native, no external app required |
 | Screenshot | Annotate | `$OMARCHY_SCREENSHOT_EDITOR`; Tensaku by default |
 | Image | Open in Omaframe | `omaframe`: annotation, borders, backgrounds and frames |
 | Screenshot | Extract and select text | `tesseract` |
@@ -197,7 +197,9 @@ uses Tensaku directly with a new output path.
 viewer. It opens the image in Omaframe's studio for annotation or a frame,
 border and background. Omaframe saves a new PNG in its chosen output folder
 and copies it to the clipboard, leaving the source unchanged. This action
-does not change the configured annotation editor.
+does not change the configured annotation editor. You can choose it as the image action
+in Settings; Space runs that action. Enter and double click open the built-in preview.
+Right click opens actions for the pointed file or its existing selection.
 
 Camera RAWs can open in darktable, RawTherapee, ART, digiKam, GIMP or a custom
 command. Choose an editor from the menu, use its star to save a preference,
@@ -243,8 +245,9 @@ and put on your clipboard.
 | Key | Does |
 |---|---|
 | arrows · `hjkl` | Move |
-| `Enter` · right click | Preview with every action for that capture |
-| `Space` on the grid or a still/PDF preview | Your default action for that kind, initially trim, matte, or open document |
+| `Enter` · double click | Open the built-in preview |
+| right click | Actions for that file or its selected files |
+| `Space` on the grid or a still/PDF preview | Your preferred action; built-in viewing for new installs, or open document for PDFs |
 | `Space` in a video or animated-image preview | Play · pause |
 | `←` `→` in a preview | Previous · next file in the same folder |
 | `J` `L` in a video preview | Seek backward · forward five seconds |
@@ -256,7 +259,7 @@ and put on your clipboard.
 | `F11` in a preview | Enter · leave fullscreen |
 | `F5` in a preview | Start · pause slideshow |
 | `I` in a preview | Show · hide file info and actions |
-| `M` | Make it postable |
+| `M` | Add background |
 | `T` · `P` | Trim · Play a recording |
 | `G` in a video preview | Save the current frame beside the recording |
 | `A` · `C` | Annotate · Extract text |

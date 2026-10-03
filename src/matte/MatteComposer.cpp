@@ -3,17 +3,21 @@
 #include "matte/HueExtractor.h"
 #include "sources/CameraRaw.h"
 
-#include <QBuffer>
 #include <QClipboard>
+#include <QFile>
 #include <QFileInfo>
+#include <QFutureWatcher>
 #include <QGuiApplication>
 #include <QImageReader>
+#include <QImageWriter>
 #include <QLinearGradient>
 #include <QPainter>
 #include <QPainterPath>
 #include <QProcess>
 #include <QRadialGradient>
 #include <QStandardPaths>
+#include <QSaveFile>
+#include <QtConcurrent>
 
 #include <cmath>
 
@@ -58,27 +62,6 @@ bool hasTransparency(const QImage& image) {
     }
   }
   return false;
-}
-
-// The composite onto the clipboard through wl-copy, which outlives omaroll,
-// rather than the Qt clipboard, whose offer dies with the window on Wayland.
-void offerToClipboard(const QImage& image) {
-  QByteArray png;
-  QBuffer buffer(&png);
-  buffer.open(QIODevice::WriteOnly);
-  image.save(&buffer, "PNG");
-
-  const QString wlCopy = QStandardPaths::findExecutable(QStringLiteral("wl-copy"));
-  if (!wlCopy.isEmpty()) {
-    QProcess process;
-    process.start(wlCopy, {QStringLiteral("--type"), QStringLiteral("image/png")});
-    process.write(png);
-    process.closeWriteChannel();
-    if (process.waitForFinished(3000)) {
-      return;
-    }
-  }
-  QGuiApplication::clipboard()->setImage(image);
 }
 
 } // namespace
@@ -269,53 +252,191 @@ QImage MatteComposer::compose(const QImage& source, Matte matte, Aspect aspect,
 
 void MatteComposer::composeAndSave(const QString& path, int matte, int aspect,
                                    qreal paddingFraction) {
-  const QFileInfo info(path);
-  if (!info.exists()) {
-    emit failed(QStringLiteral("That file is no longer there"));
+  if (m_busy) {
+    emit failed(QStringLiteral("Still working on the last matte"));
     return;
   }
+  if (matte < 0 || matte >= MatteCount || aspect < 0 || aspect >= AspectCount ||
+      !std::isfinite(paddingFraction)) {
+    emit failed(QStringLiteral("Choose a valid matte and aspect"));
+    return;
+  }
+  m_busy = true;
+  emit busyChanged();
+  const bool qtFallback = !QGuiApplication::platformName().startsWith(QStringLiteral("wayland"));
+  watch(QtConcurrent::run([path, matte, aspect, paddingFraction, qtFallback] {
+    return saveAndCopy(path, static_cast<Matte>(matte), static_cast<Aspect>(aspect), paddingFraction,
+                       qtFallback);
+  }), false);
+}
 
+void MatteComposer::retryCopy() {
+  if (m_busy) {
+    emit failed(QStringLiteral("Still working on the last matte"));
+    return;
+  }
+  if (m_lastOutputPath.isEmpty()) {
+    emit failed(QStringLiteral("There is no saved matte to copy"));
+    return;
+  }
+  m_busy = true;
+  emit busyChanged();
+  const QString path = m_lastOutputPath;
+  const bool qtFallback = !QGuiApplication::platformName().startsWith(QStringLiteral("wayland"));
+  watch(QtConcurrent::run([path, qtFallback] {
+    return copySaved(path, QFileInfo(path).isFile(), qtFallback);
+  }), true);
+}
+
+void MatteComposer::watch(QFuture<Result> future, bool retry) {
+  // The watcher and its callback belong to this QObject. Deleting the composer
+  // disconnects the callback; workers capture only values and never touch it.
+  auto* watcher = new QFutureWatcher<Result>(this);
+  connect(watcher, &QFutureWatcher<Result>::finished, this, [this, watcher, retry] {
+    Result result = watcher->result();
+    watcher->deleteLater();
+    if (!result.fallbackImage.isNull()) {
+      // QClipboard must be touched on the GUI thread. Decoding and encoding
+      // stay in the worker. On Wayland we require the persistent wl-copy offer.
+      if (auto* clipboard = QGuiApplication::clipboard()) {
+        clipboard->setImage(result.fallbackImage);
+        result.copied = true;
+      } else {
+        result.error = QStringLiteral("Could not copy the matte to the clipboard");
+      }
+    }
+    if (result.saved && !retry) {
+      m_lastOutputPath = result.outputPath;
+      emit lastOutputPathChanged();
+    }
+    m_busy = false;
+    emit busyChanged();
+    if (result.saved && !retry) emit saved(result.outputPath);
+    if (result.copied) emit copied(result.outputPath);
+    if (!result.error.isEmpty()) {
+      emit failed(result.saved
+                      ? QStringLiteral("Saved %1, but could not copy it. Retry Copy to try again. %2")
+                            .arg(QFileInfo(result.outputPath).fileName(), result.error)
+                      : result.error);
+    }
+    if (result.saved && result.copied && !retry) emit composed(result.outputPath);
+    emit finished(result.outputPath, result.saved, result.copied);
+  });
+  watcher->setFuture(future);
+}
+
+MatteComposer::Result MatteComposer::copySaved(const QString& path, bool saved, bool qtFallback) {
+  Result result;
+  result.outputPath = path;
+  result.saved = saved;
+  const QFileInfo info(path);
+  if (!info.isFile() || !info.isReadable()) {
+    result.error = QStringLiteral("The saved matte is no longer readable");
+    return result;
+  }
+  const QString wlCopy = QStandardPaths::findExecutable(QStringLiteral("wl-copy"));
+  if (!wlCopy.isEmpty()) {
+    // Feed the already encoded file instead of encoding another PNG on the GUI
+    // thread. wl-copy forks the persistent offer and its parent exits.
+    QProcess process;
+    QByteArray errors;
+    process.setStandardOutputFile(QProcess::nullDevice());
+    connect(&process, &QProcess::readyReadStandardError, &process, [&process, &errors] {
+      errors = (errors + process.readAllStandardError()).right(4096);
+    });
+    process.setStandardInputFile(path);
+    process.start(wlCopy, {QStringLiteral("--type"), QStringLiteral("image/png")});
+    const bool completed = process.waitForFinished(5000);
+    result.copied = completed && process.exitStatus() == QProcess::NormalExit &&
+                    process.exitCode() == 0;
+    if (!result.copied) {
+      if (!completed && process.state() != QProcess::NotRunning) {
+        process.kill();
+        process.waitForFinished(1000);
+      }
+      errors = (errors + process.readAllStandardError()).right(4096);
+      const QString detail = QString::fromUtf8(errors).trimmed();
+      result.error = !detail.isEmpty() ? detail
+                     : completed ? QStringLiteral("wl-copy did not finish successfully")
+                                 : QStringLiteral("wl-copy could not start or timed out");
+    }
+    // A failing helper is a real failure, never masked by a transient Qt offer.
+    return result;
+  }
+  if (!qtFallback) {
+    result.error = QStringLiteral("Install wl-clipboard to copy images");
+    return result;
+  }
+  QImageReader reader(path);
+  result.fallbackImage = reader.read();
+  if (result.fallbackImage.isNull()) {
+    result.error = QStringLiteral("Could not read the saved matte for copying");
+  }
+  return result;
+}
+
+MatteComposer::Result MatteComposer::saveAndCopy(const QString& path, Matte matte, Aspect aspect,
+                                                qreal paddingFraction, bool qtFallback) {
+  Result outcome;
+  const QFileInfo info(path);
+  if (!info.isFile()) {
+    outcome.error = QStringLiteral("That file is no longer there");
+    return outcome;
+  }
   QImageReader reader(path);
   reader.setAutoTransform(true);
-  // A camera raw is framed from the same embedded preview the library shows
-  // and the matte sheet previews, so the saved picture is the one chosen.
+  // Match the RAW preview used by the library and the sheet.
   const QImage source = CameraRaw::isRawFile(path) ? CameraRaw::readPreview(path) : reader.read();
   if (source.isNull()) {
-    emit failed(QStringLiteral("Could not read %1").arg(info.fileName()));
-    return;
+    outcome.error = QStringLiteral("Could not read %1").arg(info.fileName());
+    return outcome;
+  }
+  const QImage image = compose(source, matte, aspect, paddingFraction);
+  if (image.isNull()) {
+    outcome.error = QStringLiteral("Could not build that matte");
+    return outcome;
   }
 
-  const QImage result = compose(source, static_cast<Matte>(matte), static_cast<Aspect>(aspect),
-                                paddingFraction);
-  if (result.isNull()) {
-    emit failed(QStringLiteral("Could not build that matte"));
-    return;
-  }
-
-  // Never overwrite. The original is untouched and repeat composes get their
-  // own numbered files rather than clobbering the last one. The stem is
-  // trimmed so a name already near the filesystem's limit still fits with
-  // the suffix appended.
+  // Reserve an unused numbered name with exclusive create, as ImageEditor
+  // does. Existing mattes and the source are never overwritten by another run.
   QString stem = info.completeBaseName();
   constexpr int kNameMax = 255;
-  constexpr int kSuffixRoom = 16; // "-matte-999.png"
-  while (stem.toUtf8().size() > kNameMax - kSuffixRoom && !stem.isEmpty()) {
-    stem.chop(1);
+  constexpr int kSuffixRoom = 16;
+  while (stem.toUtf8().size() > kNameMax - kSuffixRoom && !stem.isEmpty()) stem.chop(1);
+  QString output;
+  int suffix = 1;
+  for (int attempt = 0; attempt < 64; ++attempt) {
+    QString candidate;
+    do {
+      candidate = info.absolutePath() + QLatin1Char('/') + stem +
+                  (suffix == 1 ? QStringLiteral("-matte.png")
+                               : QStringLiteral("-matte-%1.png").arg(suffix));
+      ++suffix;
+    } while (QFileInfo::exists(candidate));
+    QFile reservation(candidate);
+    if (reservation.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+      output = candidate;
+      break;
+    }
+    if (!QFileInfo::exists(candidate)) break; // permission/directory failure
   }
-  QString output = info.absolutePath() + QLatin1Char('/') + stem + QStringLiteral("-matte.png");
-  int suffix = 2;
-  while (QFileInfo::exists(output)) {
-    output = QStringLiteral("%1/%2-matte-%3.png").arg(info.absolutePath(), stem).arg(suffix++);
+  if (output.isEmpty()) {
+    outcome.error = QStringLiteral("Could not find a writable name beside %1").arg(info.fileName());
+    return outcome;
   }
-
-  if (!result.save(output, "PNG")) {
-    emit failed(QFileInfo(info.absolutePath()).isWritable()
-                    ? QStringLiteral("Could not write %1").arg(QFileInfo(output).fileName())
-                    : QStringLiteral("%1 is not writable, so the matte has nowhere to go")
-                          .arg(info.absolutePath()));
-    return;
+  // Atomic replacement of our reservation avoids publishing a partial PNG.
+  QSaveFile file(output);
+  bool written = file.open(QIODevice::WriteOnly);
+  if (written) {
+    QImageWriter writer(&file, "PNG");
+    written = writer.write(image);
+    if (written) written = file.commit();
+    else file.cancelWriting();
   }
-
-  offerToClipboard(result);
-  emit composed(output);
+  if (!written) {
+    QFile::remove(output);
+    outcome.error = QStringLiteral("Could not write %1").arg(QFileInfo(output).fileName());
+    return outcome;
+  }
+  return copySaved(output, true, qtFallback);
 }

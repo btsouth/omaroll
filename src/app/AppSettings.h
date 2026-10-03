@@ -294,8 +294,8 @@ private:
   QStringList m_libraryFolders;
   QStringList m_pinnedFolders;
   bool m_pairRawJpeg = true;
-  QString m_imagePrimaryAction = QStringLiteral("matte");
-  QString m_videoPrimaryAction = QStringLiteral("trim");
+  QString m_imagePrimaryAction = QStringLiteral("preview");
+  QString m_videoPrimaryAction = QStringLiteral("preview");
   int m_thumbnailCacheMb = 256;
   int m_tileWidth = 240;
   bool m_slideshowVideos = false;

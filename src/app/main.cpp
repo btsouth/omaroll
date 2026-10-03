@@ -162,7 +162,7 @@ Options:
                          so no compositor can resize it or overlap it.
   --render-view <view>   Which view to render: grid, detail, video, slideshow,
                          matte, corrections, compare, export, rename, OCR,
-                         editors, pins,
+                         editors, pins, context-menu, selection-menu,
                          duplicates, browser, settings, viewer, viewer-video,
                          viewer-info or viewer-menu.
   --render-size <WxH>    Window size, from 560x420 to 7680x4320. Default 1280x820.
@@ -406,6 +406,7 @@ int main(int argc, char* argv[]) {
       QStringLiteral("compare"),    QStringLiteral("export"),  QStringLiteral("rename"),
       QStringLiteral("ocr"),        QStringLiteral("duplicates"), QStringLiteral("browser"),
       QStringLiteral("settings"),   QStringLiteral("editors"), QStringLiteral("pins"),
+      QStringLiteral("context-menu"), QStringLiteral("selection-menu"),
       QStringLiteral("viewer"),  QStringLiteral("viewer-video"),
       QStringLiteral("viewer-info"), QStringLiteral("viewer-menu")};
   if (!renderView.isEmpty() && !renderViews.contains(renderView)) {

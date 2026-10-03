@@ -144,6 +144,7 @@ AppSettings::AlbumEntry AppSettings::identityFor(const QString& path) {
 AppSettings::AppSettings(QObject* parent)
     : QObject(parent), m_settings(QSettings::IniFormat, QSettings::UserScope,
                                   QStringLiteral("omaroll"), QStringLiteral("omaroll")) {
+  const bool existingProfile = !m_settings.allKeys().isEmpty();
   const QStringList favorites = m_settings.value(kFavorites).toStringList();
   m_favorites = QSet<QString>(favorites.begin(), favorites.end());
 
@@ -190,16 +191,21 @@ AppSettings::AppSettings(QObject* parent)
   }
   m_pairRawJpeg = m_settings.value(kPairRawJpeg, true).toBool();
   const QString imageAction =
-      m_settings.value(kImagePrimaryAction, QStringLiteral("matte")).toString();
-  if (QStringList {QStringLiteral("matte"), QStringLiteral("view"), QStringLiteral("edit")}
+      m_settings.value(kImagePrimaryAction, existingProfile ? QStringLiteral("matte")
+                                                          : QStringLiteral("preview")).toString();
+  if (QStringList {QStringLiteral("preview"), QStringLiteral("omaframe"), QStringLiteral("corrections"), QStringLiteral("matte"), QStringLiteral("view"), QStringLiteral("edit")}
           .contains(imageAction)) {
     m_imagePrimaryAction = imageAction;
   }
   const QString videoAction =
-      m_settings.value(kVideoPrimaryAction, QStringLiteral("trim")).toString();
-  if (QStringList {QStringLiteral("trim"), QStringLiteral("play")}.contains(videoAction)) {
+      m_settings.value(kVideoPrimaryAction, existingProfile ? QStringLiteral("trim")
+                                                          : QStringLiteral("preview")).toString();
+  if (QStringList {QStringLiteral("preview"), QStringLiteral("trim"), QStringLiteral("play")}.contains(videoAction)) {
     m_videoPrimaryAction = videoAction;
   }
+  // Persist resolved defaults so a fresh profile stays on native viewing after restart.
+  if (!m_settings.contains(kImagePrimaryAction)) m_settings.setValue(kImagePrimaryAction, m_imagePrimaryAction);
+  if (!m_settings.contains(kVideoPrimaryAction)) m_settings.setValue(kVideoPrimaryAction, m_videoPrimaryAction);
   m_thumbnailCacheMb = qBound(64, m_settings.value(kThumbnailCacheMb, 256).toInt(), 1024);
   m_tileWidth =
       qBound(kMinimumTileWidth, m_settings.value(kTileWidth, 240).toInt(), kMaximumTileWidth);
@@ -399,7 +405,7 @@ void AppSettings::setPairRawJpeg(bool value) {
 }
 
 void AppSettings::setImagePrimaryAction(const QString& action) {
-  static const QStringList allowed = {QStringLiteral("matte"), QStringLiteral("view"),
+  static const QStringList allowed = {QStringLiteral("preview"), QStringLiteral("omaframe"), QStringLiteral("corrections"), QStringLiteral("matte"), QStringLiteral("view"),
                                       QStringLiteral("edit")};
   if (!allowed.contains(action) || m_imagePrimaryAction == action) {
     return;
@@ -410,7 +416,7 @@ void AppSettings::setImagePrimaryAction(const QString& action) {
 }
 
 void AppSettings::setVideoPrimaryAction(const QString& action) {
-  static const QStringList allowed = {QStringLiteral("trim"), QStringLiteral("play")};
+  static const QStringList allowed = {QStringLiteral("preview"), QStringLiteral("trim"), QStringLiteral("play")};
   if (!allowed.contains(action) || m_videoPrimaryAction == action) {
     return;
   }

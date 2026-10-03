@@ -7,6 +7,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
+#include <QMimeDatabase>
+#include <algorithm>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QVariantMap>
@@ -165,10 +167,9 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .output = u"{stem}-1080p.mp4"_s},
 
       // --- Screenshots and pictures ---------------------------------------
-      // The matte is the one thing omaroll builds itself, because nothing on
-      // Omarchy does it. No program, so QML handles it.
+      // A dependency-free background picker. Richer framing uses Omaframe.
       {.id = u"matte"_s,
-       .label = u"Make it postable"_s,
+       .label = u"Add background"_s,
        .shortcut = u"M"_s,
        .media = Still,
        .primary = true},
@@ -334,7 +335,8 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .packageHint = u"cups"_s,
        .media = Printable,
        .raws = false,
-       .confirmation = u"Sent to the printer"_s},
+       .result = Submission,
+       .confirmation = u"Print job submitted"_s},
 
       {.id = u"files"_s,
        .label = u"Show in files"_s,
@@ -494,6 +496,7 @@ QVariantList ActionRegistry::actionsForKind(bool video, bool document,
                                             const QString& path) const {
   const bool raw = !path.isEmpty() && CameraRaw::isRawFile(path);
   QVariantList rows;
+  const QString mime = path.isEmpty() ? QString() : QMimeDatabase().mimeTypeForFile(path).name();
   for (const Definition& definition : m_definitions) {
     if (!definition.visible || !applies(definition, video, document, raw)) {
       continue;
@@ -502,7 +505,19 @@ QVariantList ActionRegistry::actionsForKind(bool video, bool document,
     const bool native = definition.program.isEmpty();
     QVariantMap row;
     row[u"id"_s] = definition.id;
-    row[u"label"_s] = definition.label;
+    row[u"label"_s] = definition.id == u"copy"_s
+        && (video || (!mime.isEmpty() && mime != u"image/png"_s && mime != u"image/jpeg"_s))
+        ? u"Copy file"_s : definition.label;
+    const QStringList common = {u"copy"_s, u"files"_s, u"print"_s, u"open-document"_s};
+    const QStringList editing = {u"omaframe"_s, u"corrections"_s, u"correctionsbatch"_s,
+        u"matte"_s, u"compare"_s, u"export"_s, u"trim"_s, u"frame"_s};
+    const QStringList organization = {u"rename"_s, u"favorite"_s, u"hide"_s, u"trash"_s};
+    row[u"group"_s] = common.contains(definition.id) ? u"File"_s
+        : editing.contains(definition.id) ? u"Edit and finish"_s
+        : organization.contains(definition.id) ? u"Organize"_s : u"Tools and sharing"_s;
+    row[u"order"_s] = common.contains(definition.id) ? common.indexOf(definition.id)
+        : editing.contains(definition.id) ? 100 + editing.indexOf(definition.id)
+        : organization.contains(definition.id) ? 300 + organization.indexOf(definition.id) : 200;
     row[u"shortcut"_s] = definition.shortcut;
     row[u"primary"_s] = definition.primary;
     row[u"native"_s] = native;
@@ -511,6 +526,9 @@ QVariantList ActionRegistry::actionsForKind(bool video, bool document,
     row[u"hint"_s] = definition.packageHint;
     rows.append(row);
   }
+  std::stable_sort(rows.begin(), rows.end(), [](const QVariant& a, const QVariant& b) {
+    return a.toMap().value(u"order"_s).toInt() < b.toMap().value(u"order"_s).toInt();
+  });
   return rows;
 }
 
@@ -631,6 +649,10 @@ bool ActionRegistry::launch(const Definition& definition, const QStringList& arg
                             const QString& output) {
   if (!output.isEmpty()) {
     return m_launcher->runTracked(definition.program, arguments, definition.packageHint, output);
+  }
+  if (definition.result == Result::Submission) {
+    return m_launcher->runSubmission(definition.program, arguments, definition.packageHint,
+                                     definition.confirmation);
   }
   return m_launcher->runDetached(definition.program, arguments, definition.packageHint,
                                  definition.confirmation);

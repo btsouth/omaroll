@@ -49,6 +49,8 @@
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTransform>
+#include <QTimer>
+#include <QThreadPool>
 #include <QtTest>
 
 #include <fcntl.h>
@@ -214,6 +216,45 @@ private slots:
                        m_scratch.filePath(QStringLiteral("config")));
     QVERIFY(qputenv("XDG_CACHE_HOME", m_scratch.filePath(QStringLiteral("cache")).toUtf8()));
     QVERIFY(qputenv("XDG_DATA_HOME", m_scratch.filePath(QStringLiteral("data")).toUtf8()));
+  }
+
+  void primaryDefaultsPreserveExistingProfilesAndFreshRestarts() {
+    QTemporaryDir profiles;
+    QVERIFY(profiles.isValid());
+    const auto restoreProfile = qScopeGuard([this] {
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                         m_scratch.filePath(QStringLiteral("config")));
+    });
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, profiles.filePath("fresh"));
+    {
+      AppSettings fresh;
+      QCOMPARE(fresh.imagePrimaryAction(), QStringLiteral("preview"));
+      QCOMPARE(fresh.videoPrimaryAction(), QStringLiteral("preview"));
+      fresh.setTileWidth(320);
+    }
+    {
+      AppSettings restarted;
+      QCOMPARE(restarted.imagePrimaryAction(), QStringLiteral("preview"));
+      QCOMPARE(restarted.videoPrimaryAction(), QStringLiteral("preview"));
+    }
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, profiles.filePath("existing"));
+    {
+      QSettings stored(QSettings::IniFormat, QSettings::UserScope,
+                       QStringLiteral("omaroll"), QStringLiteral("omaroll"));
+      stored.setValue(QStringLiteral("view/tileWidth"), 320);
+    }
+    {
+      AppSettings existing;
+      QCOMPARE(existing.imagePrimaryAction(), QStringLiteral("matte"));
+      QCOMPARE(existing.videoPrimaryAction(), QStringLiteral("trim"));
+      existing.setImagePrimaryAction(QStringLiteral("edit"));
+      existing.setVideoPrimaryAction(QStringLiteral("play"));
+    }
+    {
+      AppSettings explicitPreferences;
+      QCOMPARE(explicitPreferences.imagePrimaryAction(), QStringLiteral("edit"));
+      QCOMPARE(explicitPreferences.videoPrimaryAction(), QStringLiteral("play"));
+    }
   }
 
   void singleInstanceForwardsTheOpenedPath() {
@@ -5502,8 +5543,8 @@ private slots:
     ActionLauncher launcher;
     QSignalSpy failed(&launcher, &ActionLauncher::failed);
     QSignalSpy reported(&launcher, &ActionLauncher::reported);
-    QVERIFY(!launcher.copyFile(imagePath));
-    QCOMPARE(failed.size(), 1);
+    QVERIFY(launcher.copyFile(imagePath)); // accepted, not yet copied
+    QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 3000);
     QCOMPARE(reported.size(), 0);
 
     failed.clear();
@@ -6063,6 +6104,337 @@ private slots:
     QVERIFY2(
         centre.blue() > 120 && centre.red() < 80,
         qPrintable(QStringLiteral("expected the 20%% frame (blue), got %1").arg(centre.name())));
+  }
+
+  // These tools consume only temporary files, never a real selection or printer.
+  void submissionsConfirmOnlyAfterSuccessfulCompletion_data() {
+    QTest::addColumn<QByteArray>("ending");
+    QTest::addColumn<bool>("success");
+    QTest::addColumn<QString>("diagnostic");
+    QTest::newRow("accepted") << QByteArray("printf 'request id is mock-42\\n'\nexit 0\n")
+                             << true << QStringLiteral("mock-42");
+    QTest::newRow("rejected") << QByteArray("printf 'printer unavailable\\n' >&2\nexit 7\n")
+                             << false << QStringLiteral("printer unavailable");
+    QTest::newRow("crashed") << QByteArray("ulimit -c 0\nkill -KILL $$\n")
+                            << false << QStringLiteral("did not finish");
+  }
+
+  void submissionsConfirmOnlyAfterSuccessfulCompletion() {
+    QFETCH(QByteArray, ending);
+    QFETCH(bool, success);
+    QFETCH(QString, diagnostic);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QFile tool(dir.filePath(QStringLiteral("lp")));
+    QVERIFY(tool.open(QIODevice::WriteOnly));
+    tool.write("#!/bin/sh\n/bin/sleep 0.2\nprintf '%s\\n' \"$@\" > \"$1.args\"\n" + ending);
+    tool.close();
+    QVERIFY(tool.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                QFileDevice::ExeOwner));
+    const QByteArray previousPath = qgetenv("PATH");
+    const auto restore = qScopeGuard([&] { qputenv("PATH", previousPath); });
+    QVERIFY(qputenv("PATH", dir.path().toUtf8()));
+    const QString path = dir.filePath(QStringLiteral("photo ; $(touch nope) # ü.png"));
+    QFile input(path);
+    QVERIFY(input.open(QIODevice::WriteOnly));
+    input.write("original");
+    input.close();
+
+    ActionLauncher launcher;
+    QSignalSpy reported(&launcher, &ActionLauncher::reported);
+    QSignalSpy failed(&launcher, &ActionLauncher::failed);
+    QSignalSpy finished(&launcher, &ActionLauncher::submissionFinished);
+    bool heartbeat = false;
+    QTimer::singleShot(10, &launcher, [&] { heartbeat = true; });
+    QVERIFY(launcher.runSubmission(QStringLiteral("lp"), {path}, QStringLiteral("cups"),
+                                   QStringLiteral("Submitted to the print queue")));
+    QCOMPARE(reported.size(), 0);
+    QCOMPARE(finished.size(), 0);
+    QTRY_VERIFY_WITH_TIMEOUT(heartbeat, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 3000);
+    QCOMPARE(finished.first().at(1).toBool(), success);
+    QCOMPARE(reported.size(), success ? 1 : 0);
+    QCOMPARE(failed.size(), success ? 0 : 1);
+    QVERIFY(finished.first().at(2).toString().contains(diagnostic));
+    QFile arguments(path + QStringLiteral(".args"));
+    QVERIFY(arguments.open(QIODevice::ReadOnly));
+    QCOMPARE(QString::fromUtf8(arguments.readAll()), path + QLatin1Char('\n'));
+    QVERIFY(input.open(QIODevice::ReadOnly));
+    QCOMPARE(input.readAll(), QByteArray("original"));
+  }
+
+  void submissionsReportFailedStartAndSurviveLauncherDestruction() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto writeTool = [&](const QByteArray& body) {
+      QFile file(dir.filePath(QStringLiteral("lp")));
+      if (!file.open(QIODevice::WriteOnly)) return false;
+      file.write(body);
+      file.close();
+      return file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                 QFileDevice::ExeOwner);
+    };
+    const QByteArray previousPath = qgetenv("PATH");
+    const auto restore = qScopeGuard([&] { qputenv("PATH", previousPath); });
+    QVERIFY(qputenv("PATH", dir.path().toUtf8()));
+    ActionLauncher launcher;
+    QSignalSpy failed(&launcher, &ActionLauncher::failed);
+    QSignalSpy finished(&launcher, &ActionLauncher::submissionFinished);
+    QVERIFY(!launcher.runSubmission(QStringLiteral("lp"), {}));
+    QCOMPARE(failed.size(), 1);
+    QVERIFY(writeTool("#!/does/not/exist\n"));
+    QVERIFY(launcher.runSubmission(QStringLiteral("lp"), {}));
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 3000);
+    QCOMPARE(failed.size(), 2);
+    QVERIFY(!finished.first().at(1).toBool());
+
+    QVERIFY(writeTool("#!/bin/sh\nexec /bin/sleep 10\n"));
+    auto pending = std::make_unique<ActionLauncher>();
+    bool completed = false;
+    connect(pending.get(), &ActionLauncher::submissionFinished, this,
+            [&] { completed = true; });
+    QVERIFY(pending->runSubmission(QStringLiteral("lp"), {}));
+    QTest::qWait(20);
+    pending.reset();
+    QTest::qWait(20);
+    QVERIFY(!completed);
+  }
+
+  void imageCopyTracksWlCopyEvenWithAnInstalledHouseHelper_data() {
+    QTest::addColumn<bool>("helper");
+    QTest::addColumn<bool>("success");
+    QTest::newRow("helper-installed-success") << true << true;
+    QTest::newRow("helper-installed-failure") << true << false;
+    QTest::newRow("direct-success") << false << true;
+    QTest::newRow("direct-failure") << false << false;
+  }
+
+  void imageCopyTracksWlCopyEvenWithAnInstalledHouseHelper() {
+    QFETCH(bool, helper);
+    QFETCH(bool, success);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("image # ü.png"));
+    QImage image(8, 8, QImage::Format_RGB32);
+    image.fill(Qt::magenta);
+    QVERIFY(image.save(path, "PNG"));
+    // The installed house helper masks wl-copy's failure in --copy-only mode.
+    // Presence of that helper must not change which completion we trust.
+    if (helper) {
+      QFile house(dir.filePath(QStringLiteral("omarchy-clipboard-paste-file")));
+      QVERIFY(house.open(QIODevice::WriteOnly));
+      house.write("#!/bin/sh\nprintf called > '");
+      house.write(path.toUtf8());
+      house.write(".helper-called'\nexit 0\n");
+      house.close();
+      QVERIFY(house.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                   QFileDevice::ExeOwner));
+    }
+    QFile tool(dir.filePath(QStringLiteral("wl-copy")));
+    QVERIFY(tool.open(QIODevice::WriteOnly));
+    tool.write("#!/bin/sh\n/bin/sleep 0.2\n/bin/cat > '");
+    tool.write(path.toUtf8());
+    tool.write(".copied'\nprintf '%s\\n' \"$@\" > '");
+    tool.write(path.toUtf8());
+    tool.write(".args'\n");
+    tool.write(success ? "exit 0\n" : "echo clipboard-rejected >&2\nexit 4\n");
+    tool.close();
+    QVERIFY(tool.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                QFileDevice::ExeOwner));
+    const QByteArray previousPath = qgetenv("PATH");
+    const auto restore = qScopeGuard([&] { qputenv("PATH", previousPath); });
+    QVERIFY(qputenv("PATH", dir.path().toUtf8()));
+    ActionLauncher launcher;
+    QSignalSpy finished(&launcher, &ActionLauncher::submissionFinished);
+    QSignalSpy reported(&launcher, &ActionLauncher::reported);
+    QSignalSpy failed(&launcher, &ActionLauncher::failed);
+    QVERIFY(launcher.copyFile(path));
+    QCOMPARE(reported.size(), 0);
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 3000);
+    QCOMPARE(finished.first().at(1).toBool(), success);
+    QCOMPARE(reported.size(), success ? 1 : 0);
+    QCOMPARE(failed.size(), success ? 0 : 1);
+    QFile copied(path + QStringLiteral(".copied"));
+    QVERIFY(copied.open(QIODevice::ReadOnly));
+    QFile original(path);
+    QVERIFY(original.open(QIODevice::ReadOnly));
+    QCOMPARE(copied.readAll(), original.readAll());
+    QFile arguments(path + QStringLiteral(".args"));
+    QVERIFY(arguments.open(QIODevice::ReadOnly));
+    QCOMPARE(arguments.readAll(), QByteArray("--type\nimage/png\n"));
+    QVERIFY(!QFileInfo::exists(path + QStringLiteral(".helper-called")));
+  }
+
+  void imageCopyTimeoutDoesNotConfirmSuccess() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("image.png"));
+    QVERIFY(QImage(8, 8, QImage::Format_RGB32).save(path, "PNG"));
+    QFile tool(dir.filePath(QStringLiteral("wl-copy")));
+    QVERIFY(tool.open(QIODevice::WriteOnly));
+    tool.write("#!/bin/sh\nexec /bin/sleep 10\n");
+    tool.close();
+    QVERIFY(tool.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                QFileDevice::ExeOwner));
+    const QByteArray previousPath = qgetenv("PATH");
+    const auto restore = qScopeGuard([&] { qputenv("PATH", previousPath); });
+    QVERIFY(qputenv("PATH", dir.path().toUtf8()));
+    ActionLauncher launcher;
+    QSignalSpy finished(&launcher, &ActionLauncher::submissionFinished);
+    QSignalSpy reported(&launcher, &ActionLauncher::reported);
+    QSignalSpy failed(&launcher, &ActionLauncher::failed);
+    QVERIFY(launcher.copyFile(path));
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 8000);
+    QVERIFY(!finished.first().at(1).toBool());
+    QCOMPARE(reported.size(), 0);
+    QCOMPARE(failed.size(), 1);
+    QVERIFY(failed.first().first().toString().contains(QStringLiteral("Timed out")));
+  }
+
+  void matteSaveSeparatesClipboardFailureAndRetriesWithoutAnotherCopy() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(QStringLiteral("photo # ü.png"));
+    QImage image(120, 80, QImage::Format_RGB32);
+    image.fill(Qt::darkCyan);
+    QVERIFY(image.save(source, "PNG"));
+    QFile original(source);
+    QVERIFY(original.open(QIODevice::ReadOnly));
+    const QByteArray originalBytes = original.readAll();
+    original.close();
+    const auto writeTool = [&](bool success) {
+      QFile tool(dir.filePath(QStringLiteral("wl-copy")));
+      if (!tool.open(QIODevice::WriteOnly)) return false;
+      tool.write("#!/bin/sh\n/bin/sleep 0.2\n/bin/cat > /dev/null\n");
+      tool.write(success ? "exit 0\n" : "echo selection-rejected >&2\nexit 9\n");
+      tool.close();
+      return tool.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                 QFileDevice::ExeOwner);
+    };
+    QVERIFY(writeTool(false));
+    const QByteArray previousPath = qgetenv("PATH");
+    const auto restore = qScopeGuard([&] { qputenv("PATH", previousPath); });
+    QVERIFY(qputenv("PATH", dir.path().toUtf8()));
+    MatteComposer composer;
+    QSignalSpy saved(&composer, &MatteComposer::saved);
+    QSignalSpy copied(&composer, &MatteComposer::copied);
+    QSignalSpy composed(&composer, &MatteComposer::composed);
+    QSignalSpy failed(&composer, &MatteComposer::failed);
+    QSignalSpy finished(&composer, &MatteComposer::finished);
+    QSignalSpy busy(&composer, &MatteComposer::busyChanged);
+    bool heartbeat = false;
+    QTimer::singleShot(10, &composer, [&] { heartbeat = composer.busy(); });
+    composer.composeAndSave(source, MatteComposer::Slate, MatteComposer::Square, 0.07);
+    QVERIFY(composer.busy());
+    QCOMPARE(finished.size(), 0);
+    composer.composeAndSave(source, MatteComposer::Pop, MatteComposer::Original, 0.1);
+    QCOMPARE(failed.size(), 1); // duplicate request rejected while busy
+    QTRY_VERIFY_WITH_TIMEOUT(heartbeat, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 5000);
+    QVERIFY(!composer.busy());
+    QCOMPARE(busy.size(), 2);
+    QCOMPARE(saved.size(), 1);
+    QCOMPARE(copied.size(), 0);
+    QCOMPARE(composed.size(), 0);
+    QCOMPARE(failed.size(), 2);
+    QVERIFY(failed.last().first().toString().contains(QStringLiteral("selection-rejected")));
+    QVERIFY(finished.first().at(1).toBool());
+    QVERIFY(!finished.first().at(2).toBool());
+    const QString output = saved.first().first().toString();
+    QCOMPARE(composer.lastOutputPath(), output);
+    QVERIFY(!QImage(output).isNull());
+    QVERIFY(writeTool(true));
+    composer.retryCopy();
+    QVERIFY(composer.busy());
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 2, 5000);
+    QCOMPARE(copied.size(), 1);
+    QCOMPARE(copied.first().first().toString(), output);
+    QCOMPARE(saved.size(), 1);
+    QCOMPARE(composed.size(), 0); // retry does not announce a new saved file
+    QVERIFY(finished.last().at(1).toBool());
+    QVERIFY(finished.last().at(2).toBool());
+    QCOMPARE(QDir(dir.path()).entryList({QStringLiteral("*-matte*.png")}, QDir::Files).size(), 1);
+
+    composer.composeAndSave(source, MatteComposer::None, MatteComposer::Original, 0.1);
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 3, 5000);
+    QCOMPARE(composed.size(), 1);
+    QCOMPARE(saved.size(), 2);
+    QVERIFY(saved.last().first().toString().endsWith(QStringLiteral("-matte-2.png")));
+    QCOMPARE(QImage(saved.last().first().toString()), image);
+    QVERIFY(original.open(QIODevice::ReadOnly));
+    QCOMPARE(original.readAll(), originalBytes);
+    QFile::remove(composer.lastOutputPath());
+    composer.retryCopy();
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 4, 5000);
+    QVERIFY(!finished.last().at(1).toBool());
+    QVERIFY(!finished.last().at(2).toBool());
+  }
+
+  void matteFailuresReleaseBusyAndDoNotPublishCopies() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    MatteComposer composer;
+    QSignalSpy failed(&composer, &MatteComposer::failed);
+    QSignalSpy finished(&composer, &MatteComposer::finished);
+    QSignalSpy saved(&composer, &MatteComposer::saved);
+    composer.retryCopy();
+    QCOMPARE(failed.size(), 1);
+    QVERIFY(!composer.busy());
+    composer.composeAndSave(dir.filePath(QStringLiteral("missing.png")), MatteComposer::Slate,
+                            MatteComposer::Original, 0.1);
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 3000);
+    QVERIFY(!composer.busy());
+    QVERIFY(!finished.first().at(1).toBool());
+    QVERIFY(!finished.first().at(2).toBool());
+    QFile unreadable(dir.filePath(QStringLiteral("bad.png")));
+    QVERIFY(unreadable.open(QIODevice::WriteOnly));
+    unreadable.write("not an image");
+    unreadable.close();
+    composer.composeAndSave(unreadable.fileName(), MatteComposer::Slate, MatteComposer::Original, 0.1);
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 2, 3000);
+    QVERIFY(!composer.busy());
+    QCOMPARE(saved.size(), 0);
+    QVERIFY(composer.lastOutputPath().isEmpty());
+    QCOMPARE(QDir(dir.path()).entryList({QStringLiteral("*-matte*.png")}, QDir::Files).size(), 0);
+    composer.composeAndSave(unreadable.fileName(), -1, MatteComposer::Original, 0.1);
+    QVERIFY(!composer.busy());
+    QCOMPARE(failed.size(), 4);
+  }
+
+  void matteWorkersSurviveComposerDestructionAndReserveDistinctNames() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(QStringLiteral("photo.png"));
+    QImage image(200, 100, QImage::Format_RGB32);
+    image.fill(Qt::cyan);
+    QVERIFY(image.save(source, "PNG"));
+    QFile tool(dir.filePath(QStringLiteral("wl-copy")));
+    QVERIFY(tool.open(QIODevice::WriteOnly));
+    tool.write("#!/bin/sh\n/bin/cat > /dev/null\nexit 0\n");
+    tool.close();
+    QVERIFY(tool.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                QFileDevice::ExeOwner));
+    const QByteArray previousPath = qgetenv("PATH");
+    const auto restore = qScopeGuard([&] { qputenv("PATH", previousPath); });
+    QVERIFY(qputenv("PATH", dir.path().toUtf8()));
+    auto abandoned = std::make_unique<MatteComposer>();
+    bool completed = false;
+    connect(abandoned.get(), &MatteComposer::finished, this, [&] { completed = true; });
+    abandoned->composeAndSave(source, MatteComposer::None, MatteComposer::Original, 0.1);
+    abandoned.reset();
+    MatteComposer live;
+    QSignalSpy finished(&live, &MatteComposer::finished);
+    live.composeAndSave(source, MatteComposer::None, MatteComposer::Original, 0.1);
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 5000);
+    const QString first = dir.filePath(QStringLiteral("photo-matte.png"));
+    const QString second = dir.filePath(QStringLiteral("photo-matte-2.png"));
+    QTRY_VERIFY_WITH_TIMEOUT(!QImage(first).isNull() && !QImage(second).isNull(), 5000);
+    // Await the value-only worker as well before destroying its temporary files.
+    QVERIFY(QThreadPool::globalInstance()->waitForDone(5000));
+    QVERIFY(!completed);
+    QCOMPARE(QImage(first), image);
+    QCOMPARE(QImage(second), image);
+    QCOMPARE(QImage(source), image);
   }
 
   // --- Mattes -----------------------------------------------------------

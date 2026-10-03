@@ -139,6 +139,7 @@ qt_add_resources(omaroll "omaroll_icons"
 set(OMAROLL_QML_FILES
   qml/Main.qml
   qml/Viewer.qml
+  qml/components/ActionMenu.qml
   qml/components/CaptureCard.qml
   qml/components/CaptureGrid.qml
   qml/components/DayHeader.qml

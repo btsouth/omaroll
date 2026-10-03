@@ -11,6 +11,8 @@ Item {
 
     property string path: ""
     property string fileName: ""
+    property bool retryCopy: false
+    property string saveMessage: ""
     property int selected: 0
     property int aspect: 0
     property int paddingPercent: 7
@@ -22,19 +24,39 @@ Item {
     }
 
     function open() {
+        if (Matte.busy) return
         selected = 0
+        retryCopy = false
+        saveMessage = ""
         visible = true
         forceActiveFocus()
     }
 
     function close() { visible = false }
+    function compositionChanged() {
+        root.retryCopy = false
+        root.saveMessage = ""
+    }
+    onSelectedChanged: root.compositionChanged()
+    onAspectChanged: root.compositionChanged()
+    onPaddingPercentChanged: root.compositionChanged()
 
     function save() {
-        if (preview.status === Image.Error) {
+        if (Matte.busy || preview.status !== Image.Ready) {
             return
         }
-        Matte.composeAndSave(root.path, root.selected, root.aspect, root.paddingPercent / 100.0)
-        root.close()
+        if (root.retryCopy) Matte.retryCopy()
+        else Matte.composeAndSave(root.path, root.selected, root.aspect, root.paddingPercent / 100.0)
+    }
+
+    Connections {
+        target: Matte
+        function onFinished(outputPath, saved, copied) {
+            if (!root.visible) return
+            if (copied) { root.close(); return }
+            root.retryCopy = saved
+            root.saveMessage = saved ? "Saved a copy. Clipboard failed; retry copying." : "Could not save. Try again."
+        }
     }
 
     visible: false
@@ -101,7 +123,7 @@ Item {
                 anchors.left: parent.left
                 anchors.leftMargin: 20
                 anchors.verticalCenter: parent.verticalCenter
-                text: "Make it postable"
+                text: "Add background"
                 font.family: Theme.fontFamily
                 font.pixelSize: 15
                 font.weight: Font.DemiBold
@@ -116,7 +138,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 horizontalAlignment: Text.AlignRight
                 elide: Text.ElideMiddle
-                text: root.fileName
+                text: Matte.busy ? "Saving…" : root.saveMessage !== "" ? root.saveMessage : root.fileName
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
                 color: Theme.mutedText
@@ -165,6 +187,7 @@ Item {
         // Contact strip of every matte
         ListView {
             id: strip
+            enabled: !Matte.busy
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: controls.top
@@ -240,6 +263,7 @@ Item {
 
             Row {
                 id: shapeControls
+                enabled: !Matte.busy
                 anchors.left: parent.left
                 anchors.leftMargin: 20
                 anchors.top: parent.top
@@ -281,13 +305,14 @@ Item {
                 spacing: 8
 
                 PillButton {
-                    label: "Cancel"
+                    label: Matte.busy ? "Close" : "Cancel"
                     onClicked: root.close()
                 }
 
                 PillButton {
-                    label: "Copy and save"
-                    active: preview.status !== Image.Error
+                    label: Matte.busy ? "Saving…" : root.retryCopy ? "Retry copy" : "Copy and save"
+                    enabled: !Matte.busy && preview.status === Image.Ready
+                    active: enabled
                     onClicked: root.save()
                 }
             }
@@ -297,6 +322,8 @@ Item {
     Keys.onPressed: function (event) {
         if (event.key === Qt.Key_Escape) {
             root.close()
+            event.accepted = true
+        } else if (Matte.busy) {
             event.accepted = true
         } else if (event.key === Qt.Key_Left) {
             root.selected = (root.selected + root.matteNames.length - 1) % root.matteNames.length

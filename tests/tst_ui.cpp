@@ -339,6 +339,9 @@ private slots:
 
   // Every test starts from the plain grid with nothing selected.
   void init() {
+    for (const auto& name : {QStringLiteral("libraryContextMenu"), QStringLiteral("detailContextMenu")}) {
+      if (QObject* menu = m_window->findChild<QObject*>(name)) QMetaObject::invokeMethod(menu, "close");
+    }
     for (int guard = 0; guard < 8 && prop("anySheetOpen").toBool(); ++guard) {
       invoke("dismissTopLayer");
       QTest::qWait(20);
@@ -393,6 +396,23 @@ private slots:
     QVERIFY(!item("detail")->isVisible());
     QCOMPARE(item("library")->property("currentIndex").toInt(), 0);
     QCOMPARE(item("library")->property("checkedCount").toInt(), 0);
+  }
+
+  void backgroundRetryIsClearedWhenTheCompositionChanges() {
+    QQuickItem* sheet = item("matteSheet");
+    perform(QStringLiteral("matte"), pathAt(0));
+    QTRY_VERIFY(sheet->isVisible());
+    sheet->setProperty("retryCopy", true);
+    sheet->setProperty("saveMessage", QStringLiteral("Retry copy"));
+    sheet->setProperty("aspect", (sheet->property("aspect").toInt() + 1) % 3);
+    QVERIFY(!sheet->property("retryCopy").toBool());
+    QVERIFY(sheet->property("saveMessage").toString().isEmpty());
+    sheet->setProperty("retryCopy", true);
+    sheet->setProperty("selected", (sheet->property("selected").toInt() + 1) % 7);
+    QVERIFY(!sheet->property("retryCopy").toBool());
+    sheet->setProperty("retryCopy", true);
+    sheet->setProperty("paddingPercent", sheet->property("paddingPercent").toInt() == 12 ? 16 : 12);
+    QVERIFY(!sheet->property("retryCopy").toBool());
   }
 
   void closedMatteDoesNotReloadItsPreviousFile() {
@@ -1282,14 +1302,109 @@ private slots:
     QCOMPARE(detail->property("playbackVolume").toDouble(), retainedVolume);
   }
 
-  void rightClickOnATileOpensThatTile() {
-    QQuickItem* card = cardFor(pathAt(1));
-    QVERIFY(card);
-    click(card, Qt::RightButton);
-    settle();
-    QQuickItem* detail = item("detail");
-    QTRY_VERIFY(detail->isVisible());
-    QCOMPARE(detail->property("path").toString(), pathAt(1));
+  void rightClickOpensActionsForThePointedTileAndPreservesSelection() {
+    QQuickItem* grid = item("library");
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("libraryContextMenu"));
+    QVERIFY(menu);
+    const QString first = pathAt(0), second = pathAt(1), third = pathAt(2);
+    QVERIFY(QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, first)));
+    QVERIFY(QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, second)));
+    click(cardFor(second), Qt::RightButton);
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QVERIFY(!item("detail")->isVisible());
+    const auto targets = [&] { return menu->property("targets").value<QJSValue>().toVariant().toStringList(); };
+    QVERIFY(targets().contains(first));
+    QVERIFY(targets().contains(second));
+    QCOMPARE(targets().size(), 2);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!menu->property("visible").toBool());
+    click(cardFor(third), Qt::RightButton);
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QCOMPARE(targets(), QStringList{third});
+    QCOMPARE(grid->property("checkedCount").toInt(), 2);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!menu->property("visible").toBool());
+    QTRY_VERIFY(grid->hasActiveFocus());
+  }
+
+  void contextSelectionIsCapturedAndNarrowActionsRemainReachable() {
+    QQuickItem* grid = item("library");
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("libraryContextMenu"));
+    const QString first = pathAt(0), second = pathAt(1);
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, first));
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, second));
+    m_window->resize(560, 420);
+    const auto cleanup = qScopeGuard([&] { QMetaObject::invokeMethod(menu, "close"); m_window->resize(1280, 820); });
+    QTRY_VERIFY(item("selectionActionsButton")->isVisible());
+    QTest::qWait(100);
+    click(item("selectionActionsButton"));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    const QVariantList entries = menu->property("entries").value<QJSValue>().toVariant().toList();
+    QVERIFY(std::any_of(entries.begin(), entries.end(), [](const QVariant& row) {
+      return row.toMap().value(QStringLiteral("id")) == QStringLiteral("tailscale");
+    }));
+    QMetaObject::invokeMethod(grid, "clearChecked");
+    const QStringList targets = menu->property("targets").value<QJSValue>().toVariant().toStringList();
+    QCOMPARE(targets.size(), 2);
+    QVERIFY(targets.contains(first) && targets.contains(second));
+    QMetaObject::invokeMethod(menu, "close");
+  }
+
+  void selectionLabelsMatchTheCapturedTargetsAndCopyDependency() {
+    const QStringList paths{pathAt(0), pathAt(1)};
+    const auto cleanup = qScopeGuard([&] {
+      m_settings->setFavorite(paths, false);
+      m_settings->setHidden(paths, false);
+    });
+    const auto entries = [&] {
+      QVariant result;
+      QMetaObject::invokeMethod(m_window, "selectionEntries", Q_RETURN_ARG(QVariant, result),
+                                Q_ARG(QVariant, QVariant(paths)));
+      const QVariantList rows = result.toList();
+      QVariantMap byId;
+      for (const QVariant& row : rows) byId.insert(row.toMap().value("id").toString(), row);
+      return byId;
+    };
+    m_settings->setFavorite(paths, false);
+    m_settings->setHidden(paths, false);
+    QCOMPARE(entries().value("favorite").toMap().value("label").toString(), QStringLiteral("Favourite selected files"));
+    QCOMPARE(entries().value("hide").toMap().value("label").toString(), QStringLiteral("Hide selected files"));
+    m_settings->setFavorite(paths, true);
+    m_settings->setHidden(paths, true);
+    QCOMPARE(entries().value("favorite").toMap().value("label").toString(), QStringLiteral("Unfavourite selected files"));
+    QCOMPARE(entries().value("hide").toMap().value("label").toString(), QStringLiteral("Unhide selected files"));
+    QCOMPARE(entries().value("copy").toMap().value("available").toBool(), m_registry->available(QStringLiteral("copy")));
+    QCOMPARE(entries().value("copy").toMap().value("hint").toString(), QStringLiteral("wl-clipboard"));
+  }
+
+  void mixedSelectionsCannotStartImageCorrection() {
+    QString image, video;
+    for (int row = 0; row < m_library->rowCount(); ++row) {
+      if (m_library->isVideoAt(row)) video = pathAt(row);
+      else if (!m_library->isDocumentAt(row)) image = pathAt(row);
+    }
+    QVERIFY(!image.isEmpty() && !video.isEmpty());
+    const QVariantList paths{image, video};
+    QVERIFY(QMetaObject::invokeMethod(m_window, "performForTargets", Q_ARG(QVariant, QStringLiteral("correctionsbatch")),
+        Q_ARG(QVariant, image), Q_ARG(QVariant, false), Q_ARG(QVariant, paths)));
+    QVERIFY(!item("batchCorrectionSheet")->isVisible());
+  }
+
+  void spaceCanUseNativeViewingAndLegacyFramingRemainsAvailable() {
+    const QString previous = m_settings->imagePrimaryAction();
+    const auto cleanup = qScopeGuard([&] { m_settings->setImagePrimaryAction(previous); });
+    m_settings->setImagePrimaryAction(QStringLiteral("preview"));
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTRY_VERIFY(item("detail")->isVisible());
+    QVERIFY(!item("matteSheet")->isVisible());
+    QVERIFY(QMetaObject::invokeMethod(item("detail"), "adjustImageZoom", Q_ARG(QVariant, 2.0)));
+    const double zoom = item("detail")->property("imageZoom").toDouble();
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QCOMPARE(item("detail")->property("imageZoom").toDouble(), zoom);
+    invoke("dismissTopLayer");
+    m_settings->setImagePrimaryAction(QStringLiteral("matte"));
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTRY_VERIFY(item("matteSheet")->isVisible());
   }
 
   void clickOutsideTheLibraryBrowserIsConsumed() {
@@ -1728,12 +1843,12 @@ private slots:
     QTRY_VERIFY(detail->property("actionNavigationActive").toBool());
     QTRY_VERIFY(item("viewerActionPopup")->isVisible());
     QTRY_VERIFY(activeViewerAction() != nullptr);
-    QCOMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_matte"));
+    QCOMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_copy"));
 
     QTest::keyClick(m_window, Qt::Key_Down);
-    QTRY_COMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_corrections"));
+    QTRY_VERIFY(activeViewerAction() && activeViewerAction()->objectName() != QStringLiteral("viewerAction_copy"));
     QTest::keyClick(m_window, Qt::Key_Up);
-    QTRY_COMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_matte"));
+    QTRY_COMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_copy"));
 
     QTest::keyClick(m_window, Qt::Key_Escape);
     QTRY_VERIFY(!detail->property("actionNavigationActive").toBool());
@@ -2018,11 +2133,11 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_Tab);
     QQuickItem* focused = activeViewerAction();
     QTRY_VERIFY(focused != nullptr);
-    QCOMPARE(focused->objectName(), QStringLiteral("viewerAction_matte"));
+    QCOMPARE(focused->objectName(), QStringLiteral("viewerAction_copy"));
     QVERIFY(focused->property("usable").toBool());
     QCOMPARE(focused->property("shortcut").toString(),
-             m_registry->shortcutFor(QStringLiteral("matte")));
-    QCOMPARE(focused->property("toolTipText").toString(), QStringLiteral("Make it postable  ·  M"));
+             m_registry->shortcutFor(QStringLiteral("copy")));
+    QCOMPARE(focused->property("toolTipText").toString(), QStringLiteral("Copy image  ·  Y"));
 
     QTest::keyClick(m_window, Qt::Key_Down);
     QQuickItem* next = activeViewerAction();
@@ -2031,7 +2146,7 @@ private slots:
     QVERIFY(next->property("usable").toBool());
     QTest::keyClick(m_window, Qt::Key_Up);
     QTRY_VERIFY(activeViewerAction() != nullptr);
-    QCOMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_matte"));
+    QCOMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_copy"));
 
     QTest::keyClick(m_window, Qt::Key_Tab, Qt::ShiftModifier);
     QTRY_VERIFY(detail->hasActiveFocus());
@@ -2064,7 +2179,9 @@ private slots:
     QMetaObject::invokeMethod(detail, "focusPreview");
     QTest::keyClick(m_window, Qt::Key_Tab);
     QTRY_VERIFY(activeViewerAction() != nullptr);
-    QCOMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_matte"));
+    QCOMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_copy"));
+    QVERIFY(QMetaObject::invokeMethod(detail, "focusActionById", Q_ARG(QVariant, QStringLiteral("matte"))));
+    QTRY_COMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_matte"));
     QTest::keyClick(m_window, Qt::Key_Return);
     QTRY_VERIFY(item("matteSheet")->isVisible());
     QVERIFY(!detail->isVisible());
@@ -3774,6 +3891,13 @@ private slots:
       const QPoint clickPosition = centre(card);
       const QSizeF cardSize = card->size();
       click(card, Qt::RightButton);
+      QObject* menu = m_window->findChild<QObject*>(QStringLiteral("libraryContextMenu"));
+      QTRY_VERIFY(menu && menu->property("visible").toBool());
+      const QStringList targets = menu->property("targets").value<QJSValue>().toVariant().toStringList();
+      QCOMPARE(targets, QStringList{pathAt(row)});
+      QTest::keyClick(m_window, Qt::Key_Escape);
+      QTRY_VERIFY(!menu->property("visible").toBool());
+      QTest::keyClick(m_window, Qt::Key_Return);
       settle();
       QTRY_VERIFY2_WITH_TIMEOUT(
           detail->isVisible(),
@@ -3971,6 +4095,34 @@ private slots:
     qInfo() << "contentY before" << before << "after" << after << "tile" << index << path;
     QTRY_VERIFY(detail->isVisible());
     QCOMPARE(detail->property("path").toString(), path);
+  }
+
+  void pendingBackgroundCannotAttachToAnotherImagesSheet() {
+    const QString first = m_scratch.filePath(QStringLiteral("pending-background-a.png"));
+    const QString second = m_scratch.filePath(QStringLiteral("pending-background-b.png"));
+    QImage source(80, 60, QImage::Format_RGB32);
+    source.fill(Qt::red);
+    QVERIFY(source.save(first));
+    source.fill(Qt::blue);
+    QVERIFY(source.save(second));
+    QSignalSpy finished(m_matte, &MatteComposer::finished);
+    perform(QStringLiteral("matte"), first);
+    QTRY_COMPARE(item("mattePreview")->property("status").toInt(), 1);
+    QVERIFY(QMetaObject::invokeMethod(item("matteSheet"), "save"));
+    QVERIFY(m_matte->busy());
+    // Synchronous calls occur before completion delivery, without racing a sleep.
+    invoke("dismissTopLayer");
+    perform(QStringLiteral("matte"), second);
+    QVERIFY(!item("matteSheet")->isVisible());
+    QCOMPARE(item("matteSheet")->property("path").toString(), first);
+    QTRY_VERIFY_WITH_TIMEOUT(!finished.isEmpty(), 10000);
+    QVERIFY(!item("matteSheet")->isVisible());
+    // The library indexes the saved copy. Keep it until the disposable profile
+    // is destroyed, so an active delegate never points at a deleted fixture.
+    perform(QStringLiteral("matte"), second);
+    QTRY_VERIFY(item("matteSheet")->isVisible());
+    QCOMPARE(item("matteSheet")->property("path").toString(), second);
+    QVERIFY(!item("matteSheet")->property("retryCopy").toBool());
   }
 
   void theWindowRaisedNoQmlWarnings() {

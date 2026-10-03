@@ -508,15 +508,16 @@ ApplicationWindow {
         }
         const wanted = video ? root.videoActions : root.stillActions
         const rows = Registry.actionsForKind(video, false, Session.path)
-        for (const id of wanted) {
-            const row = rows.find(function (candidate) { return candidate.id === id })
-            if (!row || !row.available) {
-                continue
-            }
+        let group = ""
+        for (const row of rows) {
+            const id = row.id
+            if (wanted.indexOf(id) < 0) continue
+            if (group !== "" && row.group !== group) entries.push({separator: true})
+            group = row.group
             let label = row.label
             if (id === "copy" && video) label = "Copy file"
             if (id === "play") label = "Open in mpv"
-            entries.push({id: id, label: label})
+            entries.push({id: id, label: label, available: row.available, hint: row.hint})
         }
         entries.push({separator: true})
         if (!video) {
@@ -1553,8 +1554,9 @@ ApplicationWindow {
                 required property var modelData
                 readonly property bool separator: modelData.separator === true
                 objectName: separator ? "" : "viewerMenu_" + modelData.id
-                enabled: !separator
+                enabled: !separator && modelData.available !== false
                 height: separator ? 9 : 30
+                opacity: enabled || separator ? 1 : 0.55
                 contentItem: Item {
                     Rectangle {
                         visible: entry.separator
@@ -1571,6 +1573,7 @@ ApplicationWindow {
                         anchors.rightMargin: 8
                         anchors.verticalCenter: parent.verticalCenter
                         text: entry.separator ? "" : entry.modelData.label
+                              + (entry.modelData.available === false ? " · needs " + entry.modelData.hint : "")
                         elide: Text.ElideRight
                         font.family: Theme.fontFamily
                         font.pixelSize: 12

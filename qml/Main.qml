@@ -64,7 +64,7 @@ ApplicationWindow {
                                       || editorChooser.visible
     readonly property bool anySheetOpen: modalOpen || detail.visible
     // A popup menu is up; the press that closes it must not also land under it.
-    readonly property bool popupOpen: filters.menuOpen || albumActionMenu.visible
+    readonly property bool popupOpen: filters.menuOpen || albumActionMenu.visible || contextMenu.visible
     // A menu takes the keyboard while it is up and does not give it back to
     // the grid on its own, which left the arrow keys dead until a tile was
     // clicked.
@@ -140,6 +140,10 @@ ApplicationWindow {
     // Every action funnels through here so a keystroke, a click in the detail
     // sidebar and a bulk operation all take the same path.
     function perform(id, path, knownVideo) {
+        root.performForTargets(id, path, knownVideo, undefined)
+    }
+
+    function performForTargets(id, path, knownVideo, targetPaths) {
         if (path === "") {
             return
         }
@@ -149,7 +153,7 @@ ApplicationWindow {
         const row = Captures.rowOf(path)
         const video = knownVideo === undefined ? Captures.isVideoAt(row) : knownVideo
         const document = row >= 0 && Captures.isDocumentAt(row)
-        if (id !== "open" && id !== "companion" && !Registry.appliesToKind(id, video, document, path)) {
+        if (id !== "open" && id !== "companion" && id !== "preview" && !Registry.appliesToKind(id, video, document, path)) {
             root.say(id === "develop" || id === "choose-editor" ? "That action is for camera raws"
                      : document ? "That action does not apply to documents"
                      : video ? "That one is for screenshots and pictures"
@@ -159,6 +163,10 @@ ApplicationWindow {
         }
 
         switch (id) {
+        case "preview":
+            if (detail.visible && detail.path === path) return
+            root.openDetail(row, false)
+            return
         case "companion": {
             const companion = Captures.companionPathAt(row)
             if (companion !== "") root.openPaths([companion])
@@ -169,6 +177,7 @@ ApplicationWindow {
             editorChooser.request(path, id === "choose-editor")
             return
         case "matte":
+            if (Matte.busy) { root.say("Background is still saving"); return }
             matteSheet.path = path
             matteSheet.fileName = path.substring(path.lastIndexOf("/") + 1)
             matteSheet.open()
@@ -177,9 +186,14 @@ ApplicationWindow {
             correctionSheet.open(path, path.substring(path.lastIndexOf("/") + 1))
             return
         case "correctionsbatch": {
-            const checked = library.checkedCount > 1 ? library.checkedPaths() : []
+            const checked = targetPaths !== undefined ? targetPaths
+                            : library.checkedCount > 1 ? library.checkedPaths() : []
             if (checked.length < 2) {
                 root.say("Select two or more pictures to correct together")
+                return
+            }
+            if (!root.allCorrectable(checked)) {
+                root.say("Select only ordinary pictures to correct together")
                 return
             }
             batchSheet.open(checked)
@@ -188,7 +202,8 @@ ApplicationWindow {
         case "compare": {
             // A checked selection wins; otherwise compare the open picture
             // with its exact duplicates, then its visually similar set.
-            let candidates = library.checkedCount > 1 ? library.checkedPaths() : []
+            let candidates = targetPaths !== undefined ? targetPaths
+                             : library.checkedCount > 1 ? library.checkedPaths() : []
             if (candidates.length < 2) {
                 const copies = Duplicates.groupPaths(path)
                 candidates = copies.length > 1 ? copies : Similarities.groupPaths(path)
@@ -259,9 +274,15 @@ ApplicationWindow {
         }
         const video = Captures.isVideoAt(index)
         const document = Captures.isDocumentAt(index)
-        root.perform(document ? Registry.primaryActionForKind(false, true)
-                              : (video ? Settings.videoPrimaryAction : Settings.imagePrimaryAction),
-                     Captures.pathAt(index), video)
+        const action = document ? Registry.primaryActionForKind(false, true)
+                                : (video ? Settings.videoPrimaryAction : Settings.imagePrimaryAction)
+        if (action !== "preview" && (!Registry.available(action)
+                || !Registry.appliesToKind(action, video, document, Captures.pathAt(index)))) {
+            root.openDetail(index, false)
+            root.say("Preferred action is unavailable; opened in Omaroll")
+            return
+        }
+        root.perform(action, Captures.pathAt(index), video)
     }
 
     function dismissTopLayer() {
@@ -594,7 +615,13 @@ ApplicationWindow {
             return
         }
         library.currentIndex = 0
-        if (view === "detail") {
+        if (view === "context-menu") {
+            root.openContextMenu(0, 100, 100)
+        } else if (view === "selection-menu") {
+            library.toggleChecked(Captures.pathAt(0))
+            library.toggleChecked(Captures.pathAt(1))
+            root.openContextMenu(0, 100, 100)
+        } else if (view === "detail") {
             root.openDetail(0)
         } else if (view === "slideshow") {
             root.openDetail(0, false)
@@ -746,11 +773,23 @@ ApplicationWindow {
             anchors.verticalCenter: parent.verticalCenter
             spacing: 8
 
+            PillButton {
+                objectName: "selectionActionsButton"
+                visible: library.checkedCount > 0
+                label: "Actions"
+                onClicked: {
+                    contextMenu.targets = library.checkedPaths().slice()
+                    contextMenu.selectionMode = true
+                    contextMenu.entries = [{id: "title", label: contextMenu.targets.length + " selected files", available: false, hint: "", group: "Title"}]
+                        .concat(contextMenu.grouped(root.selectionEntries(contextMenu.targets)))
+                    contextMenu.popup(this, 0, height + 4)
+                }
+            }
             // Bulk actions appear only while a selection exists, so the resting
             // header stays quiet. Each acts on every checked file at once.
             PillButton {
                 anchors.verticalCenter: parent.verticalCenter
-                visible: library.checkedCount > 0
+                visible: library.checkedCount > 0 && root.width >= 700
                 label: "Send"
                 shortcut: Registry.shortcutFor("send")
                 onClicked: Registry.runBatch("send", library.checkedPaths())
@@ -773,12 +812,13 @@ ApplicationWindow {
             PillButton {
                 id: albumActionButton
                 anchors.verticalCenter: parent.verticalCenter
-                visible: library.checkedCount > 0
+                visible: library.checkedCount > 0 && root.width >= 700
                 label: "Organize"
-                onClicked: albumActionMenu.visible ? albumActionMenu.close()
-                                                       : albumActionMenu.popup(
-                                                             albumActionButton, 0,
-                                                             albumActionButton.height + 4)
+                onClicked: {
+                    albumActionMenu.targetPaths = library.checkedPaths().slice()
+                    if (albumActionMenu.visible) albumActionMenu.close()
+                    else albumActionMenu.popup(albumActionButton, 0, albumActionButton.height + 4)
+                }
             }
             // The three secondary ones give way on a narrow window rather
             // than run into the title; every one is still reachable by key.
@@ -936,6 +976,75 @@ ApplicationWindow {
             }
         }
         onDetailRequested: function (index) { root.openDetail(index, false) }
+        onContextRequested: function(index, x, y) { root.openContextMenu(index, x, y) }
+    }
+
+    function allCorrectable(paths) {
+        return paths.every(function(path) {
+            const row = Captures.rowOf(path)
+            return row >= 0 && !Captures.isVideoAt(row) && !Captures.isDocumentAt(row)
+                   && Registry.appliesToKind("corrections", false, false, path)
+        })
+    }
+
+    function selectionEntries(paths) {
+        const rows = [
+            {id: "copy", label: "Copy files", group: "File", available: Registry.available("copy"), hint: "wl-clipboard"},
+            {id: "send", label: "Send with LocalSend", group: "Tools and sharing", available: Registry.available("send"), hint: "localsend"},
+            {id: "tailscale", label: "Send to a machine", group: "Tools and sharing", available: Registry.available("tailscale"), hint: "tailscale"}]
+        const first = Captures.rowOf(paths[0])
+        const canExport = paths.every(function(path) {
+            const row = Captures.rowOf(path)
+            return row >= 0 && !Captures.isDocumentAt(row)
+                   && Captures.isVideoAt(row) === Captures.isVideoAt(first)
+        })
+        if (canExport) rows.push({id: "export", label: "Convert / resize", group: "Edit and finish", available: Registry.available("export"), hint: "Omarchy"})
+        if (paths.length > 1 && root.allCorrectable(paths)) rows.push({id: "correctionsbatch", label: "Correct selected pictures", group: "Edit and finish", available: true})
+        rows.push({id: "organize", label: "Albums and tags…", group: "Organize"},
+                  {id: "favorite", label: paths.every(function(p) { return Settings.isFavorite(p) }) ? "Unfavourite selected files" : "Favourite selected files", group: "Organize"},
+                  {id: "hide", label: paths.every(function(p) { return Settings.isHidden(p) }) ? "Unhide selected files" : "Hide selected files", group: "Organize"},
+                  {id: "trash", label: "Move selected files to Trash", group: "Organize"})
+        return rows
+    }
+
+    function openContextMenu(index, x, y) {
+        const path = Captures.pathAt(index)
+        if (path === "") return
+        contextMenu.targets = library.isChecked(path) ? library.checkedPaths().slice() : [path]
+        const batch = contextMenu.targets.length > 1
+        contextMenu.selectionMode = batch
+        const rows = batch ? root.selectionEntries(contextMenu.targets)
+            : Registry.actionsForKind(Captures.isVideoAt(index), Captures.isDocumentAt(index), path)
+                      .filter(function(row) { return row.id !== "correctionsbatch" })
+        contextMenu.entries = [{id: "title", label: batch ? contextMenu.targets.length + " selected files" : path.substring(path.lastIndexOf("/") + 1), available: false, hint: "", group: "Title"}]
+            .concat(contextMenu.grouped(rows))
+        contextMenu.popup(root.contentItem, x, y)
+    }
+
+    function performContextAction(id, paths, batch) {
+        if (!batch && paths.length === 1) { root.performForTargets(id, paths[0], undefined, paths); return }
+        switch (id) {
+        case "organize":
+            albumActionMenu.targetPaths = paths.slice()
+            albumActionMenu.popup(root.contentItem, contextMenu.x, contextMenu.y); break
+        case "copy": Actions.copyUris(paths); break
+        case "send": Registry.runBatch("send", paths); break
+        case "tailscale": tailscaleSheet.open(paths); break
+        case "export": root.openExport(paths); break
+        case "correctionsbatch": root.performForTargets(id, paths[0], undefined, paths); break
+        case "favorite": Settings.setFavorite(paths, !paths.every(function(p) { return Settings.isFavorite(p) })); break
+        case "hide": Settings.setHidden(paths, !paths.every(function(p) { return Settings.isHidden(p) })); break
+        case "trash": root.requestDeleteBatch(paths); break
+        }
+    }
+
+    ActionMenu {
+        id: contextMenu
+        objectName: "libraryContextMenu"
+        property var targets: []
+        property bool selectionMode: false
+        onTriggered: function(id) { root.performContextAction(id, targets.slice(), selectionMode) }
+        onClosed: if (!root.anySheetOpen) library.forceActiveFocus()
     }
 
     function adjacentViewerPath(path, direction) {
@@ -1162,7 +1271,7 @@ ApplicationWindow {
                   ? notice.text
                   : making !== ""
                   ? making
-                  : "Enter details   ·   Space act   ·   M matte   ·   T trim   ·   V favourite   ·   Del trash   ·   / search"
+                  : "Enter details   ·   Space act   ·   M background   ·   T trim   ·   V favourite   ·   Del trash   ·   / search"
             font.family: Theme.fontFamily
             font.pixelSize: 11
             color: notice.text !== "" || making !== ""
@@ -1204,9 +1313,10 @@ ApplicationWindow {
         // dropped back into the grid read as a mistake. What removes the
         // file from view (trash, hide), opens another sheet (matte) or hands
         // off to an editor still closes it.
-        readonly property var keepsViewer: ["play", "view", "open-document", "frame", "background", "export", "favorite",
+        readonly property var keepsViewer: ["preview", "play", "view", "open-document", "frame", "background", "export", "favorite",
                                             "copy", "ocr", "qr", "send", "tailscale", "files"]
         onActionTriggered: function (id) {
+            if (id === "matte" && Matte.busy) { root.say("Background is still saving"); return }
             if (detail.keepsViewer.indexOf(id) < 0) {
                 detail.close()
             }
@@ -1263,6 +1373,7 @@ ApplicationWindow {
 
     Menu {
         id: albumActionMenu
+        property var targetPaths: []
         objectName: "albumActionMenu"
         // Modal, undimmed: the press that closes the menu is consumed here
         // rather than also landing on the tile or pill under it.
@@ -1295,7 +1406,7 @@ ApplicationWindow {
                        ? root.shade(Theme.foreground, 0.08) : "transparent"
             }
             onTriggered: {
-                const paths = library.checkedPaths()
+                const paths = albumActionMenu.targetPaths
                 Settings.removeFromAlbum(Captures.albumFilter, paths)
                 library.clearChecked()
                 root.say("Removed " + paths.length + (paths.length === 1 ? " item" : " items"))
@@ -1323,7 +1434,7 @@ ApplicationWindow {
                            ? root.shade(Theme.foreground, 0.08) : "transparent"
                 }
                 onTriggered: {
-                    const paths = library.checkedPaths()
+                    const paths = albumActionMenu.targetPaths
                     const changed = Settings.addToAlbum(addAlbumRow.modelData, paths)
                     root.say(changed ? "Added to " + addAlbumRow.modelData
                                      : "Already in " + addAlbumRow.modelData)
@@ -1346,7 +1457,7 @@ ApplicationWindow {
                 color: newAlbumRow.hovered
                        ? root.shade(Theme.foreground, 0.08) : "transparent"
             }
-            onTriggered: albumNameSheet.open(library.checkedPaths())
+            onTriggered: albumNameSheet.open(albumActionMenu.targetPaths)
         }
 
         MenuSeparator {
@@ -1371,7 +1482,7 @@ ApplicationWindow {
                        ? root.shade(Theme.foreground, 0.08) : "transparent"
             }
             onTriggered: {
-                const paths = library.checkedPaths()
+                const paths = albumActionMenu.targetPaths
                 Settings.removeTag(Captures.tagFilter, paths)
                 library.clearChecked()
                 root.say("Removed tag from " + paths.length
@@ -1400,7 +1511,7 @@ ApplicationWindow {
                            ? root.shade(Theme.foreground, 0.08) : "transparent"
                 }
                 onTriggered: {
-                    const paths = library.checkedPaths()
+                    const paths = albumActionMenu.targetPaths
                     const changed = Settings.addTag(addTagRow.modelData, paths)
                     root.say(changed ? "Tagged as " + addTagRow.modelData
                                      : "Already tagged as " + addTagRow.modelData)
@@ -1423,7 +1534,7 @@ ApplicationWindow {
                 color: newTagRow.hovered
                        ? root.shade(Theme.foreground, 0.08) : "transparent"
             }
-            onTriggered: albumNameSheet.open(library.checkedPaths(), "tag")
+            onTriggered: albumNameSheet.open(albumActionMenu.targetPaths, "tag")
         }
 
     }
@@ -1605,10 +1716,12 @@ ApplicationWindow {
 
     Connections {
         target: Matte
-        function onComposed(outputPath) {
+        function onSaved(outputPath) {
             Library.addExtraFiles([outputPath])
-            root.say("Matte copied and saved beside the original")
             Library.refresh()
+        }
+        function onFinished(outputPath, saved, copied) {
+            if (copied) root.say(saved ? "Image copied and saved beside the original" : "Image copied")
         }
         function onFailed(message) { root.say(message) }
     }

@@ -49,9 +49,15 @@ Item {
     }
 
     function actionLabel(action) {
-        const labels = { "matte": "Make postable", "view": "View full size",
+        const labels = { "preview": "View in Omaroll", "omaframe": "Open in Omaframe",
+                         "corrections": "Crop, rotate, resize", "matte": "Add background", "view": "View full size",
                          "edit": "Edit in Pinta", "trim": "Trim", "play": "Play" }
-        return labels[action]
+        return labels[action] + (action !== "preview" && !Registry.available(action)
+                                ? " (not installed)" : "")
+    }
+
+    function availableDefaults(values) {
+        return values.filter(function(id) { return id === "preview" || Registry.available(id) })
     }
 
     function cacheLabel(megabytes) {
@@ -574,7 +580,7 @@ Item {
                     Text {
                         width: parent.width
                         wrapMode: Text.WordWrap
-                        text: "What Enter does on a photo or screenshot."
+                        text: "What Space does on a photo or screenshot."
                         font.family: Theme.fontFamily
                         font.pixelSize: 10
                         color: Theme.mutedText
@@ -586,7 +592,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     label: root.actionLabel(Settings.imagePrimaryAction)
                     onClicked: Settings.imagePrimaryAction = root.nextValue(
-                                   ["matte", "view", "edit"], Settings.imagePrimaryAction)
+                                   root.availableDefaults(["preview", "omaframe", "corrections", "matte", "view", "edit"]), Settings.imagePrimaryAction)
                 }
             }
 
@@ -607,7 +613,7 @@ Item {
                     Text {
                         width: parent.width
                         wrapMode: Text.WordWrap
-                        text: "What Enter does on a video or recording."
+                        text: "What Space does on a video or recording."
                         font.family: Theme.fontFamily
                         font.pixelSize: 10
                         color: Theme.mutedText
@@ -619,7 +625,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     label: root.actionLabel(Settings.videoPrimaryAction)
                     onClicked: Settings.videoPrimaryAction = root.nextValue(
-                                   ["trim", "play"], Settings.videoPrimaryAction)
+                                   root.availableDefaults(["preview", "trim", "play"]), Settings.videoPrimaryAction)
                 }
             }
 

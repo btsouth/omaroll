@@ -24,6 +24,13 @@ It also adds **Open in Omaframe** for existing images in the library and quick
 viewer, using Omaframe's annotation and framing controls without changing the
 configured annotation editor. Corrections and Omaframe exports remain copies.
 
+The branch also adds right-click action menus for files and selections, groups
+related actions, and keeps selection actions reachable in narrow windows.
+New profiles use built-in viewing as the Space action; upgrades preserve existing
+preferences. The native framing tool is called Add background. Saving and copying
+report their results separately, with Retry copy after a clipboard failure, and
+print confirmation waits for successful queue submission.
+
 Use the [open pull requests](https://github.com/btsouth/omaroll/pulls) for work
 under review, and the [roadmap](ROADMAP.md) for scope and future decisions.
 Changes for the next release should remain in focused pull requests; the

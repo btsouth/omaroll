@@ -28,6 +28,7 @@ FocusScope {
     signal chosen(int index)
     signal deleteRequested(string path)
     signal detailRequested(int index)
+    signal contextRequested(int index, real x, real y)
     // Tab and Shift+Tab walk the sections. Handled here as key events rather
     // than window shortcuts: on a real keyboard Shift+Tab arrives as Backtab,
     // and Qt's shortcut matcher also offers plain Tab for that key, so two
@@ -327,6 +328,10 @@ FocusScope {
                 onChosen: {
                     grid.currentIndex = cell.index
                     root.detailRequested(cell.index)
+                }
+                onContextRequested: function(x, y) {
+                    grid.currentIndex = cell.index
+                    root.contextRequested(cell.index, x, y)
                 }
                 onToggleChecked: root.toggleChecked(cell.path)
             }
