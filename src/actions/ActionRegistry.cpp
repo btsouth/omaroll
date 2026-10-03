@@ -1,6 +1,7 @@
 #include "actions/ActionRegistry.h"
 
 #include "actions/ActionLauncher.h"
+#include "sources/FileVersion.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -329,6 +330,9 @@ void ActionRegistry::probeThenLaunch(const Definition& definition, const QString
     return;
   }
 
+  m_probingOutputs.insert(output);
+  const QString originalVersion = FileVersion::key(output);
+
   // Off the event loop: a probe of a large file on a slow disk can take
   // seconds, and the window has to stay live while it decides.
   auto* probe = new QProcess(this);
@@ -338,8 +342,16 @@ void ActionRegistry::probeThenLaunch(const Definition& definition, const QString
   connect(timeout, &QTimer::timeout, probe, &QProcess::kill);
 
   connect(probe, &QProcess::finished, this,
-          [this, probe, definition, arguments, output](int exitCode, QProcess::ExitStatus status) {
+          [this, probe, definition, arguments, output, originalVersion](int exitCode, QProcess::ExitStatus status) {
             probe->deleteLater();
+            m_probingOutputs.remove(output);
+            // Another action or application may have replaced this file
+            // while the asynchronous probe was running.
+            const QFileInfo now(output);
+            if (m_launcher->isPending(output) || FileVersion::key(output) != originalVersion) {
+              m_launcher->report(u"Output changed while checking %1; try again"_s.arg(now.fileName()));
+              return;
+            }
             // A probe that had to be killed says nothing about the file; trust
             // it, as a missing ffprobe does, rather than throw away a good one.
             const bool killed = status != QProcess::NormalExit;
@@ -364,6 +376,7 @@ void ActionRegistry::probeThenLaunch(const Definition& definition, const QString
               return;
             }
             probe->deleteLater();
+            m_probingOutputs.remove(output);
             m_launcher->revealExisting(output);
           });
 
@@ -530,7 +543,7 @@ bool ActionRegistry::run(const QString& id, const QStringList& paths,
   QString output;
   if (!definition->output.isEmpty()) {
     output = first.absolutePath() + QLatin1Char('/') + expand(definition->output);
-    if (m_launcher->isPending(output)) {
+    if (m_launcher->isPending(output) || m_probingOutputs.contains(output)) {
       m_launcher->report(u"Still working on %1"_s.arg(QFileInfo(output).fileName()));
       return true;
     }

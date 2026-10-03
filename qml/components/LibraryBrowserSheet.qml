@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Window
 import QtQuick.Controls.Basic
 import QtQuick.Dialogs
 
@@ -9,6 +10,7 @@ FocusScope {
     property string query: ""
     property string folderMessage: ""
     readonly property bool compact: height < 560
+    readonly property int minimumChoicesHeight: 120
     readonly property var dateChoices: {
         const rows = []
         for (const month of Captures.dateBuckets) {
@@ -324,245 +326,293 @@ FocusScope {
             preventStealing: true
         }
 
-        Column {
+        Item {
+            id: contentArea
             anchors.fill: parent
             anchors.margins: root.compact ? 14 : 22
-            spacing: root.compact ? 8 : 12
+            readonly property int spacing: root.compact ? 8 : 12
 
-            Row {
+            // Wrapped source controls scroll here so the choices list keeps a
+            // usable height in the smallest supported window.
+            Flickable {
+                id: controlsFlickable
+                objectName: "libraryControls"
                 width: parent.width
-                spacing: 10
+                height: Math.min(controlsColumn.implicitHeight,
+                                 Math.max(0, parent.height - root.minimumChoicesHeight
+                                             - searchBox.height - 2 * parent.spacing))
+                contentWidth: width
+                contentHeight: controlsColumn.implicitHeight
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                flickableDirection: Flickable.VerticalFlick
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-                Text {
-                    width: parent.width - closeButton.width - 10
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "Browse library"
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 15
-                    font.weight: Font.DemiBold
-                    color: Theme.brightForeground
+                function revealFocusedControl() {
+                    const focused = root.Window.window ? root.Window.window.activeFocusItem : null
+                    let ancestor = focused
+                    while (ancestor && ancestor !== controlsColumn) ancestor = ancestor.parent
+                    if (!focused || ancestor !== controlsColumn) return
+                    const top = focused.mapToItem(controlsColumn, 0, 0).y
+                    const bottom = top + focused.height
+                    const maximum = Math.max(0, contentHeight - height)
+                    if (top < contentY) contentY = Math.max(0, top)
+                    else if (bottom > contentY + height) contentY = Math.min(maximum, bottom - height)
                 }
 
-                PillButton {
-                    id: closeButton
-                    label: "Close"
-                    onClicked: root.close()
-                }
-            }
-
-            Text {
-                width: parent.width
-                text: root.hasCameras
-                      ? "Browse folders, dates, albums, tags, cameras, saved views, and review sets."
-                      : "Browse folders, dates, albums, tags, saved views, and review sets."
-                wrapMode: Text.WordWrap
-                font.family: Theme.fontFamily
-                font.pixelSize: 11
-                color: Theme.mutedText
-            }
-
-            Row {
-                spacing: 8
-
-                PillButton {
-                    label: "Whole library"
-                    active: Captures.folderFilter === "" && Captures.albumFilter === ""
-                            && Captures.tagFilter === "" && Captures.dateFrom === ""
-                            && Captures.dateTo === "" && Captures.modifiedAfter === ""
-                            && Captures.cameraFilter === "" && Captures.lensFilter === ""
-                            && Captures.minimumRating === 0
-                            && Captures.smartCollectionFilter === ""
-                            && !Captures.duplicatesOnly && !Captures.similarOnly
-                    onClicked: root.showAll()
-                }
-                PillButton {
-                    label: "Exact duplicates"
-                    active: Captures.duplicatesOnly
-                    onClicked: root.showDuplicates()
-                }
-                PillButton {
-                    label: "Similar pictures"
-                    active: Captures.similarOnly
-                    onClicked: root.showSimilar()
-                }
-                PillButton {
-                    label: "+ Add folder"
-                    onClicked: folderDialog.open()
-                }
-            }
-
-            Flow {
-                width: parent.width
-                spacing: 7
-
-                PillButton { label: "Today"; onClicked: root.showRecent(1, false) }
-                PillButton { label: "This week"; onClicked: root.showRecent(7, false) }
-                PillButton { label: "New since last visit"; onClicked: root.showSinceLastVisit() }
-                PillButton { label: "Recently modified"; onClicked: root.showRecent(7, true) }
-                PillButton {
-                    label: "Save current view"
-                    onClicked: {
-                        root.close()
-                        root.saveSmartCollectionRequested()
-                    }
-                }
-            }
-
-            // A minimum rating narrows whatever else is chosen, the way the
-            // kind pills do, so picking one leaves the sheet open. The row
-            // only appears once something has been rated.
-            Flow {
-                width: parent.width
-                spacing: 7
-                visible: Settings.ratedCount > 0 || Captures.minimumRating > 0
-
-                Text {
-                    height: 26
-                    verticalAlignment: Text.AlignVCenter
-                    text: "Rated at least"
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 11
-                    color: Theme.mutedText
-                }
-
-                Repeater {
-                    model: 5
-
-                    PillButton {
-                        required property int index
-                        label: "★".repeat(index + 1)
-                        active: Captures.minimumRating === index + 1
-                        onClicked: Captures.minimumRating = active ? 0 : index + 1
-                    }
-                }
-            }
-
-            Text {
-                text: "SOURCES"
-                font.family: Theme.fontFamily
-                font.pixelSize: 9
-                color: Theme.mutedText
-            }
-
-            Flow {
-                width: parent.width
-                spacing: 7
-
-                Repeater {
-                    model: Library.automaticFolders
-
-                    PillButton {
-                        required property var modelData
-                        visible: modelData.available
-                        label: modelData.label
-                        active: Captures.folderFilter === modelData.path
-                        onClicked: root.showFolder(modelData.path)
+                Connections {
+                    target: root.Window.window
+                    function onActiveFocusItemChanged() {
+                        if (root.visible) Qt.callLater(controlsFlickable.revealFocusedControl)
                     }
                 }
 
-                Repeater {
-                    model: Settings.libraryFolders
+                Column {
+                    id: controlsColumn
+                    width: controlsFlickable.width
+                    spacing: root.compact ? 8 : 12
 
-                    PillButton {
-                        required property string modelData
-                        label: root.nameForPath(modelData)
-                        active: Captures.folderFilter === modelData
-                        onClicked: root.showFolder(modelData)
-                    }
-                }
-            }
+                    Row {
+                        width: parent.width
+                        spacing: 10
 
-            Text {
-                width: parent.width
-                visible: root.folderMessage !== ""
-                text: root.folderMessage
-                wrapMode: Text.WordWrap
-                font.family: Theme.fontFamily
-                font.pixelSize: 10
-                color: Theme.mutedText
-            }
+                        Text {
+                            width: parent.width - closeButton.width - 10
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "Browse library"
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 15
+                            font.weight: Font.DemiBold
+                            color: Theme.brightForeground
+                        }
 
-            Flow {
-                width: parent.width
-                spacing: 8
+                        PillButton {
+                            id: closeButton
+                            label: "Close"
+                            onClicked: root.close()
+                        }
+                    }
 
-                PillButton {
-                    label: "Folders  " + root.formatCount(Captures.folders.length)
-                    active: root.section === 0
-                    onClicked: {
-                        root.section = 0
-                        folderSearch.forceActiveFocus()
+                    Text {
+                        width: parent.width
+                        text: root.hasCameras
+                              ? "Browse folders, dates, albums, tags, cameras, saved views, and review sets."
+                              : "Browse folders, dates, albums, tags, saved views, and review sets."
+                        wrapMode: Text.WordWrap
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 11
+                        color: Theme.mutedText
                     }
-                }
-                PillButton {
-                    label: "Albums  " + root.formatCount(Settings.albumNames.length)
-                    active: root.section === 1
-                    onClicked: {
-                        root.section = 1
-                        folderSearch.forceActiveFocus()
+
+                    Flow {
+                        width: parent.width
+                        spacing: 8
+
+                        PillButton {
+                            label: "Whole library"
+                            active: Captures.folderFilter === "" && Captures.albumFilter === ""
+                                    && Captures.tagFilter === "" && Captures.dateFrom === ""
+                                    && Captures.dateTo === "" && Captures.modifiedAfter === ""
+                                    && Captures.cameraFilter === "" && Captures.lensFilter === ""
+                                    && Captures.minimumRating === 0
+                                    && Captures.smartCollectionFilter === ""
+                                    && !Captures.duplicatesOnly && !Captures.similarOnly
+                            onClicked: root.showAll()
+                        }
+                        PillButton {
+                            label: "Exact duplicates"
+                            active: Captures.duplicatesOnly
+                            onClicked: root.showDuplicates()
+                        }
+                        PillButton {
+                            label: "Similar pictures"
+                            active: Captures.similarOnly
+                            onClicked: root.showSimilar()
+                        }
+                        PillButton {
+                            objectName: "browseAddFolder"
+                            label: "+ Add folder"
+                            onClicked: folderDialog.open()
+                        }
                     }
-                }
-                PillButton {
-                    label: "Dates  " + root.formatCount(Captures.dateBuckets.length)
-                    active: root.section === 2
-                    onClicked: { root.section = 2; folderSearch.forceActiveFocus() }
-                }
-                PillButton {
-                    label: "Tags  " + root.formatCount(Settings.tagNames.length)
-                    active: root.section === 3
-                    onClicked: { root.section = 3; folderSearch.forceActiveFocus() }
-                }
-                PillButton {
-                    // Only a library with photos from a real camera earns this
-                    // section; a screenshot library never sees it.
-                    visible: root.hasCameras || root.section === 5
-                    label: "Cameras  " + root.formatCount(Captures.cameras.length)
-                    active: root.section === 5
-                    onClicked: { root.section = 5; folderSearch.forceActiveFocus() }
-                }
-                PillButton {
-                    label: "Smart  " + root.formatCount(Settings.smartCollectionNames.length)
-                    active: root.section === 4
-                    onClicked: { root.section = 4; folderSearch.forceActiveFocus() }
-                }
-                PillButton {
-                    visible: root.section === 1
-                    label: "+ New album"
-                    onClicked: {
-                        root.close()
-                        root.createAlbumRequested()
+
+                    Flow {
+                        width: parent.width
+                        spacing: 7
+
+                        PillButton { label: "Today"; onClicked: root.showRecent(1, false) }
+                        PillButton { label: "This week"; onClicked: root.showRecent(7, false) }
+                        PillButton { label: "New since last visit"; onClicked: root.showSinceLastVisit() }
+                        PillButton { label: "Recently modified"; onClicked: root.showRecent(7, true) }
+                        PillButton {
+                            label: "Save current view"
+                            onClicked: {
+                                root.close()
+                                root.saveSmartCollectionRequested()
+                            }
+                        }
                     }
-                }
-                PillButton {
-                    visible: root.section === 3
-                    label: "+ New tag"
-                    onClicked: { root.close(); root.createTagRequested() }
-                }
-                PillButton {
-                    visible: root.section === 4
-                    label: "+ Save view"
-                    onClicked: { root.close(); root.saveSmartCollectionRequested() }
-                }
-                PillButton {
-                    visible: (root.section === 1 || root.section === 3) && choices.currentIndex >= 0
-                    label: "Rename selected"
-                    toolTip: root.section === 3
-                             ? "Rename this tag and any tags nested under it."
-                             : "Rename this album. Its membership is kept."
-                    onClicked: root.renameCurrentChoice()
-                }
-                PillButton {
-                    visible: (root.section === 1 || root.section === 3 || root.section === 4)
-                             && choices.currentIndex >= 0
-                    label: "Delete selected"
-                    toolTip: root.section === 3
-                             ? "Remove this tag and any tags nested under it. Files are not deleted."
-                             : "Remove this collection. Files are not deleted."
-                    onClicked: root.deleteCurrentChoice()
+
+                    // A minimum rating narrows whatever else is chosen, the way the
+                    // kind pills do, so picking one leaves the sheet open. The row
+                    // only appears once something has been rated.
+                    Flow {
+                        width: parent.width
+                        spacing: 7
+                        visible: Settings.ratedCount > 0 || Captures.minimumRating > 0
+
+                        Text {
+                            height: 26
+                            verticalAlignment: Text.AlignVCenter
+                            text: "Rated at least"
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 11
+                            color: Theme.mutedText
+                        }
+
+                        Repeater {
+                            model: 5
+
+                            PillButton {
+                                required property int index
+                                label: "★".repeat(index + 1)
+                                active: Captures.minimumRating === index + 1
+                                onClicked: Captures.minimumRating = active ? 0 : index + 1
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: "SOURCES"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 9
+                        color: Theme.mutedText
+                    }
+
+                    Flow {
+                        width: parent.width
+                        spacing: 7
+
+                        Repeater {
+                            model: Library.automaticFolders
+
+                            PillButton {
+                                required property var modelData
+                                visible: modelData.available
+                                label: modelData.label
+                                active: Captures.folderFilter === modelData.path
+                                onClicked: root.showFolder(modelData.path)
+                            }
+                        }
+
+                        Repeater {
+                            model: Settings.libraryFolders
+
+                            PillButton {
+                                required property string modelData
+                                label: root.nameForPath(modelData)
+                                active: Captures.folderFilter === modelData
+                                onClicked: root.showFolder(modelData)
+                            }
+                        }
+                    }
+
+                    Text {
+                        width: parent.width
+                        visible: root.folderMessage !== ""
+                        text: root.folderMessage
+                        wrapMode: Text.WordWrap
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 10
+                        color: Theme.mutedText
+                    }
+
+                    Flow {
+                        width: parent.width
+                        spacing: 8
+
+                        PillButton {
+                            label: "Folders  " + root.formatCount(Captures.folders.length)
+                            active: root.section === 0
+                            onClicked: {
+                                root.section = 0
+                                folderSearch.forceActiveFocus()
+                            }
+                        }
+                        PillButton {
+                            label: "Albums  " + root.formatCount(Settings.albumNames.length)
+                            active: root.section === 1
+                            onClicked: {
+                                root.section = 1
+                                folderSearch.forceActiveFocus()
+                            }
+                        }
+                        PillButton {
+                            label: "Dates  " + root.formatCount(Captures.dateBuckets.length)
+                            active: root.section === 2
+                            onClicked: { root.section = 2; folderSearch.forceActiveFocus() }
+                        }
+                        PillButton {
+                            label: "Tags  " + root.formatCount(Settings.tagNames.length)
+                            active: root.section === 3
+                            onClicked: { root.section = 3; folderSearch.forceActiveFocus() }
+                        }
+                        PillButton {
+                            // Only a library with photos from a real camera earns this
+                            // section; a screenshot library never sees it.
+                            visible: root.hasCameras || root.section === 5
+                            label: "Cameras  " + root.formatCount(Captures.cameras.length)
+                            active: root.section === 5
+                            onClicked: { root.section = 5; folderSearch.forceActiveFocus() }
+                        }
+                        PillButton {
+                            label: "Smart  " + root.formatCount(Settings.smartCollectionNames.length)
+                            active: root.section === 4
+                            onClicked: { root.section = 4; folderSearch.forceActiveFocus() }
+                        }
+                        PillButton {
+                            visible: root.section === 1
+                            label: "+ New album"
+                            onClicked: {
+                                root.close()
+                                root.createAlbumRequested()
+                            }
+                        }
+                        PillButton {
+                            visible: root.section === 3
+                            label: "+ New tag"
+                            onClicked: { root.close(); root.createTagRequested() }
+                        }
+                        PillButton {
+                            visible: root.section === 4
+                            label: "+ Save view"
+                            onClicked: { root.close(); root.saveSmartCollectionRequested() }
+                        }
+                        PillButton {
+                            visible: (root.section === 1 || root.section === 3) && choices.currentIndex >= 0
+                            label: "Rename selected"
+                            toolTip: root.section === 3
+                                     ? "Rename this tag and any tags nested under it."
+                                     : "Rename this album. Its membership is kept."
+                            onClicked: root.renameCurrentChoice()
+                        }
+                        PillButton {
+                            visible: (root.section === 1 || root.section === 3 || root.section === 4)
+                                     && choices.currentIndex >= 0
+                            label: "Delete selected"
+                            toolTip: root.section === 3
+                                     ? "Remove this tag and any tags nested under it. Files are not deleted."
+                                     : "Remove this collection. Files are not deleted."
+                            onClicked: root.deleteCurrentChoice()
+                        }
+                    }
+
                 }
             }
 
             Rectangle {
+                id: searchBox
+                y: controlsFlickable.height + contentArea.spacing
                 width: parent.width
                 height: 34
                 radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
@@ -616,7 +666,8 @@ FocusScope {
                 id: choices
                 objectName: "libraryChoices"
                 width: parent.width
-                height: parent.height - y
+                y: searchBox.y + searchBox.height + contentArea.spacing
+                height: Math.max(0, parent.height - y)
                 clip: true
                 reuseItems: true
                 boundsBehavior: Flickable.StopAtBounds

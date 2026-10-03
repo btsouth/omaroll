@@ -14,6 +14,8 @@
 #include <QSaveFile>
 #include <QVariantMap>
 
+#include <limits>
+
 #include <sys/stat.h>
 
 namespace {
@@ -1045,20 +1047,23 @@ QVariantMap AppSettings::exportOrganization(const QString& path) const {
             {QStringLiteral("message"), QStringLiteral("Choose a file to write the backup to")}};
   }
 
-  const auto encodeEntries = [](const QMap<QString, QList<AlbumEntry>>& collections) {
+  const auto encodeIdentity = [](const AlbumEntry& entry) {
+    QJsonObject row;
+    row.insert(QStringLiteral("bytes"), entry.bytes);
+    row.insert(QStringLiteral("modified"), entry.modified);
+    // SHA-256 is binary; base64 keeps it exact through JSON.
+    row.insert(QStringLiteral("fingerprint"), QString::fromLatin1(entry.fingerprint.toBase64()));
+    row.insert(QStringLiteral("device"), QString::number(entry.device));
+    row.insert(QStringLiteral("inode"), QString::number(entry.inode));
+    return row;
+  };
+  const auto encodeEntries = [&encodeIdentity](const QMap<QString, QList<AlbumEntry>>& collections) {
     QJsonObject out;
     for (auto it = collections.cbegin(); it != collections.cend(); ++it) {
       QJsonArray rows;
       for (const AlbumEntry& entry : it.value()) {
-        QJsonObject row;
+        QJsonObject row = encodeIdentity(entry);
         row.insert(QStringLiteral("path"), entry.path);
-        row.insert(QStringLiteral("bytes"), entry.bytes);
-        row.insert(QStringLiteral("modified"), entry.modified);
-        // SHA-256 is binary; base64 keeps it exact through JSON.
-        row.insert(QStringLiteral("fingerprint"),
-                   QString::fromLatin1(entry.fingerprint.toBase64()));
-        row.insert(QStringLiteral("device"), QString::number(entry.device));
-        row.insert(QStringLiteral("inode"), QString::number(entry.inode));
         rows.append(row);
       }
       out.insert(it.key(), rows);
@@ -1100,6 +1105,14 @@ QVariantMap AppSettings::exportOrganization(const QString& path) const {
     captions.insert(it.key(), it.value());
   }
   root.insert(QStringLiteral("captions"), captions);
+
+  QJsonObject markIdentities;
+  for (auto it = m_markIdentities.cbegin(); it != m_markIdentities.cend(); ++it) {
+    if (pathHasMark(it.key())) {
+      markIdentities.insert(it.key(), encodeIdentity(it.value()));
+    }
+  }
+  root.insert(QStringLiteral("markIdentities"), markIdentities);
 
   QVariantMap smart;
   for (auto it = m_smartCollections.cbegin(); it != m_smartCollections.cend(); ++it) {
@@ -1265,6 +1278,61 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
     }
   }
 
+  // Optional in version 1 for backups written before mark move recovery was
+  // exported. Reject malformed identities before replacing any organization.
+  QHash<QString, AlbumEntry> markIdentities;
+  if (root.contains(QStringLiteral("markIdentities"))) {
+    const auto invalidIdentities = []() -> QVariantMap {
+      return {{QStringLiteral("ok"), false},
+              {QStringLiteral("message"), QStringLiteral("This backup has invalid mark identities")}};
+    };
+    if (!memberIs("markIdentities", QJsonValue::Object)) {
+      return invalidIdentities();
+    }
+    const auto decodeInteger = [](const QJsonValue& value, qint64& decoded) {
+      if (!value.isDouble()) {
+        return false;
+      }
+      const double number = value.toDouble();
+      const double minimum = static_cast<double>(std::numeric_limits<qint64>::min());
+      if (!(number >= minimum && number < -minimum)) {
+        return false;
+      }
+      decoded = static_cast<qint64>(number);
+      return static_cast<double>(decoded) == number;
+    };
+    const QJsonObject identities = root.value(QStringLiteral("markIdentities")).toObject();
+    for (auto it = identities.begin(); it != identities.end(); ++it) {
+      if (it.key().isEmpty() || !it.value().isObject() ||
+          !(favorites.contains(it.key()) || hidden.contains(it.key()) ||
+            ratings.contains(it.key()) || captions.contains(it.key()))) {
+        return invalidIdentities();
+      }
+      const QJsonObject row = it.value().toObject();
+      AlbumEntry entry;
+      entry.path = it.key();
+      if (!decodeInteger(row.value(QStringLiteral("bytes")), entry.bytes) || entry.bytes < 0 ||
+          !decodeInteger(row.value(QStringLiteral("modified")), entry.modified) ||
+          !row.value(QStringLiteral("fingerprint")).isString() ||
+          !row.value(QStringLiteral("device")).isString() ||
+          !row.value(QStringLiteral("inode")).isString()) {
+        return invalidIdentities();
+      }
+      const auto fingerprint = QByteArray::fromBase64Encoding(
+          row.value(QStringLiteral("fingerprint")).toString().toLatin1(),
+          QByteArray::AbortOnBase64DecodingErrors);
+      bool deviceOkay = false;
+      bool inodeOkay = false;
+      entry.device = row.value(QStringLiteral("device")).toString().toULongLong(&deviceOkay);
+      entry.inode = row.value(QStringLiteral("inode")).toString().toULongLong(&inodeOkay);
+      if (!fingerprint || fingerprint.decoded.size() != 32 || !deviceOkay || !inodeOkay) {
+        return invalidIdentities();
+      }
+      entry.fingerprint = fingerprint.decoded;
+      markIdentities.insert(entry.path, entry);
+    }
+  }
+
   // An entry whose file is present right now shows up immediately; the next
   // scan repairs anything that moved. The stored identity is kept so a move
   // can still be matched by inode or fingerprint.
@@ -1286,11 +1354,13 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
   m_hidden = std::move(hidden);
   m_ratings = std::move(ratings);
   m_captions = std::move(captions);
+  m_markIdentities = std::move(markIdentities);
 
   persistAlbums();
   persistTags();
   persistSmartCollections();
   persistMarks();
+  persistMarkIdentities();
   emit albumsChanged();
   emit tagsChanged();
   emit smartCollectionsChanged();
@@ -1481,21 +1551,6 @@ QStringList AppSettings::markedPaths() const {
     all.insert(it.key());
   }
   return QStringList(all.begin(), all.end());
-}
-
-void AppSettings::forgetMarks(const QStringList& paths) {
-  bool changed = false;
-  for (const QString& path : paths) {
-    changed = m_favorites.remove(path) || changed;
-    changed = m_hidden.remove(path) || changed;
-    changed = m_ratings.remove(path) > 0 || changed;
-    changed = m_captions.remove(path) > 0 || changed;
-    changed = m_markIdentities.remove(path) > 0 || changed;
-  }
-  if (changed) {
-    persistMarks();
-    persistMarkIdentities();
-  }
 }
 
 void AppSettings::persistMarks() {
@@ -1709,15 +1764,17 @@ void AppSettings::reconcileMarks(const QList<CaptureRecord>& records) {
     }
     const auto rating = m_ratings.find(from);
     if (rating != m_ratings.end()) {
-      m_ratings[to] = qMax(m_ratings.value(to, 0), rating.value());
+      const int stars = rating.value();
       m_ratings.erase(rating);
+      m_ratings.insert(to, qMax(m_ratings.value(to, 0), stars));
     }
     const auto caption = m_captions.find(from);
     if (caption != m_captions.end()) {
-      if (!m_captions.contains(to)) {
-        m_captions.insert(to, caption.value());
-      }
+      const QString text = caption.value();
       m_captions.erase(caption);
+      if (!m_captions.contains(to)) {
+        m_captions.insert(to, text);
+      }
     }
     m_markIdentities.remove(from);
     const AlbumEntry identity = identityFor(to);

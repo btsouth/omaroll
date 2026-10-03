@@ -48,6 +48,9 @@ ApplicationWindow {
     readonly property bool fullScreen: root.visibility === Window.FullScreen
     property string status: ""
     property string videoError: ""
+    property string loadedMediaPath: ""
+    property string loadedMediaVersion: ""
+    property bool reloadingVideo: false
     readonly property bool imageError: stillLoader.item !== null
                                        && stillLoader.item.status === Image.Error
     readonly property string playbackError: Session.isVideo ? root.videoError
@@ -293,11 +296,20 @@ ApplicationWindow {
         }
     }
 
+    function seekTo(milliseconds) {
+        if (!root.player) {
+            return
+        }
+        const duration = root.player.duration
+        const maximum = duration > 0 ? duration - 1 : Math.max(0, milliseconds)
+        root.resumeAvailable = false
+        root.resumePending = false
+        root.player.position = Math.max(0, Math.min(maximum, milliseconds))
+    }
+
     function seek(milliseconds) {
         if (root.player && root.player.duration > 0) {
-            root.resumeAvailable = false
-            root.player.position = Math.max(0, Math.min(root.player.duration - 1,
-                                                         root.player.position + milliseconds))
+            root.seekTo(root.player.position + milliseconds)
         }
     }
 
@@ -313,20 +325,17 @@ ApplicationWindow {
         if (!root.player) {
             return
         }
-        const end = root.player.duration > 0 ? root.player.duration - 1 : root.resumePosition
-        root.player.position = Math.max(0, Math.min(root.resumePosition, end))
+        root.seekTo(root.resumePosition)
         root.player.play()
-        root.resumeAvailable = false
     }
 
     function restartVideo() {
         if (!root.player) {
             return
         }
-        root.player.position = 0
+        root.seekTo(0)
         Settings.clearVideoPosition(Session.path)
         root.player.play()
-        root.resumeAvailable = false
     }
 
     // Off, then each embedded track, then each sidecar file.
@@ -383,7 +392,7 @@ ApplicationWindow {
             if (Session.isVideo && !Settings.slideshowVideos) {
                 root.advanceSlideshow()
             } else if (Session.isVideo && root.player) {
-                root.player.position = 0
+                root.seekTo(0)
                 root.player.play()
             } else {
                 root.armSlideshow()
@@ -398,18 +407,33 @@ ApplicationWindow {
     // never a video when the settings leave them out.
     function advanceSlideshow() {
         const total = Session.count
-        for (let attempt = 0; attempt < total; ++attempt) {
-            if (Settings.slideshowShuffle && total > 1) {
-                let index = Math.floor(Math.random() * (total - 1))
-                if (index >= Session.index) {
-                    index++
+        if (Settings.slideshowShuffle && total > 1) {
+            const eligible = []
+            for (let index = 0; index < total; ++index) {
+                if (index === Session.index) {
+                    continue
                 }
-                Session.jump(index)
-            } else {
-                Session.step(1)
+                if (!Settings.slideshowVideos && Session.neighbourIsVideo(index - Session.index)) {
+                    continue
+                }
+                eligible.push(index)
             }
-            if (Settings.slideshowVideos || !Session.isVideo) {
+            if (eligible.length > 0) {
+                Session.jump(eligible[Math.floor(Math.random() * eligible.length)])
                 return
+            }
+            // A sole eligible picture is where the ordered path would cycle
+            // back; keep it on screen rather than reporting that none exist.
+            if (!Session.isVideo || Settings.slideshowVideos) {
+                slideshowTimer.restart()
+                return
+            }
+        } else {
+            for (let attempt = 0; attempt < total; ++attempt) {
+                Session.step(1)
+                if (Settings.slideshowVideos || !Session.isVideo) {
+                    return
+                }
             }
         }
         root.setSlideshow(false)
@@ -544,7 +568,7 @@ ApplicationWindow {
             root.videoPausedForRender = true
             root.resumeAvailable = false
             if (root.player) {
-                root.player.position = 0
+                root.seekTo(0)
                 root.player.play()
             }
         } else if (view === "viewer-info") {
@@ -559,6 +583,18 @@ ApplicationWindow {
     Connections {
         target: Session
         function onCurrentChanged() {
+            const samePath = root.loadedMediaPath === Session.path
+            if (samePath && root.loadedMediaVersion === Session.contentVersion) {
+                return
+            }
+            root.loadedMediaPath = Session.path
+            root.loadedMediaVersion = Session.contentVersion
+            if (samePath && Session.isVideo && root.player) {
+                // The local URL stays the same after a save. Clear the player
+                // source for one turn so it opens the replacement file.
+                root.reloadingVideo = true
+                Qt.callLater(function () { root.reloadingVideo = false })
+            }
             root.animationPlaying = true
             root.resetView()
             root.resumeAvailable = false
@@ -760,7 +796,7 @@ ApplicationWindow {
             id: staticStill
             Image {
                 objectName: "viewerImage"
-                source: root.visible && !Session.isVideo ? Session.url : ""
+                source: root.visible && !Session.isVideo ? Session.imageUrl : ""
                 asynchronous: true
                 autoTransform: true
                 // Smooth while fitted, even when a small picture is scaled up;
@@ -788,7 +824,7 @@ ApplicationWindow {
             id: animatedStill
             AnimatedImage {
                 objectName: "viewerAnimation"
-                source: root.visible && !Session.isVideo ? Session.url : ""
+                source: root.visible && !Session.isVideo ? Session.imageUrl : ""
                 asynchronous: true
                 autoTransform: true
                 cache: false
@@ -811,7 +847,7 @@ ApplicationWindow {
                     void Session.count
                     return root.visible && !Session.neighbourIsVideo(modelData)
                            && !Session.neighbourIsAnimated(modelData)
-                           ? Session.neighbourUrl(modelData) : ""
+                           ? Session.neighbourImageUrl(modelData) : ""
                 }
             }
         }
@@ -837,7 +873,7 @@ ApplicationWindow {
                 MediaPlayer {
                     id: mediaPlayer
                     objectName: "viewerPlayer"
-                    source: root.visible && Session.isVideo ? Session.url : ""
+                    source: root.visible && Session.isVideo && !root.reloadingVideo ? Session.url : ""
                     videoOutput: videoSurface.item
                     audioOutput: AudioOutput {
                         volume: Settings.videoVolume
@@ -1296,6 +1332,9 @@ ApplicationWindow {
             onPlayToggled: root.togglePlayback()
             onFullScreenToggled: root.setFullScreen(!root.fullScreen)
             onCaptionsCycled: root.cycleSubtitles()
+            onSeekRequested: function (milliseconds) {
+                root.seekTo(milliseconds)
+            }
         }
     }
 
@@ -1545,7 +1584,7 @@ ApplicationWindow {
                 case Qt.Key_Home:
                 case Qt.Key_End:
                     if (video && root.player) {
-                        root.player.position = event.key === Qt.Key_Home ? 0 : root.player.duration
+                        root.seekTo(event.key === Qt.Key_Home ? 0 : root.player.duration)
                     } else {
                         Session.jump(event.key === Qt.Key_Home ? 0 : Session.count - 1)
                     }

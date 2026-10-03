@@ -39,6 +39,7 @@ add_library(omaroll_core STATIC
   src/sources/CaptureScanner.h
   src/sources/CaptureLocations.cpp
   src/sources/CaptureLocations.h
+  src/sources/FileVersion.h
   src/actions/ActionLauncher.cpp
   src/actions/ActionLauncher.h
   src/actions/ActionRegistry.cpp

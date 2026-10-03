@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- The gallery restores keyboard navigation after empty search results and
+  keeps the search field in sync with saved views and files opened from outside.
+- Browse keeps search and folder choices visible in small windows with many
+  source folders. Folder-only shuffle stays in the opened file's folder.
+- The viewer reloads files saved in place, preserves zoom and rotation when
+  other files arrive, and uses the same identity for symlinks as the library.
+- Video scrubbing and Home/End override saved resume positions. Shuffled
+  slideshows reliably find pictures when videos are excluded.
+- Organization survives disconnected folders. Backups retain the identities
+  needed to recover marks after files move, and rename recovery preserves
+  unrelated ratings and captions.
+- Repeated conversion requests share one output check. A helper failure after
+  writing media keeps the nonempty output beside the original for review.
+
 ## 1.11.0
 
 ### Added

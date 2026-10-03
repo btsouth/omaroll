@@ -18,6 +18,7 @@ Rectangle {
     signal fullScreenToggled()
     signal captionsCycled()
     signal playToggled()
+    signal seekRequested(real milliseconds)
 
     readonly property real duration: player ? player.duration : 0
     readonly property real position: player ? player.position : 0
@@ -105,7 +106,7 @@ Rectangle {
 
         function seekTo(x) {
             if (root.player && root.duration > 0) {
-                root.player.position = Math.max(0, Math.min(1, x / width)) * root.duration
+                root.seekRequested(Math.max(0, Math.min(1, x / width)) * root.duration)
             }
         }
 

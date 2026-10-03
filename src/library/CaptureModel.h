@@ -104,13 +104,6 @@ public:
   // apps parse on drop.
   Q_INVOKABLE QString uriList(const QStringList& paths) const;
 
-  // Marks whose files are gone. Paths the scan found are trusted without a
-  // stat; the rest are checked on disk, because a root that is unmounted or
-  // switched off in settings is not the same as a file that was deleted.
-  // Static and pure so the worker can run it and a test can check it.
-  [[nodiscard]] static QStringList missingMarks(const QStringList& marks,
-                                                const QSet<QString>& livePaths);
-
 signals:
   void countChanged();
   void scanningChanged();
@@ -122,7 +115,6 @@ private:
   struct ScanResult {
     QList<CaptureRecord> records;
     QStringList directories;
-    QStringList deadMarks;
   };
 
   [[nodiscard]] QList<CaptureScanner::Root> roots() const;

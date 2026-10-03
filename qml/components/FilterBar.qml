@@ -73,6 +73,17 @@ Item {
         search.selectAll()
     }
 
+    // Saved views and Open With can change the query outside this field.
+    Component.onCompleted: search.text = Captures.searchText
+    Connections {
+        target: Captures
+        function onSearchTextChanged() {
+            if (search.text !== Captures.searchText) {
+                search.text = Captures.searchText
+            }
+        }
+    }
+
     function folderName(path) {
         const parts = path.split("/").filter(function (part) { return part !== "" })
         return parts.length > 0 ? parts[parts.length - 1] : path
@@ -205,6 +216,7 @@ Item {
 
             TextInput {
                 id: search
+                objectName: "libraryFilterSearch"
                 anchors.fill: parent
                 anchors.leftMargin: 10
                 anchors.rightMargin: 10

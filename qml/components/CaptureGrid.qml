@@ -252,8 +252,8 @@ FocusScope {
             // action on a real row immediately after a trash or rescan.
             if (count === 0) {
                 currentIndex = -1
-            } else if (currentIndex >= count) {
-                currentIndex = count - 1
+            } else if (currentIndex < 0 || currentIndex >= count) {
+                currentIndex = currentIndex < 0 ? 0 : count - 1
             }
             if (root.selectedPath === "" && currentIndex >= 0) {
                 root.selectedPath = Captures.pathAt(currentIndex)
