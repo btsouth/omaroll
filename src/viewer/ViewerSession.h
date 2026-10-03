@@ -31,6 +31,11 @@ class ViewerSession final : public QObject {
   Q_PROPERTY(QString folder READ folder NOTIFY currentChanged)
   Q_PROPERTY(bool isVideo READ isVideo NOTIFY currentChanged)
   Q_PROPERTY(bool isAnimated READ isAnimated NOTIFY currentChanged)
+  // A camera raw: url is its embedded preview, rawUrl the full decode and
+  // rawSize what that decode measures, which the preview may fall short of.
+  Q_PROPERTY(bool isRaw READ isRaw NOTIFY currentChanged)
+  Q_PROPERTY(QUrl rawUrl READ rawUrl NOTIFY currentChanged)
+  Q_PROPERTY(QSize rawSize READ rawSize NOTIFY rawSizeChanged)
   Q_PROPERTY(double stamp READ stamp NOTIFY currentChanged)
   Q_PROPERTY(QString sizeLabel READ sizeLabel NOTIFY currentChanged)
   Q_PROPERTY(QString dateLabel READ dateLabel NOTIFY currentChanged)
@@ -53,6 +58,9 @@ public:
   [[nodiscard]] QString folder() const;
   [[nodiscard]] bool isVideo() const;
   [[nodiscard]] bool isAnimated() const;
+  [[nodiscard]] bool isRaw() const;
+  [[nodiscard]] QUrl rawUrl() const;
+  [[nodiscard]] QSize rawSize() const { return m_rawSize; }
   [[nodiscard]] double stamp() const { return m_stamp; }
   [[nodiscard]] QString sizeLabel() const { return m_sizeLabel; }
   [[nodiscard]] QString dateLabel() const { return m_dateLabel; }
@@ -110,6 +118,7 @@ public:
 
 signals:
   void currentChanged();
+  void rawSizeChanged();
   void sequenceChanged();
   void sequenceRevisionChanged();
   void preloadsChanged();
@@ -117,6 +126,7 @@ signals:
   void libraryRequested(const QString& path);
 
 private:
+  [[nodiscard]] QString neighbourPath(int offset) const;
   void setSequence(const QStringList& paths, int index);
   void setIndex(int index);
   void refreshDetails();
@@ -146,6 +156,7 @@ private:
   QString m_sizeLabel;
   QString m_dateLabel;
   QString m_mediaSuffix;
+  QSize m_rawSize;
   QString m_contentVersion;
   // The folder being shown and the opened file, for relisting after a change.
   QString m_folder;
@@ -163,4 +174,8 @@ private:
   std::array<QString, 2> m_pendingPreloadPaths;
   std::array<QUrl, 2> m_preloadUrls;
   QFutureWatcher<PreloadResult> m_preloadProbe;
+  // A raw's size comes from LibRaw opening the file, which can stall on a
+  // slow disk, so it is read on a worker for the file it was asked for.
+  QFutureWatcher<QSize> m_rawSizeProbe;
+  QString m_rawSizeVersion;
 };

@@ -24,6 +24,7 @@
 #include "subtitles/SubtitleIndex.h"
 #include "sources/CaptureScanner.h"
 #include "theme/OmarchyTheme.h"
+#include "thumbs/RawImageProvider.h"
 #include "thumbs/ThumbnailCache.h"
 #include "thumbs/ThumbnailProvider.h"
 #include "viewer/ViewerSession.h"
@@ -501,16 +502,19 @@ int main(int argc, char* argv[]) {
   auto* matteProvider = new MatteProvider;
   auto* editProvider = new EditProvider;
   auto* pdfProvider = new PdfProvider;
+  auto* rawProvider = new RawImageProvider;
   engine.addImageProvider(QLatin1String(ThumbnailProvider::kProviderId), thumbnailProvider);
   engine.addImageProvider(QLatin1String(MatteProvider::kProviderId), matteProvider);
   engine.addImageProvider(QLatin1String(EditProvider::kProviderId), editProvider);
   engine.addImageProvider(QLatin1String(PdfProvider::kProviderId), pdfProvider);
+  engine.addImageProvider(QLatin1String(RawImageProvider::kProviderId), rawProvider);
   QObject::connect(&application, &QCoreApplication::aboutToQuit, &application,
-                   [thumbnailProvider, matteProvider, editProvider, pdfProvider] {
+                   [thumbnailProvider, matteProvider, editProvider, pdfProvider, rawProvider] {
                      thumbnailProvider->shutdown();
                      matteProvider->shutdown();
                      editProvider->shutdown();
                      pdfProvider->shutdown();
+                     rawProvider->shutdown();
                      QThreadPool::globalInstance()->waitForDone();
                    });
   // Every window shares these. Each window's own services live in its context.

@@ -126,9 +126,12 @@ void OcrIndex::recognize(const QString& path, bool refresh) {
   }
 
   const int row = m_model->rowOf(path);
-  if (row < 0 || m_model->recordAt(row).isVideo() || m_model->recordAt(row).isDocument()) {
+  if (row < 0 || m_model->recordAt(row).isVideo() || m_model->recordAt(row).isDocument() ||
+      m_model->recordAt(row).isRaw()) {
     m_reviewing = false;
-    m_reviewError = QStringLiteral("This image is no longer available");
+    m_reviewError = row >= 0 && m_model->recordAt(row).isRaw()
+                        ? QStringLiteral("Text recognition cannot read camera raws")
+                        : QStringLiteral("This image is no longer available");
     emit reviewChanged();
     return;
   }
@@ -231,7 +234,7 @@ void OcrIndex::sync() {
   live.reserve(m_model->rowCount());
   for (int row = 0; row < m_model->rowCount(); ++row) {
     const auto& record = m_model->recordAt(row);
-    if (!record.isVideo() && !record.isDocument()) {
+    if (!record.isVideo() && !record.isDocument() && !record.isRaw()) {
       live.insert(record.path, {record.path, record.modified, record.bytes});
     }
   }
@@ -256,7 +259,8 @@ void OcrIndex::sync() {
   pictures.reserve(m_model->rowCount());
   for (int row = 0; row < m_model->rowCount(); ++row) {
     const auto& record = m_model->recordAt(row);
-    if (record.isVideo() || record.isDocument()) {
+    // Tesseract cannot read a camera raw.
+    if (record.isVideo() || record.isDocument() || record.isRaw()) {
       continue;
     }
     const Candidate candidate {record.path, record.modified, record.bytes};

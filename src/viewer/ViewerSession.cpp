@@ -1,5 +1,6 @@
 #include "viewer/ViewerSession.h"
 
+#include "sources/CameraRaw.h"
 #include "sources/CaptureScanner.h"
 #include "sources/FileVersion.h"
 
@@ -15,8 +16,10 @@
 #include <algorithm>
 
 namespace {
+// What a still Image loads for |path|: the file, or a camera raw's preview.
 QUrl imageUrl(const QString& path, const QString& version) {
   if (path.isEmpty()) return {};
+  if (CameraRaw::isRawFile(path)) return CameraRaw::previewUrl(path, version);
   QUrl result = QUrl::fromLocalFile(path);
   result.setQuery(QStringLiteral("omaroll=") + version);
   return result;
@@ -62,6 +65,11 @@ ViewerSession::ViewerSession(QObject* parent) : QObject(parent) {
     }
     setPreloadUrls(urls);
   });
+  connect(&m_rawSizeProbe, &QFutureWatcher<QSize>::finished, this, [this] {
+    if (m_rawSizeVersion != m_contentVersion || !isRaw()) return;
+    m_rawSize = m_rawSizeProbe.result();
+    emit rawSizeChanged();
+  });
 }
 
 ViewerSession::~ViewerSession() = default;
@@ -81,6 +89,12 @@ QString ViewerSession::folder() const {
 }
 
 bool ViewerSession::isVideo() const { return CaptureScanner::isVideo(m_mediaSuffix); }
+
+bool ViewerSession::isRaw() const { return CameraRaw::isRaw(m_mediaSuffix); }
+
+QUrl ViewerSession::rawUrl() const {
+  return isRaw() ? CameraRaw::fullUrl(path(), m_contentVersion) : QUrl();
+}
 
 bool ViewerSession::isAnimated() const {
   // The same rule the library viewer uses: these two may hold several frames,
@@ -139,16 +153,21 @@ bool ViewerSession::jump(int index) {
 }
 
 QUrl ViewerSession::neighbourUrl(int offset) const {
+  const QString neighbour = neighbourPath(offset);
+  return neighbour.isEmpty() ? QUrl() : QUrl::fromLocalFile(neighbour);
+}
+
+QString ViewerSession::neighbourPath(int offset) const {
   const int total = count();
   if (total < 2 || offset == 0) {
     return {};
   }
   const int index = ((m_index + offset) % total + total) % total;
-  return index == m_index ? QUrl() : QUrl::fromLocalFile(m_paths.at(index));
+  return index == m_index ? QString() : m_paths.at(index);
 }
 
 QUrl ViewerSession::neighbourImageUrl(int offset) const {
-  const QString neighbour = neighbourUrl(offset).toLocalFile();
+  const QString neighbour = neighbourPath(offset);
   return ::imageUrl(neighbour, FileVersion::key(neighbour));
 }
 
@@ -177,11 +196,11 @@ QString ViewerSession::fileNameAt(int index) const {
 }
 
 bool ViewerSession::neighbourIsVideo(int offset) const {
-  return CaptureScanner::isVideo(CaptureScanner::mediaSuffix(neighbourUrl(offset).toLocalFile()));
+  return CaptureScanner::isVideo(CaptureScanner::mediaSuffix(neighbourPath(offset)));
 }
 
 bool ViewerSession::neighbourIsAnimated(int offset) const {
-  const QString suffix = CaptureScanner::mediaSuffix(neighbourUrl(offset).toLocalFile());
+  const QString suffix = CaptureScanner::mediaSuffix(neighbourPath(offset));
   return suffix == u"gif" || suffix == u"webp";
 }
 
@@ -334,7 +353,7 @@ void ViewerSession::setPreloadUrls(const std::array<QUrl, 2>& urls) {
 
 void ViewerSession::refreshPreloads() {
   ++m_preloadGeneration;
-  m_pendingPreloadPaths = {neighbourUrl(1).toLocalFile(), neighbourUrl(-1).toLocalFile()};
+  m_pendingPreloadPaths = {neighbourPath(1), neighbourPath(-1)};
   // A two-file sequence wraps both directions onto the same picture. Also
   // exclude duplicate paths in an explicit selection, including the current.
   if (m_pendingPreloadPaths[0] == path()) m_pendingPreloadPaths[0].clear();
@@ -346,8 +365,7 @@ void ViewerSession::refreshPreloads() {
     const QString& neighbour = m_pendingPreloadPaths[i];
     if (neighbour.isEmpty()) continue;
     for (const QUrl& approved : m_preloadUrls) {
-      if (approved.toLocalFile() == neighbour &&
-          approved == ::imageUrl(neighbour, FileVersion::key(neighbour))) {
+      if (approved == ::imageUrl(neighbour, FileVersion::key(neighbour))) {
         retained[i] = approved;
         break;
       }
@@ -386,6 +404,10 @@ ViewerSession::PreloadResult ViewerSession::probePreloads(const std::array<QStri
     if (version.isEmpty()) continue;
     const QString suffix = CaptureScanner::mediaSuffix(path);
     if (!CaptureScanner::isImage(suffix) || suffix == u"gif" || suffix == u"webp") continue;
+    // A raw's preview decodes in a fraction of a second, and its header
+    // reports the sensor's size rather than the preview's, so it would only
+    // ever be budgeted wrongly.
+    if (CameraRaw::isRaw(suffix)) continue;
     QImageReader reader(path);
     if (!reader.canRead() || reader.supportsAnimation()) continue;
     const QSize size = reader.size();
@@ -409,6 +431,18 @@ void ViewerSession::refreshDetails() {
   watchCurrentFile();
   m_mediaSuffix = CaptureScanner::mediaSuffix(path());
   const QFileInfo info(path());
+  // Another file, or this one replaced: its raw size is read again.
+  if (m_rawSizeVersion != m_contentVersion || !isRaw()) {
+    const bool had = m_rawSize.isValid();
+    m_rawSize = QSize();
+    m_rawSizeVersion.clear();
+    if (had) emit rawSizeChanged();
+    if (isRaw() && !m_contentVersion.isEmpty()) {
+      m_rawSizeVersion = m_contentVersion;
+      m_rawSizeProbe.setFuture(
+          QtConcurrent::run([file = path()] { return CameraRaw::fullSize(file); }));
+    }
+  }
   if (path().isEmpty() || !info.exists()) {
     m_stamp = 0;
     m_sizeLabel.clear();

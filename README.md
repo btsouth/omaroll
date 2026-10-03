@@ -271,6 +271,19 @@ SVG/SVGZ, ICO, JXL, JPEG 2000, QOI, PSD, DDS, EXR, and TGA.
 TGA support depends on the installed Qt plugin; uncompressed Truevision 2.0
 files work, while older files without the footer may not.
 
+Camera raws: ARW, CR2, CR3, CRW, DNG, NEF, NRW, RAF, ORF, RW2, PEF, SRW and the
+other formats LibRaw reads, through the kimageformats raw plugin when `libraw`
+is installed. Thumbnails, the library and the viewer show the camera's embedded
+JPEG, turned upright, which most cameras write at full size; a raw without one
+gets a quick half-size decode instead. The viewer demosaics the raw only when
+the preview would be shown larger than it is.
+RAW tiles show their camera format. Develop opens an installed darktable,
+RawTherapee or ART; `D` does the same in the viewer. The library shows an install
+hint when none is available.
+Raws are never written: annotation, recognition, ordinary image editors, background,
+print and corrections are not offered for them, and Convert · resize makes a
+JPEG or PNG beside the raw instead.
+
 Videos: MP4, M4V, MKV, WebM, MOV, AVI, MPEG, WMV, FLV, Ogg video, 3GP and
 MTS/M2TS. Playback uses Qt's FFmpeg backend. An optional action can still hand
 the file to mpv.
@@ -351,7 +364,7 @@ On Arch, install the build and runtime dependencies:
 ```bash
 sudo pacman -S --needed git base-devel cmake ninja pkgconf bubblewrap \
   qt6-base qt6-declarative qt6-multimedia qt6-imageformats qt6-svg qt6-wayland \
-  kimageformats libavif libheif hicolor-icon-theme xdg-desktop-portal \
+  kimageformats libavif libheif libraw hicolor-icon-theme xdg-desktop-portal \
   ffmpeg ffmpegthumbnailer poppler wl-clipboard xdg-utils
 ```
 

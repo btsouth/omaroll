@@ -1,6 +1,7 @@
 #include "actions/ActionRegistry.h"
 
 #include "actions/ActionLauncher.h"
+#include "sources/CameraRaw.h"
 #include "sources/FileVersion.h"
 
 #include <QFile>
@@ -33,7 +34,8 @@ ActionRegistry::Definition annotateRow() {
             .program = configured,
             .arguments = {u"{path}"_s},
             .shortcut = u"A"_s,
-            .media = Media::Still};
+            .media = Media::Still,
+            .raws = false};
   }
   return {.id = u"annotate"_s,
           .label = u"Annotate"_s,
@@ -44,7 +46,8 @@ ActionRegistry::Definition annotateRow() {
                         u"wl-copy"_s},
           .shortcut = u"A"_s,
           .packageHint = u"tensaku"_s,
-          .media = Media::Still};
+          .media = Media::Still,
+          .raws = false};
 }
 
 ActionRegistry::Definition sendRow() {
@@ -91,6 +94,36 @@ ActionRegistry::Definition tailscaleRow() {
           .packageHint = u"tailscale"_s,
           .media = Media::Any,
           .batch = true};
+}
+
+// Use the first installed RAW developer. Without one, the row names
+// darktable so the hint says what to install.
+ActionRegistry::Definition developRow() {
+  using Media = ActionRegistry::Media;
+  struct Developer {
+    QString program;
+    QString label;
+  };
+  const QList<Developer> developers = {
+      {u"darktable"_s, u"Develop in darktable"_s},
+      {u"rawtherapee"_s, u"Develop in RawTherapee"_s},
+      {u"ART"_s, u"Develop in ART"_s},
+  };
+  Developer chosen = developers.first();
+  for (const Developer& developer : developers) {
+    if (!QStandardPaths::findExecutable(developer.program).isEmpty()) {
+      chosen = developer;
+      break;
+    }
+  }
+  return {.id = u"develop"_s,
+          .label = chosen.label,
+          .program = chosen.program,
+          .arguments = {u"{path}"_s},
+          .shortcut = u"D"_s,
+          .packageHint = u"darktable"_s,
+          .media = Media::Raw,
+          .primary = false};
 }
 
 } // namespace
@@ -167,14 +200,16 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
       {.id = u"corrections"_s,
        .label = u"Crop, rotate, resize"_s,
        .shortcut = u"Q"_s,
-       .media = Still},
+       .media = Still,
+       .raws = false},
 
       // Native: the same rotate/flip/resize over a whole selection, each as a
       // copy. QML gathers the checked files.
       {.id = u"correctionsbatch"_s,
        .label = u"Correct a selection"_s,
        .shortcut = u"B"_s,
-       .media = Still},
+       .media = Still,
+       .raws = false},
 
       // Native: side-by-side comparison with synchronized zoom. QML gathers
       // the selection, or the open picture's duplicate/similar set.
@@ -200,6 +235,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .shortcut = u"C"_s,
        .packageHint = u"tesseract"_s,
        .media = Still,
+       .raws = false,
        .result = TextToClipboard,
        .nothingFound = u"No text found"_s},
 
@@ -213,6 +249,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .arguments = {u"-q"_s, u"--raw"_s, u"-Sdisable"_s, u"-Sqrcode.enable"_s, u"{path}"_s},
        .packageHint = u"zbar"_s,
        .media = Still,
+       .raws = false,
        .result = SecretToClipboard,
        .confirmation = u"QR code copied to clipboard"_s,
        .nothingFound = u"No QR code found"_s},
@@ -222,14 +259,16 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .program = u"pinta"_s,
        .arguments = {u"{path}"_s},
        .packageHint = u"pinta"_s,
-       .media = Still},
+       .media = Still,
+       .raws = false},
 
       {.id = u"view"_s,
        .label = u"View full size"_s,
        .program = u"imv"_s,
        .arguments = {u"{path}"_s},
        .packageHint = u"imv"_s,
-       .media = Still},
+       .media = Still,
+       .raws = false},
 
       // Omarchy owns applying and persisting the current background. Keep the
       // library read-only and hand it the original path unchanged.
@@ -239,6 +278,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .arguments = {u"{path}"_s},
        .packageHint = u"Omarchy"_s,
        .media = Still,
+       .raws = false,
        .confirmation = u"Set as current background"_s},
 
       {.id = u"convert"_s,
@@ -260,6 +300,8 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .packageHint = u"Omarchy"_s,
        .media = Visual,
        .output = u"{stem}-{resolution}.{format}"_s},
+
+      developRow(),
 
       // --- Anything -------------------------------------------------------
       {.id = u"open-document"_s,
@@ -297,6 +339,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .arguments = {u"{path}"_s},
        .packageHint = u"cups"_s,
        .media = Printable,
+       .raws = false,
        .confirmation = u"Sent to the printer"_s},
 
       {.id = u"files"_s,
@@ -389,7 +432,10 @@ void ActionRegistry::probeThenLaunch(const Definition& definition, const QString
   timeout->start();
 }
 
-bool ActionRegistry::applies(const Definition& definition, bool video, bool document) {
+bool ActionRegistry::applies(const Definition& definition, bool video, bool document, bool raw) {
+  if (raw && !definition.raws) {
+    return false;
+  }
   switch (definition.media) {
   case Media::Still:
     return !video && !document;
@@ -402,6 +448,8 @@ bool ActionRegistry::applies(const Definition& definition, bool video, bool docu
   case Media::Printable:
     // Pictures and documents print; a video does not.
     return !video;
+  case Media::Raw:
+    return raw && !video && !document;
   case Media::Any:
     return true;
   }
@@ -426,9 +474,11 @@ bool ActionRegistry::appliesTo(const QString& id, bool video) const {
   return appliesToKind(id, video, false);
 }
 
-bool ActionRegistry::appliesToKind(const QString& id, bool video, bool document) const {
+bool ActionRegistry::appliesToKind(const QString& id, bool video, bool document,
+                                   const QString& path) const {
   const Definition* definition = find(id);
-  return definition && applies(*definition, video, document);
+  return definition && applies(*definition, video, document,
+                               !path.isEmpty() && CameraRaw::isRawFile(path));
 }
 
 QString ActionRegistry::primaryActionFor(bool video) const {
@@ -446,10 +496,12 @@ QString ActionRegistry::primaryActionForKind(bool video, bool document) const {
 
 QVariantList ActionRegistry::actionsFor(bool video) const { return actionsForKind(video, false); }
 
-QVariantList ActionRegistry::actionsForKind(bool video, bool document) const {
+QVariantList ActionRegistry::actionsForKind(bool video, bool document,
+                                            const QString& path) const {
+  const bool raw = !path.isEmpty() && CameraRaw::isRawFile(path);
   QVariantList rows;
   for (const Definition& definition : m_definitions) {
-    if (!definition.visible || !applies(definition, video, document)) {
+    if (!definition.visible || !applies(definition, video, document, raw)) {
       continue;
     }
 
@@ -508,6 +560,12 @@ bool ActionRegistry::run(const QString& id, const QStringList& paths,
   const Definition* definition = find(id);
   if (!definition || definition->program.isEmpty() || !m_launcher || paths.isEmpty()) {
     return false;
+  }
+
+  if (definition->media == Media::Raw) {
+    for (const QString& path : paths) {
+      if (!CameraRaw::isRawFile(path)) return false;
+    }
   }
 
   const QFileInfo first(paths.first());

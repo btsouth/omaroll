@@ -26,6 +26,7 @@
 #include "search/OcrIndex.h"
 #include "search/QrDetector.h"
 #include "subtitles/SubtitleIndex.h"
+#include "sources/CameraRaw.h"
 #include "sources/CaptureLocations.h"
 #include "sources/CaptureScanner.h"
 #include "theme/OmarchyTheme.h"
@@ -36,6 +37,7 @@
 #include <QClipboard>
 #include <QColorSpace>
 #include <QBuffer>
+#include <QCryptographicHash>
 #include <QImageIOHandler>
 #include <QImageReader>
 #include <QPainter>
@@ -90,6 +92,112 @@ QByteArray withExifOrientation(const QByteArray& jpeg, quint16 orientation) {
   app1.append(payload);
   app1.append(tiff);
   return jpeg.left(2) + app1 + jpeg.mid(2);
+}
+
+// One TIFF entry for cameraTiff(): ASCII text, or unsigned integers, or a
+// single rational as numerator and denominator.
+struct TiffField {
+  quint16 tag = 0;
+  quint16 type = 0;
+  QList<quint32> values;
+  QByteArray text;
+};
+
+// A TIFF structure the way cameras write one: IFD0, and when |exif| is given,
+// an Exif IFD it points to. Values longer than four bytes follow the IFDs.
+QByteArray cameraTiff(bool bigEndian, const QList<TiffField>& first,
+                      const QList<TiffField>& exif = {}) {
+  const auto put16 = [bigEndian](QByteArray& out, quint32 value) {
+    const char bytes[] = {char(value >> (bigEndian ? 8 : 0)), char(value >> (bigEndian ? 0 : 8))};
+    out.append(bytes, 2);
+  };
+  const auto put32 = [bigEndian](QByteArray& out, quint32 value) {
+    for (int index = 0; index < 4; ++index) {
+      out.append(char(value >> (bigEndian ? 24 - 8 * index : 8 * index)));
+    }
+  };
+  QList<TiffField> zeroth = first;
+  const quint32 firstAt = 8;
+  const quint32 exifAt = firstAt + 2 + 12 * quint32(zeroth.size() + (exif.isEmpty() ? 0 : 1)) + 4;
+  if (!exif.isEmpty()) {
+    zeroth.append({0x8769, 4, {exifAt}, {}});
+  }
+  quint32 dataAt = exifAt + (exif.isEmpty() ? 0 : 2 + 12 * quint32(exif.size()) + 4);
+
+  QByteArray out(bigEndian ? "MM" : "II", 2);
+  put16(out, 42);
+  put32(out, firstAt);
+  QByteArray data;
+  const auto directory = [&](const QList<TiffField>& fields) {
+    put16(out, quint32(fields.size()));
+    for (const TiffField& field : fields) {
+      put16(out, field.tag);
+      put16(out, field.type);
+      if (field.type == 2) {
+        const QByteArray text = field.text + '\0';
+        put32(out, quint32(text.size()));
+        if (text.size() <= 4) {
+          out.append(text.leftJustified(4, '\0'));
+        } else {
+          put32(out, dataAt + quint32(data.size()));
+          data.append(text);
+        }
+      } else if (field.type == 5) {
+        put32(out, 1);
+        put32(out, dataAt + quint32(data.size()));
+        put32(data, field.values.value(0));
+        put32(data, field.values.value(1));
+      } else {
+        put32(out, quint32(field.values.size()));
+        if (field.type == 3) {
+          put16(out, field.values.value(0));
+          put16(out, 0);
+        } else {
+          put32(out, field.values.value(0));
+        }
+      }
+    }
+    put32(out, 0);
+  };
+  directory(zeroth);
+  if (!exif.isEmpty()) {
+    directory(exif);
+  }
+  return out + data;
+}
+
+QList<TiffField> rawCameraFields(quint16 orientation) {
+  return {{0x010F, 2, {}, "SONY"}, {0x0110, 2, {}, "ILCE-7CM2"}, {0x0112, 3, {orientation}, {}}};
+}
+
+QList<TiffField> rawShotFields() {
+  return {{0x829A, 5, {1, 160}, {}},
+          {0x829D, 5, {32, 10}, {}},
+          {0x8827, 3, {3200}, {}},
+          {0x9003, 2, {}, "2026:10:01 08:32:17"},
+          {0x920A, 5, {280, 10}, {}},
+          {0xA434, 2, {}, "E 28-200mm F2.8-5.6 A071"}};
+}
+
+// An ISO base media box.
+QByteArray box(const QByteArray& type, const QByteArray& payload) {
+  const quint32 size = quint32(8 + payload.size());
+  QByteArray out;
+  for (int index = 0; index < 4; ++index) {
+    out.append(char(size >> (24 - 8 * index)));
+  }
+  return out + type + payload;
+}
+
+QString rawFixture(const QString& name) {
+  return QFINDTESTDATA(QStringLiteral("fixtures/raw/") + name);
+}
+
+QByteArray fileHash(const QString& path) {
+  QFile file(path);
+  return file.open(QIODevice::ReadOnly)
+             ? QCryptographicHash::hash(file.readAll(), QCryptographicHash::Sha256)
+             : QByteArray();
 }
 
 } // namespace
@@ -4389,6 +4497,350 @@ private slots:
     QVERIFY(!inspector.lines().isEmpty());
     QVERIFY(inspector.lines().first().startsWith(QStringLiteral("PNG")));
     QCOMPARE(QFileInfo(path).size(), before);
+  }
+
+  // The camera, lens, date and shot are read from the raw's own TIFF, in
+  // either byte order, behind ORF's and RW2's own magic numbers, and from
+  // inside a CR3's boxes or the JPEG at the front of a RAF.
+  void cameraRawHeadersGiveOrientationAndExif_data() {
+    QTest::addColumn<QByteArray>("file");
+    const QByteArray little = cameraTiff(false, rawCameraFields(6), rawShotFields());
+    const QByteArray big = cameraTiff(true, rawCameraFields(6), rawShotFields());
+    QTest::newRow("little-endian") << little;
+    QTest::newRow("big-endian") << big;
+    QByteArray olympus = little;
+    olympus.replace(2, 2, "RO");
+    QTest::newRow("orf") << olympus;
+    QByteArray panasonic = little;
+    panasonic.replace(2, 2, QByteArray("U\0", 2));
+    QTest::newRow("rw2") << panasonic;
+
+    const QByteArray canon = QByteArray::fromHex("85c0b687820f11e08111f4ce462b6a48");
+    const QByteArray cmt1 = box("CMT1", cameraTiff(false, rawCameraFields(6)));
+    const QByteArray cmt2 = box("CMT2", cameraTiff(false, rawShotFields()));
+    QTest::newRow("cr3") << box("ftyp", QByteArray("crx \0\0\0\1crx isom", 16)) +
+                                box("moov", box("uuid", canon + box("CNCV", "CanonCR3") +
+                                                            cmt1 + cmt2));
+
+    QByteArray jpeg = QByteArray::fromHex("ffd8");
+    const QByteArray exif = QByteArray("Exif\0\0", 6) + big;
+    const int length = int(exif.size()) + 2;
+    jpeg += QByteArray::fromHex("ffe1") + char(length >> 8) + char(length & 0xFF) + exif;
+    jpeg += QByteArray::fromHex("ffd9");
+    QByteArray fujifilm = QByteArray("FUJIFILMCCD-RAW 0201FF383501").leftJustified(84, '\0');
+    const quint32 at = 100;
+    for (int index = 0; index < 4; ++index) {
+      fujifilm.append(char(at >> (24 - 8 * index)));
+    }
+    for (int index = 0; index < 4; ++index) {
+      fujifilm.append(char(quint32(jpeg.size()) >> (24 - 8 * index)));
+    }
+    fujifilm = fujifilm.leftJustified(at, '\0') + jpeg;
+    QTest::newRow("raf") << fujifilm;
+  }
+
+  void cameraRawHeadersGiveOrientationAndExif() {
+    QFETCH(QByteArray, file);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("shot.raw"));
+    QFile out(path);
+    QVERIFY(out.open(QIODevice::WriteOnly));
+    out.write(file);
+    out.close();
+
+    const CameraRaw::Metadata metadata = CameraRaw::readMetadata(path);
+    QCOMPARE(metadata.orientation, 6);
+    QCOMPARE(metadata.make, QStringLiteral("SONY"));
+    QCOMPARE(metadata.model, QStringLiteral("ILCE-7CM2"));
+    QCOMPARE(metadata.lens, QStringLiteral("E 28-200mm F2.8-5.6 A071"));
+    QCOMPARE(metadata.taken, QDateTime(QDate(2026, 10, 1), QTime(8, 32, 17)));
+    QCOMPARE(metadata.exposureTime, QStringLiteral("1/160"));
+    QCOMPARE(metadata.fNumber, 3.2);
+    QCOMPARE(metadata.focalLength, 28.0);
+    QCOMPARE(metadata.iso, 3200);
+  }
+
+  // Raws come off cards and downloads: a cut-off or foreign file reads as
+  // nothing at all, never as a crash or a stray orientation.
+  void cameraRawHeadersSurviveTruncationAndJunk() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("cut.arw"));
+    const QByteArray whole = cameraTiff(false, rawCameraFields(8), rawShotFields());
+    for (qsizetype length = 0; length <= whole.size(); ++length) {
+      QFile out(path);
+      QVERIFY(out.open(QIODevice::WriteOnly | QIODevice::Truncate));
+      out.write(whole.left(length));
+      out.close();
+      const CameraRaw::Metadata metadata = CameraRaw::readMetadata(path);
+      QVERIFY(metadata.orientation >= 1 && metadata.orientation <= 8);
+    }
+    QCOMPARE(CameraRaw::readMetadata(path).orientation, 8);
+
+    // An IFD pointing past the end, and one claiming a huge entry count.
+    QByteArray broken = whole;
+    broken.replace(4, 4, QByteArray("\xff\xff\xff\x7f", 4));
+    QByteArray crowded = whole;
+    crowded.replace(8, 2, QByteArray("\xff\xff", 2));
+    for (const QByteArray& junk : {broken, crowded, QByteArray("MMjunk"), QByteArray(4096, 'x')}) {
+      QFile out(path);
+      QVERIFY(out.open(QIODevice::WriteOnly | QIODevice::Truncate));
+      out.write(junk);
+      out.close();
+      const CameraRaw::Metadata metadata = CameraRaw::readMetadata(path);
+      QCOMPARE(metadata.orientation, 1);
+      QVERIFY(metadata.make.isEmpty());
+    }
+    QCOMPARE(CameraRaw::readMetadata(dir.filePath(QStringLiteral("missing.arw"))).orientation, 1);
+  }
+
+  // The same for the containers around the TIFF: a CR3's boxes and a RAF's
+  // leading JPEG, cut off anywhere, with sizes that overflow or point past the
+  // end, and with boxes repeated so the walk cannot multiply.
+  void cameraRawContainersSurviveTruncationAndRepeats() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("cut.raw"));
+    const auto read = [&path](const QByteArray& bytes) {
+      QFile out(path);
+      if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) return CameraRaw::Metadata{};
+      out.write(bytes);
+      out.close();
+      return CameraRaw::readMetadata(path);
+    };
+
+    const QByteArray canon = QByteArray::fromHex("85c0b687820f11e08111f4ce462b6a48");
+    const QByteArray ftyp = box("ftyp", QByteArray("crx \0\0\0\1crx isom", 16));
+    const QByteArray cr3 =
+        ftyp + box("moov", box("uuid", canon + box("CMT1", cameraTiff(false, rawCameraFields(6))) +
+                                           box("CMT2", cameraTiff(false, rawShotFields()))));
+    for (qsizetype length = 0; length <= cr3.size(); ++length) {
+      const CameraRaw::Metadata metadata = read(cr3.left(length));
+      QVERIFY(metadata.orientation >= 1 && metadata.orientation <= 8);
+    }
+    QCOMPARE(read(cr3).iso, 3200);
+
+    // A 64-bit size near the limit, and a box that runs to the end of the file.
+    QByteArray huge = QByteArray::fromHex("00000001") + "moov" + QByteArray::fromHex("7fffffffffffffff");
+    QCOMPARE(read(ftyp + huge + cr3.mid(ftyp.size())).orientation, 1);
+    QByteArray open = cr3;
+    open.replace(ftyp.size(), 4, QByteArray(4, '\0'));
+    QCOMPARE(read(open).orientation, 6);
+
+    // Only the first moov, the first Canon box and the first CMT1 are read.
+    const QByteArray first = box("CMT1", cameraTiff(false, rawCameraFields(3)));
+    const QByteArray second = box("CMT1", cameraTiff(false, rawCameraFields(6)));
+    QCOMPARE(read(ftyp + box("moov", box("uuid", canon + first + second)) +
+                  box("moov", box("uuid", canon + second)))
+                 .orientation,
+             3);
+
+    // A RAF whose JPEG pointer leads past the end, then one cut short.
+    QByteArray fujifilm = QByteArray("FUJIFILMCCD-RAW 0201FF383501").leftJustified(84, '\0');
+    fujifilm += QByteArray::fromHex("7fffff00") + QByteArray::fromHex("00000010");
+    QCOMPARE(read(fujifilm).orientation, 1);
+    QByteArray jpeg = QByteArray::fromHex("ffd8");
+    const QByteArray exif = QByteArray("Exif\0\0", 6) + cameraTiff(true, rawCameraFields(6));
+    const int length = int(exif.size()) + 2;
+    jpeg += QByteArray::fromHex("ffe1") + char(length >> 8) + char(length & 0xFF) + exif;
+    QByteArray raf = QByteArray("FUJIFILMCCD-RAW 0201FF383501").leftJustified(84, '\0');
+    for (const quint32 field : {quint32(100), quint32(jpeg.size())}) {
+      for (int index = 0; index < 4; ++index) raf.append(char(field >> (24 - 8 * index)));
+    }
+    raf = raf.leftJustified(100, '\0') + jpeg;
+    for (qsizetype cut = 0; cut <= raf.size(); ++cut) {
+      const CameraRaw::Metadata metadata = read(raf.left(cut));
+      QVERIFY(metadata.orientation >= 1 && metadata.orientation <= 8);
+    }
+    QCOMPARE(read(raf).orientation, 6);
+  }
+
+  // The preview is turned exactly as Qt turns a JPEG with the same EXIF tag.
+  void rawPreviewsTurnAsQtTurnsAJpeg() {
+    QImage pattern(6, 4, QImage::Format_RGB32);
+    for (int y = 0; y < pattern.height(); ++y) {
+      for (int x = 0; x < pattern.width(); ++x) {
+        pattern.setPixel(x, y, qRgb(40 * x, 60 * y, x == 0 && y == 0 ? 255 : 0));
+      }
+    }
+    QBuffer buffer;
+    QVERIFY(buffer.open(QIODevice::WriteOnly));
+    QVERIFY(pattern.save(&buffer, "JPEG", 100));
+    for (quint16 orientation = 1; orientation <= 8; ++orientation) {
+      QByteArray jpeg = withExifOrientation(buffer.data(), orientation);
+      QBuffer stored(&jpeg);
+      QImageReader plain(&stored, "jpeg");
+      plain.setAutoTransform(false);
+      const QImage unturned = plain.read();
+      QBuffer turnedBuffer(&jpeg);
+      QImageReader turned(&turnedBuffer, "jpeg");
+      turned.setAutoTransform(true);
+      const QImage expected = turned.read().convertToFormat(QImage::Format_RGB32);
+      QCOMPARE(CameraRaw::upright(unturned, orientation).convertToFormat(QImage::Format_RGB32),
+               expected);
+    }
+  }
+
+  // A raw is listed, measured, previewed upright, decoded upright, described
+  // and dated without ImageMagick, and never written to.
+  void cameraRawsAreListedPreviewedAndDescribed() {
+    if (!CameraRaw::isRaw(QStringLiteral("dng"))) {
+      QSKIP("Qt has no camera raw decoder here (kimageformats with LibRaw)");
+    }
+    QVERIFY(CaptureScanner::isImage(QStringLiteral("ARW")));
+    QVERIFY(CaptureScanner::isImage(QStringLiteral("cr3")));
+    QVERIFY(CaptureScanner::isSupported(QStringLiteral("nef")));
+    QVERIFY(!CaptureScanner::isSupported(QStringLiteral("raw")));
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString camera = dir.filePath(QStringLiteral("DSC00042.DNG"));
+    const QString bare = dir.filePath(QStringLiteral("no-preview.dng"));
+    QVERIFY(QFile::copy(rawFixture(QStringLiteral("camera.dng")), camera));
+    QVERIFY(QFile::copy(rawFixture(QStringLiteral("no-preview.dng")), bare));
+    const QByteArray before = fileHash(camera);
+
+    const auto records = CaptureScanner::scan({{dir.path(), 1}});
+    QCOMPARE(records.size(), 2);
+    for (const CaptureRecord& record : records) {
+      QVERIFY(record.isRaw());
+      QVERIFY(!record.isVideo());
+      QCOMPARE(record.kind, CaptureRecord::Picture);
+    }
+    QVERIFY(ViewerSession::canOpen({camera, bare}));
+
+    // Tagged to turn a quarter clockwise: the bright top half ends up on
+    // the right, whether the picture is the embedded preview, the plugin's
+    // half-size decode of a raw without one, or the full demosaic.
+    const auto brightOnTheRight = [](const QImage& image) {
+      return qGray(image.pixel(image.width() - 1, image.height() / 2)) >
+             qGray(image.pixel(0, image.height() / 2)) + 60;
+    };
+    for (const QString& path : {camera, bare}) {
+      QCOMPARE(CameraRaw::fullSize(path), QSize(48, 64));
+      const QImage preview = CameraRaw::readPreview(path);
+      QCOMPARE(preview.size(), QSize(24, 32));
+      QVERIFY2(brightOnTheRight(preview), qPrintable(path));
+      const QImage full = CameraRaw::readFull(path);
+      QCOMPARE(full.size(), QSize(48, 64));
+      QVERIFY2(brightOnTheRight(full), qPrintable(path));
+    }
+
+    const QImage tile = ThumbnailCache::thumbnail(camera, QSize(12, 12), 1.0);
+    QVERIFY(!tile.isNull());
+    QVERIFY(tile.height() >= tile.width());
+
+    AppSettings settings;
+    CaptureModel model(&settings);
+    const QUrl url = model.fileUrl(camera);
+    QCOMPARE(url.scheme(), QStringLiteral("image"));
+    QCOMPARE(url.host(), QStringLiteral("raw"));
+    QVERIFY(model.fileUrl(dir.filePath(QStringLiteral("x.png"))).isLocalFile());
+    QSignalSpy sized(&model, &CaptureModel::rawSizeRead);
+    model.readRawSize(camera, url);
+    QTRY_COMPARE(sized.count(), 1);
+    QCOMPARE(sized.at(0).at(0).toString(), camera);
+    QCOMPARE(sized.at(0).at(1).toUrl(), url);
+    QCOMPARE(sized.at(0).at(2).toSize(), QSize(48, 64));
+
+    // A file replaced with the same mtime, as cp -p or rsync -a leave it, is
+    // a new URL, so Qt's cache cannot serve the old preview.
+    const QUrl previous = CameraRaw::previewUrl(camera);
+    const QDateTime stamp = QFileInfo(camera).lastModified();
+    const QString replacement = dir.filePath(QStringLiteral("replacement.dng"));
+    QVERIFY(QFile::copy(camera, replacement));
+    QVERIFY(QFile::remove(camera));
+    QVERIFY(QFile::rename(replacement, camera));
+    {
+      QFile touched(camera);
+      QVERIFY(touched.open(QIODevice::ReadWrite));
+      QVERIFY(touched.setFileTime(stamp, QFileDevice::FileModificationTime));
+    }
+    QCOMPARE(QFileInfo(camera).lastModified(), stamp);
+    QVERIFY(CameraRaw::previewUrl(camera) != previous);
+
+    QCOMPARE(MediaInspector::describeRaw(camera),
+             QStringList({QStringLiteral("DNG"),
+                          QStringLiteral("Taken  ·  ") +
+                              QLocale::system().toString(
+                                  QDateTime(QDate(2026, 9, 30), QTime(14, 5, 6)),
+                                  QLocale::ShortFormat),
+                          QStringLiteral("Camera  ·  Omaroll Test Camera"),
+                          QStringLiteral("Lens  ·  Test Lens 35mm F2.8"),
+                          QStringLiteral("f/2.8  ·  1/125 s  ·  ISO 400  ·  35 mm")}));
+    MediaInspector inspector;
+    inspector.inspect(camera, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!inspector.loading(), 5000);
+    QCOMPARE(inspector.lines().value(2), QStringLiteral("Camera  ·  Omaroll Test Camera"));
+
+    const MediaMetadataIndex::Details details = MediaMetadataIndex::rawDetails(camera);
+    QCOMPARE(details.captured, QDateTime(QDate(2026, 9, 30), QTime(14, 5, 6)));
+    QCOMPARE(details.camera, QStringLiteral("Omaroll Test Camera"));
+    QCOMPARE(details.lens, QStringLiteral("Test Lens 35mm F2.8"));
+
+    QCOMPARE(fileHash(camera), before);
+  }
+
+  // Tools that open the file themselves cannot read a raw; the actions that
+  // go through Omaroll's own decoder, or only move the file, stay.
+  void cameraRawsOfferOnlyActionsThatCanOpenThem() {
+    if (!CameraRaw::isRaw(QStringLiteral("arw"))) {
+      QSKIP("Qt has no camera raw decoder here (kimageformats with LibRaw)");
+    }
+    ActionRegistry registry(nullptr);
+    const QString raw = QStringLiteral("/tmp/DSC00042.ARW");
+    QStringList offered;
+    for (const QVariant& row : registry.actionsForKind(false, false, raw)) {
+      offered << row.toMap().value(QStringLiteral("id")).toString();
+    }
+    for (const QString& id :
+         {QStringLiteral("annotate"), QStringLiteral("ocr"), QStringLiteral("qr"),
+          QStringLiteral("edit"), QStringLiteral("view"), QStringLiteral("background"),
+          QStringLiteral("print"), QStringLiteral("corrections"),
+          QStringLiteral("correctionsbatch")}) {
+      QVERIFY2(!offered.contains(id), qPrintable(id));
+      QVERIFY2(!registry.appliesToKind(id, false, false, raw), qPrintable(id));
+      QVERIFY2(registry.appliesToKind(id, false, false, QStringLiteral("/tmp/DSC00042.JPG")),
+               qPrintable(id));
+    }
+    QVERIFY(offered.contains(QStringLiteral("develop")));
+    QVERIFY(registry.appliesToKind(QStringLiteral("develop"), false, false, raw));
+    QVERIFY(!registry.appliesToKind(QStringLiteral("develop"), false, false,
+                                  QStringLiteral("/tmp/DSC00042.JPG")));
+    for (const QString& id :
+         {QStringLiteral("matte"), QStringLiteral("compare"), QStringLiteral("export"),
+          QStringLiteral("copy"), QStringLiteral("send"), QStringLiteral("files"),
+          QStringLiteral("rename"), QStringLiteral("favorite"), QStringLiteral("trash")}) {
+      QVERIFY2(offered.contains(id), qPrintable(id));
+    }
+  }
+
+  // Corrections save a copy in the source's format, and a raw cannot be
+  // written; nothing is flattened into a stand-in either.
+  void correctionsRefuseCameraRaws() {
+    if (!CameraRaw::isRaw(QStringLiteral("dng"))) {
+      QSKIP("Qt has no camera raw decoder here (kimageformats with LibRaw)");
+    }
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString raw = dir.filePath(QStringLiteral("shot.dng"));
+    QVERIFY(QFile::copy(rawFixture(QStringLiteral("camera.dng")), raw));
+    const QString png = dir.filePath(QStringLiteral("plain.png"));
+    QVERIFY(QImage(20, 10, QImage::Format_RGB32).save(png, "PNG"));
+
+    ImageEditor editor;
+    QSignalSpy failed(&editor, &ImageEditor::failed);
+    QSignalSpy finished(&editor, &ImageEditor::batchFinished);
+    editor.saveCopy(raw, 1, false, false, 0, 0, 0, 1, 1, 0, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 5000);
+    QCOMPARE(failed.first().first().toString(), QStringLiteral("Camera raws are not corrected here"));
+    editor.saveCopies({raw, png}, 1, false, false, 0, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 20000);
+    QCOMPARE(finished.first().at(0).toInt(), 1);
+    QCOMPARE(finished.first().at(1).toInt(), 1);
+    QCOMPARE(QDir(dir.path()).entryList({QStringLiteral("shot-edited*")}, QDir::Files),
+             QStringList());
   }
 
   void hiddenIsExcludedUntilAskedFor() {

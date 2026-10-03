@@ -26,6 +26,8 @@ enum Role {
   LensRole,
   RatingRole,
   CaptionRole,
+  // "NEF", "CR3": the camera format of a RAW file, empty for anything else.
+  RawFormatRole,
   // Added by CaptureFilterModel while a search result needs OCR context.
   OcrSnippetRole,
 };

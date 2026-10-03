@@ -33,6 +33,9 @@ public:
   [[nodiscard]] static QStringList parseImage(const QByteArray& output);
   [[nodiscard]] static QStringList parseVideo(const QByteArray& output,
                                               const QString& suffix);
+  // ImageMagick reports no EXIF for camera raws; their own headers are read
+  // in-process instead, into the same lines.
+  [[nodiscard]] static QStringList describeRaw(const QString& path);
 
 signals:
   void detailsChanged();

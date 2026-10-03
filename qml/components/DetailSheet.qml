@@ -208,7 +208,7 @@ Item {
     }
 
     function visibleActions() {
-        const rows = Registry.actionsForKind(root.isVideo, root.isDocument)
+        const rows = Registry.actionsForKind(root.isVideo, root.isDocument, root.path)
         return rows.filter(function (row) { return row.id !== "qr" || root.qrDetected })
     }
 
@@ -219,7 +219,7 @@ Item {
                                                                Settings.imagePrimaryAction === "corrections"
                                                                ? "matte" : "corrections"]
     readonly property var primaryActionRows: {
-        const rows = Registry.actionsForKind(root.isVideo, root.isDocument)
+        const rows = Registry.actionsForKind(root.isVideo, root.isDocument, root.path)
         const out = []
         for (const id of root.primaryActionIds) {
             for (const row of rows) {
@@ -1172,6 +1172,7 @@ Item {
             Component {
                 id: staticStill
                 Image {
+                    id: staticImage
                     source: root.visible && !root.isVideo && root.path !== ""
                             ? Library.fileUrl(root.path) : ""
                     asynchronous: true
@@ -1179,11 +1180,31 @@ Item {
                     smooth: true
                     mipmap: true
                     fillMode: Image.Stretch
+                    // A camera raw shows its embedded preview; measure it by
+                    // the raw when the two have the same shape.
+                    Connections {
+                        target: Library
+                        function onRawSizeRead(path, source, size) {
+                            const still = staticImage
+                            if (path !== root.path || source.toString() !== still.source.toString()
+                                    || still.status !== Image.Ready
+                                    || size.width <= 0 || size.height <= 0) {
+                                return
+                            }
+                            const shown = still.sourceSize
+                            if (Math.abs(size.width / size.height
+                                         / (shown.width / shown.height) - 1) < 0.02) {
+                                root.imageSourceWidth = size.width
+                                root.imageSourceHeight = size.height
+                            }
+                        }
+                    }
                     onStatusChanged: {
                         if (status === Image.Ready) {
                             root.imageSourceWidth = sourceSize.width
                             root.imageSourceHeight = sourceSize.height
                             root.stillReady = true
+                            Library.readRawSize(root.path, source)
                         } else if (status === Image.Error) {
                             root.playbackError = "Could not display this image"
                             root.stillReady = true

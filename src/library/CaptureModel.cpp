@@ -2,6 +2,7 @@
 
 #include "app/AppSettings.h"
 #include "library/CaptureRoles.h"
+#include "sources/CameraRaw.h"
 #include "sources/CaptureLocations.h"
 
 #include <QDir>
@@ -286,6 +287,8 @@ QVariant CaptureModel::data(const QModelIndex& index, int role) const {
     return record.rating;
   case CaptureRoles::CaptionRole:
     return record.caption;
+  case CaptureRoles::RawFormatRole:
+    return record.isRaw() ? QFileInfo(record.path).suffix().toUpper() : QString();
   default:
     return {};
   }
@@ -312,6 +315,7 @@ QHash<int, QByteArray> CaptureModel::roleNames() const {
       {CaptureRoles::LensRole, "lens"},
       {CaptureRoles::RatingRole, "rating"},
       {CaptureRoles::CaptionRole, "caption"},
+      {CaptureRoles::RawFormatRole, "rawFormat"},
   };
 }
 
@@ -394,7 +398,20 @@ QString CaptureModel::dayLabelAt(int row) const {
   return dayLabel(m_records.at(row).captured.date());
 }
 
-QUrl CaptureModel::fileUrl(const QString& path) const { return QUrl::fromLocalFile(path); }
+QUrl CaptureModel::fileUrl(const QString& path) const {
+  return CameraRaw::isRawFile(path) ? CameraRaw::previewUrl(path) : QUrl::fromLocalFile(path);
+}
+
+void CaptureModel::readRawSize(const QString& path, const QUrl& source) {
+  if (!CameraRaw::isRawFile(path) || source != fileUrl(path)) {
+    return;
+  }
+  QtConcurrent::run([path] { return CameraRaw::fullSize(path); })
+      .then(this, [this, path, source](const QSize& size) {
+        // A replacement must not inherit an earlier file's dimensions.
+        if (source == fileUrl(path)) emit rawSizeRead(path, source, size);
+      });
+}
 
 QString CaptureModel::uriList(const QStringList& paths) const {
   QString list;
@@ -536,6 +553,7 @@ void CaptureModel::adoptResults(ScanResult result) {
       if (record.modified == fresh.modified && record.bytes == fresh.bytes &&
           record.kind == fresh.kind && record.video == fresh.video &&
           record.document == fresh.document && record.animated == fresh.animated &&
+          record.raw == fresh.raw &&
           record.captured == fresh.captured &&
           record.hasProducerTimestamp == fresh.hasProducerTimestamp &&
           record.favorite == fresh.favorite && record.hidden == fresh.hidden) {

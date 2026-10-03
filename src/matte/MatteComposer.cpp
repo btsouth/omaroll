@@ -1,6 +1,7 @@
 #include "matte/MatteComposer.h"
 
 #include "matte/HueExtractor.h"
+#include "sources/CameraRaw.h"
 
 #include <QBuffer>
 #include <QClipboard>
@@ -276,7 +277,9 @@ void MatteComposer::composeAndSave(const QString& path, int matte, int aspect,
 
   QImageReader reader(path);
   reader.setAutoTransform(true);
-  const QImage source = reader.read();
+  // A camera raw is framed from the same embedded preview the library shows
+  // and the matte sheet previews, so the saved picture is the one chosen.
+  const QImage source = CameraRaw::isRawFile(path) ? CameraRaw::readPreview(path) : reader.read();
   if (source.isNull()) {
     emit failed(QStringLiteral("Could not read %1").arg(info.fileName()));
     return;

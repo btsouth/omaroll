@@ -1,5 +1,7 @@
 #include "library/MediaMetadataIndex.h"
 
+#include "sources/CameraRaw.h"
+
 #include <QDataStream>
 #include <QDir>
 #include <QFile>
@@ -10,6 +12,7 @@
 #include <QSaveFile>
 #include <QSet>
 #include <QStandardPaths>
+#include <QtConcurrent>
 
 #include <algorithm>
 #include <utility>
@@ -106,6 +109,18 @@ MediaMetadataIndex::MediaMetadataIndex(CaptureModel* model, QObject* parent)
     if (error == QProcess::FailedToStart) {
       finishCurrent(false);
     }
+  });
+
+  connect(&m_rawProbe, &QFutureWatcher<QList<Details>>::finished, this, [this] {
+    const QList<Candidate> batch = std::exchange(m_current, {});
+    const QList<Details> results = m_rawProbe.result();
+    for (qsizetype index = 0; index < batch.size() && index < results.size(); ++index) {
+      if (stillCurrent(batch.at(index))) {
+        adopt(batch.at(index), results.at(index));
+      }
+    }
+    advanceProgress(static_cast<int>(batch.size()));
+    QTimer::singleShot(0, this, &MediaMetadataIndex::processNext);
   });
 
   m_syncTimer.setSingleShot(true);
@@ -236,6 +251,15 @@ MediaMetadataIndex::Details MediaMetadataIndex::parseVideoDetails(const QByteArr
   return details;
 }
 
+MediaMetadataIndex::Details MediaMetadataIndex::rawDetails(const QString& path) {
+  const CameraRaw::Metadata metadata = CameraRaw::readMetadata(path);
+  Details details;
+  details.captured = metadata.taken;
+  details.camera = cameraName(metadata.make, metadata.model);
+  details.lens = metadata.lens.simplified();
+  return details;
+}
+
 CaptureModel::MetadataUpdate MediaMetadataIndex::updateFor(const Candidate& candidate,
                                                            const Details& details) {
   return {candidate.path,   candidate.modified, candidate.bytes, details.captured,
@@ -255,12 +279,13 @@ void MediaMetadataIndex::sync() {
     for (int row = 0; row < m_model->rowCount(); ++row) {
       const CaptureRecord& record = m_model->recordAt(row);
       if (record.isDocument() || record.isVideo() != videos || record.hasProducerTimestamp ||
-          (videos ? m_videoProgram.isEmpty() : m_imageProgram.isEmpty())) {
+          (videos ? m_videoProgram.isEmpty() : m_imageProgram.isEmpty() && !record.isRaw())) {
         continue;
       }
 
       const Candidate candidate {record.path,      record.modified, record.bytes,
-                                 record.isVideo(), record.device,   record.inode};
+                                 record.isVideo(), record.device,   record.inode,
+                                 record.isRaw()};
       const auto known = m_entries.constFind(record.path);
       if (known != m_entries.cend() && known->modified == record.modified &&
           known->bytes == record.bytes && known->device == record.device &&
@@ -322,8 +347,32 @@ void MediaMetadataIndex::processNext() {
   }
 
   m_current.append(first);
+  if (first.raw) {
+    // A few header reads each, so no process.
+    QStringList paths = {first.path};
+    while (m_current.size() < kImageBatchSize && !m_queue.isEmpty() && m_queue.first().raw) {
+      const Candidate candidate = m_queue.takeFirst();
+      if (stillCurrent(candidate)) {
+        m_current.append(candidate);
+        paths.append(candidate.path);
+      } else {
+        advanceProgress();
+      }
+    }
+    m_rawProbe.setFuture(QtConcurrent::run([paths] {
+      QList<Details> results;
+      results.reserve(paths.size());
+      for (const QString& path : paths) {
+        results.append(rawDetails(path));
+      }
+      return results;
+    }));
+    return;
+  }
+
   if (!first.video) {
-    while (m_current.size() < kImageBatchSize && !m_queue.isEmpty() && !m_queue.first().video) {
+    while (m_current.size() < kImageBatchSize && !m_queue.isEmpty() && !m_queue.first().video &&
+           !m_queue.first().raw) {
       const Candidate candidate = m_queue.takeFirst();
       if (stillCurrent(candidate)) {
         m_current.append(candidate);

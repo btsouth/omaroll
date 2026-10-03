@@ -25,7 +25,7 @@ class ActionRegistry final : public QObject {
   Q_OBJECT
 
 public:
-  enum class Media { Still, Moving, Document, Visual, Printable, Any };
+  enum class Media { Still, Moving, Document, Visual, Printable, Raw, Any };
 
   // How the handler's result reaches the user. Most tools open a window or
   // send their own notification; the two recognisers only print to stdout, so
@@ -46,6 +46,9 @@ public:
     // what to install rather than just failing.
     QString packageHint = {};
     Media media = Media::Any;
+    // Whether the tool reads camera raws. Only Qt's raw plugin decodes them
+    // here; editors, recognisers and the printer would fail on the file.
+    bool raws = true;
     // Legacy or internal rows remain runnable without cluttering the action
     // list. This preserves stable ids while a richer UI replaces a preset.
     bool visible = true;
@@ -71,8 +74,11 @@ public:
   explicit ActionRegistry(ActionLauncher* launcher, QObject* parent = nullptr);
 
   // Rows for QML: id, label, shortcut, available, hint, primary, native.
+  // With a path, rows whose tool cannot open that file (a camera raw) are
+  // left out.
   Q_INVOKABLE QVariantList actionsFor(bool video) const;
-  Q_INVOKABLE QVariantList actionsForKind(bool video, bool document) const;
+  Q_INVOKABLE QVariantList actionsForKind(bool video, bool document,
+                                          const QString& path = {}) const;
 
   // Runs a delegated action. Returns false for an unknown id, an action omaroll
   // handles itself, or a missing program; the launcher reports why.
@@ -104,7 +110,8 @@ public:
   // the wrong kind of file is refused with a word rather than handed to a tool
   // that cannot open it.
   Q_INVOKABLE bool appliesTo(const QString& id, bool video) const;
-  Q_INVOKABLE bool appliesToKind(const QString& id, bool video, bool document) const;
+  Q_INVOKABLE bool appliesToKind(const QString& id, bool video, bool document,
+                                 const QString& path = {}) const;
 
 private:
   bool run(const QString& id, const QStringList& paths, const QVariantMap& placeholders = {});
@@ -114,7 +121,8 @@ private:
   void probeThenLaunch(const Definition& definition, const QStringList& arguments,
                        const QString& output);
   bool launch(const Definition& definition, const QStringList& arguments, const QString& output);
-  [[nodiscard]] static bool applies(const Definition& definition, bool video, bool document);
+  [[nodiscard]] static bool applies(const Definition& definition, bool video, bool document,
+                                    bool raw = false);
   [[nodiscard]] const Definition* find(const QString& id) const;
   [[nodiscard]] static QList<Definition> buildTable();
 

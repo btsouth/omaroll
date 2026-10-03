@@ -1,4 +1,5 @@
 #include "library/MediaInspector.h"
+#include "sources/CameraRaw.h"
 #include "sources/CaptureScanner.h"
 
 #include <QDateTime>
@@ -9,6 +10,7 @@
 #include <QLocale>
 #include <QProcess>
 #include <QStandardPaths>
+#include <QtConcurrent>
 #include <QTimer>
 
 #include <cmath>
@@ -124,6 +126,20 @@ void MediaInspector::inspect(const QString& path, bool video) {
 
   if (path.isEmpty() || !QFileInfo(path).isFile()) {
     setLoading(false);
+    return;
+  }
+
+  if (!video && CameraRaw::isRawFile(path)) {
+    // Header reads, on a worker so a slow disk cannot stall the window.
+    const quint64 generation = m_generation;
+    setLoading(true);
+    QtConcurrent::run([path] { return describeRaw(path); })
+        .then(this, [this, generation](const QStringList& lines) {
+          if (generation != m_generation) return;
+          m_lines = lines;
+          emit detailsChanged();
+          setLoading(false);
+        });
     return;
   }
 
@@ -260,6 +276,29 @@ QStringList MediaInspector::parseImage(const QByteArray& output) {
     lines.append(exposure.join(QStringLiteral("  ·  ")));
   }
   return lines;
+}
+
+QStringList MediaInspector::describeRaw(const QString& path) {
+  const CameraRaw::Metadata metadata = CameraRaw::readMetadata(path);
+  const auto positive = [](double value) {
+    return value > 0 ? QLocale::c().toString(value, 'g', 6) : QString();
+  };
+  // The fields parseImage() reads from ImageMagick, in its order.
+  const QStringList fields = {
+      CaptureScanner::mediaSuffix(path),
+      metadata.taken.toString(QStringLiteral("yyyy:MM:dd HH:mm:ss")),
+      QString(),
+      metadata.make,
+      metadata.model,
+      metadata.lens,
+      positive(metadata.fNumber),
+      metadata.exposureTime,
+      metadata.iso > 0 ? QString::number(metadata.iso) : QString(),
+      positive(metadata.focalLength),
+      QString(),
+      QString(),
+  };
+  return parseImage(fields.join(QLatin1Char('\n')).toUtf8());
 }
 
 QStringList MediaInspector::parseVideo(const QByteArray& output, const QString& suffix) {

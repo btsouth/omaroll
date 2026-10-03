@@ -1,5 +1,7 @@
 #include "sources/CaptureScanner.h"
 
+#include "sources/CameraRaw.h"
+
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -121,7 +123,7 @@ bool isTransientCaptureArtifact(const QString& name) {
 } // namespace
 
 bool CaptureScanner::isImage(const QString& suffix) {
-  return kImageSuffixes.contains(suffix.toLower());
+  return kImageSuffixes.contains(suffix.toLower()) || CameraRaw::isRaw(suffix);
 }
 
 bool CaptureScanner::isVideo(const QString& suffix) {
@@ -416,6 +418,7 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots, const std::a
         record.video = video;
         record.document = document;
         record.animated = image && (suffix == u"gif" || suffix == u"webp");
+        record.raw = image && CameraRaw::isRaw(suffix);
         record.captured = entry.lastModified();
         struct stat status {};
         if (::stat(QFile::encodeName(canonicalFile).constData(), &status) == 0) {

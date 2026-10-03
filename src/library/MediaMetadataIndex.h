@@ -2,6 +2,7 @@
 
 #include "library/CaptureModel.h"
 
+#include <QFutureWatcher>
 #include <QHash>
 #include <QList>
 #include <QObject>
@@ -47,6 +48,8 @@ public:
   [[nodiscard]] static Details parseImageDetails(const QByteArray& output);
   [[nodiscard]] static QDateTime parseVideoDate(const QByteArray& output);
   [[nodiscard]] static Details parseVideoDetails(const QByteArray& output);
+  // Camera raws are read in-process: ImageMagick reports no EXIF for them.
+  [[nodiscard]] static Details rawDetails(const QString& path);
   // "Apple iPhone 12", or just the model when the maker already leads it.
   [[nodiscard]] static QString cameraName(const QString& make, const QString& model);
 
@@ -62,6 +65,7 @@ private:
     bool video = false;
     quint64 device = 0;
     quint64 inode = 0;
+    bool raw = false;
   };
 
   struct Entry {
@@ -98,6 +102,9 @@ private:
   QHash<QString, QString> m_failed;
   QList<Candidate> m_current;
   QProcess m_process;
+  // Raws are read in-process, a batch at a time on a worker: a slow disk or
+  // network share must not stall the window.
+  QFutureWatcher<QList<Details>> m_rawProbe;
   QTimer m_timeout;
   QTimer m_syncTimer;
   QTimer m_saveTimer;
