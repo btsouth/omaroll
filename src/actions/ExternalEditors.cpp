@@ -90,11 +90,14 @@ bool ExternalEditors::parseCustomCommand(const QString& command, QString* progra
   return true;
 }
 
+bool ExternalEditors::customCommandAvailable(const QString& command) const {
+  QString program;
+  return parseCustomCommand(command, &program, nullptr) && !executableFor(program).isEmpty();
+}
+
 bool ExternalEditors::available(const QString& id) const {
   if (id == kCustomId) {
-    QString program;
-    return parseCustomCommand(m_customCommand, &program, nullptr) &&
-           !executableFor(program).isEmpty();
+    return customCommandAvailable(m_customCommand);
   }
   for (const Editor& editor : knownEditors()) {
     if (editor.id == id) {

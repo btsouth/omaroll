@@ -3158,6 +3158,7 @@ private slots:
         ->contextProperty(QStringLiteral("Editors")).value<QObject*>());
     QVERIFY(editors);
     const QString saved = editors->customCommand();
+    editors->setCustomCommand(QString());
     const QString raw = m_scratch.filePath(QStringLiteral("cancel-command.dng"));
     QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/raw/camera.dng"), raw));
     QObject* chooser = m_window->findChild<QObject*>(QStringLiteral("editorChooser"));
@@ -3170,11 +3171,26 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_A, Qt::ControlModifier);
     typeText(QStringLiteral("unavailable-draft-editor {path}"));
     QCOMPARE(chooser->property("customDraft").toString(), QStringLiteral("unavailable-draft-editor {path}"));
-    QCOMPARE(editors->customCommand(), saved);
+    QCOMPARE(editors->customCommand(), QString());
+    QVERIFY(!item("editorChooserDefault_custom")->isEnabled());
     QTest::keyClick(m_window, Qt::Key_Escape);
     QTRY_VERIFY(!chooser->property("visible").toBool());
-    QCOMPARE(editors->customCommand(), saved);
+    QCOMPARE(editors->customCommand(), QString());
     QVERIFY(!QFileInfo::exists(raw + QStringLiteral(".editor-open")));
+    QVERIFY(QMetaObject::invokeMethod(chooser, "request", Q_ARG(QVariant, raw),
+                                     Q_ARG(QVariant, true)));
+    QTRY_VERIFY(chooser->property("visible").toBool());
+    input->forceActiveFocus();
+    QTest::keyClick(m_window, Qt::Key_A, Qt::ControlModifier);
+    typeText(saved);
+    QCOMPARE(editors->customCommand(), QString());
+    QQuickItem* makeDefault = item("editorChooserDefault_custom");
+    QTRY_VERIFY(makeDefault->isEnabled());
+    click(makeDefault);
+    QCOMPARE(editors->customCommand(), saved);
+    QCOMPARE(editors->preferredId(), QStringLiteral("custom"));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!chooser->property("visible").toBool());
     for (const QString& id : {QStringLiteral("develop"), QStringLiteral("choose-editor")}) {
       perform(id, pathAt(0));
       QCOMPARE(item("detail")->property("status").toString(), QStringLiteral("That action is for camera raws"));

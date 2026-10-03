@@ -25,7 +25,8 @@ Popup {
     readonly property bool hasAvailable: {
         const rows = Editors.candidates
         for (let index = 0; index < rows.length; ++index) {
-            if (rows[index].available) {
+            if (rows[index].id === "custom" ? Editors.customCommandAvailable(root.customDraft)
+                                            : rows[index].available) {
                 return true
             }
         }
@@ -158,6 +159,9 @@ Popup {
                         id: candidateRow
                         required property int index
                         required property var modelData
+                        readonly property bool available: modelData.id === "custom"
+                                                          ? Editors.customCommandAvailable(root.customDraft)
+                                                          : modelData.available
 
                         width: parent.width
                         height: 38
@@ -168,7 +172,7 @@ Popup {
                                   ? root.shade(Theme.foreground, 0.08) : "transparent")
                         border.width: root.selectedId === candidateRow.modelData.id ? 1 : 0
                         border.color: root.shade(Theme.accent, 0.60)
-                        opacity: candidateRow.modelData.available ? 1 : 0.52
+                        opacity: candidateRow.available ? 1 : 0.52
 
                         Text {
                             id: candidateLabel
@@ -190,7 +194,7 @@ Popup {
                             anchors.right: favoriteButton.left
                             anchors.rightMargin: 8
                             anchors.verticalCenter: parent.verticalCenter
-                            text: candidateRow.modelData.available
+                            text: candidateRow.available
                                   ? ""
                                   : (candidateRow.modelData.id === "custom"
                                      ? (root.customDraft.trim() === ""
@@ -203,6 +207,7 @@ Popup {
 
                         IconButton {
                             id: favoriteButton
+                            objectName: "editorChooserDefault_" + candidateRow.modelData.id
                             anchors.right: parent.right
                             anchors.rightMargin: 4
                             anchors.verticalCenter: parent.verticalCenter
@@ -210,10 +215,13 @@ Popup {
                             height: 30
                             icon: candidateRow.modelData.preferred ? "star-filled" : "star"
                             active: candidateRow.modelData.preferred
-                            enabled: candidateRow.modelData.available
+                            enabled: candidateRow.available
                             toolTip: candidateRow.modelData.preferred
                                      ? "Default editor" : "Use by default"
                             onClicked: {
+                                if (candidateRow.modelData.id === "custom") {
+                                    Editors.customCommand = root.customDraft
+                                }
                                 if (Editors.setPreferred(candidateRow.modelData.id)) {
                                     root.selectedId = candidateRow.modelData.id
                                 }
@@ -222,13 +230,13 @@ Popup {
 
                         HoverHandler {
                             id: candidateHover
-                            enabled: candidateRow.modelData.available
+                            enabled: candidateRow.available
                                      || candidateRow.modelData.id === "custom"
                             cursorShape: Qt.PointingHandCursor
                         }
 
                         TapHandler {
-                            enabled: candidateRow.modelData.available
+                            enabled: candidateRow.available
                                      || candidateRow.modelData.id === "custom"
                             onSingleTapped: root.selectedId = candidateRow.modelData.id
                         }

@@ -35,6 +35,7 @@ public:
   [[nodiscard]] QString preferredId() const { return m_preferredId; }
   void setPreferredId(const QString& id);
   Q_INVOKABLE bool setPreferred(const QString& id);
+  Q_INVOKABLE bool customCommandAvailable(const QString& command) const;
 
   [[nodiscard]] QString customCommand() const { return m_customCommand; }
   void setCustomCommand(const QString& command);
