@@ -8,6 +8,8 @@
 #include <QStringList>
 #include <QVariantMap>
 
+#include <optional>
+
 class AppSettings;
 class QMediaPlayer;
 
@@ -18,7 +20,10 @@ class MprisService : public QObject {
   Q_OBJECT
 
 public:
-  MprisService(AppSettings* settings, const QDBusConnection& bus, QObject* parent = nullptr);
+  // Without a connection, the session bus is joined when a video first plays,
+  // so starting up never waits on it.
+  explicit MprisService(AppSettings* settings, std::optional<QDBusConnection> bus = std::nullopt,
+                        QObject* parent = nullptr);
   ~MprisService() override;
 
   // QML calls these with its MediaPlayer. The last one played is controlled.
@@ -63,7 +68,7 @@ private:
   [[nodiscard]] QDBusObjectPath trackId() const;
 
   AppSettings* m_settings;
-  QDBusConnection m_bus;
+  std::optional<QDBusConnection> m_bus;
   QObject* m_root = nullptr;
   QPointer<QMediaPlayer> m_player;
   QList<QMetaObject::Connection> m_connections;

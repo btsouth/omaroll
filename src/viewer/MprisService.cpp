@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace {
 
@@ -115,8 +116,9 @@ private:
   MprisService* m_service;
 };
 
-MprisService::MprisService(AppSettings* settings, const QDBusConnection& bus, QObject* parent)
-    : QObject(parent), m_settings(settings), m_bus(bus), m_root(new QObject(this)) {
+MprisService::MprisService(AppSettings* settings, std::optional<QDBusConnection> bus,
+                           QObject* parent)
+    : QObject(parent), m_settings(settings), m_bus(std::move(bus)), m_root(new QObject(this)) {
   new MprisRootAdaptor(m_root, this);
   new MprisPlayerAdaptor(m_root, this);
   if (m_settings) {
@@ -204,10 +206,14 @@ void MprisService::detach() {
 }
 
 void MprisService::publish() {
-  if (isPublished() || !m_bus.isConnected()) {
+  if (isPublished()) {
     return;
   }
-  if (!m_bus.registerObject(kObjectPath, m_root, QDBusConnection::ExportAdaptors)) {
+  if (!m_bus) {
+    m_bus = QDBusConnection::sessionBus();
+  }
+  if (!m_bus->isConnected() ||
+      !m_bus->registerObject(kObjectPath, m_root, QDBusConnection::ExportAdaptors)) {
     return;
   }
   // Another process already holding the name gets an instance of its own,
@@ -215,20 +221,20 @@ void MprisService::publish() {
   for (const QString& name :
        {kServiceName,
         kServiceName + QStringLiteral(".instance") + QString::number(QCoreApplication::applicationPid())}) {
-    if (m_bus.registerService(name)) {
+    if (m_bus->registerService(name)) {
       m_serviceName = name;
       return;
     }
   }
-  m_bus.unregisterObject(kObjectPath);
+  m_bus->unregisterObject(kObjectPath);
 }
 
 void MprisService::unpublish() {
   if (!isPublished()) {
     return;
   }
-  m_bus.unregisterService(m_serviceName);
-  m_bus.unregisterObject(kObjectPath);
+  m_bus->unregisterService(m_serviceName);
+  m_bus->unregisterObject(kObjectPath);
   m_serviceName.clear();
 }
 
@@ -255,7 +261,7 @@ void MprisService::changed(const QString& interface, const QStringList& names) {
       kObjectPath, QStringLiteral("org.freedesktop.DBus.Properties"),
       QStringLiteral("PropertiesChanged"));
   signal << interface << values << QStringList();
-  m_bus.send(signal);
+  m_bus->send(signal);
 }
 
 // Playback moves the position steadily; anything else is a seek, which MPRIS
