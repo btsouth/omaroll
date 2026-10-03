@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Open with offers the desktop application chooser for the current file,
+  without changing MIME defaults. The menu and `Ctrl+O` work in both viewers
+  and the library grid.
+- Show in file manager selects the current file through the standard
+  file-manager interface of the configured folder handler, falling back to
+  opening its containing folder with `xdg-open` when selection is unavailable.
+- Mouse back and forward buttons navigate files in both viewers.
+- `1` toggles fit and actual size in both image viewers; from a custom zoom,
+  it still goes to actual size first. `0` still fits.
+
 ## 1.13.0
 
 ### Added

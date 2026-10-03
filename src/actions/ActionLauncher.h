@@ -1,10 +1,12 @@
 #pragma once
 
 #include <QObject>
+#include <QDBusConnection>
 #include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QVariantMap>
+#include <optional>
 
 // Hands a capture to whoever already owns the job.
 //
@@ -20,10 +22,16 @@ class ActionLauncher final : public QObject {
   Q_PROPERTY(QStringList pendingOutputs READ pendingOutputs NOTIFY pendingOutputsChanged)
 
 public:
-  explicit ActionLauncher(QObject* parent = nullptr);
+  explicit ActionLauncher(QObject* parent = nullptr,
+                          std::optional<QDBusConnection> bus = std::nullopt);
 
   // Open in whatever the desktop has registered for the type.
   Q_INVOKABLE bool open(const QString& path);
+
+  // Ask the desktop to select this file, falling back to its default folder handler.
+  bool showInFolder(const QString& path);
+  // Always show the desktop's compatible-application chooser, without changing MIME defaults.
+  bool openWith(const QString& path);
 
   // True when a program is on PATH. QML uses this to grey out an action rather
   // than failing after the click.
@@ -115,4 +123,6 @@ private:
                        const QString& inputPath, int timeoutMs);
 
   QSet<QString> m_pendingOutputs;
+  QSet<QString> m_pendingOpenWith;
+  QDBusConnection m_bus;
 };

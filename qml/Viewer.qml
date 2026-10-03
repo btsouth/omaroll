@@ -271,6 +271,15 @@ ApplicationWindow {
         root.zoomTo(root.actualScale, x, y)
     }
 
+    function toggleActualSize() {
+        if (root.viewScale > 0
+                && Math.abs(root.viewScale - root.actualScale) <= root.actualScale * 0.001) {
+            root.fitToWindow()
+        } else {
+            root.showActualSize()
+        }
+    }
+
     // The toolbar's 1:1 / Fit button.
     function toggleFit() {
         if (root.viewScale > 0) {
@@ -492,15 +501,15 @@ ApplicationWindow {
     // each entry. They are this window's own: F is full screen here, as in
     // every player, rather than the library's Open containing folder.
     readonly property var viewerShortcuts: ({
-        library: "Enter", copy: "Y", annotate: "A", develop: "D", "choose-editor": "Shift+D", send: "S", trim: "T", frame: "G",
+        library: "Enter", copy: "Y", "open-with": "Ctrl+O", annotate: "A", develop: "D", "choose-editor": "Shift+D", send: "S", trim: "T", frame: "G",
         play: "P", rotate: "R", slideshow: "F5", fullscreen: "F", info: "I", filmstrip: "B",
         favorite: "V", trash: "Del"
     })
 
     // Handed-off actions, in the order the menu offers them. Only what is
     // installed and suits the medium is shown.
-    readonly property var stillActions: ["develop", "choose-editor", "copy", "omaframe", "annotate", "edit", "background", "send", "print", "files"]
-    readonly property var videoActions: ["frame", "trim", "copy", "play", "send", "files"]
+    readonly property var stillActions: ["develop", "choose-editor", "copy", "open-with", "omaframe", "annotate", "edit", "background", "send", "print", "files"]
+    readonly property var videoActions: ["frame", "trim", "copy", "open-with", "play", "send", "files"]
 
     function menuEntries() {
         void root.marksVersion
@@ -1177,6 +1186,20 @@ ApplicationWindow {
                     last = activeScale
                 }
             }
+
+            // Mouse side buttons use the viewer's existing file order. Keep
+            // their scope here so normal clicks, menus and video controls can
+            // still take their own input above this layer.
+            MouseArea {
+                objectName: "viewerSideButtonNavigation"
+                anchors.fill: parent
+                acceptedButtons: Qt.BackButton | Qt.ForwardButton
+                enabled: Session.count > 1 && !actionMenu.visible && !confirm.visible
+                         && !editorChooser.visible
+                onClicked: function (mouse) {
+                    root.step(mouse.button === Qt.BackButton ? -1 : 1)
+                }
+            }
         }
 
         // A file that will not open says so in the middle of the window.
@@ -1713,6 +1736,8 @@ ApplicationWindow {
                 }
             } else if (control && event.key === Qt.Key_C) {
                 root.perform("copy")
+            } else if (control && event.key === Qt.Key_O) {
+                root.perform("open-with")
             } else if (control && event.key === Qt.Key_W) {
                 root.close()
             } else if (control && event.key === Qt.Key_Q) {
@@ -1808,7 +1833,7 @@ ApplicationWindow {
                     if (!video) root.fitToWindow()
                     break
                 case Qt.Key_1:
-                    if (!video) root.showActualSize()
+                    if (!video) root.toggleActualSize()
                     break
                 case Qt.Key_R:
                     root.rotate(!shift)

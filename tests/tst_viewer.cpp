@@ -865,6 +865,39 @@ private slots:
     m_window->setProperty("chromePinned", false);
   }
 
+  void mouseSideButtonsStepAndRespectModalSheets() {
+    const QString first = media(QStringLiteral("Shot 1.jpg"));
+    const QString second = media(QStringLiteral("shot 2.jpg"));
+    open({first});
+    QTRY_COMPARE(m_session->count(), int(m_order.size()));
+    QCOMPARE(m_session->path(), first);
+
+    const QPoint at(m_window->width() / 2, m_window->height() / 2);
+    QTest::mouseClick(m_window, Qt::ForwardButton, Qt::NoModifier, at);
+    QTRY_COMPARE(m_session->path(), second);
+    QTest::mouseClick(m_window, Qt::BackButton, Qt::NoModifier, at);
+    QTRY_COMPARE(m_session->path(), first);
+
+    // A modal keeps the side buttons from changing the file underneath it.
+    QTest::keyClick(m_window, Qt::Key_Delete);
+    QQuickItem* confirm = item(QStringLiteral("viewerConfirm"));
+    QTRY_VERIFY(confirm->isVisible());
+    QTest::mouseClick(m_window, Qt::ForwardButton, Qt::NoModifier, at);
+    QCOMPARE(m_session->path(), first);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!confirm->isVisible());
+
+    // On a video the side buttons change files, while the arrow keys seek.
+    const QString clip = media(QStringLiteral("clip.mp4"));
+    open({clip, first});
+    QTRY_COMPARE(m_session->count(), 2);
+    QTRY_VERIFY(m_session->isVideo());
+    QTest::mouseClick(m_window, Qt::ForwardButton, Qt::NoModifier, at);
+    QTRY_COMPARE(m_session->path(), first);
+    QTest::mouseClick(m_window, Qt::BackButton, Qt::NoModifier, at);
+    QTRY_COMPARE(m_session->path(), clip);
+  }
+
   void openingADotfileShowsItInItsFolder() {
     const QString hidden = media(QStringLiteral(".hidden.jpg"));
     open({hidden});
@@ -889,6 +922,9 @@ private slots:
     QTRY_VERIFY(prop("imageReady").toBool());
     m_window->setProperty("chromeTimeout", 150);
     const QPoint middle(m_window->width() / 2, m_window->height() / 2);
+    // A prior mouse test may leave the synthetic pointer at the same point.
+    // Move first so reopening the window cannot leave a stale header hover.
+    QTest::mouseMove(m_window, middle + QPoint(12, 6));
     QTest::mouseMove(m_window, middle);
     QVERIFY(prop("chromeShown").toBool());
     QTRY_VERIFY(!prop("chromeShown").toBool());
@@ -927,9 +963,15 @@ private slots:
     QTRY_VERIFY(prop("viewScale").toReal() > fit);
     QTest::keyClick(m_window, Qt::Key_0);
     QTRY_COMPARE(prop("viewScale").toReal(), 0.0);
+    QTest::keyClick(m_window, Qt::Key_Plus);
+    QTRY_VERIFY(prop("viewScale").toReal() > fit);
     QTest::keyClick(m_window, Qt::Key_1);
     QTRY_COMPARE(prop("effectiveScale").toReal(), 1.0 / m_window->devicePixelRatio());
     QCOMPARE(prop("zoomPercent").toInt(), 100);
+    QTest::keyClick(m_window, Qt::Key_1);
+    QTRY_COMPARE(prop("viewScale").toReal(), 0.0);
+    QTest::keyClick(m_window, Qt::Key_1);
+    QTRY_COMPARE(prop("effectiveScale").toReal(), 1.0 / m_window->devicePixelRatio());
     QTest::keyClick(m_window, Qt::Key_0);
     QTRY_COMPARE(prop("viewScale").toReal(), 0.0);
 

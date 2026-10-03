@@ -1373,7 +1373,7 @@ ApplicationWindow {
         // file from view (trash, hide), opens another sheet (matte) or hands
         // off to an editor still closes it.
         readonly property var keepsViewer: ["preview", "play", "view", "open-document", "frame", "background", "export", "favorite",
-                                            "copy", "ocr", "qr", "send", "tailscale", "files"]
+                                            "copy", "ocr", "qr", "send", "tailscale", "files", "open-with"]
         onActionTriggered: function (id) {
             const targets = ["compare", "correctionsbatch"].indexOf(id) >= 0
                 ? root.previewSelection(detail.path) : undefined
@@ -1891,6 +1891,11 @@ ApplicationWindow {
         sequences: [Registry.shortcutFor("files")]
         enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: root.perform("files", root.currentPath())
+    }
+    Shortcut {
+        sequences: [Registry.shortcutFor("open-with")]
+        enabled: !root.anySheetOpen && !root.popupOpen
+        onActivated: root.perform("open-with", root.currentPath())
     }
     Shortcut {
         sequences: ["R"]

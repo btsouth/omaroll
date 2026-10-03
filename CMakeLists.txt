@@ -47,6 +47,8 @@ add_library(omaroll_core STATIC
   src/sources/FileVersion.h
   src/actions/ActionLauncher.cpp
   src/actions/ActionLauncher.h
+  src/actions/OpenWithRequest.cpp
+  src/actions/OpenWithRequest.h
   src/actions/ActionRegistry.cpp
   src/actions/ActionRegistry.h
   src/actions/ExternalEditors.cpp
@@ -241,6 +243,9 @@ if(BUILD_TESTING)
     "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=;QT_QUICK_BACKEND=software;QT_IM_MODULE=compose;QT_AUDIO_BACKEND=pulseaudio;PULSE_SERVER=unix:/nonexistent;PIPEWIRE_REMOTE=omaroll-no-audio")
   set_tests_properties(omaroll_tests PROPERTIES ENVIRONMENT
     "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
+  qt_add_executable(omaroll_desktop_action_tests tests/tst_desktop_actions.cpp)
+  target_link_libraries(omaroll_desktop_action_tests PRIVATE omaroll_core Qt6::Test)
+  add_test(NAME omaroll_desktop_action_tests COMMAND omaroll_desktop_action_tests)
   qt_add_executable(omaroll_companion_tests tests/tst_companions.cpp)
   target_link_libraries(omaroll_companion_tests PRIVATE omaroll_core Qt6::Test)
   add_test(NAME omaroll_companion_tests COMMAND omaroll_companion_tests)

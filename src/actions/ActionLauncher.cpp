@@ -1,8 +1,12 @@
 #include "actions/ActionLauncher.h"
+#include "actions/OpenWithRequest.h"
 #include "app/VideoPlayback.h"
 
 #include <QClipboard>
 #include <QDir>
+#include <QDBusMessage>
+#include <QDBusPendingCallWatcher>
+#include <QDBusPendingReply>
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -10,6 +14,7 @@
 #include <QProcess>
 #include <QRegularExpression>
 #include <QStandardPaths>
+#include <QSettings>
 #include <QUrl>
 #include <QTimer>
 
@@ -17,7 +22,87 @@
 
 using namespace Qt::StringLiterals;
 
-ActionLauncher::ActionLauncher(QObject* parent) : QObject(parent) {}
+ActionLauncher::ActionLauncher(QObject* parent, std::optional<QDBusConnection> bus)
+    : QObject(parent), m_bus(bus ? *bus : QDBusConnection::sessionBus()) {}
+
+bool ActionLauncher::showInFolder(const QString& path) {
+  const QFileInfo file(path);
+  if (!file.isFile()) {
+    emit failed(u"That file is no longer there"_s);
+    return false;
+  }
+  const QString folder = file.absolutePath();
+  if (!m_bus.isConnected()) {
+    return runDetached(u"xdg-open"_s, {folder}, u"xdg-utils"_s);
+  }
+  // The generic FileManager1 activation service can belong to a different
+  // installed file manager. Resolve the folder default before attempting to
+  // select a file, and only activate that application's own D-Bus service.
+  auto* query = new QProcess(this);
+  query->setProcessEnvironment(externalProcessEnvironment());
+  query->setProgram(u"xdg-mime"_s);
+  query->setArguments({u"query"_s, u"default"_s, u"inode/directory"_s});
+  query->setStandardInputFile(QProcess::nullDevice());
+  auto* timer = new QTimer(query);
+  timer->setSingleShot(true);
+  auto settled = std::make_shared<bool>(false);
+  const auto finish = [this, query, timer, settled, folder, path = file.absoluteFilePath()](bool success) {
+    if (*settled) return;
+    *settled = true;
+    timer->stop();
+    const QString desktopId = QString::fromUtf8(query->readAllStandardOutput().left(512)).trimmed();
+    query->deleteLater();
+    QString service;
+    if (success && desktopId.endsWith(u".desktop"_s) && !desktopId.contains(QLatin1Char('/'))) {
+      const QString entry = QStandardPaths::locate(QStandardPaths::GenericDataLocation,
+                                                   u"applications/"_s + desktopId);
+      if (!entry.isEmpty()) {
+        QSettings desktop(entry, QSettings::IniFormat);
+        desktop.beginGroup(u"Desktop Entry"_s);
+        if (desktop.value(u"DBusActivatable"_s, false).toBool()) {
+          service = desktopId.chopped(8);
+        }
+      }
+    }
+    if (service.isEmpty()) {
+      runDetached(u"xdg-open"_s, {folder}, u"xdg-utils"_s);
+      return;
+    }
+    QDBusMessage message = QDBusMessage::createMethodCall(
+        service, u"/org/freedesktop/FileManager1"_s,
+        u"org.freedesktop.FileManager1"_s, u"ShowItems"_s);
+    message.setArguments({QStringList{QUrl::fromLocalFile(path).toString(QUrl::FullyEncoded)}, QString()});
+    auto* watcher = new QDBusPendingCallWatcher(m_bus.asyncCall(message, 2000), this);
+    connect(watcher, &QDBusPendingCallWatcher::finished, this,
+            [this, folder](QDBusPendingCallWatcher* completed) {
+      const QDBusPendingReply<> reply = *completed;
+      completed->deleteLater();
+      if (reply.isError()) runDetached(u"xdg-open"_s, {folder}, u"xdg-utils"_s);
+    });
+  };
+  connect(query, &QProcess::finished, this, [finish](int code, QProcess::ExitStatus status) {
+    finish(status == QProcess::NormalExit && code == 0);
+  });
+  connect(query, &QProcess::errorOccurred, this, [finish](QProcess::ProcessError error) {
+    if (error == QProcess::FailedToStart) finish(false);
+  });
+  connect(timer, &QTimer::timeout, query, [query] { query->kill(); });
+  query->start();
+  timer->start(2000);
+  return true;
+}
+
+bool ActionLauncher::openWith(const QString& path) {
+  if (m_pendingOpenWith.contains(path)) return true;
+  auto* request = new OpenWithRequest(m_bus, this);
+  connect(request, &OpenWithRequest::failed, this, &ActionLauncher::failed);
+  connect(request, &OpenWithRequest::finished, this, [this, path, request] {
+    m_pendingOpenWith.remove(path);
+    request->deleteLater();
+  });
+  m_pendingOpenWith.insert(path);
+  return request->start(path);
+}
 
 QString ActionLauncher::mimeTypeFor(const QString& path) {
   static QMimeDatabase database;
