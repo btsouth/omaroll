@@ -32,7 +32,9 @@ const QStringList kVideoSuffixes = {
     QStringLiteral("mp4"), QStringLiteral("mkv"),  QStringLiteral("webm"), QStringLiteral("mov"),
     QStringLiteral("avi"), QStringLiteral("m4v"),  QStringLiteral("mpg"),  QStringLiteral("mpeg"),
     QStringLiteral("wmv"), QStringLiteral("flv"),  QStringLiteral("ogv"),  QStringLiteral("3gp"),
-    QStringLiteral("mts"), QStringLiteral("m2ts"),
+    QStringLiteral("mts"), QStringLiteral("m2ts"), QStringLiteral("m2t"),  QStringLiteral("3gpp"),
+    QStringLiteral("3g2"), QStringLiteral("asf"),  QStringLiteral("ogm"),  QStringLiteral("divx"),
+    QStringLiteral("f4v"), QStringLiteral("qt"),   QStringLiteral("vob"),  QStringLiteral("mpe"),
 };
 
 const QStringList kDocumentSuffixes = {QStringLiteral("pdf")};
@@ -253,6 +255,7 @@ QString sniffedSuffix(const QString& path) {
       {"video/ogg", "ogv"}, {"video/3gpp", "3gp"}, {"video/mp2t", "mts"},
       // Canonical names newer shared-mime-info reports for the aliases above.
       {"video/vnd.avi", "avi"}, {"video/x-theora+ogg", "ogv"}, {"video/3gpp2", "3gp"},
+      {"video/x-ogm+ogg", "ogm"},
   };
   const QByteArray header = file.read(16 * 1024);
   const QString mime = QMimeDatabase().mimeTypeForData(header).name();

@@ -316,9 +316,9 @@ Raws are never written: annotation, recognition, ordinary image editors, backgro
 print and corrections are not offered for them, and Convert · resize makes a
 JPEG or PNG beside the raw instead.
 
-Videos: MP4, M4V, MKV, WebM, MOV, AVI, MPEG, WMV, FLV, Ogg video, 3GP and
-MTS/M2TS. Playback uses Qt's FFmpeg backend. An optional action can still hand
-the file to mpv.
+Videos: MP4, M4V, F4V, MKV, WebM, MOV, AVI, DivX, MPEG, VOB, WMV, ASF, FLV,
+Ogg video, OGM, 3GP, 3G2 and MTS/M2TS. Playback uses Qt's FFmpeg backend. An
+optional action can still hand the file to mpv.
 
 Documents: PDF. Thumbnails, previews, and page counts use Poppler locally.
 

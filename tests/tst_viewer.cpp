@@ -35,6 +35,7 @@
 #include <QMediaMetaData>
 #include <QMediaPlayer>
 #include <QPointingDevice>
+#include <QProcess>
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
@@ -45,6 +46,7 @@
 #include <QScopeGuard>
 #include <QSettings>
 #include <QSignalSpy>
+#include <QStandardPaths>
 #include <QStyleHints>
 #include <QTemporaryDir>
 #include <QTextStream>
@@ -999,26 +1001,6 @@ private slots:
 
     if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
       QCOMPARE(QQuickWindow::graphicsApi(), QSGRendererInterface::OpenGL);
-      const auto renderedVideoHasColor = [&] {
-        QQuickItem* output = item(QStringLiteral("viewerVideoOutput"));
-        const QImage frame = m_window->grabWindow();
-        if (frame.isNull()) return false;
-        const qreal scale = frame.devicePixelRatio();
-        const QRectF scene = output->mapRectToScene(output->property("contentRect").toRectF());
-        const QRect bounds = QRectF(scene.topLeft() * scale, scene.size() * scale)
-                                 .toAlignedRect().intersected(frame.rect());
-        if (bounds.isEmpty()) return false;
-        int colorful = 0;
-        int samples = 0;
-        for (int y = bounds.top(); y <= bounds.bottom(); y += 8) {
-          for (int x = bounds.left(); x <= bounds.right(); x += 8) {
-            const QColor pixel = frame.pixelColor(x, y);
-            colorful += pixel.saturation() > 150 && pixel.value() > 120;
-            ++samples;
-          }
-        }
-        return colorful > samples / 10;
-      };
       QTRY_VERIFY_WITH_TIMEOUT(renderedVideoHasColor(), 5000);
     }
 
@@ -1033,6 +1015,54 @@ private slots:
     QTRY_VERIFY(!captions->property("active").toBool());
     QCOMPARE(player->activeSubtitleTrack(), -1);
     m_window->setProperty("chromePinned", false);
+    player->pause();
+  }
+
+  // The containers Omarchy hands to its default video player beyond the
+  // common ones, encoded here so the check needs no checked-in media.
+  void lessCommonContainersPlay_data() {
+    QTest::addColumn<QString>("name");
+    QTest::addColumn<QStringList>("codec");
+    QTest::newRow("asf") << QStringLiteral("clip.asf") << QStringList{QStringLiteral("wmv2")};
+    QTest::newRow("ogm") << QStringLiteral("clip.ogm")
+                         << QStringList{QStringLiteral("libtheora"), QStringLiteral("-f"),
+                                        QStringLiteral("ogg")};
+    QTest::newRow("3g2") << QStringLiteral("clip.3g2") << QStringList{QStringLiteral("mpeg4")};
+  }
+
+  void lessCommonContainersPlay() {
+    QFETCH(QString, name);
+    QFETCH(QStringList, codec);
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty()) {
+      QSKIP("ffmpeg is not installed");
+    }
+    const QString folder = m_scratch.filePath(QStringLiteral("containers"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString path = folder + QLatin1Char('/') + name;
+    QProcess encoder;
+    encoder.start(ffmpeg, QStringList{QStringLiteral("-hide_banner"), QStringLiteral("-loglevel"),
+                                      QStringLiteral("error"), QStringLiteral("-y"),
+                                      QStringLiteral("-f"), QStringLiteral("lavfi"),
+                                      QStringLiteral("-i"),
+                                      QStringLiteral("color=c=red:s=176x144:d=2:r=10"),
+                                      QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"),
+                                      QStringLiteral("-c:v")} +
+                              codec + QStringList{path});
+    QVERIFY(encoder.waitForFinished(20000));
+    QVERIFY2(encoder.exitStatus() == QProcess::NormalExit && encoder.exitCode() == 0,
+             encoder.readAllStandardError().constData());
+
+    open({path});
+    QVERIFY(m_session->isVideo());
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY_WITH_TIMEOUT(player->playbackState() == QMediaPlayer::PlayingState, 5000);
+    QCOMPARE(player->error(), QMediaPlayer::NoError);
+    QVERIFY(player->hasVideo());
+    if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
+      QTRY_VERIFY_WITH_TIMEOUT(renderedVideoHasColor(), 5000);
+    }
     player->pause();
   }
 
@@ -1676,6 +1706,29 @@ private:
   }
 
   QString media(const QString& name) const { return m_folder + QLatin1Char('/') + name; }
+
+  // Whether the frame drawn in the viewer's video area is mostly saturated
+  // color, which the red and colorful fixtures are and a blank output is not.
+  bool renderedVideoHasColor() const {
+    QQuickItem* output = item(QStringLiteral("viewerVideoOutput"));
+    const QImage frame = m_window->grabWindow();
+    if (frame.isNull()) return false;
+    const qreal scale = frame.devicePixelRatio();
+    const QRectF scene = output->mapRectToScene(output->property("contentRect").toRectF());
+    const QRect bounds = QRectF(scene.topLeft() * scale, scene.size() * scale)
+                             .toAlignedRect().intersected(frame.rect());
+    if (bounds.isEmpty()) return false;
+    int colorful = 0;
+    int samples = 0;
+    for (int y = bounds.top(); y <= bounds.bottom(); y += 8) {
+      for (int x = bounds.left(); x <= bounds.right(); x += 8) {
+        const QColor pixel = frame.pixelColor(x, y);
+        colorful += pixel.saturation() > 150 && pixel.value() > 120;
+        ++samples;
+      }
+    }
+    return colorful > samples / 10;
+  }
 
   QVariant prop(const char* name) const { return m_window->property(name); }
 
