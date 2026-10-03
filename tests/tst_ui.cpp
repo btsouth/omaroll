@@ -860,17 +860,12 @@ private slots:
           }
         }
         function removeRowAbove() { captures.remove(0, 2) }
-        // Let the grid's initial 80 ms width relayout finish before attaching
-        // records, so this test holds only requests from the settled geometry.
-        Timer {
-          interval: 120; running: true
-          onTriggered: {
-            for (let i = 0; i < 100; ++i) {
-              captures.append({ path: "/thumbnail-test/" + i + ".png", fileName: "",
-                                kindLabel: "", timeLabel: "", sizeLabel: "", isVideo: false,
-                                isDocument: false, favorite: false, rating: 0, hidden: false,
-                                stamp: 1, ocrSnippet: "", caption: "", rawFormat: "" })
-            }
+        function populate() {
+          for (let i = 0; i < 100; ++i) {
+            captures.append({ path: "/thumbnail-test/" + i + ".png", fileName: "",
+                              kindLabel: "", timeLabel: "", sizeLabel: "", isVideo: false,
+                              isDocument: false, favorite: false, rating: 0, hidden: false,
+                              stamp: 1, ocrSnippet: "", caption: "", rawFormat: "" })
           }
         }
       }
@@ -896,6 +891,20 @@ private slots:
               << "contentY" << view->property("contentY") << "originY" << view->property("originY");
       provider->dump();
     });
+    // Wait for geometry and its pending relayout, rather than racing an
+    // independent timer against window exposure on the OpenGL backend.
+    QTRY_COMPARE(gallery->width(), qreal(window->width()));
+    QTRY_COMPARE(view->property("cellWidth").toInt(), m_settings->tileWidth());
+    QObject* relayout = nullptr;
+    for (QObject* child : gallery->findChildren<QObject*>()) {
+      if (child->property("interval").toInt() == 80 && child->property("running").isValid()) {
+        relayout = child;
+        break;
+      }
+    }
+    QVERIFY(relayout);
+    QTRY_VERIFY(!relayout->property("running").toBool());
+    QVERIFY(QMetaObject::invokeMethod(window, "populate"));
     const qreal cellHeight = view->property("cellHeight").toReal();
     QCOMPARE(gallery->property("columns").toInt(), 2);
     const auto viewportReady = [&] {
