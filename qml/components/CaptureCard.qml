@@ -25,7 +25,11 @@ Item {
     property string ocrSnippet: ""
     property string caption: ""
     property bool thumbnailReady: false
+    property bool thumbnailLayoutReady: false
+    property string readyPath: ""
+    property double readyStamp: 0
     readonly property bool thumbnailPresented: thumbnail.status === Image.Ready
+                                               && thumbnail.visible
                                                && thumbnail.opacity >= 0.999
     // What leaves when this tile is dragged out. The grid sets it to the whole
     // selection when this tile is part of one.
@@ -40,6 +44,12 @@ Item {
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
     }
+
+    function updateThumbnailLayout() {
+        // Read the size outside the source binding to avoid a binding loop.
+        thumbnailLayoutReady = thumbnail.sourceSize.width > 0 && thumbnail.sourceSize.height > 0
+    }
+    Component.onCompleted: root.updateThumbnailLayout()
 
     // Hovering a recording walks a few frames through the clip, so you can tell
     // two similar recordings apart without opening either. Frames are generated
@@ -63,6 +73,7 @@ Item {
         root.scrubIndex = 0
         root.thumbnailReady = false
     }
+    onStampChanged: root.thumbnailReady = false
 
     // Drag out and it drops as the real file into anything on the desktop that
     // takes one: a Discord message, a Nautilus window, a browser upload. Copy
@@ -136,16 +147,23 @@ Item {
             asynchronous: true
             cache: true
             retainWhileLoading: true
+            // Keep a scrub frame while the next frame loads, but never display
+            // a retained image from the previous file on a recycled delegate.
+            visible: root.readyPath === root.path
+                     && root.readyStamp === root.stamp
             // Decode at the size actually drawn, on the ratio of the screen this
             // window is on. Without the ratio, a 1.5x monitor shows an upscaled
             // tile and the whole grid reads as soft.
             sourceSize: Qt.size(Math.round(root.width), Math.round(root.height))
+            // Let Image's size setter finish before enabling a new source.
+            onSourceSizeChanged: Qt.callLater(root.updateThumbnailLayout)
             // "image://thumbs/<ratio>[@<seek%>][~<stamp>]<encoded path>". The
             // path is percent-encoded whole, so a '#', a '?' or a literal '%'
             // in a filename survives URL parsing; the provider decodes once.
-            // Nothing is requested before the first layout, or every tile would
-            // ask once at the fallback size and again at its real one.
-            source: root.path === "" || root.width <= 0
+            // The card can have dimensions before Image's sourceSize binding
+            // catches up. Admit the first request only after that binding.
+            source: !root.thumbnailLayoutReady || root.path === ""
+                    || root.width <= 0 || root.height <= 0
                     ? ""
                     : "image://thumbs/" + Screen.devicePixelRatio
                       + (root.isVideo ? "@" + root.scrubPercent : "")
@@ -157,6 +175,8 @@ Item {
 
             onStatusChanged: {
                 if (status === Image.Ready) {
+                    root.readyPath = root.path
+                    root.readyStamp = root.stamp
                     root.thumbnailReady = true
                 }
             }

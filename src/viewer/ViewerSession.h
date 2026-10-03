@@ -8,6 +8,8 @@
 #include <QTimer>
 #include <QUrl>
 
+#include <array>
+
 // The files the quick viewer steps through, and which one is showing.
 //
 // One opened file means its folder: every picture and video beside it, in the
@@ -23,6 +25,8 @@ class ViewerSession final : public QObject {
   Q_OBJECT
   Q_PROPERTY(QString path READ path NOTIFY currentChanged)
   Q_PROPERTY(QUrl url READ url NOTIFY currentChanged)
+  Q_PROPERTY(QUrl imageUrl READ imageUrl NOTIFY currentChanged)
+  Q_PROPERTY(QString contentVersion READ contentVersion NOTIFY currentChanged)
   Q_PROPERTY(QString fileName READ fileName NOTIFY currentChanged)
   Q_PROPERTY(QString folder READ folder NOTIFY currentChanged)
   Q_PROPERTY(bool isVideo READ isVideo NOTIFY currentChanged)
@@ -31,13 +35,15 @@ class ViewerSession final : public QObject {
   // rawSize what that decode measures, which the preview may fall short of.
   Q_PROPERTY(bool isRaw READ isRaw NOTIFY currentChanged)
   Q_PROPERTY(QUrl rawUrl READ rawUrl NOTIFY currentChanged)
-  Q_PROPERTY(QSize rawSize READ rawSize NOTIFY currentChanged)
+  Q_PROPERTY(QSize rawSize READ rawSize NOTIFY rawSizeChanged)
   Q_PROPERTY(double stamp READ stamp NOTIFY currentChanged)
   Q_PROPERTY(QString sizeLabel READ sizeLabel NOTIFY currentChanged)
   Q_PROPERTY(QString dateLabel READ dateLabel NOTIFY currentChanged)
   Q_PROPERTY(int index READ index NOTIFY currentChanged)
   Q_PROPERTY(int count READ count NOTIFY sequenceChanged)
   Q_PROPERTY(bool selection READ selection NOTIFY sequenceChanged)
+  Q_PROPERTY(QUrl nextPreloadUrl READ nextPreloadUrl NOTIFY preloadsChanged)
+  Q_PROPERTY(QUrl previousPreloadUrl READ previousPreloadUrl NOTIFY preloadsChanged)
 
 public:
   explicit ViewerSession(QObject* parent = nullptr);
@@ -45,6 +51,8 @@ public:
 
   [[nodiscard]] QString path() const { return m_paths.value(m_index); }
   [[nodiscard]] QUrl url() const;
+  [[nodiscard]] QUrl imageUrl() const;
+  [[nodiscard]] QString contentVersion() const { return m_contentVersion; }
   [[nodiscard]] QString fileName() const;
   [[nodiscard]] QString folder() const;
   [[nodiscard]] bool isVideo() const;
@@ -60,6 +68,8 @@ public:
   [[nodiscard]] bool selection() const { return m_selection; }
   // Every file this viewer steps through, in order.
   [[nodiscard]] QStringList sequence() const { return m_paths; }
+  [[nodiscard]] QUrl nextPreloadUrl() const { return m_preloadUrls[0]; }
+  [[nodiscard]] QUrl previousPreloadUrl() const { return m_preloadUrls[1]; }
 
   // Paths must already be canonical, as OpenRequest makes them.
   Q_INVOKABLE void open(const QStringList& paths);
@@ -74,6 +84,7 @@ public:
 
   // The file |offset| steps away, for preloading the next picture.
   Q_INVOKABLE QUrl neighbourUrl(int offset) const;
+  Q_INVOKABLE QUrl neighbourImageUrl(int offset) const;
   Q_INVOKABLE bool neighbourIsVideo(int offset) const;
   Q_INVOKABLE bool neighbourIsAnimated(int offset) const;
 
@@ -99,7 +110,9 @@ public:
 
 signals:
   void currentChanged();
+  void rawSizeChanged();
   void sequenceChanged();
+  void preloadsChanged();
   void emptied();
   void libraryRequested(const QString& path);
 
@@ -111,6 +124,20 @@ private:
   void startListing();
   void applyListing(const QStringList& listed);
   void watchFolder(const QString& folder);
+  void watchCurrentFile();
+  void refreshPreloads();
+  void startPreloadProbe();
+  void setPreloadUrls(const std::array<QUrl, 2>& urls);
+
+  struct PreloadCandidate {
+    QString path;
+    QString version;
+  };
+  struct PreloadResult {
+    quint64 generation = 0;
+    std::array<PreloadCandidate, 2> candidates;
+  };
+  static PreloadResult probePreloads(const std::array<QString, 2>& paths, quint64 generation);
 
   QStringList m_paths;
   int m_index = -1;
@@ -120,6 +147,7 @@ private:
   QString m_dateLabel;
   QString m_mediaSuffix;
   QSize m_rawSize;
+  QString m_contentVersion;
   // The folder being shown and the opened file, for relisting after a change.
   QString m_folder;
   QString m_opened;
@@ -129,4 +157,15 @@ private:
   QFutureWatcher<QStringList> m_listing;
   QFileSystemWatcher m_watcher;
   QTimer m_relist;
+  // One header probe in flight, with navigation replacing the pending pair.
+  // Neither the workers nor their results retain this session.
+  quint64 m_preloadGeneration = 0;
+  bool m_preloadProbeRunning = false;
+  std::array<QString, 2> m_pendingPreloadPaths;
+  std::array<QUrl, 2> m_preloadUrls;
+  QFutureWatcher<PreloadResult> m_preloadProbe;
+  // A raw's size comes from LibRaw opening the file, which can stall on a
+  // slow disk, so it is read on a worker for the file it was asked for.
+  QFutureWatcher<QSize> m_rawSizeProbe;
+  QString m_rawSizeVersion;
 };

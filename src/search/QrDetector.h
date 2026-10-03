@@ -2,6 +2,7 @@
 
 #include <QHash>
 #include <QObject>
+#include <QPointer>
 #include <QProcess>
 #include <QString>
 #include <QTimer>
@@ -52,7 +53,7 @@ private:
   [[nodiscard]] bool stillCurrent(const Candidate& candidate) const;
   [[nodiscard]] static bool sameIdentity(const Candidate& left, const Candidate& right);
 
-  CaptureModel* m_model = nullptr;
+  QPointer<CaptureModel> m_model;
   QString m_program;
   QHash<QString, Entry> m_cache;
   std::optional<Candidate> m_requested;

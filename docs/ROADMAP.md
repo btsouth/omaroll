@@ -6,11 +6,35 @@ result. Discovery stays read-only and core use stays offline.
 
 See [project status](STATUS.md) for the latest release and current work.
 
-## Unreleased
+## Current priorities
 
-- Portrait crop presets (3:4, 2:3, 9:16), and the correction controls grouped
-  into Crop, Rotate and Resize rows that wrap only within themselves, with the
-  output and the actions beside them when the sheet is wide.
+- Refine the quick viewer and library together: navigation, search, selection,
+  clear feedback, and controls that work in narrow windows and both themes.
+- Use the [continuous-input comparison](performance/2026-10-03-gallery-loading/README.md)
+  when evaluating gallery scheduling. Preserve cached navigation and distinguish
+  submitted frames from desktop presentation and physical audio.
+- Improve desktop integration and reliability from reproducible problems and
+  user feedback. Preserve originals and keep specialist editing in the
+  existing tools.
+
+## 1.10.0 and 1.11.0 (released)
+
+- Multiple viewers, with repeated opens bringing the existing viewer forward.
+  On Hyprland, viewers opened together tile instead of covering each other.
+- Only the last-used video viewer is heard; the others keep playing silently.
+- Images and videos without extensions use content detection for opening,
+  navigation, library previews and thumbnails.
+- Portrait crop presets (3:4, 2:3, 9:16), grouped correction controls, and
+  subtitle timing buttons that leave room for the video clock and seek bar.
+
+See the [changelog](../CHANGELOG.md) for release details and contributor credits.
+
+## 1.9.1 (released)
+
+- Compact library preview headers, an optional inspector and an overflow menu.
+- Responsive video controls and Resume/Restart choices.
+- Caption edits saved before navigation, and keyboard focus restored after
+  nested actions.
 
 ## 1.9.0 (released)
 

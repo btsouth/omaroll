@@ -99,6 +99,14 @@ bool ActionLauncher::runDetached(const QString& program, const QStringList& argu
 
 bool ActionLauncher::runTracked(const QString& program, const QStringList& arguments,
                                 const QString& packageHint, const QString& outputPath) {
+  if (isPending(outputPath)) {
+    emit reported(u"Still working on %1"_s.arg(QFileInfo(outputPath).fileName()));
+    return true;
+  }
+  if (QFileInfo::exists(outputPath)) {
+    revealExisting(outputPath);
+    return true;
+  }
   const QString executable = locate(program, packageHint);
   if (executable.isEmpty()) {
     return false;
@@ -139,13 +147,18 @@ bool ActionLauncher::runTracked(const QString& program, const QStringList& argum
             if (saved) {
               emit reported(u"Saved %1 beside the original"_s.arg(output.fileName()));
             } else {
-              // The run was refused while this path existed, so whatever sits
-              // there now is this run's partial write, not a user's file.
-              QFile::remove(outputPath);
+              // The helper may have completed conversion before a clipboard
+              // or notification step failed. Keep nonempty output for review;
+              // the next request probes it before deciding whether to retry.
+              if (output.size() == 0) QFile::remove(outputPath);
               const QStringList lines = QString::fromUtf8(process->readAllStandardError())
                                             .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
-              emit failed(lines.isEmpty() ? u"%1 did not finish"_s.arg(program)
-                                          : u"%1: %2"_s.arg(program, lines.last().trimmed()));
+              QString message = lines.isEmpty() ? u"%1 did not finish"_s.arg(program)
+                                                : u"%1: %2"_s.arg(program, lines.last().trimmed());
+              if (output.size() > 0) {
+                message += u". Kept %1 beside the original for review"_s.arg(output.fileName());
+              }
+              emit failed(message);
             }
             emit outputSettled(outputPath, saved);
           });

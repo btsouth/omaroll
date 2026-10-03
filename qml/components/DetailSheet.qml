@@ -910,6 +910,7 @@ Item {
             // A recording shows its thumbnail until the first decoded frame.
             Image {
                 id: videoPoster
+                objectName: "detailVideoPoster"
                 anchors.fill: parent
                 anchors.margins: 16
                 anchors.bottomMargin: stage.videoFooterHeight
@@ -918,9 +919,9 @@ Item {
                 smooth: true
                 mipmap: true
                 visible: root.isVideo && !(player && player.hasVideo)
-                sourceSize: Qt.size(Math.round(stage.width * Screen.devicePixelRatio),
-                                    Math.round(stage.height * Screen.devicePixelRatio))
-                source: root.path === "" ? ""
+                // The thumbnail provider applies the ratio from its URL once.
+                sourceSize: Qt.size(Math.round(width), Math.round(height))
+                source: !root.visible || !root.isVideo || root.path === "" ? ""
                         : "image://thumbs/" + Screen.devicePixelRatio + "@40~"
                           + root.stamp + encodeURIComponent(root.path)
             }

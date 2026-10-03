@@ -37,10 +37,10 @@ command to start getting updates.
 To install one release without adding the repository:
 
 ```bash
-curl -fLO https://github.com/btsouth/omaroll/releases/download/v1.11.0/omaroll-1.11.0-1-x86_64.pkg.tar.zst \
-     -fLO https://github.com/btsouth/omaroll/releases/download/v1.11.0/SHA256SUMS
+curl -fLO https://github.com/btsouth/omaroll/releases/download/v1.12.0/omaroll-1.12.0-1-x86_64.pkg.tar.zst \
+     -fLO https://github.com/btsouth/omaroll/releases/download/v1.12.0/SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
-sudo pacman -U ./omaroll-1.11.0-1-x86_64.pkg.tar.zst
+sudo pacman -U ./omaroll-1.12.0-1-x86_64.pkg.tar.zst
 ```
 
 A package installed this way does not update on its own. Run the same commands
@@ -56,7 +56,7 @@ source build, see [Development](#development).
 The release includes build provenance. To verify the package with GitHub CLI:
 
 ```bash
-gh attestation verify omaroll-1.11.0-1-x86_64.pkg.tar.zst --repo btsouth/omaroll
+gh attestation verify omaroll-1.12.0-1-x86_64.pkg.tar.zst --repo btsouth/omaroll
 ```
 
 ## Open files
@@ -165,7 +165,7 @@ organization and safe copies itself, and delegates specialist work to these tool
 | Recording | Play | `mpv` |
 | Recording | Save current frame | `ffmpeg`, from the viewer position |
 | Screenshot | **Make it postable** *(default)* | **native** |
-| Screenshot | Annotate | `$OMARCHY_SCREENSHOT_EDITOR`, default `tensaku-edit` |
+| Screenshot | Annotate | `$OMARCHY_SCREENSHOT_EDITOR`; Tensaku by default |
 | Screenshot | Extract and select text | `tesseract` |
 | Image | Convert · resize | `omarchy-transcode` |
 | Image | Edit · View | `pinta` · `imv` |
@@ -185,6 +185,9 @@ organization and safe copies itself, and delegates specialist work to these tool
 
 The image and video defaults, including whether slideshows include videos, can
 be changed in Settings.
+
+When `$OMARCHY_SCREENSHOT_EDITOR` is unset or set to `tensaku-edit`, Omaroll
+uses Tensaku directly with a new output path.
 
 An action whose program is missing is shown greyed with the package to install,
 rather than hidden. The medium decides the list, not the folder: a downloaded
@@ -356,7 +359,7 @@ On Arch, install the build and runtime dependencies:
 sudo pacman -S --needed git base-devel cmake ninja pkgconf bubblewrap \
   qt6-base qt6-declarative qt6-multimedia qt6-imageformats qt6-svg qt6-wayland \
   kimageformats libavif libheif libraw hicolor-icon-theme xdg-desktop-portal \
-  ffmpegthumbnailer poppler wl-clipboard xdg-utils
+  ffmpeg ffmpegthumbnailer poppler wl-clipboard xdg-utils
 ```
 
 ```bash

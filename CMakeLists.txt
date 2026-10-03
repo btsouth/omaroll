@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(Omaroll VERSION 1.11.0 LANGUAGES CXX)
+project(Omaroll VERSION 1.12.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -41,6 +41,7 @@ add_library(omaroll_core STATIC
   src/sources/CaptureScanner.h
   src/sources/CaptureLocations.cpp
   src/sources/CaptureLocations.h
+  src/sources/FileVersion.h
   src/actions/ActionLauncher.cpp
   src/actions/ActionLauncher.h
   src/actions/ActionRegistry.cpp
@@ -186,7 +187,29 @@ install(FILES packaging/hypr/omaroll.lua
   DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/omaroll/hypr)
 install(FILES LICENSE
   DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/licenses/omaroll)
-install(FILES README.md PRIVACY.md SUPPORT.md CHANGELOG.md
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS README.md)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/README.md" OMAROLL_INSTALL_README)
+foreach(doc CONTRIBUTING.md tests/README.md docs/STATUS.md docs/ROADMAP.md RELEASING.md)
+  string(REPLACE "](${doc})"
+    "](https://github.com/btsouth/omaroll/blob/main/${doc})"
+    OMAROLL_INSTALL_README "${OMAROLL_INSTALL_README}")
+endforeach()
+foreach(image docs/library.png docs/detail.png docs/matte.png)
+  string(REPLACE "](${image})"
+    "](https://raw.githubusercontent.com/btsouth/omaroll/main/${image})"
+    OMAROLL_INSTALL_README "${OMAROLL_INSTALL_README}")
+endforeach()
+string(REPLACE "src=\"resources/icons/omaroll.svg\""
+  "src=\"https://raw.githubusercontent.com/btsouth/omaroll/main/resources/icons/omaroll.svg\""
+  OMAROLL_INSTALL_README "${OMAROLL_INSTALL_README}")
+string(REPLACE "](LICENSE)" "](../../licenses/omaroll/LICENSE)"
+  OMAROLL_INSTALL_README "${OMAROLL_INSTALL_README}")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/omaroll-install-README.md"
+  "${OMAROLL_INSTALL_README}")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/omaroll-install-README.md"
+  DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/doc/omaroll
+  RENAME README.md)
+install(FILES PRIVACY.md SUPPORT.md CHANGELOG.md
   DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/doc/omaroll)
 
 # Tests
@@ -207,6 +230,12 @@ if(BUILD_TESTING)
   set_tests_properties(omaroll_tests PROPERTIES ENVIRONMENT
     "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
 
+  qt_add_executable(omaroll_thumbnail_tests tests/tst_thumbnails.cpp)
+  target_link_libraries(omaroll_thumbnail_tests PRIVATE omaroll_core Qt6::Test)
+  add_test(NAME omaroll_thumbnail_tests COMMAND omaroll_thumbnail_tests)
+  set_tests_properties(omaroll_thumbnail_tests PROPERTIES ENVIRONMENT
+    "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
+
   # The UI suite loads the real Main.qml and drives it with synthetic input.
   # The module's files are compiled into the omaroll executable, so a second
   # process cannot import them from there; a qmldir over symlinks to the
@@ -220,6 +249,13 @@ if(BUILD_TESTING)
     string(APPEND uitest_qmldir "${qml_name} 1.0 ${qml_name}.qml\n")
   endforeach()
   file(WRITE ${uitest_module}/qmldir "${uitest_qmldir}")
+
+  # Explicitly built/run by the isolated benchmark runner, never a CI timing gate.
+  add_executable(omaroll_benchmark_interaction EXCLUDE_FROM_ALL tests/benchmark_interaction.cpp)
+  target_link_libraries(omaroll_benchmark_interaction PRIVATE
+    omaroll_core Qt6::QuickControls2 Qt6::Multimedia Qt6::Test)
+  target_compile_definitions(omaroll_benchmark_interaction PRIVATE
+    OMAROLL_QML_IMPORT_PATH="${CMAKE_BINARY_DIR}/uitest-imports")
 
   qt_add_executable(omaroll_ui_tests tests/tst_ui.cpp)
   target_link_libraries(omaroll_ui_tests PRIVATE omaroll_core Qt6::Multimedia Qt6::QuickControls2 Qt6::Test)

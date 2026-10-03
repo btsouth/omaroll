@@ -1,6 +1,7 @@
 #include "sources/CameraRaw.h"
 
 #include "sources/CaptureScanner.h"
+#include "sources/FileVersion.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -60,6 +61,8 @@ enum Type : quint16 {
   Long = 4,
   Rational = 5,
   SignedRational = 10,
+  // Some writers store the Exif pointer as an IFD offset rather than a Long.
+  Ifd = 13,
 };
 
 // Random access into one TIFF structure, which may sit inside a larger file:
@@ -142,6 +145,7 @@ public:
     case Short:
       return number16(entry.value, 0);
     case Long:
+    case Ifd:
       return number32(entry.value, 0);
     default:
       return std::nullopt;
@@ -290,6 +294,8 @@ quint32 bigEndian32(const QByteArray& bytes, qsizetype at) {
 void readBoxes(QFile& file, qint64 begin, qint64 end, CameraRaw::Metadata& metadata,
                int depth) {
   static const QByteArray canon = QByteArray::fromHex("85c0b687820f11e08111f4ce462b6a48");
+  bool seenMain = false;
+  bool seenExif = false;
   qint64 at = begin;
   for (int boxes = 0; boxes < kMaximumBoxes && at + 8 <= end; ++boxes) {
     if (!file.seek(at)) {
@@ -312,15 +318,29 @@ void readBoxes(QFile& file, qint64 begin, qint64 end, CameraRaw::Metadata& metad
     } else if (size == 0) {
       size = end - at;
     }
-    if (size < payload - at || at + size > end) {
+    if (size < payload - at || size > end - at) {
       return;
     }
+    // One moov, one Canon box in it and each CMT box once: a crafted file
+    // cannot multiply the walk by repeating them.
     if (depth == 0 && type == "moov") {
       readBoxes(file, payload, at + size, metadata, 1);
-    } else if (depth == 1 && type == "uuid" && file.read(16) == canon) {
+      return;
+    }
+    if (depth == 1 && type == "uuid" && file.read(16) == canon) {
       readBoxes(file, payload + 16, at + size, metadata, 2);
-    } else if (depth == 2 && (type == "CMT1" || type == "CMT2")) {
-      readTiff(file, payload, metadata, type == "CMT2");
+      return;
+    }
+    if (depth == 2 && (type == "CMT1" || type == "CMT2")) {
+      const bool exif = type == "CMT2";
+      bool& seen = exif ? seenExif : seenMain;
+      if (!seen) {
+        seen = true;
+        readTiff(file, payload, metadata, exif);
+        if (seenMain && seenExif) {
+          return;
+        }
+      }
     }
     at += size;
   }
@@ -465,21 +485,26 @@ QSize fullSize(const QString& path) {
 
 namespace {
 
-QUrl providerUrl(const QString& variant, const QString& path) {
+QUrl providerUrl(const QString& variant, const QString& path, const QString& version) {
   if (path.isEmpty()) {
     return {};
   }
   // The same shape as the thumbnail ids: a head without a slash, then the
   // absolute path encoded whole so '#', '?' and '%' survive URL parsing.
-  const qint64 stamp = QFileInfo(path).lastModified().toMSecsSinceEpoch();
-  return QUrl(QStringLiteral("image://raw/%1~%2").arg(variant).arg(stamp) +
+  // The version has no slash in it.
+  return QUrl(QStringLiteral("image://raw/%1~%2")
+                  .arg(variant, version.isEmpty() ? FileVersion::key(path) : version) +
               QString::fromLatin1(QUrl::toPercentEncoding(path)));
 }
 
 } // namespace
 
-QUrl previewUrl(const QString& path) { return providerUrl(QStringLiteral("preview"), path); }
+QUrl previewUrl(const QString& path, const QString& version) {
+  return providerUrl(QStringLiteral("preview"), path, version);
+}
 
-QUrl fullUrl(const QString& path) { return providerUrl(QStringLiteral("full"), path); }
+QUrl fullUrl(const QString& path, const QString& version) {
+  return providerUrl(QStringLiteral("full"), path, version);
+}
 
 } // namespace CameraRaw

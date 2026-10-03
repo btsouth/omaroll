@@ -409,16 +409,6 @@ QString CaptureModel::uriList(const QStringList& paths) const {
   return list;
 }
 
-QStringList CaptureModel::missingMarks(const QStringList& marks, const QSet<QString>& livePaths) {
-  QStringList dead;
-  for (const QString& path : marks) {
-    if (!livePaths.contains(path) && !QFileInfo::exists(path)) {
-      dead.append(path);
-    }
-  }
-  return dead;
-}
-
 void CaptureModel::refresh() {
   if (m_scanning) {
     // Fold repeat requests into one follow-up scan rather than queueing many.
@@ -430,23 +420,11 @@ void CaptureModel::refresh() {
   emit scanningChanged();
 
   const QList<CaptureScanner::Root> scanRoots = roots();
-  const QStringList marks = m_settings ? m_settings->markedPaths() : QStringList();
   const std::shared_ptr<std::atomic_bool> cancel = m_cancel;
 
-  m_scanWatcher.setFuture(QtConcurrent::run([scanRoots, marks, cancel] {
+  m_scanWatcher.setFuture(QtConcurrent::run([scanRoots, cancel] {
     ScanResult result;
     result.records = CaptureScanner::scan(scanRoots, cancel.get(), &result.directories);
-    if (cancel->load()) {
-      return result;
-    }
-    // The existence checks belong here, off the GUI thread: a mark on an
-    // unmounted network share can take seconds to answer.
-    QSet<QString> live;
-    live.reserve(result.records.size());
-    for (const CaptureRecord& record : result.records) {
-      live.insert(record.path);
-    }
-    result.deadMarks = missingMarks(marks, live);
     return result;
   }));
 }
@@ -472,10 +450,9 @@ void CaptureModel::adoptResults(ScanResult result) {
   }
 
   if (m_settings) {
-    // Move recovery first: a file renamed outside Omaroll keeps its marks
-    // before the dead-path sweep drops them.
+    // Recover external moves, but keep unmatched marks: a missing path may
+    // belong to a disconnected volume rather than a deleted file.
     m_settings->reconcileMarks(scanned);
-    m_settings->forgetMarks(result.deadMarks);
     m_settings->reconcileAlbums(scanned);
     m_settings->reconcileTags(scanned);
     for (CaptureRecord& record : scanned) {

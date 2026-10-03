@@ -13,6 +13,7 @@
 #include "app/DemoLibrary.h"
 #include "app/HeadlessAudio.h"
 #include "library/MediaInspector.h"
+#include "sources/FileVersion.h"
 #include "subtitles/SubtitleIndex.h"
 #include "sources/CameraRaw.h"
 #include "theme/OmarchyTheme.h"
@@ -23,9 +24,12 @@
 #include "viewer/ViewerWindows.h"
 
 #include <QAudioDevice>
+#include <QDataStream>
 #include <QDir>
 #include <QFile>
 #include <QGuiApplication>
+#include <QImageReader>
+#include <QJSValue>
 #include <QMediaDevices>
 #include <QMediaMetaData>
 #include <QMediaPlayer>
@@ -37,6 +41,7 @@
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
+#include <QScopeGuard>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QStyleHints>
@@ -154,6 +159,353 @@ private slots:
     m_window->setProperty("chromeTimeout", 2200);
     m_settings->setVideoMuted(false);
     m_settings->setVideoVolume(0.8);
+  }
+
+  void picturesReloadAfterSavesAndKeepTheirViewWhenSiblingsChange() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("z.png"));
+    QImage initial(40, 30, QImage::Format_RGB32);
+    initial.fill(Qt::red);
+    QVERIFY(initial.save(path));
+    open({path});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QTRY_COMPARE(prop("sourceWidth").toInt(), 40);
+    const QString version = m_session->contentVersion();
+    QImage updated(80, 60, QImage::Format_RGB32);
+    updated.fill(Qt::blue);
+    QVERIFY(updated.save(path));
+    QTRY_VERIFY_WITH_TIMEOUT(m_session->contentVersion() != version, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(prop("sourceWidth").toInt(), 80, 5000);
+    const QString temporary = dir.filePath(QStringLiteral("replacement.png"));
+    QImage replacement(120, 90, QImage::Format_RGB32);
+    replacement.fill(Qt::green);
+    QVERIFY(replacement.save(temporary));
+    QVERIFY(QFile::remove(path));
+    QVERIFY(QFile::rename(temporary, path));
+    QTRY_COMPARE_WITH_TIMEOUT(prop("sourceWidth").toInt(), 120, 5000);
+
+    QTest::keyClick(m_window, Qt::Key_R);
+    QTest::keyClick(m_window, Qt::Key_1);
+    QTRY_VERIFY(!prop("zooming").toBool());
+    const qreal scale = prop("viewScale").toReal();
+    const int rotation = prop("viewRotation").toInt();
+    const QString sibling = dir.filePath(QStringLiteral("a.png"));
+    QVERIFY(initial.save(sibling));
+    QTRY_COMPARE_WITH_TIMEOUT(m_session->count(), 2, 5000);
+    QCOMPARE(m_session->path(), path);
+    QCOMPARE(prop("viewScale").toReal(), scale);
+    QCOMPARE(prop("viewRotation").toInt(), rotation);
+    QVERIFY(QFile::remove(sibling));
+    QTRY_COMPARE_WITH_TIMEOUT(m_session->count(), 1, 5000);
+    QCOMPARE(prop("viewScale").toReal(), scale);
+    QCOMPARE(prop("viewRotation").toInt(), rotation);
+    m_window->close();
+  }
+
+  void neighbourPreloadsShareADecodedPixelBudget_data() {
+    QTest::addColumn<QSize>("nextSize");
+    QTest::addColumn<QSize>("previousSize");
+    QTest::addColumn<bool>("nextAllowed");
+    QTest::addColumn<bool>("previousAllowed");
+    QTest::newRow("small-pair") << QSize(400, 300) << QSize(800, 600) << true << true;
+    QTest::newRow("exact-budget") << QSize(4096, 4096) << QSize(1, 1) << true << false;
+    QTest::newRow("over-budget") << QSize(4096, 4097) << QSize(1, 1) << false << true;
+    QTest::newRow("combined-budget") << QSize(3072, 3072) << QSize(3072, 3072) << true << false;
+    QTest::newRow("large-first-keeps-small-second") << QSize(6000, 4000) << QSize(400, 300)
+                                                   << false << true;
+    QTest::newRow("hostile-dimensions") << QSize(2147483647, 2147483647) << QSize(400, 300)
+                                       << false << true;
+  }
+
+  void neighbourPreloadsShareADecodedPixelBudget() {
+    QFETCH(QSize, nextSize);
+    QFETCH(QSize, previousSize);
+    QFETCH(bool, nextAllowed);
+    QFETCH(bool, previousAllowed);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString current = media(QStringLiteral("Shot 1.jpg"));
+    const QString next = dir.filePath(QStringLiteral("next.bmp"));
+    const QString previous = dir.filePath(QStringLiteral("previous.bmp"));
+    // Headers alone exercise admission without allocating large decoded images.
+    QVERIFY(writeBitmapHeader(next, nextSize));
+    QVERIFY(writeBitmapHeader(previous, previousSize));
+    QCOMPARE(QImageReader(previous).size(), previousSize);
+    ViewerSession session;
+    session.open({current, next, previous});
+    QVERIFY(QThreadPool::globalInstance()->waitForDone(5000));
+    QCoreApplication::sendPostedEvents();
+    QCOMPARE(!session.nextPreloadUrl().isEmpty(), nextAllowed);
+    QCOMPARE(!session.previousPreloadUrl().isEmpty(), previousAllowed);
+    if (nextAllowed) QCOMPARE(session.nextPreloadUrl(), session.neighbourImageUrl(1));
+    if (previousAllowed) QCOMPARE(session.previousPreloadUrl(), session.neighbourImageUrl(-1));
+  }
+
+  void neighbourPreloadsSkipAnimationVideoAndUnknownDimensions_data() {
+    QTest::addColumn<QString>("fixture");
+    QTest::newRow("animation") << QStringLiteral("animated.gif");
+    QTest::newRow("animated-webp") << QStringLiteral("animated.webp");
+    QTest::newRow("still-webp-uses-animation-viewer") << QStringLiteral("still.webp");
+    QTest::newRow("video") << QStringLiteral("tracks.mkv");
+    QTest::newRow("unknown-header") << QString();
+  }
+
+  void neighbourPreloadsAccountForDecoderDepth_data() {
+    QTest::addColumn<QImage::Format>("format");
+    QTest::addColumn<QByteArray>("nextCodec");
+    QTest::addColumn<QByteArray>("previousCodec");
+    QTest::addColumn<int>("depth");
+    QTest::addColumn<bool>("previousAllowed");
+    QTest::newRow("jpeg-and-png-fit-together") << QImage::Format_RGB32 << QByteArray("JPG")
+                                             << QByteArray("PNG") << 32 << true;
+    QTest::newRow("rgba64-pair-exceeds-budget") << QImage::Format_RGBA64 << QByteArray("PNG")
+                                               << QByteArray("PNG") << 64 << false;
+  }
+
+  void neighbourPreloadsAccountForDecoderDepth() {
+    QFETCH(QImage::Format, format);
+    QFETCH(QByteArray, nextCodec);
+    QFETCH(QByteArray, previousCodec);
+    QFETCH(int, depth);
+    QFETCH(bool, previousAllowed);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString next = dir.filePath(QStringLiteral("next.") + QString::fromLatin1(nextCodec));
+    const QString previous = dir.filePath(QStringLiteral("previous.") + QString::fromLatin1(previousCodec));
+    {
+      // Six megapixels: 24 MB at 32 bits, 48 MB at 64 bits. Release the
+      // fixture writer's storage before probing the viewer's own policy.
+      QImage image(3000, 2000, format);
+      image.fill(Qt::red);
+      QVERIFY(image.save(next, nextCodec.constData()));
+      QVERIFY(image.save(previous, previousCodec.constData()));
+    }
+    QCOMPARE(QImage::toPixelFormat(QImageReader(next).imageFormat()).bitsPerPixel(), depth);
+    ViewerSession session;
+    session.open({media(QStringLiteral("Shot 1.jpg")), next, previous});
+    QVERIFY(QThreadPool::globalInstance()->waitForDone(5000));
+    QCoreApplication::sendPostedEvents();
+    QCOMPARE(session.nextPreloadUrl().toLocalFile(), next);
+    QCOMPARE(!session.previousPreloadUrl().isEmpty(), previousAllowed);
+  }
+
+  void neighbourPreloadsSkipAnimationVideoAndUnknownDimensions() {
+    QFETCH(QString, fixture);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    // Extensionless media also requires classification on the worker.
+    const QString next = dir.filePath(fixture.isEmpty() ? QStringLiteral("broken.png")
+                                                       : QStringLiteral("without extension"));
+    if (fixture.isEmpty()) {
+      QFile file(next);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      QCOMPARE(file.write("not an image"), qint64(12));
+    } else {
+      const QString source = QFINDTESTDATA(qPrintable("fixtures/viewer/" + fixture));
+      QVERIFY(!source.isEmpty());
+      QVERIFY(QFile::copy(source, next));
+    }
+    ViewerSession session;
+    const QString previous = media(QStringLiteral("shot 2.jpg"));
+    session.open({media(QStringLiteral("Shot 1.jpg")), next, previous});
+    QTRY_COMPARE(session.previousPreloadUrl().toLocalFile(), previous);
+    QVERIFY(session.nextPreloadUrl().isEmpty());
+  }
+
+  void wrappedNeighbourPreloadsAreUniqueAndExcludeTheCurrentPath() {
+    ViewerSession session;
+    const QString a = media(QStringLiteral("Shot 1.jpg"));
+    const QString b = media(QStringLiteral("shot 2.jpg"));
+    session.open({a, b});
+    QTRY_COMPARE(session.nextPreloadUrl().toLocalFile(), b);
+    QVERIFY(session.previousPreloadUrl().isEmpty());
+    session.open({a, a, b});
+    QTRY_COMPARE(session.previousPreloadUrl().toLocalFile(), b);
+    QVERIFY(session.nextPreloadUrl().isEmpty());
+    session.open({a, a});
+    QVERIFY(session.nextPreloadUrl().isEmpty());
+    QVERIFY(session.previousPreloadUrl().isEmpty());
+    session.clear();
+    QVERIFY(QThreadPool::globalInstance()->waitForDone(5000));
+    QCoreApplication::sendPostedEvents();
+    QVERIFY(session.nextPreloadUrl().isEmpty());
+    QVERIFY(session.previousPreloadUrl().isEmpty());
+  }
+
+  void replacedNeighbourCannotUseAnOldHeaderApproval() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString next = dir.filePath(QStringLiteral("next.bmp"));
+    QVERIFY(writeBitmapHeader(next, QSize(40, 30)));
+    ViewerSession session;
+    const QString previous = media(QStringLiteral("shot 2.jpg"));
+    const QStringList paths{media(QStringLiteral("Shot 1.jpg")), next, previous};
+    session.open(paths);
+    // Finish the probe without dispatching its GUI callback, then atomically
+    // replace the small neighbour with one that would exceed the budget.
+    QVERIFY(QThreadPool::globalInstance()->waitForDone(5000));
+    const QString staged = dir.filePath(QStringLiteral("staged.bmp"));
+    QVERIFY(writeBitmapHeader(staged, QSize(6000, 4000)));
+    const QString oldVersion = FileVersion::key(next);
+    QVERIFY(QFile::remove(next));
+    QVERIFY(QFile::rename(staged, next));
+    QVERIFY(FileVersion::key(next) != oldVersion);
+    QTRY_COMPARE(session.previousPreloadUrl().toLocalFile(), previous);
+    QVERIFY(session.nextPreloadUrl().isEmpty());
+    // Reopening an unchanged sequence must probe a newly saved version too.
+    QVERIFY(writeBitmapHeader(next, QSize(80, 60)));
+    session.open(paths);
+    QTRY_COMPARE(session.nextPreloadUrl(), session.neighbourImageUrl(1));
+    QVERIFY(session.nextPreloadUrl().query().contains(FileVersion::key(next)));
+  }
+
+  void obsoleteNeighbourResultsCannotSurviveNavigationOrClear() {
+    ViewerSession session;
+    const QString a = media(QStringLiteral("Shot 1.jpg"));
+    const QString b = media(QStringLiteral("shot 2.jpg"));
+    const QString c = media(QStringLiteral("shot 10.jpg"));
+    const QString d = media(QStringLiteral(".hidden.jpg"));
+    const QStringList paths{a, b, c, d};
+    session.open(paths);
+    QVERIFY(QThreadPool::globalInstance()->waitForDone(5000));
+    // Several requests arrive while a finished older probe awaits delivery.
+    for (int i = 0; i < 100; ++i) QVERIFY(session.jump(i % paths.size()));
+    QCOMPARE(session.path(), d);
+    bool obsoletePublished = false;
+    connect(&session, &ViewerSession::preloadsChanged, this, [&] {
+      obsoletePublished |= session.nextPreloadUrl().toLocalFile() == b ||
+                           session.previousPreloadUrl().toLocalFile() == d;
+    });
+    QTRY_COMPARE(session.nextPreloadUrl().toLocalFile(), a);
+    QTRY_COMPARE(session.previousPreloadUrl().toLocalFile(), c);
+    QVERIFY(!obsoletePublished);
+    session.open(paths);
+    QVERIFY(QThreadPool::globalInstance()->waitForDone(5000));
+    session.clear();
+    QSignalSpy changed(&session, &ViewerSession::preloadsChanged);
+    QCoreApplication::sendPostedEvents();
+    QCOMPARE(changed.size(), 0);
+    QVERIFY(session.nextPreloadUrl().isEmpty());
+    QVERIFY(session.previousPreloadUrl().isEmpty());
+  }
+
+  void neighbourPreloadsFollowSequenceRefreshesWithTheSameCurrentFile() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString a = dir.filePath(QStringLiteral("a.png"));
+    const QString b = dir.filePath(QStringLiteral("b.png"));
+    const QString z = dir.filePath(QStringLiteral("z.png"));
+    QImage image(40, 30, QImage::Format_RGBA64);
+    image.fill(Qt::red);
+    QVERIFY(image.save(a));
+    QVERIFY(image.save(z));
+    ViewerSession session;
+    session.open({a});
+    QTRY_COMPARE(session.count(), 2);
+    QTRY_COMPARE(session.nextPreloadUrl().toLocalFile(), z);
+    QVERIFY(session.previousPreloadUrl().isEmpty());
+    QSignalSpy current(&session, &ViewerSession::currentChanged);
+    QVERIFY(image.save(b));
+    QTRY_COMPARE_WITH_TIMEOUT(session.count(), 3, 5000);
+    QTRY_COMPARE(session.nextPreloadUrl().toLocalFile(), b);
+    QTRY_COMPARE(session.previousPreloadUrl().toLocalFile(), z);
+    QVERIFY(QFile::remove(b));
+    QTRY_COMPARE_WITH_TIMEOUT(session.count(), 2, 5000);
+    QTRY_COMPARE(session.nextPreloadUrl().toLocalFile(), z);
+    QVERIFY(session.previousPreloadUrl().isEmpty());
+    const QUrl oldUrl = session.nextPreloadUrl();
+    const QString staged = dir.filePath(QStringLiteral(".replacement"));
+    QVERIFY(image.save(staged, "PNG"));
+    QVERIFY(QFile::remove(z));
+    QVERIFY(QFile::rename(staged, z));
+    QTRY_VERIFY_WITH_TIMEOUT(session.nextPreloadUrl() != oldUrl, 5000);
+    QTRY_COMPARE(session.nextPreloadUrl(), session.neighbourImageUrl(1));
+    QCOMPARE(session.path(), a);
+    QCOMPARE(current.size(), 0);
+  }
+
+  void smallPreloadsReuseOriginalResolutionWhenStepping() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString a = dir.filePath(QStringLiteral("a.png"));
+    const QString b = dir.filePath(QStringLiteral("b.png"));
+    QImage first(400, 300, QImage::Format_RGBA64);
+    first.fill(Qt::red);
+    QImage second(480, 360, QImage::Format_RGBA64);
+    second.fill(Qt::blue);
+    QVERIFY(first.save(a));
+    QVERIFY(second.save(b));
+    open({a, b});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QQuickItem* prefetch = item(QStringLiteral("viewerPrefetch1"));
+    QTRY_COMPARE(prefetch->property("source").toUrl(), m_session->neighbourImageUrl(1));
+    QTRY_COMPARE(prefetch->property("status").toInt(), 1); // Image.Ready
+    QCOMPARE(prefetch->implicitWidth(), 480.0);
+    QCOMPARE(prefetch->implicitHeight(), 360.0);
+    QVERIFY(item(QStringLiteral("viewerPrefetch-1"))->property("source").toUrl().isEmpty());
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QQuickItem* displayed = item(QStringLiteral("viewerImage"));
+    QCOMPARE(displayed->property("status").toInt(), 1);
+    QVERIFY(!displayed->property("waited").toBool());
+    QCOMPARE(prop("sourceWidth").toInt(), 480);
+    QCOMPARE(prop("sourceHeight").toInt(), 360);
+    QTest::keyClick(m_window, Qt::Key_1);
+    QTRY_VERIFY(!prop("zooming").toBool());
+    QCOMPARE(prop("effectiveScale").toReal(), 1.0 / m_window->devicePixelRatio());
+  }
+
+  void siblingSymlinksUseTheLibraryIdentity() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString first = dir.filePath(QStringLiteral("a.png"));
+    const QString target = dir.filePath(QStringLiteral("z.png"));
+    const QString alias = dir.filePath(QStringLiteral("b.png"));
+    QImage image(40, 30, QImage::Format_RGB32);
+    image.fill(Qt::blue);
+    QVERIFY(image.save(first));
+    QVERIFY(image.save(target));
+    QVERIFY(QFile::link(target, alias));
+    open({first});
+    QTRY_COMPARE(m_session->count(), 2);
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QCOMPARE(m_session->path(), target);
+    QTest::keyClick(m_window, Qt::Key_V);
+    QVERIFY(m_settings->isFavorite(target));
+    QVERIFY(!m_settings->isFavorite(alias));
+    QSignalSpy requested(m_session, &ViewerSession::libraryRequested);
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QCOMPARE(requested.size(), 1);
+    QCOMPARE(requested.first().first().toString(), target);
+    m_settings->setFavorite({target}, false);
+    m_window->close();
+  }
+
+  void replacedVideoReopensTheSamePath() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("clip.mp4"));
+    QVERIFY(QFile::copy(media(QStringLiteral("clip.mp4")), path));
+    open({path});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY(player->duration() > 0);
+    QCOMPARE(player->subtitleTracks().size(), 0);
+    const QString version = m_session->contentVersion();
+    const QUrl url = player->source();
+    const QString replacement = QFINDTESTDATA("fixtures/viewer/tracks.mkv");
+    QVERIFY(!replacement.isEmpty());
+    // Atomic replacement keeps the old decoder's open descriptor valid until
+    // the watcher asks the player to reopen the unchanged local URL.
+    const QString staged = dir.filePath(QStringLiteral("replacement"));
+    QVERIFY(QFile::copy(replacement, staged));
+    QVERIFY(QFile::remove(path));
+    QVERIFY(QFile::rename(staged, path));
+    QTRY_VERIFY_WITH_TIMEOUT(m_session->contentVersion() != version, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(player->subtitleTracks().size(), 1, 5000);
+    QCOMPARE(player->source(), url);
+    QCOMPARE(m_session->path(), path);
+    m_window->close();
   }
 
   void opensAPictureFittedEdgeToEdge() {
@@ -520,6 +872,15 @@ private slots:
     QCOMPARE(prop("effectiveScale").toReal(), scale);
   }
 
+  void videoPosterUsesLogicalDimensions() {
+    open({media(QStringLiteral("clip.mp4"))});
+    QQuickItem* poster = item(QStringLiteral("viewerVideoPoster"));
+    QVERIFY(poster);
+    QVERIFY(!poster->property("source").toUrl().isEmpty());
+    QCOMPARE(poster->property("sourceSize").toSize(),
+             QSize(qRound(poster->width()), qRound(poster->height())));
+  }
+
   void videoPlaysWithPlayerKeysAndOneThinBar() {
     open({media(QStringLiteral("clip.mp4"))});
     QMediaPlayer* player = nullptr;
@@ -564,6 +925,50 @@ private slots:
     QVERIFY(!m_session->isVideo());
     QTRY_VERIFY(player->playbackState() != QMediaPlayer::PlayingState);
     QVERIFY(!item(QStringLiteral("viewerTransport"))->isVisible());
+  }
+
+  void explicitSeeksClearSavedResumeState() {
+    open({media(QStringLiteral("clip.mp4"))});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY(player->duration() > 0);
+    player->pause();
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+
+    const auto markResume = [this, player] {
+      player->setPosition(1000);
+      m_window->setProperty("resumePosition", 1000);
+      m_window->setProperty("resumeAvailable", true);
+      m_window->setProperty("resumePending", true);
+    };
+
+    QQuickItem* scrub = item(QStringLiteral("viewerScrub"));
+    QVERIFY(scrub->width() > 0);
+    markResume();
+    QVERIFY(QMetaObject::invokeMethod(scrub, "seekTo",
+                                      Q_ARG(QVariant, scrub->width() * 0.75)));
+    QVERIFY(!prop("resumeAvailable").toBool());
+    QVERIFY(!prop("resumePending").toBool());
+    QTRY_VERIFY(player->position() > player->duration() / 2);
+
+    markResume();
+    QTest::keyClick(m_window, Qt::Key_Home);
+    QVERIFY(!prop("resumeAvailable").toBool());
+    QVERIFY(!prop("resumePending").toBool());
+    QTRY_COMPARE(player->position(), 0);
+
+    markResume();
+    QTest::keyClick(m_window, Qt::Key_End);
+    QVERIFY(!prop("resumeAvailable").toBool());
+    QVERIFY(!prop("resumePending").toBool());
+    QTRY_VERIFY(player->position() > player->duration() * 0.9);
+
+    // The arrow keys still seek by their difference from the current position.
+    markResume();
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QVERIFY(!prop("resumeAvailable").toBool());
+    QVERIFY(!prop("resumePending").toBool());
+    QTRY_VERIFY(player->position() > 4000);
   }
 
   // The checked-in test pattern: saturated bars, two audio tracks and a
@@ -737,6 +1142,77 @@ private slots:
     QVERIFY(!prop("slideshowRunning").toBool());
     QTRY_VERIFY(!prop("fullScreen").toBool());
     QVERIFY(m_window->isVisible());
+  }
+
+  void shuffledSlideshowFindsTheOnlyPictureWithoutBouncingBetweenVideos() {
+    const QString folder = m_scratch.filePath(QStringLiteral("slideshow-shuffle"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString first = folder + QStringLiteral("/a.mp4");
+    const QString second = folder + QStringLiteral("/b.mp4");
+    const QString picture = folder + QStringLiteral("/only.jpg");
+    QVERIFY(QFile::copy(media(QStringLiteral("clip.mp4")), first));
+    QVERIFY(QFile::copy(media(QStringLiteral("clip.mp4")), second));
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), picture));
+
+    const bool videos = m_settings->slideshowVideos();
+    const bool shuffle = m_settings->slideshowShuffle();
+    const auto restoreSettings = qScopeGuard([this, videos, shuffle] {
+      m_settings->setSlideshowVideos(videos);
+      m_settings->setSlideshowShuffle(shuffle);
+    });
+    m_settings->setSlideshowVideos(false);
+    m_settings->setSlideshowShuffle(true);
+
+    // The old retry loop chooses index 1 forever with this value, bouncing
+    // between the videos and never visiting the picture at index 2.
+    QJSValue math = m_engine->globalObject().property(QStringLiteral("Math"));
+    const QJSValue random = math.property(QStringLiteral("random"));
+    const auto restoreRandom = qScopeGuard([math, random]() mutable {
+      math.setProperty(QStringLiteral("random"), random);
+    });
+    math.setProperty(QStringLiteral("random"),
+                     m_engine->evaluate(QStringLiteral("(function () { return 0; })")));
+
+    open({first, second, picture});
+    QCOMPARE(m_session->count(), 3);
+    QCOMPARE(m_session->index(), 0);
+    QVERIFY(m_session->isVideo());
+    QVERIFY(QMetaObject::invokeMethod(m_window, "setSlideshow", Q_ARG(QVariant, true)));
+    QCOMPARE(m_session->path(), picture);
+    QVERIFY(prop("slideshowRunning").toBool());
+    QVERIFY(prop("status").toString() != QStringLiteral("No pictures here for a slideshow"));
+    QVERIFY(QMetaObject::invokeMethod(m_window, "advanceSlideshow"));
+    QCOMPARE(m_session->path(), picture);
+    QVERIFY(prop("slideshowRunning").toBool());
+    QVERIFY(prop("status").toString() != QStringLiteral("No pictures here for a slideshow"));
+    QMetaObject::invokeMethod(m_window, "setSlideshow", Q_ARG(QVariant, false));
+  }
+
+  void orderedSlideshowStillStepsToTheOnlyPictureAmongVideos() {
+    const QString folder = m_scratch.filePath(QStringLiteral("slideshow-ordered"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString first = folder + QStringLiteral("/a.mp4");
+    const QString picture = folder + QStringLiteral("/b.jpg");
+    const QString second = folder + QStringLiteral("/c.mp4");
+    QVERIFY(QFile::copy(media(QStringLiteral("clip.mp4")), first));
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), picture));
+    QVERIFY(QFile::copy(media(QStringLiteral("clip.mp4")), second));
+
+    const bool videos = m_settings->slideshowVideos();
+    const bool shuffle = m_settings->slideshowShuffle();
+    const auto restoreSettings = qScopeGuard([this, videos, shuffle] {
+      m_settings->setSlideshowVideos(videos);
+      m_settings->setSlideshowShuffle(shuffle);
+    });
+    m_settings->setSlideshowVideos(false);
+    m_settings->setSlideshowShuffle(false);
+
+    open({first, picture, second});
+    QCOMPARE(m_session->count(), 3);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "setSlideshow", Q_ARG(QVariant, true)));
+    QCOMPARE(m_session->path(), picture);
+    QVERIFY(prop("slideshowRunning").toBool());
+    QMetaObject::invokeMethod(m_window, "setSlideshow", Q_ARG(QVariant, false));
   }
 
   void trashAsksFirstThenMovesOn() {
@@ -943,6 +1419,18 @@ private slots:
   }
 
 private:
+  static bool writeBitmapHeader(const QString& path, const QSize& size) {
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) return false;
+    QDataStream stream(&file);
+    stream.setByteOrder(QDataStream::LittleEndian);
+    stream << quint16(0x4d42) << quint32(54) << quint16(0) << quint16(0) << quint32(54)
+           << quint32(40) << qint32(size.width()) << qint32(size.height()) << quint16(1)
+           << quint16(32) << quint32(0) << quint32(0) << qint32(0) << qint32(0)
+           << quint32(0) << quint32(0);
+    return stream.status() == QDataStream::Ok;
+  }
+
   QString media(const QString& name) const { return m_folder + QLatin1Char('/') + name; }
 
   QVariant prop(const char* name) const { return m_window->property(name); }

@@ -57,10 +57,10 @@ struct Metadata {
 [[nodiscard]] QSize fullSize(const QString& path);
 
 // What QML loads in place of the file, from RawImageProvider. The file's
-// mtime is part of the URL, so a rewritten file is not served from Qt's
-// pixmap cache.
-[[nodiscard]] QUrl previewUrl(const QString& path);
-[[nodiscard]] QUrl fullUrl(const QString& path);
+// version (FileVersion::key, read when |version| is empty) is part of the
+// URL, so a replaced file is not served from Qt's pixmap cache.
+[[nodiscard]] QUrl previewUrl(const QString& path, const QString& version = {});
+[[nodiscard]] QUrl fullUrl(const QString& path, const QString& version = {});
 
 // Exposed for testing: EXIF orientation applied to an image.
 [[nodiscard]] QImage upright(const QImage& image, int orientation);

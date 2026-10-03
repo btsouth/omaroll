@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QSet>
 #include <QStringList>
 #include <QVariantList>
 #include <QVariantMap>
@@ -127,4 +128,5 @@ private:
 
   ActionLauncher* m_launcher = nullptr;
   QList<Definition> m_definitions;
+  QSet<QString> m_probingOutputs;
 };

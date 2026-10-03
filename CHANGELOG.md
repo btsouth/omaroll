@@ -16,6 +16,45 @@
   Pinta, imv, background, print and corrections) are not offered for one.
   Convert · resize still makes a JPEG or PNG beside it. Raws are never written.
 
+## 1.12.0
+
+### Changed
+
+- Installation instructions use the signed package repository so Omaroll can
+  update with the rest of the system. Manual release downloads remain available.
+
+### Fixed
+
+- QR detection stops safely when its media library or the application closes.
+- Gallery thumbnails wait for valid dimensions and hide a previous file's
+  retained pixels while a replacement loads. Viewport checks account for
+  files inserted or removed above a scrolled grid.
+- Installed documentation links resolve to the repository and packaged license.
+  Arch dependencies explicitly include FFmpeg for frame saving and probing.
+- The viewer bounds neighboring photo preloads while keeping originals at full
+  resolution. Canceled thumbnails stop obsolete helper work, and queued
+  requests finish during shutdown.
+- Gallery photo and document details avoid an unused video-poster decode.
+  Gallery and viewer video posters apply display scaling once.
+- The gallery restores keyboard navigation after empty search results and
+  keeps the search field in sync with saved views and files opened from outside.
+- Browse keeps search and folder choices visible in small windows with many
+  source folders. Folder-only shuffle stays in the opened file's folder.
+- The viewer reloads files saved in place, preserves zoom and rotation when
+  other files arrive, and uses the same identity for symlinks as the library.
+- Video scrubbing and Home/End override saved resume positions. Shuffled
+  slideshows reliably find pictures when videos are excluded.
+- Organization survives disconnected folders. Backups retain the identities
+  needed to recover marks after files move, and rename recovery preserves
+  unrelated ratings and captions.
+- Repeated conversion requests share one output check. A helper failure after
+  writing media keeps the nonempty output beside the original for review.
+- Reused filesystem identities no longer transfer marks to unrelated files.
+  Recovery checks reuse versioned fingerprints, and legacy backups remain
+  importable when content fingerprints are unavailable.
+- Failed removal of invalid conversion outputs reports an error instead of
+  treating the file as a completed conversion.
+
 ## 1.11.0
 
 ### Added

@@ -18,9 +18,8 @@ struct CaptureRecord;
 // defaults, never to make the app work, so nothing here is required for a first
 // run to show a full library.
 //
-// Favourites, ratings and hidden entries are keyed by absolute path. A file
-// that moves loses its mark, which is the honest behaviour for a library that never
-// modifies or tracks the files it reads.
+// Marks are keyed by path, with remembered identities for external move
+// recovery. Unavailable files keep their organization until the user clears it.
 class AppSettings final : public QObject {
   Q_OBJECT
   Q_PROPERTY(bool showHidden READ showHidden WRITE setShowHidden NOTIFY showHiddenChanged)
@@ -140,8 +139,8 @@ public:
 
   // Repoints favourites, hidden, ratings and captions when their file was
   // moved or renamed outside Omaroll, matching the same inode/device size or
-  // content fingerprint that albums and tags already use. Runs before dead
-  // marks are forgotten, so a moved file keeps everything.
+  // content fingerprint that albums and tags already use. Unmatched marks
+  // remain remembered even when their files are unavailable.
   void reconcileMarks(const QList<CaptureRecord>& records);
 
   [[nodiscard]] QStringList smartCollectionNames() const;
@@ -191,12 +190,8 @@ public:
   Q_INVOKABLE void setFavorite(const QStringList& paths, bool on);
   Q_INVOKABLE void setHidden(const QStringList& paths, bool on);
 
-  // Every marked path, for the scan worker to check against the disk.
+  // Every path with remembered organization, including unavailable files.
   [[nodiscard]] QStringList markedPaths() const;
-
-  // Drop marks the worker found to be gone, so the lists cannot grow without
-  // bound across years of use.
-  void forgetMarks(const QStringList& paths);
 
 signals:
   void showHiddenChanged();

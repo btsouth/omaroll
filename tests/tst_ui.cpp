@@ -49,6 +49,8 @@
 #include <QImage>
 #include <QMediaPlayer>
 #include <QMediaMetaData>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QPainter>
 #include <QPdfWriter>
 #include <QPointingDevice>
@@ -61,6 +63,7 @@
 #include <QSGRendererInterface>
 #include <QScopeGuard>
 #include <QSettings>
+#include <QSet>
 #include <QStandardPaths>
 #include <QStyleHints>
 #include <QTemporaryDir>
@@ -71,6 +74,95 @@
 #include <QtTest>
 
 #include <algorithm>
+#include <atomic>
+#include <memory>
+
+// Hold real QML Image requests open to check sizing, cache reuse and retained
+// pixels without depending on decoder speed or filesystem caches.
+class HeldThumbnailProvider final : public QQuickAsyncImageProvider {
+public:
+  struct Request {
+    int row;
+    int stamp;
+    QString id;
+    QSize size;
+    std::atomic_bool cancelled{false};
+    bool completed = false;
+    QQuickImageResponse* response = nullptr;
+  };
+
+  class Response final : public QQuickImageResponse {
+  public:
+    explicit Response(std::shared_ptr<Request> request) : m_request(std::move(request)) {
+      m_image = QImage(8, 8, QImage::Format_RGB32);
+      m_image.fill((m_request->row + m_request->stamp) % 2 == 0 ? Qt::red : Qt::blue);
+    }
+    QQuickTextureFactory* textureFactory() const override {
+      return QQuickTextureFactory::textureFactoryForImage(m_image);
+    }
+    void cancel() override { m_request->cancelled.store(true); }
+
+  private:
+    std::shared_ptr<Request> m_request;
+    QImage m_image;
+  };
+
+  QQuickImageResponse* requestImageResponse(const QString& id, const QSize& size) override {
+    auto request = std::make_shared<Request>();
+    request->row = QUrl::fromPercentEncoding(id.toUtf8()).section('/', -1).section('.', 0, 0).toInt();
+    request->stamp = id.section('~', 1, 1).section('%', 0, 0).toInt();
+    request->id = id;
+    request->size = size;
+    request->response = new Response(request);
+    QMutexLocker lock(&m_mutex);
+    m_requests.append(request);
+    return request->response;
+  }
+
+  QList<int> rows() const {
+    QMutexLocker lock(&m_mutex);
+    QList<int> result;
+    for (const auto& request : m_requests) result.append(request->row);
+    return result;
+  }
+
+  int count(int row, int stamp) const {
+    QMutexLocker lock(&m_mutex);
+    return std::count_if(m_requests.cbegin(), m_requests.cend(), [&](const auto& request) {
+      return request->row == row && request->stamp == stamp;
+    });
+  }
+
+  bool hasEmptySizeRequest() const {
+    QMutexLocker lock(&m_mutex);
+    return std::any_of(m_requests.cbegin(), m_requests.cend(), [](const auto& request) {
+      return request->size.isEmpty();
+    });
+  }
+
+  void dump() const {
+    QMutexLocker lock(&m_mutex);
+    for (const auto& request : m_requests) {
+      qInfo() << "Held thumbnail state" << request->row << request->id << request->size
+              << "cancelled" << request->cancelled.load() << "completed" << request->completed;
+    }
+  }
+
+  void completeAll() {
+    QMutexLocker lock(&m_mutex);
+    for (const auto& request : m_requests) {
+      if (request->completed) continue;
+      request->completed = true;
+      auto* response = request->response;
+      // Like the production provider, complete on the response's own thread.
+      QMetaObject::invokeMethod(response, [response] { emit response->finished(); }, Qt::QueuedConnection);
+    }
+  }
+
+private:
+  mutable QMutex m_mutex;
+  QList<std::shared_ptr<Request>> m_requests;
+};
 
 class UiTest : public QObject {
   Q_OBJECT
@@ -649,6 +741,32 @@ private slots:
     QCOMPARE(detail->property("path").toString(), shown);
   }
 
+  void videoPosterOnlyLoadsForAnOpenVideo() {
+    QQuickItem* poster = item("detailVideoPoster");
+    QVERIFY(poster);
+    openDetail(m_library->rowOf(QFileInfo(m_oddPath).canonicalFilePath()));
+    QVERIFY(poster->property("source").toUrl().isEmpty());
+
+    int documentRow = -1;
+    int videoRow = -1;
+    for (int row = 0; row < m_library->rowCount(); ++row) {
+      if (m_library->isDocumentAt(row)) documentRow = row;
+      if (m_library->isVideoAt(row)) videoRow = row;
+    }
+    QVERIFY(documentRow >= 0);
+    QVERIFY(videoRow >= 0);
+    invoke("dismissTopLayer");
+    openDetail(documentRow);
+    QVERIFY(poster->property("source").toUrl().isEmpty());
+    invoke("dismissTopLayer");
+    openDetail(videoRow);
+    QVERIFY(!poster->property("source").toUrl().isEmpty());
+    QCOMPARE(poster->property("sourceSize").toSize(),
+             QSize(qRound(poster->width()), qRound(poster->height())));
+    invoke("dismissTopLayer");
+    QTRY_VERIFY(poster->property("source").toUrl().isEmpty());
+  }
+
   void startupReadinessExcludesPlaceholdersAndFailedImages() {
     QQuickItem* grid = item("library");
     const auto viewportReady = [grid] {
@@ -670,9 +788,8 @@ private slots:
     QQuickItem* detail = item("detail");
     QTRY_VERIFY(detail->property("imageReady").toBool());
     const QString missing = m_scratch.filePath(QStringLiteral("missing-image.png"));
-    // Consume exactly the two decoder warnings this negative case provokes.
-    m_expectedQmlWarnings = {QStringLiteral("Cannot open: ") + QUrl::fromLocalFile(missing).toString(),
-                             QStringLiteral("No thumbnail for ") + missing};
+    // Only the still decoder runs; no hidden video poster requests this path.
+    m_expectedQmlWarnings = {QStringLiteral("Cannot open: ") + QUrl::fromLocalFile(missing).toString()};
     detail->setProperty("path", missing);
     QTRY_VERIFY(!detail->property("playbackError").toString().isEmpty());
     QVERIFY(detail->property("stillReady").toBool());
@@ -680,6 +797,226 @@ private slots:
     QTRY_VERIFY(m_expectedQmlWarnings.isEmpty());
     invoke("dismissTopLayer");
     QVERIFY(!detail->property("imageReady").toBool());
+  }
+
+  void galleryThumbnailSizingRecyclingAndScrolledModelChanges() {
+    // Synthetic rows must not react to background layout/reset signals from
+    // the main test window's unrelated library.
+    CaptureFilterModel thumbnailCaptures;
+    QQmlApplicationEngine engine;
+    engine.addImportPath(QStringLiteral(OMAROLL_QML_IMPORT_PATH));
+    auto* provider = new HeldThumbnailProvider;
+    engine.addImageProvider(QStringLiteral("thumbs"), provider);
+    auto* context = engine.rootContext();
+    context->setContextProperty(QStringLiteral("Theme"), m_theme);
+    context->setContextProperty(QStringLiteral("Settings"), m_settings);
+    context->setContextProperty(QStringLiteral("Captures"), &thumbnailCaptures);
+    context->setContextProperty(QStringLiteral("Library"), m_captures);
+    context->setContextProperty(QStringLiteral("MediaMetadata"), m_mediaMetadata);
+    QStringList warnings;
+    connect(&engine, &QQmlEngine::warnings, &engine, [&warnings](const QList<QQmlError>& errors) {
+      for (const auto& error : errors) warnings.append(error.toString());
+    });
+    engine.loadData(R"QML(
+      import QtQuick
+      import Omaroll
+      Window {
+        width: Settings.tileWidth * 2 + 12
+        height: Math.round(Settings.tileWidth * 0.68) * 2
+        ListModel { id: captures }
+        CaptureGrid { objectName: "sizingGrid"; anchors.fill: parent; model: captures }
+        CaptureCard {
+          objectName: "recycledCard"; width: Settings.tileWidth; height: parent.height / 2
+          visible: false; z: 100
+        }
+        function insertRowAbove() {
+          for (let i = 0; i < 2; ++i) {
+            captures.insert(i, { path: "/thumbnail-test/" + (2000 + i) + ".png", fileName: "",
+                                 kindLabel: "", timeLabel: "", sizeLabel: "", isVideo: false,
+                                 isDocument: false, favorite: false, rating: 0, hidden: false,
+                                 stamp: 1, ocrSnippet: "", caption: "" })
+          }
+        }
+        function removeRowAbove() { captures.remove(0, 2) }
+        // Let the grid's initial 80 ms width relayout finish before attaching
+        // records, so this test holds only requests from the settled geometry.
+        Timer {
+          interval: 120; running: true
+          onTriggered: {
+            for (let i = 0; i < 100; ++i) {
+              captures.append({ path: "/thumbnail-test/" + i + ".png", fileName: "",
+                                kindLabel: "", timeLabel: "", sizeLabel: "", isVideo: false,
+                                isDocument: false, favorite: false, rating: 0, hidden: false,
+                                stamp: 1, ocrSnippet: "", caption: "" })
+            }
+          }
+        }
+      }
+    )QML");
+    QVERIFY2(!engine.rootObjects().isEmpty(), qPrintable(warnings.join('\n')));
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst());
+    QVERIFY(window);
+    // Ensure even an early assertion releases held responses before teardown.
+    const auto release = qScopeGuard([&] { provider->completeAll(); });
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    auto* gallery = window->findChild<QQuickItem*>(QStringLiteral("sizingGrid"));
+    QVERIFY(gallery);
+    auto* view = find(gallery, [](QQuickItem* candidate) {
+      return candidate->property("cellHeight").isValid();
+    });
+    QVERIFY(view);
+    const auto diagnostics = qScopeGuard([&] {
+      if (!QTest::currentTestFailed()) return;
+      qInfo() << "Gallery geometry" << window->size() << view->size()
+              << "columns" << gallery->property("columns")
+              << "cell" << view->property("cellWidth") << view->property("cellHeight")
+              << "contentY" << view->property("contentY") << "originY" << view->property("originY");
+      provider->dump();
+    });
+    const qreal cellHeight = view->property("cellHeight").toReal();
+    QCOMPARE(gallery->property("columns").toInt(), 2);
+    const auto viewportReady = [&] {
+      QVariant ready;
+      QMetaObject::invokeMethod(gallery, "viewportReady", Q_RETURN_ARG(QVariant, ready));
+      return ready.toBool();
+    };
+    // Qt's software scene graph can round the final fade by one channel value.
+    // Keep the comparison tight while distinguishing these red/blue sources.
+    const auto pixelMatches = [](const QColor& actual, const QColor& expected) {
+      return actual.alpha() == expected.alpha()
+             && qAbs(actual.red() - expected.red()) <= 2
+             && qAbs(actual.green() - expected.green()) <= 2
+             && qAbs(actual.blue() - expected.blue()) <= 2;
+    };
+    // Visible and buffered cards use their final size for the first request,
+    // rather than decoding at fallback size and immediately requesting again.
+    QTRY_VERIFY(provider->rows().contains(0) && provider->rows().contains(1)
+                && provider->rows().contains(2) && provider->rows().contains(3));
+    QTest::qWait(240);
+    QVERIFY(!provider->hasEmptySizeRequest());
+    for (int row : {0, 1, 2, 3}) QCOMPARE(provider->rows().count(row), 1);
+    provider->completeAll();
+    QTRY_VERIFY(viewportReady());
+    // Keep selection in the synthetic viewport: changing an offscreen current
+    // index during insertion lets Qt scroll toward that unrelated selection.
+    view->setProperty("currentIndex", 62);
+    view->setProperty("contentY", cellHeight * 31);
+    QTRY_VERIFY(provider->rows().contains(62) && provider->rows().contains(63)
+                && provider->rows().contains(64) && provider->rows().contains(65));
+    provider->completeAll();
+    QTRY_VERIFY(viewportReady());
+    // GridView preserves the on-screen cells when a full row changes above
+    // them by shifting originY. Index arithmetic must follow that origin.
+    const auto visiblePaths = [&] {
+      QSet<QString> paths;
+      const QRectF viewport = view->mapRectToScene(view->boundingRect());
+      std::function<void(QQuickItem*)> collect = [&](QQuickItem* parent) {
+        for (QQuickItem* child : parent->childItems()) {
+          if (child->property("thumbnailLayoutReady").isValid() && child->isVisible() &&
+              child->mapRectToScene(child->boundingRect()).intersects(viewport)) {
+            paths.insert(child->property("path").toString());
+          }
+          collect(child);
+        }
+      };
+      collect(view);
+      return paths;
+    };
+    const QSet<QString> beforeInsertion = visiblePaths();
+    QCOMPARE(beforeInsertion, (QSet<QString>{QStringLiteral("/thumbnail-test/62.png"),
+                                             QStringLiteral("/thumbnail-test/63.png"),
+                                             QStringLiteral("/thumbnail-test/64.png"),
+                                             QStringLiteral("/thumbnail-test/65.png")}));
+    const qreal originalOrigin = view->property("originY").toReal();
+    QVERIFY(QMetaObject::invokeMethod(window, "insertRowAbove"));
+    QTRY_VERIFY(view->property("originY").toReal() != originalOrigin);
+    QTRY_COMPARE(visiblePaths(), beforeInsertion);
+    QTRY_VERIFY(viewportReady());
+    const auto cardForRow = [&](int row) {
+      const QString path = QStringLiteral("/thumbnail-test/%1.png").arg(row);
+      return find(view, [&path](QQuickItem* candidate) {
+        return candidate->property("thumbnailLayoutReady").isValid()
+               && candidate->property("path").toString() == path
+               && candidate->parentItem()->property("index").toInt() >= 0;
+      });
+    };
+    // The unadjusted index range includes the preceding buffered row. Make
+    // that row unready so it cannot accidentally let incorrect arithmetic pass.
+    auto* above = cardForRow(60);
+    QVERIFY(above);
+    above->setProperty("thumbnailReady", false);
+    QTRY_VERIFY(!above->property("thumbnailPresented").toBool());
+    QVERIFY(viewportReady());
+    auto* visibleCard = cardForRow(64);
+    QVERIFY(visibleCard);
+    visibleCard->setProperty("thumbnailReady", false);
+    QTRY_VERIFY(!visibleCard->property("thumbnailPresented").toBool());
+    QVERIFY(!viewportReady());
+    visibleCard->setProperty("thumbnailReady", true);
+    QTRY_VERIFY(viewportReady());
+    above->setProperty("thumbnailReady", true);
+    for (int row : {62, 63, 64, 65}) QCOMPARE(provider->rows().count(row), 1);
+    QVERIFY(QMetaObject::invokeMethod(window, "removeRowAbove"));
+    QTRY_COMPARE(view->property("originY").toReal(), originalOrigin);
+    QTRY_COMPARE(visiblePaths(), beforeInsertion);
+    QTRY_VERIFY(viewportReady());
+    for (int row : {62, 63, 64, 65}) QCOMPARE(provider->rows().count(row), 1);
+
+    view->setProperty("contentY", 0);
+    QTest::qWait(240);
+    for (int row : {0, 1, 2, 3}) QCOMPARE(provider->rows().count(row), 1);
+    QTRY_VERIFY(viewportReady());
+
+    // Simulate a recycled card's path reassignment while its old pixmap is
+    // ready and the replacement is held. The retained old pixels must vanish
+    // immediately, rather than fade over the new file's placeholder.
+    auto* card = window->findChild<QQuickItem*>(QStringLiteral("recycledCard"));
+    QVERIFY(card);
+    card->setVisible(true);
+    card->setProperty("path", QStringLiteral("/thumbnail-test/1000.png"));
+    QTRY_VERIFY(provider->rows().contains(1000));
+    provider->completeAll();
+    QTRY_VERIFY(card->property("thumbnailPresented").toBool());
+    const QPoint pixel(qRound(card->width() / 2), qRound(card->height() / 2));
+    QTRY_VERIFY(pixelMatches(window->grabWindow().pixelColor(pixel), QColor(Qt::red)));
+    card->setProperty("path", QStringLiteral("/thumbnail-test/1001.png"));
+    QTRY_VERIFY(provider->rows().contains(1001));
+    QVERIFY(!card->property("thumbnailPresented").toBool());
+    auto* thumbnail = find(card, [](QQuickItem* candidate) {
+      return candidate->property("sourceSize").isValid();
+    });
+    QVERIFY(thumbnail);
+    QVERIFY(!thumbnail->isVisible());
+    QVERIFY(window->grabWindow().pixelColor(pixel) != QColor(Qt::red));
+    QTRY_COMPARE(thumbnail->opacity(), 0.0);
+    provider->completeAll();
+    QTRY_VERIFY(card->property("thumbnailPresented").toBool());
+    QTRY_VERIFY(pixelMatches(window->grabWindow().pixelColor(pixel), QColor(Qt::blue)));
+    QCOMPARE(thumbnail->property("status").toInt(), 1); // Image.Ready.
+    QVERIFY(thumbnail->opacity() >= 0.999);
+    QCOMPARE(card->property("readyPath").toString(), QStringLiteral("/thumbnail-test/1001.png"));
+    QCOMPARE(card->property("readyStamp").toDouble(), 0.0);
+    // A same-path rewrite must also hide the previous version while decoding.
+    card->setProperty("stamp", 1);
+    QTRY_COMPARE(provider->count(1001, 1), 1);
+    QVERIFY(!card->property("thumbnailPresented").toBool());
+    QVERIFY(!card->property("thumbnailReady").toBool());
+    QVERIFY(!thumbnail->isVisible());
+    QVERIFY(window->grabWindow().pixelColor(pixel) != QColor(Qt::blue));
+    // Hold the replacement through the old fade-out. Reversing an animation
+    // within its first tick can leave a one-level alpha rounding difference in
+    // the software renderer; the identity checks above still run immediately.
+    QTRY_COMPARE(thumbnail->opacity(), 0.0);
+    provider->completeAll();
+    QTRY_VERIFY(card->property("thumbnailPresented").toBool());
+    QTRY_VERIFY(pixelMatches(window->grabWindow().pixelColor(pixel), QColor(Qt::red)));
+    QCOMPARE(thumbnail->property("status").toInt(), 1);
+    QVERIFY(thumbnail->opacity() >= 0.999);
+    QCOMPARE(card->property("readyPath").toString(), QStringLiteral("/thumbnail-test/1001.png"));
+    QCOMPARE(card->property("readyStamp").toDouble(), 1.0);
+    QVERIFY(!provider->hasEmptySizeRequest());
+    QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
   }
 
   void imageViewerSupportsActualSizeFlipsDeepZoomAndAnimationPause() {
@@ -1026,6 +1363,67 @@ private slots:
     QTRY_VERIFY(item("library")->hasActiveFocus());
   }
 
+  void browseKeepsSearchAndChoicesVisibleWithManySources() {
+    // Keep fixture files until suite teardown: queued decodes from a removed
+    // source may still finish after this test restores the library settings.
+    const QDir sources(m_scratch.filePath(QStringLiteral("browse-sources")));
+    QStringList paths;
+    const QSize previous = m_window->size();
+    const auto restore = qScopeGuard([&] {
+      invoke("dismissTopLayer");
+      for (const QString& path : paths) m_settings->removeLibraryFolder(path);
+      m_captures->refresh();
+      const bool removed = QTest::qWaitFor([&] {
+        return std::all_of(paths.cbegin(), paths.cend(), [&](const QString& path) {
+          return m_captures->rowOf(path + QStringLiteral("/picture.png")) < 0;
+        });
+      }, 5000);
+      m_window->resize(previous);
+      QVERIFY(removed);
+    });
+    for (int index = 0; index < 12; ++index) {
+      const QString path = sources.filePath(QStringLiteral("source-folder-%1-photographs").arg(index));
+      QVERIFY(QDir().mkpath(path));
+      const QString picture = path + QStringLiteral("/picture.png");
+      QImage fixture(40, 30, QImage::Format_RGB32);
+      fixture.fill(Qt::blue);
+      QVERIFY(fixture.save(picture));
+      m_disposablePaths.append(picture);
+      QVERIFY(m_settings->addLibraryFolder(QUrl::fromLocalFile(path)));
+      paths.append(path);
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->folders().contains(paths.constLast()), 5000);
+    m_window->resize(560, 420);
+    QObject* browser = m_window->findChild<QObject*>(QStringLiteral("libraryBrowser"));
+    QVERIFY(QMetaObject::invokeMethod(browser, "open"));
+    QTRY_VERIFY(browser->property("visible").toBool());
+    QQuickItem* controls = item("libraryControls");
+    QQuickItem* choices = item("libraryChoices");
+    QQuickItem* search = item("librarySearch");
+    QTRY_VERIFY(controls->property("contentHeight").toReal() > controls->height());
+    QTRY_VERIFY(choices->height() >= 120);
+    QVERIFY(search->isVisible());
+    QTRY_VERIFY(search->hasActiveFocus());
+    QTRY_VERIFY(search->mapToScene(QPointF()).y() >= 0);
+    QTRY_VERIFY(search->mapToScene(QPointF()).y() + search->height() <= m_window->height());
+    QQuickItem* addFolder = item("browseAddFolder");
+    QVERIFY(addFolder->x() + addFolder->width() <= addFolder->parentItem()->width());
+    QTest::keyClick(m_window, Qt::Key_Tab, Qt::ShiftModifier);
+    QTRY_VERIFY(m_window->activeFocusItem() != search);
+    QQuickItem* focused = m_window->activeFocusItem();
+    QVERIFY(focused);
+    QTRY_VERIFY(focused->mapToItem(controls, QPointF()).y() >= 0);
+    QTRY_VERIFY(focused->mapToItem(controls, QPointF()).y() + focused->height()
+                <= controls->height());
+    search->forceActiveFocus();
+    search->setProperty("text", paths.constLast());
+    QTRY_COMPARE(choices->property("count").toInt(), 1);
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!browser->property("visible").toBool());
+    QCOMPARE(m_library->folderFilter(), paths.constLast());
+    m_library->setFolderFilter({});
+  }
+
   void favouriteFromTheViewerKeepsItOpen() {
     QQuickItem* detail = item("detail");
     openDetail(0);
@@ -1129,6 +1527,37 @@ private slots:
     QTRY_COMPARE(m_library->rowCount(), all);
     QVERIFY(m_library->property("searchText").toString().isEmpty());
     QTRY_VERIFY(item("library")->hasActiveFocus());
+  }
+
+  void emptySearchResultsRecoverKeyboardNavigation() {
+    QTest::keyClick(m_window, Qt::Key_Slash);
+    QTRY_VERIFY(item("filters")->property("searchActive").toBool());
+    typeText(QStringLiteral("no-media-matches-this-query"));
+    QTRY_COMPARE(m_library->count(), 0);
+    QTRY_COMPARE(item("library")->property("currentIndex").toInt(), -1);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(m_library->count() > 0);
+    QTRY_VERIFY(item("library")->property("currentIndex").toInt() >= 0);
+    QTRY_VERIFY(item("library")->hasActiveFocus());
+    const QString expected = pathAt(item("library")->property("currentIndex").toInt());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(item("detail")->isVisible());
+    QCOMPARE(item("detail")->property("path").toString(), expected);
+  }
+
+  void externalOpenKeepsTheSearchFieldInSync() {
+    QQuickItem* search = item("libraryFilterSearch");
+    QVERIFY(search);
+    m_library->setSearchText(QStringLiteral("alpine"));
+    QTRY_COMPARE(search->property("text").toString(), QStringLiteral("alpine"));
+    QTRY_COMPARE(m_library->count(), 1);
+    const QString path = pathAt(0);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openPath", Q_ARG(QVariant, path)));
+    QTRY_VERIFY(item("detail")->isVisible());
+    QCOMPARE(m_library->searchText(), QString());
+    QCOMPARE(search->property("text").toString(), QString());
+    invoke("dismissTopLayer");
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openFolder", Q_ARG(QVariant, QString())));
   }
 
   void sectionKeysSwitchTheFilter() {
@@ -1530,6 +1959,7 @@ private slots:
     QVERIFY(m_settings->smartCollectionNames().contains(QStringLiteral("Alpine pictures")));
     QCOMPARE(m_library->smartCollectionFilter(), QStringLiteral("Alpine pictures"));
     QCOMPARE(m_library->searchText(), QStringLiteral("alpine"));
+    QCOMPARE(item("libraryFilterSearch")->property("text").toString(), QStringLiteral("alpine"));
     QCOMPARE(m_library->sortMode(), CaptureFilterModel::NameAscending);
     QCOMPARE(m_library->count(), 1);
 
@@ -2067,6 +2497,41 @@ private slots:
     QQuickItem* preview = item("mattePreview");
     // Image.Ready
     QTRY_COMPARE_WITH_TIMEOUT(preview->property("status").toInt(), 1, 15000);
+  }
+
+  void shuffledFolderPreviewStaysInTheExactFolder() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("child"))));
+    const QString first = dir.filePath(QStringLiteral("first.png"));
+    const QString second = dir.filePath(QStringLiteral("second.png"));
+    const QString child = dir.filePath(QStringLiteral("child/third.png"));
+    QImage fixture(80, 60, QImage::Format_RGB32);
+    fixture.fill(Qt::blue);
+    for (const QString& path : {first, second, child}) {
+      QVERIFY(fixture.save(path));
+      m_disposablePaths.append(path);
+    }
+    const bool previousShuffle = m_settings->slideshowShuffle();
+    const auto restore = qScopeGuard([&] {
+      invoke("dismissTopLayer");
+      m_settings->setSlideshowShuffle(previousShuffle);
+      QMetaObject::invokeMethod(m_window, "openFolder", Q_ARG(QVariant, QString()));
+      m_captures->refresh();
+    });
+    m_captures->addExtraFiles({first, second, child});
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openPath", Q_ARG(QVariant, first)));
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->isVisible());
+    QVERIFY(prop("viewerFolderOnly").toBool());
+    m_settings->setSlideshowShuffle(true);
+    QVERIFY(QMetaObject::invokeMethod(detail, "setSlideshow", Q_ARG(QVariant, true)));
+    for (int index = 0; index < 12; ++index) {
+      const QString before = detail->property("path").toString();
+      QVERIFY(QMetaObject::invokeMethod(m_window, "navigateDetail", Q_ARG(QVariant, 1)));
+      QCOMPARE(detail->property("path").toString(), before == first ? second : first);
+      QVERIFY(detail->property("slideshowRunning").toBool());
+    }
   }
 
   void explicitSelectionNavigatesInOrderAcrossFolders() {
@@ -2971,9 +3436,14 @@ private slots:
         QFile::remove(path);
       }
       m_captures->refresh();
-      QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(added.value(0)) < 0, 15000);
+      const bool removed = QTest::qWaitFor([&] {
+        return std::all_of(added.cbegin(), added.cend(), [&](const QString& path) {
+          return m_captures->rowOf(path) < 0;
+        });
+      }, 15000);
       m_window->resize(1280, 820);
       QTest::qWait(400);
+      QVERIFY(removed);
     });
 
     struct Stale {
@@ -3058,16 +3528,15 @@ private slots:
       }) : nullptr;
     };
     auto openByRightClick = [&](int row, const char* stage) {
+      QQuickItem* view = find(grid, [](QQuickItem* candidate) {
+        return candidate->property("cellWidth").isValid();
+      });
+      // Position first: an offscreen row may not have a live delegate yet.
+      // GridView.Contain
+      QMetaObject::invokeMethod(view, "positionViewAtIndex", Q_ARG(int, row), Q_ARG(int, 4));
       QQuickItem* card = nullptr;
       QTRY_VERIFY_WITH_TIMEOUT((card = liveCardAt(row)) != nullptr, 5000);
       QCOMPARE(card->property("path").toString(), pathAt(row));
-      if (centre(card).y() <= 0 || centre(card).y() >= m_window->height()) {
-        QQuickItem* view = find(grid, [](QQuickItem* candidate) {
-          return candidate->property("cellWidth").isValid();
-        });
-        // GridView.Contain
-        QMetaObject::invokeMethod(view, "positionViewAtIndex", Q_ARG(int, row), Q_ARG(int, 4));
-      }
       // Relayout may destroy the delegate while the wait processes events.
       QTRY_VERIFY_WITH_TIMEOUT((card = liveCardAt(row)) != nullptr && centre(card).y() > 0
                                    && centre(card).y() < m_window->height(), 5000);
