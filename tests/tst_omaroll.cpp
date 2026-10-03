@@ -4738,10 +4738,11 @@ private slots:
     QCOMPARE(url.host(), QStringLiteral("raw"));
     QVERIFY(model.fileUrl(dir.filePath(QStringLiteral("x.png"))).isLocalFile());
     QSignalSpy sized(&model, &CaptureModel::rawSizeRead);
-    model.readRawSize(camera);
+    model.readRawSize(camera, url);
     QTRY_COMPARE(sized.count(), 1);
     QCOMPARE(sized.at(0).at(0).toString(), camera);
-    QCOMPARE(sized.at(0).at(1).toSize(), QSize(48, 64));
+    QCOMPARE(sized.at(0).at(1).toUrl(), url);
+    QCOMPARE(sized.at(0).at(2).toSize(), QSize(48, 64));
 
     // A file replaced with the same mtime, as cp -p or rsync -a leave it, is
     // a new URL, so Qt's cache cannot serve the old preview.
