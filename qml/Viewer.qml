@@ -117,7 +117,7 @@ ApplicationWindow {
                                         || actionMenu.visible || confirm.visible
                                         || header.hovered || transport.hovered
                                         || previousButton.hovered || nextButton.hovered
-                                        || toolbar.hovered
+                                        || toolbar.hovered || filmstrip.hovered
                                         || transport.scrubbing
                                         || (Session.isVideo && !root.playing && !root.slideshowRunning)
     readonly property bool pointerHidden: !root.chromeShown
@@ -440,6 +440,12 @@ ApplicationWindow {
         root.say("No pictures here for a slideshow")
     }
 
+    function toggleFilmstrip() {
+        Settings.viewerFilmstrip = !Settings.viewerFilmstrip
+        root.revealChrome()
+        root.say(Settings.viewerFilmstrip ? "Filmstrip shown" : "Filmstrip hidden")
+    }
+
     function toggleFavorite() {
         Settings.toggleFavorite(Session.path)
         root.say(Settings.isFavorite(Session.path) ? "Added to favourites" : "Removed from favourites")
@@ -464,7 +470,7 @@ ApplicationWindow {
     // every player, rather than the library's Show in files.
     readonly property var viewerShortcuts: ({
         library: "Enter", copy: "Y", annotate: "A", send: "S", trim: "T", frame: "G",
-        play: "P", rotate: "R", slideshow: "F5", fullscreen: "F", info: "I",
+        play: "P", rotate: "R", slideshow: "F5", fullscreen: "F", info: "I", filmstrip: "B",
         favorite: "V", trash: "Del"
     })
 
@@ -497,6 +503,10 @@ ApplicationWindow {
             entries.push({id: "slideshow",
                           label: root.slideshowRunning ? "Stop slideshow" : "Slideshow"})
         }
+        if (Session.count > 1) {
+            entries.push({id: "filmstrip",
+                          label: Settings.viewerFilmstrip ? "Hide filmstrip" : "Show filmstrip"})
+        }
         entries.push({id: "fullscreen", label: root.fullScreen ? "Exit full screen" : "Full screen"})
         entries.push({id: "info", label: root.infoOpen ? "Hide details" : "Details"})
         entries.push({separator: true})
@@ -523,6 +533,9 @@ ApplicationWindow {
             return
         case "fullscreen":
             root.setFullScreen(!root.fullScreen)
+            return
+        case "filmstrip":
+            root.toggleFilmstrip()
             return
         case "info":
             root.infoOpen = !root.infoOpen
@@ -969,7 +982,10 @@ ApplicationWindow {
             objectName: "viewerSubtitles"
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottom: parent.bottom
-            anchors.bottomMargin: root.chromeShown && Session.isVideo ? transport.height + 40 : 36
+            anchors.bottomMargin: root.chromeShown && Session.isVideo
+                                  ? transport.height + 40
+                                    + (filmstrip.visible ? filmstrip.height + 10 : 0)
+                                  : 36
             width: Math.max(0, parent.width - 120)
             visible: Session.isVideo && root.subtitleText !== ""
             text: root.subtitleText
@@ -1312,6 +1328,26 @@ ApplicationWindow {
             onTrash: root.requestTrash()
         }
 
+        ViewerFilmstrip {
+            id: filmstrip
+            objectName: "viewerFilmstrip"
+            // Hidden on a window too short to keep the picture in view, and
+            // during a slideshow, which is about the one picture.
+            visible: Settings.viewerFilmstrip && Session.count > 1 && !root.slideshowRunning
+                     && parent.height >= 360
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 26 + (Session.isVideo ? transport.height : toolbar.height)
+            width: Math.min(implicitWidth, parent.width - 32, 760)
+            count: Session.count
+            currentIndex: Session.index
+            devicePixelRatio: root.dpr
+            onChosen: function (index) {
+                slideshowTimer.stop()
+                Session.jump(index)
+            }
+        }
+
         ViewerTransport {
             id: transport
             objectName: "viewerTransport"
@@ -1345,7 +1381,8 @@ ApplicationWindow {
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
         // Above the toolbar, which is up while the zoom is changing.
-        anchors.bottomMargin: toolbar.visible ? toolbar.height + 26 : 22
+        anchors.bottomMargin: (toolbar.visible ? toolbar.height + 26 : 22)
+                              + (filmstrip.visible && root.chromeShown ? filmstrip.height + 10 : 0)
         width: zoomText.implicitWidth + 20
         height: zoomText.implicitHeight + 10
         radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, height / 2) : 3
@@ -1679,6 +1716,10 @@ ApplicationWindow {
                     break
                 case Qt.Key_A:
                     if (!video) root.perform("annotate")
+                    else handled = false
+                    break
+                case Qt.Key_B:
+                    if (Session.count > 1) root.toggleFilmstrip()
                     else handled = false
                     break
                 case Qt.Key_T:
