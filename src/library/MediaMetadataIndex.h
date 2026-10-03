@@ -2,6 +2,7 @@
 
 #include "library/CaptureModel.h"
 
+#include <QFutureWatcher>
 #include <QHash>
 #include <QList>
 #include <QObject>
@@ -101,6 +102,9 @@ private:
   QHash<QString, QString> m_failed;
   QList<Candidate> m_current;
   QProcess m_process;
+  // Raws are read in-process, a batch at a time on a worker: a slow disk or
+  // network share must not stall the window.
+  QFutureWatcher<QList<Details>> m_rawProbe;
   QTimer m_timeout;
   QTimer m_syncTimer;
   QTimer m_saveTimer;

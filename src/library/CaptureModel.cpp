@@ -399,7 +399,13 @@ QUrl CaptureModel::fileUrl(const QString& path) const {
   return CameraRaw::isRawFile(path) ? CameraRaw::previewUrl(path) : QUrl::fromLocalFile(path);
 }
 
-QSize CaptureModel::rawSize(const QString& path) const { return CameraRaw::fullSize(path); }
+void CaptureModel::readRawSize(const QString& path) {
+  if (!CameraRaw::isRawFile(path)) {
+    return;
+  }
+  QtConcurrent::run([path] { return CameraRaw::fullSize(path); })
+      .then(this, [this, path](const QSize& size) { emit rawSizeRead(path, size); });
+}
 
 QString CaptureModel::uriList(const QStringList& paths) const {
   QString list;

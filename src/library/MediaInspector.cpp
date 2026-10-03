@@ -10,6 +10,7 @@
 #include <QLocale>
 #include <QProcess>
 #include <QStandardPaths>
+#include <QtConcurrent>
 #include <QTimer>
 
 #include <cmath>
@@ -129,9 +130,16 @@ void MediaInspector::inspect(const QString& path, bool video) {
   }
 
   if (!video && CameraRaw::isRawFile(path)) {
-    m_lines = describeRaw(path);
-    emit detailsChanged();
-    setLoading(false);
+    // Header reads, on a worker so a slow disk cannot stall the window.
+    const quint64 generation = m_generation;
+    setLoading(true);
+    QtConcurrent::run([path] { return describeRaw(path); })
+        .then(this, [this, generation](const QStringList& lines) {
+          if (generation != m_generation) return;
+          m_lines = lines;
+          emit detailsChanged();
+          setLoading(false);
+        });
     return;
   }
 

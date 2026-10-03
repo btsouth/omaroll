@@ -12,6 +12,7 @@
 #include <QSaveFile>
 #include <QSet>
 #include <QStandardPaths>
+#include <QtConcurrent>
 
 #include <algorithm>
 #include <utility>
@@ -108,6 +109,18 @@ MediaMetadataIndex::MediaMetadataIndex(CaptureModel* model, QObject* parent)
     if (error == QProcess::FailedToStart) {
       finishCurrent(false);
     }
+  });
+
+  connect(&m_rawProbe, &QFutureWatcher<QList<Details>>::finished, this, [this] {
+    const QList<Candidate> batch = std::exchange(m_current, {});
+    const QList<Details> results = m_rawProbe.result();
+    for (qsizetype index = 0; index < batch.size() && index < results.size(); ++index) {
+      if (stillCurrent(batch.at(index))) {
+        adopt(batch.at(index), results.at(index));
+      }
+    }
+    advanceProgress(static_cast<int>(batch.size()));
+    QTimer::singleShot(0, this, &MediaMetadataIndex::processNext);
   });
 
   m_syncTimer.setSingleShot(true);
@@ -333,15 +346,30 @@ void MediaMetadataIndex::processNext() {
     return;
   }
 
+  m_current.append(first);
   if (first.raw) {
-    // A few header reads, so no process and no batch.
-    adopt(first, rawDetails(first.path));
-    advanceProgress();
-    QTimer::singleShot(0, this, &MediaMetadataIndex::processNext);
+    // A few header reads each, so no process.
+    QStringList paths = {first.path};
+    while (m_current.size() < kImageBatchSize && !m_queue.isEmpty() && m_queue.first().raw) {
+      const Candidate candidate = m_queue.takeFirst();
+      if (stillCurrent(candidate)) {
+        m_current.append(candidate);
+        paths.append(candidate.path);
+      } else {
+        advanceProgress();
+      }
+    }
+    m_rawProbe.setFuture(QtConcurrent::run([paths] {
+      QList<Details> results;
+      results.reserve(paths.size());
+      for (const QString& path : paths) {
+        results.append(rawDetails(path));
+      }
+      return results;
+    }));
     return;
   }
 
-  m_current.append(first);
   if (!first.video) {
     while (m_current.size() < kImageBatchSize && !m_queue.isEmpty() && !m_queue.first().video &&
            !m_queue.first().raw) {

@@ -101,8 +101,8 @@ public:
   Q_INVOKABLE QUrl fileUrl(const QString& path) const;
 
   // A camera raw's own size, upright, which its preview may be smaller than.
-  // Invalid for anything else.
-  Q_INVOKABLE QSize rawSize(const QString& path) const;
+  // Read on a worker and answered by rawSizeRead(); nothing for other files.
+  Q_INVOKABLE void readRawSize(const QString& path);
 
   // text/uri-list for a drag: one fully encoded file: URL per line, CRLF
   // terminated as RFC 2483 asks, which is what Nautilus, browsers and Electron
@@ -110,6 +110,7 @@ public:
   Q_INVOKABLE QString uriList(const QStringList& paths) const;
 
 signals:
+  void rawSizeRead(const QString& path, QSize size);
   void countChanged();
   void scanningChanged();
   void automaticFoldersChanged();

@@ -1172,6 +1172,7 @@ Item {
             Component {
                 id: staticStill
                 Image {
+                    id: staticImage
                     source: root.visible && !root.isVideo && root.path !== ""
                             ? Library.fileUrl(root.path) : ""
                     asynchronous: true
@@ -1179,17 +1180,30 @@ Item {
                     smooth: true
                     mipmap: true
                     fillMode: Image.Stretch
+                    // A camera raw shows its embedded preview; measure it by
+                    // the raw when the two have the same shape.
+                    Connections {
+                        target: Library
+                        function onRawSizeRead(path, size) {
+                            const still = staticImage
+                            if (path !== root.path || still.status !== Image.Ready
+                                    || size.width <= 0 || size.height <= 0) {
+                                return
+                            }
+                            const shown = still.sourceSize
+                            if (Math.abs(size.width / size.height
+                                         / (shown.width / shown.height) - 1) < 0.02) {
+                                root.imageSourceWidth = size.width
+                                root.imageSourceHeight = size.height
+                            }
+                        }
+                    }
                     onStatusChanged: {
                         if (status === Image.Ready) {
-                            // A camera raw shows its embedded preview; measure
-                            // it by the raw when the two have the same shape.
-                            const raw = Library.rawSize(root.path)
-                            const same = raw.width > 0 && raw.height > 0
-                                && Math.abs(raw.width / raw.height
-                                            / (sourceSize.width / sourceSize.height) - 1) < 0.02
-                            root.imageSourceWidth = same ? raw.width : sourceSize.width
-                            root.imageSourceHeight = same ? raw.height : sourceSize.height
+                            root.imageSourceWidth = sourceSize.width
+                            root.imageSourceHeight = sourceSize.height
                             root.stillReady = true
+                            Library.readRawSize(root.path)
                         } else if (status === Image.Error) {
                             root.playbackError = "Could not display this image"
                             root.stillReady = true

@@ -4595,6 +4595,67 @@ private slots:
     QCOMPARE(CameraRaw::readMetadata(dir.filePath(QStringLiteral("missing.arw"))).orientation, 1);
   }
 
+  // The same for the containers around the TIFF: a CR3's boxes and a RAF's
+  // leading JPEG, cut off anywhere, with sizes that overflow or point past the
+  // end, and with boxes repeated so the walk cannot multiply.
+  void cameraRawContainersSurviveTruncationAndRepeats() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("cut.raw"));
+    const auto read = [&path](const QByteArray& bytes) {
+      QFile out(path);
+      if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) return CameraRaw::Metadata{};
+      out.write(bytes);
+      out.close();
+      return CameraRaw::readMetadata(path);
+    };
+
+    const QByteArray canon = QByteArray::fromHex("85c0b687820f11e08111f4ce462b6a48");
+    const QByteArray ftyp = box("ftyp", QByteArray("crx \0\0\0\1crx isom", 16));
+    const QByteArray cr3 =
+        ftyp + box("moov", box("uuid", canon + box("CMT1", cameraTiff(false, rawCameraFields(6))) +
+                                           box("CMT2", cameraTiff(false, rawShotFields()))));
+    for (qsizetype length = 0; length <= cr3.size(); ++length) {
+      const CameraRaw::Metadata metadata = read(cr3.left(length));
+      QVERIFY(metadata.orientation >= 1 && metadata.orientation <= 8);
+    }
+    QCOMPARE(read(cr3).iso, 3200);
+
+    // A 64-bit size near the limit, and a box that runs to the end of the file.
+    QByteArray huge = QByteArray::fromHex("00000001") + "moov" + QByteArray::fromHex("7fffffffffffffff");
+    QCOMPARE(read(ftyp + huge + cr3.mid(ftyp.size())).orientation, 1);
+    QByteArray open = cr3;
+    open.replace(ftyp.size(), 4, QByteArray(4, '\0'));
+    QCOMPARE(read(open).orientation, 6);
+
+    // Only the first moov, the first Canon box and the first CMT1 are read.
+    const QByteArray first = box("CMT1", cameraTiff(false, rawCameraFields(3)));
+    const QByteArray second = box("CMT1", cameraTiff(false, rawCameraFields(6)));
+    QCOMPARE(read(ftyp + box("moov", box("uuid", canon + first + second)) +
+                  box("moov", box("uuid", canon + second)))
+                 .orientation,
+             3);
+
+    // A RAF whose JPEG pointer leads past the end, then one cut short.
+    QByteArray fujifilm = QByteArray("FUJIFILMCCD-RAW 0201FF383501").leftJustified(84, '\0');
+    fujifilm += QByteArray::fromHex("7fffff00") + QByteArray::fromHex("00000010");
+    QCOMPARE(read(fujifilm).orientation, 1);
+    QByteArray jpeg = QByteArray::fromHex("ffd8");
+    const QByteArray exif = QByteArray("Exif\0\0", 6) + cameraTiff(true, rawCameraFields(6));
+    const int length = int(exif.size()) + 2;
+    jpeg += QByteArray::fromHex("ffe1") + char(length >> 8) + char(length & 0xFF) + exif;
+    QByteArray raf = QByteArray("FUJIFILMCCD-RAW 0201FF383501").leftJustified(84, '\0');
+    for (const quint32 field : {quint32(100), quint32(jpeg.size())}) {
+      for (int index = 0; index < 4; ++index) raf.append(char(field >> (24 - 8 * index)));
+    }
+    raf = raf.leftJustified(100, '\0') + jpeg;
+    for (qsizetype cut = 0; cut <= raf.size(); ++cut) {
+      const CameraRaw::Metadata metadata = read(raf.left(cut));
+      QVERIFY(metadata.orientation >= 1 && metadata.orientation <= 8);
+    }
+    QCOMPARE(read(raf).orientation, 6);
+  }
+
   // The preview is turned exactly as Qt turns a JPEG with the same EXIF tag.
   void rawPreviewsTurnAsQtTurnsAJpeg() {
     QImage pattern(6, 4, QImage::Format_RGB32);
@@ -4676,7 +4737,27 @@ private slots:
     QCOMPARE(url.scheme(), QStringLiteral("image"));
     QCOMPARE(url.host(), QStringLiteral("raw"));
     QVERIFY(model.fileUrl(dir.filePath(QStringLiteral("x.png"))).isLocalFile());
-    QCOMPARE(model.rawSize(camera), QSize(48, 64));
+    QSignalSpy sized(&model, &CaptureModel::rawSizeRead);
+    model.readRawSize(camera);
+    QTRY_COMPARE(sized.count(), 1);
+    QCOMPARE(sized.at(0).at(0).toString(), camera);
+    QCOMPARE(sized.at(0).at(1).toSize(), QSize(48, 64));
+
+    // A file replaced with the same mtime, as cp -p or rsync -a leave it, is
+    // a new URL, so Qt's cache cannot serve the old preview.
+    const QUrl previous = CameraRaw::previewUrl(camera);
+    const QDateTime stamp = QFileInfo(camera).lastModified();
+    const QString replacement = dir.filePath(QStringLiteral("replacement.dng"));
+    QVERIFY(QFile::copy(camera, replacement));
+    QVERIFY(QFile::remove(camera));
+    QVERIFY(QFile::rename(replacement, camera));
+    {
+      QFile touched(camera);
+      QVERIFY(touched.open(QIODevice::ReadWrite));
+      QVERIFY(touched.setFileTime(stamp, QFileDevice::FileModificationTime));
+    }
+    QCOMPARE(QFileInfo(camera).lastModified(), stamp);
+    QVERIFY(CameraRaw::previewUrl(camera) != previous);
 
     QCOMPARE(MediaInspector::describeRaw(camera),
              QStringList({QStringLiteral("DNG"),
