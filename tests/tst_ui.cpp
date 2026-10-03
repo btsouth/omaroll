@@ -893,6 +893,9 @@ private slots:
     for (int row : {0, 1, 2, 3}) QCOMPARE(provider->rows().count(row), 1);
     provider->completeAll();
     QTRY_VERIFY(viewportReady());
+    // Keep selection in the synthetic viewport: changing an offscreen current
+    // index during insertion lets Qt scroll toward that unrelated selection.
+    view->setProperty("currentIndex", 62);
     view->setProperty("contentY", cellHeight * 31);
     QTRY_VERIFY(provider->rows().contains(62) && provider->rows().contains(63)
                 && provider->rows().contains(64) && provider->rows().contains(65));
