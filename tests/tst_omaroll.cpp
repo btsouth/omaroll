@@ -1423,6 +1423,55 @@ private slots:
     QVERIFY(settings.isFavorite(moved));
   }
 
+  void organizationBackupAcceptsLegacyMarkIdentities_data() {
+    QTest::addColumn<bool>("knownBytes");
+    QTest::newRow("empty-fingerprint") << true;
+    QTest::newRow("unknown-size") << false;
+  }
+
+  void organizationBackupAcceptsLegacyMarkIdentities() {
+    QFETCH(bool, knownBytes);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                       dir.filePath(QStringLiteral("profile")));
+    const auto restoreProfile = qScopeGuard([this] {
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                         m_scratch.filePath(QStringLiteral("config")));
+    });
+    const QString path = dir.filePath(QStringLiteral("unavailable.png"));
+    const QString backup = dir.filePath(QStringLiteral("backup.json"));
+    {
+      QSettings stored(QSettings::IniFormat, QSettings::UserScope,
+                       QStringLiteral("omaroll"), QStringLiteral("omaroll"));
+      stored.setValue(QStringLiteral("library/favorites"), QStringList{path});
+      stored.setValue(QStringLiteral("library/markIdentities"), QVariantMap{
+          {path, QVariantMap{{QStringLiteral("bytes"), knownBytes ? 10 : -1},
+                            {QStringLiteral("modified"), 1000},
+                            {QStringLiteral("fingerprint"), QByteArray()},
+                            {QStringLiteral("device"), QStringLiteral("1")},
+                            {QStringLiteral("inode"), QStringLiteral("2")}}}});
+      stored.sync();
+    }
+    AppSettings settings;
+    QVERIFY(settings.isFavorite(path));
+    QVERIFY(settings.exportOrganization(backup).value(QStringLiteral("ok")).toBool());
+    QFile file(backup);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const auto identities = QJsonDocument::fromJson(file.readAll()).object()
+                                .value(QStringLiteral("markIdentities")).toObject();
+    QCOMPARE(identities.contains(path), knownBytes);
+    if (knownBytes) {
+      QCOMPARE(identities.value(path).toObject().value(QStringLiteral("fingerprint")).toString(),
+               QString());
+    }
+    settings.setFavorite({path}, false);
+    QVERIFY(settings.importOrganization(backup).value(QStringLiteral("ok")).toBool());
+    QVERIFY(settings.isFavorite(path));
+    AppSettings restored;
+    QVERIFY(restored.isFavorite(path));
+  }
+
   void invalidBackupMarkIdentitiesLeaveOrganizationUntouched() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -1805,7 +1854,7 @@ private slots:
 
     struct stat before {};
     QVERIFY(::stat(QFile::encodeName(candidate).constData(), &before) == 0);
-    QTest::qWait(2);
+    QTest::qWait(50);
     QFile changed(candidate);
     QVERIFY(changed.open(QIODevice::WriteOnly | QIODevice::Truncate));
     QCOMPARE(changed.write(QByteArray(4096, 'a')), qint64(4096));
