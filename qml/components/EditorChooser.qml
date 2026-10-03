@@ -82,6 +82,13 @@ Popup {
         }
     }
 
+    function chooseDefaultEditor(id) {
+        // Updating preferences rebuilds candidate delegates synchronously.
+        // Keep this work in the popup's context, outside the clicked delegate.
+        if (id === "custom") Editors.customCommand = root.customDraft
+        if (Editors.setPreferred(id)) root.selectedId = id
+    }
+
     width: Math.min(500, parent.width - 60)
     height: Math.min(parent.height - 60, contentItem.implicitHeight + 44)
     x: Math.round((parent.width - width) / 2)
@@ -219,14 +226,7 @@ Popup {
                             enabled: candidateRow.available
                             toolTip: candidateRow.modelData.preferred
                                      ? "Default editor" : "Use by default"
-                            onClicked: {
-                                if (candidateRow.modelData.id === "custom") {
-                                    Editors.customCommand = root.customDraft
-                                }
-                                if (Editors.setPreferred(candidateRow.modelData.id)) {
-                                    root.selectedId = candidateRow.modelData.id
-                                }
-                            }
+                            onClicked: root.chooseDefaultEditor(candidateRow.modelData.id)
                         }
 
                         HoverHandler {
