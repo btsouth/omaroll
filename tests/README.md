@@ -197,14 +197,24 @@ source identity with a tolerant 32x18 RGB comparison; indistinguishable video
 fixtures cannot qualify. Reference preparation is outside operation timers,
 but frame conversion and comparison are included. Still readiness also waits
 for the loader's fade to finish. Decoder errors, QML errors and 30-second
-operation timeouts fail the run. These are deliberate jumps, not continuous wheel scrolling. Retain stderr for actual `QSG_INFO`
-driver details beside JSON.
+operation timeouts fail the run. The default gallery passes use deliberate jumps.
+Retain stderr for actual `QSG_INFO` driver details beside JSON.
 
 Add `--burst-jumps 24` to issue gallery jumps 16 ms apart before the normal
 passes. The extra sample measures from the first input until the final viewport
 at the end of the library is ready. Intermediate viewports deliberately do not
 settle. Timer delivery can be delayed by rendering or other GUI work, so this
 measures the complete burst and final settling, not a fixed-duration input trace.
+
+Alternatively, add `--wheel-steps 120` for phased touchpad input through Qt's
+normal event delivery. It requests 40-pixel updates every 16 ms, records actual
+travel and delivery duration, and waits for the final viewport to settle.
+At least 80% of the expected travel and a nonzero submitted-frame count are
+required. The sample counts submitted frames with a fully faded, ready
+viewport during input. That readiness snapshot is not a pixel-coverage
+measurement or physical presentation evidence. GUI work can delay timer
+delivery, so compare actual duration as well as ready-frame counts. Wheel and
+burst modes are mutually exclusive.
 
 The 10 ms heartbeat reports the largest interval between GUI callbacks, not
 pure blocking time. RSS samples belong to the whole benchmark process; its
@@ -222,6 +232,8 @@ The [startup follow-up](../docs/performance/2026-09-05-startup/README.md) record
 content-ready timing and the deferred-video comparison.
 The [bounded-work follow-up](../docs/performance/2026-10-03-bounded-media/README.md)
 records mixed-media navigation and rapid-jump comparisons.
+The [gallery loading follow-up](../docs/performance/2026-10-03-gallery-loading/README.md)
+records continuous input and the scheduling policy that was discarded.
 
 A [recorded development baseline](../docs/performance/2026-09-05/README.md)
 includes raw results and the measurements still outstanding.

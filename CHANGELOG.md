@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- Gallery thumbnails wait for valid dimensions and hide a previous file's
+  retained pixels while a replacement loads. Viewport checks account for
+  files inserted or removed above a scrolled grid.
+- Installed documentation links resolve to the repository and packaged license.
+  Arch dependencies explicitly include FFmpeg for frame saving and probing.
 - The viewer bounds neighboring photo preloads while keeping originals at full
   resolution. Canceled thumbnails stop obsolete helper work, and queued
   requests finish during shutdown.

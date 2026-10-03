@@ -39,8 +39,8 @@ FocusScope {
     function viewportReady() {
         if (!visible || !layoutReady || grid.count === 0 || grid.width <= 0 || grid.height <= 0)
             return false
-        const firstRow = Math.max(0, Math.floor(grid.contentY / grid.cellHeight))
-        const lastRow = Math.ceil((grid.contentY + grid.height) / grid.cellHeight)
+        const firstRow = Math.max(0, Math.floor((grid.contentY - grid.originY) / grid.cellHeight))
+        const lastRow = Math.ceil((grid.contentY - grid.originY + grid.height) / grid.cellHeight)
         const first = firstRow * columns
         const end = Math.min(grid.count, lastRow * columns)
         if (first >= end) return false

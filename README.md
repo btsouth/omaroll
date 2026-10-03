@@ -165,7 +165,7 @@ organization and safe copies itself, and delegates specialist work to these tool
 | Recording | Play | `mpv` |
 | Recording | Save current frame | `ffmpeg`, from the viewer position |
 | Screenshot | **Make it postable** *(default)* | **native** |
-| Screenshot | Annotate | `$OMARCHY_SCREENSHOT_EDITOR`, default `tensaku-edit` |
+| Screenshot | Annotate | `$OMARCHY_SCREENSHOT_EDITOR`; Tensaku by default |
 | Screenshot | Extract and select text | `tesseract` |
 | Image | Convert · resize | `omarchy-transcode` |
 | Image | Edit · View | `pinta` · `imv` |
@@ -185,6 +185,9 @@ organization and safe copies itself, and delegates specialist work to these tool
 
 The image and video defaults, including whether slideshows include videos, can
 be changed in Settings.
+
+When `$OMARCHY_SCREENSHOT_EDITOR` is unset or set to `tensaku-edit`, Omaroll
+uses Tensaku directly with a new output path.
 
 An action whose program is missing is shown greyed with the package to install,
 rather than hidden. The medium decides the list, not the folder: a downloaded
@@ -347,7 +350,7 @@ On Arch, install the build and runtime dependencies:
 sudo pacman -S --needed git base-devel cmake ninja pkgconf bubblewrap \
   qt6-base qt6-declarative qt6-multimedia qt6-imageformats qt6-svg qt6-wayland \
   kimageformats libavif libheif hicolor-icon-theme xdg-desktop-portal \
-  ffmpegthumbnailer poppler wl-clipboard xdg-utils
+  ffmpeg ffmpegthumbnailer poppler wl-clipboard xdg-utils
 ```
 
 ```bash
