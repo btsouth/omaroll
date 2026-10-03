@@ -7,6 +7,7 @@
 #include "app/SingleInstance.h"
 #include "app/OpenRequest.h"
 #include <QLocalSocket>
+#include <QMimeDatabase>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -407,6 +408,46 @@ private slots:
     QVERIFY(!ViewerSession::canOpen({QStringLiteral("/x/a.png"), QStringLiteral("/x/doc.pdf")}));
     QVERIFY(!ViewerSession::canOpen({QStringLiteral("/x/doc.PDF")}));
     QVERIFY(!ViewerSession::canOpen({}));
+  }
+
+  // A file manager hands over every type the desktop entry claims, so each
+  // must open by the extension shared-mime-info gives it.
+  void everyClaimedVideoTypeOpensByItsExtension() {
+    QFile entry(QFINDTESTDATA("../packaging/io.github.tsouth89.omaroll.desktop"));
+    QVERIFY(entry.open(QIODevice::ReadOnly | QIODevice::Text));
+    QStringList claimed;
+    for (const QString& line : QString::fromUtf8(entry.readAll()).split(QLatin1Char('\n'))) {
+      if (line.startsWith(QStringLiteral("MimeType="))) {
+        claimed = line.mid(9).split(QLatin1Char(';'), Qt::SkipEmptyParts);
+      }
+    }
+    for (const QString& type : {QStringLiteral("video/3gpp2"), QStringLiteral("video/x-ms-asf"),
+                                QStringLiteral("video/x-ogm+ogg")}) {
+      QVERIFY2(claimed.contains(type), qPrintable(type));
+    }
+    const QMimeDatabase mimes;
+    int checked = 0;
+    for (const QString& name : std::as_const(claimed)) {
+      const QMimeType type = mimes.mimeTypeForName(name);
+      if (!type.isValid() || type.preferredSuffix().isEmpty() ||
+          !(name.startsWith(QStringLiteral("video/")) ||
+            type.name() == QStringLiteral("application/vnd.ms-asf"))) {
+        continue;
+      }
+      QVERIFY2(CaptureScanner::isVideo(type.preferredSuffix()),
+               qPrintable(name + QStringLiteral(" .") + type.preferredSuffix()));
+      ++checked;
+    }
+    QVERIFY(checked >= 15);
+    for (const QString& suffix : {QStringLiteral("asf"), QStringLiteral("ogm"),
+                                  QStringLiteral("3g2"), QStringLiteral("VOB")}) {
+      QVERIFY2(CaptureScanner::isVideo(suffix), qPrintable(suffix));
+    }
+    // Shared with TypeScript and audio, so they stay unclaimed.
+    for (const QString& suffix : {QStringLiteral("ts"), QStringLiteral("ogg"),
+                                  QStringLiteral("ogx"), QStringLiteral("mp2")}) {
+      QVERIFY2(!CaptureScanner::isSupported(suffix), qPrintable(suffix));
+    }
   }
 
   void extensionlessMediaOpensNavigatesAndAppearsInTheLibrary() {
