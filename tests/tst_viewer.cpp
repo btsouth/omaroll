@@ -13,6 +13,7 @@
 #include "app/AppSettings.h"
 #include "app/DemoLibrary.h"
 #include "app/HeadlessAudio.h"
+#include "app/OpenRequest.h"
 #include "app/VideoPlayback.h"
 #include "library/MediaInspector.h"
 #include "sources/FileVersion.h"
@@ -1823,6 +1824,111 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_Return);
     QTRY_VERIFY(!QFile::exists(second));
     QTRY_VERIFY(!m_window->isVisible());
+  }
+
+  void permanentDeleteConfirmsAndOptOutDoesNotRepeatOrChangeTrash() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString first = dir.filePath(QStringLiteral("a.jpg"));
+    const QString second = dir.filePath(QStringLiteral("b.jpg"));
+    const QString third = dir.filePath(QStringLiteral("c.jpg"));
+    for (const auto& path : {first, second, third})
+      QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), path));
+    m_settings->setConfirmPermanentDelete(true);
+    const auto restore = qScopeGuard([&] { m_settings->setConfirmPermanentDelete(true); });
+    open({first});
+    QTRY_COMPARE(m_session->count(), 3);
+    QQuickItem* confirm = item(QStringLiteral("viewerPermanentConfirm"));
+    QTest::keyClick(m_window, Qt::Key_Delete, Qt::ShiftModifier);
+    QTRY_VERIFY(confirm->isVisible());
+    QCOMPARE(confirm->property("path").toString(), first);
+    QVERIFY(confirm->property("detail").toString().contains(QStringLiteral("cannot be undone")));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QVERIFY(QFile::exists(first));
+    QTest::keyClick(m_window, Qt::Key_Delete, Qt::ShiftModifier);
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!QFile::exists(first));
+    QTRY_COMPARE(m_session->path(), second);
+
+    m_settings->setConfirmPermanentDelete(false);
+    QKeyEvent repeat(QEvent::KeyPress, Qt::Key_Delete, Qt::ShiftModifier, QString(), true);
+    QCoreApplication::sendEvent(m_window, &repeat);
+    QVERIFY(QFile::exists(second));
+    QVERIFY(!confirm->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Delete);
+    QTRY_VERIFY(item(QStringLiteral("viewerConfirm"))->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QVERIFY(QFile::exists(second));
+    QTest::keyClick(m_window, Qt::Key_Delete, Qt::ShiftModifier);
+    QTRY_VERIFY(!QFile::exists(second));
+    QVERIFY(!confirm->isVisible());
+    QTRY_COMPARE(m_session->path(), third);
+    QVERIFY(QFile::exists(third));
+  }
+
+  void permanentDeleteOfAnExplicitAliasKeepsItsTargetAfterFolderListing() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("original"))));
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("links"))));
+    const QString target = dir.filePath(QStringLiteral("original/same.jpg"));
+    const QString alias = dir.filePath(QStringLiteral("links/same.jpg"));
+    const QString sibling = dir.filePath(QStringLiteral("original/other.jpg"));
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), target));
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), sibling));
+    QVERIFY(QFile::link(target, alias));
+    const OpenRequest request = OpenRequest::fromPaths({alias});
+    QCOMPARE(request.files, QStringList{target});
+    QCOMPARE(request.entryPaths.value(target), alias);
+    open(request.files);
+    m_session->setDeletionPaths(request.entryPaths);
+    QTRY_COMPARE(m_session->count(), 2);
+    QCOMPARE(m_session->deletionPath(), alias);
+    m_settings->setConfirmPermanentDelete(false);
+    const auto restore = qScopeGuard([&] { m_settings->setConfirmPermanentDelete(true); });
+    QTest::keyClick(m_window, Qt::Key_Delete, Qt::ShiftModifier);
+    QTRY_VERIFY(!QFileInfo(alias).isSymLink());
+    QVERIFY(QFile::exists(target));
+    QTRY_COMPARE(m_session->path(), sibling);
+  }
+
+  void reopeningOneSelectionAliasPreservesTheOtherAndLibraryHandoff() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("original"))));
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("links"))));
+    QStringList targets, aliases;
+    for (const auto& name : {QStringLiteral("a.jpg"), QStringLiteral("b.jpg")}) {
+      const QString target = dir.filePath(QStringLiteral("original/") + name);
+      const QString alias = dir.filePath(QStringLiteral("links/") + name);
+      QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), target));
+      QVERIFY(QFile::link(target, alias));
+      targets.append(target);
+      aliases.append(alias);
+    }
+    const OpenRequest request = OpenRequest::fromPaths(aliases);
+    ViewerWindows viewers(*m_engine);
+    viewers.setPlacementQuery([] { return HyprlandPlacement::Plan{}; });
+    QQuickWindow* window = viewers.open(request.files, request.entryPaths);
+    QVERIFY(window);
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    QCOMPARE(viewers.open({targets.first()}, {{targets.first(), aliases.first()}}), window);
+    ViewerSession* session = viewers.sessionOf(window);
+    QVERIFY(session->step(1));
+    QCOMPARE(session->deletionPath(), aliases.last());
+    QSignalSpy library(&viewers, &ViewerWindows::libraryRequested);
+    session->openInLibrary();
+    QCOMPARE(library.size(), 1);
+    const OpenRequest handoff = OpenRequest::fromPaths({library.first().at(0).toString()});
+    QCOMPARE(handoff.files, QStringList{targets.last()});
+    QCOMPARE(handoff.entryPaths.value(targets.last()), aliases.last());
+    m_settings->setConfirmPermanentDelete(false);
+    const auto restore = qScopeGuard([&] { m_settings->setConfirmPermanentDelete(true); });
+    QTest::keyClick(window, Qt::Key_Delete, Qt::ShiftModifier);
+    QTRY_VERIFY(!QFileInfo(aliases.last()).isSymLink());
+    QVERIFY(QFile::exists(targets.last()));
+    QVERIFY(QFileInfo(aliases.first()).isSymLink());
+    window->close();
   }
 
   // Each file opened from outside gets a viewer of its own. Asking again for

@@ -213,14 +213,19 @@ QVariantList CaptureModel::automaticFolders() const {
 bool CaptureModel::folderAvailable(const QString& path) const { return QFileInfo(path).isDir(); }
 
 void CaptureModel::addExtraFiles(const QStringList& paths) {
-  const qsizetype before = m_extraFiles.size();
+  bool changed = false;
   for (const QString& path : paths) {
     const QFileInfo info(path);
     if (info.isFile() && CaptureScanner::isSupported(CaptureScanner::mediaSuffix(path))) {
-      m_extraFiles.insert(info.canonicalFilePath());
+      const QString canonical = info.canonicalFilePath();
+      const QString entry = info.absoluteFilePath();
+      if (!canonical.isEmpty() && m_extraFiles.value(canonical) != entry) {
+        m_extraFiles.insert(canonical, entry);
+        changed = true;
+      }
     }
   }
-  if (m_extraFiles.size() != before) {
+  if (changed) {
     refresh();
   }
 }
@@ -333,6 +338,12 @@ QString CaptureModel::pathAt(int row) const {
   return m_records.at(row).path;
 }
 
+QString CaptureModel::deletionPathAt(int row) const {
+  if (row < 0 || row >= m_records.size()) return {};
+  const auto& record = m_records.at(row);
+  return record.entryPath.isEmpty() ? record.path : record.entryPath;
+}
+
 int CaptureModel::rowOf(const QString& path) const {
   if (m_rowIndexValid) {
     return m_rowsByPath.value(path, -1);
@@ -441,9 +452,19 @@ void CaptureModel::refresh() {
   const QList<CaptureScanner::Root> scanRoots = roots();
   const std::shared_ptr<std::atomic_bool> cancel = m_cancel;
 
-  m_scanWatcher.setFuture(QtConcurrent::run([scanRoots, cancel] {
+  const auto explicitEntries = m_extraFiles;
+  m_scanWatcher.setFuture(QtConcurrent::run([scanRoots, cancel, explicitEntries] {
     ScanResult result;
     result.records = CaptureScanner::scan(scanRoots, cancel.get(), &result.directories);
+    // Discovery deduplicates resolved media. An explicit open still names the
+    // entry the user chose, even when a watched folder found its target first.
+    for (auto& record : result.records) {
+      const QString entry = explicitEntries.value(record.path);
+      if (!entry.isEmpty() && QFileInfo(entry).canonicalFilePath() == record.path) {
+        record.entryPath = entry;
+        record.fileName = QFileInfo(entry).fileName();
+      }
+    }
     return result;
   }));
 }
@@ -561,6 +582,7 @@ void CaptureModel::adoptResults(ScanResult result) {
       const CaptureRecord& fresh = scanned.at(incoming.value(record.path));
       kept.insert(record.path);
       if (record.modified == fresh.modified && record.bytes == fresh.bytes &&
+          record.entryPath == fresh.entryPath && record.fileName == fresh.fileName &&
           record.kind == fresh.kind && record.video == fresh.video &&
           record.document == fresh.document && record.animated == fresh.animated &&
           record.raw == fresh.raw && record.companionPath == fresh.companionPath &&

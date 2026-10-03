@@ -1,10 +1,10 @@
 import QtQuick
+import QtQuick.Controls.Basic
 
 // A modal confirm, themed rather than borrowed from the platform dialog set.
 //
-// Deleting is the one destructive thing omaroll does, so it asks first and says
-// exactly which file and where it is going. "Move to Trash" rather than
-// "Delete" because that is literally what happens and the file is recoverable.
+// Callers describe the captured targets and distinguish recoverable Trash
+// from explicit permanent deletion.
 Item {
     id: root
 
@@ -93,14 +93,27 @@ Item {
                 wrapMode: Text.WordWrap
             }
 
-            Text {
+            Flickable {
+                id: details
+                objectName: "confirmationDetails"
                 width: parent.width
-                text: root.detail
-                font.family: Theme.fontFamily
-                font.pixelSize: 12
-                color: Theme.mutedText
-                wrapMode: Text.WrapAnywhere
-                visible: text !== ""
+                height: Math.min(detailText.implicitHeight, Math.max(60, root.height - 180))
+                contentWidth: width
+                contentHeight: detailText.implicitHeight
+                boundsBehavior: Flickable.StopAtBounds
+                clip: true
+                visible: root.detail !== ""
+                ScrollBar.vertical: ScrollBar { width: 6; policy: ScrollBar.AsNeeded }
+                Text {
+                    id: detailText
+                    width: parent.width - 12
+                    text: root.detail
+                    textFormat: Text.PlainText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 12
+                    color: Theme.mutedText
+                    wrapMode: Text.WrapAnywhere
+                }
             }
 
             Item { width: 1; height: 8 }

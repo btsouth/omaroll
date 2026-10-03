@@ -2232,6 +2232,21 @@ private slots:
     settings.setFavorite({moved}, false);
   }
 
+  void permanentDeleteConfirmationDefaultsOnAndOptOutPersists() {
+    AppSettings settings;
+    QVERIFY(settings.confirmPermanentDelete());
+    const auto restore = qScopeGuard([&] { settings.setConfirmPermanentDelete(true); });
+    QSignalSpy changed(&settings, &AppSettings::confirmPermanentDeleteChanged);
+    settings.setConfirmPermanentDelete(false);
+    QCOMPARE(changed.size(), 1);
+    AppSettings reloaded;
+    QVERIFY(!reloaded.confirmPermanentDelete());
+    settings.setConfirmPermanentDelete(true);
+    QCOMPARE(changed.size(), 2);
+    AppSettings restored;
+    QVERIFY(restored.confirmPermanentDelete());
+  }
+
   void slideshowOptionsPersistAndClamp() {
     AppSettings settings;
     settings.setSlideshowIntervalSeconds(8);
@@ -6130,6 +6145,35 @@ private slots:
     QVERIFY(!launcher.moveToTrash(path));
     QCOMPARE(failed.size(), 1);
     QCOMPARE(failed.first().first().toString(), QStringLiteral("That file is no longer there"));
+  }
+
+  void permanentDeleteSkipsTrashAndDoesNotFollowLinksOrRemoveDirectories() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString target = dir.filePath(QStringLiteral("permanent original.txt"));
+    QFile file(target);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("keep through link deletion");
+    file.close();
+    const QString alias = dir.filePath(QStringLiteral("permanent link.txt"));
+    QVERIFY(QFile::link(target, alias));
+    ActionLauncher launcher;
+    QSignalSpy failed(&launcher, &ActionLauncher::failed);
+    const QDir trash(m_scratch.filePath(QStringLiteral("data/Trash/files")));
+    const QStringList before = trash.entryList(QDir::Files);
+    QVERIFY(launcher.deletePermanently(alias));
+    QVERIFY(!QFileInfo(alias).isSymLink());
+    QVERIFY(QFile::exists(target));
+    QVERIFY(QFile::link(dir.filePath(QStringLiteral("missing.txt")), alias));
+    QVERIFY(launcher.deletePermanently(alias));
+    QVERIFY(!QFileInfo(alias).isSymLink());
+    QVERIFY(launcher.deletePermanently(target));
+    QVERIFY(!QFile::exists(target));
+    QCOMPARE(trash.entryList(QDir::Files), before);
+    QVERIFY(!launcher.deletePermanently(target));
+    QVERIFY(!launcher.deletePermanently(dir.path()));
+    QVERIFY(QDir(dir.path()).exists());
+    QCOMPARE(failed.size(), 2);
   }
 
   // --- Thumbnails -------------------------------------------------------

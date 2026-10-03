@@ -32,10 +32,12 @@ OpenRequest OpenRequest::fromPaths(const QStringList& paths) {
       if (!seen.contains(canonical)) {
         seen.insert(canonical);
         result.files.append(canonical);
+        result.entryPaths.insert(canonical, info.absoluteFilePath());
       }
     }
     if (!result.error.isEmpty()) {
       result.files.clear();
+      result.entryPaths.clear();
       result.folder.clear();
       break;
     }

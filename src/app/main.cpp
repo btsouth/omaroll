@@ -291,7 +291,9 @@ private:
     if (!opened.folder.isEmpty()) {
       m_captures.setExtraRoot(opened.folder);
     } else if (!opened.files.isEmpty()) {
-      m_captures.addExtraFiles(opened.files);
+      QStringList entries;
+      for (const auto& path : opened.files) entries.append(opened.entryPaths.value(path, path));
+      m_captures.addExtraFiles(entries);
       if (opened.files.size() == 1) {
         m_captures.setExtraRoot(QFileInfo(opened.files.first()).canonicalPath());
       }
@@ -447,8 +449,9 @@ int main(int argc, char* argv[]) {
     qWarning().noquote() << "omaroll:" << request.error;
     return 2;
   }
-  const QStringList requestedPaths =
-      request.folder.isEmpty() ? request.files : QStringList{request.folder};
+  QStringList requestedPaths;
+  if (!request.folder.isEmpty()) requestedPaths = {request.folder};
+  else for (const auto& path : request.files) requestedPaths.append(request.entryPaths.value(path, path));
   const bool preferLibrary = optionPresent(arguments, QStringLiteral("--library"));
   // Pictures and videos from outside open in the viewer. Folders, documents,
   // a plain launch and an explicit --library open the library.
@@ -572,19 +575,21 @@ int main(int argc, char* argv[]) {
   // up before the viewer closes, so closing it never ends the app.
   QObject::connect(&viewers, &ViewerWindows::libraryRequested, &application,
                    [&](const QString& path, QQuickWindow* viewer) {
-                     OpenRequest opened;
-                     opened.files = {path};
+                     const OpenRequest opened = OpenRequest::fromPaths({path});
                      if (QQuickWindow* library = openLibrary(opened)) {
                        library->raise();
                        library->requestActivate();
                        viewer->close();
                      }
                    });
-  const auto openViewer = [&](const QStringList& files) { return viewers.open(files); };
+  const auto openViewer = [&](const QStringList& files, const QHash<QString, QString>& entries = {}) {
+    return viewers.open(files, entries);
+  };
 
   const bool startInViewer = rendering ? renderingViewer : opensInViewer(request, preferLibrary);
   QQuickWindow* window = startInViewer
-                             ? openViewer(rendering ? viewerRenderFiles : request.files)
+                             ? openViewer(rendering ? viewerRenderFiles : request.files,
+                                          rendering ? QHash<QString, QString>() : request.entryPaths)
                              : openLibrary(request);
   startup.mark("qml");
   if (!window) {
@@ -610,7 +615,7 @@ int main(int argc, char* argv[]) {
             return;
           }
           if (opensInViewer(opened, library)) {
-            openViewer(opened.files);
+            openViewer(opened.files, opened.entryPaths);
           } else {
             openLibrary(opened);
           }

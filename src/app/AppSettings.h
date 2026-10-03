@@ -46,6 +46,8 @@ class AppSettings final : public QObject {
   Q_PROPERTY(int tileWidth READ tileWidth WRITE setTileWidth NOTIFY tileWidthChanged)
   Q_PROPERTY(bool slideshowVideos READ slideshowVideos WRITE setSlideshowVideos NOTIFY
                  slideshowVideosChanged)
+  Q_PROPERTY(bool confirmPermanentDelete READ confirmPermanentDelete WRITE setConfirmPermanentDelete NOTIFY
+                 confirmPermanentDeleteChanged)
   // Slideshow timing and order.
   Q_PROPERTY(int slideshowIntervalSeconds READ slideshowIntervalSeconds WRITE
                  setSlideshowIntervalSeconds NOTIFY slideshowIntervalSecondsChanged)
@@ -109,6 +111,8 @@ public:
   void setTileWidth(int width);
   [[nodiscard]] bool slideshowVideos() const { return m_slideshowVideos; }
   void setSlideshowVideos(bool value);
+  [[nodiscard]] bool confirmPermanentDelete() const { return m_confirmPermanentDelete; }
+  void setConfirmPermanentDelete(bool value);
   [[nodiscard]] int slideshowIntervalSeconds() const { return m_slideshowIntervalSeconds; }
   void setSlideshowIntervalSeconds(int seconds);
   [[nodiscard]] bool slideshowShuffle() const { return m_slideshowShuffle; }
@@ -228,6 +232,7 @@ signals:
   void thumbnailCacheMbChanged();
   void tileWidthChanged();
   void slideshowVideosChanged();
+  void confirmPermanentDeleteChanged();
   void slideshowIntervalSecondsChanged();
   void slideshowShuffleChanged();
   void viewerFilmstripChanged();
@@ -300,6 +305,7 @@ private:
   int m_thumbnailCacheMb = 256;
   int m_tileWidth = 240;
   bool m_slideshowVideos = false;
+  bool m_confirmPermanentDelete = true;
   int m_slideshowIntervalSeconds = 4;
   bool m_slideshowShuffle = false;
   bool m_viewerFilmstrip = false;

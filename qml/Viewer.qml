@@ -134,7 +134,7 @@ ApplicationWindow {
                                        && root.sourceWidth > 0
 
     readonly property bool chromeShown: root.chromePinned || root.pointerActive || root.infoOpen
-                                        || actionMenu.visible || confirm.visible || editorChooser.visible
+                                        || actionMenu.visible || confirm.visible || permanentConfirm.visible || editorChooser.visible
                                         || header.hovered || transport.hovered
                                         || previousButton.hovered || nextButton.hovered
                                         || toolbar.hovered || filmstrip.hovered
@@ -497,6 +497,28 @@ ApplicationWindow {
         confirm.open()
     }
 
+    function requestPermanentDelete() {
+        if (Session.path === "" || confirm.visible || permanentConfirm.visible || actionMenu.visible
+                || editorChooser.visible) return
+        const target = Session.deletionPath
+        const viewedPath = Session.path
+        if (!Settings.confirmPermanentDelete) {
+            root.deletePermanently(target, viewedPath)
+            return
+        }
+        permanentConfirm.path = target
+        permanentConfirm.viewedPath = viewedPath
+        permanentConfirm.detail = "This skips Trash and cannot be undone.\n\n" + target
+        permanentConfirm.open()
+    }
+
+    function deletePermanently(path, viewedPath) {
+        if (path !== "" && Actions.deletePermanently(path)) {
+            Session.forget(viewedPath)
+            root.say("Permanently deleted")
+        }
+    }
+
     // The keys a viewer is expected to have, and what the menu shows beside
     // each entry. They are this window's own: F is full screen here, as in
     // every player, rather than the library's Open containing folder.
@@ -747,6 +769,7 @@ ApplicationWindow {
         }
         root.infoOpen = false
         confirm.close()
+        permanentConfirm.close()
         actionMenu.close()
         Session.clear()
     }
@@ -1194,7 +1217,7 @@ ApplicationWindow {
                 objectName: "viewerSideButtonNavigation"
                 anchors.fill: parent
                 acceptedButtons: Qt.BackButton | Qt.ForwardButton
-                enabled: Session.count > 1 && !actionMenu.visible && !confirm.visible
+                enabled: Session.count > 1 && !actionMenu.visible && !confirm.visible && !permanentConfirm.visible
                          && !editorChooser.visible
                 onClicked: function (mouse) {
                     root.step(mouse.button === Qt.BackButton ? -1 : 1)
@@ -1708,6 +1731,22 @@ ApplicationWindow {
         onVisibleChanged: if (!visible) keys.forceActiveFocus()
     }
 
+    ConfirmSheet {
+        id: permanentConfirm
+        objectName: "viewerPermanentConfirm"
+        property string path: ""
+        property string viewedPath: ""
+        title: "Permanently delete this file?"
+        confirmLabel: "Delete permanently"
+        onAccepted: {
+            const target = permanentConfirm.path
+            const viewedPath = permanentConfirm.viewedPath
+            permanentConfirm.path = ""
+            root.deletePermanently(target, viewedPath)
+        }
+        onVisibleChanged: if (!visible) keys.forceActiveFocus()
+    }
+
     // The keyboard. One handler rather than window shortcuts: shifted pairs
     // were ambiguous as Shortcuts on a real keyboard, and a single place keeps
     // the medium-specific meanings readable.
@@ -1853,7 +1892,11 @@ ApplicationWindow {
                     Session.openInLibrary()
                     break
                 case Qt.Key_Delete:
-                    root.requestTrash()
+                    if (shift) {
+                        if (!event.isAutoRepeat) root.requestPermanentDelete()
+                    } else {
+                        root.requestTrash()
+                    }
                     break
                 case Qt.Key_V:
                     root.toggleFavorite()

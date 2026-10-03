@@ -153,6 +153,7 @@ public:
   // this side rather than letting callers reach past the proxy with an index
   // that means something else there.
   Q_INVOKABLE QString pathAt(int row) const;
+  Q_INVOKABLE QString deletionPathAt(int row) const;
   Q_INVOKABLE QString companionPathAt(int row) const;
   Q_INVOKABLE QString fileNameAt(int row) const;
   Q_INVOKABLE QString dayLabelAt(int row) const;

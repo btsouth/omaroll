@@ -2778,7 +2778,7 @@ Item {
     // registry supplied rather than hard-coded a second time.
     function shortcutLabel(event) {
         if (event.key === Qt.Key_Delete) {
-            return "Del"
+            return event.modifiers & Qt.ShiftModifier ? "Shift+Del" : "Del"
         }
         // From the key, not the text: with Ctrl held the text is a control
         // character, so Ctrl+H would otherwise never match its label.
@@ -2834,6 +2834,13 @@ Item {
     }
 
     Keys.onPressed: function (event) {
+        if (event.key === Qt.Key_Delete && (event.modifiers & Qt.ShiftModifier)
+                && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier))) {
+            if (pdfSearch.activeFocus) return
+            if (!event.isAutoRepeat && !root.contextMenuOpen) root.invokeAction("permanent-delete")
+            event.accepted = true
+            return
+        }
         if (!(event.modifiers & (Qt.ControlModifier | Qt.AltModifier))
                 && (event.key === Qt.Key_D || event.key === Qt.Key_O)
                 && Registry.appliesToKind("develop", root.isVideo, root.isDocument, root.path)) {

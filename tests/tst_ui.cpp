@@ -3413,6 +3413,104 @@ private slots:
     QTRY_VERIFY(grid->property("currentIndex").toInt() < m_library->rowCount());
   }
 
+  void permanentDeleteUsesCapturedSelectionAndConfirmsInTheDetailViewer() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString first = dir.filePath(QStringLiteral("a.png"));
+    const QString second = dir.filePath(QStringLiteral("b.png"));
+    const QString third = dir.filePath(QStringLiteral("c.png"));
+    QImage picture(200, 150, QImage::Format_RGB32);
+    picture.fill(Qt::blue);
+    for (const auto& path : {first, second, third}) QVERIFY(picture.save(path));
+    m_captures->addExtraFiles({first, second, third});
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(third) >= 0, 10000);
+    m_settings->setConfirmPermanentDelete(true);
+    const auto restore = qScopeGuard([&] { m_settings->setConfirmPermanentDelete(true); });
+    QQuickItem* grid = item("library");
+    grid->setProperty("currentIndex", m_library->rowOf(first));
+    QVERIFY(QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, first)));
+    QVERIFY(QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, second)));
+    QTest::keyClick(m_window, Qt::Key_Delete, Qt::ShiftModifier);
+    QQuickItem* confirm = item("permanentConfirm");
+    QTRY_VERIFY(confirm->isVisible());
+    QVERIFY(confirm->property("title").toString().contains(QStringLiteral("2 files")));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QVERIFY(QFile::exists(first) && QFile::exists(second));
+    QTest::keyClick(m_window, Qt::Key_Delete, Qt::ShiftModifier);
+    QTRY_VERIFY(confirm->isVisible());
+    // Changing the selection behind the prompt must not change its targets.
+    QVERIFY(QMetaObject::invokeMethod(grid, "clearChecked"));
+    QVERIFY(QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, third)));
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!QFile::exists(first) && !QFile::exists(second));
+    QVERIFY(QFile::exists(third));
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(first) < 0, 10000);
+    openDetail(m_library->rowOf(third));
+    QTest::keyClick(m_window, Qt::Key_Delete, Qt::ShiftModifier);
+    QTRY_VERIFY(confirm->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QVERIFY(QFile::exists(third));
+    m_settings->setConfirmPermanentDelete(false);
+    grid->setProperty("currentIndex", m_library->rowOf(third));
+    grid->forceActiveFocus();
+    QKeyEvent repeat(QEvent::KeyPress, Qt::Key_Delete, Qt::ShiftModifier, QString(), true);
+    QCoreApplication::sendEvent(m_window, &repeat);
+    QVERIFY(QFile::exists(third));
+    QVERIFY(!confirm->isVisible());
+    QVERIFY(!item("confirm")->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Delete, Qt::ShiftModifier);
+    QTRY_VERIFY(!QFile::exists(third));
+    QVERIFY(!confirm->isVisible());
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(third) < 0, 10000);
+  }
+
+  void permanentDeleteReportsPartialFailureWithoutRemovingADirectory() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString first = dir.filePath(QStringLiteral("delete me.png"));
+    const QString second = dir.filePath(QStringLiteral("keep directory.png"));
+    QImage picture(200, 150, QImage::Format_RGB32);
+    picture.fill(Qt::blue);
+    QVERIFY(picture.save(first));
+    QVERIFY(picture.save(second));
+    m_captures->addExtraFiles({first, second});
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(second) >= 0, 10000);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "requestPermanentDelete",
+                                     Q_ARG(QVariant, QVariant(QStringList{first, second}))));
+    QTRY_VERIFY(item("permanentConfirm")->isVisible());
+    QVERIFY(QFile::remove(second));
+    QVERIFY(QDir().mkpath(second));
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!QFile::exists(first));
+    QVERIFY(QFileInfo(second).isDir());
+    QVERIFY(item("detail")->property("status").toString().contains(QStringLiteral("1 of 2")));
+  }
+
+  void permanentDeleteFromAnAliasTileRemovesTheLinkAndKeepsTheOriginal() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("original"))));
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("links"))));
+    const QString target = dir.filePath(QStringLiteral("original/same.png"));
+    const QString alias = dir.filePath(QStringLiteral("links/same.png"));
+    QImage picture(200, 150, QImage::Format_RGB32);
+    picture.fill(Qt::blue);
+    QVERIFY(picture.save(target));
+    QVERIFY(QFile::link(target, alias));
+    m_captures->addExtraFiles({alias});
+    m_captures->setExtraRoot(QFileInfo(target).canonicalPath());
+    QTRY_VERIFY_WITH_TIMEOUT(!m_captures->scanning(), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(target) >= 0, 10000);
+    QCOMPARE(m_library->deletionPathAt(m_library->rowOf(target)), alias);
+    m_settings->setConfirmPermanentDelete(false);
+    const auto restore = qScopeGuard([&] { m_settings->setConfirmPermanentDelete(true); });
+    item("library")->setProperty("currentIndex", m_library->rowOf(target));
+    QTest::keyClick(m_window, Qt::Key_Delete, Qt::ShiftModifier);
+    QTRY_VERIFY(!QFileInfo(alias).isSymLink());
+    QVERIFY(QFile::exists(target));
+    QVERIFY(!item("permanentConfirm")->isVisible());
+  }
+
   void videoRenderKeepsADecodedFrameVisible() {
     QVERIFY(QMetaObject::invokeMethod(m_window, "openViewForRender",
                                       Q_ARG(QVariant, QStringLiteral("video"))));

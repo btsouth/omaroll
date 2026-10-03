@@ -18,6 +18,8 @@ struct CaptureRecord {
   };
 
   QString path;
+  // The discovered directory entry before media-path canonicalization.
+  QString entryPath;
   QString fileName;
   // A unique RAW/JPEG sibling. Both files remain independent source rows.
   QString companionPath;

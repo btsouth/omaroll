@@ -483,6 +483,24 @@ bool ActionLauncher::moveToTrash(const QString& path) {
   return true;
 }
 
+bool ActionLauncher::deletePermanently(const QString& path) {
+  const QFileInfo info(path);
+  if (!info.exists() && !info.isSymLink()) {
+    emit failed(u"That file is no longer there"_s);
+    return false;
+  }
+  if (!info.isFile() && !info.isSymLink()) {
+    emit failed(u"Only files can be permanently deleted"_s);
+    return false;
+  }
+  QFile file(path);
+  if (!file.remove()) {
+    emit failed(u"Could not permanently delete this file: %1"_s.arg(file.errorString()));
+    return false;
+  }
+  return true;
+}
+
 QVariantMap ActionLauncher::renameFile(const QString& path, const QString& baseName) {
   const auto failure = [](const QString& message) {
     return QVariantMap{{QStringLiteral("ok"), false},

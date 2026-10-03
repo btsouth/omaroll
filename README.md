@@ -127,6 +127,7 @@ process, so a favourite or rating set in one shows in the others.
 | `Y` · `S` · `A` | Copy · send · annotate |
 | `T` · `G` · `P` | Trim · save the current frame · open in mpv |
 | `Del` | Move to Trash, with confirm |
+| `Shift+Del` | Delete permanently, with confirmation on by default |
 | right click · menu button | Everything else that suits the file |
 | `Enter` · grid button | Open the file in the library |
 | `Esc` | Leave the slideshow or full screen, close the details, then close |
@@ -201,6 +202,12 @@ and PDFs. Menu shortcuts act on the same captured targets as clicks.
 **Open with** passes the original file to the application you choose. Saving
 in an editor can change that file. It requires a desktop portal that supports
 the application chooser; if unavailable, Omaroll reports an error.
+
+`Shift+Delete` skips Trash and cannot be undone. Both viewers and the library
+ask for confirmation by default. **Confirm permanent deletion** in Settings
+can turn that prompt off; regular `Delete` continues to use Trash and its
+existing confirmation. Permanent deletion removes the chosen file or symlink, or the checked files,
+without automatically including RAW/JPEG companions.
 
 The image and video defaults, including whether slideshows include videos, can
 be changed in Settings.
@@ -285,6 +292,7 @@ and put on your clipboard.
 | `N` | Rename, preserving the extension |
 | `Y` · `S` · `F` | Clipboard · Send · Show in file manager |
 | `V` · `Ctrl+H` | Favourite · Hide |
+| `Shift+Del` | Delete the current file or checked files permanently |
 | `Q` · `B` | Crop, rotate, resize the open picture · correct the whole selection |
 | `K` | Compare the selection, or the open picture's copies |
 | `Ctrl+Z` | Undo the last favourite, hide, rating or caption change |

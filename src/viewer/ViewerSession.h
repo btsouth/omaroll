@@ -3,6 +3,7 @@
 #include "sources/RawJpegPairs.h"
 
 #include <QFileSystemWatcher>
+#include <QHash>
 #include <QFutureWatcher>
 #include <QObject>
 #include <QSize>
@@ -26,6 +27,7 @@
 class ViewerSession final : public QObject {
   Q_OBJECT
   Q_PROPERTY(QString path READ path NOTIFY currentChanged)
+  Q_PROPERTY(QString deletionPath READ deletionPath NOTIFY deletionPathChanged)
   Q_PROPERTY(QUrl url READ url NOTIFY currentChanged)
   Q_PROPERTY(QUrl imageUrl READ imageUrl NOTIFY currentChanged)
   Q_PROPERTY(QString contentVersion READ contentVersion NOTIFY currentChanged)
@@ -55,6 +57,9 @@ public:
   ~ViewerSession() override;
 
   [[nodiscard]] QString path() const { return m_paths.value(m_index); }
+  [[nodiscard]] QString deletionPath() const {
+    return m_explicitEntryPaths.value(path(), m_deletionPaths.value(path(), path()));
+  }
   [[nodiscard]] QUrl url() const;
   [[nodiscard]] QUrl imageUrl() const;
   [[nodiscard]] QString contentVersion() const { return m_contentVersion; }
@@ -83,6 +88,8 @@ public:
 
   // Paths must already be canonical, as OpenRequest makes them.
   Q_INVOKABLE void open(const QStringList& paths);
+  // Merge new requests without losing aliases for retained selection members.
+  void setDeletionPaths(const QHash<QString, QString>& entryPaths);
   // Connect the viewer's poster readiness to completed scene-graph frames.
   Q_INVOKABLE void watchVideoStartup(QObject* window);
   // Forget the sequence, so a closed window does not flash the last picture
@@ -122,7 +129,8 @@ public:
 
   // Pictures and videos in |folder| in natural name order. Dotfiles are left
   // out, except |keep|, which is always listed: it is the file the user opened.
-  [[nodiscard]] static QStringList siblings(const QString& folder, const QString& keep = {});
+  [[nodiscard]] static QStringList siblings(const QString& folder, const QString& keep = {},
+                                           QHash<QString, QString>* entryPaths = nullptr);
 
   // The viewer's window in logical pixels: most of |available|, landscape,
   // the same for every file, with each picture fitted inside it.
@@ -130,6 +138,7 @@ public:
 
 signals:
   void currentChanged();
+  void deletionPathChanged();
   void rawSizeChanged();
   void sequenceChanged();
   void sequenceRevisionChanged();
@@ -149,6 +158,7 @@ private:
     quint64 generation = 0;
     quint64 request = 0;
     QStringList paths;
+    QHash<QString, QString> entryPaths;
     RawJpegPairs::Companions companions;
   };
   void applyListing(ListingResult listed);
@@ -171,6 +181,8 @@ private:
   static PreloadResult probePreloads(const std::array<QString, 2>& paths, quint64 generation);
 
   QStringList m_paths;
+  QHash<QString, QString> m_deletionPaths;
+  QHash<QString, QString> m_explicitEntryPaths;
   QStringList m_folderPaths;
   RawJpegPairs::Companions m_companions;
   bool m_pairRawJpeg = true;

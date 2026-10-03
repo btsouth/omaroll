@@ -53,7 +53,7 @@ ApplicationWindow {
     // under an open sheet is disabled outright: pointer handlers take passive
     // grabs, so a scrim alone does not stop a tap on a sheet's control from
     // also reaching the tile, pill or viewer button under it.
-    readonly property bool modalOpen: confirm.visible || matteSheet.visible
+    readonly property bool modalOpen: confirm.visible || permanentConfirm.visible || matteSheet.visible
                                       || correctionSheet.visible
                                       || batchSheet.visible
                                       || compareSheet.visible
@@ -153,7 +153,7 @@ ApplicationWindow {
         const row = Captures.rowOf(path)
         const video = knownVideo === undefined ? Captures.isVideoAt(row) : knownVideo
         const document = row >= 0 && Captures.isDocumentAt(row)
-        if (id !== "open" && id !== "companion" && id !== "preview" && id !== "organize" && !Registry.appliesToKind(id, video, document, path)) {
+        if (id !== "open" && id !== "companion" && id !== "preview" && id !== "organize" && id !== "permanent-delete" && !Registry.appliesToKind(id, video, document, path)) {
             root.say(id === "develop" || id === "choose-editor" ? "That action is for camera raws"
                      : document ? "That action does not apply to documents"
                      : video ? "That one is for screenshots and pictures"
@@ -253,6 +253,9 @@ ApplicationWindow {
         case "trash":
             root.requestDelete(path)
             return
+        case "permanent-delete":
+            root.requestPermanentDelete([path])
+            return
         case "open":
             Actions.open(path)
             return
@@ -282,6 +285,8 @@ ApplicationWindow {
     function dismissTopLayer() {
         if (confirm.visible) {
             confirm.close()
+        } else if (permanentConfirm.visible) {
+            permanentConfirm.close()
         } else if (editorChooser.visible) {
             editorChooser.close()
         } else if (exportSheet.visible) {
@@ -587,6 +592,50 @@ ApplicationWindow {
                          ? paths.length + " files. They stay recoverable from your file manager."
                          : detail
         confirm.open()
+    }
+
+    function requestPermanentDelete(paths) {
+        if (paths.length === 0 || root.modalOpen || root.popupOpen) return
+        // Copy the targets now. A rescan or selection change cannot retarget the prompt.
+        const targets = []
+        const seen = new Set()
+        for (const path of paths) {
+            const entry = Captures.deletionPathAt(Captures.rowOf(path))
+            if (entry === "" || seen.has(entry)) continue
+            seen.add(entry)
+            targets.push({path: entry, viewedPath: path})
+        }
+        if (targets.length === 0) return
+        if (!Settings.confirmPermanentDelete) {
+            root.deletePermanently(targets)
+            return
+        }
+        permanentConfirm.paths = targets
+        permanentConfirm.title = targets.length === 1 ? "Permanently delete this file?"
+                                 : "Permanently delete " + targets.length + " files?"
+        const names = targets.slice(0, 3).map(function(target) { return target.path.substring(target.path.lastIndexOf("/") + 1) })
+        permanentConfirm.detail = "This skips Trash and cannot be undone.\n\n"
+                                 + (targets.length === 1 ? targets[0].path : names.join("\n")
+                                    + (targets.length > 3 ? "\nand " + (targets.length - 3) + " more selected files" : ""))
+        permanentConfirm.open()
+    }
+
+    function deletePermanently(paths) {
+        let deleted = 0
+        const failed = []
+        for (const target of paths) {
+            if (Actions.deletePermanently(target.path)) deleted++
+            else failed.push(target.viewedPath)
+        }
+        if (deleted > 0) {
+            root.say(deleted === paths.length
+                     ? "Permanently deleted " + deleted + (deleted === 1 ? " file" : " files")
+                     : "Permanently deleted " + deleted + " of " + paths.length + " files; some could not be deleted")
+        }
+        // Failed targets remain selected so a partial result is visible and retryable.
+        library.clearChecked()
+        for (const path of failed) library.toggleChecked(path)
+        Library.refresh()
     }
 
     function keepSelectedDuplicate(path) {
@@ -1742,6 +1791,19 @@ ApplicationWindow {
         onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
     }
 
+    ConfirmSheet {
+        id: permanentConfirm
+        objectName: "permanentConfirm"
+        property var paths: []
+        confirmLabel: "Delete permanently"
+        onAccepted: {
+            const targets = permanentConfirm.paths.slice()
+            permanentConfirm.paths = []
+            root.deletePermanently(targets)
+        }
+        onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
+    }
+
     // Transient status line, so a result or a missing handler is reported where
     // the user is already looking rather than swallowed.
     QtObject {
@@ -1878,6 +1940,13 @@ ApplicationWindow {
             Settings.undo()
             root.say("Undone")
         }
+    }
+    Shortcut {
+        sequences: ["Shift+Del"]
+        autoRepeat: false
+        enabled: !root.anySheetOpen && !root.popupOpen && !filters.searchActive
+        onActivated: root.requestPermanentDelete(library.checkedCount > 0
+                      ? library.checkedPaths() : [root.currentPath()])
     }
     // Ctrl rather than a bare H, which the grid uses for vim-style movement.
     // Modified keys are not swallowed by the search field, so guard it.
