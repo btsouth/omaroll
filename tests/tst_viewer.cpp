@@ -1213,7 +1213,10 @@ private slots:
     // Switching can rebuild ListView delegates. Resolve the current tile on
     // each check instead of keeping a pointer to the old QML object.
     QTRY_COMPARE(label(0), QStringLiteral("RAW+JPG"));
-
+    m_session->setPairRawJpeg(false);
+    QCOMPARE(m_session->count(), 4);
+    QCOMPARE(m_session->path(), raw);
+    QTRY_COMPARE(label(0), QStringLiteral("DNG"));
   }
 
   void theMenuOffersOnlyWhatSuitsTheFile() {

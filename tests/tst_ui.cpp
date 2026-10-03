@@ -3156,6 +3156,10 @@ private slots:
     QVERIFY(configureRawEditorRecorder());
     QObject* chooser = m_window->findChild<QObject*>(QStringLiteral("editorChooser"));
     QVERIFY(chooser);
+    const auto restore = qScopeGuard([&] {
+      QMetaObject::invokeMethod(chooser, "close");
+      m_window->resize(1280, 820);
+    });
     int index = 0;
     for (const QSize& size : {QSize(1280, 820), QSize(560, 420)}) {
       m_window->resize(size);
@@ -3167,9 +3171,14 @@ private slots:
                                          Q_ARG(QVariant, true)));
         QTRY_VERIFY(chooser->property("visible").toBool());
         QQuickItem* scroller = item("editorChooserScroll");
+        // A resize updates popup geometry on the next polish pass. Scroll
+        // using the settled viewport instead of the previous window's height.
+        QTest::qWait(150);
         scroller->setProperty("contentY", qMax(0.0, scroller->property("contentHeight").toDouble()
                                                    - scroller->height()));
         QQuickItem* button = item(buttonName);
+        QTRY_VERIFY(button->mapRectToItem(scroller, button->boundingRect()).bottom()
+                    <= scroller->height() + 1);
         const QRectF rect = button->mapRectToItem(scroller, button->boundingRect());
         QVERIFY2(rect.left() >= 0 && rect.right() <= scroller->width() + 1,
                  qPrintable(QStringLiteral("%1 lies outside the chooser").arg(buttonName)));
@@ -3189,10 +3198,12 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(raw) >= 0, 5000);
     openDetail(m_library->rowOf(raw));
     QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->isVisible());
     QObject* chooser = m_window->findChild<QObject*>(QStringLiteral("editorChooser"));
     QVERIFY(chooser);
     for (Qt::Key key : {Qt::Key_D, Qt::Key_O}) {
       QVERIFY(QMetaObject::invokeMethod(detail, "focusPreview"));
+      QTRY_VERIFY(detail->hasActiveFocus());
       QTest::keyClick(m_window, key, Qt::ShiftModifier);
       QTRY_VERIFY(chooser->property("visible").toBool());
       QVERIFY(!QFileInfo::exists(raw + QStringLiteral(".editor-open")));
