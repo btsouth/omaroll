@@ -773,6 +773,7 @@ ApplicationWindow {
 
                 Loader {
                     id: stillLoader
+                    objectName: "viewerStillLoader"
                     anchors.centerIn: parent
                     width: root.sourceWidth * root.effectiveScale
                     height: root.sourceHeight * root.effectiveScale
@@ -839,6 +840,7 @@ ApplicationWindow {
             model: [1, -1]
             Image {
                 required property int modelData
+                objectName: "viewerPrefetch" + modelData
                 visible: false
                 asynchronous: true
                 autoTransform: true
@@ -854,12 +856,14 @@ ApplicationWindow {
 
         // A recording shows its thumbnail until the first frame is decoded.
         Image {
+            objectName: "viewerVideoPoster"
             anchors.fill: parent
             visible: Session.isVideo && !(root.player && root.player.hasVideo)
             fillMode: Image.PreserveAspectFit
             asynchronous: true
             smooth: true
-            sourceSize: Qt.size(Math.round(width * root.dpr), Math.round(height * root.dpr))
+            // The thumbnail provider applies the ratio from its URL once.
+            sourceSize: Qt.size(Math.round(width), Math.round(height))
             source: root.visible && Session.isVideo && Session.path !== ""
                     ? "image://thumbs/" + root.dpr + "@40~" + Session.stamp
                       + encodeURIComponent(Session.path)

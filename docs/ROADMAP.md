@@ -10,9 +10,9 @@ See [project status](STATUS.md) for the latest release and current work.
 
 - Refine the quick viewer and library together: navigation, search, selection,
   clear feedback, and controls that work in narrow windows and both themes.
-- Measure current startup, navigation and library responsiveness with realistic
-  image and video fixtures. Keep submitted frames separate from desktop
-  presentation and physical audio results.
+- Use the [mixed-media measurements](performance/2026-10-02-mixed-media/README.md)
+  to investigate bounded photo preloading and visible-thumbnail scheduling.
+  Keep submitted frames separate from desktop presentation and physical audio.
 - Improve desktop integration and reliability from reproducible problems and
   user feedback. Preserve originals and keep specialist editing in the
   existing tools.

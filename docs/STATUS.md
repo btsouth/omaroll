@@ -16,6 +16,10 @@ under review, and the [roadmap](ROADMAP.md) for scope and future decisions.
 Changes for the next release should remain in focused pull requests; the
 published tag identifies the 1.11.0 source.
 
+The [mixed-media baseline](performance/2026-10-02-mixed-media/README.md) records
+startup, whole-library jumps, viewer navigation and the preloading comparison.
+Its generated fixtures and headless measurements have explicit limits.
+
 The [Omarchy package submission](https://github.com/omacom/omarchy-pkgs/pull/295)
 is still under review. Repository inclusion, default installation and MIME
 associations are separate upstream decisions.

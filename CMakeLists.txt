@@ -218,6 +218,13 @@ if(BUILD_TESTING)
   endforeach()
   file(WRITE ${uitest_module}/qmldir "${uitest_qmldir}")
 
+  # Explicitly built/run by the isolated benchmark runner, never a CI timing gate.
+  add_executable(omaroll_benchmark_interaction EXCLUDE_FROM_ALL tests/benchmark_interaction.cpp)
+  target_link_libraries(omaroll_benchmark_interaction PRIVATE
+    omaroll_core Qt6::QuickControls2 Qt6::Multimedia Qt6::Test)
+  target_compile_definitions(omaroll_benchmark_interaction PRIVATE
+    OMAROLL_QML_IMPORT_PATH="${CMAKE_BINARY_DIR}/uitest-imports")
+
   qt_add_executable(omaroll_ui_tests tests/tst_ui.cpp)
   target_link_libraries(omaroll_ui_tests PRIVATE omaroll_core Qt6::Multimedia Qt6::QuickControls2 Qt6::Test)
   target_compile_definitions(omaroll_ui_tests PRIVATE

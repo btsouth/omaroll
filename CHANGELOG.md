@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Gallery photo and document details avoid an unused video-poster decode.
+  Gallery and viewer video posters apply display scaling once.
 - The gallery restores keyboard navigation after empty search results and
   keeps the search field in sync with saved views and files opened from outside.
 - Browse keeps search and folder choices visible in small windows with many
