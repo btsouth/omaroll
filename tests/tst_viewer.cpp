@@ -47,6 +47,7 @@
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
+#include <QQmlProperty>
 #include <QQuickItem>
 #include <QQuickImageProvider>
 #include <QQuickStyle>
@@ -86,11 +87,14 @@ public:
   QQuickWindow* window = nullptr;
   std::atomic<int> posterFrames{0};
   int framesAtCreation = -1;
+  QQuickItem* poster = nullptr;
+  int posterStatusAtCreation = -1;
 
 public slots:
   void playerChanged() {
     if (window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))) {
       framesAtCreation = posterFrames.load();
+      posterStatusAtCreation = poster->property("status").toInt();
     }
   }
 };
@@ -578,7 +582,7 @@ private slots:
     context.setContextProperty(QStringLiteral("Session"), &session);
     QQmlComponent component(m_engine);
     component.loadFromModule("Omaroll", "Viewer");
-    std::unique_ptr<QObject> root(component.create(&context));
+    std::unique_ptr<QObject> root(component.beginCreate(&context));
     QVERIFY2(root, qPrintable(component.errorString()));
     auto* window = qobject_cast<QQuickWindow*>(root.get());
     QVERIFY(window);
@@ -586,12 +590,12 @@ private slots:
       return item->objectName() == QStringLiteral("viewerVideoPoster");
     });
     QVERIFY(poster);
-    QVERIFY(poster->setProperty("source", QUrl(posterSource)));
 
     std::atomic<bool> readyAtSync{false};
     bool synchronized = false;
     StartupPlayerProbe probe;
     probe.window = window;
+    probe.poster = poster;
     QVERIFY(connect(window, SIGNAL(playerChanged()), &probe, SLOT(playerChanged())));
     const auto sample = connect(window, &QQuickWindow::afterAnimating, this, [&] {
       readyAtSync.store(poster->property("status").toInt() == 1);
@@ -619,11 +623,20 @@ private slots:
       window->hide();
     });
 
+    // Component completion attaches the production watcher. Register our
+    // submission counter first, before it can queue startup to the GUI.
+    component.completeCreate();
+    QVERIFY2(!component.isError(), qPrintable(component.errorString()));
+    // Remove the normal source binding so session changes cannot replace the
+    // controlled thumbnail with a real decoder request.
+    QVERIFY(QQmlProperty::write(poster, QStringLiteral("source"), QUrl(posterSource)));
     session.open({media(QStringLiteral("clip.mp4"))});
     window->show();
     QTRY_VERIFY_WITH_TIMEOUT(probe.framesAtCreation >= 0, 5000);
     if (expectPoster) {
-      QVERIFY2(probe.framesAtCreation > 0, "The player started before a poster frame was submitted");
+      QVERIFY2(probe.framesAtCreation > 0,
+               qPrintable(QStringLiteral("The player started before a poster frame was submitted (status %1)")
+                              .arg(probe.posterStatusAtCreation)));
     } else {
       QCOMPARE(probe.framesAtCreation, 0);
     }
