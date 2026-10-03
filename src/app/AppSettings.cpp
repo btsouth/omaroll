@@ -1109,7 +1109,7 @@ QVariantMap AppSettings::exportOrganization(const QString& path) const {
 
   QJsonObject markIdentities;
   for (auto it = m_markIdentities.cbegin(); it != m_markIdentities.cend(); ++it) {
-    if (pathHasMark(it.key())) {
+    if (pathHasMark(it.key()) && it.value().bytes >= 0) {
       markIdentities.insert(it.key(), encodeIdentity(it.value()));
     }
   }
@@ -1326,7 +1326,9 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
       bool inodeOkay = false;
       entry.device = row.value(QStringLiteral("device")).toString().toULongLong(&deviceOkay);
       entry.inode = row.value(QStringLiteral("inode")).toString().toULongLong(&inodeOkay);
-      if (!fingerprint || fingerprint.decoded.size() != 32 || !deviceOkay || !inodeOkay) {
+      if (!fingerprint ||
+          (!fingerprint.decoded.isEmpty() && fingerprint.decoded.size() != 32) ||
+          !deviceOkay || !inodeOkay) {
         return invalidIdentities();
       }
       entry.fingerprint = fingerprint.decoded;
