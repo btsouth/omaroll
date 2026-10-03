@@ -165,7 +165,7 @@ organization and safe copies itself, and delegates specialist work to these tool
 |---|---|---|
 | Recording | Trim *(default)* | `omacut` |
 | Recording | Convert · resize | `omarchy-transcode` |
-| Recording | Play | `mpv` |
+| Recording | Open in mpv | `mpv` |
 | Recording | Save current frame | `ffmpeg`, from the viewer position |
 | Image | Add background | native, no external app required |
 | Screenshot | Annotate | `$OMARCHY_SCREENSHOT_EDITOR`; Tensaku by default |
@@ -180,12 +180,17 @@ organization and safe copies itself, and delegates specialist work to these tool
 | Image | Compare side by side | native |
 | Image or PDF | Print | `lp` (CUPS) |
 | PDF | Open document *(default)* | `sushi` |
+| Any | Open in Omaroll · Albums and tags | native |
 | Any | Rename in place | native, extension preserved |
-| Image or video | Copy image | `omarchy-clipboard-paste-file` |
+| Any | Copy image or file | `wl-copy`: PNG/JPEG pixels, otherwise file URIs |
 | Any | Send with LocalSend | `omarchy-menu-share` |
 | Any | Send to a machine | `omarchy-tailscale-send`, after picking the machine |
 | Any | Open containing folder | default file manager through `xdg-open` |
 | Any | Move to Trash | XDG trash, never `unlink` |
+
+Single-file menus include viewing and editing actions. Selection menus offer
+only actions supported for every selected file, including printing pictures
+and PDFs. Menu shortcuts act on the same captured targets as clicks.
 
 The image and video defaults, including whether slideshows include videos, can
 be changed in Settings.

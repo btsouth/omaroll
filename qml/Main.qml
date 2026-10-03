@@ -64,7 +64,7 @@ ApplicationWindow {
                                       || editorChooser.visible
     readonly property bool anySheetOpen: modalOpen || detail.visible
     // A popup menu is up; the press that closes it must not also land under it.
-    readonly property bool popupOpen: filters.menuOpen || albumActionMenu.visible || contextMenu.visible
+    readonly property bool popupOpen: filters.menuOpen || albumActionMenu.visible || contextMenu.visible || detail.contextMenuOpen
     // A menu takes the keyboard while it is up and does not give it back to
     // the grid on its own, which left the arrow keys dead until a tile was
     // clicked.
@@ -153,7 +153,7 @@ ApplicationWindow {
         const row = Captures.rowOf(path)
         const video = knownVideo === undefined ? Captures.isVideoAt(row) : knownVideo
         const document = row >= 0 && Captures.isDocumentAt(row)
-        if (id !== "open" && id !== "companion" && id !== "preview" && !Registry.appliesToKind(id, video, document, path)) {
+        if (id !== "open" && id !== "companion" && id !== "preview" && id !== "organize" && !Registry.appliesToKind(id, video, document, path)) {
             root.say(id === "develop" || id === "choose-editor" ? "That action is for camera raws"
                      : document ? "That action does not apply to documents"
                      : video ? "That one is for screenshots and pictures"
@@ -166,6 +166,10 @@ ApplicationWindow {
         case "preview":
             if (detail.visible && detail.path === path) return
             root.openDetail(row, false)
+            return
+        case "organize":
+            albumActionMenu.targetPaths = [path]
+            albumActionMenu.popup(root.contentItem, contextMenu.x, contextMenu.y)
             return
         case "companion": {
             const companion = Captures.companionPathAt(row)
@@ -768,10 +772,7 @@ ApplicationWindow {
                 visible: library.checkedCount > 0
                 label: "Actions"
                 onClicked: {
-                    contextMenu.targets = library.checkedPaths().slice()
-                    contextMenu.selectionMode = true
-                    contextMenu.entries = [{id: "title", label: contextMenu.targets.length + " selected files", available: false, hint: "", group: "Title"}]
-                        .concat(contextMenu.grouped(root.selectionEntries(contextMenu.targets)))
+                    root.prepareContextMenu(library.checkedPaths())
                     contextMenu.popup(this, 0, height + 4)
                 }
             }
@@ -994,7 +995,31 @@ ApplicationWindow {
         return candidates.filter(root.isComparableImage)
     }
 
+    function previewSelection(path) {
+        const checked = library.checkedCount > 1 ? library.checkedPaths() : []
+        return checked.indexOf(path) >= 0 ? checked : []
+    }
+
+    function singleEntries(path) {
+        const index = Captures.rowOf(path)
+        if (index < 0) return []
+        const rows = Registry.actionsForKind(Captures.isVideoAt(index), Captures.isDocumentAt(index), path)
+            .filter(function(row) {
+                return ["qr", "correctionsbatch", "frame"].indexOf(row.id) < 0
+                    && (row.id !== "compare" || root.comparisonPaths(path, [path]).length > 1)
+            }).map(function(row) {
+                if (row.id === "favorite") row.label = Settings.isFavorite(path) ? "Unfavourite" : "Favourite"
+                if (row.id === "hide") row.label = Settings.isHidden(path) ? "Unhide" : "Hide"
+                return row
+            })
+        rows.unshift({id: "preview", label: "Open in Omaroll", available: true, group: "File"})
+        rows.push({id: "organize", label: "Albums and tags…", available: true, group: "Organize"})
+        return rows
+    }
+
     function selectionEntries(paths) {
+        if (paths.length === 0) return []
+        if (paths.length === 1) return root.singleEntries(paths[0])
         const rows = [
             {id: "copy", label: "Copy files", group: "File", available: Registry.available("copy"), hint: "wl-clipboard"},
             {id: "send", label: "Send with LocalSend", group: "Tools and sharing", available: Registry.available("send"), hint: "localsend"},
@@ -1007,27 +1032,26 @@ ApplicationWindow {
         })
         if (paths.length > 1 && paths.every(root.isComparableImage))
             rows.push({id: "compare", label: "Compare side by side", group: "Edit and finish", available: true, shortcut: Registry.shortcutFor("compare")})
+        if (paths.every(function(path) {
+            const row = Captures.rowOf(path)
+            return row >= 0 && Registry.appliesToKind("print", Captures.isVideoAt(row), Captures.isDocumentAt(row), path)
+        })) rows.push({id: "print", label: "Print selected files", group: "File", available: Registry.available("print"), hint: "cups"})
         if (canExport) rows.push({id: "export", label: "Convert / resize", group: "Edit and finish", available: Registry.available("export"), hint: "Omarchy"})
         if (paths.length > 1 && root.allCorrectable(paths)) rows.push({id: "correctionsbatch", label: "Correct selected pictures", group: "Edit and finish", available: true})
         rows.push({id: "organize", label: "Albums and tags…", group: "Organize"},
                   {id: "favorite", label: paths.every(function(p) { return Settings.isFavorite(p) }) ? "Unfavourite" : "Favourite", group: "Organize"},
                   {id: "hide", label: paths.every(function(p) { return Settings.isHidden(p) }) ? "Unhide" : "Hide", group: "Organize"},
                   {id: "trash", label: "Move to Trash", group: "Organize"})
-        return rows
+        return rows.map(function(row) { row.shortcut = Registry.shortcutFor(row.id); return row })
     }
 
-    function openContextMenu(index, x, y) {
-        const path = Captures.pathAt(index)
-        if (path === "") return
-        contextMenu.targets = library.isChecked(path) ? library.checkedPaths().slice() : [path]
+    function prepareContextMenu(paths) {
+        contextMenu.targets = paths.slice()
+        const path = contextMenu.targets[0]
+        const index = Captures.rowOf(path)
         const batch = contextMenu.targets.length > 1
         contextMenu.selectionMode = batch
-        const rows = batch ? root.selectionEntries(contextMenu.targets)
-            : Registry.actionsForKind(Captures.isVideoAt(index), Captures.isDocumentAt(index), path)
-                      .filter(function(row) {
-                          return row.id !== "qr" && row.id !== "correctionsbatch"
-                              && (row.id !== "compare" || root.comparisonPaths(path, [path]).length > 1)
-                      })
+        const rows = root.selectionEntries(contextMenu.targets)
         contextMenu.entries = [{id: "title", label: batch ? contextMenu.targets.length + " selected files" : path.substring(path.lastIndexOf("/") + 1), available: false, hint: "", group: "Title"}]
             .concat(contextMenu.grouped(rows))
         // Append the asynchronous action without rebuilding or moving existing rows.
@@ -1038,6 +1062,12 @@ ApplicationWindow {
                 {separator: true, conditional: true}, Object.assign({}, qr, {conditional: true})])
             Qr.inspect(path)
         }
+    }
+
+    function openContextMenu(index, x, y) {
+        const path = Captures.pathAt(index)
+        if (path === "") return
+        root.prepareContextMenu(library.isChecked(path) ? library.checkedPaths() : [path])
         contextMenu.popup(root.contentItem, x, y)
     }
 
@@ -1048,6 +1078,7 @@ ApplicationWindow {
             albumActionMenu.targetPaths = paths.slice()
             albumActionMenu.popup(root.contentItem, contextMenu.x, contextMenu.y); break
         case "copy": Actions.copyUris(paths); break
+        case "print": Registry.runBatch("print", paths); break
         case "send": Registry.runBatch("send", paths); break
         case "tailscale": tailscaleSheet.open(paths); break
         case "export": root.openExport(paths); break
@@ -1069,7 +1100,7 @@ ApplicationWindow {
         onTriggered: function(id) { root.performContextAction(id, targets.slice(), selectionMode) }
         onClosed: {
             if (!detail.visible) Qr.clear()
-            if (!root.anySheetOpen) library.forceActiveFocus()
+            if (!root.anySheetOpen && !root.popupOpen) library.forceActiveFocus()
         }
     }
 
@@ -1320,7 +1351,7 @@ ApplicationWindow {
     DetailSheet {
         id: detail
         canCompare: root.comparisonPaths(detail.path,
-            library.checkedCount > 1 ? library.checkedPaths() : []).length > 1
+            root.previewSelection(detail.path)).length > 1
         onRateRequested: function (stars) { root.rate(stars) }
         onCaptionEdited: function (text) {
             Settings.setCaption(detail.path, text)
@@ -1344,11 +1375,13 @@ ApplicationWindow {
         readonly property var keepsViewer: ["preview", "play", "view", "open-document", "frame", "background", "export", "favorite",
                                             "copy", "ocr", "qr", "send", "tailscale", "files"]
         onActionTriggered: function (id) {
+            const targets = ["compare", "correctionsbatch"].indexOf(id) >= 0
+                ? root.previewSelection(detail.path) : undefined
             if (id === "matte" && Matte.busy) { root.say("Background is still saving"); return }
             if (detail.keepsViewer.indexOf(id) < 0) {
                 detail.close()
             }
-            root.perform(id, detail.path, detail.isVideo)
+            root.performForTargets(id, detail.path, detail.isVideo, targets)
         }
         status: notice.text
     }
@@ -1757,90 +1790,90 @@ ApplicationWindow {
     // Shortcuts. All disabled while a sheet is open, which owns its own keys.
     Shortcut {
         sequences: [Registry.shortcutFor("matte")]
-        enabled: !root.anySheetOpen
+        enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: root.perform("matte", root.currentPath())
     }
     Shortcut {
         sequences: [Registry.shortcutFor("corrections")]
-        enabled: !root.anySheetOpen
+        enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: root.perform("corrections", root.currentPath())
     }
     Shortcut {
         sequences: [Registry.shortcutFor("correctionsbatch")]
-        enabled: !root.anySheetOpen
+        enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: root.perform("correctionsbatch", root.currentPath())
     }
     Shortcut {
         sequences: [Registry.shortcutFor("compare")]
-        enabled: !root.anySheetOpen
+        enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: root.perform("compare", root.currentPath())
     }
     Shortcut {
         sequences: [Registry.shortcutFor("trim")]
-        enabled: !root.anySheetOpen
+        enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: root.perform("trim", root.currentPath())
     }
     Shortcut {
         sequences: [Registry.shortcutFor("play")]
-        enabled: !root.anySheetOpen
+        enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: root.perform("play", root.currentPath())
     }
     Shortcut {
         sequences: [Registry.shortcutFor("annotate")]
-        enabled: !root.anySheetOpen
+        enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: root.perform("annotate", root.currentPath())
     }
     Shortcut {
         sequences: ["D", "O"]
-        enabled: !root.anySheetOpen && !filters.searchActive
+        enabled: !root.anySheetOpen && !root.popupOpen && !filters.searchActive
         onActivated: root.perform("develop", root.currentPath())
     }
     Shortcut {
         sequences: ["Shift+D", "Shift+O"]
-        enabled: !root.anySheetOpen && !filters.searchActive
+        enabled: !root.anySheetOpen && !root.popupOpen && !filters.searchActive
         onActivated: root.perform("choose-editor", root.currentPath())
     }
     Shortcut {
         sequences: [Registry.shortcutFor("ocr")]
-        enabled: !root.anySheetOpen
+        enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: root.perform("ocr", root.currentPath())
     }
     Shortcut {
         sequences: [Registry.shortcutFor("export")]
-        enabled: !root.anySheetOpen
+        enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: library.checkedCount > 0
                      ? root.openExport(library.checkedPaths())
                      : root.perform("export", root.currentPath())
     }
     Shortcut {
         sequences: [Registry.shortcutFor("rename")]
-        enabled: !root.anySheetOpen
+        enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: root.perform("rename", root.currentPath())
     }
     // With a selection, the keys that have a bulk form act on all of it, as
     // the header buttons and a drag do; otherwise on the highlighted tile.
     Shortcut {
         sequences: [Registry.shortcutFor("copy")]
-        enabled: !root.anySheetOpen
+        enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: library.checkedCount > 0 ? Actions.copyUris(library.checkedPaths())
                                               : root.perform("copy", root.currentPath())
     }
     Shortcut {
         sequences: [Registry.shortcutFor("send")]
-        enabled: !root.anySheetOpen
+        enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: library.checkedCount > 0 ? Registry.runBatch("send", library.checkedPaths())
                                               : root.perform("send", root.currentPath())
     }
     Shortcut {
         sequences: [Registry.shortcutFor("favorite")]
-        enabled: !root.anySheetOpen
+        enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: library.checkedCount > 0 ? root.markChecked("favorite")
                                               : root.perform("favorite", root.currentPath())
     }
     // Undo the destructive organization marks, from the grid or the viewer.
     Shortcut {
         sequences: ["Ctrl+Z"]
-        enabled: !root.modalOpen && Settings.canUndo()
+        enabled: !root.modalOpen && !root.popupOpen && Settings.canUndo()
         onActivated: {
             Settings.undo()
             root.say("Undone")
@@ -1850,23 +1883,23 @@ ApplicationWindow {
     // Modified keys are not swallowed by the search field, so guard it.
     Shortcut {
         sequences: [Registry.shortcutFor("hide")]
-        enabled: !root.anySheetOpen && !filters.searchActive
+        enabled: !root.anySheetOpen && !root.popupOpen && !filters.searchActive
         onActivated: library.checkedCount > 0 ? root.markChecked("hide")
                                               : root.perform("hide", root.currentPath())
     }
     Shortcut {
         sequences: [Registry.shortcutFor("files")]
-        enabled: !root.anySheetOpen
+        enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: root.perform("files", root.currentPath())
     }
     Shortcut {
         sequences: ["R"]
-        enabled: !root.anySheetOpen
+        enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: Library.refresh()
     }
     Shortcut {
         sequences: ["/"]
-        enabled: !root.anySheetOpen
+        enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: filters.focusSearch()
     }
     // Number keys jump between sections, in the order the filter bar shows them.
@@ -1877,7 +1910,7 @@ ApplicationWindow {
             required property int index
             Shortcut {
                 sequences: [filters.sectionShortcut(sectionKey.index)]
-                enabled: !root.anySheetOpen
+                enabled: !root.anySheetOpen && !root.popupOpen
                 onActivated: filters.selectSection(sectionKey.index)
             }
         }
@@ -1899,23 +1932,23 @@ ApplicationWindow {
     }
     Shortcut {
         sequences: ["Ctrl+A"]
-        enabled: !root.anySheetOpen
+        enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: library.checkAll()
     }
     // Tile size, the way every browser and file manager does it.
     Shortcut {
         sequences: ["Ctrl++", "Ctrl+="]
-        enabled: !root.anySheetOpen
+        enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: Settings.tileWidth += library.tileStep
     }
     Shortcut {
         sequences: ["Ctrl+-"]
-        enabled: !root.anySheetOpen
+        enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: Settings.tileWidth -= library.tileStep
     }
     Shortcut {
         sequences: ["Ctrl+0"]
-        enabled: !root.anySheetOpen
+        enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: Settings.tileWidth = 240
     }
     Shortcut {
@@ -1926,7 +1959,7 @@ ApplicationWindow {
     // window scope. With no sheet, the search field still owns its Escape.
     Shortcut {
         sequences: ["Escape"]
-        enabled: root.anySheetOpen || !filters.searchActive
+        enabled: !root.popupOpen && (root.anySheetOpen || !filters.searchActive)
         onActivated: {
             // Unwind the viewer's editor/menu before PDF selection or preview.
             // A nested sheet keeps Escape until it closes.

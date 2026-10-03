@@ -296,7 +296,7 @@ ApplicationWindow {
 
     // The slideshow waits for each picture to be on screen before timing it.
     function armSlideshow() {
-        if (root.slideshowRunning && !Session.isVideo && root.stillReady) {
+        if (root.slideshowRunning && !actionMenu.visible && !Session.isVideo && root.stillReady) {
             slideshowTimer.restart()
         }
     }
@@ -426,6 +426,7 @@ ApplicationWindow {
     // The next file for the slideshow: any other one when shuffling, and
     // never a video when the settings leave them out.
     function advanceSlideshow() {
+        if (actionMenu.visible) return
         const total = Session.count
         if (Settings.slideshowShuffle && total > 1) {
             const eligible = []
@@ -540,6 +541,11 @@ ApplicationWindow {
         return entries
     }
 
+    function performMenuAction(id) {
+        root.perform(id)
+        actionMenu.close()
+    }
+
     function perform(id) {
         const path = Session.path
         if (path === "") {
@@ -633,6 +639,7 @@ ApplicationWindow {
             if (samePath && root.loadedMediaVersion === Session.contentVersion) {
                 return
             }
+            actionMenu.close()
             root.loadedMediaPath = Session.path
             root.loadedMediaVersion = Session.contentVersion
             if (samePath && Session.isVideo && root.player) {
@@ -1536,6 +1543,22 @@ ApplicationWindow {
         modal: true
         dim: false
         readonly property var entries: root.menuEntries()
+        onVisibleChanged: {
+            if (visible) {
+                slideshowTimer.stop()
+            } else if (root.slideshowRunning && Session.isVideo && !Settings.slideshowVideos
+                       && root.loadedMediaPath === Session.path) {
+                root.advanceSlideshow()
+            } else if (root.slideshowRunning && Session.isVideo
+                       && root.loadedMediaPath === Session.path
+                       && (root.videoError !== "" || (root.player
+                           && root.player.mediaStatus === MediaPlayer.EndOfMedia))) {
+                // A clip may finish or fail while its menu holds the target.
+                slideshowTimer.restart()
+            } else {
+                root.armSlideshow()
+            }
+        }
         onClosed: keys.forceActiveFocus()
 
         background: Rectangle {
@@ -1612,7 +1635,7 @@ ApplicationWindow {
                            ? root.shade(Theme.foreground, 0.09) : "transparent"
                     radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 3) : 0
                 }
-                onTriggered: root.perform(entry.modelData.id)
+                onTriggered: root.performMenuAction(entry.modelData.id)
             }
         }
     }

@@ -107,7 +107,12 @@ Menu {
             ToolTip.delay: 600
             ToolTip.text: modelData.label + (modelData.available === false && modelData.hint
                                            ? " · needs " + modelData.hint : "")
-            onTriggered: root.triggered(entry.modelData.id)
+            Shortcut {
+                sequences: entry.modelData.shortcut ? [entry.modelData.shortcut] : []
+                enabled: root.visible && entry.enabled
+                onActivated: entry.click()
+            }
+            onTriggered: { root.triggered(entry.modelData.id); root.close() }
         }
     }
 }

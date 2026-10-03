@@ -13,6 +13,7 @@ Item {
 
     property string path: ""
     property bool canCompare: false
+    readonly property bool contextMenuOpen: imageContextMenu.visible
     property int actionsRevision: 0
 
     Connections {
@@ -23,6 +24,10 @@ Item {
         function onRowsRemoved() { root.actionsRevision++ }
         function onModelReset() { root.actionsRevision++ }
         function onPairRawJpegChanged() { root.actionsRevision++ }
+    }
+    Connections {
+        target: Settings
+        function onMarksChanged() { root.actionsRevision++ }
     }
     property string fileName: ""
     property string selectionLabel: ""
@@ -227,8 +232,12 @@ Item {
             rows.unshift({id: "companion", label: "View " + companion.substring(companion.lastIndexOf(".") + 1).toUpperCase() + " companion",
                           available: true, native: true, shortcut: "", hint: "", primary: false, group: "File"})
         }
+        for (const row of rows) {
+            if (row.id === "favorite") row.label = Settings.isFavorite(root.path) ? "Unfavourite" : "Favourite"
+            if (row.id === "hide") row.label = Settings.isHidden(root.path) ? "Unhide" : "Hide"
+        }
         return rows.filter(function (row) {
-            return (row.id !== "qr" || root.qrDetected)
+            return row.id !== "correctionsbatch" && (row.id !== "qr" || root.qrDetected)
                 && (row.id !== "compare" || root.canCompare)
         })
     }
@@ -2776,16 +2785,22 @@ Item {
         id: imageContextMenu
         objectName: "detailContextMenu"
         entryPrefix: "detailContextAction_"
+        conditionalEntriesVisible: root.qrDetected
         onTriggered: function(id) { root.invokeAction(id) }
         onClosed: root.restoreFocus()
+    }
+    function openImageContextMenu(x, y) {
+        imageContextMenu.entries = imageContextMenu.grouped(root.visibleActions().filter(function(row) { return row.id !== "qr" }))
+        const qr = Registry.actionsForKind(root.isVideo, root.isDocument, root.path)
+            .find(function(row) { return row.id === "qr" })
+        if (qr) imageContextMenu.entries = imageContextMenu.entries.concat([
+            {separator: true, conditional: true}, Object.assign({}, qr, {conditional: true})])
+        imageContextMenu.popup(stage, x, y)
     }
     TapHandler {
         parent: stage
         acceptedButtons: Qt.RightButton
-        onSingleTapped: function(point) {
-            imageContextMenu.entries = imageContextMenu.grouped(root.visibleActions())
-            imageContextMenu.popup(stage, point.position.x, point.position.y)
-        }
+        onSingleTapped: function(point) { root.openImageContextMenu(point.position.x, point.position.y) }
     }
 
 

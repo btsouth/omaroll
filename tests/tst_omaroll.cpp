@@ -5302,7 +5302,7 @@ private slots:
     QVERIFY(documents.contains(QStringLiteral("trash")));
     QVERIFY(!documents.contains(QStringLiteral("matte")));
     QVERIFY(!documents.contains(QStringLiteral("export")));
-    QVERIFY(!documents.contains(QStringLiteral("copy")));
+    QVERIFY(documents.contains(QStringLiteral("copy")));
   }
 
   void backgroundActionUsesTheOmarchyHandlerEndToEnd() {
@@ -6297,6 +6297,41 @@ private slots:
     QVERIFY(arguments.open(QIODevice::ReadOnly));
     QCOMPARE(arguments.readAll(), QByteArray("--type\nimage/png\n"));
     QVERIFY(!QFileInfo::exists(path + QStringLiteral(".helper-called")));
+  }
+
+  void printBatchTracksEachCapturedFile() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString a = dir.filePath("first image.png"), b = dir.filePath("second image.png");
+    QVERIFY(QImage(8, 8, QImage::Format_RGB32).save(a, "PNG"));
+    QVERIFY(QImage(8, 8, QImage::Format_RGB32).save(b, "PNG"));
+    const QString logPath = dir.filePath("printed.log");
+    QFile tool(dir.filePath("lp"));
+    QVERIFY(tool.open(QIODevice::WriteOnly));
+    tool.write("#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$OMAROLL_TEST_LOG\"\nexit 0\n");
+    tool.close();
+    QVERIFY(tool.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    const QByteArray oldPath = qgetenv("PATH"), oldLog = qgetenv("OMAROLL_TEST_LOG");
+    const auto restore = qScopeGuard([&] {
+      qputenv("PATH", oldPath);
+      if (oldLog.isNull()) qunsetenv("OMAROLL_TEST_LOG"); else qputenv("OMAROLL_TEST_LOG", oldLog);
+    });
+    qputenv("PATH", dir.path().toUtf8());
+    qputenv("OMAROLL_TEST_LOG", logPath.toUtf8());
+    ActionLauncher launcher;
+    ActionRegistry registry(&launcher);
+    QSignalSpy finished(&launcher, &ActionLauncher::submissionFinished);
+    QSignalSpy reported(&launcher, &ActionLauncher::reported);
+    QVERIFY(registry.runBatch("print", {a, b}));
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 2, 3000);
+    QCOMPARE(reported.size(), 2);
+    for (const auto& result : finished) QVERIFY(result.at(1).toBool());
+    QFile log(logPath);
+    QVERIFY(log.open(QIODevice::ReadOnly));
+    QStringList actual = QString::fromUtf8(log.readAll()).split('\n', Qt::SkipEmptyParts);
+    QStringList expected{a, b};
+    actual.sort(); expected.sort();
+    QCOMPARE(actual, expected);
   }
 
   void imageCopyTimeoutDoesNotConfirmSuccess() {

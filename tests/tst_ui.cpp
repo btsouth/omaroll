@@ -1408,6 +1408,96 @@ private slots:
     QVERIFY(!hasCompare());
   }
 
+  void contextMenuShortcutsUseCapturedTargets() {
+    QStringList images;
+    for (int row = 0; row < m_library->rowCount(); ++row) {
+      const QString path = pathAt(row);
+      if (path.endsWith(".jpg") || path.endsWith(".png")) images.append(path);
+    }
+    QVERIFY(images.size() >= 3);
+    const QString a = images[0], b = images[1], c = images[2];
+    const QStringList paths{a, b, c};
+    const auto cleanup = qScopeGuard([&] { m_settings->setFavorite(paths, false); m_settings->setHidden(paths, false); });
+    m_settings->setFavorite(paths, false);
+    m_settings->setHidden(paths, false);
+    QQuickItem* grid = item("library");
+    QObject* menu = m_window->findChild<QObject*>("libraryContextMenu");
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, a));
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, b));
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openContextMenu",
+        Q_ARG(QVariant, m_library->rowOf(c)), Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QTest::keyClick(m_window, Qt::Key_V);
+    QTRY_VERIFY(m_settings->isFavorite(c));
+    QVERIFY(!m_settings->isFavorite(a) && !m_settings->isFavorite(b));
+    QTRY_VERIFY(!menu->property("visible").toBool());
+    m_settings->setFavorite(paths, false);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openContextMenu",
+        Q_ARG(QVariant, m_library->rowOf(a)), Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QMetaObject::invokeMethod(grid, "clearChecked");
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, c));
+    QTest::keyClick(m_window, Qt::Key_V);
+    QTRY_VERIFY(m_settings->isFavorite(a) && m_settings->isFavorite(b));
+    QVERIFY(!m_settings->isFavorite(c));
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openContextMenu",
+        Q_ARG(QVariant, m_library->rowOf(a)), Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QTest::keyClick(m_window, Qt::Key_H, Qt::ControlModifier);
+    QTRY_VERIFY(m_settings->isHidden(a));
+    QVERIFY(!m_settings->isHidden(b) && !m_settings->isHidden(c));
+  }
+
+  void menusOfferOnlyUsefulExistingActions() {
+    QStringList images;
+    QString video, document;
+    for (int row = 0; row < m_library->rowCount(); ++row) {
+      const QString path = pathAt(row);
+      if (m_library->isVideoAt(row)) video = path;
+      else if (m_library->isDocumentAt(row)) document = path;
+      else if (path.endsWith(".jpg")) images.append(path);
+    }
+    QVERIFY(images.size() >= 3 && !video.isEmpty() && !document.isEmpty());
+    const auto ids = [&](const QStringList& paths) {
+      QVariant result;
+      QMetaObject::invokeMethod(m_window, "selectionEntries", Q_RETURN_ARG(QVariant, result), Q_ARG(QVariant, QVariant(paths)));
+      QStringList out;
+      for (const QVariant& row : result.toList()) out.append(row.toMap().value("id").toString());
+      return out;
+    };
+    QVERIFY(ids({images[0]}).contains("preview"));
+    QVERIFY(ids({images[0]}).contains("organize"));
+    QVERIFY(ids({images[0]}).contains("omaframe"));
+    QVERIFY(ids({document}).contains("copy"));
+    QVERIFY(!ids({video}).contains("frame"));
+    QVERIFY(ids({images[0], images[1]}).contains("print"));
+    QVERIFY(ids({images[0], document}).contains("print"));
+    QVERIFY(!ids({images[0], video}).contains("print"));
+    QQuickItem* grid = item("library");
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, images[0]));
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, images[1]));
+    openDetail(m_library->rowOf(images[2]));
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->isVisible());
+    QVariant result;
+    QVERIFY(QMetaObject::invokeMethod(m_window, "previewSelection", Q_RETURN_ARG(QVariant, result), Q_ARG(QVariant, images[2])));
+    QVERIFY(result.toList().isEmpty());
+    QVERIFY(QMetaObject::invokeMethod(detail, "visibleActions", Q_RETURN_ARG(QVariant, result)));
+    for (const QVariant& row : result.toList()) QVERIFY(row.toMap().value("id").toString() != "correctionsbatch");
+    QVERIFY(QMetaObject::invokeMethod(detail, "actionTriggered", Q_ARG(QString, QStringLiteral("compare"))));
+    QVERIFY(!item("compareSheet")->isVisible());
+    // Grid bulk shortcuts still use the checked pair even if another tile is current.
+    perform("compare", images[2]);
+    QTRY_VERIFY(item("compareSheet")->isVisible());
+    QCOMPARE(item("compareSheet")->property("paths").value<QJSValue>().toVariant().toStringList(), QStringList({images[0], images[1]}));
+    invoke("dismissTopLayer");
+    openDetail(m_library->rowOf(video));
+    QVERIFY(QMetaObject::invokeMethod(detail, "visibleActions", Q_RETURN_ARG(QVariant, result)));
+    bool hasFrame = false;
+    for (const QVariant& row : result.toList()) hasFrame |= row.toMap().value("id").toString() == "frame";
+    QVERIFY(hasFrame);
+  }
+
   void selectionLabelsMatchTheCapturedTargetsAndCopyDependency() {
     const QStringList paths{pathAt(0), pathAt(1)};
     const auto cleanup = qScopeGuard([&] {
@@ -2363,6 +2453,19 @@ private slots:
     QTRY_COMPARE(m_qr->path(), qrPath);
     QTRY_VERIFY_WITH_TIMEOUT(!m_qr->checking(), 3000);
     QVERIFY(m_qr->detected());
+    m_qr->inspect(negativePath);
+    QTRY_VERIFY(!detail->property("qrDetected").toBool());
+    QVERIFY(QMetaObject::invokeMethod(detail, "openImageContextMenu", Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
+    QObject* previewMenu = m_window->findChild<QObject*>("detailContextMenu");
+    QTRY_VERIFY(previewMenu->property("visible").toBool());
+    QQuickItem* previewRename = item("detailContextAction_rename");
+    QQuickItem* previewQr = item("detailContextAction_qr");
+    QVERIFY(!previewQr->isVisible());
+    QCOMPARE(previewQr->height(), 0.0);
+    m_qr->inspect(qrPath);
+    QTRY_VERIFY(previewQr->isVisible());
+    QCOMPARE(item("detailContextAction_rename"), previewRename);
+    QMetaObject::invokeMethod(previewMenu, "close");
 
     // Inserting or removing the asynchronous QR row must not move keyboard
     // focus onto a different action farther down the list.

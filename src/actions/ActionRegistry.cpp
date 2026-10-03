@@ -36,6 +36,7 @@ ActionRegistry::Definition annotateRow() {
             .program = configured,
             .arguments = {u"{path}"_s},
             .shortcut = u"A"_s,
+            .packageHint = QFileInfo(configured).fileName(),
             .media = Media::Still,
             .raws = false};
   }
@@ -125,7 +126,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .primary = true},
 
       {.id = u"play"_s,
-       .label = u"Play"_s,
+       .label = u"Open in mpv"_s,
        .program = u"mpv"_s,
        .arguments = {u"{path}"_s},
        .shortcut = u"P"_s,
@@ -315,7 +316,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .program = u"wl-copy"_s,
        .shortcut = u"Y"_s,
        .packageHint = u"wl-clipboard"_s,
-       .media = Visual,
+       .media = Any,
        .result = CopyFile},
 
       // The same path the Share menu and the Nautilus extension take: LocalSend
@@ -506,7 +507,7 @@ QVariantList ActionRegistry::actionsForKind(bool video, bool document,
     QVariantMap row;
     row[u"id"_s] = definition.id;
     row[u"label"_s] = definition.id == u"copy"_s
-        && (video || (!mime.isEmpty() && mime != u"image/png"_s && mime != u"image/jpeg"_s))
+        && (video || document || (!mime.isEmpty() && mime != u"image/png"_s && mime != u"image/jpeg"_s))
         ? u"Copy file"_s : definition.label;
     const QStringList common = {u"copy"_s, u"files"_s, u"print"_s, u"open-document"_s};
     const QStringList editing = {u"omaframe"_s, u"corrections"_s, u"correctionsbatch"_s,
