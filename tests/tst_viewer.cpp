@@ -1113,7 +1113,7 @@ private slots:
   // Media keys and the shell's player controls reach a playing video, and the
   // player leaves the bus with it.
   void videoIsControlledOverMpris() {
-    const QDBusConnection client(QStringLiteral("omaroll-test-client"));
+    QDBusConnection client(QStringLiteral("omaroll-test-client"));
     if (!client.isConnected()) {
       QSKIP("dbus-daemon is not available");
     }
