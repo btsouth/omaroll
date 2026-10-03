@@ -8,6 +8,7 @@
 #include "app/OpenRequest.h"
 #include "app/SingleInstance.h"
 #include "app/StartupTrace.h"
+#include "app/VideoPlayback.h"
 #include "library/CaptureFilterModel.h"
 #include "library/CaptureModel.h"
 #include "library/DuplicateIndex.h"
@@ -348,6 +349,9 @@ int main(int argc, char* argv[]) {
   // StartupWMClass. Changing it silently breaks the transparency opt-out.
   QGuiApplication::setDesktopFileName(QStringLiteral("io.github.tsouth89.omaroll"));
 
+  // Capture caller overrides now; driver checks wait until the first video.
+  videoPlaybackEnvironment();
+
   // Basic rather than a platform style: every colour comes from the Omarchy
   // theme, and a style that injects its own palette fights that.
   QQuickStyle::setStyle(QStringLiteral("Basic"));
@@ -396,6 +400,7 @@ int main(int argc, char* argv[]) {
 
   const QString renderPath = optionValue(arguments, QStringLiteral("--render"));
   const bool rendering = !renderPath.isEmpty();
+  if (rendering) configureVideoPlayback();
   if (rendering && !QMediaDevices::audioOutputs().isEmpty()) {
     QTextStream(stderr) << "omaroll: refusing a headless render with audio outputs available\n";
     return 1;

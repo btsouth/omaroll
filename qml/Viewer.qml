@@ -696,6 +696,7 @@ ApplicationWindow {
     function startPlayer() {
         playerStart.stop()
         if (Session.isVideo && !playerLoader.active) {
+            Settings.prepareVideoPlayback()
             playerLoader.active = true
         }
     }

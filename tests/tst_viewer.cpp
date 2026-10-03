@@ -13,6 +13,7 @@
 #include "app/AppSettings.h"
 #include "app/DemoLibrary.h"
 #include "app/HeadlessAudio.h"
+#include "app/VideoPlayback.h"
 #include "library/MediaInspector.h"
 #include "sources/FileVersion.h"
 #include "subtitles/SubtitleIndex.h"
@@ -44,6 +45,8 @@
 #include <QMediaPlayer>
 #include <QPointingDevice>
 #include <QProcess>
+#include <QVideoFrame>
+#include <QVideoSink>
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
@@ -1178,11 +1181,22 @@ private slots:
     player->pause();
   }
 
-  // The containers Omarchy hands to its default video player beyond the
-  // common ones, encoded here so the check needs no checked-in media.
+  // Video codecs and containers encoded here so the check needs no downloads.
   void lessCommonContainersPlay_data() {
     QTest::addColumn<QString>("name");
     QTest::addColumn<QStringList>("codec");
+    QTest::newRow("h264-mp4") << QStringLiteral("clip.mp4")
+                              << QStringList{QStringLiteral("libx264")};
+    QTest::newRow("hevc-mp4") << QStringLiteral("clip-hevc.mp4")
+                              << QStringList{QStringLiteral("libx265"), QStringLiteral("-threads"),
+                                             QStringLiteral("1"), QStringLiteral("-x265-params"),
+                                             QStringLiteral("pools=1:frame-threads=1")};
+    QTest::newRow("vp9-webm") << QStringLiteral("clip.webm")
+                              << QStringList{QStringLiteral("libvpx-vp9")};
+    QTest::newRow("mpeg4-avi") << QStringLiteral("clip.avi")
+                               << QStringList{QStringLiteral("mpeg4")};
+    QTest::newRow("mpeg2-mts") << QStringLiteral("clip.mts")
+                              << QStringList{QStringLiteral("mpeg2video")};
     QTest::newRow("asf") << QStringLiteral("clip.asf") << QStringList{QStringLiteral("wmv2")};
     QTest::newRow("ogm") << QStringLiteral("clip.ogm")
                          << QStringList{QStringLiteral("libtheora"), QStringLiteral("-f"),
@@ -1220,6 +1234,7 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(player->playbackState() == QMediaPlayer::PlayingState, 5000);
     QCOMPARE(player->error(), QMediaPlayer::NoError);
     QVERIFY(player->hasVideo());
+    QTRY_VERIFY_WITH_TIMEOUT(player->videoSink() && player->videoSink()->videoFrame().isValid(), 5000);
     if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
       QTRY_VERIFY_WITH_TIMEOUT(renderedVideoHasColor(), 5000);
     }
@@ -2104,6 +2119,7 @@ private:
 // Offscreen unconditionally, not just under ctest. Run by hand on a live
 // session this would open a real window on the desktop.
 int main(int argc, char* argv[]) {
+  configureVideoPlayback();
   disableHeadlessAudio();
   qputenv("QT_QPA_PLATFORM", "offscreen");
   QGuiApplication application(argc, argv);

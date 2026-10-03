@@ -4,8 +4,12 @@
 #include <QElapsedTimer>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMediaPlayer>
+#include <QPointer>
 #include <QQuickWindow>
 #include <QVariant>
+#include <QVideoFrame>
+#include <QVideoSink>
 
 #include <atomic>
 #include <memory>
@@ -37,14 +41,32 @@ public:
       std::atomic<int> ready{0};
       int synchronized = 0;
       int reported = 0;
+      QPointer<QVideoSink> sink;
+      bool decoded = false;
     };
     auto state = std::make_shared<State>();
     // Read QML on the GUI thread, then latch that snapshot during scene sync.
     // A later GUI update must not label an earlier frame as containing media.
-    QObject::connect(window, &QQuickWindow::afterAnimating, window, [window, state] {
+    QObject::connect(window, &QQuickWindow::afterAnimating, window, [window, state, trace = *this] {
       QVariant ready;
       if (QMetaObject::invokeMethod(window, "startupReadiness", Q_RETURN_ARG(QVariant, ready))) {
         state->ready.store(ready.toInt());
+      }
+      // A track flag can precede decoded pixels by hundreds of milliseconds.
+      // Observe the sink on the GUI thread, including an already-arrived frame.
+      if (!state->sink && !state->decoded) {
+        auto* player = window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"));
+        if (player && player->videoSink()) {
+          state->sink = player->videoSink();
+          const auto decoded = [trace, state](const QVideoFrame& frame) {
+            if (!state->decoded && frame.isValid()) {
+              state->decoded = true;
+              trace.mark("video_decoded_frame");
+            }
+          };
+          QObject::connect(state->sink.data(), &QVideoSink::videoFrameChanged, window, decoded);
+          decoded(state->sink->videoFrame());
+        }
       }
     });
     QObject::connect(window, &QQuickWindow::beforeSynchronizing, window, [state] {

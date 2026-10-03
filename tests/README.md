@@ -101,6 +101,22 @@ quick viewer separately, including both themes and narrow windows.
 
 ## Performance
 
+On Linux, Omaroll defaults Qt FFmpeg decoding to `cuda,vaapi` when the NVIDIA
+driver marker and loadable `libnvcuvid.so` pass Qt's CUDA prerequisites,
+otherwise `vaapi`. Encoding defaults to
+an empty hardware list (`,`). Setting both avoids Qt's general hardware-device
+scan, including recording devices a viewer does not need. Qt retains software
+decoding when the listed devices or a file's codec are unavailable. Existing
+`QT_FFMPEG_DECODING_HW_DEVICE_TYPES` and `QT_FFMPEG_ENCODING_HW_DEVICE_TYPES`
+values, including explicit empty values, take precedence. Apps launched through
+Omaroll's actions receive the caller's original hardware settings.
+The driver prerequisites are checked once, when the first player is created.
+
+These are [documented private Qt controls](https://doc.qt.io/qt-6/advanced-ffmpeg-configuration.html),
+so verify device selection and rendered video when upgrading Qt. Other operating
+systems retain their Qt defaults. Isolated software fallback does not establish
+accelerated playback on NVIDIA, Intel or AMD hardware.
+
 The optional benchmarks keep their files, settings and cache in disposable
 directories. Select the filesystem deliberately: `/tmp` may be RAM-backed.
 Run a Release build on an otherwise quiet machine and retain the JSON output.
@@ -144,6 +160,10 @@ at entry to `main`, excluding process spawning and dynamic loading before main:
   establish decoded pixels or presentation.
 - `poster_frame`: frame submitted with the quick viewer's video thumbnail
   ready and visible, before the player takes over.
+- `video_decoded_frame`: first valid video frame observed at the quick viewer's
+  sink. Observation happens on the GUI thread and can include a frame that
+  arrived before the sink was attached to tracing. This is not a submitted-frame
+  milestone or proof of physical presentation.
 - `grid_frame`: frame submitted after scanning settles and every cell
   intersecting the viewport has a decoded thumbnail at full opacity. An empty
   library, missing delegate, failed decode or fading thumbnail does not qualify.

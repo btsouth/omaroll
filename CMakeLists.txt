@@ -21,6 +21,7 @@ add_library(omaroll_core STATIC
   src/app/OpenRequest.cpp
   src/app/OpenRequest.h
   src/app/HeadlessAudio.h
+  src/app/VideoPlayback.h
   src/library/CaptureRecord.h
   src/library/CaptureRoles.h
   src/library/CaptureModel.cpp
