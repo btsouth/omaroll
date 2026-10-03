@@ -972,8 +972,12 @@ ApplicationWindow {
                         }
                     }
                     // Remember the spot on pause; the timer covers long
-                    // uninterrupted playback.
+                    // uninterrupted playback. Media keys follow the video
+                    // played last.
                     onPlaybackStateChanged: {
+                        if (playbackState === MediaPlayer.PlayingState) {
+                            Mpris.track(mediaPlayer)
+                        }
                         if (playbackState === MediaPlayer.PausedState && duration > 0
                                 && position >= 5000 && position < duration - 3000) {
                             Settings.setVideoPosition(Session.path, Math.round(position))

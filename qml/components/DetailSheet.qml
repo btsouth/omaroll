@@ -1357,6 +1357,10 @@ Item {
                                 pause()
                                 return
                             }
+                            // Media keys follow the video played last.
+                            if (playbackState === MediaPlayer.PlayingState) {
+                                Mpris.track(mediaPlayer)
+                            }
                             if (playbackState === MediaPlayer.PausedState && duration > 0
                                     && position >= 5000 && position < duration - 3000) {
                                 Settings.setVideoPosition(root.path, Math.round(position))

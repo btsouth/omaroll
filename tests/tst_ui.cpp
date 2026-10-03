@@ -37,6 +37,7 @@
 #include "sources/CameraRaw.h"
 #include "thumbs/RawImageProvider.h"
 #include "thumbs/ThumbnailProvider.h"
+#include "viewer/MprisService.h"
 
 #include <QAudioBuffer>
 #include <QAudioBufferOutput>
@@ -309,6 +310,9 @@ private slots:
     context->setContextProperty(QStringLiteral("MediaMetadata"), m_mediaMetadata);
     context->setContextProperty(QStringLiteral("Tailscale"), m_tailscale);
     context->setContextProperty(QStringLiteral("DemoMode"), true);
+    // Without a bus connection, so playback never reaches the desktop's.
+    context->setContextProperty(QStringLiteral("Mpris"),
+                                new MprisService(m_settings, QDBusConnection(QString()), this));
     context->setContextProperty(QStringLiteral("InitialPaths"), QStringList());
     context->setContextProperty(QStringLiteral("InitialFolderPath"), QString());
 

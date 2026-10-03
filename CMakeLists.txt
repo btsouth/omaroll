@@ -8,7 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Concurrent Core Gui Multimedia Qml Quick QuickControls2 Test)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Concurrent Core DBus Gui Multimedia Qml Quick QuickControls2 Test)
 qt_standard_project_setup(REQUIRES 6.8)
 
 add_library(omaroll_core STATIC
@@ -90,6 +90,8 @@ add_library(omaroll_core STATIC
   src/theme/OmarchyTheme.h
   src/viewer/HyprlandPlacement.cpp
   src/viewer/HyprlandPlacement.h
+  src/viewer/MprisService.cpp
+  src/viewer/MprisService.h
   src/viewer/ViewerSession.cpp
   src/viewer/ViewerSession.h
   src/viewer/ViewerWindows.cpp
@@ -97,7 +99,8 @@ add_library(omaroll_core STATIC
 )
 
 target_include_directories(omaroll_core PUBLIC src)
-target_link_libraries(omaroll_core PUBLIC Qt6::Concurrent Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick)
+target_link_libraries(omaroll_core PUBLIC Qt6::Concurrent Qt6::Core Qt6::DBus Qt6::Gui Qt6::Multimedia
+  Qt6::Qml Qt6::Quick)
 target_compile_definitions(omaroll_core PUBLIC OMAROLL_VERSION="${PROJECT_VERSION}")
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(omaroll_core PRIVATE -Wall -Wextra -Wpedantic)
