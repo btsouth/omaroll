@@ -3493,6 +3493,10 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_A, Qt::ControlModifier);
     typeText(QStringLiteral("unavailable-draft-editor {path}"));
     QCOMPARE(chooser->property("customDraft").toString(), QStringLiteral("unavailable-draft-editor {path}"));
+    QCOMPARE(chooser->property("selectedId").toString(), QStringLiteral("custom"));
+    QVERIFY(QMetaObject::invokeMethod(chooser, "openSelected"));
+    QCOMPARE(editors->customCommand(), QString());
+    QVERIFY(chooser->property("visible").toBool());
     QCOMPARE(editors->customCommand(), QString());
     QVERIFY(!item("editorChooserDefault_custom")->isEnabled());
     QTest::keyClick(m_window, Qt::Key_Escape);

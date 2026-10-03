@@ -81,6 +81,16 @@ bool ExternalEditors::parseCustomCommand(const QString& command, QString* progra
     return false;
   }
 
+  // A shell parses its command again. Never interpolate filenames into one,
+  // including a shell invoked through env or another command wrapper. Use a
+  // script executable that receives the path as an ordinary argument instead.
+  const QStringList shells{u"sh"_s, u"bash"_s, u"dash"_s, u"zsh"_s, u"fish"_s,
+                           u"ksh"_s, u"csh"_s, u"tcsh"_s};
+  for (const QString& token : QProcess::splitCommand(command)) {
+    if (shells.contains(QFileInfo(token).fileName()) || token.startsWith(u"--split-string"_s)
+        || token.startsWith(u"-S"_s)) return false;
+  }
+
   if (program != nullptr) {
     *program = executable;
   }
@@ -237,7 +247,18 @@ bool ExternalEditors::requestOpen(const QString& path) {
   return true;
 }
 
+bool ExternalEditors::launchCustom(const QString& command, const QString& path) {
+  const bool started = launchImpl(QString::fromLatin1(kCustomId), path, command);
+  if (started) setCustomCommand(command);
+  return started;
+}
+
 bool ExternalEditors::launch(const QString& id, const QString& path) {
+  return launchImpl(id, path, m_customCommand);
+}
+
+bool ExternalEditors::launchImpl(const QString& id, const QString& path,
+                                 const QString& customCommand) {
   if (m_launcher == nullptr) {
     reject(u"External editor launching is unavailable"_s);
     return false;
@@ -255,8 +276,8 @@ bool ExternalEditors::launch(const QString& id, const QString& path) {
   if (id == QLatin1String(kCustomId)) {
     QString program;
     QStringList arguments;
-    if (!parseCustomCommand(m_customCommand, &program, &arguments)) {
-      reject(u"Enter a custom editor command first"_s);
+    if (!parseCustomCommand(customCommand, &program, &arguments)) {
+      reject(u"Use a direct editor command or wrapper script"_s);
       return false;
     }
     bool substituted = false;

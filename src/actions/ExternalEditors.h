@@ -59,6 +59,8 @@ public:
   // Launches one candidate. Unknown ids and non-RAW files are refused before
   // ActionLauncher sees them.
   Q_INVOKABLE bool launch(const QString& id, const QString& path);
+  // Save a draft only after the custom editor starts successfully.
+  Q_INVOKABLE bool launchCustom(const QString& command, const QString& path);
 
 signals:
   void preferencesChanged();
@@ -81,6 +83,7 @@ private:
   [[nodiscard]] QString firstInstalledId() const;
   [[nodiscard]] bool parseCustomCommand(const QString& command, QString* program,
                                         QStringList* arguments) const;
+  bool launchImpl(const QString& id, const QString& path, const QString& customCommand);
   void setRequestedPath(const QString& path);
   void setMessage(const QString& message, bool missingEditors = false);
   void reject(const QString& message);

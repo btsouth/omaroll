@@ -74,10 +74,10 @@ Popup {
         if (root.selectedId === "") {
             return
         }
-        if (root.selectedId === "custom") {
-            Editors.customCommand = root.customDraft
-        }
-        if (Editors.launch(root.selectedId, root.path)) {
+        const started = root.selectedId === "custom"
+                          ? Editors.launchCustom(root.customDraft, root.path)
+                          : Editors.launch(root.selectedId, root.path)
+        if (started) {
             root.close()
         }
     }
@@ -284,6 +284,7 @@ Popup {
                             root.customDraft = text
                         }
                     }
+                    onTextEdited: root.selectedId = "custom"
                     Keys.onReturnPressed: root.openSelected()
                     Keys.onEnterPressed: root.openSelected()
                 }

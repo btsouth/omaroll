@@ -373,6 +373,46 @@ private slots:
     QCOMPARE(launch.arguments.at(1), QFile::encodeName(dangerousPath));
   }
 
+  void failedCustomLaunchPreservesSavedCommand() {
+    if (!rawSupported()) QSKIP("Qt RAW support is unavailable");
+    ActionLauncher launcher;
+    ExternalEditors editors(&launcher);
+    const QString custom = makeRecorder(m_caseRoot, QStringLiteral("custom-editor"));
+    QVERIFY(!custom.isEmpty());
+    const QString saved = custom + QStringLiteral(" {path}");
+    editors.setCustomCommand(saved);
+    QSignalSpy preferences(&editors, &ExternalEditors::preferencesChanged);
+    QVERIFY(!editors.launchCustom(QStringLiteral("missing-draft-editor {path}"), rawFixture()));
+    QCOMPARE(editors.customCommand(), saved);
+    QCOMPARE(preferences.count(), 0);
+    const QString replacement = custom + QStringLiteral(" --draft {path}");
+    QVERIFY(editors.launchCustom(replacement, rawFixture()));
+    QCOMPARE(editors.customCommand(), replacement);
+    QCOMPARE(preferences.count(), 1);
+    QTRY_VERIFY_WITH_TIMEOUT(recordedLaunch(m_log).complete, 3000);
+  }
+
+  void shellPlaceholdersAreRefused() {
+    if (!rawSupported()) QSKIP("Qt RAW support is unavailable");
+    ActionLauncher launcher;
+    ExternalEditors editors(&launcher);
+    QSignalSpy messages(&launcher, &ActionLauncher::reported);
+    for (const QString& command : {QStringLiteral("sh -c \"editor {path}\""),
+                                   QStringLiteral("/bin/bash -lc \"editor {path}\""),
+                                   QStringLiteral("env sh -c \"editor {path}\""),
+                                   QStringLiteral("env -S \"sh -c 'editor {path}'\""),
+                                   QStringLiteral("env --split-string=\"sh -c 'editor {path}'\""),
+                                   QStringLiteral("sh -c")}) {
+      QVERIFY(!editors.customCommandAvailable(command));
+      QVERIFY(!editors.launchCustom(command, rawFixture()));
+    }
+    QCOMPARE(messages.count(), 6);
+    for (const auto& message : messages)
+      QCOMPARE(message.first().toString(), QStringLiteral("Use a direct editor command or wrapper script"));
+    QVERIFY(!QFileInfo::exists(m_log));
+    QCOMPARE(editors.customCommand(), QString());
+  }
+
   void pinCanonicalizesDeduplicatesAndKeepsLibrarySource() {
     const QString folder = m_caseRoot + QStringLiteral("/library");
     QVERIFY(QDir().mkpath(folder));
