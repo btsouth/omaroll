@@ -1368,8 +1368,13 @@ private slots:
       invoke("dismissTopLayer");
       for (const QString& path : paths) m_settings->removeLibraryFolder(path);
       m_captures->refresh();
-      QTRY_VERIFY_WITH_TIMEOUT(!m_captures->scanning(), 5000);
+      const bool removed = QTest::qWaitFor([&] {
+        return std::all_of(paths.cbegin(), paths.cend(), [&](const QString& path) {
+          return m_captures->rowOf(path + QStringLiteral("/picture.png")) < 0;
+        });
+      }, 5000);
       m_window->resize(previous);
+      QVERIFY(removed);
     });
     for (int index = 0; index < 12; ++index) {
       const QString path = sources.filePath(QStringLiteral("source-folder-%1-photographs").arg(index));
@@ -3381,9 +3386,14 @@ private slots:
         QFile::remove(path);
       }
       m_captures->refresh();
-      QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(added.value(0)) < 0, 15000);
+      const bool removed = QTest::qWaitFor([&] {
+        return std::all_of(added.cbegin(), added.cend(), [&](const QString& path) {
+          return m_captures->rowOf(path) < 0;
+        });
+      }, 15000);
       m_window->resize(1280, 820);
       QTest::qWait(400);
+      QVERIFY(removed);
     });
 
     struct Stale {
@@ -3468,16 +3478,15 @@ private slots:
       }) : nullptr;
     };
     auto openByRightClick = [&](int row, const char* stage) {
+      QQuickItem* view = find(grid, [](QQuickItem* candidate) {
+        return candidate->property("cellWidth").isValid();
+      });
+      // Position first: an offscreen row may not have a live delegate yet.
+      // GridView.Contain
+      QMetaObject::invokeMethod(view, "positionViewAtIndex", Q_ARG(int, row), Q_ARG(int, 4));
       QQuickItem* card = nullptr;
       QTRY_VERIFY_WITH_TIMEOUT((card = liveCardAt(row)) != nullptr, 5000);
       QCOMPARE(card->property("path").toString(), pathAt(row));
-      if (centre(card).y() <= 0 || centre(card).y() >= m_window->height()) {
-        QQuickItem* view = find(grid, [](QQuickItem* candidate) {
-          return candidate->property("cellWidth").isValid();
-        });
-        // GridView.Contain
-        QMetaObject::invokeMethod(view, "positionViewAtIndex", Q_ARG(int, row), Q_ARG(int, 4));
-      }
       // Relayout may destroy the delegate while the wait processes events.
       QTRY_VERIFY_WITH_TIMEOUT((card = liveCardAt(row)) != nullptr && centre(card).y() > 0
                                    && centre(card).y() < m_window->height(), 5000);
