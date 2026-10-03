@@ -125,8 +125,8 @@ Considered for 1.8.0 and left out; revisit only with a fresh decision:
 - Extend the benchmarks with warm navigation and 50k mixed libraries where
   they can run headless; the Wayland presentation and GPU memory numbers need
   the desktop.
-- Maintain the [Omarchy package submission](https://github.com/omacom/omarchy-pkgs/pull/295),
-  and keep it aligned with published releases.
+- The [Omarchy package submission](https://github.com/omacom/omarchy-pkgs/pull/295)
+  is under review.
 
 Repository inclusion, installation by default and MIME defaults are separate
 upstream decisions. Advanced editing remains available through Omarchy's
