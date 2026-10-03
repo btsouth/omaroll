@@ -72,7 +72,8 @@ omaroll clip.mp4
 A picture or video opens in the viewer: the media fills the window, a small
 picture included, and the name, the controls and the menu appear when the
 pointer moves. Rotating turns the view only; a rotated copy is saved from the
-library. Pictures and videos in the folder are listed by filename. Use the arrows
+library. Pictures and videos in the folder are listed by filename; press `B`
+for a filmstrip of them above the controls, and click one to open it. Use the arrows
 to step through pictures, or Page Up and Page Down to change files while a video
 is playing. Folders, PDFs and a plain `omaroll` open the library, and so does
 `--library` with any file:
@@ -118,6 +119,7 @@ process, so a favourite or rating set in one shows in the others.
 | `F` · `F11` · double click a video | Full screen |
 | `F5` | Slideshow |
 | `I` | Details: size, date, rating, camera or codec |
+| `B` | Hide or show the filmstrip |
 | `V` · `Alt+1`-`Alt+5` · `Ctrl+Z` | Favourite · rate · undo |
 | `Y` · `S` · `A` | Copy · send · annotate |
 | `T` · `G` · `P` | Trim · save the current frame · open in mpv |

@@ -1068,6 +1068,51 @@ private slots:
     m_window->setProperty("chromePinned", false);
   }
 
+  void theFilmstripShowsTheFolderAndOpensWhatIsClicked() {
+    m_settings->setViewerFilmstrip(true);
+    open({media(QStringLiteral("shot 2.jpg"))});
+    QTRY_COMPARE(m_session->count(), int(m_order.size()));
+    QTRY_VERIFY(prop("imageReady").toBool());
+    m_window->setProperty("chromePinned", true);
+    const auto restore = qScopeGuard([this] {
+      m_window->setProperty("chromePinned", false);
+      m_settings->setViewerFilmstrip(false);
+    });
+
+    QQuickItem* strip = item(QStringLiteral("viewerFilmstrip"));
+    QTRY_VERIFY(strip->isVisible());
+    QCOMPARE(strip->property("currentIndex").toInt(), 2);
+    // It sits above the toolbar rather than over it.
+    QQuickItem* toolbar = item(QStringLiteral("viewerToolbar"));
+    QVERIFY(strip->mapToScene(QPointF(0, strip->height())).y() <=
+            toolbar->mapToScene(QPointF(0, 0)).y());
+
+    QQuickItem* tile = nullptr;
+    QTRY_VERIFY((tile = find(m_window->contentItem(), [](QQuickItem* candidate) {
+                   return candidate->objectName() == QStringLiteral("viewerFilmstripTile1");
+                 })));
+    click(tile);
+    QTRY_COMPARE(m_session->path(), m_order.at(1));
+    QCOMPARE(strip->property("currentIndex").toInt(), 1);
+
+    // B puts it away and brings it back, and the choice is remembered.
+    QTest::keyClick(m_window, Qt::Key_B);
+    QVERIFY(!m_settings->viewerFilmstrip());
+    QTRY_VERIFY(!strip->isVisible());
+    QTest::keyClick(m_window, Qt::Key_B);
+    QVERIFY(m_settings->viewerFilmstrip());
+    QTRY_VERIFY(strip->isVisible());
+
+    // A single file has nothing to show beside it.
+    const QString alone = m_scratch.filePath(QStringLiteral("alone"));
+    QVERIFY(QDir().mkpath(alone));
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), alone + QStringLiteral("/only.jpg")));
+    open({alone + QStringLiteral("/only.jpg")});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QCOMPARE(m_session->count(), 1);
+    QVERIFY(!strip->isVisible());
+  }
+
   void theMenuOffersOnlyWhatSuitsTheFile() {
     open({media(QStringLiteral("Shot 1.jpg"))});
     QTRY_COMPARE(m_session->count(), int(m_order.size()));

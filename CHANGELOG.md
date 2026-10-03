@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- The viewer can show a filmstrip of the folder above its controls. B or the
+  menu turns it on, a click on a thumbnail opens that file, and the choice is
+  kept.
+
 ## 1.12.0
 
 ### Changed

@@ -43,6 +43,7 @@ constexpr int kMaximumTileWidth = 480;
 constexpr auto kSlideshowVideos = "slideshow/includeVideos";
 constexpr auto kSlideshowInterval = "slideshow/intervalSeconds";
 constexpr auto kSlideshowShuffle = "slideshow/shuffle";
+constexpr auto kViewerFilmstrip = "viewer/filmstrip";
 constexpr auto kAlbums = "library/albums";
 constexpr auto kTags = "library/tags";
 constexpr auto kSmartCollections = "library/smartCollections";
@@ -195,6 +196,7 @@ AppSettings::AppSettings(QObject* parent)
   m_slideshowVideos = m_settings.value(kSlideshowVideos, false).toBool();
   m_slideshowIntervalSeconds = qBound(2, m_settings.value(kSlideshowInterval, 4).toInt(), 20);
   m_slideshowShuffle = m_settings.value(kSlideshowShuffle, false).toBool();
+  m_viewerFilmstrip = m_settings.value(kViewerFilmstrip, false).toBool();
   m_videoVolume = qBound(0.0, m_settings.value(kVideoVolume, 0.8).toDouble(), 1.0);
   m_videoMuted = m_settings.value(kVideoMuted, false).toBool();
   const QVariantMap storedPositions = m_settings.value(kVideoPositions).toMap();
@@ -407,6 +409,15 @@ void AppSettings::setSlideshowIntervalSeconds(int seconds) {
   m_slideshowIntervalSeconds = bounded;
   m_settings.setValue(kSlideshowInterval, bounded);
   emit slideshowIntervalSecondsChanged();
+}
+
+void AppSettings::setViewerFilmstrip(bool value) {
+  if (m_viewerFilmstrip == value) {
+    return;
+  }
+  m_viewerFilmstrip = value;
+  m_settings.setValue(kViewerFilmstrip, value);
+  emit viewerFilmstripChanged();
 }
 
 void AppSettings::setSlideshowShuffle(bool value) {

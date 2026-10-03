@@ -80,6 +80,12 @@ public:
   Q_INVOKABLE bool neighbourIsVideo(int offset) const;
   Q_INVOKABLE bool neighbourIsAnimated(int offset) const;
 
+  // The filmstrip's tile for the file at |index|: the library's thumbnail
+  // URL, with the file's mtime so a rewrite is not served from Qt's cache.
+  Q_INVOKABLE QString thumbnailUrl(int index, qreal devicePixelRatio) const;
+  Q_INVOKABLE bool isVideoAt(int index) const;
+  Q_INVOKABLE QString fileNameAt(int index) const;
+
   // A file this window just moved to the Trash. The next one takes its place,
   // or the previous one at the end; an empty sequence emits emptied().
   Q_INVOKABLE void forget(const QString& path);
