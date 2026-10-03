@@ -96,8 +96,8 @@ ActionRegistry::Definition tailscaleRow() {
           .batch = true};
 }
 
-// The first RAW developer installed, in the order Arch users most often have
-// them. Without one, the row names darktable so the hint says what to install.
+// Use the first installed RAW developer. Without one, the row names
+// darktable so the hint says what to install.
 ActionRegistry::Definition developRow() {
   using Media = ActionRegistry::Media;
   struct Developer {

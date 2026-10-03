@@ -3166,6 +3166,10 @@ private slots:
     m_captures->refresh();
     QTRY_VERIFY(m_library->rowOf(path) >= 0);
     QTRY_VERIFY_WITH_TIMEOUT(cardFor(path) != nullptr, 5000);
+    QCOMPARE(cardFor(path)->property("rawFormat").toString(), QStringLiteral("DNG"));
+    QQuickItem* badge = cardFor(path)->findChild<QQuickItem*>(QStringLiteral("rawBadge"));
+    QVERIFY(badge);
+    QVERIFY(badge->isVisible());
     openDetail(m_library->rowOf(path));
     QQuickItem* detail = item("detail");
     QTRY_VERIFY_WITH_TIMEOUT(detail->property("imageReady").toBool(), 10000);
@@ -3179,6 +3183,7 @@ private slots:
     for (const QVariant& row : rows.toList()) {
       ids << row.toMap().value(QStringLiteral("id")).toString();
     }
+    QVERIFY(ids.contains(QStringLiteral("develop")));
     QVERIFY(ids.contains(QStringLiteral("matte")));
     QVERIFY(ids.contains(QStringLiteral("export")));
     QVERIFY(!ids.contains(QStringLiteral("corrections")));
