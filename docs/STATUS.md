@@ -2,8 +2,8 @@
 
 ## Latest release
 
-[Omaroll 1.12.0](https://github.com/btsouth/omaroll/releases/tag/v1.12.0), dated
-3 October 2026. See the [changelog](../CHANGELOG.md#1120) for what it includes.
+[Omaroll 1.13.0](https://github.com/btsouth/omaroll/releases/tag/v1.13.0), dated
+3 October 2026. See the [changelog](../CHANGELOG.md#1130) for what it includes.
 
 The release provides an x86_64 Arch package, source archive and PKGBUILD, with
 checksums and signed build provenance. Installation and verification commands
@@ -11,30 +11,13 @@ are in the [README](../README.md#install-or-update).
 
 ## Current work
 
-Camera raw opening (ARW, CR3, DNG, NEF, RAF and the rest LibRaw reads) is
-merged for the next release, including thumbnails from the embedded preview,
-orientation, and the actions offered for a raw.
+Version 1.13.0 adds camera RAW viewing, RAW/JPEG companions, saved editor choices,
+folder pins, and Open in Omaframe for existing images. Right-click menus use
+captured file selections, QR copying appears after detection, and containing
+folders open in the default file manager. Clipboard and print actions report
+completion or failure. Corrections and Omaframe exports remain copies.
 
-The next-release branch adds RAW/JPEG grouping with a companion switch, RAW
-filmstrip badges, a saved external-editor choice and custom commands, and
-pinned-folder shortcuts. Grouping preserves both originals and keeps explicit
-file selections visible.
-
-It also adds **Open in Omaframe** for existing images in the library and quick
-viewer, using Omaframe's annotation and framing controls without changing the
-configured annotation editor. Corrections and Omaframe exports remain copies.
-
-The branch also adds right-click action menus for files and selections, groups
-related actions, and keeps selection actions reachable in narrow windows.
-New profiles use built-in viewing as the Space action; upgrades preserve existing
-preferences. The native framing tool is called Add background. Saving and copying
-report their results separately, with Retry copy after a clipboard failure, and
-print confirmation waits for successful queue submission.
-
-Use the [open pull requests](https://github.com/btsouth/omaroll/pulls) for work
-under review, and the [roadmap](ROADMAP.md) for scope and future decisions.
-Changes for the next release should remain in focused pull requests; the
-published tag identifies the 1.12.0 source.
+Use the [roadmap](ROADMAP.md) for future work and open decisions.
 
 The [mixed-media baseline](performance/2026-10-02-mixed-media/README.md) records
 startup, whole-library jumps, viewer navigation and the preloading comparison.
