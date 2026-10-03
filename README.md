@@ -26,15 +26,25 @@ telemetry.
 Requires x86_64 Omarchy or Arch Linux with Qt 6.8+ and Poppler.
 
 ```bash
+curl -fsSL https://pkgs.btso.dev/install.sh | bash -s -- omaroll
+```
+
+This adds my [signed package repository](https://github.com/btsouth/pkgs), so
+Omaroll then updates with the rest of your system (`omarchy update` or
+`sudo pacman -Syu`). If you installed an earlier release by hand, run the same
+command to start getting updates.
+
+To install one release without adding the repository:
+
+```bash
 curl -fLO https://github.com/btsouth/omaroll/releases/download/v1.11.0/omaroll-1.11.0-1-x86_64.pkg.tar.zst \
      -fLO https://github.com/btsouth/omaroll/releases/download/v1.11.0/SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
 sudo pacman -U ./omaroll-1.11.0-1-x86_64.pkg.tar.zst
 ```
 
-Run the same commands for a newer release to update. The package is prepared for
-the Omarchy repository so installation and updates can move to normal `pacman`
-updates after inclusion.
+A package installed this way does not update on its own. Run the same commands
+for a newer release.
 
 If you prefer a browser, download the package and `SHA256SUMS` from the
 [latest release](https://github.com/btsouth/omaroll/releases/latest), put them
