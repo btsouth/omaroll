@@ -159,7 +159,12 @@ void MprisService::attach(QMediaPlayer* player) {
   ++m_track;
   m_lastPosition = player->position();
   m_sincePosition.start();
+  m_seekRequested = false;
+  m_stopped = false;
   const auto status = [this] {
+    if (m_player && m_player->playbackState() == QMediaPlayer::PlayingState) {
+      m_stopped = false;
+    }
     changed(kPlayerInterface, {QStringLiteral("PlaybackStatus"), QStringLiteral("CanPlay"),
                                QStringLiteral("CanPause")});
   };
@@ -184,6 +189,8 @@ void MprisService::attach(QMediaPlayer* player) {
                 ++m_track;
                 m_lastPosition = 0;
                 m_sincePosition.restart();
+                m_seekRequested = false;
+                m_stopped = false;
                 changed(kPlayerInterface, {QStringLiteral("Metadata"),
                                            QStringLiteral("PlaybackStatus")});
               }),
@@ -265,15 +272,17 @@ void MprisService::changed(const QString& interface, const QStringList& names) {
 }
 
 // Playback moves the position steadily; anything else is a seek, which MPRIS
-// clients hear about so their progress does not drift.
+// clients hear about so their progress does not drift. A paused player only
+// moves when it is sought, however short the step.
 void MprisService::positionMoved(qint64 position) {
   const bool playing = m_player && m_player->playbackState() == QMediaPlayer::PlayingState;
   const double rate = m_player ? m_player->playbackRate() : 1.0;
   const qint64 expected =
       m_lastPosition + (playing ? qint64(double(m_sincePosition.elapsed()) * rate) : 0);
+  const bool requested = std::exchange(m_seekRequested, false);
   m_lastPosition = position;
   m_sincePosition.restart();
-  if (std::abs(position - expected) > 1000) {
+  if (requested || (!playing && position != expected) || std::abs(position - expected) > 1000) {
     emit seeked(position * 1000);
   }
 }
@@ -302,7 +311,7 @@ QString MprisService::playbackStatus() const {
   case QMediaPlayer::PlayingState:
     return QStringLiteral("Playing");
   case QMediaPlayer::PausedState:
-    return QStringLiteral("Paused");
+    return m_stopped ? QStringLiteral("Stopped") : QStringLiteral("Paused");
   case QMediaPlayer::StoppedState:
     break;
   }
@@ -393,12 +402,19 @@ void MprisService::playPause() {
   }
 }
 
-// Stopping keeps the first frame on screen, as the end of a video does.
+// Stopping keeps the first frame on screen, as the end of a video does, and
+// reports Stopped until playback starts again.
 void MprisService::stop() {
-  if (m_player) {
-    m_player->pause();
+  if (!m_player) {
+    return;
+  }
+  m_stopped = true;
+  m_player->pause();
+  if (m_player->position() != 0) {
+    m_seekRequested = true;
     m_player->setPosition(0);
   }
+  changed(kPlayerInterface, {QStringLiteral("PlaybackStatus")});
 }
 
 void MprisService::seek(qlonglong offsetUs) {
@@ -409,6 +425,7 @@ void MprisService::seek(qlonglong offsetUs) {
   if (m_player->duration() > 0 && target >= m_player->duration()) {
     return;
   }
+  m_seekRequested = true;
   m_player->setPosition(std::max<qint64>(0, target));
 }
 
@@ -417,6 +434,7 @@ void MprisService::setPosition(const QDBusObjectPath& track, qlonglong positionU
       (m_player->duration() > 0 && positionUs / 1000 > m_player->duration())) {
     return;
   }
+  m_seekRequested = true;
   m_player->setPosition(positionUs / 1000);
 }
 

@@ -65,18 +65,20 @@
 #include <functional>
 #include <memory>
 
-// Collects org.freedesktop.DBus.Properties.PropertiesChanged, which QSignalSpy
-// cannot attach to.
+// Collects PropertiesChanged and Seeked from the bus, which QSignalSpy cannot
+// attach to.
 class PropertiesWatcher : public QObject {
   Q_OBJECT
 
 public:
   QList<QVariantMap> changes;
+  QList<qlonglong> seeks;
 
 public slots:
   void changed(const QString&, const QVariantMap& values, const QStringList&) {
     changes.append(values);
   }
+  void seeked(qlonglong position) { seeks.append(position); }
 };
 
 class ViewerTest : public QObject {
@@ -1150,21 +1152,29 @@ private slots:
                            QStringLiteral("org.freedesktop.DBus.Properties"),
                            QStringLiteral("PropertiesChanged"), &watcher,
                            SLOT(changed(QString, QVariantMap, QStringList))));
+    QVERIFY(client.connect(service, QStringLiteral("/org/mpris/MediaPlayer2"), remote,
+                           QStringLiteral("Seeked"), &watcher, SLOT(seeked(qlonglong))));
     QCOMPARE(mprisCall(remote, QStringLiteral("Pause")).type(), QDBusMessage::ReplyMessage);
     QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
     QTRY_VERIFY(std::any_of(watcher.changes.cbegin(), watcher.changes.cend(), [](const QVariantMap& values) {
       return values.value(QStringLiteral("PlaybackStatus")).toString() == QStringLiteral("Paused");
     }));
+    // Even a short step while paused is announced, so clients do not drift.
+    QTRY_VERIFY(player->isSeekable());
+    QVERIFY(player->duration() > 2000);
+    const qint64 before = player->position();
+    QCOMPARE(mprisCall(remote, QStringLiteral("Seek"), {qlonglong(300000)}).type(),
+             QDBusMessage::ReplyMessage);
+    QTRY_VERIFY(player->position() >= before + 250);
+    QTRY_VERIFY(!watcher.seeks.isEmpty());
     QCOMPARE(mprisCall(remote, QStringLiteral("PlayPause")).type(), QDBusMessage::ReplyMessage);
     QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
 
-    if (player->isSeekable() && player->duration() > 2000) {
-      QCOMPARE(mprisCall(remote, QStringLiteral("SetPosition"),
-                         {QVariant::fromValue(track), qlonglong(1500000)})
-                   .type(),
-               QDBusMessage::ReplyMessage);
-      QTRY_VERIFY(player->position() >= 1400);
-    }
+    QCOMPARE(mprisCall(remote, QStringLiteral("SetPosition"),
+                       {QVariant::fromValue(track), qlonglong(1500000)})
+                 .type(),
+             QDBusMessage::ReplyMessage);
+    QTRY_VERIFY(player->position() >= 1400);
 
     const qreal volume = m_settings->videoVolume();
     QDBusMessage set = mprisCall(QStringLiteral("org.freedesktop.DBus.Properties"),
@@ -1174,6 +1184,16 @@ private slots:
     QCOMPARE(set.type(), QDBusMessage::ReplyMessage);
     QTRY_COMPARE(m_settings->videoVolume(), 0.25);
     m_settings->setVideoVolume(volume);
+
+    // Stop rewinds and reads as stopped, unlike a pause, until played again.
+    QCOMPARE(mprisCall(remote, QStringLiteral("Stop")).type(), QDBusMessage::ReplyMessage);
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    QTRY_VERIFY(player->position() < 500);
+    QCOMPARE(mprisProperty(remote, QStringLiteral("PlaybackStatus")).toString(),
+             QStringLiteral("Stopped"));
+    QCOMPARE(mprisCall(remote, QStringLiteral("Play")).type(), QDBusMessage::ReplyMessage);
+    QTRY_COMPARE(mprisProperty(remote, QStringLiteral("PlaybackStatus")).toString(),
+                 QStringLiteral("Playing"));
 
     m_window->close();
     QTRY_VERIFY(!m_mpris->isPublished());

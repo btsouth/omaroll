@@ -76,4 +76,8 @@ private:
   quint64 m_track = 0;
   qint64 m_lastPosition = 0;
   QElapsedTimer m_sincePosition;
+  // Set by Seek and SetPosition, so even a short seek is announced.
+  bool m_seekRequested = false;
+  // Stop keeps the first frame paused on screen but reads as stopped.
+  bool m_stopped = false;
 };
