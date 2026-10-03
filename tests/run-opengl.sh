@@ -45,13 +45,13 @@ render() { # theme view size
 # The smallest window the app allows, where the chrome has the least room, gets
 # the views that collided there, and a document in both palettes.
 renders=()
-for view in grid detail document video slideshow matte corrections compare export rename ocr duplicates browser settings viewer viewer-video viewer-info viewer-menu; do
+for view in grid detail document video slideshow matte corrections compare export rename ocr duplicates browser settings editors pins viewer viewer-video viewer-info viewer-menu; do
   renders+=("dark $view 1280x820")
 done
-for view in grid detail document corrections compare duplicates browser settings viewer viewer-info viewer-menu; do
+for view in grid detail document corrections compare duplicates browser settings editors pins viewer viewer-info viewer-menu; do
   renders+=("light $view 1280x820")
 done
-for view in grid detail video ocr document corrections viewer viewer-video; do
+for view in grid detail video ocr document corrections editors pins viewer viewer-video; do
   renders+=("dark $view 560x420")
 done
 renders+=("light document 560x420")

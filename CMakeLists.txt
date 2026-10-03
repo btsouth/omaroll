@@ -37,6 +37,8 @@ add_library(omaroll_core STATIC
   src/library/MediaMetadataIndex.h
   src/sources/CameraRaw.cpp
   src/sources/CameraRaw.h
+  src/sources/RawJpegPairs.cpp
+  src/sources/RawJpegPairs.h
   src/sources/CaptureScanner.cpp
   src/sources/CaptureScanner.h
   src/sources/CaptureLocations.cpp
@@ -46,6 +48,8 @@ add_library(omaroll_core STATIC
   src/actions/ActionLauncher.h
   src/actions/ActionRegistry.cpp
   src/actions/ActionRegistry.h
+  src/actions/ExternalEditors.cpp
+  src/actions/ExternalEditors.h
   src/actions/TailscalePeers.cpp
   src/actions/TailscalePeers.h
   src/edit/ImageEditor.cpp
@@ -150,6 +154,8 @@ set(OMAROLL_QML_FILES
   qml/components/BatchCorrectionSheet.qml
   qml/components/CompareSheet.qml
   qml/components/SettingsSheet.qml
+  qml/components/EditorChooser.qml
+  qml/components/PinnedFolders.qml
   qml/components/AlbumNameSheet.qml
   qml/components/ExportSheet.qml
   qml/components/RenameSheet.qml
@@ -230,6 +236,15 @@ if(BUILD_TESTING)
     "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=;QT_QUICK_BACKEND=software;QT_IM_MODULE=compose;QT_AUDIO_BACKEND=pulseaudio;PULSE_SERVER=unix:/nonexistent;PIPEWIRE_REMOTE=omaroll-no-audio")
   set_tests_properties(omaroll_tests PROPERTIES ENVIRONMENT
     "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
+  qt_add_executable(omaroll_companion_tests tests/tst_companions.cpp)
+  target_link_libraries(omaroll_companion_tests PRIVATE omaroll_core Qt6::Test)
+  add_test(NAME omaroll_companion_tests COMMAND omaroll_companion_tests)
+  qt_add_executable(omaroll_editor_tests tests/tst_editors.cpp)
+  target_link_libraries(omaroll_editor_tests PRIVATE omaroll_core Qt6::Test)
+  add_test(NAME omaroll_editor_tests COMMAND omaroll_editor_tests)
+  set_tests_properties(omaroll_companion_tests omaroll_editor_tests PROPERTIES
+    ENVIRONMENT "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
+
 
   qt_add_executable(omaroll_thumbnail_tests tests/tst_thumbnails.cpp)
   target_link_libraries(omaroll_thumbnail_tests PRIVATE omaroll_core Qt6::Test)

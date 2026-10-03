@@ -31,6 +31,14 @@ CaptureFilterModel::CaptureFilterModel(QObject* parent) : QSortFilterProxyModel(
   connect(this, &QAbstractItemModel::rowsRemoved, this, &CaptureFilterModel::countChanged);
   connect(this, &QAbstractItemModel::modelReset, this, &CaptureFilterModel::countChanged);
 
+  m_pairingTimer.setSingleShot(true);
+  m_pairingTimer.setInterval(0);
+  connect(&m_pairingTimer, &QTimer::timeout, this, [this] {
+    beginFilterUpdate();
+    endFilterUpdate();
+    emit countChanged();
+  });
+
   m_folderIndexTimer.setSingleShot(true);
   m_folderIndexTimer.setInterval(0);
   connect(&m_folderIndexTimer, &QTimer::timeout, this, [this] {
@@ -69,6 +77,8 @@ CaptureFilterModel::CaptureFilterModel(QObject* parent) : QSortFilterProxyModel(
 }
 
 void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
+  m_pairingTimer.stop();
+  m_groupedOutPaths.clear();
   m_folderIndexTimer.stop();
   m_duplicateOrderTimer.stop();
   for (const QMetaObject::Connection& connection : std::as_const(m_sourceConnections)) {
@@ -89,6 +99,14 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
     emit camerasChanged();
     return;
   }
+
+  // Coalesce scan diffs and mark batches. A RAW's filter eligibility changes
+  // whether its JPEG is visible, so both rows must be reconsidered together.
+  const auto pairingChanged = [this] { m_pairingTimer.start(); };
+  m_sourceConnections.append(connect(model, &QAbstractItemModel::rowsInserted, this, pairingChanged));
+  m_sourceConnections.append(connect(model, &QAbstractItemModel::rowsRemoved, this, pairingChanged));
+  m_sourceConnections.append(connect(model, &QAbstractItemModel::modelReset, this, pairingChanged));
+  m_sourceConnections.append(connect(model, &QAbstractItemModel::dataChanged, this, pairingChanged));
 
   // A source insertion can be completely filtered out, in which case the
   // proxy emits no row signal even though sourceCount changed.
@@ -142,6 +160,8 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
   emit foldersChanged();
   emit dateBucketsChanged();
   emit camerasChanged();
+  beginFilterUpdate();
+  endFilterUpdate();
 }
 
 void CaptureFilterModel::beginFilterUpdate() {
@@ -151,11 +171,58 @@ void CaptureFilterModel::beginFilterUpdate() {
 }
 
 void CaptureFilterModel::endFilterUpdate() {
+  rebuildPairing();
 #if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
   endFilterChange(Direction::Rows);
 #else
   invalidateFilter();
 #endif
+  if (rowCount() > 0) {
+    emit dataChanged(index(0, 0), index(rowCount() - 1, 0),
+                     {CaptureModel::CompanionPathRole, CaptureRoles::RawFormatRole});
+  }
+}
+
+void CaptureFilterModel::rebuildPairing() {
+  m_groupedOutPaths.clear();
+  if (!m_pairRawJpeg || m_duplicatesOnly || m_similarOnly || !sourceModel()) return;
+  // Two source passes per filter/scan batch, then constant-time row decisions.
+  QSet<QString> eligible;
+  for (int row = 0; row < sourceModel()->rowCount(); ++row) {
+    const CaptureRecord& record = sourceRecord(row);
+    if (!record.companionPath.isEmpty() && matchesFilters(record)) eligible.insert(record.path);
+  }
+  for (int row = 0; row < sourceModel()->rowCount(); ++row) {
+    const CaptureRecord& record = sourceRecord(row);
+    if (!record.isRaw() || record.companionPath.isEmpty() || !eligible.contains(record.path) ||
+        !eligible.contains(record.companionPath)) continue;
+    const bool explicitRaw = m_explicitPaths.contains(record.path);
+    const bool explicitJpeg = m_explicitPaths.contains(record.companionPath);
+    if (explicitRaw && explicitJpeg) continue;
+    if (explicitJpeg) {
+      m_groupedOutPaths.insert(record.path);
+    } else {
+      m_groupedOutPaths.insert(record.companionPath);
+    }
+  }
+}
+
+void CaptureFilterModel::setExplicitPaths(const QStringList& paths) {
+  const QSet<QString> explicitPaths(paths.begin(), paths.end());
+  if (explicitPaths == m_explicitPaths) return;
+  beginFilterUpdate();
+  m_explicitPaths = explicitPaths;
+  endFilterUpdate();
+  emit countChanged();
+}
+
+void CaptureFilterModel::setPairRawJpeg(bool value) {
+  if (m_pairRawJpeg == value) return;
+  beginFilterUpdate();
+  m_pairRawJpeg = value;
+  endFilterUpdate();
+  emit pairRawJpegChanged();
+  emit countChanged();
 }
 
 void CaptureFilterModel::setKindFilter(int kind) {
@@ -697,6 +764,10 @@ QString CaptureFilterModel::pathAt(int row) const {
   return data(index(row, 0), CaptureRoles::PathRole).toString();
 }
 
+QString CaptureFilterModel::companionPathAt(int row) const {
+  return data(index(row, 0), CaptureModel::CompanionPathRole).toString();
+}
+
 QString CaptureFilterModel::fileNameAt(int row) const {
   return data(index(row, 0), CaptureRoles::FileNameRole).toString();
 }
@@ -759,6 +830,14 @@ QString CaptureFilterModel::ocrSnippetAt(int row) const {
 }
 
 QVariant CaptureFilterModel::data(const QModelIndex& proxyIndex, int role) const {
+  if (role == CaptureRoles::RawFormatRole && proxyIndex.isValid()) {
+    const CaptureRecord& record = sourceRecord(mapToSource(proxyIndex).row());
+    if (!record.companionPath.isEmpty() && m_groupedOutPaths.contains(record.companionPath)) {
+      return QStringLiteral("RAW+JPG");
+    }
+  }
+  if (role == CaptureModel::CompanionPathRole &&
+      (!m_pairRawJpeg || m_duplicatesOnly || m_similarOnly)) return QString();
   if (role == CaptureRoles::OcrSnippetRole) {
     if (!proxyIndex.isValid()) {
       return {};
@@ -957,7 +1036,10 @@ bool CaptureFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex& sour
     return false;
   }
   const CaptureRecord& record = sourceRecord(sourceRow);
+  return !m_groupedOutPaths.contains(record.path) && matchesFilters(record);
+}
 
+bool CaptureFilterModel::matchesFilters(const CaptureRecord& record) const {
   if (!m_showHidden && record.hidden) {
     return false;
   }

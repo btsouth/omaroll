@@ -289,6 +289,8 @@ QVariant CaptureModel::data(const QModelIndex& index, int role) const {
     return record.caption;
   case CaptureRoles::RawFormatRole:
     return record.isRaw() ? QFileInfo(record.path).suffix().toUpper() : QString();
+  case CompanionPathRole:
+    return record.companionPath;
   default:
     return {};
   }
@@ -316,7 +318,12 @@ QHash<int, QByteArray> CaptureModel::roleNames() const {
       {CaptureRoles::RatingRole, "rating"},
       {CaptureRoles::CaptionRole, "caption"},
       {CaptureRoles::RawFormatRole, "rawFormat"},
+      {CompanionPathRole, "companionPath"},
   };
+}
+
+QString CaptureModel::companionPathAt(int row) const {
+  return row >= 0 && row < m_records.size() ? m_records.at(row).companionPath : QString();
 }
 
 QString CaptureModel::pathAt(int row) const {
@@ -459,6 +466,9 @@ void CaptureModel::adoptResults(ScanResult result) {
   if (!m_heldPaths.isEmpty()) {
     scanned.removeIf(
         [this](const CaptureRecord& record) { return m_heldPaths.contains(record.path); });
+    for (CaptureRecord& record : scanned) {
+      if (m_heldPaths.contains(record.companionPath)) record.companionPath.clear();
+    }
   }
 
   if (m_settings) {
@@ -553,7 +563,7 @@ void CaptureModel::adoptResults(ScanResult result) {
       if (record.modified == fresh.modified && record.bytes == fresh.bytes &&
           record.kind == fresh.kind && record.video == fresh.video &&
           record.document == fresh.document && record.animated == fresh.animated &&
-          record.raw == fresh.raw &&
+          record.raw == fresh.raw && record.companionPath == fresh.companionPath &&
           record.captured == fresh.captured &&
           record.hasProducerTimestamp == fresh.hasProducerTimestamp &&
           record.favorite == fresh.favorite && record.hidden == fresh.hidden) {

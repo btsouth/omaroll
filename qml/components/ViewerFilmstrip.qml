@@ -101,6 +101,33 @@ Rectangle {
             }
 
             Rectangle {
+                id: rawBadge
+                objectName: "viewerFilmstripRawBadge" + tile.index
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.margins: 4
+                readonly property string label: {
+                    const revision = Session.sequenceRevision;
+                    return Session.companionPathAt(tile.index).length > 0
+                        ? "RAW+JPG" : Session.rawFormatAt(tile.index);
+                }
+                visible: label.length > 0
+                width: rawBadgeText.implicitWidth + 6
+                height: rawBadgeText.implicitHeight + 2
+                radius: 2
+                color: Qt.rgba(0, 0, 0, 0.78)
+
+                Text {
+                    id: rawBadgeText
+                    anchors.centerIn: parent
+                    text: rawBadge.label
+                    font.pixelSize: 9
+                    font.bold: true
+                    color: "#ffffff"
+                }
+            }
+
+            Rectangle {
                 anchors.fill: parent
                 radius: 3
                 color: "transparent"

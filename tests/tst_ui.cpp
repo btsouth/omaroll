@@ -11,6 +11,7 @@
 
 #include "actions/ActionLauncher.h"
 #include "actions/ActionRegistry.h"
+#include "actions/ExternalEditors.h"
 #include "actions/TailscalePeers.h"
 #include "app/AppSettings.h"
 #include "app/DemoLibrary.h"
@@ -295,6 +296,7 @@ private slots:
     context->setContextProperty(QStringLiteral("Actions"), m_actions);
     context->setContextProperty(QStringLiteral("Settings"), m_settings);
     context->setContextProperty(QStringLiteral("Registry"), m_registry);
+    context->setContextProperty(QStringLiteral("Editors"), new ExternalEditors(m_actions, m_engine));
     context->setContextProperty(QStringLiteral("Matte"), m_matte);
     context->setContextProperty(QStringLiteral("ImageEdit"), m_imageEditor);
     context->setContextProperty(QStringLiteral("TextIndex"), m_textIndex);
@@ -3149,6 +3151,73 @@ private slots:
 
   // A camera raw previews from its embedded JPEG, measures as the raw, and
   // offers only the actions that can open it.
+  void theRawEditorChooserBelongsToItsRequestingWindowAndFile() {
+    if (!CameraRaw::isRaw(QStringLiteral("dng"))) QSKIP("Qt RAW support is unavailable");
+    const QString first = QFileInfo(m_oddPath).absolutePath() + QStringLiteral("/first.dng");
+    const QString second = QFileInfo(m_oddPath).absolutePath() + QStringLiteral("/second.dng");
+    const QString fixture = QFINDTESTDATA("fixtures/raw/camera.dng");
+    QVERIFY(QFile::copy(fixture, first));
+    QVERIFY(QFile::copy(fixture, second));
+    QObject* chooser = m_window->findChild<QObject*>(QStringLiteral("editorChooser"));
+    QVERIFY(chooser);
+    QQmlComponent component(m_engine);
+    component.loadFromModule("Omaroll", "EditorChooser");
+    std::unique_ptr<QObject> other(component.createWithInitialProperties(
+        {{QStringLiteral("parent"), QVariant::fromValue(m_window->contentItem())}},
+        m_engine->rootContext()));
+    QVERIFY2(other, qPrintable(component.errorString()));
+    QVERIFY(QMetaObject::invokeMethod(chooser, "request", Q_ARG(QVariant, first),
+                                     Q_ARG(QVariant, true)));
+    QTRY_VERIFY(chooser->property("visible").toBool());
+    QVERIFY(!other->property("visible").toBool());
+    QCOMPARE(chooser->property("path").toString(), first);
+    QVERIFY(QMetaObject::invokeMethod(other.get(), "request", Q_ARG(QVariant, second),
+                                     Q_ARG(QVariant, true)));
+    QTRY_VERIFY(other->property("visible").toBool());
+    QCOMPARE(chooser->property("path").toString(), first);
+    QCOMPARE(other->property("path").toString(), second);
+    QVERIFY(QMetaObject::invokeMethod(other.get(), "close"));
+    QVERIFY(QMetaObject::invokeMethod(chooser, "close"));
+  }
+
+  void pinnedFoldersRemainShortcutsWithoutRemovingTheirSource() {
+    QVERIFY(m_settings->pinFolderPath(QFileInfo(m_oddPath).absolutePath()));
+    QQuickItem* pins = item("pinnedFolders");
+    QTRY_VERIFY(pins->isVisible());
+    const QString folder = m_settings->pinnedFolders().first();
+    QVERIFY(QMetaObject::invokeMethod(pins, "chosen", Q_ARG(QString, folder)));
+    QCOMPARE(m_library->folderFilter(), folder);
+    m_settings->unpinFolder(folder);
+    QTRY_VERIFY(!pins->isVisible());
+    QVERIFY(m_settings->libraryFolders().contains(folder));
+    QCOMPARE(m_library->folderFilter(), folder);
+  }
+
+  void theLibraryCompanionActionOpensTheRequestedOriginal() {
+    if (!CameraRaw::isRaw(QStringLiteral("dng"))) QSKIP("Qt RAW support is unavailable");
+    const QString folder = QFileInfo(m_oddPath).absolutePath();
+    const QString raw = folder + QStringLiteral("/paired.dng");
+    const QString jpeg = folder + QStringLiteral("/paired.jpg");
+    QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/raw/camera.dng"), raw));
+    QImage image(48, 64, QImage::Format_RGB32);
+    image.fill(Qt::cyan);
+    QVERIFY(image.save(jpeg, "JPEG"));
+    m_captures->refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(raw) >= 0, 5000);
+    QTRY_COMPARE(m_library->rowOf(jpeg), -1);
+    openDetail(m_library->rowOf(raw));
+    QVERIFY(QMetaObject::invokeMethod(m_window, "perform", Q_ARG(QVariant, "companion"),
+                                     Q_ARG(QVariant, raw), Q_ARG(QVariant, false)));
+    QQuickItem* detail = item("detail");
+    QTRY_COMPARE(detail->property("path").toString(), jpeg);
+    QVERIFY(m_library->rowOf(jpeg) >= 0);
+    QCOMPARE(m_library->rowOf(raw), -1);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "perform", Q_ARG(QVariant, "companion"),
+                                     Q_ARG(QVariant, jpeg), Q_ARG(QVariant, false)));
+    QTRY_COMPARE(detail->property("path").toString(), raw);
+    QVERIFY(QFileInfo::exists(raw) && QFileInfo::exists(jpeg));
+  }
+
   void aCameraRawPreviewsAtItsOwnSizeWithItsOwnActions() {
     if (!CameraRaw::isRaw(QStringLiteral("dng"))) {
       QSKIP("Qt has no camera raw decoder here (kimageformats with LibRaw)");
@@ -3175,8 +3244,8 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(detail->property("imageReady").toBool(), 10000);
     QVERIFY(detail->property("playbackError").toString().isEmpty());
     // The preview is 24x32 once upright; the raw is 48x64.
-    QCOMPARE(detail->property("mediaWidth").toInt(), 48);
-    QCOMPARE(detail->property("mediaHeight").toInt(), 64);
+    QTRY_COMPARE(detail->property("mediaWidth").toInt(), 48);
+    QTRY_COMPARE(detail->property("mediaHeight").toInt(), 64);
     // A late size result for another version of this path must be ignored.
     m_captures->rawSizeRead(path, QUrl(QStringLiteral("image://raw/old-version")),
                            QSize(480, 640));

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "library/CaptureRecord.h"
+#include "library/CaptureRoles.h"
 #include "sources/CaptureScanner.h"
 
 #include <QAbstractListModel>
@@ -38,6 +39,7 @@ class CaptureModel final : public QAbstractListModel {
                  NOTIFY automaticFoldersChanged)
 
 public:
+  static constexpr int CompanionPathRole = CaptureRoles::OcrSnippetRole + 1;
   explicit CaptureModel(AppSettings* settings, QObject* parent = nullptr);
   ~CaptureModel() override;
 
@@ -84,6 +86,7 @@ public:
   void releasePath(const QString& path);
 
   Q_INVOKABLE QString pathAt(int row) const;
+  Q_INVOKABLE QString companionPathAt(int row) const;
   // The source row for a path, -1 when no scan has brought it in yet. The
   // proxy's rowOf answers "visible under the current filters?"; this answers
   // "in the library at all?".

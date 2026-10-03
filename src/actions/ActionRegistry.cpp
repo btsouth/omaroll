@@ -96,34 +96,13 @@ ActionRegistry::Definition tailscaleRow() {
           .batch = true};
 }
 
-// Use the first installed RAW developer. Without one, the row names
-// darktable so the hint says what to install.
+// Native: the requesting window routes to the shared editor preferences and
+// owns the chooser. This remains usable even when no developer is installed.
 ActionRegistry::Definition developRow() {
-  using Media = ActionRegistry::Media;
-  struct Developer {
-    QString program;
-    QString label;
-  };
-  const QList<Developer> developers = {
-      {u"darktable"_s, u"Develop in darktable"_s},
-      {u"rawtherapee"_s, u"Develop in RawTherapee"_s},
-      {u"ART"_s, u"Develop in ART"_s},
-  };
-  Developer chosen = developers.first();
-  for (const Developer& developer : developers) {
-    if (!QStandardPaths::findExecutable(developer.program).isEmpty()) {
-      chosen = developer;
-      break;
-    }
-  }
   return {.id = u"develop"_s,
-          .label = chosen.label,
-          .program = chosen.program,
-          .arguments = {u"{path}"_s},
+          .label = u"Open in RAW editor"_s,
           .shortcut = u"D"_s,
-          .packageHint = u"darktable"_s,
-          .media = Media::Raw,
-          .primary = false};
+          .media = ActionRegistry::Media::Raw};
 }
 
 } // namespace
@@ -313,6 +292,10 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .output = u"{stem}-{resolution}.{format}"_s},
 
       developRow(),
+      {.id = u"choose-editor"_s,
+       .label = u"Choose RAW editor…"_s,
+       .shortcut = u"Shift+D"_s,
+       .media = Raw},
 
       // --- Anything -------------------------------------------------------
       {.id = u"open-document"_s,

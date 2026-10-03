@@ -33,6 +33,8 @@ class AppSettings final : public QObject {
   Q_PROPERTY(
       int recursionDepth READ recursionDepth WRITE setRecursionDepth NOTIFY recursionDepthChanged)
   Q_PROPERTY(QStringList libraryFolders READ libraryFolders NOTIFY libraryFoldersChanged)
+  Q_PROPERTY(QStringList pinnedFolders READ pinnedFolders NOTIFY pinnedFoldersChanged)
+  Q_PROPERTY(bool pairRawJpeg READ pairRawJpeg WRITE setPairRawJpeg NOTIFY pairRawJpegChanged)
   Q_PROPERTY(QString imagePrimaryAction READ imagePrimaryAction WRITE setImagePrimaryAction NOTIFY
                  imagePrimaryActionChanged)
   Q_PROPERTY(QString videoPrimaryAction READ videoPrimaryAction WRITE setVideoPrimaryAction NOTIFY
@@ -83,6 +85,18 @@ public:
   [[nodiscard]] QStringList libraryFolders() const { return m_libraryFolders; }
   Q_INVOKABLE bool addLibraryFolder(const QUrl& folder);
   Q_INVOKABLE void removeLibraryFolder(const QString& folder);
+  // Pins are shortcuts independent of library sources. Unpinning never
+  // removes a source, and unavailable entries remain until explicitly removed.
+  [[nodiscard]] QStringList pinnedFolders() const { return m_pinnedFolders; }
+  Q_INVOKABLE bool pinFolder(const QUrl& folder);
+  Q_INVOKABLE bool pinFolderPath(const QString& folder) {
+    return pinFolder(QUrl::fromLocalFile(folder));
+  }
+  Q_INVOKABLE void unpinFolder(const QString& folder);
+  Q_INVOKABLE [[nodiscard]] bool isFolderPinned(const QString& folder) const;
+
+  [[nodiscard]] bool pairRawJpeg() const { return m_pairRawJpeg; }
+  void setPairRawJpeg(bool value);
 
   [[nodiscard]] QString imagePrimaryAction() const { return m_imagePrimaryAction; }
   void setImagePrimaryAction(const QString& action);
@@ -206,6 +220,8 @@ signals:
   void scanDownloadsChanged();
   void recursionDepthChanged();
   void libraryFoldersChanged();
+  void pinnedFoldersChanged();
+  void pairRawJpegChanged();
   void imagePrimaryActionChanged();
   void videoPrimaryActionChanged();
   void thumbnailCacheMbChanged();
@@ -276,6 +292,8 @@ private:
   bool m_scanDownloads = true;
   int m_recursionDepth = 4;
   QStringList m_libraryFolders;
+  QStringList m_pinnedFolders;
+  bool m_pairRawJpeg = true;
   QString m_imagePrimaryAction = QStringLiteral("matte");
   QString m_videoPrimaryAction = QStringLiteral("trim");
   int m_thumbnailCacheMb = 256;

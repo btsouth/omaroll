@@ -3,6 +3,7 @@
 // "cold" means a fresh application cache, not a cold OS filesystem cache.
 #include "actions/ActionLauncher.h"
 #include "actions/ActionRegistry.h"
+#include "actions/ExternalEditors.h"
 #include "actions/TailscalePeers.h"
 #include "app/AppSettings.h"
 #include "app/HeadlessAudio.h"
@@ -322,6 +323,7 @@ int main(int argc, char** argv) {
   auto* shared = engine.rootContext();
   shared->setContextProperty(u"Theme"_s, &theme); shared->setContextProperty(u"Settings"_s, &settings);
   shared->setContextProperty(u"Actions"_s, &actions); shared->setContextProperty(u"Registry"_s, &registry);
+  shared->setContextProperty(u"Editors"_s, new ExternalEditors(&actions, &engine));
   shared->setContextProperty(u"DemoMode"_s, false);
   std::unique_ptr<QObject> galleryServices, galleryRoot, viewerRoot;
   QQuickWindow* gallery = nullptr; QQuickWindow* viewer = nullptr;

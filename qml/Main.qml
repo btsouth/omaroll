@@ -61,6 +61,7 @@ ApplicationWindow {
                                       || albumNameSheet.visible
                                       || exportSheet.visible || renameSheet.visible
                                       || tailscaleSheet.visible || textReviewSheet.visible
+                                      || editorChooser.visible
     readonly property bool anySheetOpen: modalOpen || detail.visible
     // A popup menu is up; the press that closes it must not also land under it.
     readonly property bool popupOpen: filters.menuOpen || albumActionMenu.visible
@@ -148,7 +149,7 @@ ApplicationWindow {
         const row = Captures.rowOf(path)
         const video = knownVideo === undefined ? Captures.isVideoAt(row) : knownVideo
         const document = row >= 0 && Captures.isDocumentAt(row)
-        if (id !== "open" && !Registry.appliesToKind(id, video, document, path)) {
+        if (id !== "open" && id !== "companion" && !Registry.appliesToKind(id, video, document, path)) {
             root.say(document ? "That action does not apply to documents"
                      : video ? "That one is for screenshots and pictures"
                      : Registry.appliesToKind(id, false, false) ? "That one cannot open camera raws"
@@ -157,6 +158,15 @@ ApplicationWindow {
         }
 
         switch (id) {
+        case "companion": {
+            const companion = Captures.companionPathAt(row)
+            if (companion !== "") root.openPaths([companion])
+            return
+        }
+        case "develop":
+        case "choose-editor":
+            editorChooser.request(path, id === "choose-editor")
+            return
         case "matte":
             matteSheet.path = path
             matteSheet.fileName = path.substring(path.lastIndexOf("/") + 1)
@@ -256,6 +266,8 @@ ApplicationWindow {
     function dismissTopLayer() {
         if (confirm.visible) {
             confirm.close()
+        } else if (editorChooser.visible) {
+            editorChooser.close()
         } else if (exportSheet.visible) {
             exportSheet.close()
         } else if (renameSheet.visible) {
@@ -351,6 +363,7 @@ ApplicationWindow {
     // is doing now. Filters are only cleared when they would hide it.
     property string pendingRevealPath: ""
     function showAllMedia(folder) {
+        Captures.setExplicitPaths([])
         Captures.kindFilter = filters.kindAll
         Captures.searchText = ""
         Captures.favoritesOnly = false
@@ -382,6 +395,7 @@ ApplicationWindow {
         const folder = paths.length > 1 ? ""
                        : paths[0].substring(0, paths[0].lastIndexOf("/"))
         root.showAllMedia(folder)
+        Captures.setExplicitPaths(paths)
         for (const path of paths) {
             if (Settings.isHidden(path)) Captures.showHidden = true
         }
@@ -629,6 +643,11 @@ ApplicationWindow {
             libraryBrowser.open()
         } else if (view === "settings") {
             settingsSheet.open()
+        } else if (view === "editors") {
+            editorChooser.openFor("Camera photo.ARW")
+        } else if (view === "pins") {
+            const path = Captures.pathAt(0)
+            Settings.pinFolderPath(path.substring(0, path.lastIndexOf("/")))
         }
     }
 
@@ -838,9 +857,45 @@ ApplicationWindow {
         onBrowseRequested: libraryBrowser.open()
     }
 
+    Item {
+        id: folderShortcuts
+        anchors.top: filters.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: pins.hasPins || Captures.folderFilter !== "" ? 42 : 0
+        enabled: !root.anySheetOpen
+
+        PinnedFolders {
+            id: pins
+            objectName: "pinnedFolders"
+            anchors.left: parent.left
+            anchors.right: pinCurrentFolder.left
+            anchors.rightMargin: 8
+            height: parent.height
+            onChosen: function(path) { root.openFolder(path) }
+        }
+        PillButton {
+            id: pinCurrentFolder
+            anchors.right: parent.right
+            anchors.rightMargin: 12
+            anchors.verticalCenter: parent.verticalCenter
+            visible: Captures.folderFilter !== ""
+            width: visible ? implicitWidth : 0
+            readonly property bool pinned: {
+                void Settings.pinnedFolders
+                return Settings.isFolderPinned(Captures.folderFilter)
+            }
+            label: pinned ? "Unpin folder" : "Pin folder"
+            onClicked: {
+                if (pinned) Settings.unpinFolder(Captures.folderFilter)
+                else if (!Settings.pinFolderPath(Captures.folderFilter)) root.say("That folder is unavailable")
+            }
+        }
+    }
+
     Rectangle {
         id: divider
-        anchors.top: filters.bottom
+        anchors.top: folderShortcuts.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         height: 1
@@ -1469,6 +1524,12 @@ ApplicationWindow {
         onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
     }
 
+    EditorChooser {
+        id: editorChooser
+        objectName: "editorChooser"
+        onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
+    }
+
     SettingsSheet {
         id: settingsSheet
         objectName: "settingsSheet"
@@ -1586,6 +1647,16 @@ ApplicationWindow {
         sequences: [Registry.shortcutFor("annotate")]
         enabled: !root.anySheetOpen
         onActivated: root.perform("annotate", root.currentPath())
+    }
+    Shortcut {
+        sequences: ["D", "O"]
+        enabled: !root.anySheetOpen && !filters.searchActive
+        onActivated: root.perform("develop", root.currentPath())
+    }
+    Shortcut {
+        sequences: ["Shift+D", "Shift+O"]
+        enabled: !root.anySheetOpen && !filters.searchActive
+        onActivated: root.perform("choose-editor", root.currentPath())
     }
     Shortcut {
         sequences: [Registry.shortcutFor("ocr")]

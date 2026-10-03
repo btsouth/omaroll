@@ -120,6 +120,7 @@ process, so a favourite or rating set in one shows in the others.
 | `F5` | Slideshow |
 | `I` | Details: size, date, rating, camera or codec |
 | `B` | Hide or show the filmstrip |
+| `D` · `Shift+D` | Open a RAW in the preferred editor · choose an editor |
 | `V` · `Alt+1`-`Alt+5` · `Ctrl+Z` | Favourite · rate · undo |
 | `Y` · `S` · `A` | Copy · send · annotate |
 | `T` · `G` · `P` | Trim · save the current frame · open in mpv |
@@ -197,6 +198,21 @@ viewer. It opens the image in Omaframe's studio for annotation or a frame,
 border and background. Omaframe saves a new PNG in its chosen output folder
 and copies it to the clipboard, leaving the source unchanged. This action
 does not change the configured annotation editor.
+
+Camera RAWs can open in darktable, RawTherapee, ART, digiKam, GIMP or a custom
+command. Choose an editor from the menu, use its star to save a preference,
+or enable **Always ask**. Custom commands accept `{path}` in an argument;
+without it, Omaroll appends the file path. Use double quotes around arguments
+containing spaces. Omaroll passes arguments directly without a shell.
+
+Matching RAW and JPEG files in the same folder appear as one item by default.
+The companion action switches between the originals; rename and Trash act on
+the file being viewed. Ambiguous matches stay separate, and duplicate reviews
+show both files. Turn grouping off in Settings to show every file separately.
+
+Pin a folder in Settings or from its library view to add a shortcut above the
+grid. Pinning also adds that folder as a library source. Unpinning removes only
+the shortcut, leaving the source and files alone.
 
 An action whose program is missing is shown greyed with the package to install,
 rather than hidden. The medium decides the list, not the folder: a downloaded

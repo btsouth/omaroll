@@ -9,6 +9,7 @@
 
 #include "actions/ActionLauncher.h"
 #include "actions/ActionRegistry.h"
+#include "actions/ExternalEditors.h"
 #include "app/AppSettings.h"
 #include "app/DemoLibrary.h"
 #include "app/HeadlessAudio.h"
@@ -118,6 +119,7 @@ private slots:
     shared->setContextProperty(QStringLiteral("Actions"), m_actions);
     shared->setContextProperty(QStringLiteral("Settings"), m_settings);
     shared->setContextProperty(QStringLiteral("Registry"), m_registry);
+    shared->setContextProperty(QStringLiteral("Editors"), new ExternalEditors(m_actions, m_engine));
     shared->setContextProperty(QStringLiteral("DemoMode"), true);
     // The same split main.cpp makes: the viewer's own services in its context.
     m_context = new QQmlContext(shared, this);
@@ -1162,6 +1164,51 @@ private slots:
     QVERIFY(image.save(first));
     QTRY_VERIFY(m_session->sequenceRevision() > replacementRevision);
     QCOMPARE(m_session->count(), 2);
+  }
+
+  void filmstripShowsRawFormatsAndPairedBadgesInBothDirections() {
+    if (!CameraRaw::isRaw(QStringLiteral("dng"))) QSKIP("Qt RAW support is unavailable");
+    const QString folder = m_scratch.filePath(QStringLiteral("filmstrip-raw-pairs"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString raw = folder + QStringLiteral("/a.DNG");
+    const QString jpeg = folder + QStringLiteral("/a.jpg");
+    const QString loneRaw = folder + QStringLiteral("/b.dng");
+    const QString fixture = QFINDTESTDATA("fixtures/raw/camera.dng");
+    QVERIFY(QFile::copy(fixture, raw));
+    QVERIFY(QFile::copy(fixture, loneRaw));
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), jpeg));
+    QVERIFY(QFile::copy(media(QStringLiteral("clip.mp4")), folder + QStringLiteral("/clip.mp4")));
+    const bool previousPairing = m_session->pairRawJpeg();
+    const bool previousStrip = m_settings->viewerFilmstrip();
+    const auto restore = qScopeGuard([this, previousPairing, previousStrip] {
+      m_window->setProperty("chromePinned", false);
+      m_settings->setViewerFilmstrip(previousStrip);
+      m_session->setPairRawJpeg(previousPairing);
+    });
+    m_session->setPairRawJpeg(true);
+    m_settings->setViewerFilmstrip(true);
+    m_window->setProperty("chromePinned", true);
+    open({jpeg});
+    QTRY_COMPARE(m_session->count(), 3);
+    QCOMPARE(m_session->path(), jpeg);
+    QQuickItem* pairedBadge = nullptr;
+    QTRY_VERIFY((pairedBadge = find(m_window->contentItem(), [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("viewerFilmstripRawBadge0");
+    })));
+    QTRY_COMPARE(pairedBadge->property("label").toString(), QStringLiteral("RAW+JPG"));
+    QVERIFY(pairedBadge->isVisible());
+    QQuickItem* rawBadge = item(QStringLiteral("viewerFilmstripRawBadge1"));
+    QCOMPARE(rawBadge->property("label").toString(), QStringLiteral("DNG"));
+    QVERIFY(rawBadge->isVisible());
+    QVERIFY(m_session->isVideoAt(2));
+    QVERIFY(item(QStringLiteral("viewerFilmstripRawBadge2"))->property("label").toString().isEmpty());
+    QVERIFY(m_session->switchCompanion());
+    QCOMPARE(m_session->path(), raw);
+    QTRY_COMPARE(pairedBadge->property("label").toString(), QStringLiteral("RAW+JPG"));
+    m_session->setPairRawJpeg(false);
+    QCOMPARE(m_session->count(), 4);
+    QCOMPARE(m_session->path(), raw);
+    QTRY_COMPARE(pairedBadge->property("label").toString(), QStringLiteral("DNG"));
   }
 
   void theMenuOffersOnlyWhatSuitsTheFile() {

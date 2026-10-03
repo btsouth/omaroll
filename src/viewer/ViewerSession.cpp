@@ -14,6 +14,7 @@
 #include <QtConcurrent>
 
 #include <algorithm>
+#include <utility>
 
 namespace {
 // What a still Image loads for |path|: the file, or a camera raw's preview.
@@ -42,10 +43,13 @@ ViewerSession::ViewerSession(QObject* parent) : QObject(parent) {
   });
   connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this, [this] { m_relist.start(); });
   connect(&m_watcher, &QFileSystemWatcher::fileChanged, this, [this] { m_relist.start(); });
-  connect(&m_listing, &QFutureWatcher<QStringList>::finished, this, [this] {
-    if (m_listedGeneration == m_generation) {
-      applyListing(m_listing.result());
+  connect(&m_listing, &QFutureWatcher<ListingResult>::finished, this, [this] {
+    m_listingRunning = false;
+    ListingResult result = m_listing.result();
+    if (result.generation == m_generation && result.request == m_listingRequest && !m_selection) {
+      applyListing(std::move(result));
     }
+    if (m_listingPending) startListing();
   });
   connect(&m_preloadProbe, &QFutureWatcher<PreloadResult>::finished, this, [this] {
     m_preloadProbeRunning = false;
@@ -65,10 +69,15 @@ ViewerSession::ViewerSession(QObject* parent) : QObject(parent) {
     }
     setPreloadUrls(urls);
   });
-  connect(&m_rawSizeProbe, &QFutureWatcher<QSize>::finished, this, [this] {
-    if (m_rawSizeVersion != m_contentVersion || !isRaw()) return;
-    m_rawSize = m_rawSizeProbe.result();
-    emit rawSizeChanged();
+  connect(&m_rawSizeProbe, &QFutureWatcher<RawSizeResult>::finished, this, [this] {
+    m_rawSizeProbeRunning = false;
+    const RawSizeResult result = m_rawSizeProbe.result();
+    if (result.path == path() && result.version == m_contentVersion && isRaw() &&
+        FileVersion::key(result.path) == result.version) {
+      m_rawSize = result.size;
+      emit rawSizeChanged();
+    }
+    if (result.path != m_rawSizePath || result.version != m_rawSizeVersion) startRawSizeProbe();
   });
 }
 
@@ -108,6 +117,9 @@ void ViewerSession::open(const QStringList& paths) {
     return;
   }
   ++m_generation;
+  m_folderPaths.clear();
+  m_companions.clear();
+  m_listingPending = false;
   m_relist.stop();
   if (paths.size() > 1) {
     m_selection = true;
@@ -127,12 +139,56 @@ void ViewerSession::open(const QStringList& paths) {
 
 void ViewerSession::clear() {
   ++m_generation;
+  m_folderPaths.clear();
+  m_companions.clear();
+  m_listingPending = false;
   m_relist.stop();
   m_folder.clear();
   m_opened.clear();
   m_selection = false;
   watchFolder({});
   setSequence({}, -1);
+}
+
+QString ViewerSession::companionPath() const { return companionPathAt(m_index); }
+
+QString ViewerSession::companionPathAt(int index) const {
+  if (!m_pairRawJpeg || m_selection || index < 0 || index >= count()) return {};
+  return m_companions.value(m_paths.at(index));
+}
+
+QString ViewerSession::rawFormatAt(int index) const {
+  if (index < 0 || index >= count()) return {};
+  const QString& file = m_paths.at(index);
+  return CameraRaw::isRawFile(file) ? QFileInfo(file).suffix().toUpper() : QString();
+}
+
+void ViewerSession::setPairRawJpeg(bool value) {
+  if (m_pairRawJpeg == value) return;
+  m_pairRawJpeg = value;
+  if (!m_selection && !m_folderPaths.isEmpty()) rebuildFolderSequence(path());
+  else {
+    ++m_sequenceRevision;
+    emit sequenceRevisionChanged();
+    emit companionPathChanged();
+  }
+  emit pairRawJpegChanged();
+}
+
+bool ViewerSession::switchCompanion() {
+  const QString companion = companionPath();
+  if (companion.isEmpty()) return false;
+  if (!QFileInfo::exists(companion)) {
+    startListing();
+    return false;
+  }
+  // Replace this pair's representative only. Actions keep using path(), so
+  // switching never broadens Trash/rename to include the other physical file.
+  QStringList paths = m_paths;
+  paths[m_index] = companion;
+  m_opened = companion;
+  setSequence(paths, m_index);
+  return true;
 }
 
 bool ViewerSession::step(int direction) {
@@ -205,6 +261,20 @@ bool ViewerSession::neighbourIsAnimated(int offset) const {
 }
 
 void ViewerSession::forget(const QString& path) {
+  if (!m_selection && m_folderPaths.contains(path)) {
+    ++m_generation; // A listing started before Trash must not put it back.
+    const QString current = this->path();
+    const QString companion = m_companions.take(path);
+    if (!companion.isEmpty()) m_companions.remove(companion);
+    m_folderPaths.removeAll(path);
+    if (m_folderPaths.isEmpty()) {
+      clear();
+      emit emptied();
+      return;
+    }
+    rebuildFolderSequence(current == path ? companion : current);
+    return;
+  }
   const int removed = int(m_paths.indexOf(path));
   if (removed < 0) {
     return;
@@ -331,6 +401,7 @@ void ViewerSession::setSequence(const QStringList& paths, int index) {
   // Relisting may replace indexed files without changing the count.
   ++m_sequenceRevision;
   emit sequenceRevisionChanged();
+  emit companionPathChanged();
   // Even an unchanged current file may have new or replaced neighbours.
   refreshPreloads();
 }
@@ -342,6 +413,7 @@ void ViewerSession::setIndex(int index) {
   m_index = index;
   refreshDetails();
   emit currentChanged();
+  emit companionPathChanged();
   refreshPreloads();
 }
 
@@ -432,15 +504,16 @@ void ViewerSession::refreshDetails() {
   m_mediaSuffix = CaptureScanner::mediaSuffix(path());
   const QFileInfo info(path());
   // Another file, or this one replaced: its raw size is read again.
-  if (m_rawSizeVersion != m_contentVersion || !isRaw()) {
+  if (m_rawSizePath != path() || m_rawSizeVersion != m_contentVersion || !isRaw()) {
     const bool had = m_rawSize.isValid();
     m_rawSize = QSize();
     m_rawSizeVersion.clear();
+    m_rawSizePath.clear();
     if (had) emit rawSizeChanged();
     if (isRaw() && !m_contentVersion.isEmpty()) {
       m_rawSizeVersion = m_contentVersion;
-      m_rawSizeProbe.setFuture(
-          QtConcurrent::run([file = path()] { return CameraRaw::fullSize(file); }));
+      m_rawSizePath = path();
+      startRawSizeProbe();
     }
   }
   if (path().isEmpty() || !info.exists()) {
@@ -457,19 +530,46 @@ void ViewerSession::refreshDetails() {
                 QStringLiteral("  ·  ") + locale.toString(modified.time(), QLocale::ShortFormat);
 }
 
-void ViewerSession::startListing() {
-  if (m_folder.isEmpty()) {
-    return;
-  }
-  const QString folder = m_folder;
-  const QString keep = m_opened;
-  m_listedGeneration = m_generation;
-  m_listing.setFuture(QtConcurrent::run([folder, keep] { return siblings(folder, keep); }));
+void ViewerSession::startRawSizeProbe() {
+  if (m_rawSizeProbeRunning || m_rawSizePath.isEmpty() || m_rawSizeVersion.isEmpty()) return;
+  m_rawSizeProbeRunning = true;
+  const QString file = m_rawSizePath;
+  const QString version = m_rawSizeVersion;
+  m_rawSizeProbe.setFuture(QtConcurrent::run([file, version] {
+    return RawSizeResult{file, version, CameraRaw::fullSize(file)};
+  }));
 }
 
-void ViewerSession::applyListing(const QStringList& listed) {
+void ViewerSession::startListing() {
+  if (m_folder.isEmpty()) {
+    m_listingPending = false;
+    return;
+  }
+  ++m_listingRequest;
+  if (m_listingRunning) {
+    m_listingPending = true;
+    return;
+  }
+  m_listingPending = false;
+  m_listingRunning = true;
+  const QString folder = m_folder;
+  const QString keep = m_opened;
+  const quint64 generation = m_generation;
+  const quint64 request = m_listingRequest;
+  m_listing.setFuture(QtConcurrent::run([folder, keep, generation, request] {
+    ListingResult result;
+    result.generation = generation;
+    result.request = request;
+    result.paths = siblings(folder, keep);
+    result.companions = RawJpegPairs::find(result.paths);
+    return result;
+  }));
+}
+
+void ViewerSession::applyListing(ListingResult listed) {
   const QString current = path();
-  if (listed.isEmpty()) {
+  const QString previousCompanion = m_companions.value(current);
+  if (listed.paths.isEmpty()) {
     // An unreadable folder still shows the file that was opened. A folder
     // that emptied under the window has nothing left to show.
     if (current.isEmpty() || !QFileInfo::exists(current)) {
@@ -478,13 +578,17 @@ void ViewerSession::applyListing(const QStringList& listed) {
     }
     return;
   }
-  const int found = int(listed.indexOf(current));
-  if (found >= 0) {
-    setSequence(listed, found);
-    return;
-  }
-  // The file on screen went away: whatever now sits in its place shows.
-  setSequence(listed, std::min(std::max(m_index, 0), int(listed.size()) - 1));
+  m_folderPaths = std::move(listed.paths);
+  m_companions = std::move(listed.companions);
+  rebuildFolderSequence(m_folderPaths.contains(current) ? current : previousCompanion);
+}
+
+void ViewerSession::rebuildFolderSequence(const QString& preferred) {
+  const QStringList paths = m_pairRawJpeg
+                                ? RawJpegPairs::grouped(m_folderPaths, m_companions, preferred)
+                                : m_folderPaths;
+  const int found = int(paths.indexOf(preferred));
+  setSequence(paths, found >= 0 ? found : std::max(m_index, 0));
 }
 
 void ViewerSession::watchFolder(const QString& folder) {

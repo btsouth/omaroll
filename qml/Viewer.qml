@@ -134,7 +134,7 @@ ApplicationWindow {
                                        && root.sourceWidth > 0
 
     readonly property bool chromeShown: root.chromePinned || root.pointerActive || root.infoOpen
-                                        || actionMenu.visible || confirm.visible
+                                        || actionMenu.visible || confirm.visible || editorChooser.visible
                                         || header.hovered || transport.hovered
                                         || previousButton.hovered || nextButton.hovered
                                         || toolbar.hovered || filmstrip.hovered
@@ -489,20 +489,23 @@ ApplicationWindow {
     // each entry. They are this window's own: F is full screen here, as in
     // every player, rather than the library's Show in files.
     readonly property var viewerShortcuts: ({
-        library: "Enter", copy: "Y", annotate: "A", develop: "D", send: "S", trim: "T", frame: "G",
+        library: "Enter", copy: "Y", annotate: "A", develop: "D", "choose-editor": "Shift+D", send: "S", trim: "T", frame: "G",
         play: "P", rotate: "R", slideshow: "F5", fullscreen: "F", info: "I", filmstrip: "B",
         favorite: "V", trash: "Del"
     })
 
     // Handed-off actions, in the order the menu offers them. Only what is
     // installed and suits the medium is shown.
-    readonly property var stillActions: ["develop", "copy", "omaframe", "annotate", "edit", "background", "send", "print", "files"]
+    readonly property var stillActions: ["develop", "choose-editor", "copy", "omaframe", "annotate", "edit", "background", "send", "print", "files"]
     readonly property var videoActions: ["frame", "trim", "copy", "play", "send", "files"]
 
     function menuEntries() {
         void root.marksVersion
         const video = Session.isVideo
         const entries = [{id: "library", label: "Open in library"}, {separator: true}]
+        if (Session.companionPath !== "") {
+            entries.push({id: "companion", label: Session.isRaw ? "View JPEG companion" : "View RAW companion"})
+        }
         const wanted = video ? root.videoActions : root.stillActions
         const rows = Registry.actionsForKind(video, false, Session.path)
         for (const id of wanted) {
@@ -542,6 +545,13 @@ ApplicationWindow {
             return
         }
         switch (id) {
+        case "companion":
+            Session.switchCompanion()
+            return
+        case "develop":
+        case "choose-editor":
+            if (Session.isRaw) editorChooser.request(path, id === "choose-editor")
+            return
         case "library":
             Session.openInLibrary()
             return
@@ -1590,6 +1600,11 @@ ApplicationWindow {
         }
     }
 
+    EditorChooser {
+        id: editorChooser
+        objectName: "editorChooser"
+    }
+
     ConfirmSheet {
         id: confirm
         objectName: "viewerConfirm"
@@ -1615,6 +1630,10 @@ ApplicationWindow {
         focus: true
 
         Keys.onPressed: function (event) {
+            if (editorChooser.visible) {
+                event.accepted = false
+                return
+            }
             const control = (event.modifiers & Qt.ControlModifier) !== 0
             const alt = (event.modifiers & Qt.AltModifier) !== 0
             const shift = (event.modifiers & Qt.ShiftModifier) !== 0
@@ -1757,7 +1776,8 @@ ApplicationWindow {
                     root.perform("send")
                     break
                 case Qt.Key_D:
-                    if (Session.isRaw) root.perform("develop")
+                case Qt.Key_O:
+                    if (Session.isRaw) root.perform(event.modifiers & Qt.ShiftModifier ? "choose-editor" : "develop")
                     else handled = false
                     break
                 case Qt.Key_A:

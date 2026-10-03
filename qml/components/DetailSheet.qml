@@ -209,6 +209,11 @@ Item {
 
     function visibleActions() {
         const rows = Registry.actionsForKind(root.isVideo, root.isDocument, root.path)
+        const companion = Captures.companionPathAt(Captures.rowOf(root.path))
+        if (companion !== "") {
+            rows.unshift({id: "companion", label: "View " + companion.substring(companion.lastIndexOf(".") + 1).toUpperCase() + " companion",
+                          available: true, native: true, shortcut: "", hint: "", primary: false})
+        }
         return rows.filter(function (row) { return row.id !== "qr" || root.qrDetected })
     }
 

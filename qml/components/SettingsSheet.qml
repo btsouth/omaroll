@@ -11,6 +11,7 @@ Item {
     signal rescanRequested()
     signal createAlbumRequested()
     property string folderMessage: ""
+    property bool pinSelectedFolder: false
     property string textCacheMessage: ""
     property string organizationMessage: ""
     property bool organizationOk: false
@@ -692,7 +693,47 @@ Item {
                     id: addFolder
                     anchors.verticalCenter: parent.verticalCenter
                     label: "Add folder"
-                    onClicked: folderDialog.open()
+                    onClicked: { root.pinSelectedFolder = false; folderDialog.open() }
+                }
+            }
+
+            Row {
+                width: parent.width
+                spacing: 12
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width - pinFolder.width - 12
+                    text: "Pinned folders appear as shortcuts above the library."
+                    wrapMode: Text.WordWrap
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 10
+                    color: Theme.mutedText
+                }
+                PillButton {
+                    id: pinFolder
+                    label: "Pin folder"
+                    onClicked: { root.pinSelectedFolder = true; folderDialog.open() }
+                }
+            }
+
+            Row {
+                width: parent.width
+                spacing: 12
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width - pairingToggle.width - 12
+                    text: "Group matching RAW and JPEG files"
+                    wrapMode: Text.WordWrap
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 12
+                    color: Theme.foreground
+                }
+                PillButton {
+                    id: pairingToggle
+                    objectName: "pairRawJpegToggle"
+                    label: Settings.pairRawJpeg ? "On" : "Off"
+                    active: Settings.pairRawJpeg
+                    onClicked: Settings.pairRawJpeg = !Settings.pairRawJpeg
                 }
             }
 
@@ -827,9 +868,12 @@ Item {
 
     FolderDialog {
         id: folderDialog
-        title: "Add a folder to Omaroll"
+        title: root.pinSelectedFolder ? "Pin a folder in Omaroll" : "Add a folder to Omaroll"
         onAccepted: {
-            root.folderMessage = Settings.addLibraryFolder(selectedFolder)
+            root.folderMessage = root.pinSelectedFolder
+                                 ? (Settings.pinFolder(selectedFolder) ? "Folder pinned"
+                                    : "That folder is already pinned or unavailable")
+                                 : Settings.addLibraryFolder(selectedFolder)
                                  ? "Folder added"
                                  : "That folder is already added, unavailable, or is your home folder"
         }

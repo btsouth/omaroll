@@ -1,5 +1,7 @@
 #pragma once
 
+#include "sources/RawJpegPairs.h"
+
 #include <QFileSystemWatcher>
 #include <QFutureWatcher>
 #include <QObject>
@@ -43,6 +45,8 @@ class ViewerSession final : public QObject {
   Q_PROPERTY(int count READ count NOTIFY sequenceChanged)
   Q_PROPERTY(quint64 sequenceRevision READ sequenceRevision NOTIFY sequenceRevisionChanged)
   Q_PROPERTY(bool selection READ selection NOTIFY sequenceChanged)
+  Q_PROPERTY(bool pairRawJpeg READ pairRawJpeg WRITE setPairRawJpeg NOTIFY pairRawJpegChanged)
+  Q_PROPERTY(QString companionPath READ companionPath NOTIFY companionPathChanged)
   Q_PROPERTY(QUrl nextPreloadUrl READ nextPreloadUrl NOTIFY preloadsChanged)
   Q_PROPERTY(QUrl previousPreloadUrl READ previousPreloadUrl NOTIFY preloadsChanged)
 
@@ -68,6 +72,10 @@ public:
   [[nodiscard]] int count() const { return int(m_paths.size()); }
   [[nodiscard]] quint64 sequenceRevision() const { return m_sequenceRevision; }
   [[nodiscard]] bool selection() const { return m_selection; }
+  [[nodiscard]] bool pairRawJpeg() const { return m_pairRawJpeg; }
+  void setPairRawJpeg(bool value);
+  [[nodiscard]] QString companionPath() const;
+  Q_INVOKABLE bool switchCompanion();
   // Every file this viewer steps through, in order.
   [[nodiscard]] QStringList sequence() const { return m_paths; }
   [[nodiscard]] QUrl nextPreloadUrl() const { return m_preloadUrls[0]; }
@@ -95,6 +103,8 @@ public:
   Q_INVOKABLE QString thumbnailUrl(int index, qreal devicePixelRatio) const;
   Q_INVOKABLE bool isVideoAt(int index) const;
   Q_INVOKABLE QString fileNameAt(int index) const;
+  Q_INVOKABLE QString rawFormatAt(int index) const;
+  Q_INVOKABLE QString companionPathAt(int index) const;
 
   // A file this window just moved to the Trash. The next one takes its place,
   // or the previous one at the end; an empty sequence emits emptied().
@@ -122,6 +132,8 @@ signals:
   void sequenceChanged();
   void sequenceRevisionChanged();
   void preloadsChanged();
+  void pairRawJpegChanged();
+  void companionPathChanged();
   void emptied();
   void libraryRequested(const QString& path);
 
@@ -131,12 +143,20 @@ private:
   void setIndex(int index);
   void refreshDetails();
   void startListing();
-  void applyListing(const QStringList& listed);
+  struct ListingResult {
+    quint64 generation = 0;
+    quint64 request = 0;
+    QStringList paths;
+    RawJpegPairs::Companions companions;
+  };
+  void applyListing(ListingResult listed);
+  void rebuildFolderSequence(const QString& preferred);
   void watchFolder(const QString& folder);
   void watchCurrentFile();
   void refreshPreloads();
   void startPreloadProbe();
   void setPreloadUrls(const std::array<QUrl, 2>& urls);
+  void startRawSizeProbe();
 
   struct PreloadCandidate {
     QString path;
@@ -149,6 +169,9 @@ private:
   static PreloadResult probePreloads(const std::array<QString, 2>& paths, quint64 generation);
 
   QStringList m_paths;
+  QStringList m_folderPaths;
+  RawJpegPairs::Companions m_companions;
+  bool m_pairRawJpeg = true;
   quint64 m_sequenceRevision = 0;
   int m_index = -1;
   bool m_selection = false;
@@ -163,8 +186,10 @@ private:
   QString m_opened;
   // A listing that finishes after another open() describes the wrong folder.
   quint64 m_generation = 0;
-  quint64 m_listedGeneration = 0;
-  QFutureWatcher<QStringList> m_listing;
+  quint64 m_listingRequest = 0;
+  bool m_listingRunning = false;
+  bool m_listingPending = false;
+  QFutureWatcher<ListingResult> m_listing;
   QFileSystemWatcher m_watcher;
   QTimer m_relist;
   // One header probe in flight, with navigation replacing the pending pair.
@@ -176,6 +201,13 @@ private:
   QFutureWatcher<PreloadResult> m_preloadProbe;
   // A raw's size comes from LibRaw opening the file, which can stall on a
   // slow disk, so it is read on a worker for the file it was asked for.
-  QFutureWatcher<QSize> m_rawSizeProbe;
+  struct RawSizeResult {
+    QString path;
+    QString version;
+    QSize size;
+  };
+  QFutureWatcher<RawSizeResult> m_rawSizeProbe;
+  bool m_rawSizeProbeRunning = false;
+  QString m_rawSizePath;
   QString m_rawSizeVersion;
 };

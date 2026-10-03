@@ -15,9 +15,14 @@ Camera raw opening (ARW, CR3, DNG, NEF, RAF and the rest LibRaw reads) is
 merged for the next release, including thumbnails from the embedded preview,
 orientation, and the actions offered for a raw.
 
-The next-release branch also adds **Open in Omaframe** for existing images in
-the library and quick viewer, using Omaframe's annotation and framing controls
-without changing the configured annotation editor.
+The next-release branch adds RAW/JPEG grouping with a companion switch, RAW
+filmstrip badges, a saved external-editor choice and custom commands, and
+pinned-folder shortcuts. Grouping preserves both originals and keeps explicit
+file selections visible.
+
+It also adds **Open in Omaframe** for existing images in the library and quick
+viewer, using Omaframe's annotation and framing controls without changing the
+configured annotation editor. Corrections and Omaframe exports remain copies.
 
 Use the [open pull requests](https://github.com/btsouth/omaroll/pulls) for work
 under review, and the [roadmap](ROADMAP.md) for scope and future decisions.

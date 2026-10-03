@@ -34,6 +34,8 @@ constexpr auto kKindFilter = "library/kindFilter";
 constexpr auto kScanDownloads = "sources/scanDownloads";
 constexpr auto kRecursionDepth = "sources/recursionDepth";
 constexpr auto kLibraryFolders = "sources/libraryFolders";
+constexpr auto kPinnedFolders = "sources/pinnedFolders";
+constexpr auto kPairRawJpeg = "library/pairRawJpeg";
 constexpr auto kImagePrimaryAction = "actions/imagePrimary";
 constexpr auto kVideoPrimaryAction = "actions/videoPrimary";
 constexpr auto kThumbnailCacheMb = "cache/maximumMb";
@@ -179,6 +181,14 @@ AppSettings::AppSettings(QObject* parent)
       m_libraryFolders.append(normalized);
     }
   }
+  const QStringList pinnedFolders = m_settings.value(kPinnedFolders).toStringList();
+  for (const QString& folder : pinnedFolders) {
+    const QString normalized = normalizedFolder(folder, false);
+    if (!normalized.isEmpty() && !m_pinnedFolders.contains(normalized)) {
+      m_pinnedFolders.append(normalized);
+    }
+  }
+  m_pairRawJpeg = m_settings.value(kPairRawJpeg, true).toBool();
   const QString imageAction =
       m_settings.value(kImagePrimaryAction, QStringLiteral("matte")).toString();
   if (QStringList {QStringLiteral("matte"), QStringLiteral("view"), QStringLiteral("edit")}
@@ -349,6 +359,43 @@ void AppSettings::removeLibraryFolder(const QString& folder) {
   }
   m_settings.setValue(kLibraryFolders, m_libraryFolders);
   emit libraryFoldersChanged();
+}
+
+bool AppSettings::pinFolder(const QUrl& folder) {
+  const QString normalized = normalizedFolder(folder.toLocalFile(), true);
+  if (normalized.isEmpty() || m_pinnedFolders.contains(normalized)) {
+    return false;
+  }
+
+  m_pinnedFolders.append(normalized);
+  m_settings.setValue(kPinnedFolders, m_pinnedFolders);
+  emit pinnedFoldersChanged();
+  addLibraryFolder(QUrl::fromLocalFile(normalized));
+  return true;
+}
+
+void AppSettings::unpinFolder(const QString& folder) {
+  const QString normalized = normalizedFolder(folder, false);
+  if (normalized.isEmpty() || !m_pinnedFolders.removeOne(normalized)) {
+    return;
+  }
+
+  m_settings.setValue(kPinnedFolders, m_pinnedFolders);
+  emit pinnedFoldersChanged();
+}
+
+bool AppSettings::isFolderPinned(const QString& folder) const {
+  const QString normalized = normalizedFolder(folder, false);
+  return !normalized.isEmpty() && m_pinnedFolders.contains(normalized);
+}
+
+void AppSettings::setPairRawJpeg(bool value) {
+  if (m_pairRawJpeg == value) {
+    return;
+  }
+  m_pairRawJpeg = value;
+  m_settings.setValue(kPairRawJpeg, value);
+  emit pairRawJpegChanged();
 }
 
 void AppSettings::setImagePrimaryAction(const QString& action) {
