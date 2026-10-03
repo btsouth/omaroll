@@ -4795,7 +4795,7 @@ private slots:
       offered << row.toMap().value(QStringLiteral("id")).toString();
     }
     for (const QString& id :
-         {QStringLiteral("annotate"), QStringLiteral("ocr"), QStringLiteral("qr"),
+         {QStringLiteral("annotate"), QStringLiteral("omaframe"), QStringLiteral("ocr"), QStringLiteral("qr"),
           QStringLiteral("edit"), QStringLiteral("view"), QStringLiteral("background"),
           QStringLiteral("print"), QStringLiteral("corrections"),
           QStringLiteral("correctionsbatch")}) {
@@ -4814,6 +4814,65 @@ private slots:
           QStringLiteral("rename"), QStringLiteral("favorite"), QStringLiteral("trash")}) {
       QVERIFY2(offered.contains(id), qPrintable(id));
     }
+  }
+
+  void existingImagesOpenInOmaframeWithoutChangingTheAnnotationEditor() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray previousPath = qgetenv("PATH");
+    const bool editorWasSet = qEnvironmentVariableIsSet("OMARCHY_SCREENSHOT_EDITOR");
+    const QByteArray previousEditor = qgetenv("OMARCHY_SCREENSHOT_EDITOR");
+    const auto restoreEnvironment = qScopeGuard([&] {
+      qputenv("PATH", previousPath);
+      if (editorWasSet) qputenv("OMARCHY_SCREENSHOT_EDITOR", previousEditor);
+      else qunsetenv("OMARCHY_SCREENSHOT_EDITOR");
+    });
+    QVERIFY(qputenv("PATH", dir.path().toUtf8()));
+    QVERIFY(qputenv("OMARCHY_SCREENSHOT_EDITOR", "configured-annotation-editor"));
+
+    ActionLauncher launcher;
+    ActionRegistry registry(&launcher);
+    QSignalSpy failed(&launcher, &ActionLauncher::failed);
+    QVERIFY(!registry.available(QStringLiteral("omaframe")));
+    QVERIFY(!registry.run(QStringLiteral("omaframe"), dir.filePath(QStringLiteral("photo.png"))));
+    QCOMPARE(failed.size(), 1);
+    QVERIFY(failed.first().first().toString().contains(QStringLiteral("omaframe")));
+    QVERIFY(registry.appliesToKind(QStringLiteral("omaframe"), false, false,
+                                  dir.filePath(QStringLiteral("photo.png"))));
+    QVERIFY(!registry.appliesToKind(QStringLiteral("omaframe"), true, false));
+    QVERIFY(!registry.appliesToKind(QStringLiteral("omaframe"), false, true));
+
+    QFile handler(dir.filePath(QStringLiteral("omaframe")));
+    QVERIFY(handler.open(QIODevice::WriteOnly));
+    handler.write("#!/bin/sh\nprintf '%s\\n%s\\n' \"$#\" \"$1\" > \"$1.args\"\n");
+    handler.close();
+    QVERIFY(handler.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                   QFileDevice::ExeOwner));
+    const QString source = dir.filePath(QStringLiteral("photo # ' ; $(touch injected) 雪.png"));
+    QImage image(8, 8, QImage::Format_RGB32);
+    image.fill(Qt::cyan);
+    QVERIFY(image.save(source, "PNG"));
+    const QByteArray before = fileHash(source);
+    QVERIFY(registry.available(QStringLiteral("omaframe")));
+    QVERIFY(!registry.available(QStringLiteral("annotate")));
+    QCOMPARE(registry.shortcutFor(QStringLiteral("annotate")), QStringLiteral("A"));
+    QVERIFY(registry.run(QStringLiteral("omaframe"), source));
+    QTRY_VERIFY(QFileInfo::exists(source + QStringLiteral(".args")));
+    QFile arguments(source + QStringLiteral(".args"));
+    QVERIFY(arguments.open(QIODevice::ReadOnly));
+    QCOMPARE(arguments.readAll(), QByteArray("1\n") + source.toUtf8() + '\n');
+    QCOMPARE(fileHash(source), before);
+    QVERIFY(!QFileInfo::exists(dir.filePath(QStringLiteral("injected"))));
+    QCOMPARE(qgetenv("OMARCHY_SCREENSHOT_EDITOR"), QByteArray("configured-annotation-editor"));
+    for (const QVariant& value : registry.actionsForKind(false, false, source)) {
+      const QVariantMap row = value.toMap();
+      if (row.value(QStringLiteral("id")) == QStringLiteral("omaframe")) {
+        QCOMPARE(row.value(QStringLiteral("label")).toString(), QStringLiteral("Open in Omaframe"));
+        QVERIFY(row.value(QStringLiteral("available")).toBool());
+        return;
+      }
+    }
+    QFAIL("Existing images need an Open in Omaframe action");
   }
 
   // Corrections save a copy in the source's format, and a raw cannot be

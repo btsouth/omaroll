@@ -225,6 +225,17 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
       // with the bare path, as omarchy-capture-screenshot would hand it over.
       annotateRow(),
 
+      // Omaframe accepts an existing image and opens the same annotation,
+      // border and finish controls used for screenshots. It exports a new
+      // PNG; the handoff does not ask it to overwrite the source.
+      {.id = u"omaframe"_s,
+       .label = u"Open in Omaframe"_s,
+       .program = u"omaframe"_s,
+       .arguments = {u"{path}"_s},
+       .packageHint = u"omaframe"_s,
+       .media = Still,
+       .raws = false},
+
       // Same tesseract invocation omarchy-capture-text uses, minus its
       // single-block page mode: a whole screenshot has many blocks.
       {.id = u"ocr"_s,

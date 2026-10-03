@@ -168,6 +168,7 @@ organization and safe copies itself, and delegates specialist work to these tool
 | Recording | Save current frame | `ffmpeg`, from the viewer position |
 | Screenshot | **Make it postable** *(default)* | **native** |
 | Screenshot | Annotate | `$OMARCHY_SCREENSHOT_EDITOR`; Tensaku by default |
+| Image | Open in Omaframe | `omaframe`: annotation, borders, backgrounds and frames |
 | Screenshot | Extract and select text | `tesseract` |
 | Image | Convert · resize | `omarchy-transcode` |
 | Image | Edit · View | `pinta` · `imv` |
@@ -190,6 +191,12 @@ be changed in Settings.
 
 When `$OMARCHY_SCREENSHOT_EDITOR` is unset or set to `tensaku-edit`, Omaroll
 uses Tensaku directly with a new output path.
+
+**Open in Omaframe** is available for existing images in the library and quick
+viewer. It opens the image in Omaframe's studio for annotation or a frame,
+border and background. Omaframe saves a new PNG in its chosen output folder
+and copies it to the clipboard, leaving the source unchanged. This action
+does not change the configured annotation editor.
 
 An action whose program is missing is shown greyed with the package to install,
 rather than hidden. The medium decides the list, not the folder: a downloaded

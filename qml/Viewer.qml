@@ -496,7 +496,7 @@ ApplicationWindow {
 
     // Handed-off actions, in the order the menu offers them. Only what is
     // installed and suits the medium is shown.
-    readonly property var stillActions: ["develop", "copy", "annotate", "edit", "background", "send", "print", "files"]
+    readonly property var stillActions: ["develop", "copy", "omaframe", "annotate", "edit", "background", "send", "print", "files"]
     readonly property var videoActions: ["frame", "trim", "copy", "play", "send", "files"]
 
     function menuEntries() {
