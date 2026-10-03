@@ -41,6 +41,7 @@ class ViewerSession final : public QObject {
   Q_PROPERTY(QString dateLabel READ dateLabel NOTIFY currentChanged)
   Q_PROPERTY(int index READ index NOTIFY currentChanged)
   Q_PROPERTY(int count READ count NOTIFY sequenceChanged)
+  Q_PROPERTY(quint64 sequenceRevision READ sequenceRevision NOTIFY sequenceRevisionChanged)
   Q_PROPERTY(bool selection READ selection NOTIFY sequenceChanged)
   Q_PROPERTY(QUrl nextPreloadUrl READ nextPreloadUrl NOTIFY preloadsChanged)
   Q_PROPERTY(QUrl previousPreloadUrl READ previousPreloadUrl NOTIFY preloadsChanged)
@@ -65,6 +66,7 @@ public:
   [[nodiscard]] QString dateLabel() const { return m_dateLabel; }
   [[nodiscard]] int index() const { return m_index; }
   [[nodiscard]] int count() const { return int(m_paths.size()); }
+  [[nodiscard]] quint64 sequenceRevision() const { return m_sequenceRevision; }
   [[nodiscard]] bool selection() const { return m_selection; }
   // Every file this viewer steps through, in order.
   [[nodiscard]] QStringList sequence() const { return m_paths; }
@@ -87,6 +89,12 @@ public:
   Q_INVOKABLE QUrl neighbourImageUrl(int offset) const;
   Q_INVOKABLE bool neighbourIsVideo(int offset) const;
   Q_INVOKABLE bool neighbourIsAnimated(int offset) const;
+
+  // The filmstrip's tile for the file at |index|: the library's thumbnail
+  // URL, with the file's mtime so a rewrite is not served from Qt's cache.
+  Q_INVOKABLE QString thumbnailUrl(int index, qreal devicePixelRatio) const;
+  Q_INVOKABLE bool isVideoAt(int index) const;
+  Q_INVOKABLE QString fileNameAt(int index) const;
 
   // A file this window just moved to the Trash. The next one takes its place,
   // or the previous one at the end; an empty sequence emits emptied().
@@ -112,6 +120,7 @@ signals:
   void currentChanged();
   void rawSizeChanged();
   void sequenceChanged();
+  void sequenceRevisionChanged();
   void preloadsChanged();
   void emptied();
   void libraryRequested(const QString& path);
@@ -140,6 +149,7 @@ private:
   static PreloadResult probePreloads(const std::array<QString, 2>& paths, quint64 generation);
 
   QStringList m_paths;
+  quint64 m_sequenceRevision = 0;
   int m_index = -1;
   bool m_selection = false;
   double m_stamp = 0;
