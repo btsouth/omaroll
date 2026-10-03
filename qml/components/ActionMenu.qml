@@ -4,6 +4,7 @@ import QtQuick.Controls.Basic
 Menu {
     id: root
     property var entries: []
+    property bool conditionalEntriesVisible: false
     function grouped(rows) {
         const out = []; let group = ""
         const groups = ["File", "Edit and finish", "Tools and sharing", "Organize"]
@@ -41,9 +42,11 @@ Menu {
             id: entry
             required property var modelData
             readonly property bool separator: modelData.separator === true
-            objectName: separator ? "" : root.entryPrefix + modelData.id
-            enabled: !separator && modelData.available !== false
-            height: separator ? 9 : modelData.available === false && modelData.hint ? 46 : 30
+            objectName: separator ? (modelData.conditional ? root.entryPrefix + "conditionalSeparator" : "")
+                                  : root.entryPrefix + modelData.id
+            visible: !modelData.conditional || root.conditionalEntriesVisible
+            enabled: visible && !separator && modelData.available !== false
+            height: !visible ? 0 : separator ? 9 : modelData.available === false && modelData.hint ? 46 : 30
             opacity: enabled || separator ? 1 : 0.55
             contentItem: Item {
                 Rectangle {

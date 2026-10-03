@@ -5346,6 +5346,40 @@ private slots:
     QCOMPARE(QString::fromUtf8(log.readAll()), imagePath + QLatin1Char('\n'));
   }
 
+  void containingFolderUsesTheDefaultHandlerAndOneDirectoryArgument() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray oldPath = qgetenv("PATH");
+    const QByteArray oldLog = qgetenv("OMAROLL_TEST_LOG");
+    const auto restore = qScopeGuard([&] {
+      qputenv("PATH", oldPath);
+      if (oldLog.isNull()) qunsetenv("OMAROLL_TEST_LOG");
+      else qputenv("OMAROLL_TEST_LOG", oldLog);
+    });
+    const QString folder = dir.filePath(QStringLiteral("Photos #1 %20 雪"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString path = folder + QStringLiteral("/image space.png");
+    QImage image(8, 8, QImage::Format_RGB32);
+    image.fill(Qt::blue);
+    QVERIFY(image.save(path));
+    QFile handler(dir.filePath(QStringLiteral("xdg-open")));
+    QVERIFY(handler.open(QIODevice::WriteOnly));
+    handler.write("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$OMAROLL_TEST_LOG\"\n");
+    handler.close();
+    QVERIFY(handler.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    const QString logPath = dir.filePath(QStringLiteral("folder.log"));
+    QVERIFY(qputenv("PATH", dir.path().toUtf8()));
+    QVERIFY(qputenv("OMAROLL_TEST_LOG", logPath.toUtf8()));
+    ActionLauncher launcher;
+    ActionRegistry registry(&launcher);
+    QVERIFY(registry.available(QStringLiteral("files"))); // No Nautilus in PATH.
+    QVERIFY(registry.run(QStringLiteral("files"), path));
+    QTRY_VERIFY(QFileInfo::exists(logPath));
+    QFile log(logPath);
+    QVERIFY(log.open(QIODevice::ReadOnly));
+    QCOMPARE(QString::fromUtf8(log.readAll()), folder + QLatin1Char('\n'));
+  }
+
   void renamePreservesTheExtensionAndMovesLibraryState() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

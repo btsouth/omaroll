@@ -11,7 +11,7 @@
 
 class CaptureModel;
 
-// Checks only the image currently open in the viewer. Detection retains a
+// Checks only the image currently open in the viewer or its action menu. Detection retains a
 // yes/no value keyed by file identity, never the decoded QR payload.
 class QrDetector final : public QObject {
   Q_OBJECT

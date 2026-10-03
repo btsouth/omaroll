@@ -1359,6 +1359,55 @@ private slots:
     QMetaObject::invokeMethod(menu, "close");
   }
 
+  void compareAppearsForImageSelectionsAndUsesTheCapturedPair() {
+    QStringList images;
+    QString video;
+    for (int row = 0; row < m_library->rowCount(); ++row) {
+      if (m_library->isVideoAt(row)) video = pathAt(row);
+      else if (!m_library->isDocumentAt(row)) images.append(pathAt(row));
+    }
+    QVERIFY(images.size() >= 2 && !video.isEmpty());
+    const QString first = images[0], second = images[1];
+    QQuickItem* grid = item("library");
+    QObject* menu = m_window->findChild<QObject*>("libraryContextMenu");
+    QVERIFY(menu);
+    const auto hasCompare = [&] {
+      const auto rows = menu->property("entries").value<QJSValue>().toVariant().toList();
+      return std::any_of(rows.begin(), rows.end(), [](const QVariant& row) {
+        return row.toMap().value("id").toString() == QStringLiteral("compare");
+      });
+    };
+    QVERIFY(m_duplicates->groupPaths(first).size() < 2);
+    QVERIFY(m_similarities->groupPaths(first).size() < 2);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openContextMenu",
+        Q_ARG(QVariant, m_library->rowOf(first)), Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QVERIFY(!hasCompare());
+    QMetaObject::invokeMethod(menu, "close");
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, first));
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, second));
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openContextMenu",
+        Q_ARG(QVariant, m_library->rowOf(second)), Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QVERIFY(hasCompare());
+    const QStringList captured = menu->property("targets").value<QJSValue>().toVariant().toStringList();
+    QMetaObject::invokeMethod(grid, "clearChecked");
+    // Trigger the actual MenuItem after selection changes.
+    QQuickItem* action = item("contextAction_compare");
+    QVERIFY(action);
+    QVERIFY(QMetaObject::invokeMethod(action, "click"));
+    QTRY_VERIFY(item("compareSheet")->isVisible());
+    QCOMPARE(item("compareSheet")->property("paths").value<QJSValue>().toVariant().toStringList(), captured);
+    invoke("dismissTopLayer");
+    QMetaObject::invokeMethod(menu, "close");
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, first));
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, video));
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openContextMenu",
+        Q_ARG(QVariant, m_library->rowOf(first)), Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QVERIFY(!hasCompare());
+  }
+
   void selectionLabelsMatchTheCapturedTargetsAndCopyDependency() {
     const QStringList paths{pathAt(0), pathAt(1)};
     const auto cleanup = qScopeGuard([&] {
@@ -2247,6 +2296,7 @@ private slots:
   }
 
   void qrActionAppearsOnlyAfterDetectionAndCopiesThroughTheSecurePath() {
+    const QString negativePath = pathAt(0);
     openDetail(0);
     QQuickItem* detail = item("detail");
     QTRY_VERIFY(detail->isVisible());
@@ -2264,8 +2314,51 @@ private slots:
     QImage image(19, 17, QImage::Format_RGB32);
     image.fill(Qt::white);
     QVERIFY(image.save(qrPath, "PNG"));
+    const auto removeFixture = qScopeGuard([&] {
+      if (QObject* popup = m_window->findChild<QObject*>("libraryContextMenu"))
+        QMetaObject::invokeMethod(popup, "close");
+      QMetaObject::invokeMethod(detail, "close");
+      QFile::remove(qrPath);
+      m_captures->refresh();
+    });
     m_captures->refresh();
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(qrPath) >= 0, 5000);
+    QObject* menu = m_window->findChild<QObject*>("libraryContextMenu");
+    QVERIFY(menu);
+    const auto openMenu = [&](const QString& path) {
+      return QMetaObject::invokeMethod(m_window, "openContextMenu",
+          Q_ARG(QVariant, m_library->rowOf(path)), Q_ARG(QVariant, 100), Q_ARG(QVariant, 100));
+    };
+    QVERIFY(openMenu(qrPath));
+    QTRY_VERIFY_WITH_TIMEOUT(menu->property("conditionalEntriesVisible").toBool(), 3000);
+    QQuickItem* rename = item("contextAction_rename");
+    QVERIFY(rename);
+    QQuickItem* contextQrAction = item("contextAction_qr");
+    QVERIFY(contextQrAction);
+    QQuickItem* qrSeparator = item("contextAction_conditionalSeparator");
+    QVERIFY(qrSeparator);
+    QTRY_VERIFY(contextQrAction->isVisible() && qrSeparator->isVisible());
+    QCOMPARE(contextQrAction->height(), 30.0);
+    QCOMPARE(qrSeparator->height(), 9.0);
+    const double renameY = rename->property("y").toDouble();
+    m_qr->inspect(negativePath);
+    QTRY_VERIFY(!menu->property("conditionalEntriesVisible").toBool());
+    QTRY_VERIFY(!contextQrAction->isVisible() && !qrSeparator->isVisible());
+    QCOMPARE(contextQrAction->height(), 0.0);
+    QCOMPARE(qrSeparator->height(), 0.0);
+    m_qr->inspect(qrPath);
+    QTRY_VERIFY(menu->property("conditionalEntriesVisible").toBool());
+    QCOMPARE(item("contextAction_rename"), rename);
+    QCOMPARE(rename->property("y").toDouble(), renameY);
+    QMetaObject::invokeMethod(menu, "close");
+    QVERIFY(openMenu(negativePath));
+    QTRY_VERIFY_WITH_TIMEOUT(!m_qr->checking(), 3000);
+    QVERIFY(!menu->property("conditionalEntriesVisible").toBool());
+    // A completion for another image must not reveal an action on this target.
+    m_qr->inspect(qrPath);
+    QTRY_VERIFY(m_qr->detected());
+    QVERIFY(!menu->property("conditionalEntriesVisible").toBool());
+    QMetaObject::invokeMethod(menu, "close");
     openDetail(m_library->rowOf(qrPath));
     QTRY_COMPARE(m_qr->path(), qrPath);
     QTRY_VERIFY_WITH_TIMEOUT(!m_qr->checking(), 3000);
@@ -2279,7 +2372,7 @@ private slots:
                   return candidate->objectName() == QStringLiteral("viewerAction_rename") &&
                          candidate->hasActiveFocus();
                 }) != nullptr);
-    m_qr->inspect(pathAt(0));
+    m_qr->inspect(negativePath);
     QTRY_VERIFY_WITH_TIMEOUT(!m_qr->checking(), 3000);
     QTRY_VERIFY(find(detail, [](QQuickItem* candidate) {
                   return candidate->objectName() == QStringLiteral("viewerAction_rename") &&

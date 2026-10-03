@@ -12,6 +12,7 @@ Item {
     id: root
 
     property string path: ""
+    property bool canCompare: false
     property int actionsRevision: 0
 
     Connections {
@@ -226,7 +227,10 @@ Item {
             rows.unshift({id: "companion", label: "View " + companion.substring(companion.lastIndexOf(".") + 1).toUpperCase() + " companion",
                           available: true, native: true, shortcut: "", hint: "", primary: false, group: "File"})
         }
-        return rows.filter(function (row) { return row.id !== "qr" || root.qrDetected })
+        return rows.filter(function (row) {
+            return (row.id !== "qr" || root.qrDetected)
+                && (row.id !== "compare" || root.canCompare)
+        })
     }
 
     // Primary actions in the inspector; the full registry stays in the menu.

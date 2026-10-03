@@ -200,19 +200,9 @@ ApplicationWindow {
             return
         }
         case "compare": {
-            // A checked selection wins; otherwise compare the open picture
-            // with its exact duplicates, then its visually similar set.
-            let candidates = targetPaths !== undefined ? targetPaths
-                             : library.checkedCount > 1 ? library.checkedPaths() : []
-            if (candidates.length < 2) {
-                const copies = Duplicates.groupPaths(path)
-                candidates = copies.length > 1 ? copies : Similarities.groupPaths(path)
-            }
-            const still = candidates.filter(function (candidate) {
-                const candidateRow = Captures.rowOf(candidate)
-                return candidateRow >= 0 && !Captures.isVideoAt(candidateRow)
-                       && !Captures.isDocumentAt(candidateRow)
-            })
+            const targets = targetPaths !== undefined ? targetPaths
+                            : library.checkedCount > 1 ? library.checkedPaths() : []
+            const still = root.comparisonPaths(path, targets)
             if (still.length < 2) {
                 root.say("Select two or more pictures, or open one with copies to compare")
                 return
@@ -987,6 +977,23 @@ ApplicationWindow {
         })
     }
 
+    function isComparableImage(path) {
+        const row = Captures.rowOf(path)
+        return row >= 0 && !Captures.isVideoAt(row) && !Captures.isDocumentAt(row)
+    }
+
+    function comparisonPaths(path, targets) {
+        // Keep menus current when duplicate/similarity groups finish indexing.
+        void Duplicates.groupCount
+        void Similarities.groupCount
+        let candidates = targets
+        if (candidates.length < 2) {
+            const copies = Duplicates.groupPaths(path)
+            candidates = copies.length > 1 ? copies : Similarities.groupPaths(path)
+        }
+        return candidates.filter(root.isComparableImage)
+    }
+
     function selectionEntries(paths) {
         const rows = [
             {id: "copy", label: "Copy files", group: "File", available: Registry.available("copy"), hint: "wl-clipboard"},
@@ -998,6 +1005,8 @@ ApplicationWindow {
             return row >= 0 && !Captures.isDocumentAt(row)
                    && Captures.isVideoAt(row) === Captures.isVideoAt(first)
         })
+        if (paths.length > 1 && paths.every(root.isComparableImage))
+            rows.push({id: "compare", label: "Compare side by side", group: "Edit and finish", available: true, shortcut: Registry.shortcutFor("compare")})
         if (canExport) rows.push({id: "export", label: "Convert / resize", group: "Edit and finish", available: Registry.available("export"), hint: "Omarchy"})
         if (paths.length > 1 && root.allCorrectable(paths)) rows.push({id: "correctionsbatch", label: "Correct selected pictures", group: "Edit and finish", available: true})
         rows.push({id: "organize", label: "Albums and tags…", group: "Organize"},
@@ -1015,9 +1024,20 @@ ApplicationWindow {
         contextMenu.selectionMode = batch
         const rows = batch ? root.selectionEntries(contextMenu.targets)
             : Registry.actionsForKind(Captures.isVideoAt(index), Captures.isDocumentAt(index), path)
-                      .filter(function(row) { return row.id !== "correctionsbatch" })
+                      .filter(function(row) {
+                          return row.id !== "qr" && row.id !== "correctionsbatch"
+                              && (row.id !== "compare" || root.comparisonPaths(path, [path]).length > 1)
+                      })
         contextMenu.entries = [{id: "title", label: batch ? contextMenu.targets.length + " selected files" : path.substring(path.lastIndexOf("/") + 1), available: false, hint: "", group: "Title"}]
             .concat(contextMenu.grouped(rows))
+        // Append the asynchronous action without rebuilding or moving existing rows.
+        if (!batch) {
+            const qr = Registry.actionsForKind(Captures.isVideoAt(index), Captures.isDocumentAt(index), path)
+                .find(function(row) { return row.id === "qr" })
+            if (qr) contextMenu.entries = contextMenu.entries.concat([
+                {separator: true, conditional: true}, Object.assign({}, qr, {conditional: true})])
+            Qr.inspect(path)
+        }
         contextMenu.popup(root.contentItem, x, y)
     }
 
@@ -1031,6 +1051,7 @@ ApplicationWindow {
         case "send": Registry.runBatch("send", paths); break
         case "tailscale": tailscaleSheet.open(paths); break
         case "export": root.openExport(paths); break
+        case "compare":
         case "correctionsbatch": root.performForTargets(id, paths[0], undefined, paths); break
         case "favorite": Settings.setFavorite(paths, !paths.every(function(p) { return Settings.isFavorite(p) })); break
         case "hide": Settings.setHidden(paths, !paths.every(function(p) { return Settings.isHidden(p) })); break
@@ -1043,8 +1064,13 @@ ApplicationWindow {
         objectName: "libraryContextMenu"
         property var targets: []
         property bool selectionMode: false
+        conditionalEntriesVisible: !selectionMode && targets.length === 1
+                                   && Qr.path === targets[0] && Qr.detected
         onTriggered: function(id) { root.performContextAction(id, targets.slice(), selectionMode) }
-        onClosed: if (!root.anySheetOpen) library.forceActiveFocus()
+        onClosed: {
+            if (!detail.visible) Qr.clear()
+            if (!root.anySheetOpen) library.forceActiveFocus()
+        }
     }
 
     function adjacentViewerPath(path, direction) {
@@ -1293,6 +1319,8 @@ ApplicationWindow {
 
     DetailSheet {
         id: detail
+        canCompare: root.comparisonPaths(detail.path,
+            library.checkedCount > 1 ? library.checkedPaths() : []).length > 1
         onRateRequested: function (stars) { root.rate(stars) }
         onCaptionEdited: function (text) {
             Settings.setCaption(detail.path, text)

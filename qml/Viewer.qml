@@ -487,7 +487,7 @@ ApplicationWindow {
 
     // The keys a viewer is expected to have, and what the menu shows beside
     // each entry. They are this window's own: F is full screen here, as in
-    // every player, rather than the library's Show in files.
+    // every player, rather than the library's Open containing folder.
     readonly property var viewerShortcuts: ({
         library: "Enter", copy: "Y", annotate: "A", develop: "D", "choose-editor": "Shift+D", send: "S", trim: "T", frame: "G",
         play: "P", rotate: "R", slideshow: "F5", fullscreen: "F", info: "I", filmstrip: "B",

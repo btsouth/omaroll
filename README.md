@@ -174,7 +174,7 @@ organization and safe copies itself, and delegates specialist work to these tool
 | Image | Convert · resize | `omarchy-transcode` |
 | Image | Edit · View | `pinta` · `imv` |
 | Image | Set as background | `omarchy-theme-bg-set` |
-| Image | Copy detected QR content | `zbarimg` |
+| Image | Copy QR content (only after detection) | `zbarimg` |
 | Image | Crop, rotate, resize · Copy region | native |
 | Image | Correct a selection | native |
 | Image | Compare side by side | native |
@@ -184,7 +184,7 @@ organization and safe copies itself, and delegates specialist work to these tool
 | Image or video | Copy image | `omarchy-clipboard-paste-file` |
 | Any | Send with LocalSend | `omarchy-menu-share` |
 | Any | Send to a machine | `omarchy-tailscale-send`, after picking the machine |
-| Any | Show in files | `nautilus` |
+| Any | Open containing folder | default file manager through `xdg-open` |
 | Any | Move to Trash | XDG trash, never `unlink` |
 
 The image and video defaults, including whether slideshows include videos, can
@@ -265,7 +265,7 @@ and put on your clipboard.
 | `A` · `C` | Annotate · Extract text |
 | `E` | Convert or resize, including the selection |
 | `N` | Rename, preserving the extension |
-| `Y` · `S` · `F` | Clipboard · Send · Show in files |
+| `Y` · `S` · `F` | Clipboard · Send · Open containing folder |
 | `V` · `Ctrl+H` | Favourite · Hide |
 | `Q` · `B` | Crop, rotate, resize the open picture · correct the whole selection |
 | `K` | Compare the selection, or the open picture's copies |

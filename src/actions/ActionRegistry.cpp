@@ -339,11 +339,11 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .confirmation = u"Print job submitted"_s},
 
       {.id = u"files"_s,
-       .label = u"Show in files"_s,
-       .program = u"nautilus"_s,
-       .arguments = {u"--select"_s, u"{path}"_s},
+       .label = u"Open containing folder"_s,
+       .program = u"xdg-open"_s,
+       .arguments = {u"{dir}"_s},
        .shortcut = u"F"_s,
-       .packageHint = u"nautilus"_s},
+       .packageHint = u"xdg-utils"_s},
 
       // Native: QML owns these.
       {.id = u"rename"_s, .label = u"Rename"_s, .shortcut = u"N"_s},
