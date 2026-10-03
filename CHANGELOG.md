@@ -9,7 +9,8 @@
   file-manager interface of the configured folder handler, falling back to
   opening its containing folder with `xdg-open` when selection is unavailable.
 - Mouse back and forward buttons navigate files in both viewers.
-- `1` toggles fit and actual size in both image viewers; `0` still fits.
+- `1` toggles fit and actual size in both image viewers; from a custom zoom,
+  it still goes to actual size first. `0` still fits.
 
 ## 1.13.0
 

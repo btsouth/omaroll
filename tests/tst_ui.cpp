@@ -1094,6 +1094,8 @@ private slots:
     QVERIFY(QMetaObject::invokeMethod(detail, "resetImageView"));
     QVERIFY(QMetaObject::invokeMethod(detail, "adjustImageZoom", Q_ARG(QVariant, 10.0)));
     QVERIFY(detail->property("imageZoom").toDouble() > 4.0);
+    QTest::keyClick(m_window, Qt::Key_1);
+    QTRY_VERIFY(qAbs(detail->property("displayedImageScale").toDouble() - 1.0) < 0.01);
     QTest::keyClick(m_window, Qt::Key_0);
     QCOMPARE(detail->property("imageZoom").toDouble(), 1.0);
     QVERIFY(!detail->property("imageFlipHorizontal").toBool());

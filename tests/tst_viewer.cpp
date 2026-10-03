@@ -963,6 +963,8 @@ private slots:
     QTRY_VERIFY(prop("viewScale").toReal() > fit);
     QTest::keyClick(m_window, Qt::Key_0);
     QTRY_COMPARE(prop("viewScale").toReal(), 0.0);
+    QTest::keyClick(m_window, Qt::Key_Plus);
+    QTRY_VERIFY(prop("viewScale").toReal() > fit);
     QTest::keyClick(m_window, Qt::Key_1);
     QTRY_COMPARE(prop("effectiveScale").toReal(), 1.0 / m_window->devicePixelRatio());
     QCOMPARE(prop("zoomPercent").toInt(), 100);

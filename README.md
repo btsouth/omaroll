@@ -131,6 +131,9 @@ process, so a favourite or rating set in one shows in the others.
 | `Enter` · grid button | Open the file in the library |
 | `Esc` | Leave the slideshow or full screen, close the details, then close |
 
+In both image viewers, `1` goes to actual size from a custom zoom. Press it
+again at actual size to fit the image.
+
 </details>
 
 ## Features
@@ -194,6 +197,10 @@ organization and safe copies itself, and delegates specialist work to these tool
 Single-file menus include viewing and editing actions. Selection menus offer
 only actions supported for every selected file, including printing pictures
 and PDFs. Menu shortcuts act on the same captured targets as clicks.
+
+**Open with** passes the original file to the application you choose. Saving
+in an editor can change that file. It requires a desktop portal that supports
+the application chooser; if unavailable, Omaroll reports an error.
 
 The image and video defaults, including whether slideshows include videos, can
 be changed in Settings.

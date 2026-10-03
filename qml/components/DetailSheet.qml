@@ -414,11 +414,11 @@ Item {
     }
 
     function toggleActualImageSize() {
-        if (Math.abs(root.imageZoom - 1.0) <= 0.001) {
-            root.showActualImageSize()
-        } else {
+        if (Math.abs(root.displayedImageScale - 1.0) <= 0.001) {
             root.imageZoom = 1.0
             Qt.callLater(stillViewport.centerContent)
+        } else {
+            root.showActualImageSize()
         }
     }
 
@@ -1858,8 +1858,8 @@ Item {
                     objectName: "actualSizeButton"
                     visible: !root.isDocument && stage.width >= 430
                     label: root.compactControls ? "1:1" : "Actual"
-                    toolTip: "Actual size"
-                    shortcut: root.viewerShortcuts.actual.label
+                    toolTip: "Actual size (1 toggles fit and actual size)"
+                    Accessible.description: "Show actual size. Press 1 to toggle fit and actual size."
                     active: Math.abs(root.displayedImageScale - 1) < 0.01
                     onClicked: root.showActualImageSize()
                 }

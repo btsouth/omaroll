@@ -271,6 +271,15 @@ ApplicationWindow {
         root.zoomTo(root.actualScale, x, y)
     }
 
+    function toggleActualSize() {
+        if (root.viewScale > 0
+                && Math.abs(root.viewScale - root.actualScale) <= root.actualScale * 0.001) {
+            root.fitToWindow()
+        } else {
+            root.showActualSize()
+        }
+    }
+
     // The toolbar's 1:1 / Fit button.
     function toggleFit() {
         if (root.viewScale > 0) {
@@ -1824,7 +1833,7 @@ ApplicationWindow {
                     if (!video) root.fitToWindow()
                     break
                 case Qt.Key_1:
-                    if (!video) root.toggleFit()
+                    if (!video) root.toggleActualSize()
                     break
                 case Qt.Key_R:
                     root.rotate(!shift)
