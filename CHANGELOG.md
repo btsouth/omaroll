@@ -11,6 +11,7 @@
 
 ### Fixed
 
+- QR detection stops safely when its media library or the application closes.
 - Gallery thumbnails wait for valid dimensions and hide a previous file's
   retained pixels while a replacement loads. Viewport checks account for
   files inserted or removed above a scrolled grid.

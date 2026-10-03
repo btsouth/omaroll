@@ -13,6 +13,9 @@ constexpr int kQrTimeoutMs = 10'000;
 QrDetector::QrDetector(CaptureModel* model, QObject* parent)
     : QObject(parent), m_model(model),
       m_program(QStandardPaths::findExecutable(QStringLiteral("zbarimg"))) {
+  if (model) {
+    connect(model, &QObject::destroyed, this, &QrDetector::clear);
+  }
   m_timeout.setSingleShot(true);
   m_timeout.setInterval(kQrTimeoutMs);
   connect(&m_timeout, &QTimer::timeout, &m_process, &QProcess::kill);
@@ -27,6 +30,10 @@ QrDetector::QrDetector(CaptureModel* model, QObject* parent)
 }
 
 QrDetector::~QrDetector() {
+  // Reaping the helper can emit finished/errorOccurred synchronously. The
+  // detector must not publish results or inspect its model during teardown.
+  m_timeout.stop();
+  disconnect(&m_process, nullptr, this, nullptr);
   if (m_process.state() != QProcess::NotRunning) {
     m_process.kill();
     m_process.waitForFinished(1000);

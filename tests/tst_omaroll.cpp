@@ -50,7 +50,12 @@
 #include <QtTest>
 
 #include <fcntl.h>
+#include <signal.h>
 #include <sys/stat.h>
+#include <unistd.h>
+
+#include <cerrno>
+#include <memory>
 
 namespace {
 
@@ -3675,6 +3680,109 @@ private slots:
     QVERIFY(detector.path().isEmpty());
     QVERIFY(!detector.checking());
     QVERIFY(!detector.detected());
+  }
+
+  void qrDetectionStopsSafelyDuringTeardown_data() {
+    QTest::addColumn<int>("destructionOrder");
+    QTest::newRow("parent-deletes-model-first") << 0;
+    QTest::newRow("detector-dies-before-model") << 1;
+    QTest::newRow("model-dies-with-detector-alive") << 2;
+  }
+
+  void qrDetectionStopsSafelyDuringTeardown() {
+    QFETCH(int, destructionOrder);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    QMap<QByteArray, QByteArray> previousEnvironment;
+    for (const char* name : {"PATH", "OMAROLL_QR_TEST_FIFO", "OMAROLL_QR_TEST_PID",
+                             "XDG_PICTURES_DIR", "XDG_VIDEOS_DIR", "OMARCHY_SCREENSHOT_DIR",
+                             "OMARCHY_SCREENRECORD_DIR"}) {
+      previousEnvironment.insert(name, qgetenv(name));
+    }
+    const auto restore = qScopeGuard([&] {
+      for (auto it = previousEnvironment.cbegin(); it != previousEnvironment.cend(); ++it) {
+        it.value().isNull() ? qunsetenv(it.key().constData())
+                            : qputenv(it.key().constData(), it.value());
+      }
+    });
+
+    const QString fifoPath = dir.filePath(QStringLiteral("helper-gate"));
+    const QString pidPath = dir.filePath(QStringLiteral("helper.pid"));
+    QCOMPARE(::mkfifo(QFile::encodeName(fifoPath).constData(), 0600), 0);
+    // Holding both ends open lets the helper open its reader and guarantees
+    // that read cannot finish with EOF before the destruction under test.
+    const int gate = ::open(QFile::encodeName(fifoPath).constData(), O_RDWR | O_NONBLOCK);
+    QVERIFY(gate >= 0);
+    const auto closeGate = qScopeGuard([&] { ::close(gate); });
+
+    QFile zbar(dir.filePath(QStringLiteral("zbarimg")));
+    QVERIFY(zbar.open(QIODevice::WriteOnly));
+    zbar.write("#!/bin/sh\n"
+               "exec 3< \"$OMAROLL_QR_TEST_FIFO\"\n"
+               "printf '%s\\n' \"$$\" > \"$OMAROLL_QR_TEST_PID\"\n"
+               "IFS= read -r reply <&3\n"
+               "printf 'private-value\\n'\n");
+    zbar.close();
+    QVERIFY(zbar.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                QFileDevice::ExeOwner));
+    QVERIFY(qputenv("PATH", dir.path().toUtf8() + ':' + previousEnvironment.value("PATH")));
+    QVERIFY(qputenv("OMAROLL_QR_TEST_FIFO", fifoPath.toUtf8()));
+    QVERIFY(qputenv("OMAROLL_QR_TEST_PID", pidPath.toUtf8()));
+    for (const char* name : {"XDG_PICTURES_DIR", "XDG_VIDEOS_DIR", "OMARCHY_SCREENSHOT_DIR",
+                             "OMARCHY_SCREENRECORD_DIR"}) {
+      QVERIFY(qputenv(name, dir.path().toUtf8()));
+    }
+
+    const QString imagePath = dir.filePath(QStringLiteral("capture.png"));
+    QImage image(16, 12, QImage::Format_RGB32);
+    image.fill(Qt::white);
+    QVERIFY(image.save(imagePath, "PNG"));
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    auto owner = std::make_unique<QObject>();
+    auto* model = new CaptureModel(&settings, owner.get());
+    QSignalSpy scanned(model, &CaptureModel::countChanged);
+    QVERIFY(scanned.wait(5000));
+    QCOMPARE(model->rowCount(), 1);
+    auto* detector = new QrDetector(model, owner.get());
+    detector->inspect(imagePath);
+    QVERIFY(detector->checking());
+    const auto helperPid = [&] {
+      QFile file(pidPath);
+      return file.open(QIODevice::ReadOnly) ? file.readAll().trimmed().toLongLong() : qint64(0);
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(helperPid() > 0, 3000);
+    const pid_t pid = static_cast<pid_t>(helperPid());
+    QCOMPARE(::kill(pid, 0), 0);
+    QVERIFY(detector->checking());
+
+    if (destructionOrder == 0) {
+      // Match QObject child teardown: the model was registered first, so it
+      // is deleted before the detector kills and synchronously reaps zbar.
+      owner.reset();
+    } else if (destructionOrder == 1) {
+      QSignalSpy stateChanged(detector, &QrDetector::stateChanged);
+      delete detector;
+      QCOMPARE(stateChanged.size(), 0);
+      QCOMPARE(model->rowCount(), 1);
+    } else {
+      delete model;
+      QVERIFY(!detector->checking());
+      QVERIFY(!detector->detected());
+      QVERIFY(detector->path().isEmpty());
+      // Deliver the helper's late finished callback while the detector lives.
+      QTRY_VERIFY_WITH_TIMEOUT(::kill(pid, 0) == -1 && errno == ESRCH, 3000);
+      QSignalSpy stateChanged(detector, &QrDetector::stateChanged);
+      detector->inspect(imagePath);
+      QVERIFY(!detector->checking());
+      QVERIFY(!detector->detected());
+      QCOMPARE(stateChanged.size(), 1);
+      owner.reset();
+    }
+    // A killed but unreaped helper still has a PID; require full cleanup.
+    QCOMPARE(::kill(pid, 0), -1);
+    QCOMPARE(errno, ESRCH);
   }
 
   void equalSortKeysHaveStableOrder() {
