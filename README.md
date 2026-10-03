@@ -272,8 +272,9 @@ files work, while older files without the footer may not.
 Camera raws: ARW, CR2, CR3, CRW, DNG, NEF, NRW, RAF, ORF, RW2, PEF, SRW and the
 other formats LibRaw reads, through the kimageformats raw plugin when `libraw`
 is installed. Thumbnails, the library and the viewer show the camera's embedded
-JPEG, turned upright, which most cameras write at full size; the viewer
-demosaics the raw only when that preview would be shown larger than it is.
+JPEG, turned upright, which most cameras write at full size; a raw without one
+gets a quick half-size decode instead. The viewer demosaics the raw only when
+the preview would be shown larger than it is.
 Raws are never written: annotation, recognition, external editors, background,
 print and corrections are not offered for them, and Convert · resize makes a
 JPEG or PNG beside the raw instead.

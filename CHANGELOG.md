@@ -8,13 +8,14 @@
   DNG, Nikon NEF, Fujifilm RAF, Olympus ORF, Panasonic RW2, Pentax PEF, Samsung
   SRW and the other formats LibRaw reads, through the kimageformats raw plugin
   when `libraw` is installed. Thumbnails and previews use the camera's embedded
-  JPEG, turned upright, so stepping through a folder of raws is as quick as
-  JPEGs. The viewer demosaics the raw itself only when that preview would be
+  JPEG, turned upright, or a half-size decode when there is none, so stepping
+  through a folder of raws is as quick as JPEGs. The viewer demosaics the raw itself only when that preview would be
   shown larger than it is. Dates, camera, lens and exposure come from the
   raw's own headers.
 - Actions whose tool cannot open a raw (annotate, text and QR recognition,
   Pinta, imv, background, print and corrections) are not offered for one.
   Convert · resize still makes a JPEG or PNG beside it. Raws are never written.
+- The Arch package depends on `libraw`, so raws open without extra setup.
 
 ## 1.12.0
 
