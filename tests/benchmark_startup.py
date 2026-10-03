@@ -60,7 +60,12 @@ def sample(binary, fixture, mode, file_count=100):
                 selector.register(process.stderr, selectors.EVENT_READ)
                 while time.perf_counter() - started < 8:
                     if process.poll() is not None:
-                        raise RuntimeError(f"Omaroll exited early: {process.returncode}")
+                        # Include both the partial line already read and stderr
+                        # still buffered when the process exited.
+                        remaining = pending + process.stderr.read()
+                        diagnostics.extend(remaining.decode(errors="replace").splitlines())
+                        raise RuntimeError(f"Omaroll exited early: {process.returncode}\n"
+                                           + "\n".join(diagnostics))
                     if idle_start is None and time.perf_counter() - started >= 3:
                         idle_start = (time.perf_counter(), cpu_seconds(process.pid))
                     for key, _ in selector.select(timeout=0.05):

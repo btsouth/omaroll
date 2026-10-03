@@ -49,6 +49,9 @@
 #include <QTransform>
 #include <QtTest>
 
+#include <fcntl.h>
+#include <sys/stat.h>
+
 namespace {
 
 // A JPEG carrying a single EXIF Orientation tag. Qt cannot write one, and the
@@ -1694,6 +1697,167 @@ private slots:
     settings.setCaption(copied, QString());
     settings.setHidden({copied}, false);
     settings.setFavorite({bmpA, bmpB}, false);
+  }
+
+  void reusedInodeDoesNotStealMarks_data() {
+    QTest::addColumn<bool>("knownFingerprint");
+    QTest::newRow("known-content") << true;
+    QTest::newRow("legacy-identity") << false;
+  }
+
+  void reusedInodeDoesNotStealMarks() {
+    QFETCH(bool, knownFingerprint);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                       dir.filePath(QStringLiteral("profile")));
+    const auto restoreProfile = qScopeGuard([this] {
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                         m_scratch.filePath(QStringLiteral("config")));
+    });
+    const QString original = dir.filePath(QStringLiteral("original.bmp"));
+    const QString unrelated = dir.filePath(QStringLiteral("unrelated.bmp"));
+    for (const QString& path : {original, unrelated}) {
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      QCOMPARE(file.write(QByteArray(4096, path == original ? 'a' : 'b')), qint64(4096));
+    }
+    const auto records = CaptureScanner::scan(
+        {{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
+    QCOMPARE(records.size(), 2);
+    CaptureRecord reused;
+    for (const auto& record : records) {
+      if (record.path == original) reused = record;
+    }
+    QVERIFY(reused.inode != 0);
+    reused.path = unrelated; // Model an equal-sized file reusing the remembered inode.
+    {
+      AppSettings settings;
+      settings.setFavorite({original}, true);
+      settings.setHidden({original}, true);
+      settings.setRating({original}, 4);
+      settings.setCaption(original, QStringLiteral("Original caption"));
+    }
+    if (!knownFingerprint) {
+      QSettings stored(QSettings::IniFormat, QSettings::UserScope,
+                       QStringLiteral("omaroll"), QStringLiteral("omaroll"));
+      QVariantMap identities = stored.value(QStringLiteral("library/markIdentities")).toMap();
+      QVariantMap identity = identities.value(original).toMap();
+      identity.remove(QStringLiteral("fingerprint"));
+      identities.insert(original, identity);
+      stored.setValue(QStringLiteral("library/markIdentities"), identities);
+      stored.sync();
+    }
+    QVERIFY(QFile::remove(original));
+    {
+      AppSettings settings;
+      // Retain the unavailable mark through a scan before the inode reappears.
+      settings.reconcileMarks({});
+      settings.reconcileMarks({reused});
+      settings.reconcileMarks({reused});
+    }
+    AppSettings reloaded;
+    const QString marked = knownFingerprint ? original : unrelated;
+    const QString unmarked = knownFingerprint ? unrelated : original;
+    QVERIFY(reloaded.isFavorite(marked));
+    QVERIFY(reloaded.isHidden(marked));
+    QCOMPARE(reloaded.rating(marked), 4);
+    QCOMPARE(reloaded.caption(marked), QStringLiteral("Original caption"));
+    QVERIFY(!reloaded.isFavorite(unmarked));
+    QVERIFY(!reloaded.isHidden(unmarked));
+    QCOMPARE(reloaded.rating(unmarked), 0);
+    QVERIFY(reloaded.caption(unmarked).isEmpty());
+  }
+
+  void retainedMarkFingerprintCacheTracksContentAndMarkIdentity() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                       dir.filePath(QStringLiteral("profile")));
+    const auto restoreProfile = qScopeGuard([this] {
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                         m_scratch.filePath(QStringLiteral("config")));
+    });
+    const QString first = dir.filePath(QStringLiteral("first.bmp"));
+    const QString second = dir.filePath(QStringLiteral("second.bmp"));
+    const QString candidate = dir.filePath(QStringLiteral("candidate.bmp"));
+    for (const QString& path : {first, second}) {
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      QCOMPARE(file.write(QByteArray(4096, path == first ? 'a' : 'b')), qint64(4096));
+    }
+    AppSettings settings;
+    settings.setFavorite({first}, true);
+    settings.setHidden({second}, true);
+    QVERIFY(QFile::copy(second, candidate));
+    QVERIFY(QFile::remove(first));
+    QVERIFY(QFile::remove(second));
+    auto records = CaptureScanner::scan(
+        {{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
+    QCOMPARE(records.size(), 1);
+    settings.reconcileMarks(records);
+    // A mismatch against one mark must not suppress a match against another.
+    QVERIFY(settings.isFavorite(first));
+    QVERIFY(!settings.isFavorite(candidate));
+    QVERIFY(settings.isHidden(candidate));
+    settings.reconcileMarks(records);
+    QVERIFY(settings.isFavorite(first));
+
+    struct stat before {};
+    QVERIFY(::stat(QFile::encodeName(candidate).constData(), &before) == 0);
+    QTest::qWait(2);
+    QFile changed(candidate);
+    QVERIFY(changed.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    QCOMPARE(changed.write(QByteArray(4096, 'a')), qint64(4096));
+    changed.close();
+    const timespec times[] = {before.st_atim, before.st_mtim};
+    QVERIFY(::utimensat(AT_FDCWD, QFile::encodeName(candidate).constData(), times, 0) == 0);
+    // Same path, size, inode and exact mtime: ctime must invalidate the hash.
+    records = CaptureScanner::scan(
+        {{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
+    settings.reconcileMarks(records);
+    QVERIFY(!settings.isFavorite(first));
+    QVERIFY(settings.isFavorite(candidate));
+    QVERIFY(settings.isHidden(candidate));
+  }
+
+  void retainedMarksLeaveAmbiguousOrExcessiveFingerprintCandidatesUnresolved_data() {
+    QTest::addColumn<int>("candidateCount");
+    QTest::newRow("ambiguous") << 2;
+    QTest::newRow("bounded-fingerprinting") << 129;
+  }
+
+  void retainedMarksLeaveAmbiguousOrExcessiveFingerprintCandidatesUnresolved() {
+    QFETCH(int, candidateCount);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                       dir.filePath(QStringLiteral("profile")));
+    const auto restoreProfile = qScopeGuard([this] {
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                         m_scratch.filePath(QStringLiteral("config")));
+    });
+    const QString original = dir.filePath(QStringLiteral("original.bmp"));
+    QFile file(original);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(QByteArray(4096, 'a')), qint64(4096));
+    file.close();
+    AppSettings settings;
+    settings.setFavorite({original}, true);
+    for (int index = 0; index < candidateCount; ++index) {
+      const QString path = dir.filePath(QStringLiteral("candidate-%1.bmp").arg(index));
+      QVERIFY(QFile::copy(original, path));
+      QFile copy(path);
+      QVERIFY(copy.open(QIODevice::ReadWrite));
+      QVERIFY(copy.setFileTime(QDateTime::fromMSecsSinceEpoch(1000), QFileDevice::FileModificationTime));
+    }
+    QVERIFY(QFile::remove(original));
+    const auto records = CaptureScanner::scan(
+        {{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
+    QCOMPARE(records.size(), candidateCount);
+    settings.reconcileMarks(records);
+    settings.reconcileMarks(records);
+    QCOMPARE(settings.markedPaths(), QStringList{original});
   }
 
   void undoRestoresThePreviousMarks() {
@@ -4826,6 +4990,46 @@ private slots:
     QVERIFY(file.open(QIODevice::ReadOnly));
     QCOMPARE(file.readAll(), replaceDuringProbe ? QByteArray("user replacement must survive")
                                               : QByteArray("fresh"));
+  }
+
+  void rejectedOutputRemovalFailureDoesNotRevealOrLaunch() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray previousPath = qgetenv("PATH");
+    const auto restorePath = qScopeGuard([&] { qputenv("PATH", previousPath); });
+    QFile probe(dir.filePath(QStringLiteral("ffprobe")));
+    QVERIFY(probe.open(QIODevice::WriteOnly));
+    probe.write("#!/bin/sh\nexit 1\n");
+    probe.close();
+    QVERIFY(probe.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                 QFileDevice::ExeOwner));
+    QVERIFY(qputenv("PATH", dir.path().toUtf8()));
+    const QString source = dir.filePath(QStringLiteral("clip.mp4"));
+    const QString output = dir.filePath(QStringLiteral("clip-1080p.mp4"));
+    // A directory reliably makes QFile::remove fail, including under root.
+    QVERIFY(QDir().mkdir(output));
+    const QString child = output + QStringLiteral("/keep.txt");
+    QFile marker(child);
+    QVERIFY(marker.open(QIODevice::WriteOnly));
+    marker.write("keep");
+    marker.close();
+    QVERIFY(QFileInfo(output).size() > 0);
+    ActionLauncher launcher;
+    ActionRegistry registry(&launcher);
+    QSignalSpy failed(&launcher, &ActionLauncher::failed);
+    QSignalSpy alreadyDone(&launcher, &ActionLauncher::outputAlreadyDone);
+    QSignalSpy pending(&launcher, &ActionLauncher::outputPending);
+    QVERIFY(registry.run(QStringLiteral("shrink"), source));
+    QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 3000);
+    QVERIFY(failed.first().first().toString().contains(QStringLiteral("Could not remove invalid output")));
+    QCOMPARE(alreadyDone.size(), 0);
+    QCOMPARE(pending.size(), 0);
+    QVERIFY(QFileInfo::exists(child));
+    // The failed probe releases its reservation, so another request can retry.
+    QVERIFY(registry.run(QStringLiteral("shrink"), source));
+    QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 2, 3000);
+    QCOMPARE(alreadyDone.size(), 0);
+    QCOMPARE(pending.size(), 0);
   }
 
   void existingOutputsAreRevealedAndEmptyCorpsesCleared() {

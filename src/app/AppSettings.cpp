@@ -3,6 +3,7 @@
 #include "library/CaptureRecord.h"
 
 #include <QCoreApplication>
+#include <QCache>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
@@ -1675,6 +1676,9 @@ void AppSettings::reconcileMarks(const QList<CaptureRecord>& records) {
   };
   QList<Candidate> candidates;
   candidates.reserve(records.size());
+  QHash<QPair<quint64, qint64>, QList<qsizetype>> byInodeAndSize;
+  QHash<QPair<qint64, qint64>, QList<qsizetype>> bySizeAndModified;
+  QHash<qint64, QList<qsizetype>> bySize;
   QSet<QString> live;
   live.reserve(records.size());
   for (const CaptureRecord& record : records) {
@@ -1687,13 +1691,66 @@ void AppSettings::reconcileMarks(const QList<CaptureRecord>& records) {
         inode = status.st_ino;
       }
     }
+    const qsizetype index = candidates.size();
     candidates.append({record.path, record.bytes, record.modified, device, inode});
+    byInodeAndSize[{inode, record.bytes}].append(index);
+    bySizeAndModified[{record.bytes, record.modified}].append(index);
+    bySize[record.bytes].append(index);
     live.insert(record.path);
   }
 
+  struct CachedFingerprint {
+    qint64 bytes;
+    qint64 modified;
+    QString version;
+    QByteArray fingerprint;
+  };
+  // Bound memory across scans and share only within the calling thread. Cache
+  // the content hash, not a match decision tied to a particular saved mark.
+  static thread_local QCache<QString, CachedFingerprint> fingerprintCache(4096);
+  const auto versionFor = [](const QString& path) {
+    struct stat status {};
+    if (::stat(QFile::encodeName(path).constData(), &status) != 0) return QString();
+    // ctime also invalidates a same-sized edit whose mtime was restored.
+    return QStringLiteral("%1:%2:%3:%4:%5:%6:%7")
+        .arg(qulonglong(status.st_dev)).arg(qulonglong(status.st_ino))
+        .arg(qlonglong(status.st_size)).arg(qlonglong(status.st_mtim.tv_sec))
+        .arg(qlonglong(status.st_mtim.tv_nsec)).arg(qlonglong(status.st_ctim.tv_sec))
+        .arg(qlonglong(status.st_ctim.tv_nsec));
+  };
+  QHash<QString, CachedFingerprint> fingerprints;
+  const auto fingerprintFor = [&](const Candidate& candidate) -> QByteArray {
+    const QString version = versionFor(candidate.path);
+    if (version.isEmpty()) return {};
+    if (const auto cached = fingerprints.constFind(candidate.path);
+        cached != fingerprints.cend() && cached->version == version) {
+      return cached->fingerprint;
+    }
+    if (const auto* cached = fingerprintCache.object(candidate.path);
+        cached && cached->bytes == candidate.bytes && cached->modified == candidate.modified &&
+        cached->version == version) {
+      fingerprints.insert(candidate.path, *cached);
+      return cached->fingerprint;
+    }
+    const QByteArray fingerprint = identityFor(candidate.path).fingerprint;
+    if (versionFor(candidate.path) != version) return {};
+    const CachedFingerprint cached{candidate.bytes, candidate.modified, version, fingerprint};
+    if (!fingerprint.isEmpty()) {
+      fingerprintCache.insert(candidate.path, new CachedFingerprint(cached));
+    }
+    fingerprints.insert(candidate.path, cached);
+    return fingerprint;
+  };
+
   // Decide every move before applying any, so two walking marks cannot chase
   // each other's path mid-loop.
-  QList<QPair<QString, QString>> moves;
+  struct Move {
+    QString from;
+    QString to;
+    QString version;
+    QByteArray fingerprint;
+  };
+  QList<Move> moves;
   for (auto it = m_markIdentities.cbegin(); it != m_markIdentities.cend(); ++it) {
     const QString& oldPath = it.key();
     if (live.contains(oldPath)) {
@@ -1704,9 +1761,10 @@ void AppSettings::reconcileMarks(const QList<CaptureRecord>& records) {
     QString match;
     int found = 0;
     if (identity.device != 0 && identity.inode != 0) {
-      for (const Candidate& candidate : std::as_const(candidates)) {
-        if (candidate.inode == identity.inode && candidate.bytes == identity.bytes &&
-            (candidate.device == identity.device || candidate.modified == identity.modified)) {
+      for (qsizetype index : byInodeAndSize.value({identity.inode, identity.bytes})) {
+        const Candidate& candidate = candidates.at(index);
+        if ((candidate.device == identity.device || candidate.modified == identity.modified) &&
+            (identity.fingerprint.isEmpty() || fingerprintFor(candidate) == identity.fingerprint)) {
           match = candidate.path;
           if (++found > 1) {
             break;
@@ -1715,26 +1773,18 @@ void AppSettings::reconcileMarks(const QList<CaptureRecord>& records) {
       }
     }
     if (found != 1 && !identity.fingerprint.isEmpty()) {
-      QList<Candidate> possible;
-      for (const Candidate& candidate : std::as_const(candidates)) {
-        if (candidate.bytes == identity.bytes && candidate.modified == identity.modified) {
-          possible.append(candidate);
-        }
-      }
+      QList<qsizetype> possible = bySizeAndModified.value({identity.bytes, identity.modified});
       if (possible.isEmpty()) {
-        for (const Candidate& candidate : std::as_const(candidates)) {
-          if (candidate.bytes == identity.bytes) {
-            possible.append(candidate);
-          }
-        }
+        possible = bySize.value(identity.bytes);
       }
       // Same guard as albums and tags: a directory full of equal-sized files
       // must not stall the UI fingerprinting everything.
       if (possible.size() <= 128) {
         match.clear();
         found = 0;
-        for (const Candidate& candidate : std::as_const(possible)) {
-          if (identityFor(candidate.path).fingerprint == identity.fingerprint) {
+        for (qsizetype index : std::as_const(possible)) {
+          const Candidate& candidate = candidates.at(index);
+          if (fingerprintFor(candidate) == identity.fingerprint) {
             match = candidate.path;
             if (++found > 1) {
               break;
@@ -1745,7 +1795,9 @@ void AppSettings::reconcileMarks(const QList<CaptureRecord>& records) {
     }
 
     if (found == 1 && !match.isEmpty()) {
-      moves.append({oldPath, match});
+      const QString version = identity.fingerprint.isEmpty() ? versionFor(match)
+                                                             : fingerprints.value(match).version;
+      moves.append({oldPath, match, version, identity.fingerprint});
     }
   }
 
@@ -1753,9 +1805,16 @@ void AppSettings::reconcileMarks(const QList<CaptureRecord>& records) {
     return;
   }
 
+  bool moved = false;
   for (const auto& move : std::as_const(moves)) {
-    const QString& from = move.first;
-    const QString& to = move.second;
+    const QString& from = move.from;
+    const QString& to = move.to;
+    if (!move.version.isEmpty() && versionFor(to) != move.version) continue;
+    const AlbumEntry identity = identityFor(to);
+    // Verify before removing source marks and persist only this checked
+    // identity. A target may have changed since the move was proposed.
+    if ((!move.fingerprint.isEmpty() && identity.fingerprint != move.fingerprint) ||
+        (!move.version.isEmpty() && versionFor(to) != move.version)) continue;
     if (m_favorites.remove(from)) {
       m_favorites.insert(to);
     }
@@ -1777,12 +1836,13 @@ void AppSettings::reconcileMarks(const QList<CaptureRecord>& records) {
       }
     }
     m_markIdentities.remove(from);
-    const AlbumEntry identity = identityFor(to);
     if (identity.resolved) {
       m_markIdentities.insert(to, identity);
     }
+    moved = true;
   }
 
+  if (!moved) return;
   persistMarks();
   persistMarkIdentities();
   emit marksChanged();

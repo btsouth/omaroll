@@ -367,7 +367,12 @@ void ActionRegistry::probeThenLaunch(const Definition& definition, const QString
             // A truncated file with this exact name is the corpse of a
             // transcode that died before runs were tracked. Left in place it
             // blocks every retry forever, because ffmpeg refuses to overwrite.
-            QFile::remove(output);
+            QFile rejected(output);
+            if (!rejected.remove()) {
+              emit m_launcher->failed(u"Could not remove invalid output %1: %2"_s
+                                          .arg(now.fileName(), rejected.errorString()));
+              return;
+            }
             launch(definition, arguments, output);
           });
   connect(probe, &QProcess::errorOccurred, this,
@@ -558,7 +563,12 @@ bool ActionRegistry::run(const QString& id, const QStringList& paths,
       // An empty file with this exact name is the corpse of a transcode that
       // died before runs were tracked. Left in place it blocks every retry
       // forever, because ffmpeg refuses to overwrite.
-      QFile::remove(output);
+      QFile empty(output);
+      if (!empty.remove()) {
+        emit m_launcher->failed(u"Could not remove empty output %1: %2"_s
+                                    .arg(existing.fileName(), empty.errorString()));
+        return false;
+      }
     }
   }
 
