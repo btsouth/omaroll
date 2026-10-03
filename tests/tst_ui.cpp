@@ -4230,11 +4230,28 @@ private slots:
     });
     m_window->resize(1005, 545);
     m_settings->setTileWidth(440);
-    QTest::qWait(500);
     QQuickItem* view = find(grid, [](QQuickItem* candidate) {
       return candidate->property("cellWidth").isValid();
     });
     QVERIFY(view);
+    // Measure only once the relayout has settled with the first row at the
+    // top, since the rows below are counted from there. A slow machine can
+    // still be resizing or scrolled after any fixed wait.
+    QVariantList measured;
+    bool settled = false;
+    for (int attempt = 0; attempt < 30 && !settled; ++attempt) {
+      if (view->property("contentY").toReal() != view->property("originY").toReal()) {
+        QMetaObject::invokeMethod(view, "positionViewAtBeginning");
+      }
+      QTest::qWait(200);
+      const QVariantList now{view->height(), view->property("cellWidth"),
+                             view->property("cellHeight"), grid->property("columns"),
+                             view->property("contentY"), view->property("originY")};
+      settled = now == measured && grid->property("layoutReady").toBool() &&
+                now.at(4).toReal() == now.at(5).toReal();
+      measured = now;
+    }
+    QVERIFY2(settled, "grid geometry never settled at the top");
     // The first tile in the row that is cut off at the bottom of the viewport,
     // located from the view's own geometry so pooled delegates cannot mislead.
     const qreal cellHeight = view->property("cellHeight").toReal();
