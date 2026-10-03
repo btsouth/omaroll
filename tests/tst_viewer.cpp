@@ -21,10 +21,18 @@
 #include "thumbs/RawImageProvider.h"
 #include "thumbs/ThumbnailProvider.h"
 #include "viewer/HyprlandPlacement.h"
+#include "viewer/MprisService.h"
 #include "viewer/ViewerSession.h"
 #include "viewer/ViewerWindows.h"
 
 #include <QAudioDevice>
+#include <QDBusArgument>
+#include <QDBusConnection>
+#include <QDBusConnectionInterface>
+#include <QDBusMessage>
+#include <QDBusObjectPath>
+#include <QDBusPendingCall>
+#include <QDBusVariant>
 #include <QDataStream>
 #include <QDir>
 #include <QFile>
@@ -53,8 +61,25 @@
 #include <QThreadPool>
 #include <QtTest>
 
+#include <algorithm>
 #include <functional>
 #include <memory>
+
+// Collects PropertiesChanged and Seeked from the bus, which QSignalSpy cannot
+// attach to.
+class PropertiesWatcher : public QObject {
+  Q_OBJECT
+
+public:
+  QList<QVariantMap> changes;
+  QList<qlonglong> seeks;
+
+public slots:
+  void changed(const QString&, const QVariantMap& values, const QStringList&) {
+    changes.append(values);
+  }
+  void seeked(qlonglong position) { seeks.append(position); }
+};
 
 class ViewerTest : public QObject {
   Q_OBJECT
@@ -99,6 +124,18 @@ private slots:
     m_session = new ViewerSession(this);
     m_mediaInfo = new MediaInspector(this);
     m_subtitles = new SubtitleIndex(this);
+    // A bus of the test's own, so the player never reaches the desktop's.
+    const QString daemon = QStandardPaths::findExecutable(QStringLiteral("dbus-daemon"));
+    if (!daemon.isEmpty()) {
+      m_busDaemon.start(daemon, {QStringLiteral("--session"), QStringLiteral("--nofork"),
+                                 QStringLiteral("--nopidfile"), QStringLiteral("--print-address")});
+      if (m_busDaemon.waitForReadyRead(5000)) {
+        const QString address = QString::fromUtf8(m_busDaemon.readLine()).trimmed();
+        QDBusConnection::connectToBus(address, QStringLiteral("omaroll-test-player"));
+        QDBusConnection::connectToBus(address, QStringLiteral("omaroll-test-client"));
+      }
+    }
+    m_mpris = new MprisService(m_settings, QDBusConnection(QStringLiteral("omaroll-test-player")), this);
 
     m_engine = new QQmlEngine(this);
     connect(m_engine, &QQmlEngine::warnings, this, [this](const QList<QQmlError>& warnings) {
@@ -123,6 +160,7 @@ private slots:
     shared->setContextProperty(QStringLiteral("Registry"), m_registry);
     shared->setContextProperty(QStringLiteral("Editors"), new ExternalEditors(m_actions, m_engine));
     shared->setContextProperty(QStringLiteral("DemoMode"), true);
+    shared->setContextProperty(QStringLiteral("Mpris"), m_mpris);
     // The same split main.cpp makes: the viewer's own services in its context.
     m_context = new QQmlContext(shared, this);
     m_context->setContextProperty(QStringLiteral("Session"), m_session);
@@ -151,6 +189,14 @@ private slots:
     }
     delete m_engine;
     m_engine = nullptr;
+    delete m_mpris;
+    m_mpris = nullptr;
+    QDBusConnection::disconnectFromBus(QStringLiteral("omaroll-test-player"));
+    QDBusConnection::disconnectFromBus(QStringLiteral("omaroll-test-client"));
+    if (m_busDaemon.state() != QProcess::NotRunning) {
+      m_busDaemon.kill();
+      m_busDaemon.waitForFinished(5000);
+    }
     QThreadPool::globalInstance()->waitForDone();
   }
 
@@ -1066,6 +1112,94 @@ private slots:
     player->pause();
   }
 
+  // Media keys and the shell's player controls reach a playing video, and the
+  // player leaves the bus with it.
+  void videoIsControlledOverMpris() {
+    QDBusConnection client(QStringLiteral("omaroll-test-client"));
+    if (!client.isConnected()) {
+      QSKIP("dbus-daemon is not available");
+    }
+    QTRY_VERIFY(!m_mpris->isPublished());
+    open({media(QStringLiteral("clip.mp4"))});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY_WITH_TIMEOUT(player->playbackState() == QMediaPlayer::PlayingState, 5000);
+    QTRY_VERIFY(m_mpris->isPublished());
+    const QString service = m_mpris->serviceName();
+    QCOMPARE(service, QStringLiteral("org.mpris.MediaPlayer2.omaroll"));
+    QVERIFY(client.interface()->isServiceRegistered(service));
+
+    const QString root = QStringLiteral("org.mpris.MediaPlayer2");
+    const QString remote = QStringLiteral("org.mpris.MediaPlayer2.Player");
+    QCOMPARE(mprisProperty(root, QStringLiteral("Identity")).toString(), QStringLiteral("Omaroll"));
+    QCOMPARE(mprisProperty(root, QStringLiteral("DesktopEntry")).toString(),
+             QStringLiteral("io.github.tsouth89.omaroll"));
+    QVERIFY(mprisProperty(root, QStringLiteral("CanRaise")).toBool());
+    QCOMPARE(mprisProperty(remote, QStringLiteral("PlaybackStatus")).toString(),
+             QStringLiteral("Playing"));
+    QVERIFY(mprisProperty(remote, QStringLiteral("CanPause")).toBool());
+    QVERIFY(!mprisProperty(remote, QStringLiteral("CanGoNext")).toBool());
+
+    const QVariantMap metadata =
+        qdbus_cast<QVariantMap>(mprisProperty(remote, QStringLiteral("Metadata")).value<QDBusArgument>());
+    QVERIFY(metadata.value(QStringLiteral("xesam:url")).toString().endsWith(QStringLiteral("/clip.mp4")));
+    QVERIFY(!metadata.value(QStringLiteral("xesam:title")).toString().isEmpty());
+    const QDBusObjectPath track = metadata.value(QStringLiteral("mpris:trackid")).value<QDBusObjectPath>();
+    QVERIFY(track.path().startsWith(QStringLiteral("/io/github/tsouth89/omaroll/track/")));
+
+    PropertiesWatcher watcher;
+    QVERIFY(client.connect(service, QStringLiteral("/org/mpris/MediaPlayer2"),
+                           QStringLiteral("org.freedesktop.DBus.Properties"),
+                           QStringLiteral("PropertiesChanged"), &watcher,
+                           SLOT(changed(QString, QVariantMap, QStringList))));
+    QVERIFY(client.connect(service, QStringLiteral("/org/mpris/MediaPlayer2"), remote,
+                           QStringLiteral("Seeked"), &watcher, SLOT(seeked(qlonglong))));
+    QCOMPARE(mprisCall(remote, QStringLiteral("Pause")).type(), QDBusMessage::ReplyMessage);
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    QTRY_VERIFY(std::any_of(watcher.changes.cbegin(), watcher.changes.cend(), [](const QVariantMap& values) {
+      return values.value(QStringLiteral("PlaybackStatus")).toString() == QStringLiteral("Paused");
+    }));
+    // Even a short step while paused is announced, so clients do not drift.
+    QTRY_VERIFY(player->isSeekable());
+    QVERIFY(player->duration() > 2000);
+    const qint64 before = player->position();
+    QCOMPARE(mprisCall(remote, QStringLiteral("Seek"), {qlonglong(300000)}).type(),
+             QDBusMessage::ReplyMessage);
+    QTRY_VERIFY(player->position() >= before + 250);
+    QTRY_VERIFY(!watcher.seeks.isEmpty());
+    QCOMPARE(mprisCall(remote, QStringLiteral("PlayPause")).type(), QDBusMessage::ReplyMessage);
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+
+    QCOMPARE(mprisCall(remote, QStringLiteral("SetPosition"),
+                       {QVariant::fromValue(track), qlonglong(1500000)})
+                 .type(),
+             QDBusMessage::ReplyMessage);
+    QTRY_VERIFY(player->position() >= 1400);
+
+    const qreal volume = m_settings->videoVolume();
+    QDBusMessage set = mprisCall(QStringLiteral("org.freedesktop.DBus.Properties"),
+                                 QStringLiteral("Set"),
+                                 {remote, QStringLiteral("Volume"),
+                                  QVariant::fromValue(QDBusVariant(0.25))});
+    QCOMPARE(set.type(), QDBusMessage::ReplyMessage);
+    QTRY_COMPARE(m_settings->videoVolume(), 0.25);
+    m_settings->setVideoVolume(volume);
+
+    // Stop rewinds and reads as stopped, unlike a pause, until played again.
+    QCOMPARE(mprisCall(remote, QStringLiteral("Stop")).type(), QDBusMessage::ReplyMessage);
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    QTRY_VERIFY(player->position() < 500);
+    QCOMPARE(mprisProperty(remote, QStringLiteral("PlaybackStatus")).toString(),
+             QStringLiteral("Stopped"));
+    QCOMPARE(mprisCall(remote, QStringLiteral("Play")).type(), QDBusMessage::ReplyMessage);
+    QTRY_COMPARE(mprisProperty(remote, QStringLiteral("PlaybackStatus")).toString(),
+                 QStringLiteral("Playing"));
+
+    m_window->close();
+    QTRY_VERIFY(!m_mpris->isPublished());
+    QTRY_VERIFY(!client.interface()->isServiceRegistered(service));
+  }
+
   void closingStopsPlaybackAndForgetsTheFile() {
     open({media(QStringLiteral("clip.mp4"))});
     QMediaPlayer* player = nullptr;
@@ -1730,6 +1864,30 @@ private:
     return colorful > samples / 10;
   }
 
+  // A call to the published player, made from another connection and waited
+  // for without blocking the player's own thread.
+  QDBusMessage mprisCall(const QString& interface, const QString& method,
+                         const QVariantList& arguments = {}) const {
+    QDBusMessage message = QDBusMessage::createMethodCall(
+        m_mpris->serviceName(), QStringLiteral("/org/mpris/MediaPlayer2"), interface, method);
+    message.setArguments(arguments);
+    QDBusPendingCall call = QDBusConnection(QStringLiteral("omaroll-test-client")).asyncCall(message);
+    if (!QTest::qWaitFor([&call] { return call.isFinished(); }, 5000)) {
+      return {};
+    }
+    return call.reply();
+  }
+
+  QVariant mprisProperty(const QString& interface, const QString& name) const {
+    const QDBusMessage reply =
+        mprisCall(QStringLiteral("org.freedesktop.DBus.Properties"), QStringLiteral("Get"),
+                  {interface, name});
+    if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().isEmpty()) {
+      return {};
+    }
+    return reply.arguments().constFirst().value<QDBusVariant>().variant();
+  }
+
   QVariant prop(const char* name) const { return m_window->property(name); }
 
   void open(const QStringList& paths) {
@@ -1822,6 +1980,8 @@ private:
   RawImageProvider* m_raws = nullptr;
   QQmlEngine* m_engine = nullptr;
   QQmlContext* m_context = nullptr;
+  MprisService* m_mpris = nullptr;
+  QProcess m_busDaemon;
   std::unique_ptr<QObject> m_root;
   QQuickWindow* m_window = nullptr;
   QStringList m_warnings;

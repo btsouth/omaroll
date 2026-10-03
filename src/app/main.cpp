@@ -28,6 +28,7 @@
 #include "thumbs/RawImageProvider.h"
 #include "thumbs/ThumbnailCache.h"
 #include "thumbs/ThumbnailProvider.h"
+#include "viewer/MprisService.h"
 #include "viewer/ViewerSession.h"
 #include "viewer/ViewerWindows.h"
 
@@ -532,6 +533,9 @@ int main(int argc, char* argv[]) {
   engine.rootContext()->setContextProperty(QStringLiteral("Registry"), &registry);
   engine.rootContext()->setContextProperty(QStringLiteral("Editors"), &editors);
   engine.rootContext()->setContextProperty(QStringLiteral("DemoMode"), demo);
+  // A render never appears as a player on the desktop's session bus.
+  MprisService mpris(&settings, rendering ? std::optional(QDBusConnection(QString())) : std::nullopt);
+  engine.rootContext()->setContextProperty(QStringLiteral("Mpris"), &mpris);
 
   startup.mark("services");
 

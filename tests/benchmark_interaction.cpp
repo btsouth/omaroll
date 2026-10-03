@@ -24,6 +24,7 @@
 #include "subtitles/SubtitleIndex.h"
 #include "theme/OmarchyTheme.h"
 #include "thumbs/ThumbnailProvider.h"
+#include "viewer/MprisService.h"
 #include "viewer/ViewerSession.h"
 #include "sources/CaptureScanner.h"
 
@@ -325,6 +326,8 @@ int main(int argc, char** argv) {
   shared->setContextProperty(u"Actions"_s, &actions); shared->setContextProperty(u"Registry"_s, &registry);
   shared->setContextProperty(u"Editors"_s, new ExternalEditors(&actions, &engine));
   shared->setContextProperty(u"DemoMode"_s, false);
+  MprisService mpris(&settings, QDBusConnection(QString()));
+  shared->setContextProperty(u"Mpris"_s, &mpris);
   std::unique_ptr<QObject> galleryServices, galleryRoot, viewerRoot;
   QQuickWindow* gallery = nullptr; QQuickWindow* viewer = nullptr;
   QQuickItem* grid = nullptr; QQuickItem* viewport = nullptr;
