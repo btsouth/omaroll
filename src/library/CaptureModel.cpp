@@ -287,6 +287,8 @@ QVariant CaptureModel::data(const QModelIndex& index, int role) const {
     return record.rating;
   case CaptureRoles::CaptionRole:
     return record.caption;
+  case CaptureRoles::RawFormatRole:
+    return record.isRaw() ? QFileInfo(record.path).suffix().toUpper() : QString();
   default:
     return {};
   }
@@ -313,6 +315,7 @@ QHash<int, QByteArray> CaptureModel::roleNames() const {
       {CaptureRoles::LensRole, "lens"},
       {CaptureRoles::RatingRole, "rating"},
       {CaptureRoles::CaptionRole, "caption"},
+      {CaptureRoles::RawFormatRole, "rawFormat"},
   };
 }
 

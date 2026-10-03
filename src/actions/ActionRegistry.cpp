@@ -96,6 +96,36 @@ ActionRegistry::Definition tailscaleRow() {
           .batch = true};
 }
 
+// The first RAW developer installed, in the order Arch users most often have
+// them. Without one, the row names darktable so the hint says what to install.
+ActionRegistry::Definition developRow() {
+  using Media = ActionRegistry::Media;
+  struct Developer {
+    QString program;
+    QString label;
+  };
+  const QList<Developer> developers = {
+      {u"darktable"_s, u"Develop in darktable"_s},
+      {u"rawtherapee"_s, u"Develop in RawTherapee"_s},
+      {u"ART"_s, u"Develop in ART"_s},
+  };
+  Developer chosen = developers.first();
+  for (const Developer& developer : developers) {
+    if (!QStandardPaths::findExecutable(developer.program).isEmpty()) {
+      chosen = developer;
+      break;
+    }
+  }
+  return {.id = u"develop"_s,
+          .label = chosen.label,
+          .program = chosen.program,
+          .arguments = {u"{path}"_s},
+          .shortcut = u"D"_s,
+          .packageHint = u"darktable"_s,
+          .media = Media::Raw,
+          .primary = false};
+}
+
 } // namespace
 
 QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
@@ -271,6 +301,8 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .media = Visual,
        .output = u"{stem}-{resolution}.{format}"_s},
 
+      developRow(),
+
       // --- Anything -------------------------------------------------------
       {.id = u"open-document"_s,
        .label = u"Open document"_s,
@@ -416,6 +448,8 @@ bool ActionRegistry::applies(const Definition& definition, bool video, bool docu
   case Media::Printable:
     // Pictures and documents print; a video does not.
     return !video;
+  case Media::Raw:
+    return raw && !video && !document;
   case Media::Any:
     return true;
   }
@@ -526,6 +560,12 @@ bool ActionRegistry::run(const QString& id, const QStringList& paths,
   const Definition* definition = find(id);
   if (!definition || definition->program.isEmpty() || !m_launcher || paths.isEmpty()) {
     return false;
+  }
+
+  if (definition->media == Media::Raw) {
+    for (const QString& path : paths) {
+      if (!CameraRaw::isRawFile(path)) return false;
+    }
   }
 
   const QFileInfo first(paths.first());

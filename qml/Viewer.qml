@@ -483,14 +483,14 @@ ApplicationWindow {
     // each entry. They are this window's own: F is full screen here, as in
     // every player, rather than the library's Show in files.
     readonly property var viewerShortcuts: ({
-        library: "Enter", copy: "Y", annotate: "A", send: "S", trim: "T", frame: "G",
+        library: "Enter", copy: "Y", annotate: "A", develop: "D", send: "S", trim: "T", frame: "G",
         play: "P", rotate: "R", slideshow: "F5", fullscreen: "F", info: "I",
         favorite: "V", trash: "Del"
     })
 
     // Handed-off actions, in the order the menu offers them. Only what is
     // installed and suits the medium is shown.
-    readonly property var stillActions: ["copy", "annotate", "edit", "background", "send", "print", "files"]
+    readonly property var stillActions: ["develop", "copy", "annotate", "edit", "background", "send", "print", "files"]
     readonly property var videoActions: ["frame", "trim", "copy", "play", "send", "files"]
 
     function menuEntries() {
@@ -1718,6 +1718,10 @@ ApplicationWindow {
                     break
                 case Qt.Key_S:
                     root.perform("send")
+                    break
+                case Qt.Key_D:
+                    if (Session.isRaw) root.perform("develop")
+                    else handled = false
                     break
                 case Qt.Key_A:
                     if (!video) root.perform("annotate")

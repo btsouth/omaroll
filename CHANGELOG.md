@@ -16,6 +16,8 @@
   Pinta, imv, background, print and corrections) are not offered for one.
   Convert · resize still makes a JPEG or PNG beside it. Raws are never written.
 - The Arch package depends on `libraw`, so raws open without extra setup.
+- Camera RAW tiles show their format, and Develop opens an installed darktable,
+  RawTherapee or ART. The viewer shortcut is `D`.
 
 ## 1.12.0
 

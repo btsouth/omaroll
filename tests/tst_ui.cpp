@@ -834,7 +834,7 @@ private slots:
             captures.insert(i, { path: "/thumbnail-test/" + (2000 + i) + ".png", fileName: "",
                                  kindLabel: "", timeLabel: "", sizeLabel: "", isVideo: false,
                                  isDocument: false, favorite: false, rating: 0, hidden: false,
-                                 stamp: 1, ocrSnippet: "", caption: "" })
+                                 stamp: 1, ocrSnippet: "", caption: "", rawFormat: "" })
           }
         }
         function removeRowAbove() { captures.remove(0, 2) }
@@ -847,7 +847,7 @@ private slots:
               captures.append({ path: "/thumbnail-test/" + i + ".png", fileName: "",
                                 kindLabel: "", timeLabel: "", sizeLabel: "", isVideo: false,
                                 isDocument: false, favorite: false, rating: 0, hidden: false,
-                                stamp: 1, ocrSnippet: "", caption: "" })
+                                stamp: 1, ocrSnippet: "", caption: "", rawFormat: "" })
             }
           }
         }

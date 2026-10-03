@@ -24,6 +24,9 @@ Item {
     property bool selectionMode: false
     property string ocrSnippet: ""
     property string caption: ""
+    // The camera format of a RAW file, so it reads apart from the JPEG the
+    // camera wrote beside it.
+    property string rawFormat: ""
     property bool thumbnailReady: false
     property bool thumbnailLayoutReady: false
     property string readyPath: ""
@@ -273,7 +276,29 @@ Item {
         }
 
         // Kind marker. A recording needs to be tellable from a screenshot at a
-        // glance, before any text is read.
+        // glance, before any text is read, and a RAW file from its JPEG.
+        Rectangle {
+            objectName: "rawBadge"
+            anchors.top: parent.top
+            anchors.right: parent.right
+            anchors.margins: 8
+            visible: root.rawFormat !== ""
+            width: rawLabel.implicitWidth + 12
+            height: rawLabel.implicitHeight + 6
+            radius: 3
+            color: Qt.rgba(0, 0, 0, 0.55)
+
+            Text {
+                id: rawLabel
+                anchors.centerIn: parent
+                text: root.rawFormat
+                font.family: Theme.fontFamily
+                font.pixelSize: 10
+                font.weight: Font.DemiBold
+                color: "#ffffff"
+            }
+        }
+
         Rectangle {
             anchors.top: parent.top
             anchors.right: parent.right

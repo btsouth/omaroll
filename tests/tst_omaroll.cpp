@@ -4803,6 +4803,10 @@ private slots:
       QVERIFY2(registry.appliesToKind(id, false, false, QStringLiteral("/tmp/DSC00042.JPG")),
                qPrintable(id));
     }
+    QVERIFY(offered.contains(QStringLiteral("develop")));
+    QVERIFY(registry.appliesToKind(QStringLiteral("develop"), false, false, raw));
+    QVERIFY(!registry.appliesToKind(QStringLiteral("develop"), false, false,
+                                  QStringLiteral("/tmp/DSC00042.JPG")));
     for (const QString& id :
          {QStringLiteral("matte"), QStringLiteral("compare"), QStringLiteral("export"),
           QStringLiteral("copy"), QStringLiteral("send"), QStringLiteral("files"),

@@ -275,7 +275,10 @@ is installed. Thumbnails, the library and the viewer show the camera's embedded
 JPEG, turned upright, which most cameras write at full size; a raw without one
 gets a quick half-size decode instead. The viewer demosaics the raw only when
 the preview would be shown larger than it is.
-Raws are never written: annotation, recognition, external editors, background,
+RAW tiles show their camera format. Develop opens an installed darktable,
+RawTherapee or ART; `D` does the same in the viewer. The library shows an install
+hint when none is available.
+Raws are never written: annotation, recognition, ordinary image editors, background,
 print and corrections are not offered for them, and Convert · resize makes a
 JPEG or PNG beside the raw instead.
 
