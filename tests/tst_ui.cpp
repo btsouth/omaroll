@@ -3186,9 +3186,11 @@ private slots:
     QCOMPARE(editors->customCommand(), QString());
     QQuickItem* makeDefault = item("editorChooserDefault_custom");
     QTRY_VERIFY(makeDefault->isEnabled());
+    QCOMPARE(chooser->property("hint").toString(), QString());
     click(makeDefault);
     QCOMPARE(editors->customCommand(), saved);
     QCOMPARE(editors->preferredId(), QStringLiteral("custom"));
+    QCOMPARE(chooser->property("hint").toString(), QString());
     QTest::keyClick(m_window, Qt::Key_Escape);
     QTRY_VERIFY(!chooser->property("visible").toBool());
     for (const QString& id : {QStringLiteral("develop"), QStringLiteral("choose-editor")}) {

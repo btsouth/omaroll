@@ -33,6 +33,7 @@ Popup {
         return false
     }
     readonly property string hint: Editors.message !== ""
+                                      && !(Editors.missingEditors && root.hasAvailable)
                                       ? Editors.message
                                       : (root.hasAvailable ? ""
                                                            : "No RAW editor is installed. Install darktable or RawTherapee, or set a custom command.")

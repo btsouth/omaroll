@@ -181,11 +181,12 @@ void ExternalEditors::setRequestedPath(const QString& path) {
   emit requestedPathChanged();
 }
 
-void ExternalEditors::setMessage(const QString& message) {
-  if (m_message == message) {
+void ExternalEditors::setMessage(const QString& message, bool missingEditors) {
+  if (m_message == message && m_missingEditors == missingEditors) {
     return;
   }
   m_message = message;
+  m_missingEditors = missingEditors;
   emit messageChanged();
 }
 
@@ -204,7 +205,7 @@ void ExternalEditors::showChooser(const QString& path) {
   setRequestedPath(path);
   if (firstInstalledId().isEmpty() && !available(QString::fromLatin1(kCustomId))) {
     setMessage(u"No RAW editor is installed. Install darktable or RawTherapee, or set a custom "
-               u"command."_s);
+               u"command."_s, true);
   } else {
     setMessage({});
   }

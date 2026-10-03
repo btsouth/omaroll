@@ -24,6 +24,7 @@ class ExternalEditors final : public QObject {
   Q_PROPERTY(bool alwaysChoose READ alwaysChoose WRITE setAlwaysChoose NOTIFY preferencesChanged)
   Q_PROPERTY(QString requestedPath READ requestedPath NOTIFY requestedPathChanged)
   Q_PROPERTY(QString message READ message NOTIFY messageChanged)
+  Q_PROPERTY(bool missingEditors READ missingEditors NOTIFY messageChanged)
 
 public:
   explicit ExternalEditors(ActionLauncher* launcher, QObject* parent = nullptr);
@@ -45,6 +46,7 @@ public:
 
   [[nodiscard]] QString requestedPath() const { return m_requestedPath; }
   [[nodiscard]] QString message() const { return m_message; }
+  [[nodiscard]] bool missingEditors() const { return m_missingEditors; }
 
   // Opens through the saved preference or the first installed developer. With
   // alwaysChoose, and when no preference is usable, this asks for the dialog.
@@ -80,7 +82,7 @@ private:
   [[nodiscard]] bool parseCustomCommand(const QString& command, QString* program,
                                         QStringList* arguments) const;
   void setRequestedPath(const QString& path);
-  void setMessage(const QString& message);
+  void setMessage(const QString& message, bool missingEditors = false);
   void reject(const QString& message);
 
   ActionLauncher* m_launcher = nullptr;
@@ -90,4 +92,5 @@ private:
   bool m_alwaysChoose = false;
   QString m_requestedPath;
   QString m_message;
+  bool m_missingEditors = false;
 };
