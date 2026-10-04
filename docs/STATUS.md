@@ -2,8 +2,8 @@
 
 ## Latest release
 
-[Omaroll 1.13.0](https://github.com/btsouth/omaroll/releases/tag/v1.13.0), dated
-3 October 2026. See the [changelog](../CHANGELOG.md#1130) for what it includes.
+[Omaroll 1.14.0](https://github.com/btsouth/omaroll/releases/tag/v1.14.0), dated
+3 October 2026. See the [changelog](../CHANGELOG.md#1140) for what it includes.
 
 The release provides an x86_64 Arch package, source archive and PKGBUILD, with
 checksums and signed build provenance. Installation and verification commands
@@ -11,11 +11,16 @@ are in the [README](../README.md#install-or-update).
 
 ## Current work
 
-Version 1.13.0 adds camera RAW viewing, RAW/JPEG companions, saved editor choices,
-folder pins, and Open in Omaframe for existing images. Right-click menus use
-captured file selections, QR copying appears after detection, and containing
-folders open in the default file manager. Clipboard and print actions report
-completion or failure. Corrections and Omaframe exports remain copies.
+Version 1.14.0 improves photo and video startup, adds video media-key controls
+and more video file associations, and brings Open with and navigation shortcuts
+to both viewers. Show in file manager selects the current file when the default
+folder handler supports it. Shift+Delete removes files permanently, with
+confirmation on by default and an explicit Settings opt-out. Ordinary Delete
+continues to use Trash.
+
+Folder sidebar request [#82](https://github.com/btsouth/omaroll/issues/82) awaits
+workflow clarification. [#80](https://github.com/btsouth/omaroll/issues/80) stays
+open for the reporter's version and file-manager setup.
 
 Use the [roadmap](ROADMAP.md) for future work and open decisions.
 

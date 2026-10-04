@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 1.14.0
+
+Photos and videos open faster, and videos work with media keys and the shell's
+player controls. This release also brings the application chooser and more
+navigation shortcuts to both viewers.
+
+### Added
+
+- Media keys and the desktop player panel control Omaroll videos through MPRIS,
+  including play/pause, seeking and track navigation.
+- Additional video types sent by Omarchy's file associations open in Omaroll,
+  including 3G2, ASF and OGM. Audio-only Ogg associations stay unchanged.
 - `Shift+Delete` permanently deletes the current file or checked library files.
   Confirmation is on by default, with an explicit opt-out in Settings.
   Regular `Delete` still uses recoverable Trash.
@@ -14,6 +26,15 @@
 - Mouse back and forward buttons navigate files in both viewers.
 - `1` toggles fit and actual size in both image viewers; from a custom zoom,
   it still goes to actual size first. `0` still fits.
+
+### Changed
+
+- Startup uses the desktop portal theme instead of loading GTK3.
+- Opening a video shows its poster while the player starts. Linux playback
+  avoids Qt's broad hardware-device scan, uses guarded CUDA/VAAPI discovery,
+  and retains software fallback and explicit user overrides.
+
+[Install or update](https://github.com/btsouth/omaroll#install-or-update).
 
 ## 1.13.0
 
