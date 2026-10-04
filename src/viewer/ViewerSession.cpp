@@ -61,6 +61,8 @@ void ViewerSession::watchVideoStartup(QObject* target) {
 }
 
 ViewerSession::ViewerSession(QObject* parent) : QObject(parent) {
+  connect(this, &ViewerSession::currentChanged, this, &ViewerSession::deletionPathChanged);
+  connect(this, &ViewerSession::sequenceRevisionChanged, this, &ViewerSession::deletionPathChanged);
   // A burst of writes (a download landing, a batch export) settles before the
   // folder is read again.
   m_relist.setSingleShot(true);
@@ -151,6 +153,8 @@ void ViewerSession::open(const QStringList& paths) {
   }
   ++m_generation;
   m_folderPaths.clear();
+  m_deletionPaths.clear();
+  m_explicitEntryPaths.clear();
   m_companions.clear();
   m_listingPending = false;
   m_relist.stop();
@@ -170,9 +174,19 @@ void ViewerSession::open(const QStringList& paths) {
   startListing();
 }
 
+void ViewerSession::setDeletionPaths(const QHash<QString, QString>& entryPaths) {
+  for (auto it = entryPaths.cbegin(); it != entryPaths.cend(); ++it) {
+    m_explicitEntryPaths.insert(it.key(), it.value());
+  }
+  ++m_sequenceRevision;
+  emit sequenceRevisionChanged();
+}
+
 void ViewerSession::clear() {
   ++m_generation;
   m_folderPaths.clear();
+  m_deletionPaths.clear();
+  m_explicitEntryPaths.clear();
   m_companions.clear();
   m_listingPending = false;
   m_relist.stop();
@@ -294,6 +308,8 @@ bool ViewerSession::neighbourIsAnimated(int offset) const {
 }
 
 void ViewerSession::forget(const QString& path) {
+  m_deletionPaths.remove(path);
+  m_explicitEntryPaths.remove(path);
   if (!m_selection && m_folderPaths.contains(path)) {
     ++m_generation; // A listing started before Trash must not put it back.
     const QString current = this->path();
@@ -346,7 +362,8 @@ bool ViewerSession::canOpen(const QStringList& files) {
   return !files.isEmpty() && std::all_of(files.cbegin(), files.cend(), &ViewerSession::isViewable);
 }
 
-QStringList ViewerSession::siblings(const QString& folder, const QString& keep) {
+QStringList ViewerSession::siblings(const QString& folder, const QString& keep,
+                                   QHash<QString, QString>* entryPaths) {
   const QDir directory(folder);
   const QString kept = QFileInfo(keep).fileName();
   const bool keepHere = !keep.isEmpty() && QFileInfo(keep).absolutePath() == directory.absolutePath();
@@ -391,6 +408,7 @@ QStringList ViewerSession::siblings(const QString& folder, const QString& keep) 
     if (!seen.contains(path)) {
       seen.insert(path);
       paths.append(path);
+      if (entryPaths) entryPaths->insert(path, file.absoluteFilePath());
     }
   }
   return paths;
@@ -593,7 +611,7 @@ void ViewerSession::startListing() {
     ListingResult result;
     result.generation = generation;
     result.request = request;
-    result.paths = siblings(folder, keep);
+    result.paths = siblings(folder, keep, &result.entryPaths);
     result.companions = RawJpegPairs::find(result.paths);
     return result;
   }));
@@ -612,6 +630,7 @@ void ViewerSession::applyListing(ListingResult listed) {
     return;
   }
   m_folderPaths = std::move(listed.paths);
+  m_deletionPaths = std::move(listed.entryPaths);
   m_companions = std::move(listed.companions);
   rebuildFolderSequence(m_folderPaths.contains(current) ? current : previousCompanion);
 }

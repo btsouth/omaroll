@@ -764,6 +764,12 @@ QString CaptureFilterModel::pathAt(int row) const {
   return data(index(row, 0), CaptureRoles::PathRole).toString();
 }
 
+QString CaptureFilterModel::deletionPathAt(int row) const {
+  const auto source = mapToSource(index(row, 0));
+  return source.isValid() ? static_cast<const CaptureModel*>(sourceModel())->deletionPathAt(source.row())
+                          : QString();
+}
+
 QString CaptureFilterModel::companionPathAt(int row) const {
   return data(index(row, 0), CaptureModel::CompanionPathRole).toString();
 }

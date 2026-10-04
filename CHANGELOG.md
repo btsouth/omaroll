@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `Shift+Delete` permanently deletes the current file or checked library files.
+  Confirmation is on by default, with an explicit opt-out in Settings.
+  Regular `Delete` still uses recoverable Trash.
 - Open with offers the desktop application chooser for the current file,
   without changing MIME defaults. The menu and `Ctrl+O` work in both viewers
   and the library grid.

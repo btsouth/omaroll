@@ -37,9 +37,14 @@ public:
   // than failing after the click.
   Q_INVOKABLE bool handlerAvailable(const QString& program) const;
 
-  // XDG trash, never unlink. A capture the user deletes by accident has to be
-  // recoverable from their file manager like anything else they delete.
+  // Ordinary Delete uses recoverable XDG Trash.
   Q_INVOKABLE bool moveToTrash(const QString& path);
+  // Explicit permanent deletion removes only this file or symlink, never a directory tree.
+  Q_INVOKABLE bool deletePermanently(const QString& path);
+  // Bind confirmation to the parent directory and entry, preserving a final symlink.
+  Q_INVOKABLE QVariantMap capturePermanentDelete(const QString& path,
+                                                 const QString& expectedMediaPath = {});
+  Q_INVOKABLE bool deleteCapturedPermanently(const QVariantMap& target);
 
   // Rename in place without letting the user accidentally change the media
   // extension or overwrite another file. The map contains ok, path, fileName,

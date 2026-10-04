@@ -416,6 +416,7 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots, const std::a
 
         CaptureRecord record;
         record.path = canonicalFile;
+        record.entryPath = entry.absoluteFilePath();
         record.fileName = name;
         record.bytes = entry.size();
         record.modified = entry.lastModified().toMSecsSinceEpoch();

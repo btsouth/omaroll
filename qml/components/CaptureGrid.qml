@@ -356,6 +356,12 @@ FocusScope {
                 }
                 break
             case Qt.Key_Delete:
+                // Shift+Delete belongs to the non-repeating permanent-delete
+                // shortcut. A repeat rejected there must not turn into Trash.
+                if (event.modifiers & Qt.ShiftModifier) {
+                    event.accepted = true
+                    break
+                }
                 if (grid.currentIndex >= 0) {
                     root.deleteRequested(Captures.pathAt(grid.currentIndex))
                     event.accepted = true

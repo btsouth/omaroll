@@ -83,10 +83,12 @@ ViewerWindows::~ViewerWindows() {
   }
 }
 
-QQuickWindow* ViewerWindows::open(const QStringList& files) {
+QQuickWindow* ViewerWindows::open(const QStringList& files, const QHash<QString, QString>& entryPaths) {
   for (const auto& viewer : m_viewers) {
     if (viewer->shows(files)) {
-      show(*viewer, {}, false);
+      QHash<QString, QString> requestedEntries;
+      for (const auto& file : files) requestedEntries.insert(file, entryPaths.value(file, file));
+      show(*viewer, {}, false, requestedEntries);
       return viewer->window;
     }
   }
@@ -102,7 +104,7 @@ QQuickWindow* ViewerWindows::open(const QStringList& files) {
   // there already; the first one alone floats centred as before.
   const bool others = !visibleWindows().isEmpty();
   const HyprlandPlacement::Plan plan = others ? m_query() : HyprlandPlacement::Plan{};
-  show(*viewer, files, plan.tileNew());
+  show(*viewer, files, plan.tileNew(), entryPaths);
   HyprlandPlacement::tile(plan.floating);
   if (others) {
     // Two opens in quick succession can each look before the other's window
@@ -160,7 +162,9 @@ ViewerWindows::Viewer* ViewerWindows::create() {
   QQuickWindow* window = created->window;
   created->connections = {
       connect(&created->session, &ViewerSession::libraryRequested, this,
-              [this, window](const QString& path) { emit libraryRequested(path, window); }),
+              [this, created, window](const QString&) {
+                emit libraryRequested(created->session.deletionPath(), window);
+              }),
       // Stepping onto or off a video moves the sound.
       connect(&created->session, &ViewerSession::currentChanged, this,
               &ViewerWindows::updateFrontmost),
@@ -182,11 +186,13 @@ ViewerWindows::Viewer* ViewerWindows::create() {
   return created;
 }
 
-void ViewerWindows::show(Viewer& viewer, const QStringList& files, bool tiled) {
+void ViewerWindows::show(Viewer& viewer, const QStringList& files, bool tiled,
+                         const QHash<QString, QString>& entryPaths) {
   QQuickWindow* window = viewer.window;
   if (!files.isEmpty()) {
     viewer.session.open(files);
   }
+  viewer.session.setDeletionPaths(entryPaths);
   if (!window->isVisible()) {
     // Hyprland's float rule matches a viewer's title when the window maps.
     // Mapping under the library's plain title leaves this one tiled; its own

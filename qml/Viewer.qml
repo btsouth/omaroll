@@ -134,7 +134,7 @@ ApplicationWindow {
                                        && root.sourceWidth > 0
 
     readonly property bool chromeShown: root.chromePinned || root.pointerActive || root.infoOpen
-                                        || actionMenu.visible || confirm.visible || editorChooser.visible
+                                        || actionMenu.visible || confirm.visible || permanentConfirm.visible || editorChooser.visible
                                         || header.hovered || transport.hovered
                                         || previousButton.hovered || nextButton.hovered
                                         || toolbar.hovered || filmstrip.hovered
@@ -497,6 +497,31 @@ ApplicationWindow {
         confirm.open()
     }
 
+    function requestPermanentDelete() {
+        if (Session.path === "" || confirm.visible || permanentConfirm.visible || actionMenu.visible
+                || editorChooser.visible) return
+        const entry = Session.deletionPath
+        const viewedPath = Session.path
+        const target = Actions.capturePermanentDelete(entry, viewedPath)
+        if (target.parent === undefined) return
+        if (!Settings.confirmPermanentDelete) {
+            root.deletePermanently(target, viewedPath)
+            return
+        }
+        permanentConfirm.path = entry
+        permanentConfirm.target = target
+        permanentConfirm.viewedPath = viewedPath
+        permanentConfirm.detail = "This skips Trash and cannot be undone.\n\n" + entry
+        permanentConfirm.open()
+    }
+
+    function deletePermanently(target, viewedPath) {
+        if (Actions.deleteCapturedPermanently(target)) {
+            Session.forget(viewedPath)
+            root.say("Permanently deleted")
+        }
+    }
+
     // The keys a viewer is expected to have, and what the menu shows beside
     // each entry. They are this window's own: F is full screen here, as in
     // every player, rather than the library's Open containing folder.
@@ -747,6 +772,7 @@ ApplicationWindow {
         }
         root.infoOpen = false
         confirm.close()
+        permanentConfirm.close()
         actionMenu.close()
         Session.clear()
     }
@@ -1194,7 +1220,7 @@ ApplicationWindow {
                 objectName: "viewerSideButtonNavigation"
                 anchors.fill: parent
                 acceptedButtons: Qt.BackButton | Qt.ForwardButton
-                enabled: Session.count > 1 && !actionMenu.visible && !confirm.visible
+                enabled: Session.count > 1 && !actionMenu.visible && !confirm.visible && !permanentConfirm.visible
                          && !editorChooser.visible
                 onClicked: function (mouse) {
                     root.step(mouse.button === Qt.BackButton ? -1 : 1)
@@ -1708,6 +1734,24 @@ ApplicationWindow {
         onVisibleChanged: if (!visible) keys.forceActiveFocus()
     }
 
+    ConfirmSheet {
+        id: permanentConfirm
+        objectName: "viewerPermanentConfirm"
+        property var target: ({})
+        property string path: ""
+        property string viewedPath: ""
+        title: "Permanently delete this file?"
+        confirmLabel: "Delete permanently"
+        onAccepted: {
+            const target = permanentConfirm.target
+            const viewedPath = permanentConfirm.viewedPath
+            permanentConfirm.path = ""
+            permanentConfirm.target = ({})
+            root.deletePermanently(target, viewedPath)
+        }
+        onVisibleChanged: if (!visible) keys.forceActiveFocus()
+    }
+
     // The keyboard. One handler rather than window shortcuts: shifted pairs
     // were ambiguous as Shortcuts on a real keyboard, and a single place keeps
     // the medium-specific meanings readable.
@@ -1853,7 +1897,11 @@ ApplicationWindow {
                     Session.openInLibrary()
                     break
                 case Qt.Key_Delete:
-                    root.requestTrash()
+                    if (shift) {
+                        if (!event.isAutoRepeat) root.requestPermanentDelete()
+                    } else {
+                        root.requestTrash()
+                    }
                     break
                 case Qt.Key_V:
                     root.toggleFavorite()

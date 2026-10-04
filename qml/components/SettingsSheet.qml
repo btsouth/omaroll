@@ -164,7 +164,7 @@ Item {
                 width: parent.width
                 wrapMode: Text.WordWrap
                 text: "Omaroll reads the folders Omarchy already writes captures to. "
-                      + "It changes a file only when you explicitly rename or trash it."
+                      + "Rename and deletion happen only when you request them."
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
                 color: Theme.mutedText
@@ -380,6 +380,37 @@ Item {
                 width: parent.width
                 height: 1
                 color: root.shade(Theme.foreground, 0.12)
+            }
+
+            Row {
+                width: parent.width
+                spacing: 12
+                Column {
+                    width: parent.width - permanentDeleteConfirmation.width - 12
+                    spacing: 2
+                    Text {
+                        text: "Confirm permanent deletion"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 12
+                        color: Theme.foreground
+                    }
+                    Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        text: "Shift+Delete skips Trash and cannot be undone. Off deletes immediately. Regular Delete still uses Trash."
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 10
+                        color: Theme.mutedText
+                    }
+                }
+                PillButton {
+                    id: permanentDeleteConfirmation
+                    objectName: "permanentDeleteConfirmation"
+                    anchors.verticalCenter: parent.verticalCenter
+                    label: Settings.confirmPermanentDelete ? "On" : "Off"
+                    active: Settings.confirmPermanentDelete
+                    onClicked: Settings.confirmPermanentDelete = !Settings.confirmPermanentDelete
+                }
             }
 
             Row {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QList>
+#include <QHash>
 #include <QObject>
 #include <QStringList>
 
@@ -29,7 +30,7 @@ public:
 
   // Shows files in a viewer and returns its window, or nullptr when the QML
   // could not be loaded (the errors are already printed).
-  QQuickWindow* open(const QStringList& files);
+  QQuickWindow* open(const QStringList& files, const QHash<QString, QString>& entryPaths = {});
 
   // Visible viewers, oldest first.
   [[nodiscard]] QList<QQuickWindow*> visibleWindows() const;
@@ -47,13 +48,15 @@ public:
   void setPlacementQuery(PlacementQuery query) { m_query = std::move(query); }
 
 signals:
+  // The source entry chosen by the user, before media-path resolution.
   void libraryRequested(const QString& path, QQuickWindow* viewer);
 
 private:
   struct Viewer;
 
   Viewer* create();
-  void show(Viewer& viewer, const QStringList& files, bool tiled);
+  void show(Viewer& viewer, const QStringList& files, bool tiled,
+            const QHash<QString, QString>& entryPaths = {});
   void activated(Viewer& viewer);
   void hidden();
   void updateFrontmost();

@@ -44,6 +44,7 @@ constexpr auto kTileWidth = "view/tileWidth";
 constexpr int kMinimumTileWidth = 160;
 constexpr int kMaximumTileWidth = 480;
 constexpr auto kSlideshowVideos = "slideshow/includeVideos";
+constexpr auto kConfirmPermanentDelete = "actions/confirmPermanentDelete";
 constexpr auto kSlideshowInterval = "slideshow/intervalSeconds";
 constexpr auto kSlideshowShuffle = "slideshow/shuffle";
 constexpr auto kViewerFilmstrip = "viewer/filmstrip";
@@ -211,6 +212,7 @@ AppSettings::AppSettings(QObject* parent)
   m_tileWidth =
       qBound(kMinimumTileWidth, m_settings.value(kTileWidth, 240).toInt(), kMaximumTileWidth);
   m_slideshowVideos = m_settings.value(kSlideshowVideos, false).toBool();
+  m_confirmPermanentDelete = m_settings.value(kConfirmPermanentDelete, true).toBool();
   m_slideshowIntervalSeconds = qBound(2, m_settings.value(kSlideshowInterval, 4).toInt(), 20);
   m_slideshowShuffle = m_settings.value(kSlideshowShuffle, false).toBool();
   m_viewerFilmstrip = m_settings.value(kViewerFilmstrip, false).toBool();
@@ -453,6 +455,13 @@ void AppSettings::setSlideshowVideos(bool value) {
   m_slideshowVideos = value;
   m_settings.setValue(kSlideshowVideos, value);
   emit slideshowVideosChanged();
+}
+
+void AppSettings::setConfirmPermanentDelete(bool value) {
+  if (m_confirmPermanentDelete == value) return;
+  m_confirmPermanentDelete = value;
+  m_settings.setValue(kConfirmPermanentDelete, value);
+  emit confirmPermanentDeleteChanged();
 }
 
 void AppSettings::setSlideshowIntervalSeconds(int seconds) {
