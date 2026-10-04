@@ -18,6 +18,13 @@
 #include <QUrl>
 #include <QTimer>
 
+#include <QScopeGuard>
+
+#include <cerrno>
+#include <cstring>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <memory>
 
 using namespace Qt::StringLiterals;
@@ -483,22 +490,79 @@ bool ActionLauncher::moveToTrash(const QString& path) {
   return true;
 }
 
-bool ActionLauncher::deletePermanently(const QString& path) {
+QVariantMap ActionLauncher::capturePermanentDelete(const QString& path,
+                                                   const QString& expectedMediaPath) {
   const QFileInfo info(path);
-  if (!info.exists() && !info.isSymLink()) {
+  if (!expectedMediaPath.isEmpty() && info.canonicalFilePath() != expectedMediaPath) {
+    emit failed(u"That file changed. Try opening it again before deleting it"_s);
+    return {};
+  }
+  const QString parent = info.dir().canonicalPath();
+  const QByteArray name = QFile::encodeName(info.fileName());
+  const int directory = ::open(QFile::encodeName(parent).constData(),
+                                O_PATH | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+  if (directory < 0) {
+    emit failed(u"Could not access this file's folder"_s);
+    return {};
+  }
+  const auto closeDirectory = qScopeGuard([directory] { ::close(directory); });
+  struct stat parentInfo {}, entry {};
+  if (::fstat(directory, &parentInfo) != 0 ||
+      ::fstatat(directory, name.constData(), &entry, AT_SYMLINK_NOFOLLOW) != 0) {
     emit failed(u"That file is no longer there"_s);
+    return {};
+  }
+  if (!S_ISREG(entry.st_mode) && !S_ISLNK(entry.st_mode)) {
+    emit failed(u"Only files can be permanently deleted"_s);
+    return {};
+  }
+  // Strings preserve 64-bit filesystem identities across QML's JS numbers.
+  return {{u"parent"_s, parent}, {u"name"_s, info.fileName()},
+          {u"parentDevice"_s, QString::number(qulonglong(parentInfo.st_dev))},
+          {u"parentInode"_s, QString::number(qulonglong(parentInfo.st_ino))},
+          {u"device"_s, QString::number(qulonglong(entry.st_dev))},
+          {u"inode"_s, QString::number(qulonglong(entry.st_ino))}};
+}
+
+bool ActionLauncher::deleteCapturedPermanently(const QVariantMap& target) {
+  if (target.isEmpty()) return false;
+  const QString parent = target.value(u"parent"_s).toString();
+  const QString name = target.value(u"name"_s).toString();
+  if (parent.isEmpty() || name.isEmpty() || name.contains(QLatin1Char('/')) ||
+      name == u"." || name == u"..") return false;
+  const int directory = ::open(QFile::encodeName(parent).constData(),
+                                O_PATH | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+  if (directory < 0) {
+    emit failed(u"That file's folder changed. Try again before deleting it"_s);
     return false;
   }
-  if (!info.isFile() && !info.isSymLink()) {
+  const auto closeDirectory = qScopeGuard([directory] { ::close(directory); });
+  struct stat parentInfo {}, entry {};
+  const QByteArray encodedName = QFile::encodeName(name);
+  if (::fstat(directory, &parentInfo) != 0 ||
+      QString::number(qulonglong(parentInfo.st_dev)) != target.value(u"parentDevice"_s).toString() ||
+      QString::number(qulonglong(parentInfo.st_ino)) != target.value(u"parentInode"_s).toString() ||
+      ::fstatat(directory, encodedName.constData(), &entry, AT_SYMLINK_NOFOLLOW) != 0 ||
+      QString::number(qulonglong(entry.st_dev)) != target.value(u"device"_s).toString() ||
+      QString::number(qulonglong(entry.st_ino)) != target.value(u"inode"_s).toString()) {
+    emit failed(u"That file or its folder changed. Try again before deleting it"_s);
+    return false;
+  }
+  if (!S_ISREG(entry.st_mode) && !S_ISLNK(entry.st_mode)) {
     emit failed(u"Only files can be permanently deleted"_s);
     return false;
   }
-  QFile file(path);
-  if (!file.remove()) {
-    emit failed(u"Could not permanently delete this file: %1"_s.arg(file.errorString()));
+  // Resolve only the basename through the validated directory descriptor.
+  // Changing an ancestor symlink after open cannot redirect this removal.
+  if (::unlinkat(directory, encodedName.constData(), 0) != 0) {
+    emit failed(u"Could not permanently delete this file: %1"_s.arg(QString::fromLocal8Bit(std::strerror(errno))));
     return false;
   }
   return true;
+}
+
+bool ActionLauncher::deletePermanently(const QString& path) {
+  return deleteCapturedPermanently(capturePermanentDelete(path));
 }
 
 QVariantMap ActionLauncher::renameFile(const QString& path, const QString& baseName) {

@@ -603,7 +603,9 @@ ApplicationWindow {
             const entry = Captures.deletionPathAt(Captures.rowOf(path))
             if (entry === "" || seen.has(entry)) continue
             seen.add(entry)
-            targets.push({path: entry, viewedPath: path})
+            const deletion = Actions.capturePermanentDelete(entry, path)
+            if (deletion.parent === undefined) return
+            targets.push({path: entry, viewedPath: path, deletion: deletion})
         }
         if (targets.length === 0) return
         if (!Settings.confirmPermanentDelete) {
@@ -624,7 +626,7 @@ ApplicationWindow {
         let deleted = 0
         const failed = []
         for (const target of paths) {
-            if (Actions.deletePermanently(target.path)) deleted++
+            if (Actions.deleteCapturedPermanently(target.deletion)) deleted++
             else failed.push(target.viewedPath)
         }
         if (deleted > 0) {

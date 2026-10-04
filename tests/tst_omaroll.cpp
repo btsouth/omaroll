@@ -6176,6 +6176,61 @@ private slots:
     QCOMPARE(failed.size(), 2);
   }
 
+  void permanentDeleteAnchorsTheParentAndRefusesReplacedEntries() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString first = dir.filePath(QStringLiteral("first"));
+    const QString second = dir.filePath(QStringLiteral("second"));
+    const QString parentAlias = dir.filePath(QStringLiteral("parent-alias"));
+    QVERIFY(QDir().mkpath(first));
+    QVERIFY(QDir().mkpath(second));
+    for (const QString& parent : {first, second}) {
+      QFile file(parent + QStringLiteral("/same.jpg"));
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("disposable");
+    }
+    QVERIFY(QFile::link(first, parentAlias));
+    ActionLauncher launcher;
+    const auto captured = launcher.capturePermanentDelete(parentAlias + QStringLiteral("/same.jpg"));
+    QVERIFY(!captured.isEmpty());
+    QVERIFY(QFile::remove(parentAlias));
+    QVERIFY(QFile::link(second, parentAlias));
+    QVERIFY(launcher.deleteCapturedPermanently(captured));
+    QVERIFY(!QFile::exists(first + QStringLiteral("/same.jpg")));
+    QVERIFY(QFile::exists(second + QStringLiteral("/same.jpg")));
+
+    const QString path = second + QStringLiteral("/same.jpg");
+    const auto replacement = launcher.capturePermanentDelete(path);
+    QVERIFY(QFile::rename(path, second + QStringLiteral("/kept.jpg")));
+    QVERIFY(QFile::copy(second + QStringLiteral("/kept.jpg"), path));
+    QVERIFY(!launcher.deleteCapturedPermanently(replacement));
+    QVERIFY(QFile::exists(path));
+
+    const auto movedParent = launcher.capturePermanentDelete(path);
+    QVERIFY(QDir().rename(second, dir.filePath(QStringLiteral("moved"))));
+    QVERIFY(QFile::link(first, second));
+    QVERIFY(!launcher.deleteCapturedPermanently(movedParent));
+    QVERIFY(QFile::exists(dir.filePath(QStringLiteral("moved/same.jpg"))));
+
+    // An intermediate ancestor can redirect open even with O_NOFOLLOW on the
+    // final parent. A hard-linked entry makes the parent identity decisive.
+    const QString ancestor = dir.filePath(QStringLiteral("ancestor"));
+    const QString other = dir.filePath(QStringLiteral("other"));
+    QVERIFY(QDir().mkpath(ancestor + QStringLiteral("/nested")));
+    QVERIFY(QDir().mkpath(other + QStringLiteral("/nested")));
+    const QString original = ancestor + QStringLiteral("/nested/same.jpg");
+    const QString hardLink = other + QStringLiteral("/nested/same.jpg");
+    QVERIFY(QFile::copy(dir.filePath(QStringLiteral("moved/kept.jpg")), original));
+    QCOMPARE(::link(QFile::encodeName(original).constData(), QFile::encodeName(hardLink).constData()), 0);
+    const auto intermediate = launcher.capturePermanentDelete(original);
+    QVERIFY(!intermediate.isEmpty());
+    QVERIFY(QDir().rename(ancestor, dir.filePath(QStringLiteral("ancestor-kept"))));
+    QVERIFY(QFile::link(other, ancestor));
+    QVERIFY(!launcher.deleteCapturedPermanently(intermediate));
+    QVERIFY(QFile::exists(hardLink));
+    QVERIFY(QFile::exists(dir.filePath(QStringLiteral("ancestor-kept/nested/same.jpg"))));
+  }
+
   // --- Thumbnails -------------------------------------------------------
 
   void thumbnailCoversTheTileWithoutUpscaling() {

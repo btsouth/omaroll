@@ -500,20 +500,23 @@ ApplicationWindow {
     function requestPermanentDelete() {
         if (Session.path === "" || confirm.visible || permanentConfirm.visible || actionMenu.visible
                 || editorChooser.visible) return
-        const target = Session.deletionPath
+        const entry = Session.deletionPath
         const viewedPath = Session.path
+        const target = Actions.capturePermanentDelete(entry, viewedPath)
+        if (target.parent === undefined) return
         if (!Settings.confirmPermanentDelete) {
             root.deletePermanently(target, viewedPath)
             return
         }
-        permanentConfirm.path = target
+        permanentConfirm.path = entry
+        permanentConfirm.target = target
         permanentConfirm.viewedPath = viewedPath
-        permanentConfirm.detail = "This skips Trash and cannot be undone.\n\n" + target
+        permanentConfirm.detail = "This skips Trash and cannot be undone.\n\n" + entry
         permanentConfirm.open()
     }
 
-    function deletePermanently(path, viewedPath) {
-        if (path !== "" && Actions.deletePermanently(path)) {
+    function deletePermanently(target, viewedPath) {
+        if (Actions.deleteCapturedPermanently(target)) {
             Session.forget(viewedPath)
             root.say("Permanently deleted")
         }
@@ -1734,14 +1737,16 @@ ApplicationWindow {
     ConfirmSheet {
         id: permanentConfirm
         objectName: "viewerPermanentConfirm"
+        property var target: ({})
         property string path: ""
         property string viewedPath: ""
         title: "Permanently delete this file?"
         confirmLabel: "Delete permanently"
         onAccepted: {
-            const target = permanentConfirm.path
+            const target = permanentConfirm.target
             const viewedPath = permanentConfirm.viewedPath
             permanentConfirm.path = ""
+            permanentConfirm.target = ({})
             root.deletePermanently(target, viewedPath)
         }
         onVisibleChanged: if (!visible) keys.forceActiveFocus()
