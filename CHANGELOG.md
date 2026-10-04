@@ -11,7 +11,7 @@ navigation shortcuts to both viewers.
 ### Added
 
 - Media keys and the desktop player panel control Omaroll videos through MPRIS,
-  including play/pause, seeking and track navigation.
+  including play/pause and seeking. Next/previous controls are not offered.
 - Additional video types sent by Omarchy's file associations open in Omaroll,
   including 3G2, ASF and OGM. Audio-only Ogg associations stay unchanged.
 - `Shift+Delete` permanently deletes the current file or checked library files.
@@ -33,6 +33,9 @@ navigation shortcuts to both viewers.
 - Opening a video shows its poster while the player starts. Linux playback
   avoids Qt's broad hardware-device scan, uses guarded CUDA/VAAPI discovery,
   and retains software fallback and explicit user overrides.
+
+Thanks to @dyedfox for the viewer shortcuts, Open with, file-manager and
+permanent-delete requests.
 
 [Install or update](https://github.com/btsouth/omaroll#install-or-update).
 
