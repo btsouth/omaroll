@@ -6425,6 +6425,11 @@ private slots:
                  "cp -- \"$1\" \"${1%.*}-$3.$2\"\n");
     helper.close();
     QVERIFY(helper.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    QFile clipboard(dir.filePath(QStringLiteral("wl-copy")));
+    QVERIFY(clipboard.open(QIODevice::WriteOnly));
+    clipboard.write("#!/bin/sh\ncat >/dev/null\n");
+    clipboard.close();
+    QVERIFY(clipboard.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
     const QByteArray previousPath = qgetenv("PATH");
     const auto restore = qScopeGuard([&] { qputenv("PATH", previousPath); });
     qputenv("PATH", dir.path().toUtf8() + ':' + previousPath);
