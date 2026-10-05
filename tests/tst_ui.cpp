@@ -746,6 +746,9 @@ private slots:
       QFile::remove(second);
       QFile::remove(firstCopy);
       QFile::remove(secondCopy);
+      m_captures->refresh();
+      QTRY_COMPARE(m_captures->rowOf(firstCopy), -1);
+      QTRY_COMPARE(m_captures->rowOf(secondCopy), -1);
       m_window->resize(1280, 820);
     });
 
@@ -803,6 +806,9 @@ private slots:
     const auto cleanup = qScopeGuard([&] {
       invoke("dismissTopLayer"); QFile::remove(path); QFile::remove(missing);
       QFile::remove(ImageEditor::outputPathFor(missing));
+      m_captures->refresh();
+      QTRY_COMPARE(m_captures->rowOf(path), -1);
+      QTRY_COMPARE(m_captures->rowOf(ImageEditor::outputPathFor(missing)), -1);
     });
     QQuickItem* single = item("correctionSheet");
     perform(QStringLiteral("corrections"), path);
@@ -835,7 +841,11 @@ private slots:
     QCOMPARE(batch->property("failedPaths").value<QJSValue>().toVariant().toStringList(), QStringList{missing});
     QVERIFY(pill(batch, QStringLiteral("Retry failed"))->isVisible());
     QVERIFY(QImage(40, 20, QImage::Format_RGB32).save(missing));
-    click(pill(batch, QStringLiteral("Retry failed")));
+    QSignalSpy retried(m_imageEditor, &ImageEditor::batchFinished);
+    clickSettled(pill(batch, QStringLiteral("Retry failed")));
+    QTRY_COMPARE_WITH_TIMEOUT(retried.size(), 1, 15000);
+    QCOMPARE(retried.first().at(0).toInt(), 1);
+    QCOMPARE(retried.first().at(1).toInt(), 0);
     QTRY_VERIFY_WITH_TIMEOUT(!batch->isVisible(), 15000);
     QVERIFY(QFileInfo::exists(ImageEditor::outputPathFor(missing)));
     QVERIFY(!QFileInfo::exists(ImageEditor::outputPathFor(path)));
@@ -1021,7 +1031,6 @@ private slots:
     QImage source(80, 60, QImage::Format_RGB32);
     source.fill(Qt::red);
     QVERIFY(source.save(path));
-    const int baselineRows = m_captures->rowCount();
     const auto cleanup = qScopeGuard([&] {
       invoke("dismissTopLayer");
       QFile::remove(path);
@@ -1038,9 +1047,7 @@ private slots:
       // The saved copy joined the shared library model. Drop it again before
       // the next test, or pathAt(0) hands it a file that no longer exists.
       QMetaObject::invokeMethod(m_captures, "refresh");
-      for (int waited = 0; waited < 50 && m_captures->rowCount() > baselineRows; ++waited) {
-        QTest::qWait(100);
-      }
+      QTRY_COMPARE(m_captures->rowOf(ImageEditor::outputPathFor(path)), -1);
       m_window->resize(1280, 820);
     });
 
