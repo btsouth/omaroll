@@ -54,7 +54,10 @@ done
 for view in grid detail video ocr document corrections editors pins context-menu selection-menu viewer viewer-video; do
   renders+=("dark $view 560x420")
 done
-renders+=("light document 560x420")
+for view in grid detail settings browser pins selection-menu document; do
+  renders+=("light $view 560x420")
+done
+renders+=("dark settings 560x420" "dark browser 560x420")
 
 jobs="${OMAROLL_RENDER_JOBS:-$(( $(nproc) * 3 ))}"
 failed=0

@@ -136,6 +136,7 @@ Item {
 
         Flickable {
             id: settingsFlickable
+            objectName: "settingsScroll"
             anchors.fill: parent
             anchors.margins: 22
             contentHeight: column.implicitHeight
@@ -145,6 +146,26 @@ Item {
                 id: settingsScrollBar
                 width: 8
                 policy: ScrollBar.AsNeeded
+            }
+
+
+            function revealFocusedControl() {
+                const focused = root.Window.window ? root.Window.window.activeFocusItem : null
+                let ancestor = focused
+                while (ancestor && ancestor !== column) ancestor = ancestor.parent
+                if (!focused || ancestor !== column) return
+                const top = focused.mapToItem(column, 0, 0).y
+                const bottom = top + focused.height
+                const maximum = Math.max(0, contentHeight - height)
+                if (top < contentY) contentY = Math.max(0, top)
+                else if (bottom > contentY + height) contentY = Math.min(maximum, bottom - height)
+            }
+
+            Connections {
+                target: root.Window.window
+                function onActiveFocusItemChanged() {
+                    if (root.visible) Qt.callLater(settingsFlickable.revealFocusedControl)
+                }
             }
 
             Column {
@@ -257,8 +278,10 @@ Item {
 
                 PillButton {
                     id: toggleDownloads
+                    accessibleName: "Scan Downloads"
                     anchors.verticalCenter: parent.verticalCenter
                     label: Settings.scanDownloads ? "On" : "Off"
+                    checkable: true
                     active: Settings.scanDownloads
                     onClicked: Settings.scanDownloads = !Settings.scanDownloads
                 }
@@ -293,6 +316,7 @@ Item {
 
                 PillButton {
                     id: depthButton
+                    accessibleName: "Folder scan depth"
                     anchors.verticalCenter: parent.verticalCenter
                     label: Settings.recursionDepth + " deep"
                     onClicked: Settings.recursionDepth =
@@ -328,8 +352,10 @@ Item {
 
                 PillButton {
                     id: hiddenButton
+                    accessibleName: "Hidden items"
                     anchors.verticalCenter: parent.verticalCenter
                     label: Captures.showHidden ? "Shown" : "Hidden"
+                    checkable: true
                     active: Captures.showHidden
                     onClicked: Captures.showHidden = !Captures.showHidden
                 }
@@ -364,6 +390,7 @@ Item {
 
                 PillButton {
                     id: clearTextCacheButton
+                    accessibleName: "Clear image text cache"
                     objectName: "clearTextCacheButton"
                     anchors.verticalCenter: parent.verticalCenter
                     label: "Clear cache"
@@ -406,8 +433,10 @@ Item {
                 PillButton {
                     id: permanentDeleteConfirmation
                     objectName: "permanentDeleteConfirmation"
+                    accessibleName: "Confirm permanent deletion"
                     anchors.verticalCenter: parent.verticalCenter
                     label: Settings.confirmPermanentDelete ? "On" : "Off"
+                    checkable: true
                     active: Settings.confirmPermanentDelete
                     onClicked: Settings.confirmPermanentDelete = !Settings.confirmPermanentDelete
                 }
@@ -473,8 +502,10 @@ Item {
 
                 PillButton {
                     id: slideshowVideosButton
+                    accessibleName: "Include videos in slideshow"
                     anchors.verticalCenter: parent.verticalCenter
                     label: Settings.slideshowVideos ? "On" : "Off"
+                    checkable: true
                     active: Settings.slideshowVideos
                     onClicked: Settings.slideshowVideos = !Settings.slideshowVideos
                 }
@@ -506,6 +537,7 @@ Item {
 
                 PillButton {
                     id: slideshowIntervalButton
+                    accessibleName: "Slideshow interval"
                     anchors.verticalCenter: parent.verticalCenter
                     label: Settings.slideshowIntervalSeconds + " s"
                     onClicked: {
@@ -543,8 +575,10 @@ Item {
 
                 PillButton {
                     id: slideshowShuffleButton
+                    accessibleName: "Shuffle slideshow"
                     anchors.verticalCenter: parent.verticalCenter
                     label: Settings.slideshowShuffle ? "On" : "Off"
+                    checkable: true
                     active: Settings.slideshowShuffle
                     onClicked: Settings.slideshowShuffle = !Settings.slideshowShuffle
                 }
@@ -654,6 +688,7 @@ Item {
 
                 PillButton {
                     id: imageActionButton
+                    accessibleName: "Default picture action"
                     anchors.verticalCenter: parent.verticalCenter
                     label: root.actionLabel(Settings.imagePrimaryAction)
                     onClicked: Settings.imagePrimaryAction = root.nextValue(
@@ -687,6 +722,7 @@ Item {
 
                 PillButton {
                     id: videoActionButton
+                    accessibleName: "Default video action"
                     anchors.verticalCenter: parent.verticalCenter
                     label: root.actionLabel(Settings.videoPrimaryAction)
                     onClicked: Settings.videoPrimaryAction = root.nextValue(
@@ -720,6 +756,7 @@ Item {
 
                 PillButton {
                     id: cacheButton
+                    accessibleName: "Thumbnail cache size"
                     anchors.verticalCenter: parent.verticalCenter
                     label: root.cacheLabel(Settings.thumbnailCacheMb)
                     onClicked: Settings.thumbnailCacheMb = root.nextValue(
@@ -801,8 +838,10 @@ Item {
                 }
                 PillButton {
                     id: pairingToggle
+                    accessibleName: "Pair RAW and JPEG"
                     objectName: "pairRawJpegToggle"
                     label: Settings.pairRawJpeg ? "On" : "Off"
+                    checkable: true
                     active: Settings.pairRawJpeg
                     onClicked: Settings.pairRawJpeg = !Settings.pairRawJpeg
                 }

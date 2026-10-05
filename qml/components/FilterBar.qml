@@ -91,6 +91,17 @@ Item {
 
     // On a half-screen tile the pills and the search cannot share a row, so
     // the search and sort drop to a second line rather than overlap.
+    readonly property real kindButtonsWidth: {
+        let total = 0
+        let count = 0
+        for (const child of kinds.children) {
+            if (child !== libraryButton && child.visible) {
+                total += child.width
+                count++
+            }
+        }
+        return total + count * kinds.spacing
+    }
     readonly property bool separateBrowse: root.width < 620
     readonly property bool wrapped: root.width < kinds.width + 40 + 90 + sortButton.width + 60
     implicitHeight: wrapped ? 76 : 40
@@ -153,6 +164,8 @@ Item {
         PillButton {
             label: "★"
             toolTip: "Favourites"
+            accessibleName: "Favourites"
+            checkable: true
             shortcut: root.sectionShortcut(6)
             active: Captures.favoritesOnly
             onClicked: Captures.favoritesOnly = !Captures.favoritesOnly
@@ -160,6 +173,9 @@ Item {
 
         PillButton {
             id: libraryButton
+            objectName: "libraryBrowseButton"
+            maximumWidth: root.separateBrowse ? 140
+                          : Math.max(80, root.width - 40 - kindButtonsWidth)
             // Keep Browse reachable when the kind filters fill a narrow row.
             parent: root.separateBrowse ? root : kinds
             x: root.separateBrowse ? 20 : 0
@@ -186,7 +202,7 @@ Item {
                     || Captures.dateFrom !== "" || Captures.modifiedAfter !== ""
                     || Captures.smartCollectionFilter !== ""
                     || root.browserOpen
-            toolTip: Captures.folderFilter
+            toolTip: Captures.folderFilter !== "" ? Captures.folderFilter : label
             onClicked: root.browseRequested()
         }
     }
@@ -285,6 +301,10 @@ Item {
                 required property string modelData
 
                 height: 30
+                text: modelData
+                Accessible.name: text
+                checkable: true
+                checked: Captures.sortMode === index
 
                 contentItem: Text {
                     text: sortRow.modelData

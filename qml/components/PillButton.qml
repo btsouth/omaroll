@@ -7,6 +7,9 @@ Item {
     id: root
 
     property string label: ""
+    property string accessibleName: label
+    property bool checkable: false
+    property real maximumWidth: Infinity
     property bool active: false
     property bool floating: false
     property int badge: -1
@@ -24,7 +27,9 @@ Item {
     activeFocusOnTab: true
     opacity: root.enabled ? 1 : 0.42
     Accessible.role: Accessible.Button
-    Accessible.name: root.label
+    Accessible.name: root.accessibleName
+    Accessible.checkable: root.checkable
+    Accessible.checked: root.checkable && root.active
     Accessible.description: root.shortcut !== "" ? "Shortcut " + root.shortcut : ""
     Accessible.onPressAction: if (root.enabled) root.clicked()
 
@@ -32,7 +37,17 @@ Item {
         return Qt.rgba(base.r, base.g, base.b, amount)
     }
 
-    implicitWidth: content.implicitWidth + (floating ? 26 : 22)
+    TextMetrics {
+        id: labelMetrics
+        text: root.label
+        font.family: Theme.fontFamily
+        font.pixelSize: 12
+        font.weight: root.active || root.floating ? Font.DemiBold : Font.Normal
+    }
+
+    implicitWidth: Math.min(root.maximumWidth, labelMetrics.advanceWidth
+                           + (root.badge >= 0 ? badgeText.implicitWidth + 6 : 0)
+                           + (floating ? 26 : 22))
     implicitHeight: floating ? 34 : 26
 
     Behavior on opacity { NumberAnimation { duration: 120 } }
@@ -60,11 +75,14 @@ Item {
         Row {
             id: content
             anchors.centerIn: parent
+            width: Math.max(0, root.width - (root.floating ? 26 : 22))
             spacing: 6
 
             Text {
                 anchors.verticalCenter: parent.verticalCenter
                 text: root.label
+                width: Math.max(0, content.width - (badgeText.visible ? badgeText.implicitWidth + content.spacing : 0))
+                elide: Text.ElideRight
                 font.family: Theme.fontFamily
                 font.pixelSize: 12
                 font.weight: root.active || root.floating ? Font.DemiBold : Font.Normal
@@ -76,6 +94,7 @@ Item {
 
             Text {
                 anchors.verticalCenter: parent.verticalCenter
+                id: badgeText
                 visible: root.badge >= 0
                 text: root.badge
                 font.family: Theme.fontFamily
@@ -90,7 +109,7 @@ Item {
         }
 
         ToolTip {
-            visible: root.resolvedToolTip !== "" && hover.hovered
+            visible: root.resolvedToolTip !== "" && (hover.hovered || root.activeFocus)
             text: root.resolvedToolTip
             delay: 500
         }

@@ -40,6 +40,7 @@
 #include "thumbs/ThumbnailProvider.h"
 #include "viewer/MprisService.h"
 
+#include <QAccessible>
 #include <QAudioBuffer>
 #include <QAudioBufferOutput>
 #include <QAudioDevice>
@@ -367,6 +368,241 @@ private slots:
         m_settings->clearVideoPosition(m_library->pathAt(row));
       }
     }
+  }
+
+
+  void firstGridMarkImmediatelyEnablesUndoAgain() {
+    while (m_settings->canUndo()) m_settings->undo();
+    const QString path = pathAt(0);
+    const bool favorite = m_settings->isFavorite(path);
+    for (int round = 0; round < 2; ++round) {
+      QTest::keyClick(m_window, Qt::Key_V);
+      QTRY_COMPARE(m_settings->isFavorite(path), !favorite);
+      QVERIFY(m_settings->canUndo());
+      QTest::keyClick(m_window, Qt::Key_Z, Qt::ControlModifier);
+      QTRY_COMPARE(m_settings->isFavorite(path), favorite);
+      QVERIFY(!m_settings->canUndo());
+    }
+  }
+
+  void unpinIconIsReachableAndActivatesFromTheKeyboard() {
+    const QString folder = QFileInfo(pathAt(0)).absolutePath();
+    QVERIFY(m_settings->pinFolderPath(folder));
+    const auto restore = qScopeGuard([&] { m_settings->unpinFolder(folder); });
+    QQuickItem* unpin = nullptr;
+    QTRY_VERIFY((unpin = find(item("pinnedFolders"), [&](QQuickItem* candidate) {
+      return candidate->property("toolTip").toString() == QStringLiteral("Unpin ") + folder;
+    })) != nullptr);
+    unpin->parentItem()->forceActiveFocus();
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QTRY_VERIFY(unpin->hasActiveFocus());
+    QVERIFY(unpin->activeFocusOnTab());
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTRY_VERIFY(!m_settings->isFolderPinned(folder));
+  }
+
+  void captionShortcutAndTechnicalDetailsWorkWithoutAPointer() {
+    m_window->resize(560, 420);
+    const auto restore = qScopeGuard([&] { m_window->resize(1280, 820); });
+    openDetail(0);
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->isVisible());
+    QTest::keyClick(m_window, Qt::Key_C, Qt::AltModifier);
+    QQuickItem* caption = item("viewerCaption");
+    QTRY_VERIFY(caption->hasActiveFocus());
+    QVERIFY(caption->activeFocusOnTab());
+    typeText(QStringLiteral("cancel this caption"));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!caption->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_C, Qt::AltModifier);
+    QTRY_VERIFY(caption->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QQuickItem* technical = item("viewerTechnicalToggle");
+    QTRY_VERIFY(technical->hasActiveFocus());
+    auto* scroll = item("inspectorScroll");
+    QTRY_VERIFY(technical->mapToItem(scroll, QPointF()).y() >= 0);
+    QVERIFY(technical->mapToItem(scroll, QPointF(0, technical->height())).y() <= scroll->height());
+    const bool expanded = detail->property("technicalExpanded").toBool();
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTRY_COMPARE(detail->property("technicalExpanded").toBool(), !expanded);
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_COMPARE(detail->property("technicalExpanded").toBool(), expanded);
+  }
+
+  void settingsTabRevealsEveryFocusedControl() {
+    m_window->resize(560, 420);
+    const auto restore = qScopeGuard([&] { m_window->resize(1280, 820); });
+    QVERIFY(QMetaObject::invokeMethod(item("settingsSheet"), "open"));
+    QQuickItem* scroll = item("settingsScroll");
+    QQuickItem* first = find(item("settingsSheet"), [](QQuickItem* candidate) {
+      return candidate->property("accessibleName").toString() == QStringLiteral("Scan Downloads");
+    });
+    QVERIFY(first);
+    first->forceActiveFocus();
+    bool scrolled = false;
+    for (int step = 0; step < 18; ++step) {
+      QTest::keyClick(m_window, Qt::Key_Tab);
+      QQuickItem* focused = m_window->activeFocusItem();
+      QVERIFY(focused);
+      QQuickItem* ancestor = focused;
+      while (ancestor && ancestor != scroll) ancestor = ancestor->parentItem();
+      if (ancestor != scroll) break;
+      QTRY_VERIFY(focused->mapToItem(scroll, QPointF()).y() >= -1);
+      QTRY_VERIFY(focused->mapToItem(scroll, QPointF(0, focused->height())).y() <= scroll->height() + 1);
+      scrolled |= scroll->property("contentY").toReal() > 0;
+    }
+    QVERIFY(scrolled);
+  }
+
+  void gridCardsAndMenusExposeNamesAndSelection() {
+    const QString path = pathAt(0);
+    QTRY_VERIFY(cardFor(path));
+    QQuickItem* card = cardFor(path);
+    QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(card);
+    QVERIFY(accessible);
+    QCOMPARE(accessible->role(), QAccessible::ListItem);
+    QVERIFY(accessible->text(QAccessible::Name).contains(m_library->fileNameAt(0)));
+    QVERIFY(accessible->state().selected);
+    QVERIFY(!accessible->state().checked);
+    QVERIFY(accessible->actionInterface());
+    accessible->actionInterface()->doAction(QAccessibleActionInterface::toggleAction());
+    QTRY_VERIFY(accessible->state().checked);
+    QQuickItem* tip = card->findChild<QQuickItem*>(QStringLiteral("captureFilenameTip"));
+    QVERIFY(tip);
+    QCOMPARE(tip->property("text").toString(), m_library->fileNameAt(0));
+    QVERIFY(card->property("keyboardCurrent").toBool());
+    QTRY_VERIFY_WITH_TIMEOUT(tip->isVisible(), 1500);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openContextMenu", Q_ARG(QVariant, 0),
+                                    Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
+    QQuickItem* rename = item("contextAction_rename");
+    QCOMPARE(rename->property("text").toString(), QStringLiteral("Rename"));
+    auto* namedAction = QAccessible::queryAccessibleInterface(rename);
+    QVERIFY(namedAction);
+    QCOMPARE(namedAction->text(QAccessible::Name), QStringLiteral("Rename"));
+  }
+
+  void failedThumbnailHasADistinctSettledState() {
+    const QString missing = m_scratch.filePath(QStringLiteral("failed-preview.png"));
+    m_disposablePaths.append(missing);
+    QQmlComponent component(m_engine);
+    component.setData(R"QML(
+      import QtQuick
+      import Omaroll
+      CaptureCard { width: 240; height: 160; fileName: "failed-preview.png" }
+    )QML", QUrl());
+    std::unique_ptr<QObject> object(component.create());
+    QVERIFY2(object, qPrintable(component.errorString()));
+    object->setProperty("path", missing);
+    QTRY_VERIFY(object->property("thumbnailFailed").toBool());
+    QVERIFY(!object->property("thumbnailReady").toBool());
+    auto* placeholder = object->findChild<QQuickItem*>(QStringLiteral("thumbnailPlaceholder"));
+    QVERIFY(placeholder);
+    QCOMPARE(placeholder->property("text").toString(), QStringLiteral("Preview unavailable"));
+    object->setProperty("path", QString());
+    QTRY_VERIFY(!object->property("thumbnailFailed").toBool());
+  }
+
+  void failedTrashTargetsRemainChecked() {
+    QTemporaryDir dir;
+    const QString good = dir.filePath(QStringLiteral("trash-good.png"));
+    const QString changed = dir.filePath(QStringLiteral("trash-changed.png"));
+    QImage image(30, 20, QImage::Format_RGB32);
+    image.fill(Qt::red);
+    QVERIFY(image.save(good));
+    QVERIFY(image.save(changed));
+    m_captures->addExtraFiles({good, changed});
+    const auto cleanup = qScopeGuard([&] {
+      invoke("dismissTopLayer");
+      dir.remove();
+      m_captures->refresh();
+      QTRY_VERIFY(!m_captures->scanning());
+    });
+    QTRY_VERIFY(m_library->rowOf(good) >= 0 && m_library->rowOf(changed) >= 0);
+    auto* grid = item("library");
+    for (const QString& path : {good, changed})
+      QVERIFY(QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, path)));
+    QVERIFY(QMetaObject::invokeMethod(m_window, "requestDeleteBatch",
+                                    Q_ARG(QVariant, QStringList{good, changed}),
+                                    Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant())));
+    QTRY_VERIFY(item("confirm")->isVisible());
+    // The captured identity must reject a replacement, leaving it retryable.
+    QVERIFY(QFile::rename(changed, dir.filePath(QStringLiteral("old.png"))));
+    image.fill(Qt::blue);
+    QVERIFY(image.save(changed));
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!item("confirm")->isVisible());
+    QVERIFY(!QFileInfo::exists(good));
+    QCOMPARE(QImage(changed).pixelColor(0, 0), QColor(Qt::blue));
+    QTRY_VERIFY(!m_captures->scanning());
+    QTRY_COMPARE(grid->property("checkedCount").toInt(), 1);
+    QVariant checked;
+    QVERIFY(QMetaObject::invokeMethod(grid, "isChecked", Q_RETURN_ARG(QVariant, checked),
+                                    Q_ARG(QVariant, changed)));
+    QVERIFY(checked.toBool());
+  }
+
+  void renameKeepsOtherChecksAndFollowsTheRenamedCheck() {
+    QTemporaryDir dir;
+    const QString source = dir.filePath(QStringLiteral("rename-checked.png"));
+    const QString other = dir.filePath(QStringLiteral("rename-other.png"));
+    QVERIFY(QImage(30, 20, QImage::Format_RGB32).save(source));
+    QVERIFY(QImage(31, 21, QImage::Format_RGB32).save(other));
+    m_captures->addExtraFiles({source, other});
+    const auto cleanup = qScopeGuard([&] {
+      invoke("dismissTopLayer");
+      dir.remove();
+      m_captures->refresh();
+      QTRY_VERIFY(!m_captures->scanning());
+    });
+    QTRY_VERIFY(m_library->rowOf(source) >= 0 && m_library->rowOf(other) >= 0);
+    auto* grid = item("library");
+    for (const QString& path : {source, other})
+      QVERIFY(QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, path)));
+    perform(QStringLiteral("rename"), source);
+    QTRY_VERIFY(item("renameSheet")->isVisible());
+    item("renameInput")->setProperty("text", QStringLiteral("renamed-check"));
+    QTest::keyClick(m_window, Qt::Key_Return);
+    const QString renamed = dir.filePath(QStringLiteral("renamed-check.png"));
+    QTRY_VERIFY(m_library->rowOf(renamed) >= 0 && !m_captures->scanning());
+    QTRY_COMPARE(grid->property("checkedCount").toInt(), 2);
+    for (const QString& path : {renamed, other}) {
+      QVariant checked;
+      QVERIFY(QMetaObject::invokeMethod(grid, "isChecked", Q_RETURN_ARG(QVariant, checked),
+                                      Q_ARG(QVariant, path)));
+      QVERIFY(checked.toBool());
+    }
+  }
+
+  void longLibraryNamesAndStatusFitNarrowWindows_data() {
+    QTest::addColumn<int>("width");
+    for (int width : {560, 700, 900})
+      QTest::newRow(qPrintable(QString::number(width))) << width;
+  }
+
+  void longLibraryNamesAndStatusFitNarrowWindows() {
+    QFETCH(int, width);
+    const bool downloads = m_settings->scanDownloads();
+    const QString album = QStringLiteral("A very long collection name ").repeated(12);
+    QVERIFY(m_settings->createAlbum(album));
+    m_library->setAlbumFilter(album, {});
+    m_settings->setScanDownloads(true);
+    m_window->resize(width, 420);
+    const auto restore = qScopeGuard([&] {
+      m_library->setAlbumFilter({}, {});
+      m_settings->deleteAlbum(album);
+      m_settings->setScanDownloads(downloads);
+      m_window->resize(1280, 820);
+    });
+    QTest::qWait(100);
+    QQuickItem* browse = item("libraryBrowseButton");
+    const QRectF browseBounds = browse->mapRectToScene(browse->boundingRect());
+    QVERIFY(browseBounds.right() <= width - 19);
+    if (width >= 700) QCOMPARE(browse->property("toolTip").toString(), album + QStringLiteral("  ▾"));
+    QQuickItem* status = item("libraryStatus");
+    const QRectF statusBounds = status->mapRectToScene(status->boundingRect());
+    const QRectF settingsBounds = pill(m_window->contentItem(), QStringLiteral("Settings"))
+        ->mapRectToScene(pill(m_window->contentItem(), QStringLiteral("Settings"))->boundingRect());
+    QVERIFY(statusBounds.right() < settingsBounds.left());
   }
 
   void matteControlsKeepTheSheetOpen() {
@@ -1932,7 +2168,7 @@ private slots:
     QTRY_VERIFY(item("viewerInspector")->isVisible());
     QQuickItem* field = detail->findChild<QQuickItem*>(QStringLiteral("viewerCaption"));
     QVERIFY(field);
-    field->forceActiveFocus();
+    QTest::keyClick(m_window, Qt::Key_C, Qt::AltModifier);
     QTRY_VERIFY(field->hasActiveFocus());
     typeText(QStringLiteral("Trip notes"));
     QTest::keyClick(m_window, Qt::Key_Return);
@@ -1947,7 +2183,7 @@ private slots:
     QTRY_VERIFY(second != first);
     QTRY_VERIFY(detail->property("caption").toString().isEmpty());
     QVERIFY(field->property("text").toString().isEmpty());
-    field->forceActiveFocus();
+    QTest::keyClick(m_window, Qt::Key_C, Qt::AltModifier);
     QTRY_VERIFY(field->hasActiveFocus());
     typeText(QStringLiteral("Second one"));
     QTest::keyClick(m_window, Qt::Key_Return);
@@ -2052,7 +2288,7 @@ private slots:
     QTRY_VERIFY(item("viewerInspector")->isVisible());
     QQuickItem* field = detail->findChild<QQuickItem*>(QStringLiteral("viewerCaption"));
     QVERIFY(field);
-    field->forceActiveFocus();
+    QTest::keyClick(m_window, Qt::Key_C, Qt::AltModifier);
     QTRY_VERIFY(field->hasActiveFocus());
     typeText(QStringLiteral("Do not keep"));
     QTest::keyClick(m_window, Qt::Key_Escape);
@@ -2071,14 +2307,14 @@ private slots:
     openDetail(0);
     detail->setProperty("showInfo", true);
     QQuickItem* field = item("viewerCaption");
-    field->forceActiveFocus();
+    QTest::keyClick(m_window, Qt::Key_C, Qt::AltModifier);
     QTRY_VERIFY(field->hasActiveFocus());
     field->setProperty("text", QStringLiteral("First file notes"));
     openDetail(1);
     QTRY_COMPARE(m_settings->caption(first), QStringLiteral("First file notes"));
     QCOMPARE(m_settings->caption(second), secondCaption);
     QTRY_COMPARE(field->property("text").toString(), secondCaption);
-    field->forceActiveFocus();
+    QTest::keyClick(m_window, Qt::Key_C, Qt::AltModifier);
     QTRY_VERIFY(field->hasActiveFocus());
     field->setProperty("text", QStringLiteral("Second file notes"));
     click(item("viewerInfoButton"));

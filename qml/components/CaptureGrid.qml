@@ -316,6 +316,7 @@ FocusScope {
                 caption: cell.caption
                 rawFormat: cell.rawFormat
                 selected: grid.currentIndex === cell.index
+                keyboardCurrent: selected && grid.activeFocus
                 checked: root.isChecked(cell.path)
                 selectionMode: root.checkedCount > 0
                 // Dragging a checked tile takes the whole selection with it.

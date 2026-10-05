@@ -132,6 +132,7 @@ process, so a favourite or rating set in one shows in the others.
 | `Del` | Move to Trash, with confirm |
 | `Shift+Del` | Delete permanently, with confirmation on by default |
 | right click · menu button | Everything else that suits the file |
+| `Tab` · `Shift+Tab` | Next · previous control |
 | `Enter` · grid button | Open the file in the library |
 | `Esc` | Leave the slideshow or full screen, close the details, then close |
 
@@ -304,6 +305,7 @@ and put on your clipboard.
 | `Q` · `B` | Crop, rotate, resize the open picture · correct the whole selection |
 | `K` | Compare the selection, or the open picture's copies |
 | `Ctrl+Z` | Undo the last favourite, hide, rating or caption change |
+| `Alt+C` in the library preview | Edit the caption; Enter saves and Escape cancels |
 | `1`-`8` · `Tab` `Shift+Tab` | Jump to a section · next · previous section |
 | `Alt+1`-`Alt+5` · `Alt+0` | Rate · clear rating, in the grid or the viewer |
 | `Page Up` `Page Down` in a PDF preview | Previous · next page |

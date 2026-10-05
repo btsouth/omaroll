@@ -256,6 +256,23 @@ private slots:
     m_settings->setVideoPlaybackRate(1.0);
   }
 
+  void tabTraversesViewerIconButtonsAndEnterActivatesThem() {
+    open({media(QStringLiteral("Shot 1.jpg"))});
+    m_window->setProperty("chromeTimeout", 60000);
+    QQuickItem* details = item(QStringLiteral("viewerInfoButton"));
+    details->forceActiveFocus();
+    QTRY_VERIFY(details->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QTRY_VERIFY(item(QStringLiteral("viewerLibraryButton"))->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Backtab, Qt::ShiftModifier);
+    QTRY_VERIFY(details->hasActiveFocus());
+    const bool info = prop("infoOpen").toBool();
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_COMPARE(prop("infoOpen").toBool(), !info);
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTRY_COMPARE(prop("infoOpen").toBool(), info);
+  }
+
   void explicitSelectionsPruneMissingFilesBeforeNavigation_data() {
     QTest::addColumn<bool>("jump");
     QTest::addColumn<int>("direction");

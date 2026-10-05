@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls.Basic
 
 // One capture. The thumbnail is drawn at full opacity on top of the translucent
 // chrome: dimming the pixels someone is trying to look at is a bug, not a style,
@@ -20,6 +21,8 @@ Item {
     property int rating: 0
     property bool hiddenMark: false
     property bool selected: false
+    property bool keyboardCurrent: false
+    readonly property bool thumbnailFailed: thumbnail.status === Image.Error
     property bool checked: false
     property bool selectionMode: false
     property string ocrSnippet: ""
@@ -39,6 +42,23 @@ Item {
     property var dragPaths: [path]
     // Raised before the drag image is grabbed, so the badge below is in it.
     property bool dragging: false
+
+    Accessible.role: Accessible.ListItem
+    Accessible.name: [fileName, kindLabel, timeLabel].filter(function(value) { return value !== "" }).join(", ")
+    Accessible.description: thumbnailFailed ? "Preview unavailable" : ""
+    Accessible.selected: selected
+    Accessible.selectable: true
+    Accessible.checkable: true
+    Accessible.checked: checked
+    Accessible.onPressAction: root.chosen()
+    Accessible.onToggleAction: root.toggleChecked()
+
+    ToolTip {
+        objectName: "captureFilenameTip"
+        visible: root.fileName !== "" && (hover.hovered || root.keyboardCurrent)
+        text: root.fileName
+        delay: 600
+    }
 
     signal activated()
     signal chosen()
@@ -188,14 +208,18 @@ Item {
             Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutQuad } }
         }
 
-        // Placeholder while a thumbnail is being made, and the resting state for
-        // anything that cannot produce one.
+        // Failed decodes stay distinct from a thumbnail still being made.
         Text {
             anchors.centerIn: parent
             visible: !root.thumbnailReady
-            text: root.isVideo ? "▶" : (root.isDocument ? "PDF" : "▦")
+            objectName: "thumbnailPlaceholder"
+            text: root.thumbnailFailed ? "Preview unavailable"
+                  : root.isVideo ? "▶" : (root.isDocument ? "PDF" : "▦")
             font.family: Theme.fontFamily
-            font.pixelSize: 22
+            width: parent.width - 24
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.Wrap
+            font.pixelSize: root.thumbnailFailed ? 12 : 22
             color: Theme.mutedText
         }
 
@@ -336,6 +360,7 @@ Item {
         // card is hovered, so the resting grid stays pictures rather than chrome.
         Rectangle {
             id: checkBox
+            Accessible.ignored: true
             anchors.top: parent.top
             anchors.left: parent.left
             anchors.margins: 7

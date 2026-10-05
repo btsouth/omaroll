@@ -11,6 +11,7 @@ Item {
 
     property string label: ""
     property bool shown: true
+    property real maximumWidth: Infinity
 
     implicitWidth: pill.width
     implicitHeight: pill.height
@@ -21,7 +22,7 @@ Item {
 
     Rectangle {
         id: pill
-        width: text.implicitWidth + 22
+        width: Math.min(root.maximumWidth, text.implicitWidth + 22)
         height: text.implicitHeight + 12
         radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
         color: root.shade(Theme.background, 0.88)
@@ -36,6 +37,8 @@ Item {
             id: text
             anchors.centerIn: parent
             text: root.label
+            width: Math.max(0, pill.width - 22)
+            elide: Text.ElideRight
             font.family: Theme.fontFamily
             font.pixelSize: 12
             font.weight: Font.DemiBold

@@ -69,6 +69,7 @@ class AppSettings final : public QObject {
   Q_PROPERTY(
       QStringList smartCollectionNames READ smartCollectionNames NOTIFY smartCollectionsChanged)
   Q_PROPERTY(QString previousVisit READ previousVisit CONSTANT)
+  Q_PROPERTY(bool undoAvailable READ canUndo NOTIFY undoChanged)
 
 public:
   explicit AppSettings(QObject* parent = nullptr);

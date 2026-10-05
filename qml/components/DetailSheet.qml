@@ -12,6 +12,7 @@ Item {
     id: root
 
     property string path: ""
+    readonly property bool captionEditing: captionField.activeFocus
     property bool canCompare: false
     readonly property bool contextMenuOpen: imageContextMenu.visible
     property int actionsRevision: 0
@@ -2311,6 +2312,8 @@ Item {
             }
 
             Flickable {
+                id: inspectorScroll
+                objectName: "inspectorScroll"
                 anchors.fill: parent
                 anchors.margins: 1
                 contentWidth: width
@@ -2318,6 +2321,24 @@ Item {
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
                 ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                function revealFocusedControl() {
+                    const focused = root.Window.window ? root.Window.window.activeFocusItem : null
+                    let ancestor = focused
+                    while (ancestor && ancestor !== inspectorColumn) ancestor = ancestor.parent
+                    if (!focused || ancestor !== inspectorColumn) return
+                    const top = focused.mapToItem(contentItem, 0, 0).y
+                    const bottom = top + focused.height
+                    const maximum = Math.max(0, contentHeight - height)
+                    if (top < contentY) contentY = Math.max(0, top)
+                    else if (bottom > contentY + height) contentY = Math.min(maximum, bottom - height)
+                }
+                Connections {
+                    target: root.Window.window
+                    function onActiveFocusItemChanged() {
+                        if (root.visible) Qt.callLater(inspectorScroll.revealFocusedControl)
+                    }
+                }
 
                 Column {
                     id: inspectorColumn
@@ -2427,6 +2448,24 @@ Item {
                                 readonly property bool lit: index < root.rating
                                 Accessible.role: Accessible.Button
                                 Accessible.name: (index + 1) + (index === 0 ? " star" : " stars")
+                                Accessible.checkable: true
+                                Accessible.checked: index + 1 === root.rating
+                                Accessible.onPressAction: root.rateRequested(index + 1 === root.rating ? 0 : index + 1)
+                                activeFocusOnTab: true
+                                Keys.onPressed: function(event) {
+                                    if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+                                            || event.key === Qt.Key_Space) {
+                                        root.rateRequested(index + 1 === root.rating ? 0 : index + 1)
+                                        event.accepted = true
+                                    }
+                                }
+                                Rectangle {
+                                    anchors.fill: parent
+                                    color: "transparent"
+                                    radius: 3
+                                    border.width: parent.activeFocus ? 2 : 0
+                                    border.color: Theme.accent
+                                }
 
                                 Icon {
                                     anchors.centerIn: parent
@@ -2473,7 +2512,8 @@ Item {
                             anchors.topMargin: 6
                             wrapMode: TextInput.Wrap
                             clip: true
-                            activeFocusOnTab: false
+                            activeFocusOnTab: true
+                            Accessible.name: "Caption"
                             font.family: Theme.fontFamily
                             font.pixelSize: 13
                             color: Theme.foreground
@@ -2539,6 +2579,26 @@ Item {
                         Item {
                             id: technicalToggle
                             objectName: "viewerTechnicalToggle"
+                            activeFocusOnTab: true
+                            Accessible.role: Accessible.Button
+                            Accessible.name: "Technical details"
+                            Accessible.checkable: true
+                            Accessible.checked: root.technicalExpanded
+                            Accessible.onPressAction: root.technicalExpanded = !root.technicalExpanded
+                            Keys.onPressed: function(event) {
+                                if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+                                        || event.key === Qt.Key_Space) {
+                                    root.technicalExpanded = !root.technicalExpanded
+                                    event.accepted = true
+                                }
+                            }
+                            Rectangle {
+                                anchors.fill: parent
+                                color: "transparent"
+                                radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 4) : 3
+                                border.width: technicalToggle.activeFocus ? 2 : 0
+                                border.color: Theme.accent
+                            }
                             width: parent.width
                             height: 30
 
@@ -2849,6 +2909,16 @@ Item {
         }
     }
 
+    Shortcut {
+        sequences: ["Alt+C"]
+        enabled: root.visible && !root.contextMenuOpen && root.enabled
+        onActivated: {
+            root.actionNavigationActive = false
+            root.showInfo = true
+            captionField.forceActiveFocus()
+        }
+    }
+
     Keys.onPressed: function (event) {
         if (event.key === Qt.Key_Delete && (event.modifiers & Qt.ShiftModifier)
                 && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier))) {
@@ -2866,11 +2936,13 @@ Item {
         }
         if (event.key === Qt.Key_Backtab
                 || (event.key === Qt.Key_Tab && (event.modifiers & Qt.ShiftModifier))) {
+            if (root.Window.window && root.Window.window.activeFocusItem !== root) return
             root.focusPreview()
             event.accepted = true
             return
         }
         if (event.key === Qt.Key_Tab) {
+            if (root.Window.window && root.Window.window.activeFocusItem !== root) return
             root.focusFirstAction()
             event.accepted = true
             return
