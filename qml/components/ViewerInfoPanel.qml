@@ -30,7 +30,8 @@ Rectangle {
     }
 
     implicitWidth: 300
-    implicitHeight: Math.min(content.implicitHeight + 32, parent ? parent.height - 32 : 600)
+    implicitHeight: Math.min(content.implicitHeight + copyActions.implicitHeight + 40,
+                             parent ? parent.height - 32 : 600)
     radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 4
     color: root.shade(Theme.background, 0.92)
     border.width: 1
@@ -44,8 +45,12 @@ Rectangle {
     }
 
     Flickable {
-        anchors.fill: parent
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: copyActions.top
         anchors.margins: 16
+        anchors.bottomMargin: 8
         contentHeight: content.implicitHeight
         clip: true
         boundsBehavior: Flickable.StopAtBounds
@@ -173,21 +178,6 @@ Rectangle {
                 font.pixelSize: 11
                 color: Theme.mutedText
             }
-            Flow {
-                width: parent.width
-                spacing: 6
-                PillButton {
-                    objectName: "viewerInfoCopyPath"
-                    label: "Copy path"
-                    onClicked: root.copyPathRequested()
-                }
-                PillButton {
-                    objectName: "viewerInfoCopyName"
-                    label: "Copy file name"
-                    onClicked: root.copyNameRequested()
-                }
-            }
-
             // Where the file lives. A click shows it in the file manager.
             Text {
                 objectName: "viewerInfoFolder"
@@ -212,6 +202,27 @@ Rectangle {
                     delay: 500
                 }
             }
+        }
+    }
+
+    // Keep copy actions reachable while long paths and metadata scroll above.
+    Flow {
+        id: copyActions
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.margins: 16
+        spacing: 6
+
+        PillButton {
+            objectName: "viewerInfoCopyPath"
+            label: "Copy path"
+            onClicked: root.copyPathRequested()
+        }
+        PillButton {
+            objectName: "viewerInfoCopyName"
+            label: "Copy file name"
+            onClicked: root.copyNameRequested()
         }
     }
 }

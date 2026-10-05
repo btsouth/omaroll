@@ -59,6 +59,7 @@ for view in grid detail settings browser pins selection-menu document; do
 done
 renders+=("dark settings 560x420" "dark browser 560x420")
 renders+=("dark viewer-help 320x240" "light viewer-help 320x240")
+renders+=("dark viewer-info 320x240" "light viewer-info 320x240")
 
 jobs="${OMAROLL_RENDER_JOBS:-$(( $(nproc) * 3 ))}"
 failed=0

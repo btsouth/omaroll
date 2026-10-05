@@ -2283,7 +2283,14 @@ private slots:
     QTRY_COMPARE(label(0), QStringLiteral("DNG"));
   }
 
+  void copyPathAndNamePreserveTheOpenedEntry_data() {
+    QTest::addColumn<QSize>("windowSize");
+    QTest::newRow("normal") << QSize(1200, 800);
+    QTest::newRow("minimum") << QSize(320, 240);
+  }
+
   void copyPathAndNamePreserveTheOpenedEntry() {
+    QFETCH(QSize, windowSize);
     QTemporaryDir folder;
     QVERIFY(folder.isValid());
     const QString target = folder.filePath(QStringLiteral("target.png"));
@@ -2293,6 +2300,7 @@ private slots:
     const QString alias = folder.filePath(QStringLiteral("opened ü name.png"));
     QVERIFY(QFile::link(target, alias));
     open({target});
+    m_window->resize(windowSize);
     m_session->setDeletionPaths({{target, alias}});
     QTRY_VERIFY(prop("imageReady").toBool());
     // Exercise the helper's Qt fallback without a compositor clipboard process.
@@ -2305,16 +2313,21 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_I);
     QCOMPARE(item(QStringLiteral("viewerInfoPanel"))->property("filePath").toString(), alias);
     QCOMPARE(item(QStringLiteral("viewerInfoPanel"))->property("resolvedPath").toString(), target);
-    QVERIFY(QQmlProperty(item(QStringLiteral("viewerInfoPanel")), QStringLiteral("lines")).write(QVariantList{}));
-    // The card fades in and relays out after its lines change; click once the
-    // button has stopped moving.
+    QVariantList lines;
+    for (int index = 0; index < 30; ++index) lines.append(QStringLiteral("Metadata line %1").arg(index));
+    QQuickItem* panel = item(QStringLiteral("viewerInfoPanel"));
+    QVERIFY(QQmlProperty(panel, QStringLiteral("lines")).write(lines));
+    // Copy actions remain inside the card even when its details need scrolling.
     QQuickItem* copyName = item(QStringLiteral("viewerInfoCopyName"));
-    QTRY_VERIFY(copyName->isVisible() && item(QStringLiteral("viewerInfoPanel"))->opacity() == 1.0);
-    QPoint settled;
-    QTRY_VERIFY([&] { const QPoint now = centre(copyName); const bool same = now == settled; settled = now; return same; }());
+    QQuickItem* copyPath = item(QStringLiteral("viewerInfoCopyPath"));
+    const auto insideCard = [panel](QQuickItem* button) {
+      const QRectF card(panel->mapToScene(QPointF(16, 16)), panel->size() - QSizeF(32, 32));
+      return button->isVisible() && card.contains(QRectF(button->mapToScene(QPointF()), button->size()));
+    };
+    QTRY_VERIFY(insideCard(copyName) && insideCard(copyPath));
     click(copyName);
     QTRY_COMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("opened ü name.png"));
-    click(item(QStringLiteral("viewerInfoCopyPath")));
+    click(copyPath);
     QTRY_COMPARE(QGuiApplication::clipboard()->text(), alias);
     QTest::keyClick(m_window, Qt::Key_I);
     QTest::mouseClick(m_window, Qt::RightButton, Qt::NoModifier, QPoint(150, 120));
