@@ -1549,6 +1549,11 @@ Item {
             // A new result set jumps to its first page.
             Connections {
                 target: PdfInfo
+                function onChanged() {
+                    if (PdfInfo.pageCount > 0 && root.pdfPage > PdfInfo.pageCount) {
+                        root.pdfPage = PdfInfo.pageCount
+                    }
+                }
                 function onMatchesChanged() {
                     if (PdfInfo.matchCount > 0) {
                         root.pdfMatchIndex = 0
