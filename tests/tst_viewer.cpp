@@ -1233,7 +1233,7 @@ private slots:
         }
       }
     }
-    transport->setProperty("player", QVariant::fromValue(prop("player").value<QObject*>()));
+    transport->setProperty("player", QVariant::fromValue(m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
     m_window->setProperty("chromePinned", false);
   }
 
@@ -2141,9 +2141,10 @@ private slots:
     QVERIFY(first->property("audible").toBool());
     QVERIFY(!second->property("audible").toBool());
     QCOMPARE(m_mpris->position(), qlonglong(a->position()) * 1000);
+    const qint64 silentPosition = b->position();
     m_mpris->seek(1000000);
     QTRY_VERIFY(a->position() >= 900);
-    QVERIFY(b->position() < 900);
+    QCOMPARE(b->position(), silentPosition);
 
     QQuickWindow* still = viewers.open({media(QStringLiteral("shot 2.jpg"))});
     QCOMPARE(viewers.frontmost(), still);

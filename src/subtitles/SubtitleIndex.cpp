@@ -176,7 +176,9 @@ SubtitleIndex::SubtitleIndex(QObject* parent) : QObject(parent) {
           [this](const QString& directory) {
     const auto paths = m_cache.keys() + m_pending.keys();
     for (const QString& path : paths) {
-      if (QFileInfo(path).absolutePath() == directory) invalidate(path);
+      if (QFileInfo(path).absolutePath() == directory) {
+        invalidate(path);
+      }
     }
   });
 }
@@ -230,7 +232,9 @@ QString SubtitleIndex::label(const QString& subtitlePath) const {
 const SubtitleIndex::Parsed& SubtitleIndex::cuesFor(const QString& path) {
   static const Parsed empty;
   const auto found = m_cache.constFind(path);
-  if (found != m_cache.cend()) return *found;
+  if (found != m_cache.cend()) {
+    return *found;
+  }
   if (!m_pending.contains(path)) {
     const quint64 generation = ++m_generation;
     m_pending.insert(path, generation);
@@ -255,13 +259,21 @@ const SubtitleIndex::Parsed& SubtitleIndex::cuesFor(const QString& path) {
 SubtitleIndex::Parsed SubtitleIndex::parse(const QString& path) {
   Parsed parsed;
   const QFileInfo info(path);
-  if (!info.isFile() || info.size() <= 0 || info.size() > kMaximumFileBytes) return parsed;
+  if (!info.isFile() || info.size() <= 0 || info.size() > kMaximumFileBytes) {
+    return parsed;
+  }
   QFile file(path);
-  if (!file.open(QIODevice::ReadOnly)) return parsed;
+  if (!file.open(QIODevice::ReadOnly)) {
+    return parsed;
+  }
   const QByteArray bytes = file.read(kMaximumFileBytes + 1);
-  if (bytes.size() > kMaximumFileBytes) return parsed;
+  if (bytes.size() > kMaximumFileBytes) {
+    return parsed;
+  }
   QString text = QString::fromUtf8(bytes);
-  if (!text.isEmpty() && text.at(0) == QChar(0xFEFF)) text.remove(0, 1);
+  if (!text.isEmpty() && text.at(0) == QChar(0xFEFF)) {
+    text.remove(0, 1);
+  }
   text.replace(QLatin1String("\r\n"), QLatin1String("\n"));
   text.replace(QLatin1Char('\r'), QLatin1Char('\n'));
   const QStringList lines = text.split(QLatin1Char('\n'));
@@ -270,19 +282,25 @@ SubtitleIndex::Parsed SubtitleIndex::parse(const QString& path) {
   parsed.cues = webvtt ? parseVtt(lines) : parseSrt(lines);
   std::stable_sort(parsed.cues.begin(), parsed.cues.end(),
                    [](const Cue& a, const Cue& b) { return a.start < b.start; });
-  while (parsed.leaves < parsed.cues.size()) parsed.leaves *= 2;
+  while (parsed.leaves < parsed.cues.size()) {
+    parsed.leaves *= 2;
+  }
   parsed.maximumEnds.fill(-1, parsed.leaves * 2);
-  for (int i = 0; i < parsed.cues.size(); ++i)
+  for (int i = 0; i < parsed.cues.size(); ++i) {
     parsed.maximumEnds[parsed.leaves + i] = parsed.cues.at(i).end;
-  for (int i = parsed.leaves - 1; i > 0; --i)
+  }
+  for (int i = parsed.leaves - 1; i > 0; --i) {
     parsed.maximumEnds[i] = std::max(parsed.maximumEnds.at(i * 2), parsed.maximumEnds.at(i * 2 + 1));
+  }
   return parsed;
 }
 
 void SubtitleIndex::collect(const Parsed& parsed, int node, int begin, int end,
                             qint64 position, QStringList& active) {
   if (begin >= parsed.cues.size() || parsed.maximumEnds.at(node) < position ||
-      parsed.cues.at(begin).start > position) return;
+      parsed.cues.at(begin).start > position) {
+    return;
+  }
   if (end - begin == 1) {
     active.append(parsed.cues.at(begin).text);
     return;
@@ -298,7 +316,9 @@ QString SubtitleIndex::textAt(const QString& subtitlePath, qint64 positionMs) {
   }
   const Parsed& parsed = cuesFor(subtitlePath);
   QStringList active;
-  if (!parsed.cues.isEmpty()) collect(parsed, 1, 0, parsed.leaves, positionMs, active);
+  if (!parsed.cues.isEmpty()) {
+    collect(parsed, 1, 0, parsed.leaves, positionMs, active);
+  }
   return active.join(QLatin1Char('\n'));
 }
 

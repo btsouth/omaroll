@@ -8,6 +8,7 @@
 #include "viewer/MprisService.h"
 
 #include <QGuiApplication>
+#include <QMediaPlayer>
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
@@ -227,7 +228,10 @@ void ViewerWindows::activated(Viewer& viewer) {
   if (viewer.session.isVideo()) {
     auto* mpris = qobject_cast<MprisService*>(
         m_engine.rootContext()->contextProperty(QStringLiteral("Mpris")).value<QObject*>());
-    if (mpris) mpris->track(viewer.window->property("player").value<QObject*>(), viewer.window);
+    if (mpris) {
+      mpris->track(viewer.window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer")),
+                   viewer.window);
+    }
   }
   updateFrontmost();
 }

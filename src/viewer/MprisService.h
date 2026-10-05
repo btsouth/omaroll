@@ -20,7 +20,7 @@ class MprisService : public QObject {
   Q_OBJECT
 
 public:
-  // Without a connection, the session bus is joined when a video first plays,
+  // Without a connection, the session bus is joined when a video first loads,
   // so starting up never waits on it.
   explicit MprisService(AppSettings* settings, std::optional<QDBusConnection> bus = std::nullopt,
                         QObject* parent = nullptr);
