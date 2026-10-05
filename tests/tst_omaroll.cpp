@@ -5818,11 +5818,12 @@ private slots:
     const QStringList paths = {QStringLiteral("/tmp/first capture.png"),
                                QStringLiteral("/tmp/second # capture.mp4")};
     QVERIFY(registry.runBatch(QStringLiteral("send"), paths));
-    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(logPath), 1000);
-    QFile log(logPath);
-    QVERIFY(log.open(QIODevice::ReadOnly));
-    QCOMPARE(QString::fromUtf8(log.readAll()),
-             QStringLiteral("file\n/tmp/first capture.png\n/tmp/second # capture.mp4\n"));
+    const auto readLog = [&] {
+      QFile log(logPath);
+      return log.open(QIODevice::ReadOnly) ? QString::fromUtf8(log.readAll()) : QString();
+    };
+    QTRY_COMPARE_WITH_TIMEOUT(readLog(),
+        QStringLiteral("file\n/tmp/first capture.png\n/tmp/second # capture.mp4\n"), 1000);
   }
 
   void trackedRunsReportSettleAndKeepNonemptyOutputAfterFailure() {
