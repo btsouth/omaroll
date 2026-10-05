@@ -261,10 +261,14 @@ bool ActionLauncher::runTracked(const QString& program, const QStringList& argum
     emit reported(u"Still working on %1"_s.arg(QFileInfo(outputPath).fileName()));
     return true;
   }
-  if (QFileInfo(outputPath).exists() || QFileInfo(outputPath).isSymLink()) {
-    emit failed(u"Output %1 already exists. Move or rename it before exporting again"_s
+  if (QFileInfo(outputPath).isSymLink()) {
+    emit failed(u"Output %1 is a symbolic link. Move or rename it before exporting again"_s
                     .arg(QFileInfo(outputPath).fileName()));
     return false;
+  }
+  if (QFileInfo::exists(outputPath)) {
+    revealExisting(outputPath);
+    return true;
   }
   const QString executable = locate(program, packageHint);
   if (executable.isEmpty()) {
@@ -297,11 +301,13 @@ bool ActionLauncher::runTracked(const QString& program, const QStringList& argum
 
   connect(process, &QProcess::finished, this,
           [this, process, program, outputPath](int exitCode, QProcess::ExitStatus status) {
+            const QString finishedVersion = FileVersion::key(outputPath);
+            const QFileInfo output(outputPath);
+            const bool empty = output.exists() && !output.isSymLink() && output.isFile() && output.size() == 0;
             process->deleteLater();
             m_pendingOutputs.remove(outputPath);
             emit pendingOutputsChanged();
 
-            const QFileInfo output(outputPath);
             const bool saved =
                 status == QProcess::NormalExit && exitCode == 0 && output.size() > 0;
             if (saved) {
@@ -309,7 +315,10 @@ bool ActionLauncher::runTracked(const QString& program, const QStringList& argum
             } else {
               // The helper may have completed conversion before a clipboard
               // or notification step failed. Keep its output for review.
-              // A path alone cannot prove ownership, including for empty output.
+              if (empty && !finishedVersion.isEmpty() && !QFileInfo(outputPath).isSymLink() &&
+                  FileVersion::key(outputPath) == finishedVersion) {
+                QFile::remove(outputPath);
+              }
               const QStringList lines = QString::fromUtf8(process->readAllStandardError())
                                             .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
               QString message = lines.isEmpty() ? u"%1 did not finish"_s.arg(program)

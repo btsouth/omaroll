@@ -72,8 +72,9 @@ public:
   // A transcode can run for minutes with its output sitting at zero bytes, so
   // fire-and-forget left the user guessing whether anything happened. The
   // output is announced as pending so the library holds the half-written file
-  // back, and settled once the tool exits: saved on success, or retained and
-  // explained on failure. The tool's own stderr is quoted when it has one.
+  // back, and settled once the tool exits: saved on success, or nonempty
+  // output retained and explained on failure. The tool's own stderr is quoted
+  // when it has one.
   bool runTracked(const QString& program, const QStringList& arguments,
                   const QString& packageHint, const QString& outputPath);
 

@@ -6,6 +6,7 @@
 
 #include <cerrno>
 #include <fcntl.h>
+#include <stdio.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -17,7 +18,8 @@ bool sameEntry(const struct stat& first, const struct stat& second) {
 
 } // namespace
 
-CopyOutput::CopyOutput(const QString& preferredPath) : m_path(preferredPath) {
+CopyOutput::CopyOutput(const QString& preferredPath, LinkFunction link)
+    : m_link(link ? link : ::linkat), m_path(preferredPath) {
   const QByteArray directory = QFile::encodeName(QFileInfo(m_path).absolutePath());
   m_directory = ::open(directory.constData(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
   if (m_directory < 0) return;
@@ -73,13 +75,22 @@ QString CopyOutput::publish() {
 
   for (int number = 1; number <= 10000; ++number) {
     const QString name = number == 1 ? info.fileName()
-        : info.completeBaseName() + QStringLiteral("-%1.").arg(number) + info.suffix();
+        : info.completeBaseName() + QStringLiteral("-%1").arg(number)
+            + (info.suffix().isEmpty() ? QString() : QLatin1Char('.') + info.suffix());
     const QByteArray encodedName = QFile::encodeName(name);
     // Link the open inode, so replacing the private temporary name cannot
     // substitute someone else's file between validation and publication.
     const QByteArray source = QByteArray("/proc/self/fd/") + QByteArray::number(m_file.handle());
-    if (::linkat(AT_FDCWD, source.constData(), m_directory, encodedName.constData(), AT_SYMLINK_FOLLOW) == 0) {
+    if (m_link(AT_FDCWD, source.constData(), m_directory, encodedName.constData(), AT_SYMLINK_FOLLOW) == 0) {
       return info.absolutePath() + QLatin1Char('/') + name;
+    }
+    if (errno == EPERM || errno == EOPNOTSUPP || errno == ENOSYS || errno == EMLINK) {
+      // Some removable filesystems cannot hard-link. A no-replace rename
+      // still publishes atomically without overwriting another entry.
+      if (::renameat2(m_temporaryDirectory, "output", m_directory,
+                      encodedName.constData(), RENAME_NOREPLACE) == 0) {
+        return info.absolutePath() + QLatin1Char('/') + name;
+      }
     }
     if (errno != EEXIST) return {};
   }

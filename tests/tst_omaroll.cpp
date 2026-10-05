@@ -5904,65 +5904,207 @@ private slots:
     QVERIFY(failed.first().first().toString().contains(QStringLiteral("Kept copy.png")));
   }
 
-  void exportCollisionsRemainUntouched_data() {
+  void exportCollisionsAreRevealedOrTrashed_data() {
     QTest::addColumn<QByteArray>("contents");
     QTest::addColumn<QString>("action");
-    QTest::newRow("empty-video") << QByteArray() << QStringLiteral("shrink");
-    QTest::newRow("malformed-video") << QByteArray("recoverable video") << QStringLiteral("shrink");
-    QTest::newRow("malformed-jpeg") << QByteArray("recoverable jpeg") << QStringLiteral("convert");
-    QTest::newRow("probe-warning") << QByteArray("valid output with diagnostics") << QStringLiteral("shrink");
+    QTest::addColumn<QByteArray>("probe");
+    QTest::addColumn<bool>("complete");
+    QTest::newRow("empty-video") << QByteArray() << QStringLiteral("shrink") << QByteArray("exit 0") << false;
+    QTest::newRow("malformed-video") << QByteArray("recoverable video") << QStringLiteral("shrink") << QByteArray("exit 1") << false;
+    QTest::newRow("malformed-jpeg") << QByteArray("recoverable jpeg") << QStringLiteral("convert") << QByteArray("exit 1") << false;
+    QTest::newRow("probe-warning") << QByteArray("output with diagnostics") << QStringLiteral("shrink") << QByteArray("echo warning >&2; exit 0") << false;
+    QTest::newRow("complete-video") << QByteArray("complete video") << QStringLiteral("shrink") << QByteArray("exit 0") << true;
+    QTest::newRow("complete-jpeg") << QByteArray("complete jpeg") << QStringLiteral("convert") << QByteArray("exit 0") << true;
+    QTest::newRow("missing-probe") << QByteArray("trust existing") << QStringLiteral("shrink") << QByteArray() << true;
+    QTest::newRow("failed-probe-start") << QByteArray("trust existing") << QStringLiteral("shrink") << QByteArray("bad-interpreter") << true;
+    QTest::newRow("timed-out-probe") << QByteArray("trust existing") << QStringLiteral("shrink") << QByteArray("exec /bin/sleep 10") << true;
+    QTest::newRow("killed-probe") << QByteArray("trust existing") << QStringLiteral("shrink") << QByteArray("kill -KILL $$") << true;
   }
 
-  void exportCollisionsRemainUntouched() {
+  void exportCollisionsAreRevealedOrTrashed() {
     QFETCH(QByteArray, contents);
     QFETCH(QString, action);
+    QFETCH(QByteArray, probe);
+    QFETCH(bool, complete);
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QByteArray previousPath = qgetenv("PATH");
     const auto restore = qScopeGuard([&] { qputenv("PATH", previousPath); });
-    for (const QString& name : {QStringLiteral("ffprobe"), QStringLiteral("omarchy-transcode")}) {
-      QFile helper(dir.filePath(name));
-      QVERIFY(helper.open(QIODevice::WriteOnly));
-      helper.write("#!/bin/sh\necho warning >&2\nexit 0\n");
-      helper.close();
-      QVERIFY(helper.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
-    }
-    QVERIFY(qputenv("PATH", dir.path().toUtf8()));
     const bool jpeg = action == QStringLiteral("convert");
     const QString source = dir.filePath(jpeg ? QStringLiteral("photo.png") : QStringLiteral("clip.mp4"));
     const QString output = dir.filePath(jpeg ? QStringLiteral("photo-medium.jpg") : QStringLiteral("clip-1080p.mp4"));
+    QFile helper(dir.filePath(QStringLiteral("omarchy-transcode")));
+    QVERIFY(helper.open(QIODevice::WriteOnly));
+    helper.write("#!/bin/sh\nprintf exported > '");
+    helper.write(output.toUtf8());
+    helper.write("'\n");
+    helper.close();
+    QVERIFY(helper.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    if (!probe.isEmpty()) {
+      QFile file(dir.filePath(QStringLiteral("ffprobe")));
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write(probe == "bad-interpreter" ? "#!/missing-interpreter\n" : "#!/bin/sh\n" + probe + '\n');
+      file.close();
+      QVERIFY(file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    }
+    QVERIFY(qputenv("PATH", dir.path().toUtf8()));
     QFile file(output);
     QVERIFY(file.open(QIODevice::WriteOnly));
     QCOMPARE(file.write(contents), contents.size());
+    file.close();
+    const QDir trash(m_scratch.filePath(QStringLiteral("data/Trash/files")));
+    const QStringList before = trash.entryList(QDir::Files);
+    ActionLauncher launcher;
+    ActionRegistry registry(&launcher);
+    QSignalSpy failed(&launcher, &ActionLauncher::failed);
+    QSignalSpy pending(&launcher, &ActionLauncher::outputPending);
+    QSignalSpy settled(&launcher, &ActionLauncher::outputSettled);
+    QSignalSpy revealed(&launcher, &ActionLauncher::outputAlreadyDone);
+    QSignalSpy reported(&launcher, &ActionLauncher::reported);
+    QVERIFY(registry.run(action, source));
+    if (complete) {
+      QTRY_COMPARE(revealed.size(), 1);
+      QCOMPARE(revealed.first().first().toString(), output);
+      QCOMPARE(pending.size(), 0);
+      QVERIFY(file.open(QIODevice::ReadOnly));
+      QCOMPARE(file.readAll(), contents);
+      QCOMPARE(trash.entryList(QDir::Files), before);
+      // The direct launcher also reveals an existing output without a new run.
+      QVERIFY(launcher.runTracked(QStringLiteral("missing-helper"), {}, {}, output));
+      QCOMPARE(revealed.size(), 2);
+    } else {
+      QTRY_COMPARE(settled.size(), 1);
+      QCOMPARE(pending.size(), 1);
+      QCOMPARE(revealed.size(), 0);
+      QCOMPARE(settled.first().at(1).toBool(), true);
+      QStringList added = trash.entryList(QDir::Files);
+      for (const QString& name : before) added.removeAll(name);
+      QCOMPARE(added.size(), 1);
+      QFile recoverable(trash.filePath(added.first()));
+      QVERIFY(recoverable.open(QIODevice::ReadOnly));
+      QCOMPARE(recoverable.readAll(), contents);
+      QVERIFY(file.open(QIODevice::ReadOnly));
+      QCOMPARE(file.readAll(), QByteArray("exported"));
+      QVERIFY(reported.first().first().toString().contains(QStringLiteral("Moved incomplete")));
+    }
+    QCOMPARE(failed.size(), 0);
+  }
+
+  void exportDoesNotLaunchWhenTrashFails() {
+    QTemporaryDir dir;
+    const QByteArray previousDataHome = qgetenv("XDG_DATA_HOME");
+    const auto restore = qScopeGuard([&] { qputenv("XDG_DATA_HOME", previousDataHome); });
+    QVERIFY(qputenv("XDG_DATA_HOME", "/proc/omaroll-test-no-trash"));
+    const QString output = dir.filePath(QStringLiteral("clip-1080p.mp4"));
+    QFile file(output);
+    QVERIFY(file.open(QIODevice::WriteOnly));
     file.close();
     ActionLauncher launcher;
     ActionRegistry registry(&launcher);
     QSignalSpy failed(&launcher, &ActionLauncher::failed);
     QSignalSpy pending(&launcher, &ActionLauncher::outputPending);
-    QVERIFY(!registry.run(action, source));
+    QVERIFY(!registry.run(QStringLiteral("shrink"), dir.filePath(QStringLiteral("clip.mp4"))));
     QCOMPARE(failed.size(), 1);
-    QVERIFY(failed.first().first().toString().contains(QStringLiteral("already exists")));
+    QVERIFY(failed.first().first().toString().contains(QStringLiteral("Trash")));
     QCOMPARE(pending.size(), 0);
-    QVERIFY(file.open(QIODevice::ReadOnly));
-    QCOMPARE(file.readAll(), contents);
-  }
-
-  void failedTrackedOutputDoesNotRemoveAnExternalEmptyReplacement() {
-    QTemporaryDir dir;
-    const QString output = dir.filePath(QStringLiteral("output.png"));
-    const QString started = dir.filePath(QStringLiteral("started"));
-    ActionLauncher launcher;
-    QSignalSpy settled(&launcher, &ActionLauncher::outputSettled);
-    QVERIFY(launcher.runTracked(QStringLiteral("sh"),
-      {QStringLiteral("-c"), QStringLiteral("printf started > \"$1\"; sleep 0.3; exit 1"),
-       QStringLiteral("helper"), started}, {}, output));
-    QTRY_VERIFY(QFileInfo::exists(started));
-    QFile replacement(output);
-    QVERIFY(replacement.open(QIODevice::WriteOnly));
-    replacement.close();
-    QTRY_COMPARE(settled.size(), 1);
     QVERIFY(QFileInfo::exists(output));
     QCOMPARE(QFileInfo(output).size(), 0);
+  }
+
+  void exportSymlinksRemainUntouched_data() {
+    QTest::addColumn<bool>("dangling");
+    QTest::newRow("existing-target") << false;
+    QTest::newRow("missing-target") << true;
+  }
+
+  void exportSymlinksRemainUntouched() {
+    QFETCH(bool, dangling);
+    QTemporaryDir dir;
+    const QString target = dir.filePath(QStringLiteral("target"));
+    if (!dangling) {
+      QFile file(target);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("keep target");
+    }
+    const QString output = dir.filePath(QStringLiteral("clip-1080p.mp4"));
+    QVERIFY(QFile::link(target, output));
+    ActionLauncher launcher;
+    ActionRegistry registry(&launcher);
+    QSignalSpy failed(&launcher, &ActionLauncher::failed);
+    QSignalSpy pending(&launcher, &ActionLauncher::outputPending);
+    QVERIFY(!registry.run(QStringLiteral("shrink"), dir.filePath(QStringLiteral("clip.mp4"))));
+    QVERIFY(!launcher.runTracked(QStringLiteral("sh"), {}, {}, output));
+    QCOMPARE(failed.size(), 2);
+    QCOMPARE(pending.size(), 0);
+    QVERIFY(QFileInfo(output).isSymLink());
+    QCOMPARE(QFileInfo(output).symLinkTarget(), target);
+    if (!dangling) {
+      QFile file(target);
+      QVERIFY(file.open(QIODevice::ReadOnly));
+      QCOMPARE(file.readAll(), QByteArray("keep target"));
+    }
+  }
+
+  void exportProbeRejectsAChangedOutput() {
+    QTemporaryDir dir;
+    const QByteArray previousPath = qgetenv("PATH");
+    const auto restore = qScopeGuard([&] { qputenv("PATH", previousPath); });
+    const QString output = dir.filePath(QStringLiteral("clip-1080p.mp4"));
+    QFile file(output);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("incomplete");
+    file.close();
+    QFile probe(dir.filePath(QStringLiteral("ffprobe")));
+    QVERIFY(probe.open(QIODevice::WriteOnly));
+    probe.write("#!/bin/sh\n/bin/sleep 0.3\nexit 1\n");
+    probe.close();
+    QVERIFY(probe.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    QVERIFY(qputenv("PATH", dir.path().toUtf8()));
+    ActionLauncher launcher;
+    ActionRegistry registry(&launcher);
+    QSignalSpy pending(&launcher, &ActionLauncher::outputPending);
+    QSignalSpy reported(&launcher, &ActionLauncher::reported);
+    QVERIFY(registry.run(QStringLiteral("shrink"), dir.filePath(QStringLiteral("clip.mp4"))));
+    QVERIFY(QFile::rename(output, dir.filePath(QStringLiteral("old"))));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("replacement");
+    file.close();
+    QTRY_COMPARE(reported.size(), 1);
+    QVERIFY(reported.first().first().toString().contains(QStringLiteral("Output changed")));
+    QCOMPARE(pending.size(), 0);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), QByteArray("replacement"));
+  }
+
+  void failedTrackedEmptyOutputIsRemovedOnlyIfUnchanged_data() {
+    QTest::addColumn<bool>("replaceAtFinish");
+    QTest::newRow("owned-empty") << false;
+    QTest::newRow("replaced-after-finish") << true;
+  }
+
+  void failedTrackedEmptyOutputIsRemovedOnlyIfUnchanged() {
+    QFETCH(bool, replaceAtFinish);
+    QTemporaryDir dir;
+    const QString output = dir.filePath(QStringLiteral("output.png"));
+    ActionLauncher launcher;
+    QSignalSpy settled(&launcher, &ActionLauncher::outputSettled);
+    QSignalSpy failed(&launcher, &ActionLauncher::failed);
+    QVERIFY(launcher.runTracked(QStringLiteral("sh"),
+      {QStringLiteral("-c"), QStringLiteral(": > \"$1\"; exit 1"),
+       QStringLiteral("helper"), output}, {}, output));
+    if (replaceAtFinish) {
+      connect(&launcher, &ActionLauncher::pendingOutputsChanged, &launcher, [&] {
+        QVERIFY(!launcher.isPending(output));
+        QVERIFY(QFile::rename(output, dir.filePath(QStringLiteral("owned"))));
+        QFile replacement(output);
+        QVERIFY(replacement.open(QIODevice::WriteOnly));
+      });
+    }
+    QTRY_COMPARE(settled.size(), 1);
+    QCOMPARE(settled.first().at(1).toBool(), false);
+    QCOMPARE(failed.size(), 1);
+    QCOMPARE(QFileInfo::exists(output), replaceAtFinish);
+    if (replaceAtFinish) QCOMPARE(QFileInfo(output).size(), 0);
   }
 
   void tailscalePeersAreTheMachinesThatCanTakeAFile() {
@@ -6863,6 +7005,51 @@ private slots:
       QVERIFY(failed.device());
       failed.device()->write("partial");
       // Destruction of an unpublished output touches only the owned temp.
+    }
+    QVERIFY(collision.open(QIODevice::ReadOnly));
+    QCOMPARE(collision.readAll(), QByteArray("other application"));
+    QCOMPARE(QDir(dir.path()).entryList({QStringLiteral(".omaroll-copy-*")}, QDir::Dirs | QDir::Hidden).size(), 0);
+  }
+
+  void privateCopiesFallBackToNoReplaceRename_data() {
+    QTest::addColumn<int>("linkError");
+    QTest::addColumn<QString>("name");
+    QTest::newRow("permission") << EPERM << QStringLiteral("photo.png");
+    QTest::newRow("unsupported") << EOPNOTSUPP << QStringLiteral("photo.png");
+    QTest::newRow("unimplemented") << ENOSYS << QStringLiteral("photo.png");
+    QTest::newRow("link-limit-no-suffix") << EMLINK << QStringLiteral("photo");
+    QTest::newRow("other-error-fails") << EACCES << QStringLiteral("photo.png");
+  }
+
+  void privateCopiesFallBackToNoReplaceRename() {
+    QFETCH(int, linkError);
+    QFETCH(QString, name);
+    QTemporaryDir dir;
+    const QString destination = dir.filePath(name);
+    QFile collision(destination);
+    QVERIFY(collision.open(QIODevice::WriteOnly));
+    collision.write("other application");
+    collision.close();
+    // Inject the link failure, then exercise the real renameat2 syscall.
+    static int injectedError;
+    injectedError = linkError;
+    const auto failLink = +[](int, const char*, int, const char*, int) {
+      errno = injectedError;
+      return -1;
+    };
+    QString published;
+    {
+      CopyOutput output(destination, failLink);
+      QVERIFY(output.device());
+      QCOMPARE(output.device()->write("our encoded image"), 17);
+      published = output.publish();
+      const QString numbered = name == QStringLiteral("photo") ? QStringLiteral("photo-2") : QStringLiteral("photo-2.png");
+      QCOMPARE(published, linkError == EACCES ? QString() : dir.filePath(numbered));
+    }
+    if (!published.isEmpty()) {
+      QFile file(published);
+      QVERIFY(file.open(QIODevice::ReadOnly));
+      QCOMPARE(file.readAll(), QByteArray("our encoded image"));
     }
     QVERIFY(collision.open(QIODevice::ReadOnly));
     QCOMPARE(collision.readAll(), QByteArray("other application"));

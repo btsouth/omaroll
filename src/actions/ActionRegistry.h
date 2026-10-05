@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QSet>
 #include <QStringList>
 #include <QVariantList>
 #include <QVariantMap>
@@ -66,7 +67,7 @@ public:
     // Where the tool writes, with "{stem}" for the source's base name, for
     // tools that refuse to overwrite: omarchy-transcode runs ffmpeg without
     // -y, and a second run would hang on its prompt. An existing output is
-    // left untouched and reported instead of launched.
+    // probed and revealed when complete, or moved to Trash before retrying.
     QString output = {};
   };
 
@@ -115,6 +116,8 @@ public:
 private:
   bool run(const QString& id, const QStringList& paths, const QVariantMap& placeholders = {});
   bool launch(const Definition& definition, const QStringList& arguments, const QString& output);
+  void probeThenLaunch(const Definition& definition, const QStringList& arguments,
+                       const QString& output);
   [[nodiscard]] static bool applies(const Definition& definition, bool video, bool document,
                                     bool raw = false);
   [[nodiscard]] const Definition* find(const QString& id) const;
@@ -122,4 +125,5 @@ private:
 
   ActionLauncher* m_launcher = nullptr;
   QList<Definition> m_definitions;
+  QSet<QString> m_probingOutputs;
 };

@@ -8,7 +8,8 @@
 // and cleanup even if a folder or one of its ancestors is moved.
 class CopyOutput final {
 public:
-  explicit CopyOutput(const QString& preferredPath);
+  using LinkFunction = int (*)(int, const char*, int, const char*, int);
+  explicit CopyOutput(const QString& preferredPath, LinkFunction link = nullptr);
   ~CopyOutput();
   CopyOutput(const CopyOutput&) = delete;
   CopyOutput& operator=(const CopyOutput&) = delete;
@@ -18,6 +19,7 @@ public:
   [[nodiscard]] QString publish();
 
 private:
+  LinkFunction m_link;
   QString m_path;
   QByteArray m_temporaryName;
   QFile m_file;

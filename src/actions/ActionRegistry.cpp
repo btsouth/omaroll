@@ -2,10 +2,13 @@
 
 #include "actions/ActionLauncher.h"
 #include "sources/CameraRaw.h"
+#include "sources/FileVersion.h"
 
 #include <QFile>
 #include <QFileInfo>
 #include <QMimeDatabase>
+#include <QProcess>
+#include <QTimer>
 #include <algorithm>
 #include <QStandardPaths>
 #include <QVariantMap>
@@ -355,6 +358,77 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
 ActionRegistry::ActionRegistry(ActionLauncher* launcher, QObject* parent)
     : QObject(parent), m_launcher(launcher), m_definitions(buildTable()) {}
 
+void ActionRegistry::probeThenLaunch(const Definition& definition, const QStringList& arguments,
+                                     const QString& output) {
+  // A >0-byte file is not proof the transcode finished: the fire-and-forget
+  // era could die mid-write and leave a truncated mp4 that then blocked every
+  // retry as "already done". ffprobe reads the container the way any player
+  // would; it ships with the ffmpeg omarchy-transcode needs anyway. When it
+  // is somehow absent, trust the file rather than re-transcoding on a guess.
+  const QString ffprobe = QStandardPaths::findExecutable(QStringLiteral("ffprobe"));
+  if (ffprobe.isEmpty()) {
+    m_launcher->revealExisting(output);
+    return;
+  }
+
+  m_probingOutputs.insert(output);
+  const QString originalVersion = FileVersion::key(output);
+
+  // Off the event loop: a probe of a large file on a slow disk can take
+  // seconds, and the window has to stay live while it decides.
+  auto* probe = new QProcess(this);
+  auto* timeout = new QTimer(probe);
+  timeout->setSingleShot(true);
+  timeout->setInterval(4000);
+  connect(timeout, &QTimer::timeout, probe, &QProcess::kill);
+
+  connect(probe, &QProcess::finished, this,
+          [this, probe, definition, arguments, output, originalVersion](int exitCode, QProcess::ExitStatus status) {
+            probe->deleteLater();
+            m_probingOutputs.remove(output);
+            // Another action or application may have replaced this file
+            // while the asynchronous probe was running.
+            const QFileInfo now(output);
+            if (m_launcher->isPending(output) || now.isSymLink() ||
+                FileVersion::key(output) != originalVersion) {
+              m_launcher->report(u"Output changed while checking %1; try again"_s.arg(now.fileName()));
+              return;
+            }
+            // A probe that had to be killed says nothing about the file; trust
+            // it, as a missing ffprobe does, rather than throw away a good one.
+            const bool killed = status != QProcess::NormalExit;
+            const bool complete =
+                killed || (exitCode == 0 && probe->readAllStandardError().trimmed().isEmpty());
+            if (complete) {
+              // Shown, not just mentioned: the viewer opens on the file,
+              // because "already done" with nothing to look at reads as
+              // nothing happening.
+              m_launcher->revealExisting(output);
+              return;
+            }
+            if (!m_launcher->moveToTrash(output)) return;
+            m_launcher->report(u"Moved incomplete %1 to Trash and exporting again"_s.arg(now.fileName()));
+            launch(definition, arguments, output);
+          });
+  connect(probe, &QProcess::errorOccurred, this,
+          [this, probe, output, originalVersion](QProcess::ProcessError error) {
+            if (error != QProcess::FailedToStart) {
+              return;
+            }
+            probe->deleteLater();
+            m_probingOutputs.remove(output);
+            if (m_launcher->isPending(output) || QFileInfo(output).isSymLink() ||
+                FileVersion::key(output) != originalVersion) {
+              m_launcher->report(u"Output changed while checking %1; try again"_s.arg(QFileInfo(output).fileName()));
+              return;
+            }
+            m_launcher->revealExisting(output);
+          });
+
+  probe->start(ffprobe, {u"-v"_s, u"error"_s, output});
+  timeout->start();
+}
+
 bool ActionRegistry::applies(const Definition& definition, bool video, bool document, bool raw) {
   if (raw && !definition.raws) {
     return false;
@@ -548,15 +622,23 @@ bool ActionRegistry::run(const QString& id, const QStringList& paths,
   QString output;
   if (!definition->output.isEmpty()) {
     output = first.absolutePath() + QLatin1Char('/') + expand(definition->output);
-    if (m_launcher->isPending(output)) {
+    if (m_launcher->isPending(output) || m_probingOutputs.contains(output)) {
       m_launcher->report(u"Still working on %1"_s.arg(QFileInfo(output).fileName()));
       return true;
     }
     const QFileInfo existing(output);
-    if (existing.exists() || existing.isSymLink()) {
-      emit m_launcher->failed(u"Output %1 already exists. Move or rename it before exporting again"_s
+    if (existing.isSymLink()) {
+      emit m_launcher->failed(u"Output %1 is a symbolic link. Move or rename it before exporting again"_s
                                   .arg(existing.fileName()));
       return false;
+    }
+    if (existing.exists()) {
+      if (existing.size() > 0) {
+        probeThenLaunch(*definition, arguments, output);
+        return true;
+      }
+      if (!m_launcher->moveToTrash(output)) return false;
+      m_launcher->report(u"Moved incomplete %1 to Trash and exporting again"_s.arg(existing.fileName()));
     }
   }
 
