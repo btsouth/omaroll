@@ -1183,12 +1183,16 @@ private slots:
 
   void narrowTransportKeepsSeekingWithCaptionsAndChangedSpeed_data() {
     QTest::addColumn<QString>("palette");
-    QTest::newRow("dark") << QStringLiteral("dark");
-    QTest::newRow("light") << QStringLiteral("light");
+    QTest::addColumn<int>("width");
+    QTest::newRow("dark-320") << QStringLiteral("dark") << 320;
+    QTest::newRow("dark-400") << QStringLiteral("dark") << 400;
+    QTest::newRow("light-320") << QStringLiteral("light") << 320;
+    QTest::newRow("light-400") << QStringLiteral("light") << 400;
   }
 
   void narrowTransportKeepsSeekingWithCaptionsAndChangedSpeed() {
     QFETCH(QString, palette);
+    QFETCH(int, width);
     QTemporaryDir themeHome;
     QVERIFY(themeHome.isValid());
     QVERIFY(QDir().mkpath(themeHome.filePath(QStringLiteral("omarchy"))));
@@ -1211,6 +1215,8 @@ private slots:
     QQuickItem* transport = control(QStringLiteral("viewerTransport"));
     QQuickItem* scrub = control(QStringLiteral("viewerScrub"));
     QVERIFY(transport && scrub);
+    window->resize(width, 240);
+    QTRY_COMPARE(transport->width(), width - 32);
     QQmlComponent component(m_engine);
     component.setData(R"(
       import QtQuick
@@ -1237,25 +1243,21 @@ private slots:
       }
       for (const double rate : {1.0, 1.5}) {
         player->setProperty("playbackRate", rate);
-        for (const int width : {320, 400}) {
-          window->resize(width, 240);
-          QTRY_COMPARE(transport->width(), width - 32);
-          QTRY_VERIFY(scrub->width() >= 64);
-          QTRY_VERIFY(control(QStringLiteral("viewerCaptionsButton"))->isVisible());
-          if (rate != 1.0) {
-            QTRY_VERIFY(control(QStringLiteral("viewerSpeedButton"))->isVisible());
-          }
-          QTRY_VERIFY(scrub->mapToScene(QPointF()).x() >= 0);
-          QTRY_VERIFY(scrub->mapToScene(QPointF(scrub->width(), 0)).x() <= width);
-          if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
-            QSignalSpy frames(window, &QQuickWindow::frameSwapped);
-            window->requestUpdate();
-            QTRY_VERIFY(frames.size() >= 2);
-            QTRY_VERIFY(!window->grabWindow().isNull());
-            QVERIFY(window->grabWindow().save(QCoreApplication::applicationDirPath()
-                + QStringLiteral("/narrow-transport-%1-%2-%3-%4.png")
-                      .arg(palette).arg(width).arg(rate).arg(pixels)));
-          }
+        QTRY_VERIFY(scrub->width() >= 64);
+        QTRY_VERIFY(control(QStringLiteral("viewerCaptionsButton"))->isVisible());
+        if (rate != 1.0) {
+          QTRY_VERIFY(control(QStringLiteral("viewerSpeedButton"))->isVisible());
+        }
+        QTRY_VERIFY(scrub->mapToScene(QPointF()).x() >= 0);
+        QTRY_VERIFY(scrub->mapToScene(QPointF(scrub->width(), 0)).x() <= width);
+        if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
+          QSignalSpy frames(window, &QQuickWindow::frameSwapped);
+          window->requestUpdate();
+          QTRY_VERIFY(frames.size() >= 2);
+          QTRY_VERIFY(!window->grabWindow().isNull());
+          QVERIFY(window->grabWindow().save(QCoreApplication::applicationDirPath()
+              + QStringLiteral("/narrow-transport-%1-%2-%3-%4.png")
+                    .arg(palette).arg(width).arg(rate).arg(pixels)));
         }
       }
     }

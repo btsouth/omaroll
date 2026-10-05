@@ -25,20 +25,13 @@ Rectangle {
     readonly property bool playing: player && player.playbackState === MediaPlayer.PlayingState
     readonly property real rate: player ? player.playbackRate : 1
     readonly property real minimumSeekWidth: 64
-    readonly property real essentialSeekBudget: width - 6 - playButton.width - 8 - elapsed.implicitWidth
-                                               - 24 - 10 - 6
-                                               - soundButton.width - fullScreenButton.width - 2
-    readonly property real seekBudget: essentialSeekBudget - total.width
-    readonly property bool showCaptions: hasCaptions && seekBudget >= minimumSeekWidth + captionsButton.width + 2
-    readonly property bool speedWanted: Math.abs(rate - 1) > 0.01 || width >= 560
-    readonly property bool showSpeed: speedWanted
-                                     && seekBudget >= minimumSeekWidth + speedButton.width + 2
-                                        + (showCaptions ? captionsButton.width + 2 : 0)
-    readonly property bool wide: width >= 560 && seekBudget >= minimumSeekWidth + 66
-                                + (showCaptions ? captionsButton.width + 2 : 0)
-                                + (showSpeed ? speedButton.width + 2 : 0)
-
-    readonly property bool hasOverflow: (hasCaptions && !showCaptions) || (speedWanted && !showSpeed)
+    readonly property bool wide: width >= 560
+    readonly property bool speedWanted: Math.abs(rate - 1) > 0.01 || wide
+    readonly property real seekBudget: width - 6 - playButton.width - 8 - elapsed.implicitWidth
+                                      - 24 - 10 - (stacked ? 0 : extras.implicitWidth + 6)
+    readonly property bool stacked: width - 6 - playButton.width - 8 - elapsed.implicitWidth
+                                   - 24 - total.implicitWidth - 10 - 6 - extras.implicitWidth
+                                   < minimumSeekWidth
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
@@ -65,7 +58,7 @@ Rectangle {
         root.player.playbackRate = 1
     }
 
-    implicitHeight: 46 + (hasOverflow ? 38 : 0)
+    implicitHeight: 46 + (stacked ? 38 : 0)
     radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, height / 2) : 4
     color: root.shade(Theme.background, 0.84)
     border.width: 1
@@ -86,7 +79,7 @@ Rectangle {
         anchors.left: parent.left
         anchors.leftMargin: 6
         anchors.verticalCenter: parent.verticalCenter
-        anchors.verticalCenterOffset: root.hasOverflow ? 19 : 0
+        anchors.verticalCenterOffset: root.stacked ? 19 : 0
         icon: root.playing ? "pause" : "play"
         iconSize: 18
         toolTip: root.playing ? "Pause" : "Play"
@@ -99,7 +92,7 @@ Rectangle {
         anchors.left: playButton.right
         anchors.leftMargin: 8
         anchors.verticalCenter: parent.verticalCenter
-        anchors.verticalCenterOffset: root.hasOverflow ? 19 : 0
+        anchors.verticalCenterOffset: root.stacked ? 19 : 0
         text: root.clock(root.position)
         font.family: Theme.fontFamily
         font.pixelSize: 11
@@ -114,7 +107,7 @@ Rectangle {
         anchors.leftMargin: 12
         anchors.rightMargin: 12
         anchors.verticalCenter: parent.verticalCenter
-        anchors.verticalCenterOffset: root.hasOverflow ? 19 : 0
+        anchors.verticalCenterOffset: root.stacked ? 19 : 0
         height: 24
 
         readonly property real fraction: root.duration > 0
@@ -197,12 +190,12 @@ Rectangle {
 
     Text {
         id: total
-        visible: root.essentialSeekBudget - implicitWidth >= root.minimumSeekWidth
+        visible: root.seekBudget - implicitWidth >= root.minimumSeekWidth
         width: visible ? implicitWidth : 0
-        anchors.right: extras.left
+        anchors.right: root.stacked ? parent.right : extras.left
         anchors.rightMargin: 10
         anchors.verticalCenter: parent.verticalCenter
-        anchors.verticalCenterOffset: root.hasOverflow ? 19 : 0
+        anchors.verticalCenterOffset: root.stacked ? 19 : 0
         text: root.clock(root.duration)
         font.family: Theme.fontFamily
         font.pixelSize: 11
@@ -214,13 +207,12 @@ Rectangle {
         anchors.right: parent.right
         anchors.rightMargin: 6
         anchors.verticalCenter: parent.verticalCenter
-        anchors.verticalCenterOffset: root.hasOverflow ? 19 : 0
+        anchors.verticalCenterOffset: root.stacked ? -19 : 0
         spacing: 2
 
         IconButton {
             id: captionsButton
             objectName: "viewerCaptionsButton"
-            parent: root.showCaptions ? extras : overflowExtras
             visible: root.hasCaptions
             anchors.verticalCenter: parent.verticalCenter
             icon: "captions"
@@ -234,7 +226,6 @@ Rectangle {
         Rectangle {
             id: speedButton
             objectName: "viewerSpeedButton"
-            parent: root.showSpeed ? extras : overflowExtras
             visible: root.speedWanted
             anchors.verticalCenter: parent.verticalCenter
             width: speedLabel.implicitWidth + 16
@@ -321,17 +312,6 @@ Rectangle {
             shortcut: "F"
             onClicked: root.fullScreenToggled()
         }
-    }
-
-    Row {
-        id: overflowExtras
-        anchors.right: parent.right
-        anchors.rightMargin: 6
-        anchors.top: parent.top
-        anchors.topMargin: 4
-        height: 34
-        spacing: 2
-        visible: root.hasOverflow
     }
 
     // The wheel over the bar sets the volume, the way it does in most players.
