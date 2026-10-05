@@ -21,7 +21,7 @@ Item {
 
     readonly property int fileCount: paths.length
 
-    signal finished(int succeeded, int failed, var outputs)
+    signal finished(int succeeded, int failed)
 
     function open(list) {
         jobGeneration = ImageEdit.nextJobId()
@@ -68,18 +68,17 @@ Item {
         function onBatchFinished(succeeded, failed, results, jobId) {
             if (jobId !== root.jobGeneration || !root.visible) return
             root.running = false
-            const outputs = []
             const failedPaths = []
             const errors = []
             for (const result of results) {
                 if (result.error !== "") {
                     failedPaths.push(result.source)
                     errors.push(result.source + ": " + result.error)
-                } else outputs.push(result.output)
+                }
             }
             root.failedPaths = failedPaths
             root.errorText = errors.join("\n")
-            root.finished(succeeded, failed, outputs)
+            root.finished(succeeded, failed)
             if (failed === 0) root.close()
         }
         function onFailed(message, jobId) {
@@ -224,7 +223,8 @@ Item {
                 spacing: 8
 
                 PillButton {
-                    label: "Cancel"
+                    label: root.running ? "Close" : "Cancel"
+                    toolTip: root.running ? "Saving continues after closing" : ""
                     onClicked: root.close()
                 }
                 PillButton {

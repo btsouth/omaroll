@@ -851,7 +851,8 @@ Item {
                 Item { width: 4; height: 1 }
 
                 PillButton {
-                    label: "Cancel"
+                    label: root.saving ? "Close" : "Cancel"
+                    toolTip: root.saving ? "Saving continues after closing" : ""
                     onClicked: root.close()
                 }
                 PillButton {

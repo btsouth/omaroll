@@ -811,7 +811,7 @@ private slots:
     perform(QStringLiteral("corrections"), path);
     const int current = single->property("jobGeneration").toInt();
     QVERIFY(old != current);
-    m_imageEditor->saved(QStringLiteral("/tmp/old.png"), old);
+    m_imageEditor->saved(path, old);
     m_imageEditor->failed(QStringLiteral("old error"), old);
     m_imageEditor->copied(old);
     QVERIFY(single->isVisible());
