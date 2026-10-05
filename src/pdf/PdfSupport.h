@@ -26,7 +26,8 @@ void limitProcess(QProcess& process);
 // The 1-based pages of a document whose text contains query, ignoring case and
 // runs of whitespace (so a phrase split across lines still matches). The text
 // is what pdftotext emits: pages separated by a form feed.
-[[nodiscard]] QList<int> findPages(const QString& documentText, const QString& query);
+[[nodiscard]] QList<int> findPages(const QString& documentText, const QString& query,
+                                   bool* tooManyMatches = nullptr);
 
 // One recognized word of a page. The box is in page points, the space
 // pdftotext reports and the space a page is rendered in.

@@ -3043,6 +3043,16 @@ private slots:
     QVERIFY(PdfSupport::findPages(text, QString()).isEmpty());
   }
 
+  void pdfSearchBoundsMatchingPages() {
+    bool tooMany = false;
+    const QString manyPages = QStringLiteral("match\f").repeated(100001);
+    QVERIFY(PdfSupport::findPages(manyPages, QStringLiteral("match"), &tooMany).isEmpty());
+    QVERIFY(tooMany);
+    QCOMPARE(PdfSupport::findPages(QStringLiteral("match"), QStringLiteral("match"), &tooMany),
+             QList<int>({1}));
+    QVERIFY(!tooMany);
+  }
+
   void pdfPageTextCopyReportsAnOutcome() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

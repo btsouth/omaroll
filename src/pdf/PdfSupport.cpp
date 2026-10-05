@@ -105,21 +105,27 @@ bool textAvailable() {
   return !QStandardPaths::findExecutable(QStringLiteral("pdftotext")).isEmpty();
 }
 
-QList<int> findPages(const QString& documentText, const QString& query) {
+QList<int> findPages(const QString& documentText, const QString& query, bool* tooManyMatches) {
+  if (tooManyMatches) *tooManyMatches = false;
   QList<int> pages;
   const QString needle = normalized(query).toCaseFolded();
-  if (needle.isEmpty()) {
-    return pages;
-  }
-  const QStringList pageTexts = documentText.split(QChar(0x0C));
-  for (qsizetype index = 0; index < pageTexts.size(); ++index) {
-    const QString& page = pageTexts.at(index);
-    if (page.trimmed().isEmpty()) {
-      continue;
-    }
+  if (needle.isEmpty()) return pages;
+  qsizetype start = 0;
+  int pageNumber = 1;
+  while (start < documentText.size()) {
+    const qsizetype separator = documentText.indexOf(QChar(0x0C), start);
+    const qsizetype end = separator < 0 ? documentText.size() : separator;
+    const QString page = documentText.mid(start, end - start);
     if (normalized(page).toCaseFolded().contains(needle)) {
-      pages.append(static_cast<int>(index) + 1);
+      if (pages.size() >= 100000) {
+        if (tooManyMatches) *tooManyMatches = true;
+        return {};
+      }
+      pages.append(pageNumber);
     }
+    if (separator < 0) break;
+    start = separator + 1;
+    ++pageNumber;
   }
   return pages;
 }

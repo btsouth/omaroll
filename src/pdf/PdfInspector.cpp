@@ -224,16 +224,28 @@ void PdfInspector::searchText() {
   const quint64 request = ++m_searchRequest;
   const QString text = m_documentText;
   const QString query = m_query;
-  auto* watcher = new QFutureWatcher<QList<int>>(this);
-  connect(watcher, &QFutureWatcher<QList<int>>::finished, this, [this, watcher, generation, request] {
-    const auto pages = watcher->result();
+  struct Search {
+    QVariantList matches;
+    bool tooMany = false;
+  };
+  auto* watcher = new QFutureWatcher<Search>(this);
+  connect(watcher, &QFutureWatcher<Search>::finished, this, [this, watcher, generation, request] {
+    const auto result = watcher->result();
     watcher->deleteLater();
     if (generation != m_generation || request != m_searchRequest || !currentVersion()) return;
-    m_matches.clear();
-    for (const int page : pages) m_matches.append(page);
+    if (result.tooMany) {
+      emit searchFailed(QStringLiteral("This PDF has too many matching pages"));
+      return;
+    }
+    m_matches = result.matches;
     emit matchesChanged();
   });
-  watcher->setFuture(QtConcurrent::run([text, query] { return PdfSupport::findPages(text, query); }));
+  watcher->setFuture(QtConcurrent::run([text, query] {
+    Search result;
+    const auto pages = PdfSupport::findPages(text, query, &result.tooMany);
+    for (const int page : pages) result.matches.append(page);
+    return result;
+  }));
 }
 
 PdfInspector::~PdfInspector() {
