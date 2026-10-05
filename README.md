@@ -112,6 +112,8 @@ process, so a favourite or rating set in one shows in the others.
 | wheel · pinch | Zoom around the pointer |
 | `+` `-` | Zoom in · out |
 | drag · two-finger scroll | Move around a zoomed picture, down a long screenshot |
+| `W` | Fit width, starting at the top of tall pictures |
+| `Shift` + arrows | Pan a picture zoomed beyond fit |
 | `0` · `1` or double click | Fit · toggle fit and actual size |
 | `R` · `Shift+R` | Rotate right · left, the view only, never the file |
 | `Space` · `K` | Play · pause a video or animation |
@@ -127,6 +129,8 @@ process, so a favourite or rating set in one shows in the others.
 | `B` | Hide or show the filmstrip |
 | `D` · `Shift+D` | Open a RAW in the preferred editor · choose an editor |
 | `V` · `Alt+1`-`Alt+5` · `Ctrl+Z` | Favourite · rate · undo |
+| `Ctrl+Shift+C` | Copy the opened path as plain text |
+| `?` · `F1` | Show or hide the grouped shortcut help |
 | `Y` · `S` · `A` | Copy · send · annotate |
 | `T` · `G` · `P` | Trim · save the current frame · open in mpv |
 | `Del` | Move to Trash, with confirm |
@@ -136,7 +140,9 @@ process, so a favourite or rating set in one shows in the others.
 | `Esc` | Leave the slideshow or full screen, close the details, then close |
 
 In both image viewers, `1` goes to actual size from a custom zoom. Press it
-again at actual size to fit the image.
+again at actual size to fit the image. The quick viewer menu also offers Fit
+without enlarging and Copy file name. Turn off **Enlarge small pictures to fit**
+in Settings to show small pictures at 100% when fitted.
 
 Settings offers **Remember playback speed**, off by default. When enabled,
 the last speed chosen in the quick viewer applies to newly opened videos.

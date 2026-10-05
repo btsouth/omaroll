@@ -9,6 +9,8 @@ Rectangle {
 
     property string fileName: ""
     property string folder: ""
+    property string filePath: ""
+    property string resolvedPath: ""
     property string technical: ""
     property string sizeLabel: ""
     property string dateLabel: ""
@@ -20,6 +22,8 @@ Rectangle {
     signal rateRequested(int stars)
     signal favoriteToggled()
     signal folderRequested()
+    signal copyPathRequested()
+    signal copyNameRequested()
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
@@ -151,6 +155,38 @@ Rectangle {
             }
 
             Item { width: 1; height: 4 }
+
+            Text {
+                width: parent.width
+                text: "Path: " + root.filePath
+                wrapMode: Text.WrapAnywhere
+                font.family: Theme.fontFamily
+                font.pixelSize: 11
+                color: Theme.mutedText
+            }
+            Text {
+                width: parent.width
+                visible: root.resolvedPath !== ""
+                text: "Target: " + root.resolvedPath
+                wrapMode: Text.WrapAnywhere
+                font.family: Theme.fontFamily
+                font.pixelSize: 11
+                color: Theme.mutedText
+            }
+            Flow {
+                width: parent.width
+                spacing: 6
+                PillButton {
+                    objectName: "viewerInfoCopyPath"
+                    label: "Copy path"
+                    onClicked: root.copyPathRequested()
+                }
+                PillButton {
+                    objectName: "viewerInfoCopyName"
+                    label: "Copy file name"
+                    onClicked: root.copyNameRequested()
+                }
+            }
 
             // Where the file lives. A click shows it in the file manager.
             Text {

@@ -1,6 +1,7 @@
 #include "actions/ActionLauncher.h"
 #include "actions/OpenWithRequest.h"
 #include "app/VideoPlayback.h"
+#include "edit/ClipboardText.h"
 #include "sources/FileVersion.h"
 
 #include <QClipboard>
@@ -349,6 +350,10 @@ QStringList ActionLauncher::pendingOutputs() const {
 void ActionLauncher::revealExisting(const QString& path) {
   emit reported(u"Already made earlier: %1"_s.arg(QFileInfo(path).fileName()));
   emit outputAlreadyDone(path);
+}
+
+bool ActionLauncher::copyPlainText(const QString& text) {
+  return ClipboardText::offer(text);
 }
 
 bool ActionLauncher::copyText(const QString& text, bool sensitive, const QString& mimeType) {

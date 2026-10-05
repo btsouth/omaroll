@@ -28,6 +28,7 @@
 #include "viewer/ViewerWindows.h"
 
 #include <QAudioDevice>
+#include <QClipboard>
 #include <QDBusArgument>
 #include <QDBusConnection>
 #include <QDBusConnectionInterface>
@@ -2248,6 +2249,178 @@ private slots:
     QCOMPARE(m_session->count(), 4);
     QCOMPARE(m_session->path(), raw);
     QTRY_COMPARE(label(0), QStringLiteral("DNG"));
+  }
+
+  void copyPathAndNamePreserveTheOpenedEntry() {
+    QTemporaryDir folder;
+    QVERIFY(folder.isValid());
+    const QString target = folder.filePath(QStringLiteral("target.png"));
+    QImage image(80, 60, QImage::Format_RGB32);
+    image.fill(Qt::blue);
+    QVERIFY(image.save(target));
+    const QString alias = folder.filePath(QStringLiteral("opened ü name.png"));
+    QVERIFY(QFile::link(target, alias));
+    open({target});
+    m_session->setDeletionPaths({{target, alias}});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    // Exercise the helper's Qt fallback without a compositor clipboard process.
+    const QByteArray previousPath = qgetenv("PATH");
+    const auto restore = qScopeGuard([&] { qputenv("PATH", previousPath); });
+    qputenv("PATH", QByteArray());
+    QTest::keyClick(m_window, Qt::Key_C, Qt::ControlModifier | Qt::ShiftModifier);
+    QCOMPARE(QGuiApplication::clipboard()->text(), alias);
+    QCOMPARE(prop("status").toString(), QStringLiteral("Path copied"));
+    QTest::keyClick(m_window, Qt::Key_I);
+    QCOMPARE(item(QStringLiteral("viewerInfoPanel"))->property("filePath").toString(), alias);
+    QCOMPARE(item(QStringLiteral("viewerInfoPanel"))->property("resolvedPath").toString(), target);
+    QVERIFY(QMetaObject::invokeMethod(item(QStringLiteral("viewerInfoCopyName")), "click"));
+    QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("opened ü name.png"));
+    QVERIFY(QMetaObject::invokeMethod(item(QStringLiteral("viewerInfoCopyPath")), "click"));
+    QCOMPARE(QGuiApplication::clipboard()->text(), alias);
+    QTest::keyClick(m_window, Qt::Key_I);
+    QTest::mouseClick(m_window, Qt::RightButton, Qt::NoModifier, QPoint(150, 120));
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("viewerMenu"));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QVERIFY(menuIds(menu).contains(QStringLiteral("copy-path")));
+    QVERIFY(menuIds(menu).contains(QStringLiteral("copy-name")));
+    QVERIFY(QMetaObject::invokeMethod(item(QStringLiteral("viewerMenu_copy-name")), "click"));
+    QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("opened ü name.png"));
+  }
+
+  void fitWidthAndKeyboardPanKeepPlainNavigation() {
+    QTemporaryDir folder;
+    QVERIFY(folder.isValid());
+    const QString tall = folder.filePath(QStringLiteral("tall.png"));
+    const QString next = folder.filePath(QStringLiteral("next.png"));
+    QImage image(600, 4000, QImage::Format_RGB32);
+    image.fill(Qt::blue);
+    QVERIFY(image.save(tall));
+    QVERIFY(image.save(next));
+    open({tall, next});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QQuickItem* still = item(QStringLiteral("viewerStill"));
+    QTest::keyClick(m_window, Qt::Key_Down, Qt::ShiftModifier);
+    QCOMPARE(still->property("contentY").toReal(), 0.0);
+    QTest::keyClick(m_window, Qt::Key_W);
+    QCOMPARE(prop("fitMode").toString(), QStringLiteral("width"));
+    QTRY_VERIFY(qAbs(prop("displayWidth").toReal() - m_window->width()) < 0.01);
+    QCOMPARE(still->property("contentY").toReal(), 0.0);
+    QVERIFY(still->property("interactive").toBool());
+    QTest::keyClick(m_window, Qt::Key_Down, Qt::ShiftModifier);
+    QCOMPARE(still->property("contentY").toReal(), 80.0);
+    QCOMPARE(m_session->path(), tall);
+    QTest::keyClick(m_window, Qt::Key_Up, Qt::ShiftModifier);
+    QCOMPARE(still->property("contentY").toReal(), 0.0);
+    for (int i = 0; i < 120; ++i) QTest::keyClick(m_window, Qt::Key_Down, Qt::ShiftModifier);
+    QCOMPARE(still->property("contentY").toReal(),
+             still->property("contentHeight").toReal() - still->height());
+    m_window->resize(600, 400);
+    QTRY_VERIFY(qAbs(prop("displayWidth").toReal() - 600) < 0.01);
+    QTest::keyClick(m_window, Qt::Key_0);
+    QTRY_COMPARE(prop("viewScale").toReal(), 0.0);
+    QCOMPARE(prop("fitMode").toString(), QStringLiteral("fit"));
+    QTest::keyClick(m_window, Qt::Key_1);
+    QTRY_COMPARE(prop("zoomPercent").toInt(), 100);
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QCOMPARE(m_session->path(), next);
+    QTRY_COMPARE(prop("fitMode").toString(), QStringLiteral("fit"));
+  }
+
+  void keyboardPanClampsBothAxesAtActualSize() {
+    QTemporaryDir folder;
+    QVERIFY(folder.isValid());
+    const QString path = folder.filePath(QStringLiteral("large.png"));
+    QImage image(2000, 1800, QImage::Format_RGB32);
+    image.fill(Qt::blue);
+    QVERIFY(image.save(path));
+    open({path});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QTest::keyClick(m_window, Qt::Key_1);
+    QTRY_VERIFY(!prop("zooming").toBool());
+    QQuickItem* still = item(QStringLiteral("viewerStill"));
+    still->setProperty("contentX", 0);
+    still->setProperty("contentY", 0);
+    QTest::keyClick(m_window, Qt::Key_Right, Qt::ShiftModifier);
+    QTest::keyClick(m_window, Qt::Key_Down, Qt::ShiftModifier);
+    QCOMPARE(still->property("contentX").toReal(), 80.0);
+    QCOMPARE(still->property("contentY").toReal(), 80.0);
+    for (int i = 0; i < 40; ++i) {
+      QTest::keyClick(m_window, Qt::Key_Left, Qt::ShiftModifier);
+      QTest::keyClick(m_window, Qt::Key_Up, Qt::ShiftModifier);
+    }
+    QCOMPARE(still->property("contentX").toReal(), 0.0);
+    QCOMPARE(still->property("contentY").toReal(), 0.0);
+  }
+
+  void smallPictureEnlargementIsOptionalAndRemembered() {
+    QVERIFY(m_settings->enlargeSmallPictures());
+    QTemporaryDir folder;
+    QVERIFY(folder.isValid());
+    const QString path = folder.filePath(QStringLiteral("tiny.png"));
+    QImage image(40, 30, QImage::Format_RGB32);
+    image.fill(Qt::blue);
+    QVERIFY(image.save(path));
+    open({path});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QVERIFY(prop("zoomPercent").toInt() > 100);
+    QSignalSpy changed(m_settings, &AppSettings::enlargeSmallPicturesChanged);
+    const auto restore = qScopeGuard([&] { m_settings->setEnlargeSmallPictures(true); });
+    m_settings->setEnlargeSmallPictures(false);
+    QCOMPARE(changed.count(), 1);
+    m_settings->setEnlargeSmallPictures(false);
+    QCOMPARE(changed.count(), 1);
+    AppSettings saved;
+    QVERIFY(!saved.enlargeSmallPictures());
+    QTRY_COMPARE(prop("zoomPercent").toInt(), 100);
+    m_settings->setEnlargeSmallPictures(true);
+    QTRY_VERIFY(prop("zoomPercent").toInt() > 100);
+    QTest::mouseClick(m_window, Qt::RightButton, Qt::NoModifier, QPoint(150, 120));
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("viewerMenu"));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QVERIFY(QMetaObject::invokeMethod(item(QStringLiteral("viewerMenu_fit-shrink")), "click"));
+    QTRY_COMPARE(prop("zoomPercent").toInt(), 100);
+    QTest::keyClick(m_window, Qt::Key_0);
+    QTRY_VERIFY(prop("zoomPercent").toInt() > 100);
+  }
+
+  void shortcutHelpIsModalScrollableAndRestoresFocus_data() {
+    QTest::addColumn<bool>("video");
+    QTest::addColumn<QSize>("size");
+    QTest::newRow("picture") << false << QSize(1200, 800);
+    QTest::newRow("narrow-picture") << false << QSize(320, 240);
+    QTest::newRow("video") << true << QSize(1200, 800);
+  }
+
+  void shortcutHelpIsModalScrollableAndRestoresFocus() {
+    QFETCH(bool, video);
+    QFETCH(QSize, size);
+    open({media(video ? QStringLiteral("clip.mp4") : QStringLiteral("Shot 1.jpg"))});
+    m_window->resize(size);
+    QObject* help = m_window->findChild<QObject*>(QStringLiteral("viewerShortcutHelp"));
+    QVERIFY(help);
+    QTest::keyClick(m_window, Qt::Key_Question, Qt::ShiftModifier);
+    QTRY_VERIFY(help->property("visible").toBool());
+    QVERIFY(prop("blockingActionOpen").toBool());
+    QCOMPARE(help->property("video").toBool(), video);
+    QVERIFY(help->property("width").toReal() <= size.width() - 24);
+    QVERIFY(help->property("height").toReal() <= size.height() - 24);
+    QQuickItem* scroll = item(QStringLiteral("viewerShortcutScroll"));
+    QVERIFY(scroll);
+    QQuickItem* flick = scroll->property("contentItem").value<QQuickItem*>();
+    QVERIFY(flick);
+    QTRY_VERIFY(flick->property("contentHeight").toReal() > flick->height());
+    const QString path = m_session->path();
+    QTest::keyClick(m_window, Qt::Key_PageDown);
+    QCOMPARE(m_session->path(), path);
+    QTest::keyClick(m_window, Qt::Key_Question, Qt::ShiftModifier);
+    QTRY_VERIFY(!help->property("visible").toBool());
+    QTRY_VERIFY(item(QStringLiteral("viewerKeys"))->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(help->property("visible").toBool());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!help->property("visible").toBool());
+    QVERIFY(m_window->isVisible());
+    QTRY_VERIFY(item(QStringLiteral("viewerKeys"))->hasActiveFocus());
   }
 
   void theMenuOffersOnlyWhatSuitsTheFile() {

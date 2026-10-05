@@ -8,6 +8,9 @@
   with Shift+A, and adjust sidecar subtitle timing with Z and X.
 - An optional Remember playback speed setting applies the last chosen quick
   viewer speed to newly opened videos. It is off by default.
+- Copy paths and file names from the quick viewer and its details card.
+- Fit pictures to the width or without enlarging, with a saved enlargement setting.
+- Pan zoomed pictures with Shift+arrows and see viewer shortcuts with ? or F1.
 
 ### Fixed
 

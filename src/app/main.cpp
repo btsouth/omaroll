@@ -166,7 +166,7 @@ Options:
                          matte, corrections, compare, export, rename, OCR,
                          editors, pins, context-menu, selection-menu,
                          duplicates, browser, settings, viewer, viewer-video,
-                         viewer-info or viewer-menu.
+                         viewer-info, viewer-menu or viewer-help.
   --render-size <WxH>    Window size, from 560x420 to 7680x4320. Default 1280x820.
   --version              Print the version and exit.
   --help                 Show this message.)"
@@ -422,7 +422,7 @@ int main(int argc, char* argv[]) {
       QStringLiteral("settings"),   QStringLiteral("editors"), QStringLiteral("pins"),
       QStringLiteral("context-menu"), QStringLiteral("selection-menu"),
       QStringLiteral("viewer"),  QStringLiteral("viewer-video"),
-      QStringLiteral("viewer-info"), QStringLiteral("viewer-menu")};
+      QStringLiteral("viewer-info"), QStringLiteral("viewer-menu"), QStringLiteral("viewer-help")};
   if (!renderView.isEmpty() && !renderViews.contains(renderView)) {
     qWarning().noquote() << "omaroll: unknown render view:" << renderView;
     return 2;
