@@ -1,7 +1,6 @@
 #include "pdf/PdfSupport.h"
 
 #include <QFileInfo>
-#include <QElapsedTimer>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QStandardPaths>
@@ -27,26 +26,26 @@ constexpr qreal kLineTolerance = 0.5;
 QByteArray toolOutput(const QString& executable, const QStringList& arguments, int timeout) {
   QProcess process;
   PdfSupport::limitProcess(process);
-  process.start(executable, arguments);
-  QElapsedTimer elapsed;
-  elapsed.start();
+  process.setStandardErrorFile(QProcess::nullDevice());
   QByteArray output("");
   bool exceeded = false;
-  do {
-    process.waitForFinished(50);
+  const auto drain = [&] {
     const QByteArray chunk = process.readAllStandardOutput();
     if (output.size() + chunk.size() > 64 * 1024) {
       exceeded = true;
-      break;
+      process.kill();
+    } else if (!exceeded) {
+      output += chunk;
     }
-    output += chunk;
-    process.readAllStandardError();
-  } while (process.state() != QProcess::NotRunning && elapsed.elapsed() < timeout);
-  if (process.state() != QProcess::NotRunning) {
+  };
+  QObject::connect(&process, &QProcess::readyReadStandardOutput, drain);
+  process.start(executable, arguments);
+  if (!process.waitForFinished(timeout)) {
     process.kill();
     process.waitForFinished(1000);
     return {};
   }
+  drain();
   if (exceeded || process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
     return {};
   }
@@ -144,8 +143,12 @@ QImage renderPage(const QString& path, int page, const QSize& target) {
   static const QRegularExpression geometry(
       QStringLiteral(R"((?:Page\s+\d+\s+size|Page size):\s+([\d.]+)\s+x\s+([\d.]+))"));
   const auto match = geometry.match(QString::fromLocal8Bit(info));
-  const qreal width = match.captured(1).toDouble();
-  const qreal height = match.captured(2).toDouble();
+  qreal width = match.captured(1).toDouble();
+  qreal height = match.captured(2).toDouble();
+  static const QRegularExpression rotation(
+      QStringLiteral(R"((?:Page\s+\d+\s+rot|Page rot):\s+(-?\d+))"));
+  const int degrees = rotation.match(QString::fromLocal8Bit(info)).captured(1).toInt();
+  if (qAbs(degrees % 180) == 90) std::swap(width, height);
   if (!match.hasMatch() || !std::isfinite(width) || !std::isfinite(height) || width <= 0 || height <= 0) {
     return {};
   }
@@ -159,8 +162,11 @@ QImage renderPage(const QString& path, int page, const QSize& target) {
   }
   scale = qMin(scale, 3840.0 / qMax(width, height));
   scale = qMin(scale, std::sqrt(qreal(kPixelLimit - 2 * 3840) / width / height));
-  const int edge = qMax(1, int(std::floor(qMax(width, height) * scale)));
-  arguments << QStringLiteral("-scale-to") << QString::number(edge)
+  const int rasterWidth = qMax(1, int(std::floor(width * scale + 0.000001)));
+  const int rasterHeight = qMax(1, int(std::floor(height * scale + 0.000001)));
+  arguments << QStringLiteral("-scale-dimension-before-rotation")
+            << QStringLiteral("-scale-to-x") << QString::number(rasterWidth)
+            << QStringLiteral("-scale-to-y") << QString::number(rasterHeight)
             << QStringLiteral("-png") << path << prefix;
   // Both raster edges and their product are bounded before Poppler allocates.
   if (toolOutput(executable, arguments, 12000).isNull()) {
