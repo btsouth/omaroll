@@ -315,7 +315,7 @@ Item {
 
                 PillButton {
                     id: depthButton
-                    accessibleName: "Folder scan depth"
+                    accessibleName: "Folder scan depth: " + label
                     anchors.verticalCenter: parent.verticalCenter
                     label: Settings.recursionDepth + " deep"
                     onClicked: Settings.recursionDepth =
@@ -536,7 +536,7 @@ Item {
 
                 PillButton {
                     id: slideshowIntervalButton
-                    accessibleName: "Slideshow interval"
+                    accessibleName: "Slideshow interval: " + label
                     anchors.verticalCenter: parent.verticalCenter
                     label: Settings.slideshowIntervalSeconds + " s"
                     onClicked: {
@@ -687,7 +687,7 @@ Item {
 
                 PillButton {
                     id: imageActionButton
-                    accessibleName: "Default picture action"
+                    accessibleName: "Default picture action: " + label
                     anchors.verticalCenter: parent.verticalCenter
                     label: root.actionLabel(Settings.imagePrimaryAction)
                     onClicked: Settings.imagePrimaryAction = root.nextValue(
@@ -721,7 +721,7 @@ Item {
 
                 PillButton {
                     id: videoActionButton
-                    accessibleName: "Default video action"
+                    accessibleName: "Default video action: " + label
                     anchors.verticalCenter: parent.verticalCenter
                     label: root.actionLabel(Settings.videoPrimaryAction)
                     onClicked: Settings.videoPrimaryAction = root.nextValue(
@@ -755,7 +755,7 @@ Item {
 
                 PillButton {
                     id: cacheButton
-                    accessibleName: "Thumbnail cache size"
+                    accessibleName: "Thumbnail cache size: " + label
                     anchors.verticalCenter: parent.verticalCenter
                     label: root.cacheLabel(Settings.thumbnailCacheMb)
                     onClicked: Settings.thumbnailCacheMb = root.nextValue(

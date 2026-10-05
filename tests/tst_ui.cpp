@@ -467,11 +467,11 @@ private slots:
     QVERIFY(accessible->actionInterface());
     accessible->actionInterface()->doAction(QAccessibleActionInterface::toggleAction());
     QTRY_VERIFY(accessible->state().checked);
-    QQuickItem* tip = card->findChild<QQuickItem*>(QStringLiteral("captureFilenameTip"));
+    QObject* tip = card->findChild<QObject*>(QStringLiteral("captureFilenameTip"));
     QVERIFY(tip);
     QCOMPARE(tip->property("text").toString(), m_library->fileNameAt(0));
     QVERIFY(card->property("keyboardCurrent").toBool());
-    QTRY_VERIFY_WITH_TIMEOUT(tip->isVisible(), 1500);
+    QTRY_VERIFY_WITH_TIMEOUT(tip->property("visible").toBool(), 1500);
     QVERIFY(QMetaObject::invokeMethod(m_window, "openContextMenu", Q_ARG(QVariant, 0),
                                     Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
     QQuickItem* rename = item("contextAction_rename");
