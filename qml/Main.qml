@@ -1724,7 +1724,8 @@ ApplicationWindow {
     BatchCorrectionSheet {
         id: batchSheet
         objectName: "batchCorrectionSheet"
-        onFinished: function (succeeded, failed) {
+        onFinished: function (succeeded, failed, outputs) {
+            Library.addExtraFiles(outputs)
             Library.refresh()
             root.say(failed > 0
                      ? "Corrected " + succeeded + " of " + (succeeded + failed) + " files"

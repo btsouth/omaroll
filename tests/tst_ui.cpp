@@ -765,6 +765,43 @@ private slots:
     QCOMPARE(QImage(secondCopy).size(), QSize(30, 60));
   }
 
+  void correctionSheetsIgnoreStaleJobsAndShowFailures() {
+    const QString path = m_scratch.filePath(QStringLiteral("generation.png"));
+    QVERIFY(QImage(120, 80, QImage::Format_RGB32).save(path));
+    const auto cleanup = qScopeGuard([&] { invoke("dismissTopLayer"); QFile::remove(path); });
+    QQuickItem* single = item("correctionSheet");
+    perform(QStringLiteral("corrections"), path);
+    const int old = single->property("jobGeneration").toInt();
+    QVERIFY(QMetaObject::invokeMethod(single, "close"));
+    perform(QStringLiteral("corrections"), path);
+    const int current = single->property("jobGeneration").toInt();
+    QVERIFY(old != current);
+    m_imageEditor->saved(QStringLiteral("/tmp/old.png"), old);
+    m_imageEditor->failed(QStringLiteral("old error"), old);
+    m_imageEditor->copied(old);
+    QVERIFY(single->isVisible());
+    QVERIFY(single->property("errorText").toString().isEmpty());
+    QVERIFY(QMetaObject::invokeMethod(single, "close"));
+    QQuickItem* batch = item("batchCorrectionSheet");
+    QVERIFY(QMetaObject::invokeMethod(batch, "open", Q_ARG(QVariant, QVariant(QStringList{path}))));
+    const int oldBatch = batch->property("jobGeneration").toInt();
+    QVERIFY(QMetaObject::invokeMethod(batch, "close"));
+    QVERIFY(QMetaObject::invokeMethod(batch, "open", Q_ARG(QVariant, QVariant(QStringList{path}))));
+    const int batchId = batch->property("jobGeneration").toInt();
+    m_imageEditor->batchProgress(1, 1, oldBatch);
+    m_imageEditor->batchFinished(1, 0, {}, oldBatch);
+    QVERIFY(batch->isVisible());
+    QCOMPARE(batch->property("doneCount").toInt(), 0);
+    const QString missing = m_scratch.filePath(QStringLiteral("generation-missing.png"));
+    m_imageEditor->batchFinished(0, 1,
+        {QVariantMap{{QStringLiteral("source"), missing}, {QStringLiteral("output"), QString()},
+                     {QStringLiteral("error"), QStringLiteral("Could not read")}}}, batchId);
+    QVERIFY(batch->isVisible());
+    QVERIFY(batch->property("errorText").toString().contains(missing));
+    QCOMPARE(batch->property("failedPaths").toStringList(), QStringList{missing});
+    QVERIFY(pill(batch, QStringLiteral("Retry failed"))->isVisible());
+  }
+
   void correctionStraightenSliderDrivesThePreview() {
     const QString path = m_scratch.filePath(QStringLiteral("straighten-disposable.png"));
     QVERIFY(QImage(120, 80, QImage::Format_RGB32).save(path));
@@ -833,6 +870,16 @@ private slots:
 
     click(pill(sheet, QStringLiteral("3:4")));
     QVERIFY2(qAbs(cropRatio() - 3.0 / 4.0) < 0.02, qPrintable(QString::number(cropRatio())));
+
+    for (int turn = 0; turn < 4; ++turn) {
+      QVERIFY(QMetaObject::invokeMethod(sheet, "rotate", Q_ARG(QVariant, 1)));
+      QTRY_VERIFY(qAbs(cropRatio() - 3.0 / 4.0) < 0.02);
+    }
+    QVERIFY(QMetaObject::invokeMethod(sheet, "close"));
+    perform(QStringLiteral("corrections"), path);
+    QCOMPARE(sheet->property("cropAspectLabel").toString(), QStringLiteral("Free"));
+    QCOMPARE(sheet->property("cropW").toDouble(), 1.0);
+    QCOMPARE(sheet->property("cropH").toDouble(), 1.0);
 
     click(pill(sheet, QStringLiteral("Free")));
     QCOMPARE(sheet->property("cropAspect").toDouble(), 0.0);

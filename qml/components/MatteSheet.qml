@@ -23,8 +23,11 @@ Item {
         return Qt.rgba(base.r, base.g, base.b, amount)
     }
 
+    property bool animated: false
+
     function open() {
         if (Matte.busy) return
+        animated = ImageEdit.isAnimated(root.path)
         selected = 0
         retryCopy = false
         saveMessage = ""
@@ -138,7 +141,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 horizontalAlignment: Text.AlignRight
                 elide: Text.ElideMiddle
-                text: Matte.busy ? "Saving…" : root.saveMessage !== "" ? root.saveMessage : root.fileName
+                text: Matte.busy ? "Saving…" : root.saveMessage !== "" ? root.saveMessage : root.animated ? "Animation: saves a still first frame" : root.fileName
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
                 color: Theme.mutedText
@@ -310,7 +313,7 @@ Item {
                 }
 
                 PillButton {
-                    label: Matte.busy ? "Saving…" : root.retryCopy ? "Retry copy" : "Copy and save"
+                    label: Matte.busy ? "Saving…" : root.retryCopy ? "Retry copy" : root.animated ? "Save first frame" : "Copy and save"
                     enabled: !Matte.busy && preview.status === Image.Ready
                     active: enabled
                     onClicked: root.save()
