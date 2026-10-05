@@ -91,17 +91,7 @@ Item {
 
     // On a half-screen tile the pills and the search cannot share a row, so
     // the search and sort drop to a second line rather than overlap.
-    readonly property real kindButtonsWidth: {
-        let total = 0
-        let count = 0
-        for (const child of kinds.children) {
-            if (child !== libraryButton && child.visible) {
-                total += child.width
-                count++
-            }
-        }
-        return total + count * kinds.spacing
-    }
+    readonly property real kindButtonsWidth: sectionButtons.width + kinds.spacing
     readonly property bool separateBrowse: root.width < Math.max(620, root.kindButtonsWidth + 140)
     readonly property bool wrapped: root.width < kinds.width + 40 + 90 + sortButton.width + 60
     implicitHeight: wrapped ? 76 : 40
@@ -113,6 +103,10 @@ Item {
         anchors.top: parent.top
         anchors.topMargin: 7
         spacing: 6
+
+        Row {
+            id: sectionButtons
+            spacing: kinds.spacing
 
         PillButton {
             label: "All"
@@ -169,6 +163,8 @@ Item {
             shortcut: root.sectionShortcut(6)
             active: Captures.favoritesOnly
             onClicked: Captures.favoritesOnly = !Captures.favoritesOnly
+        }
+
         }
 
         PillButton {

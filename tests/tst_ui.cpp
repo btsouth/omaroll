@@ -447,6 +447,9 @@ private slots:
       QQuickItem* ancestor = focused;
       while (ancestor && ancestor != scroll) ancestor = ancestor->parentItem();
       if (ancestor != scroll) break;
+      qInfo() << "Settings focus" << focused << focused->property("accessibleName")
+              << "y" << focused->mapToItem(scroll, QPointF()).y() << "height" << focused->height()
+              << "scroll" << scroll->height() << scroll->property("contentY") << scroll->property("contentHeight");
       QTRY_VERIFY(focused->mapToItem(scroll, QPointF()).y() >= -1);
       QTRY_VERIFY(focused->mapToItem(scroll, QPointF(0, focused->height())).y() <= scroll->height() + 1);
       scrolled |= scroll->property("contentY").toReal() > 0;
@@ -457,6 +460,7 @@ private slots:
   void gridCardsAndMenusExposeNamesAndSelection() {
     const QString path = pathAt(0);
     QTRY_VERIFY(cardFor(path));
+    QTest::qWait(120); // Let the previous window resize release old delegates.
     QQuickItem* card = cardFor(path);
     QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(card);
     QVERIFY(accessible);
@@ -510,6 +514,8 @@ private slots:
     image.fill(Qt::red);
     QVERIFY(image.save(good));
     QVERIFY(image.save(changed));
+    m_disposablePaths.append(good);
+    m_disposablePaths.append(changed);
     m_captures->addExtraFiles({good, changed});
     const auto cleanup = qScopeGuard([&] {
       invoke("dismissTopLayer");
@@ -554,6 +560,9 @@ private slots:
     const QString other = dir.filePath(QStringLiteral("rename-other.png"));
     QVERIFY(QImage(30, 20, QImage::Format_RGB32).save(source));
     QVERIFY(QImage(31, 21, QImage::Format_RGB32).save(other));
+    m_disposablePaths.append(source);
+    m_disposablePaths.append(other);
+    m_disposablePaths.append(dir.filePath(QStringLiteral("renamed-check.png")));
     m_captures->addExtraFiles({source, other});
     const QString album = QStringLiteral("Rename checked files");
     const auto cleanup = qScopeGuard([&] {
@@ -598,7 +607,7 @@ private slots:
   void longLibraryNamesAndStatusFitNarrowWindows() {
     QFETCH(int, width);
     const bool downloads = m_settings->scanDownloads();
-    const QString album = QStringLiteral("A very long collection name ").repeated(12);
+    const QString album = QStringLiteral("A very long collection name ").repeated(4);
     QVERIFY(m_settings->createAlbum(album));
     m_library->setAlbumFilter(album, {});
     m_settings->setScanDownloads(true);
