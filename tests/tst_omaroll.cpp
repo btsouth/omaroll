@@ -2014,7 +2014,7 @@ private slots:
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        dir.filePath(QStringLiteral("profile")));
     const auto restoreProfile = qScopeGuard([this] {
-      AppSettings::s_fingerprintReadPaths.clear();
+      AppSettings::s_fingerprintReadPaths = nullptr;
       QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                          m_scratch.filePath(QStringLiteral("config")));
     });
@@ -2050,9 +2050,10 @@ private slots:
                     QVariantMap{{QStringLiteral("Tag"), entries}});
     stored.sync();
     QCOMPARE(stored.status(), QSettings::NoError);
-    AppSettings::s_fingerprintReadPaths.clear();
+    QStringList fingerprintReads;
+    AppSettings::s_fingerprintReadPaths = &fingerprintReads;
     AppSettings settings;
-    QCOMPARE(AppSettings::s_fingerprintReadPaths.size(), 0);
+    QCOMPARE(fingerprintReads.size(), 0);
     QCOMPARE(settings.albumPaths(QStringLiteral("Album")), paths);
     QCOMPARE(settings.tagPaths(QStringLiteral("Tag")), paths);
     const auto scan = [&] {
@@ -2063,7 +2064,7 @@ private slots:
     for (int reconcile = 0; reconcile < 2; ++reconcile) {
       settings.reconcileAlbums(records);
       settings.reconcileTags(records);
-      QCOMPARE(AppSettings::s_fingerprintReadPaths.size(), 0);
+      QCOMPARE(fingerprintReads.size(), 0);
     }
     QFile edited(paths.first());
     QVERIFY(edited.open(QIODevice::WriteOnly | QIODevice::Truncate));
@@ -2072,12 +2073,12 @@ private slots:
     const auto changed = scan();
     settings.reconcileAlbums(changed);
     settings.reconcileTags(changed);
-    QCOMPARE(AppSettings::s_fingerprintReadPaths, QStringList{paths.first()});
+    QCOMPARE(fingerprintReads, QStringList{paths.first()});
     QCOMPARE(settings.albumPaths(QStringLiteral("Album")), paths);
     QCOMPARE(settings.tagPaths(QStringLiteral("Tag")), paths);
     settings.reconcileAlbums(changed);
     settings.reconcileTags(changed);
-    QCOMPARE(AppSettings::s_fingerprintReadPaths, QStringList{paths.first()});
+    QCOMPARE(fingerprintReads, QStringList{paths.first()});
   }
 
   void collectionFingerprintsRefreshAfterSizeEditsWithPreservedTime() {

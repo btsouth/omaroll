@@ -265,7 +265,7 @@ signals:
 private:
 #ifdef OMAROLL_TESTING
   friend class OmarollTest;
-  static thread_local QStringList s_fingerprintReadPaths;
+  static thread_local QStringList* s_fingerprintReadPaths;
 #endif
   struct AlbumEntry {
     QString path;

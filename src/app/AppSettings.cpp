@@ -129,7 +129,7 @@ QString identityVersionFor(const QString& path) {
 } // namespace
 
 #ifdef OMAROLL_TESTING
-thread_local QStringList AppSettings::s_fingerprintReadPaths;
+thread_local QStringList* AppSettings::s_fingerprintReadPaths = nullptr;
 #endif
 
 AppSettings::AlbumEntry AppSettings::identityFor(const QString& path) {
@@ -164,7 +164,7 @@ AppSettings::AlbumEntry AppSettings::identityFor(const QString& path) {
   }
   constexpr qint64 chunkSize = 64 * 1024;
 #ifdef OMAROLL_TESTING
-  s_fingerprintReadPaths.append(path);
+  if (s_fingerprintReadPaths) s_fingerprintReadPaths->append(path);
 #endif
   QCryptographicHash hash(QCryptographicHash::Sha256);
   hash.addData(QByteArray::number(entry.bytes));
@@ -301,7 +301,7 @@ AppSettings::AppSettings(QObject* parent)
     m_settings.sync();
   }
   const QVariantMap storedAlbums = m_settings.value(kAlbums).toMap();
-  const auto restoreCollections = [this](const QVariantMap& storedCollections,
+  const auto restoreCollections = [](const QVariantMap& storedCollections,
                                          QMap<QString, QList<AlbumEntry>>& target,
                                          QString (*normalize)(const QString&)) {
     for (auto it = storedCollections.cbegin(); it != storedCollections.cend(); ++it) {
@@ -333,9 +333,7 @@ AppSettings::AppSettings(QObject* parent)
               entry.inode == status.st_ino && entry.bytes == static_cast<qint64>(status.st_size) &&
               (entry.device == status.st_dev ||
                entry.modified == QFileInfo(entry.path).lastModified().toMSecsSinceEpoch())) {
-            const AlbumEntry current = identityFor(entry.path);
-            entry.resolved = current.resolved &&
-                             (entry.fingerprint.isEmpty() || current.fingerprint == entry.fingerprint);
+            entry.resolved = true;
           }
           entries.append(entry);
         }
@@ -1159,6 +1157,17 @@ bool AppSettings::reconcileCollectionMap(QMap<QString, QList<AlbumEntry>>& colle
       const auto livePath = std::find_if(candidates.cbegin(), candidates.cend(),
           [&entry](const Candidate& candidate) { return candidate.path == entry.path; });
       if (livePath != candidates.cend()) {
+        const QFileInfo info(entry.path);
+        struct stat status {};
+        if (info.isFile() && info.isReadable() &&
+            ::stat(QFile::encodeName(entry.path).constData(), &status) == 0 &&
+            entry.device == status.st_dev && entry.inode == status.st_ino &&
+            entry.bytes == static_cast<qint64>(status.st_size) &&
+            entry.modified == info.lastModified().toMSecsSinceEpoch()) {
+          entry.resolved = true;
+          resolutionChange = resolutionChange || !wasResolved;
+          continue;
+        }
         const AlbumEntry current = identityFor(entry.path);
         // Continuous same-path, same-device/inode edits keep membership.
         // A replacement or a previously unavailable entry must still match
