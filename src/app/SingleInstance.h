@@ -1,11 +1,11 @@
 #pragma once
 
 #include <QLocalServer>
-#include <QObject>
 #include <QLockFile>
+#include <QObject>
+#include <QStringList>
 
 #include <memory>
-#include <QStringList>
 
 class SingleInstance final : public QObject {
   Q_OBJECT

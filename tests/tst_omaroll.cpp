@@ -63,6 +63,7 @@
 #include <cerrno>
 #include <memory>
 #include <future>
+#include <cstdio>
 #include <sys/socket.h>
 #include <sys/un.h>
 
@@ -451,18 +452,23 @@ private slots:
 
   void singleInstanceRequiresAcknowledgement_data() {
     QTest::addColumn<bool>("disconnect");
-    QTest::newRow("no-ack") << false;
-    QTest::newRow("disconnected-owner") << true;
+    QTest::addColumn<bool>("stalledWrite");
+    QTest::newRow("no-ack") << false << false;
+    QTest::newRow("disconnected-owner") << true << false;
+    QTest::newRow("stalled-write") << false << true;
   }
 
   void singleInstanceRequiresAcknowledgement() {
     QFETCH(bool, disconnect);
+    QFETCH(bool, stalledWrite);
     const QString name = QStringLiteral("omaroll-no-ack-%1").arg(QCoreApplication::applicationPid());
     QLocalServer owner;
     QVERIFY(owner.listen(name));
-    auto result = notifyInstance(name, {QStringLiteral("/tmp/a.png")});
+    auto result = notifyInstance(name, {stalledWrite ? QString(450000, QLatin1Char('x'))
+                                                          : QStringLiteral("/tmp/a.png")});
     QTRY_VERIFY(owner.hasPendingConnections());
     QLocalSocket* peer = owner.nextPendingConnection();
+    if (stalledWrite) peer->setReadBufferSize(1);
     if (disconnect) peer->abort();
     QTRY_VERIFY_WITH_TIMEOUT(result.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready, 6500);
     QCOMPARE(result.get(), SingleInstance::Result::Error);
@@ -482,6 +488,48 @@ private slots:
     auto recovered = notifyInstance(name);
     QTRY_VERIFY(recovered.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready);
     QCOMPARE(recovered.get(), SingleInstance::Result::Forwarded);
+  }
+
+  void singleInstanceArbitratesSimultaneousStarts() {
+    const QString name = QStringLiteral("omaroll-start-race-%1").arg(QCoreApplication::applicationPid());
+    QList<QProcess*> starts;
+    const auto cleanup = qScopeGuard([&] { qDeleteAll(starts); });
+    for (int index = 0; index < 12; ++index) {
+      auto* process = new QProcess;
+      starts.append(process);
+      process->start(QCoreApplication::applicationFilePath(), {QStringLiteral("--ipc-peer"), name});
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(std::all_of(starts.cbegin(), starts.cend(), [](const auto* process) {
+      return process->state() == QProcess::NotRunning;
+    }), 10000);
+    int primaries = 0;
+    for (auto* process : starts) {
+      QVERIFY2(process->exitCode() == 0, process->readAllStandardError().constData());
+      if (process->readAllStandardOutput().contains("primary")) ++primaries;
+    }
+    QCOMPARE(primaries, 1);
+  }
+
+  void executableReportsUnacknowledgedLegacyForwarding() {
+    QTemporaryDir dir;
+    const QString display = QFileInfo(dir.path()).fileName();
+    QLocalServer legacy;
+    QVERIFY(legacy.listen(QStringLiteral("omaroll-%1-%2").arg(getuid()).arg(display)));
+    QProcess process;
+    auto environment = QProcessEnvironment::systemEnvironment();
+    environment.insert(QStringLiteral("WAYLAND_DISPLAY"), display);
+    environment.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("offscreen"));
+    process.setProcessEnvironment(environment);
+    process.start(QCoreApplication::applicationDirPath() + QStringLiteral("/omaroll"), {});
+    QTRY_VERIFY(legacy.hasPendingConnections());
+    auto* peer = legacy.nextPendingConnection();
+    QTRY_VERIFY(peer->canReadLine());
+    QVERIFY(QJsonDocument::fromJson(peer->readLine()).isObject());
+    peer->disconnectFromServer();
+    QTRY_VERIFY_WITH_TIMEOUT(process.state() == QProcess::NotRunning, 7000);
+    QCOMPARE(process.exitCode(), 1);
+    QVERIFY(process.readAllStandardError().contains("did not acknowledge"));
+    QVERIFY(legacy.isListening());
   }
 
   void singleInstanceRejectsOversizedOutgoingRequests() {
@@ -7435,6 +7483,16 @@ private:
 int main(int argc, char* argv[]) {
   disableHeadlessAudio();
   QGuiApplication application(argc, argv);
+  if (argc == 3 && QByteArray(argv[1]) == "--ipc-peer") {
+    SingleInstance instance(QString::fromLocal8Bit(argv[2]));
+    const auto result = instance.claimOrNotify();
+    if (result == SingleInstance::Result::Error) return 1;
+    if (result == SingleInstance::Result::Forwarded) return 0;
+    std::puts("primary");
+    std::fflush(stdout);
+    QTimer::singleShot(2000, &application, &QCoreApplication::quit);
+    return application.exec();
+  }
   OmarollTest test;
   QTEST_SET_MAIN_SOURCE_PATH
   return QTest::qExec(&test, argc, argv);

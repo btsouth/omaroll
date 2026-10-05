@@ -10,6 +10,7 @@
 #include <QLocalSocket>
 #include <QStandardPaths>
 #include <QTimer>
+#include <QThread>
 
 #include <unistd.h>
 
@@ -146,11 +147,15 @@ SingleInstance::SingleInstance(const QString& serverName, QObject* parent)
 }
 
 SingleInstance::Result SingleInstance::claimOrNotify(const QStringList& paths, bool library) {
+  if (paths.size() > maxPaths) {
+    qWarning() << "omaroll: the open request exceeds the single-instance limit";
+    return Result::Error;
+  }
   QJsonObject message{{QStringLiteral("paths"), QJsonArray::fromStringList(paths)},
                       {QStringLiteral("path"), paths.value(0)},
                       {QStringLiteral("library"), library}};
   const QByteArray frame = QJsonDocument(message).toJson(QJsonDocument::Compact) + '\n';
-  if (paths.size() > maxPaths || frame.size() > maxFrameBytes) {
+  if (frame.size() > maxFrameBytes) {
     qWarning() << "omaroll: the open request exceeds the single-instance limit";
     return Result::Error;
   }
@@ -176,8 +181,17 @@ SingleInstance::Result SingleInstance::claimOrNotify(const QStringList& paths, b
   }
 
   QLocalSocket socket;
-  socket.connectToServer(m_serverName);
-  if (socket.waitForConnected(1000)) {
+  QDeadlineTimer connectDeadline(1000);
+  bool connected = false;
+  do {
+    socket.connectToServer(m_serverName);
+    connected = socket.waitForConnected(connectDeadline.remainingTime());
+    if (connected || ownsLock || !missingEndpoint(socket.error()) || connectDeadline.hasExpired()) break;
+    // The owner may hold the lock just before publishing its endpoint.
+    socket.abort();
+    QThread::msleep(10);
+  } while (!connectDeadline.hasExpired());
+  if (connected) {
     const Result result = forward(socket, frame);
     if (ownsLock) m_lock->unlock();
     return result;
