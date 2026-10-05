@@ -1754,16 +1754,16 @@ ApplicationWindow {
         id: renameSheet
         objectName: "renameSheet"
         onRenamed: function (oldPath, newPath, fileName) {
+            if (library.isChecked(oldPath)) {
+                library.toggleChecked(oldPath)
+                root.pendingRenamedCheck = renameSheet.renamedMediaPath
+            }
             Settings.relocatePath(oldPath, newPath)
             Library.addExtraFiles([newPath])
             root.viewerPaths = root.viewerPaths.map(function (path) {
                 return path === oldPath ? newPath : path
             })
             root.pendingRevealPath = renameSheet.renamedMediaPath
-            if (library.isChecked(oldPath)) {
-                library.toggleChecked(oldPath)
-                root.pendingRenamedCheck = renameSheet.renamedMediaPath
-            }
             root.say("Renamed to " + fileName)
             Library.refresh()
         }

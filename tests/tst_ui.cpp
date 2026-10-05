@@ -541,20 +541,36 @@ private slots:
     QVERIFY(checked.toBool());
   }
 
+  void renameKeepsOtherChecksAndFollowsTheRenamedCheck_data() {
+    QTest::addColumn<bool>("albumView");
+    QTest::newRow("all-media") << false;
+    QTest::newRow("album") << true;
+  }
+
   void renameKeepsOtherChecksAndFollowsTheRenamedCheck() {
+    QFETCH(bool, albumView);
     QTemporaryDir dir;
     const QString source = dir.filePath(QStringLiteral("rename-checked.png"));
     const QString other = dir.filePath(QStringLiteral("rename-other.png"));
     QVERIFY(QImage(30, 20, QImage::Format_RGB32).save(source));
     QVERIFY(QImage(31, 21, QImage::Format_RGB32).save(other));
     m_captures->addExtraFiles({source, other});
+    const QString album = QStringLiteral("Rename checked files");
     const auto cleanup = qScopeGuard([&] {
       invoke("dismissTopLayer");
+      m_library->setAlbumFilter({}, {});
+      m_settings->deleteAlbum(album);
       dir.remove();
       m_captures->refresh();
       QTRY_VERIFY(!m_captures->scanning());
     });
     QTRY_VERIFY(m_library->rowOf(source) >= 0 && m_library->rowOf(other) >= 0);
+    if (albumView) {
+      QVERIFY(m_settings->createAlbum(album));
+      QVERIFY(m_settings->addToAlbum(album, {source, other}));
+      m_library->setAlbumFilter(album, m_settings->albumPaths(album));
+      QTRY_COMPARE(m_library->count(), 2);
+    }
     auto* grid = item("library");
     for (const QString& path : {source, other})
       QVERIFY(QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, path)));
