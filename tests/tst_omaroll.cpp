@@ -2051,6 +2051,44 @@ private slots:
       QVERIFY(settings.albumPaths(QStringLiteral("Album")).isEmpty());
       QVERIFY(settings.tagPaths(QStringLiteral("Tag")).isEmpty());
     }
+    // A real unmount can leave an empty readable mountpoint behind. Model
+    // the remembered member's device differing from that host directory.
+    QVERIFY(QDir().mkpath(root));
+    struct stat parent {};
+    QVERIFY(::stat(QFile::encodeName(root).constData(), &parent) == 0);
+    QSettings stored(QSettings::IniFormat, QSettings::UserScope,
+                     QStringLiteral("omaroll"), QStringLiteral("omaroll"));
+    for (const QString& key : {QStringLiteral("library/albums"), QStringLiteral("library/tags")}) {
+      QVariantMap collections = stored.value(key).toMap();
+      for (auto collection = collections.begin(); collection != collections.end(); ++collection) {
+        QVariantList entries = collection.value().toList();
+        for (QVariant& entry : entries) {
+          QVariantMap row = entry.toMap();
+          row.insert(QStringLiteral("device"), QString::number(quint64(parent.st_dev) + 1));
+          entry = row;
+        }
+        collection.value() = entries;
+      }
+      stored.setValue(key, collections);
+    }
+    QVariantMap identities = stored.value(QStringLiteral("library/markIdentities")).toMap();
+    QVariantMap identity = identities.value(path).toMap();
+    identity.insert(QStringLiteral("device"), QString::number(quint64(parent.st_dev) + 1));
+    identities.insert(path, identity);
+    stored.setValue(QStringLiteral("library/markIdentities"), identities);
+    stored.sync();
+    {
+      AppSettings disconnected;
+      disconnected.reconcileMarks({duplicate});
+      disconnected.reconcileAlbums({duplicate});
+      disconnected.reconcileTags({duplicate});
+      QVERIFY(disconnected.isFavorite(path));
+      QVERIFY(!disconnected.isFavorite(copy));
+      QCOMPARE(disconnected.caption(path), QStringLiteral("Original caption"));
+      QVERIFY(disconnected.albumPaths(QStringLiteral("Album")).isEmpty());
+      QVERIFY(disconnected.tagPaths(QStringLiteral("Tag")).isEmpty());
+    }
+    QVERIFY(QDir().rmdir(root));
     QVERIFY(QDir().rename(offline, root));
     settings.reconcileAlbums(all);
     settings.reconcileTags(all);

@@ -153,6 +153,16 @@ AppSettings::AlbumEntry AppSettings::identityFor(const QString& path) {
   return entry;
 }
 
+bool AppSettings::relocationAvailable(const AlbumEntry& entry) {
+  const QFileInfo parent(QFileInfo(entry.path).absolutePath());
+  if (QFileInfo::exists(entry.path) || !parent.isDir() || !parent.isReadable()) return false;
+  struct stat status {};
+  if (::stat(QFile::encodeName(parent.absoluteFilePath()).constData(), &status) != 0) return false;
+  // An unmounted source can leave a readable empty mountpoint on the host
+  // filesystem. Its device no longer agrees with the remembered member.
+  return entry.device == 0 || entry.device == status.st_dev;
+}
+
 AppSettings::AppSettings(QObject* parent)
     : QObject(parent), m_settings(QSettings::IniFormat, QSettings::UserScope,
                                   QStringLiteral("omaroll"), QStringLiteral("omaroll")) {
@@ -1139,9 +1149,7 @@ bool AppSettings::reconcileCollectionMap(QMap<QString, QList<AlbumEntry>>& colle
 
       // A missing scan row is not evidence of a move when the old path still
       // exists, or its containing directory is disconnected/unreadable.
-      const QFileInfo parent(QFileInfo(entry.path).absolutePath());
-      const bool mayRelocate = livePath == candidates.cend() && !QFileInfo::exists(entry.path) &&
-                               parent.isDir() && parent.isReadable();
+      const bool mayRelocate = livePath == candidates.cend() && relocationAvailable(entry);
       if (mayRelocate && !entry.fingerprint.isEmpty()) {
         QString match;
         int matches = 0;
@@ -2008,9 +2016,7 @@ void AppSettings::reconcileMarks(const QList<CaptureRecord>& records) {
   QList<Move> moves;
   for (auto it = m_markIdentities.cbegin(); it != m_markIdentities.cend(); ++it) {
     const QString& oldPath = it.key();
-    const QFileInfo parent(QFileInfo(oldPath).absolutePath());
-    if (live.contains(oldPath) || QFileInfo::exists(oldPath) ||
-        !parent.isDir() || !parent.isReadable()) {
+    if (live.contains(oldPath) || !relocationAvailable(it.value())) {
       continue;
     }
     const AlbumEntry& identity = it.value();

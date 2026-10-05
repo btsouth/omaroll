@@ -290,6 +290,7 @@ private:
   [[nodiscard]] bool pathHasMark(const QString& path) const;
   bool reconcileCollectionMap(QMap<QString, QList<AlbumEntry>>& collections,
                               const QList<CaptureRecord>& records);
+  [[nodiscard]] static bool relocationAvailable(const AlbumEntry& entry);
   [[nodiscard]] static AlbumEntry identityFor(const QString& path);
 
   QSettings m_settings;
