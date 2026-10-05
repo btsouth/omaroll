@@ -4155,10 +4155,11 @@ private slots:
     QVERIFY(QFileInfo::exists(dir.filePath(QStringLiteral("first.png"))));
     QVERIFY(QFileInfo::exists(dir.filePath(QStringLiteral("copy.png"))));
 
-    // Reopening an unchanged review reuses the in-memory hashes immediately.
+    // Dirty groups cannot nominate destructive cleanup targets.
     duplicates.refresh();
     QVERIFY(duplicates.otherCopies(firstPath).isEmpty());
     QTRY_VERIFY_WITH_TIMEOUT(!duplicates.otherCopies(firstPath).isEmpty(), 5000);
+    // Reopening an unchanged review reuses the in-memory hashes immediately.
     duplicates.setActive(false);
     duplicates.setActive(true);
     QVERIFY(!duplicates.scanning());

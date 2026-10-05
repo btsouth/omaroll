@@ -355,7 +355,6 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
 ActionRegistry::ActionRegistry(ActionLauncher* launcher, QObject* parent)
     : QObject(parent), m_launcher(launcher), m_definitions(buildTable()) {}
 
-
 bool ActionRegistry::applies(const Definition& definition, bool video, bool document, bool raw) {
   if (raw && !definition.raws) {
     return false;

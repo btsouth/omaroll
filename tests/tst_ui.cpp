@@ -3396,6 +3396,33 @@ private slots:
     QVERIFY(m_library->rowOf(kept) >= 0);
   }
 
+  void keepSelectedSkipsACopyReplacedWhileThePromptIsOpen() {
+    QTemporaryDir dir;
+    const QString kept = dir.filePath(QStringLiteral("kept.png"));
+    const QString copy = dir.filePath(QStringLiteral("copy.png"));
+    QImage picture(35, 29, QImage::Format_RGB32);
+    picture.fill(QColor(17, 29, 143));
+    QVERIFY(picture.save(kept));
+    QVERIFY(QFile::copy(kept, copy));
+    m_captures->addExtraFiles({kept, copy});
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(copy) >= 0, 10000);
+    m_library->setDuplicatesOnly(true);
+    QTRY_COMPARE_WITH_TIMEOUT(m_duplicates->otherCopies(kept), QStringList{copy}, 15000);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "keepSelectedDuplicate", Q_ARG(QVariant, kept)));
+    QTRY_VERIFY(item("confirm")->isVisible());
+    QVERIFY(QFile::rename(copy, dir.filePath(QStringLiteral("old.png"))));
+    picture.fill(Qt::yellow);
+    QVERIFY(picture.save(copy));
+    QSignalSpy finished(m_actions, &ActionLauncher::duplicateCleanupFinished);
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 5000);
+    QCOMPARE(finished.first().at(0).toInt(), 0);
+    QCOMPARE(finished.first().at(1).toStringList(), QStringList{copy});
+    QCOMPARE(QImage(copy).pixelColor(0, 0), QColor(Qt::yellow));
+    QVERIFY(QFileInfo::exists(kept));
+    m_library->setDuplicatesOnly(false);
+  }
+
   void libraryFilePromptsPreserveSymlinkTargetsAndRejectReplacements_data() {
     QTest::addColumn<bool>("rename");
     QTest::addColumn<bool>("replace");

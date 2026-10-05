@@ -308,7 +308,7 @@ bool ActionLauncher::runTracked(const QString& program, const QStringList& argum
               emit reported(u"Saved %1 beside the original"_s.arg(output.fileName()));
             } else {
               // The helper may have completed conversion before a clipboard
-              // or notification step failed. Keep nonempty output for review;
+              // or notification step failed. Keep its output for review.
               // A path alone cannot prove ownership, including for empty output.
               const QStringList lines = QString::fromUtf8(process->readAllStandardError())
                                             .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
@@ -538,7 +538,7 @@ QVariantMap ActionLauncher::renameCapturedFile(const QVariantMap& target, const 
   if (!capturedFileMatches(target)) {
     return {{u"ok"_s, false}, {u"error"_s, u"That file changed or disappeared. Open Rename again"_s}};
   }
-  QVariantMap result = renameFile(target.value(u"path"_s).toString(), baseName);
+  QVariantMap result = renameFile(target.value(u"path"_s).toString(), baseName, target);
   if (result.value(u"ok"_s).toBool()) {
     result.insert(u"mediaPath"_s, QFileInfo(result.value(u"path"_s).toString()).canonicalFilePath());
   }
@@ -660,6 +660,10 @@ bool ActionLauncher::deletePermanently(const QString& path) {
 }
 
 QVariantMap ActionLauncher::renameFile(const QString& path, const QString& baseName) {
+  return renameFile(path, baseName, {});
+}
+
+QVariantMap ActionLauncher::renameFile(const QString& path, const QString& baseName, const QVariantMap& captured) {
   const auto failure = [](const QString& message) {
     return QVariantMap{{QStringLiteral("ok"), false},
                        {QStringLiteral("error"), message}};
@@ -688,6 +692,9 @@ QVariantMap ActionLauncher::renameFile(const QString& path, const QString& baseN
   }
   if (QFileInfo::exists(target)) {
     return failure(u"A file with that name already exists"_s);
+  }
+  if (!captured.isEmpty() && !capturedFileMatches(captured)) {
+    return failure(u"That file changed or disappeared. Open Rename again"_s);
   }
   if (!QFile::rename(source.absoluteFilePath(), target)) {
     return failure(u"Could not rename this file"_s);

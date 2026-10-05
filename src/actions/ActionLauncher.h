@@ -129,6 +129,7 @@ signals:
 
 private:
   [[nodiscard]] static bool capturedFileMatches(const QVariantMap& target);
+  QVariantMap renameFile(const QString& path, const QString& baseName, const QVariantMap& target);
   [[nodiscard]] QString locate(const QString& program, const QString& packageHint);
   bool copyText(const QString& text, bool sensitive, const QString& mimeType = {});
   bool startSubmission(const QString& program, const QStringList& arguments,
