@@ -490,6 +490,46 @@ private slots:
     QCOMPARE(recovered.get(), SingleInstance::Result::Forwarded);
   }
 
+  void singleInstanceSeparatesSessions_data() {
+    QTest::addColumn<int>("mode");
+    QTest::newRow("absolute-wayland-display") << 0;
+    QTest::newRow("same-display-different-runtime") << 1;
+    QTest::newRow("different-x11-displays") << 2;
+  }
+
+  void singleInstanceSeparatesSessions() {
+    QFETCH(int, mode);
+    QTemporaryDir firstRuntime;
+    QTemporaryDir secondRuntime;
+    QVERIFY(firstRuntime.isValid());
+    QVERIFY(secondRuntime.isValid());
+    const QByteArray oldRuntime = qgetenv("XDG_RUNTIME_DIR");
+    const QByteArray oldWayland = qgetenv("WAYLAND_DISPLAY");
+    const QByteArray oldDisplay = qgetenv("DISPLAY");
+    const auto restore = qScopeGuard([&] {
+      oldRuntime.isNull() ? qunsetenv("XDG_RUNTIME_DIR") : qputenv("XDG_RUNTIME_DIR", oldRuntime);
+      oldWayland.isNull() ? qunsetenv("WAYLAND_DISPLAY") : qputenv("WAYLAND_DISPLAY", oldWayland);
+      oldDisplay.isNull() ? qunsetenv("DISPLAY") : qputenv("DISPLAY", oldDisplay);
+    });
+    qputenv("XDG_RUNTIME_DIR", firstRuntime.path().toUtf8());
+    if (mode == 2) {
+      qunsetenv("WAYLAND_DISPLAY");
+      qputenv("DISPLAY", ":101");
+    } else {
+      qputenv("WAYLAND_DISPLAY", mode == 0 ? firstRuntime.filePath("wayland-0").toUtf8()
+                                            : QByteArray("wayland-test-session"));
+    }
+    SingleInstance first;
+    QCOMPARE(first.claimOrNotify(), SingleInstance::Result::Primary);
+    auto forwarded = notifyInstance({});
+    QTRY_VERIFY(forwarded.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready);
+    QCOMPARE(forwarded.get(), SingleInstance::Result::Forwarded);
+    if (mode == 2) qputenv("DISPLAY", ":102");
+    else qputenv("XDG_RUNTIME_DIR", secondRuntime.path().toUtf8());
+    SingleInstance otherSession;
+    QCOMPARE(otherSession.claimOrNotify(), SingleInstance::Result::Primary);
+  }
+
   void singleInstanceArbitratesSimultaneousStarts() {
     const QString name = QStringLiteral("omaroll-start-race-%1").arg(QCoreApplication::applicationPid());
     QList<QProcess*> starts;
