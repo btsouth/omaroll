@@ -495,6 +495,19 @@ private slots:
     QCOMPARE(recovered.get(), SingleInstance::Result::Forwarded);
   }
 
+  void singleInstanceRunsWithoutAWritableTemporaryDirectory() {
+    const QByteArray previous = qgetenv("TMPDIR");
+    qputenv("TMPDIR", "/nonexistent/omaroll-test");
+    SingleInstance instance(QStringLiteral("omaroll-no-tmp-%1").arg(QCoreApplication::applicationPid()));
+    const auto result = instance.claimOrNotify();
+    if (previous.isNull()) {
+      qunsetenv("TMPDIR");
+    } else {
+      qputenv("TMPDIR", previous);
+    }
+    QCOMPARE(result, SingleInstance::Result::Primary);
+  }
+
   void singleInstanceSeparatesSessions_data() {
     QTest::addColumn<int>("mode");
     QTest::newRow("absolute-wayland-display") << 0;
@@ -555,7 +568,7 @@ private slots:
     QCOMPARE(primaries, 1);
   }
 
-  void executableReportsUnacknowledgedLegacyForwarding() {
+  void executableForwardsToALegacyInstance() {
     QTemporaryDir dir;
     const QString display = QFileInfo(dir.path()).fileName();
     QLocalServer legacy;
@@ -573,9 +586,7 @@ private slots:
     QVERIFY(QJsonDocument::fromJson(peer->readLine()).isObject());
     peer->disconnectFromServer();
     QTRY_VERIFY_WITH_TIMEOUT(process.state() == QProcess::NotRunning, 7000);
-    QCOMPARE(process.exitCode(), 1);
-    const QByteArray diagnostics = process.readAllStandardError();
-    QVERIFY2(diagnostics.contains("omaroll:") && diagnostics.contains("request"), diagnostics.constData());
+    QCOMPARE(process.exitCode(), 0);
     QVERIFY(legacy.isListening());
   }
 

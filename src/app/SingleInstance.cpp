@@ -33,7 +33,7 @@ bool missingEndpoint(QLocalSocket::LocalSocketError error) {
   return error == QLocalSocket::ServerNotFoundError || error == QLocalSocket::ConnectionRefusedError;
 }
 
-SingleInstance::Result forward(QLocalSocket& socket, const QByteArray& frame) {
+SingleInstance::Result forward(QLocalSocket& socket, const QByteArray& frame, bool legacy = false) {
   QDeadlineTimer deadline(requestTimeout);
   if (socket.write(frame) != frame.size()) {
     qWarning() << "omaroll: could not write the open request:" << socket.errorString();
@@ -48,8 +48,11 @@ SingleInstance::Result forward(QLocalSocket& socket, const QByteArray& frame) {
   socket.setReadBufferSize(acknowledgement.size() + 1);
   while (!socket.canReadLine()) {
     if (deadline.hasExpired() || !socket.waitForReadyRead(deadline.remainingTime())) {
-      // Older versions accept the legacy path field but do not acknowledge it.
-      // Delivery is uncertain, so report failure instead of starting another writer.
+      // Versions before the acknowledgement read one line and hang up, so a
+      // clean close from the old endpoint is how they accept a request.
+      if (legacy && !deadline.hasExpired() && socket.error() == QLocalSocket::PeerClosedError) {
+        return SingleInstance::Result::Forwarded;
+      }
       qWarning() << "omaroll: the running instance did not acknowledge the open request;"
                     " close it and retry if the file did not open";
       return SingleInstance::Result::Error;
@@ -164,6 +167,10 @@ SingleInstance::Result SingleInstance::claimOrNotify(const QStringList& paths, b
     return Result::Error;
   }
   const bool ownsLock = m_lock->tryLock();
+  // No lock file at all (an unwritable TMPDIR, say) means the endpoint cannot
+  // be made either. Run without single-instance rather than exit with
+  // nothing on screen, unless an owner can still be reached.
+  const bool lockUnavailable = !ownsLock && m_lock->error() != QLockFile::LockFailedError;
   if (ownsLock) {
     // An app running before an upgrade has no ownership lock or ACK protocol.
     // Never remove its endpoint or start a second settings-writing instance.
@@ -171,7 +178,7 @@ SingleInstance::Result SingleInstance::claimOrNotify(const QStringList& paths, b
       QLocalSocket legacy;
       legacy.connectToServer(m_legacyServerName);
       if (legacy.waitForConnected(1000)) {
-        const Result result = forward(legacy, frame);
+        const Result result = forward(legacy, frame, true);
         m_lock->unlock();
         return result;
       }
@@ -189,7 +196,10 @@ SingleInstance::Result SingleInstance::claimOrNotify(const QStringList& paths, b
   do {
     socket.connectToServer(m_serverName);
     connected = socket.waitForConnected(connectDeadline.remainingTime());
-    if (connected || ownsLock || !missingEndpoint(socket.error()) || connectDeadline.hasExpired()) break;
+    if (connected || ownsLock || lockUnavailable || !missingEndpoint(socket.error()) ||
+        connectDeadline.hasExpired()) {
+      break;
+    }
     // The owner may hold the lock just before publishing its endpoint.
     socket.abort();
     QThread::msleep(10);
@@ -209,10 +219,16 @@ SingleInstance::Result SingleInstance::claimOrNotify(const QStringList& paths, b
     const bool absent = found != 0 && errno == ENOENT;
     const bool stale = found == 0 && S_ISSOCK(info.st_mode) && info.st_uid == getuid() &&
                        socket.error() == QLocalSocket::ConnectionRefusedError;
-    if ((absent || (stale && QLocalServer::removeServer(m_serverName))) &&
-        m_server.listen(m_serverName)) {
+    if (absent || (stale && QLocalServer::removeServer(m_serverName))) {
+      if (!m_server.listen(m_serverName)) {
+        qWarning() << "omaroll: running without single-instance:" << m_server.errorString();
+      }
       return Result::Primary;
     }
+  }
+  if (lockUnavailable && missingEndpoint(socket.error())) {
+    qWarning() << "omaroll: running without single-instance:" << m_lock->error();
+    return Result::Primary;
   }
   qWarning() << "omaroll: could not claim or contact the running instance:" << socket.errorString();
   if (ownsLock) m_lock->unlock();
