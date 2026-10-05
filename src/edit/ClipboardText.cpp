@@ -1,10 +1,10 @@
 #include "edit/ClipboardText.h"
+#include "edit/ClipboardFallback.h"
 
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QProcess>
 #include <QStandardPaths>
-#include <QThread>
 
 namespace ClipboardText {
 
@@ -30,23 +30,11 @@ bool offer(const QString& text) {
     return finished && process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
   }
 
-  auto* application = qobject_cast<QGuiApplication*>(QCoreApplication::instance());
-  if (!application || QGuiApplication::platformName().startsWith(QStringLiteral("wayland"))) {
-    return false;
-  }
-  bool offered = false;
-  const auto fallback = [&] {
-    if (QGuiApplication::clipboard()) {
-      QGuiApplication::clipboard()->setText(text);
-      offered = true;
-    }
-  };
-  if (QThread::currentThread() == application->thread()) {
-    fallback();
-  } else {
-    QMetaObject::invokeMethod(application, fallback, Qt::BlockingQueuedConnection);
-  }
-  return offered;
+  return ClipboardFallback::onGuiThread([text] {
+    if (!QGuiApplication::clipboard()) return false;
+    QGuiApplication::clipboard()->setText(text);
+    return true;
+  });
 }
 
 } // namespace ClipboardText

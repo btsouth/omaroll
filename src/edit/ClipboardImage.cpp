@@ -1,11 +1,11 @@
 #include "edit/ClipboardImage.h"
+#include "edit/ClipboardFallback.h"
 
 #include <QBuffer>
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QProcess>
 #include <QStandardPaths>
-#include <QThread>
 
 namespace ClipboardImage {
 
@@ -35,23 +35,11 @@ bool offer(const QImage& image) {
     }
   }
 
-  auto* application = qobject_cast<QGuiApplication*>(QCoreApplication::instance());
-  if (!application || QGuiApplication::platformName().startsWith(QStringLiteral("wayland"))) {
-    return false;
-  }
-  bool offered = false;
-  const auto fallback = [&] {
-    if (QGuiApplication::clipboard()) {
-      QGuiApplication::clipboard()->setImage(image);
-      offered = true;
-    }
-  };
-  if (QThread::currentThread() == application->thread()) {
-    fallback();
-  } else {
-    QMetaObject::invokeMethod(application, fallback, Qt::BlockingQueuedConnection);
-  }
-  return offered;
+  return ClipboardFallback::onGuiThread([image] {
+    if (!QGuiApplication::clipboard()) return false;
+    QGuiApplication::clipboard()->setImage(image);
+    return true;
+  });
 }
 
 } // namespace ClipboardImage

@@ -2955,6 +2955,22 @@ private slots:
     }
   }
 
+  void nativeClipboardFallbackCancelsWithoutGuiEvents() {
+    QTemporaryDir dir;
+    const QByteArray oldPath = qgetenv("PATH");
+    const auto restore = qScopeGuard([&] { qputenv("PATH", oldPath); });
+    qputenv("PATH", dir.path().toUtf8());
+    QGuiApplication::clipboard()->setText(QStringLiteral("unchanged"));
+    auto offered = std::async(std::launch::async, [] {
+      return ClipboardText::offer(QStringLiteral("late offer"));
+    });
+    // Deliberately stop servicing GUI events, as happens during shutdown.
+    QVERIFY(offered.wait_for(std::chrono::milliseconds(1500)) == std::future_status::ready);
+    QVERIFY(!offered.get());
+    QCoreApplication::processEvents();
+    QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("unchanged"));
+  }
+
   void trackedExportStopsDescendantsOnClose() {
     QTemporaryDir dir;
     const QString pidPath = dir.filePath(QStringLiteral("child.pid"));
