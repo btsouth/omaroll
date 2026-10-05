@@ -1248,6 +1248,9 @@ private slots:
           QTRY_VERIFY(scrub->mapToScene(QPointF()).x() >= 0);
           QTRY_VERIFY(scrub->mapToScene(QPointF(scrub->width(), 0)).x() <= width);
           if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
+            QSignalSpy frames(window, &QQuickWindow::frameSwapped);
+            window->requestUpdate();
+            QTRY_VERIFY(frames.size() >= 2);
             QTRY_VERIFY(!window->grabWindow().isNull());
             QVERIFY(window->grabWindow().save(QCoreApplication::applicationDirPath()
                 + QStringLiteral("/narrow-transport-%1-%2-%3-%4.png")
