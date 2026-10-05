@@ -62,7 +62,7 @@ QString CopyOutput::encoderPath() const {
 }
 
 QString CopyOutput::publish() {
-  if (!m_file.isOpen() || !m_file.flush() || m_file.size() <= 0) return {};
+  if (!m_file.isOpen() || !m_file.flush() || m_file.size() <= 0 || ::fsync(m_file.handle()) != 0) return {};
   struct stat directory {}, current {}, owned {}, temporary {};
   const QFileInfo info(m_path);
   if (::fstat(m_directory, &directory) != 0 ||
@@ -75,7 +75,10 @@ QString CopyOutput::publish() {
     const QString name = number == 1 ? info.fileName()
         : info.completeBaseName() + QStringLiteral("-%1.").arg(number) + info.suffix();
     const QByteArray encodedName = QFile::encodeName(name);
-    if (::linkat(m_temporaryDirectory, "output", m_directory, encodedName.constData(), 0) == 0) {
+    // Link the open inode, so replacing the private temporary name cannot
+    // substitute someone else's file between validation and publication.
+    const QByteArray source = QByteArray("/proc/self/fd/") + QByteArray::number(m_file.handle());
+    if (::linkat(AT_FDCWD, source.constData(), m_directory, encodedName.constData(), AT_SYMLINK_FOLLOW) == 0) {
       return info.absolutePath() + QLatin1Char('/') + name;
     }
     if (errno != EEXIST) return {};
