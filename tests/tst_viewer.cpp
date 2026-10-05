@@ -1195,13 +1195,21 @@ private slots:
     const QString fixture = QFINDTESTDATA(qPrintable(QStringLiteral("fixtures/themes/%1").arg(palette)));
     QVERIFY(QFile::link(fixture, themeHome.filePath(QStringLiteral("omarchy/current"))));
     OmarchyTheme theme(themeHome.path(), themeHome.path());
-    m_context->setContextProperty(QStringLiteral("Theme"), &theme);
+    m_engine->rootContext()->setContextProperty(QStringLiteral("Theme"), &theme);
     const auto restoreTheme = qScopeGuard([this] {
-      m_context->setContextProperty(QStringLiteral("Theme"), m_theme);
+      m_engine->rootContext()->setContextProperty(QStringLiteral("Theme"), m_theme);
     });
-    open({media(QStringLiteral("clip.mp4"))});
-    QQuickItem* transport = item(QStringLiteral("viewerTransport"));
-    QQuickItem* scrub = item(QStringLiteral("viewerScrub"));
+    ViewerWindows viewers(*m_engine);
+    viewers.setPlacementQuery([] { return HyprlandPlacement::Plan{}; });
+    QQuickWindow* window = viewers.open({media(QStringLiteral("clip.mp4"))});
+    QVERIFY(window);
+    const auto control = [window](const QString& name) {
+      return find(window->contentItem(), [&name](QQuickItem* candidate) {
+        return candidate->objectName() == name;
+      });
+    };
+    QQuickItem* transport = control(QStringLiteral("viewerTransport"));
+    QQuickItem* scrub = control(QStringLiteral("viewerScrub"));
     QVERIFY(transport && scrub);
     QQmlComponent component(m_engine);
     component.setData(R"(
@@ -1218,25 +1226,37 @@ private slots:
     transport->setProperty("player", QVariant::fromValue(player.get()));
     transport->setProperty("hasCaptions", true);
     transport->setProperty("captionsOn", true);
-    m_window->setProperty("chromePinned", true);
-    for (const double rate : {1.0, 1.5}) {
-      player->setProperty("playbackRate", rate);
-      for (const int width : {320, 400}) {
-        m_window->resize(width, 240);
-        QTRY_VERIFY(scrub->width() >= 64);
-        QVERIFY(item(QStringLiteral("viewerCaptionsButton"))->isVisible());
-        if (rate != 1.0) QVERIFY(item(QStringLiteral("viewerSpeedButton"))->isVisible());
-        QVERIFY(scrub->mapToScene(QPointF()).x() >= 0);
-        QVERIFY(scrub->mapToScene(QPointF(scrub->width(), 0)).x() <= width);
-        if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
-          QTRY_VERIFY(!m_window->grabWindow().isNull());
-          QVERIFY(m_window->grabWindow().save(QCoreApplication::applicationDirPath()
-                      + QStringLiteral("/narrow-transport-%1-%2-%3.png").arg(palette).arg(width).arg(rate)));
+    window->setProperty("chromePinned", true);
+    for (const int pixels : {11, 14}) {
+      for (const QString& clock : {QStringLiteral("1:01:00"), QStringLiteral("2:00:00")}) {
+        QQuickItem* label = find(transport, [&clock](QQuickItem* candidate) {
+          return candidate->property("text").toString() == clock;
+        });
+        QVERIFY(label);
+        QFont font = label->property("font").value<QFont>();
+        font.setPixelSize(pixels);
+        label->setProperty("font", font);
+      }
+      for (const double rate : {1.0, 1.5}) {
+        player->setProperty("playbackRate", rate);
+        for (const int width : {320, 400}) {
+          window->resize(width, 240);
+          QTRY_COMPARE(transport->width(), width - 32);
+          QTRY_VERIFY(scrub->width() >= 64);
+          QVERIFY(control(QStringLiteral("viewerCaptionsButton"))->isVisible());
+          if (rate != 1.0) QVERIFY(control(QStringLiteral("viewerSpeedButton"))->isVisible());
+          QVERIFY(scrub->mapToScene(QPointF()).x() >= 0);
+          QVERIFY(scrub->mapToScene(QPointF(scrub->width(), 0)).x() <= width);
+          if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
+            QTRY_VERIFY(!window->grabWindow().isNull());
+            QVERIFY(window->grabWindow().save(QCoreApplication::applicationDirPath()
+                + QStringLiteral("/narrow-transport-%1-%2-%3-%4.png")
+                      .arg(palette).arg(width).arg(rate).arg(pixels)));
+          }
         }
       }
     }
-    transport->setProperty("player", QVariant::fromValue(m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
-    m_window->setProperty("chromePinned", false);
+    window->close();
   }
 
   void remoteCommandsRespectResumeIntent() {
