@@ -495,6 +495,12 @@ private slots:
     QQuickItem* card = nullptr;
     QTRY_VERIFY((card = cardFor(path)) != nullptr);
     const QSizeF size(card->width(), card->height());
+    QQuickItem* thumbnail = find(card, [](QQuickItem* candidate) {
+      return candidate->property("source").toUrl().toString().startsWith(QStringLiteral("image://thumbs/"));
+    });
+    QVERIFY(thumbnail);
+    const QSize sourceSize = thumbnail->property("sourceSize").toSize();
+    const QUrl source = thumbnail->property("source").toUrl();
     QQuickItem* label = find(card, [](QQuickItem* candidate) {
       return candidate->objectName() == QStringLiteral("captureFilenameLabel");
     });
@@ -508,6 +514,8 @@ private slots:
     invoke("dismissTopLayer");
     QTRY_VERIFY(label->isVisible());
     QCOMPARE(QSizeF(card->width(), card->height()), size);
+    QCOMPARE(thumbnail->property("sourceSize").toSize(), sourceSize);
+    QCOMPARE(thumbnail->property("source").toUrl(), source);
     QCOMPARE(label->property("text").toString(), m_library->fileNameAt(0));
     m_window->resize(560, 420);
     QTRY_VERIFY(cardFor(path));
@@ -522,6 +530,8 @@ private slots:
     QVERIFY(dir.isValid());
     const QString target = dir.filePath(QStringLiteral("original.png"));
     const QString alias = dir.filePath(QStringLiteral("alias # 雪.png"));
+    m_disposablePaths.append(target);
+    m_disposablePaths.append(alias);
     const auto cleanup = qScopeGuard([&] {
       invoke("dismissTopLayer");
       dir.remove();
