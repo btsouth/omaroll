@@ -262,7 +262,10 @@ private slots:
     QQuickItem* details = item(QStringLiteral("viewerInfoButton"));
     details->forceActiveFocus();
     QTRY_VERIFY(details->hasActiveFocus());
+    qInfo() << "Before Tab" << m_window->activeFocusItem() << "next" << details->nextItemInFocusChain(true)
+            << "tab" << details->activeFocusOnTab() << "visible" << details->isVisible();
     QTest::keyClick(m_window, Qt::Key_Tab);
+    qInfo() << "After Tab" << m_window->activeFocusItem();
     QTRY_VERIFY(item(QStringLiteral("viewerLibraryButton"))->hasActiveFocus());
     QTest::keyClick(m_window, Qt::Key_Backtab, Qt::ShiftModifier);
     QTRY_VERIFY(details->hasActiveFocus());
