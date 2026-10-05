@@ -2844,6 +2844,18 @@ private slots:
     QVERIFY(inspector.selectionText().contains(QStringLiteral("New second page")));
     QVERIFY(inspector.selectionText() != oldText);
 
+    inspector.clearSelection();
+    QList<int> selectedPages;
+    const auto connection = connect(&inspector, &PdfInspector::selectionChanged, &inspector, [&] {
+      if (inspector.hasSelection()) selectedPages.append(inspector.selectionPage());
+    });
+    inspector.updateSelection(2, 0, 0, 1, 1); // cached words, selection still in the worker
+    inspector.updateSelection(1, 0, 0, 1, 1); // a new page supersedes that selection
+    QTRY_VERIFY(inspector.hasSelection() && inspector.selectionPage() == 1);
+    QVERIFY(inspector.selectionText().contains(QStringLiteral("Replacement document")));
+    for (const int page : selectedPages) QCOMPARE(page, 1);
+    QObject::disconnect(connection);
+
     // Replacement while extraction is running must not apply the old words.
     inspector.clear();
     inspector.inspect(path);

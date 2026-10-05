@@ -364,6 +364,7 @@ void PdfInspector::copyPageText(int page) {
 }
 
 void PdfInspector::startPageWords(int page) {
+  ++m_selectionRequest;
   stopProcess(m_wordsProcess, m_wordsTimeout);
   ++m_wordsRequest;
   m_wordsOutput = {};
