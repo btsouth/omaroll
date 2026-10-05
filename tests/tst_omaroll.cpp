@@ -8157,6 +8157,18 @@ private slots:
     const QString source = dir.filePath(QStringLiteral("region.png"));
     QVERIFY(QImage(64, 48, QImage::Format_RGB32).save(source, "PNG"));
 
+    const QString offered = dir.filePath(QStringLiteral("offered.png"));
+    QFile helper(dir.filePath(QStringLiteral("wl-copy")));
+    QVERIFY(helper.open(QIODevice::WriteOnly));
+    helper.write("#!/bin/sh\nexec /bin/cat > '");
+    helper.write(offered.toUtf8());
+    helper.write("'\n");
+    helper.close();
+    QVERIFY(helper.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    const QByteArray oldPath = qgetenv("PATH");
+    const auto restore = qScopeGuard([&] { qputenv("PATH", oldPath); });
+    qputenv("PATH", dir.path().toUtf8() + ':' + oldPath);
+
     ImageEditor editor;
     QSignalSpy copied(&editor, &ImageEditor::copied);
     QSignalSpy failed(&editor, &ImageEditor::failed);
@@ -8164,6 +8176,7 @@ private slots:
     editor.copyRegion(source, 0, false, false, 0, 0.5, 0.5, 0.5, 0.5);
     QTRY_COMPARE_WITH_TIMEOUT(copied.size(), 1, 15000);
     QCOMPARE(failed.size(), 0);
+    QCOMPARE(QImage(offered).size(), QSize(32, 24));
 
     editor.copyRegion(dir.filePath(QStringLiteral("missing.png")), 0, false, false, 0, 0, 0, 1, 1);
     QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 5000);
