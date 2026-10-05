@@ -501,7 +501,8 @@ private slots:
     QVERIFY(label);
     QVERIFY(!label->isVisible());
     QVERIFY(QMetaObject::invokeMethod(item("settingsSheet"), "open"));
-    click(item("gridFilenamesToggle"));
+    item("gridFilenamesToggle")->forceActiveFocus();
+    QTest::keyClick(m_window, Qt::Key_Space);
     QTRY_VERIFY(m_settings->showGridFilenames());
     const auto restore = qScopeGuard([&] { m_settings->setShowGridFilenames(false); m_window->resize(1280, 820); });
     invoke("dismissTopLayer");
@@ -620,6 +621,26 @@ private slots:
       QTest::qWait(30);
       QVERIFY(QLineF(before, underPointer()).length() < 0.001);
     }
+  }
+
+  void imagePinchKeepsItsCentroidFixed() {
+    openDetail(m_library->rowOf(m_oddPath));
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->property("imageReady").toBool());
+    QVERIFY(QMetaObject::invokeMethod(detail, "adjustImageZoom", Q_ARG(QVariant, 3.0),
+                                     Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant())));
+    QQuickItem* viewport = item("detailStillViewport");
+    QQuickItem* canvas = item("detailImageCanvas");
+    QTest::qWait(50);
+    const QPointF pointer(viewport->width() * 0.6, viewport->height() * 0.6);
+    const auto underPointer = [&] {
+      return QPointF((viewport->property("contentX").toDouble() + pointer.x() - canvas->x()) / canvas->width(),
+                     (viewport->property("contentY").toDouble() + pointer.y() - canvas->y()) / canvas->height());
+    };
+    const QPointF before = underPointer();
+    pinchAt(viewport->mapToScene(pointer).toPoint());
+    QTRY_VERIFY(detail->property("imageZoom").toDouble() > 3.0);
+    QVERIFY(QLineF(before, underPointer()).length() < 0.003);
   }
 
   void failedThumbnailHasADistinctSettledState() {
@@ -864,6 +885,11 @@ private slots:
     QCoreApplication::sendEvent(m_window, &wheel);
     QTRY_VERIFY(sheet->property("zoom").toDouble() > 1.0);
     QVERIFY(QLineF(pointer, image->mapFromScene(at)).length() < 0.01);
+
+    const double wheelZoom = sheet->property("zoom").toDouble();
+    pinchAt(at.toPoint());
+    QTRY_VERIFY(sheet->property("zoom").toDouble() > wheelZoom);
+    QVERIFY(QLineF(pointer, image->mapFromScene(at)).length() < 2.0);
 
     // One zoom property drives both pictures; reset returns them to fit.
     sheet->setProperty("zoom", 2.0);
@@ -5260,6 +5286,21 @@ private:
       QTest::qWait(20);
     }
     QTest::mouseRelease(m_window, Qt::LeftButton, Qt::NoModifier, end);
+    QTest::qWait(30);
+  }
+
+  void pinchAt(const QPoint& at) {
+    static auto* device = QTest::createTouchDevice();
+    QTest::touchEvent(m_window, device).press(0, at - QPoint(40, 0), m_window)
+                                      .press(1, at + QPoint(40, 0), m_window);
+    QTest::qWait(30);
+    for (int distance : {50, 60, 80}) {
+      QTest::touchEvent(m_window, device).move(0, at - QPoint(distance, 0), m_window)
+                                        .move(1, at + QPoint(distance, 0), m_window);
+      QTest::qWait(30);
+    }
+    QTest::touchEvent(m_window, device).release(0, at - QPoint(80, 0), m_window)
+                                      .release(1, at + QPoint(80, 0), m_window);
     QTest::qWait(30);
   }
 

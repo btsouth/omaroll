@@ -454,16 +454,19 @@ void AppSettings::setTileWidth(int width) {
 }
 
 void AppSettings::setShowGridFilenames(bool value) {
-  const bool bounded = value;
-  if (m_showGridFilenames == bounded) return;
-  m_showGridFilenames = bounded;
-  m_settings.setValue(kShowGridFilenames, bounded);
+  if (m_showGridFilenames == value) {
+    return;
+  }
+  m_showGridFilenames = value;
+  m_settings.setValue(kShowGridFilenames, value);
   emit showGridFilenamesChanged();
 }
 
 void AppSettings::setPreviewWidth(int width) {
   const int bounded = qBound(500, width, 8192);
-  if (m_previewWidth == bounded) return;
+  if (m_previewWidth == bounded) {
+    return;
+  }
   m_previewWidth = bounded;
   m_settings.setValue(kPreviewWidth, bounded);
   emit previewWidthChanged();
@@ -471,7 +474,9 @@ void AppSettings::setPreviewWidth(int width) {
 
 void AppSettings::setPreviewHeight(int height) {
   const int bounded = qBound(360, height, 8192);
-  if (m_previewHeight == bounded) return;
+  if (m_previewHeight == bounded) {
+    return;
+  }
   m_previewHeight = bounded;
   m_settings.setValue(kPreviewHeight, bounded);
   emit previewHeightChanged();

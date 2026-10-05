@@ -415,7 +415,8 @@ int main(int argc, char* argv[]) {
   }
   const QString renderView = optionValue(arguments, QStringLiteral("--render-view"));
   static const QStringList renderViews = {
-      QStringLiteral("grid"),       QStringLiteral("grid-filenames"), QStringLiteral("detail"),  QStringLiteral("document"),
+      QStringLiteral("grid"),       QStringLiteral("grid-filenames"),
+      QStringLiteral("detail"),     QStringLiteral("document"),
       QStringLiteral("video"),
       QStringLiteral("slideshow"),  QStringLiteral("matte"),   QStringLiteral("corrections"),
       QStringLiteral("compare"),    QStringLiteral("export"),  QStringLiteral("rename"),

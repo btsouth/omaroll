@@ -2879,13 +2879,7 @@ Item {
                         }
                     }
 
-                    Shortcut {
-        sequence: "Ctrl+Shift+C"
-        enabled: root.visible && root.enabled && !root.contextMenuOpen
-        onActivated: root.invokeAction("copy-path")
-    }
-
-    Keys.onPressed: function (event) {
+                    Keys.onPressed: function (event) {
                         if (event.key === Qt.Key_Up || event.key === Qt.Key_Down) {
                             root.focusRelativeAction(event.key === Qt.Key_Up ? -1 : 1)
                             event.accepted = true
@@ -3027,6 +3021,12 @@ Item {
             root.showInfo = true
             captionField.forceActiveFocus()
         }
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Shift+C"
+        enabled: root.visible && root.enabled && !root.contextMenuOpen
+        onActivated: root.invokeAction("copy-path")
     }
 
     Keys.onPressed: function (event) {
