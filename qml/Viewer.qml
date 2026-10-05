@@ -1905,9 +1905,10 @@ ApplicationWindow {
                 handled = false
             } else {
                 switch (event.key) {
+                // Tab would walk focus into the details card and leave the
+                // viewer's keys behind.
                 case Qt.Key_Tab:
                 case Qt.Key_Backtab:
-                    handled = false
                     break
                 case Qt.Key_Escape:
                     if (root.slideshowRunning) root.setSlideshow(false)
