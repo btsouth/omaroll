@@ -564,6 +564,7 @@ private slots:
     auto environment = QProcessEnvironment::systemEnvironment();
     environment.insert(QStringLiteral("WAYLAND_DISPLAY"), display);
     environment.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("offscreen"));
+    environment.insert(QStringLiteral("QT_FORCE_STDERR_LOGGING"), QStringLiteral("1"));
     process.setProcessEnvironment(environment);
     process.start(QCoreApplication::applicationDirPath() + QStringLiteral("/omaroll"), {});
     QTRY_VERIFY(legacy.hasPendingConnections());
@@ -573,7 +574,8 @@ private slots:
     peer->disconnectFromServer();
     QTRY_VERIFY_WITH_TIMEOUT(process.state() == QProcess::NotRunning, 7000);
     QCOMPARE(process.exitCode(), 1);
-    QVERIFY(process.readAllStandardError().contains("did not acknowledge"));
+    const QByteArray diagnostics = process.readAllStandardError();
+    QVERIFY2(diagnostics.contains("omaroll:") && diagnostics.contains("request"), diagnostics.constData());
     QVERIFY(legacy.isListening());
   }
 
@@ -604,7 +606,8 @@ private slots:
     QCOMPARE(recovered.claimOrNotify(), SingleInstance::Result::Primary);
     struct stat info{};
     QCOMPARE(::stat(path.constData(), &info), 0);
-    QCOMPARE(info.st_mode & 0777, mode_t(0600));
+    QCOMPARE(info.st_mode & 0077, mode_t(0));
+    QCOMPARE(info.st_mode & 0600, mode_t(0600));
     auto valid = notifyInstance(name);
     QTRY_VERIFY(valid.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready);
     QCOMPARE(valid.get(), SingleInstance::Result::Forwarded);

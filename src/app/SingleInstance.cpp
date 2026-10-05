@@ -4,6 +4,7 @@
 #include <QDeadlineTimer>
 #include <QDebug>
 #include <QDir>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -12,7 +13,10 @@
 #include <QTimer>
 #include <QThread>
 
+#include <sys/stat.h>
 #include <unistd.h>
+
+#include <cerrno>
 
 namespace {
 constexpr qint64 maxFrameBytes = 1024 * 1024;
@@ -177,7 +181,6 @@ SingleInstance::Result SingleInstance::claimOrNotify(const QStringList& paths, b
         return Result::Error;
       }
     }
-    if (m_server.listen(m_serverName)) return Result::Primary;
   }
 
   QLocalSocket socket;
@@ -196,12 +199,20 @@ SingleInstance::Result SingleInstance::claimOrNotify(const QStringList& paths, b
     if (ownsLock) m_lock->unlock();
     return result;
   }
-  // A timeout, permissions failure or lock held by a starting/live owner is
-  // not evidence of a stale socket. Only the lock holder can recover a refusal.
-  if (ownsLock && m_server.serverError() == QAbstractSocket::AddressInUseError &&
-      missingEndpoint(socket.error()) && QLocalServer::removeServer(m_serverName) &&
-      m_server.listen(m_serverName)) {
-    return Result::Primary;
+  // Probe before listen: Qt's UserAccessOption publishes with rename(),
+  // which can replace an existing endpoint instead of reporting AddressInUse.
+  // A timeout or a live owner's lock never permits removal or a second writer.
+  if (ownsLock && missingEndpoint(socket.error())) {
+    const QByteArray endpoint = QFile::encodeName(QDir::temp().filePath(m_serverName));
+    struct stat info{};
+    const int found = ::lstat(endpoint.constData(), &info);
+    const bool absent = found != 0 && errno == ENOENT;
+    const bool stale = found == 0 && S_ISSOCK(info.st_mode) && info.st_uid == getuid() &&
+                       socket.error() == QLocalSocket::ConnectionRefusedError;
+    if ((absent || (stale && QLocalServer::removeServer(m_serverName))) &&
+        m_server.listen(m_serverName)) {
+      return Result::Primary;
+    }
   }
   qWarning() << "omaroll: could not claim or contact the running instance:" << socket.errorString();
   if (ownsLock) m_lock->unlock();
