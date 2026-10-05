@@ -2880,6 +2880,37 @@ private slots:
     QVERIFY(qint64(square.width()) * square.height() <= PdfSupport::kPixelLimit);
   }
 
+  void pdfRotatedPageKeepsItsFitWidth() {
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("rotated.pdf"));
+    QByteArray pdf("%PDF-1.4\n");
+    const QList<QByteArray> objects{
+      "<< /Type /Catalog /Pages 2 0 R >>",
+      "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Rotate 90 /Resources << >> >>"
+    };
+    QList<int> offsets;
+    for (const auto& object : objects) {
+      offsets.append(pdf.size());
+      pdf += QByteArray::number(offsets.size()) + " 0 obj\n" + object + "\nendobj\n";
+    }
+    const int xref = pdf.size();
+    pdf += "xref\n0 4\n0000000000 65535 f \n";
+    for (const int offset : offsets) {
+      pdf += QByteArray::number(offset).rightJustified(10, '0') + " 00000 n \n";
+    }
+    pdf += "trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n" + QByteArray::number(xref) + "\n%%EOF\n";
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(pdf), pdf.size());
+    file.close();
+    const QImage image = PdfSupport::renderPage(path, 1, QSize(600, 0));
+    QVERIFY(!image.isNull());
+    QCOMPARE(image.width(), 600);
+    QVERIFY(image.height() < image.width());
+    QVERIFY(qAbs(qreal(image.height()) / image.width() - 612.0 / 792.0) < 0.01);
+  }
+
   void nativeClipboardRejectsFailedOffers_data() {
     QTest::addColumn<QByteArray>("failure");
     QTest::newRow("nonzero") << QByteArray("exit 4\n");
