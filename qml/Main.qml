@@ -80,6 +80,10 @@ ApplicationWindow {
         noticeTimer.restart()
     }
 
+    function organizationStatus(message) {
+        root.say(Settings.organizationError || message)
+    }
+
     function restoreFocusAfterSheet() {
         Qt.callLater(function () {
             if (detail.visible) {
@@ -245,11 +249,11 @@ ApplicationWindow {
         }
         case "favorite":
             Settings.toggleFavorite(path)
-            root.say(Settings.isFavorite(path) ? "Added to favourites" : "Removed from favourites")
+            root.organizationStatus(Settings.isFavorite(path) ? "Added to favourites" : "Removed from favourites")
             return
         case "hide":
             Settings.toggleHidden(path)
-            root.say(Settings.isHidden(path) ? "Hidden" : "Shown again")
+            root.organizationStatus(Settings.isHidden(path) ? "Hidden" : "Shown again")
             return
         case "trash":
             root.requestDelete(path)
@@ -554,7 +558,7 @@ ApplicationWindow {
             return
         }
         Settings.setRating(paths, stars)
-        root.say(stars > 0 ? "Rated " + "★".repeat(stars)
+        root.organizationStatus(stars > 0 ? "Rated " + "★".repeat(stars)
                            : "Rating cleared")
     }
     function markChecked(which) {
@@ -562,11 +566,11 @@ ApplicationWindow {
         if (which === "favorite") {
             const on = !root.allChecked(function (p) { return Settings.isFavorite(p) })
             Settings.setFavorite(paths, on)
-            root.say((on ? "Added " : "Removed ") + paths.length + (on ? " to favourites" : " from favourites"))
+            root.organizationStatus((on ? "Added " : "Removed ") + paths.length + (on ? " to favourites" : " from favourites"))
         } else {
             const on = !root.allChecked(function (p) { return Settings.isHidden(p) })
             Settings.setHidden(paths, on)
-            root.say(on ? "Hidden " + paths.length : "Shown " + paths.length + " again")
+            root.organizationStatus(on ? "Hidden " + paths.length : "Shown " + paths.length + " again")
         }
     }
     Connections {
@@ -1449,7 +1453,7 @@ ApplicationWindow {
         onRateRequested: function (stars) { root.rate(stars) }
         onCaptionEdited: function (text) {
             Settings.setCaption(detail.path, text)
-            root.say(text !== "" ? "Caption saved" : "Caption removed")
+            root.organizationStatus(text !== "" ? "Caption saved" : "Caption removed")
         }
         onStatusRequested: function (message) { root.say(message) }
         objectName: "detail"

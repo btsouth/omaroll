@@ -66,6 +66,10 @@ Item {
         } else if (mode === "tag" && paths.length > 0) {
             Settings.addTag(name, paths)
         }
+        if (Settings.organizationError !== "") {
+            errorMessage = Settings.organizationError
+            return
+        }
         root.saved(name, paths.length, mode)
         root.close()
     }
