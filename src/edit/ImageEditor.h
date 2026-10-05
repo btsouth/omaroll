@@ -71,7 +71,7 @@ public:
   // Writes "<stem>-edited.<ext>" beside the original, asynchronously. Crop
   // values are fractions (0..1) of the rotated-and-flipped frame; width or
   // height of zero means the full frame. Emits saved() or failed().
-  Q_INVOKABLE void saveCopy(const QString &path, int quarterTurns,
+  Q_INVOKABLE void saveCopy(const QString& path, int quarterTurns,
                             bool flipHorizontal, bool flipVertical,
                             qreal straightenDegrees, qreal cropX, qreal cropY,
                             qreal cropWidth, qreal cropHeight, int targetWidth,
@@ -79,7 +79,7 @@ public:
 
   // Copies the selected region (same pipeline, no resize) to the clipboard.
   // Emits copied() or failed(). Nothing is written to disk.
-  Q_INVOKABLE void copyRegion(const QString &path, int quarterTurns,
+  Q_INVOKABLE void copyRegion(const QString& path, int quarterTurns,
                               bool flipHorizontal, bool flipVertical,
                               qreal straightenDegrees, qreal cropX, qreal cropY,
                               qreal cropWidth, qreal cropHeight, int jobId = 0);
@@ -87,15 +87,15 @@ public:
   // Writes a copy of every path with the same rotate/flip/resize (no crop and
   // no straighten), one at a time, each with the existing collision handling.
   // Emits batchProgress after each file and batchFinished at the end.
-  Q_INVOKABLE void saveCopies(const QStringList &paths, int quarterTurns,
+  Q_INVOKABLE void saveCopies(const QStringList& paths, int quarterTurns,
                               bool flipHorizontal, bool flipVertical,
                               int targetWidth, int targetHeight, int jobId = 0);
 
   Q_INVOKABLE int nextJobId() { return ++m_nextJobId; }
-  Q_INVOKABLE bool isAnimated(const QString &path) const;
-  [[nodiscard]] static QVariantMap exportImage(const QString &source,
-                                               const QString &preferred,
-                                               const QByteArray &format,
+  Q_INVOKABLE bool isAnimated(const QString& path) const;
+  [[nodiscard]] static QVariantMap exportImage(const QString& source,
+                                               const QString& preferred,
+                                               const QByteArray& format,
                                                int edge);
 
   // The pure pipeline, shared with the preview provider and unit tests.
@@ -108,12 +108,12 @@ public:
   [[nodiscard]] static QString availableOutputPath(const QString& sourcePath);
 
 signals:
-  void saved(const QString &outputPath, int jobId);
+  void saved(const QString& outputPath, int jobId);
   void copied(int jobId);
-  void failed(const QString &message, int jobId);
+  void failed(const QString& message, int jobId);
   void busyChanged();
   void batchProgress(int done, int total, int jobId);
-  void batchFinished(int succeeded, int failed, const QVariantList &results,
+  void batchFinished(int succeeded, int failed, const QVariantList& results,
                      int jobId);
 
 private:

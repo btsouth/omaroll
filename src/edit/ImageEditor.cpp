@@ -79,8 +79,8 @@ QImage readOriented(const QString& path) {
 }
 
 // The encoder writes only our private file; publication never replaces a name.
-QString writeImage(const QImage &image, const QString &preferred,
-                   const QByteArray &format, int quality = 92) {
+QString writeImage(const QImage &image, const QString& preferred,
+                   const QByteArray& format, int quality = 92) {
   CopyOutput output(preferred);
   if (!output.device())
     return {};
@@ -97,8 +97,8 @@ struct SaveResult {
   QString error;
 };
 
-SaveResult saveTransform(const QString &source,
-                         const ImageEditor::Transform &transform) {
+SaveResult saveTransform(const QString& source,
+                         const ImageEditor::Transform& transform) {
   if (CameraRaw::isRawFile(source))
     return {{}, kRawRefusal};
   QString error;
