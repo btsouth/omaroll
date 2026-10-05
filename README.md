@@ -132,7 +132,6 @@ process, so a favourite or rating set in one shows in the others.
 | `Del` | Move to Trash, with confirm |
 | `Shift+Del` | Delete permanently, with confirmation on by default |
 | right click · menu button | Everything else that suits the file |
-| `Tab` · `Shift+Tab` | Next · previous control |
 | `Enter` · grid button | Open the file in the library |
 | `Esc` | Leave the slideshow or full screen, close the details, then close |
 
