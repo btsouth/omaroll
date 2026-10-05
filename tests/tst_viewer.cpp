@@ -1181,7 +1181,24 @@ private slots:
     QTRY_VERIFY(player->position() > 4000);
   }
 
+  void narrowTransportKeepsSeekingWithCaptionsAndChangedSpeed_data() {
+    QTest::addColumn<QString>("palette");
+    QTest::newRow("dark") << QStringLiteral("dark");
+    QTest::newRow("light") << QStringLiteral("light");
+  }
+
   void narrowTransportKeepsSeekingWithCaptionsAndChangedSpeed() {
+    QFETCH(QString, palette);
+    QTemporaryDir themeHome;
+    QVERIFY(themeHome.isValid());
+    QVERIFY(QDir().mkpath(themeHome.filePath(QStringLiteral("omarchy"))));
+    const QString fixture = QFINDTESTDATA(qPrintable(QStringLiteral("fixtures/themes/%1").arg(palette)));
+    QVERIFY(QFile::link(fixture, themeHome.filePath(QStringLiteral("omarchy/current"))));
+    OmarchyTheme theme(themeHome.path(), themeHome.path());
+    m_context->setContextProperty(QStringLiteral("Theme"), &theme);
+    const auto restoreTheme = qScopeGuard([this] {
+      m_context->setContextProperty(QStringLiteral("Theme"), m_theme);
+    });
     open({media(QStringLiteral("clip.mp4"))});
     QQuickItem* transport = item(QStringLiteral("viewerTransport"));
     QQuickItem* scrub = item(QStringLiteral("viewerScrub"));
@@ -1202,15 +1219,19 @@ private slots:
     transport->setProperty("hasCaptions", true);
     transport->setProperty("captionsOn", true);
     m_window->setProperty("chromePinned", true);
-    for (const int width : {320, 400}) {
-      m_window->resize(width, 240);
-      QTRY_VERIFY(scrub->width() >= 64);
-      QVERIFY(scrub->mapToScene(QPointF()).x() >= 0);
-      QVERIFY(scrub->mapToScene(QPointF(scrub->width(), 0)).x() <= width);
-    }
-    if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
-      QTRY_VERIFY(!m_window->grabWindow().isNull());
-      QVERIFY(m_window->grabWindow().save(QStringLiteral("narrow-transport.png")));
+    for (const double rate : {1.0, 1.5}) {
+      player->setProperty("playbackRate", rate);
+      for (const int width : {320, 400}) {
+        m_window->resize(width, 240);
+        QTRY_VERIFY(scrub->width() >= 64);
+        QVERIFY(scrub->mapToScene(QPointF()).x() >= 0);
+        QVERIFY(scrub->mapToScene(QPointF(scrub->width(), 0)).x() <= width);
+        if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
+          QTRY_VERIFY(!m_window->grabWindow().isNull());
+          QVERIFY(m_window->grabWindow().save(QStringLiteral("narrow-transport-%1-%2-%3.png")
+                                               .arg(palette).arg(width).arg(rate)));
+        }
+      }
     }
     transport->setProperty("player", QVariant::fromValue(prop("player").value<QObject*>()));
     m_window->setProperty("chromePinned", false);
@@ -2144,6 +2165,22 @@ private slots:
     QTRY_VERIFY(second->property("audible").toBool());
     QCOMPARE(m_mpris->playbackStatus(), QStringLiteral("Playing"));
     QVERIFY(!m_settings->videoMuted());
+
+    // The library uses the same ownership policy as the quick viewers.
+    QMediaPlayer libraryPlayer;
+    QObject libraryController;
+    libraryController.setProperty("audible", false);
+    libraryPlayer.setSource(QUrl::fromLocalFile(clip));
+    m_mpris->track(&libraryPlayer, &libraryController);
+    QVERIFY(libraryController.property("audible").toBool());
+    QVERIFY(!second->property("audible").toBool());
+    QCOMPARE(viewers.open({clip, picture}), second);
+    QVERIFY(second->property("audible").toBool());
+    QVERIFY(!libraryController.property("audible").toBool());
+    m_mpris->track(&libraryPlayer, &libraryController);
+    m_mpris->release(&libraryPlayer);
+    QVERIFY(second->property("audible").toBool());
+    QCOMPARE(m_mpris->playbackStatus(), QStringLiteral("Playing"));
 
     for (QQuickWindow* window : viewers.visibleWindows()) {
       window->close();

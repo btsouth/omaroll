@@ -25,9 +25,10 @@ Rectangle {
     readonly property bool playing: player && player.playbackState === MediaPlayer.PlayingState
     readonly property real rate: player ? player.playbackRate : 1
     readonly property real minimumSeekWidth: 64
-    readonly property real seekBudget: width - 6 - playButton.width - 8 - elapsed.implicitWidth
-                                      - 24 - total.implicitWidth - 10 - 6
-                                      - soundButton.width - fullScreenButton.width - 2
+    readonly property real essentialSeekBudget: width - 6 - playButton.width - 8 - elapsed.implicitWidth
+                                               - 24 - 10 - 6
+                                               - soundButton.width - fullScreenButton.width - 2
+    readonly property real seekBudget: essentialSeekBudget - total.width
     readonly property bool showCaptions: hasCaptions && seekBudget >= minimumSeekWidth + captionsButton.width + 2
     readonly property bool showSpeed: (Math.abs(rate - 1) > 0.01 || width >= 560)
                                      && seekBudget >= minimumSeekWidth + speedButton.width + 2
@@ -190,6 +191,8 @@ Rectangle {
 
     Text {
         id: total
+        visible: root.essentialSeekBudget - implicitWidth >= root.minimumSeekWidth
+        width: visible ? implicitWidth : 0
         anchors.right: extras.left
         anchors.rightMargin: 10
         anchors.verticalCenter: parent.verticalCenter
