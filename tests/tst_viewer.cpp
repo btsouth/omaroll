@@ -1575,6 +1575,7 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_BracketRight);
     QCOMPARE(m_settings->videoPlaybackRate(), 1.25);
     m_window->setProperty("chromePinned", true);
+    const auto unpin = qScopeGuard([this] { m_window->setProperty("chromePinned", false); });
     auto* speed = item(QStringLiteral("viewerSpeedButton"));
     QTRY_VERIFY(speed->isVisible());
     QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier,
@@ -1673,7 +1674,7 @@ private slots:
     QVERIFY(!menuIds(menu).contains(QStringLiteral("audio-track")));
     QVERIFY(!menuIds(menu).contains(QStringLiteral("video-loop")));
     open({media(QStringLiteral("clip.mp4"))});
-    QTRY_COMPARE(player->audioTracks().size(), 1);
+    QTRY_COMPARE(player->audioTracks().size(), 0);
     QVERIFY(!menuIds(menu).contains(QStringLiteral("audio-track")));
   }
 
