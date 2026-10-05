@@ -234,7 +234,7 @@ void PdfInspector::searchText() {
     watcher->deleteLater();
     if (generation != m_generation || request != m_searchRequest || !currentVersion()) return;
     if (result.tooMany) {
-      emit searchFailed(QStringLiteral("This PDF has too many matching pages"));
+      emit searchFailed(QStringLiteral("This PDF has too many pages to search"));
       return;
     }
     m_matches = result.matches;
