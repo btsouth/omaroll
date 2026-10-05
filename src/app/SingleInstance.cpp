@@ -222,6 +222,8 @@ SingleInstance::Result SingleInstance::claimOrNotify(const QStringList& paths, b
     if (absent || (stale && QLocalServer::removeServer(m_serverName))) {
       if (!m_server.listen(m_serverName)) {
         qWarning() << "omaroll: running without single-instance:" << m_server.errorString();
+        // Without an endpoint the lock would only make later launches fail.
+        m_lock->unlock();
       }
       return Result::Primary;
     }
