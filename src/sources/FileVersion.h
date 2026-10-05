@@ -9,9 +9,11 @@ namespace FileVersion {
 
 // Distinguish an atomic replacement or an in-place save, including writes
 // within the same millisecond. This is a cache identity, not a content hash.
-inline QString key(const QString& path) {
+inline QString key(const QString& path, bool followSymlink = true) {
   struct stat info {};
-  if (path.isEmpty() || ::stat(QFile::encodeName(path).constData(), &info) != 0) {
+  const QByteArray name = QFile::encodeName(path);
+  if (path.isEmpty() || (followSymlink ? ::stat(name.constData(), &info)
+                                     : ::lstat(name.constData(), &info)) != 0) {
     return {};
   }
   return QStringLiteral("%1-%2-%3-%4-%5")

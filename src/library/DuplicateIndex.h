@@ -20,6 +20,7 @@ class DuplicateIndex final : public QObject {
   Q_OBJECT
   Q_PROPERTY(bool active READ active NOTIFY activeChanged)
   Q_PROPERTY(bool scanning READ scanning NOTIFY scanningChanged)
+  Q_PROPERTY(bool ready READ ready NOTIFY readinessChanged)
   Q_PROPERTY(int completed READ completed NOTIFY progressChanged)
   Q_PROPERTY(int total READ total NOTIFY progressChanged)
   Q_PROPERTY(int duplicateCount READ duplicateCount NOTIFY groupsChanged)
@@ -31,6 +32,7 @@ public:
 
   [[nodiscard]] bool active() const { return m_active; }
   [[nodiscard]] bool scanning() const { return m_scanning; }
+  [[nodiscard]] bool ready() const { return m_active && !m_dirty && !m_scanning; }
   [[nodiscard]] int completed() const { return m_completed; }
   [[nodiscard]] int total() const { return m_total; }
   [[nodiscard]] int duplicateCount() const { return m_groups.size(); }
@@ -45,6 +47,7 @@ public:
 signals:
   void activeChanged();
   void scanningChanged();
+  void readinessChanged();
   void progressChanged();
   void groupsChanged();
 

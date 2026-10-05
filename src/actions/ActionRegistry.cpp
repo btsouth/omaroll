@@ -6,11 +6,11 @@
 
 #include <QFile>
 #include <QFileInfo>
-#include <QProcess>
 #include <QMimeDatabase>
+#include <QProcess>
+#include <QTimer>
 #include <algorithm>
 #include <QStandardPaths>
-#include <QTimer>
 #include <QVariantMap>
 
 using namespace Qt::StringLiterals;
@@ -389,7 +389,8 @@ void ActionRegistry::probeThenLaunch(const Definition& definition, const QString
             // Another action or application may have replaced this file
             // while the asynchronous probe was running.
             const QFileInfo now(output);
-            if (m_launcher->isPending(output) || FileVersion::key(output) != originalVersion) {
+            if (m_launcher->isPending(output) || now.isSymLink() ||
+                FileVersion::key(output) != originalVersion) {
               m_launcher->report(u"Output changed while checking %1; try again"_s.arg(now.fileName()));
               return;
             }
@@ -405,24 +406,22 @@ void ActionRegistry::probeThenLaunch(const Definition& definition, const QString
               m_launcher->revealExisting(output);
               return;
             }
-            // A truncated file with this exact name is the corpse of a
-            // transcode that died before runs were tracked. Left in place it
-            // blocks every retry forever, because ffmpeg refuses to overwrite.
-            QFile rejected(output);
-            if (!rejected.remove()) {
-              emit m_launcher->failed(u"Could not remove invalid output %1: %2"_s
-                                          .arg(now.fileName(), rejected.errorString()));
-              return;
-            }
+            if (!m_launcher->moveToTrash(output)) return;
+            m_launcher->report(u"Moved incomplete %1 to Trash and exporting again"_s.arg(now.fileName()));
             launch(definition, arguments, output);
           });
   connect(probe, &QProcess::errorOccurred, this,
-          [this, probe, output](QProcess::ProcessError error) {
+          [this, probe, output, originalVersion](QProcess::ProcessError error) {
             if (error != QProcess::FailedToStart) {
               return;
             }
             probe->deleteLater();
             m_probingOutputs.remove(output);
+            if (m_launcher->isPending(output) || QFileInfo(output).isSymLink() ||
+                FileVersion::key(output) != originalVersion) {
+              m_launcher->report(u"Output changed while checking %1; try again"_s.arg(QFileInfo(output).fileName()));
+              return;
+            }
             m_launcher->revealExisting(output);
           });
 
@@ -628,22 +627,18 @@ bool ActionRegistry::run(const QString& id, const QStringList& paths,
       return true;
     }
     const QFileInfo existing(output);
+    if (existing.isSymLink()) {
+      emit m_launcher->failed(u"Output %1 is a symbolic link. Move or rename it before exporting again"_s
+                                  .arg(existing.fileName()));
+      return false;
+    }
     if (existing.exists()) {
       if (existing.size() > 0) {
-        // Finished, or a truncated leftover: ffprobe decides, off the GUI
-        // thread, and the launch follows from there.
         probeThenLaunch(*definition, arguments, output);
         return true;
       }
-      // An empty file with this exact name is the corpse of a transcode that
-      // died before runs were tracked. Left in place it blocks every retry
-      // forever, because ffmpeg refuses to overwrite.
-      QFile empty(output);
-      if (!empty.remove()) {
-        emit m_launcher->failed(u"Could not remove empty output %1: %2"_s
-                                    .arg(existing.fileName(), empty.errorString()));
-        return false;
-      }
+      if (!m_launcher->moveToTrash(output)) return false;
+      m_launcher->report(u"Moved incomplete %1 to Trash and exporting again"_s.arg(existing.fileName()));
     }
   }
 

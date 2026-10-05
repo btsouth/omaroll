@@ -1,6 +1,7 @@
 #include "actions/ActionLauncher.h"
 #include "actions/OpenWithRequest.h"
 #include "app/VideoPlayback.h"
+#include "sources/FileVersion.h"
 
 #include <QClipboard>
 #include <QDir>
@@ -9,6 +10,8 @@
 #include <QDBusPendingReply>
 #include <QFile>
 #include <QFileInfo>
+#include <QFutureWatcher>
+#include <QtConcurrent>
 #include <QGuiApplication>
 #include <QMimeDatabase>
 #include <QProcess>
@@ -258,6 +261,11 @@ bool ActionLauncher::runTracked(const QString& program, const QStringList& argum
     emit reported(u"Still working on %1"_s.arg(QFileInfo(outputPath).fileName()));
     return true;
   }
+  if (QFileInfo(outputPath).isSymLink()) {
+    emit failed(u"Output %1 is a symbolic link. Move or rename it before exporting again"_s
+                    .arg(QFileInfo(outputPath).fileName()));
+    return false;
+  }
   if (QFileInfo::exists(outputPath)) {
     revealExisting(outputPath);
     return true;
@@ -293,20 +301,24 @@ bool ActionLauncher::runTracked(const QString& program, const QStringList& argum
 
   connect(process, &QProcess::finished, this,
           [this, process, program, outputPath](int exitCode, QProcess::ExitStatus status) {
+            const QString finishedVersion = FileVersion::key(outputPath);
+            const QFileInfo output(outputPath);
+            const bool empty = output.exists() && !output.isSymLink() && output.isFile() && output.size() == 0;
             process->deleteLater();
             m_pendingOutputs.remove(outputPath);
             emit pendingOutputsChanged();
 
-            const QFileInfo output(outputPath);
             const bool saved =
                 status == QProcess::NormalExit && exitCode == 0 && output.size() > 0;
             if (saved) {
               emit reported(u"Saved %1 beside the original"_s.arg(output.fileName()));
             } else {
               // The helper may have completed conversion before a clipboard
-              // or notification step failed. Keep nonempty output for review;
-              // the next request probes it before deciding whether to retry.
-              if (output.size() == 0) QFile::remove(outputPath);
+              // or notification step failed. Keep its output for review.
+              if (empty && !finishedVersion.isEmpty() && !QFileInfo(outputPath).isSymLink() &&
+                  FileVersion::key(outputPath) == finishedVersion) {
+                QFile::remove(outputPath);
+              }
               const QStringList lines = QString::fromUtf8(process->readAllStandardError())
                                             .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
               QString message = lines.isEmpty() ? u"%1 did not finish"_s.arg(program)
@@ -490,6 +502,97 @@ bool ActionLauncher::moveToTrash(const QString& path) {
   return true;
 }
 
+QVariantMap ActionLauncher::captureFileAction(const QString& path, const QString& expectedMediaPath) {
+  QVariantMap target = capturePermanentDelete(path, expectedMediaPath);
+  if (target.isEmpty()) return {};
+  target.insert(u"path"_s, QFileInfo(path).absoluteFilePath());
+  target.insert(u"entryVersion"_s, FileVersion::key(path, false));
+  target.insert(u"mediaVersion"_s, FileVersion::key(path));
+  if (!capturedFileMatches(target)) {
+    emit failed(u"That file changed. Open it again before acting on it"_s);
+    return {};
+  }
+  return target;
+}
+
+bool ActionLauncher::capturedFileMatches(const QVariantMap& target) {
+  const QString path = target.value(u"path"_s).toString();
+  const QString entryVersion = target.value(u"entryVersion"_s).toString();
+  const QString mediaVersion = target.value(u"mediaVersion"_s).toString();
+  struct stat parent {}, entry {};
+  const QFileInfo info(path);
+  return !path.isEmpty() && !entryVersion.isEmpty() && !mediaVersion.isEmpty() &&
+      info.fileName() == target.value(u"name"_s).toString() &&
+      info.dir().canonicalPath() == target.value(u"parent"_s).toString() &&
+      ::stat(QFile::encodeName(info.absolutePath()).constData(), &parent) == 0 &&
+      ::lstat(QFile::encodeName(path).constData(), &entry) == 0 &&
+      (S_ISREG(entry.st_mode) || S_ISLNK(entry.st_mode)) &&
+      QString::number(qulonglong(parent.st_dev)) == target.value(u"parentDevice"_s).toString() &&
+      QString::number(qulonglong(parent.st_ino)) == target.value(u"parentInode"_s).toString() &&
+      QString::number(qulonglong(entry.st_dev)) == target.value(u"device"_s).toString() &&
+      QString::number(qulonglong(entry.st_ino)) == target.value(u"inode"_s).toString() &&
+      FileVersion::key(path, false) == entryVersion && FileVersion::key(path) == mediaVersion;
+}
+
+bool ActionLauncher::moveCapturedToTrash(const QVariantMap& target) {
+  if (!capturedFileMatches(target)) {
+    emit failed(u"%1 changed or disappeared. Open the Trash prompt again"_s
+                    .arg(target.value(u"path"_s).toString()));
+    return false;
+  }
+  return moveToTrash(target.value(u"path"_s).toString());
+}
+
+QVariantMap ActionLauncher::renameCapturedFile(const QVariantMap& target, const QString& baseName) {
+  if (!capturedFileMatches(target)) {
+    return {{u"ok"_s, false}, {u"error"_s, u"That file changed or disappeared. Open Rename again"_s}};
+  }
+  QVariantMap result = renameFile(target.value(u"path"_s).toString(), baseName, target);
+  if (result.value(u"ok"_s).toBool()) {
+    result.insert(u"mediaPath"_s, QFileInfo(result.value(u"path"_s).toString()).canonicalFilePath());
+  }
+  return result;
+}
+
+void ActionLauncher::moveDuplicateCopiesToTrash(const QVariantMap& keep, const QVariantList& copies) {
+  // Re-read the bytes on a worker. Cached duplicate groups only nominate
+  // candidates; they never authorize moving a file.
+  QDir().mkpath(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation));
+  auto* watcher = new QFutureWatcher<QVariantMap>(this);
+  connect(watcher, &QFutureWatcher<QVariantMap>::finished, this, [this, watcher] {
+    const QVariantMap result = watcher->result();
+    watcher->deleteLater();
+    const int moved = result.value(u"moved"_s).toInt();
+    const QStringList skipped = result.value(u"skipped"_s).toStringList();
+    if (!skipped.isEmpty()) emit failed(u"Skipped changed, unreadable or nonidentical copies:\n%1"_s
+                                          .arg(skipped.join(QLatin1Char('\n'))));
+    emit duplicateCleanupFinished(moved, skipped);
+  });
+  watcher->setFuture(QtConcurrent::run([keep, copies] {
+    int moved = 0;
+    QStringList skipped;
+    const QString keepPath = keep.value(u"path"_s).toString();
+    for (const QVariant& value : copies) {
+      const QVariantMap target = value.toMap();
+      const QString path = target.value(u"path"_s).toString();
+      QFile kept(keepPath), copy(path);
+      bool identical = path != keepPath && capturedFileMatches(keep) && capturedFileMatches(target) &&
+          kept.open(QIODevice::ReadOnly) && copy.open(QIODevice::ReadOnly) && kept.size() == copy.size();
+      while (identical && !kept.atEnd()) {
+        const QByteArray first = kept.read(1024 * 1024);
+        const QByteArray second = copy.read(1024 * 1024);
+        identical = !first.isEmpty() && first == second &&
+                    kept.error() == QFileDevice::NoError && copy.error() == QFileDevice::NoError;
+      }
+      // Check versions again after reading, immediately before the move.
+      identical = identical && copy.atEnd() && capturedFileMatches(keep) && capturedFileMatches(target);
+      if (identical && QFile::moveToTrash(path)) ++moved;
+      else skipped.append(path);
+    }
+    return QVariantMap{{u"moved"_s, moved}, {u"skipped"_s, skipped}};
+  }));
+}
+
 QVariantMap ActionLauncher::capturePermanentDelete(const QString& path,
                                                    const QString& expectedMediaPath) {
   const QFileInfo info(path);
@@ -566,6 +669,10 @@ bool ActionLauncher::deletePermanently(const QString& path) {
 }
 
 QVariantMap ActionLauncher::renameFile(const QString& path, const QString& baseName) {
+  return renameFile(path, baseName, {});
+}
+
+QVariantMap ActionLauncher::renameFile(const QString& path, const QString& baseName, const QVariantMap& captured) {
   const auto failure = [](const QString& message) {
     return QVariantMap{{QStringLiteral("ok"), false},
                        {QStringLiteral("error"), message}};
@@ -594,6 +701,9 @@ QVariantMap ActionLauncher::renameFile(const QString& path, const QString& baseN
   }
   if (QFileInfo::exists(target)) {
     return failure(u"A file with that name already exists"_s);
+  }
+  if (!captured.isEmpty() && !capturedFileMatches(captured)) {
+    return failure(u"That file changed or disappeared. Open Rename again"_s);
   }
   if (!QFile::rename(source.absoluteFilePath(), target)) {
     return failure(u"Could not rename this file"_s);

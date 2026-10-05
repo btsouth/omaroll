@@ -89,6 +89,7 @@ QStringList DuplicateIndex::groupPaths(const QString& path) const {
 }
 
 QStringList DuplicateIndex::otherCopies(const QString& keepPath) const {
+  if (!ready()) return {};
   QStringList paths = groupPaths(keepPath);
   paths.removeAll(keepPath);
   return paths;
@@ -100,6 +101,7 @@ void DuplicateIndex::setActive(bool active) {
   }
   m_active = active;
   emit activeChanged();
+  emit readinessChanged();
 
   if (!m_active) {
     m_refreshTimer.stop();
@@ -123,14 +125,12 @@ void DuplicateIndex::refresh() {
   // An explicit recheck must read content again even if a caller preserved a
   // file's size and timestamp while rewriting it.
   m_cache.clear();
-  m_dirty = true;
-  if (m_active) {
-    m_refreshTimer.start();
-  }
+  markDirty();
 }
 
 void DuplicateIndex::markDirty() {
   m_dirty = true;
+  emit readinessChanged();
   if (!m_active) {
     return;
   }
@@ -216,6 +216,7 @@ void DuplicateIndex::start() {
     }
     setProgress(0, 0);
     setScanning(false);
+    emit readinessChanged();
     return;
   }
 
@@ -287,6 +288,7 @@ void DuplicateIndex::setScanning(bool scanning) {
   }
   m_scanning = scanning;
   emit scanningChanged();
+  emit readinessChanged();
 }
 
 void DuplicateIndex::setProgress(int completed, int total) {

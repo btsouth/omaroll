@@ -1,0 +1,28 @@
+#pragma once
+
+#include <QFile>
+#include <QString>
+
+// Encode privately beside the destination, then publish a numbered copy
+// without replacing an existing entry. Directory descriptors pin all writes
+// and cleanup even if a folder or one of its ancestors is moved.
+class CopyOutput final {
+public:
+  using LinkFunction = int (*)(int, const char*, int, const char*, int);
+  explicit CopyOutput(const QString& preferredPath, LinkFunction link = nullptr);
+  ~CopyOutput();
+  CopyOutput(const CopyOutput&) = delete;
+  CopyOutput& operator=(const CopyOutput&) = delete;
+
+  [[nodiscard]] QFile* device() { return m_file.isOpen() ? &m_file : nullptr; }
+  [[nodiscard]] QString encoderPath() const;
+  [[nodiscard]] QString publish();
+
+private:
+  LinkFunction m_link;
+  QString m_path;
+  QByteArray m_temporaryName;
+  QFile m_file;
+  int m_directory = -1;
+  int m_temporaryDirectory = -1;
+};

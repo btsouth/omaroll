@@ -1,6 +1,7 @@
 #include "matte/MatteComposer.h"
 
 #include "matte/HueExtractor.h"
+#include "edit/CopyOutput.h"
 #include "sources/CameraRaw.h"
 
 #include <QClipboard>
@@ -16,7 +17,6 @@
 #include <QProcess>
 #include <QRadialGradient>
 #include <QStandardPaths>
-#include <QSaveFile>
 #include <QtConcurrent>
 
 #include <cmath>
@@ -397,45 +397,20 @@ MatteComposer::Result MatteComposer::saveAndCopy(const QString& path, Matte matt
     return outcome;
   }
 
-  // Reserve an unused numbered name with exclusive create, as ImageEditor
-  // does. Existing mattes and the source are never overwritten by another run.
   QString stem = info.completeBaseName();
   constexpr int kNameMax = 255;
   constexpr int kSuffixRoom = 16;
   while (stem.toUtf8().size() > kNameMax - kSuffixRoom && !stem.isEmpty()) stem.chop(1);
-  QString output;
-  int suffix = 1;
-  for (int attempt = 0; attempt < 64; ++attempt) {
-    QString candidate;
-    do {
-      candidate = info.absolutePath() + QLatin1Char('/') + stem +
-                  (suffix == 1 ? QStringLiteral("-matte.png")
-                               : QStringLiteral("-matte-%1.png").arg(suffix));
-      ++suffix;
-    } while (QFileInfo::exists(candidate));
-    QFile reservation(candidate);
-    if (reservation.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
-      output = candidate;
-      break;
-    }
-    if (!QFileInfo::exists(candidate)) break; // permission/directory failure
-  }
-  if (output.isEmpty()) {
-    outcome.error = QStringLiteral("Could not find a writable name beside %1").arg(info.fileName());
+  CopyOutput copy(info.absolutePath() + QLatin1Char('/') + stem + QStringLiteral("-matte.png"));
+  if (!copy.device()) {
+    outcome.error = QStringLiteral("Could not create a private copy beside %1").arg(info.fileName());
     return outcome;
   }
-  // Atomic replacement of our reservation avoids publishing a partial PNG.
-  QSaveFile file(output);
-  bool written = file.open(QIODevice::WriteOnly);
-  if (written) {
-    QImageWriter writer(&file, "PNG");
-    written = writer.write(image);
-    if (written) written = file.commit();
-    else file.cancelWriting();
-  }
-  if (!written) {
-    QFile::remove(output);
-    outcome.error = QStringLiteral("Could not write %1").arg(QFileInfo(output).fileName());
+  QImageWriter writer(copy.device(), "PNG");
+  const QString output = writer.write(image) ? copy.publish() : QString();
+  if (output.isEmpty()) {
+    outcome.error = QStringLiteral("Could not safely save a copy beside %1; check its folder")
+                        .arg(info.fileName());
     return outcome;
   }
   return copySaved(output, true, qtFallback);

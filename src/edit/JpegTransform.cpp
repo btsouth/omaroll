@@ -90,7 +90,8 @@ bool apply(const QString& source, const QString& output, int quarterTurns, bool 
   process.start(executable, arguments);
   if (!process.waitForFinished(15000) || process.exitStatus() != QProcess::NormalExit ||
       process.exitCode() != 0) {
-    QFile::remove(output);
+    process.kill();
+    process.waitForFinished();
     return false;
   }
   return QFileInfo(output).size() > 0;

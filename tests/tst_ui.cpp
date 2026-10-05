@@ -3396,6 +3396,107 @@ private slots:
     QVERIFY(m_library->rowOf(kept) >= 0);
   }
 
+  void keepSelectedSkipsACopyReplacedWhileThePromptIsOpen() {
+    QTemporaryDir dir;
+    const QString kept = dir.filePath(QStringLiteral("kept.png"));
+    const QString copy = dir.filePath(QStringLiteral("copy.png"));
+    m_disposablePaths.append(kept);
+    m_disposablePaths.append(copy);
+    QImage picture(35, 29, QImage::Format_RGB32);
+    picture.fill(QColor(17, 29, 143));
+    QVERIFY(picture.save(kept));
+    QVERIFY(QFile::copy(kept, copy));
+    m_captures->addExtraFiles({kept, copy});
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(copy) >= 0, 10000);
+    m_library->setDuplicatesOnly(true);
+    QTRY_COMPARE_WITH_TIMEOUT(m_duplicates->otherCopies(kept), QStringList{copy}, 15000);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "keepSelectedDuplicate", Q_ARG(QVariant, kept)));
+    QTRY_VERIFY(item("confirm")->isVisible());
+    QVERIFY(QFile::rename(copy, dir.filePath(QStringLiteral("old.png"))));
+    picture.fill(Qt::yellow);
+    QVERIFY(picture.save(copy));
+    QSignalSpy finished(m_actions, &ActionLauncher::duplicateCleanupFinished);
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 5000);
+    QCOMPARE(finished.first().at(0).toInt(), 0);
+    QCOMPARE(finished.first().at(1).toStringList(), QStringList{copy});
+    QCOMPARE(QImage(copy).pixelColor(0, 0), QColor(Qt::yellow));
+    QVERIFY(QFileInfo::exists(kept));
+    m_library->setDuplicatesOnly(false);
+    QVERIFY(dir.remove());
+    m_captures->refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(m_captures->rowOf(kept) < 0 && m_captures->rowOf(copy) < 0, 10000);
+  }
+
+  void libraryFilePromptsPreserveSymlinkTargetsAndRejectReplacements_data() {
+    QTest::addColumn<bool>("rename");
+    QTest::addColumn<bool>("replace");
+    QTest::newRow("rename-alias") << true << false;
+    QTest::newRow("trash-alias") << false << false;
+    QTest::newRow("rename-replacement") << true << true;
+    QTest::newRow("trash-replacement") << false << true;
+  }
+
+  void libraryFilePromptsPreserveSymlinkTargetsAndRejectReplacements() {
+    QFETCH(bool, rename);
+    QFETCH(bool, replace);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString media = dir.filePath(QStringLiteral("original.png"));
+    const QString alias = dir.filePath(QStringLiteral("alias.jpg"));
+    m_disposablePaths.append(media);
+    QImage picture(32, 24, QImage::Format_RGB32);
+    picture.fill(Qt::cyan);
+    QVERIFY(picture.save(media));
+    if (!replace) QVERIFY(QFile::link(media, alias));
+    m_captures->addExtraFiles({replace ? media : alias});
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(media) >= 0, 10000);
+    QCOMPARE(m_library->deletionPathAt(m_library->rowOf(media)), replace ? media : alias);
+    m_settings->toggleFavorite(media);
+    const auto clearFavorite = qScopeGuard([&] {
+      if (m_settings->isFavorite(media)) m_settings->toggleFavorite(media);
+    });
+    perform(rename ? QStringLiteral("rename") : QStringLiteral("trash"), media);
+    QQuickItem* sheet = item(rename ? "renameSheet" : "confirm");
+    QTRY_VERIFY(sheet->isVisible());
+    if (rename) {
+      QCOMPARE(sheet->property("path").toString(), replace ? media : alias);
+      item("renameInput")->setProperty("text", QStringLiteral("renamed"));
+    } else {
+      QCOMPARE(sheet->property("detail").toString(), replace ? media : alias);
+    }
+    if (replace) {
+      QVERIFY(QFile::rename(media, dir.filePath(QStringLiteral("old.png"))));
+      picture.fill(Qt::magenta);
+      QVERIFY(picture.save(media));
+    }
+    if (rename) click(pill(sheet, QStringLiteral("Rename")));
+    else QTest::keyClick(m_window, Qt::Key_Return);
+    if (replace && rename) {
+      QVERIFY(sheet->isVisible());
+      QVERIFY(sheet->property("errorMessage").toString().contains(QStringLiteral("changed")));
+      invoke("dismissTopLayer");
+    } else {
+      QTRY_VERIFY(!sheet->isVisible());
+    }
+    QVERIFY(QFileInfo::exists(media));
+    QVERIFY(m_settings->isFavorite(media));
+    QCOMPARE(QImage(media).pixelColor(0, 0), replace ? QColor(Qt::magenta) : QColor(Qt::cyan));
+    if (!replace) {
+      QVERIFY(!QFileInfo(alias).isSymLink());
+      if (rename) {
+        const QString renamed = dir.filePath(QStringLiteral("renamed.jpg"));
+        QVERIFY(QFileInfo(renamed).isSymLink());
+        QCOMPARE(QFileInfo(renamed).canonicalFilePath(), media);
+      }
+    } else {
+      QVERIFY(!QFileInfo::exists(dir.filePath(QStringLiteral("renamed.png"))));
+    }
+    QVERIFY(dir.remove());
+    m_captures->refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(m_captures->rowOf(media) < 0, 10000);
+  }
+
   void trashMovesTheFileAndTheGridFollows() {
     QQuickItem* grid = item("library");
     const int last = m_library->rowCount() - 1;

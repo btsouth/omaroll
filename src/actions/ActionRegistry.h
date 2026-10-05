@@ -67,7 +67,7 @@ public:
     // Where the tool writes, with "{stem}" for the source's base name, for
     // tools that refuse to overwrite: omarchy-transcode runs ffmpeg without
     // -y, and a second run would hang on its prompt. An existing output is
-    // reported instead of launched.
+    // probed and revealed when complete, or moved to Trash before retrying.
     QString output = {};
   };
 
@@ -115,12 +115,9 @@ public:
 
 private:
   bool run(const QString& id, const QStringList& paths, const QVariantMap& placeholders = {});
-  // The output already exists and is not empty: ask ffprobe whether it is
-  // whole, then either reveal it or clear it and launch. Asynchronous, so a
-  // slow probe never freezes the window.
+  bool launch(const Definition& definition, const QStringList& arguments, const QString& output);
   void probeThenLaunch(const Definition& definition, const QStringList& arguments,
                        const QString& output);
-  bool launch(const Definition& definition, const QStringList& arguments, const QString& output);
   [[nodiscard]] static bool applies(const Definition& definition, bool video, bool document,
                                     bool raw = false);
   [[nodiscard]] const Definition* find(const QString& id) const;
