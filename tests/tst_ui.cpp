@@ -747,6 +747,7 @@ private slots:
       QFile::remove(firstCopy);
       QFile::remove(secondCopy);
       m_captures->refresh();
+      QTRY_VERIFY(!m_captures->scanning());
       QTRY_COMPARE(m_captures->rowOf(firstCopy), -1);
       QTRY_COMPARE(m_captures->rowOf(secondCopy), -1);
       m_window->resize(1280, 820);
@@ -807,6 +808,7 @@ private slots:
       invoke("dismissTopLayer"); QFile::remove(path); QFile::remove(missing);
       QFile::remove(ImageEditor::outputPathFor(missing));
       m_captures->refresh();
+      QTRY_VERIFY(!m_captures->scanning());
       QTRY_COMPARE(m_captures->rowOf(path), -1);
       QTRY_COMPARE(m_captures->rowOf(ImageEditor::outputPathFor(missing)), -1);
     });
@@ -1047,6 +1049,7 @@ private slots:
       // The saved copy joined the shared library model. Drop it again before
       // the next test, or pathAt(0) hands it a file that no longer exists.
       QMetaObject::invokeMethod(m_captures, "refresh");
+      QTRY_VERIFY(!m_captures->scanning());
       QTRY_COMPARE(m_captures->rowOf(ImageEditor::outputPathFor(path)), -1);
       m_window->resize(1280, 820);
     });
