@@ -2899,7 +2899,8 @@ private slots:
     const QList<QByteArray> objects{
       "<< /Type /Catalog /Pages 2 0 R >>",
       "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Rotate 90 /Resources << >> >>"
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Rotate 90 /Resources << >> >>",
+      "<< /Title (metadata\\nPage 1 size: 1 x 1\\nPage 1 rot: 0) >>"
     };
     QList<int> offsets;
     for (const auto& object : objects) {
@@ -2907,11 +2908,11 @@ private slots:
       pdf += QByteArray::number(offsets.size()) + " 0 obj\n" + object + "\nendobj\n";
     }
     const int xref = pdf.size();
-    pdf += "xref\n0 4\n0000000000 65535 f \n";
+    pdf += "xref\n0 5\n0000000000 65535 f \n";
     for (const int offset : offsets) {
       pdf += QByteArray::number(offset).rightJustified(10, '0') + " 00000 n \n";
     }
-    pdf += "trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n" + QByteArray::number(xref) + "\n%%EOF\n";
+    pdf += "trailer\n<< /Size 5 /Root 1 0 R /Info 4 0 R >>\nstartxref\n" + QByteArray::number(xref) + "\n%%EOF\n";
     QFile file(path);
     QVERIFY(file.open(QIODevice::WriteOnly));
     QCOMPARE(file.write(pdf), pdf.size());

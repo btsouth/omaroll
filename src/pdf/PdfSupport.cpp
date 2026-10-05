@@ -147,12 +147,14 @@ QImage renderPage(const QString& path, int page, const QSize& target) {
       {QStringLiteral("-f"), QString::number(qMax(1, page)), QStringLiteral("-l"),
        QString::number(qMax(1, page)), path}, 10000);
   static const QRegularExpression geometry(
-      QStringLiteral(R"((?:Page\s+\d+\s+size|Page size):\s+([\d.]+)\s+x\s+([\d.]+))"));
+      QStringLiteral(R"(^(?:Page\s+\d+\s+size|Page size):\s+([\d.]+)\s+x\s+([\d.]+))"),
+      QRegularExpression::MultilineOption);
   const auto match = geometry.match(QString::fromLocal8Bit(info));
   qreal width = match.captured(1).toDouble();
   qreal height = match.captured(2).toDouble();
   static const QRegularExpression rotation(
-      QStringLiteral(R"((?:Page\s+\d+\s+rot|Page rot):\s+(-?\d+))"));
+      QStringLiteral(R"(^(?:Page\s+\d+\s+rot|Page rot):\s+(-?\d+))"),
+      QRegularExpression::MultilineOption);
   const int degrees = rotation.match(QString::fromLocal8Bit(info)).captured(1).toInt();
   if (qAbs(degrees % 180) == 90) std::swap(width, height);
   if (!match.hasMatch() || !std::isfinite(width) || !std::isfinite(height) || width <= 0 || height <= 0) {
