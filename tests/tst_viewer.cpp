@@ -1275,6 +1275,38 @@ private slots:
     QCOMPARE(m_session->path(), selection.at(0));
   }
 
+  void controlsStayVisibleWhileTheyContainKeyboardFocus_data() {
+    QTest::addColumn<QString>("controlName");
+    QTest::newRow("header") << QStringLiteral("viewerMoreButton");
+    QTest::newRow("toolbar") << QStringLiteral("viewerZoomIn");
+  }
+
+  void controlsStayVisibleWhileTheyContainKeyboardFocus() {
+    QFETCH(QString, controlName);
+    open({media(QStringLiteral("Shot 1.jpg"))});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    m_window->setProperty("chromeTimeout", 80);
+    const QPoint middle(m_window->width() / 2, m_window->height() / 2);
+    QTest::mouseMove(m_window, middle + QPoint(12, 6));
+    QTest::mouseMove(m_window, middle);
+    QQuickItem* control = item(controlName);
+    QVERIFY(control && control->isVisible());
+    control->forceActiveFocus();
+    QTRY_VERIFY(control->hasActiveFocus());
+    QTRY_VERIFY(!prop("pointerActive").toBool());
+    QVERIFY(prop("chromeFocused").toBool());
+    QVERIFY(prop("chromeShown").toBool());
+    QTest::qWait(150);
+    QVERIFY(control->isVisible());
+    item(QStringLiteral("viewerKeys"))->forceActiveFocus();
+    QTRY_VERIFY(!prop("chromeFocused").toBool());
+    QTRY_VERIFY(!prop("chromeShown").toBool());
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QVERIFY(prop("chromeShown").toBool());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!prop("chromeShown").toBool());
+  }
+
   void controlsFadeAndReturnWithThePointer() {
     open({media(QStringLiteral("Shot 1.jpg"))});
     QTRY_VERIFY(prop("imageReady").toBool());

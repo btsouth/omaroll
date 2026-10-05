@@ -150,7 +150,18 @@ ApplicationWindow {
     readonly property bool imageReady: root.visible && !Session.isVideo && root.stillReady
                                        && root.sourceWidth > 0
 
+    function focusWithin(control) {
+        let focused = root.activeFocusItem
+        while (focused) {
+            if (focused === control) return true
+            focused = focused.parent
+        }
+        return false
+    }
+    readonly property bool chromeFocused: root.focusWithin(header) || root.focusWithin(toolbar)
+                                         || root.focusWithin(transport) || root.focusWithin(filmstrip)
     readonly property bool chromeShown: root.chromePinned || root.pointerActive || root.infoOpen
+                                        || root.chromeFocused || shortcutHelp.visible
                                         || actionMenu.visible || confirm.visible || permanentConfirm.visible || editorChooser.visible
                                         || header.hovered || transport.hovered
                                         || previousButton.hovered || nextButton.hovered
