@@ -1615,7 +1615,24 @@ private slots:
     QCOMPARE(reloaded.videoPlaybackRate(), 0.25);
   }
 
+  void audioTrackAndSidecarTimingControlsFollowAvailability_data() {
+    QTest::addColumn<QString>("palette");
+    QTest::newRow("dark-narrow") << QStringLiteral("dark");
+    QTest::newRow("light-narrow") << QStringLiteral("light");
+  }
+
   void audioTrackAndSidecarTimingControlsFollowAvailability() {
+    QFETCH(QString, palette);
+    QTemporaryDir themeHome;
+    QVERIFY(themeHome.isValid());
+    QVERIFY(QDir().mkpath(themeHome.filePath(QStringLiteral("omarchy"))));
+    const QString fixture = QFINDTESTDATA("fixtures/themes") + QLatin1Char('/') + palette;
+    QVERIFY(QFile::link(fixture, themeHome.filePath(QStringLiteral("omarchy/current"))));
+    OmarchyTheme theme(themeHome.path(), themeHome.path());
+    m_engine->rootContext()->setContextProperty(QStringLiteral("Theme"), &theme);
+    const auto restoreTheme = qScopeGuard([this] {
+      m_engine->rootContext()->setContextProperty(QStringLiteral("Theme"), m_theme);
+    });
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString path = dir.filePath(QStringLiteral("tracks.mkv"));
@@ -1624,6 +1641,7 @@ private slots:
                         dir.filePath(QStringLiteral("tracks.srt"))));
     const QString picture = media(QStringLiteral("Shot 1.jpg"));
     open({path, picture});
+    m_window->resize(560, 420);
     QMediaPlayer* player = nullptr;
     QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
     QTRY_COMPARE(player->audioTracks().size(), 2);
@@ -1659,6 +1677,18 @@ private slots:
     QTRY_COMPARE(prop("subtitleText").toString(), QStringLiteral("Omaroll subtitle test"));
     QTest::keyClick(m_window, Qt::Key_Menu);
     QTRY_VERIFY(menu->property("visible").toBool());
+    auto* content = menu->property("contentItem").value<QQuickItem*>();
+    QVERIFY(content);
+    QTRY_VERIFY(content->height() <= m_window->height());
+    QTRY_VERIFY(content->mapToScene(QPointF()).y() >= 0);
+    QTRY_VERIFY(content->mapToScene(QPointF(0, content->height())).y() <= m_window->height());
+    if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
+      QSignalSpy frames(m_window, &QQuickWindow::frameSwapped);
+      m_window->requestUpdate();
+      QTRY_VERIFY(!frames.isEmpty());
+      QVERIFY(m_window->grabWindow().save(QCoreApplication::applicationDirPath()
+          + QStringLiteral("/video-menu-%1-narrow.png").arg(palette)));
+    }
     QVERIFY(QMetaObject::invokeMethod(item(QStringLiteral("viewerMenu_subtitles-earlier")), "click"));
     QCOMPARE(prop("subtitleOffsetMs").toInt(), 0);
     QTest::keyClick(m_window, Qt::Key_Z);
