@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- Loop videos in the quick viewer with the menu or Shift+L, cycle audio tracks
+  with Shift+A, and adjust sidecar subtitle timing with Z and X.
+- An optional Remember playback speed setting applies the last chosen quick
+  viewer speed to newly opened videos. It is off by default.
+
 ## 1.14.0
 
 Photos and videos open faster, and videos work with media keys and the shell's

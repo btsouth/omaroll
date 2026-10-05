@@ -118,6 +118,9 @@ process, so a favourite or rating set in one shows in the others.
 | click a video | Play · pause |
 | `J` `L` · `↑` `↓` · `M` | Seek ten seconds · volume · mute |
 | `[` `]` · `Backspace` · `C` | Speed · normal speed · cycle subtitles |
+| `Shift+L` | Loop video on or off; slideshows still advance |
+| `Shift+A` | Cycle audio tracks when more than one is available |
+| `Z` `X` | Show sidecar subtitles 0.5 seconds earlier · later, up to 10 seconds |
 | `F` · `F11` · double click a video | Full screen |
 | `F5` | Slideshow |
 | `I` | Details: size, date, rating, camera or codec |
@@ -134,6 +137,11 @@ process, so a favourite or rating set in one shows in the others.
 
 In both image viewers, `1` goes to actual size from a custom zoom. Press it
 again at actual size to fit the image.
+
+Settings offers **Remember playback speed**, off by default. When enabled,
+the last speed chosen in the quick viewer applies to newly opened videos.
+`Backspace` also resets that preference to normal speed. Video loop lasts
+until the viewer closes; subtitle delay resets when the file changes.
 
 </details>
 

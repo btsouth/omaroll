@@ -60,6 +60,10 @@ class AppSettings final : public QObject {
   // Video playback preferences, remembered across files and sessions.
   Q_PROPERTY(qreal videoVolume READ videoVolume WRITE setVideoVolume NOTIFY videoVolumeChanged)
   Q_PROPERTY(bool videoMuted READ videoMuted WRITE setVideoMuted NOTIFY videoMutedChanged)
+  Q_PROPERTY(bool rememberPlaybackSpeed READ rememberPlaybackSpeed WRITE setRememberPlaybackSpeed
+                 NOTIFY rememberPlaybackSpeedChanged)
+  Q_PROPERTY(qreal videoPlaybackRate READ videoPlaybackRate WRITE setVideoPlaybackRate
+                 NOTIFY videoPlaybackRateChanged)
   Q_PROPERTY(QStringList albumNames READ albumNames NOTIFY albumsChanged)
   Q_PROPERTY(QStringList tagNames READ tagNames NOTIFY tagsChanged)
   Q_PROPERTY(
@@ -133,6 +137,10 @@ public:
   void setVideoVolume(qreal value);
   [[nodiscard]] bool videoMuted() const { return m_videoMuted; }
   void setVideoMuted(bool value);
+  [[nodiscard]] bool rememberPlaybackSpeed() const { return m_rememberPlaybackSpeed; }
+  void setRememberPlaybackSpeed(bool value);
+  [[nodiscard]] qreal videoPlaybackRate() const { return m_videoPlaybackRate; }
+  void setVideoPlaybackRate(qreal value);
 
   [[nodiscard]] QStringList albumNames() const;
   Q_INVOKABLE [[nodiscard]] QStringList albumPaths(const QString& name) const;
@@ -240,6 +248,8 @@ signals:
   void viewerFilmstripChanged();
   void videoVolumeChanged();
   void videoMutedChanged();
+  void rememberPlaybackSpeedChanged();
+  void videoPlaybackRateChanged();
   void albumsChanged();
   void tagsChanged();
   void smartCollectionsChanged();
@@ -313,6 +323,8 @@ private:
   bool m_viewerFilmstrip = false;
   qreal m_videoVolume = 0.8;
   bool m_videoMuted = false;
+  bool m_rememberPlaybackSpeed = false;
+  qreal m_videoPlaybackRate = 1.0;
   // Resume spots, most recently touched first in m_videoRecency.
   QHash<QString, qint64> m_videoPositions;
   QList<QString> m_videoRecency;
