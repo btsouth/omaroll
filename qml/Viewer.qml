@@ -1807,7 +1807,7 @@ ApplicationWindow {
         modal: true
         dim: false
         readonly property var entries: root.menuEntries()
-        onClosed: keys.forceActiveFocus()
+        onClosed: if (!shortcutHelp.visible) keys.forceActiveFocus()
 
         background: Rectangle {
             implicitWidth: 232

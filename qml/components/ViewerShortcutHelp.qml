@@ -60,6 +60,7 @@ Popup {
     y: (parent.height - height) / 2
     modal: true
     focus: true
+    onOpened: contentItem.forceActiveFocus()
     padding: 16
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     background: Rectangle {
