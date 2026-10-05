@@ -467,12 +467,20 @@ private slots:
     QVERIFY(!accessible->state().checked);
     QVERIFY(accessible->actionInterface());
     accessible->actionInterface()->doAction(QAccessibleActionInterface::toggleAction());
-    QTRY_VERIFY(accessible->state().checked);
-    QObject* tip = card->findChild<QObject*>(QStringLiteral("captureFilenameTip"));
-    QVERIFY(tip);
-    QCOMPARE(tip->property("text").toString(), m_library->fileNameAt(0));
-    QVERIFY(card->property("keyboardCurrent").toBool());
-    QTRY_VERIFY_WITH_TIMEOUT(tip->property("visible").toBool(), 1500);
+    QTRY_VERIFY([&] {
+      auto* live = cardFor(path);
+      auto* interface = live ? QAccessible::queryAccessibleInterface(live) : nullptr;
+      return interface && interface->state().checked;
+    }());
+    // The grid can release a delegate while a popup's delay is running.
+    const auto filenameTip = [&]() -> QObject* {
+      auto* live = cardFor(path);
+      return live ? live->findChild<QObject*>(QStringLiteral("captureFilenameTip")) : nullptr;
+    };
+    QTRY_VERIFY(filenameTip());
+    QCOMPARE(filenameTip()->property("text").toString(), m_library->fileNameAt(0));
+    QTRY_VERIFY(cardFor(path) && cardFor(path)->property("keyboardCurrent").toBool());
+    QTRY_VERIFY_WITH_TIMEOUT(filenameTip() && filenameTip()->property("visible").toBool(), 1500);
     QVERIFY(QMetaObject::invokeMethod(m_window, "openContextMenu", Q_ARG(QVariant, 0),
                                     Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
     QQuickItem* rename = item("contextAction_rename");
