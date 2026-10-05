@@ -879,6 +879,8 @@ private slots:
     QStringList pair{pathAt(0), pathAt(1)};
     QVERIFY(QMetaObject::invokeMethod(sheet, "open", Q_ARG(QVariant, QVariant(pair))));
     QTRY_VERIFY(sheet->isVisible());
+    QTRY_COMPARE(sheet->width(), qreal(m_window->width()));
+    QTRY_COMPARE(sheet->height(), qreal(m_window->height()));
     QCOMPARE(sheet->property("imageCount").toInt(), 2);
 
     QQuickItem* repeater = find(sheet, [](QQuickItem* candidate) {
