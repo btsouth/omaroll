@@ -1275,36 +1275,36 @@ private slots:
     QCOMPARE(m_session->path(), selection.at(0));
   }
 
-  void controlsStayVisibleWhileTheyContainKeyboardFocus_data() {
-    QTest::addColumn<QString>("controlName");
-    QTest::newRow("header") << QStringLiteral("viewerMoreButton");
-    QTest::newRow("toolbar") << QStringLiteral("viewerZoomIn");
+  void tabKeepsViewerPlaybackAndNavigationKeys_data() {
+    QTest::addColumn<bool>("video");
+    QTest::newRow("picture") << false;
+    QTest::newRow("video") << true;
   }
 
-  void controlsStayVisibleWhileTheyContainKeyboardFocus() {
-    QFETCH(QString, controlName);
-    open({media(QStringLiteral("Shot 1.jpg"))});
-    QTRY_VERIFY(prop("imageReady").toBool());
-    m_window->setProperty("chromeTimeout", 80);
-    const QPoint middle(m_window->width() / 2, m_window->height() / 2);
-    QTest::mouseMove(m_window, middle + QPoint(12, 6));
-    QTest::mouseMove(m_window, middle);
-    QQuickItem* control = item(controlName);
-    QVERIFY(control && control->isVisible());
-    control->forceActiveFocus();
-    QTRY_VERIFY(control->hasActiveFocus());
-    QTRY_VERIFY(!prop("pointerActive").toBool());
-    QVERIFY(prop("chromeFocused").toBool());
-    QVERIFY(prop("chromeShown").toBool());
-    QTest::qWait(150);
-    QVERIFY(control->isVisible());
-    item(QStringLiteral("viewerKeys"))->forceActiveFocus();
-    QTRY_VERIFY(!prop("chromeFocused").toBool());
-    QTRY_VERIFY(!prop("chromeShown").toBool());
-    QTest::keyClick(m_window, Qt::Key_F1);
-    QVERIFY(prop("chromeShown").toBool());
-    QTest::keyClick(m_window, Qt::Key_Escape);
-    QTRY_VERIFY(!prop("chromeShown").toBool());
+  void tabKeepsViewerPlaybackAndNavigationKeys() {
+    QFETCH(bool, video);
+    const QString picture = media(QStringLiteral("Shot 1.jpg"));
+    const QString clip = media(QStringLiteral("clip.mp4"));
+    open(video ? QStringList{clip, picture} : QStringList{picture, clip});
+    QTest::keyClick(m_window, Qt::Key_I);
+    QVERIFY(prop("infoOpen").toBool());
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QVERIFY(item(QStringLiteral("viewerKeys"))->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Backtab, Qt::ShiftModifier);
+    QVERIFY(item(QStringLiteral("viewerKeys"))->hasActiveFocus());
+    if (video) {
+      QMediaPlayer* player = nullptr;
+      QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+      QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+      QTest::keyClick(m_window, Qt::Key_Space);
+      QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+      QTest::keyClick(m_window, Qt::Key_Right);
+      QTRY_VERIFY(player->position() > 0);
+      QCOMPARE(m_session->path(), clip);
+    } else {
+      QTest::keyClick(m_window, Qt::Key_Right);
+      QCOMPARE(m_session->path(), clip);
+    }
   }
 
   void controlsFadeAndReturnWithThePointer() {
@@ -2462,6 +2462,63 @@ private slots:
     QTRY_VERIFY(!help->property("visible").toBool());
     QVERIFY(m_window->isVisible());
     QTRY_VERIFY(item(QStringLiteral("viewerKeys"))->hasActiveFocus());
+  }
+
+  void shortcutHelpShowsAvailableVideoControls() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString tracks = dir.filePath(QStringLiteral("tracks.mkv"));
+    QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/viewer/tracks.mkv"), tracks));
+    QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/viewer/captions.srt"),
+                        dir.filePath(QStringLiteral("tracks.srt"))));
+    QObject* help = m_window->findChild<QObject*>(QStringLiteral("viewerShortcutHelp"));
+    QVERIFY(help);
+    const auto hasKey = [help](const QString& key) {
+      auto* content = help->property("contentItem").value<QQuickItem*>();
+      return content && find(content, [&key](QQuickItem* child) {
+        return child->property("text").toString() == key;
+      });
+    };
+    open({media(QStringLiteral("Shot 1.jpg"))});
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(help->property("visible").toBool());
+    QVERIFY(!hasKey(QStringLiteral("Shift+L")));
+    QVERIFY(!hasKey(QStringLiteral("Shift+A")));
+    QVERIFY(!hasKey(QStringLiteral("Z / X")));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+
+    open({tracks});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_COMPARE(player->audioTracks().size(), 2);
+    QTRY_COMPARE(player->subtitleTracks().size(), 1);
+    player->pause();
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(hasKey(QStringLiteral("Shift+L")));
+    QVERIFY(hasKey(QStringLiteral("Shift+A")));
+    QVERIFY(!hasKey(QStringLiteral("Z / X")));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTest::keyClick(m_window, Qt::Key_C); // Embedded subtitles.
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QVERIFY(!hasKey(QStringLiteral("Z / X")));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTest::keyClick(m_window, Qt::Key_C); // Sidecar subtitles.
+    QTRY_VERIFY(!prop("externalSubtitle").toString().isEmpty());
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(hasKey(QStringLiteral("Z / X")));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTest::keyClick(m_window, Qt::Key_C); // Off.
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(!hasKey(QStringLiteral("Z / X")));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+
+    open({media(QStringLiteral("clip.mp4"))});
+    QTRY_VERIFY(!prop("hasAudioChoices").toBool());
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(hasKey(QStringLiteral("Shift+L")));
+    QVERIFY(!hasKey(QStringLiteral("Shift+A")));
+    QVERIFY(!hasKey(QStringLiteral("Z / X")));
+    QTest::keyClick(m_window, Qt::Key_Escape);
   }
 
   void theMenuOffersOnlyWhatSuitsTheFile() {

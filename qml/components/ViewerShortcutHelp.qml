@@ -5,6 +5,8 @@ Popup {
     id: root
     property bool video: false
     property bool animated: false
+    property bool audioChoices: false
+    property bool sidecarSubtitles: false
     // One model for the grouped list. Rows only describe keys implemented here.
     readonly property var groups: [
         {title: "Navigation", rows: [
@@ -26,11 +28,14 @@ Popup {
             {keys: "Space / K", label: "Play / pause"},
             {keys: "← / →", label: "Seek five seconds"},
             {keys: "J / L", label: "Seek ten seconds"},
+            {keys: "Shift+L", label: "Toggle video loop"},
             {keys: "↑ / ↓", label: "Volume up / down"},
             {keys: "M", label: "Mute / unmute"},
             {keys: "[ / ]", label: "Decrease / increase speed"},
             {keys: "Backspace", label: "Normal speed"},
+            {keys: "Shift+A", label: "Cycle audio tracks", audio: true},
             {keys: "C", label: "Cycle subtitles"},
+            {keys: "Z / X", label: "Sidecar subtitles earlier / later by 0.5 seconds", sidecar: true},
             {keys: "T / G / P", label: "Trim / save frame / open in mpv"}]},
         {title: "Actions", rows: [
             {keys: "Space / K", label: "Play / pause animation", animation: true},
@@ -53,6 +58,7 @@ Popup {
     function applicable(row) {
         return (!row.still || !root.video) && (!row.video || root.video)
             && (!row.animation || root.animated)
+            && (!row.audio || root.audioChoices) && (!row.sidecar || root.sidecarSubtitles)
     }
     parent: Overlay.overlay
     width: Math.min(560, parent.width - 24)

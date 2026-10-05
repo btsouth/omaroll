@@ -150,18 +150,8 @@ ApplicationWindow {
     readonly property bool imageReady: root.visible && !Session.isVideo && root.stillReady
                                        && root.sourceWidth > 0
 
-    function focusWithin(control) {
-        let focused = root.activeFocusItem
-        while (focused) {
-            if (focused === control) return true
-            focused = focused.parent
-        }
-        return false
-    }
-    readonly property bool chromeFocused: root.focusWithin(header) || root.focusWithin(toolbar)
-                                         || root.focusWithin(transport) || root.focusWithin(filmstrip)
     readonly property bool chromeShown: root.chromePinned || root.pointerActive || root.infoOpen
-                                        || root.chromeFocused || shortcutHelp.visible
+                                        || shortcutHelp.visible
                                         || actionMenu.visible || confirm.visible || permanentConfirm.visible || editorChooser.visible
                                         || header.hovered || transport.hovered
                                         || previousButton.hovered || nextButton.hovered
@@ -1909,6 +1899,8 @@ ApplicationWindow {
         objectName: "viewerShortcutHelp"
         video: Session.isVideo
         animated: Session.isAnimated
+        audioChoices: root.hasAudioChoices
+        sidecarSubtitles: root.externalSubtitle !== ""
         onClosed: keys.forceActiveFocus()
     }
 
@@ -2000,9 +1992,10 @@ ApplicationWindow {
                 handled = false
             } else {
                 switch (event.key) {
+                // Tab would walk focus into the details card and leave the
+                // viewer's keys behind.
                 case Qt.Key_Tab:
                 case Qt.Key_Backtab:
-                    handled = false
                     break
                 case Qt.Key_Escape:
                     if (root.slideshowRunning) root.setSlideshow(false)
