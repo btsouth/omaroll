@@ -102,7 +102,7 @@ Item {
         }
         return total + count * kinds.spacing
     }
-    readonly property bool separateBrowse: root.width < 620
+    readonly property bool separateBrowse: root.width < Math.max(620, root.kindButtonsWidth + 140)
     readonly property bool wrapped: root.width < kinds.width + 40 + 90 + sortButton.width + 60
     implicitHeight: wrapped ? 76 : 40
 
@@ -175,7 +175,7 @@ Item {
             id: libraryButton
             objectName: "libraryBrowseButton"
             maximumWidth: root.separateBrowse ? 140
-                          : Math.max(80, root.width - 40 - kindButtonsWidth)
+                          : Math.max(80, root.width - 40 - root.kindButtonsWidth)
             // Keep Browse reachable when the kind filters fill a narrow row.
             parent: root.separateBrowse ? root : kinds
             x: root.separateBrowse ? 20 : 0
