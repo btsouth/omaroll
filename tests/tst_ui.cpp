@@ -3400,6 +3400,8 @@ private slots:
     QTemporaryDir dir;
     const QString kept = dir.filePath(QStringLiteral("kept.png"));
     const QString copy = dir.filePath(QStringLiteral("copy.png"));
+    m_disposablePaths.append(kept);
+    m_disposablePaths.append(copy);
     QImage picture(35, 29, QImage::Format_RGB32);
     picture.fill(QColor(17, 29, 143));
     QVERIFY(picture.save(kept));
@@ -3442,6 +3444,7 @@ private slots:
     QVERIFY(dir.isValid());
     const QString media = dir.filePath(QStringLiteral("original.png"));
     const QString alias = dir.filePath(QStringLiteral("alias.jpg"));
+    m_disposablePaths.append(media);
     QImage picture(32, 24, QImage::Format_RGB32);
     picture.fill(Qt::cyan);
     QVERIFY(picture.save(media));
