@@ -13,7 +13,7 @@
 class AppSettings;
 class QMediaPlayer;
 
-// Publishes the video playing most recently as an MPRIS player, so media keys
+// Publishes the audible video as an MPRIS player, so media keys
 // and the Omarchy shell's player controls reach it. The bus name exists only
 // while a video is loaded; pictures and the library alone never show up.
 class MprisService : public QObject {
@@ -26,8 +26,8 @@ public:
                         QObject* parent = nullptr);
   ~MprisService() override;
 
-  // QML calls these with its MediaPlayer. The last one played is controlled.
-  Q_INVOKABLE void track(QObject* player);
+  // Selection also moves sound; releasing it selects the surviving video used last.
+  Q_INVOKABLE void track(QObject* player, QObject* controller = nullptr);
   Q_INVOKABLE void release(QObject* player);
 
   [[nodiscard]] QString serviceName() const { return m_serviceName; }
@@ -59,6 +59,14 @@ signals:
   void seeked(qlonglong positionUs);
 
 private:
+  struct Candidate {
+    QPointer<QMediaPlayer> player;
+    QPointer<QObject> controller;
+    QList<QMetaObject::Connection> connections;
+  };
+  void select(QMediaPlayer* player);
+  void forget(QMediaPlayer* player);
+  bool command(const char* method, std::optional<qint64> position = std::nullopt);
   void publish();
   void unpublish();
   void attach(QMediaPlayer* player);
@@ -72,6 +80,7 @@ private:
   QObject* m_root = nullptr;
   QPointer<QMediaPlayer> m_player;
   QList<QMetaObject::Connection> m_connections;
+  QList<Candidate> m_candidates;
   QString m_serviceName;
   quint64 m_track = 0;
   qint64 m_lastPosition = 0;

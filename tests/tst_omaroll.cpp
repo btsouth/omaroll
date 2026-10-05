@@ -2266,8 +2266,13 @@ private slots:
   }
 
   void videoPlaybackPreferencesAndResumePersist() {
-    const QString movie = QStringLiteral("/tmp/omaroll-resume-movie-%1.mp4")
-                              .arg(QRandomGenerator::global()->generate());
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString movie = dir.filePath(QStringLiteral("movie.mp4"));
+    QFile file(movie);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("video identity");
+    file.close();
     AppSettings settings;
     settings.setVideoVolume(0.35);
     settings.setVideoMuted(true);
@@ -2294,6 +2299,72 @@ private slots:
     reloaded.setVideoVolume(0.8);
     reloaded.setVideoMuted(false);
     reloaded.setVideoPosition(movie, 0);
+  }
+
+  void videoResumeRejectsReplacementAndKeepsCertainRenames() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("movie.mp4"));
+    const auto write = [](const QString& target, const QByteArray& bytes) {
+      QFile file(target);
+      return file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size();
+    };
+    QVERIFY(write(path, "original"));
+    AppSettings settings;
+    settings.setVideoPosition(path, 9000);
+    const QString identity = settings.videoIdentity(path);
+    const QString renamed = dir.filePath(QStringLiteral("renamed.mp4"));
+    QVERIFY(QFile::rename(path, renamed));
+    QCOMPARE(settings.videoPosition(renamed), 9000);
+    QVERIFY(write(renamed, "in-place replacement"));
+    QCOMPARE(settings.videoPosition(renamed), 0);
+    settings.setVideoPosition(renamed, 9000, identity);
+    QCOMPARE(settings.videoPosition(renamed), 0);
+    settings.setVideoPosition(renamed, 10000);
+    const QString replacement = dir.filePath(QStringLiteral("replacement.mp4"));
+    QVERIFY(write(replacement, "atomic replacement"));
+    QVERIFY(QFile::remove(renamed));
+    QVERIFY(QFile::rename(replacement, renamed));
+    QCOMPARE(settings.videoPosition(renamed), 0);
+    QSettings legacy;
+    legacy.setValue(QStringLiteral("playback/positions"), QVariantMap{{renamed, 11000}});
+    legacy.sync();
+    AppSettings reloaded;
+    QCOMPARE(reloaded.videoPosition(renamed), 0);
+  }
+
+  void externalSubtitlesIndexLongOverlapsAndReload() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("long.srt"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("1\n00:00:00,000 --> 20:00:00,000\nLong overlap\n\n");
+    for (int i = 1; i <= 20000; ++i) {
+      file.write(QStringLiteral("%1\n%2.000 --> %2.500\nCue %1\n\n")
+                     .arg(i).arg(i * 2).toUtf8());
+    }
+    file.close();
+    SubtitleIndex subtitles;
+    QCOMPARE(subtitles.cueCount(path), 0); // Loading never waits on parsing.
+    QTRY_COMPARE(subtitles.cueCount(path), 20001);
+    QCOMPARE(subtitles.textAt(path, 40000000), QStringLiteral("Long overlap\nCue 20000"));
+    QCOMPARE(subtitles.textAt(path, 2000), QStringLiteral("Long overlap\nCue 1"));
+    QCOMPARE(subtitles.textAt(path, 40000501), QStringLiteral("Long overlap"));
+    const int revision = subtitles.revision();
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    file.write("1\n00:00:01,000 --> 00:00:02,000\nChanged\n\n");
+    file.close();
+    QTRY_VERIFY(subtitles.revision() > revision);
+    QTRY_COMPARE(subtitles.textAt(path, 1500), QStringLiteral("Changed"));
+    const QString replacement = dir.filePath(QStringLiteral("new.srt"));
+    QFile next(replacement);
+    QVERIFY(next.open(QIODevice::WriteOnly));
+    next.write("1\n00:00:01,000 --> 00:00:02,000\nReplaced\n\n");
+    next.close();
+    QVERIFY(QFile::remove(path));
+    QVERIFY(QFile::rename(replacement, path));
+    QTRY_COMPARE(subtitles.textAt(path, 1500), QStringLiteral("Replaced"));
   }
 
   void externalSubtitlesParseAndAnswerByPosition() {
@@ -2328,7 +2399,7 @@ private slots:
 
     QCOMPARE(subtitles.label(srt), QStringLiteral("Subtitles"));
     QCOMPARE(subtitles.label(vtt), QStringLiteral("English"));
-    QCOMPARE(subtitles.cueCount(srt), 2);
+    QTRY_COMPARE(subtitles.cueCount(srt), 2);
 
     // Markup is stripped, cues answer at their boundaries, and the gap between
     // cues is silent.
@@ -2338,7 +2409,7 @@ private slots:
     QCOMPARE(subtitles.textAt(srt, 4200), QStringLiteral("Second line\nsecond row"));
 
     // A WebVTT cue with no hours, and its note skipped.
-    QCOMPARE(subtitles.textAt(vtt, 1500), QStringLiteral("VTT cue"));
+    QTRY_COMPARE(subtitles.textAt(vtt, 1500), QStringLiteral("VTT cue"));
     QCOMPARE(subtitles.textAt(vtt, 2500), QString());
   }
 

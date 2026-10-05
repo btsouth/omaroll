@@ -1,4 +1,5 @@
 #include "app/AppSettings.h"
+#include "sources/FileVersion.h"
 #include "app/VideoPlayback.h"
 
 #include "library/CaptureRecord.h"
@@ -54,7 +55,7 @@ constexpr auto kSmartCollections = "library/smartCollections";
 constexpr auto kLastVisit = "library/lastVisit";
 constexpr auto kVideoVolume = "playback/volume";
 constexpr auto kVideoMuted = "playback/muted";
-constexpr auto kVideoPositions = "playback/positions";
+constexpr auto kVideoPositions = "playback/positionsV2";
 // Resume spots beyond a few minutes are the useful ones; too many entries and
 // the file grows for no benefit.
 constexpr int kMaximumResumeEntries = 500;
@@ -493,20 +494,26 @@ void AppSettings::setSlideshowShuffle(bool value) {
 }
 
 qint64 AppSettings::videoPosition(const QString& path) const {
-  return m_videoPositions.value(path, 0);
+  return m_videoPositions.value(FileVersion::key(path), 0);
 }
 
-void AppSettings::setVideoPosition(const QString& path, qint64 milliseconds) {
-  if (path.isEmpty()) {
+QString AppSettings::videoIdentity(const QString& path) const {
+  return FileVersion::key(path);
+}
+
+void AppSettings::setVideoPosition(const QString& path, qint64 milliseconds,
+                                   const QString& identity) {
+  const QString key = FileVersion::key(path);
+  if (key.isEmpty() || (!identity.isEmpty() && identity != key)) {
     return;
   }
   if (milliseconds < kMinimumResumeMs) {
     clearVideoPosition(path);
     return;
   }
-  m_videoPositions.insert(path, milliseconds);
-  m_videoRecency.removeAll(path);
-  m_videoRecency.prepend(path);
+  m_videoPositions.insert(key, milliseconds);
+  m_videoRecency.removeAll(key);
+  m_videoRecency.prepend(key);
   while (m_videoRecency.size() > kMaximumResumeEntries) {
     m_videoPositions.remove(m_videoRecency.takeLast());
   }
@@ -518,10 +525,11 @@ void AppSettings::setVideoPosition(const QString& path, qint64 milliseconds) {
 }
 
 void AppSettings::clearVideoPosition(const QString& path) {
-  if (m_videoPositions.remove(path) == 0 && !m_videoRecency.contains(path)) {
+  const QString key = FileVersion::key(path);
+  if (m_videoPositions.remove(key) == 0 && !m_videoRecency.contains(key)) {
     return;
   }
-  m_videoRecency.removeAll(path);
+  m_videoRecency.removeAll(key);
   QVariantMap stored;
   for (auto it = m_videoPositions.cbegin(); it != m_videoPositions.cend(); ++it) {
     stored.insert(it.key(), it.value());

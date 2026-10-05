@@ -1181,6 +1181,82 @@ private slots:
     QTRY_VERIFY(player->position() > 4000);
   }
 
+  void narrowTransportKeepsSeekingWithCaptionsAndChangedSpeed() {
+    open({media(QStringLiteral("clip.mp4"))});
+    QQuickItem* transport = item(QStringLiteral("viewerTransport"));
+    QQuickItem* scrub = item(QStringLiteral("viewerScrub"));
+    QVERIFY(transport && scrub);
+    QQmlComponent component(m_engine);
+    component.setData(R"(
+      import QtQuick
+      QtObject {
+        property real duration: 7200000
+        property real position: 3660000
+        property real playbackRate: 1.5
+        property int playbackState: 2
+      }
+    )", QUrl());
+    std::unique_ptr<QObject> player(component.create());
+    QVERIFY2(player, qPrintable(component.errorString()));
+    transport->setProperty("player", QVariant::fromValue(player.get()));
+    transport->setProperty("hasCaptions", true);
+    transport->setProperty("captionsOn", true);
+    m_window->setProperty("chromePinned", true);
+    for (const int width : {320, 400}) {
+      m_window->resize(width, 240);
+      QTRY_VERIFY(scrub->width() >= 64);
+      QVERIFY(scrub->mapToScene(QPointF()).x() >= 0);
+      QVERIFY(scrub->mapToScene(QPointF(scrub->width(), 0)).x() <= width);
+    }
+    if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
+      QTRY_VERIFY(!m_window->grabWindow().isNull());
+      QVERIFY(m_window->grabWindow().save(QStringLiteral("narrow-transport.png")));
+    }
+    transport->setProperty("player", QVariant::fromValue(prop("player").value<QObject*>()));
+    m_window->setProperty("chromePinned", false);
+  }
+
+  void remoteCommandsRespectResumeIntent() {
+    if (!QDBusConnection(QStringLiteral("omaroll-test-client")).isConnected())
+      QSKIP("dbus-daemon is not available");
+    const QString path = m_scratch.filePath(QStringLiteral("mpris-resume.mkv"));
+    QVERIFY(QFile::exists(path) || QFile::copy(QFINDTESTDATA("fixtures/viewer/tracks.mkv"), path));
+    m_settings->setVideoPosition(path, 7000);
+    open({path});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY(prop("resumeAvailable").toBool());
+    QTRY_VERIFY(m_mpris->isPublished());
+    const QString remote = QStringLiteral("org.mpris.MediaPlayer2.Player");
+    QCOMPARE(mprisCall(remote, QStringLiteral("Play")).type(), QDBusMessage::ReplyMessage);
+    QVERIFY(!prop("resumeAvailable").toBool());
+    QVERIFY(!prop("resumePending").toBool());
+    QTRY_VERIFY(player->position() >= 6500);
+    QCOMPARE(mprisCall(remote, QStringLiteral("Pause")).type(), QDBusMessage::ReplyMessage);
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    m_window->setProperty("resumeAvailable", true);
+    m_window->setProperty("resumePending", true);
+    QCOMPARE(mprisCall(remote, QStringLiteral("Seek"), {qlonglong(-1000000)}).type(),
+             QDBusMessage::ReplyMessage);
+    QVERIFY(!prop("resumeAvailable").toBool());
+    QVERIFY(!prop("resumePending").toBool());
+    const QVariantMap metadata = m_mpris->metadata();
+    m_window->setProperty("resumeAvailable", true);
+    QCOMPARE(mprisCall(remote, QStringLiteral("SetPosition"),
+                       {metadata.value(QStringLiteral("mpris:trackid")), qlonglong(1000000)}).type(),
+             QDBusMessage::ReplyMessage);
+    QVERIFY(!prop("resumeAvailable").toBool());
+    QTRY_COMPARE(player->position(), 1000);
+    QCOMPARE(mprisCall(remote, QStringLiteral("PlayPause")).type(), QDBusMessage::ReplyMessage);
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+    m_window->setProperty("resumeAvailable", true);
+    m_window->setProperty("resumePending", true);
+    QCOMPARE(mprisCall(remote, QStringLiteral("Stop")).type(), QDBusMessage::ReplyMessage);
+    QVERIFY(!prop("resumeAvailable").toBool());
+    QVERIFY(!prop("resumePending").toBool());
+    m_settings->clearVideoPosition(path);
+  }
+
   // The checked-in test pattern: saturated bars, two audio tracks and a
   // subtitle track. Under OpenGL the bars must reach the screen, not just a
   // decoded frame in memory.
@@ -2030,12 +2106,23 @@ private slots:
     QQuickWindow* first = viewers.open({clip});
     QQuickWindow* second = viewers.open({clip, picture});
     QVERIFY(first && second && first != second);
-    QVERIFY(second->property("audible").toBool());
-    QVERIFY(!first->property("audible").toBool());
+    QMediaPlayer* a = nullptr;
+    QMediaPlayer* b = nullptr;
+    QTRY_VERIFY((a = first->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY((b = second->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY(second->property("audible").toBool());
+    QTRY_VERIFY(!first->property("audible").toBool());
+    QTRY_VERIFY(a->duration() > 0 && b->duration() > 0);
+    a->pause();
+    b->pause();
 
     QCOMPARE(viewers.open({clip}), first);
     QVERIFY(first->property("audible").toBool());
     QVERIFY(!second->property("audible").toBool());
+    QCOMPARE(m_mpris->position(), qlonglong(a->position()) * 1000);
+    m_mpris->seek(1000000);
+    QTRY_VERIFY(a->position() >= 900);
+    QVERIFY(b->position() < 900);
 
     QQuickWindow* still = viewers.open({media(QStringLiteral("shot 2.jpg"))});
     QCOMPARE(viewers.frontmost(), still);
@@ -2046,7 +2133,16 @@ private slots:
     QTRY_COMPARE(viewers.sessionOf(first)->count(), 4);
     QVERIFY(viewers.sessionOf(first)->step(1));
     QVERIFY(!viewers.sessionOf(first)->isVideo());
-    QVERIFY(second->property("audible").toBool());
+    QTRY_VERIFY(second->property("audible").toBool());
+    QCOMPARE(m_mpris->position(), qlonglong(b->position()) * 1000);
+    m_mpris->play();
+    QTRY_COMPARE(b->playbackState(), QMediaPlayer::PlayingState);
+    QQuickWindow* third = viewers.open({clip, media(QStringLiteral("shot 2.jpg"))});
+    QVERIFY(third && third != second);
+    QTRY_VERIFY(!second->property("audible").toBool());
+    third->close();
+    QTRY_VERIFY(second->property("audible").toBool());
+    QCOMPARE(m_mpris->playbackStatus(), QStringLiteral("Playing"));
     QVERIFY(!m_settings->videoMuted());
 
     for (QQuickWindow* window : viewers.visibleWindows()) {

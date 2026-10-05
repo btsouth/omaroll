@@ -24,7 +24,17 @@ Rectangle {
     readonly property real position: player ? player.position : 0
     readonly property bool playing: player && player.playbackState === MediaPlayer.PlayingState
     readonly property real rate: player ? player.playbackRate : 1
-    readonly property bool wide: width >= 560
+    readonly property real minimumSeekWidth: 64
+    readonly property real seekBudget: width - 6 - playButton.width - 8 - elapsed.implicitWidth
+                                      - 24 - total.implicitWidth - 10 - 6
+                                      - soundButton.width - fullScreenButton.width - 2
+    readonly property bool showCaptions: hasCaptions && seekBudget >= minimumSeekWidth + captionsButton.width + 2
+    readonly property bool showSpeed: (Math.abs(rate - 1) > 0.01 || width >= 560)
+                                     && seekBudget >= minimumSeekWidth + speedButton.width + 2
+                                        + (showCaptions ? captionsButton.width + 2 : 0)
+    readonly property bool wide: width >= 560 && seekBudget >= minimumSeekWidth + 66
+                                + (showCaptions ? captionsButton.width + 2 : 0)
+                                + (showSpeed ? speedButton.width + 2 : 0)
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
@@ -105,7 +115,7 @@ Rectangle {
         readonly property bool lifted: scrubMouse.containsMouse || scrubMouse.pressed
 
         function seekTo(x) {
-            if (root.player && root.duration > 0) {
+            if (root.player && root.duration > 0 && width > 0) {
                 root.seekRequested(Math.max(0, Math.min(1, x / width)) * root.duration)
             }
         }
@@ -197,8 +207,9 @@ Rectangle {
         spacing: 2
 
         IconButton {
+            id: captionsButton
             objectName: "viewerCaptionsButton"
-            visible: root.hasCaptions
+            visible: root.showCaptions
             anchors.verticalCenter: parent.verticalCenter
             icon: "captions"
             active: root.captionsOn
@@ -209,8 +220,9 @@ Rectangle {
 
         // Shown once the speed is not normal, or when there is room to offer it.
         Rectangle {
+            id: speedButton
             objectName: "viewerSpeedButton"
-            visible: Math.abs(root.rate - 1) > 0.01 || root.wide
+            visible: root.showSpeed
             anchors.verticalCenter: parent.verticalCenter
             width: speedLabel.implicitWidth + 16
             height: 30
@@ -288,6 +300,7 @@ Rectangle {
         }
 
         IconButton {
+            id: fullScreenButton
             objectName: "viewerTransportFullScreen"
             anchors.verticalCenter: parent.verticalCenter
             icon: root.fullScreen ? "fullscreen-exit" : "fullscreen"

@@ -134,10 +134,43 @@ MprisService::~MprisService() {
   unpublish();
 }
 
-void MprisService::track(QObject* object) {
+void MprisService::track(QObject* object, QObject* controller) {
   auto* player = qobject_cast<QMediaPlayer*>(object);
   if (!player || player->source().isEmpty()) {
     return;
+  }
+  auto found = std::find_if(m_candidates.begin(), m_candidates.end(),
+                            [player](const Candidate& entry) { return entry.player == player; });
+  if (found == m_candidates.end()) {
+    Candidate entry{player, controller, {}};
+    entry.connections.append(connect(player, &QMediaPlayer::sourceChanged, this,
+        [this, player](const QUrl& source) { if (source.isEmpty()) release(player); }));
+    entry.connections.append(connect(player, &QObject::destroyed, this,
+        [this, player] { forget(player); }));
+    QQuickWindow* window = qobject_cast<QQuickWindow*>(controller);
+    if (!window) {
+      if (auto* item = qobject_cast<QQuickItem*>(controller)) window = item->window();
+    }
+    if (window) {
+      entry.connections.append(connect(window, &QWindow::activeChanged, this,
+          [this, window, player] { if (window->isActive()) select(player); }));
+    }
+    m_candidates.append(entry);
+  } else if (controller) {
+    found->controller = controller;
+  }
+  select(player);
+}
+
+void MprisService::select(QMediaPlayer* player) {
+  auto found = std::find_if(m_candidates.begin(), m_candidates.end(),
+                            [player](const Candidate& entry) { return entry.player == player; });
+  if (found == m_candidates.end() || !player || player->source().isEmpty()) return;
+  const Candidate selected = *found;
+  m_candidates.erase(found);
+  m_candidates.append(selected);
+  for (const Candidate& entry : std::as_const(m_candidates)) {
+    if (entry.controller) entry.controller->setProperty("audible", entry.player == player);
   }
   if (player != m_player) {
     detach();
@@ -147,11 +180,34 @@ void MprisService::track(QObject* object) {
 }
 
 void MprisService::release(QObject* object) {
-  if (!object || object != m_player) {
-    return;
+  if (auto* player = qobject_cast<QMediaPlayer*>(object)) forget(player);
+}
+
+void MprisService::forget(QMediaPlayer* player) {
+  const bool selected = !m_player || m_player == player;
+  for (auto it = m_candidates.begin(); it != m_candidates.end();) {
+    if (!it->player || it->player == player) {
+      for (const auto& connection : std::as_const(it->connections)) disconnect(connection);
+      if (it->controller) it->controller->setProperty("audible", false);
+      it = m_candidates.erase(it);
+    } else {
+      ++it;
+    }
   }
+  if (!selected) return;
   detach();
-  unpublish();
+  if (!m_candidates.isEmpty()) select(m_candidates.last().player);
+  else unpublish();
+}
+
+bool MprisService::command(const char* method, std::optional<qint64> position) {
+  for (const Candidate& entry : std::as_const(m_candidates)) {
+    if (entry.player != m_player || !entry.controller) continue;
+    return position ? QMetaObject::invokeMethod(entry.controller, method,
+                          Q_ARG(QVariant, QVariant::fromValue(*position)))
+                    : QMetaObject::invokeMethod(entry.controller, method);
+  }
+  return false;
 }
 
 void MprisService::attach(QMediaPlayer* player) {
@@ -194,10 +250,6 @@ void MprisService::attach(QMediaPlayer* player) {
                 changed(kPlayerInterface, {QStringLiteral("Metadata"),
                                            QStringLiteral("PlaybackStatus")});
               }),
-      connect(player, &QObject::destroyed, this, [this] {
-        m_connections.clear();
-        unpublish();
-      }),
   };
   changed(kPlayerInterface, {QStringLiteral("Metadata"), QStringLiteral("PlaybackStatus"),
                              QStringLiteral("CanPlay"), QStringLiteral("CanPause"),
@@ -380,7 +432,7 @@ void MprisService::setVolume(double volume) {
 bool MprisService::canSeek() const { return m_player && m_player->isSeekable(); }
 
 void MprisService::play() {
-  if (m_player) {
+  if (m_player && !command("playVideo")) {
     m_player->play();
   }
 }
@@ -398,7 +450,7 @@ void MprisService::playPause() {
   if (m_player->playbackState() == QMediaPlayer::PlayingState) {
     m_player->pause();
   } else {
-    m_player->play();
+    play();
   }
 }
 
@@ -410,10 +462,8 @@ void MprisService::stop() {
   }
   m_stopped = true;
   m_player->pause();
-  if (m_player->position() != 0) {
-    m_seekRequested = true;
-    m_player->setPosition(0);
-  }
+  m_seekRequested = true;
+  if (!command("seekTo", 0)) m_player->setPosition(0);
   changed(kPlayerInterface, {QStringLiteral("PlaybackStatus")});
 }
 
@@ -426,7 +476,8 @@ void MprisService::seek(qlonglong offsetUs) {
     return;
   }
   m_seekRequested = true;
-  m_player->setPosition(std::max<qint64>(0, target));
+  if (!command("seekTo", std::max<qint64>(0, target)))
+    m_player->setPosition(std::max<qint64>(0, target));
 }
 
 void MprisService::setPosition(const QDBusObjectPath& track, qlonglong positionUs) {
@@ -435,7 +486,7 @@ void MprisService::setPosition(const QDBusObjectPath& track, qlonglong positionU
     return;
   }
   m_seekRequested = true;
-  m_player->setPosition(positionUs / 1000);
+  if (!command("seekTo", positionUs / 1000)) m_player->setPosition(positionUs / 1000);
 }
 
 #include "MprisService.moc"

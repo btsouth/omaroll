@@ -123,7 +123,9 @@ public:
   // Where a video was last left, in milliseconds. Zero means no saved spot.
   // Entries are pruned so a long-lived library does not grow forever.
   Q_INVOKABLE [[nodiscard]] qint64 videoPosition(const QString& path) const;
-  Q_INVOKABLE void setVideoPosition(const QString& path, qint64 milliseconds);
+  Q_INVOKABLE void setVideoPosition(const QString& path, qint64 milliseconds,
+                                     const QString& identity = {});
+  Q_INVOKABLE [[nodiscard]] QString videoIdentity(const QString& path) const;
   Q_INVOKABLE void clearVideoPosition(const QString& path);
 
   [[nodiscard]] qreal videoVolume() const { return m_videoVolume; }
