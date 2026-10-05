@@ -518,16 +518,16 @@ private slots:
   }
 
   void libraryCopiesOpenedEntryPathAndName() {
-    QTemporaryDir dir;
-    QVERIFY(dir.isValid());
-    const QString target = dir.filePath(QStringLiteral("original.png"));
-    const QString alias = dir.filePath(QStringLiteral("alias # 雪.png"));
+    const QString target = m_scratch.filePath(QStringLiteral("copy-original.png"));
+    const QString alias = m_scratch.filePath(QStringLiteral("copy-alias # 雪.png"));
+    m_disposablePaths.append(target);
+    m_disposablePaths.append(alias);
     QImage picture(200, 150, QImage::Format_RGB32);
     picture.fill(Qt::blue);
     QVERIFY(picture.save(target));
     QVERIFY(QFile::link(target, alias));
     m_captures->addExtraFiles({alias});
-    m_captures->setExtraRoot(dir.path());
+    m_captures->setExtraRoot(m_scratch.path());
     QTRY_VERIFY_WITH_TIMEOUT(!m_captures->scanning(), 10000);
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(target) >= 0, 10000);
     const int row = m_library->rowOf(target);
@@ -542,8 +542,13 @@ private slots:
     QVERIFY(QMetaObject::invokeMethod(m_window, "openContextMenu", Q_ARG(QVariant, row),
                                      Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
     QVERIFY(item("contextAction_copy-path"));
-    click(item("contextAction_copy-name"));
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("libraryContextMenu"));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QQuickItem* copyName = item("contextAction_copy-name");
+    copyName->forceActiveFocus();
+    QTest::keyClick(m_window, Qt::Key_Return);
     QTRY_COMPARE(copiedText(), QFileInfo(alias).fileName());
+    QTRY_VERIFY(!menu->property("visible").toBool());
     openDetail(row);
     QTRY_VERIFY(item("detail")->isVisible());
     QTest::keyClick(m_window, Qt::Key_C, Qt::ControlModifier | Qt::ShiftModifier);
