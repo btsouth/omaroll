@@ -77,6 +77,21 @@ Item {
                                        && stillLoader.item !== null
                                        && stillLoader.item.status === Image.Ready
                                        && stillLoader.width > 0 && stillLoader.height > 0
+    property real previewWidth: Settings.previewWidth
+    property real previewHeight: Settings.previewHeight
+    readonly property real maximumPreviewWidth: Math.max(1, root.width - 24)
+    readonly property real maximumPreviewHeight: Math.max(1, root.height - 24)
+
+    function resizePreview(width, height) {
+        previewWidth = Math.max(Math.min(500, maximumPreviewWidth), Math.min(maximumPreviewWidth, width))
+        previewHeight = Math.max(Math.min(360, maximumPreviewHeight), Math.min(maximumPreviewHeight, height))
+    }
+
+    function rememberPreviewSize() {
+        Settings.previewWidth = Math.round(previewWidth)
+        Settings.previewHeight = Math.round(previewHeight)
+    }
+
     property bool fullScreen: false
     // The inspector is on demand: a preview opens on the media alone and the
     // details surface appears only when asked for.
@@ -235,6 +250,8 @@ Item {
     function visibleActions() {
         void root.actionsRevision
         const rows = Registry.actionsForKind(root.isVideo, root.isDocument, root.path)
+        rows.push({id: "copy-path", label: "Copy path", available: true, group: "File", shortcut: "Ctrl+Shift+C"},
+                  {id: "copy-name", label: "Copy file name", available: true, group: "File"})
         const companion = Captures.companionPathAt(Captures.rowOf(root.path))
         if (companion !== "") {
             rows.unshift({id: "companion", label: "View " + companion.substring(companion.lastIndexOf(".") + 1).toUpperCase() + " companion",
@@ -405,9 +422,18 @@ Item {
         Qt.callLater(stillViewport.centerContent)
     }
 
-    function adjustImageZoom(factor) {
-        imageZoom = Math.max(0.001, Math.min(64, imageZoom * factor))
-        Qt.callLater(stillViewport.centerContent)
+    function adjustImageZoom(factor, x, y) {
+        const before = root.imageZoom
+        const px = x === undefined ? stillViewport.width / 2 : x
+        const py = y === undefined ? stillViewport.height / 2 : y
+        // The same anchor math as the quick viewer, in fitted-image units.
+        const boxX = (stillViewport.contentX + px - imageCanvas.x) / before
+        const boxY = (stillViewport.contentY + py - imageCanvas.y) / before
+        imageZoom = Math.max(0.001, Math.min(64, before * factor))
+        stillViewport.contentX = Math.max(0, Math.min(stillViewport.contentWidth - stillViewport.width,
+                                                     imageCanvas.x + boxX * imageZoom - px))
+        stillViewport.contentY = Math.max(0, Math.min(stillViewport.contentHeight - stillViewport.height,
+                                                     imageCanvas.y + boxY * imageZoom - py))
     }
 
     function showActualImageSize() {
@@ -775,8 +801,9 @@ Item {
     Rectangle {
         id: panel
         anchors.centerIn: parent
-        width: root.fullScreen ? root.width : Math.min(1000, root.width - 60)
-        height: root.fullScreen ? root.height : Math.min(700, root.height - 60)
+        objectName: "detailPanel"
+        width: root.fullScreen ? root.width : Math.min(root.previewWidth, root.maximumPreviewWidth)
+        height: root.fullScreen ? root.height : Math.min(root.previewHeight, root.maximumPreviewHeight)
         radius: root.fullScreen ? 0 : (Theme.cornerRadius > 0 ? Theme.cornerRadius : 4)
         color: root.shade(Theme.background, 0.97)
         border.width: 1
@@ -995,6 +1022,7 @@ Item {
             // for inspection without ever rewriting the file.
             Flickable {
                 id: stillViewport
+                objectName: "detailStillViewport"
                 anchors.fill: parent
                 anchors.margins: 16
                 anchors.bottomMargin: 54
@@ -1021,6 +1049,7 @@ Item {
 
                 Item {
                     id: imageCanvas
+                    objectName: "detailImageCanvas"
                     width: (stillViewport.sideways ? stillViewport.sourceHeight
                                                    : stillViewport.sourceWidth)
                            * stillViewport.fittedScale * root.imageZoom
@@ -1102,6 +1131,7 @@ Item {
                     acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                     onWheel: function (event) {
                         if (event.phase !== Qt.NoScrollPhase
+                                && !(event.modifiers & Qt.ControlModifier)
                                 && (event.pixelDelta.x !== 0 || event.pixelDelta.y !== 0)) {
                             stillViewport.contentX = Math.max(0, Math.min(
                                 stillViewport.contentWidth - stillViewport.width,
@@ -1120,8 +1150,21 @@ Item {
                             event.accepted = true
                             return
                         }
-                        root.adjustImageZoom(delta > 0 ? 1.2 : 1 / 1.2)
+                        const at = stillViewport.mapFromItem(null, point.scenePosition)
+                        root.adjustImageZoom(Math.pow(1.2, delta / 120), at.x, at.y)
                         event.accepted = true
+                    }
+                }
+
+                PinchHandler {
+                    target: null
+                    property real last: 1
+                    onActiveChanged: last = 1
+                    onActiveScaleChanged: {
+                        if (!active || last <= 0) return
+                        const at = stillViewport.mapFromItem(null, centroid.scenePosition)
+                        root.adjustImageZoom(activeScale / last, at.x, at.y)
+                        last = activeScale
                     }
                 }
 
@@ -2836,7 +2879,13 @@ Item {
                         }
                     }
 
-                    Keys.onPressed: function (event) {
+                    Shortcut {
+        sequence: "Ctrl+Shift+C"
+        enabled: root.visible && root.enabled && !root.contextMenuOpen
+        onActivated: root.invokeAction("copy-path")
+    }
+
+    Keys.onPressed: function (event) {
                         if (event.key === Qt.Key_Up || event.key === Qt.Key_Down) {
                             root.focusRelativeAction(event.key === Qt.Key_Up ? -1 : 1)
                             event.accepted = true
@@ -2888,6 +2937,52 @@ Item {
         target: root
         function onPathChanged() { imageContextMenu.close() }
     }
+    Repeater {
+        model: ["left", "right", "top", "bottom", "corner"]
+        MouseArea {
+            id: resizeHandle
+            required property string modelData
+            objectName: "detailResize_" + modelData
+            visible: root.visible && !root.fullScreen
+            z: 10
+            x: modelData === "left" ? panel.x - 4
+               : modelData === "right" || modelData === "corner" ? panel.x + panel.width - 8 : panel.x + 8
+            y: modelData === "top" ? panel.y - 4
+               : modelData === "bottom" || modelData === "corner" ? panel.y + panel.height - 8 : panel.y + 8
+            width: modelData === "corner" ? 16 : modelData === "left" || modelData === "right" ? 12 : panel.width - 16
+            height: modelData === "corner" ? 16 : modelData === "top" || modelData === "bottom" ? 12 : panel.height - 16
+            cursorShape: modelData === "corner" ? Qt.SizeFDiagCursor
+                         : modelData === "left" || modelData === "right" ? Qt.SizeHorCursor : Qt.SizeVerCursor
+            preventStealing: true
+            property point start
+            property real startWidth
+            property real startHeight
+            onPressed: function(mouse) {
+                start = mapToItem(root, mouse.x, mouse.y)
+                startWidth = panel.width
+                startHeight = panel.height
+            }
+            onPositionChanged: function(mouse) {
+                if (!pressed) return
+                const at = mapToItem(root, mouse.x, mouse.y)
+                const horizontal = modelData === "left" || modelData === "right" || modelData === "corner"
+                const vertical = modelData === "top" || modelData === "bottom" || modelData === "corner"
+                root.resizePreview(startWidth + (horizontal ? 2 * (at.x - start.x) * (modelData === "left" ? -1 : 1) : 0),
+                                   startHeight + (vertical ? 2 * (at.y - start.y) * (modelData === "top" ? -1 : 1) : 0))
+            }
+            onReleased: root.rememberPreviewSize()
+            Rectangle {
+                visible: resizeHandle.modelData === "corner"
+                anchors.centerIn: parent
+                width: 8
+                height: 8
+                color: "transparent"
+                border.width: 1
+                border.color: Theme.mutedText
+            }
+        }
+    }
+
     ActionMenu {
         id: imageContextMenu
         objectName: "detailContextMenu"

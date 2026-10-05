@@ -238,7 +238,8 @@ Item {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            height: root.ocrSnippet !== "" || root.caption !== "" ? 52 : 30
+            height: (root.ocrSnippet !== "" || root.caption !== "" ? 52 : 30)
+                    + (Settings.showGridFilenames ? 20 : 0)
             visible: root.thumbnailReady
             color: Qt.rgba(0, 0, 0, 0.72)
         }
@@ -258,6 +259,22 @@ Item {
             font.pixelSize: 10
             color: "#ffffff"
             opacity: 0.90
+        }
+
+        Text {
+            objectName: "captureFilenameLabel"
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: metadataRow.top
+            anchors.bottomMargin: root.ocrSnippet !== "" || root.caption !== "" ? 24 : 2
+            anchors.leftMargin: 8
+            anchors.rightMargin: 8
+            visible: Settings.showGridFilenames
+            text: root.fileName
+            elide: Text.ElideMiddle
+            font.family: Theme.fontFamily
+            font.pixelSize: 11
+            color: root.thumbnailReady ? "#ffffff" : Theme.foreground
         }
 
         // Stars sit at the right end of the strip, so they read with the

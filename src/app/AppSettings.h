@@ -44,6 +44,9 @@ class AppSettings final : public QObject {
   // Target width of a grid tile in logical pixels. Ctrl+wheel and Ctrl+plus
   // or minus step it; the grid flexes the real width to fill each row.
   Q_PROPERTY(int tileWidth READ tileWidth WRITE setTileWidth NOTIFY tileWidthChanged)
+  Q_PROPERTY(bool showGridFilenames READ showGridFilenames WRITE setShowGridFilenames NOTIFY showGridFilenamesChanged)
+  Q_PROPERTY(int previewWidth READ previewWidth WRITE setPreviewWidth NOTIFY previewWidthChanged)
+  Q_PROPERTY(int previewHeight READ previewHeight WRITE setPreviewHeight NOTIFY previewHeightChanged)
   Q_PROPERTY(bool slideshowVideos READ slideshowVideos WRITE setSlideshowVideos NOTIFY
                  slideshowVideosChanged)
   Q_PROPERTY(bool confirmPermanentDelete READ confirmPermanentDelete WRITE setConfirmPermanentDelete NOTIFY
@@ -116,6 +119,12 @@ public:
 
   [[nodiscard]] int tileWidth() const { return m_tileWidth; }
   void setTileWidth(int width);
+  [[nodiscard]] bool showGridFilenames() const { return m_showGridFilenames; }
+  void setShowGridFilenames(bool value);
+  [[nodiscard]] int previewWidth() const { return m_previewWidth; }
+  void setPreviewWidth(int width);
+  [[nodiscard]] int previewHeight() const { return m_previewHeight; }
+  void setPreviewHeight(int height);
   [[nodiscard]] bool slideshowVideos() const { return m_slideshowVideos; }
   void setSlideshowVideos(bool value);
   [[nodiscard]] bool confirmPermanentDelete() const { return m_confirmPermanentDelete; }
@@ -246,6 +255,9 @@ signals:
   void videoPrimaryActionChanged();
   void thumbnailCacheMbChanged();
   void tileWidthChanged();
+  void showGridFilenamesChanged();
+  void previewWidthChanged();
+  void previewHeightChanged();
   void slideshowVideosChanged();
   void confirmPermanentDeleteChanged();
   void slideshowIntervalSecondsChanged();
@@ -322,6 +334,9 @@ private:
   QString m_videoPrimaryAction = QStringLiteral("preview");
   int m_thumbnailCacheMb = 256;
   int m_tileWidth = 240;
+  bool m_showGridFilenames = false;
+  int m_previewWidth = 1000;
+  int m_previewHeight = 700;
   bool m_slideshowVideos = false;
   bool m_confirmPermanentDelete = true;
   int m_slideshowIntervalSeconds = 4;

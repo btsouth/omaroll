@@ -4,6 +4,13 @@
 
 ### Added
 
+- An optional Show filenames in grid setting keeps elided names on thumbnails,
+  with the full name on hover or keyboard focus. It is off by default.
+- Copy path and Copy file name in library menus and previews. `Ctrl+Shift+C`
+  copies the opened entry's path as text, including symlinks.
+- Resize the library preview by dragging its edges or corner. Its last size
+  is remembered and fits within the current window.
+
 - Loop videos in the quick viewer with the menu or Shift+L, cycle audio tracks
   with Shift+A, and adjust sidecar subtitle timing with Z and X.
 - An optional Remember playback speed setting applies the last chosen quick
@@ -13,6 +20,9 @@
 - Pan zoomed pictures with Shift+arrows and see viewer shortcuts with ? or F1.
 
 ### Fixed
+
+- Wheel and pinch zoom in the library preview and Compare keep the point under
+  the pointer fixed.
 
 - Icon buttons support Tab, Enter and Space, and the library preview has an
   `Alt+C` caption shortcut and keyboard access to technical details.

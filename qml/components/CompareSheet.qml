@@ -33,8 +33,14 @@ Item {
         panY = 0
     }
 
-    function zoomBy(factor) {
+    function zoomBy(factor, x, y) {
+        const px = x === undefined ? 0 : x
+        const py = y === undefined ? 0 : y
+        const boxX = (px - root.panX) / root.zoom
+        const boxY = (py - root.panY) / root.zoom
         zoom = Math.max(0.1, Math.min(16, zoom * factor))
+        panX = px - boxX * zoom
+        panY = py - boxY * zoom
     }
 
     function shade(base, amount) {
@@ -44,17 +50,6 @@ Item {
     visible: false
     anchors.fill: parent
     focus: visible
-
-    WheelHandler {
-        target: null
-        enabled: root.visible
-        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-        onWheel: function (event) {
-            const delta = event.angleDelta.y !== 0 ? event.angleDelta.y : event.pixelDelta.y
-            root.zoomBy(delta > 0 ? 1.2 : 1 / 1.2)
-            event.accepted = true
-        }
-    }
 
     Rectangle {
         anchors.fill: parent
@@ -125,6 +120,34 @@ Item {
             color: root.shade(Theme.darkerBackground, 0.7)
             radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
             clip: true
+
+            function zoomAt(factor, scenePosition) {
+                const at = grid.mapFromItem(null, scenePosition)
+                const column = Math.max(0, Math.min(grid.columns - 1, Math.floor(at.x / (grid.cellWidth + grid.spacing))))
+                const row = Math.max(0, Math.min(grid.rows - 1, Math.floor(at.y / (grid.cellHeight + grid.spacing))))
+                root.zoomBy(factor, at.x - column * (grid.cellWidth + grid.spacing) - grid.cellWidth / 2,
+                                    at.y - row * (grid.cellHeight + grid.spacing) - grid.cellHeight / 2)
+            }
+
+            WheelHandler {
+                target: null
+                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                onWheel: function(event) {
+                    const delta = event.angleDelta.y !== 0 ? event.angleDelta.y : event.pixelDelta.y
+                    if (delta !== 0) stage.zoomAt(Math.pow(1.15, delta / 120), point.scenePosition)
+                    event.accepted = true
+                }
+            }
+            PinchHandler {
+                target: null
+                property real last: 1
+                onActiveChanged: last = 1
+                onActiveScaleChanged: {
+                    if (!active || last <= 0) return
+                    stage.zoomAt(activeScale / last, centroid.scenePosition)
+                    last = activeScale
+                }
+            }
 
             // Drag anywhere on the stage to pan every picture together.
             DragHandler {
