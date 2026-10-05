@@ -199,6 +199,16 @@ Item {
                 color: root.shade(Theme.foreground, 0.12)
             }
 
+            Text {
+                width: parent.width
+                visible: Settings.organizationError !== ""
+                text: Settings.organizationError
+                wrapMode: Text.WordWrap
+                font.family: Theme.fontFamily
+                font.pixelSize: 12
+                color: Theme.red
+            }
+
             Column {
                 width: parent.width
                 spacing: 7

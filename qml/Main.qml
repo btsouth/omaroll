@@ -339,6 +339,9 @@ ApplicationWindow {
     }
     Connections {
         target: Settings
+        function onOrganizationErrorChanged() {
+            if (Settings.organizationError !== "") root.say(Settings.organizationError)
+        }
         function onScanDownloadsChanged() { root.reconcileFilter() }
         function onAlbumsChanged() {
             if (root.renamingCollection || Captures.albumFilter === "") {
