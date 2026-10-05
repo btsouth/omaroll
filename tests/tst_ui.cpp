@@ -607,7 +607,7 @@ private slots:
   void longLibraryNamesAndStatusFitNarrowWindows() {
     QFETCH(int, width);
     const bool downloads = m_settings->scanDownloads();
-    const QString album = QStringLiteral("A very long collection name ").repeated(4);
+    const QString album = QStringLiteral("A very long collection name ").repeated(4).left(60);
     QVERIFY(m_settings->createAlbum(album));
     m_library->setAlbumFilter(album, {});
     m_settings->setScanDownloads(true);

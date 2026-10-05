@@ -260,12 +260,12 @@ private slots:
     open({media(QStringLiteral("Shot 1.jpg"))});
     m_window->setProperty("chromeTimeout", 60000);
     QQuickItem* details = item(QStringLiteral("viewerInfoButton"));
+    QTRY_VERIFY(details->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QTRY_VERIFY(m_window->activeFocusItem() != item(QStringLiteral("viewerKeys")));
     details->forceActiveFocus();
     QTRY_VERIFY(details->hasActiveFocus());
-    qInfo() << "Before Tab" << m_window->activeFocusItem() << "next" << details->nextItemInFocusChain(true)
-            << "tab" << details->activeFocusOnTab() << "visible" << details->isVisible();
     QTest::keyClick(m_window, Qt::Key_Tab);
-    qInfo() << "After Tab" << m_window->activeFocusItem();
     QTRY_VERIFY(item(QStringLiteral("viewerLibraryButton"))->hasActiveFocus());
     QTest::keyClick(m_window, Qt::Key_Backtab, Qt::ShiftModifier);
     QTRY_VERIFY(details->hasActiveFocus());

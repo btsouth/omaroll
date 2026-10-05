@@ -152,6 +152,7 @@ Item {
                 const focused = root.Window.window ? root.Window.window.activeFocusItem : null
                 let ancestor = focused
                 while (ancestor && ancestor !== column) ancestor = ancestor.parent
+                console.log("Settings reveal", focused, ancestor, column, root.Window.window)
                 if (!focused || ancestor !== column) return
                 const top = focused.mapToItem(column, 0, 0).y
                 const bottom = top + focused.height
@@ -163,6 +164,7 @@ Item {
             Connections {
                 target: root.Window.window
                 function onActiveFocusItemChanged() {
+                    console.log("Settings focus signal", root.visible)
                     if (root.visible) Qt.callLater(settingsFlickable.revealFocusedControl)
                 }
             }
