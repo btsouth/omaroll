@@ -2306,10 +2306,16 @@ private slots:
     QCOMPARE(item(QStringLiteral("viewerInfoPanel"))->property("filePath").toString(), alias);
     QCOMPARE(item(QStringLiteral("viewerInfoPanel"))->property("resolvedPath").toString(), target);
     QVERIFY(QQmlProperty(item(QStringLiteral("viewerInfoPanel")), QStringLiteral("lines")).write(QVariantList{}));
-    click(item(QStringLiteral("viewerInfoCopyName")));
-    QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("opened ü name.png"));
+    // The card fades in and relays out after its lines change; click once the
+    // button has stopped moving.
+    QQuickItem* copyName = item(QStringLiteral("viewerInfoCopyName"));
+    QTRY_VERIFY(copyName->isVisible() && item(QStringLiteral("viewerInfoPanel"))->opacity() == 1.0);
+    QPoint settled;
+    QTRY_VERIFY([&] { const QPoint now = centre(copyName); const bool same = now == settled; settled = now; return same; }());
+    click(copyName);
+    QTRY_COMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("opened ü name.png"));
     click(item(QStringLiteral("viewerInfoCopyPath")));
-    QCOMPARE(QGuiApplication::clipboard()->text(), alias);
+    QTRY_COMPARE(QGuiApplication::clipboard()->text(), alias);
     QTest::keyClick(m_window, Qt::Key_I);
     QTest::mouseClick(m_window, Qt::RightButton, Qt::NoModifier, QPoint(150, 120));
     QObject* menu = m_window->findChild<QObject*>(QStringLiteral("viewerMenu"));
