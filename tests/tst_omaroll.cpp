@@ -3161,6 +3161,11 @@ private slots:
 
     // A page that cannot be read is refused whole: a half-read page would place
     // every word wrongly.
+    QVERIFY(PdfSupport::parsePageWords(QByteArray(PdfSupport::kPageByteLimit + 1, 'x')).pageSize.isEmpty());
+    QVERIFY(PdfSupport::parsePageWords(
+        "<!DOCTYPE page [<!ENTITY expanded 'untrusted'>]>"
+        "<page width=\"600\" height=\"800\"><word xMin=\"1\" yMin=\"1\" xMax=\"10\" yMax=\"10\">"
+        "&expanded;</word></page>").pageSize.isEmpty());
     QVERIFY(PdfSupport::parsePageWords(QByteArray()).pageSize.isEmpty());
     QVERIFY(PdfSupport::parsePageWords("<html><body><doc>").pageSize.isEmpty());
     QVERIFY(PdfSupport::parsePageWords("<page width=\"0\" height=\"0\"/>").pageSize.isEmpty());

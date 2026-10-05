@@ -180,8 +180,10 @@ PdfPageText parsePageWords(const QByteArray& xml) {
   if (xml.size() > kPageByteLimit) return page;
   QXmlStreamReader reader(xml);
   bool readPage = false;
+  qsizetype textSize = 0;
   while (!reader.atEnd()) {
     reader.readNext();
+    if (reader.isDTD() && !reader.entityDeclarations().isEmpty()) return {};
     if (!reader.isStartElement()) {
       continue;
     }
@@ -218,6 +220,8 @@ PdfPageText parsePageWords(const QByteArray& xml) {
     PdfWord word;
     word.box = QRectF(topLeft, bottomRight);
     word.text = reader.readElementText();
+    textSize += word.text.size();
+    if (textSize > kPageByteLimit / 2 || page.words.size() >= 100000) return {};
     if (placed && !word.text.isEmpty() && word.box.width() > 0 && word.box.height() > 0) {
       page.words.append(word);
     }
