@@ -1,7 +1,7 @@
 import QtQuick
 import QtMultimedia
 
-// The viewer's one row of video controls: play, time, scrub, and sound, with
+// The viewer's compact video controls: play, time, scrub, and sound, with
 // captions and speed only when they mean something. Everything else a player
 // could offer lives on the keyboard or in the viewer's menu.
 Rectangle {
@@ -30,12 +30,15 @@ Rectangle {
                                                - soundButton.width - fullScreenButton.width - 2
     readonly property real seekBudget: essentialSeekBudget - total.width
     readonly property bool showCaptions: hasCaptions && seekBudget >= minimumSeekWidth + captionsButton.width + 2
-    readonly property bool showSpeed: (Math.abs(rate - 1) > 0.01 || width >= 560)
+    readonly property bool speedWanted: Math.abs(rate - 1) > 0.01 || width >= 560
+    readonly property bool showSpeed: speedWanted
                                      && seekBudget >= minimumSeekWidth + speedButton.width + 2
                                         + (showCaptions ? captionsButton.width + 2 : 0)
     readonly property bool wide: width >= 560 && seekBudget >= minimumSeekWidth + 66
                                 + (showCaptions ? captionsButton.width + 2 : 0)
                                 + (showSpeed ? speedButton.width + 2 : 0)
+
+    readonly property bool hasOverflow: (hasCaptions && !showCaptions) || (speedWanted && !showSpeed)
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
@@ -62,7 +65,7 @@ Rectangle {
         root.player.playbackRate = 1
     }
 
-    implicitHeight: 46
+    implicitHeight: 46 + (hasOverflow ? 38 : 0)
     radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, height / 2) : 4
     color: root.shade(Theme.background, 0.84)
     border.width: 1
@@ -83,6 +86,7 @@ Rectangle {
         anchors.left: parent.left
         anchors.leftMargin: 6
         anchors.verticalCenter: parent.verticalCenter
+        anchors.verticalCenterOffset: root.hasOverflow ? 19 : 0
         icon: root.playing ? "pause" : "play"
         iconSize: 18
         toolTip: root.playing ? "Pause" : "Play"
@@ -95,6 +99,7 @@ Rectangle {
         anchors.left: playButton.right
         anchors.leftMargin: 8
         anchors.verticalCenter: parent.verticalCenter
+        anchors.verticalCenterOffset: root.hasOverflow ? 19 : 0
         text: root.clock(root.position)
         font.family: Theme.fontFamily
         font.pixelSize: 11
@@ -109,6 +114,7 @@ Rectangle {
         anchors.leftMargin: 12
         anchors.rightMargin: 12
         anchors.verticalCenter: parent.verticalCenter
+        anchors.verticalCenterOffset: root.hasOverflow ? 19 : 0
         height: 24
 
         readonly property real fraction: root.duration > 0
@@ -196,6 +202,7 @@ Rectangle {
         anchors.right: extras.left
         anchors.rightMargin: 10
         anchors.verticalCenter: parent.verticalCenter
+        anchors.verticalCenterOffset: root.hasOverflow ? 19 : 0
         text: root.clock(root.duration)
         font.family: Theme.fontFamily
         font.pixelSize: 11
@@ -207,12 +214,14 @@ Rectangle {
         anchors.right: parent.right
         anchors.rightMargin: 6
         anchors.verticalCenter: parent.verticalCenter
+        anchors.verticalCenterOffset: root.hasOverflow ? 19 : 0
         spacing: 2
 
         IconButton {
             id: captionsButton
             objectName: "viewerCaptionsButton"
-            visible: root.showCaptions
+            parent: root.showCaptions ? extras : overflowExtras
+            visible: root.hasCaptions
             anchors.verticalCenter: parent.verticalCenter
             icon: "captions"
             active: root.captionsOn
@@ -225,7 +234,8 @@ Rectangle {
         Rectangle {
             id: speedButton
             objectName: "viewerSpeedButton"
-            visible: root.showSpeed
+            parent: root.showSpeed ? extras : overflowExtras
+            visible: root.speedWanted
             anchors.verticalCenter: parent.verticalCenter
             width: speedLabel.implicitWidth + 16
             height: 30
@@ -311,6 +321,17 @@ Rectangle {
             shortcut: "F"
             onClicked: root.fullScreenToggled()
         }
+    }
+
+    Row {
+        id: overflowExtras
+        anchors.right: parent.right
+        anchors.rightMargin: 6
+        anchors.top: parent.top
+        anchors.topMargin: 4
+        height: 34
+        spacing: 2
+        visible: root.hasOverflow
     }
 
     // The wheel over the bar sets the volume, the way it does in most players.

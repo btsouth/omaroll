@@ -1224,12 +1224,14 @@ private slots:
       for (const int width : {320, 400}) {
         m_window->resize(width, 240);
         QTRY_VERIFY(scrub->width() >= 64);
+        QVERIFY(item(QStringLiteral("viewerCaptionsButton"))->isVisible());
+        if (rate != 1.0) QVERIFY(item(QStringLiteral("viewerSpeedButton"))->isVisible());
         QVERIFY(scrub->mapToScene(QPointF()).x() >= 0);
         QVERIFY(scrub->mapToScene(QPointF(scrub->width(), 0)).x() <= width);
         if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
           QTRY_VERIFY(!m_window->grabWindow().isNull());
-          QVERIFY(m_window->grabWindow().save(QStringLiteral("narrow-transport-%1-%2-%3.png")
-                                               .arg(palette).arg(width).arg(rate)));
+          QVERIFY(m_window->grabWindow().save(QCoreApplication::applicationDirPath()
+                      + QStringLiteral("/narrow-transport-%1-%2-%3.png").arg(palette).arg(width).arg(rate)));
         }
       }
     }
