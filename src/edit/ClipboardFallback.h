@@ -14,9 +14,7 @@ namespace ClipboardFallback {
 template <typename Offer>
 bool onGuiThread(Offer offer) {
   auto* application = qobject_cast<QGuiApplication*>(QCoreApplication::instance());
-  if (!application || QGuiApplication::platformName().startsWith(QStringLiteral("wayland"))) {
-    return false;
-  }
+  if (!application) return false;
   if (QThread::currentThread() == application->thread()) return offer();
 
   struct State {

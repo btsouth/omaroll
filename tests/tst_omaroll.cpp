@@ -2990,13 +2990,9 @@ private slots:
     const auto disconnect = qScopeGuard([&] { QObject::disconnect(connection); });
     auto offered = std::async(std::launch::async, [image] { return ClipboardImage::offer(image); });
     QTRY_VERIFY(offered.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready);
-    if (QGuiApplication::platformName().startsWith(QStringLiteral("wayland"))) {
-      QVERIFY(!offered.get());
-    } else {
-      QVERIFY(offered.get());
-      QVERIFY(guiThread);
-      QCOMPARE(QGuiApplication::clipboard()->image(), image);
-    }
+    QVERIFY(offered.get());
+    QVERIFY(guiThread);
+    QCOMPARE(QGuiApplication::clipboard()->image(), image);
   }
 
   void nativeClipboardFallbackCancelsWithoutGuiEvents() {
