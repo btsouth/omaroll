@@ -263,6 +263,10 @@ signals:
   void organizationErrorChanged();
 
 private:
+#ifdef OMAROLL_TESTING
+  friend class OmarollTest;
+  static thread_local QStringList s_fingerprintReadPaths;
+#endif
   struct AlbumEntry {
     QString path;
     qint64 bytes = -1;

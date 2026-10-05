@@ -2008,7 +2008,79 @@ private slots:
     QVERIFY(settings.tagPaths(QStringLiteral("Tag")).isEmpty());
   }
 
-  void collectionFingerprintsRefreshAfterPreservedTimeEdits() {
+  void unchangedCollectionsDoNotReadFingerprints() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                       dir.filePath(QStringLiteral("profile")));
+    const auto restoreProfile = qScopeGuard([this] {
+      AppSettings::s_fingerprintReadPaths.clear();
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                         m_scratch.filePath(QStringLiteral("config")));
+    });
+    QStringList paths;
+    QVariantList entries;
+    const QByteArray bytes(200, 'a');
+    for (int index = 0; index < 8; ++index) {
+      const QString path = dir.filePath(QStringLiteral("member-%1.bmp").arg(index));
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      QCOMPARE(file.write(bytes), qint64(bytes.size()));
+      file.close();
+      paths.append(path);
+      struct stat status {};
+      QVERIFY(::stat(QFile::encodeName(path).constData(), &status) == 0);
+      QCryptographicHash hash(QCryptographicHash::Sha256);
+      hash.addData(QByteArray::number(bytes.size()));
+      hash.addData(bytes);
+      entries.append(QVariantMap{
+          {QStringLiteral("path"), path},
+          {QStringLiteral("bytes"), bytes.size()},
+          {QStringLiteral("modified"), QFileInfo(path).lastModified().toMSecsSinceEpoch()},
+          {QStringLiteral("fingerprint"), hash.result()},
+          {QStringLiteral("device"), QString::number(status.st_dev)},
+          {QStringLiteral("inode"), QString::number(status.st_ino)}});
+    }
+    // Seed persisted members without warming identityFor's per-process cache.
+    QSettings stored(QSettings::IniFormat, QSettings::UserScope,
+                     QStringLiteral("omaroll"), QStringLiteral("omaroll"));
+    stored.setValue(QStringLiteral("library/albums"),
+                    QVariantMap{{QStringLiteral("Album"), entries}});
+    stored.setValue(QStringLiteral("library/tags"),
+                    QVariantMap{{QStringLiteral("Tag"), entries}});
+    stored.sync();
+    QCOMPARE(stored.status(), QSettings::NoError);
+    AppSettings::s_fingerprintReadPaths.clear();
+    AppSettings settings;
+    QCOMPARE(AppSettings::s_fingerprintReadPaths.size(), 0);
+    QCOMPARE(settings.albumPaths(QStringLiteral("Album")), paths);
+    QCOMPARE(settings.tagPaths(QStringLiteral("Tag")), paths);
+    const auto scan = [&] {
+      return CaptureScanner::scan({{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
+    };
+    const auto records = scan();
+    QCOMPARE(records.size(), paths.size());
+    for (int reconcile = 0; reconcile < 2; ++reconcile) {
+      settings.reconcileAlbums(records);
+      settings.reconcileTags(records);
+      QCOMPARE(AppSettings::s_fingerprintReadPaths.size(), 0);
+    }
+    QFile edited(paths.first());
+    QVERIFY(edited.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    QCOMPARE(edited.write(QByteArray(300, 'b')), qint64(300));
+    edited.close();
+    const auto changed = scan();
+    settings.reconcileAlbums(changed);
+    settings.reconcileTags(changed);
+    QCOMPARE(AppSettings::s_fingerprintReadPaths, QStringList{paths.first()});
+    QCOMPARE(settings.albumPaths(QStringLiteral("Album")), paths);
+    QCOMPARE(settings.tagPaths(QStringLiteral("Tag")), paths);
+    settings.reconcileAlbums(changed);
+    settings.reconcileTags(changed);
+    QCOMPARE(AppSettings::s_fingerprintReadPaths, QStringList{paths.first()});
+  }
+
+  void collectionFingerprintsRefreshAfterSizeEditsWithPreservedTime() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
@@ -2031,7 +2103,7 @@ private slots:
     struct stat before {};
     QVERIFY(::stat(QFile::encodeName(original).constData(), &before) == 0);
     QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
-    QCOMPARE(file.write(QByteArray(200, 'b')), qint64(200));
+    QCOMPARE(file.write(QByteArray(300, 'b')), qint64(300));
     file.close();
     const struct timespec times[] = {before.st_atim, before.st_mtim};
     QVERIFY(::utimensat(AT_FDCWD, QFile::encodeName(original).constData(), times, 0) == 0);
@@ -2040,8 +2112,8 @@ private slots:
     };
     settings.reconcileAlbums(scan());
     settings.reconcileTags(scan());
-    // Moving to a new inode needs the edited content's fingerprint, even
-    // though the original file's size and nanosecond mtime never changed.
+    // The size change refreshes the fingerprint even with preserved mtime,
+    // so a later copy/remove move can find the edited content on a new inode.
     QVERIFY(QFile::copy(original, moved));
     QVERIFY(QFile::remove(original));
     settings.reconcileAlbums(scan());

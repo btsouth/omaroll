@@ -128,6 +128,10 @@ QString identityVersionFor(const QString& path) {
 
 } // namespace
 
+#ifdef OMAROLL_TESTING
+thread_local QStringList AppSettings::s_fingerprintReadPaths;
+#endif
+
 AppSettings::AlbumEntry AppSettings::identityFor(const QString& path) {
   AppSettings::AlbumEntry entry;
   entry.path = path;
@@ -159,6 +163,9 @@ AppSettings::AlbumEntry AppSettings::identityFor(const QString& path) {
     return entry;
   }
   constexpr qint64 chunkSize = 64 * 1024;
+#ifdef OMAROLL_TESTING
+  s_fingerprintReadPaths.append(path);
+#endif
   QCryptographicHash hash(QCryptographicHash::Sha256);
   hash.addData(QByteArray::number(entry.bytes));
   hash.addData(file.read(chunkSize));
