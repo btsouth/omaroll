@@ -832,7 +832,7 @@ private slots:
                      {QStringLiteral("error"), QStringLiteral("Could not read")}}}, batchId);
     QVERIFY(batch->isVisible());
     QVERIFY(batch->property("errorText").toString().contains(missing));
-    QCOMPARE(batch->property("failedPaths").toStringList(), QStringList{missing});
+    QCOMPARE(batch->property("failedPaths").value<QJSValue>().toVariant().toStringList(), QStringList{missing});
     QVERIFY(pill(batch, QStringLiteral("Retry failed"))->isVisible());
     QVERIFY(QImage(40, 20, QImage::Format_RGB32).save(missing));
     click(pill(batch, QStringLiteral("Retry failed")));
@@ -871,9 +871,12 @@ private slots:
   void correctionCropAspectPresets() {
     const QString path = m_scratch.filePath(QStringLiteral("aspect-disposable.png"));
     QVERIFY(QImage(120, 80, QImage::Format_RGB32).save(path));
+    const QString portrait = m_scratch.filePath(QStringLiteral("aspect-portrait.png"));
+    QVERIFY(QImage(80, 120, QImage::Format_RGB32).save(portrait));
     const auto cleanup = qScopeGuard([&] {
       invoke("dismissTopLayer");
       QFile::remove(path);
+      QFile::remove(portrait);
       m_window->resize(1280, 820);
     });
 
@@ -915,7 +918,7 @@ private slots:
       QTRY_VERIFY(qAbs(cropRatio() - 3.0 / 4.0) < 0.02);
     }
     QVERIFY(QMetaObject::invokeMethod(sheet, "close"));
-    perform(QStringLiteral("corrections"), path);
+    perform(QStringLiteral("corrections"), portrait);
     QCOMPARE(sheet->property("cropAspectLabel").toString(), QStringLiteral("Free"));
     QCOMPARE(sheet->property("cropW").toDouble(), 1.0);
     QCOMPARE(sheet->property("cropH").toDouble(), 1.0);

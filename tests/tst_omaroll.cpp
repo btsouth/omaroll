@@ -6447,17 +6447,22 @@ private slots:
 
   void taildropReportsCompletionAndFailure_data() {
     QTest::addColumn<int>("code");
-    QTest::newRow("success") << 0;
-    QTest::newRow("failed") << 1;
-    QTest::newRow("failed-start") << 2;
+    QTest::addColumn<bool>("houseHelper");
+    QTest::newRow("helper-success") << 0 << true;
+    QTest::newRow("helper-failed") << 1 << true;
+    QTest::newRow("helper-failed-start") << 2 << true;
+    QTest::newRow("direct-success") << 0 << false;
+    QTest::newRow("direct-failed") << 1 << false;
+    QTest::newRow("direct-failed-start") << 2 << false;
   }
 
   void taildropReportsCompletionAndFailure() {
     QFETCH(int, code);
+    QFETCH(bool, houseHelper);
     QTemporaryDir dir;
     const QByteArray previousPath = qgetenv("PATH");
     const auto restore = qScopeGuard([&] { qputenv("PATH", previousPath); });
-    QFile helper(dir.filePath(QStringLiteral("omarchy-tailscale-send")));
+    QFile helper(dir.filePath(houseHelper ? QStringLiteral("omarchy-tailscale-send") : QStringLiteral("tailscale")));
     QVERIFY(helper.open(QIODevice::WriteOnly));
     helper.write(code == 2 ? "#!/missing/interpreter\n" :
                  code == 1 ? "#!/bin/sh\necho peer-unreachable >&2\nexit 1\n" : "#!/bin/sh\nexit 0\n");
