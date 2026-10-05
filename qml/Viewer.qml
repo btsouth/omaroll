@@ -43,6 +43,12 @@ ApplicationWindow {
     property bool chromePinned: false
     property bool infoOpen: false
     property bool slideshowRunning: false
+    readonly property bool blockingActionOpen: actionMenu.visible || confirm.visible
+                                              || permanentConfirm.visible || editorChooser.visible
+    onBlockingActionOpenChanged: {
+        if (root.blockingActionOpen) slideshowTimer.stop()
+        else Qt.callLater(root.resumeSlideshow)
+    }
     property bool videoPausedForRender: false
     property int visibilityBeforeFullScreen: Window.Windowed
     readonly property bool fullScreen: root.visibility === Window.FullScreen
@@ -299,7 +305,12 @@ ApplicationWindow {
     }
 
     function step(direction) {
+        if (root.blockingActionOpen) return
         slideshowTimer.stop()
+        if (root.slideshowRunning) {
+            root.stepSlideshow(direction)
+            return
+        }
         if (!Session.step(direction)) {
             root.say("This is the only file here")
         }
@@ -307,7 +318,7 @@ ApplicationWindow {
 
     // The slideshow waits for each picture to be on screen before timing it.
     function armSlideshow() {
-        if (root.slideshowRunning && !actionMenu.visible && !Session.isVideo && root.stillReady) {
+        if (root.slideshowRunning && !root.blockingActionOpen && !Session.isVideo && root.stillReady) {
             slideshowTimer.restart()
         }
     }
@@ -434,10 +445,37 @@ ApplicationWindow {
         }
     }
 
+    function resumeSlideshow() {
+        if (!root.slideshowRunning || root.blockingActionOpen) return
+        if (Session.isVideo && root.loadedMediaPath === Session.path) {
+            if (!Settings.slideshowVideos) {
+                root.advanceSlideshow()
+            } else if (root.videoError !== "" || (root.player
+                       && root.player.mediaStatus === MediaPlayer.EndOfMedia)) {
+                slideshowTimer.restart()
+            }
+        } else {
+            root.armSlideshow()
+        }
+    }
+
+    function stepSlideshow(direction) {
+        const total = Session.count
+        for (let attempt = 1; attempt <= total; ++attempt) {
+            const index = (Session.index + (direction < 0 ? -attempt : attempt) + total) % total
+            if (!Settings.slideshowVideos && Session.isVideoAt(index)) continue
+            if (index === Session.index) root.armSlideshow()
+            else Session.jump(index)
+            return
+        }
+        root.setSlideshow(false)
+        root.say("No pictures here for a slideshow")
+    }
+
     // The next file for the slideshow: any other one when shuffling, and
     // never a video when the settings leave them out.
     function advanceSlideshow() {
-        if (actionMenu.visible) return
+        if (root.blockingActionOpen) return
         const total = Session.count
         if (Settings.slideshowShuffle && total > 1) {
             const eligible = []
@@ -461,12 +499,8 @@ ApplicationWindow {
                 return
             }
         } else {
-            for (let attempt = 0; attempt < total; ++attempt) {
-                Session.step(1)
-                if (Settings.slideshowVideos || !Session.isVideo) {
-                    return
-                }
-            }
+            root.stepSlideshow(1)
+            return
         }
         root.setSlideshow(false)
         root.say("No pictures here for a slideshow")
@@ -492,8 +526,10 @@ ApplicationWindow {
         if (Session.path === "") {
             return
         }
-        confirm.path = Session.path
-        confirm.detail = Session.path
+        if (confirm.visible || permanentConfirm.visible || editorChooser.visible) return
+        confirm.path = Session.deletionPath
+        confirm.viewedPath = Session.path
+        confirm.detail = confirm.path
         confirm.open()
     }
 
@@ -1583,6 +1619,7 @@ ApplicationWindow {
         anchors.right: parent.right
         anchors.topMargin: 58
         anchors.rightMargin: 14
+        height: Math.min(implicitHeight, Math.max(0, parent.height - y - 16))
         visible: root.infoOpen
         fileName: Session.fileName
         folder: Session.folder
@@ -1616,22 +1653,6 @@ ApplicationWindow {
         modal: true
         dim: false
         readonly property var entries: root.menuEntries()
-        onVisibleChanged: {
-            if (visible) {
-                slideshowTimer.stop()
-            } else if (root.slideshowRunning && Session.isVideo && !Settings.slideshowVideos
-                       && root.loadedMediaPath === Session.path) {
-                root.advanceSlideshow()
-            } else if (root.slideshowRunning && Session.isVideo
-                       && root.loadedMediaPath === Session.path
-                       && (root.videoError !== "" || (root.player
-                           && root.player.mediaStatus === MediaPlayer.EndOfMedia))) {
-                // A clip may finish or fail while its menu holds the target.
-                slideshowTimer.restart()
-            } else {
-                root.armSlideshow()
-            }
-        }
         onClosed: keys.forceActiveFocus()
 
         background: Rectangle {
@@ -1716,17 +1737,19 @@ ApplicationWindow {
     EditorChooser {
         id: editorChooser
         objectName: "editorChooser"
+        onClosed: keys.forceActiveFocus()
     }
 
     ConfirmSheet {
         id: confirm
         objectName: "viewerConfirm"
         property string path: ""
+        property string viewedPath: ""
         title: "Move this item to Trash?"
         confirmLabel: "Move to Trash"
         onAccepted: {
             if (confirm.path !== "" && Actions.moveToTrash(confirm.path)) {
-                Session.forget(confirm.path)
+                Session.forget(confirm.viewedPath)
                 root.say("Moved to Trash")
             }
             confirm.path = ""

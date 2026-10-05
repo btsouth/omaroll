@@ -479,6 +479,49 @@ private slots:
     QTRY_VERIFY(item(QStringLiteral("viewerKeys"))->hasActiveFocus());
   }
 
+  void slideshowTrashHoldsAVideoThroughEndOfMedia_data() {
+    QTest::addColumn<bool>("accept");
+    QTest::newRow("cancel") << false;
+    QTest::newRow("accept") << true;
+  }
+
+  void slideshowTrashHoldsAVideoThroughEndOfMedia() {
+    QFETCH(bool, accept);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString clip = dir.filePath(QStringLiteral("clip.mp4"));
+    const QString picture = dir.filePath(QStringLiteral("picture.jpg"));
+    QVERIFY(QFile::copy(media(QStringLiteral("clip.mp4")), clip));
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), picture));
+    const bool videos = m_settings->slideshowVideos(), shuffle = m_settings->slideshowShuffle();
+    const int interval = m_settings->slideshowIntervalSeconds();
+    const auto restore = qScopeGuard([&] {
+      m_settings->setSlideshowVideos(videos);
+      m_settings->setSlideshowShuffle(shuffle);
+      m_settings->setSlideshowIntervalSeconds(interval);
+    });
+    m_settings->setSlideshowVideos(true);
+    m_settings->setSlideshowShuffle(false);
+    m_settings->setSlideshowIntervalSeconds(2);
+    open({clip, picture});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY(player->duration() > 0);
+    QTest::keyClick(m_window, Qt::Key_F5);
+    QTest::keyClick(m_window, Qt::Key_Delete);
+    QQuickItem* confirm = item(QStringLiteral("viewerConfirm"));
+    QTRY_VERIFY(confirm->isVisible());
+    // Let the decoder reach EOF while the confirmation owns its target.
+    player->setPosition(std::max<qint64>(0, player->duration() - 100));
+    QTRY_COMPARE(player->mediaStatus(), QMediaPlayer::EndOfMedia);
+    QCOMPARE(m_session->path(), clip);
+    QVERIFY(confirm->isVisible());
+    QTest::keyClick(m_window, accept ? Qt::Key_Return : Qt::Key_Escape);
+    QTRY_COMPARE_WITH_TIMEOUT(m_session->path(), picture, 4000);
+    QCOMPARE(QFile::exists(clip), !accept);
+    QVERIFY(prop("slideshowRunning").toBool());
+  }
+
   void manualSlideshowNavigationSkipsExcludedVideos_data() {
     QTest::addColumn<bool>("shuffle");
     QTest::newRow("ordered") << false;
@@ -515,7 +558,26 @@ private slots:
     QVERIFY(prop("slideshowRunning").toBool());
   }
 
+  void detailsStayInsideAShortWindowAndScrollToTheFolder_data() {
+    QTest::addColumn<QString>("palette");
+    QTest::newRow("dark") << QStringLiteral("dark");
+    QTest::newRow("light") << QStringLiteral("light");
+  }
+
   void detailsStayInsideAShortWindowAndScrollToTheFolder() {
+    QFETCH(QString, palette);
+    QTemporaryDir themeDir;
+    QVERIFY(themeDir.isValid());
+    const QString themeRoot = themeDir.filePath(QStringLiteral("omarchy/current/theme"));
+    QVERIFY(QDir().mkpath(themeRoot));
+    const QString fixture = QFINDTESTDATA("fixtures/themes") + QLatin1Char('/') + palette;
+    for (const auto& name : {QStringLiteral("colors.toml"), QStringLiteral("shell.toml")})
+      QVERIFY(QFile::copy(fixture + QStringLiteral("/theme/") + name, themeRoot + QLatin1Char('/') + name));
+    OmarchyTheme theme(themeDir.path(), themeDir.path());
+    m_engine->rootContext()->setContextProperty(QStringLiteral("Theme"), &theme);
+    const auto restoreTheme = qScopeGuard([&] {
+      m_engine->rootContext()->setContextProperty(QStringLiteral("Theme"), m_theme);
+    });
     const QSize before = m_window->size();
     const auto restore = qScopeGuard([&] { m_window->resize(before); });
     open({media(QStringLiteral("Shot 1.jpg"))});
