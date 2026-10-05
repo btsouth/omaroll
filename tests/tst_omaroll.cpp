@@ -1885,6 +1885,38 @@ private slots:
     QVERIFY(!settings.organizationError().isEmpty());
   }
 
+  void damagedSettingsArePreservedWhenOrganizationCannotSave() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                       dir.filePath(QStringLiteral("profile")));
+    const auto restoreProfile = qScopeGuard([this] {
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                         m_scratch.filePath(QStringLiteral("config")));
+    });
+    QString ini;
+    {
+      QSettings stored(QSettings::IniFormat, QSettings::UserScope,
+                       QStringLiteral("omaroll"), QStringLiteral("omaroll"));
+      ini = stored.fileName();
+    }
+    QVERIFY(QDir().mkpath(QFileInfo(ini).absolutePath()));
+    QFile file(ini);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    const QByteArray damaged("[library]\nfavorites=/remember.bmp\n[truncated\n");
+    QCOMPARE(file.write(damaged), qint64(damaged.size()));
+    file.close();
+    {
+      AppSettings settings;
+      QVERIFY(!settings.organizationError().isEmpty());
+      QVERIFY(!settings.createAlbum(QStringLiteral("Cannot overwrite")));
+      settings.setFavorite({QStringLiteral("/new.bmp")}, true);
+      QVERIFY(!settings.organizationError().isEmpty());
+    }
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), damaged);
+  }
+
   void restoreAndRelocationInvalidateMarksUndo() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

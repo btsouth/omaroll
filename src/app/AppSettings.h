@@ -283,6 +283,7 @@ private:
   void pushMarksUndo();
   void clearMarksUndo();
   bool syncOrganization();
+  void setValue(const char* key, const QVariant& value);
   // Records (or forgets) the on-disk identity behind a path's marks, so the
   // mark can be found again after an external move.
   void refreshMarkIdentity(const QString& path);

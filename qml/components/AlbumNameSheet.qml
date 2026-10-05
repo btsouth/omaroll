@@ -46,7 +46,7 @@ Item {
             const renamed = mode === "tag" ? Settings.renameTag(renameFrom, name)
                                            : Settings.renameAlbum(renameFrom, name)
             if (!renamed) {
-                errorMessage = "That name is taken or invalid."
+                errorMessage = Settings.organizationError || "That name is taken or invalid."
                 return
             }
             root.saved(name, 0, mode + "Rename")
@@ -57,8 +57,8 @@ Item {
                         : mode === "smart" ? Settings.saveSmartCollection(name, savedView)
                                            : Settings.createAlbum(name)
         if (!created) {
-            errorMessage = mode === "smart" ? "Use a name without a slash."
-                                             : "Use a unique name without a slash."
+            errorMessage = Settings.organizationError || (mode === "smart"
+                           ? "Use a name without a slash." : "Use a unique name without a slash.")
             return
         }
         if (mode === "album" && paths.length > 0) {
