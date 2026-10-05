@@ -3917,6 +3917,23 @@ private slots:
     QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
     QTest::qWait(200);
     QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    auto* mpris = qobject_cast<MprisService*>(
+        m_engine->rootContext()->contextProperty(QStringLiteral("Mpris")).value<QObject*>());
+    QVERIFY(mpris);
+    mpris->play();
+    QTRY_VERIFY(player->position() >= 6500);
+    QVERIFY(!item("detail")->property("resumeAvailable").toBool());
+    QVERIFY(!item("detail")->property("resumePending").toBool());
+    mpris->pause();
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    item("detail")->setProperty("resumeAvailable", true);
+    item("detail")->setProperty("resumePending", true);
+    mpris->setPosition(mpris->metadata().value(QStringLiteral("mpris:trackid")).value<QDBusObjectPath>(),
+                       1000000);
+    QVERIFY(!item("detail")->property("resumeAvailable").toBool());
+    QVERIFY(!item("detail")->property("resumePending").toBool());
+    QTRY_COMPARE(player->position(), 1000);
+    item("detail")->setProperty("resumeAvailable", true);
     click(item("resumeButton"));
     QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
     player->setPosition(0);

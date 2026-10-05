@@ -35,6 +35,7 @@ Item {
     property string dayLabel: ""
     property string timeLabel: ""
     property string sizeLabel: ""
+    property bool audible: true
     property bool isVideo: false
     // Keep playback state after first use, but do not initialize the multimedia
     // backend just to browse pictures. Loader creation is synchronous.
@@ -123,9 +124,12 @@ Item {
     // A timing nudge for sidecar subtitles, which are the ones omaroll draws
     // itself. Positive shows the cue later.
     property int subtitleOffsetMs: 0
-    readonly property string externalCueText: externalSubtitle !== "" && player
+    readonly property string externalCueText: {
+        void Subtitles.revision
+        return externalSubtitle !== "" && player
         ? Subtitles.textAt(externalSubtitle, Math.round(player.position) - root.subtitleOffsetMs)
         : ""
+    }
     readonly property string subtitleOverlayText: externalSubtitle !== ""
         ? externalCueText
         : (output.videoSink ? output.videoSink.subtitleText : "")
@@ -428,6 +432,12 @@ Item {
         Qt.callLater(stillViewport.centerContent)
     }
 
+    function playVideo() {
+        if (!root.player) return
+        if (root.resumeAvailable) root.resumeVideo()
+        else root.player.play()
+    }
+
     function toggleVideoPlayback() {
         if (player.playbackState === MediaPlayer.PlayingState) {
             player.pause()
@@ -437,9 +447,16 @@ Item {
         }
     }
 
-    function seekVideo(milliseconds) {
+    function seekTo(milliseconds) {
+        if (!root.player) return
         root.resumeAvailable = false
-        player.position = Math.max(0, Math.min(player.duration, player.position + milliseconds))
+        root.resumePending = false
+        const maximum = player.duration > 0 ? player.duration - 1 : Math.max(0, milliseconds)
+        player.position = Math.max(0, Math.min(maximum, milliseconds))
+    }
+
+    function seekVideo(milliseconds) {
+        root.seekTo(player.position + milliseconds)
     }
 
     function findInPdf() {
@@ -483,8 +500,7 @@ Item {
             return
         }
         const end = player.duration > 0 ? player.duration - 1 : root.resumePosition
-        resumeAvailable = false
-        player.position = Math.max(0, Math.min(root.resumePosition, end))
+        root.seekTo(Math.max(0, Math.min(root.resumePosition, end)))
         player.play()
     }
 
@@ -492,8 +508,7 @@ Item {
         if (!player) {
             return
         }
-        resumeAvailable = false
-        player.position = 0
+        root.seekTo(0)
         Settings.clearVideoPosition(root.path)
         player.play()
     }
@@ -1333,17 +1348,22 @@ Item {
                     MediaPlayer {
                         id: mediaPlayer
                         objectName: "videoPlayer"
+                        property string resumeIdentity: ""
                         source: root.visible && root.isVideo && root.path !== ""
                                 ? Library.fileUrl(root.path) : ""
                         videoOutput: videoSurface.item
                         audioOutput: AudioOutput {
                             volume: Settings.videoVolume
-                            muted: Settings.videoMuted
+                            muted: Settings.videoMuted || !root.audible
                         }
                         loops: 1
                         onSourceChanged: {
                             if (source.toString() !== "") {
+                                mediaPlayer.resumeIdentity = Settings.videoIdentity(root.path)
+                                Mpris.track(mediaPlayer, root)
                                 play()
+                            } else {
+                                Mpris.release(mediaPlayer)
                             }
                         }
                         // A clip the ffmpeg backend cannot decode must say so rather
@@ -1369,13 +1389,9 @@ Item {
                                 pause()
                                 return
                             }
-                            // Media keys follow the video played last.
-                            if (playbackState === MediaPlayer.PlayingState) {
-                                Mpris.track(mediaPlayer)
-                            }
                             if (playbackState === MediaPlayer.PausedState && duration > 0
                                     && position >= 5000 && position < duration - 3000) {
-                                Settings.setVideoPosition(root.path, Math.round(position))
+                                Settings.setVideoPosition(root.path, Math.round(position), mediaPlayer.resumeIdentity)
                             }
                         }
                         onMediaStatusChanged: {
@@ -1421,7 +1437,7 @@ Item {
                 onTriggered: {
                     if (player.duration > 0 && player.position >= 5000
                             && player.position < player.duration - 3000) {
-                        Settings.setVideoPosition(root.path, Math.round(player.position))
+                        Settings.setVideoPosition(root.path, Math.round(player.position), player.resumeIdentity)
                     }
                 }
             }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QHash>
+#include <QFileSystemWatcher>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -8,11 +9,12 @@
 // Sidecar subtitles: the .srt or .vtt sitting next to a video, which Qt
 // Multimedia will not load by itself.
 //
-// The file is parsed once into sorted cues and cached against its size and
-// mtime. textAt() is a binary search, so it is cheap enough to call on every
-// playback tick from a QML binding. Nothing here writes or moves a file.
+// Files are parsed on a worker and invalidated by filesystem watches. An
+// interval index prunes expired cues on each playback tick, including overlaps.
+// Nothing here writes or moves a file.
 class SubtitleIndex final : public QObject {
   Q_OBJECT
+  Q_PROPERTY(int revision READ revision NOTIFY changed)
 
 public:
   struct Cue {
@@ -40,15 +42,27 @@ public:
   // Number of parsed cues, for tests and diagnostics.
   Q_INVOKABLE [[nodiscard]] int cueCount(const QString& subtitlePath);
 
+  [[nodiscard]] int revision() const { return m_revision; }
+
+signals:
+  void changed();
+
 private:
   struct Parsed {
-    qint64 modified = -1;
-    qint64 bytes = -1;
     QList<Cue> cues;
-    bool valid = false;
+    QList<qint64> maximumEnds;
+    int leaves = 1;
   };
 
-  [[nodiscard]] const QList<Cue>& cuesFor(const QString& path);
+  [[nodiscard]] const Parsed& cuesFor(const QString& path);
+  static Parsed parse(const QString& path);
+  static void collect(const Parsed& parsed, int node, int begin, int end,
+                      qint64 position, QStringList& active);
+  void invalidate(const QString& path);
 
   QHash<QString, Parsed> m_cache;
+  QHash<QString, quint64> m_pending;
+  QFileSystemWatcher m_watcher;
+  quint64 m_generation = 0;
+  int m_revision = 0;
 };

@@ -113,9 +113,12 @@ ApplicationWindow {
     property var subtitleFiles: []
     property string externalSubtitle: ""
     property int subtitleChoice: 0
-    readonly property string subtitleText: externalSubtitle !== "" && player
+    readonly property string subtitleText: {
+        void Subtitles.revision
+        return externalSubtitle !== "" && player
         ? Subtitles.textAt(externalSubtitle, Math.round(player.position))
         : (videoOutput.videoSink ? videoOutput.videoSink.subtitleText : "")
+    }
 
     readonly property bool favorite: { void root.marksVersion; return Settings.isFavorite(Session.path) }
     readonly property int rating: { void root.marksVersion; return Settings.rating(Session.path) }
@@ -322,6 +325,12 @@ ApplicationWindow {
         }
     }
     onStillReadyChanged: root.armSlideshow()
+
+    function playVideo() {
+        if (!root.player) return
+        if (root.resumeAvailable) root.resumeVideo()
+        else root.player.play()
+    }
 
     function togglePlayback() {
         if (Session.isVideo && root.player) {
@@ -759,7 +768,7 @@ ApplicationWindow {
         playerStart.stop()
         const generation = root.playerStartGeneration
         Qt.callLater(function () {
-            if (generation === root.playerStartGeneration) root.startPlayer()
+            if (root && generation === root.playerStartGeneration) root.startPlayer()
         })
     }
     function startPlayer() {
@@ -1036,6 +1045,7 @@ ApplicationWindow {
                 MediaPlayer {
                     id: mediaPlayer
                     objectName: "viewerPlayer"
+                    property string resumeIdentity: ""
                     source: root.visible && Session.isVideo && !root.reloadingVideo ? Session.url : ""
                     videoOutput: videoSurface.item
                     audioOutput: AudioOutput {
@@ -1044,7 +1054,13 @@ ApplicationWindow {
                     }
                     onSourceChanged: {
                         root.videoError = ""
-                        if (source.toString() !== "") play()
+                        if (source.toString() !== "") {
+                            mediaPlayer.resumeIdentity = Settings.videoIdentity(Session.path)
+                            Mpris.track(mediaPlayer, root)
+                            play()
+                        } else {
+                            Mpris.release(mediaPlayer)
+                        }
                     }
                     // A clip the backend cannot decode says so rather than
                     // sitting behind a dead play button. A slideshow moves on.
@@ -1062,15 +1078,15 @@ ApplicationWindow {
                         }
                     }
                     // Remember the spot on pause; the timer covers long
-                    // uninterrupted playback. Media keys follow the video
-                    // played last.
+                    // uninterrupted playback.
                     onPlaybackStateChanged: {
-                        if (playbackState === MediaPlayer.PlayingState) {
-                            Mpris.track(mediaPlayer)
+                        if (playbackState === MediaPlayer.PlayingState && root.resumeAvailable) {
+                            pause()
+                            return
                         }
                         if (playbackState === MediaPlayer.PausedState && duration > 0
                                 && position >= 5000 && position < duration - 3000) {
-                            Settings.setVideoPosition(Session.path, Math.round(position))
+                            Settings.setVideoPosition(Session.path, Math.round(position), mediaPlayer.resumeIdentity)
                         }
                     }
                     onMediaStatusChanged: {
@@ -1110,7 +1126,7 @@ ApplicationWindow {
                 const player = root.player
                 if (player.duration > 0 && player.position >= 5000
                         && player.position < player.duration - 3000) {
-                    Settings.setVideoPosition(Session.path, Math.round(player.position))
+                    Settings.setVideoPosition(Session.path, Math.round(player.position), player.resumeIdentity)
                 }
             }
         }

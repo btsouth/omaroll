@@ -1,7 +1,7 @@
 import QtQuick
 import QtMultimedia
 
-// The viewer's one row of video controls: play, time, scrub, and sound, with
+// The viewer's compact video controls: play, time, scrub, and sound, with
 // captions and speed only when they mean something. Everything else a player
 // could offer lives on the keyboard or in the viewer's menu.
 Rectangle {
@@ -24,7 +24,14 @@ Rectangle {
     readonly property real position: player ? player.position : 0
     readonly property bool playing: player && player.playbackState === MediaPlayer.PlayingState
     readonly property real rate: player ? player.playbackRate : 1
+    readonly property real minimumSeekWidth: 64
     readonly property bool wide: width >= 560
+    readonly property bool speedWanted: Math.abs(rate - 1) > 0.01 || wide
+    readonly property real seekBudget: width - 6 - playButton.width - 8 - elapsed.implicitWidth
+                                      - 24 - 10 - (stacked ? 0 : extras.implicitWidth + 6)
+    readonly property bool stacked: width - 6 - playButton.width - 8 - elapsed.implicitWidth
+                                   - 24 - total.implicitWidth - 10 - 6 - extras.implicitWidth
+                                   < minimumSeekWidth
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
@@ -51,7 +58,7 @@ Rectangle {
         root.player.playbackRate = 1
     }
 
-    implicitHeight: 46
+    implicitHeight: 46 + (stacked ? 38 : 0)
     radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, height / 2) : 4
     color: root.shade(Theme.background, 0.84)
     border.width: 1
@@ -72,6 +79,7 @@ Rectangle {
         anchors.left: parent.left
         anchors.leftMargin: 6
         anchors.verticalCenter: parent.verticalCenter
+        anchors.verticalCenterOffset: root.stacked ? 19 : 0
         icon: root.playing ? "pause" : "play"
         iconSize: 18
         toolTip: root.playing ? "Pause" : "Play"
@@ -84,6 +92,7 @@ Rectangle {
         anchors.left: playButton.right
         anchors.leftMargin: 8
         anchors.verticalCenter: parent.verticalCenter
+        anchors.verticalCenterOffset: root.stacked ? 19 : 0
         text: root.clock(root.position)
         font.family: Theme.fontFamily
         font.pixelSize: 11
@@ -98,6 +107,7 @@ Rectangle {
         anchors.leftMargin: 12
         anchors.rightMargin: 12
         anchors.verticalCenter: parent.verticalCenter
+        anchors.verticalCenterOffset: root.stacked ? 19 : 0
         height: 24
 
         readonly property real fraction: root.duration > 0
@@ -105,7 +115,7 @@ Rectangle {
         readonly property bool lifted: scrubMouse.containsMouse || scrubMouse.pressed
 
         function seekTo(x) {
-            if (root.player && root.duration > 0) {
+            if (root.player && root.duration > 0 && width > 0) {
                 root.seekRequested(Math.max(0, Math.min(1, x / width)) * root.duration)
             }
         }
@@ -180,9 +190,12 @@ Rectangle {
 
     Text {
         id: total
-        anchors.right: extras.left
+        visible: root.seekBudget - implicitWidth >= root.minimumSeekWidth
+        width: visible ? implicitWidth : 0
+        anchors.right: root.stacked ? parent.right : extras.left
         anchors.rightMargin: 10
         anchors.verticalCenter: parent.verticalCenter
+        anchors.verticalCenterOffset: root.stacked ? 19 : 0
         text: root.clock(root.duration)
         font.family: Theme.fontFamily
         font.pixelSize: 11
@@ -194,9 +207,11 @@ Rectangle {
         anchors.right: parent.right
         anchors.rightMargin: 6
         anchors.verticalCenter: parent.verticalCenter
+        anchors.verticalCenterOffset: root.stacked ? -19 : 0
         spacing: 2
 
         IconButton {
+            id: captionsButton
             objectName: "viewerCaptionsButton"
             visible: root.hasCaptions
             anchors.verticalCenter: parent.verticalCenter
@@ -209,8 +224,9 @@ Rectangle {
 
         // Shown once the speed is not normal, or when there is room to offer it.
         Rectangle {
+            id: speedButton
             objectName: "viewerSpeedButton"
-            visible: Math.abs(root.rate - 1) > 0.01 || root.wide
+            visible: root.speedWanted
             anchors.verticalCenter: parent.verticalCenter
             width: speedLabel.implicitWidth + 16
             height: 30
@@ -288,6 +304,7 @@ Rectangle {
         }
 
         IconButton {
+            id: fullScreenButton
             objectName: "viewerTransportFullScreen"
             anchors.verticalCenter: parent.verticalCenter
             icon: root.fullScreen ? "fullscreen-exit" : "fullscreen"

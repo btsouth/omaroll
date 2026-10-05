@@ -1534,6 +1534,130 @@ private slots:
     QTRY_VERIFY(player->position() > 4000);
   }
 
+  void narrowTransportKeepsSeekingWithCaptionsAndChangedSpeed_data() {
+    QTest::addColumn<QString>("palette");
+    QTest::addColumn<int>("width");
+    QTest::newRow("dark-320") << QStringLiteral("dark") << 320;
+    QTest::newRow("dark-400") << QStringLiteral("dark") << 400;
+    QTest::newRow("light-320") << QStringLiteral("light") << 320;
+    QTest::newRow("light-400") << QStringLiteral("light") << 400;
+  }
+
+  void narrowTransportKeepsSeekingWithCaptionsAndChangedSpeed() {
+    QFETCH(QString, palette);
+    QFETCH(int, width);
+    QTemporaryDir themeHome;
+    QVERIFY(themeHome.isValid());
+    QVERIFY(QDir().mkpath(themeHome.filePath(QStringLiteral("omarchy"))));
+    const QString fixture = QFINDTESTDATA(qPrintable(QStringLiteral("fixtures/themes/%1").arg(palette)));
+    QVERIFY(QFile::link(fixture, themeHome.filePath(QStringLiteral("omarchy/current"))));
+    OmarchyTheme theme(themeHome.path(), themeHome.path());
+    m_engine->rootContext()->setContextProperty(QStringLiteral("Theme"), &theme);
+    const auto restoreTheme = qScopeGuard([this] {
+      m_engine->rootContext()->setContextProperty(QStringLiteral("Theme"), m_theme);
+    });
+    ViewerWindows viewers(*m_engine);
+    viewers.setPlacementQuery([] { return HyprlandPlacement::Plan{}; });
+    QQuickWindow* window = viewers.open({media(QStringLiteral("clip.mp4"))});
+    QVERIFY(window);
+    const auto control = [window](const QString& name) {
+      return find(window->contentItem(), [&name](QQuickItem* candidate) {
+        return candidate->objectName() == name;
+      });
+    };
+    QQuickItem* transport = control(QStringLiteral("viewerTransport"));
+    QQuickItem* scrub = control(QStringLiteral("viewerScrub"));
+    QVERIFY(transport && scrub);
+    window->resize(width, 240);
+    QTRY_COMPARE(transport->width(), width - 32);
+    QQmlComponent component(m_engine);
+    component.setData(R"(
+      import QtQuick
+      QtObject {
+        property real duration: 7200000
+        property real position: 3660000
+        property real playbackRate: 1.5
+        property int playbackState: 2
+      }
+    )", QUrl());
+    std::unique_ptr<QObject> player(component.create());
+    QVERIFY2(player, qPrintable(component.errorString()));
+    QVERIFY(QQmlProperty::write(transport, QStringLiteral("player"), QVariant::fromValue(player.get())));
+    QVERIFY(QQmlProperty::write(transport, QStringLiteral("hasCaptions"), true));
+    QVERIFY(QQmlProperty::write(transport, QStringLiteral("captionsOn"), true));
+    window->setProperty("chromePinned", true);
+    for (const int pixels : {11, 14}) {
+      for (const QString& clock : {QStringLiteral("1:01:00"), QStringLiteral("2:00:00")}) {
+        QQuickItem* label = find(transport, [&clock](QQuickItem* candidate) {
+          return candidate->property("text").toString() == clock;
+        });
+        QVERIFY(label);
+        QVERIFY(QQmlProperty::write(label, QStringLiteral("font.pixelSize"), pixels));
+      }
+      for (const double rate : {1.0, 1.5}) {
+        player->setProperty("playbackRate", rate);
+        QTRY_VERIFY(scrub->width() >= 64);
+        QTRY_VERIFY(control(QStringLiteral("viewerCaptionsButton"))->isVisible());
+        if (rate != 1.0) {
+          QTRY_VERIFY(control(QStringLiteral("viewerSpeedButton"))->isVisible());
+        }
+        QTRY_VERIFY(scrub->mapToScene(QPointF()).x() >= 0);
+        QTRY_VERIFY(scrub->mapToScene(QPointF(scrub->width(), 0)).x() <= width);
+        if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
+          QSignalSpy frames(window, &QQuickWindow::frameSwapped);
+          window->requestUpdate();
+          QTRY_VERIFY(frames.size() >= 2);
+          QTRY_VERIFY(!window->grabWindow().isNull());
+          QVERIFY(window->grabWindow().save(QCoreApplication::applicationDirPath()
+              + QStringLiteral("/narrow-transport-%1-%2-%3-%4.png")
+                    .arg(palette).arg(width).arg(rate).arg(pixels)));
+        }
+      }
+    }
+    window->close();
+  }
+
+  void remoteCommandsRespectResumeIntent() {
+    if (!QDBusConnection(QStringLiteral("omaroll-test-client")).isConnected())
+      QSKIP("dbus-daemon is not available");
+    const QString path = m_scratch.filePath(QStringLiteral("mpris-resume.mkv"));
+    QVERIFY(QFile::exists(path) || QFile::copy(QFINDTESTDATA("fixtures/viewer/tracks.mkv"), path));
+    m_settings->setVideoPosition(path, 7000);
+    open({path});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY(prop("resumeAvailable").toBool());
+    QTRY_VERIFY(m_mpris->isPublished());
+    const QString remote = QStringLiteral("org.mpris.MediaPlayer2.Player");
+    QCOMPARE(mprisCall(remote, QStringLiteral("Play")).type(), QDBusMessage::ReplyMessage);
+    QVERIFY(!prop("resumeAvailable").toBool());
+    QVERIFY(!prop("resumePending").toBool());
+    QTRY_VERIFY(player->position() >= 6500);
+    QCOMPARE(mprisCall(remote, QStringLiteral("Pause")).type(), QDBusMessage::ReplyMessage);
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    m_window->setProperty("resumeAvailable", true);
+    m_window->setProperty("resumePending", true);
+    QCOMPARE(mprisCall(remote, QStringLiteral("Seek"), {qlonglong(-1000000)}).type(),
+             QDBusMessage::ReplyMessage);
+    QVERIFY(!prop("resumeAvailable").toBool());
+    QVERIFY(!prop("resumePending").toBool());
+    const QVariantMap metadata = m_mpris->metadata();
+    m_window->setProperty("resumeAvailable", true);
+    QCOMPARE(mprisCall(remote, QStringLiteral("SetPosition"),
+                       {metadata.value(QStringLiteral("mpris:trackid")), qlonglong(1000000)}).type(),
+             QDBusMessage::ReplyMessage);
+    QVERIFY(!prop("resumeAvailable").toBool());
+    QTRY_COMPARE(player->position(), 1000);
+    QCOMPARE(mprisCall(remote, QStringLiteral("PlayPause")).type(), QDBusMessage::ReplyMessage);
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+    m_window->setProperty("resumeAvailable", true);
+    m_window->setProperty("resumePending", true);
+    QCOMPARE(mprisCall(remote, QStringLiteral("Stop")).type(), QDBusMessage::ReplyMessage);
+    QVERIFY(!prop("resumeAvailable").toBool());
+    QVERIFY(!prop("resumePending").toBool());
+    m_settings->clearVideoPosition(path);
+  }
+
   // The checked-in test pattern: saturated bars, two audio tracks and a
   // subtitle track. Under OpenGL the bars must reach the screen, not just a
   // decoded frame in memory.
@@ -2383,12 +2507,24 @@ private slots:
     QQuickWindow* first = viewers.open({clip});
     QQuickWindow* second = viewers.open({clip, picture});
     QVERIFY(first && second && first != second);
-    QVERIFY(second->property("audible").toBool());
-    QVERIFY(!first->property("audible").toBool());
+    QMediaPlayer* a = nullptr;
+    QMediaPlayer* b = nullptr;
+    QTRY_VERIFY((a = first->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY((b = second->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY(second->property("audible").toBool());
+    QTRY_VERIFY(!first->property("audible").toBool());
+    QTRY_VERIFY(a->duration() > 0 && b->duration() > 0);
+    a->pause();
+    b->pause();
 
     QCOMPARE(viewers.open({clip}), first);
     QVERIFY(first->property("audible").toBool());
     QVERIFY(!second->property("audible").toBool());
+    QCOMPARE(m_mpris->position(), qlonglong(a->position()) * 1000);
+    const qint64 silentPosition = b->position();
+    m_mpris->seek(1000000);
+    QTRY_VERIFY(a->position() >= 900);
+    QCOMPARE(b->position(), silentPosition);
 
     QQuickWindow* still = viewers.open({media(QStringLiteral("shot 2.jpg"))});
     QCOMPARE(viewers.frontmost(), still);
@@ -2399,8 +2535,33 @@ private slots:
     QTRY_COMPARE(viewers.sessionOf(first)->count(), 4);
     QVERIFY(viewers.sessionOf(first)->step(1));
     QVERIFY(!viewers.sessionOf(first)->isVideo());
-    QVERIFY(second->property("audible").toBool());
+    QTRY_VERIFY(second->property("audible").toBool());
+    QCOMPARE(m_mpris->position(), qlonglong(b->position()) * 1000);
+    m_mpris->play();
+    QTRY_COMPARE(b->playbackState(), QMediaPlayer::PlayingState);
+    QQuickWindow* third = viewers.open({clip, media(QStringLiteral("shot 2.jpg"))});
+    QVERIFY(third && third != second);
+    QTRY_VERIFY(!second->property("audible").toBool());
+    third->close();
+    QTRY_VERIFY(second->property("audible").toBool());
+    QCOMPARE(m_mpris->playbackStatus(), QStringLiteral("Playing"));
     QVERIFY(!m_settings->videoMuted());
+
+    // The library uses the same ownership policy as the quick viewers.
+    QMediaPlayer libraryPlayer;
+    QObject libraryController;
+    libraryController.setProperty("audible", false);
+    libraryPlayer.setSource(QUrl::fromLocalFile(clip));
+    m_mpris->track(&libraryPlayer, &libraryController);
+    QVERIFY(libraryController.property("audible").toBool());
+    QVERIFY(!second->property("audible").toBool());
+    QCOMPARE(viewers.open({clip, picture}), second);
+    QVERIFY(second->property("audible").toBool());
+    QVERIFY(!libraryController.property("audible").toBool());
+    m_mpris->track(&libraryPlayer, &libraryController);
+    m_mpris->release(&libraryPlayer);
+    QVERIFY(second->property("audible").toBool());
+    QCOMPARE(m_mpris->playbackStatus(), QStringLiteral("Playing"));
 
     for (QQuickWindow* window : viewers.visibleWindows()) {
       window->close();

@@ -5,8 +5,10 @@
 #include "subtitles/SubtitleIndex.h"
 #include "viewer/HyprlandPlacement.h"
 #include "viewer/ViewerSession.h"
+#include "viewer/MprisService.h"
 
 #include <QGuiApplication>
+#include <QMediaPlayer>
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
@@ -223,6 +225,14 @@ void ViewerWindows::show(Viewer& viewer, const QStringList& files, bool tiled,
 void ViewerWindows::activated(Viewer& viewer) {
   m_recent.removeAll(&viewer);
   m_recent.append(&viewer);
+  if (viewer.session.isVideo()) {
+    auto* mpris = qobject_cast<MprisService*>(
+        m_engine.rootContext()->contextProperty(QStringLiteral("Mpris")).value<QObject*>());
+    if (mpris) {
+      mpris->track(viewer.window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer")),
+                   viewer.window);
+    }
+  }
   updateFrontmost();
 }
 
@@ -248,16 +258,7 @@ void ViewerWindows::hidden() {
 
 void ViewerWindows::updateFrontmost() {
   const QQuickWindow* front = frontmost();
-  // The sound stays with the video used last, even while a picture in
-  // another viewer has the focus.
-  const Viewer* heard = nullptr;
-  for (auto it = m_recent.crbegin(); it != m_recent.crend() && !heard; ++it) {
-    if ((*it)->window->isVisible() && (*it)->session.isVideo()) {
-      heard = *it;
-    }
-  }
   for (const auto& viewer : m_viewers) {
     viewer->window->setProperty("frontmost", viewer->window == front);
-    viewer->window->setProperty("audible", !heard || viewer.get() == heard);
   }
 }
