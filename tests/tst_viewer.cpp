@@ -38,7 +38,6 @@
 #include <QDataStream>
 #include <QDir>
 #include <QFile>
-#include <QFont>
 #include <QGuiApplication>
 #include <QImageReader>
 #include <QJSValue>
@@ -1224,9 +1223,9 @@ private slots:
     )", QUrl());
     std::unique_ptr<QObject> player(component.create());
     QVERIFY2(player, qPrintable(component.errorString()));
-    transport->setProperty("player", QVariant::fromValue(player.get()));
-    transport->setProperty("hasCaptions", true);
-    transport->setProperty("captionsOn", true);
+    QVERIFY(QQmlProperty::write(transport, QStringLiteral("player"), QVariant::fromValue(player.get())));
+    QVERIFY(QQmlProperty::write(transport, QStringLiteral("hasCaptions"), true));
+    QVERIFY(QQmlProperty::write(transport, QStringLiteral("captionsOn"), true));
     window->setProperty("chromePinned", true);
     for (const int pixels : {11, 14}) {
       for (const QString& clock : {QStringLiteral("1:01:00"), QStringLiteral("2:00:00")}) {
@@ -1234,9 +1233,7 @@ private slots:
           return candidate->property("text").toString() == clock;
         });
         QVERIFY(label);
-        QFont font = label->property("font").value<QFont>();
-        font.setPixelSize(pixels);
-        label->setProperty("font", font);
+        QVERIFY(QQmlProperty::write(label, QStringLiteral("font.pixelSize"), pixels));
       }
       for (const double rate : {1.0, 1.5}) {
         player->setProperty("playbackRate", rate);
