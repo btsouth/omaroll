@@ -2273,9 +2273,10 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_I);
     QCOMPARE(item(QStringLiteral("viewerInfoPanel"))->property("filePath").toString(), alias);
     QCOMPARE(item(QStringLiteral("viewerInfoPanel"))->property("resolvedPath").toString(), target);
-    QVERIFY(QMetaObject::invokeMethod(item(QStringLiteral("viewerInfoCopyName")), "click"));
+    QVERIFY(QQmlProperty(item(QStringLiteral("viewerInfoPanel")), QStringLiteral("lines")).write(QVariantList{}));
+    click(item(QStringLiteral("viewerInfoCopyName")));
     QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("opened ü name.png"));
-    QVERIFY(QMetaObject::invokeMethod(item(QStringLiteral("viewerInfoCopyPath")), "click"));
+    click(item(QStringLiteral("viewerInfoCopyPath")));
     QCOMPARE(QGuiApplication::clipboard()->text(), alias);
     QTest::keyClick(m_window, Qt::Key_I);
     QTest::mouseClick(m_window, Qt::RightButton, Qt::NoModifier, QPoint(150, 120));
@@ -2416,7 +2417,10 @@ private slots:
     QTRY_VERIFY(flick->property("contentHeight").toReal() > flick->height());
     const QString path = m_session->path();
     QTest::keyClick(m_window, Qt::Key_PageDown);
+    QTRY_VERIFY(flick->property("contentY").toReal() > 0);
     QCOMPARE(m_session->path(), path);
+    QTest::keyClick(m_window, Qt::Key_Home);
+    QTRY_COMPARE(flick->property("contentY").toReal(), 0.0);
     QTest::keyClick(m_window, Qt::Key_Question, Qt::ShiftModifier);
     QTRY_VERIFY(!help->property("visible").toBool());
     QTRY_VERIFY(item(QStringLiteral("viewerKeys"))->hasActiveFocus());

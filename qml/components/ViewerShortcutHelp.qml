@@ -75,7 +75,22 @@ Popup {
             if (event.key === Qt.Key_Question || event.key === Qt.Key_F1 || event.key === Qt.Key_Escape) {
                 root.close()
                 event.accepted = true
+                return
             }
+            const flick = scroll.contentItem
+            const maximum = Math.max(0, flick.contentHeight - flick.height)
+            let target = flick.contentY
+            switch (event.key) {
+            case Qt.Key_Down: target += 80; break
+            case Qt.Key_Up: target -= 80; break
+            case Qt.Key_PageDown: target += flick.height * 0.8; break
+            case Qt.Key_PageUp: target -= flick.height * 0.8; break
+            case Qt.Key_Home: target = 0; break
+            case Qt.Key_End: target = maximum; break
+            default: return
+            }
+            flick.contentY = Math.max(0, Math.min(maximum, target))
+            event.accepted = true
         }
         Text {
             id: heading
