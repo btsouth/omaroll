@@ -1244,8 +1244,10 @@ private slots:
           window->resize(width, 240);
           QTRY_COMPARE(transport->width(), width - 32);
           QTRY_VERIFY(scrub->width() >= 64);
-          QVERIFY(control(QStringLiteral("viewerCaptionsButton"))->isVisible());
-          if (rate != 1.0) QVERIFY(control(QStringLiteral("viewerSpeedButton"))->isVisible());
+          QTRY_VERIFY(control(QStringLiteral("viewerCaptionsButton"))->isVisible());
+          if (rate != 1.0) {
+            QTRY_VERIFY(control(QStringLiteral("viewerSpeedButton"))->isVisible());
+          }
           QTRY_VERIFY(scrub->mapToScene(QPointF()).x() >= 0);
           QTRY_VERIFY(scrub->mapToScene(QPointF(scrub->width(), 0)).x() <= width);
           if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
