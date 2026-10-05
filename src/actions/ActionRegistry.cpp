@@ -702,23 +702,39 @@ bool ActionRegistry::launch(const Definition& definition, const QStringList& arg
       return false;
     }
     m_probingOutputs.insert(output);
-    emit m_launcher->outputPending(output);
-    m_launcher->report(u"Converting %1"_s.arg(QFileInfo(arguments.first()).fileName()));
-    auto* watcher = new QFutureWatcher<QVariantMap>(this);
-    connect(watcher, &QFutureWatcher<QVariantMap>::finished, this, [this, watcher, output] {
-      const QVariantMap result = watcher->result();
-      watcher->deleteLater();
-      m_probingOutputs.remove(output);
-      const QString saved = result.value(u"output"_s).toString();
-      emit m_launcher->outputSettled(output, saved == output);
-      if (!saved.isEmpty()) {
-        if (saved != output) emit m_launcher->outputSettled(saved, true);
-        m_launcher->report(u"Saved %1"_s.arg(QFileInfo(saved).fileName()));
-        m_launcher->copyUris({saved});
-      } else emit m_launcher->failed(result.value(u"error"_s).toString());
+    auto* probe = new QFutureWatcher<bool>(this);
+    connect(probe, &QFutureWatcher<bool>::finished, this,
+            [this, probe, definition, arguments, output, format, edge] {
+      const bool native = probe->result();
+      probe->deleteLater();
+      // Only EXIF-oriented or non-sRGB pictures need the native writer;
+      // every other picture keeps the installed Omarchy conversion helper.
+      if (!native) {
+        m_probingOutputs.remove(output);
+        m_launcher->runTracked(definition.program, arguments, definition.packageHint, output);
+        return;
+      }
+      emit m_launcher->outputPending(output);
+      m_launcher->report(u"Making %1"_s.arg(QFileInfo(output).fileName()));
+      auto* watcher = new QFutureWatcher<QVariantMap>(this);
+      connect(watcher, &QFutureWatcher<QVariantMap>::finished, this, [this, watcher, output] {
+        const QVariantMap result = watcher->result();
+        watcher->deleteLater();
+        m_probingOutputs.remove(output);
+        const QString saved = result.value(u"output"_s).toString();
+        if (!saved.isEmpty()) {
+          m_launcher->report(u"Saved %1 beside the original"_s.arg(QFileInfo(saved).fileName()));
+          m_launcher->copyUris({saved});
+        } else emit m_launcher->failed(result.value(u"error"_s).toString());
+        emit m_launcher->outputSettled(output, saved == output);
+        if (!saved.isEmpty() && saved != output) emit m_launcher->outputSettled(saved, true);
+      });
+      watcher->setFuture(QtConcurrent::run([source = arguments.first(), output, format, edge] {
+        return ImageEditor::exportImage(source, output, format, edge);
+      }));
     });
-    watcher->setFuture(QtConcurrent::run([source = arguments.first(), output, format, edge] {
-      return ImageEditor::exportImage(source, output, format, edge);
+    probe->setFuture(QtConcurrent::run([source = arguments.first()] {
+      return ImageEditor::needsNativeExport(source);
     }));
     return true;
   }

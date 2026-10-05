@@ -1,7 +1,6 @@
 import QtQuick
 
-// Picture copies use the native oriented, color-profile-preserving writer.
-// Videos use omarchy-transcode with the same format and size choices.
+// Conversion uses omarchy-transcode unless picture metadata needs preserving.
 Item {
     id: root
 

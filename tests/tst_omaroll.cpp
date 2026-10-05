@@ -6388,6 +6388,78 @@ private slots:
     settings.deleteAlbum(album);
   }
 
+  void pictureExportRouting_data() {
+    QTest::addColumn<int>("orientation");
+    QTest::addColumn<QColorSpace>("space");
+    QTest::addColumn<bool>("native");
+    QTest::newRow("untagged-helper") << 1 << QColorSpace() << false;
+    QTest::newRow("srgb-helper") << 1 << QColorSpace(QColorSpace::SRgb) << false;
+    QTest::newRow("orientation-native") << 6 << QColorSpace() << true;
+    QTest::newRow("p3-native") << 1 << QColorSpace(QColorSpace::DisplayP3) << true;
+    QTest::newRow("orientation-p3-native") << 6 << QColorSpace(QColorSpace::DisplayP3) << true;
+  }
+
+  void pictureExportRouting() {
+    QFETCH(int, orientation);
+    QFETCH(QColorSpace, space);
+    QFETCH(bool, native);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(QStringLiteral("picture #1.jpg"));
+    const QString output = dir.filePath(QStringLiteral("picture #1-low.png"));
+    QImage image(40, 20, QImage::Format_RGB32);
+    image.fill(Qt::green);
+    image.setColorSpace(space);
+    QByteArray bytes;
+    QBuffer buffer(&bytes);
+    QVERIFY(buffer.open(QIODevice::WriteOnly));
+    QVERIFY(image.save(&buffer, "JPG", 95));
+    QFile sourceFile(source);
+    QVERIFY(sourceFile.open(QIODevice::WriteOnly));
+    sourceFile.write(withExifOrientation(bytes, orientation));
+    sourceFile.close();
+
+    QFile helper(dir.filePath(QStringLiteral("omarchy-transcode")));
+    QVERIFY(helper.open(QIODevice::WriteOnly));
+    helper.write("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$1.arguments\"\n"
+                 "cp -- \"$1\" \"${1%.*}-$3.$2\"\n");
+    helper.close();
+    QVERIFY(helper.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    const QByteArray previousPath = qgetenv("PATH");
+    const auto restore = qScopeGuard([&] { qputenv("PATH", previousPath); });
+    qputenv("PATH", dir.path().toUtf8() + ':' + previousPath);
+
+    ActionLauncher launcher;
+    ActionRegistry registry(&launcher);
+    QSignalSpy pending(&launcher, &ActionLauncher::outputPending);
+    QSignalSpy settled(&launcher, &ActionLauncher::outputSettled);
+    QSignalSpy reported(&launcher, &ActionLauncher::reported);
+    QSignalSpy failed(&launcher, &ActionLauncher::failed);
+    QVERIFY(registry.runBatchWith(QStringLiteral("export"),
+        {{QStringLiteral("format"), QStringLiteral("png")},
+         {QStringLiteral("resolution"), QStringLiteral("low")}}, {source}));
+    QTRY_COMPARE_WITH_TIMEOUT(settled.size(), 1, 5000);
+    QCOMPARE(pending.size(), 1);
+    QCOMPARE(pending.first().first().toString(), output);
+    QCOMPARE(settled.first().first().toString(), output);
+    QVERIFY(settled.first().at(1).toBool());
+    QVERIFY(failed.isEmpty());
+    QVERIFY(reported.contains({QStringLiteral("Making picture #1-low.png")}));
+    QVERIFY(reported.contains({QStringLiteral("Saved picture #1-low.png beside the original")}));
+    QCOMPARE(QFileInfo::exists(source + QStringLiteral(".arguments")), !native);
+    if (!native) {
+      QFile arguments(source + QStringLiteral(".arguments"));
+      QVERIFY(arguments.open(QIODevice::ReadOnly));
+      QCOMPARE(arguments.readAll(), source.toUtf8() + "\npng\nlow\n");
+    } else {
+      QImageReader reader(output);
+      QCOMPARE(reader.transformation(), QImageIOHandler::Transformations(QImageIOHandler::TransformationNone));
+      const QImage copy = reader.read();
+      QCOMPARE(copy.size(), orientation == 6 ? QSize(20, 40) : QSize(40, 20));
+      QCOMPARE(copy.colorSpace(), space);
+    }
+  }
+
   void pictureExportsBakeOrientationAndKeepProfiles() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

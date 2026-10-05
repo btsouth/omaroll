@@ -79,16 +79,13 @@ QImage readOriented(const QString& path) {
 }
 
 // The encoder writes only our private file; publication never replaces a name.
-QString writeImage(const QImage &image, const QString& preferred,
-                   const QByteArray& format, int quality = 92) {
+QString writeImage(const QImage& image, const QString& preferred, const QByteArray& format,
+                   int quality = 92) {
   CopyOutput output(preferred);
-  if (!output.device())
-    return {};
+  if (!output.device()) return {};
   QImageWriter writer(output.device(), format);
-  if (format == "jpg")
-    writer.setQuality(quality);
-  if (!writer.write(image))
-    return {};
+  if (format == "jpg") writer.setQuality(quality);
+  if (!writer.write(image)) return {};
   return output.publish();
 }
 
@@ -97,10 +94,8 @@ struct SaveResult {
   QString error;
 };
 
-SaveResult saveTransform(const QString& source,
-                         const ImageEditor::Transform& transform) {
-  if (CameraRaw::isRawFile(source))
-    return {{}, kRawRefusal};
+SaveResult saveTransform(const QString& source, const ImageEditor::Transform& transform) {
+  if (CameraRaw::isRawFile(source)) return {{}, kRawRefusal};
   QString error;
   QString output;
   const QByteArray format = writableFormat(source);
@@ -111,24 +106,20 @@ SaveResult saveTransform(const QString& source,
   // which bakes the tag in correctly.
   const bool fullFrame = transform.cropX == 0.0 && transform.cropY == 0.0 &&
                          transform.cropW == 1.0 && transform.cropH == 1.0;
-  const bool noResize =
-      transform.targetWidth <= 0 && transform.targetHeight <= 0;
+  const bool noResize = transform.targetWidth <= 0 && transform.targetHeight <= 0;
   const bool turned = (((transform.quarterTurns % 4) + 4) % 4) != 0 ||
                       transform.flipHorizontal || transform.flipVertical;
-  if (format == QByteArrayLiteral("jpg") && turned &&
-      qFuzzyIsNull(transform.straightenDegrees) && fullFrame && noResize &&
-      JpegTransform::available()) {
+  if (format == QByteArrayLiteral("jpg") && turned && qFuzzyIsNull(transform.straightenDegrees) &&
+      fullFrame && noResize && JpegTransform::available()) {
     QImageReader probe(source);
     if (probe.transformation() == QImageIOHandler::TransformationNone) {
       CopyOutput candidate(composedOutputPath(source, false));
       if (candidate.device() &&
-          JpegTransform::apply(source, candidate.encoderPath(),
-                               transform.quarterTurns, transform.flipHorizontal,
-                               transform.flipVertical)) {
+          JpegTransform::apply(source, candidate.encoderPath(), transform.quarterTurns,
+                               transform.flipHorizontal, transform.flipVertical)) {
         output = candidate.publish();
-        if (output.isEmpty())
-          error = QStringLiteral("Could not safely save a copy beside %1")
-                      .arg(QFileInfo(source).fileName());
+        if (output.isEmpty()) error = QStringLiteral("Could not safely save a copy beside %1")
+                                         .arg(QFileInfo(source).fileName());
       }
     }
   }
@@ -136,8 +127,7 @@ SaveResult saveTransform(const QString& source,
   if (output.isEmpty() && error.isEmpty()) {
     const QImage image = readOriented(source);
     if (image.isNull()) {
-      error =
-          QStringLiteral("Could not read %1").arg(QFileInfo(source).fileName());
+      error = QStringLiteral("Could not read %1").arg(QFileInfo(source).fileName());
     } else {
       const QImage result = ImageEditor::apply(image, transform);
       if (result.isNull()) {
@@ -145,10 +135,8 @@ SaveResult saveTransform(const QString& source,
       } else {
         output = writeImage(result, composedOutputPath(source, false), format);
         if (output.isEmpty()) {
-          error =
-              QStringLiteral(
-                  "Could not safely save a copy beside %1; check its folder")
-                  .arg(QFileInfo(source).fileName());
+          error = QStringLiteral("Could not safely save a copy beside %1; check its folder")
+                      .arg(QFileInfo(source).fileName());
         }
       }
     }
@@ -159,7 +147,7 @@ SaveResult saveTransform(const QString& source,
 
 } // namespace
 
-ImageEditor::ImageEditor(QObject *parent) : QObject(parent) {}
+ImageEditor::ImageEditor(QObject* parent) : QObject(parent) {}
 
 QImage ImageEditor::apply(const QImage& source, const Transform& transform) {
   if (source.isNull()) {
@@ -454,6 +442,16 @@ bool ImageEditor::isAnimated(const QString& path) const {
   return reader.supportsAnimation() && reader.imageCount() != 1;
 }
 
+bool ImageEditor::needsNativeExport(const QString& source) {
+  QImageReader reader(source);
+  if (reader.transformation() != QImageIOHandler::TransformationNone) return true;
+  // Qt exposes ICC profiles on decoded images. Probe a tiny image in the worker;
+  // decoders without scaled reads may still decode the full frame there.
+  reader.setScaledSize(QSize(1, 1));
+  const QColorSpace space = reader.read().colorSpace();
+  return space.isValid() && space != QColorSpace(QColorSpace::SRgb);
+}
+
 QVariantMap ImageEditor::exportImage(const QString& source, const QString& preferred,
                                     const QByteArray& format, int edge) {
   if ((format != "jpg" && format != "png") || edge <= 0) {
@@ -464,8 +462,7 @@ QVariantMap ImageEditor::exportImage(const QString& source, const QString& prefe
     return {{QStringLiteral("error"), QStringLiteral("Could not read %1")
                                           .arg(QFileInfo(source).fileName())}};
   }
-  if (image.width() > edge)
-    image = image.scaledToWidth(edge, Qt::SmoothTransformation);
+  if (image.width() > edge) image = image.scaledToWidth(edge, Qt::SmoothTransformation);
   const QString output = writeImage(image, preferred, format, 85);
   return {{QStringLiteral("output"), output},
           {QStringLiteral("error"),
