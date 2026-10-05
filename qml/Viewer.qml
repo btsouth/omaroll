@@ -733,7 +733,7 @@ ApplicationWindow {
         playerStart.stop()
         const generation = root.playerStartGeneration
         Qt.callLater(function () {
-            if (generation === root.playerStartGeneration) root.startPlayer()
+            if (root && generation === root.playerStartGeneration) root.startPlayer()
         })
     }
     function startPlayer() {
