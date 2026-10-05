@@ -518,16 +518,23 @@ private slots:
   }
 
   void libraryCopiesOpenedEntryPathAndName() {
-    const QString target = m_scratch.filePath(QStringLiteral("copy-original.png"));
-    const QString alias = m_scratch.filePath(QStringLiteral("copy-alias # 雪.png"));
-    m_disposablePaths.append(target);
-    m_disposablePaths.append(alias);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString target = dir.filePath(QStringLiteral("original.png"));
+    const QString alias = dir.filePath(QStringLiteral("alias # 雪.png"));
+    const auto cleanup = qScopeGuard([&] {
+      invoke("dismissTopLayer");
+      dir.remove();
+      m_captures->refresh();
+      const bool removed = QTest::qWaitFor([&] { return !m_captures->scanning() && m_library->rowOf(target) < 0; }, 10000);
+      QVERIFY(removed);
+    });
     QImage picture(200, 150, QImage::Format_RGB32);
     picture.fill(Qt::blue);
     QVERIFY(picture.save(target));
     QVERIFY(QFile::link(target, alias));
     m_captures->addExtraFiles({alias});
-    m_captures->setExtraRoot(m_scratch.path());
+    m_captures->setExtraRoot(dir.path());
     QTRY_VERIFY_WITH_TIMEOUT(!m_captures->scanning(), 10000);
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(target) >= 0, 10000);
     const int row = m_library->rowOf(target);
@@ -586,7 +593,8 @@ private slots:
     openDetail(0);
     QCOMPARE(qRound(panel->width()), remembered.width());
     m_window->resize(560, 420);
-    QTRY_VERIFY(panel->width() <= 536 && panel->height() <= 396);
+    QTRY_COMPARE(panel->width(), 500.0);
+    QTRY_COMPARE(panel->height(), 360.0);
     QCOMPARE(m_settings->previewWidth(), remembered.width());
     m_window->resize(1280, 820);
     QTRY_COMPARE(qRound(panel->width()), remembered.width());
@@ -607,7 +615,7 @@ private slots:
     QTRY_VERIFY(detail->property("imageReady").toBool());
     detail->setProperty("imageRotation", rotation);
     detail->setProperty("imageFlipHorizontal", true);
-    QVERIFY(QMetaObject::invokeMethod(detail, "adjustImageZoom", Q_ARG(QVariant, 3.0),
+    QVERIFY(QMetaObject::invokeMethod(detail, "zoomImageAt", Q_ARG(QVariant, 3.0),
                                      Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant())));
     QQuickItem* viewport = item("detailStillViewport");
     QQuickItem* canvas = item("detailImageCanvas");
@@ -632,7 +640,7 @@ private slots:
     openDetail(m_library->rowOf(m_oddPath));
     QQuickItem* detail = item("detail");
     QTRY_VERIFY(detail->property("imageReady").toBool());
-    QVERIFY(QMetaObject::invokeMethod(detail, "adjustImageZoom", Q_ARG(QVariant, 3.0),
+    QVERIFY(QMetaObject::invokeMethod(detail, "zoomImageAt", Q_ARG(QVariant, 3.0),
                                      Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant())));
     QQuickItem* viewport = item("detailStillViewport");
     QQuickItem* canvas = item("detailImageCanvas");
@@ -5295,7 +5303,7 @@ private:
   }
 
   void pinchAt(const QPoint& at) {
-    static auto* device = QTest::createTouchDevice();
+    auto* device = QTest::createTouchDevice();
     QTest::touchEvent(m_window, device).press(0, at - QPoint(40, 0), m_window)
                                       .press(1, at + QPoint(40, 0), m_window);
     QTest::qWait(30);

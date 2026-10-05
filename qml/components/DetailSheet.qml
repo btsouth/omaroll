@@ -79,8 +79,8 @@ Item {
                                        && stillLoader.width > 0 && stillLoader.height > 0
     property real previewWidth: Settings.previewWidth
     property real previewHeight: Settings.previewHeight
-    readonly property real maximumPreviewWidth: Math.max(1, root.width - 24)
-    readonly property real maximumPreviewHeight: Math.max(1, root.height - 24)
+    readonly property real maximumPreviewWidth: Math.max(1, root.width - 60)
+    readonly property real maximumPreviewHeight: Math.max(1, root.height - 60)
 
     function resizePreview(width, height) {
         previewWidth = Math.max(Math.min(500, maximumPreviewWidth), Math.min(maximumPreviewWidth, width))
@@ -250,8 +250,10 @@ Item {
     function visibleActions() {
         void root.actionsRevision
         const rows = Registry.actionsForKind(root.isVideo, root.isDocument, root.path)
-        rows.push({id: "copy-path", label: "Copy path", available: true, group: "File", shortcut: "Ctrl+Shift+C"},
-                  {id: "copy-name", label: "Copy file name", available: true, group: "File"})
+        rows.push({id: "copy-path", label: "Copy path", available: true, native: true, primary: false,
+                   group: "File", shortcut: "Ctrl+Shift+C", hint: ""},
+                  {id: "copy-name", label: "Copy file name", available: true, native: true, primary: false,
+                   group: "File", shortcut: "", hint: ""})
         const companion = Captures.companionPathAt(Captures.rowOf(root.path))
         if (companion !== "") {
             rows.unshift({id: "companion", label: "View " + companion.substring(companion.lastIndexOf(".") + 1).toUpperCase() + " companion",
@@ -422,7 +424,11 @@ Item {
         Qt.callLater(stillViewport.centerContent)
     }
 
-    function adjustImageZoom(factor, x, y) {
+    function adjustImageZoom(factor) {
+        root.zoomImageAt(factor, stillViewport.width / 2, stillViewport.height / 2)
+    }
+
+    function zoomImageAt(factor, x, y) {
         const before = root.imageZoom
         const px = x === undefined ? stillViewport.width / 2 : x
         const py = y === undefined ? stillViewport.height / 2 : y
@@ -1151,7 +1157,7 @@ Item {
                             return
                         }
                         const at = stillViewport.mapFromItem(null, point.scenePosition)
-                        root.adjustImageZoom(Math.pow(1.2, delta / 120), at.x, at.y)
+                        root.zoomImageAt(Math.pow(1.2, delta / 120), at.x, at.y)
                         event.accepted = true
                     }
                 }
@@ -1163,7 +1169,7 @@ Item {
                     onActiveScaleChanged: {
                         if (!active || last <= 0) return
                         const at = stillViewport.mapFromItem(null, centroid.scenePosition)
-                        root.adjustImageZoom(activeScale / last, at.x, at.y)
+                        root.zoomImageAt(activeScale / last, at.x, at.y)
                         last = activeScale
                     }
                 }
