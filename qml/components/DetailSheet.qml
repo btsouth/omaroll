@@ -2314,6 +2314,8 @@ Item {
             Flickable {
                 id: inspectorScroll
                 objectName: "inspectorScroll"
+                onContentHeightChanged: if (root.visible) Qt.callLater(inspectorScroll.revealFocusedControl)
+                onHeightChanged: if (root.visible) Qt.callLater(inspectorScroll.revealFocusedControl)
                 anchors.fill: parent
                 anchors.margins: 1
                 contentWidth: width

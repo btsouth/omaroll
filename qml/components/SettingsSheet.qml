@@ -137,6 +137,8 @@ Item {
         Flickable {
             id: settingsFlickable
             objectName: "settingsScroll"
+            onContentHeightChanged: if (root.visible) Qt.callLater(settingsFlickable.revealFocusedControl)
+            onHeightChanged: if (root.visible) Qt.callLater(settingsFlickable.revealFocusedControl)
             anchors.fill: parent
             anchors.margins: 22
             contentHeight: column.implicitHeight
