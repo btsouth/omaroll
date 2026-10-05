@@ -108,62 +108,62 @@ Item {
             id: sectionButtons
             spacing: kinds.spacing
 
-        PillButton {
-            label: "All"
-            shortcut: root.sectionShortcut(0)
-            active: Captures.kindFilter === root.kindAll
-            onClicked: Captures.kindFilter = root.kindAll
-        }
-        PillButton {
-            label: root.width < 700 ? "Shots" : "Screenshots"
-            shortcut: root.sectionShortcut(1)
-            active: Captures.kindFilter === root.kindScreenshot
-            onClicked: Captures.kindFilter = root.kindScreenshot
-        }
-        PillButton {
-            label: root.width < 700 ? "Clips" : "Recordings"
-            shortcut: root.sectionShortcut(2)
-            active: Captures.kindFilter === root.kindRecording
-            onClicked: Captures.kindFilter = root.kindRecording
-        }
-        PillButton {
-            label: root.width < 700 ? "Photos" : "Pictures"
-            shortcut: root.sectionShortcut(3)
-            active: Captures.kindFilter === root.kindPicture
-            onClicked: Captures.kindFilter = root.kindPicture
-        }
-        PillButton {
-            label: "Videos"
-            shortcut: root.sectionShortcut(4)
-            active: Captures.kindFilter === root.kindVideo
-            onClicked: Captures.kindFilter = root.kindVideo
-        }
-        PillButton {
-            visible: Settings.scanDownloads
-            label: root.width < 700 ? "Down" : "Downloads"
-            shortcut: root.sectionShortcut(5)
-            active: Captures.kindFilter === root.kindDownload
-            onClicked: Captures.kindFilter = root.kindDownload
-        }
-        PillButton {
-            label: "PDFs"
-            shortcut: root.sectionShortcut(7)
-            active: Captures.kindFilter === root.kindDocument
-            onClicked: Captures.kindFilter = root.kindDocument
-        }
+            PillButton {
+                label: "All"
+                shortcut: root.sectionShortcut(0)
+                active: Captures.kindFilter === root.kindAll
+                onClicked: Captures.kindFilter = root.kindAll
+            }
+            PillButton {
+                label: root.width < 700 ? "Shots" : "Screenshots"
+                shortcut: root.sectionShortcut(1)
+                active: Captures.kindFilter === root.kindScreenshot
+                onClicked: Captures.kindFilter = root.kindScreenshot
+            }
+            PillButton {
+                label: root.width < 700 ? "Clips" : "Recordings"
+                shortcut: root.sectionShortcut(2)
+                active: Captures.kindFilter === root.kindRecording
+                onClicked: Captures.kindFilter = root.kindRecording
+            }
+            PillButton {
+                label: root.width < 700 ? "Photos" : "Pictures"
+                shortcut: root.sectionShortcut(3)
+                active: Captures.kindFilter === root.kindPicture
+                onClicked: Captures.kindFilter = root.kindPicture
+            }
+            PillButton {
+                label: "Videos"
+                shortcut: root.sectionShortcut(4)
+                active: Captures.kindFilter === root.kindVideo
+                onClicked: Captures.kindFilter = root.kindVideo
+            }
+            PillButton {
+                visible: Settings.scanDownloads
+                label: root.width < 700 ? "Down" : "Downloads"
+                shortcut: root.sectionShortcut(5)
+                active: Captures.kindFilter === root.kindDownload
+                onClicked: Captures.kindFilter = root.kindDownload
+            }
+            PillButton {
+                label: "PDFs"
+                shortcut: root.sectionShortcut(7)
+                active: Captures.kindFilter === root.kindDocument
+                onClicked: Captures.kindFilter = root.kindDocument
+            }
 
-        Item { width: 6; height: 1 }
+            Item { width: 6; height: 1 }
 
-        // Orthogonal to the kind: favourites of whatever section is showing.
-        PillButton {
-            label: "★"
-            toolTip: "Favourites"
-            accessibleName: "Favourites"
-            checkable: true
-            shortcut: root.sectionShortcut(6)
-            active: Captures.favoritesOnly
-            onClicked: Captures.favoritesOnly = !Captures.favoritesOnly
-        }
+            // Orthogonal to the kind: favourites of whatever section is showing.
+            PillButton {
+                label: "★"
+                toolTip: "Favourites"
+                accessibleName: "Favourites"
+                checkable: true
+                shortcut: root.sectionShortcut(6)
+                active: Captures.favoritesOnly
+                onClicked: Captures.favoritesOnly = !Captures.favoritesOnly
+            }
 
         }
 

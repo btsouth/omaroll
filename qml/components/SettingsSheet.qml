@@ -152,19 +152,18 @@ Item {
                 const focused = root.Window.window ? root.Window.window.activeFocusItem : null
                 let ancestor = focused
                 while (ancestor && ancestor !== column) ancestor = ancestor.parent
-                console.log("Settings reveal", focused, ancestor, column, root.Window.window)
                 if (!focused || ancestor !== column) return
                 const top = focused.mapToItem(column, 0, 0).y
                 const bottom = top + focused.height
-                const maximum = Math.max(0, contentHeight - height)
-                if (top < contentY) contentY = Math.max(0, top)
-                else if (bottom > contentY + height) contentY = Math.min(maximum, bottom - height)
+                const maximum = Math.max(0, settingsFlickable.contentHeight - settingsFlickable.height)
+                if (top < settingsFlickable.contentY) settingsFlickable.contentY = Math.max(0, top)
+                else if (bottom > settingsFlickable.contentY + settingsFlickable.height)
+                    settingsFlickable.contentY = Math.min(maximum, bottom - settingsFlickable.height)
             }
 
             Connections {
                 target: root.Window.window
                 function onActiveFocusItemChanged() {
-                    console.log("Settings focus signal", root.visible)
                     if (root.visible) Qt.callLater(settingsFlickable.revealFocusedControl)
                 }
             }

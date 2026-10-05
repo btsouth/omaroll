@@ -2327,11 +2327,12 @@ Item {
                     let ancestor = focused
                     while (ancestor && ancestor !== inspectorColumn) ancestor = ancestor.parent
                     if (!focused || ancestor !== inspectorColumn) return
-                    const top = focused.mapToItem(contentItem, 0, 0).y
+                    const top = focused.mapToItem(inspectorScroll.contentItem, 0, 0).y
                     const bottom = top + focused.height
-                    const maximum = Math.max(0, contentHeight - height)
-                    if (top < contentY) contentY = Math.max(0, top)
-                    else if (bottom > contentY + height) contentY = Math.min(maximum, bottom - height)
+                    const maximum = Math.max(0, inspectorScroll.contentHeight - inspectorScroll.height)
+                    if (top < inspectorScroll.contentY) inspectorScroll.contentY = Math.max(0, top)
+                    else if (bottom > inspectorScroll.contentY + inspectorScroll.height)
+                        inspectorScroll.contentY = Math.min(maximum, bottom - inspectorScroll.height)
                 }
                 Connections {
                     target: root.Window.window

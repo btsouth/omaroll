@@ -447,9 +447,6 @@ private slots:
       QQuickItem* ancestor = focused;
       while (ancestor && ancestor != scroll) ancestor = ancestor->parentItem();
       if (ancestor != scroll) break;
-      qInfo() << "Settings focus" << focused << focused->property("accessibleName")
-              << "y" << focused->mapToItem(scroll, QPointF()).y() << "height" << focused->height()
-              << "scroll" << scroll->height() << scroll->property("contentY") << scroll->property("contentHeight");
       QTRY_VERIFY(focused->mapToItem(scroll, QPointF()).y() >= -1);
       QTRY_VERIFY(focused->mapToItem(scroll, QPointF(0, focused->height())).y() <= scroll->height() + 1);
       scrolled |= scroll->property("contentY").toReal() > 0;
