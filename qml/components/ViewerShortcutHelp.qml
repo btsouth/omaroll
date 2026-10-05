@@ -39,6 +39,7 @@ Popup {
             {keys: "Y / Ctrl+C", label: root.video ? "Copy file" : "Copy image"},
             {keys: "Ctrl+Shift+C", label: "Copy path"},
             {keys: "Ctrl+O", label: "Choose another application"},
+            {keys: "Menu", label: "Show the action menu"},
             {keys: "S", label: "Send"},
             {keys: "A", label: "Annotate", still: true},
             {keys: "D / Shift+D", label: "Open RAW editor / choose editor", still: true},

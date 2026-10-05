@@ -137,7 +137,7 @@ process, so a favourite or rating set in one shows in the others.
 | `Shift+Del` | Delete permanently, with confirmation on by default |
 | right click · menu button | Everything else that suits the file |
 | `Enter` · grid button | Open the file in the library |
-| `Esc` | Leave the slideshow or full screen, close the details, then close |
+| `Esc` | Close help, leave the slideshow or full screen, close the details, then close |
 
 In both image viewers, `1` goes to actual size from a custom zoom. Press it
 again at actual size to fit the image. The quick viewer menu also offers Fit
