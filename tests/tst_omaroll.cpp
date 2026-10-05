@@ -2008,6 +2008,48 @@ private slots:
     QVERIFY(settings.tagPaths(QStringLiteral("Tag")).isEmpty());
   }
 
+  void collectionFingerprintsRefreshAfterPreservedTimeEdits() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                       dir.filePath(QStringLiteral("profile")));
+    const auto restoreProfile = qScopeGuard([this] {
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                         m_scratch.filePath(QStringLiteral("config")));
+    });
+    const QString original = dir.filePath(QStringLiteral("original.bmp"));
+    const QString moved = dir.filePath(QStringLiteral("moved.bmp"));
+    QFile file(original);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(QByteArray(200, 'a')), qint64(200));
+    file.close();
+    AppSettings settings;
+    QVERIFY(settings.createAlbum(QStringLiteral("Album")));
+    QVERIFY(settings.addToAlbum(QStringLiteral("Album"), {original}));
+    QVERIFY(settings.createTag(QStringLiteral("Tag")));
+    QVERIFY(settings.addTag(QStringLiteral("Tag"), {original}));
+    struct stat before {};
+    QVERIFY(::stat(QFile::encodeName(original).constData(), &before) == 0);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    QCOMPARE(file.write(QByteArray(200, 'b')), qint64(200));
+    file.close();
+    const struct timespec times[] = {before.st_atim, before.st_mtim};
+    QVERIFY(::utimensat(AT_FDCWD, QFile::encodeName(original).constData(), times, 0) == 0);
+    const auto scan = [&] {
+      return CaptureScanner::scan({{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
+    };
+    settings.reconcileAlbums(scan());
+    settings.reconcileTags(scan());
+    // Moving to a new inode needs the edited content's fingerprint, even
+    // though the original file's size and nanosecond mtime never changed.
+    QVERIFY(QFile::copy(original, moved));
+    QVERIFY(QFile::remove(original));
+    settings.reconcileAlbums(scan());
+    settings.reconcileTags(scan());
+    QCOMPARE(settings.albumPaths(QStringLiteral("Album")), QStringList{moved});
+    QCOMPARE(settings.tagPaths(QStringLiteral("Tag")), QStringList{moved});
+  }
+
   void disconnectedAndExcludedMembersDoNotFollowCopies() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

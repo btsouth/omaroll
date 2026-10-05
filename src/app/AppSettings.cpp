@@ -115,13 +115,32 @@ bool tagIsUnder(const QString& candidate, const QString& parent) {
          candidate.at(parent.size()) == QLatin1Char('/');
 }
 
+QString identityVersionFor(const QString& path) {
+  struct stat status {};
+  if (::stat(QFile::encodeName(path).constData(), &status) != 0) return {};
+  // ctime also invalidates an edit whose size and mtime were preserved.
+  return QStringLiteral("%1:%2:%3:%4:%5:%6:%7")
+      .arg(qulonglong(status.st_dev)).arg(qulonglong(status.st_ino))
+      .arg(qlonglong(status.st_size)).arg(qlonglong(status.st_mtim.tv_sec))
+      .arg(qlonglong(status.st_mtim.tv_nsec)).arg(qlonglong(status.st_ctim.tv_sec))
+      .arg(qlonglong(status.st_ctim.tv_nsec));
+}
+
 } // namespace
 
 AppSettings::AlbumEntry AppSettings::identityFor(const QString& path) {
   AppSettings::AlbumEntry entry;
   entry.path = path;
 
-  const QString version = FileVersion::key(path);
+  struct CachedIdentity {
+    QString version;
+    AlbumEntry identity;
+  };
+  static thread_local QCache<QString, CachedIdentity> cache(4096);
+  const QString version = identityVersionFor(path);
+  if (const auto* cached = cache.object(path); cached && cached->version == version) {
+    return cached->identity;
+  }
   const QFileInfo info(path);
   if (version.isEmpty() || !info.isFile() || !info.isReadable()) {
     return entry;
@@ -147,9 +166,10 @@ AppSettings::AlbumEntry AppSettings::identityFor(const QString& path) {
     file.seek(qMax<qint64>(0, entry.bytes - chunkSize));
     hash.addData(file.read(chunkSize));
   }
-  if (file.error() != QFile::NoError || FileVersion::key(path) != version) return entry;
+  if (file.error() != QFile::NoError || identityVersionFor(path) != version) return entry;
   entry.fingerprint = hash.result();
   entry.resolved = true;
+  cache.insert(path, new CachedIdentity{version, entry});
   return entry;
 }
 
@@ -1971,16 +1991,7 @@ void AppSettings::reconcileMarks(const QList<CaptureRecord>& records) {
   // Bound memory across scans and share only within the calling thread. Cache
   // the content hash, not a match decision tied to a particular saved mark.
   static thread_local QCache<QString, CachedFingerprint> fingerprintCache(4096);
-  const auto versionFor = [](const QString& path) {
-    struct stat status {};
-    if (::stat(QFile::encodeName(path).constData(), &status) != 0) return QString();
-    // ctime also invalidates a same-sized edit whose mtime was restored.
-    return QStringLiteral("%1:%2:%3:%4:%5:%6:%7")
-        .arg(qulonglong(status.st_dev)).arg(qulonglong(status.st_ino))
-        .arg(qlonglong(status.st_size)).arg(qlonglong(status.st_mtim.tv_sec))
-        .arg(qlonglong(status.st_mtim.tv_nsec)).arg(qlonglong(status.st_ctim.tv_sec))
-        .arg(qlonglong(status.st_ctim.tv_nsec));
-  };
+  const auto versionFor = identityVersionFor;
   QHash<QString, CachedFingerprint> fingerprints;
   const auto fingerprintFor = [&](const Candidate& candidate) -> QByteArray {
     const QString version = versionFor(candidate.path);
