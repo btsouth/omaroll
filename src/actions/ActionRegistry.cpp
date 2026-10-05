@@ -689,7 +689,7 @@ bool ActionRegistry::launch(const Definition& definition, const QStringList& arg
       if (error == QProcess::FailedToStart) finish(false, process->errorString());
     });
     process->start(executable, arguments);
-    return true;
+    return !state->settled;
   }
   if (definition.id == u"export"_s && arguments.size() == 3 &&
       ActionLauncher::mimeTypeFor(arguments.first()).startsWith(u"image/"_s)) {
