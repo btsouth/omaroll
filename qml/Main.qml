@@ -384,6 +384,7 @@ ApplicationWindow {
     // stay in the grid rather than opening the viewer over whatever the user
     // is doing now. Filters are only cleared when they would hide it.
     property string pendingRevealPath: ""
+    property string pendingRenamedCheck: ""
     function showAllMedia(folder) {
         Captures.setExplicitPaths([])
         Captures.kindFilter = filters.kindAll
@@ -470,6 +471,13 @@ ApplicationWindow {
         target: Captures
         function onDataChanged() { root.refreshOpenDetail() }
         function onCountChanged() {
+            if (root.pendingRenamedCheck !== "" && Captures.rowOf(root.pendingRenamedCheck) >= 0) {
+                const renamed = root.pendingRenamedCheck
+                root.pendingRenamedCheck = ""
+                Qt.callLater(function() {
+                    if (Captures.rowOf(renamed) >= 0 && !library.isChecked(renamed)) library.toggleChecked(renamed)
+                })
+            }
             if (detail.visible) {
                 const detailRow = Captures.rowOf(detail.path)
                 if (detailRow < 0) {
@@ -572,7 +580,9 @@ ApplicationWindow {
 
     function captureTrashTarget(path) {
         const entry = Captures.deletionPathAt(Captures.rowOf(path))
-        return Actions.captureFileAction(entry, path)
+        const target = Actions.captureFileAction(entry, path)
+        if (target.path !== undefined) target.viewedPath = path
+        return target
     }
 
     function requestDelete(path) {
@@ -757,13 +767,16 @@ ApplicationWindow {
         enabled: !root.anySheetOpen && !albumActionMenu.visible
 
         Row {
+            id: headerTitle
             anchors.left: parent.left
             anchors.leftMargin: 20
             anchors.verticalCenter: parent.verticalCenter
+            width: Math.max(0, header.width - headerActions.width - 52)
             spacing: 12
 
             Text {
                 anchors.verticalCenter: parent.verticalCenter
+                id: appTitle
                 text: "Omaroll"
                 font.family: Theme.fontFamily
                 font.pixelSize: 17
@@ -781,6 +794,9 @@ ApplicationWindow {
 
             Text {
                 anchors.verticalCenter: parent.verticalCenter
+                objectName: "libraryStatus"
+                width: Math.max(0, headerTitle.width - appTitle.width - 25)
+                elide: Text.ElideRight
                 text: {
                     if (Duplicates.scanning && Captures.duplicatesOnly) {
                         return Duplicates.total > 0
@@ -832,6 +848,7 @@ ApplicationWindow {
         }
 
         Row {
+            id: headerActions
             anchors.right: parent.right
             anchors.rightMargin: 20
             anchors.verticalCenter: parent.verticalCenter
@@ -933,6 +950,8 @@ ApplicationWindow {
 
             DayHeader {
                 anchors.verticalCenter: parent.verticalCenter
+                visible: shown
+                maximumWidth: Math.max(80, root.width * 0.24)
                 label: library.currentDayLabel
                 shown: Captures.count > 0 && library.checkedCount === 0
             }
@@ -940,6 +959,7 @@ ApplicationWindow {
             PillButton {
                 anchors.verticalCenter: parent.verticalCenter
                 label: "⚙"
+                accessibleName: "Settings"
                 toolTip: "Settings"
                 onClicked: settingsSheet.open()
             }
@@ -1522,6 +1542,8 @@ ApplicationWindow {
 
         MenuItem {
             id: removeFromAlbumRow
+            text: "Remove from " + Captures.albumFilter
+            Accessible.name: text
             visible: Captures.albumFilter !== ""
             height: visible ? 30 : 0
             contentItem: Text {
@@ -1550,6 +1572,8 @@ ApplicationWindow {
 
             MenuItem {
                 id: addAlbumRow
+                text: "Add to " + addAlbumRow.modelData
+                Accessible.name: text
                 required property string modelData
                 height: 30
                 contentItem: Text {
@@ -1576,6 +1600,8 @@ ApplicationWindow {
 
         MenuItem {
             id: newAlbumRow
+            text: "+ New album"
+            Accessible.name: text
             height: 30
             contentItem: Text {
                 text: "+ New album"
@@ -1598,6 +1624,8 @@ ApplicationWindow {
 
         MenuItem {
             id: removeTagRow
+            text: "Remove tag " + Captures.tagFilter
+            Accessible.name: text
             visible: Captures.tagFilter !== ""
             height: visible ? 30 : 0
             contentItem: Text {
@@ -1627,6 +1655,8 @@ ApplicationWindow {
 
             MenuItem {
                 id: addTagRow
+                text: "Tag as " + addTagRow.modelData
+                Accessible.name: text
                 required property string modelData
                 height: 30
                 contentItem: Text {
@@ -1653,6 +1683,8 @@ ApplicationWindow {
 
         MenuItem {
             id: newTagRow
+            text: "+ New tag"
+            Accessible.name: text
             height: 30
             contentItem: Text {
                 text: "+ New tag"
@@ -1722,13 +1754,16 @@ ApplicationWindow {
         id: renameSheet
         objectName: "renameSheet"
         onRenamed: function (oldPath, newPath, fileName) {
+            if (library.isChecked(oldPath)) {
+                library.toggleChecked(oldPath)
+                root.pendingRenamedCheck = renameSheet.renamedMediaPath
+            }
             Settings.relocatePath(oldPath, newPath)
             Library.addExtraFiles([newPath])
             root.viewerPaths = root.viewerPaths.map(function (path) {
                 return path === oldPath ? newPath : path
             })
             root.pendingRevealPath = renameSheet.renamedMediaPath
-            library.clearChecked()
             root.say("Renamed to " + fileName)
             Library.refresh()
         }
@@ -1795,8 +1830,10 @@ ApplicationWindow {
                 root.say("Checking exact copies before moving them")
             } else if (root.pendingDeleteBatch.length > 0) {
                 let moved = 0
+                const failed = []
                 for (const target of root.pendingDeleteBatch) {
                     if (Actions.moveCapturedToTrash(target)) moved++
+                    else failed.push(target.viewedPath)
                 }
                 if (moved > 0) {
                     root.say(moved === root.pendingDeleteBatch.length
@@ -1804,6 +1841,9 @@ ApplicationWindow {
                              : "Moved " + moved + " of " + root.pendingDeleteBatch.length + " items to Trash")
                 }
                 library.clearChecked()
+                for (const path of failed) library.toggleChecked(path)
+                if (failed.length > 0) root.say("Moved " + moved + " of " + root.pendingDeleteBatch.length
+                                              + " items to Trash; " + failed.length + " could not be moved")
                 Library.refresh()
             } else if (Actions.moveCapturedToTrash(root.pendingDeleteTarget)) {
                 root.say("Moved to Trash")
@@ -1965,7 +2005,8 @@ ApplicationWindow {
     // Undo the destructive organization marks, from the grid or the viewer.
     Shortcut {
         sequences: ["Ctrl+Z"]
-        enabled: !root.modalOpen && !root.popupOpen && Settings.canUndo()
+        enabled: !root.modalOpen && !root.popupOpen && !filters.searchActive
+                 && !detail.captionEditing && Settings.undoAvailable
         onActivated: {
             Settings.undo()
             root.say("Undone")

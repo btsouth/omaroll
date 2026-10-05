@@ -47,6 +47,9 @@ Menu {
             visible: !modelData.conditional || root.conditionalEntriesVisible
             enabled: visible && !separator && modelData.available !== false
             height: !visible ? 0 : separator ? 9 : modelData.available === false && modelData.hint ? 46 : 30
+            text: separator ? "" : modelData.label
+            Accessible.name: text
+            Accessible.ignored: separator
             opacity: enabled || separator ? 1 : 0.55
             contentItem: Item {
                 Rectangle {

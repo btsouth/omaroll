@@ -91,7 +91,8 @@ Item {
 
     // On a half-screen tile the pills and the search cannot share a row, so
     // the search and sort drop to a second line rather than overlap.
-    readonly property bool separateBrowse: root.width < 620
+    readonly property real kindButtonsWidth: sectionButtons.width + kinds.spacing
+    readonly property bool separateBrowse: root.width < Math.max(620, root.kindButtonsWidth + 140)
     readonly property bool wrapped: root.width < kinds.width + 40 + 90 + sortButton.width + 60
     implicitHeight: wrapped ? 76 : 40
 
@@ -103,63 +104,74 @@ Item {
         anchors.topMargin: 7
         spacing: 6
 
-        PillButton {
-            label: "All"
-            shortcut: root.sectionShortcut(0)
-            active: Captures.kindFilter === root.kindAll
-            onClicked: Captures.kindFilter = root.kindAll
-        }
-        PillButton {
-            label: root.width < 700 ? "Shots" : "Screenshots"
-            shortcut: root.sectionShortcut(1)
-            active: Captures.kindFilter === root.kindScreenshot
-            onClicked: Captures.kindFilter = root.kindScreenshot
-        }
-        PillButton {
-            label: root.width < 700 ? "Clips" : "Recordings"
-            shortcut: root.sectionShortcut(2)
-            active: Captures.kindFilter === root.kindRecording
-            onClicked: Captures.kindFilter = root.kindRecording
-        }
-        PillButton {
-            label: root.width < 700 ? "Photos" : "Pictures"
-            shortcut: root.sectionShortcut(3)
-            active: Captures.kindFilter === root.kindPicture
-            onClicked: Captures.kindFilter = root.kindPicture
-        }
-        PillButton {
-            label: "Videos"
-            shortcut: root.sectionShortcut(4)
-            active: Captures.kindFilter === root.kindVideo
-            onClicked: Captures.kindFilter = root.kindVideo
-        }
-        PillButton {
-            visible: Settings.scanDownloads
-            label: root.width < 700 ? "Down" : "Downloads"
-            shortcut: root.sectionShortcut(5)
-            active: Captures.kindFilter === root.kindDownload
-            onClicked: Captures.kindFilter = root.kindDownload
-        }
-        PillButton {
-            label: "PDFs"
-            shortcut: root.sectionShortcut(7)
-            active: Captures.kindFilter === root.kindDocument
-            onClicked: Captures.kindFilter = root.kindDocument
-        }
+        Row {
+            id: sectionButtons
+            spacing: kinds.spacing
 
-        Item { width: 6; height: 1 }
+            PillButton {
+                label: "All"
+                shortcut: root.sectionShortcut(0)
+                active: Captures.kindFilter === root.kindAll
+                onClicked: Captures.kindFilter = root.kindAll
+            }
+            PillButton {
+                label: root.width < 700 ? "Shots" : "Screenshots"
+                shortcut: root.sectionShortcut(1)
+                active: Captures.kindFilter === root.kindScreenshot
+                onClicked: Captures.kindFilter = root.kindScreenshot
+            }
+            PillButton {
+                label: root.width < 700 ? "Clips" : "Recordings"
+                shortcut: root.sectionShortcut(2)
+                active: Captures.kindFilter === root.kindRecording
+                onClicked: Captures.kindFilter = root.kindRecording
+            }
+            PillButton {
+                label: root.width < 700 ? "Photos" : "Pictures"
+                shortcut: root.sectionShortcut(3)
+                active: Captures.kindFilter === root.kindPicture
+                onClicked: Captures.kindFilter = root.kindPicture
+            }
+            PillButton {
+                label: "Videos"
+                shortcut: root.sectionShortcut(4)
+                active: Captures.kindFilter === root.kindVideo
+                onClicked: Captures.kindFilter = root.kindVideo
+            }
+            PillButton {
+                visible: Settings.scanDownloads
+                label: root.width < 700 ? "Down" : "Downloads"
+                shortcut: root.sectionShortcut(5)
+                active: Captures.kindFilter === root.kindDownload
+                onClicked: Captures.kindFilter = root.kindDownload
+            }
+            PillButton {
+                label: "PDFs"
+                shortcut: root.sectionShortcut(7)
+                active: Captures.kindFilter === root.kindDocument
+                onClicked: Captures.kindFilter = root.kindDocument
+            }
 
-        // Orthogonal to the kind: favourites of whatever section is showing.
-        PillButton {
-            label: "★"
-            toolTip: "Favourites"
-            shortcut: root.sectionShortcut(6)
-            active: Captures.favoritesOnly
-            onClicked: Captures.favoritesOnly = !Captures.favoritesOnly
+            Item { width: 6; height: 1 }
+
+            // Orthogonal to the kind: favourites of whatever section is showing.
+            PillButton {
+                label: "★"
+                toolTip: "Favourites"
+                accessibleName: "Favourites"
+                checkable: true
+                shortcut: root.sectionShortcut(6)
+                active: Captures.favoritesOnly
+                onClicked: Captures.favoritesOnly = !Captures.favoritesOnly
+            }
+
         }
 
         PillButton {
             id: libraryButton
+            objectName: "libraryBrowseButton"
+            maximumWidth: root.separateBrowse ? 140
+                          : Math.max(80, root.width - 40 - root.kindButtonsWidth)
             // Keep Browse reachable when the kind filters fill a narrow row.
             parent: root.separateBrowse ? root : kinds
             x: root.separateBrowse ? 20 : 0
@@ -186,7 +198,7 @@ Item {
                     || Captures.dateFrom !== "" || Captures.modifiedAfter !== ""
                     || Captures.smartCollectionFilter !== ""
                     || root.browserOpen
-            toolTip: Captures.folderFilter
+            toolTip: Captures.folderFilter !== "" ? Captures.folderFilter : label
             onClicked: root.browseRequested()
         }
     }
@@ -285,6 +297,10 @@ Item {
                 required property string modelData
 
                 height: 30
+                text: modelData
+                Accessible.name: text
+                checkable: true
+                checked: Captures.sortMode === index
 
                 contentItem: Text {
                     text: sortRow.modelData

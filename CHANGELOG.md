@@ -9,6 +9,16 @@
 - An optional Remember playback speed setting applies the last chosen quick
   viewer speed to newly opened videos. It is off by default.
 
+### Fixed
+
+- Icon buttons support Tab, Enter and Space, and the library preview has an
+  `Alt+C` caption shortcut and keyboard access to technical details.
+- Library Undo reacts to the first mark. Failed Trash targets and other checked
+  files stay selected after file actions.
+- Grid filenames appear on hover or keyboard focus. Failed previews have a
+  distinct message, long toolbar labels fit narrow windows, and Settings
+  scrolls focused controls into view.
+
 ## 1.14.0
 
 Photos and videos open faster, and videos work with media keys and the shell's

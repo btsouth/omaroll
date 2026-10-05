@@ -27,6 +27,7 @@ Item {
 
     implicitWidth: root.label !== "" ? Math.max(34, labelMetrics.advanceWidth + 18) : 34
     implicitHeight: 34
+    activeFocusOnTab: true
     opacity: root.enabled ? 1 : 0.42
     Accessible.role: Accessible.Button
     Accessible.name: root.toolTip
@@ -51,8 +52,9 @@ Item {
         color: root.active ? root.shade(Theme.accent, 0.30)
                : root.raised ? root.shade(Theme.background, root.hovered ? 0.92 : 0.74)
                : root.shade(Theme.foreground, root.hovered ? 0.12 : 0.0)
-        border.width: root.raised ? 1 : 0
-        border.color: root.shade(Theme.foreground, root.hovered ? 0.28 : 0.14)
+        border.width: root.activeFocus ? 2 : root.raised ? 1 : 0
+        border.color: root.activeFocus ? Theme.accent
+                      : root.shade(Theme.foreground, root.hovered ? 0.28 : 0.14)
         Behavior on color { ColorAnimation { duration: 120; easing.type: Easing.OutQuad } }
     }
 
@@ -85,8 +87,16 @@ Item {
         onClicked: root.clicked()
     }
 
+    Keys.onPressed: function(event) {
+        if (root.enabled && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+                             || event.key === Qt.Key_Space)) {
+            root.clicked()
+            event.accepted = true
+        }
+    }
+
     ToolTip {
-        visible: root.resolvedToolTip !== "" && root.hovered
+        visible: root.resolvedToolTip !== "" && (root.hovered || root.activeFocus)
         text: root.resolvedToolTip
         delay: 500
     }

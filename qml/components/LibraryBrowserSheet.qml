@@ -665,6 +665,8 @@ FocusScope {
             ListView {
                 id: choices
                 objectName: "libraryChoices"
+                Accessible.role: Accessible.List
+                Accessible.name: "Library choices"
                 width: parent.width
                 y: searchBox.y + searchBox.height + contentArea.spacing
                 height: Math.max(0, parent.height - y)
@@ -724,6 +726,12 @@ FocusScope {
                                                      : objectChoice ? Number(modelData.count)
                                                      : root.section === 3
                                                      ? Settings.tagItemCount(value) : 0
+                    Accessible.role: Accessible.ListItem
+                    Accessible.name: objectChoice ? choiceLabel : value
+                    Accessible.selectable: true
+                    Accessible.selected: selectedChoice
+                    Accessible.focused: ListView.isCurrentItem && choices.activeFocus
+                    Accessible.onPressAction: root.openChoice(choiceRow.index)
                     width: choices.width - 10
                     height: 48
                     radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3

@@ -304,6 +304,7 @@ and put on your clipboard.
 | `Q` · `B` | Crop, rotate, resize the open picture · correct the whole selection |
 | `K` | Compare the selection, or the open picture's copies |
 | `Ctrl+Z` | Undo the last favourite, hide, rating or caption change |
+| `Alt+C` in the library preview | Edit the caption; Enter saves and Escape cancels |
 | `1`-`8` · `Tab` `Shift+Tab` | Jump to a section · next · previous section |
 | `Alt+1`-`Alt+5` · `Alt+0` | Rate · clear rating, in the grid or the viewer |
 | `Page Up` `Page Down` in a PDF preview | Previous · next page |
