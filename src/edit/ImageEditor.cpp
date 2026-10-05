@@ -456,7 +456,7 @@ bool ImageEditor::isAnimated(const QString& path) const {
 
 QVariantMap ImageEditor::exportImage(const QString& source, const QString& preferred,
                                     const QByteArray& format, int edge) {
-  if ((format != "jpg" && format != "png") || edge <= 0 || CameraRaw::isRawFile(source)) {
+  if ((format != "jpg" && format != "png") || edge <= 0) {
     return {{QStringLiteral("error"), QStringLiteral("Unsupported picture export")}};
   }
   QImage image = readOriented(source);
