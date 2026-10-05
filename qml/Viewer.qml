@@ -305,7 +305,6 @@ ApplicationWindow {
     }
 
     function step(direction) {
-        if (root.blockingActionOpen) return
         slideshowTimer.stop()
         if (root.slideshowRunning) {
             root.stepSlideshow(direction)

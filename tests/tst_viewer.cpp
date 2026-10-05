@@ -246,6 +246,8 @@ private slots:
       m_window->close();
     }
     QTRY_VERIFY(!m_window->isVisible());
+    m_window->setWindowState(Qt::WindowNoState);
+    m_window->resize(1200, 800);
     m_window->setProperty("chromeTimeout", 2200);
     m_settings->setVideoMuted(false);
     m_settings->setVideoVolume(0.8);
