@@ -7,8 +7,16 @@
 #include <QSizeF>
 #include <QString>
 
+class QProcess;
+
 namespace PdfSupport {
 
+inline constexpr qsizetype kTextByteLimit = 16 * 1024 * 1024;
+inline constexpr qsizetype kPageByteLimit = 4 * 1024 * 1024;
+inline constexpr qint64 kPixelLimit = 8 * 1024 * 1024;
+
+// Apply Poppler child memory, CPU and output-file budgets before it starts.
+void limitProcess(QProcess& process);
 [[nodiscard]] bool available();
 [[nodiscard]] QImage renderPage(const QString& path, int page, const QSize& target);
 

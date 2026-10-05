@@ -20,6 +20,8 @@
 #include "library/MediaInspector.h"
 #include "library/SimilarityIndex.h"
 #include "edit/ImageEditor.h"
+#include "edit/ClipboardImage.h"
+#include "edit/ClipboardText.h"
 #include "edit/CopyOutput.h"
 #include "edit/JpegTransform.h"
 #include "matte/HueExtractor.h"
@@ -2729,6 +2731,258 @@ private slots:
     QVERIFY(subtitles.files(video).isEmpty());
   }
 
+  void pdfSearchCachesExtractionAndReportsFailures() {
+    QTemporaryDir dir;
+    const QString source = QFINDTESTDATA("fixtures/pdf/text-page.pdf");
+    const QString path = dir.filePath(QStringLiteral("document.pdf"));
+    QVERIFY(QFile::copy(source, path));
+    const QString log = dir.filePath(QStringLiteral("calls"));
+    QFile helper(dir.filePath(QStringLiteral("pdftotext")));
+    const auto install = [&](const QByteArray& body) {
+      if (!helper.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+      helper.write("#!/bin/sh\necho call >> '");
+      helper.write(log.toUtf8());
+      helper.write("'\n");
+      helper.write(body);
+      helper.close();
+      return helper.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    };
+    QVERIFY(install("/bin/sleep 0.1\nprintf 'alpha\\fbeta'\n"));
+    const QByteArray oldPath = qgetenv("PATH");
+    const auto restore = qScopeGuard([&] { qputenv("PATH", oldPath); });
+    qputenv("PATH", dir.path().toUtf8() + ':' + oldPath);
+    PdfInspector inspector;
+    QSignalSpy failed(&inspector, &PdfInspector::searchFailed);
+    inspector.inspect(path);
+    QTRY_COMPARE(inspector.pageCount(), 1);
+    inspector.find(QStringLiteral("alpha"));
+    inspector.find(QStringLiteral("beta")); // reuse in-flight extraction, answer latest query
+    QTRY_COMPARE(inspector.matches(), QVariantList({2}));
+    inspector.find(QStringLiteral("alpha"));
+    QTRY_COMPARE(inspector.matches(), QVariantList({1}));
+    inspector.clearSearch();
+    inspector.find(QStringLiteral("beta"));
+    QTRY_COMPARE(inspector.matches(), QVariantList({2}));
+    QFile calls(log);
+    QVERIFY(calls.open(QIODevice::ReadOnly));
+    QCOMPARE(calls.readAll().count("call"), 1);
+    calls.close();
+    QCOMPARE(failed.size(), 0);
+
+    // Replacing the document discards the extraction cache and its results.
+    QVERIFY(QFile::rename(path, path + QStringLiteral(".old")));
+    QVERIFY(QFile::copy(source, path));
+    QVERIFY(install("echo encrypted-document >&2\nexit 1\n"));
+    inspector.inspect(path);
+    QVERIFY(inspector.matches().isEmpty());
+    QTRY_COMPARE(inspector.pageCount(), 1);
+    inspector.find(QStringLiteral("alpha"));
+    QTRY_COMPARE(failed.size(), 1);
+    QVERIFY(failed.first().first().toString().contains(QStringLiteral("encrypted-document")));
+    QVERIFY(inspector.matches().isEmpty());
+
+    QVERIFY(install("exec /usr/bin/head -c 20000000 /dev/zero\n"));
+    inspector.find(QStringLiteral("alpha"));
+    QTRY_COMPARE(failed.size(), 2);
+    QVERIFY(failed.last().first().toString().contains(QStringLiteral("too large")));
+  }
+
+  void pdfPageExtractionBudgets_data() {
+    QTest::addColumn<bool>("words");
+    QTest::newRow("page-text") << false;
+    QTest::newRow("word-xml") << true;
+  }
+
+  void pdfPageExtractionBudgets() {
+    QFETCH(bool, words);
+    QTemporaryDir dir;
+    QFile helper(dir.filePath(QStringLiteral("pdftotext")));
+    QVERIFY(helper.open(QIODevice::WriteOnly));
+    helper.write("#!/bin/sh\nexec /usr/bin/head -c 6000000 /dev/zero\n");
+    helper.close();
+    QVERIFY(helper.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    const QByteArray oldPath = qgetenv("PATH");
+    const auto restore = qScopeGuard([&] { qputenv("PATH", oldPath); });
+    qputenv("PATH", dir.path().toUtf8() + ':' + oldPath);
+    PdfInspector inspector;
+    inspector.inspect(QFINDTESTDATA("fixtures/pdf/text-page.pdf"));
+    QTRY_COMPARE(inspector.pageCount(), 1);
+    QSignalSpy failed(&inspector, words ? &PdfInspector::selectionFailed : &PdfInspector::textCopyFailed);
+    if (words) inspector.updateSelection(1, 0, 0, 1, 1);
+    else inspector.copyPageText(1);
+    QTRY_COMPARE(failed.size(), 1);
+    QVERIFY(failed.first().first().toString().contains(QStringLiteral("too large")));
+    QVERIFY(!inspector.hasSelection());
+  }
+
+  void pdfReplacementInvalidatesDetailsAndSelection() {
+    QTemporaryDir dir;
+    const QString source = QFINDTESTDATA("fixtures/pdf/text-page.pdf");
+    const QString path = dir.filePath(QStringLiteral("document.pdf"));
+    QVERIFY(QFile::copy(source, path));
+    PdfInspector inspector;
+    inspector.inspect(path);
+    QTRY_COMPARE(inspector.pageCount(), 1);
+    inspector.updateSelection(1, 0, 0, 1, 1);
+    QTRY_VERIFY(inspector.hasSelection());
+    const QString oldText = inspector.selectionText();
+    const QString next = dir.filePath(QStringLiteral("next.pdf"));
+    {
+      QPdfWriter writer(next);
+      QPainter painter(&writer);
+      painter.drawText(QPoint(100, 1000), QStringLiteral("Replacement document"));
+      QVERIFY(writer.newPage());
+      painter.drawText(QPoint(300, 3000), QStringLiteral("New second page"));
+    }
+    QVERIFY(QFile::rename(path, dir.filePath(QStringLiteral("old.pdf"))));
+    QVERIFY(QFile::rename(next, path));
+    inspector.inspect(path);
+    QVERIFY(!inspector.hasSelection());
+    QTRY_COMPARE(inspector.pageCount(), 2);
+    inspector.updateSelection(2, 0, 0, 1, 1);
+    QTRY_VERIFY(inspector.hasSelection());
+    QVERIFY(inspector.selectionText().contains(QStringLiteral("New second page")));
+    QVERIFY(inspector.selectionText() != oldText);
+
+    // Replacement while extraction is running must not apply the old words.
+    inspector.clear();
+    inspector.inspect(path);
+    QTRY_COMPARE(inspector.pageCount(), 2);
+    inspector.updateSelection(2, 0, 0, 1, 1);
+    QVERIFY(QFile::rename(path, next));
+    QVERIFY(QFile::copy(source, path));
+    inspector.inspect(path);
+    QTRY_COMPARE(inspector.pageCount(), 1);
+    QTest::qWait(200);
+    QVERIFY(!inspector.hasSelection());
+    inspector.updateSelection(1, 0, 0, 1, 1);
+    QTRY_VERIFY(inspector.hasSelection());
+    QCOMPARE(inspector.selectionText(), oldText);
+  }
+
+  void pdfTallPageHasBoundedRaster() {
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("tall.pdf"));
+    {
+      QPdfWriter writer(path);
+      writer.setPageSize(QPageSize(QSizeF(50, 5000), QPageSize::Millimeter));
+      QPainter painter(&writer);
+      painter.fillRect(QRect(0, 0, 200, 1000), Qt::red);
+    }
+    const QImage image = PdfSupport::renderPage(path, 1, QSize(3000, 0));
+    QVERIFY(!image.isNull());
+    QVERIFY(image.height() <= 3840);
+    QVERIFY(image.width() < 3000);
+    QVERIFY(qint64(image.width()) * image.height() <= PdfSupport::kPixelLimit);
+    const QImage square = PdfSupport::renderPage(QFINDTESTDATA("fixtures/pdf/text-page.pdf"), 1,
+                                               QSize(3840, 3840));
+    QVERIFY(!square.isNull());
+    QVERIFY(qint64(square.width()) * square.height() <= PdfSupport::kPixelLimit);
+  }
+
+  void nativeClipboardRejectsFailedOffers_data() {
+    QTest::addColumn<QByteArray>("failure");
+    QTest::newRow("nonzero") << QByteArray("exit 4\n");
+    QTest::newRow("crash") << QByteArray("kill -KILL $$\n");
+    QTest::newRow("timeout") << QByteArray("exec /bin/sleep 10\n");
+  }
+
+  void nativeClipboardRejectsFailedOffers() {
+    QFETCH(QByteArray, failure);
+    QTemporaryDir dir;
+    QFile helper(dir.filePath(QStringLiteral("wl-copy")));
+    QVERIFY(helper.open(QIODevice::WriteOnly));
+    helper.write("#!/bin/sh\n/bin/cat >/dev/null\n");
+    helper.write(failure);
+    helper.close();
+    QVERIFY(helper.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    const QByteArray oldPath = qgetenv("PATH");
+    const auto restore = qScopeGuard([&] { qputenv("PATH", oldPath); });
+    qputenv("PATH", dir.path().toUtf8() + ':' + oldPath);
+    QGuiApplication::clipboard()->setText(QStringLiteral("unchanged"));
+    QImage image(4, 4, QImage::Format_RGB32);
+    image.fill(Qt::red);
+    QVERIFY(!ClipboardImage::offer(image));
+    QVERIFY(!ClipboardText::offer(QStringLiteral("text")));
+    QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("unchanged"));
+    if (failure.startsWith("exit")) {
+      PdfInspector inspector;
+      inspector.inspect(QFINDTESTDATA("fixtures/pdf/text-page.pdf"));
+      QTRY_COMPARE(inspector.pageCount(), 1);
+      QSignalSpy copied(&inspector, &PdfInspector::textCopied);
+      QSignalSpy failed(&inspector, &PdfInspector::textCopyFailed);
+      inspector.copyPageText(1);
+      QTRY_COMPARE(failed.size(), 1);
+      QCOMPARE(copied.size(), 0);
+      QSignalSpy selected(&inspector, &PdfInspector::selectionCopied);
+      QSignalSpy selectionFailed(&inspector, &PdfInspector::selectionFailed);
+      inspector.updateSelection(1, 0, 0, 1, 1);
+      QTRY_VERIFY(inspector.hasSelection());
+      inspector.copySelection();
+      QCOMPARE(selectionFailed.size(), 1);
+      QCOMPARE(selected.size(), 0);
+      ImageEditor editor;
+      QSignalSpy imageCopied(&editor, &ImageEditor::copied);
+      QSignalSpy imageFailed(&editor, &ImageEditor::failed);
+      const QString path = dir.filePath(QStringLiteral("region.png"));
+      QVERIFY(image.save(path));
+      editor.copyRegion(path, 0, false, false, 0, 0, 0, 1, 1);
+      QTRY_COMPARE(imageFailed.size(), 1);
+      QCOMPARE(imageCopied.size(), 0);
+    }
+  }
+
+  void nativeClipboardFallbackRunsOnGuiThread() {
+    QTemporaryDir dir;
+    const QByteArray oldPath = qgetenv("PATH");
+    const auto restore = qScopeGuard([&] { qputenv("PATH", oldPath); });
+    qputenv("PATH", dir.path().toUtf8()); // no persistent helper
+    QImage image(4, 4, QImage::Format_RGB32);
+    image.fill(Qt::green);
+    bool guiThread = true;
+    const auto connection = connect(QGuiApplication::clipboard(), &QClipboard::dataChanged,
+        QGuiApplication::clipboard(), [&] { guiThread &= QThread::currentThread() == qApp->thread(); },
+        Qt::DirectConnection);
+    const auto disconnect = qScopeGuard([&] { QObject::disconnect(connection); });
+    auto offered = std::async(std::launch::async, [image] { return ClipboardImage::offer(image); });
+    QTRY_VERIFY(offered.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready);
+    if (QGuiApplication::platformName().startsWith(QStringLiteral("wayland"))) {
+      QVERIFY(!offered.get());
+    } else {
+      QVERIFY(offered.get());
+      QVERIFY(guiThread);
+      QCOMPARE(QGuiApplication::clipboard()->image(), image);
+    }
+  }
+
+  void trackedExportStopsDescendantsOnClose() {
+    QTemporaryDir dir;
+    const QString pidPath = dir.filePath(QStringLiteral("child.pid"));
+    const QString output = dir.filePath(QStringLiteral("output"));
+    auto launcher = std::make_unique<ActionLauncher>();
+    QVERIFY(launcher->runTracked(QStringLiteral("sh"),
+        {QStringLiteral("-c"),
+         QStringLiteral("/bin/sh -c 'trap \"\" TERM; echo $$ > \"$1\"; exec /bin/sleep 30' child \"$1\" & wait"),
+         QStringLiteral("helper"), pidPath}, {}, output));
+    QTRY_VERIFY(QFileInfo(pidPath).size() > 0);
+    QFile pidFile(pidPath);
+    QVERIFY(pidFile.open(QIODevice::ReadOnly));
+    const qint64 pid = pidFile.readAll().trimmed().toLongLong();
+    QVERIFY(pid > 0);
+    const auto cleanup = qScopeGuard([&] { ::kill(pid, SIGKILL); });
+    QVERIFY(::kill(pid, 0) == 0);
+    QElapsedTimer elapsed;
+    elapsed.start();
+    launcher.reset();
+    QVERIFY(elapsed.elapsed() < 3000);
+    const auto stopped = [&] {
+      QFile state(QStringLiteral("/proc/%1/stat").arg(pid));
+      if (!state.open(QIODevice::ReadOnly)) return true;
+      return state.readAll().split(' ').value(2) == "Z";
+    };
+    QTRY_VERIFY(stopped());
+  }
+
   void pdfSearchMatchesAcrossPagesAndWhitespace() {
     const QString text = QStringLiteral("Invoice total: 42") + QChar(0x0C)
                          + QStringLiteral("Notes\nINVOICE\nnothing\nTOTAL") + QChar(0x0C)
@@ -2949,7 +3203,7 @@ private slots:
     const QRectF firstLine = rects.first().toRectF();
     inspector.updateSelection(1, firstLine.left(), firstLine.top(), firstLine.right(),
                               firstLine.bottom());
-    QVERIFY(inspector.hasSelection());
+    QTRY_VERIFY(inspector.hasSelection());
     QCOMPARE(failed.size(), 0);
     QVERIFY(inspector.selectionText().size() < wholePage.size());
     QVERIFY(wholePage.contains(inspector.selectionText()));

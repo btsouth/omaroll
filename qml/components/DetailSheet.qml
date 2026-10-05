@@ -689,6 +689,10 @@ Item {
         }
     }
 
+    onStampChanged: {
+        if (isDocument) PdfInfo.inspect(path)
+    }
+
     onPathChanged: {
         stillReady = false
         animationPlaying = true
@@ -1553,6 +1557,9 @@ Item {
                     } else {
                         root.pdfMatchIndex = 0
                     }
+                }
+                function onSearchFailed(message) {
+                    root.statusRequested(message)
                 }
                 function onTextCopied(page) {
                     root.statusRequested("Copied page " + page + " text")
