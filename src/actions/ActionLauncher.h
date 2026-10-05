@@ -5,6 +5,7 @@
 #include <QSet>
 #include <QString>
 #include <QStringList>
+#include <QVariantList>
 #include <QVariantMap>
 #include <optional>
 
@@ -39,6 +40,11 @@ public:
 
   // Ordinary Delete uses recoverable XDG Trash.
   Q_INVOKABLE bool moveToTrash(const QString& path);
+  Q_INVOKABLE QVariantMap captureFileAction(const QString& path,
+                                            const QString& expectedMediaPath = {});
+  Q_INVOKABLE bool moveCapturedToTrash(const QVariantMap& target);
+  Q_INVOKABLE QVariantMap renameCapturedFile(const QVariantMap& target, const QString& baseName);
+  Q_INVOKABLE void moveDuplicateCopiesToTrash(const QVariantMap& keep, const QVariantList& copies);
   // Explicit permanent deletion removes only this file or symlink, never a directory tree.
   Q_INVOKABLE bool deletePermanently(const QString& path);
   // Bind confirmation to the parent directory and entry, preserving a final symlink.
@@ -66,7 +72,7 @@ public:
   // A transcode can run for minutes with its output sitting at zero bytes, so
   // fire-and-forget left the user guessing whether anything happened. The
   // output is announced as pending so the library holds the half-written file
-  // back, and settled once the tool exits: saved on success, or cleaned up and
+  // back, and settled once the tool exits: saved on success, or retained and
   // explained on failure. The tool's own stderr is quoted when it has one.
   bool runTracked(const QString& program, const QStringList& arguments,
                   const QString& packageHint, const QString& outputPath);
@@ -119,8 +125,10 @@ signals:
   void outputAlreadyDone(const QString& path);
   void pendingOutputsChanged();
   void submissionFinished(const QString& program, bool success, const QString& detail);
+  void duplicateCleanupFinished(int moved, const QStringList& skipped);
 
 private:
+  [[nodiscard]] static bool capturedFileMatches(const QVariantMap& target);
   [[nodiscard]] QString locate(const QString& program, const QString& packageHint);
   bool copyText(const QString& text, bool sensitive, const QString& mimeType = {});
   bool startSubmission(const QString& program, const QStringList& arguments,

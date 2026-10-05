@@ -1,6 +1,7 @@
 #include "edit/ImageEditor.h"
 
 #include "edit/ClipboardImage.h"
+#include "edit/CopyOutput.h"
 #include "edit/JpegTransform.h"
 #include "sources/CameraRaw.h"
 #include "sources/CaptureScanner.h"
@@ -13,7 +14,6 @@
 #include <QImageReader>
 #include <QImageWriter>
 #include <QMetaObject>
-#include <QSaveFile>
 #include <QTransform>
 #include <QtConcurrent>
 #include <QtMath>
@@ -78,36 +78,14 @@ QImage readOriented(const QString& path) {
   return reader.read();
 }
 
-// Writes atomically through QSaveFile, so a failure or a full disk leaves no
-// half-written file for the scanner to pick up.
-bool writeImage(const QImage& image, const QString& output, const QByteArray& format) {
-  QSaveFile file(output);
-  if (!file.open(QIODevice::WriteOnly)) {
-    return false;
-  }
-  QImageWriter writer(&file, format);
-  if (format == "jpg") {
-    writer.setQuality(92);
-  }
-  if (!writer.write(image)) {
-    file.cancelWriting();
-    return false;
-  }
-  return file.commit();
-}
-
-// Reserves a free edited name with an exclusive create, so another instance
-// cannot claim it between selection and write.
-QString reserveOutputName(const QString& sourcePath) {
-  for (int attempt = 0; attempt < 64; ++attempt) {
-    const QString candidate = ImageEditor::availableOutputPath(sourcePath);
-    QFile reservation(candidate);
-    if (reservation.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
-      reservation.close();
-      return candidate;
-    }
-  }
-  return {};
+// The encoder writes only our private file; publication never replaces a name.
+QString writeImage(const QImage& image, const QString& preferred, const QByteArray& format) {
+  CopyOutput output(preferred);
+  if (!output.device()) return {};
+  QImageWriter writer(output.device(), format);
+  if (format == "jpg") writer.setQuality(92);
+  if (!writer.write(image)) return {};
+  return output.publish();
 }
 
 } // namespace
@@ -265,13 +243,12 @@ void ImageEditor::saveCopy(const QString& path, int quarterTurns, bool flipHoriz
         noResize && JpegTransform::available()) {
       QImageReader probe(source);
       if (probe.transformation() == QImageIOHandler::TransformationNone) {
-        const QString candidate = reserveOutputName(source);
-        if (!candidate.isEmpty()) {
-          if (JpegTransform::apply(source, candidate, turns, flipH, flipV)) {
-            output = candidate;
-          } else {
-            QFile::remove(candidate);
-          }
+        CopyOutput candidate(composedOutputPath(source, false));
+        if (candidate.device() &&
+            JpegTransform::apply(source, candidate.encoderPath(), turns, flipH, flipV)) {
+          output = candidate.publish();
+          if (output.isEmpty()) error = QStringLiteral("Could not safely save a copy beside %1")
+                                           .arg(QFileInfo(source).fileName());
         }
       }
     }
@@ -297,16 +274,10 @@ void ImageEditor::saveCopy(const QString& path, int quarterTurns, bool flipHoriz
         if (result.isNull()) {
           error = QStringLiteral("That correction left nothing to save");
         } else {
-          output = reserveOutputName(source);
+          output = writeImage(result, composedOutputPath(source, false), format);
           if (output.isEmpty()) {
-            error = QStringLiteral("Could not find a free name beside %1")
+            error = QStringLiteral("Could not safely save a copy beside %1; check its folder")
                         .arg(QFileInfo(source).fileName());
-          } else if (!writeImage(result, output, format)) {
-            QFile::remove(output);
-            error = QFileInfo(source).absoluteDir().exists()
-                        ? QStringLiteral("Could not write %1").arg(QFileInfo(output).fileName())
-                        : QStringLiteral("The folder for %1 is no longer there")
-                              .arg(QFileInfo(source).fileName());
           }
         }
       }
@@ -439,11 +410,9 @@ void ImageEditor::saveCopies(const QStringList& paths, int quarterTurns, bool fl
         if (result.isNull()) {
           ++failedCount;
         } else {
-          const QString output = reserveOutputName(source);
-          if (output.isEmpty() || !writeImage(result, output, writableFormat(source))) {
-            if (!output.isEmpty()) {
-              QFile::remove(output);
-            }
+          const QString output = writeImage(result, composedOutputPath(source, false),
+                                            writableFormat(source));
+          if (output.isEmpty()) {
             ++failedCount;
           } else {
             ++succeeded;

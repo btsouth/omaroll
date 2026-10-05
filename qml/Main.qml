@@ -39,7 +39,8 @@ ApplicationWindow {
     // whatever is selected when it is confirmed. A rescan or sort change can
     // move the selection under a modal, and trashing the wrong file is
     // unforgivable.
-    property string pendingDeletePath: ""
+    property var pendingDeleteTarget: ({})
+    property var pendingDuplicateKeep: ({})
     property var pendingDeleteBatch: []
     // While a collection rename is in flight the old name is gone from the
     // model before the new one is known, so the filter-clearing handlers are
@@ -221,7 +222,7 @@ ApplicationWindow {
             root.openExport([path], video)
             return
         case "rename":
-            renameSheet.open(path, Captures.fileNameAt(row))
+            renameSheet.open(Captures.deletionPathAt(row), Captures.fileNameAt(row), path)
             return
         case "ocr":
             if (!TextIndex.available) {
@@ -569,23 +570,34 @@ ApplicationWindow {
         }
     }
 
+    function captureTrashTarget(path) {
+        const entry = Captures.deletionPathAt(Captures.rowOf(path))
+        return Actions.captureFileAction(entry, path)
+    }
+
     function requestDelete(path) {
-        if (path === "") {
-            return
-        }
-        root.pendingDeletePath = path
+        if (path === "") return
+        const target = root.captureTrashTarget(path)
+        if (target.path === undefined) return
+        root.pendingDeleteTarget = target
         root.pendingDeleteBatch = []
+        root.pendingDuplicateKeep = ({})
         confirm.title = "Move this item to Trash?"
-        confirm.detail = path
+        confirm.detail = target.path
         confirm.open()
     }
 
     function requestDeleteBatch(paths, title, detail) {
-        if (paths.length === 0) {
-            return
+        if (paths.length === 0) return
+        const targets = []
+        for (const path of paths) {
+            const target = root.captureTrashTarget(path)
+            if (target.path === undefined) return
+            targets.push(target)
         }
-        root.pendingDeletePath = ""
-        root.pendingDeleteBatch = paths
+        root.pendingDeleteTarget = ({})
+        root.pendingDeleteBatch = targets
+        root.pendingDuplicateKeep = ({})
         confirm.title = title === undefined
                         ? "Move " + paths.length + " items to Trash?" : title
         confirm.detail = detail === undefined
@@ -646,11 +658,14 @@ ApplicationWindow {
             root.say("No other exact copies remain")
             return
         }
+        const keep = root.captureTrashTarget(path)
+        if (keep.path === undefined) return
         const name = path.substring(path.lastIndexOf("/") + 1)
         root.requestDeleteBatch(others,
                                 "Keep " + name + " and trash " + others.length
                                 + (others.length === 1 ? " copy?" : " copies?"),
                                 "Only byte-for-byte identical copies are moved. They remain recoverable from your file manager.")
+        if (confirm.visible) root.pendingDuplicateKeep = keep
     }
 
     // Called by --render so a screenshot can be taken of a specific view
@@ -1707,7 +1722,7 @@ ApplicationWindow {
             root.viewerPaths = root.viewerPaths.map(function (path) {
                 return path === oldPath ? newPath : path
             })
-            root.pendingRevealPath = newPath
+            root.pendingRevealPath = renameSheet.renamedMediaPath
             library.clearChecked()
             root.say("Renamed to " + fileName)
             Library.refresh()
@@ -1770,12 +1785,13 @@ ApplicationWindow {
         objectName: "confirm"
         confirmLabel: "Move to Trash"
         onAccepted: {
-            if (root.pendingDeleteBatch.length > 0) {
+            if (root.pendingDuplicateKeep.path !== undefined) {
+                Actions.moveDuplicateCopiesToTrash(root.pendingDuplicateKeep, root.pendingDeleteBatch)
+                root.say("Checking exact copies before moving them")
+            } else if (root.pendingDeleteBatch.length > 0) {
                 let moved = 0
-                for (const path of root.pendingDeleteBatch) {
-                    if (Actions.moveToTrash(path)) {
-                        moved++
-                    }
+                for (const target of root.pendingDeleteBatch) {
+                    if (Actions.moveCapturedToTrash(target)) moved++
                 }
                 if (moved > 0) {
                     root.say(moved === root.pendingDeleteBatch.length
@@ -1783,12 +1799,14 @@ ApplicationWindow {
                              : "Moved " + moved + " of " + root.pendingDeleteBatch.length + " items to Trash")
                 }
                 library.clearChecked()
-            } else if (Actions.moveToTrash(root.pendingDeletePath)) {
+                Library.refresh()
+            } else if (Actions.moveCapturedToTrash(root.pendingDeleteTarget)) {
                 root.say("Moved to Trash")
+                Library.refresh()
             }
-            root.pendingDeletePath = ""
+            root.pendingDeleteTarget = ({})
             root.pendingDeleteBatch = []
-            Library.refresh()
+            root.pendingDuplicateKeep = ({})
         }
         onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
     }
@@ -1821,6 +1839,11 @@ ApplicationWindow {
 
     Connections {
         target: Actions
+        function onDuplicateCleanupFinished(moved, skipped) {
+            if (skipped.length === 0) root.say("Moved " + moved + " exact copies to Trash")
+            library.clearChecked()
+            Library.refresh()
+        }
         function onFailed(message) { root.say(message) }
         function onReported(message) { root.say(message) }
         // A finished transcode lands next to its source, not at the top, so

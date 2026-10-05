@@ -4,11 +4,15 @@ Item {
     id: root
 
     property string path: ""
+    property var capturedTarget: ({})
+    property string renamedMediaPath: ""
     property string suffix: ""
     property string errorMessage: ""
     signal renamed(string oldPath, string newPath, string fileName)
 
-    function open(filePath, fileName) {
+    function open(filePath, fileName, mediaPath) {
+        capturedTarget = Actions.captureFileAction(filePath, mediaPath === undefined ? "" : mediaPath)
+        if (capturedTarget.path === undefined) return
         path = filePath
         const dot = fileName.lastIndexOf(".")
         suffix = dot >= 0 ? fileName.substring(dot) : ""
@@ -23,11 +27,12 @@ Item {
 
     function save() {
         const oldPath = path
-        const result = Actions.renameFile(oldPath, nameInput.text)
+        const result = Actions.renameCapturedFile(capturedTarget, nameInput.text)
         if (!result.ok) {
             errorMessage = result.error
             return
         }
+        renamedMediaPath = result.mediaPath
         root.close()
         root.renamed(oldPath, result.path, result.fileName)
     }
