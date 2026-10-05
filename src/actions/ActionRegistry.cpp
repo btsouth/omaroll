@@ -3,20 +3,20 @@
 #include "actions/ActionLauncher.h"
 #include "app/VideoPlayback.h"
 #include "edit/ImageEditor.h"
-#include <QFutureWatcher>
-#include <QtConcurrent>
-#include <memory>
 #include "sources/CameraRaw.h"
 #include "sources/FileVersion.h"
 
 #include <QFile>
 #include <QFileInfo>
+#include <QFutureWatcher>
 #include <QMimeDatabase>
 #include <QProcess>
 #include <QTimer>
 #include <algorithm>
 #include <QStandardPaths>
 #include <QVariantMap>
+#include <QtConcurrent>
+#include <memory>
 
 using namespace Qt::StringLiterals;
 

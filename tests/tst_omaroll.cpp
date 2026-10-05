@@ -8133,7 +8133,9 @@ private slots:
     QCOMPARE(back.first().at(0).toInt(), 1);
     QCOMPARE(back.first().at(3).toInt(), 42);
     const QVariantMap result = back.first().at(2).toList().first().toMap();
-    QCOMPARE(QImage(result.value(QStringLiteral("output")).toString()), decoded);
+    const QImage restored(result.value(QStringLiteral("output")).toString());
+    QCOMPARE(restored, decoded);
+    QCOMPARE(restored.colorSpace(), decoded.colorSpace());
   }
 
   void jpegLosslessIsSkippedWhenItCannotApply() {

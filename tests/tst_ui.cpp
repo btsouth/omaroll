@@ -765,10 +765,45 @@ private slots:
     QCOMPARE(QImage(secondCopy).size(), QSize(30, 60));
   }
 
+  void animatedCopiesAreLabeledBeforeSaving() {
+    const QString path = QFINDTESTDATA("fixtures/viewer/animated.webp");
+    const auto cleanup = qScopeGuard([&] { invoke("dismissTopLayer"); m_window->resize(1280, 820); });
+    m_window->resize(560, 420);
+    QQuickItem* single = item("correctionSheet");
+    perform(QStringLiteral("corrections"), path);
+    QTRY_VERIFY(single->isVisible());
+    QVERIFY(single->property("animated").toBool());
+    QCOMPARE(item("correctionSave")->property("label").toString(), QStringLiteral("Save first frame"));
+    QVERIFY(QMetaObject::invokeMethod(single, "close"));
+    QQuickItem* batch = item("batchCorrectionSheet");
+    QVERIFY(QMetaObject::invokeMethod(batch, "open", Q_ARG(QVariant, QVariant(QStringList{path}))));
+    QVERIFY(batch->property("hasAnimation").toBool());
+    QCOMPARE(item("batchApply")->property("label").toString(), QStringLiteral("Save first frames"));
+    QVERIFY(QMetaObject::invokeMethod(batch, "close"));
+    QQuickItem* matte = item("matteSheet");
+    matte->setProperty("path", path);
+    QVERIFY(QMetaObject::invokeMethod(matte, "open"));
+    QVERIFY(matte->property("animated").toBool());
+    QVERIFY(pill(matte, QStringLiteral("Save first frame")));
+    QVERIFY(QMetaObject::invokeMethod(matte, "close"));
+    QQuickItem* exportSheet = item("exportSheet");
+    QVERIFY(QMetaObject::invokeMethod(exportSheet, "open",
+        Q_ARG(QVariant, QVariant(QStringList{path})), Q_ARG(QVariant, false)));
+    QVERIFY(exportSheet->property("hasAnimation").toBool());
+    QVERIFY(QMetaObject::invokeMethod(exportSheet, "close"));
+  }
+
   void correctionSheetsIgnoreStaleJobsAndShowFailures() {
     const QString path = m_scratch.filePath(QStringLiteral("generation.png"));
     QVERIFY(QImage(120, 80, QImage::Format_RGB32).save(path));
-    const auto cleanup = qScopeGuard([&] { invoke("dismissTopLayer"); QFile::remove(path); });
+    const QString missing = m_scratch.filePath(QStringLiteral("generation-missing.png"));
+    m_disposablePaths.append(path);
+    m_disposablePaths.append(missing);
+    m_disposablePaths.append(ImageEditor::outputPathFor(missing));
+    const auto cleanup = qScopeGuard([&] {
+      invoke("dismissTopLayer"); QFile::remove(path); QFile::remove(missing);
+      QFile::remove(ImageEditor::outputPathFor(missing));
+    });
     QQuickItem* single = item("correctionSheet");
     perform(QStringLiteral("corrections"), path);
     const int old = single->property("jobGeneration").toInt();
@@ -792,7 +827,6 @@ private slots:
     m_imageEditor->batchFinished(1, 0, {}, oldBatch);
     QVERIFY(batch->isVisible());
     QCOMPARE(batch->property("doneCount").toInt(), 0);
-    const QString missing = m_scratch.filePath(QStringLiteral("generation-missing.png"));
     m_imageEditor->batchFinished(0, 1,
         {QVariantMap{{QStringLiteral("source"), missing}, {QStringLiteral("output"), QString()},
                      {QStringLiteral("error"), QStringLiteral("Could not read")}}}, batchId);
@@ -800,6 +834,11 @@ private slots:
     QVERIFY(batch->property("errorText").toString().contains(missing));
     QCOMPARE(batch->property("failedPaths").toStringList(), QStringList{missing});
     QVERIFY(pill(batch, QStringLiteral("Retry failed"))->isVisible());
+    QVERIFY(QImage(40, 20, QImage::Format_RGB32).save(missing));
+    click(pill(batch, QStringLiteral("Retry failed")));
+    QTRY_VERIFY_WITH_TIMEOUT(!batch->isVisible(), 15000);
+    QVERIFY(QFileInfo::exists(ImageEditor::outputPathFor(missing)));
+    QVERIFY(!QFileInfo::exists(ImageEditor::outputPathFor(path)));
   }
 
   void correctionStraightenSliderDrivesThePreview() {

@@ -21,6 +21,14 @@
 - Grid filenames appear on hover or keyboard focus. Failed previews have a
   distinct message, long toolbar labels fit narrow windows, and Settings
   scrolls focused controls into view.
+- Picture exports bake orientation and preserve color profiles. Background
+  copies convert tagged pictures to sRGB, and batch JPEG turns use the same
+  lossless path as single-picture corrections.
+- Animated pictures clearly offer a still first-frame copy. Correction sheets
+  ignore earlier jobs after reopening, keep crop presets consistent when
+  rotating, and list failed batch files with a retry action.
+- Taildrop reports send failures and completion without replacing failed starts
+  with a sending message.
 
 ## 1.14.0
 
