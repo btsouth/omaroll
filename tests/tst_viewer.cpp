@@ -2316,6 +2316,11 @@ private slots:
              still->property("contentHeight").toReal() - still->height());
     m_window->resize(600, 400);
     QTRY_VERIFY(qAbs(prop("displayWidth").toReal() - 600) < 0.01);
+    QTest::keyClick(m_window, Qt::Key_1);
+    QTRY_COMPARE(prop("zoomPercent").toInt(), 100);
+    QCOMPARE(prop("fitMode").toString(), QStringLiteral("fit"));
+    QTest::keyClick(m_window, Qt::Key_1);
+    QTRY_COMPARE(prop("viewScale").toReal(), 0.0);
     QTest::keyClick(m_window, Qt::Key_0);
     QTRY_COMPARE(prop("viewScale").toReal(), 0.0);
     QCOMPARE(prop("fitMode").toString(), QStringLiteral("fit"));

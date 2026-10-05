@@ -245,6 +245,8 @@ ApplicationWindow {
     }
 
     function fitToWindow() {
+        if (Session.isVideo || !root.imageReady) return
+        root.viewScale = root.effectiveScale
         root.fitMode = "fit"
         root.zoomTo(root.fittedScale)
     }
@@ -312,6 +314,9 @@ ApplicationWindow {
     }
 
     function showActualSize(x, y) {
+        if (Session.isVideo || !root.imageReady) return
+        root.viewScale = root.effectiveScale
+        root.fitMode = "fit"
         root.zoomTo(root.actualScale, x, y)
     }
 
@@ -1630,7 +1635,7 @@ ApplicationWindow {
             anchors.bottom: parent.bottom
             anchors.bottomMargin: 16
             compact: parent.width < 460
-            fitted: root.viewScale === 0
+            fitted: root.viewScale === 0 && root.fitMode === "fit"
             canStep: Session.count > 1
             slideshowRunning: root.slideshowRunning
             onZoomOut: root.zoomBy(1 / 1.25)
