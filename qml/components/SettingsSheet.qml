@@ -148,7 +148,6 @@ Item {
                 policy: ScrollBar.AsNeeded
             }
 
-
             function revealFocusedControl() {
                 const focused = root.Window.window ? root.Window.window.activeFocusItem : null
                 let ancestor = focused

@@ -1542,6 +1542,8 @@ ApplicationWindow {
 
         MenuItem {
             id: removeFromAlbumRow
+            text: "Remove from " + Captures.albumFilter
+            Accessible.name: text
             visible: Captures.albumFilter !== ""
             height: visible ? 30 : 0
             contentItem: Text {
@@ -1570,6 +1572,8 @@ ApplicationWindow {
 
             MenuItem {
                 id: addAlbumRow
+                text: "Add to " + addAlbumRow.modelData
+                Accessible.name: text
                 required property string modelData
                 height: 30
                 contentItem: Text {
@@ -1596,6 +1600,8 @@ ApplicationWindow {
 
         MenuItem {
             id: newAlbumRow
+            text: "+ New album"
+            Accessible.name: text
             height: 30
             contentItem: Text {
                 text: "+ New album"
@@ -1618,6 +1624,8 @@ ApplicationWindow {
 
         MenuItem {
             id: removeTagRow
+            text: "Remove tag " + Captures.tagFilter
+            Accessible.name: text
             visible: Captures.tagFilter !== ""
             height: visible ? 30 : 0
             contentItem: Text {
@@ -1647,6 +1655,8 @@ ApplicationWindow {
 
             MenuItem {
                 id: addTagRow
+                text: "Tag as " + addTagRow.modelData
+                Accessible.name: text
                 required property string modelData
                 height: 30
                 contentItem: Text {
@@ -1673,6 +1683,8 @@ ApplicationWindow {
 
         MenuItem {
             id: newTagRow
+            text: "+ New tag"
+            Accessible.name: text
             height: 30
             contentItem: Text {
                 text: "+ New tag"

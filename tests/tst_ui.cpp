@@ -522,7 +522,7 @@ private slots:
     for (const QString& path : {good, changed})
       QVERIFY(QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, path)));
     QVERIFY(QMetaObject::invokeMethod(m_window, "requestDeleteBatch",
-                                    Q_ARG(QVariant, QStringList{good, changed}),
+                                    Q_ARG(QVariant, QVariant(QStringList{good, changed})),
                                     Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant())));
     QTRY_VERIFY(item("confirm")->isVisible());
     // The captured identity must reject a replacement, leaving it retryable.
