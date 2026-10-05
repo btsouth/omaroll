@@ -71,6 +71,7 @@
 #include <functional>
 #include <atomic>
 #include <memory>
+#include <unistd.h>
 
 class StartupPosterProvider final : public QQuickImageProvider {
 public:
@@ -245,9 +246,361 @@ private slots:
       m_window->close();
     }
     QTRY_VERIFY(!m_window->isVisible());
+    m_window->setWindowState(Qt::WindowNoState);
+    m_window->resize(1200, 800);
     m_window->setProperty("chromeTimeout", 2200);
     m_settings->setVideoMuted(false);
     m_settings->setVideoVolume(0.8);
+  }
+
+  void explicitSelectionsPruneMissingFilesBeforeNavigation_data() {
+    QTest::addColumn<bool>("jump");
+    QTest::addColumn<int>("direction");
+    QTest::newRow("next") << false << 1;
+    QTest::newRow("previous") << false << -1;
+    QTest::newRow("jump") << true << 1;
+  }
+
+  void explicitSelectionsPruneMissingFilesBeforeNavigation() {
+    QFETCH(bool, jump);
+    QFETCH(int, direction);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QStringList paths;
+    for (const auto& name : {QStringLiteral("a.jpg"), QStringLiteral("b.jpg"), QStringLiteral("c.jpg")}) {
+      paths.append(dir.filePath(name));
+      QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), paths.last()));
+    }
+    ViewerSession session;
+    session.open(paths);
+    const int removed = direction < 0 ? 2 : 1;
+    QVERIFY(QFile::remove(paths.at(removed)));
+    // Navigate before the directory watcher's debounce can run.
+    QVERIFY(jump ? session.jump(removed) : session.step(direction));
+    QCOMPARE(session.count(), 2);
+    QCOMPARE(session.path(), paths.at(direction < 0 ? 1 : 2));
+    QVERIFY(QFile::exists(session.path()));
+    QVERIFY(QFile::remove(session.path()));
+    QVERIFY(session.step(direction));
+    QCOMPARE(session.path(), paths.first());
+    QCOMPARE(session.count(), 1);
+    QVERIFY(!session.step(direction));
+    QSignalSpy emptied(&session, &ViewerSession::emptied);
+    QVERIFY(QFile::remove(paths.first()));
+    QVERIFY(!session.step(direction));
+    QCOMPARE(session.count(), 0);
+    QCOMPARE(emptied.count(), 1);
+  }
+
+  void explicitSelectionsWatchEveryParentWithoutAdmittingNewFiles() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QStringList paths;
+    for (int index = 0; index < 3; ++index) {
+      const QString folder = dir.filePath(QString::number(index));
+      QVERIFY(QDir().mkpath(folder));
+      paths.append(folder + QStringLiteral("/selected.jpg"));
+      QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), paths.last()));
+    }
+    ViewerSession session;
+    session.open(paths);
+    QVERIFY(QFile::copy(paths.first(), dir.filePath(QStringLiteral("1/new.jpg"))));
+    QVERIFY(QFile::remove(paths.at(1)));
+    QTRY_COMPARE(session.sequence(), (QStringList{paths.at(0), paths.at(2)}));
+    QCOMPARE(session.path(), paths.first());
+    const QString version = session.contentVersion();
+    const QString staged = dir.filePath(QStringLiteral("0/staged.jpg"));
+    QVERIFY(QFile::copy(media(QStringLiteral("shot 2.jpg")), staged));
+    QVERIFY(QFile::remove(paths.first()));
+    QVERIFY(QFile::rename(staged, paths.first()));
+    QTRY_VERIFY(session.contentVersion() != version);
+    QCOMPARE(session.path(), paths.first());
+    QCOMPARE(session.count(), 2);
+    QVERIFY(QFile::remove(paths.first()));
+    QTRY_COMPARE(session.path(), paths.last());
+    QSignalSpy emptied(&session, &ViewerSession::emptied);
+    QVERIFY(QFile::remove(paths.last()));
+    QTRY_COMPARE(emptied.count(), 1);
+    QCOMPARE(session.count(), 0);
+  }
+
+  void folderRenameFollowsTheCurrentFile_data() {
+    QTest::addColumn<QString>("kind");
+    QTest::newRow("sort-later") << QStringLiteral("z.jpg");
+    QTest::newRow("sort-earlier") << QStringLiteral("0.jpg");
+    QTest::newRow("raw-pair") << QStringLiteral("z.dng");
+    QTest::newRow("alias") << QStringLiteral("alias");
+  }
+
+  void folderRenameFollowsTheCurrentFile() {
+    QFETCH(QString, kind);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const bool raw = kind.endsWith(QLatin1String("dng"));
+    if (raw && !CameraRaw::isRaw(QStringLiteral("dng"))) QSKIP("Qt RAW support is unavailable");
+    const QString current = dir.filePath(raw ? QStringLiteral("b.dng") : QStringLiteral("b.jpg"));
+    for (const auto& name : {QStringLiteral("a.jpg"), QStringLiteral("c.jpg")})
+      QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), dir.filePath(name)));
+    QVERIFY(QFile::copy(raw ? QFINDTESTDATA("fixtures/raw/camera.dng")
+                           : media(QStringLiteral("shot 2.jpg")), current));
+    if (raw) QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), dir.filePath(QStringLiteral("b.jpg"))));
+    ViewerSession session;
+    session.open({current});
+    QTRY_COMPARE(session.count(), 3);
+    QCOMPARE(session.path(), current);
+    const QString version = session.contentVersion();
+    QString renamed = dir.filePath(kind == QLatin1String("alias") ? QStringLiteral("z.jpg") : kind);
+    if (kind == QLatin1String("alias")) {
+      QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("outside"))));
+      const QString target = dir.filePath(QStringLiteral("outside/target.jpg"));
+      QVERIFY(QFile::rename(current, target));
+      QVERIFY(QFile::link(target, renamed));
+      renamed = target;
+    } else {
+      QVERIFY(QFile::rename(current, renamed));
+    }
+    QTRY_COMPARE(session.path(), renamed);
+    QCOMPARE(session.contentVersion(), version);
+    QVERIFY(QFile::exists(session.path()));
+    if (kind == QLatin1String("alias"))
+      QCOMPARE(session.deletionPath(), dir.filePath(QStringLiteral("z.jpg")));
+  }
+
+  void ambiguousRenameFallsBackToTheNearestSurvivor() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString a = dir.filePath(QStringLiteral("a.jpg"));
+    const QString b = dir.filePath(QStringLiteral("b.jpg"));
+    const QString c = dir.filePath(QStringLiteral("c.jpg"));
+    for (const auto& path : {a, b, c}) QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), path));
+    ViewerSession session;
+    session.open({b});
+    QTRY_COMPARE(session.count(), 3);
+    QVERIFY(QFile::rename(b, dir.filePath(QStringLiteral("y.jpg"))));
+    QVERIFY(::link(QFile::encodeName(dir.filePath(QStringLiteral("y.jpg"))).constData(),
+                   QFile::encodeName(dir.filePath(QStringLiteral("z.jpg"))).constData()) == 0);
+    QTRY_COMPARE(session.count(), 4);
+    QCOMPARE(session.path(), c);
+  }
+
+  void trashOfAnAliasKeepsTheTarget_data() {
+    QTest::addColumn<bool>("explicitAlias");
+    QTest::addColumn<bool>("outside");
+    QTest::newRow("explicit-outside") << true << true;
+    QTest::newRow("explicit-inside") << true << false;
+    QTest::newRow("sibling-outside") << false << true;
+    QTest::newRow("sibling-inside") << false << false;
+  }
+
+  void trashOfAnAliasKeepsTheTarget() {
+    QFETCH(bool, explicitAlias);
+    QFETCH(bool, outside);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("original"))));
+    const QString target = dir.filePath(outside ? QStringLiteral("original/target.jpg")
+                                              : QStringLiteral("z.jpg"));
+    const QString alias = dir.filePath(QStringLiteral("a.jpg"));
+    const QString sibling = dir.filePath(QStringLiteral("b.jpg"));
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), target));
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), sibling));
+    QVERIFY(QFile::link(target, alias));
+    if (explicitAlias) {
+      const OpenRequest request = OpenRequest::fromPaths({alias});
+      open(request.files);
+      m_session->setDeletionPaths(request.entryPaths);
+      QTRY_VERIFY(m_session->sequenceRevision() >= 2);
+    } else {
+      open({sibling});
+      QTRY_COMPARE(m_session->count(), 2);
+      QVERIFY(m_session->jump(0));
+    }
+    QCOMPARE(m_session->path(), target);
+    QCOMPARE(m_session->deletionPath(), alias);
+    QTest::keyClick(m_window, Qt::Key_Delete);
+    QQuickItem* confirm = item(QStringLiteral("viewerConfirm"));
+    QTRY_VERIFY(confirm->isVisible());
+    QCOMPARE(confirm->property("path").toString(), alias);
+    QCOMPARE(confirm->property("detail").toString(), alias);
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!QFileInfo(alias).isSymLink());
+    QVERIFY(QFile::exists(target));
+    QVERIFY(m_session->path() != target);
+  }
+
+  void slideshowDialogsHoldTheTargetAndResume_data() {
+    QTest::addColumn<QString>("dialogName");
+    QTest::addColumn<bool>("accept");
+    QTest::newRow("trash-cancel") << QStringLiteral("viewerConfirm") << false;
+    QTest::newRow("trash-accept") << QStringLiteral("viewerConfirm") << true;
+    QTest::newRow("permanent-cancel") << QStringLiteral("viewerPermanentConfirm") << false;
+    QTest::newRow("permanent-accept") << QStringLiteral("viewerPermanentConfirm") << true;
+    QTest::newRow("raw-cancel") << QStringLiteral("editorChooser") << false;
+  }
+
+  void slideshowDialogsHoldTheTargetAndResume() {
+    QFETCH(QString, dialogName);
+    QFETCH(bool, accept);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const bool raw = dialogName == QLatin1String("editorChooser");
+    if (raw && !CameraRaw::isRaw(QStringLiteral("dng"))) QSKIP("Qt RAW support is unavailable");
+    const QString first = dir.filePath(raw ? QStringLiteral("a.dng") : QStringLiteral("a.jpg"));
+    const QString second = dir.filePath(QStringLiteral("b.jpg"));
+    QVERIFY(QFile::copy(raw ? QFINDTESTDATA("fixtures/raw/camera.dng")
+                           : media(QStringLiteral("Shot 1.jpg")), first));
+    QVERIFY(QFile::copy(media(QStringLiteral("shot 2.jpg")), second));
+    const int interval = m_settings->slideshowIntervalSeconds();
+    const bool shuffle = m_settings->slideshowShuffle();
+    const auto restore = qScopeGuard([&] {
+      m_settings->setSlideshowIntervalSeconds(interval);
+      m_settings->setSlideshowShuffle(shuffle);
+    });
+    m_settings->setSlideshowIntervalSeconds(2);
+    m_settings->setSlideshowShuffle(false);
+    open({first, second});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QTest::keyClick(m_window, Qt::Key_F5);
+    if (raw) QTest::keyClick(m_window, Qt::Key_D, Qt::ShiftModifier);
+    else QTest::keyClick(m_window, Qt::Key_Delete, dialogName == QLatin1String("viewerPermanentConfirm")
+                                               ? Qt::ShiftModifier : Qt::NoModifier);
+    QObject* dialog = m_window->findChild<QObject*>(dialogName);
+    QVERIFY(dialog);
+    QTRY_VERIFY(dialog->property("visible").toBool());
+    QSignalSpy changed(m_session, &ViewerSession::currentChanged);
+    QTest::qWait(2300);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "advanceSlideshow"));
+    QCOMPARE(changed.count(), 0);
+    QCOMPARE(m_session->path(), first);
+    QTest::keyClick(m_window, accept ? Qt::Key_Return : Qt::Key_Escape);
+    QTRY_VERIFY(!dialog->property("visible").toBool());
+    QTRY_COMPARE_WITH_TIMEOUT(m_session->path(), second, 4000);
+    if (accept) QVERIFY(!QFile::exists(first));
+    else QVERIFY(QFile::exists(first));
+    QVERIFY(prop("slideshowRunning").toBool());
+    QTRY_VERIFY(item(QStringLiteral("viewerKeys"))->hasActiveFocus());
+  }
+
+  void slideshowTrashHoldsAVideoThroughEndOfMedia_data() {
+    QTest::addColumn<bool>("accept");
+    QTest::newRow("cancel") << false;
+    QTest::newRow("accept") << true;
+  }
+
+  void slideshowTrashHoldsAVideoThroughEndOfMedia() {
+    QFETCH(bool, accept);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString clip = dir.filePath(QStringLiteral("clip.mp4"));
+    const QString picture = dir.filePath(QStringLiteral("picture.jpg"));
+    QVERIFY(QFile::copy(media(QStringLiteral("clip.mp4")), clip));
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), picture));
+    const bool videos = m_settings->slideshowVideos(), shuffle = m_settings->slideshowShuffle();
+    const int interval = m_settings->slideshowIntervalSeconds();
+    const auto restore = qScopeGuard([&] {
+      m_settings->setSlideshowVideos(videos);
+      m_settings->setSlideshowShuffle(shuffle);
+      m_settings->setSlideshowIntervalSeconds(interval);
+    });
+    m_settings->setSlideshowVideos(true);
+    m_settings->setSlideshowShuffle(false);
+    m_settings->setSlideshowIntervalSeconds(2);
+    open({clip, picture});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY(player->duration() > 0);
+    QTest::keyClick(m_window, Qt::Key_F5);
+    QTest::keyClick(m_window, Qt::Key_Delete);
+    QQuickItem* confirm = item(QStringLiteral("viewerConfirm"));
+    QTRY_VERIFY(confirm->isVisible());
+    // Let the decoder reach EOF while the confirmation owns its target.
+    player->setPosition(std::max<qint64>(0, player->duration() - 100));
+    QTRY_COMPARE(player->mediaStatus(), QMediaPlayer::EndOfMedia);
+    QCOMPARE(m_session->path(), clip);
+    QVERIFY(confirm->isVisible());
+    QTest::keyClick(m_window, accept ? Qt::Key_Return : Qt::Key_Escape);
+    QTRY_COMPARE_WITH_TIMEOUT(m_session->path(), picture, 4000);
+    QCOMPARE(QFile::exists(clip), !accept);
+    QVERIFY(prop("slideshowRunning").toBool());
+  }
+
+  void manualSlideshowNavigationSkipsExcludedVideos_data() {
+    QTest::addColumn<bool>("shuffle");
+    QTest::newRow("ordered") << false;
+    QTest::newRow("shuffled") << true;
+  }
+
+  void manualSlideshowNavigationSkipsExcludedVideos() {
+    QFETCH(bool, shuffle);
+    const bool videos = m_settings->slideshowVideos(), oldShuffle = m_settings->slideshowShuffle();
+    const auto restore = qScopeGuard([&] {
+      m_settings->setSlideshowVideos(videos);
+      m_settings->setSlideshowShuffle(oldShuffle);
+    });
+    m_settings->setSlideshowVideos(false);
+    m_settings->setSlideshowShuffle(shuffle);
+    const QString first = media(QStringLiteral("Shot 1.jpg"));
+    const QString second = media(QStringLiteral("shot 2.jpg"));
+    const QString clip = media(QStringLiteral("clip.mp4"));
+    open({first, clip, second});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QTest::keyClick(m_window, Qt::Key_F5);
+    QSignalSpy changed(m_session, &ViewerSession::currentChanged);
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QCOMPARE(m_session->path(), second);
+    QCOMPARE(changed.count(), 1);
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QCOMPARE(m_session->path(), first);
+    QCOMPARE(changed.count(), 2);
+    // With one eligible image, manual navigation keeps it on screen.
+    QVERIFY(m_session->jump(0));
+    m_session->forget(second);
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QCOMPARE(m_session->path(), first);
+    QVERIFY(prop("slideshowRunning").toBool());
+  }
+
+  void detailsStayInsideAShortWindowAndScrollToTheFolder_data() {
+    QTest::addColumn<QString>("palette");
+    QTest::newRow("dark") << QStringLiteral("dark");
+    QTest::newRow("light") << QStringLiteral("light");
+  }
+
+  void detailsStayInsideAShortWindowAndScrollToTheFolder() {
+    QFETCH(QString, palette);
+    QTemporaryDir themeDir;
+    QVERIFY(themeDir.isValid());
+    const QString themeRoot = themeDir.filePath(QStringLiteral("omarchy/current/theme"));
+    QVERIFY(QDir().mkpath(themeRoot));
+    const QString fixture = QFINDTESTDATA("fixtures/themes") + QLatin1Char('/') + palette;
+    for (const auto& name : {QStringLiteral("colors.toml"), QStringLiteral("shell.toml")})
+      QVERIFY(QFile::copy(fixture + QStringLiteral("/theme/") + name, themeRoot + QLatin1Char('/') + name));
+    OmarchyTheme theme(themeDir.path(), themeDir.path());
+    m_engine->rootContext()->setContextProperty(QStringLiteral("Theme"), &theme);
+    const auto restoreTheme = qScopeGuard([&] {
+      m_engine->rootContext()->setContextProperty(QStringLiteral("Theme"), m_theme);
+    });
+    const QSize before = m_window->size();
+    const auto restore = qScopeGuard([&] { m_window->resize(before); });
+    open({media(QStringLiteral("Shot 1.jpg"))});
+    m_window->resize(320, 240);
+    QTest::keyClick(m_window, Qt::Key_I);
+    QQuickItem* panel = item(QStringLiteral("viewerInfoPanel"));
+    QVariantList lines;
+    for (int index = 0; index < 30; ++index) lines.append(QStringLiteral("Long metadata line %1").arg(index));
+    // Break this test instance's async metadata binding for deterministic size.
+    QVERIFY(QQmlProperty(panel, QStringLiteral("lines")).write(lines));
+    QTRY_VERIFY(panel->height() > 100);
+    QVERIFY(panel->y() + panel->height() <= m_window->height() - 16);
+    QQuickItem* flick = find(panel, [](QQuickItem* candidate) {
+      return candidate->property("contentHeight").isValid();
+    });
+    QVERIFY(flick);
+    QTRY_VERIFY(flick->property("contentHeight").toReal() > flick->height());
+    flick->setProperty("contentY", flick->property("contentHeight").toReal() - flick->height());
+    QQuickItem* folder = item(QStringLiteral("viewerInfoFolder"));
+    QTRY_VERIFY(folder->mapToScene(QPointF(0, folder->height())).y() <= m_window->height() - 16);
+    QVERIFY(folder->mapToScene(QPointF()).y() >= panel->y() + 16);
   }
 
   void picturesReloadAfterSavesAndKeepTheirViewWhenSiblingsChange() {

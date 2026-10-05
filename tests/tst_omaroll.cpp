@@ -1046,8 +1046,17 @@ private slots:
   void viewerKeepsASelectionAndMovesOnFromATrashedFile() {
     ViewerSession session;
     QSignalSpy emptied(&session, &ViewerSession::emptied);
-    const QStringList paths{QStringLiteral("/x/3.png"), QStringLiteral("/x/1.png"),
-                            QStringLiteral("/y/2.mp4")};
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("x"))));
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("y"))));
+    const QStringList paths{dir.filePath(QStringLiteral("x/3.png")),
+                            dir.filePath(QStringLiteral("x/1.png")),
+                            dir.filePath(QStringLiteral("y/2.mp4"))};
+    for (const QString& path : paths) {
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+    }
     session.open(paths);
     QVERIFY(session.selection());
     QCOMPARE(session.count(), 3);

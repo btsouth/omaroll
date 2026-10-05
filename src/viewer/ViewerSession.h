@@ -163,6 +163,8 @@ private:
   };
   void applyListing(ListingResult listed);
   void rebuildFolderSequence(const QString& preferred);
+  void refreshSelection(const QString& preferred);
+  void watchSelectionFolders();
   void watchFolder(const QString& folder);
   void watchCurrentFile();
   void refreshPreloads();

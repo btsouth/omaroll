@@ -70,10 +70,8 @@ ViewerSession::ViewerSession(QObject* parent) : QObject(parent) {
   connect(&m_relist, &QTimer::timeout, this, [this] {
     if (!m_selection) {
       startListing();
-    } else if (QFileInfo::exists(path())) {
-      setSequence(m_paths, m_index);
     } else {
-      forget(path());
+      refreshSelection(path());
     }
   });
   connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this, [this] { m_relist.start(); });
@@ -162,8 +160,8 @@ void ViewerSession::open(const QStringList& paths) {
     m_selection = true;
     m_folder.clear();
     m_opened.clear();
-    watchFolder({});
     setSequence(paths, 0);
+    watchSelectionFolders();
     return;
   }
   m_selection = false;
@@ -239,6 +237,21 @@ bool ViewerSession::switchCompanion() {
 }
 
 bool ViewerSession::step(int direction) {
+  if (m_selection && direction != 0) {
+    const QString before = path();
+    QString preferred;
+    for (int offset = 1; offset <= count(); ++offset) {
+      const int index = (m_index + (direction < 0 ? -offset : offset) + count()) % count();
+      const QString candidate = m_paths.at(index);
+      const QFileInfo info(candidate);
+      if (info.isFile() && info.isReadable()) {
+        preferred = candidate;
+        break;
+      }
+    }
+    refreshSelection(preferred);
+    return path() != before && !path().isEmpty();
+  }
   const int total = count();
   if (total < 2 || direction == 0) {
     return false;
@@ -250,6 +263,10 @@ bool ViewerSession::step(int direction) {
 bool ViewerSession::jump(int index) {
   if (index < 0 || index >= count()) {
     return false;
+  }
+  if (m_selection) {
+    refreshSelection(m_paths.at(index));
+    return !m_paths.isEmpty();
   }
   setIndex(index);
   return true;
@@ -344,6 +361,45 @@ void ViewerSession::forget(const QString& path) {
     next = std::min(removed, int(remaining.size()) - 1);
   }
   setSequence(remaining, next);
+  if (m_selection) watchSelectionFolders();
+}
+
+void ViewerSession::refreshSelection(const QString& preferred) {
+  QStringList remaining;
+  int next = 0;
+  const int preferredIndex = int(m_paths.indexOf(preferred));
+  for (int index = 0; index < count(); ++index) {
+    const QString& candidate = m_paths.at(index);
+    const QFileInfo info(candidate);
+    if (info.isFile() && info.isReadable()) {
+      if (index < (preferredIndex >= 0 ? preferredIndex : m_index)) ++next;
+      remaining.append(candidate);
+    } else {
+      m_explicitEntryPaths.remove(candidate);
+    }
+  }
+  if (remaining.isEmpty()) {
+    clear();
+    emit emptied();
+    return;
+  }
+  setSequence(remaining, next);
+  watchSelectionFolders();
+}
+
+void ViewerSession::watchSelectionFolders() {
+  QStringList folders;
+  for (const QString& path : m_paths) {
+    const QString folder = QFileInfo(path).absolutePath();
+    if (!folders.contains(folder)) folders.append(folder);
+  }
+  const QStringList watched = m_watcher.directories();
+  for (const QString& folder : watched) {
+    if (!folders.contains(folder)) m_watcher.removePath(folder);
+  }
+  for (const QString& folder : folders) {
+    if (!watched.contains(folder)) m_watcher.addPath(folder);
+  }
 }
 
 void ViewerSession::openInLibrary() {
@@ -629,10 +685,33 @@ void ViewerSession::applyListing(ListingResult listed) {
     }
     return;
   }
+  QString preferred = current;
+  if (!listed.paths.contains(current)) {
+    preferred = previousCompanion;
+    if (!m_contentVersion.isEmpty()) {
+      QString renamed;
+      for (const QString& candidate : listed.paths) {
+        // The full version includes device, inode, size and modification time.
+        // Follow only an unchanged, unique file, never a replacement or an
+        // ambiguous hardlink. Otherwise retain the nearest surviving item.
+        if (FileVersion::key(candidate) != m_contentVersion) continue;
+        if (!renamed.isEmpty()) {
+          renamed.clear();
+          break;
+        }
+        renamed = candidate;
+      }
+      if (!renamed.isEmpty()) {
+        preferred = renamed;
+        if (m_opened == current) m_opened = renamed;
+        m_explicitEntryPaths.remove(current);
+      }
+    }
+  }
   m_folderPaths = std::move(listed.paths);
   m_deletionPaths = std::move(listed.entryPaths);
   m_companions = std::move(listed.companions);
-  rebuildFolderSequence(m_folderPaths.contains(current) ? current : previousCompanion);
+  rebuildFolderSequence(preferred);
 }
 
 void ViewerSession::rebuildFolderSequence(const QString& preferred) {
