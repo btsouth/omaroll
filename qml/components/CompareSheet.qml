@@ -78,7 +78,7 @@ Item {
         MouseArea {
             anchors.fill: parent
             acceptedButtons: Qt.AllButtons
-            preventStealing: true
+            preventStealing: false
         }
 
         Item {
