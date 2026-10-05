@@ -418,6 +418,40 @@ Item {
                 spacing: 12
 
                 Column {
+                    width: parent.width - rememberPlaybackSpeedButton.width - 12
+                    spacing: 2
+
+                    Text {
+                        text: "Remember playback speed"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 12
+                        color: Theme.foreground
+                    }
+                    Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        text: "Use the last chosen speed when opening a video in the quick viewer."
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 10
+                        color: Theme.mutedText
+                    }
+                }
+
+                PillButton {
+                    id: rememberPlaybackSpeedButton
+                    objectName: "rememberPlaybackSpeedButton"
+                    anchors.verticalCenter: parent.verticalCenter
+                    label: Settings.rememberPlaybackSpeed ? "On" : "Off"
+                    active: Settings.rememberPlaybackSpeed
+                    onClicked: Settings.rememberPlaybackSpeed = !Settings.rememberPlaybackSpeed
+                }
+            }
+
+            Row {
+                width: parent.width
+                spacing: 12
+
+                Column {
                     width: parent.width - slideshowVideosButton.width - 12
                     spacing: 2
 

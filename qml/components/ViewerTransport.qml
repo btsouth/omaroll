@@ -19,6 +19,7 @@ Rectangle {
     signal captionsCycled()
     signal playToggled()
     signal seekRequested(real milliseconds)
+    signal rateRequested(real rate)
 
     readonly property real duration: player ? player.duration : 0
     readonly property real position: player ? player.position : 0
@@ -48,14 +49,15 @@ Rectangle {
     }
 
     function cycleRate() {
+        if (!root.player) return
         const rates = [1, 1.25, 1.5, 2, 0.5]
         for (let index = 0; index < rates.length; ++index) {
             if (Math.abs(root.player.playbackRate - rates[index]) < 0.01) {
-                root.player.playbackRate = rates[(index + 1) % rates.length]
+                root.rateRequested(rates[(index + 1) % rates.length])
                 return
             }
         }
-        root.player.playbackRate = 1
+        root.rateRequested(1)
     }
 
     implicitHeight: 46 + (stacked ? 38 : 0)

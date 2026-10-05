@@ -18,6 +18,7 @@
 #include <QVariantMap>
 
 #include <limits>
+#include <cmath>
 
 #include <sys/stat.h>
 
@@ -55,6 +56,8 @@ constexpr auto kSmartCollections = "library/smartCollections";
 constexpr auto kLastVisit = "library/lastVisit";
 constexpr auto kVideoVolume = "playback/volume";
 constexpr auto kVideoMuted = "playback/muted";
+constexpr auto kRememberPlaybackSpeed = "playback/rememberSpeed";
+constexpr auto kVideoPlaybackRate = "playback/rate";
 constexpr auto kVideoPositions = "playback/positionsV2";
 // Resume spots beyond a few minutes are the useful ones; too many entries and
 // the file grows for no benefit.
@@ -219,6 +222,9 @@ AppSettings::AppSettings(QObject* parent)
   m_viewerFilmstrip = m_settings.value(kViewerFilmstrip, false).toBool();
   m_videoVolume = qBound(0.0, m_settings.value(kVideoVolume, 0.8).toDouble(), 1.0);
   m_videoMuted = m_settings.value(kVideoMuted, false).toBool();
+  m_rememberPlaybackSpeed = m_settings.value(kRememberPlaybackSpeed, false).toBool();
+  const qreal savedRate = m_settings.value(kVideoPlaybackRate, 1.0).toDouble();
+  m_videoPlaybackRate = std::isfinite(savedRate) ? qBound(0.25, savedRate, 4.0) : 1.0;
   const QVariantMap storedPositions = m_settings.value(kVideoPositions).toMap();
   for (auto it = storedPositions.cbegin(); it != storedPositions.cend(); ++it) {
     const qint64 position = it.value().toLongLong();
@@ -558,6 +564,28 @@ void AppSettings::setVideoMuted(bool value) {
   m_videoMuted = value;
   m_settings.setValue(kVideoMuted, value);
   emit videoMutedChanged();
+}
+
+void AppSettings::setRememberPlaybackSpeed(bool value) {
+  if (m_rememberPlaybackSpeed == value) {
+    return;
+  }
+  m_rememberPlaybackSpeed = value;
+  m_settings.setValue(kRememberPlaybackSpeed, value);
+  emit rememberPlaybackSpeedChanged();
+}
+
+void AppSettings::setVideoPlaybackRate(qreal value) {
+  if (!std::isfinite(value)) {
+    return;
+  }
+  const qreal bounded = qBound(0.25, value, 4.0);
+  if (qFuzzyCompare(m_videoPlaybackRate, bounded)) {
+    return;
+  }
+  m_videoPlaybackRate = bounded;
+  m_settings.setValue(kVideoPlaybackRate, bounded);
+  emit videoPlaybackRateChanged();
 }
 
 void AppSettings::relocatePath(const QString& oldPath, const QString& newPath) {

@@ -71,6 +71,7 @@
 #include <functional>
 #include <atomic>
 #include <memory>
+#include <limits>
 #include <unistd.h>
 
 class StartupPosterProvider final : public QQuickImageProvider {
@@ -251,6 +252,8 @@ private slots:
     m_window->setProperty("chromeTimeout", 2200);
     m_settings->setVideoMuted(false);
     m_settings->setVideoVolume(0.8);
+    m_settings->setRememberPlaybackSpeed(false);
+    m_settings->setVideoPlaybackRate(1.0);
   }
 
   void explicitSelectionsPruneMissingFilesBeforeNavigation_data() {
@@ -1488,6 +1491,221 @@ private slots:
     QVERIFY(!m_session->isVideo());
     QTRY_VERIFY(player->playbackState() != QMediaPlayer::PlayingState);
     QVERIFY(!item(QStringLiteral("viewerTransport"))->isVisible());
+  }
+
+  void videoLoopRestartsButSlideshowStillAdvances_data() {
+    QTest::addColumn<bool>("loop");
+    QTest::addColumn<bool>("slideshow");
+    QTest::newRow("replay-button") << false << false;
+    QTest::newRow("loop") << true << false;
+    QTest::newRow("slideshow-with-loop") << true << true;
+  }
+
+  void videoLoopRestartsButSlideshowStillAdvances() {
+    QFETCH(bool, loop);
+    QFETCH(bool, slideshow);
+    const bool videos = m_settings->slideshowVideos();
+    const auto restore = qScopeGuard([this, videos] { m_settings->setSlideshowVideos(videos); });
+    m_settings->setSlideshowVideos(true);
+    const QString path = media(QStringLiteral("clip.mp4"));
+    const QString next = media(QStringLiteral("Shot 1.jpg"));
+    open({path, next});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY(player->duration() > 0);
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+    QVERIFY(!prop("loopVideo").toBool());
+    if (loop) QTest::keyClick(m_window, Qt::Key_L, Qt::ShiftModifier);
+    QCOMPARE(prop("loopVideo").toBool(), loop);
+    if (slideshow) QTest::keyClick(m_window, Qt::Key_F5);
+    QSignalSpy statuses(player, &QMediaPlayer::mediaStatusChanged);
+    player->setPosition(player->duration() - 250);
+    QTRY_VERIFY_WITH_TIMEOUT(std::any_of(statuses.cbegin(), statuses.cend(), [](const auto& args) {
+      return args.first().toInt() == QMediaPlayer::EndOfMedia;
+    }), 5000);
+    if (slideshow) {
+      QTRY_COMPARE(m_session->path(), next);
+      QVERIFY(prop("slideshowRunning").toBool());
+    } else {
+      QCOMPARE(m_session->path(), path);
+      QTRY_VERIFY(player->position() < 2000);
+      QTRY_COMPARE(player->playbackState(), loop ? QMediaPlayer::PlayingState
+                                               : QMediaPlayer::PausedState);
+    }
+    m_window->close();
+    QVERIFY(!prop("loopVideo").toBool());
+  }
+
+  void videoLoopMenuTogglesWithoutSeeking() {
+    open({media(QStringLiteral("clip.mp4"))});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY(player->duration() > 0);
+    player->pause();
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    player->setPosition(1000);
+    QTRY_COMPARE(player->position(), 1000);
+    QTest::keyClick(m_window, Qt::Key_L, Qt::ShiftModifier);
+    QVERIFY(prop("loopVideo").toBool());
+    QCOMPARE(player->position(), 1000);
+    QTest::keyClick(m_window, Qt::Key_Menu);
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("viewerMenu"));
+    QVERIFY(menu);
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QVERIFY(QMetaObject::invokeMethod(item(QStringLiteral("viewerMenu_video-loop")), "click"));
+    QVERIFY(!prop("loopVideo").toBool());
+  }
+
+  void playbackSpeedPreferenceIsOptionalAndSharedByControls() {
+    QVERIFY(!m_settings->rememberPlaybackSpeed());
+    const QString video = media(QStringLiteral("clip.mp4"));
+    const QString picture = media(QStringLiteral("Shot 1.jpg"));
+    open({video, picture});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY(player->duration() > 0);
+    QTest::keyClick(m_window, Qt::Key_BracketRight);
+    QCOMPARE(player->playbackRate(), 1.25);
+    QCOMPARE(m_settings->videoPlaybackRate(), 1.0);
+    QTest::keyClick(m_window, Qt::Key_PageDown);
+    QTest::keyClick(m_window, Qt::Key_PageUp);
+    QTRY_COMPARE(player->playbackRate(), 1.0);
+
+    m_settings->setRememberPlaybackSpeed(true);
+    QTest::keyClick(m_window, Qt::Key_BracketRight);
+    QCOMPARE(m_settings->videoPlaybackRate(), 1.25);
+    m_window->setProperty("chromePinned", true);
+    const auto unpin = qScopeGuard([this] { m_window->setProperty("chromePinned", false); });
+    auto* speed = item(QStringLiteral("viewerSpeedButton"));
+    QTRY_VERIFY(speed->isVisible());
+    QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier,
+                     speed->mapToScene(QPointF(speed->width() / 2, speed->height() / 2)).toPoint());
+    QTRY_COMPARE(player->playbackRate(), 1.5);
+    QCOMPARE(m_settings->videoPlaybackRate(), 1.5);
+    {
+      AppSettings reloaded;
+      QVERIFY(reloaded.rememberPlaybackSpeed());
+      QCOMPARE(reloaded.videoPlaybackRate(), 1.5);
+    }
+    QTest::keyClick(m_window, Qt::Key_PageDown);
+    QTest::keyClick(m_window, Qt::Key_PageUp);
+    QTRY_COMPARE(player->playbackRate(), 1.5);
+    QTest::keyClick(m_window, Qt::Key_Backspace);
+    QCOMPARE(player->playbackRate(), 1.0);
+    QCOMPARE(m_settings->videoPlaybackRate(), 1.0);
+    QTest::keyClick(m_window, Qt::Key_BracketRight);
+    m_window->close();
+    open({video});
+    QTRY_COMPARE(player->playbackRate(), 1.25);
+    m_settings->setRememberPlaybackSpeed(false);
+    m_window->close();
+    open({video});
+    QTRY_COMPARE(player->playbackRate(), 1.0);
+    QCOMPARE(m_settings->videoPlaybackRate(), 1.25);
+  }
+
+  void playbackSpeedPreferenceIsBounded() {
+    m_settings->setVideoPlaybackRate(20);
+    QCOMPARE(m_settings->videoPlaybackRate(), 4.0);
+    m_settings->setVideoPlaybackRate(-1);
+    QCOMPARE(m_settings->videoPlaybackRate(), 0.25);
+    m_settings->setVideoPlaybackRate(std::numeric_limits<qreal>::quiet_NaN());
+    QCOMPARE(m_settings->videoPlaybackRate(), 0.25);
+    AppSettings reloaded;
+    QCOMPARE(reloaded.videoPlaybackRate(), 0.25);
+  }
+
+  void audioTrackAndSidecarTimingControlsFollowAvailability_data() {
+    QTest::addColumn<QString>("palette");
+    QTest::newRow("dark-narrow") << QStringLiteral("dark");
+    QTest::newRow("light-narrow") << QStringLiteral("light");
+  }
+
+  void audioTrackAndSidecarTimingControlsFollowAvailability() {
+    QFETCH(QString, palette);
+    QTemporaryDir themeHome;
+    QVERIFY(themeHome.isValid());
+    QVERIFY(QDir().mkpath(themeHome.filePath(QStringLiteral("omarchy"))));
+    const QString fixture = QFINDTESTDATA("fixtures/themes") + QLatin1Char('/') + palette;
+    QVERIFY(QFile::link(fixture, themeHome.filePath(QStringLiteral("omarchy/current"))));
+    OmarchyTheme theme(themeHome.path(), themeHome.path());
+    m_engine->rootContext()->setContextProperty(QStringLiteral("Theme"), &theme);
+    const auto restoreTheme = qScopeGuard([this] {
+      m_engine->rootContext()->setContextProperty(QStringLiteral("Theme"), m_theme);
+    });
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("tracks.mkv"));
+    QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/viewer/tracks.mkv"), path));
+    QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/viewer/captions.srt"),
+                        dir.filePath(QStringLiteral("tracks.srt"))));
+    const QString picture = media(QStringLiteral("Shot 1.jpg"));
+    open({path, picture});
+    m_window->resize(560, 420);
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_COMPARE(player->audioTracks().size(), 2);
+    QTRY_COMPARE(player->subtitleTracks().size(), 1);
+    player->pause();
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("viewerMenu"));
+    QVERIFY(menu);
+    QTRY_VERIFY(menuIds(menu).contains(QStringLiteral("audio-track")));
+    QVERIFY(!menuIds(menu).contains(QStringLiteral("subtitles-earlier")));
+    const int audio = player->activeAudioTrack();
+    QTest::keyClick(m_window, Qt::Key_A, Qt::ShiftModifier);
+    QCOMPARE(player->activeAudioTrack(), (audio + 1) % 2);
+    QVERIFY(prop("status").toString().startsWith(QStringLiteral("Audio: Track ")));
+    QTest::keyClick(m_window, Qt::Key_Menu);
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QVERIFY(QMetaObject::invokeMethod(item(QStringLiteral("viewerMenu_audio-track")), "click"));
+    QCOMPARE(player->activeAudioTrack(), audio);
+
+    QTest::keyClick(m_window, Qt::Key_X);
+    QCOMPARE(prop("subtitleOffsetMs").toInt(), 0);
+    QTest::keyClick(m_window, Qt::Key_C); // Embedded subtitles have no timing controls.
+    QVERIFY(!menuIds(menu).contains(QStringLiteral("subtitles-later")));
+    QTest::keyClick(m_window, Qt::Key_C); // Sidecar.
+    QTRY_VERIFY(!prop("externalSubtitle").toString().isEmpty());
+    QTRY_VERIFY(menuIds(menu).contains(QStringLiteral("subtitles-earlier")));
+    QTRY_VERIFY(menuIds(menu).contains(QStringLiteral("subtitles-later")));
+    player->setPosition(6200);
+    QTRY_COMPARE(player->position(), 6200);
+    QTRY_COMPARE(prop("subtitleText").toString(), QStringLiteral("Second subtitle"));
+    QTest::keyClick(m_window, Qt::Key_X);
+    QCOMPARE(prop("subtitleOffsetMs").toInt(), 500);
+    QTRY_COMPARE(prop("subtitleText").toString(), QStringLiteral("Omaroll subtitle test"));
+    QTest::keyClick(m_window, Qt::Key_Menu);
+    QTRY_VERIFY(menu->property("visible").toBool());
+    auto* content = menu->property("contentItem").value<QQuickItem*>();
+    QVERIFY(content);
+    QTRY_VERIFY(content->height() <= m_window->height());
+    QTRY_VERIFY(content->mapToScene(QPointF()).y() >= 0);
+    QTRY_VERIFY(content->mapToScene(QPointF(0, content->height())).y() <= m_window->height());
+    if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
+      QSignalSpy frames(m_window, &QQuickWindow::frameSwapped);
+      m_window->requestUpdate();
+      QTRY_VERIFY(!frames.isEmpty());
+      QVERIFY(m_window->grabWindow().save(QCoreApplication::applicationDirPath()
+          + QStringLiteral("/video-menu-%1-narrow.png").arg(palette)));
+    }
+    QVERIFY(QMetaObject::invokeMethod(item(QStringLiteral("viewerMenu_subtitles-earlier")), "click"));
+    QCOMPARE(prop("subtitleOffsetMs").toInt(), 0);
+    QTest::keyClick(m_window, Qt::Key_Z);
+    QCOMPARE(prop("subtitleOffsetMs").toInt(), -500);
+    for (int i = 0; i < 25; ++i) QTest::keyClick(m_window, Qt::Key_Z);
+    QCOMPARE(prop("subtitleOffsetMs").toInt(), -10000);
+    for (int i = 0; i < 45; ++i) QTest::keyClick(m_window, Qt::Key_X);
+    QCOMPARE(prop("subtitleOffsetMs").toInt(), 10000);
+    QTest::keyClick(m_window, Qt::Key_C); // Off: delay controls disappear.
+    QTRY_VERIFY(!menuIds(menu).contains(QStringLiteral("subtitles-earlier")));
+    QTest::keyClick(m_window, Qt::Key_PageDown);
+    QCOMPARE(prop("subtitleOffsetMs").toInt(), 0);
+    QTRY_VERIFY(!menuIds(menu).contains(QStringLiteral("audio-track")));
+    QTRY_VERIFY(!menuIds(menu).contains(QStringLiteral("video-loop")));
+    open({media(QStringLiteral("clip.mp4"))});
+    QTRY_COMPARE(player->audioTracks().size(), 0);
+    QTRY_VERIFY(!menuIds(menu).contains(QStringLiteral("audio-track")));
   }
 
   void explicitSeeksClearSavedResumeState() {

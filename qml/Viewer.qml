@@ -110,13 +110,16 @@ ApplicationWindow {
     property bool resumeAvailable: false
     property real resumePosition: 0
     property bool resumePending: false
+    property bool loopVideo: false
     property var subtitleFiles: []
     property string externalSubtitle: ""
     property int subtitleChoice: 0
+    property int subtitleOffsetMs: 0
+    readonly property bool hasAudioChoices: root.player && root.player.audioTracks.length > 1
     readonly property string subtitleText: {
         void Subtitles.revision
         return externalSubtitle !== "" && player
-        ? Subtitles.textAt(externalSubtitle, Math.round(player.position))
+        ? Subtitles.textAt(externalSubtitle, Math.round(player.position) - root.subtitleOffsetMs)
         : (videoOutput.videoSink ? videoOutput.videoSink.subtitleText : "")
     }
 
@@ -388,6 +391,46 @@ ApplicationWindow {
         root.player.play()
     }
 
+    function toggleVideoLoop() {
+        if (!Session.isVideo) return
+        root.loopVideo = !root.loopVideo
+        root.say(root.loopVideo ? "Video loop on" : "Video loop off")
+    }
+
+    function setPlaybackRate(rate) {
+        if (!Session.isVideo || !root.player) return
+        root.player.playbackRate = Math.max(0.25, Math.min(4, rate))
+        if (Settings.rememberPlaybackSpeed) {
+            Settings.videoPlaybackRate = root.player.playbackRate
+        }
+        root.say(root.player.playbackRate === 1 ? "Normal speed"
+                 : "Speed " + Number(root.player.playbackRate.toFixed(2)) + "×")
+    }
+
+    function cycleAudioTrack() {
+        if (!Session.isVideo || !root.hasAudioChoices) return
+        const index = (root.player.activeAudioTrack + 1) % root.player.audioTracks.length
+        root.player.activeAudioTrack = index
+        let label = "Track " + (index + 1)
+        try {
+            const track = root.player.audioTracks[index]
+            const title = track.stringValue(QMediaMetaData.Title)
+            const language = track.stringValue(QMediaMetaData.Language)
+            if (title) label += ": " + title
+            else if (language) label += ": " + language.toUpperCase()
+        } catch (error) {
+            // A value without stringValue keeps the ordinal.
+        }
+        root.say("Audio: " + label)
+    }
+
+    function adjustSubtitleOffset(amount) {
+        if (!Session.isVideo || root.externalSubtitle === "") return
+        root.subtitleOffsetMs = Math.max(-10000, Math.min(10000, root.subtitleOffsetMs + amount))
+        root.say("Subtitle delay " + (root.subtitleOffsetMs > 0 ? "+" : "")
+                 + (root.subtitleOffsetMs / 1000).toFixed(1) + " s")
+    }
+
     // Off, then each embedded track, then each sidecar file.
     function subtitleChoices() {
         const choices = [{kind: "off", label: "Off", index: -1, path: ""}]
@@ -572,6 +615,8 @@ ApplicationWindow {
     readonly property var viewerShortcuts: ({
         library: "Enter", copy: "Y", "open-with": "Ctrl+O", annotate: "A", develop: "D", "choose-editor": "Shift+D", send: "S", trim: "T", frame: "G",
         play: "P", rotate: "R", slideshow: "F5", fullscreen: "F", info: "I", filmstrip: "B",
+        "video-loop": "Shift+L", "audio-track": "Shift+A",
+        "subtitles-earlier": "Z", "subtitles-later": "X",
         favorite: "V", trash: "Del"
     })
 
@@ -601,6 +646,16 @@ ApplicationWindow {
             entries.push({id: id, label: label, available: row.available, hint: row.hint})
         }
         entries.push({separator: true})
+        if (video) {
+            entries.push({id: "video-loop", label: "Loop video: " + (root.loopVideo ? "On" : "Off")})
+            if (root.hasAudioChoices) {
+                entries.push({id: "audio-track", label: "Cycle audio track"})
+            }
+            if (root.externalSubtitle !== "") {
+                entries.push({id: "subtitles-earlier", label: "Subtitles earlier"})
+                entries.push({id: "subtitles-later", label: "Subtitles later"})
+            }
+        }
         if (!video) {
             entries.push({id: "rotate", label: "Rotate"})
         }
@@ -632,6 +687,16 @@ ApplicationWindow {
             return
         }
         switch (id) {
+        case "video-loop":
+            root.toggleVideoLoop()
+            return
+        case "audio-track":
+            root.cycleAudioTrack()
+            return
+        case "subtitles-earlier":
+        case "subtitles-later":
+            root.adjustSubtitleOffset(id === "subtitles-earlier" ? -500 : 500)
+            return
         case "companion":
             Session.switchCompanion()
             return
@@ -735,6 +800,7 @@ ApplicationWindow {
             root.resumePending = true
             root.externalSubtitle = ""
             root.subtitleChoice = 0
+            root.subtitleOffsetMs = 0
             if (Session.isVideo) {
                 root.startPlayerSoon()
                 root.subtitleFiles = Subtitles.files(Session.path)
@@ -809,6 +875,7 @@ ApplicationWindow {
     // A closed viewer forgets its file: the next open must not flash the last
     // picture, and a hidden window must not keep playing sound.
     onClosing: {
+        root.loopVideo = false
         root.slideshowRunning = false
         slideshowTimer.stop()
         if (root.player) {
@@ -1055,6 +1122,7 @@ ApplicationWindow {
                     onSourceChanged: {
                         root.videoError = ""
                         if (source.toString() !== "") {
+                            playbackRate = Settings.rememberPlaybackSpeed ? Settings.videoPlaybackRate : 1
                             mediaPlayer.resumeIdentity = Settings.videoIdentity(Session.path)
                             Mpris.track(mediaPlayer, root)
                             play()
@@ -1105,6 +1173,10 @@ ApplicationWindow {
                         }
                         if (root.slideshowRunning) {
                             root.advanceSlideshow()
+                            return
+                        }
+                        if (root.loopVideo) {
+                            root.restartVideo()
                             return
                         }
                         // Hold the first frame rather than a blank stage, so
@@ -1552,6 +1624,7 @@ ApplicationWindow {
             onPlayToggled: root.togglePlayback()
             onFullScreenToggled: root.setFullScreen(!root.fullScreen)
             onCaptionsCycled: root.cycleSubtitles()
+            onRateRequested: function (rate) { root.setPlaybackRate(rate) }
             onSeekRequested: function (milliseconds) {
                 root.seekTo(milliseconds)
             }
@@ -1809,7 +1882,11 @@ ApplicationWindow {
             const video = Session.isVideo
             let handled = true
 
-            if (alt && event.key >= Qt.Key_0 && event.key <= Qt.Key_5) {
+            if (video && shift && !control && !alt && event.key === Qt.Key_L) {
+                if (!event.isAutoRepeat) root.toggleVideoLoop()
+            } else if (video && shift && !control && !alt && event.key === Qt.Key_A) {
+                root.cycleAudioTrack()
+            } else if (alt && event.key >= Qt.Key_0 && event.key <= Qt.Key_5) {
                 root.rate(event.key - Qt.Key_0)
             } else if (control && event.key === Qt.Key_Z) {
                 if (Settings.canUndo()) {
@@ -1885,20 +1962,23 @@ ApplicationWindow {
                     if (video) root.cycleSubtitles()
                     else handled = false
                     break
+                case Qt.Key_Z:
+                case Qt.Key_X:
+                    if (video) root.adjustSubtitleOffset(event.key === Qt.Key_Z ? -500 : 500)
+                    else handled = false
+                    break
                 case Qt.Key_BracketLeft:
                 case Qt.Key_BracketRight:
                     if (video && root.player) {
-                        root.player.playbackRate = Math.max(0.25, Math.min(4,
-                            root.player.playbackRate + (event.key === Qt.Key_BracketLeft ? -0.25 : 0.25)))
-                        root.say("Speed " + Number(root.player.playbackRate.toFixed(2)) + "×")
+                        root.setPlaybackRate(root.player.playbackRate
+                            + (event.key === Qt.Key_BracketLeft ? -0.25 : 0.25))
                     } else {
                         handled = false
                     }
                     break
                 case Qt.Key_Backspace:
                     if (video && root.player) {
-                        root.player.playbackRate = 1
-                        root.say("Normal speed")
+                        root.setPlaybackRate(1)
                     } else {
                         handled = false
                     }
