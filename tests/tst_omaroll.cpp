@@ -2827,13 +2827,8 @@ private slots:
     QTRY_VERIFY(inspector.hasSelection());
     const QString oldText = inspector.selectionText();
     const QString next = dir.filePath(QStringLiteral("next.pdf"));
-    {
-      QPdfWriter writer(next);
-      QPainter painter(&writer);
-      painter.drawText(QPoint(100, 1000), QStringLiteral("Replacement document"));
-      QVERIFY(writer.newPage());
-      painter.drawText(QPoint(300, 3000), QStringLiteral("New second page"));
-    }
+    // A fontless build image cannot draw a text layer with QPdfWriter.
+    QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/pdf/letter-pages.pdf"), next));
     QVERIFY(QFile::rename(path, dir.filePath(QStringLiteral("old.pdf"))));
     QVERIFY(QFile::rename(next, path));
     inspector.inspect(path);
@@ -2841,7 +2836,7 @@ private slots:
     QTRY_COMPARE(inspector.pageCount(), 2);
     inspector.updateSelection(2, 0, 0, 1, 1);
     QTRY_VERIFY(inspector.hasSelection());
-    QVERIFY(inspector.selectionText().contains(QStringLiteral("New second page")));
+    QVERIFY(inspector.selectionText().contains(QStringLiteral("Second page")));
     QVERIFY(inspector.selectionText() != oldText);
 
     inspector.clearSelection();
@@ -2852,7 +2847,7 @@ private slots:
     inspector.updateSelection(2, 0, 0, 1, 1); // cached words, selection still in the worker
     inspector.updateSelection(1, 0, 0, 1, 1); // a new page supersedes that selection
     QTRY_VERIFY(inspector.hasSelection() && inspector.selectionPage() == 1);
-    QVERIFY(inspector.selectionText().contains(QStringLiteral("Replacement document")));
+    QVERIFY(inspector.selectionText().contains(QStringLiteral("Omaroll selection")));
     for (const int page : selectedPages) QCOMPARE(page, 1);
     QObject::disconnect(connection);
 
