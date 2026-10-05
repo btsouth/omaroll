@@ -38,6 +38,7 @@
 #include <QDataStream>
 #include <QDir>
 #include <QFile>
+#include <QFont>
 #include <QGuiApplication>
 #include <QImageReader>
 #include <QJSValue>
@@ -1245,8 +1246,8 @@ private slots:
           QTRY_VERIFY(scrub->width() >= 64);
           QVERIFY(control(QStringLiteral("viewerCaptionsButton"))->isVisible());
           if (rate != 1.0) QVERIFY(control(QStringLiteral("viewerSpeedButton"))->isVisible());
-          QVERIFY(scrub->mapToScene(QPointF()).x() >= 0);
-          QVERIFY(scrub->mapToScene(QPointF(scrub->width(), 0)).x() <= width);
+          QTRY_VERIFY(scrub->mapToScene(QPointF()).x() >= 0);
+          QTRY_VERIFY(scrub->mapToScene(QPointF(scrub->width(), 0)).x() <= width);
           if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
             QTRY_VERIFY(!window->grabWindow().isNull());
             QVERIFY(window->grabWindow().save(QCoreApplication::applicationDirPath()
