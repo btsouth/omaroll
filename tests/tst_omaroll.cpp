@@ -58,14 +58,14 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 #include <cerrno>
-#include <memory>
-#include <future>
 #include <cstdio>
-#include <sys/socket.h>
-#include <sys/un.h>
+#include <future>
+#include <memory>
 
 namespace {
 
@@ -464,15 +464,20 @@ private slots:
     const QString name = QStringLiteral("omaroll-no-ack-%1").arg(QCoreApplication::applicationPid());
     QLocalServer owner;
     QVERIFY(owner.listen(name));
+    QLocalSocket* peer = nullptr;
+    connect(&owner, &QLocalServer::newConnection, &owner, [&] {
+      peer = owner.nextPendingConnection();
+      if (stalledWrite) peer->setReadBufferSize(1);
+      if (disconnect) peer->abort();
+    });
     auto result = notifyInstance(name, {stalledWrite ? QString(450000, QLatin1Char('x'))
-                                                          : QStringLiteral("/tmp/a.png")});
-    QTRY_VERIFY(owner.hasPendingConnections());
-    QLocalSocket* peer = owner.nextPendingConnection();
-    if (stalledWrite) peer->setReadBufferSize(1);
-    if (disconnect) peer->abort();
+                                                    : QStringLiteral("/tmp/a.png")});
+    QTRY_VERIFY(peer != nullptr);
     QTRY_VERIFY_WITH_TIMEOUT(result.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready, 6500);
     QCOMPARE(result.get(), SingleInstance::Result::Error);
+    if (stalledWrite) QCOMPARE(peer->bytesAvailable(), qint64(1));
     // Failed forwarding must leave the live owner's endpoint reachable.
+    owner.disconnect(&owner);
     QLocalSocket probe;
     probe.connectToServer(name);
     QVERIFY(probe.waitForConnected());
