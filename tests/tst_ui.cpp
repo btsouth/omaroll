@@ -456,11 +456,10 @@ private slots:
 
   void gridCardsAndMenusExposeNamesAndSelection() {
     const QString path = pathAt(0);
-    QTRY_VERIFY(cardFor(path));
-    QTest::qWait(120); // Let the previous window resize release old delegates.
-    QQuickItem* card = cardFor(path);
-    QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(card);
-    QVERIFY(accessible);
+    QQuickItem* card = nullptr;
+    QAccessibleInterface* accessible = nullptr;
+    QTRY_VERIFY((card = cardFor(path)) != nullptr
+                && (accessible = QAccessible::queryAccessibleInterface(card)) != nullptr);
     QCOMPARE(accessible->role(), QAccessible::ListItem);
     QVERIFY(accessible->text(QAccessible::Name).contains(m_library->fileNameAt(0)));
     QVERIFY(accessible->state().selected);
