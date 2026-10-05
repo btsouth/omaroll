@@ -1701,11 +1701,11 @@ private slots:
     QTRY_VERIFY(!menuIds(menu).contains(QStringLiteral("subtitles-earlier")));
     QTest::keyClick(m_window, Qt::Key_PageDown);
     QCOMPARE(prop("subtitleOffsetMs").toInt(), 0);
-    QVERIFY(!menuIds(menu).contains(QStringLiteral("audio-track")));
-    QVERIFY(!menuIds(menu).contains(QStringLiteral("video-loop")));
+    QTRY_VERIFY(!menuIds(menu).contains(QStringLiteral("audio-track")));
+    QTRY_VERIFY(!menuIds(menu).contains(QStringLiteral("video-loop")));
     open({media(QStringLiteral("clip.mp4"))});
     QTRY_COMPARE(player->audioTracks().size(), 0);
-    QVERIFY(!menuIds(menu).contains(QStringLiteral("audio-track")));
+    QTRY_VERIFY(!menuIds(menu).contains(QStringLiteral("audio-track")));
   }
 
   void explicitSeeksClearSavedResumeState() {
