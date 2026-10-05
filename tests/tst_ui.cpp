@@ -3421,6 +3421,9 @@ private slots:
     QCOMPARE(QImage(copy).pixelColor(0, 0), QColor(Qt::yellow));
     QVERIFY(QFileInfo::exists(kept));
     m_library->setDuplicatesOnly(false);
+    QVERIFY(dir.remove());
+    m_captures->refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(m_captures->rowOf(kept) < 0 && m_captures->rowOf(copy) < 0, 10000);
   }
 
   void libraryFilePromptsPreserveSymlinkTargetsAndRejectReplacements_data() {
@@ -3486,6 +3489,9 @@ private slots:
     } else {
       QVERIFY(!QFileInfo::exists(dir.filePath(QStringLiteral("renamed.png"))));
     }
+    QVERIFY(dir.remove());
+    m_captures->refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(m_captures->rowOf(media) < 0, 10000);
   }
 
   void trashMovesTheFileAndTheGridFollows() {

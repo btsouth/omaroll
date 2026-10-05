@@ -653,6 +653,10 @@ ApplicationWindow {
     }
 
     function keepSelectedDuplicate(path) {
+        if (!Duplicates.ready) {
+            root.say("Wait for the exact-copy check to finish")
+            return
+        }
         const others = Duplicates.otherCopies(path)
         if (others.length === 0) {
             root.say("No other exact copies remain")
@@ -919,6 +923,7 @@ ApplicationWindow {
             PillButton {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: library.checkedCount === 0 && Captures.duplicatesOnly
+                         && Duplicates.ready
                          && library.currentIndex >= 0 && Duplicates.groupCount > 0
                          && Duplicates.otherCopies(root.currentPath()).length > 0
                 label: "Keep selected"

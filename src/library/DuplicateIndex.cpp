@@ -89,7 +89,7 @@ QStringList DuplicateIndex::groupPaths(const QString& path) const {
 }
 
 QStringList DuplicateIndex::otherCopies(const QString& keepPath) const {
-  if (m_dirty || m_scanning || !m_active) return {};
+  if (!ready()) return {};
   QStringList paths = groupPaths(keepPath);
   paths.removeAll(keepPath);
   return paths;
@@ -101,6 +101,7 @@ void DuplicateIndex::setActive(bool active) {
   }
   m_active = active;
   emit activeChanged();
+  emit readinessChanged();
 
   if (!m_active) {
     m_refreshTimer.stop();
@@ -129,6 +130,7 @@ void DuplicateIndex::refresh() {
 
 void DuplicateIndex::markDirty() {
   m_dirty = true;
+  emit readinessChanged();
   if (!m_active) {
     return;
   }
@@ -214,6 +216,7 @@ void DuplicateIndex::start() {
     }
     setProgress(0, 0);
     setScanning(false);
+    emit readinessChanged();
     return;
   }
 
@@ -285,6 +288,7 @@ void DuplicateIndex::setScanning(bool scanning) {
   }
   m_scanning = scanning;
   emit scanningChanged();
+  emit readinessChanged();
 }
 
 void DuplicateIndex::setProgress(int completed, int total) {

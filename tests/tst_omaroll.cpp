@@ -4157,6 +4157,7 @@ private slots:
 
     // Dirty groups cannot nominate destructive cleanup targets.
     duplicates.refresh();
+    QVERIFY(!duplicates.ready());
     QVERIFY(duplicates.otherCopies(firstPath).isEmpty());
     QTRY_VERIFY_WITH_TIMEOUT(!duplicates.otherCopies(firstPath).isEmpty(), 5000);
     // Reopening an unchanged review reuses the in-memory hashes immediately.
@@ -6896,6 +6897,7 @@ private slots:
     {
       CopyOutput output(dir.filePath(QStringLiteral("photo-edited.png")));
       QVERIFY(output.device());
+      output.device()->write("our encoded image");
       const QStringList names = QDir(dir.path()).entryList({QStringLiteral(".omaroll-copy-*")}, QDir::Dirs | QDir::Hidden);
       QCOMPARE(names.size(), 1);
       replaced = dir.filePath(names.first() + QStringLiteral("/output"));
