@@ -463,9 +463,9 @@ int main(int argc, char* argv[]) {
   // should take over, or be refused by, a real session's instance.
   SingleInstance instance;
   if (!rendering && !demo) {
-    if (!instance.claimOrNotify(requestedPaths, preferLibrary)) {
-      return 0;
-    }
+    const auto result = instance.claimOrNotify(requestedPaths, preferLibrary);
+    if (result == SingleInstance::Result::Forwarded) return 0;
+    if (result == SingleInstance::Result::Error) return 1;
   }
 
   // The viewer renders open a demo file the way a file manager would.

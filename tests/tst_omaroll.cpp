@@ -62,8 +62,19 @@
 
 #include <cerrno>
 #include <memory>
+#include <future>
+#include <sys/socket.h>
+#include <sys/un.h>
 
 namespace {
+
+std::future<SingleInstance::Result> notifyInstance(const QString& server, const QStringList& paths = {},
+                                                bool library = false) {
+  return std::async(std::launch::async, [server, paths, library] {
+    SingleInstance sender(server);
+    return sender.claimOrNotify(paths, library);
+  });
+}
 
 // A JPEG carrying a single EXIF Orientation tag. Qt cannot write one, and the
 // alternatives (ImageMagick, exiftool) are not guaranteed on a build machine,
@@ -324,12 +335,13 @@ private slots:
                                .arg(QCoreApplication::applicationPid())
                                .arg(QRandomGenerator::global()->generate());
     SingleInstance first(server);
-    QVERIFY(first.claimOrNotify());
+    QCOMPARE(first.claimOrNotify(), SingleInstance::Result::Primary);
     QSignalSpy activation(&first, &SingleInstance::activationRequested);
 
-    SingleInstance second(server);
     const QString path = QStringLiteral("/tmp/a strange # capture.png");
-    QVERIFY(!second.claimOrNotify({path}));
+    auto forwarded = notifyInstance(server, {path});
+    QTRY_VERIFY(forwarded.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready);
+    QCOMPARE(forwarded.get(), SingleInstance::Result::Forwarded);
     QTRY_COMPARE_WITH_TIMEOUT(activation.size(), 1, 1000);
     QCOMPARE(activation.first().first().toStringList(), QStringList{path});
   }
@@ -337,19 +349,172 @@ private slots:
   void singleInstanceForwardsMultiplePaths() {
     const QString server = QStringLiteral("omaroll-selection-%1").arg(QCoreApplication::applicationPid());
     SingleInstance first(server);
-    QVERIFY(first.claimOrNotify());
+    QCOMPARE(first.claimOrNotify(), SingleInstance::Result::Primary);
     QSignalSpy activation(&first, &SingleInstance::activationRequested);
     const QStringList paths{QStringLiteral("/tmp/one folder/a # 雪.png"),
                             QStringLiteral("/tmp/other folder/b.webp"),
                             QStringLiteral("/tmp/one folder/c.gif")};
-    SingleInstance second(server);
-    QVERIFY(!second.claimOrNotify(paths));
+    auto forwarded = notifyInstance(server, paths);
+    QTRY_VERIFY(forwarded.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready);
+    QCOMPARE(forwarded.get(), SingleInstance::Result::Forwarded);
     QTRY_COMPARE(activation.size(), 1);
     QCOMPARE(activation.first().first().toStringList(), paths);
-    SingleInstance third(server);
-    QVERIFY(!third.claimOrNotify());
+    auto activated = notifyInstance(server);
+    QTRY_VERIFY(activated.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready);
+    QCOMPARE(activated.get(), SingleInstance::Result::Forwarded);
     QTRY_COMPARE(activation.size(), 2);
     QVERIFY(activation.last().first().toStringList().isEmpty());
+  }
+
+  void singleInstanceRejectsInvalidFrames_data() {
+    QTest::addColumn<QByteArray>("frame");
+    QTest::newRow("oversized") << QByteArray(1024 * 1024 + 1, 'x');
+    QTest::newRow("oversized-line") << (QByteArray(1024 * 1024 + 1, 'x') + '\n');
+    QTest::newRow("invalid-json") << QByteArray("not json\n");
+    QTest::newRow("invalid-path") << QByteArray("{\"paths\":[42]}\n");
+    QTest::newRow("invalid-library") << QByteArray("{\"paths\":[],\"library\":42}\n");
+    QTest::newRow("trailing-frame") << QByteArray("{\"paths\":[]}\n{\"paths\":[]}\n");
+    QTest::newRow("too-many-paths") << (QJsonDocument(QJsonObject{
+        {QStringLiteral("paths"), QJsonArray::fromStringList(QStringList(4097, QStringLiteral("/tmp/a.png")))}})
+        .toJson(QJsonDocument::Compact) + '\n');
+  }
+
+  void singleInstanceRejectsInvalidFrames() {
+    QFETCH(QByteArray, frame);
+    const QString server = QStringLiteral("omaroll-invalid-%1").arg(QCoreApplication::applicationPid());
+    SingleInstance first(server);
+    QCOMPARE(first.claimOrNotify(), SingleInstance::Result::Primary);
+    QSignalSpy activation(&first, &SingleInstance::activationRequested);
+    QLocalSocket sender;
+    sender.connectToServer(server);
+    QVERIFY(sender.waitForConnected());
+    sender.write(frame);
+    sender.flush();
+    QTRY_COMPARE_WITH_TIMEOUT(sender.state(), QLocalSocket::UnconnectedState, 2000);
+    QVERIFY(sender.readAll().isEmpty());
+    QVERIFY(activation.isEmpty());
+    auto valid = notifyInstance(server, {QStringLiteral("/tmp/still-works.png")});
+    QTRY_VERIFY(valid.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready);
+    QCOMPARE(valid.get(), SingleInstance::Result::Forwarded);
+    QCOMPARE(activation.size(), 1);
+  }
+
+  void singleInstanceBoundsIdleAndActivePeers() {
+    const QString server = QStringLiteral("omaroll-peers-%1").arg(QCoreApplication::applicationPid());
+    SingleInstance first(server);
+    QCOMPARE(first.claimOrNotify(), SingleInstance::Result::Primary);
+    QSignalSpy activation(&first, &SingleInstance::activationRequested);
+    QList<QLocalSocket*> peers;
+    const auto cleanup = qScopeGuard([&] { qDeleteAll(peers); });
+    for (int index = 0; index < 16; ++index) {
+      auto* peer = new QLocalSocket;
+      peers.append(peer);
+      peer->connectToServer(server);
+      QVERIFY(peer->waitForConnected());
+      peer->write("{");
+      peer->flush();
+      QTest::qWait(10);
+    }
+    QLocalSocket excess;
+    excess.connectToServer(server);
+    QVERIFY(excess.waitForConnected());
+    QTRY_COMPARE_WITH_TIMEOUT(excess.state(), QLocalSocket::UnconnectedState, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(std::all_of(peers.cbegin(), peers.cend(), [](const auto* peer) {
+      return peer->state() == QLocalSocket::UnconnectedState;
+    }), 6000);
+    QVERIFY(activation.isEmpty());
+    auto valid = notifyInstance(server);
+    QTRY_VERIFY(valid.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready);
+    QCOMPARE(valid.get(), SingleInstance::Result::Forwarded);
+  }
+
+  void singleInstanceReleasesDisconnectedPeer() {
+    const QString server = QStringLiteral("omaroll-disconnect-%1").arg(QCoreApplication::applicationPid());
+    SingleInstance first(server);
+    QCOMPARE(first.claimOrNotify(), SingleInstance::Result::Primary);
+    QSignalSpy activation(&first, &SingleInstance::activationRequested);
+    for (int index = 0; index < 32; ++index) {
+      QLocalSocket peer;
+      peer.connectToServer(server);
+      QVERIFY(peer.waitForConnected());
+      peer.write("{");
+      peer.flush();
+      QTest::qWait(5);
+      peer.abort();
+      QTest::qWait(5);
+    }
+    QVERIFY(activation.isEmpty());
+    auto valid = notifyInstance(server);
+    QTRY_VERIFY(valid.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready);
+    QCOMPARE(valid.get(), SingleInstance::Result::Forwarded);
+  }
+
+  void singleInstanceRequiresAcknowledgement_data() {
+    QTest::addColumn<bool>("disconnect");
+    QTest::newRow("no-ack") << false;
+    QTest::newRow("disconnected-owner") << true;
+  }
+
+  void singleInstanceRequiresAcknowledgement() {
+    QFETCH(bool, disconnect);
+    const QString name = QStringLiteral("omaroll-no-ack-%1").arg(QCoreApplication::applicationPid());
+    QLocalServer owner;
+    QVERIFY(owner.listen(name));
+    auto result = notifyInstance(name, {QStringLiteral("/tmp/a.png")});
+    QTRY_VERIFY(owner.hasPendingConnections());
+    QLocalSocket* peer = owner.nextPendingConnection();
+    if (disconnect) peer->abort();
+    QTRY_VERIFY_WITH_TIMEOUT(result.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready, 6500);
+    QCOMPARE(result.get(), SingleInstance::Result::Error);
+    // Failed forwarding must leave the live owner's endpoint reachable.
+    QLocalSocket probe;
+    probe.connectToServer(name);
+    QVERIFY(probe.waitForConnected());
+  }
+
+  void singleInstanceDoesNotReplaceALockedOwner() {
+    const QString name = QStringLiteral("omaroll-busy-%1").arg(QCoreApplication::applicationPid());
+    SingleInstance owner(name);
+    QCOMPARE(owner.claimOrNotify(), SingleInstance::Result::Primary);
+    // Do not pump the owner event loop while the sender waits for its ACK.
+    auto failed = notifyInstance(name);
+    QCOMPARE(failed.get(), SingleInstance::Result::Error);
+    auto recovered = notifyInstance(name);
+    QTRY_VERIFY(recovered.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready);
+    QCOMPARE(recovered.get(), SingleInstance::Result::Forwarded);
+  }
+
+  void singleInstanceRejectsOversizedOutgoingRequests() {
+    const QString name = QStringLiteral("omaroll-outgoing-%1").arg(QCoreApplication::applicationPid());
+    SingleInstance instance(name);
+    QCOMPARE(instance.claimOrNotify(QStringList(4097, QStringLiteral("/tmp/a.png"))),
+             SingleInstance::Result::Error);
+    QCOMPARE(instance.claimOrNotify({QString(1024 * 1024, QLatin1Char('x'))}),
+             SingleInstance::Result::Error);
+    QCOMPARE(instance.claimOrNotify(), SingleInstance::Result::Primary);
+  }
+
+  void singleInstanceRecoversAStaleEndpoint() {
+    QTemporaryDir dir;
+    const QString name = dir.filePath(QStringLiteral("stale.sock"));
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    QVERIFY(fd >= 0);
+    sockaddr_un address{};
+    address.sun_family = AF_UNIX;
+    const QByteArray path = QFile::encodeName(name);
+    QVERIFY(path.size() < qsizetype(sizeof(address.sun_path)));
+    memcpy(address.sun_path, path.constData(), size_t(path.size()));
+    const int bound = ::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address));
+    ::close(fd);
+    QCOMPARE(bound, 0);
+    SingleInstance recovered(name);
+    QCOMPARE(recovered.claimOrNotify(), SingleInstance::Result::Primary);
+    struct stat info{};
+    QCOMPARE(::stat(path.constData(), &info), 0);
+    QCOMPARE(info.st_mode & 0777, mode_t(0600));
+    auto valid = notifyInstance(name);
+    QTRY_VERIFY(valid.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready);
+    QCOMPARE(valid.get(), SingleInstance::Result::Forwarded);
   }
 
   void openRequestValidatesAndPreservesSelection() {
@@ -390,7 +555,7 @@ private slots:
   void singleInstanceAcceptsLegacyAndFragmentedRequests() {
     const QString server = QStringLiteral("omaroll-fragments-%1").arg(QCoreApplication::applicationPid());
     SingleInstance first(server);
-    QVERIFY(first.claimOrNotify());
+    QCOMPARE(first.claimOrNotify(), SingleInstance::Result::Primary);
     QSignalSpy activation(&first, &SingleInstance::activationRequested);
     QLocalSocket sender;
     sender.connectToServer(server);
@@ -421,7 +586,7 @@ private slots:
     qputenv("WAYLAND_DISPLAY", QFileInfo(dir.path()).fileName().toUtf8());
     SingleInstance receiver;
     oldDisplay.isNull() ? qunsetenv("WAYLAND_DISPLAY") : qputenv("WAYLAND_DISPLAY", oldDisplay);
-    QVERIFY(receiver.claimOrNotify());
+    QCOMPARE(receiver.claimOrNotify(), SingleInstance::Result::Primary);
     QSignalSpy activation(&receiver, &SingleInstance::activationRequested);
     QProcess process;
     auto environment = QProcessEnvironment::systemEnvironment();
@@ -433,10 +598,24 @@ private slots:
     process.setWorkingDirectory(dir.path());
     const QString binary = QCoreApplication::applicationDirPath() + QStringLiteral("/omaroll");
     process.start(binary, {QStringLiteral("--"), QFileInfo(first).fileName(), second, first});
-    QVERIFY(process.waitForFinished(5000));
+    QTRY_VERIFY_WITH_TIMEOUT(process.state() == QProcess::NotRunning, 7000);
     QCOMPARE(process.exitCode(), 0);
     QTRY_COMPARE(activation.size(), 1);
     QCOMPARE(activation.first().first().toStringList(), (QStringList{first, second}));
+    activation.clear();
+    QList<QProcess*> launches;
+    const auto cleanup = qScopeGuard([&] { qDeleteAll(launches); });
+    for (int index = 0; index < 12; ++index) {
+      auto* child = new QProcess;
+      launches.append(child);
+      child->setProcessEnvironment(environment);
+      child->start(binary, {first});
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(std::all_of(launches.cbegin(), launches.cend(), [](const auto* child) {
+      return child->state() == QProcess::NotRunning;
+    }), 10000);
+    for (const auto* child : launches) QCOMPARE(child->exitCode(), 0);
+    QCOMPARE(activation.size(), 12);
     activation.clear();
     process.start(binary, {first, dir.filePath(QStringLiteral("missing.png"))});
     QVERIFY(process.waitForFinished(5000));
@@ -449,16 +628,18 @@ private slots:
   void singleInstanceForwardsTheLibraryRequest() {
     const QString server = QStringLiteral("omaroll-library-%1").arg(QCoreApplication::applicationPid());
     SingleInstance first(server);
-    QVERIFY(first.claimOrNotify());
+    QCOMPARE(first.claimOrNotify(), SingleInstance::Result::Primary);
     QSignalSpy activation(&first, &SingleInstance::activationRequested);
     const QString path = QStringLiteral("/tmp/a picture # 雪.png");
-    SingleInstance second(server);
-    QVERIFY(!second.claimOrNotify({path}, true));
+    auto forwarded = notifyInstance(server, {path}, true);
+    QTRY_VERIFY(forwarded.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready);
+    QCOMPARE(forwarded.get(), SingleInstance::Result::Forwarded);
     QTRY_COMPARE(activation.size(), 1);
     QCOMPARE(activation.first().at(0).toStringList(), QStringList{path});
     QVERIFY(activation.first().at(1).toBool());
-    SingleInstance third(server);
-    QVERIFY(!third.claimOrNotify({path}));
+    auto activated = notifyInstance(server, {path});
+    QTRY_VERIFY(activated.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready);
+    QCOMPARE(activated.get(), SingleInstance::Result::Forwarded);
     QTRY_COMPARE(activation.size(), 2);
     QVERIFY(!activation.last().at(1).toBool());
   }
