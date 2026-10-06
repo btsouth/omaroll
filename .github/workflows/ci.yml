@@ -5,7 +5,37 @@ on:
   # otherwise run everything twice.
   push:
     branches: [main]
+    paths:
+      - '**'
+      - '!**.md'
+      - '!.github/ISSUE_TEMPLATE/**'
+      # The build reads these Markdown files (CMakeLists.txt installs or
+      # rewrites them), so renaming or deleting one must still run CI.
+      - 'README.md'
+      - 'CONTRIBUTING.md'
+      - 'RELEASING.md'
+      - 'PRIVACY.md'
+      - 'SUPPORT.md'
+      - 'CHANGELOG.md'
+      - 'docs/STATUS.md'
+      - 'docs/ROADMAP.md'
+      - 'tests/**'
   pull_request:
+    paths:
+      - '**'
+      - '!**.md'
+      - '!.github/ISSUE_TEMPLATE/**'
+      # The build reads these Markdown files (CMakeLists.txt installs or
+      # rewrites them), so renaming or deleting one must still run CI.
+      - 'README.md'
+      - 'CONTRIBUTING.md'
+      - 'RELEASING.md'
+      - 'PRIVACY.md'
+      - 'SUPPORT.md'
+      - 'CHANGELOG.md'
+      - 'docs/STATUS.md'
+      - 'docs/ROADMAP.md'
+      - 'tests/**'
 
 # A newer push to the same pull request replaces the run in progress.
 concurrency:
@@ -39,8 +69,8 @@ jobs:
           qt6-declarative qt6-imageformats qt6-multimedia qt6-svg qt6-wayland
           wl-clipboard xdg-desktop-portal xdg-utils mesa xorg-server-xvfb xorg-xauth
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: Cache compiler outputs
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - name: Restore compiler outputs
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .ccache
           key: ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
@@ -84,6 +114,12 @@ jobs:
       - name: Compiler cache statistics
         if: always()
         run: ccache --show-stats
+      - name: Save compiler outputs
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .ccache
+          key: ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
       - name: Save test results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
