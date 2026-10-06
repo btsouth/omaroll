@@ -3002,21 +3002,34 @@ private slots:
   void placementFailureAndWorkspaceSwitchHaveBoundedFallbacks() {
     ViewerWindows viewers(*m_engine);
     QList<HyprlandPlacement::Reply> pending;
+    bool settleRetry = false;
     viewers.setPlacementQuery([&](QObject*, HyprlandPlacement::Reply reply) {
-      pending.append(std::move(reply));
+      if (settleRetry) {
+        settleRetry = false;
+        HyprlandPlacement::Plan settled;
+        settled.viewers = 1;
+        reply(settled);
+      } else {
+        pending.append(std::move(reply));
+      }
     });
     viewers.setPlacementTile([](const QStringList&) {});
     auto* first = viewers.open({media(QStringLiteral("Shot 1.jpg"))});
     auto* second = viewers.open({media(QStringLiteral("shot 2.jpg"))});
     QVERIFY(first && second && !second->isVisible());
+    bool mappedTiled = false;
+    connect(second, &QWindow::visibleChanged, this, [second, &mappedTiled](bool visible) {
+      if (visible) mappedTiled = second->property("mapTiled").toBool();
+    }, Qt::SingleShotConnection);
     HyprlandPlacement::Plan switched;
     switched.retry = true;
+    settleRetry = true;
     pending.takeFirst()(switched);
-    QTRY_COMPARE(pending.size(), 1);
+    QTRY_VERIFY(second->isVisible());
+    QVERIFY(mappedTiled);
+    QVERIFY(!settleRetry && pending.isEmpty());
     HyprlandPlacement::Plan settled;
     settled.viewers = 1;
-    pending.takeFirst()(settled);
-    QVERIFY(second->isVisible() && second->property("mapTiled").toBool());
     auto* third = viewers.open({media(QStringLiteral("shot 10.jpg"))});
     QVERIFY(third && !third->isVisible());
     pending.takeFirst()({});
@@ -3040,24 +3053,33 @@ private slots:
   void placementWaitsForAValidEmptySnapshotToSettle() {
     ViewerWindows viewers(*m_engine);
     QList<HyprlandPlacement::Reply> pending;
+    int queries = 0;
     viewers.setPlacementQuery([&](QObject*, HyprlandPlacement::Reply reply) {
-      pending.append(std::move(reply));
+      if (++queries == 2) {
+        HyprlandPlacement::Plan mapped;
+        mapped.valid = true;
+        mapped.viewers = 1;
+        reply(mapped);
+      } else {
+        pending.append(std::move(reply));
+      }
     });
     viewers.setPlacementTile([](const QStringList&) {});
     auto* first = viewers.open({media(QStringLiteral("Shot 1.jpg"))});
     auto* second = viewers.open({media(QStringLiteral("shot 2.jpg"))});
     QVERIFY(first && second && !second->isVisible());
+    bool mappedTiled = false;
+    connect(second, &QWindow::visibleChanged, this, [second, &mappedTiled](bool visible) {
+      if (visible) mappedTiled = second->property("mapTiled").toBool();
+    }, Qt::SingleShotConnection);
     HyprlandPlacement::Plan notMapped;
     notMapped.valid = true;
     pending.takeFirst()(notMapped);
     QVERIFY(!second->isVisible());
-    QTRY_COMPARE(pending.size(), 1);
-    QVERIFY(!second->isVisible());
-    HyprlandPlacement::Plan mapped;
-    mapped.valid = true;
-    mapped.viewers = 1;
-    pending.takeFirst()(mapped);
-    QVERIFY(second->isVisible() && second->property("mapTiled").toBool());
+    QTRY_VERIFY(second->isVisible());
+    QVERIFY(mappedTiled);
+    QCOMPARE(queries, 2);
+    QVERIFY(pending.isEmpty());
     first->close(); second->close();
   }
 
