@@ -166,8 +166,9 @@ Options:
                          matte, corrections, compare, export, rename, OCR,
                          editors, pins, context-menu, selection-menu,
                          duplicates, browser, settings, viewer, viewer-video,
-                         viewer-info or viewer-menu.
-  --render-size <WxH>    Window size, from 560x420 to 7680x4320. Default 1280x820.
+                         viewer-info, viewer-menu or viewer-help.
+  --render-size <WxH>    Window size, from 560x420 (viewer 320x240) to 7680x4320.
+                         Default 1280x820.
   --version              Print the version and exit.
   --help                 Show this message.)"
                       << Qt::endl;
@@ -422,7 +423,7 @@ int main(int argc, char* argv[]) {
       QStringLiteral("settings"),   QStringLiteral("editors"), QStringLiteral("pins"),
       QStringLiteral("context-menu"), QStringLiteral("selection-menu"),
       QStringLiteral("viewer"),  QStringLiteral("viewer-video"),
-      QStringLiteral("viewer-info"), QStringLiteral("viewer-menu")};
+      QStringLiteral("viewer-info"), QStringLiteral("viewer-menu"), QStringLiteral("viewer-help")};
   if (!renderView.isEmpty() && !renderViews.contains(renderView)) {
     qWarning().noquote() << "omaroll: unknown render view:" << renderView;
     return 2;
@@ -437,8 +438,12 @@ int main(int argc, char* argv[]) {
     const QStringList dimensions = renderSize.split(QLatin1Char('x'));
     const int width = dimensions.at(0).toInt();
     const int height = dimensions.at(1).toInt();
-    if (width < 560 || height < 420 || width > 7680 || height > 4320) {
-      qWarning().noquote() << "omaroll: render size must be between 560x420 and 7680x4320";
+    const bool viewer = renderView.startsWith(QStringLiteral("viewer"));
+    if (width < (viewer ? 320 : 560) || height < (viewer ? 240 : 420)
+        || width > 7680 || height > 4320) {
+      qWarning().noquote() << (viewer
+          ? "omaroll: render size must be between 320x240 and 7680x4320"
+          : "omaroll: render size must be between 560x420 and 7680x4320");
       return 2;
     }
   }

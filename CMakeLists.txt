@@ -173,6 +173,7 @@ set(OMAROLL_QML_FILES
   qml/components/Icon.qml
   qml/components/IconButton.qml
   qml/components/ViewerInfoPanel.qml
+  qml/components/ViewerShortcutHelp.qml
   qml/components/ViewerFilmstrip.qml
   qml/components/ViewerToolbar.qml
   qml/components/ViewerTransport.qml

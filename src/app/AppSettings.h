@@ -57,6 +57,8 @@ class AppSettings final : public QObject {
   // turned on with B or the menu.
   Q_PROPERTY(bool viewerFilmstrip READ viewerFilmstrip WRITE setViewerFilmstrip NOTIFY
                  viewerFilmstripChanged)
+  Q_PROPERTY(bool enlargeSmallPictures READ enlargeSmallPictures WRITE setEnlargeSmallPictures NOTIFY
+                 enlargeSmallPicturesChanged)
   // Video playback preferences, remembered across files and sessions.
   Q_PROPERTY(qreal videoVolume READ videoVolume WRITE setVideoVolume NOTIFY videoVolumeChanged)
   Q_PROPERTY(bool videoMuted READ videoMuted WRITE setVideoMuted NOTIFY videoMutedChanged)
@@ -124,6 +126,8 @@ public:
   void setSlideshowShuffle(bool value);
   [[nodiscard]] bool viewerFilmstrip() const { return m_viewerFilmstrip; }
   void setViewerFilmstrip(bool value);
+  [[nodiscard]] bool enlargeSmallPictures() const { return m_enlargeSmallPictures; }
+  void setEnlargeSmallPictures(bool value);
 
   // Where a video was last left, in milliseconds. Zero means no saved spot.
   // Entries are pruned so a long-lived library does not grow forever.
@@ -247,6 +251,7 @@ signals:
   void slideshowIntervalSecondsChanged();
   void slideshowShuffleChanged();
   void viewerFilmstripChanged();
+  void enlargeSmallPicturesChanged();
   void videoVolumeChanged();
   void videoMutedChanged();
   void rememberPlaybackSpeedChanged();
@@ -322,6 +327,7 @@ private:
   int m_slideshowIntervalSeconds = 4;
   bool m_slideshowShuffle = false;
   bool m_viewerFilmstrip = false;
+  bool m_enlargeSmallPictures = true;
   qreal m_videoVolume = 0.8;
   bool m_videoMuted = false;
   bool m_rememberPlaybackSpeed = false;

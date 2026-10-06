@@ -44,7 +44,7 @@ ApplicationWindow {
     property bool infoOpen: false
     property bool slideshowRunning: false
     readonly property bool blockingActionOpen: actionMenu.visible || confirm.visible
-                                              || permanentConfirm.visible || editorChooser.visible
+                                              || permanentConfirm.visible || editorChooser.visible || shortcutHelp.visible
     onBlockingActionOpenChanged: {
         if (root.blockingActionOpen) slideshowTimer.stop()
         else Qt.callLater(root.resumeSlideshow)
@@ -66,6 +66,7 @@ ApplicationWindow {
 
     // A still is fitted until it is zoomed; viewScale is then the logical
     // size of one source pixel. Zero means "fit".
+    property string fitMode: "fit"
     property real viewScale: 0
     property int viewRotation: 0
     // Read straight off the loaded image, so a picture that arrives from the
@@ -137,8 +138,12 @@ ApplicationWindow {
     readonly property real fitScale: root.rotatedWidth > 0 && root.rotatedHeight > 0
         ? Math.min(stage.width / root.rotatedWidth, stage.height / root.rotatedHeight, 4 / root.dpr)
         : 0
+    readonly property real fittedScale: root.fitMode === "width"
+        ? Math.min(stage.width / Math.max(1, root.rotatedWidth), 4 / root.dpr)
+        : (root.fitMode === "shrink" || !Settings.enlargeSmallPictures)
+          ? Math.min(root.fitScale, root.actualScale) : root.fitScale
     readonly property real actualScale: 1 / root.dpr
-    readonly property real effectiveScale: root.viewScale > 0 ? root.viewScale : root.fitScale
+    readonly property real effectiveScale: root.viewScale > 0 ? root.viewScale : root.fittedScale
     readonly property real displayWidth: root.rotatedWidth * root.effectiveScale
     readonly property real displayHeight: root.rotatedHeight * root.effectiveScale
     readonly property int zoomPercent: Math.round(root.effectiveScale * root.dpr * 100)
@@ -146,6 +151,7 @@ ApplicationWindow {
                                        && root.sourceWidth > 0
 
     readonly property bool chromeShown: root.chromePinned || root.pointerActive || root.infoOpen
+                                        || shortcutHelp.visible
                                         || actionMenu.visible || confirm.visible || permanentConfirm.visible || editorChooser.visible
                                         || header.hovered || transport.hovered
                                         || previousButton.hovered || nextButton.hovered
@@ -192,6 +198,7 @@ ApplicationWindow {
 
     function resetView() {
         zoomAnimation.stop()
+        root.fitMode = "fit"
         root.viewScale = 0
         root.viewRotation = 0
         still.contentX = 0
@@ -239,7 +246,35 @@ ApplicationWindow {
     }
 
     function fitToWindow() {
-        root.zoomTo(root.fitScale)
+        if (Session.isVideo || !root.imageReady) return
+        root.viewScale = root.effectiveScale
+        root.fitMode = "fit"
+        root.zoomTo(root.fittedScale)
+    }
+
+    function setFitMode(mode) {
+        if (Session.isVideo || !root.imageReady) return
+        zoomAnimation.stop()
+        root.fitMode = mode
+        root.viewScale = 0
+        still.contentX = 0
+        still.contentY = 0
+        zoomBadge.flash()
+    }
+
+    function panImage(dx, dy) {
+        if (Session.isVideo || root.effectiveScale <= root.fitScale * 1.001) return
+        still.cancelFlick()
+        still.contentX = Math.max(0, Math.min(still.contentWidth - still.width, still.contentX + dx))
+        still.contentY = Math.max(0, Math.min(still.contentHeight - still.height, still.contentY + dy))
+    }
+
+    function copyPath(nameOnly) {
+        const path = Session.deletionPath
+        const text = nameOnly ? path.slice(path.lastIndexOf("/") + 1) : path
+        if (text === "") return
+        root.say(Actions.copyPlainText(text) ? (nameOnly ? "File name copied" : "Path copied")
+                                            : "Could not copy text")
     }
 
     // One step of a zoom: the new scale, with the point under the anchor kept
@@ -260,7 +295,7 @@ ApplicationWindow {
 
     // Arriving back at the fitted size goes back to following the window.
     function settleZoom() {
-        if (Math.abs(root.viewScale - root.fitScale) <= root.fitScale * 0.001) {
+        if (Math.abs(root.viewScale - root.fittedScale) <= root.fittedScale * 0.001) {
             root.viewScale = 0
         }
     }
@@ -280,6 +315,9 @@ ApplicationWindow {
     }
 
     function showActualSize(x, y) {
+        if (Session.isVideo || !root.imageReady) return
+        root.viewScale = root.effectiveScale
+        root.fitMode = "fit"
         root.zoomTo(root.actualScale, x, y)
     }
 
@@ -294,7 +332,7 @@ ApplicationWindow {
 
     // The toolbar's 1:1 / Fit button.
     function toggleFit() {
-        if (root.viewScale > 0) {
+        if (root.viewScale > 0 || root.fitMode !== "fit") {
             root.fitToWindow()
         } else {
             root.showActualSize()
@@ -617,7 +655,7 @@ ApplicationWindow {
         play: "P", rotate: "R", slideshow: "F5", fullscreen: "F", info: "I", filmstrip: "B",
         "video-loop": "Shift+L", "audio-track": "Shift+A",
         "subtitles-earlier": "Z", "subtitles-later": "X",
-        favorite: "V", trash: "Del"
+        favorite: "V", trash: "Del", "copy-path": "Ctrl+Shift+C", "fit-width": "W", help: "? / F1", fit: "0", actual: "1"
     })
 
     // Handed-off actions, in the order the menu offers them. Only what is
@@ -656,7 +694,14 @@ ApplicationWindow {
                 entries.push({id: "subtitles-later", label: "Subtitles later"})
             }
         }
+        entries.push({id: "copy-path", label: "Copy path"})
+        entries.push({id: "copy-name", label: "Copy file name"})
+        entries.push({separator: true})
         if (!video) {
+            entries.push({id: "fit", label: "Fit"})
+            entries.push({id: "fit-width", label: "Fit width"})
+            entries.push({id: "actual", label: "Actual size"})
+            entries.push({id: "fit-shrink", label: "Fit without enlarging"})
             entries.push({id: "rotate", label: "Rotate"})
         }
         if (Session.count > 1) {
@@ -669,6 +714,7 @@ ApplicationWindow {
         }
         entries.push({id: "fullscreen", label: root.fullScreen ? "Exit full screen" : "Full screen"})
         entries.push({id: "info", label: root.infoOpen ? "Hide details" : "Details"})
+        entries.push({id: "help", label: "Keyboard shortcuts"})
         entries.push({separator: true})
         entries.push({id: "favorite",
                       label: root.favorite ? "Remove from favourites" : "Add to favourites"})
@@ -696,6 +742,23 @@ ApplicationWindow {
         case "subtitles-earlier":
         case "subtitles-later":
             root.adjustSubtitleOffset(id === "subtitles-earlier" ? -500 : 500)
+            return
+        case "copy-path":
+        case "copy-name":
+            root.copyPath(id === "copy-name")
+            return
+        case "fit":
+            root.fitToWindow()
+            return
+        case "fit-width":
+        case "fit-shrink":
+            root.setFitMode(id === "fit-width" ? "width" : "shrink")
+            return
+        case "actual":
+            root.showActualSize()
+            return
+        case "help":
+            shortcutHelp.open()
             return
         case "companion":
             Session.switchCompanion()
@@ -770,6 +833,8 @@ ApplicationWindow {
             }
         } else if (view === "viewer-info") {
             root.infoOpen = true
+        } else if (view === "viewer-help") {
+            shortcutHelp.open()
         } else if (view === "viewer-menu") {
             actionMenu.popup(moreButton, moreButton.width - actionMenu.implicitWidth,
                              moreButton.height + 6)
@@ -885,6 +950,7 @@ ApplicationWindow {
         confirm.close()
         permanentConfirm.close()
         actionMenu.close()
+        shortcutHelp.close()
         Session.clear()
     }
 
@@ -946,7 +1012,7 @@ ApplicationWindow {
             // rather than sailing down a long screenshot.
             flickDeceleration: 4000
             maximumFlickVelocity: 4000
-            interactive: root.viewScale > 0
+            interactive: root.effectiveScale > root.fitScale * 1.001
                          && (contentWidth > width + 0.5 || contentHeight > height + 0.5)
             contentWidth: Math.max(width, root.displayWidth)
             contentHeight: Math.max(height, root.displayHeight)
@@ -1570,7 +1636,7 @@ ApplicationWindow {
             anchors.bottom: parent.bottom
             anchors.bottomMargin: 16
             compact: parent.width < 460
-            fitted: root.viewScale === 0
+            fitted: root.viewScale === 0 && root.fitMode === "fit"
             canStep: Session.count > 1
             slideshowRunning: root.slideshowRunning
             onZoomOut: root.zoomBy(1 / 1.25)
@@ -1659,7 +1725,9 @@ ApplicationWindow {
         Text {
             id: zoomText
             anchors.centerIn: parent
-            text: root.viewScale > 0 ? root.zoomPercent + "%" : "Fit  ·  " + root.zoomPercent + "%"
+            text: root.viewScale > 0 ? root.zoomPercent + "%"
+                  : (root.fitMode === "width" ? "Fit width" : root.fitMode === "shrink" ? "Fit without enlarging" : "Fit")
+                    + "  ·  " + root.zoomPercent + "%"
             font.family: Theme.fontFamily
             font.pixelSize: 11
             color: Theme.brightForeground
@@ -1711,6 +1779,8 @@ ApplicationWindow {
         visible: root.infoOpen
         fileName: Session.fileName
         folder: Session.folder
+        filePath: Session.deletionPath
+        resolvedPath: Session.path !== Session.deletionPath ? Session.path : ""
         technical: {
             const parts = []
             if (Session.isVideo) {
@@ -1731,6 +1801,8 @@ ApplicationWindow {
         onRateRequested: function (stars) { root.rate(stars) }
         onFavoriteToggled: root.toggleFavorite()
         onFolderRequested: root.perform("files")
+        onCopyPathRequested: root.copyPath(false)
+        onCopyNameRequested: root.copyPath(true)
     }
 
     Menu {
@@ -1741,7 +1813,7 @@ ApplicationWindow {
         modal: true
         dim: false
         readonly property var entries: root.menuEntries()
-        onClosed: keys.forceActiveFocus()
+        onClosed: if (!shortcutHelp.visible) keys.forceActiveFocus()
 
         background: Rectangle {
             implicitWidth: 232
@@ -1822,6 +1894,16 @@ ApplicationWindow {
         }
     }
 
+    ViewerShortcutHelp {
+        id: shortcutHelp
+        objectName: "viewerShortcutHelp"
+        video: Session.isVideo
+        animated: Session.isAnimated
+        audioChoices: root.hasAudioChoices
+        sidecarSubtitles: root.externalSubtitle !== ""
+        onClosed: keys.forceActiveFocus()
+    }
+
     EditorChooser {
         id: editorChooser
         objectName: "editorChooser"
@@ -1894,13 +1976,18 @@ ApplicationWindow {
                     root.say("Undone")
                 }
             } else if (control && event.key === Qt.Key_C) {
-                root.perform("copy")
+                if (shift) root.copyPath(false)
+                else root.perform("copy")
             } else if (control && event.key === Qt.Key_O) {
                 root.perform("open-with")
             } else if (control && event.key === Qt.Key_W) {
                 root.close()
             } else if (control && event.key === Qt.Key_Q) {
                 Qt.quit()
+            } else if (shift && !control && !alt && !video
+                       && [Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down].indexOf(event.key) >= 0) {
+                root.panImage(event.key === Qt.Key_Left ? -80 : event.key === Qt.Key_Right ? 80 : 0,
+                              event.key === Qt.Key_Up ? -80 : event.key === Qt.Key_Down ? 80 : 0)
             } else if (control || alt) {
                 handled = false
             } else {
@@ -1990,6 +2077,13 @@ ApplicationWindow {
                 case Qt.Key_Minus:
                 case Qt.Key_Underscore:
                     root.zoomBy(1 / 1.25)
+                    break
+                case Qt.Key_Question:
+                case Qt.Key_F1:
+                    shortcutHelp.open()
+                    break
+                case Qt.Key_W:
+                    if (!video) root.setFitMode("width")
                     break
                 case Qt.Key_0:
                     if (!video) root.fitToWindow()

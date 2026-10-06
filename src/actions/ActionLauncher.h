@@ -26,6 +26,8 @@ public:
   explicit ActionLauncher(QObject* parent = nullptr,
                           std::optional<QDBusConnection> bus = std::nullopt);
 
+  Q_INVOKABLE bool copyPlainText(const QString& text);
+
   // Open in whatever the desktop has registered for the type.
   Q_INVOKABLE bool open(const QString& path);
 
