@@ -892,6 +892,9 @@ private slots:
     QTRY_COMPARE(sheet->width(), qreal(m_window->width()));
     QTRY_COMPARE(sheet->height(), qreal(m_window->height()));
     QCOMPARE(sheet->property("imageCount").toInt(), 2);
+    QSignalSpy frames(m_window, &QQuickWindow::frameSwapped);
+    m_window->update();
+    QTRY_VERIFY(!frames.isEmpty());
 
     QQuickItem* repeater = find(sheet, [](QQuickItem* candidate) {
       return candidate->objectName() == QStringLiteral("compareRepeater");
@@ -912,6 +915,9 @@ private slots:
     QVERIFY(QLineF(pointer, image->mapFromScene(at)).length() < 0.01);
 
     const double wheelZoom = sheet->property("zoom").toDouble();
+    frames.clear();
+    m_window->update();
+    QTRY_VERIFY(!frames.isEmpty());
     pinchAt(at.toPoint());
     QTRY_VERIFY(sheet->property("zoom").toDouble() > wheelZoom);
     QVERIFY(QLineF(pointer, image->mapFromScene(at)).length() < 2.0);
