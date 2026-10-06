@@ -1618,7 +1618,7 @@ private slots:
     QCOMPARE(thumbnail->property("status").toInt(), 1); // Image.Ready.
     QVERIFY(thumbnail->opacity() >= 0.999);
     QCOMPARE(card->property("readyPath").toString(), QStringLiteral("/thumbnail-test/1001.png"));
-    QVERIFY(card->property("readyIdentity").toString().startsWith(QStringLiteral("0!")));
+    QCOMPARE(card->property("readyIdentity").toString(), QStringLiteral("0"));
     // A same-path rewrite must also hide the previous version while decoding.
     card->setProperty("stamp", 1);
     QTRY_COMPARE(provider->count(1001, 1), 1);
