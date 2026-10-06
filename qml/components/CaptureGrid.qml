@@ -98,6 +98,10 @@ FocusScope {
     }
 
     function restoreLayout() {
+        if (!grid.reuseItems) {
+            restoringLayout = false
+            return
+        }
         const selected = Captures.rowOf(selectedPath)
         if (selected >= 0) {
             grid.currentIndex = selected
@@ -165,12 +169,12 @@ FocusScope {
     // resize settles, preserving the user's place while positions are rebuilt.
     Timer {
         id: relayoutTimer
+        objectName: "gridRelayoutTimer"
         interval: 80
         onTriggered: {
             if (grid.count === 0) {
                 return
             }
-            const selected = grid.currentIndex
             const scroll = grid.contentY
             // Drop the delegate pool across the reattach. Delegates pooled
             // before the model went away and taken back for the same row
@@ -183,7 +187,7 @@ FocusScope {
                 root.layoutReady = true
                 Qt.callLater(function () {
                     grid.reuseItems = true
-                    grid.currentIndex = Math.min(selected, grid.count - 1)
+                    root.restoreLayout()
                     grid.contentY = Math.max(0, Math.min(scroll, grid.contentHeight - grid.height))
                 })
             })
@@ -262,7 +266,7 @@ FocusScope {
             Qt.callLater(root.updateDay)
         }
         onCurrentIndexChanged: {
-            if (!root.restoringLayout) {
+            if (!root.restoringLayout && grid.reuseItems) {
                 root.selectedPath = currentIndex >= 0 ? Captures.pathAt(currentIndex) : ""
             }
         }
@@ -323,14 +327,17 @@ FocusScope {
                 dragPaths: root.isChecked(cell.path) ? root.checkedPaths() : [cell.path]
 
                 onActivated: {
+                    root.selectedPath = cell.path
                     grid.currentIndex = cell.index
                     grid.forceActiveFocus()
                 }
                 onChosen: {
+                    root.selectedPath = cell.path
                     grid.currentIndex = cell.index
                     root.detailRequested(cell.index)
                 }
                 onContextRequested: function(x, y) {
+                    root.selectedPath = cell.path
                     grid.currentIndex = cell.index
                     root.contextRequested(cell.index, x, y)
                 }
