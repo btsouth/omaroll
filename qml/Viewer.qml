@@ -140,6 +140,9 @@ ApplicationWindow {
         : 0
     readonly property real fittedScale: root.fitMode === "width"
         ? Math.min(stage.width / Math.max(1, root.rotatedWidth), 4 / root.dpr)
+        : root.fitMode === "fill" && root.rotatedWidth > 0 && root.rotatedHeight > 0
+        ? Math.min(Math.max(stage.width / root.rotatedWidth, stage.height / root.rotatedHeight),
+                   4 / root.dpr)
         : (root.fitMode === "shrink" || !Settings.enlargeSmallPictures)
           ? Math.min(root.fitScale, root.actualScale) : root.fitScale
     readonly property real actualScale: 1 / root.dpr
@@ -260,6 +263,23 @@ ApplicationWindow {
         still.contentX = 0
         still.contentY = 0
         zoomBadge.flash()
+    }
+
+    // Fill covers the window, cropping the edges that do not fit, centred.
+    // Asking again goes back to fitting the whole picture.
+    function toggleFill() {
+        if (Session.isVideo || !root.imageReady) return
+        if (root.fitMode === "fill" && root.viewScale === 0) {
+            root.setFitMode("fit")
+            return
+        }
+        root.setFitMode("fill")
+        root.centreView()
+    }
+
+    function centreView() {
+        still.contentX = Math.max(0, (still.contentWidth - still.width) / 2)
+        still.contentY = Math.max(0, (still.contentHeight - still.height) / 2)
     }
 
     function panImage(dx, dy) {
@@ -657,7 +677,7 @@ ApplicationWindow {
         play: "P", rotate: "R", slideshow: "F5", fullscreen: "F", info: "I", filmstrip: "B",
         "video-loop": "Shift+L", "audio-track": "Shift+A",
         "subtitles-earlier": "Z", "subtitles-later": "X",
-        favorite: "V", trash: "Del", "copy-path": "Ctrl+Shift+C", "fit-width": "W", help: "? / F1", fit: "0", actual: "1"
+        favorite: "V", trash: "Del", "copy-path": "Ctrl+Shift+C", "fit-width": "W", fill: "Shift+W", help: "? / F1", fit: "0", actual: "1"
     })
 
     // Handed-off actions, in the order the menu offers them. Only what is
@@ -702,6 +722,7 @@ ApplicationWindow {
         if (!video) {
             entries.push({id: "fit", label: "Fit"})
             entries.push({id: "fit-width", label: "Fit width"})
+            entries.push({id: "fill", label: "Fill window"})
             entries.push({id: "actual", label: "Actual size"})
             entries.push({id: "fit-shrink", label: "Fit without enlarging"})
             entries.push({id: "rotate", label: "Rotate"})
@@ -751,6 +772,9 @@ ApplicationWindow {
             return
         case "fit":
             root.fitToWindow()
+            return
+        case "fill":
+            root.toggleFill()
             return
         case "fit-width":
         case "fit-shrink":
@@ -1022,6 +1046,9 @@ ApplicationWindow {
                          && (contentWidth > width + 0.5 || contentHeight > height + 0.5)
             contentWidth: Math.max(width, root.displayWidth)
             contentHeight: Math.max(height, root.displayHeight)
+            // A filled picture stays centred as its tile changes size.
+            onWidthChanged: if (root.fitMode === "fill" && root.viewScale === 0) Qt.callLater(root.centreView)
+            onHeightChanged: if (root.fitMode === "fill" && root.viewScale === 0) Qt.callLater(root.centreView)
 
             // A double click zooms to the real size and back; a picture
             // already shown at its real size zooms to twice that instead. Being
@@ -1732,7 +1759,8 @@ ApplicationWindow {
             id: zoomText
             anchors.centerIn: parent
             text: root.viewScale > 0 ? root.zoomPercent + "%"
-                  : (root.fitMode === "width" ? "Fit width" : root.fitMode === "shrink" ? "Fit without enlarging" : "Fit")
+                  : (root.fitMode === "width" ? "Fit width" : root.fitMode === "fill" ? "Fill"
+                     : root.fitMode === "shrink" ? "Fit without enlarging" : "Fit")
                     + "  ·  " + root.zoomPercent + "%"
             font.family: Theme.fontFamily
             font.pixelSize: 11
@@ -2089,7 +2117,8 @@ ApplicationWindow {
                     shortcutHelp.open()
                     break
                 case Qt.Key_W:
-                    if (!video) root.setFitMode("width")
+                    if (!video && shift) root.toggleFill()
+                    else if (!video) root.setFitMode("width")
                     break
                 case Qt.Key_0:
                     if (!video) root.fitToWindow()
