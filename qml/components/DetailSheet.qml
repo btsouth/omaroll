@@ -82,14 +82,18 @@ Item {
     readonly property real maximumPreviewWidth: Math.max(1, root.width - 60)
     readonly property real maximumPreviewHeight: Math.max(1, root.height - 60)
 
+    // An edge drag changes only its own dimension, so a size clamped by a
+    // small window is not saved over the one chosen in a larger window.
     function resizePreview(width, height) {
-        previewWidth = Math.max(Math.min(500, maximumPreviewWidth), Math.min(maximumPreviewWidth, width))
-        previewHeight = Math.max(Math.min(360, maximumPreviewHeight), Math.min(maximumPreviewHeight, height))
+        if (width !== undefined)
+            previewWidth = Math.max(Math.min(500, maximumPreviewWidth), Math.min(maximumPreviewWidth, width))
+        if (height !== undefined)
+            previewHeight = Math.max(Math.min(360, maximumPreviewHeight), Math.min(maximumPreviewHeight, height))
     }
 
-    function rememberPreviewSize() {
-        Settings.previewWidth = Math.round(previewWidth)
-        Settings.previewHeight = Math.round(previewHeight)
+    function rememberPreviewSize(horizontal, vertical) {
+        if (horizontal) Settings.previewWidth = Math.round(previewWidth)
+        if (vertical) Settings.previewHeight = Math.round(previewHeight)
     }
 
     property bool fullScreen: false
@@ -2957,6 +2961,8 @@ Item {
             property point start
             property real startWidth
             property real startHeight
+            readonly property bool horizontal: modelData === "left" || modelData === "right" || modelData === "corner"
+            readonly property bool vertical: modelData === "top" || modelData === "bottom" || modelData === "corner"
             onPressed: function(mouse) {
                 start = mapToItem(root, mouse.x, mouse.y)
                 startWidth = panel.width
@@ -2965,12 +2971,12 @@ Item {
             onPositionChanged: function(mouse) {
                 if (!pressed) return
                 const at = mapToItem(root, mouse.x, mouse.y)
-                const horizontal = modelData === "left" || modelData === "right" || modelData === "corner"
-                const vertical = modelData === "top" || modelData === "bottom" || modelData === "corner"
-                root.resizePreview(startWidth + (horizontal ? 2 * (at.x - start.x) * (modelData === "left" ? -1 : 1) : 0),
-                                   startHeight + (vertical ? 2 * (at.y - start.y) * (modelData === "top" ? -1 : 1) : 0))
+                root.resizePreview(horizontal ? startWidth + 2 * (at.x - start.x) * (modelData === "left" ? -1 : 1)
+                                              : undefined,
+                                   vertical ? startHeight + 2 * (at.y - start.y) * (modelData === "top" ? -1 : 1)
+                                            : undefined)
             }
-            onReleased: root.rememberPreviewSize()
+            onReleased: root.rememberPreviewSize(horizontal, vertical)
             Rectangle {
                 visible: resizeHandle.modelData === "corner"
                 anchors.centerIn: parent

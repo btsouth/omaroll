@@ -166,7 +166,8 @@ Options:
                          matte, corrections, compare, export, rename, OCR,
                          editors, pins, context-menu, selection-menu,
                          duplicates, browser, settings, viewer, viewer-video,
-                         viewer-info, viewer-menu or viewer-help.
+                         viewer-info, viewer-menu, viewer-help or
+                         grid-filenames.
   --render-size <WxH>    Window size, from 560x420 (viewer 320x240) to 7680x4320.
                          Default 1280x820.
   --version              Print the version and exit.
