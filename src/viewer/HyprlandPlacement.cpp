@@ -52,6 +52,7 @@ public:
   }
 
   ~PlacementQuery() override {
+    disconnect(&m_process, nullptr, this, nullptr);
     if (m_process.state() != QProcess::NotRunning) m_process.kill();
   }
 
