@@ -1,4 +1,5 @@
 #include "edit/ClipboardImage.h"
+#include "edit/ClipboardFallback.h"
 
 #include <QBuffer>
 #include <QClipboard>
@@ -20,20 +21,25 @@ bool offer(const QImage& image) {
     const QString wlCopy = QStandardPaths::findExecutable(QStringLiteral("wl-copy"));
     if (!wlCopy.isEmpty()) {
       QProcess process;
+      process.setStandardOutputFile(QProcess::nullDevice());
+      process.setStandardErrorFile(QProcess::nullDevice());
       process.start(wlCopy, {QStringLiteral("--type"), QStringLiteral("image/png")});
       process.write(png);
       process.closeWriteChannel();
-      if (process.waitForFinished(3000)) {
-        return true;
+      const bool finished = process.waitForFinished(3000);
+      if (!finished) {
+        process.kill();
+        process.waitForFinished(500);
       }
+      return finished && process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
     }
   }
 
-  if (QGuiApplication::clipboard()) {
+  return ClipboardFallback::onGuiThread([image] {
+    if (!QGuiApplication::clipboard()) return false;
     QGuiApplication::clipboard()->setImage(image);
     return true;
-  }
-  return false;
+  });
 }
 
 } // namespace ClipboardImage

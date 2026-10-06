@@ -59,6 +59,7 @@ public:
 signals:
   void changed();
   void matchesChanged();
+  void searchFailed(const QString& message);
   void textCopied(int page);
   void textCopyFailed(const QString& message);
   void selectionChanged();
@@ -66,6 +67,15 @@ signals:
   void selectionFailed(const QString& message);
 
 private:
+  struct Output {
+    QByteArray bytes;
+    QByteArray diagnostics;
+    QString failure;
+  };
+  void boundProcess(QProcess& process, QTimer& timer, Output& output, qsizetype limit);
+  void stopProcess(QProcess& process, QTimer& timer);
+  bool currentVersion();
+  void searchText();
   void startPageWords(int page);
   void applyPendingSelection();
   void resetPageWords();
@@ -73,6 +83,20 @@ private:
   QProcess m_process;
   QTimer m_timeout;
   QString m_path;
+  QString m_version;
+  quint64 m_generation = 0;
+  quint64 m_searchRequest = 0;
+  quint64 m_extractionRequest = 0;
+  quint64 m_wordsRequest = 0;
+  quint64 m_selectionRequest = 0;
+  quint64 m_textRequest = 0;
+  Output m_infoOutput;
+  Output m_searchOutput;
+  Output m_textOutput;
+  Output m_wordsOutput;
+  QString m_documentText;
+  bool m_textLoaded = false;
+  bool m_extracting = false;
   int m_pageCount = 0;
   bool m_loading = false;
   QString m_error;

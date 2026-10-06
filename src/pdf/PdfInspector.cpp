@@ -2,28 +2,38 @@
 
 #include "edit/ClipboardText.h"
 #include "pdf/PdfSupport.h"
+#include "sources/FileVersion.h"
 
 #include <QFileInfo>
+#include <QFutureWatcher>
+#include <QtConcurrent>
+#include <QSignalBlocker>
 #include <QRegularExpression>
 #include <QStandardPaths>
 
 PdfInspector::PdfInspector(QObject* parent) : QObject(parent) {
+  boundProcess(m_process, m_timeout, m_infoOutput, 64 * 1024);
+  boundProcess(m_searchProcess, m_searchTimeout, m_searchOutput, PdfSupport::kTextByteLimit);
+  boundProcess(m_textProcess, m_textTimeout, m_textOutput, PdfSupport::kPageByteLimit);
+  boundProcess(m_wordsProcess, m_wordsTimeout, m_wordsOutput, PdfSupport::kPageByteLimit);
   m_timeout.setSingleShot(true);
   m_timeout.setInterval(10'000);
-  connect(&m_timeout, &QTimer::timeout, &m_process, &QProcess::kill);
   connect(&m_process, &QProcess::finished, this,
           [this](int exitCode, QProcess::ExitStatus status) {
             m_timeout.stop();
             m_loading = false;
-            if (status != QProcess::NormalExit || exitCode != 0) {
-              m_error = QString::fromLocal8Bit(m_process.readAllStandardError()).trimmed();
+            if (!currentVersion()) return;
+            if (status != QProcess::NormalExit || exitCode != 0 || !m_infoOutput.failure.isEmpty()) {
+              m_error = m_infoOutput.failure.isEmpty()
+                            ? QString::fromLocal8Bit(m_infoOutput.diagnostics).trimmed()
+                            : m_infoOutput.failure;
               if (m_error.isEmpty()) {
                 m_error = QStringLiteral("Could not read PDF details");
               }
               emit changed();
               return;
             }
-            const QString output = QString::fromLocal8Bit(m_process.readAllStandardOutput());
+            const QString output = QString::fromLocal8Bit(m_infoOutput.bytes);
             static const QRegularExpression pages(
                 QStringLiteral(R"(^Pages:\s+(\d+)\s*$)"),
                 QRegularExpression::MultilineOption);
@@ -45,69 +55,114 @@ PdfInspector::PdfInspector(QObject* parent) : QObject(parent) {
 
   m_searchTimeout.setSingleShot(true);
   m_searchTimeout.setInterval(20'000);
-  connect(&m_searchTimeout, &QTimer::timeout, &m_searchProcess, &QProcess::kill);
   connect(&m_searchProcess, &QProcess::finished, this,
           [this](int exitCode, QProcess::ExitStatus status) {
             m_searchTimeout.stop();
-            if (status != QProcess::NormalExit || exitCode != 0) {
+            if (!currentVersion()) return;
+            if (status != QProcess::NormalExit || exitCode != 0 || !m_searchOutput.failure.isEmpty()) {
+              m_extracting = false;
+              emit searchFailed(m_searchOutput.failure.isEmpty()
+                  ? QStringLiteral("Could not search this PDF: %1").arg(
+                      QString::fromLocal8Bit(m_searchOutput.diagnostics).trimmed())
+                  : m_searchOutput.failure);
               return;
             }
-            const QString text = QString::fromUtf8(m_searchProcess.readAllStandardOutput());
-            const QList<int> pages = PdfSupport::findPages(text, m_query);
-            m_matches.clear();
-            for (const int page : pages) {
-              m_matches.append(page);
-            }
-            emit matchesChanged();
+            const QByteArray bytes = std::move(m_searchOutput.bytes);
+            const quint64 generation = m_generation;
+            const quint64 extraction = m_extractionRequest;
+            auto* watcher = new QFutureWatcher<QString>(this);
+            connect(watcher, &QFutureWatcher<QString>::finished, this, [this, watcher, generation, extraction] {
+              const QString text = watcher->result();
+              watcher->deleteLater();
+              if (generation != m_generation || extraction != m_extractionRequest || !currentVersion()) return;
+              m_extracting = false;
+              m_documentText = text;
+              m_textLoaded = true;
+              searchText();
+            });
+            watcher->setFuture(QtConcurrent::run([bytes] { return QString::fromUtf8(bytes); }));
           });
+  connect(&m_searchProcess, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
+    if (error == QProcess::FailedToStart) {
+      m_searchTimeout.stop();
+      m_extracting = false;
+      emit searchFailed(QStringLiteral("Could not start PDF text extraction"));
+    }
+  });
 
   m_textTimeout.setSingleShot(true);
   m_textTimeout.setInterval(20'000);
-  connect(&m_textTimeout, &QTimer::timeout, &m_textProcess, &QProcess::kill);
   connect(&m_textProcess, &QProcess::finished, this,
           [this](int exitCode, QProcess::ExitStatus status) {
             m_textTimeout.stop();
-            if (status != QProcess::NormalExit || exitCode != 0) {
-              emit textCopyFailed(QStringLiteral("Could not read this page"));
+            if (!currentVersion()) return;
+            if (status != QProcess::NormalExit || exitCode != 0 || !m_textOutput.failure.isEmpty()) {
+              emit textCopyFailed(m_textOutput.failure.isEmpty() ? QStringLiteral("Could not read this page")
+                                                                : m_textOutput.failure);
               return;
             }
-            const QString text = QString::fromUtf8(m_textProcess.readAllStandardOutput()).trimmed();
-            if (text.isEmpty()) {
-              emit textCopyFailed(QStringLiteral("No text on this page"));
-            } else if (!ClipboardText::offer(text)) {
-              emit textCopyFailed(QStringLiteral("The clipboard is not reachable"));
-            } else {
-              emit textCopied(m_textPage);
-            }
+            const QByteArray bytes = std::move(m_textOutput.bytes);
+            const quint64 generation = m_generation;
+            const int page = m_textPage;
+            const quint64 request = m_textRequest;
+            auto* watcher = new QFutureWatcher<QString>(this);
+            connect(watcher, &QFutureWatcher<QString>::finished, this, [this, watcher, generation, request, page] {
+              const QString text = watcher->result();
+              watcher->deleteLater();
+              if (generation != m_generation || request != m_textRequest || !currentVersion()) return;
+              if (text.isEmpty()) {
+                emit textCopyFailed(QStringLiteral("No text on this page"));
+              } else if (!ClipboardText::offer(text)) {
+                emit textCopyFailed(QStringLiteral("The clipboard is not reachable"));
+              } else {
+                emit textCopied(page);
+              }
+            });
+            watcher->setFuture(QtConcurrent::run([bytes] { return QString::fromUtf8(bytes).trimmed(); }));
           });
+  connect(&m_textProcess, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
+    if (error == QProcess::FailedToStart) {
+      m_textTimeout.stop();
+      emit textCopyFailed(QStringLiteral("Could not start PDF text extraction"));
+    }
+  });
 
   m_wordsTimeout.setSingleShot(true);
   m_wordsTimeout.setInterval(20'000);
-  connect(&m_wordsTimeout, &QTimer::timeout, &m_wordsProcess, &QProcess::kill);
   connect(&m_wordsProcess, &QProcess::finished, this,
           [this](int exitCode, QProcess::ExitStatus status) {
             m_wordsTimeout.stop();
             const int page = m_wordsPage;
-            m_wordsPage = 0;
-            if (status != QProcess::NormalExit || exitCode != 0) {
+            if (!currentVersion()) return;
+            if (status != QProcess::NormalExit || exitCode != 0 || !m_wordsOutput.failure.isEmpty()) {
+              m_wordsPage = 0;
               // A cancelled read (the selection was dropped, the document
               // changed) leaves the page at zero and is not a failure.
               if (page > 0 && m_pendingPage == page) {
-                emit selectionFailed(QStringLiteral("Could not read this page's text"));
+                emit selectionFailed(m_wordsOutput.failure.isEmpty() ? QStringLiteral("Could not read this page's text")
+                                                                   : m_wordsOutput.failure);
               }
               return;
             }
-            const PdfSupport::PdfPageText words =
-                PdfSupport::parsePageWords(m_wordsProcess.readAllStandardOutput());
-            if (words.pageSize.width() > 0) {
-              m_pageWords = words;
-              m_wordsLoadedPage = page;
-            } else if (m_pendingPage == page) {
-              // Only a page that parsed is remembered: an unreadable one is
-              // read again next time rather than cached as empty.
-              emit selectionFailed(QStringLiteral("Could not read this page's text"));
-            }
-            applyPendingSelection();
+            const QByteArray bytes = std::move(m_wordsOutput.bytes);
+            const quint64 generation = m_generation;
+            const quint64 request = m_wordsRequest;
+            auto* watcher = new QFutureWatcher<PdfSupport::PdfPageText>(this);
+            connect(watcher, &QFutureWatcher<PdfSupport::PdfPageText>::finished, this,
+                    [this, watcher, generation, request, page] {
+              const auto words = watcher->result();
+              watcher->deleteLater();
+              if (generation != m_generation || request != m_wordsRequest || !currentVersion()) return;
+              m_wordsPage = 0;
+              if (words.pageSize.width() > 0) {
+                m_pageWords = words;
+                m_wordsLoadedPage = page;
+              } else if (m_pendingPage == page) {
+                emit selectionFailed(QStringLiteral("Malformed PDF text coordinates"));
+              }
+              applyPendingSelection();
+            });
+            watcher->setFuture(QtConcurrent::run([bytes] { return PdfSupport::parsePageWords(bytes); }));
           });
   connect(&m_wordsProcess, &QProcess::errorOccurred, this,
           [this](QProcess::ProcessError error) {
@@ -125,23 +180,79 @@ PdfInspector::PdfInspector(QObject* parent) : QObject(parent) {
           });
 }
 
+void PdfInspector::boundProcess(QProcess& process, QTimer& timer, Output& output, qsizetype limit) {
+  PdfSupport::limitProcess(process);
+  const auto drain = [&process, &output, limit] {
+    const QByteArray bytes = process.readAllStandardOutput();
+    if (output.bytes.size() + bytes.size() > limit) {
+      output.failure = QStringLiteral("PDF text output is too large");
+      process.kill();
+    } else if (output.failure.isEmpty()) {
+      output.bytes += bytes;
+    }
+    output.diagnostics = (output.diagnostics + process.readAllStandardError()).right(4096);
+  };
+  connect(&process, &QProcess::readyReadStandardOutput, this, drain);
+  connect(&process, &QProcess::readyReadStandardError, this, drain);
+  // Drain the final bytes before the operation's completion handler.
+  connect(&process, &QProcess::finished, this, drain);
+  connect(&timer, &QTimer::timeout, this, [&process, &output] {
+    output.failure = QStringLiteral("Reading this PDF timed out");
+    process.kill();
+  });
+}
+
+void PdfInspector::stopProcess(QProcess& process, QTimer& timer) {
+  timer.stop();
+  const QSignalBlocker blocked(process);
+  if (process.state() != QProcess::NotRunning) {
+    process.kill();
+    process.waitForFinished(1000);
+  }
+}
+
+bool PdfInspector::currentVersion() {
+  if (m_path.isEmpty()) return false;
+  if (FileVersion::key(m_path) == m_version) return true;
+  inspect(m_path);
+  return false;
+}
+
+void PdfInspector::searchText() {
+  if (m_query.isEmpty()) return;
+  const quint64 generation = m_generation;
+  const quint64 request = ++m_searchRequest;
+  const QString text = m_documentText;
+  const QString query = m_query;
+  struct Search {
+    QVariantList matches;
+    bool tooMany = false;
+  };
+  auto* watcher = new QFutureWatcher<Search>(this);
+  connect(watcher, &QFutureWatcher<Search>::finished, this, [this, watcher, generation, request] {
+    const auto result = watcher->result();
+    watcher->deleteLater();
+    if (generation != m_generation || request != m_searchRequest || !currentVersion()) return;
+    if (result.tooMany) {
+      emit searchFailed(QStringLiteral("This PDF has too many pages to search"));
+      return;
+    }
+    m_matches = result.matches;
+    emit matchesChanged();
+  });
+  watcher->setFuture(QtConcurrent::run([text, query] {
+    Search result;
+    const auto pages = PdfSupport::findPages(text, query, &result.tooMany);
+    for (const int page : pages) result.matches.append(page);
+    return result;
+  }));
+}
+
 PdfInspector::~PdfInspector() {
-  if (m_process.state() != QProcess::NotRunning) {
-    m_process.kill();
-    m_process.waitForFinished(1000);
-  }
-  if (m_searchProcess.state() != QProcess::NotRunning) {
-    m_searchProcess.kill();
-    m_searchProcess.waitForFinished(1000);
-  }
-  if (m_textProcess.state() != QProcess::NotRunning) {
-    m_textProcess.kill();
-    m_textProcess.waitForFinished(1000);
-  }
-  if (m_wordsProcess.state() != QProcess::NotRunning) {
-    m_wordsProcess.kill();
-    m_wordsProcess.waitForFinished(1000);
-  }
+  stopProcess(m_process, m_timeout);
+  stopProcess(m_searchProcess, m_searchTimeout);
+  stopProcess(m_textProcess, m_textTimeout);
+  stopProcess(m_wordsProcess, m_wordsTimeout);
 }
 
 bool PdfInspector::available() const {
@@ -153,17 +264,21 @@ bool PdfInspector::textSearchAvailable() const {
 }
 
 void PdfInspector::inspect(const QString& path) {
-  if (m_path == path && (m_loading || m_pageCount > 0)) {
+  const QString version = FileVersion::key(path);
+  if (m_path == path && m_version == version && (m_loading || m_pageCount > 0)) {
     return;
   }
-  if (m_process.state() != QProcess::NotRunning) {
-    m_process.kill();
-    m_process.waitForFinished(1000);
-  }
+  ++m_generation;
+  stopProcess(m_process, m_timeout);
+  stopProcess(m_textProcess, m_textTimeout);
   clearSearch();
+  m_documentText.clear();
+  m_textLoaded = false;
   clearSelection();
   resetPageWords();
   m_path = path;
+  m_version = version;
+  m_infoOutput = {};
   m_pageCount = 0;
   m_error.clear();
   if (!QFileInfo(path).isFile()) {
@@ -179,14 +294,12 @@ void PdfInspector::inspect(const QString& path) {
 }
 
 void PdfInspector::clear() {
-  m_timeout.stop();
-  if (m_process.state() != QProcess::NotRunning) {
-    m_process.kill();
-  }
-  m_textTimeout.stop();
-  if (m_textProcess.state() != QProcess::NotRunning) {
-    m_textProcess.kill();
-  }
+  ++m_generation;
+  stopProcess(m_process, m_timeout);
+  stopProcess(m_textProcess, m_textTimeout);
+  m_documentText.clear();
+  m_textLoaded = false;
+  m_version.clear();
   clearSearch();
   clearSelection();
   resetPageWords();
@@ -198,27 +311,34 @@ void PdfInspector::clear() {
 }
 
 void PdfInspector::find(const QString& query) {
+  if (!currentVersion()) return;
+  ++m_searchRequest;
   m_query = query.simplified();
   m_matches.clear();
   emit matchesChanged();
-  if (m_path.isEmpty() || m_query.isEmpty() || m_pageCount <= 0 ||
-      !PdfSupport::textAvailable()) {
+  if (m_query.isEmpty() || m_pageCount <= 0) return;
+  if (!PdfSupport::textAvailable()) {
+    emit searchFailed(QStringLiteral("PDF search needs Poppler"));
     return;
   }
-  if (m_searchProcess.state() != QProcess::NotRunning) {
-    m_searchProcess.kill();
-    m_searchProcess.waitForFinished(500);
+  if (m_textLoaded) {
+    searchText();
+    return;
   }
+  if (m_extracting) return;
+  ++m_extractionRequest;
+  m_searchOutput = {};
+  m_extracting = true;
   m_searchProcess.start(QStandardPaths::findExecutable(QStringLiteral("pdftotext")),
                         {QStringLiteral("-layout"), m_path, QStringLiteral("-")});
   m_searchTimeout.start();
 }
 
 void PdfInspector::clearSearch() {
-  m_searchTimeout.stop();
-  if (m_searchProcess.state() != QProcess::NotRunning) {
-    m_searchProcess.kill();
-  }
+  ++m_extractionRequest;
+  ++m_searchRequest;
+  stopProcess(m_searchProcess, m_searchTimeout);
+  m_extracting = false;
   m_query.clear();
   if (!m_matches.isEmpty()) {
     m_matches.clear();
@@ -227,15 +347,15 @@ void PdfInspector::clearSearch() {
 }
 
 void PdfInspector::copyPageText(int page) {
+  if (!m_path.isEmpty() && !currentVersion()) return;
   if (m_path.isEmpty() || page < 1 || (m_pageCount > 0 && page > m_pageCount) ||
       !PdfSupport::textAvailable()) {
     emit textCopyFailed(QStringLiteral("No text to copy"));
     return;
   }
-  if (m_textProcess.state() != QProcess::NotRunning) {
-    m_textProcess.kill();
-    m_textProcess.waitForFinished(500);
-  }
+  stopProcess(m_textProcess, m_textTimeout);
+  ++m_textRequest;
+  m_textOutput = {};
   m_textPage = page;
   m_textProcess.start(QStandardPaths::findExecutable(QStringLiteral("pdftotext")),
                       {QStringLiteral("-f"), QString::number(page), QStringLiteral("-l"),
@@ -244,10 +364,10 @@ void PdfInspector::copyPageText(int page) {
 }
 
 void PdfInspector::startPageWords(int page) {
-  if (m_wordsProcess.state() != QProcess::NotRunning) {
-    m_wordsProcess.kill();
-    m_wordsProcess.waitForFinished(500);
-  }
+  ++m_selectionRequest;
+  stopProcess(m_wordsProcess, m_wordsTimeout);
+  ++m_wordsRequest;
+  m_wordsOutput = {};
   m_wordsLoadedPage = 0;
   m_pageWords = {};
   m_wordsPage = page;
@@ -262,29 +382,45 @@ void PdfInspector::applyPendingSelection() {
   if (m_pendingPage < 1 || m_pendingArea.isEmpty() || m_wordsLoadedPage != m_pendingPage) {
     return;
   }
-  const QList<int> indexes = PdfSupport::wordsTouched(m_pageWords, m_pendingArea);
-  m_selectionPage = m_pendingPage;
-  m_selectionIndexes = indexes;
-  m_selectionRects.clear();
-  m_selectionText.clear();
-  if (!indexes.isEmpty()) {
-    m_selectionText = PdfSupport::wordsText(m_pageWords, indexes);
-    const QList<QRectF> lines = PdfSupport::wordLines(m_pageWords, indexes);
-    for (const QRectF& line : lines) {
-      m_selectionRects.append(line);
+  struct Selection {
+    QList<int> indexes;
+    QString text;
+    QVariantList rects;
+  };
+  const quint64 generation = m_generation;
+  const quint64 request = ++m_selectionRequest;
+  const int page = m_pendingPage;
+  const QRectF area = m_pendingArea;
+  const auto words = m_pageWords;
+  auto* watcher = new QFutureWatcher<Selection>(this);
+  connect(watcher, &QFutureWatcher<Selection>::finished, this,
+          [this, watcher, generation, request, page, empty = words.words.isEmpty()] {
+    const auto selection = watcher->result();
+    watcher->deleteLater();
+    if (generation != m_generation || request != m_selectionRequest || !currentVersion()) return;
+    m_selectionPage = page;
+    m_selectionIndexes = selection.indexes;
+    m_selectionText = selection.text;
+    m_selectionRects = selection.rects;
+    emit selectionChanged();
+    if (selection.indexes.isEmpty()) {
+      emit selectionFailed(empty ? QStringLiteral("This page has no selectable text")
+                                 : QStringLiteral("No text under that selection"));
     }
-  }
-  emit selectionChanged();
-  if (indexes.isEmpty()) {
-    // An image-only page and a drag that missed the words read differently to
-    // someone dragging, so they are told apart.
-    emit selectionFailed(m_pageWords.words.isEmpty()
-                             ? QStringLiteral("This page has no selectable text")
-                             : QStringLiteral("No text under that selection"));
-  }
+  });
+  watcher->setFuture(QtConcurrent::run([words, area] {
+    Selection selection;
+    selection.indexes = PdfSupport::wordsTouched(words, area);
+    selection.text = PdfSupport::wordsText(words, selection.indexes);
+    for (const auto& line : PdfSupport::wordLines(words, selection.indexes)) {
+      selection.rects.append(line);
+    }
+    return selection;
+  }));
 }
 
 void PdfInspector::updateSelection(int page, qreal left, qreal top, qreal right, qreal bottom) {
+  if (!m_path.isEmpty() && !currentVersion()) return;
   if (m_path.isEmpty() || page < 1 || (m_pageCount > 0 && page > m_pageCount) ||
       !PdfSupport::textAvailable()) {
     emit selectionFailed(QStringLiteral("No text to select"));
@@ -308,10 +444,9 @@ void PdfInspector::updateSelection(int page, qreal left, qreal top, qreal right,
 }
 
 void PdfInspector::clearSelection() {
-  m_wordsTimeout.stop();
-  if (m_wordsProcess.state() != QProcess::NotRunning) {
-    m_wordsProcess.kill();
-  }
+  ++m_wordsRequest;
+  ++m_selectionRequest;
+  stopProcess(m_wordsProcess, m_wordsTimeout);
   m_wordsPage = 0;
   m_pendingPage = 0;
   m_pendingArea = QRectF();
@@ -333,6 +468,10 @@ void PdfInspector::resetPageWords() {
 }
 
 void PdfInspector::copySelection() {
+  if (!m_path.isEmpty() && !currentVersion()) {
+    emit selectionFailed(QStringLiteral("The PDF changed. Select its text again"));
+    return;
+  }
   if (m_selectionText.isEmpty()) {
     emit selectionFailed(QStringLiteral("Select some text first"));
     return;

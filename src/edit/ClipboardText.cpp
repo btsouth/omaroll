@@ -1,4 +1,5 @@
 #include "edit/ClipboardText.h"
+#include "edit/ClipboardFallback.h"
 
 #include <QClipboard>
 #include <QGuiApplication>
@@ -16,19 +17,24 @@ bool offer(const QString& text) {
   const QString wlCopy = QStandardPaths::findExecutable(QStringLiteral("wl-copy"));
   if (!wlCopy.isEmpty()) {
     QProcess process;
+    process.setStandardOutputFile(QProcess::nullDevice());
+    process.setStandardErrorFile(QProcess::nullDevice());
     process.start(wlCopy, {QStringLiteral("--type"), QStringLiteral("text/plain;charset=utf-8")});
     process.write(utf8);
     process.closeWriteChannel();
-    if (process.waitForFinished(3000)) {
-      return true;
+    const bool finished = process.waitForFinished(3000);
+    if (!finished) {
+      process.kill();
+      process.waitForFinished(500);
     }
+    return finished && process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
   }
 
-  if (QGuiApplication::clipboard()) {
+  return ClipboardFallback::onGuiThread([text] {
+    if (!QGuiApplication::clipboard()) return false;
     QGuiApplication::clipboard()->setText(text);
     return true;
-  }
-  return false;
+  });
 }
 
 } // namespace ClipboardText

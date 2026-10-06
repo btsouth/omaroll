@@ -9,6 +9,8 @@ Rectangle {
 
     property string fileName: ""
     property string folder: ""
+    property string filePath: ""
+    property string resolvedPath: ""
     property string technical: ""
     property string sizeLabel: ""
     property string dateLabel: ""
@@ -20,13 +22,16 @@ Rectangle {
     signal rateRequested(int stars)
     signal favoriteToggled()
     signal folderRequested()
+    signal copyPathRequested()
+    signal copyNameRequested()
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
     }
 
     implicitWidth: 300
-    implicitHeight: Math.min(content.implicitHeight + 32, parent ? parent.height - 32 : 600)
+    implicitHeight: Math.min(content.implicitHeight + copyActions.implicitHeight + 40,
+                             parent ? parent.height - 32 : 600)
     radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 4
     color: root.shade(Theme.background, 0.92)
     border.width: 1
@@ -40,8 +45,12 @@ Rectangle {
     }
 
     Flickable {
-        anchors.fill: parent
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: copyActions.top
         anchors.margins: 16
+        anchors.bottomMargin: 8
         contentHeight: content.implicitHeight
         clip: true
         boundsBehavior: Flickable.StopAtBounds
@@ -152,6 +161,23 @@ Rectangle {
 
             Item { width: 1; height: 4 }
 
+            Text {
+                width: parent.width
+                text: "Path: " + root.filePath
+                wrapMode: Text.WrapAnywhere
+                font.family: Theme.fontFamily
+                font.pixelSize: 11
+                color: Theme.mutedText
+            }
+            Text {
+                width: parent.width
+                visible: root.resolvedPath !== ""
+                text: "Target: " + root.resolvedPath
+                wrapMode: Text.WrapAnywhere
+                font.family: Theme.fontFamily
+                font.pixelSize: 11
+                color: Theme.mutedText
+            }
             // Where the file lives. A click shows it in the file manager.
             Text {
                 objectName: "viewerInfoFolder"
@@ -176,6 +202,27 @@ Rectangle {
                     delay: 500
                 }
             }
+        }
+    }
+
+    // Keep copy actions reachable while long paths and metadata scroll above.
+    Flow {
+        id: copyActions
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.margins: 16
+        spacing: 6
+
+        PillButton {
+            objectName: "viewerInfoCopyPath"
+            label: "Copy path"
+            onClicked: root.copyPathRequested()
+        }
+        PillButton {
+            objectName: "viewerInfoCopyName"
+            label: "Copy file name"
+            onClicked: root.copyNameRequested()
         }
     }
 }

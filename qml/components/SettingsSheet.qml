@@ -457,6 +457,27 @@ Item {
             Row {
                 width: parent.width
                 spacing: 12
+                Text {
+                    width: parent.width - enlargeButton.width - 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Enlarge small pictures to fit"
+                    wrapMode: Text.WordWrap
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 12
+                    color: Theme.foreground
+                }
+                PillButton {
+                    id: enlargeButton
+                    objectName: "enlargeSmallPicturesButton"
+                    label: Settings.enlargeSmallPictures ? "On" : "Off"
+                    active: Settings.enlargeSmallPictures
+                    onClicked: Settings.enlargeSmallPictures = !Settings.enlargeSmallPictures
+                }
+            }
+
+            Row {
+                width: parent.width
+                spacing: 12
 
                 Column {
                     width: parent.width - rememberPlaybackSpeedButton.width - 12

@@ -9,6 +9,8 @@
 #include <QVariantMap>
 #include <optional>
 
+class QProcess;
+
 // Hands a capture to whoever already owns the job.
 //
 // omaroll performs almost no work itself: this class is the seam where the
@@ -25,6 +27,10 @@ class ActionLauncher final : public QObject {
 public:
   explicit ActionLauncher(QObject* parent = nullptr,
                           std::optional<QDBusConnection> bus = std::nullopt);
+
+  ~ActionLauncher() override;
+
+  Q_INVOKABLE bool copyPlainText(const QString& text);
 
   // Open in whatever the desktop has registered for the type.
   Q_INVOKABLE bool open(const QString& path);
@@ -137,6 +143,8 @@ private:
                        const QString& packageHint, const QString& confirmation,
                        const QString& inputPath, int timeoutMs);
 
+  void stopTracked();
+  QSet<QProcess*> m_trackedProcesses;
   QSet<QString> m_pendingOutputs;
   QSet<QString> m_pendingOpenWith;
   QDBusConnection m_bus;

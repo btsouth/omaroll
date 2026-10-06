@@ -689,6 +689,10 @@ Item {
         }
     }
 
+    onStampChanged: {
+        if (isDocument) PdfInfo.inspect(path)
+    }
+
     onPathChanged: {
         stillReady = false
         animationPlaying = true
@@ -1545,6 +1549,11 @@ Item {
             // A new result set jumps to its first page.
             Connections {
                 target: PdfInfo
+                function onChanged() {
+                    if (PdfInfo.pageCount > 0 && root.pdfPage > PdfInfo.pageCount) {
+                        root.pdfPage = PdfInfo.pageCount
+                    }
+                }
                 function onMatchesChanged() {
                     if (PdfInfo.matchCount > 0) {
                         root.pdfMatchIndex = 0
@@ -1553,6 +1562,9 @@ Item {
                     } else {
                         root.pdfMatchIndex = 0
                     }
+                }
+                function onSearchFailed(message) {
+                    root.statusRequested(message)
                 }
                 function onTextCopied(page) {
                     root.statusRequested("Copied page " + page + " text")

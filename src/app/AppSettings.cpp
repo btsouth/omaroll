@@ -50,6 +50,7 @@ constexpr auto kSlideshowVideos = "slideshow/includeVideos";
 constexpr auto kConfirmPermanentDelete = "actions/confirmPermanentDelete";
 constexpr auto kSlideshowInterval = "slideshow/intervalSeconds";
 constexpr auto kSlideshowShuffle = "slideshow/shuffle";
+constexpr auto kEnlargeSmallPictures = "viewer/enlargeSmallPictures";
 constexpr auto kViewerFilmstrip = "viewer/filmstrip";
 constexpr auto kAlbums = "library/albums";
 constexpr auto kTags = "library/tags";
@@ -262,6 +263,7 @@ AppSettings::AppSettings(QObject* parent)
   m_confirmPermanentDelete = m_settings.value(kConfirmPermanentDelete, true).toBool();
   m_slideshowIntervalSeconds = qBound(2, m_settings.value(kSlideshowInterval, 4).toInt(), 20);
   m_slideshowShuffle = m_settings.value(kSlideshowShuffle, false).toBool();
+  m_enlargeSmallPictures = m_settings.value(kEnlargeSmallPictures, true).toBool();
   m_viewerFilmstrip = m_settings.value(kViewerFilmstrip, false).toBool();
   m_videoVolume = qBound(0.0, m_settings.value(kVideoVolume, 0.8).toDouble(), 1.0);
   m_videoMuted = m_settings.value(kVideoMuted, false).toBool();
@@ -546,6 +548,13 @@ void AppSettings::setSlideshowIntervalSeconds(int seconds) {
   m_slideshowIntervalSeconds = bounded;
   setValue(kSlideshowInterval, bounded);
   emit slideshowIntervalSecondsChanged();
+}
+
+void AppSettings::setEnlargeSmallPictures(bool value) {
+  if (m_enlargeSmallPictures == value) return;
+  m_enlargeSmallPictures = value;
+  m_settings.setValue(kEnlargeSmallPictures, value);
+  emit enlargeSmallPicturesChanged();
 }
 
 void AppSettings::setViewerFilmstrip(bool value) {

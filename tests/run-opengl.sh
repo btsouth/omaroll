@@ -45,10 +45,10 @@ render() { # theme view size
 # The smallest window the app allows, where the chrome has the least room, gets
 # the views that collided there, and a document in both palettes.
 renders=()
-for view in grid detail document video slideshow matte corrections compare export rename ocr duplicates browser settings editors pins context-menu selection-menu viewer viewer-video viewer-info viewer-menu; do
+for view in grid detail document video slideshow matte corrections compare export rename ocr duplicates browser settings editors pins context-menu selection-menu viewer viewer-video viewer-info viewer-menu viewer-help; do
   renders+=("dark $view 1280x820")
 done
-for view in grid detail document corrections compare duplicates browser settings editors pins context-menu selection-menu viewer viewer-info viewer-menu; do
+for view in grid detail document corrections compare duplicates browser settings editors pins context-menu selection-menu viewer viewer-info viewer-menu viewer-help; do
   renders+=("light $view 1280x820")
 done
 for view in grid detail video ocr document corrections editors pins context-menu selection-menu viewer viewer-video; do
@@ -58,6 +58,8 @@ for view in grid detail settings browser pins selection-menu document; do
   renders+=("light $view 560x420")
 done
 renders+=("dark settings 560x420" "dark browser 560x420")
+renders+=("dark viewer-help 320x240" "light viewer-help 320x240")
+renders+=("dark viewer-info 320x240" "light viewer-info 320x240")
 
 jobs="${OMAROLL_RENDER_JOBS:-$(( $(nproc) * 3 ))}"
 failed=0
