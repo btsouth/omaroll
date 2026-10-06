@@ -267,9 +267,16 @@ private slots:
                                           [&](const QString& suffix) {
                                             return warning.toString().endsWith(suffix);
                                           });
-        const bool disposable = std::any_of(
-            m_disposablePaths.cbegin(), m_disposablePaths.cend(), [&](const QString& path) {
-              return warning.toString().endsWith(QStringLiteral("No thumbnail for ") + path);
+        // A tile can ask for a file a test has just removed. That failure is
+        // expected; one for a file that still exists is not.
+        const QString text = warning.toString();
+        const qsizetype missing = text.indexOf(QStringLiteral("No thumbnail for /"));
+        QString thumbnailPath = missing < 0 ? QString() : text.mid(missing + 17);
+        if (thumbnailPath.endsWith(QLatin1Char(')'))) thumbnailPath.chop(1);
+        const bool disposable =
+            (!thumbnailPath.isEmpty() && !QFileInfo::exists(thumbnailPath)) ||
+            std::any_of(m_disposablePaths.cbegin(), m_disposablePaths.cend(), [&](const QString& path) {
+              return text.endsWith(QStringLiteral("No thumbnail for ") + path);
             });
         if (expected != m_expectedQmlWarnings.end()) {
           m_expectedQmlWarnings.erase(expected);
