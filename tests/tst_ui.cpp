@@ -269,7 +269,7 @@ private slots:
                                           });
         const bool disposable = std::any_of(
             m_disposablePaths.cbegin(), m_disposablePaths.cend(), [&](const QString& path) {
-              return warning.toString().contains(QStringLiteral("No thumbnail for ") + path);
+              return warning.toString().endsWith(QStringLiteral("No thumbnail for ") + path);
             });
         if (expected != m_expectedQmlWarnings.end()) {
           m_expectedQmlWarnings.erase(expected);
@@ -738,6 +738,8 @@ private slots:
     QVERIFY(QImage(60, 30, QImage::Format_RGB32).save(second));
     const QString firstCopy = m_scratch.filePath(QStringLiteral("batch-a-edited.png"));
     const QString secondCopy = m_scratch.filePath(QStringLiteral("batch-b-edited.png"));
+    m_disposablePaths.append(firstCopy);
+    m_disposablePaths.append(secondCopy);
     const auto cleanup = qScopeGuard([&] {
       invoke("dismissTopLayer");
       QFile::remove(first);
@@ -3150,7 +3152,11 @@ private slots:
     const QString third = dir.filePath(QStringLiteral("third.png"));
     QImage fixture(80, 60, QImage::Format_RGB32);
     fixture.fill(Qt::green);
-    for (const QString& path : {first, second, third}) QVERIFY(fixture.save(path));
+    for (const QString& path : {first, second, third}) {
+      QVERIFY(fixture.save(path));
+      m_disposablePaths.append(path);
+    }
+    m_disposablePaths.append(dir.filePath(QStringLiteral("other folder/renamed selection.png")));
     const QStringList selection{second, first, third};
     m_captures->addExtraFiles(selection);
     QVERIFY(QMetaObject::invokeMethod(m_window, "openPaths", Q_ARG(QVariant, selection)));
@@ -4484,6 +4490,15 @@ private slots:
   void tilesStayMappedAfterResizeAndRescan() {
     QQuickItem* grid = item("library");
     QQuickItem* detail = item("detail");
+    // Earlier tests delete explicit files while their last scan is still in
+    // flight. Count a fresh disk snapshot, not those departing rows.
+    m_captures->refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(!m_captures->scanning() && [&] {
+      for (int row = 0; row < m_captures->rowCount(); ++row) {
+        if (!QFileInfo::exists(m_captures->pathAt(row))) return false;
+      }
+      return true;
+    }(), 15000);
     const QString pictures = QFileInfo(m_oddPath).absolutePath();
     const QString source = pictures + QStringLiteral("/alpine-dawn.jpg");
     QStringList added;
@@ -4516,16 +4531,20 @@ private slots:
       QQuickItem* view = find(grid, [](QQuickItem* candidate) {
         return candidate->property("cellWidth").isValid();
       });
+      QVERIFY(view);
       std::function<void(QQuickItem*)> walk = [&](QQuickItem* node) {
         for (QQuickItem* child : node->childItems()) {
           if (child->property("dragPaths").isValid() && child->isVisible() &&
               child->parentItem() && child->parentItem()->property("index").isValid()) {
             const int index = child->parentItem()->property("index").toInt();
+            QQuickItem* live = nullptr;
+            QMetaObject::invokeMethod(view, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, live),
+                                      Q_ARG(int, index));
+            // Pooled delegates can retain visible=true and old positions,
+            // but are not the tiles the view paints or sends input to.
+            if (live != child->parentItem()) continue;
             const QString path = child->property("path").toString();
             if (path != m_library->pathAt(index)) {
-              QQuickItem* live = nullptr;
-              QMetaObject::invokeMethod(view, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, live),
-                                        Q_ARG(int, index));
               const QPointF at = child->mapToScene(QPointF(child->width() / 2, child->height() / 2));
               qInfo() << stage << "tile" << index << "shows" << path << "but the row holds"
                       << m_library->pathAt(index) << "at" << at << "live delegate:"
@@ -4587,24 +4606,33 @@ private slots:
       QQuickItem* view = find(grid, [](QQuickItem* candidate) {
         return candidate->property("cellWidth").isValid();
       });
+      const QString expectedPath = pathAt(row);
+      QSignalSpy frames(m_window, &QQuickWindow::afterAnimating);
       // Position first: an offscreen row may not have a live delegate yet.
       // GridView.Contain
       QMetaObject::invokeMethod(view, "positionViewAtIndex", Q_ARG(int, row), Q_ARG(int, 4));
+      m_window->update();
+      QTRY_VERIFY(!frames.isEmpty());
+      QMetaObject::invokeMethod(view, "forceLayout");
+      view->ensurePolished();
       QQuickItem* card = nullptr;
       QTRY_VERIFY_WITH_TIMEOUT((card = liveCardAt(row)) != nullptr, 5000);
-      QCOMPARE(card->property("path").toString(), pathAt(row));
+      QCOMPARE(card->property("path").toString(), expectedPath);
       // Relayout may destroy the delegate while the wait processes events.
-      QTRY_VERIFY_WITH_TIMEOUT((card = liveCardAt(row)) != nullptr && centre(card).y() > 0
-                                   && centre(card).y() < m_window->height(), 5000);
+      QTRY_VERIFY_WITH_TIMEOUT((card = liveCardAt(row)) != nullptr
+                                   && !view->property("moving").toBool()
+                                   && view->mapRectToScene(view->boundingRect()).contains(centre(card)),
+                              5000);
       const QPoint clickPosition = centre(card);
       const QSizeF cardSize = card->size();
-      click(card, Qt::RightButton);
+      QTest::mouseClick(m_window, Qt::RightButton, Qt::NoModifier, clickPosition);
       QObject* menu = m_window->findChild<QObject*>(QStringLiteral("libraryContextMenu"));
       QTRY_VERIFY(menu && menu->property("visible").toBool());
       const QStringList targets = menu->property("targets").value<QJSValue>().toVariant().toStringList();
-      QCOMPARE(targets, QStringList{pathAt(row)});
+      QCOMPARE(targets, QStringList{expectedPath});
       QTest::keyClick(m_window, Qt::Key_Escape);
       QTRY_VERIFY(!menu->property("visible").toBool());
+      QTRY_COMPARE(pathAt(grid->property("currentIndex").toInt()), expectedPath);
       QTest::keyClick(m_window, Qt::Key_Return);
       settle();
       QTRY_VERIFY2_WITH_TIMEOUT(
@@ -4623,9 +4651,9 @@ private slots:
                          .arg(prop("anySheetOpen").toBool())
                          .arg(prop("popupOpen").toBool())),
           5000);
-      QVERIFY2(detail->property("path").toString() == pathAt(row),
+      QVERIFY2(detail->property("path").toString() == expectedPath,
                qPrintable(QStringLiteral("%1: clicked %2, viewer opened %3")
-                              .arg(QLatin1String(stage), pathAt(row),
+                              .arg(QLatin1String(stage), expectedPath,
                                    detail->property("path").toString())));
       invoke("dismissTopLayer");
       QTRY_VERIFY(!detail->isVisible());
