@@ -581,7 +581,10 @@ void CaptureModel::adoptResults(ScanResult result) {
       CaptureRecord& record = m_records[existing];
       const CaptureRecord& fresh = scanned.at(incoming.value(record.path));
       kept.insert(record.path);
-      if (record.modified == fresh.modified && record.bytes == fresh.bytes &&
+      if (record.device == fresh.device && record.inode == fresh.inode &&
+          record.camera == fresh.camera && record.lens == fresh.lens &&
+          record.rating == fresh.rating && record.caption == fresh.caption &&
+          record.modified == fresh.modified && record.bytes == fresh.bytes &&
           record.entryPath == fresh.entryPath && record.fileName == fresh.fileName &&
           record.kind == fresh.kind && record.video == fresh.video &&
           record.document == fresh.document && record.animated == fresh.animated &&

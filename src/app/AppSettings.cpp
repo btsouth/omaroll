@@ -17,6 +17,7 @@
 #include <QSaveFile>
 #include <QVariantMap>
 
+#include <algorithm>
 #include <limits>
 #include <cmath>
 
@@ -60,11 +61,14 @@ constexpr auto kVideoMuted = "playback/muted";
 constexpr auto kRememberPlaybackSpeed = "playback/rememberSpeed";
 constexpr auto kVideoPlaybackRate = "playback/rate";
 constexpr auto kVideoPositions = "playback/positionsV2";
+constexpr auto kVideoPositionRecency = "playback/positionRecencyV2";
+constexpr auto kLegacyVideoPositions = "playback/positions";
 // Resume spots beyond a few minutes are the useful ones; too many entries and
 // the file grows for no benefit.
 constexpr int kMaximumResumeEntries = 500;
 constexpr qint64 kMinimumResumeMs = 5000;
 constexpr auto kOrganizationFormat = "omaroll.organization";
+constexpr qint64 kMaximumOrganizationBytes = 16 * 1024 * 1024;
 
 QString normalizedFolder(const QString& path, bool mustExist) {
   const QFileInfo info(path);
@@ -112,14 +116,38 @@ bool tagIsUnder(const QString& candidate, const QString& parent) {
          candidate.at(parent.size()) == QLatin1Char('/');
 }
 
+QString identityVersionFor(const QString& path) {
+  struct stat status {};
+  if (::stat(QFile::encodeName(path).constData(), &status) != 0) return {};
+  // ctime also invalidates an edit whose size and mtime were preserved.
+  return QStringLiteral("%1:%2:%3:%4:%5:%6:%7")
+      .arg(qulonglong(status.st_dev)).arg(qulonglong(status.st_ino))
+      .arg(qlonglong(status.st_size)).arg(qlonglong(status.st_mtim.tv_sec))
+      .arg(qlonglong(status.st_mtim.tv_nsec)).arg(qlonglong(status.st_ctim.tv_sec))
+      .arg(qlonglong(status.st_ctim.tv_nsec));
+}
+
 } // namespace
+
+#ifdef OMAROLL_TESTING
+thread_local QStringList* AppSettings::s_fingerprintReadPaths = nullptr;
+#endif
 
 AppSettings::AlbumEntry AppSettings::identityFor(const QString& path) {
   AppSettings::AlbumEntry entry;
   entry.path = path;
 
+  struct CachedIdentity {
+    QString version;
+    AlbumEntry identity;
+  };
+  static thread_local QCache<QString, CachedIdentity> cache(4096);
+  const QString version = identityVersionFor(path);
+  if (const auto* cached = cache.object(path); cached && cached->version == version) {
+    return cached->identity;
+  }
   const QFileInfo info(path);
-  if (!info.isFile() || !info.isReadable()) {
+  if (version.isEmpty() || !info.isFile() || !info.isReadable()) {
     return entry;
   }
   entry.bytes = info.size();
@@ -136,6 +164,9 @@ AppSettings::AlbumEntry AppSettings::identityFor(const QString& path) {
     return entry;
   }
   constexpr qint64 chunkSize = 64 * 1024;
+#ifdef OMAROLL_TESTING
+  if (s_fingerprintReadPaths) s_fingerprintReadPaths->append(path);
+#endif
   QCryptographicHash hash(QCryptographicHash::Sha256);
   hash.addData(QByteArray::number(entry.bytes));
   hash.addData(file.read(chunkSize));
@@ -143,9 +174,21 @@ AppSettings::AlbumEntry AppSettings::identityFor(const QString& path) {
     file.seek(qMax<qint64>(0, entry.bytes - chunkSize));
     hash.addData(file.read(chunkSize));
   }
+  if (file.error() != QFile::NoError || identityVersionFor(path) != version) return entry;
   entry.fingerprint = hash.result();
   entry.resolved = true;
+  cache.insert(path, new CachedIdentity{version, entry});
   return entry;
+}
+
+bool AppSettings::relocationAvailable(const AlbumEntry& entry) {
+  const QFileInfo parent(QFileInfo(entry.path).absolutePath());
+  if (QFileInfo::exists(entry.path) || !parent.isDir() || !parent.isReadable()) return false;
+  struct stat status {};
+  if (::stat(QFile::encodeName(parent.absoluteFilePath()).constData(), &status) != 0) return false;
+  // An unmounted source can leave a readable empty mountpoint on the host
+  // filesystem. Its device no longer agrees with the remembered member.
+  return entry.device == 0 || entry.device == status.st_dev;
 }
 
 AppSettings::AppSettings(QObject* parent)
@@ -211,8 +254,8 @@ AppSettings::AppSettings(QObject* parent)
     m_videoPrimaryAction = videoAction;
   }
   // Persist resolved defaults so a fresh profile stays on native viewing after restart.
-  if (!m_settings.contains(kImagePrimaryAction)) m_settings.setValue(kImagePrimaryAction, m_imagePrimaryAction);
-  if (!m_settings.contains(kVideoPrimaryAction)) m_settings.setValue(kVideoPrimaryAction, m_videoPrimaryAction);
+  if (!m_settings.contains(kImagePrimaryAction)) setValue(kImagePrimaryAction, m_imagePrimaryAction);
+  if (!m_settings.contains(kVideoPrimaryAction)) setValue(kVideoPrimaryAction, m_videoPrimaryAction);
   m_thumbnailCacheMb = qBound(64, m_settings.value(kThumbnailCacheMb, 256).toInt(), 1024);
   m_tileWidth =
       qBound(kMinimumTileWidth, m_settings.value(kTileWidth, 240).toInt(), kMaximumTileWidth);
@@ -227,16 +270,40 @@ AppSettings::AppSettings(QObject* parent)
   m_rememberPlaybackSpeed = m_settings.value(kRememberPlaybackSpeed, false).toBool();
   const qreal savedRate = m_settings.value(kVideoPlaybackRate, 1.0).toDouble();
   m_videoPlaybackRate = std::isfinite(savedRate) ? qBound(0.25, savedRate, 4.0) : 1.0;
-  const QVariantMap storedPositions = m_settings.value(kVideoPositions).toMap();
+  m_videoRecency = m_settings.value(kVideoPositionRecency).toStringList();
+  QVariantMap storedPositions = m_settings.value(kVideoPositions).toMap();
+  if (m_settings.status() != QSettings::FormatError &&
+      storedPositions.isEmpty() && m_settings.contains(kLegacyVideoPositions)) {
+    m_videoRecency.clear();
+    const QVariantMap legacy = m_settings.value(kLegacyVideoPositions).toMap();
+    // The old map loads in key order too. Preserve that order while changing
+    // identities, rather than sorting by the new device/inode keys.
+    for (auto it = legacy.cbegin(); it != legacy.cend(); ++it) {
+      const QString key = FileVersion::key(it.key());
+      const qint64 position = it.value().toLongLong();
+      if (!key.isEmpty() && QFileInfo(it.key()).isFile() && position >= kMinimumResumeMs &&
+          !storedPositions.contains(key) && m_videoRecency.size() < kMaximumResumeEntries) {
+        storedPositions.insert(key, position);
+        m_videoRecency.append(key);
+      }
+    }
+    setValue(kVideoPositions, storedPositions);
+    setValue(kVideoPositionRecency, m_videoRecency);
+  }
   for (auto it = storedPositions.cbegin(); it != storedPositions.cend(); ++it) {
     const qint64 position = it.value().toLongLong();
     if (!it.key().isEmpty() && position >= kMinimumResumeMs) {
       m_videoPositions.insert(it.key(), position);
-      m_videoRecency.append(it.key());
+      if (!m_videoRecency.contains(it.key())) m_videoRecency.append(it.key());
     }
   }
+  m_videoRecency.removeIf([this](const QString& key) { return !m_videoPositions.contains(key); });
+  if (m_settings.status() != QSettings::FormatError && m_settings.contains(kLegacyVideoPositions)) {
+    m_settings.remove(kLegacyVideoPositions);
+    m_settings.sync();
+  }
   const QVariantMap storedAlbums = m_settings.value(kAlbums).toMap();
-  const auto restoreCollections = [this](const QVariantMap& storedCollections,
+  const auto restoreCollections = [](const QVariantMap& storedCollections,
                                          QMap<QString, QList<AlbumEntry>>& target,
                                          QString (*normalize)(const QString&)) {
     for (auto it = storedCollections.cbegin(); it != storedCollections.cend(); ++it) {
@@ -306,7 +373,7 @@ AppSettings::AppSettings(QObject* parent)
   }
 
   m_previousVisit = m_settings.value(kLastVisit).toString();
-  m_settings.setValue(kLastVisit, QDateTime::currentDateTime().toString(Qt::ISODate));
+  setValue(kLastVisit, QDateTime::currentDateTime().toString(Qt::ISODate));
 }
 
 void AppSettings::setShowHidden(bool value) {
@@ -314,7 +381,7 @@ void AppSettings::setShowHidden(bool value) {
     return;
   }
   m_showHidden = value;
-  m_settings.setValue(kShowHidden, value);
+  setValue(kShowHidden, value);
   emit showHiddenChanged();
 }
 
@@ -326,7 +393,7 @@ void AppSettings::setSortMode(int value) {
     return;
   }
   m_sortMode = bounded;
-  m_settings.setValue(kSortMode, bounded);
+  setValue(kSortMode, bounded);
   emit sortModeChanged();
 }
 
@@ -336,7 +403,7 @@ void AppSettings::setKindFilter(int value) {
     return;
   }
   m_kindFilter = bounded;
-  m_settings.setValue(kKindFilter, bounded);
+  setValue(kKindFilter, bounded);
   emit kindFilterChanged();
 }
 
@@ -345,7 +412,7 @@ void AppSettings::setScanDownloads(bool value) {
     return;
   }
   m_scanDownloads = value;
-  m_settings.setValue(kScanDownloads, value);
+  setValue(kScanDownloads, value);
   emit scanDownloadsChanged();
 }
 
@@ -355,7 +422,7 @@ void AppSettings::setRecursionDepth(int value) {
     return;
   }
   m_recursionDepth = bounded;
-  m_settings.setValue(kRecursionDepth, bounded);
+  setValue(kRecursionDepth, bounded);
   emit recursionDepthChanged();
 }
 
@@ -365,7 +432,7 @@ bool AppSettings::addLibraryFolder(const QUrl& folder) {
     return false;
   }
   m_libraryFolders.append(normalized);
-  m_settings.setValue(kLibraryFolders, m_libraryFolders);
+  setValue(kLibraryFolders, m_libraryFolders);
   emit libraryFoldersChanged();
   return true;
 }
@@ -375,7 +442,7 @@ void AppSettings::removeLibraryFolder(const QString& folder) {
   if (normalized.isEmpty() || !m_libraryFolders.removeOne(normalized)) {
     return;
   }
-  m_settings.setValue(kLibraryFolders, m_libraryFolders);
+  setValue(kLibraryFolders, m_libraryFolders);
   emit libraryFoldersChanged();
 }
 
@@ -386,7 +453,7 @@ bool AppSettings::pinFolder(const QUrl& folder) {
   }
 
   m_pinnedFolders.append(normalized);
-  m_settings.setValue(kPinnedFolders, m_pinnedFolders);
+  setValue(kPinnedFolders, m_pinnedFolders);
   emit pinnedFoldersChanged();
   addLibraryFolder(QUrl::fromLocalFile(normalized));
   return true;
@@ -398,7 +465,7 @@ void AppSettings::unpinFolder(const QString& folder) {
     return;
   }
 
-  m_settings.setValue(kPinnedFolders, m_pinnedFolders);
+  setValue(kPinnedFolders, m_pinnedFolders);
   emit pinnedFoldersChanged();
 }
 
@@ -412,7 +479,7 @@ void AppSettings::setPairRawJpeg(bool value) {
     return;
   }
   m_pairRawJpeg = value;
-  m_settings.setValue(kPairRawJpeg, value);
+  setValue(kPairRawJpeg, value);
   emit pairRawJpegChanged();
 }
 
@@ -423,7 +490,7 @@ void AppSettings::setImagePrimaryAction(const QString& action) {
     return;
   }
   m_imagePrimaryAction = action;
-  m_settings.setValue(kImagePrimaryAction, action);
+  setValue(kImagePrimaryAction, action);
   emit imagePrimaryActionChanged();
 }
 
@@ -433,7 +500,7 @@ void AppSettings::setVideoPrimaryAction(const QString& action) {
     return;
   }
   m_videoPrimaryAction = action;
-  m_settings.setValue(kVideoPrimaryAction, action);
+  setValue(kVideoPrimaryAction, action);
   emit videoPrimaryActionChanged();
 }
 
@@ -443,7 +510,7 @@ void AppSettings::setTileWidth(int width) {
     return;
   }
   m_tileWidth = bounded;
-  m_settings.setValue(kTileWidth, bounded);
+  setValue(kTileWidth, bounded);
   emit tileWidthChanged();
 }
 
@@ -453,7 +520,7 @@ void AppSettings::setThumbnailCacheMb(int megabytes) {
     return;
   }
   m_thumbnailCacheMb = bounded;
-  m_settings.setValue(kThumbnailCacheMb, bounded);
+  setValue(kThumbnailCacheMb, bounded);
   emit thumbnailCacheMbChanged();
 }
 
@@ -462,14 +529,14 @@ void AppSettings::setSlideshowVideos(bool value) {
     return;
   }
   m_slideshowVideos = value;
-  m_settings.setValue(kSlideshowVideos, value);
+  setValue(kSlideshowVideos, value);
   emit slideshowVideosChanged();
 }
 
 void AppSettings::setConfirmPermanentDelete(bool value) {
   if (m_confirmPermanentDelete == value) return;
   m_confirmPermanentDelete = value;
-  m_settings.setValue(kConfirmPermanentDelete, value);
+  setValue(kConfirmPermanentDelete, value);
   emit confirmPermanentDeleteChanged();
 }
 
@@ -479,7 +546,7 @@ void AppSettings::setSlideshowIntervalSeconds(int seconds) {
     return;
   }
   m_slideshowIntervalSeconds = bounded;
-  m_settings.setValue(kSlideshowInterval, bounded);
+  setValue(kSlideshowInterval, bounded);
   emit slideshowIntervalSecondsChanged();
 }
 
@@ -495,7 +562,7 @@ void AppSettings::setViewerFilmstrip(bool value) {
     return;
   }
   m_viewerFilmstrip = value;
-  m_settings.setValue(kViewerFilmstrip, value);
+  setValue(kViewerFilmstrip, value);
   emit viewerFilmstripChanged();
 }
 
@@ -504,7 +571,7 @@ void AppSettings::setSlideshowShuffle(bool value) {
     return;
   }
   m_slideshowShuffle = value;
-  m_settings.setValue(kSlideshowShuffle, value);
+  setValue(kSlideshowShuffle, value);
   emit slideshowShuffleChanged();
 }
 
@@ -536,7 +603,8 @@ void AppSettings::setVideoPosition(const QString& path, qint64 milliseconds,
   for (auto it = m_videoPositions.cbegin(); it != m_videoPositions.cend(); ++it) {
     stored.insert(it.key(), it.value());
   }
-  m_settings.setValue(kVideoPositions, stored);
+  setValue(kVideoPositions, stored);
+  setValue(kVideoPositionRecency, m_videoRecency);
 }
 
 void AppSettings::clearVideoPosition(const QString& path) {
@@ -549,7 +617,8 @@ void AppSettings::clearVideoPosition(const QString& path) {
   for (auto it = m_videoPositions.cbegin(); it != m_videoPositions.cend(); ++it) {
     stored.insert(it.key(), it.value());
   }
-  m_settings.setValue(kVideoPositions, stored);
+  setValue(kVideoPositions, stored);
+  setValue(kVideoPositionRecency, m_videoRecency);
 }
 
 void AppSettings::setVideoVolume(qreal value) {
@@ -558,7 +627,7 @@ void AppSettings::setVideoVolume(qreal value) {
     return;
   }
   m_videoVolume = bounded;
-  m_settings.setValue(kVideoVolume, bounded);
+  setValue(kVideoVolume, bounded);
   emit videoVolumeChanged();
 }
 
@@ -571,7 +640,7 @@ void AppSettings::setVideoMuted(bool value) {
     return;
   }
   m_videoMuted = value;
-  m_settings.setValue(kVideoMuted, value);
+  setValue(kVideoMuted, value);
   emit videoMutedChanged();
 }
 
@@ -602,6 +671,8 @@ void AppSettings::relocatePath(const QString& oldPath, const QString& newPath) {
     return;
   }
 
+  clearMarksUndo();
+  m_deferOrganizationSync = true;
   bool marksChangedValue = false;
   if (m_favorites.remove(oldPath)) {
     m_favorites.insert(newPath);
@@ -658,6 +729,8 @@ void AppSettings::relocatePath(const QString& oldPath, const QString& newPath) {
     persistTags();
     emit tagsChanged();
   }
+  m_deferOrganizationSync = false;
+  syncOrganization();
 }
 
 QStringList AppSettings::albumNames() const {
@@ -701,7 +774,7 @@ bool AppSettings::createAlbum(const QString& name) {
   m_albums.insert(normalized, {});
   persistAlbums();
   emit albumsChanged();
-  return true;
+  return m_organizationError.isEmpty();
 }
 
 void AppSettings::deleteAlbum(const QString& name) {
@@ -729,7 +802,7 @@ bool AppSettings::renameAlbum(const QString& oldName, const QString& newName) {
   m_albums.insert(target, m_albums.take(oldName));
   persistAlbums();
   emit albumsChanged();
-  return true;
+  return m_organizationError.isEmpty();
 }
 
 bool AppSettings::addToAlbum(const QString& name, const QStringList& paths) {
@@ -771,7 +844,7 @@ bool AppSettings::addToAlbum(const QString& name, const QStringList& paths) {
     persistAlbums();
     emit albumsChanged();
   }
-  return changed;
+  return changed && m_organizationError.isEmpty();
 }
 
 void AppSettings::removeFromAlbum(const QString& name, const QStringList& paths) {
@@ -881,7 +954,7 @@ bool AppSettings::createTag(const QString& name) {
   }
   persistTags();
   emit tagsChanged();
-  return true;
+  return m_organizationError.isEmpty();
 }
 
 void AppSettings::deleteTag(const QString& name) {
@@ -964,13 +1037,16 @@ bool AppSettings::renameTag(const QString& oldName, const QString& newName) {
       viewsChanged = true;
     }
   }
+  m_deferOrganizationSync = true;
   persistTags();
   if (viewsChanged) {
     persistSmartCollections();
     emit smartCollectionsChanged();
   }
+  m_deferOrganizationSync = false;
+  syncOrganization();
   emit tagsChanged();
-  return true;
+  return m_organizationError.isEmpty();
 }
 
 bool AppSettings::addTag(const QString& name, const QStringList& paths) {
@@ -999,7 +1075,7 @@ bool AppSettings::addTag(const QString& name, const QStringList& paths) {
     persistTags();
     emit tagsChanged();
   }
-  return changed;
+  return changed && m_organizationError.isEmpty();
 }
 
 void AppSettings::removeTag(const QString& name, const QStringList& paths) {
@@ -1043,7 +1119,7 @@ bool AppSettings::saveSmartCollection(const QString& name, const QVariantMap& vi
   m_smartCollections.insert(normalized, view);
   persistSmartCollections();
   emit smartCollectionsChanged();
-  return true;
+  return m_organizationError.isEmpty();
 }
 
 void AppSettings::deleteSmartCollection(const QString& name) {
@@ -1087,28 +1163,62 @@ bool AppSettings::reconcileCollectionMap(QMap<QString, QList<AlbumEntry>>& colle
       const bool wasResolved = entry.resolved;
       entry.resolved = false;
 
-      if (entry.fingerprint.isEmpty()) {
-        const AlbumEntry upgraded = identityFor(entry.path);
-        if (upgraded.resolved) {
-          entry = upgraded;
-          persistedChange = true;
+      const auto livePath = std::find_if(candidates.cbegin(), candidates.cend(),
+          [&entry](const Candidate& candidate) { return candidate.path == entry.path; });
+      if (livePath != candidates.cend()) {
+        const QFileInfo info(entry.path);
+        struct stat status {};
+        if (info.isFile() && info.isReadable() &&
+            ::stat(QFile::encodeName(entry.path).constData(), &status) == 0 &&
+            entry.device == status.st_dev && entry.inode == status.st_ino &&
+            entry.bytes == static_cast<qint64>(status.st_size) &&
+            entry.modified == info.lastModified().toMSecsSinceEpoch()) {
+          entry.resolved = true;
+          resolutionChange = resolutionChange || !wasResolved;
+          continue;
         }
-      } else {
+        const AlbumEntry current = identityFor(entry.path);
+        // Continuous same-path, same-device/inode edits keep membership.
+        // A replacement or a previously unavailable entry must still match
+        // content; an inode alone cannot establish that it is the old file.
+        if (current.resolved &&
+            (entry.fingerprint.isEmpty() || current.fingerprint == entry.fingerprint ||
+             (wasResolved && entry.device != 0 && entry.inode != 0 &&
+              current.device == entry.device && current.inode == entry.inode))) {
+          persistedChange = persistedChange || entry.bytes != current.bytes ||
+              entry.modified != current.modified || entry.fingerprint != current.fingerprint ||
+              entry.device != current.device || entry.inode != current.inode;
+          entry = current;
+        }
+      }
+
+      // A missing scan row is not evidence of a move when the old path still
+      // exists, or its containing directory is disconnected/unreadable.
+      const bool mayRelocate = livePath == candidates.cend() && relocationAvailable(entry);
+      if (mayRelocate && !entry.fingerprint.isEmpty()) {
+        QString match;
+        int matches = 0;
         for (const Candidate& candidate : std::as_const(candidates)) {
           if (entry.device != 0 && entry.inode != 0 && candidate.inode == entry.inode &&
               candidate.bytes == entry.bytes &&
               (candidate.device == entry.device || candidate.modified == entry.modified)) {
-            if (entry.path != candidate.path) {
-              entry.path = candidate.path;
-              persistedChange = true;
+            const AlbumEntry current = identityFor(candidate.path);
+            if (current.resolved && current.fingerprint == entry.fingerprint) {
+              match = candidate.path;
+              if (++matches > 1) break;
             }
-            entry.resolved = true;
-            break;
+          }
+        }
+        if (matches == 1) {
+          const AlbumEntry current = identityFor(match);
+          if (current.resolved && current.fingerprint == entry.fingerprint) {
+            entry = current;
+            persistedChange = true;
           }
         }
       }
 
-      if (!entry.resolved && !entry.fingerprint.isEmpty()) {
+      if (!entry.resolved && mayRelocate && !entry.fingerprint.isEmpty()) {
         QList<Candidate> possible;
         for (const Candidate& candidate : std::as_const(candidates)) {
           if (candidate.bytes == entry.bytes && candidate.modified == entry.modified) {
@@ -1141,8 +1251,10 @@ bool AppSettings::reconcileCollectionMap(QMap<QString, QList<AlbumEntry>>& colle
         }
         if (matches == 1) {
           const AlbumEntry repaired = identityFor(matchedPath);
-          entry = repaired;
-          persistedChange = true;
+          if (repaired.resolved && repaired.fingerprint == entry.fingerprint) {
+            entry = repaired;
+            persistedChange = true;
+          }
         }
       }
       resolutionChange = resolutionChange || wasResolved != entry.resolved;
@@ -1281,8 +1393,16 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
             {QStringLiteral("message"),
              QStringLiteral("Could not open %1").arg(QFileInfo(path).fileName())}};
   }
+  const auto invalidBackup = []() -> QVariantMap {
+    return {{QStringLiteral("ok"), false},
+            {QStringLiteral("message"), QStringLiteral("This backup contains invalid organization")}};
+  };
+  if (file.size() > kMaximumOrganizationBytes) return invalidBackup();
+  const QByteArray payload = file.read(kMaximumOrganizationBytes + 1);
+  if (payload.size() > kMaximumOrganizationBytes || file.error() != QFile::NoError)
+    return invalidBackup();
   QJsonParseError parseError;
-  const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parseError);
+  const QJsonDocument document = QJsonDocument::fromJson(payload, &parseError);
   if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
     return {{QStringLiteral("ok"), false},
             {QStringLiteral("message"), QStringLiteral("That is not a valid backup file")}};
@@ -1316,43 +1436,59 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
   // Decode into temporaries. Nothing here mutates state, so a malformed file
   // cannot leave a half-restored profile behind. Keys are normalized the way
   // startup normalizes them, so an imported name survives a restart.
-  const auto decodeEntries = [](const QJsonObject& collections,
-                                QString (*normalize)(const QString&)) {
-    QMap<QString, QList<AlbumEntry>> decoded;
+  const auto decodeInteger = [](const QJsonValue& value, qint64& decoded) {
+    if (!value.isDouble()) return false;
+    const double number = value.toDouble();
+    const double minimum = static_cast<double>(std::numeric_limits<qint64>::min());
+    if (!(number >= minimum && number < -minimum)) return false;
+    decoded = static_cast<qint64>(number);
+    return static_cast<double>(decoded) == number;
+  };
+  const auto decodeIdentity = [&decodeInteger](const QJsonObject& row, AlbumEntry& entry) {
+    if (!decodeInteger(row.value(QStringLiteral("bytes")), entry.bytes) || entry.bytes < -1 ||
+        !decodeInteger(row.value(QStringLiteral("modified")), entry.modified) ||
+        !row.value(QStringLiteral("fingerprint")).isString() ||
+        !row.value(QStringLiteral("device")).isString() ||
+        !row.value(QStringLiteral("inode")).isString()) return false;
+    const auto fingerprint = QByteArray::fromBase64Encoding(
+        row.value(QStringLiteral("fingerprint")).toString().toLatin1(),
+        QByteArray::AbortOnBase64DecodingErrors);
+    bool deviceOkay = false;
+    bool inodeOkay = false;
+    entry.device = row.value(QStringLiteral("device")).toString().toULongLong(&deviceOkay);
+    entry.inode = row.value(QStringLiteral("inode")).toString().toULongLong(&inodeOkay);
+    if (!fingerprint || (!fingerprint.decoded.isEmpty() && fingerprint.decoded.size() != 32) ||
+        !deviceOkay || !inodeOkay) return false;
+    entry.fingerprint = fingerprint.decoded;
+    return true;
+  };
+  const auto decodeEntries = [&decodeIdentity](const QJsonObject& collections,
+                                QString (*normalize)(const QString&),
+                                QMap<QString, QList<AlbumEntry>>& decoded) {
     for (auto it = collections.begin(); it != collections.end(); ++it) {
+      if (!it.value().isArray()) return false;
       const QString name = normalize(it.key());
-      if (name.isEmpty() || !it.value().isArray()) {
-        continue;
-      }
       QList<AlbumEntry> entries;
       for (const QJsonValue& value : it.value().toArray()) {
+        if (!value.isObject()) return false;
         const QJsonObject row = value.toObject();
         AlbumEntry entry;
+        if (!row.value(QStringLiteral("path")).isString() ||
+            row.value(QStringLiteral("path")).toString().isEmpty() ||
+            !decodeIdentity(row, entry)) return false;
         entry.path = row.value(QStringLiteral("path")).toString();
-        if (entry.path.isEmpty()) {
-          continue;
-        }
-        entry.bytes = row.value(QStringLiteral("bytes")).toVariant().toLongLong();
-        entry.modified = row.value(QStringLiteral("modified")).toVariant().toLongLong();
-        entry.fingerprint =
-            QByteArray::fromBase64(row.value(QStringLiteral("fingerprint")).toString().toLatin1());
-        entry.device = row.value(QStringLiteral("device")).toString().toULongLong();
-        entry.inode = row.value(QStringLiteral("inode")).toString().toULongLong();
         entries.append(entry);
       }
-      if (decoded.contains(name)) {
-        decoded[name].append(entries);
-      } else {
-        decoded.insert(name, entries);
-      }
+      // Preserve the existing name normalization, after validating its rows.
+      if (!name.isEmpty()) decoded[name].append(entries);
     }
-    return decoded;
+    return true;
   };
-
-  QMap<QString, QList<AlbumEntry>> albums =
-      decodeEntries(root.value(QStringLiteral("albums")).toObject(), normalizedAlbumName);
-  QMap<QString, QList<AlbumEntry>> tags =
-      decodeEntries(root.value(QStringLiteral("tags")).toObject(), normalizedTagName);
+  QMap<QString, QList<AlbumEntry>> albums;
+  QMap<QString, QList<AlbumEntry>> tags;
+  if (!decodeEntries(root.value(QStringLiteral("albums")).toObject(), normalizedAlbumName, albums) ||
+      !decodeEntries(root.value(QStringLiteral("tags")).toObject(), normalizedTagName, tags))
+    return invalidBackup();
   // createTag always fills in a tag's ancestors; an imported tree keeps the
   // same invariant, or a child would be unreachable in Browse.
   const QStringList importedTagNames = tags.keys();
@@ -1368,38 +1504,54 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
 
   QSet<QString> favorites;
   for (const QJsonValue& value : root.value(QStringLiteral("favorites")).toArray()) {
-    if (!value.toString().isEmpty()) {
-      favorites.insert(value.toString());
-    }
+    if (!value.isString() || value.toString().isEmpty()) return invalidBackup();
+    favorites.insert(value.toString());
   }
   QSet<QString> hidden;
   for (const QJsonValue& value : root.value(QStringLiteral("hidden")).toArray()) {
-    if (!value.toString().isEmpty()) {
-      hidden.insert(value.toString());
-    }
+    if (!value.isString() || value.toString().isEmpty()) return invalidBackup();
+    hidden.insert(value.toString());
   }
   QHash<QString, int> ratings;
   const QJsonObject ratingObject = root.value(QStringLiteral("ratings")).toObject();
   for (auto it = ratingObject.begin(); it != ratingObject.end(); ++it) {
-    const int stars = it.value().toInt();
-    if (!it.key().isEmpty() && stars >= 1 && stars <= kMaximumRating) {
-      ratings.insert(it.key(), stars);
-    }
+    qint64 decodedStars = 0;
+    if (it.key().isEmpty() || !decodeInteger(it.value(), decodedStars) ||
+        decodedStars < 1 || decodedStars > kMaximumRating) return invalidBackup();
+    const int stars = static_cast<int>(decodedStars);
+    ratings.insert(it.key(), stars);
   }
   QHash<QString, QString> captions;
   const QJsonObject captionObject = root.value(QStringLiteral("captions")).toObject();
   for (auto it = captionObject.begin(); it != captionObject.end(); ++it) {
+    if (it.key().isEmpty() || !it.value().isString() || it.value().toString().isEmpty())
+      return invalidBackup();
     const QString text = it.value().toString().left(kMaximumCaptionLength);
-    if (!it.key().isEmpty() && !text.isEmpty()) {
-      captions.insert(it.key(), text);
-    }
+    captions.insert(it.key(), text);
   }
   QMap<QString, QVariantMap> smartCollections;
   const QJsonObject smartObject = root.value(QStringLiteral("smartCollections")).toObject();
   for (auto it = smartObject.begin(); it != smartObject.end(); ++it) {
-    if (it.value().isObject()) {
-      smartCollections.insert(it.key(), it.value().toObject().toVariantMap());
+    if (!it.value().isObject() || it.value().toObject().isEmpty()) return invalidBackup();
+    const QJsonObject view = it.value().toObject();
+    for (auto field = view.begin(); field != view.end(); ++field) {
+      const QString& key = field.key();
+      const QJsonValue value = field.value();
+      if (QStringList{QStringLiteral("favorites"), QStringLiteral("showHidden")}.contains(key)) {
+        if (!value.isBool()) return invalidBackup();
+      } else if (QStringList{QStringLiteral("kind"), QStringLiteral("dateField"),
+                            QStringLiteral("minRating"), QStringLiteral("sort")}.contains(key)) {
+        qint64 number = 0;
+        const qint64 minimum = key == QLatin1String("kind") ? -1 : 0;
+        const qint64 maximum = key == QLatin1String("dateField") ? 1 : 5;
+        if (!decodeInteger(value, number) || number < minimum || number > maximum)
+          return invalidBackup();
+      } else if (!value.isString()) {
+        return invalidBackup();
+      }
     }
+    const QString name = normalizedAlbumName(it.key());
+    if (!name.isEmpty()) smartCollections.insert(name, it.value().toObject().toVariantMap());
   }
 
   // Optional in version 1 for backups written before mark move recovery was
@@ -1413,18 +1565,6 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
     if (!memberIs("markIdentities", QJsonValue::Object)) {
       return invalidIdentities();
     }
-    const auto decodeInteger = [](const QJsonValue& value, qint64& decoded) {
-      if (!value.isDouble()) {
-        return false;
-      }
-      const double number = value.toDouble();
-      const double minimum = static_cast<double>(std::numeric_limits<qint64>::min());
-      if (!(number >= minimum && number < -minimum)) {
-        return false;
-      }
-      decoded = static_cast<qint64>(number);
-      return static_cast<double>(decoded) == number;
-    };
     const QJsonObject identities = root.value(QStringLiteral("markIdentities")).toObject();
     for (auto it = identities.begin(); it != identities.end(); ++it) {
       if (it.key().isEmpty() || !it.value().isObject() ||
@@ -1435,26 +1575,7 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
       const QJsonObject row = it.value().toObject();
       AlbumEntry entry;
       entry.path = it.key();
-      if (!decodeInteger(row.value(QStringLiteral("bytes")), entry.bytes) || entry.bytes < 0 ||
-          !decodeInteger(row.value(QStringLiteral("modified")), entry.modified) ||
-          !row.value(QStringLiteral("fingerprint")).isString() ||
-          !row.value(QStringLiteral("device")).isString() ||
-          !row.value(QStringLiteral("inode")).isString()) {
-        return invalidIdentities();
-      }
-      const auto fingerprint = QByteArray::fromBase64Encoding(
-          row.value(QStringLiteral("fingerprint")).toString().toLatin1(),
-          QByteArray::AbortOnBase64DecodingErrors);
-      bool deviceOkay = false;
-      bool inodeOkay = false;
-      entry.device = row.value(QStringLiteral("device")).toString().toULongLong(&deviceOkay);
-      entry.inode = row.value(QStringLiteral("inode")).toString().toULongLong(&inodeOkay);
-      if (!fingerprint ||
-          (!fingerprint.decoded.isEmpty() && fingerprint.decoded.size() != 32) ||
-          !deviceOkay || !inodeOkay) {
-        return invalidIdentities();
-      }
-      entry.fingerprint = fingerprint.decoded;
+      if (!decodeIdentity(row, entry) || entry.bytes < 0) return invalidIdentities();
       markIdentities.insert(entry.path, entry);
     }
   }
@@ -1466,13 +1587,19 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
     for (auto it = collections.begin(); it != collections.end(); ++it) {
       for (AlbumEntry& entry : *it) {
         const QFileInfo info(entry.path);
-        entry.resolved = info.isFile() && info.isReadable();
+        const AlbumEntry current = identityFor(entry.path);
+        entry.resolved = info.isFile() && info.isReadable() && current.resolved &&
+                         (entry.fingerprint.isEmpty() || current.fingerprint == entry.fingerprint);
       }
     }
   };
   resolvePresent(albums);
   resolvePresent(tags);
 
+  const auto oldAlbums = m_albums;
+  const auto oldTags = m_tags;
+  const auto oldViews = m_smartCollections;
+  const MarksSnapshot oldMarks{m_favorites, m_hidden, m_ratings, m_captions, m_markIdentities};
   m_albums = std::move(albums);
   m_tags = std::move(tags);
   m_smartCollections = std::move(smartCollections);
@@ -1482,11 +1609,32 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
   m_captions = std::move(captions);
   m_markIdentities = std::move(markIdentities);
 
+  m_deferOrganizationSync = true;
   persistAlbums();
   persistTags();
   persistSmartCollections();
   persistMarks();
-  persistMarkIdentities();
+  m_deferOrganizationSync = false;
+  if (!syncOrganization()) {
+    m_albums = oldAlbums;
+    m_tags = oldTags;
+    m_smartCollections = oldViews;
+    m_favorites = oldMarks.favorites;
+    m_hidden = oldMarks.hidden;
+    m_ratings = oldMarks.ratings;
+    m_captions = oldMarks.captions;
+    m_markIdentities = oldMarks.identities;
+    // Replace pending failed values too, so a later flush cannot restore them.
+    m_deferOrganizationSync = true;
+    persistAlbums();
+    persistTags();
+    persistSmartCollections();
+    persistMarks();
+    m_deferOrganizationSync = false;
+    syncOrganization();
+    return {{QStringLiteral("ok"), false}, {QStringLiteral("message"), m_organizationError}};
+  }
+  clearMarksUndo();
   emit albumsChanged();
   emit tagsChanged();
   emit smartCollectionsChanged();
@@ -1525,7 +1673,8 @@ void AppSettings::persistAlbums() {
     }
     albums.insert(album.key(), entries);
   }
-  m_settings.setValue(kAlbums, albums);
+  setValue(kAlbums, albums);
+  syncOrganization();
 }
 
 void AppSettings::persistTags() {
@@ -1544,7 +1693,8 @@ void AppSettings::persistTags() {
     }
     tags.insert(tag.key(), entries);
   }
-  m_settings.setValue(kTags, tags);
+  setValue(kTags, tags);
+  syncOrganization();
 }
 
 void AppSettings::persistSmartCollections() {
@@ -1552,7 +1702,8 @@ void AppSettings::persistSmartCollections() {
   for (auto it = m_smartCollections.cbegin(); it != m_smartCollections.cend(); ++it) {
     stored.insert(it.key(), it.value());
   }
-  m_settings.setValue(kSmartCollections, stored);
+  setValue(kSmartCollections, stored);
+  syncOrganization();
 }
 
 bool AppSettings::isFavorite(const QString& path) const { return m_favorites.contains(path); }
@@ -1680,20 +1831,25 @@ QStringList AppSettings::markedPaths() const {
 }
 
 void AppSettings::persistMarks() {
-  m_settings.setValue(kFavorites, QStringList(m_favorites.begin(), m_favorites.end()));
-  m_settings.setValue(kHidden, QStringList(m_hidden.begin(), m_hidden.end()));
+  const bool deferred = m_deferOrganizationSync;
+  m_deferOrganizationSync = true;
+  persistMarkIdentities();
+  setValue(kFavorites, QStringList(m_favorites.begin(), m_favorites.end()));
+  setValue(kHidden, QStringList(m_hidden.begin(), m_hidden.end()));
   QStringList ratings;
   ratings.reserve(m_ratings.size());
   for (auto it = m_ratings.cbegin(); it != m_ratings.cend(); ++it) {
     ratings.append(QString::number(it.value()) + QLatin1Char(':') + it.key());
   }
   ratings.sort();
-  m_settings.setValue(kRatings, ratings);
+  setValue(kRatings, ratings);
   QVariantMap captions;
   for (auto it = m_captions.cbegin(); it != m_captions.cend(); ++it) {
     captions.insert(it.key(), it.value());
   }
-  m_settings.setValue(kCaptions, captions);
+  setValue(kCaptions, captions);
+  m_deferOrganizationSync = deferred;
+  syncOrganization();
 }
 
 bool AppSettings::pathHasMark(const QString& path) const {
@@ -1713,7 +1869,38 @@ void AppSettings::persistMarkIdentities() {
     row.insert(QStringLiteral("inode"), QString::number(entry.inode));
     stored.insert(it.key(), row);
   }
-  m_settings.setValue(kMarkIdentities, stored);
+  setValue(kMarkIdentities, stored);
+  syncOrganization();
+}
+
+void AppSettings::setValue(const char* key, const QVariant& value) {
+  // A damaged ini must remain available for recovery, not be overwritten
+  // with whichever subset QSettings managed to read.
+  if (m_settings.status() == QSettings::FormatError) {
+    syncOrganization();
+    return;
+  }
+  m_settings.setValue(key, value);
+}
+
+bool AppSettings::syncOrganization() {
+  if (m_deferOrganizationSync) return true;
+  m_settings.sync();
+  const QString error = m_settings.status() == QSettings::NoError ? QString()
+      : m_settings.status() == QSettings::FormatError
+          ? QStringLiteral("Your settings file is damaged. Keep a copy and repair it before saving organization.")
+          : QStringLiteral("Could not save organization. Check that your settings folder is writable and has free space.");
+  if (m_organizationError != error) {
+    m_organizationError = error;
+    emit organizationErrorChanged();
+  }
+  return error.isEmpty();
+}
+
+void AppSettings::clearMarksUndo() {
+  if (m_undoStack.isEmpty()) return;
+  m_undoStack.clear();
+  emit undoChanged();
 }
 
 void AppSettings::pushMarksUndo() {
@@ -1746,7 +1933,6 @@ void AppSettings::undo() {
   m_captions = std::move(snapshot.captions);
   m_markIdentities = std::move(snapshot.identities);
   persistMarks();
-  persistMarkIdentities();
   emit marksChanged();
   m_undoing = false;
   emit undoChanged();
@@ -1757,9 +1943,7 @@ void AppSettings::refreshMarkIdentity(const QString& path) {
     return;
   }
   if (!pathHasMark(path)) {
-    if (m_markIdentities.remove(path) > 0) {
-      persistMarkIdentities();
-    }
+    m_markIdentities.remove(path);
     return;
   }
   if (m_markIdentities.contains(path)) {
@@ -1768,7 +1952,6 @@ void AppSettings::refreshMarkIdentity(const QString& path) {
   const AlbumEntry identity = identityFor(path);
   if (identity.resolved) {
     m_markIdentities.insert(path, identity);
-    persistMarkIdentities();
   }
 }
 
@@ -1833,16 +2016,7 @@ void AppSettings::reconcileMarks(const QList<CaptureRecord>& records) {
   // Bound memory across scans and share only within the calling thread. Cache
   // the content hash, not a match decision tied to a particular saved mark.
   static thread_local QCache<QString, CachedFingerprint> fingerprintCache(4096);
-  const auto versionFor = [](const QString& path) {
-    struct stat status {};
-    if (::stat(QFile::encodeName(path).constData(), &status) != 0) return QString();
-    // ctime also invalidates a same-sized edit whose mtime was restored.
-    return QStringLiteral("%1:%2:%3:%4:%5:%6:%7")
-        .arg(qulonglong(status.st_dev)).arg(qulonglong(status.st_ino))
-        .arg(qlonglong(status.st_size)).arg(qlonglong(status.st_mtim.tv_sec))
-        .arg(qlonglong(status.st_mtim.tv_nsec)).arg(qlonglong(status.st_ctim.tv_sec))
-        .arg(qlonglong(status.st_ctim.tv_nsec));
-  };
+  const auto versionFor = identityVersionFor;
   QHash<QString, CachedFingerprint> fingerprints;
   const auto fingerprintFor = [&](const Candidate& candidate) -> QByteArray {
     const QString version = versionFor(candidate.path);
@@ -1878,7 +2052,7 @@ void AppSettings::reconcileMarks(const QList<CaptureRecord>& records) {
   QList<Move> moves;
   for (auto it = m_markIdentities.cbegin(); it != m_markIdentities.cend(); ++it) {
     const QString& oldPath = it.key();
-    if (live.contains(oldPath)) {
+    if (live.contains(oldPath) || !relocationAvailable(it.value())) {
       continue;
     }
     const AlbumEntry& identity = it.value();
@@ -1968,7 +2142,7 @@ void AppSettings::reconcileMarks(const QList<CaptureRecord>& records) {
   }
 
   if (!moved) return;
+  clearMarksUndo();
   persistMarks();
-  persistMarkIdentities();
   emit marksChanged();
 }

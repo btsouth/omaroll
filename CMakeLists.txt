@@ -232,6 +232,7 @@ install(FILES PRIVACY.md SUPPORT.md CHANGELOG.md
 # Tests
 include(CTest)
 if(BUILD_TESTING)
+  target_compile_definitions(omaroll_core PUBLIC OMAROLL_TESTING)
   add_executable(omaroll_benchmark_library EXCLUDE_FROM_ALL tests/benchmark_library.cpp)
   target_link_libraries(omaroll_benchmark_library PRIVATE omaroll_core)
   qt_add_executable(omaroll_tests tests/tst_omaroll.cpp)

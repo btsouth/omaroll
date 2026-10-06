@@ -603,12 +603,14 @@ ApplicationWindow {
 
     function toggleFavorite() {
         Settings.toggleFavorite(Session.path)
-        root.say(Settings.isFavorite(Session.path) ? "Added to favourites" : "Removed from favourites")
+        root.say(Settings.organizationError || (Settings.isFavorite(Session.path)
+                 ? "Added to favourites" : "Removed from favourites"))
     }
 
     function rate(stars) {
         Settings.setRating([Session.path], stars)
-        root.say(stars > 0 ? "Rated " + "★".repeat(stars) : "Rating cleared")
+        root.say(Settings.organizationError || (stars > 0
+                 ? "Rated " + "★".repeat(stars) : "Rating cleared"))
     }
 
     function requestTrash() {
@@ -957,6 +959,10 @@ ApplicationWindow {
     Connections {
         target: Settings
         function onMarksChanged() { root.marksVersion++ }
+        function onOrganizationErrorChanged() {
+            if (root.visible && root.frontmost && Settings.organizationError !== "")
+                root.say(Settings.organizationError)
+        }
     }
 
     Connections {

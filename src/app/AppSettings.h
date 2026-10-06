@@ -22,6 +22,7 @@ struct CaptureRecord;
 // recovery. Unavailable files keep their organization until the user clears it.
 class AppSettings final : public QObject {
   Q_OBJECT
+  Q_PROPERTY(QString organizationError READ organizationError NOTIFY organizationErrorChanged)
   Q_PROPERTY(bool showHidden READ showHidden WRITE setShowHidden NOTIFY showHiddenChanged)
   // How many files carry a rating, so the Browse sheet can leave the rating
   // row out of a library nobody has rated.
@@ -76,6 +77,7 @@ class AppSettings final : public QObject {
 public:
   explicit AppSettings(QObject* parent = nullptr);
 
+  [[nodiscard]] QString organizationError() const { return m_organizationError; }
   [[nodiscard]] bool showHidden() const { return m_showHidden; }
   void setShowHidden(bool value);
 
@@ -263,8 +265,13 @@ signals:
   // caring which one it was.
   void marksChanged();
   void undoChanged();
+  void organizationErrorChanged();
 
 private:
+#ifdef OMAROLL_TESTING
+  friend class OmarollTest;
+  static thread_local QStringList* s_fingerprintReadPaths;
+#endif
   struct AlbumEntry {
     QString path;
     qint64 bytes = -1;
@@ -283,15 +290,21 @@ private:
   // Snapshots the marks (and their identities) before a destructive change, so
   // undo can put them back exactly.
   void pushMarksUndo();
+  void clearMarksUndo();
+  bool syncOrganization();
+  void setValue(const char* key, const QVariant& value);
   // Records (or forgets) the on-disk identity behind a path's marks, so the
   // mark can be found again after an external move.
   void refreshMarkIdentity(const QString& path);
   [[nodiscard]] bool pathHasMark(const QString& path) const;
   bool reconcileCollectionMap(QMap<QString, QList<AlbumEntry>>& collections,
                               const QList<CaptureRecord>& records);
+  [[nodiscard]] static bool relocationAvailable(const AlbumEntry& entry);
   [[nodiscard]] static AlbumEntry identityFor(const QString& path);
 
   QSettings m_settings;
+  QString m_organizationError;
+  bool m_deferOrganizationSync = false;
   QSet<QString> m_favorites;
   QSet<QString> m_hidden;
   QHash<QString, int> m_ratings;
