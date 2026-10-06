@@ -32,6 +32,7 @@ class OcrIndex final : public QObject {
 public:
   explicit OcrIndex(CaptureModel* model, QObject* parent = nullptr);
   ~OcrIndex() override;
+  void requestStop();
 
   [[nodiscard]] bool available() const { return !m_program.isEmpty(); }
   [[nodiscard]] bool indexing() const { return m_indexing; }
@@ -89,6 +90,7 @@ private:
   CaptureModel* m_model = nullptr;
   QString m_program;
   QString m_languages;
+  QString m_legacyLanguages;
   QHash<QString, Entry> m_entries;
   QList<Candidate> m_queue;
   QSet<QString> m_failed;

@@ -1,6 +1,7 @@
 #include "app/AppSettings.h"
 #include "library/CaptureFilterModel.h"
 #include "library/CaptureModel.h"
+#include "library/MediaMetadataIndex.h"
 #include "sources/CaptureScanner.h"
 #include "thumbs/ThumbnailCache.h"
 
@@ -22,6 +23,7 @@
 #include <QTimer>
 
 #include <sys/resource.h>
+#include <time.h>
 
 // Optional benchmark, not a timing assertion in CI. Each invocation owns its
 // settings, cache and generated files. Fixture creation is outside the timers.
@@ -91,6 +93,55 @@ int main(int argc, char** argv) {
                                                                      : QStringLiteral("generated-png")},
                      {QStringLiteral("qt"), QString::fromLatin1(qVersion())},
                      {QStringLiteral("cache_budget_bytes"), ThumbnailCache::kMaxCacheBytes}};
+  if (application.arguments().contains(QStringLiteral("--metadata"))) {
+    AppSettings settings;
+    if (!settings.addLibraryFolder(QUrl::fromLocalFile(pictures))) return 1;
+    CaptureModel model(&settings);
+    CaptureFilterModel proxy;
+    proxy.setSourceModel(&model);
+    QEventLoop loop;
+    QObject::connect(&model, &CaptureModel::scanningChanged, &loop, [&] {
+      if (!model.scanning()) loop.quit();
+    });
+    QTimer::singleShot(30000, &loop, &QEventLoop::quit);
+    loop.exec();
+    if (model.scanning() || model.rowCount() != count) return 1;
+    QCoreApplication::processEvents();
+    int notifications = 0;
+    int pairingNotifications = 0;
+    double firstMs = 0;
+    QElapsedTimer elapsed; elapsed.start();
+    const auto cpuMs = [] {
+      timespec now {};
+      clock_gettime(CLOCK_THREAD_CPUTIME_ID, &now);
+      return now.tv_sec * 1000.0 + now.tv_nsec / 1e6;
+    };
+    const double cpuStart = cpuMs();
+    QObject::connect(&model, &QAbstractItemModel::dataChanged, &loop, [&] {
+      ++notifications;
+      if (firstMs == 0) firstMs = elapsed.nsecsElapsed() / 1e6;
+    });
+    QObject::connect(&proxy, &QAbstractItemModel::dataChanged, &loop,
+        [&](const QModelIndex&, const QModelIndex&, const QList<int>& roles) {
+          if (roles.contains(CaptureModel::CompanionPathRole)) ++pairingNotifications;
+        });
+    MediaMetadataIndex metadata(&model);
+    QObject::connect(&metadata, &MediaMetadataIndex::indexingChanged, &loop, [&] {
+      if (!metadata.indexing()) QTimer::singleShot(0, &loop, &QEventLoop::quit);
+    });
+    QTimer::singleShot(120000, &loop, &QEventLoop::quit);
+    loop.exec();
+    QCoreApplication::processEvents();
+    if (metadata.indexing() || metadata.completed() != metadata.total()) return 1;
+    result.insert(QStringLiteral("metadata_total"), metadata.total());
+    result.insert(QStringLiteral("metadata_notifications"), notifications);
+    result.insert(QStringLiteral("pairing_notifications"), pairingNotifications);
+    result.insert(QStringLiteral("first_metadata_ms"), firstMs);
+    result.insert(QStringLiteral("indexing_wall_ms"), elapsed.nsecsElapsed() / 1e6);
+    result.insert(QStringLiteral("indexing_gui_cpu_ms"), cpuMs() - cpuStart);
+    QTextStream(stdout) << QJsonDocument(result).toJson();
+    return 0;
+  }
   QJsonArray scans;
   QElapsedTimer timer;
   for (int run = 0; run < 5; ++run) {
@@ -140,6 +191,27 @@ int main(int argc, char** argv) {
   proxy.setSearchText({});
   if (proxy.rowCount() != count) return 1;
   result.insert(QStringLiteral("clear_filename_filter_ms"), timer.nsecsElapsed() / 1e6);
+  const int membershipArgument = application.arguments().indexOf(QStringLiteral("--memberships"));
+  const int memberships = membershipArgument < 0 ? 0
+      : qBound(0, application.arguments().value(membershipArgument + 1).toInt(), count);
+  if (memberships > 0) {
+    const QString collection = QStringLiteral("Benchmark");
+    const QStringList members = files.last(memberships);
+    if (!settings.createAlbum(collection) || !settings.addToAlbum(collection, members) ||
+        !settings.createTag(collection) || !settings.addTag(collection, members)) return 1;
+    const auto records = CaptureScanner::scan({{pictures, 4}});
+    QJsonArray reconciliation;
+    for (int run = 0; run < 3; ++run) {
+      timer.restart();
+      settings.reconcileAlbums(records);
+      settings.reconcileTags(records);
+      reconciliation.append(timer.nsecsElapsed() / 1e6);
+      if (settings.albumPaths(collection).size() != memberships ||
+          settings.tagPaths(collection).size() != memberships) return 1;
+    }
+    result.insert(QStringLiteral("memberships_per_collection"), memberships);
+    result.insert(QStringLiteral("album_and_tag_reconciliation_ms"), reconciliation);
+  }
   QJsonArray thumbnails;
   QStringList thumbnailFiles;
   QSet<QString> sampled;

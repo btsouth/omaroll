@@ -39,6 +39,7 @@ public:
   [[nodiscard]] int groupCount() const;
   [[nodiscard]] const QHash<QString, QString>& groups() const { return m_groups; }
 
+  void requestStop();
   void setActive(bool active);
   Q_INVOKABLE void refresh();
   Q_INVOKABLE [[nodiscard]] QStringList groupPaths(const QString& path) const;

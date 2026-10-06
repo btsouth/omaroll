@@ -44,8 +44,9 @@ public:
 
   // How a new viewer finds the viewers already on its workspace; the
   // running Hyprland by default. Tests substitute their own.
-  using PlacementQuery = std::function<HyprlandPlacement::Plan()>;
+  using PlacementQuery = std::function<void(QObject*, HyprlandPlacement::Reply)>;
   void setPlacementQuery(PlacementQuery query) { m_query = std::move(query); }
+  void setPlacementTile(std::function<void(const QStringList&)> tile) { m_tile = std::move(tile); }
 
 signals:
   // The source entry chosen by the user, before media-path resolution.
@@ -55,10 +56,11 @@ private:
   struct Viewer;
 
   Viewer* create();
-  void show(Viewer& viewer, const QStringList& files, bool tiled,
+  void show(Viewer& viewer, const QStringList& files,
             const QHash<QString, QString>& entryPaths = {});
   void activated(Viewer& viewer);
   void hidden();
+  void place(Viewer& viewer, quint64 generation, bool retry = false);
   void updateFrontmost();
 
   QQmlEngine& m_engine;
@@ -66,4 +68,5 @@ private:
   // Most recently active last.
   QList<Viewer*> m_recent;
   PlacementQuery m_query = HyprlandPlacement::query;
+  std::function<void(const QStringList&)> m_tile = HyprlandPlacement::tile;
 };

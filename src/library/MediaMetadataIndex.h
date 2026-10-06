@@ -9,6 +9,8 @@
 #include <QProcess>
 #include <QSet>
 #include <QTimer>
+#include <atomic>
+#include <memory>
 
 // Reads embedded metadata from general photos and videos: the original
 // capture date, and the camera and lens that took them.
@@ -38,6 +40,7 @@ public:
 
   explicit MediaMetadataIndex(CaptureModel* model, QObject* parent = nullptr);
   ~MediaMetadataIndex() override;
+  void requestStop();
 
   [[nodiscard]] bool indexing() const { return m_indexing; }
   [[nodiscard]] int completed() const { return m_completed; }
@@ -83,6 +86,7 @@ private:
   [[nodiscard]] bool stillCurrent(const Candidate& candidate) const;
   [[nodiscard]] static QHash<int, Details> parseImageBatch(const QByteArray& output,
                                                            QSet<int>* completed);
+  void flushUpdates();
   void adopt(const Candidate& candidate, const Details& details);
   [[nodiscard]] static CaptureModel::MetadataUpdate updateFor(const Candidate& candidate,
                                                               const Details& details);
@@ -108,6 +112,8 @@ private:
   QTimer m_timeout;
   QTimer m_syncTimer;
   QTimer m_saveTimer;
+  QTimer m_updateTimer;
+  std::shared_ptr<std::atomic_bool> m_stopping = std::make_shared<std::atomic_bool>(false);
   bool m_indexing = false;
   bool m_cacheDirty = false;
   int m_completed = 0;

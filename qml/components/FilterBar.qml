@@ -73,6 +73,10 @@ Item {
         search.selectAll()
     }
 
+    function applySearch() {
+        Captures.searchText = search.text
+    }
+
     // Saved views and Open With can change the query outside this field.
     Component.onCompleted: search.text = Captures.searchText
     Connections {
@@ -240,13 +244,14 @@ Item {
                 selectionColor: root.shade(Theme.accent, 0.5)
                 selectedTextColor: Theme.brightForeground
 
-                onTextChanged: Captures.searchText = text
+                onTextChanged: Captures.queueSearchText(text)
+                onActiveFocusChanged: if (!activeFocus) root.applySearch()
                 Keys.onEscapePressed: {
                     text = ""
                     root.done()
                 }
-                Keys.onReturnPressed: root.done()
-                Keys.onEnterPressed: root.done()
+                Keys.onReturnPressed: { root.applySearch(); root.done() }
+                Keys.onEnterPressed: { root.applySearch(); root.done() }
             }
 
             Text {

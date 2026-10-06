@@ -14,7 +14,7 @@
 namespace {
 
 constexpr quint32 kCacheMagic = 0x4f435231; // OCR1
-constexpr quint16 kCacheVersion = 3;
+constexpr quint16 kCacheVersion = 4;
 constexpr qint64 kMaximumCacheEntryBytes = 4LL * 1024 * 1024;
 constexpr qint64 kMaximumCacheBytes = 64LL * 1024 * 1024;
 constexpr int kOcrTimeoutMs = 30'000;
@@ -58,8 +58,25 @@ OcrIndex::OcrIndex(CaptureModel* model, QObject* parent)
     : QObject(parent), m_model(model),
       m_program(model ? QStandardPaths::findExecutable(QStringLiteral("tesseract")) : QString()),
       m_languages(qEnvironmentVariable("OMARCHY_OCR_LANGS", QStringLiteral("eng"))) {
+  QStringList languages;
+  for (const QString& language : m_languages.split(QLatin1Char('+'), Qt::SkipEmptyParts)) {
+    if (!language.trimmed().isEmpty()) languages.append(language.trimmed());
+  }
+  m_languages = languages.join(QLatin1Char('+'));
   if (m_languages.isEmpty()) {
     m_languages = QStringLiteral("eng");
+  }
+  // Version 3 did not record languages. Assign those entries once to the
+  // configuration present at upgrade, then migrate valid entries on demand.
+  QDir().mkpath(cacheDirectory());
+  QFile migration(cacheDirectory() + QStringLiteral("/legacy-languages"));
+  if (migration.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+    migration.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    migration.write(m_languages.toUtf8());
+    migration.close();
+  }
+  if (migration.open(QIODevice::ReadOnly)) {
+    m_legacyLanguages = QString::fromUtf8(migration.read(4096));
   }
   m_timeout.setSingleShot(true);
   m_timeout.setInterval(kOcrTimeoutMs);
@@ -85,10 +102,20 @@ OcrIndex::OcrIndex(CaptureModel* model, QObject* parent)
 }
 
 OcrIndex::~OcrIndex() {
+  requestStop();
   if (m_process.state() != QProcess::NotRunning) {
     m_process.kill();
     m_process.waitForFinished(1000);
   }
+}
+
+void OcrIndex::requestStop() {
+  m_active = false;
+  m_queue.clear();
+  m_reviewCandidate.reset();
+  m_timeout.stop();
+  disconnect(&m_process, nullptr, this, nullptr);
+  if (m_process.state() != QProcess::NotRunning) m_process.kill();
 }
 
 QString OcrIndex::cacheDirectory() { return cacheHome() + QStringLiteral("/omaroll/ocr"); }
@@ -480,13 +507,22 @@ bool OcrIndex::stillCurrent(const Candidate& candidate) const {
 
 QString OcrIndex::cachePath(const QString& path) const {
   const QByteArray key =
-      QCryptographicHash::hash(path.toUtf8(), QCryptographicHash::Sha256).toHex();
+      QCryptographicHash::hash(path.toUtf8() + '\0' + m_languages.toUtf8(),
+                               QCryptographicHash::Sha256).toHex();
   return cacheDirectory() + QLatin1Char('/') + QString::fromLatin1(key) + QStringLiteral(".ocr");
 }
 
 bool OcrIndex::readCache(const Candidate& candidate, QString* text) const {
   QFile file(cachePath(candidate.path));
-  if (!file.open(QIODevice::ReadOnly) || file.size() > kMaximumCacheEntryBytes) {
+  bool legacy = false;
+  if (!file.open(QIODevice::ReadOnly) && m_languages == m_legacyLanguages) {
+    const QByteArray key = QCryptographicHash::hash(candidate.path.toUtf8(),
+                                                   QCryptographicHash::Sha256).toHex();
+    file.setFileName(cacheDirectory() + QLatin1Char('/') + QString::fromLatin1(key) +
+                     QStringLiteral(".ocr"));
+    legacy = file.open(QIODevice::ReadOnly);
+  }
+  if (!file.isOpen() || file.size() > kMaximumCacheEntryBytes) {
     return false;
   }
   QDataStream stream(&file);
@@ -496,14 +532,23 @@ bool OcrIndex::readCache(const Candidate& candidate, QString* text) const {
   qint64 modified = 0;
   qint64 bytes = 0;
   QString path;
+  QString languages;
   QString stored;
-  stream >> magic >> version >> path >> modified >> bytes >> stored;
-  if (stream.status() != QDataStream::Ok || magic != kCacheMagic || version != kCacheVersion ||
-      path != candidate.path || modified != candidate.modified || bytes != candidate.bytes ||
+  stream >> magic >> version >> path >> modified >> bytes;
+  if (version == 4) stream >> languages;
+  stream >> stored;
+  if (stream.status() != QDataStream::Ok || magic != kCacheMagic ||
+      (legacy ? version != 3 : version != kCacheVersion) ||
+      path != candidate.path || (!legacy && languages != m_languages) ||
+      modified != candidate.modified || bytes != candidate.bytes ||
       stored.size() > kMaximumCacheEntryBytes) {
     return false;
   }
   *text = stored;
+  if (legacy) {
+    writeCache(candidate, stored);
+    if (QFileInfo::exists(cachePath(candidate.path))) QFile::remove(file.fileName());
+  }
   return true;
 }
 
@@ -522,7 +567,7 @@ void OcrIndex::writeCache(const Candidate& candidate, const QString& text) const
   QDataStream stream(&file);
   stream.setVersion(QDataStream::Qt_6_0);
   stream << kCacheMagic << kCacheVersion << candidate.path << candidate.modified << candidate.bytes
-         << text;
+         << m_languages << text;
   if (stream.status() == QDataStream::Ok && file.commit()) {
     QFile::setPermissions(cachePath(candidate.path),
                           QFileDevice::ReadOwner | QFileDevice::WriteOwner);
@@ -545,11 +590,14 @@ void OcrIndex::pruneCache() {
       QString path;
       qint64 modified = 0;
       qint64 bytes = 0;
+      QString languages;
       QString text;
-      stream >> magic >> version >> path >> modified >> bytes >> text;
+      stream >> magic >> version >> path >> modified >> bytes;
+      if (version == 4) stream >> languages;
+      stream >> text;
       const QFileInfo source(path);
       keep = stream.status() == QDataStream::Ok && magic == kCacheMagic &&
-             version == kCacheVersion && !path.isEmpty() && source.isFile() &&
+             (version == 3 || version == kCacheVersion) && !path.isEmpty() && source.isFile() &&
              source.size() == bytes && source.lastModified().toMSecsSinceEpoch() == modified &&
              retainedBytes + info.size() <= kMaximumCacheBytes;
     } else {

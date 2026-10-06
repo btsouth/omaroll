@@ -23,8 +23,9 @@ CaptureFilterModel::CaptureFilterModel(QObject* parent) : QSortFilterProxyModel(
   m_nameCollator.setCaseSensitivity(Qt::CaseInsensitive);
   m_nameCollator.setNumericMode(true);
   setDynamicSortFilter(true);
-  // lessThan() reads the roles it needs directly, so no single sort role fits;
-  // sorting column 0 just gives the proxy something to order.
+  // Metadata dates can move individual rows without rebuilding the proxy.
+  // Scan and mark changes use the full update path for the other sort modes.
+  setSortRole(CaptureRoles::CapturedRole);
   sort(0);
 
   connect(this, &QAbstractItemModel::rowsInserted, this, &CaptureFilterModel::countChanged);
@@ -64,6 +65,10 @@ CaptureFilterModel::CaptureFilterModel(QObject* parent) : QSortFilterProxyModel(
     }
   });
 
+  m_searchTimer.setSingleShot(true);
+  m_searchTimer.setInterval(150);
+  connect(&m_searchTimer, &QTimer::timeout, this, [this] { setSearchText(m_pendingSearchText); });
+
   m_ocrFilterTimer.setSingleShot(true);
   m_ocrFilterTimer.setInterval(60);
   connect(&m_ocrFilterTimer, &QTimer::timeout, this, [this] {
@@ -77,6 +82,7 @@ CaptureFilterModel::CaptureFilterModel(QObject* parent) : QSortFilterProxyModel(
 }
 
 void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
+  m_metadataIndexesDirty = false;
   m_pairingTimer.stop();
   m_groupedOutPaths.clear();
   m_folderIndexTimer.stop();
@@ -106,7 +112,27 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
   m_sourceConnections.append(connect(model, &QAbstractItemModel::rowsInserted, this, pairingChanged));
   m_sourceConnections.append(connect(model, &QAbstractItemModel::rowsRemoved, this, pairingChanged));
   m_sourceConnections.append(connect(model, &QAbstractItemModel::modelReset, this, pairingChanged));
-  m_sourceConnections.append(connect(model, &QAbstractItemModel::dataChanged, this, pairingChanged));
+  m_sourceConnections.append(connect(model, &QAbstractItemModel::dataChanged, this,
+      [this, pairingChanged](const QModelIndex&, const QModelIndex&, const QList<int>& roles) {
+        const bool metadataOnly = !roles.isEmpty() && std::all_of(roles.begin(), roles.end(), [](int role) {
+          return role == CaptureRoles::CapturedRole || role == CaptureRoles::DayKeyRole ||
+                 role == CaptureRoles::DayLabelRole || role == CaptureRoles::TimeLabelRole ||
+                 role == CaptureRoles::CameraRole || role == CaptureRoles::LensRole;
+        });
+        if (!metadataOnly || !m_cameraFilter.isEmpty() || !m_lensFilter.isEmpty() ||
+            m_dateFrom.isValid() || m_dateTo.isValid()) {
+          pairingChanged();
+        }
+      }));
+  if (auto* captures = qobject_cast<CaptureModel*>(model)) {
+    m_sourceConnections.append(connect(captures, &CaptureModel::metadataIndexingChanged, this,
+        [this, captures] {
+          if (!captures->metadataIndexing() && m_metadataIndexesDirty) {
+            m_metadataIndexesDirty = false;
+            m_folderIndexTimer.start();
+          }
+        }));
+  }
 
   // A source insertion can be completely filtered out, in which case the
   // proxy emits no row signal even though sourceCount changed.
@@ -144,7 +170,9 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
                     roles.contains(CaptureRoles::StampRole) ||
                     roles.contains(CaptureRoles::CameraRole) ||
                     roles.contains(CaptureRoles::LensRole)) {
-                  m_folderIndexTimer.start();
+                  const auto* captures = qobject_cast<CaptureModel*>(sourceModel());
+                  if (captures && captures->metadataIndexing()) m_metadataIndexesDirty = true;
+                  else m_folderIndexTimer.start();
                 }
                 if ((!m_duplicateGroups.isEmpty() || !m_similarGroups.isEmpty()) &&
                     (roles.isEmpty() || roles.contains(CaptureRoles::PathRole) ||
@@ -249,8 +277,25 @@ void CaptureFilterModel::setSortMode(int mode) {
   emit sortModeChanged();
 }
 
+void CaptureFilterModel::queueSearchText(const QString& text) {
+  if (text.isEmpty() || text == m_searchText) {
+    setSearchText(text);
+    return;
+  }
+  m_pendingSearchText = text;
+  m_searchTimer.start();
+}
+
+void CaptureFilterModel::commitPendingSearch() {
+  if (m_searchTimer.isActive()) setSearchText(m_pendingSearchText);
+}
+
 void CaptureFilterModel::setSearchText(const QString& text) {
+  const bool pending = m_searchTimer.isActive();
+  m_searchTimer.stop();
   if (m_searchText == text) {
+    // An explicit reset also cancels uncommitted typing and restores the field.
+    if (pending) emit searchTextChanged();
     return;
   }
   beginFilterUpdate();
@@ -607,7 +652,8 @@ void CaptureFilterModel::setMinimumRating(int stars) {
   emit countChanged();
 }
 
-QVariantMap CaptureFilterModel::currentView() const {
+QVariantMap CaptureFilterModel::currentView() {
+  commitPendingSearch();
   QVariantMap view;
   view.insert(QStringLiteral("search"), m_searchText);
   view.insert(QStringLiteral("kind"), m_kindFilter);
@@ -825,6 +871,11 @@ bool CaptureFilterModel::isDocumentAt(int row) const {
 bool CaptureFilterModel::isAnimatedAt(int row) const {
   const QModelIndex source = mapToSource(index(row, 0));
   return source.isValid() && sourceRecord(source.row()).animated;
+}
+
+QString CaptureFilterModel::thumbnailVersionAt(int row) const {
+  return row >= 0 && row < rowCount()
+             ? data(index(row, 0), CaptureRoles::ThumbnailVersionRole).toString() : QString();
 }
 
 qint64 CaptureFilterModel::stampAt(int row) const {

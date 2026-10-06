@@ -89,7 +89,7 @@ SimilarityIndex::SimilarityIndex(CaptureModel* model, QObject* parent)
 }
 
 SimilarityIndex::~SimilarityIndex() {
-  m_cancel->store(true);
+  requestStop();
   m_watcher.waitForFinished();
 }
 
@@ -110,6 +110,14 @@ QStringList SimilarityIndex::groupPaths(const QString& path) const {
   }
   paths.sort(Qt::CaseSensitive);
   return paths;
+}
+
+void SimilarityIndex::requestStop() {
+  m_refreshTimer.stop();
+  m_active = false;
+  m_restartQueued = false;
+  ++m_generation;
+  m_cancel->store(true);
 }
 
 void SimilarityIndex::setActive(bool active) {
@@ -291,9 +299,8 @@ void SimilarityIndex::start() {
     QHash<quint64, int> exactRepresentative;
     QMultiHash<int, int> chunks;
     for (int index = 0; index < hashes.size(); ++index) {
-      if (cancel->load() || !hashes[index].valid) {
-        continue;
-      }
+      if (cancel->load()) return result;
+      if (!hashes[index].valid) continue;
       const auto exact = exactRepresentative.constFind(hashes[index].hash);
       if (exact != exactRepresentative.cend() &&
           similarAspect(hashes[index], hashes[exact.value()]) &&
@@ -307,10 +314,12 @@ void SimilarityIndex::start() {
         const int key = chunk * 256 + int((hashes[index].hash >> (chunk * 8)) & 0xff);
         const auto values = chunks.values(key);
         for (int value : values) {
+          if (cancel->load()) return result;
           possible.insert(value);
         }
       }
       for (int other : std::as_const(possible)) {
+        if (cancel->load()) return result;
         if (similarAspect(hashes[index], hashes[other]) &&
             similarColour(hashes[index], hashes[other]) &&
             std::popcount(hashes[index].hash ^ hashes[other].hash) <= kMaximumDistance) {
@@ -326,6 +335,7 @@ void SimilarityIndex::start() {
 
     QHash<int, QStringList> sets;
     for (int index = 0; index < work.size(); ++index) {
+      if (cancel->load()) return result;
       if (hashes[index].valid) {
         sets[findRoot(parent, index)].append(work[index].path);
       }

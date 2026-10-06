@@ -1,4 +1,5 @@
 #include "sources/CaptureScanner.h"
+#include "sources/ThumbnailSource.h"
 
 #include "sources/CameraRaw.h"
 #include "sources/RawJpegPairs.h"
@@ -429,6 +430,7 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots, const std::a
         if (::stat(QFile::encodeName(canonicalFile).constData(), &status) == 0) {
           record.device = status.st_dev;
           record.inode = status.st_ino;
+          record.thumbnailVersion = ThumbnailSource::version(canonicalFile, FileVersion::thumbnailKey(status));
         }
 
         CaptureRecord::Kind named = CaptureRecord::Picture;

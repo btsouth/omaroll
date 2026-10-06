@@ -105,9 +105,9 @@ QQuickImageResponse* ThumbnailProvider::requestImageResponse(const QString& id,
   //   image://thumbs/1.5/home/user/Pictures/shot.png
   //   image://thumbs/1.5@60~1725200000/home/user/Videos/clip.mp4
   // The optional @<percent> is the seek position for a video scrub frame. The
-  // optional ~<stamp> is the file's mtime: it is not used here, it only makes
-  // the URL differ when the file is rewritten, so Qt's in-memory pixmap cache
-  // cannot keep serving the old frame.
+  // optional ~<version> includes file identity and source dependencies, so
+  // Qt's in-memory pixmap cache cannot keep serving a replaced file. Qt also
+  // keys pixmaps by the requested size.
   qreal devicePixelRatio = 1.0;
   int seekPercent = 20;
   // QML percent-encodes the path whole, so a '#', a '?' or a literal '%' in

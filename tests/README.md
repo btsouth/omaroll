@@ -135,7 +135,9 @@ TMPDIR="$PWD/build/release/benchmark-fixtures" bash tests/run-isolated.sh build/
 The library benchmark creates distinct 1000x750 PNG files in folders of 500.
 Creation is excluded from the timers. Five scans run with warm filesystem
 caches, followed by model/proxy construction, a fully evaluated natural sort,
-and twenty cold-cache then warm-cache thumbnails. Peak memory belongs to the
+and twenty cold-cache then warm-cache thumbnails. Add `--memberships 5000`
+to time album and tag reconciliation with that many members in each collection;
+collection creation stays outside the timers. Peak memory belongs to the
 benchmark process, which also creates fixtures; it is not application memory.
 
 The startup probe launches the actual executable six times using offscreen Qt

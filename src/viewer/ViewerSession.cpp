@@ -3,6 +3,7 @@
 #include "sources/CameraRaw.h"
 #include "sources/CaptureScanner.h"
 #include "sources/FileVersion.h"
+#include "sources/ThumbnailSource.h"
 
 #include <QCollator>
 #include <QDateTime>
@@ -296,13 +297,12 @@ QString ViewerSession::thumbnailUrl(int index, qreal devicePixelRatio) const {
     return {};
   }
   const QString& file = m_paths.at(index);
-  const QFileInfo info(file);
   // "image://thumbs/<ratio>[@<seek%>]~<stamp><encoded path>", as the grid
   // asks for it, so a file already seen there is a disk-cache hit.
   return QStringLiteral("image://thumbs/%1%2~%3%4")
       .arg(devicePixelRatio > 0 ? devicePixelRatio : 1.0)
       .arg(isVideoAt(index) ? QStringLiteral("@40") : QString())
-      .arg(info.lastModified().toMSecsSinceEpoch())
+      .arg(ThumbnailSource::version(file, FileVersion::thumbnailKey(file)))
       .arg(QString::fromUtf8(QUrl::toPercentEncoding(file)));
 }
 
@@ -492,6 +492,7 @@ void ViewerSession::setSequence(const QStringList& paths, int index) {
   const QString beforeSuffix = m_mediaSuffix;
   const double beforeStamp = m_stamp;
   const QString beforeVersion = m_contentVersion;
+  const QString beforeThumbnailVersion = m_thumbnailVersion;
   const bool listChanged = paths != m_paths;
   m_paths = paths;
   m_index = paths.isEmpty() ? -1 : std::clamp(index, 0, int(paths.size()) - 1);
@@ -502,7 +503,8 @@ void ViewerSession::setSequence(const QStringList& paths, int index) {
   // and directory relists must refresh it even when the sequence is unchanged.
   refreshDetails();
   if (path() != before || m_index != beforeIndex || m_mediaSuffix != beforeSuffix ||
-      m_stamp != beforeStamp || m_contentVersion != beforeVersion) {
+      m_stamp != beforeStamp || m_contentVersion != beforeVersion ||
+      m_thumbnailVersion != beforeThumbnailVersion) {
     emit currentChanged();
   }
   // Relisting may replace indexed files without changing the count.
@@ -607,6 +609,7 @@ ViewerSession::PreloadResult ViewerSession::probePreloads(const std::array<QStri
 
 void ViewerSession::refreshDetails() {
   m_contentVersion = FileVersion::key(path());
+  m_thumbnailVersion = ThumbnailSource::version(path(), FileVersion::thumbnailKey(path()));
   watchCurrentFile();
   m_mediaSuffix = CaptureScanner::mediaSuffix(path());
   const QFileInfo info(path());
@@ -738,7 +741,11 @@ void ViewerSession::watchFolder(const QString& folder) {
 void ViewerSession::watchCurrentFile() {
   const QStringList watched = m_watcher.files();
   const QString current = path();
-  if (watched == QStringList{current}) return;
+  QStringList next;
+  if (!current.isEmpty() && QFileInfo::exists(current)) next.append(current);
+  const QString source = ThumbnailSource::path(current);
+  if (source != current && QFileInfo::exists(source)) next.append(source);
+  if (watched == next) return;
   if (!watched.isEmpty()) m_watcher.removePaths(watched);
-  if (!current.isEmpty() && QFileInfo::exists(current)) m_watcher.addPath(current);
+  if (!next.isEmpty()) m_watcher.addPaths(next);
 }

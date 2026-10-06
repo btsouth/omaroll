@@ -31,6 +31,7 @@ class ViewerSession final : public QObject {
   Q_PROPERTY(QUrl url READ url NOTIFY currentChanged)
   Q_PROPERTY(QUrl imageUrl READ imageUrl NOTIFY currentChanged)
   Q_PROPERTY(QString contentVersion READ contentVersion NOTIFY currentChanged)
+  Q_PROPERTY(QString thumbnailVersion READ thumbnailVersion NOTIFY currentChanged)
   Q_PROPERTY(QString fileName READ fileName NOTIFY currentChanged)
   Q_PROPERTY(QString folder READ folder NOTIFY currentChanged)
   Q_PROPERTY(bool isVideo READ isVideo NOTIFY currentChanged)
@@ -63,6 +64,7 @@ public:
   [[nodiscard]] QUrl url() const;
   [[nodiscard]] QUrl imageUrl() const;
   [[nodiscard]] QString contentVersion() const { return m_contentVersion; }
+  [[nodiscard]] QString thumbnailVersion() const { return m_thumbnailVersion; }
   [[nodiscard]] QString fileName() const;
   [[nodiscard]] QString folder() const;
   [[nodiscard]] bool isVideo() const;
@@ -197,6 +199,7 @@ private:
   QString m_mediaSuffix;
   QSize m_rawSize;
   QString m_contentVersion;
+  QString m_thumbnailVersion;
   // The folder being shown and the opened file, for relisting after a change.
   QString m_folder;
   QString m_opened;

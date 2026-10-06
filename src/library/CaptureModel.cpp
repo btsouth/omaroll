@@ -112,8 +112,16 @@ CaptureModel::~CaptureModel() {
   // Stop the walk rather than wait for a large tree to finish; the result is
   // discarded either way, and the wait keeps the future from delivering into
   // a destroyed watcher.
-  m_cancel->store(true);
+  requestStop();
   m_scanWatcher.waitForFinished();
+}
+
+void CaptureModel::requestStop() {
+  m_refreshTimer.stop();
+  m_fallbackRefreshTimer.stop();
+  m_midnightTimer.stop();
+  m_rescanQueued = false;
+  m_cancel->store(true);
 }
 
 void CaptureModel::scheduleMidnight() {
@@ -274,6 +282,8 @@ QVariant CaptureModel::data(const QModelIndex& index, int role) const {
     return sizeLabel(record.bytes);
   case CaptureRoles::BytesRole:
     return record.bytes;
+  case CaptureRoles::ThumbnailVersionRole:
+    return record.thumbnailVersion;
   case CaptureRoles::StampRole:
     return record.modified;
   case CaptureRoles::IsVideoRole:
@@ -314,6 +324,7 @@ QHash<int, QByteArray> CaptureModel::roleNames() const {
       {CaptureRoles::SizeLabelRole, "sizeLabel"},
       {CaptureRoles::BytesRole, "bytes"},
       {CaptureRoles::StampRole, "stamp"},
+      {CaptureRoles::ThumbnailVersionRole, "thumbnailVersion"},
       {CaptureRoles::IsVideoRole, "isVideo"},
       {CaptureRoles::IsDocumentRole, "isDocument"},
       {CaptureRoles::FavoriteRole, "favorite"},
@@ -356,13 +367,18 @@ int CaptureModel::rowOf(const QString& path) const {
   return -1;
 }
 
+void CaptureModel::setMetadataIndexing(bool indexing) {
+  if (m_metadataIndexing == indexing) return;
+  m_metadataIndexing = indexing;
+  emit metadataIndexingChanged();
+}
+
 void CaptureModel::applyMetadata(const QList<MetadataUpdate>& updates) {
   if (updates.isEmpty() || m_records.isEmpty()) {
     return;
   }
 
-  int firstChanged = m_records.size();
-  int lastChanged = -1;
+  QList<int> changedRows;
   bool dateChanged = false;
   bool cameraChanged = false;
   for (const MetadataUpdate& update : updates) {
@@ -392,11 +408,10 @@ void CaptureModel::applyMetadata(const QList<MetadataUpdate>& updates) {
     if (!changed) {
       continue;
     }
-    firstChanged = qMin(firstChanged, row);
-    lastChanged = qMax(lastChanged, row);
+    changedRows.append(row);
   }
 
-  if (lastChanged >= 0) {
+  if (!changedRows.isEmpty()) {
     QList<int> roles;
     if (dateChanged) {
       roles.append({CaptureRoles::CapturedRole, CaptureRoles::DayKeyRole,
@@ -405,7 +420,18 @@ void CaptureModel::applyMetadata(const QList<MetadataUpdate>& updates) {
     if (cameraChanged) {
       roles.append({CaptureRoles::CameraRole, CaptureRoles::LensRole});
     }
-    emit dataChanged(index(firstChanged), index(lastChanged), roles);
+    std::sort(changedRows.begin(), changedRows.end());
+    int first = changedRows.first();
+    int last = first;
+    for (const int row : std::as_const(changedRows)) {
+      if (row <= last + 1) {
+        last = row;
+      } else {
+        emit dataChanged(index(first), index(last), roles);
+        first = last = row;
+      }
+    }
+    emit dataChanged(index(first), index(last), roles);
   }
 }
 
@@ -440,6 +466,7 @@ QString CaptureModel::uriList(const QStringList& paths) const {
 }
 
 void CaptureModel::refresh() {
+  if (m_cancel->load()) return;
   if (m_scanning) {
     // Fold repeat requests into one follow-up scan rather than queueing many.
     m_rescanQueued = true;
@@ -608,7 +635,7 @@ void CaptureModel::adoptResults(ScanResult result) {
     }
 
     // Update what stayed. A rewritten file (a recording finalised in place)
-    // changes size and mtime; the mtime is what busts the thumbnail cache.
+    // changes its full version, including replacements with preserved mtime.
     QSet<QString> kept;
     kept.reserve(m_records.size());
     for (int existing = 0; existing < m_records.size(); ++existing) {
@@ -619,6 +646,7 @@ void CaptureModel::adoptResults(ScanResult result) {
           record.camera == fresh.camera && record.lens == fresh.lens &&
           record.rating == fresh.rating && record.caption == fresh.caption &&
           record.modified == fresh.modified && record.bytes == fresh.bytes &&
+          record.thumbnailVersion == fresh.thumbnailVersion &&
           record.entryPath == fresh.entryPath && record.fileName == fresh.fileName &&
           record.kind == fresh.kind && record.video == fresh.video &&
           record.document == fresh.document && record.animated == fresh.animated &&

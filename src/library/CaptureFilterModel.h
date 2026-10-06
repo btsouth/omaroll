@@ -79,8 +79,10 @@ public:
   [[nodiscard]] int sortMode() const { return m_sortMode; }
   void setSortMode(int mode);
 
-  [[nodiscard]] QString searchText() const { return m_searchText; }
+  [[nodiscard]] QString searchText() { commitPendingSearch(); return m_searchText; }
   void setSearchText(const QString& text);
+  Q_INVOKABLE void queueSearchText(const QString& text);
+  Q_INVOKABLE void commitPendingSearch();
 
   [[nodiscard]] bool favoritesOnly() const { return m_favoritesOnly; }
   void setFavoritesOnly(bool value);
@@ -121,7 +123,7 @@ public:
   void setMinimumRating(int stars);
 
   [[nodiscard]] QString smartCollectionFilter() const { return m_smartCollectionFilter; }
-  Q_INVOKABLE QVariantMap currentView() const;
+  Q_INVOKABLE QVariantMap currentView();
   Q_INVOKABLE void applyView(const QString& name, const QVariantMap& view,
                              const QStringList& tagPaths = {});
   Q_INVOKABLE void clearSmartCollection();
@@ -168,6 +170,7 @@ public:
   Q_INVOKABLE bool isDocumentAt(int row) const;
   Q_INVOKABLE bool isAnimatedAt(int row) const;
   Q_INVOKABLE qint64 stampAt(int row) const;
+  Q_INVOKABLE QString thumbnailVersionAt(int row) const;
   Q_INVOKABLE QString ocrSnippetAt(int row) const;
 
   // Text found by the local OCR index. Updates are coalesced because a warm
@@ -234,6 +237,8 @@ private:
   int m_sortMode = NewestFirst;
   QCollator m_nameCollator;
   QString m_searchText;
+  QString m_pendingSearchText;
+  QTimer m_searchTimer;
   QStringList m_searchTerms;
   QString m_folderFilter;
   QStringList m_folders;
@@ -269,6 +274,7 @@ private:
   QHash<QString, QString> m_ocrText;
   QHash<QString, QString> m_ocrFolded;
   QTimer m_folderIndexTimer;
+  bool m_metadataIndexesDirty = false;
   QTimer m_duplicateOrderTimer;
   QTimer m_ocrFilterTimer;
   QList<QMetaObject::Connection> m_sourceConnections;

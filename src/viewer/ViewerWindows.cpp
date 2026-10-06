@@ -13,6 +13,7 @@
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QQuickWindow>
+#include <QPointer>
 #include <QScreen>
 #include <QTimer>
 
@@ -56,7 +57,7 @@ struct ViewerWindows::Viewer {
   // Already showing these files: one file being the one on screen, or the
   // same selection of several.
   [[nodiscard]] bool shows(const QStringList& files) const {
-    if (!window->isVisible() || files.isEmpty()) {
+    if ((!window->isVisible() && !pending) || files.isEmpty()) {
       return false;
     }
     return files.size() == 1 ? session.path() == files.first()
@@ -71,6 +72,8 @@ struct ViewerWindows::Viewer {
   std::unique_ptr<QObject> root;
   QQuickWindow* window = nullptr;
   QList<QMetaObject::Connection> connections;
+  bool pending = false;
+  quint64 placementGeneration = 0;
 };
 
 ViewerWindows::ViewerWindows(QQmlEngine& engine, QObject* parent)
@@ -90,39 +93,44 @@ QQuickWindow* ViewerWindows::open(const QStringList& files, const QHash<QString,
     if (viewer->shows(files)) {
       QHash<QString, QString> requestedEntries;
       for (const auto& file : files) requestedEntries.insert(file, entryPaths.value(file, file));
-      show(*viewer, {}, false, requestedEntries);
+      viewer->session.setDeletionPaths(requestedEntries);
+      if (!viewer->pending) show(*viewer, {});
       return viewer->window;
     }
   }
 
   const auto spare = std::find_if(m_viewers.begin(), m_viewers.end(),
-                                  [](const auto& viewer) { return !viewer->window->isVisible(); });
+                                  [](const auto& viewer) {
+                                    return !viewer->window->isVisible() && !viewer->pending;
+                                  });
   Viewer* viewer = spare != m_viewers.end() ? spare->get() : create();
   if (!viewer) {
     return nullptr;
   }
 
-  // A second viewer on this workspace tiles, and so do the ones floating
-  // there already; the first one alone floats centred as before.
-  const bool others = !visibleWindows().isEmpty();
-  const HyprlandPlacement::Plan plan = others ? m_query() : HyprlandPlacement::Plan{};
-  show(*viewer, files, plan.tileNew(), entryPaths);
-  HyprlandPlacement::tile(plan.floating);
+  const bool others = std::any_of(m_viewers.begin(), m_viewers.end(), [viewer](const auto& other) {
+    return other.get() != viewer && (other->window->isVisible() || other->pending);
+  });
+  viewer->session.open(files);
+  viewer->session.setDeletionPaths(entryPaths);
+  viewer->window->setProperty("mapTiled", false);
+  const quint64 generation = ++viewer->placementGeneration;
   if (others) {
-    // Two opens in quick succession can each look before the other's window
-    // has mapped, and both would float. Look again once this one is up and
-    // its own title has reached the compositor.
-    connect(
-        viewer->window, &QQuickWindow::frameSwapped, this,
-        [this] {
-          QTimer::singleShot(150, this, [this] {
-            const HyprlandPlacement::Plan settled = m_query();
-            if (settled.viewers > 1) {
-              HyprlandPlacement::tile(settled.floating);
-            }
-          });
-        },
-        Qt::SingleShotConnection);
+    // Prepare the media while hidden. IPC must finish before the float rule
+    // sees the title, with one deadline for the whole placement request.
+    viewer->pending = true;
+    connect(viewer->window, &QQuickWindow::closing, this, [viewer] {
+      viewer->pending = false;
+      ++viewer->placementGeneration;
+    }, Qt::SingleShotConnection);
+    QTimer::singleShot(100, viewer->window, [this, viewer, generation] {
+      if (!viewer->pending || generation != viewer->placementGeneration) return;
+      viewer->pending = false;
+      show(*viewer, {});
+    });
+    place(*viewer, generation);
+  } else {
+    show(*viewer, {});
   }
   return viewer->window;
 }
@@ -188,23 +196,14 @@ ViewerWindows::Viewer* ViewerWindows::create() {
   return created;
 }
 
-void ViewerWindows::show(Viewer& viewer, const QStringList& files, bool tiled,
+void ViewerWindows::show(Viewer& viewer, const QStringList& files,
                          const QHash<QString, QString>& entryPaths) {
   QQuickWindow* window = viewer.window;
   if (!files.isEmpty()) {
     viewer.session.open(files);
   }
-  viewer.session.setDeletionPaths(entryPaths);
+  if (!entryPaths.isEmpty()) viewer.session.setDeletionPaths(entryPaths);
   if (!window->isVisible()) {
-    // Hyprland's float rule matches a viewer's title when the window maps.
-    // Mapping under the library's plain title leaves this one tiled; its own
-    // title follows once the first frame is up.
-    window->setProperty("mapTiled", tiled);
-    if (tiled) {
-      connect(
-          window, &QQuickWindow::frameSwapped, window,
-          [window] { window->setProperty("mapTiled", false); }, Qt::SingleShotConnection);
-    }
     // A floating window opens at this size. A tiling compositor ignores
     // the request and gives the window its tile instead.
     if (const QScreen* screen = window->screen()) {
@@ -236,11 +235,51 @@ void ViewerWindows::activated(Viewer& viewer) {
   updateFrontmost();
 }
 
+void ViewerWindows::place(Viewer& viewer, quint64 generation, bool retry) {
+  QPointer<QQuickWindow> window = viewer.window;
+  m_query(viewer.window, [this, &viewer, window, generation, retry](HyprlandPlacement::Plan plan) {
+    if (!window || !viewer.pending || generation != viewer.placementGeneration) return;
+    const bool unmappedPeer = plan.valid && plan.viewers == 0 &&
+        std::any_of(m_viewers.begin(), m_viewers.end(), [&viewer](const auto& other) {
+          return other.get() != &viewer && (other->window->isVisible() || other->pending);
+        });
+    if (!retry && (plan.retry || unmappedPeer)) {
+      QTimer::singleShot(25, window, [this, &viewer, window, generation] {
+        if (window && viewer.pending && generation == viewer.placementGeneration) {
+          place(viewer, generation, true);
+        }
+      });
+      return;
+    }
+    viewer.pending = false;
+    window->setProperty("mapTiled", plan.tileNew());
+    if (plan.tileNew()) {
+      connect(window, &QQuickWindow::frameSwapped, window, [window] {
+        if (window) window->setProperty("mapTiled", false);
+      }, Qt::SingleShotConnection);
+    }
+    show(viewer, {});
+    m_tile(plan.floating);
+    if (unmappedPeer) {
+      // A viewer opened a moment earlier has still not reached the
+      // compositor, so both float. Look again once this one is up.
+      connect(window, &QQuickWindow::frameSwapped, window, [this, window] {
+        QTimer::singleShot(150, window, [this, window] {
+          if (!window->isVisible()) return;
+          m_query(window, [this](HyprlandPlacement::Plan settled) {
+            if (settled.viewers > 1) m_tile(settled.floating);
+          });
+        });
+      }, Qt::SingleShotConnection);
+    }
+  });
+}
+
 void ViewerWindows::hidden() {
   // Keep one closed viewer for the next open; free the rest.
   bool kept = false;
   for (auto it = m_viewers.begin(); it != m_viewers.end();) {
-    if ((*it)->window->isVisible()) {
+    if ((*it)->window->isVisible() || (*it)->pending) {
       ++it;
     } else if (!kept) {
       kept = true;

@@ -3,6 +3,7 @@
 #include "pdf/PdfSupport.h"
 #include "sources/CameraRaw.h"
 #include "sources/CaptureScanner.h"
+#include "sources/ThumbnailSource.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -128,21 +129,13 @@ void ThumbnailCache::prune(qint64 maxBytes) {
   }
 }
 
-QString ThumbnailCache::cacheKey(const QString& path, const QSize& pixelSize, int seekPercent) {
-  const QFileInfo info(path);
-
-  // Same identity Omarchy's own image picker uses (size and mtime), plus the
-  // rendered size so a scale change is a miss rather than a blurry hit. The
-  // leading tag versions the rendering itself, so a change in how tiles are
-  // made invalidates everything rather than serving old shapes from cache.
-  const QString identity = QStringLiteral("cover3|%1|%2|%3|%4x%5|t%6")
-                               .arg(path)
-                               .arg(info.size())
-                               .arg(info.lastModified().toMSecsSinceEpoch())
-                               .arg(pixelSize.width())
-                               .arg(pixelSize.height())
-                               .arg(seekPercent);
-
+QString ThumbnailCache::cacheKey(const QString& path, const QString& renderPath,
+                                 const QSize& pixelSize, int seekPercent) {
+  const QString version = FileVersion::diskKey(path);
+  const QString dependency = renderPath == path ? version : FileVersion::diskKey(renderPath);
+  const QString identity = QStringLiteral("cover5|%1|%2|%3|%4|%5x%6|t%7")
+                               .arg(path, version, renderPath, dependency)
+                               .arg(pixelSize.width()).arg(pixelSize.height()).arg(seekPercent);
   return QString::fromLatin1(
       QCryptographicHash::hash(identity.toUtf8(), QCryptographicHash::Md5).toHex());
 }
@@ -270,7 +263,8 @@ QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
   }
 
   const QString directory = cacheDirectory();
-  const QString key = cacheKey(path, pixelSize, seekPercent);
+  const QString renderPath = ThumbnailSource::path(path);
+  const QString key = cacheKey(path, renderPath, pixelSize, seekPercent);
   const QString cachePath = directory + QLatin1Char('/') + key + QStringLiteral(".jpg");
 
   QImage cached(cachePath);
@@ -280,30 +274,30 @@ QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
   if (!cached.isNull()) {
     return cached;
   }
+  // Older tiles have no ctime in their key. Reuse them only when the source
+  // has not changed since the tile was written, including preserved-mtime saves.
+  const QFileInfo source(path);
+  const QString legacyIdentity = QStringLiteral("cover3|%1|%2|%3|%4x%5|t%6")
+      .arg(path).arg(source.size()).arg(source.lastModified().toMSecsSinceEpoch())
+      .arg(pixelSize.width()).arg(pixelSize.height()).arg(seekPercent);
+  const QString legacyPath = directory + QLatin1Char('/') + QString::fromLatin1(
+      QCryptographicHash::hash(legacyIdentity.toUtf8(), QCryptographicHash::Md5).toHex())
+      + QStringLiteral(".jpg");
+  struct stat tileInfo {};
+  const auto unchanged = [&tileInfo](const QString& file) {
+    struct stat info {};
+    if (::stat(QFile::encodeName(file).constData(), &info) != 0) return false;
+    return info.st_ctim.tv_sec < tileInfo.st_mtim.tv_sec ||
+           (info.st_ctim.tv_sec == tileInfo.st_mtim.tv_sec &&
+            info.st_ctim.tv_nsec <= tileInfo.st_mtim.tv_nsec);
+  };
+  if (renderPath == path && ::stat(QFile::encodeName(legacyPath).constData(), &tileInfo) == 0 &&
+      unchanged(path)) {
+    cached.load(legacyPath);
+    if (!cached.isNull()) return isCancelled(cancelled) ? QImage{} : cached;
+  }
   if (recentlyFailed(key)) {
     return {};
-  }
-
-  // A transcode's output takes its source's exact tile. Rendering the derived
-  // file itself can never line up: ffmpegthumbnailer seeks by keyframe and
-  // fails outright on a short single-keyframe re-encode (frame zero, usually
-  // dark), while a GIF decodes to the true percent frame, so the same content
-  // wore three different tiles and read as three unrelated videos.
-  QString renderPath = path;
-  static const QRegularExpression derivedName(
-      QStringLiteral(R"(^(.*)-(?:4k|1080p|720p)\.(?:mp4|gif)$)"),
-      QRegularExpression::CaseInsensitiveOption);
-  const QRegularExpressionMatch derived = derivedName.match(path);
-  if (derived.hasMatch()) {
-    for (const QString& extension :
-         {QStringLiteral("mp4"), QStringLiteral("mkv"), QStringLiteral("webm"),
-          QStringLiteral("mov"), QStringLiteral("m4v"), QStringLiteral("avi")}) {
-      const QString candidate = derived.captured(1) + QLatin1Char('.') + extension;
-      if (QFileInfo::exists(candidate)) {
-        renderPath = candidate;
-        break;
-      }
-    }
   }
 
   const QString suffix = CaptureScanner::mediaSuffix(renderPath);
@@ -327,7 +321,10 @@ QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
   }
   if (rendered.isNull() && renderPath != path) {
     // The source could not be read after all; the derived file stands alone.
-    rendered = renderImage(path, pixelSize, seekPercent, cancelled);
+    const QString fallbackSuffix = CaptureScanner::mediaSuffix(path);
+    rendered = CaptureScanner::isVideo(fallbackSuffix)
+                   ? renderVideo(path, pixelSize, seekPercent, cancelled)
+                   : renderImage(path, pixelSize, seekPercent, cancelled);
   }
   if (isCancelled(cancelled)) {
     return {};

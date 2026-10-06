@@ -60,6 +60,6 @@ private:
                                           int seekPercent, Cancellation cancelled);
   [[nodiscard]] static QImage renderVideo(const QString& path, const QSize& pixelSize,
                                           int seekPercent, Cancellation cancelled);
-  [[nodiscard]] static QString cacheKey(const QString& path, const QSize& pixelSize,
-                                        int seekPercent);
+  [[nodiscard]] static QString cacheKey(const QString& path, const QString& renderPath,
+                                        const QSize& pixelSize, int seekPercent);
 };

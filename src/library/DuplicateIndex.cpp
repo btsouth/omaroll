@@ -61,7 +61,7 @@ DuplicateIndex::DuplicateIndex(CaptureModel* model, QObject* parent)
 }
 
 DuplicateIndex::~DuplicateIndex() {
-  m_cancel->store(true);
+  requestStop();
   m_watcher.waitForFinished();
 }
 
@@ -93,6 +93,14 @@ QStringList DuplicateIndex::otherCopies(const QString& keepPath) const {
   QStringList paths = groupPaths(keepPath);
   paths.removeAll(keepPath);
   return paths;
+}
+
+void DuplicateIndex::requestStop() {
+  m_refreshTimer.stop();
+  m_active = false;
+  m_restartQueued = false;
+  ++m_generation;
+  m_cancel->store(true);
 }
 
 void DuplicateIndex::setActive(bool active) {

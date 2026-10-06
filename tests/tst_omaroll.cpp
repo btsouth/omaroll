@@ -46,6 +46,7 @@
 #include <QColorSpace>
 #include <QBuffer>
 #include <QCryptographicHash>
+#include <QDataStream>
 #include <QImageIOHandler>
 #include <QImageReader>
 #include <QPainter>
@@ -54,6 +55,7 @@
 #include <QScopeGuard>
 #include <QSaveFile>
 #include <QSignalSpy>
+#include <QSemaphore>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTransform>
@@ -2478,6 +2480,8 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(!model.scanning(), 5000);
     QVERIFY(model.rowOf(path) >= 0);
     const CaptureRecord original = model.recordAt(model.rowOf(path));
+    const QImage oldTile = ThumbnailCache::thumbnail(path, QSize(8, 8), 1.0);
+    QVERIFY(oldTile.pixelColor(4, 4).red() > 200);
     image.fill(Qt::blue);
     QVERIFY(image.save(replacement, "BMP"));
     QFile file(replacement);
@@ -2492,6 +2496,9 @@ private slots:
     QCOMPARE(fresh.bytes, original.bytes);
     QCOMPARE(fresh.modified, original.modified);
     QVERIFY(fresh.inode != original.inode);
+    QVERIFY(fresh.thumbnailVersion != original.thumbnailVersion);
+    const QImage newTile = ThumbnailCache::thumbnail(path, QSize(8, 8), 1.0);
+    QVERIFY(newTile.pixelColor(4, 4).blue() > 200);
     struct stat status {};
     QVERIFY(::stat(QFile::encodeName(path).constData(), &status) == 0);
     QCOMPARE(fresh.inode, quint64(status.st_ino));
@@ -4938,9 +4945,12 @@ private slots:
 
   void localOcrSearchRunsOnceThenUsesItsPrivateCache() {
     QTemporaryDir dir;
+    QTemporaryDir cacheDir;
     QVERIFY(dir.isValid());
 
+    const QByteArray previousCache = qgetenv("XDG_CACHE_HOME");
     const QByteArray previousPath = qgetenv("PATH");
+    const QByteArray previousLanguages = qgetenv("OMARCHY_OCR_LANGS");
     const QByteArray previousLog = qgetenv("OMAROLL_OCR_TEST_LOG");
     const QByteArray previousPictures = qgetenv("XDG_PICTURES_DIR");
     const QByteArray previousVideos = qgetenv("XDG_VIDEOS_DIR");
@@ -4950,7 +4960,9 @@ private slots:
       const auto putBack = [](const char* name, const QByteArray& value) {
         value.isNull() ? qunsetenv(name) : qputenv(name, value);
       };
+      putBack("XDG_CACHE_HOME", previousCache);
       putBack("PATH", previousPath);
+      putBack("OMARCHY_OCR_LANGS", previousLanguages);
       putBack("OMAROLL_OCR_TEST_LOG", previousLog);
       putBack("XDG_PICTURES_DIR", previousPictures);
       putBack("XDG_VIDEOS_DIR", previousVideos);
@@ -4958,6 +4970,7 @@ private slots:
       putBack("OMARCHY_SCREENRECORD_DIR", previousRecordings);
     });
 
+    qputenv("XDG_CACHE_HOME", cacheDir.path().toUtf8());
     const QString logPath = dir.filePath(QStringLiteral("ocr-runs.log"));
     QFile tesseract(dir.filePath(QStringLiteral("tesseract")));
     QVERIFY(tesseract.open(QIODevice::WriteOnly));
@@ -4974,6 +4987,7 @@ private slots:
       QVERIFY(qputenv(name, dir.path().toUtf8()));
     }
 
+    { QFile log(logPath); QVERIFY(log.open(QIODevice::WriteOnly)); }
     const QString imagePath = dir.filePath(QStringLiteral("capture-001.png"));
     QImage image(16, 12, QImage::Format_RGB32);
     image.fill(Qt::white);
@@ -4985,6 +4999,20 @@ private slots:
     QSignalSpy scanned(&model, &CaptureModel::countChanged);
     QVERIFY(scanned.wait(5000));
     QCOMPARE(model.rowCount(), 1);
+
+    QVERIFY(QDir().mkpath(OcrIndex::cacheDirectory()));
+    const QString legacyPath = OcrIndex::cacheDirectory() + QLatin1Char('/') +
+        QString::fromLatin1(QCryptographicHash::hash(imagePath.toUtf8(), QCryptographicHash::Sha256).toHex())
+        + QStringLiteral(".ocr");
+    {
+      QFile legacy(legacyPath);
+      QVERIFY(legacy.open(QIODevice::WriteOnly));
+      QDataStream stream(&legacy);
+      stream.setVersion(QDataStream::Qt_6_0);
+      stream << quint32(0x4f435231) << quint16(3) << imagePath
+             << model.recordAt(0).modified << model.recordAt(0).bytes
+             << QStringLiteral("Invoice total forty two");
+    }
 
     const auto runSearch = [&] {
       CaptureFilterModel proxy;
@@ -5005,8 +5033,21 @@ private slots:
       QVERIFY(proxy.ocrSnippetAt(0).isEmpty());
     };
 
+    qputenv("OMARCHY_OCR_LANGS", "deu+eng");
+    runSearch();
+    QVERIFY(!QFile::exists(legacyPath));
+    qputenv("OMARCHY_OCR_LANGS", " deu + eng ");
+    runSearch();
+    qputenv("OMARCHY_OCR_LANGS", "eng");
     runSearch();
     runSearch();
+    qputenv("OMARCHY_OCR_LANGS", "deu+eng");
+    runSearch();
+    {
+      OcrIndex index(&model);
+      QThreadPool::globalInstance()->waitForDone();
+      QCOMPARE(index.clearCache(), 2);
+    }
 
     image = QImage(20, 14, QImage::Format_RGB32);
     image.fill(Qt::black);
@@ -5914,7 +5955,7 @@ private slots:
 
     QFile ffprobe(dir.filePath(QStringLiteral("ffprobe")));
     QVERIFY(ffprobe.open(QIODevice::WriteOnly));
-    ffprobe.write("#!/bin/sh\n"
+    ffprobe.write("#!/bin/sh\n/bin/sleep 1\n"
                   "printf '%s\\n' "
                   "'{\"format\":{\"tags\":{\"creation_time\":\"2021-08-09T10:"
                   "11:12\",\"com.apple.quicktime.make\":\"Apple\","
@@ -5944,6 +5985,7 @@ private slots:
     clip.write("test video");
     clip.close();
 
+    { QFile log(logPath); QVERIFY(log.open(QIODevice::WriteOnly)); }
     QFile::remove(MediaMetadataIndex::cachePath());
     AppSettings settings;
     settings.setScanDownloads(false);
@@ -5959,8 +6001,12 @@ private slots:
     const QDateTime undatedFallback = model.recordAt(model.rowOf(undated)).captured;
 
     {
+      QElapsedTimer metadataTimer; metadataTimer.start();
       MediaMetadataIndex dates(&model);
       QTRY_COMPARE_WITH_TIMEOUT(dates.total(), 3, 2000);
+      QTRY_VERIFY_WITH_TIMEOUT(!model.recordAt(model.rowOf(photo)).camera.isEmpty(), 3000);
+      qInfo() << "PERF first metadata ms" << metadataTimer.nsecsElapsed() / 1e6;
+      QVERIFY(dates.indexing());
       QTRY_VERIFY_WITH_TIMEOUT(!dates.indexing(), 3000);
       QCOMPARE(dates.completed(), 3);
       QCOMPARE(model.recordAt(model.rowOf(photo)).captured,
@@ -6106,6 +6152,11 @@ private slots:
     QVERIFY(scanned.wait(5000));
     QCOMPARE(model.rowCount(), paths.size());
     QSignalSpy dateChanges(&model, &QAbstractItemModel::dataChanged);
+    CaptureFilterModel liveProxy;
+    liveProxy.setSourceModel(&model);
+    QCoreApplication::processEvents();
+    QSignalSpy proxyChanges(&liveProxy, &QAbstractItemModel::dataChanged);
+    QSignalSpy dateChoices(&liveProxy, &CaptureFilterModel::dateBucketsChanged);
 
     {
       MediaMetadataIndex dates(&model);
@@ -6122,7 +6173,27 @@ private slots:
         }
       }
     }
-    QCOMPARE(dateChanges.count(), 1);
+    QCoreApplication::processEvents();
+    QCOMPARE(dateChoices.size(), 1);
+    for (const auto& change : proxyChanges) {
+      QVERIFY(!change.at(2).value<QList<int>>().contains(CaptureModel::CompanionPathRole));
+    }
+    // Only changed rows are published, once each, in contiguous ranges.
+    QSet<int> notifiedRows;
+    QVERIFY(!dateChanges.isEmpty());
+    for (const auto& change : dateChanges) {
+      const auto first = change.at(0).value<QModelIndex>();
+      const auto last = change.at(1).value<QModelIndex>();
+      QVERIFY(first.isValid() && last.isValid());
+      QVERIFY(first.row() <= last.row());
+      QVERIFY(change.at(2).value<QList<int>>().contains(CaptureRoles::CapturedRole));
+      for (int row = first.row(); row <= last.row(); ++row) {
+        QVERIFY(!notifiedRows.contains(row));
+        QVERIFY(!model.recordAt(row).path.endsWith(QStringLiteral("photo 32 #.png")));
+        notifiedRows.insert(row);
+      }
+    }
+    QCOMPARE(notifiedRows.size(), 64);
 
     QFile log(logPath);
     QVERIFY(log.open(QIODevice::ReadOnly));
@@ -8011,6 +8082,142 @@ private slots:
 
   // --- Thumbnails -------------------------------------------------------
 
+  void indexShutdownCancelsQueuedWorkBeforeDrainingThePool() {
+    QTemporaryDir dir;
+    QImage image(64, 64, QImage::Format_RGB32);
+    image.fill(Qt::green);
+    for (int index = 0; index < 8; ++index) {
+      QVERIFY(image.save(dir.filePath(QStringLiteral("photo%1.png").arg(index)), "PNG"));
+    }
+    AppSettings settings;
+    QVERIFY(settings.addLibraryFolder(QUrl::fromLocalFile(dir.path())));
+    CaptureModel model(&settings);
+    QTRY_VERIFY_WITH_TIMEOUT(!model.scanning(), 5000);
+    QThreadPool* pool = QThreadPool::globalInstance();
+    pool->waitForDone();
+    const int threads = pool->maxThreadCount();
+    pool->setMaxThreadCount(1);
+    DuplicateIndex duplicates(&model);
+    SimilarityIndex similarities(&model);
+    QSemaphore entered, release;
+    pool->start([&] { entered.release(); release.acquire(); });
+    const auto restorePool = qScopeGuard([&] {
+      release.release();
+      pool->waitForDone();
+      pool->setMaxThreadCount(threads);
+    });
+    QVERIFY(entered.tryAcquire(1, 1000));
+    duplicates.setActive(true);
+    similarities.setActive(true);
+    duplicates.refresh();
+    similarities.refresh();
+    QTRY_VERIFY(duplicates.scanning() && similarities.scanning());
+    QVERIFY(duplicates.total() > 0 && similarities.total() > 0);
+    QElapsedTimer timer; timer.start();
+    duplicates.requestStop();
+    similarities.requestStop();
+    model.requestStop();
+    release.release();
+    QVERIFY(pool->waitForDone(QDeadlineTimer(1500)));
+    qInfo() << "PERF cancelled index drain ms" << timer.nsecsElapsed() / 1e6;
+    QTRY_VERIFY(!duplicates.scanning() && !similarities.scanning());
+    QCOMPARE(duplicates.completed(), 0);
+    QCOMPARE(similarities.completed(), 0);
+    QVERIFY(duplicates.groups().isEmpty() && similarities.groups().isEmpty());
+  }
+
+  void diskThumbnailVersionsSurviveRemountAndReuseValidLegacyTiles() {
+    struct stat info {};
+    info.st_size = 123;
+    info.st_mtim = {456, 789};
+    info.st_ctim = {987, 654};
+    const QString key = FileVersion::diskKey(info);
+    info.st_dev = 100; info.st_ino = 200;
+    QCOMPARE(FileVersion::diskKey(info), key);
+    ++info.st_ctim.tv_nsec;
+    QVERIFY(FileVersion::diskKey(info) != key);
+
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("legacy.bmp"));
+    QImage source(16, 16, QImage::Format_RGB32);
+    source.fill(Qt::blue);
+    QVERIFY(source.save(path, "BMP"));
+    const QFileInfo file(path);
+    const QString identity = QStringLiteral("cover3|%1|%2|%3|8x8|t20")
+        .arg(path).arg(file.size()).arg(file.lastModified().toMSecsSinceEpoch());
+    const QString cache = ThumbnailCache::cacheDirectory() + QLatin1Char('/') +
+        QString::fromLatin1(QCryptographicHash::hash(identity.toUtf8(), QCryptographicHash::Md5).toHex())
+        + QStringLiteral(".jpg");
+    QVERIFY(QDir().mkpath(ThumbnailCache::cacheDirectory()));
+    QImage oldTile(8, 8, QImage::Format_RGB32);
+    oldTile.fill(Qt::red);
+    QVERIFY(oldTile.save(cache));
+    // A deliberately distinct cached color proves the old entry was read.
+    QVERIFY(ThumbnailCache::thumbnail(path, QSize(8, 8), 1.0).pixelColor(4, 4).red() > 200);
+    struct stat status {};
+    QVERIFY(::stat(QFile::encodeName(path).constData(), &status) == 0);
+    const timespec times[2] = {status.st_atim, status.st_mtim};
+    QTest::qWait(5);
+    source.fill(Qt::green);
+    QVERIFY(source.save(path, "BMP"));
+    QVERIFY(::utimensat(AT_FDCWD, QFile::encodeName(path).constData(), times, 0) == 0);
+    QVERIFY(ThumbnailCache::thumbnail(path, QSize(8, 8), 1.0).pixelColor(4, 4).green() > 100);
+  }
+
+  void thumbnailVersionsCoverPreservedTimesAndNanoseconds() {
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("photo.bmp"));
+    QImage image(32, 32, QImage::Format_RGB32);
+    image.fill(Qt::red);
+    QVERIFY(image.save(path, "BMP"));
+    const auto scan = [&] { return CaptureScanner::scan({{dir.path(), 1}}).first(); };
+    const auto original = scan();
+    QVERIFY(!original.thumbnailVersion.isEmpty());
+    QVERIFY(ThumbnailCache::thumbnail(path, QSize(8, 8), 1.0).pixelColor(4, 4).red() > 200);
+    struct stat status {};
+    QVERIFY(::stat(QFile::encodeName(path).constData(), &status) == 0);
+    const timespec times[2] = {status.st_atim, {status.st_mtim.tv_sec,
+        status.st_mtim.tv_nsec % 1000000 == 999999 ? status.st_mtim.tv_nsec - 1
+                                                  : status.st_mtim.tv_nsec + 1}};
+    image.fill(Qt::blue);
+    QVERIFY(image.save(path, "BMP"));
+    QVERIFY(::utimensat(AT_FDCWD, QFile::encodeName(path).constData(), times, 0) == 0);
+    const auto rewritten = scan();
+    QCOMPARE(rewritten.modified, original.modified);
+    QCOMPARE(rewritten.bytes, original.bytes);
+    QCOMPARE(rewritten.inode, original.inode);
+    QVERIFY(rewritten.thumbnailVersion != original.thumbnailVersion);
+    QVERIFY(ThumbnailCache::thumbnail(path, QSize(8, 8), 1.0).pixelColor(4, 4).blue() > 200);
+    // Restoring the exact mtime still refreshes Qt's URL and the disk entry.
+    QTest::qWait(5);
+    image.fill(Qt::red);
+    QVERIFY(image.save(path, "BMP"));
+    QVERIFY(::utimensat(AT_FDCWD, QFile::encodeName(path).constData(), times, 0) == 0);
+    const auto preservedWrite = scan();
+    QCOMPARE(preservedWrite.modified, rewritten.modified);
+    QCOMPARE(preservedWrite.bytes, rewritten.bytes);
+    QCOMPARE(preservedWrite.inode, rewritten.inode);
+    QVERIFY(preservedWrite.thumbnailVersion != rewritten.thumbnailVersion);
+    QVERIFY(ThumbnailCache::thumbnail(path, QSize(8, 8), 1.0).pixelColor(4, 4).red() > 200);
+    image = QImage(40, 32, QImage::Format_RGB32);
+    image.fill(Qt::green);
+    QVERIFY(image.save(path, "BMP"));
+    const timespec preserved[2] = {status.st_atim, status.st_mtim};
+    QVERIFY(::utimensat(AT_FDCWD, QFile::encodeName(path).constData(), preserved, 0) == 0);
+    const auto resized = scan();
+    QCOMPARE(resized.modified, original.modified);
+    QVERIFY(resized.bytes != original.bytes);
+    QVERIFY(resized.thumbnailVersion != original.thumbnailVersion);
+    QVERIFY(ThumbnailCache::thumbnail(path, QSize(8, 8), 1.0).pixelColor(4, 4).green() > 100);
+    // Unchanged requests, including equivalent capped DPR, reuse their disk entries.
+    const QDir cache(ThumbnailCache::cacheDirectory());
+    const int entries = cache.entryList({QStringLiteral("*.jpg")}, QDir::Files).size();
+    for (int repeat = 0; repeat < 4; ++repeat) {
+      QVERIFY(!ThumbnailCache::thumbnail(path, QSize(8, 8), 1.0).isNull());
+    }
+    QCOMPARE(cache.entryList({QStringLiteral("*.jpg")}, QDir::Files).size(), entries);
+  }
+
   void thumbnailCoversTheTileWithoutUpscaling() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -8085,6 +8292,38 @@ private slots:
     QVERIFY(!sourceTile.isNull());
     QCOMPARE(gifTile, sourceTile);
     QCOMPARE(resizedTile, sourceTile);
+    const auto before = CaptureScanner::scan({{gif, 1}}).first().thumbnailVersion;
+    // Preserve the derived files and invalidate only their shared dependency.
+    QVERIFY(QFile::rename(source, source + QStringLiteral(".saved")));
+    const QImage standalone = ThumbnailCache::thumbnail(gif, QSize(80, 60), 1.0, 20);
+    QVERIFY(!standalone.isNull());
+    QVERIFY(standalone != gifTile);
+    const auto missing = CaptureScanner::scan({{gif, 1}}).first().thumbnailVersion;
+    QVERIFY(missing != before);
+    QFile corrupt(source);
+    QVERIFY(corrupt.open(QIODevice::WriteOnly));
+    corrupt.write("not a video");
+    corrupt.close();
+    const QImage fallback = ThumbnailCache::thumbnail(resized, QSize(80, 60), 1.0, 20);
+    QVERIFY(!fallback.isNull());
+    QCOMPARE(fallback, resizedTile);
+    const auto invalid = CaptureScanner::scan({{gif, 1}}).first().thumbnailVersion;
+    QVERIFY(invalid != missing && invalid != before);
+    ffmpeg.start(QStandardPaths::findExecutable(QStringLiteral("ffmpeg")),
+                 {QStringLiteral("-y"), QStringLiteral("-loglevel"), QStringLiteral("error"),
+                  QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+                  QStringLiteral("color=blue:s=320x240:r=10:d=3"),
+                  QStringLiteral("-c:v"), QStringLiteral("libx264"), source});
+    QVERIFY(ffmpeg.waitForFinished(30000));
+    QCOMPARE(ffmpeg.exitCode(), 0);
+    const QImage rewritten = ThumbnailCache::thumbnail(gif, QSize(80, 60), 1.0, 20);
+    QVERIFY(!rewritten.isNull());
+    QVERIFY(rewritten != gifTile);
+    QVERIFY(CaptureScanner::scan({{gif, 1}}).first().thumbnailVersion != invalid);
+    QVERIFY(QFile::remove(source));
+    QVERIFY(QFile::rename(source + QStringLiteral(".saved"), source));
+    QCOMPARE(ThumbnailCache::thumbnail(gif, QSize(80, 60), 1.0, 20), gifTile);
+
   }
 
   void animatedGifThumbnailSeeksLikeAVideo() {

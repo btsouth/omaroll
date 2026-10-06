@@ -2,16 +2,18 @@
 
 #include <QByteArray>
 #include <QStringList>
+#include <functional>
+
+class QObject;
 
 // Where a second quick viewer goes on Hyprland.
 //
 // The first viewer floats centred, by the window rule in hypr/omaroll.lua.
 // Floating a second one would stack it exactly on top of the first, so once a
 // workspace holds more than one viewer they all tile and the user's own
-// layout arranges them. Hyprland applies the float rule only when a window
-// maps, so the new viewer maps under the library's title (which the rule
-// leaves tiled), and the viewers already floating there are tiled through
-// IPC. Elsewhere this does nothing and each viewer is simply its own window.
+// layout arranges them. An asynchronous query chooses the title before mapping,
+// so the second viewer appears directly in its tile.
+// Elsewhere this does nothing and each viewer is simply its own window.
 namespace HyprlandPlacement {
 
 // The class Omaroll's windows carry, from the desktop file's app ID.
@@ -22,6 +24,9 @@ struct Plan {
   int viewers = 0;
   // Addresses of those viewers that are still floating.
   QStringList floating;
+  // A valid empty snapshot can precede another viewer's compositor mapping.
+  bool valid = false;
+  bool retry = false;
 
   // A viewer about to open there joins the others in tiles.
   [[nodiscard]] bool tileNew() const { return viewers > 0; }
@@ -36,9 +41,10 @@ struct Plan {
 // True for a Wayland window in a Hyprland session with hyprctl installed.
 [[nodiscard]] bool available();
 
-// The plan for this process, asked of the running compositor. Each query is
-// bounded, so a stuck compositor costs a moment, never a hang.
-[[nodiscard]] Plan query();
+// Queries never wait on the caller. A stale workspace or timed-out helper
+// yields an empty plan; destroying the context cancels delivery.
+using Reply = std::function<void(Plan)>;
+void query(QObject* context, Reply reply);
 
 // Tiles each window, without waiting for the compositor.
 void tile(const QStringList& addresses);

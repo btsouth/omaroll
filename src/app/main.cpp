@@ -50,6 +50,7 @@
 #include <QSettings>
 #include <QTextStream>
 #include <QThreadPool>
+#include <QDeadlineTimer>
 #include <QTimer>
 
 #include <memory>
@@ -268,6 +269,14 @@ public:
     m_context.setContextProperty(QStringLiteral("InitialPaths"), request.files);
     m_context.setContextProperty(QStringLiteral("InitialFolderPath"), request.folder);
     m_window = createWindow(engine, m_context, "Main", m_root);
+  }
+
+  void requestStop() {
+    m_captures.requestStop();
+    m_mediaMetadata.requestStop();
+    m_textIndex.requestStop();
+    m_duplicates.requestStop();
+    m_similarities.requestStop();
   }
 
   LibraryWindow(const LibraryWindow&) = delete;
@@ -542,15 +551,6 @@ int main(int argc, char* argv[]) {
   engine.addImageProvider(QLatin1String(EditProvider::kProviderId), editProvider);
   engine.addImageProvider(QLatin1String(PdfProvider::kProviderId), pdfProvider);
   engine.addImageProvider(QLatin1String(RawImageProvider::kProviderId), rawProvider);
-  QObject::connect(&application, &QCoreApplication::aboutToQuit, &application,
-                   [thumbnailProvider, matteProvider, editProvider, pdfProvider, rawProvider] {
-                     thumbnailProvider->shutdown();
-                     matteProvider->shutdown();
-                     editProvider->shutdown();
-                     pdfProvider->shutdown();
-                     rawProvider->shutdown();
-                     QThreadPool::globalInstance()->waitForDone();
-                   });
   // Every window shares these. Each window's own services live in its context.
   engine.rootContext()->setContextProperty(QStringLiteral("Theme"), &theme);
   engine.rootContext()->setContextProperty(QStringLiteral("Actions"), &actions);
@@ -566,6 +566,22 @@ int main(int argc, char* argv[]) {
 
   // Declared after the engine, so every window goes before it does.
   std::unique_ptr<LibraryWindow> libraryWindow;
+  QObject::connect(&application, &QCoreApplication::aboutToQuit, &application,
+                   [&libraryWindow, thumbnailProvider, matteProvider, editProvider, pdfProvider, rawProvider] {
+                     if (libraryWindow) libraryWindow->requestStop();
+                     thumbnailProvider->shutdown();
+                     matteProvider->shutdown();
+                     editProvider->shutdown();
+                     pdfProvider->shutdown();
+                     rawProvider->shutdown();
+                     // Saves on the pool still use their editors, so a slow one is
+                     // reported and then finished rather than cut off.
+                     if (!QThreadPool::globalInstance()->waitForDone(QDeadlineTimer(1500))) {
+                       qWarning("Background workers exceeded the shutdown drain deadline");
+                       QThreadPool::globalInstance()->waitForDone();
+                     }
+                   });
+
   ViewerWindows viewers(engine);
 
   const auto openLibrary = [&](const OpenRequest& opened) -> QQuickWindow* {
