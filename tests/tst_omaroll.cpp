@@ -2732,6 +2732,9 @@ private slots:
   }
 
   void pdfSearchCachesExtractionAndReportsFailures() {
+    if (!PdfSupport::available() || !PdfSupport::textAvailable()) {
+      QSKIP("Poppler is not installed");
+    }
     QTemporaryDir dir;
     const QString source = QFINDTESTDATA("fixtures/pdf/text-page.pdf");
     const QString path = dir.filePath(QStringLiteral("document.pdf"));
@@ -2794,6 +2797,9 @@ private slots:
   }
 
   void pdfPageExtractionBudgets() {
+    if (!PdfSupport::available() || !PdfSupport::textAvailable()) {
+      QSKIP("Poppler is not installed");
+    }
     QFETCH(bool, words);
     QTemporaryDir dir;
     QFile helper(dir.filePath(QStringLiteral("pdftotext")));
@@ -2816,6 +2822,9 @@ private slots:
   }
 
   void pdfReplacementInvalidatesDetailsAndSelection() {
+    if (!PdfSupport::available() || !PdfSupport::textAvailable()) {
+      QSKIP("Poppler is not installed");
+    }
     QTemporaryDir dir;
     const QString source = QFINDTESTDATA("fixtures/pdf/text-page.pdf");
     const QString path = dir.filePath(QStringLiteral("document.pdf"));
@@ -2868,6 +2877,9 @@ private slots:
   }
 
   void pdfTallPageHasBoundedRaster() {
+    if (!PdfSupport::available() || !PdfSupport::textAvailable()) {
+      QSKIP("Poppler is not installed");
+    }
     QTemporaryDir dir;
     const QString path = dir.filePath(QStringLiteral("tall.pdf"));
     {
@@ -2888,6 +2900,9 @@ private slots:
   }
 
   void pdfRotatedPageKeepsItsFitWidth() {
+    if (!PdfSupport::available() || !PdfSupport::textAvailable()) {
+      QSKIP("Poppler is not installed");
+    }
     QTemporaryDir dir;
     const QString path = dir.filePath(QStringLiteral("rotated.pdf"));
     QByteArray pdf("%PDF-1.4\n");
