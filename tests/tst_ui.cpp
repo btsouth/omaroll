@@ -1647,6 +1647,7 @@ private slots:
     const QUrl oldSource = thumbnail->property("source").toUrl();
     card->setWidth(card->width() + 1);
     QTRY_VERIFY(thumbnail->property("source").toUrl() != oldSource);
+    QTRY_COMPARE(provider->count(1001, 2), 2);
     provider->completeAll();
     QTRY_VERIFY(card->property("thumbnailPresented").toBool());
 
