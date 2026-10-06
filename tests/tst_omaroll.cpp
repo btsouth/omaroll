@@ -1263,6 +1263,41 @@ private slots:
     QCOMPARE(tree.data(tree.index(2, 0), FolderTreeModel::MediaCountRole).toInt(), 0);
   }
 
+  void folderTreeCountChangesPreserveIndexesWithoutReset() {
+    FolderTreeModel tree;
+    QAbstractItemModelTester tester(&tree, QAbstractItemModelTester::FailureReportingMode::QtTest);
+    const QVariantList sources{QVariantMap{{"path", "/library"}, {"label", "Library"}}};
+    const QStringList folders{"/library/trip/day", "/library/other"};
+    tree.setFolders(sources, folders,
+                    {{"/library", 3}, {"/library/trip", 2}, {"/library/trip/day", 2}, {"/library/other", 1}});
+    const QPersistentModelIndex day(tree.indexForPath("/library/trip/day"));
+    QSignalSpy aboutToReset(&tree, &QAbstractItemModel::modelAboutToBeReset);
+    QSignalSpy changed(&tree, &QAbstractItemModel::dataChanged);
+    const QHash<QString, int> counts{{"/library", 4}, {"/library/trip", 3},
+                                    {"/library/trip/day", 3}, {"/library/other", 1}};
+    tree.setFolders(sources, folders, counts);
+    QCOMPARE(aboutToReset.size(), 0);
+    QCOMPARE(changed.size(), 3);
+    QVERIFY(day.isValid());
+    QCOMPARE(day, tree.indexForPath("/library/trip/day"));
+    QCOMPARE(tree.data(day, FolderTreeModel::MediaCountRole).toInt(), 3);
+    QSet<QString> changedPaths;
+    for (const auto& signal : changed) {
+      const QModelIndex first = qvariant_cast<QModelIndex>(signal.at(0));
+      QCOMPARE(first, qvariant_cast<QModelIndex>(signal.at(1)));
+      QCOMPARE(qvariant_cast<QList<int>>(signal.at(2)), QList<int>{FolderTreeModel::MediaCountRole});
+      changedPaths.insert(tree.pathForIndex(first));
+      QCOMPARE(tree.data(first, FolderTreeModel::MediaCountRole).toInt(), counts.value(tree.pathForIndex(first)));
+    }
+    QCOMPARE(changedPaths, (QSet<QString>{"/library", "/library/trip", "/library/trip/day"}));
+    tree.setFolders(sources, folders, counts);
+    QCOMPARE(changed.size(), 3);
+    QCOMPARE(aboutToReset.size(), 0);
+    tree.setFolders({QVariantMap{{"path", "/library"}, {"label", "Renamed library"}}}, folders, counts);
+    QCOMPARE(aboutToReset.size(), 1);
+    QVERIFY(!day.isValid());
+  }
+
   void folderTreeUpdatesAfterIndexedFoldersChange() {
     FolderTreeModel tree;
     QAbstractItemModelTester tester(&tree, QAbstractItemModelTester::FailureReportingMode::QtTest);
@@ -1331,6 +1366,27 @@ private slots:
     settings.setScanDownloads(false);
     QTRY_COMPARE(tree.rowCount(), 6);
     QVERIFY(!tree.indexForPath(dir.filePath("Downloads")).isValid());
+  }
+
+  void explicitlyOpenedSymlinkFileIsNotAFolderSource() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString target = dir.filePath("original.png");
+    const QString alias = dir.filePath("alias.png");
+    QImage image(12, 12, QImage::Format_RGB32);
+    image.fill(Qt::red);
+    QVERIFY(image.save(target));
+    QVERIFY(QFile::link(target, alias));
+    CaptureModel library(nullptr);
+    QTRY_VERIFY(!library.scanning());
+    library.addExtraFiles({alias});
+    QTRY_VERIFY(library.rowOf(target) >= 0);
+    QTRY_VERIFY(!library.scanning());
+    for (const QVariant& source : library.folderSources()) {
+      const QString path = source.toMap().value("path").toString();
+      QVERIFY(path != target);
+      QVERIFY(path != alias);
+    }
   }
 
   void folderSidebarPreferencesDefaultPersistAndClamp() {

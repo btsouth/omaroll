@@ -453,8 +453,10 @@ void CaptureModel::refresh() {
   const std::shared_ptr<std::atomic_bool> cancel = m_cancel;
 
   const auto explicitEntries = m_extraFiles;
+  const auto explicitPaths = explicitEntries.values();
+  const QSet<QString> explicitSources(explicitPaths.cbegin(), explicitPaths.cend());
   const bool downloadsEnabled = !m_settings || m_settings->scanDownloads();
-  m_scanWatcher.setFuture(QtConcurrent::run([scanRoots, cancel, explicitEntries, downloadsEnabled] {
+  m_scanWatcher.setFuture(QtConcurrent::run([scanRoots, cancel, explicitEntries, explicitSources, downloadsEnabled] {
     ScanResult result;
     // Resolve source paths on the scan worker, never from a tree delegate.
     // Explicit files are not folder sources; session directories are.
@@ -463,7 +465,7 @@ void CaptureModel::refresh() {
     QHash<QString, int> rowByPath;
     for (qsizetype i = 0; i < scanRoots.size(); ++i) {
       const QString source = scanRoots.at(i).path;
-      if (source.isEmpty() || explicitEntries.contains(source)) continue;
+      if (source.isEmpty() || explicitSources.contains(source)) continue;
       const QFileInfo info(source);
       QString path = info.canonicalFilePath();
       if (path.isEmpty()) path = QDir::cleanPath(info.absoluteFilePath());

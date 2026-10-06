@@ -38,9 +38,8 @@ void FolderTreeModel::bind(CaptureModel* library, CaptureFilterModel* captures) 
 
 void FolderTreeModel::setFolders(const QVariantList& sources, const QStringList& folders,
                                 const QHash<QString, int>& counts) {
-  beginResetModel();
-  m_byPath.clear();
-  m_root.children.clear();
+  Node nextRoot;
+  QHash<QString, Node*> nextByPath;
   QStringList sorted = folders;
   std::sort(sorted.begin(), sorted.end());
   for (const QVariant& source : sources) {
@@ -52,9 +51,9 @@ void FolderTreeModel::setFolders(const QVariantList& sources, const QStringList&
     root->path = path;
     root->count = counts.value(path);
     root->parent = &m_root;
-    root->row = static_cast<int>(m_root.children.size());
+    root->row = static_cast<int>(nextRoot.children.size());
     QHash<QString, Node*> byPath{{path, root.get()}};
-    m_byPath.insert(path, root.get());
+    nextByPath.insert(path, root.get());
     const QString prefix = path.endsWith(QLatin1Char('/')) ? path : path + QLatin1Char('/');
     for (const QString& folder : sorted) {
       if (!folder.startsWith(prefix)) continue;
@@ -73,13 +72,38 @@ void FolderTreeModel::setFolders(const QVariantList& sources, const QStringList&
           child = entry.get();
           current->children.push_back(std::move(entry));
           byPath.insert(childPath, child);
-          m_byPath.insert(childPath, child);
+          nextByPath.insert(childPath, child);
         }
         current = child;
       }
     }
-    m_root.children.push_back(std::move(root));
+    nextRoot.children.push_back(std::move(root));
   }
+  const auto sameStructure = [](const auto& self, const Node& current, const Node& next) -> bool {
+    if (current.path != next.path || current.name != next.name ||
+        current.children.size() != next.children.size()) return false;
+    for (size_t i = 0; i < current.children.size(); ++i) {
+      if (!self(self, *current.children[i], *next.children[i])) return false;
+    }
+    return true;
+  };
+  if (sameStructure(sameStructure, m_root, nextRoot)) {
+    const auto updateCounts = [this](const auto& self, Node& current, const Node& next) -> void {
+      if (current.count != next.count) {
+        current.count = next.count;
+        const QModelIndex changed = createIndex(current.row, 0, &current);
+        emit dataChanged(changed, changed, {MediaCountRole});
+      }
+      for (size_t i = 0; i < current.children.size(); ++i) {
+        self(self, *current.children[i], *next.children[i]);
+      }
+    };
+    updateCounts(updateCounts, m_root, nextRoot);
+    return;
+  }
+  beginResetModel();
+  m_root.children = std::move(nextRoot.children);
+  m_byPath = std::move(nextByPath);
   endResetModel();
 }
 

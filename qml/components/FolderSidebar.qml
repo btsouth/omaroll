@@ -7,6 +7,8 @@ FocusScope {
 
     property real paneWidth: Settings.folderSidebarWidth
     readonly property bool menuOpen: folderMenu.visible
+    property var expandedPathsBeforeReset: []
+    property bool expansionRestorePending: false
     signal chosen(string path)
     signal addFolderRequested()
     signal gridFocusRequested()
@@ -40,7 +42,27 @@ FocusScope {
     }
     Connections {
         target: FolderTree
-        function onModelReset() { Qt.callLater(root.syncSelection) }
+        function onModelAboutToBeReset() {
+            // Keep the first snapshot if scans reset again before the layout turn.
+            if (root.expansionRestorePending) return
+            const paths = []
+            for (let row = 0; row < tree.rows; ++row) {
+                if (tree.isExpanded(row)) paths.push(FolderTree.pathForIndex(tree.index(row, 0)))
+            }
+            root.expandedPathsBeforeReset = paths
+            root.expansionRestorePending = true
+        }
+        function onModelReset() { Qt.callLater(root.restoreExpansion) }
+    }
+    function restoreExpansion() {
+        for (const path of expandedPathsBeforeReset) {
+            const index = FolderTree.indexForPath(path)
+            if (!index.valid) continue
+            tree.expandToIndex(index)
+            tree.expand(tree.rowAtIndex(index))
+        }
+        expansionRestorePending = false
+        syncSelection()
     }
     Connections {
         target: Settings

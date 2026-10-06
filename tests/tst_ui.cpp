@@ -4606,6 +4606,59 @@ private slots:
     QTRY_VERIFY(item("library")->hasActiveFocus());
   }
 
+  void folderSidebarPreservesExpansionAcrossCountAndStructureChanges() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString branch = dir.filePath("b");
+    const QString leaf = dir.filePath("b/leaf");
+    const QString current = dir.filePath("bc");
+    QVERIFY(QDir().mkpath(leaf));
+    QVERIFY(QDir().mkpath(current));
+    QImage image(12, 12, QImage::Format_RGB32);
+    image.fill(Qt::red);
+    QVERIFY(image.save(leaf + "/first.png"));
+    QVERIFY(image.save(current + "/current.png"));
+    const auto restore = qScopeGuard([&] {
+      m_settings->setShowFolderSidebar(false);
+      m_library->setFolderFilter({});
+      m_settings->removeLibraryFolder(dir.path());
+      QTRY_VERIFY(!m_folderTree->indexForPath(dir.path()).isValid());
+    });
+    QVERIFY(m_settings->addLibraryFolder(QUrl::fromLocalFile(dir.path())));
+    QTRY_COMPARE(m_folderTree->data(m_folderTree->indexForPath(leaf), FolderTreeModel::MediaCountRole).toInt(), 1);
+    m_library->setFolderFilter(current);
+    m_settings->setShowFolderSidebar(true);
+    QQuickItem* tree = item("folderSidebarTree");
+    QVERIFY(QMetaObject::invokeMethod(tree, "expandToIndex", Q_ARG(QModelIndex, m_folderTree->indexForPath(branch))));
+    const auto branchRow = [&] {
+      int row = -1;
+      QMetaObject::invokeMethod(tree, "rowAtIndex", Q_RETURN_ARG(int, row),
+                                Q_ARG(QModelIndex, m_folderTree->indexForPath(branch)));
+      return row;
+    };
+    QTRY_VERIFY(branchRow() >= 0);
+    QVERIFY(QMetaObject::invokeMethod(tree, "expand", Q_ARG(int, branchRow())));
+    const auto branchExpanded = [&] {
+      bool expanded = false;
+      QMetaObject::invokeMethod(tree, "isExpanded", Q_RETURN_ARG(bool, expanded), Q_ARG(int, branchRow()));
+      return expanded;
+    };
+    QTRY_VERIFY(branchExpanded());
+    QSignalSpy aboutToReset(m_folderTree, &QAbstractItemModel::modelAboutToBeReset);
+    QVERIFY(image.save(leaf + "/second.png"));
+    m_captures->refresh();
+    QTRY_COMPARE(m_folderTree->data(m_folderTree->indexForPath(leaf), FolderTreeModel::MediaCountRole).toInt(), 2);
+    QCOMPARE(aboutToReset.size(), 0);
+    QVERIFY(branchExpanded());
+    QVERIFY(QDir().mkpath(dir.filePath("a")));
+    QVERIFY(image.save(dir.filePath("a/sibling.png")));
+    m_captures->refresh();
+    QTRY_VERIFY(m_folderTree->indexForPath(dir.filePath("a")).isValid());
+    QCOMPARE(aboutToReset.size(), 1);
+    QTRY_VERIFY(branchExpanded());
+    QCOMPARE(m_library->folderFilter(), current);
+  }
+
   void folderSidebarShortcutRespectsSearchSheetsAndMenus() {
     QVERIFY(!m_settings->showFolderSidebar());
     QTest::keyClick(m_window, Qt::Key_Slash);
