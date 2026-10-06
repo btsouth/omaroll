@@ -3012,7 +3012,7 @@ private slots:
     HyprlandPlacement::Plan switched;
     switched.retry = true;
     pending.takeFirst()(switched);
-    QCOMPARE(pending.size(), 1);
+    QTRY_COMPARE(pending.size(), 1);
     HyprlandPlacement::Plan settled;
     settled.viewers = 1;
     pending.takeFirst()(settled);
@@ -3035,6 +3035,30 @@ private slots:
     pending.takeFirst()(settled);
     QVERIFY(!timedOut->property("mapTiled").toBool());
     first->close(); second->close(); timedOut->close();
+  }
+
+  void placementWaitsForAValidEmptySnapshotToSettle() {
+    ViewerWindows viewers(*m_engine);
+    QList<HyprlandPlacement::Reply> pending;
+    viewers.setPlacementQuery([&](QObject*, HyprlandPlacement::Reply reply) {
+      pending.append(std::move(reply));
+    });
+    viewers.setPlacementTile([](const QStringList&) {});
+    auto* first = viewers.open({media(QStringLiteral("Shot 1.jpg"))});
+    auto* second = viewers.open({media(QStringLiteral("shot 2.jpg"))});
+    QVERIFY(first && second && !second->isVisible());
+    HyprlandPlacement::Plan notMapped;
+    notMapped.valid = true;
+    pending.takeFirst()(notMapped);
+    QVERIFY(!second->isVisible());
+    QTRY_COMPARE(pending.size(), 1);
+    QVERIFY(!second->isVisible());
+    HyprlandPlacement::Plan mapped;
+    mapped.valid = true;
+    mapped.viewers = 1;
+    pending.takeFirst()(mapped);
+    QVERIFY(second->isVisible() && second->property("mapTiled").toBool());
+    first->close(); second->close();
   }
 
   void severalViewersOpenSideBySideAndCloseCleanly() {

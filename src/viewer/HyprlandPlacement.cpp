@@ -112,11 +112,13 @@ namespace HyprlandPlacement {
 Plan plan(const QByteArray& clients, const QByteArray& activeWorkspace, qint64 pid) {
   Plan result;
   const QJsonValue workspace = QJsonDocument::fromJson(activeWorkspace).object().value(u"id");
-  if (!workspace.isDouble()) {
+  const QJsonDocument windows = QJsonDocument::fromJson(clients);
+  if (!workspace.isDouble() || !windows.isArray()) {
     return result;
   }
+  result.valid = true;
   const QString viewerTitle = QStringLiteral(" · Omaroll");
-  for (const QJsonValue& value : QJsonDocument::fromJson(clients).array()) {
+  for (const QJsonValue& value : windows.array()) {
     const QJsonObject client = value.toObject();
     if (client.value(u"pid").toInteger(-1) != pid ||
         client.value(u"class").toString() != QLatin1String(kWindowClass) ||

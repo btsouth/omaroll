@@ -113,6 +113,7 @@ QQuickWindow* ViewerWindows::open(const QStringList& files, const QHash<QString,
   });
   viewer->session.open(files);
   viewer->session.setDeletionPaths(entryPaths);
+  viewer->window->setProperty("mapTiled", false);
   const quint64 generation = ++viewer->placementGeneration;
   if (others) {
     // Prepare the media while hidden. IPC must finish before the float rule
@@ -238,8 +239,16 @@ void ViewerWindows::place(Viewer& viewer, quint64 generation, bool retry) {
   QPointer<QQuickWindow> window = viewer.window;
   m_query(viewer.window, [this, &viewer, window, generation, retry](HyprlandPlacement::Plan plan) {
     if (!window || !viewer.pending || generation != viewer.placementGeneration) return;
-    if (plan.retry && !retry) {
-      place(viewer, generation, true);
+    const bool unmappedPeer = plan.valid && plan.viewers == 0 &&
+        std::any_of(m_viewers.begin(), m_viewers.end(), [&viewer](const auto& other) {
+          return other.get() != &viewer && (other->window->isVisible() || other->pending);
+        });
+    if (!retry && (plan.retry || unmappedPeer)) {
+      QTimer::singleShot(25, window, [this, &viewer, window, generation] {
+        if (window && viewer.pending && generation == viewer.placementGeneration) {
+          place(viewer, generation, true);
+        }
+      });
       return;
     }
     viewer.pending = false;

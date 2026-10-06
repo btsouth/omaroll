@@ -24,6 +24,8 @@ struct Plan {
   int viewers = 0;
   // Addresses of those viewers that are still floating.
   QStringList floating;
+  // A valid empty snapshot can precede another viewer's compositor mapping.
+  bool valid = false;
   bool retry = false;
 
   // A viewer about to open there joins the others in tiles.
