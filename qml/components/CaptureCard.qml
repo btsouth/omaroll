@@ -19,7 +19,6 @@ Item {
     property double stamp: 0
     property string thumbnailVersion: ""
     readonly property string thumbnailIdentity: (thumbnailVersion || String(stamp))
-        + "!" + thumbnail.sourceSize.width + "x" + thumbnail.sourceSize.height
         + "!" + Screen.devicePixelRatio
     property bool favorite: false
     property int rating: 0

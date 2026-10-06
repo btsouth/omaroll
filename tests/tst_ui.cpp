@@ -1644,9 +1644,9 @@ private slots:
     provider->completeAll();
     QTRY_VERIFY(card->property("thumbnailPresented").toBool());
     QTRY_VERIFY(pixelMatches(window->grabWindow().pixelColor(pixel), QColor(Qt::blue)));
-    const QUrl oldSource = thumbnail->property("source").toUrl();
+    const QSize oldSize = thumbnail->property("sourceSize").toSize();
     card->setWidth(card->width() + 1);
-    QTRY_VERIFY(thumbnail->property("source").toUrl() != oldSource);
+    QTRY_VERIFY(thumbnail->property("sourceSize").toSize() != oldSize);
     QTRY_COMPARE(provider->count(1001, 2), 2);
     provider->completeAll();
     QTRY_VERIFY(card->property("thumbnailPresented").toBool());

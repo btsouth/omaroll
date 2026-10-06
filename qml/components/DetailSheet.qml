@@ -1025,9 +1025,7 @@ Item {
                 sourceSize: Qt.size(Math.round(width), Math.round(height))
                 source: !root.visible || !root.isVideo || root.path === "" ? ""
                         : "image://thumbs/" + Screen.devicePixelRatio + "@40~"
-                          + encodeURIComponent(root.thumbnailVersion) + "!"
-                          + Math.round(root.width) + "x" + Math.round(root.height)
-                          + encodeURIComponent(root.path)
+                          + encodeURIComponent(root.thumbnailVersion) + encodeURIComponent(root.path)
             }
 
             // Stills fit on open, zoom to 4x without throwing away decoded
