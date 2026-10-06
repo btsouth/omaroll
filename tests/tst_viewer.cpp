@@ -2991,6 +2991,7 @@ private slots:
 
     auto* fourth = viewers.open({media(QStringLiteral("Shot 1.jpg"))});
     QVERIFY(fourth && !fourth->isVisible());
+    QTRY_VERIFY(fourth->isVisible());
     fourth->close();
     pending.takeFirst()(plan);
     QVERIFY(!fourth->isVisible());
@@ -3026,8 +3027,10 @@ private slots:
     QElapsedTimer timer; timer.start();
     auto* timedOut = viewers.open({media(QStringLiteral("shot 10.jpg"))});
     QVERIFY(timedOut && !timedOut->isVisible());
+    connect(timedOut, &QWindow::visibleChanged, this, [&timer](bool visible) {
+      if (visible) qInfo() << "PERF placement timeout mapped ms" << timer.nsecsElapsed() / 1e6;
+    }, Qt::SingleShotConnection);
     QTRY_VERIFY(timedOut->isVisible());
-    qInfo() << "PERF placement timeout mapped ms" << timer.nsecsElapsed() / 1e6;
     QVERIFY(!timedOut->property("mapTiled").toBool());
     pending.takeFirst()(settled);
     QVERIFY(!timedOut->property("mapTiled").toBool());
