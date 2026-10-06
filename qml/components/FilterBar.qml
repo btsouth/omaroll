@@ -73,11 +73,23 @@ Item {
         search.selectAll()
     }
 
+    function applySearch() {
+        searchDelay.stop()
+        Captures.searchText = search.text
+    }
+
+    Timer {
+        id: searchDelay
+        interval: 150
+        onTriggered: root.applySearch()
+    }
+
     // Saved views and Open With can change the query outside this field.
     Component.onCompleted: search.text = Captures.searchText
     Connections {
         target: Captures
         function onSearchTextChanged() {
+            searchDelay.stop()
             if (search.text !== Captures.searchText) {
                 search.text = Captures.searchText
             }
@@ -240,13 +252,18 @@ Item {
                 selectionColor: root.shade(Theme.accent, 0.5)
                 selectedTextColor: Theme.brightForeground
 
-                onTextChanged: Captures.searchText = text
+                onTextChanged: {
+                    if (text === Captures.searchText) searchDelay.stop()
+                    else if (text === "") root.applySearch()
+                    else searchDelay.restart()
+                }
+                onActiveFocusChanged: if (!activeFocus) root.applySearch()
                 Keys.onEscapePressed: {
                     text = ""
                     root.done()
                 }
-                Keys.onReturnPressed: root.done()
-                Keys.onEnterPressed: root.done()
+                Keys.onReturnPressed: { root.applySearch(); root.done() }
+                Keys.onEnterPressed: { root.applySearch(); root.done() }
             }
 
             Text {

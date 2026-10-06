@@ -17,6 +17,10 @@ Item {
     // mtime, carried in the thumbnail URL so a rewritten file busts Qt's
     // in-memory pixmap cache as well as the disk one.
     property double stamp: 0
+    property string thumbnailVersion: ""
+    readonly property string thumbnailIdentity: (thumbnailVersion || String(stamp))
+        + "!" + thumbnail.sourceSize.width + "x" + thumbnail.sourceSize.height
+        + "!" + Screen.devicePixelRatio
     property bool favorite: false
     property int rating: 0
     property bool hiddenMark: false
@@ -33,7 +37,7 @@ Item {
     property bool thumbnailReady: false
     property bool thumbnailLayoutReady: false
     property string readyPath: ""
-    property double readyStamp: 0
+    property string readyIdentity: ""
     readonly property bool thumbnailPresented: thumbnail.status === Image.Ready
                                                && thumbnail.visible
                                                && thumbnail.opacity >= 0.999
@@ -98,6 +102,7 @@ Item {
         root.thumbnailReady = false
     }
     onStampChanged: root.thumbnailReady = false
+    onThumbnailIdentityChanged: root.thumbnailReady = false
 
     // Drag out and it drops as the real file into anything on the desktop that
     // takes one: a Discord message, a Nautilus window, a browser upload. Copy
@@ -174,7 +179,7 @@ Item {
             // Keep a scrub frame while the next frame loads, but never display
             // a retained image from the previous file on a recycled delegate.
             visible: root.readyPath === root.path
-                     && root.readyStamp === root.stamp
+                     && root.readyIdentity === root.thumbnailIdentity
             // Decode at the size actually drawn, on the ratio of the screen this
             // window is on. Without the ratio, a 1.5x monitor shows an upscaled
             // tile and the whole grid reads as soft.
@@ -191,7 +196,7 @@ Item {
                     ? ""
                     : "image://thumbs/" + Screen.devicePixelRatio
                       + (root.isVideo ? "@" + root.scrubPercent : "")
-                      + "~" + root.stamp
+                      + "~" + encodeURIComponent(root.thumbnailIdentity)
                       + encodeURIComponent(root.path)
             smooth: true
             mipmap: true
@@ -200,7 +205,7 @@ Item {
             onStatusChanged: {
                 if (status === Image.Ready) {
                     root.readyPath = root.path
-                    root.readyStamp = root.stamp
+                    root.readyIdentity = root.thumbnailIdentity
                     root.thumbnailReady = true
                 }
             }

@@ -30,6 +30,7 @@ enum Role {
   RawFormatRole,
   // Added by CaptureFilterModel while a search result needs OCR context.
   OcrSnippetRole,
+  ThumbnailVersionRole,
 };
 
 } // namespace CaptureRoles

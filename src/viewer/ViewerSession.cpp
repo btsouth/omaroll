@@ -3,6 +3,7 @@
 #include "sources/CameraRaw.h"
 #include "sources/CaptureScanner.h"
 #include "sources/FileVersion.h"
+#include "sources/ThumbnailSource.h"
 
 #include <QCollator>
 #include <QDateTime>
@@ -296,13 +297,12 @@ QString ViewerSession::thumbnailUrl(int index, qreal devicePixelRatio) const {
     return {};
   }
   const QString& file = m_paths.at(index);
-  const QFileInfo info(file);
   // "image://thumbs/<ratio>[@<seek%>]~<stamp><encoded path>", as the grid
   // asks for it, so a file already seen there is a disk-cache hit.
   return QStringLiteral("image://thumbs/%1%2~%3%4")
       .arg(devicePixelRatio > 0 ? devicePixelRatio : 1.0)
       .arg(isVideoAt(index) ? QStringLiteral("@40") : QString())
-      .arg(info.lastModified().toMSecsSinceEpoch())
+      .arg(ThumbnailSource::version(file, FileVersion::key(file)))
       .arg(QString::fromUtf8(QUrl::toPercentEncoding(file)));
 }
 

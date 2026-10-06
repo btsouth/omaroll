@@ -168,6 +168,7 @@ public:
   Q_INVOKABLE bool isDocumentAt(int row) const;
   Q_INVOKABLE bool isAnimatedAt(int row) const;
   Q_INVOKABLE qint64 stampAt(int row) const;
+  Q_INVOKABLE QString thumbnailVersionAt(int row) const;
   Q_INVOKABLE QString ocrSnippetAt(int row) const;
 
   // Text found by the local OCR index. Updates are coalesced because a warm

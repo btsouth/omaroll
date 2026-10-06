@@ -1186,6 +1186,7 @@ void AppSettings::deleteSmartCollection(const QString& name) {
 
 bool AppSettings::reconcileCollectionMap(QMap<QString, QList<AlbumEntry>>& collections,
                                          const QList<CaptureRecord>& records) {
+  if (collections.isEmpty()) return false;
   struct Candidate {
     QString path;
     qint64 bytes = 0;
@@ -1193,6 +1194,10 @@ bool AppSettings::reconcileCollectionMap(QMap<QString, QList<AlbumEntry>>& colle
     quint64 device = 0;
     quint64 inode = 0;
   };
+  QHash<QString, int> byPath;
+  QMultiHash<quint64, int> byInode;
+  QMultiHash<qint64, int> bySize;
+  QMultiHash<QPair<qint64, qint64>, int> bySizeAndTime;
   QList<Candidate> candidates;
   candidates.reserve(records.size());
   for (const CaptureRecord& record : records) {
@@ -1207,6 +1212,11 @@ bool AppSettings::reconcileCollectionMap(QMap<QString, QList<AlbumEntry>>& colle
         inode = status.st_ino;
       }
     }
+    const int index = candidates.size();
+    byPath.insert(record.path, index);
+    if (inode != 0) byInode.insert(inode, index);
+    bySize.insert(record.bytes, index);
+    bySizeAndTime.insert({record.bytes, record.modified}, index);
     candidates.append({record.path, record.bytes, record.modified, device, inode});
   }
 
@@ -1217,9 +1227,8 @@ bool AppSettings::reconcileCollectionMap(QMap<QString, QList<AlbumEntry>>& colle
       const bool wasResolved = entry.resolved;
       entry.resolved = false;
 
-      const auto livePath = std::find_if(candidates.cbegin(), candidates.cend(),
-          [&entry](const Candidate& candidate) { return candidate.path == entry.path; });
-      if (livePath != candidates.cend()) {
+      const bool livePath = byPath.contains(entry.path);
+      if (livePath) {
         const QFileInfo info(entry.path);
         struct stat status {};
         if (info.isFile() && info.isReadable() &&
@@ -1248,11 +1257,13 @@ bool AppSettings::reconcileCollectionMap(QMap<QString, QList<AlbumEntry>>& colle
 
       // A missing scan row is not evidence of a move when the old path still
       // exists, or its containing directory is disconnected/unreadable.
-      const bool mayRelocate = livePath == candidates.cend() && relocationAvailable(entry);
+      const bool mayRelocate = !livePath && relocationAvailable(entry);
       if (mayRelocate && !entry.fingerprint.isEmpty()) {
         QString match;
         int matches = 0;
-        for (const Candidate& candidate : std::as_const(candidates)) {
+        const auto sameInode = byInode.values(entry.inode);
+        for (int index : sameInode) {
+          const Candidate& candidate = candidates.at(index);
           if (entry.device != 0 && entry.inode != 0 && candidate.inode == entry.inode &&
               candidate.bytes == entry.bytes &&
               (candidate.device == entry.device || candidate.modified == entry.modified)) {
@@ -1273,19 +1284,8 @@ bool AppSettings::reconcileCollectionMap(QMap<QString, QList<AlbumEntry>>& colle
       }
 
       if (!entry.resolved && mayRelocate && !entry.fingerprint.isEmpty()) {
-        QList<Candidate> possible;
-        for (const Candidate& candidate : std::as_const(candidates)) {
-          if (candidate.bytes == entry.bytes && candidate.modified == entry.modified) {
-            possible.append(candidate);
-          }
-        }
-        if (possible.isEmpty()) {
-          for (const Candidate& candidate : std::as_const(candidates)) {
-            if (candidate.bytes == entry.bytes) {
-              possible.append(candidate);
-            }
-          }
-        }
+        QList<int> possible = bySizeAndTime.values({entry.bytes, entry.modified});
+        if (possible.isEmpty()) possible = bySize.values(entry.bytes);
         // A pathological directory full of equally sized files should not
         // stall the UI to repair one uncertain album entry.
         if (possible.size() > 128) {
@@ -1294,7 +1294,8 @@ bool AppSettings::reconcileCollectionMap(QMap<QString, QList<AlbumEntry>>& colle
         }
         QString matchedPath;
         int matches = 0;
-        for (const Candidate& candidate : std::as_const(possible)) {
+        for (int index : std::as_const(possible)) {
+          const Candidate& candidate = candidates.at(index);
           if (identityFor(candidate.path).fingerprint == entry.fingerprint) {
             matchedPath = candidate.path;
             ++matches;

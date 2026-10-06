@@ -1808,7 +1808,7 @@ private slots:
       m_engine->rootContext()->setContextProperty(QStringLiteral("Theme"), m_theme);
     });
     ViewerWindows viewers(*m_engine);
-    viewers.setPlacementQuery([] { return HyprlandPlacement::Plan{}; });
+    viewers.setPlacementQuery([](QObject*, HyprlandPlacement::Reply reply) { reply({}); });
     QQuickWindow* window = viewers.open({media(QStringLiteral("clip.mp4"))});
     QVERIFY(window);
     const auto control = [window](const QString& name) {
@@ -2893,7 +2893,7 @@ private slots:
     }
     const OpenRequest request = OpenRequest::fromPaths(aliases);
     ViewerWindows viewers(*m_engine);
-    viewers.setPlacementQuery([] { return HyprlandPlacement::Plan{}; });
+    viewers.setPlacementQuery([](QObject*, HyprlandPlacement::Reply reply) { reply({}); });
     QQuickWindow* window = viewers.open(request.files, request.entryPaths);
     QVERIFY(window);
     QVERIFY(QTest::qWaitForWindowExposed(window));
@@ -2919,16 +2919,52 @@ private slots:
   // Each file opened from outside gets a viewer of its own. Asking again for
   // what one already shows brings that one forward, a selection stays one
   // viewer, and closing leaves the rest alone with one closed viewer kept.
-  // A viewer opened beside another maps under the plain title, so Hyprland's
-  // float rule leaves it tiled, and then takes its own.
+  // Placement follows mapping, so compositor queries never delay opening.
+  void placementRepliesKeepOpensResponsiveAndRejectClosedWindows() {
+    ViewerWindows viewers(*m_engine);
+    QList<HyprlandPlacement::Reply> pending;
+    viewers.setPlacementQuery([&](QObject*, HyprlandPlacement::Reply reply) {
+      pending.append(std::move(reply));
+    });
+    QStringList tiled;
+    viewers.setPlacementTile([&](const QStringList& addresses) { tiled += addresses; });
+    auto* first = viewers.open({media(QStringLiteral("Shot 1.jpg"))});
+    QVERIFY(first);
+    QElapsedTimer timer; timer.start();
+    auto* second = viewers.open({media(QStringLiteral("shot 2.jpg"))});
+    qInfo() << "PERF second viewer open ms" << timer.nsecsElapsed() / 1e6;
+    QVERIFY(second && second->isVisible());
+    QVERIFY(pending.isEmpty());
+    QTRY_COMPARE(pending.size(), 1);
+    bool heartbeat = false;
+    QTimer::singleShot(10, this, [&] { heartbeat = true; });
+    QTRY_VERIFY(heartbeat);
+    QVERIFY(second->isVisible());
+    HyprlandPlacement::Plan plan;
+    plan.viewers = 2;
+    plan.floating = {QStringLiteral("0xabc"), QStringLiteral("0xdef")};
+    pending.takeFirst()(plan);
+    QCOMPARE(tiled, plan.floating);
+    // A later query cannot tile addresses from before a viewer was closed.
+    auto* third = viewers.open({media(QStringLiteral("shot 10.jpg"))});
+    QVERIFY(third);
+    QTRY_COMPARE(pending.size(), 1);
+    third->close();
+    QCoreApplication::processEvents();
+    pending.takeFirst()(plan);
+    QCOMPARE(tiled, plan.floating);
+    first->close();
+    second->close();
+  }
+
   void severalViewersOpenSideBySideAndCloseCleanly() {
     ViewerWindows viewers(*m_engine);
     int queries = 0;
-    viewers.setPlacementQuery([&queries] {
+    viewers.setPlacementQuery([&queries](QObject*, HyprlandPlacement::Reply reply) {
       ++queries;
       HyprlandPlacement::Plan plan;
-      plan.viewers = 1;
-      return plan;
+      plan.viewers = 2;
+      reply(plan);
     });
     const QString first = media(QStringLiteral("Shot 1.jpg"));
     const QString second = media(QStringLiteral("shot 2.jpg"));
@@ -2938,12 +2974,12 @@ private slots:
     QCOMPARE(a->title(), QStringLiteral("Shot 1.jpg · Omaroll"));
     QQuickWindow* b = viewers.open({second});
     QVERIFY(b && a != b);
-    QCOMPARE(b->title(), QStringLiteral("Omaroll"));
+    QCOMPARE(b->title(), QStringLiteral("shot 2.jpg · Omaroll"));
     QVERIFY(QTest::qWaitForWindowExposed(a));
     QVERIFY(QTest::qWaitForWindowExposed(b));
     QTRY_COMPARE(b->title(), QStringLiteral("shot 2.jpg · Omaroll"));
-    // Asked once before mapping and once after, for opens that raced.
-    QTRY_COMPARE(queries, 2);
+    // Asked after mapping without delaying open.
+    QTRY_COMPARE(queries, 1);
     QCOMPARE(viewers.visibleWindows(), (QList<QQuickWindow*>{a, b}));
     QCOMPARE(viewers.sessionOf(a)->path(), first);
     QCOMPARE(viewers.sessionOf(b)->path(), second);
@@ -3009,7 +3045,7 @@ private slots:
   // A picture in front leaves the sound where it was.
   void onlyTheVideoUsedLastIsHeard() {
     ViewerWindows viewers(*m_engine);
-    viewers.setPlacementQuery([] { return HyprlandPlacement::Plan{}; });
+    viewers.setPlacementQuery([](QObject*, HyprlandPlacement::Reply reply) { reply({}); });
     const QString clip = media(QStringLiteral("clip.mp4"));
     const QString picture = media(QStringLiteral("Shot 1.jpg"));
     QQuickWindow* first = viewers.open({clip});

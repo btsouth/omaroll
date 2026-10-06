@@ -479,6 +479,7 @@ ApplicationWindow {
         detail.timeLabel = Captures.timeLabelAt(row)
         detail.sizeLabel = Captures.sizeLabelAt(row)
         detail.stamp = Captures.stampAt(row)
+        detail.thumbnailVersion = Captures.thumbnailVersionAt(row)
         detail.canNavigate = root.adjacentViewerPath(detail.path, 1) !== ""
         if (!detail.isVideo && !detail.isDocument) {
             Qr.inspect(detail.path)
@@ -1293,6 +1294,7 @@ ApplicationWindow {
         detail.timeLabel = Captures.timeLabelAt(index)
         detail.sizeLabel = Captures.sizeLabelAt(index)
         detail.stamp = Captures.stampAt(index)
+        detail.thumbnailVersion = Captures.thumbnailVersionAt(index)
         detail.favorite = Settings.isFavorite(detail.path)
         detail.rating = Settings.rating(detail.path)
         detail.caption = Settings.caption(detail.path)

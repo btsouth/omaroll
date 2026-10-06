@@ -8,21 +8,67 @@
 #include <QProcess>
 #include <QRegularExpression>
 #include <QStandardPaths>
+#include <QTimer>
+#include <utility>
 
 namespace {
 
 QString hyprctl() { return QStandardPaths::findExecutable(QStringLiteral("hyprctl")); }
 
-QByteArray ask(const QString& executable, const QString& what) {
-  QProcess process;
-  process.start(executable, {QStringLiteral("-j"), what});
-  if (!process.waitForFinished(300) || process.exitCode() != 0) {
-    process.kill();
-    process.waitForFinished(100);
-    return {};
+class PlacementQuery final : public QObject {
+public:
+  PlacementQuery(QObject* context, HyprlandPlacement::Reply reply)
+      : QObject(context), m_reply(std::move(reply)) {
+    m_timeout.setSingleShot(true);
+    m_timeout.setInterval(300);
+    connect(&m_timeout, &QTimer::timeout, &m_process, &QProcess::kill);
+    connect(&m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
+      if (error == QProcess::FailedToStart) finish({});
+    });
+    connect(&m_process, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) {
+      m_timeout.stop();
+      if (code != 0 || status != QProcess::NormalExit) {
+        finish({});
+        return;
+      }
+      const QByteArray output = m_process.readAllStandardOutput();
+      if (m_step == 0) {
+        m_workspace = output;
+        ++m_step;
+        ask(QStringLiteral("clients"));
+      } else if (m_step == 1) {
+        m_clients = output;
+        ++m_step;
+        ask(QStringLiteral("activeworkspace"));
+      } else {
+        const QJsonValue before = QJsonDocument::fromJson(m_workspace).object().value(u"id");
+        const QJsonValue after = QJsonDocument::fromJson(output).object().value(u"id");
+        finish(before.isDouble() && before == after
+                   ? HyprlandPlacement::plan(m_clients, output, QCoreApplication::applicationPid())
+                   : HyprlandPlacement::Plan{});
+      }
+    });
+    ask(QStringLiteral("activeworkspace"));
   }
-  return process.readAllStandardOutput();
-}
+
+private:
+  void ask(const QString& what) {
+    m_process.start(hyprctl(), {QStringLiteral("-j"), what});
+    m_timeout.start();
+  }
+  void finish(HyprlandPlacement::Plan plan) {
+    if (!m_reply) return;
+    auto reply = std::exchange(m_reply, {});
+    deleteLater();
+    reply(std::move(plan));
+  }
+  QProcess m_process;
+  QTimer m_timeout;
+  HyprlandPlacement::Reply m_reply;
+  QByteArray m_workspace;
+  QByteArray m_clients;
+  int m_step = 0;
+};
 
 // Hyprland 0.56 reads dispatches as Lua; earlier releases take the classic
 // dispatcher, and reject the Lua form with a non-zero exit.
@@ -83,17 +129,12 @@ bool available() {
          !qEnvironmentVariable("HYPRLAND_INSTANCE_SIGNATURE").isEmpty() && !hyprctl().isEmpty();
 }
 
-Plan query() {
+void query(QObject* context, Reply reply) {
   if (!available()) {
-    return {};
+    reply({});
+    return;
   }
-  const QString executable = hyprctl();
-  const QByteArray workspace = ask(executable, QStringLiteral("activeworkspace"));
-  if (workspace.isEmpty()) {
-    return {};
-  }
-  return plan(ask(executable, QStringLiteral("clients")), workspace,
-              QCoreApplication::applicationPid());
+  new PlacementQuery(context, std::move(reply));
 }
 
 void tile(const QStringList& addresses) {

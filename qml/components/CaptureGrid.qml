@@ -293,6 +293,7 @@ FocusScope {
             required property int rating
             required property bool hidden
             required property double stamp
+            required property string thumbnailVersion
             required property string ocrSnippet
             required property string caption
             required property string rawFormat
@@ -313,6 +314,7 @@ FocusScope {
                 isVideo: cell.isVideo
                 isDocument: cell.isDocument
                 stamp: cell.stamp
+                thumbnailVersion: cell.thumbnailVersion
                 favorite: cell.favorite
                 rating: cell.rating
                 hiddenMark: cell.hidden

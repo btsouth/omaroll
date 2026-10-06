@@ -40,9 +40,10 @@ class CaptureModel final : public QAbstractListModel {
                  NOTIFY automaticFoldersChanged)
 
 public:
-  static constexpr int CompanionPathRole = CaptureRoles::OcrSnippetRole + 1;
+  static constexpr int CompanionPathRole = CaptureRoles::ThumbnailVersionRole + 1;
   explicit CaptureModel(AppSettings* settings, QObject* parent = nullptr);
   ~CaptureModel() override;
+  void requestStop();
 
   [[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
   [[nodiscard]] QVariant data(const QModelIndex& index, int role) const override;

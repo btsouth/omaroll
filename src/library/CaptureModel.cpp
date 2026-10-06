@@ -112,8 +112,16 @@ CaptureModel::~CaptureModel() {
   // Stop the walk rather than wait for a large tree to finish; the result is
   // discarded either way, and the wait keeps the future from delivering into
   // a destroyed watcher.
-  m_cancel->store(true);
+  requestStop();
   m_scanWatcher.waitForFinished();
+}
+
+void CaptureModel::requestStop() {
+  m_refreshTimer.stop();
+  m_fallbackRefreshTimer.stop();
+  m_midnightTimer.stop();
+  m_rescanQueued = false;
+  m_cancel->store(true);
 }
 
 void CaptureModel::scheduleMidnight() {
@@ -274,6 +282,8 @@ QVariant CaptureModel::data(const QModelIndex& index, int role) const {
     return sizeLabel(record.bytes);
   case CaptureRoles::BytesRole:
     return record.bytes;
+  case CaptureRoles::ThumbnailVersionRole:
+    return record.thumbnailVersion;
   case CaptureRoles::StampRole:
     return record.modified;
   case CaptureRoles::IsVideoRole:
@@ -314,6 +324,7 @@ QHash<int, QByteArray> CaptureModel::roleNames() const {
       {CaptureRoles::SizeLabelRole, "sizeLabel"},
       {CaptureRoles::BytesRole, "bytes"},
       {CaptureRoles::StampRole, "stamp"},
+      {CaptureRoles::ThumbnailVersionRole, "thumbnailVersion"},
       {CaptureRoles::IsVideoRole, "isVideo"},
       {CaptureRoles::IsDocumentRole, "isDocument"},
       {CaptureRoles::FavoriteRole, "favorite"},
@@ -440,6 +451,7 @@ QString CaptureModel::uriList(const QStringList& paths) const {
 }
 
 void CaptureModel::refresh() {
+  if (m_cancel->load()) return;
   if (m_scanning) {
     // Fold repeat requests into one follow-up scan rather than queueing many.
     m_rescanQueued = true;
@@ -608,7 +620,7 @@ void CaptureModel::adoptResults(ScanResult result) {
     }
 
     // Update what stayed. A rewritten file (a recording finalised in place)
-    // changes size and mtime; the mtime is what busts the thumbnail cache.
+    // changes its full version, including replacements with preserved mtime.
     QSet<QString> kept;
     kept.reserve(m_records.size());
     for (int existing = 0; existing < m_records.size(); ++existing) {
@@ -619,6 +631,7 @@ void CaptureModel::adoptResults(ScanResult result) {
           record.camera == fresh.camera && record.lens == fresh.lens &&
           record.rating == fresh.rating && record.caption == fresh.caption &&
           record.modified == fresh.modified && record.bytes == fresh.bytes &&
+          record.thumbnailVersion == fresh.thumbnailVersion &&
           record.entryPath == fresh.entryPath && record.fileName == fresh.fileName &&
           record.kind == fresh.kind && record.video == fresh.video &&
           record.document == fresh.document && record.animated == fresh.animated &&

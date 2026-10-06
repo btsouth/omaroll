@@ -39,6 +39,8 @@ struct CaptureRecord {
   // in place (a recording finalised by omarchy-capture-screenrecording) gets a
   // fresh tile rather than the cached old one.
   qint64 modified = 0;
+  // Full file and transcode-source identity, gathered off the GUI thread.
+  QString thumbnailVersion;
   // The medium, decided by extension or an extensionless file's header.
   // Kept apart from kind because a Download
   // can be either, and everything that plays, scrubs or trims keys off this.

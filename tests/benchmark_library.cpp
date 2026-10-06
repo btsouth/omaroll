@@ -140,6 +140,27 @@ int main(int argc, char** argv) {
   proxy.setSearchText({});
   if (proxy.rowCount() != count) return 1;
   result.insert(QStringLiteral("clear_filename_filter_ms"), timer.nsecsElapsed() / 1e6);
+  const int membershipArgument = application.arguments().indexOf(QStringLiteral("--memberships"));
+  const int memberships = membershipArgument < 0 ? 0
+      : qBound(0, application.arguments().value(membershipArgument + 1).toInt(), count);
+  if (memberships > 0) {
+    const QString collection = QStringLiteral("Benchmark");
+    const QStringList members = files.last(memberships);
+    if (!settings.createAlbum(collection) || !settings.addToAlbum(collection, members) ||
+        !settings.createTag(collection) || !settings.addTag(collection, members)) return 1;
+    const auto records = CaptureScanner::scan({{pictures, 4}});
+    QJsonArray reconciliation;
+    for (int run = 0; run < 3; ++run) {
+      timer.restart();
+      settings.reconcileAlbums(records);
+      settings.reconcileTags(records);
+      reconciliation.append(timer.nsecsElapsed() / 1e6);
+      if (settings.albumPaths(collection).size() != memberships ||
+          settings.tagPaths(collection).size() != memberships) return 1;
+    }
+    result.insert(QStringLiteral("memberships_per_collection"), memberships);
+    result.insert(QStringLiteral("album_and_tag_reconciliation_ms"), reconciliation);
+  }
   QJsonArray thumbnails;
   QStringList thumbnailFiles;
   QSet<QString> sampled;

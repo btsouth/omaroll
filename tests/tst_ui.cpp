@@ -115,7 +115,7 @@ public:
   QQuickImageResponse* requestImageResponse(const QString& id, const QSize& size) override {
     auto request = std::make_shared<Request>();
     request->row = QUrl::fromPercentEncoding(id.toUtf8()).section('/', -1).section('.', 0, 0).toInt();
-    request->stamp = id.section('~', 1, 1).section('%', 0, 0).toInt();
+    request->stamp = id.section('~', 1, 1).section('!', 0, 0).section('%', 0, 0).toInt();
     request->id = id;
     request->size = size;
     request->response = new Response(request);
@@ -1447,7 +1447,7 @@ private slots:
             captures.insert(i, { path: "/thumbnail-test/" + (2000 + i) + ".png", fileName: "",
                                  kindLabel: "", timeLabel: "", sizeLabel: "", isVideo: false,
                                  isDocument: false, favorite: false, rating: 0, hidden: false,
-                                 stamp: 1, ocrSnippet: "", caption: "", rawFormat: "" })
+                                 stamp: 1, thumbnailVersion: "1", ocrSnippet: "", caption: "", rawFormat: "" })
           }
         }
         function removeRowAbove() { captures.remove(0, 2) }
@@ -1456,7 +1456,7 @@ private slots:
             captures.append({ path: "/thumbnail-test/" + i + ".png", fileName: "",
                               kindLabel: "", timeLabel: "", sizeLabel: "", isVideo: false,
                               isDocument: false, favorite: false, rating: 0, hidden: false,
-                              stamp: 1, ocrSnippet: "", caption: "", rawFormat: "" })
+                              stamp: 1, thumbnailVersion: "1", ocrSnippet: "", caption: "", rawFormat: "" })
           }
         }
       }
@@ -1618,7 +1618,7 @@ private slots:
     QCOMPARE(thumbnail->property("status").toInt(), 1); // Image.Ready.
     QVERIFY(thumbnail->opacity() >= 0.999);
     QCOMPARE(card->property("readyPath").toString(), QStringLiteral("/thumbnail-test/1001.png"));
-    QCOMPARE(card->property("readyStamp").toDouble(), 0.0);
+    QVERIFY(card->property("readyIdentity").toString().startsWith(QStringLiteral("0!")));
     // A same-path rewrite must also hide the previous version while decoding.
     card->setProperty("stamp", 1);
     QTRY_COMPARE(provider->count(1001, 1), 1);
@@ -1636,7 +1636,20 @@ private slots:
     QCOMPARE(thumbnail->property("status").toInt(), 1);
     QVERIFY(thumbnail->opacity() >= 0.999);
     QCOMPARE(card->property("readyPath").toString(), QStringLiteral("/thumbnail-test/1001.png"));
-    QCOMPARE(card->property("readyStamp").toDouble(), 1.0);
+    QVERIFY(card->property("readyIdentity").toString().startsWith(QStringLiteral("1!")));
+    // A replacement identity changes the URL even when mtime stays put.
+    card->setProperty("thumbnailVersion", QStringLiteral("2"));
+    QTRY_COMPARE(provider->count(1001, 2), 1);
+    QVERIFY(!thumbnail->isVisible());
+    provider->completeAll();
+    QTRY_VERIFY(card->property("thumbnailPresented").toBool());
+    QTRY_VERIFY(pixelMatches(window->grabWindow().pixelColor(pixel), QColor(Qt::blue)));
+    const QUrl oldSource = thumbnail->property("source").toUrl();
+    card->setWidth(card->width() + 1);
+    QTRY_VERIFY(thumbnail->property("source").toUrl() != oldSource);
+    provider->completeAll();
+    QTRY_VERIFY(card->property("thumbnailPresented").toBool());
+
     QVERIFY(!provider->hasEmptySizeRequest());
     QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
   }
@@ -2376,6 +2389,34 @@ private slots:
     // detach the model while the next scenario is sending selection keys.
     QTest::qWait(120);
     QTRY_VERIFY(item("library")->property("layoutReady").toBool());
+  }
+
+  void searchTypingIsCoalescedAndExplicitActionsApplyImmediately() {
+    auto* search = item("libraryFilterSearch");
+    QVERIFY(search);
+    QTest::keyClick(m_window, Qt::Key_Slash);
+    QTRY_VERIFY(search->hasActiveFocus());
+    QSignalSpy changes(m_library, &CaptureFilterModel::searchTextChanged);
+    QElapsedTimer timer; timer.start();
+    typeText(QStringLiteral("alpine"));
+    qInfo() << "PERF search burst ms" << timer.nsecsElapsed() / 1e6
+            << "updates" << changes.size();
+    QCOMPARE(changes.size(), 0);
+    QTRY_COMPARE(m_library->searchText(), QStringLiteral("alpine"));
+    QCOMPARE(changes.size(), 1);
+    QCOMPARE(m_library->count(), 1);
+    search->setProperty("text", QStringLiteral("no-match"));
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QCOMPARE(m_library->searchText(), QStringLiteral("no-match"));
+    QCOMPARE(m_library->count(), 0);
+    search->setProperty("text", QString());
+    QCOMPARE(m_library->searchText(), QString());
+    search->setProperty("text", QStringLiteral("pending"));
+    m_library->setSearchText(QStringLiteral("alpine"));
+    QCOMPARE(search->property("text").toString(), QStringLiteral("alpine"));
+    QTest::qWait(200);
+    QCOMPARE(m_library->searchText(), QStringLiteral("alpine"));
+    m_library->setSearchText(QString());
   }
 
   void searchFiltersTheGridAndEscapeClearsIt() {

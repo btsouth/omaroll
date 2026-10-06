@@ -1172,7 +1172,7 @@ ApplicationWindow {
             // The thumbnail provider applies the ratio from its URL once.
             sourceSize: Qt.size(Math.round(width), Math.round(height))
             source: root.visible && Session.isVideo && Session.path !== ""
-                    ? "image://thumbs/" + root.dpr + "@40~" + Session.stamp
+                    ? "image://thumbs/" + root.dpr + "@40~" + Session.contentVersion
                       + encodeURIComponent(Session.path)
                     : ""
         }

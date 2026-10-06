@@ -38,6 +38,7 @@ public:
   // when it is not part of a set.
   Q_INVOKABLE [[nodiscard]] QStringList groupPaths(const QString& path) const;
 
+  void requestStop();
   void setActive(bool active);
   Q_INVOKABLE void refresh();
 

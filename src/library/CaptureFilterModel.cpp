@@ -827,6 +827,11 @@ bool CaptureFilterModel::isAnimatedAt(int row) const {
   return source.isValid() && sourceRecord(source.row()).animated;
 }
 
+QString CaptureFilterModel::thumbnailVersionAt(int row) const {
+  return row >= 0 && row < rowCount()
+             ? data(index(row, 0), CaptureRoles::ThumbnailVersionRole).toString() : QString();
+}
+
 qint64 CaptureFilterModel::stampAt(int row) const {
   return data(index(row, 0), CaptureRoles::StampRole).toLongLong();
 }

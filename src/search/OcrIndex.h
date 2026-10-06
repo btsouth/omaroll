@@ -32,6 +32,7 @@ class OcrIndex final : public QObject {
 public:
   explicit OcrIndex(CaptureModel* model, QObject* parent = nullptr);
   ~OcrIndex() override;
+  void requestStop();
 
   [[nodiscard]] bool available() const { return !m_program.isEmpty(); }
   [[nodiscard]] bool indexing() const { return m_indexing; }

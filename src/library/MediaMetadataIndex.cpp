@@ -127,6 +127,10 @@ MediaMetadataIndex::MediaMetadataIndex(CaptureModel* model, QObject* parent)
   m_syncTimer.setInterval(100);
   connect(&m_syncTimer, &QTimer::timeout, this, &MediaMetadataIndex::sync);
 
+  m_updateTimer.setSingleShot(true);
+  m_updateTimer.setInterval(50);
+  connect(&m_updateTimer, &QTimer::timeout, this, &MediaMetadataIndex::flushUpdates);
+
   m_saveTimer.setSingleShot(true);
   // Batch many quick metadata reads into one small atomic cache write.
   m_saveTimer.setInterval(5000);
@@ -141,7 +145,7 @@ MediaMetadataIndex::MediaMetadataIndex(CaptureModel* model, QObject* parent)
 }
 
 MediaMetadataIndex::~MediaMetadataIndex() {
-  disconnect(&m_process, nullptr, this, nullptr);
+  requestStop();
   if (m_process.state() != QProcess::NotRunning) {
     m_process.kill();
     m_process.waitForFinished(1000);
@@ -149,6 +153,18 @@ MediaMetadataIndex::~MediaMetadataIndex() {
   if (m_cacheDirty) {
     saveCache();
   }
+}
+
+void MediaMetadataIndex::requestStop() {
+  m_stopping->store(true);
+  m_syncTimer.stop();
+  m_timeout.stop();
+  m_updateTimer.stop();
+  m_saveTimer.stop();
+  m_queue.clear();
+  disconnect(&m_process, nullptr, this, nullptr);
+  disconnect(&m_rawProbe, nullptr, this, nullptr);
+  if (m_process.state() != QProcess::NotRunning) m_process.kill();
 }
 
 QString MediaMetadataIndex::cachePath() {
@@ -267,7 +283,7 @@ CaptureModel::MetadataUpdate MediaMetadataIndex::updateFor(const Candidate& cand
 }
 
 void MediaMetadataIndex::sync() {
-  if (!m_model) {
+  if (m_stopping->load() || !m_model) {
     return;
   }
 
@@ -311,13 +327,10 @@ void MediaMetadataIndex::sync() {
     }
   }
 
-  if (m_indexing || !m_current.isEmpty() || !m_pendingUpdates.isEmpty()) {
-    for (const CaptureModel::MetadataUpdate& update : std::as_const(cachedUpdates)) {
-      m_pendingUpdates.insert(update.path, update);
-    }
-  } else {
-    m_model->applyMetadata(cachedUpdates);
+  for (const CaptureModel::MetadataUpdate& update : std::as_const(cachedUpdates)) {
+    m_pendingUpdates.insert(update.path, update);
   }
+  if (!m_pendingUpdates.isEmpty() && !m_updateTimer.isActive()) m_updateTimer.start();
   resetProgress(m_queue.size() + m_current.size());
   setIndexing(!m_current.isEmpty() || !m_queue.isEmpty());
   if (m_cacheDirty) {
@@ -327,14 +340,12 @@ void MediaMetadataIndex::sync() {
 }
 
 void MediaMetadataIndex::processNext() {
+  if (m_stopping->load()) return;
   if (m_process.state() != QProcess::NotRunning || !m_current.isEmpty()) {
     return;
   }
   if (m_queue.isEmpty()) {
-    if (!m_pendingUpdates.isEmpty()) {
-      m_model->applyMetadata(m_pendingUpdates.values());
-      m_pendingUpdates.clear();
-    }
+    flushUpdates();
     setIndexing(false);
     return;
   }
@@ -359,10 +370,12 @@ void MediaMetadataIndex::processNext() {
         advanceProgress();
       }
     }
-    m_rawProbe.setFuture(QtConcurrent::run([paths] {
+    const auto stopping = m_stopping;
+    m_rawProbe.setFuture(QtConcurrent::run([paths, stopping] {
       QList<Details> results;
       results.reserve(paths.size());
       for (const QString& path : paths) {
+        if (stopping->load()) break;
         results.append(rawDetails(path));
       }
       return results;
@@ -475,7 +488,14 @@ void MediaMetadataIndex::adopt(const Candidate& candidate, const Details& detail
   scheduleSave();
   if (details != Details {}) {
     m_pendingUpdates.insert(candidate.path, updateFor(candidate, details));
+    if (!m_updateTimer.isActive()) m_updateTimer.start();
   }
+}
+
+void MediaMetadataIndex::flushUpdates() {
+  m_updateTimer.stop();
+  const auto updates = std::exchange(m_pendingUpdates, {});
+  if (m_model && !updates.isEmpty()) m_model->applyMetadata(updates.values());
 }
 
 void MediaMetadataIndex::setIndexing(bool value) {

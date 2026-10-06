@@ -59,6 +59,7 @@ Item {
     // does not reposition the list back onto a page boundary.
     property bool pdfScrollFromList: false
     property double stamp: 0
+    property string thumbnailVersion: ""
     property bool favorite: false
     property int rating: 0
     property string caption: ""
@@ -1024,7 +1025,9 @@ Item {
                 sourceSize: Qt.size(Math.round(width), Math.round(height))
                 source: !root.visible || !root.isVideo || root.path === "" ? ""
                         : "image://thumbs/" + Screen.devicePixelRatio + "@40~"
-                          + root.stamp + encodeURIComponent(root.path)
+                          + encodeURIComponent(root.thumbnailVersion) + "!"
+                          + Math.round(root.width) + "x" + Math.round(root.height)
+                          + encodeURIComponent(root.path)
             }
 
             // Stills fit on open, zoom to 4x without throwing away decoded
