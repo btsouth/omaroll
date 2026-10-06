@@ -477,10 +477,11 @@ void CaptureModel::refresh() {
         rowByPath.insert(path, static_cast<int>(result.folderSources.size()));
         result.folderSources.append(QVariantMap{{QStringLiteral("path"), path},
                                                {QStringLiteral("label"), label}});
-      } else {
+      } else if (i < labels.size() || (i == 4 && downloadsEnabled)) {
+        // Later fixed roots describe the broader media collection. Additional
+        // folders keep the fixed label when their canonical paths overlap.
         QVariantMap row = result.folderSources.at(*found).toMap();
-        row[QStringLiteral("label")] = row.value(QStringLiteral("label")).toString() +
-                                       QStringLiteral(" + ") + label;
+        row[QStringLiteral("label")] = label;
         result.folderSources[*found] = row;
       }
     }

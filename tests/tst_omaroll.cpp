@@ -1366,6 +1366,24 @@ private slots:
     settings.setScanDownloads(false);
     QTRY_COMPARE(tree.rowCount(), 6);
     QVERIFY(!tree.indexForPath(dir.filePath("Downloads")).isValid());
+
+    // Stock Omarchy writes captures into the broader media roots. A saved
+    // additional folder pointing at that same root must not override its label.
+    QVERIFY(qputenv("OMARCHY_SCREENSHOT_DIR", dir.filePath("Pictures").toUtf8()));
+    QVERIFY(qputenv("OMARCHY_SCREENRECORD_DIR", dir.filePath("Videos").toUtf8()));
+    QVERIFY(settings.addLibraryFolder(QUrl::fromLocalFile(dir.filePath("Pictures"))));
+    library.refresh();
+    QTRY_VERIFY(!library.scanning());
+    QTRY_COMPARE(tree.rowCount(), 4);
+    QHash<QString, QString> labels;
+    for (const QVariant& source : library.folderSources()) {
+      const QVariantMap row = source.toMap();
+      labels.insert(row.value("path").toString(), row.value("label").toString());
+    }
+    QCOMPARE(labels.value(dir.filePath("Pictures")), QStringLiteral("Pictures"));
+    QCOMPARE(labels.value(dir.filePath("Videos")), QStringLiteral("Videos"));
+    QCOMPARE(tree.data(tree.indexForPath(dir.filePath("Pictures")), FolderTreeModel::FolderNameRole).toString(),
+             QStringLiteral("Pictures"));
   }
 
   void explicitlyOpenedSymlinkFileIsNotAFolderSource() {

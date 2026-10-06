@@ -4556,19 +4556,19 @@ private slots:
   }
 
   void folderSidebarKeyboardExpandsCollapsesAndOpens() {
-    QTRY_VERIFY(!m_captures->scanning());
     m_library->setFolderFilter({});
     const QString folder = QFileInfo(m_oddPath).absolutePath();
     const QVariantList sources{QVariantMap{{"path", folder}, {"label", "Test library"}}};
+    // Use an unbound projection: a pending scan or queued live rebuild must
+    // never replace the synthetic tree while keyboard input is being tested.
+    FolderTreeModel fixture;
+    fixture.setFolders(sources, {folder + "/b/leaf", folder + "/bc"}, {});
+    m_engine->rootContext()->setContextProperty(QStringLiteral("FolderTree"), &fixture);
     const auto restore = qScopeGuard([&] {
       m_settings->setShowFolderSidebar(false);
       m_library->setFolderFilter({});
-      // Rebind the production projection after the synthetic keyboard fixture.
-      QHash<QString, int> counts;
-      for (const QString& path : m_library->folders()) counts.insert(path, m_library->folderItemCount(path));
-      m_folderTree->setFolders(m_captures->folderSources(), m_library->folders(), counts);
+      m_engine->rootContext()->setContextProperty(QStringLiteral("FolderTree"), m_folderTree);
     });
-    m_folderTree->setFolders(sources, {folder + "/b/leaf", folder + "/bc"}, {});
     m_settings->setShowFolderSidebar(true);
     QQuickItem* tree = item("folderSidebarTree");
     QTRY_COMPARE(tree->property("rows").toInt(), 1);
