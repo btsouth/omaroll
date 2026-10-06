@@ -288,6 +288,7 @@ and put on your clipboard.
 
 | Key | Does |
 |---|---|
+| `F9` | Show · hide the folder sidebar (windows at least 760px wide) |
 | arrows · `hjkl` | Move |
 | `Enter` · double click | Open the built-in preview |
 | right click | Actions for that file or its selected files |
@@ -319,7 +320,8 @@ and put on your clipboard.
 | `K` | Compare the selection, or the open picture's copies |
 | `Ctrl+Z` | Undo the last favourite, hide, rating or caption change |
 | `Alt+C` in the library preview | Edit the caption; Enter saves and Escape cancels |
-| `1`-`8` · `Tab` `Shift+Tab` | Jump to a section · next · previous section |
+| `1`-`8` · `Tab` `Shift+Tab` | Jump to a section · next · previous section; with the sidebar open, Tab moves between the grid and sidebar |
+| `↑` `↓` · `←` `→` · `Enter` in the sidebar | Move · collapse or expand · open the folder |
 | `Alt+1`-`Alt+5` · `Alt+0` | Rate · clear rating, in the grid or the viewer |
 | `Page Up` `Page Down` in a PDF preview | Previous · next page |
 | `Select text` in a PDF, then drag | Pick the words under the pointer |

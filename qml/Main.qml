@@ -65,13 +65,15 @@ ApplicationWindow {
                                       || editorChooser.visible
     readonly property bool anySheetOpen: modalOpen || detail.visible
     // A popup menu is up; the press that closes it must not also land under it.
-    readonly property bool popupOpen: filters.menuOpen || albumActionMenu.visible || contextMenu.visible || detail.contextMenuOpen
+    readonly property bool folderSidebarVisible: Settings.showFolderSidebar && width >= 760
+    readonly property bool popupOpen: folderSidebar.menuOpen || filters.menuOpen || albumActionMenu.visible || contextMenu.visible || detail.contextMenuOpen
     // A menu takes the keyboard while it is up and does not give it back to
     // the grid on its own, which left the arrow keys dead until a tile was
     // clicked.
     onPopupOpenChanged: {
         if (!popupOpen && !anySheetOpen) {
-            library.forceActiveFocus()
+            if (folderSidebar.activeFocus) folderSidebar.focusTree()
+            else library.forceActiveFocus()
         }
     }
 
@@ -758,6 +760,11 @@ ApplicationWindow {
             root.perform("ocr", Captures.pathAt(0))
         } else if (view === "duplicates") {
             Captures.duplicatesOnly = true
+        } else if (view === "sidebar") {
+            Settings.showFolderSidebar = true
+            const folder = Captures.pathAt(0).substring(0, Captures.pathAt(0).lastIndexOf("/"))
+            Settings.pinFolderPath(folder)
+            libraryBrowser.showFolder(folder)
         } else if (view === "browser") {
             libraryBrowser.open()
         } else if (view === "settings") {
@@ -871,6 +878,16 @@ ApplicationWindow {
             anchors.verticalCenter: parent.verticalCenter
             spacing: 8
 
+            IconButton {
+                objectName: "folderSidebarToggle"
+                anchors.verticalCenter: parent.verticalCenter
+                label: "Folders"
+                enabled: !root.popupOpen
+                toolTip: "Toggle folder sidebar"
+                shortcut: "F9"
+                active: Settings.showFolderSidebar
+                onClicked: Settings.showFolderSidebar = !Settings.showFolderSidebar
+            }
             PillButton {
                 objectName: "selectionActionsButton"
                 visible: library.checkedCount > 0
@@ -1002,7 +1019,8 @@ ApplicationWindow {
         anchors.top: filters.bottom
         anchors.left: parent.left
         anchors.right: parent.right
-        height: pins.hasPins || Captures.folderFilter !== "" ? 42 : 0
+        visible: !root.folderSidebarVisible
+        height: visible && (pins.hasPins || Captures.folderFilter !== "") ? 42 : 0
         enabled: !root.anySheetOpen
 
         PinnedFolders {
@@ -1043,11 +1061,27 @@ ApplicationWindow {
         Behavior on color { ColorAnimation { duration: 180 } }
     }
 
+    FolderSidebar {
+        id: folderSidebar
+        objectName: "folderSidebar"
+        anchors.top: filters.bottom
+        anchors.left: parent.left
+        anchors.bottom: footer.top
+        width: paneWidth
+        visible: root.folderSidebarVisible
+        enabled: !root.anySheetOpen && (!root.popupOpen || menuOpen)
+        onChosen: function(path) { libraryBrowser.showFolder(path) }
+        onAddFolderRequested: libraryBrowser.addFolder()
+        onGridFocusRequested: library.forceActiveFocus()
+        onMessage: function(text) { root.say(text) }
+        onVisibleChanged: if (!visible && activeFocus) library.forceActiveFocus()
+    }
+
     CaptureGrid {
         id: library
         objectName: "library"
         anchors.top: divider.bottom
-        anchors.left: parent.left
+        anchors.left: root.folderSidebarVisible ? folderSidebar.right : parent.left
         anchors.right: parent.right
         anchors.bottom: footer.top
         anchors.topMargin: 8
@@ -1059,7 +1093,10 @@ ApplicationWindow {
         // Tab walks the sections the way it walks tabs in a browser, while
         // the grid has the keyboard. The search field, sheets and menus keep
         // their own Tab because the grid never sees it then.
-        onSectionStepRequested: function (step) { filters.cycleSection(step) }
+        onSectionStepRequested: function (step) {
+            if (root.folderSidebarVisible) folderSidebar.focusTree()
+            else filters.cycleSection(step)
+        }
 
         model: Captures
         visible: Captures.count > 0
@@ -1330,7 +1367,7 @@ ApplicationWindow {
     // and useless.
     Column {
         anchors.centerIn: library
-        width: Math.min(420, parent.width - 80)
+        width: Math.min(420, library.width - 40)
         spacing: 10
         visible: Captures.count === 0 && !Library.scanning && !TextIndex.indexing
                  && !(Captures.duplicatesOnly && Duplicates.scanning)
@@ -1438,7 +1475,7 @@ ApplicationWindow {
                   ? notice.text
                   : making !== ""
                   ? making
-                  : "Enter details   ·   Space act   ·   M background   ·   T trim   ·   V favourite   ·   Del trash   ·   / search"
+                  : "Enter details   ·   Space act   ·   M background   ·   T trim   ·   V favourite   ·   Del trash   ·   / search   ·   F9 folders"
             font.family: Theme.fontFamily
             font.pixelSize: 11
             color: notice.text !== "" || making !== ""
@@ -2112,6 +2149,12 @@ ApplicationWindow {
         sequences: ["Ctrl+A"]
         enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: library.checkAll()
+    }
+    Shortcut {
+        sequences: ["F9"]
+        autoRepeat: false
+        enabled: !root.anySheetOpen && !root.popupOpen && !filters.searchActive
+        onActivated: Settings.showFolderSidebar = !Settings.showFolderSidebar
     }
     // Tile size, the way every browser and file manager does it.
     Shortcut {

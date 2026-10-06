@@ -453,8 +453,35 @@ void CaptureModel::refresh() {
   const std::shared_ptr<std::atomic_bool> cancel = m_cancel;
 
   const auto explicitEntries = m_extraFiles;
-  m_scanWatcher.setFuture(QtConcurrent::run([scanRoots, cancel, explicitEntries] {
+  const bool downloadsEnabled = !m_settings || m_settings->scanDownloads();
+  m_scanWatcher.setFuture(QtConcurrent::run([scanRoots, cancel, explicitEntries, downloadsEnabled] {
     ScanResult result;
+    // Resolve source paths on the scan worker, never from a tree delegate.
+    // Explicit files are not folder sources; session directories are.
+    const QStringList labels{QStringLiteral("Screenshots"), QStringLiteral("Screen recordings"),
+                             QStringLiteral("Pictures"), QStringLiteral("Videos")};
+    QHash<QString, int> rowByPath;
+    for (qsizetype i = 0; i < scanRoots.size(); ++i) {
+      const QString source = scanRoots.at(i).path;
+      if (source.isEmpty() || explicitEntries.contains(source)) continue;
+      const QFileInfo info(source);
+      QString path = info.canonicalFilePath();
+      if (path.isEmpty()) path = QDir::cleanPath(info.absoluteFilePath());
+      const QString label = i < labels.size() ? labels.at(i)
+                            : i == 4 && downloadsEnabled ? QStringLiteral("Downloads")
+                            : info.fileName();
+      const auto found = rowByPath.constFind(path);
+      if (found == rowByPath.cend()) {
+        rowByPath.insert(path, static_cast<int>(result.folderSources.size()));
+        result.folderSources.append(QVariantMap{{QStringLiteral("path"), path},
+                                               {QStringLiteral("label"), label}});
+      } else {
+        QVariantMap row = result.folderSources.at(*found).toMap();
+        row[QStringLiteral("label")] = row.value(QStringLiteral("label")).toString() +
+                                       QStringLiteral(" + ") + label;
+        result.folderSources[*found] = row;
+      }
+    }
     result.records = CaptureScanner::scan(scanRoots, cancel.get(), &result.directories);
     // Discovery deduplicates resolved media. An explicit open still names the
     // entry the user chose, even when a watched folder found its target first.
@@ -480,6 +507,10 @@ void CaptureModel::releasePath(const QString& path) {
 }
 
 void CaptureModel::adoptResults(ScanResult result) {
+  if (m_folderSources != result.folderSources) {
+    m_folderSources = std::move(result.folderSources);
+    emit folderSourcesChanged();
+  }
   QList<CaptureRecord>& scanned = result.records;
   // Row signals can invoke rowOf while this diff is in progress. Fall back to
   // the live list until every removal and insertion has settled.

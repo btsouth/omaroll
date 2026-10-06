@@ -18,8 +18,8 @@ folder handler supports it. Shift+Delete removes files permanently, with
 confirmation on by default and an explicit Settings opt-out. Ordinary Delete
 continues to use Trash.
 
-Folder sidebar request [#82](https://github.com/btsouth/omaroll/issues/82) awaits
-workflow clarification. [#80](https://github.com/btsouth/omaroll/issues/80) stays
+Folder sidebar [#82](https://github.com/btsouth/omaroll/issues/82) is implemented
+on `feature/folder-sidebar`. [#80](https://github.com/btsouth/omaroll/issues/80) stays
 open for the reporter's version and file-manager setup.
 
 Use the [roadmap](ROADMAP.md) for future work and open decisions.

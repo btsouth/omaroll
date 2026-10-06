@@ -10,6 +10,7 @@
 #include "app/StartupTrace.h"
 #include "app/VideoPlayback.h"
 #include "library/CaptureFilterModel.h"
+#include "library/FolderTreeModel.h"
 #include "library/CaptureModel.h"
 #include "library/DuplicateIndex.h"
 #include "library/MediaMetadataIndex.h"
@@ -165,7 +166,7 @@ Options:
   --render-view <view>   Which view to render: grid, detail, video, slideshow,
                          matte, corrections, compare, export, rename, OCR,
                          editors, pins, context-menu, selection-menu,
-                         duplicates, browser, settings, viewer, viewer-video,
+                         duplicates, browser, sidebar, settings, viewer, viewer-video,
                          viewer-info, viewer-menu, viewer-help or
                          grid-filenames.
   --render-size <WxH>    Window size, from 560x420 (viewer 320x240) to 7680x4320.
@@ -239,6 +240,7 @@ public:
     QObject::connect(&m_library, &CaptureFilterModel::showHiddenChanged, &settings,
                      [this, &settings] { settings.setShowHidden(m_library.showHidden()); });
 
+    m_folderTree.bind(&m_captures, &m_library);
     add(request);
 
     // A tracked tool's half-written output stays out of the library until the
@@ -249,6 +251,7 @@ public:
     QObject::connect(&actions, &ActionLauncher::outputSettled, &m_captures,
                      &CaptureModel::releasePath);
 
+    m_context.setContextProperty(QStringLiteral("FolderTree"), &m_folderTree);
     m_context.setContextProperty(QStringLiteral("Captures"), &m_library);
     m_context.setContextProperty(QStringLiteral("Library"), &m_captures);
     m_context.setContextProperty(QStringLiteral("Matte"), &m_matte);
@@ -305,6 +308,7 @@ private:
   CaptureModel m_captures;
   MediaMetadataIndex m_mediaMetadata;
   CaptureFilterModel m_library;
+  FolderTreeModel m_folderTree;
   OcrIndex m_textIndex;
   QrDetector m_qr;
   SubtitleIndex m_subtitles;
@@ -421,7 +425,7 @@ int main(int argc, char* argv[]) {
       QStringLiteral("video"),
       QStringLiteral("slideshow"),  QStringLiteral("matte"),   QStringLiteral("corrections"),
       QStringLiteral("compare"),    QStringLiteral("export"),  QStringLiteral("rename"),
-      QStringLiteral("ocr"),        QStringLiteral("duplicates"), QStringLiteral("browser"),
+      QStringLiteral("ocr"),        QStringLiteral("duplicates"), QStringLiteral("browser"), QStringLiteral("sidebar"),
       QStringLiteral("settings"),   QStringLiteral("editors"), QStringLiteral("pins"),
       QStringLiteral("context-menu"), QStringLiteral("selection-menu"),
       QStringLiteral("viewer"),  QStringLiteral("viewer-video"),

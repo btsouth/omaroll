@@ -47,6 +47,8 @@ class AppSettings final : public QObject {
   Q_PROPERTY(int tileWidth READ tileWidth WRITE setTileWidth NOTIFY tileWidthChanged)
   Q_PROPERTY(bool showGridFilenames READ showGridFilenames WRITE setShowGridFilenames NOTIFY
                  showGridFilenamesChanged)
+  Q_PROPERTY(bool showFolderSidebar READ showFolderSidebar WRITE setShowFolderSidebar NOTIFY showFolderSidebarChanged)
+  Q_PROPERTY(int folderSidebarWidth READ folderSidebarWidth WRITE setFolderSidebarWidth NOTIFY folderSidebarWidthChanged)
   Q_PROPERTY(int previewWidth READ previewWidth WRITE setPreviewWidth NOTIFY previewWidthChanged)
   Q_PROPERTY(int previewHeight READ previewHeight WRITE setPreviewHeight NOTIFY previewHeightChanged)
   Q_PROPERTY(bool slideshowVideos READ slideshowVideos WRITE setSlideshowVideos NOTIFY
@@ -124,6 +126,10 @@ public:
   void setTileWidth(int width);
   [[nodiscard]] bool showGridFilenames() const { return m_showGridFilenames; }
   void setShowGridFilenames(bool value);
+  [[nodiscard]] bool showFolderSidebar() const { return m_showFolderSidebar; }
+  void setShowFolderSidebar(bool value);
+  [[nodiscard]] int folderSidebarWidth() const { return m_folderSidebarWidth; }
+  void setFolderSidebarWidth(int width);
   [[nodiscard]] int previewWidth() const { return m_previewWidth; }
   void setPreviewWidth(int width);
   [[nodiscard]] int previewHeight() const { return m_previewHeight; }
@@ -259,6 +265,8 @@ signals:
   void thumbnailCacheMbChanged();
   void tileWidthChanged();
   void showGridFilenamesChanged();
+  void showFolderSidebarChanged();
+  void folderSidebarWidthChanged();
   void previewWidthChanged();
   void previewHeightChanged();
   void slideshowVideosChanged();
@@ -349,6 +357,8 @@ private:
   int m_thumbnailCacheMb = 256;
   int m_tileWidth = 240;
   bool m_showGridFilenames = false;
+  bool m_showFolderSidebar = false;
+  int m_folderSidebarWidth = 240;
   int m_previewWidth = 1000;
   int m_previewHeight = 700;
   bool m_slideshowVideos = false;

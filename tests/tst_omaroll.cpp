@@ -13,6 +13,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include "library/CaptureFilterModel.h"
+#include "library/FolderTreeModel.h"
+#include <QAbstractItemModelTester>
 #include "library/CaptureModel.h"
 #include "library/CaptureRoles.h"
 #include "library/DuplicateIndex.h"
@@ -1231,6 +1233,137 @@ private slots:
     settings.setScanDownloads(false);
     QVERIFY(!changed.isEmpty());
     QCOMPARE(model.automaticFolders().size(), 2);
+  }
+
+  void folderTreeBuildsNestedSourcesAndCounts() {
+    FolderTreeModel tree;
+    QAbstractItemModelTester tester(&tree, QAbstractItemModelTester::FailureReportingMode::QtTest);
+    const QVariantList sources{QVariantMap{{"path", "/a/b"}, {"label", "Pictures"}},
+                               QVariantMap{{"path", "/a/bc"}, {"label", "Session"}},
+                               QVariantMap{{"path", "/empty"}, {"label", "Empty"}}};
+    tree.setFolders(sources, {"/a/b", "/a/b/trip/day", "/a/b/trip/night", "/a/bc/clip", "/outside"},
+                    {{"/a/b", 9}, {"/a/b/trip", 7}, {"/a/b/trip/day", 3},
+                     {"/a/b/trip/night", 4}, {"/a/bc", 2}, {"/a/bc/clip", 2}});
+    QCOMPARE(tree.rowCount(), 3);
+    const QModelIndex pictures = tree.index(0, 0);
+    QCOMPARE(tree.data(pictures).toString(), QStringLiteral("Pictures"));
+    QCOMPARE(tree.data(pictures, FolderTreeModel::MediaCountRole).toInt(), 9);
+    QCOMPARE(tree.rowCount(pictures), 1);
+    const QModelIndex trip = tree.index(0, 0, pictures);
+    QCOMPARE(tree.pathForIndex(trip), QStringLiteral("/a/b/trip"));
+    QCOMPARE(tree.parent(trip), pictures);
+    QCOMPARE(tree.rowCount(trip), 2);
+    QCOMPARE(tree.data(trip, FolderTreeModel::MediaCountRole).toInt(), 7);
+    QCOMPARE(tree.pathForIndex(tree.index(0, 0, trip)), QStringLiteral("/a/b/trip/day"));
+    QCOMPARE(tree.data(tree.index(1, 0, trip), FolderTreeModel::MediaCountRole).toInt(), 4);
+    QCOMPARE(tree.parent(tree.indexForPath("/a/bc/clip")), tree.index(1, 0));
+    QVERIFY(!tree.indexForPath("/outside").isValid());
+    QVERIFY(!tree.parent(pictures).isValid());
+    QCOMPARE(tree.rowCount(tree.index(2, 0)), 0);
+    QCOMPARE(tree.data(tree.index(2, 0), FolderTreeModel::MediaCountRole).toInt(), 0);
+  }
+
+  void folderTreeUpdatesAfterIndexedFoldersChange() {
+    FolderTreeModel tree;
+    QAbstractItemModelTester tester(&tree, QAbstractItemModelTester::FailureReportingMode::QtTest);
+    QSignalSpy reset(&tree, &QAbstractItemModel::modelReset);
+    const QVariantList sources{QVariantMap{{"path", "/library"}, {"label", "Library"}}};
+    tree.setFolders(sources, {"/library/old/leaf"}, {{"/library", 2}, {"/library/old", 2}});
+    QVERIFY(tree.indexForPath("/library/old/leaf").isValid());
+    tree.setFolders(sources, {"/library/new"}, {{"/library", 5}, {"/library/new", 5}});
+    QCOMPARE(reset.size(), 2);
+    QVERIFY(!tree.indexForPath("/library/old").isValid());
+    QCOMPARE(tree.rowCount(tree.index(0, 0)), 1);
+    QCOMPARE(tree.data(tree.indexForPath("/library/new"), FolderTreeModel::MediaCountRole).toInt(), 5);
+    tree.setFolders({}, {}, {});
+    QCOMPARE(tree.rowCount(), 0);
+  }
+
+  void folderTreeFollowsLibrarySourcesAndScans() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto restoreProfile = qScopeGuard([this] {
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                         m_scratch.filePath(QStringLiteral("config")));
+    });
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, dir.filePath("config"));
+    const QList<QByteArray> names{"OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR",
+                                 "XDG_PICTURES_DIR", "XDG_VIDEOS_DIR", "XDG_DOWNLOAD_DIR"};
+    const QStringList leaves{"Shots", "Recordings", "Pictures", "Videos", "Downloads"};
+    QList<QByteArray> previous;
+    for (qsizetype i = 0; i < names.size(); ++i) {
+      previous.append(qgetenv(names.at(i).constData()));
+      QVERIFY(qputenv(names.at(i).constData(), dir.filePath(leaves.at(i)).toUtf8()));
+      QVERIFY(QDir().mkpath(dir.filePath(leaves.at(i))));
+    }
+    const auto restoreEnvironment = qScopeGuard([&] {
+      for (qsizetype i = 0; i < names.size(); ++i) {
+        if (previous.at(i).isNull()) qunsetenv(names.at(i).constData());
+        else qputenv(names.at(i).constData(), previous.at(i));
+      }
+    });
+    const QString child = dir.filePath("Pictures/trip/day");
+    const QString extra = dir.filePath("Additional");
+    const QString session = dir.filePath("Session");
+    for (const QString& path : {child, extra, session}) QVERIFY(QDir().mkpath(path));
+    QImage image(12, 12, QImage::Format_RGB32);
+    image.fill(Qt::red);
+    QVERIFY(image.save(child + "/image.png"));
+    AppSettings settings;
+    QVERIFY(settings.addLibraryFolder(QUrl::fromLocalFile(extra)));
+    CaptureModel library(&settings);
+    CaptureFilterModel captures;
+    captures.setSourceModel(&library);
+    FolderTreeModel tree;
+    tree.bind(&library, &captures);
+    library.setExtraRoot(session);
+    library.refresh();
+    QTRY_VERIFY(tree.indexForPath(child).isValid());
+    QTRY_COMPARE(tree.rowCount(), 7);
+    QVERIFY(tree.indexForPath(extra).isValid());
+    QVERIFY(tree.indexForPath(session).isValid());
+    QCOMPARE(tree.data(tree.indexForPath(dir.filePath("Pictures")), FolderTreeModel::MediaCountRole).toInt(), 1);
+    QVERIFY(QDir().mkpath(dir.filePath("Pictures/new")));
+    QVERIFY(image.save(dir.filePath("Pictures/new/image.png")));
+    library.refresh();
+    QTRY_VERIFY(tree.indexForPath(dir.filePath("Pictures/new")).isValid());
+    QCOMPARE(tree.data(tree.indexForPath(dir.filePath("Pictures")), FolderTreeModel::MediaCountRole).toInt(), 2);
+    settings.setScanDownloads(false);
+    QTRY_COMPARE(tree.rowCount(), 6);
+    QVERIFY(!tree.indexForPath(dir.filePath("Downloads")).isValid());
+  }
+
+  void folderSidebarPreferencesDefaultPersistAndClamp() {
+    QTemporaryDir profiles;
+    QVERIFY(profiles.isValid());
+    const auto restore = qScopeGuard([this] {
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                         m_scratch.filePath(QStringLiteral("config")));
+    });
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, profiles.path());
+    {
+      AppSettings settings;
+      QVERIFY(!settings.showFolderSidebar());
+      QCOMPARE(settings.folderSidebarWidth(), 240);
+      settings.setShowFolderSidebar(true);
+      settings.setFolderSidebarWidth(320);
+    }
+    {
+      AppSettings restored;
+      QVERIFY(restored.showFolderSidebar());
+      QCOMPARE(restored.folderSidebarWidth(), 320);
+      restored.setFolderSidebarWidth(1);
+      QCOMPARE(restored.folderSidebarWidth(), 180);
+      restored.setFolderSidebarWidth(9999);
+      QCOMPARE(restored.folderSidebarWidth(), 400);
+    }
+    QSettings stored(QSettings::IniFormat, QSettings::UserScope, "omaroll", "omaroll");
+    stored.setValue("view/folderSidebarWidth", -100);
+    stored.sync();
+    QCOMPARE(AppSettings().folderSidebarWidth(), 180);
+    stored.setValue("view/folderSidebarWidth", 9999);
+    stored.sync();
+    QCOMPARE(AppSettings().folderSidebarWidth(), 400);
   }
 
   void gridAndPreviewPreferencesPersistAndClamp() {

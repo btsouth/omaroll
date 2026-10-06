@@ -89,6 +89,7 @@ FocusScope {
     }
 
     function close() { visible = false }
+    function addFolder() { folderDialog.open() }
 
     function clearLibraryView() {
         Captures.duplicatesOnly = false
@@ -432,7 +433,7 @@ FocusScope {
                         PillButton {
                             objectName: "browseAddFolder"
                             label: "+ Add folder"
-                            onClicked: folderDialog.open()
+                            onClicked: root.addFolder()
                         }
                     }
 
