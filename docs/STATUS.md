@@ -2,8 +2,8 @@
 
 ## Latest release
 
-[Omaroll 1.14.0](https://github.com/btsouth/omaroll/releases/tag/v1.14.0), dated
-3 October 2026. See the [changelog](../CHANGELOG.md#1140) for what it includes.
+[Omaroll 1.15.0](https://github.com/btsouth/omaroll/releases/tag/v1.15.0), dated
+6 October 2026. See the [changelog](../CHANGELOG.md#1150) for what it includes.
 
 The release provides an x86_64 Arch package, source archive and PKGBUILD, with
 checksums and signed build provenance. Installation and verification commands
@@ -11,16 +11,16 @@ are in the [README](../README.md#install-or-update).
 
 ## Current work
 
-Version 1.14.0 improves photo and video startup, adds video media-key controls
-and more video file associations, and brings Open with and navigation shortcuts
-to both viewers. Show in file manager selects the current file when the default
-folder handler supports it. Shift+Delete removes files permanently, with
-confirmation on by default and an explicit Settings opt-out. Ordinary Delete
-continues to use Trash.
+Version 1.15.0 adds an optional library folder sidebar, viewer looping, audio
+track and subtitle timing controls, fit modes and shortcut help, and grid
+filenames, pointer zoom, path copying and a resizable preview. A second quick
+viewer maps directly into its Hyprland tile without blocking, metadata appears
+during indexing, and file actions, restores and single-instance hand-offs are
+safer. Physical desktop acceptance on Omarchy covered viewer tiling, video
+audio, media keys and clipboard paste into other apps.
 
-The library has an optional folder sidebar
-([#82](https://github.com/btsouth/omaroll/issues/82)), toggled with F9. [#80](https://github.com/btsouth/omaroll/issues/80) stays
-open for the reporter's version and file-manager setup.
+[#80](https://github.com/btsouth/omaroll/issues/80) stays open for the
+reporter's version and file-manager setup.
 
 Use the [roadmap](ROADMAP.md) for future work and open decisions.
 

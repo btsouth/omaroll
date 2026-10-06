@@ -1,8 +1,17 @@
 # Changelog
 
-## Unreleased
+## 1.15.0
+
+A second quick viewer opens straight into its tile without stalling the app,
+large libraries show metadata and thumbnails sooner, and the library gains an
+optional folder sidebar. The quick viewer adds looping, audio track and
+subtitle timing controls, and file actions, restores and hand-offs are safer.
 
 ### Added
+
+- An optional folder sidebar in the library, toggled with F9 or the Folders
+  button. It shows pinned folders and a tree of library folders with counts,
+  and its visibility and width are remembered.
 
 - An optional Show filenames in grid setting keeps elided names on thumbnails,
   with the full name on hover or keyboard focus. It is off by default.
@@ -19,7 +28,35 @@
 - Fit pictures to the width or without enlarging, with a saved enlargement setting.
 - Pan zoomed pictures with Shift+arrows and see viewer shortcuts with ? or F1.
 
+### Changed
+
+- A second quick viewer on Hyprland asks the compositor without blocking and
+  maps directly into its tile. Closing a viewer never rearranges the others.
+- Media metadata appears while indexing instead of at the end, and album and
+  tag checks on large libraries are faster.
+- Search waits for a short pause in typing; Enter, saved views and opening a
+  result apply it at once.
+- Thumbnails refresh when a file is replaced, even with its old modification
+  time, and existing cached thumbnails are kept after the upgrade.
+- OCR results are kept per language setting. Existing results carry over
+  without running text recognition again.
+- PDF rendering, text extraction and search have size and time limits and run
+  off the main thread.
+
 ### Fixed
+
+- Opening files from outside reliably reaches the running instance, with a
+  clear error when it cannot, and simultaneous starts no longer race.
+- Quick viewer Trash, slideshows and renames stay on the file being shown,
+  including symlinks and files renamed by other apps.
+- Video sound and media keys follow the active video across windows, and
+  resume positions survive renames but not replacements.
+- Library exports, corrections, renames and Trash act on the files chosen
+  when the prompt opened and never replace an existing file.
+- Restoring a backup validates it first and rolls back on failure. Save
+  errors are shown, and albums and tags follow edited files.
+- Clipboard actions report failure when the helper fails, and conversions
+  stop cleanly when Omaroll quits.
 
 - Wheel and pinch zoom in the library preview and Compare keep the point under
   the pointer fixed.
@@ -39,6 +76,12 @@
   rotating, and list failed batch files with a retry action.
 - Taildrop reports send failures and completion without replacing failed starts
   with a sending message.
+
+Thanks to @dyedfox for the folder sidebar, grid filenames, pointer zoom, copy
+path and resizable preview requests, and to @ykrytsun-ait for also requesting
+the last four.
+
+[Install or update](https://github.com/btsouth/omaroll#install-or-update).
 
 ## 1.14.0
 
