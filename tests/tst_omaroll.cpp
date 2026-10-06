@@ -5032,15 +5032,15 @@ private slots:
       QVERIFY(proxy.ocrSnippetAt(0).isEmpty());
     };
 
-    qputenv("OMARCHY_OCR_LANGS", "eng");
-    runSearch();
-    QVERIFY(!QFile::exists(legacyPath));
-    qputenv("OMARCHY_OCR_LANGS", " eng ");
-    runSearch();
     qputenv("OMARCHY_OCR_LANGS", "deu+eng");
     runSearch();
+    QVERIFY(!QFile::exists(legacyPath));
+    qputenv("OMARCHY_OCR_LANGS", " deu + eng ");
     runSearch();
     qputenv("OMARCHY_OCR_LANGS", "eng");
+    runSearch();
+    runSearch();
+    qputenv("OMARCHY_OCR_LANGS", "deu+eng");
     runSearch();
     {
       OcrIndex index(&model);

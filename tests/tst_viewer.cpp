@@ -328,6 +328,29 @@ private slots:
     QCOMPARE(session.count(), 0);
   }
 
+  void derivedViewerPosterFollowsItsSourceVersion() {
+    QTemporaryDir dir;
+    const QString source = dir.filePath(QStringLiteral("clip.mp4"));
+    const QString derived = dir.filePath(QStringLiteral("clip-1080p.mp4"));
+    const QString fixture = QFINDTESTDATA("fixtures/viewer/tracks.mkv");
+    QVERIFY(QFile::copy(fixture, source));
+    QVERIFY(QFile::copy(fixture, derived));
+    ViewerSession session;
+    session.open({derived});
+    const QString own = session.contentVersion();
+    const QString poster = session.thumbnailVersion();
+    QVERIFY(poster != own);
+    QSignalSpy changed(&session, &ViewerSession::currentChanged);
+    QTest::qWait(5);
+    QFile rewritten(source);
+    QVERIFY(rewritten.open(QIODevice::Append));
+    rewritten.write("changed source");
+    rewritten.close();
+    QTRY_VERIFY(session.thumbnailVersion() != poster);
+    QCOMPARE(session.contentVersion(), own);
+    QVERIFY(!changed.isEmpty());
+  }
+
   void folderRenameFollowsTheCurrentFile_data() {
     QTest::addColumn<QString>("kind");
     QTest::newRow("sort-later") << QStringLiteral("z.jpg");
