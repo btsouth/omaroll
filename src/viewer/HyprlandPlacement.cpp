@@ -20,13 +20,15 @@ public:
   PlacementQuery(QObject* context, HyprlandPlacement::Reply reply)
       : QObject(context), m_reply(std::move(reply)) {
     m_timeout.setSingleShot(true);
-    m_timeout.setInterval(300);
-    connect(&m_timeout, &QTimer::timeout, &m_process, &QProcess::kill);
+    m_timeout.setInterval(100);
+    connect(&m_timeout, &QTimer::timeout, this, [this] {
+      m_process.kill();
+      finish({});
+    });
     connect(&m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
       if (error == QProcess::FailedToStart) finish({});
     });
     connect(&m_process, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) {
-      m_timeout.stop();
       if (code != 0 || status != QProcess::NormalExit) {
         finish({});
         return;
@@ -43,11 +45,18 @@ public:
       } else {
         const QJsonValue before = QJsonDocument::fromJson(m_workspace).object().value(u"id");
         const QJsonValue after = QJsonDocument::fromJson(output).object().value(u"id");
-        finish(before.isDouble() && before == after
-                   ? HyprlandPlacement::plan(m_clients, output, QCoreApplication::applicationPid())
-                   : HyprlandPlacement::Plan{});
+        HyprlandPlacement::Plan result;
+        if (before.isDouble() && after.isDouble()) {
+          if (before == after) {
+            result = HyprlandPlacement::plan(m_clients, output, QCoreApplication::applicationPid());
+          } else {
+            result.retry = true;
+          }
+        }
+        finish(result);
       }
     });
+    m_timeout.start();
     ask(QStringLiteral("activeworkspace"));
   }
 
@@ -59,10 +68,10 @@ public:
 private:
   void ask(const QString& what) {
     m_process.start(hyprctl(), {QStringLiteral("-j"), what});
-    m_timeout.start();
   }
   void finish(HyprlandPlacement::Plan plan) {
     if (!m_reply) return;
+    m_timeout.stop();
     auto reply = std::exchange(m_reply, {});
     deleteLater();
     reply(std::move(plan));

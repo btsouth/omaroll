@@ -128,7 +128,7 @@ MediaMetadataIndex::MediaMetadataIndex(CaptureModel* model, QObject* parent)
   connect(&m_syncTimer, &QTimer::timeout, this, &MediaMetadataIndex::sync);
 
   m_updateTimer.setSingleShot(true);
-  m_updateTimer.setInterval(50);
+  m_updateTimer.setInterval(300);
   connect(&m_updateTimer, &QTimer::timeout, this, &MediaMetadataIndex::flushUpdates);
 
   m_saveTimer.setSingleShot(true);
@@ -503,6 +503,7 @@ void MediaMetadataIndex::setIndexing(bool value) {
     return;
   }
   m_indexing = value;
+  if (m_model) m_model->setMetadataIndexing(value);
   emit indexingChanged();
 }
 

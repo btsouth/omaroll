@@ -7,6 +7,19 @@
 
 namespace FileVersion {
 
+// Persistent keys must survive device and inode renumbering on remount.
+inline QString diskKey(const struct stat& info) {
+  return QStringLiteral("%1-%2-%3-%4-%5")
+      .arg(qlonglong(info.st_size)).arg(qlonglong(info.st_mtim.tv_sec))
+      .arg(qlonglong(info.st_mtim.tv_nsec)).arg(qlonglong(info.st_ctim.tv_sec))
+      .arg(qlonglong(info.st_ctim.tv_nsec));
+}
+
+inline QString diskKey(const QString& path) {
+  struct stat info {};
+  return ::stat(QFile::encodeName(path).constData(), &info) == 0 ? diskKey(info) : QString();
+}
+
 inline QString key(const struct stat& info) {
   return QStringLiteral("%1-%2-%3-%4-%5")
       .arg(qulonglong(info.st_dev)).arg(qulonglong(info.st_ino)).arg(qlonglong(info.st_size))

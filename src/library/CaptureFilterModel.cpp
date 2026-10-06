@@ -81,6 +81,7 @@ CaptureFilterModel::CaptureFilterModel(QObject* parent) : QSortFilterProxyModel(
 }
 
 void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
+  m_metadataIndexesDirty = false;
   m_pairingTimer.stop();
   m_groupedOutPaths.clear();
   m_folderIndexTimer.stop();
@@ -110,7 +111,27 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
   m_sourceConnections.append(connect(model, &QAbstractItemModel::rowsInserted, this, pairingChanged));
   m_sourceConnections.append(connect(model, &QAbstractItemModel::rowsRemoved, this, pairingChanged));
   m_sourceConnections.append(connect(model, &QAbstractItemModel::modelReset, this, pairingChanged));
-  m_sourceConnections.append(connect(model, &QAbstractItemModel::dataChanged, this, pairingChanged));
+  m_sourceConnections.append(connect(model, &QAbstractItemModel::dataChanged, this,
+      [this, pairingChanged](const QModelIndex&, const QModelIndex&, const QList<int>& roles) {
+        const bool metadataOnly = !roles.isEmpty() && std::all_of(roles.begin(), roles.end(), [](int role) {
+          return role == CaptureRoles::CapturedRole || role == CaptureRoles::DayKeyRole ||
+                 role == CaptureRoles::DayLabelRole || role == CaptureRoles::TimeLabelRole ||
+                 role == CaptureRoles::CameraRole || role == CaptureRoles::LensRole;
+        });
+        if (!metadataOnly || (m_pairRawJpeg && (!m_cameraFilter.isEmpty() || !m_lensFilter.isEmpty() ||
+                                              m_dateFrom.isValid() || m_dateTo.isValid()))) {
+          pairingChanged();
+        }
+      }));
+  if (auto* captures = qobject_cast<CaptureModel*>(model)) {
+    m_sourceConnections.append(connect(captures, &CaptureModel::metadataIndexingChanged, this,
+        [this, captures] {
+          if (!captures->metadataIndexing() && m_metadataIndexesDirty) {
+            m_metadataIndexesDirty = false;
+            m_folderIndexTimer.start();
+          }
+        }));
+  }
 
   // A source insertion can be completely filtered out, in which case the
   // proxy emits no row signal even though sourceCount changed.
@@ -148,7 +169,9 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
                     roles.contains(CaptureRoles::StampRole) ||
                     roles.contains(CaptureRoles::CameraRole) ||
                     roles.contains(CaptureRoles::LensRole)) {
-                  m_folderIndexTimer.start();
+                  const auto* captures = qobject_cast<CaptureModel*>(sourceModel());
+                  if (captures && captures->metadataIndexing()) m_metadataIndexesDirty = true;
+                  else m_folderIndexTimer.start();
                 }
                 if ((!m_duplicateGroups.isEmpty() || !m_similarGroups.isEmpty()) &&
                     (roles.isEmpty() || roles.contains(CaptureRoles::PathRole) ||
@@ -260,6 +283,10 @@ void CaptureFilterModel::queueSearchText(const QString& text) {
   }
   m_pendingSearchText = text;
   m_searchTimer.start();
+}
+
+void CaptureFilterModel::commitPendingSearch() {
+  if (m_searchTimer.isActive()) setSearchText(m_pendingSearchText);
 }
 
 void CaptureFilterModel::setSearchText(const QString& text) {
@@ -624,7 +651,8 @@ void CaptureFilterModel::setMinimumRating(int stars) {
   emit countChanged();
 }
 
-QVariantMap CaptureFilterModel::currentView() const {
+QVariantMap CaptureFilterModel::currentView() {
+  commitPendingSearch();
   QVariantMap view;
   view.insert(QStringLiteral("search"), m_searchText);
   view.insert(QStringLiteral("kind"), m_kindFilter);

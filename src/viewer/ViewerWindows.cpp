@@ -13,6 +13,7 @@
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QQuickWindow>
+#include <QPointer>
 #include <QScreen>
 #include <QTimer>
 
@@ -56,7 +57,7 @@ struct ViewerWindows::Viewer {
   // Already showing these files: one file being the one on screen, or the
   // same selection of several.
   [[nodiscard]] bool shows(const QStringList& files) const {
-    if (!window->isVisible() || files.isEmpty()) {
+    if ((!window->isVisible() && !pending) || files.isEmpty()) {
       return false;
     }
     return files.size() == 1 ? session.path() == files.first()
@@ -71,6 +72,8 @@ struct ViewerWindows::Viewer {
   std::unique_ptr<QObject> root;
   QQuickWindow* window = nullptr;
   QList<QMetaObject::Connection> connections;
+  bool pending = false;
+  quint64 placementGeneration = 0;
 };
 
 ViewerWindows::ViewerWindows(QQmlEngine& engine, QObject* parent)
@@ -90,29 +93,43 @@ QQuickWindow* ViewerWindows::open(const QStringList& files, const QHash<QString,
     if (viewer->shows(files)) {
       QHash<QString, QString> requestedEntries;
       for (const auto& file : files) requestedEntries.insert(file, entryPaths.value(file, file));
-      show(*viewer, {}, requestedEntries);
+      viewer->session.setDeletionPaths(requestedEntries);
+      if (!viewer->pending) show(*viewer, {});
       return viewer->window;
     }
   }
 
   const auto spare = std::find_if(m_viewers.begin(), m_viewers.end(),
-                                  [](const auto& viewer) { return !viewer->window->isVisible(); });
+                                  [](const auto& viewer) {
+                                    return !viewer->window->isVisible() && !viewer->pending;
+                                  });
   Viewer* viewer = spare != m_viewers.end() ? spare->get() : create();
   if (!viewer) {
     return nullptr;
   }
 
-  const bool others = !visibleWindows().isEmpty();
-  const quint64 generation = ++m_placementGeneration;
-  show(*viewer, files, entryPaths);
+  const bool others = std::any_of(m_viewers.begin(), m_viewers.end(), [viewer](const auto& other) {
+    return other.get() != viewer && (other->window->isVisible() || other->pending);
+  });
+  viewer->session.open(files);
+  viewer->session.setDeletionPaths(entryPaths);
+  const quint64 generation = ++viewer->placementGeneration;
   if (others) {
-    // Map promptly, then tile viewers together once the compositor sees them.
-    // Coalesce rapid opens and discard replies after a close or newer open.
-    connect(viewer->window, &QQuickWindow::frameSwapped, this, [this, generation] {
-      QTimer::singleShot(150, this, [this, generation] {
-        reconcilePlacement(generation);
-      });
+    // Prepare the media while hidden. IPC must finish before the float rule
+    // sees the title, with one deadline for the whole placement request.
+    viewer->pending = true;
+    connect(viewer->window, &QQuickWindow::closing, this, [viewer] {
+      viewer->pending = false;
+      ++viewer->placementGeneration;
     }, Qt::SingleShotConnection);
+    QTimer::singleShot(100, viewer->window, [this, viewer, generation] {
+      if (!viewer->pending || generation != viewer->placementGeneration) return;
+      viewer->pending = false;
+      show(*viewer, {});
+    });
+    place(*viewer, generation);
+  } else {
+    show(*viewer, {});
   }
   return viewer->window;
 }
@@ -184,7 +201,7 @@ void ViewerWindows::show(Viewer& viewer, const QStringList& files,
   if (!files.isEmpty()) {
     viewer.session.open(files);
   }
-  viewer.session.setDeletionPaths(entryPaths);
+  if (!entryPaths.isEmpty()) viewer.session.setDeletionPaths(entryPaths);
   if (!window->isVisible()) {
     // A floating window opens at this size. A tiling compositor ignores
     // the request and gives the window its tile instead.
@@ -217,23 +234,31 @@ void ViewerWindows::activated(Viewer& viewer) {
   updateFrontmost();
 }
 
-void ViewerWindows::reconcilePlacement(quint64 generation) {
-  if (generation != m_placementGeneration || visibleWindows().size() < 2) return;
-  m_query(this, [this, generation](HyprlandPlacement::Plan settled) {
-    if (generation == m_placementGeneration && visibleWindows().size() > 1 &&
-        settled.viewers > 1) {
-      m_tile(settled.floating);
+void ViewerWindows::place(Viewer& viewer, quint64 generation, bool retry) {
+  QPointer<QQuickWindow> window = viewer.window;
+  m_query(viewer.window, [this, &viewer, window, generation, retry](HyprlandPlacement::Plan plan) {
+    if (!window || !viewer.pending || generation != viewer.placementGeneration) return;
+    if (plan.retry && !retry) {
+      place(viewer, generation, true);
+      return;
     }
+    viewer.pending = false;
+    window->setProperty("mapTiled", plan.tileNew());
+    if (plan.tileNew()) {
+      connect(window, &QQuickWindow::frameSwapped, window, [window] {
+        if (window) window->setProperty("mapTiled", false);
+      }, Qt::SingleShotConnection);
+    }
+    show(viewer, {});
+    m_tile(plan.floating);
   });
 }
 
 void ViewerWindows::hidden() {
-  const quint64 generation = ++m_placementGeneration;
-  QTimer::singleShot(150, this, [this, generation] { reconcilePlacement(generation); });
   // Keep one closed viewer for the next open; free the rest.
   bool kept = false;
   for (auto it = m_viewers.begin(); it != m_viewers.end();) {
-    if ((*it)->window->isVisible()) {
+    if ((*it)->window->isVisible() || (*it)->pending) {
       ++it;
     } else if (!kept) {
       kept = true;

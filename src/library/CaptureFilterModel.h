@@ -79,9 +79,10 @@ public:
   [[nodiscard]] int sortMode() const { return m_sortMode; }
   void setSortMode(int mode);
 
-  [[nodiscard]] QString searchText() const { return m_searchText; }
+  [[nodiscard]] QString searchText() { commitPendingSearch(); return m_searchText; }
   void setSearchText(const QString& text);
   Q_INVOKABLE void queueSearchText(const QString& text);
+  Q_INVOKABLE void commitPendingSearch();
 
   [[nodiscard]] bool favoritesOnly() const { return m_favoritesOnly; }
   void setFavoritesOnly(bool value);
@@ -122,7 +123,7 @@ public:
   void setMinimumRating(int stars);
 
   [[nodiscard]] QString smartCollectionFilter() const { return m_smartCollectionFilter; }
-  Q_INVOKABLE QVariantMap currentView() const;
+  Q_INVOKABLE QVariantMap currentView();
   Q_INVOKABLE void applyView(const QString& name, const QVariantMap& view,
                              const QStringList& tagPaths = {});
   Q_INVOKABLE void clearSmartCollection();
@@ -273,6 +274,7 @@ private:
   QHash<QString, QString> m_ocrText;
   QHash<QString, QString> m_ocrFolded;
   QTimer m_folderIndexTimer;
+  bool m_metadataIndexesDirty = false;
   QTimer m_duplicateOrderTimer;
   QTimer m_ocrFilterTimer;
   QList<QMetaObject::Connection> m_sourceConnections;

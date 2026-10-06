@@ -46,6 +46,7 @@
 #include <QColorSpace>
 #include <QBuffer>
 #include <QCryptographicHash>
+#include <QDataStream>
 #include <QImageIOHandler>
 #include <QImageReader>
 #include <QPainter>
@@ -4946,6 +4947,7 @@ private slots:
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
 
+    const QByteArray previousCache = qgetenv("XDG_CACHE_HOME");
     const QByteArray previousPath = qgetenv("PATH");
     const QByteArray previousLanguages = qgetenv("OMARCHY_OCR_LANGS");
     const QByteArray previousLog = qgetenv("OMAROLL_OCR_TEST_LOG");
@@ -4957,6 +4959,7 @@ private slots:
       const auto putBack = [](const char* name, const QByteArray& value) {
         value.isNull() ? qunsetenv(name) : qputenv(name, value);
       };
+      putBack("XDG_CACHE_HOME", previousCache);
       putBack("PATH", previousPath);
       putBack("OMARCHY_OCR_LANGS", previousLanguages);
       putBack("OMAROLL_OCR_TEST_LOG", previousLog);
@@ -4966,6 +4969,7 @@ private slots:
       putBack("OMARCHY_SCREENRECORD_DIR", previousRecordings);
     });
 
+    qputenv("XDG_CACHE_HOME", dir.filePath(QStringLiteral("cache")).toUtf8());
     const QString logPath = dir.filePath(QStringLiteral("ocr-runs.log"));
     QFile tesseract(dir.filePath(QStringLiteral("tesseract")));
     QVERIFY(tesseract.open(QIODevice::WriteOnly));
@@ -4995,6 +4999,20 @@ private slots:
     QVERIFY(scanned.wait(5000));
     QCOMPARE(model.rowCount(), 1);
 
+    QVERIFY(QDir().mkpath(OcrIndex::cacheDirectory()));
+    const QString legacyPath = OcrIndex::cacheDirectory() + QLatin1Char('/') +
+        QString::fromLatin1(QCryptographicHash::hash(imagePath.toUtf8(), QCryptographicHash::Sha256).toHex())
+        + QStringLiteral(".ocr");
+    {
+      QFile legacy(legacyPath);
+      QVERIFY(legacy.open(QIODevice::WriteOnly));
+      QDataStream stream(&legacy);
+      stream.setVersion(QDataStream::Qt_6_0);
+      stream << quint32(0x4f435231) << quint16(3) << imagePath
+             << model.recordAt(0).modified << model.recordAt(0).bytes
+             << QStringLiteral("Invoice total forty two");
+    }
+
     const auto runSearch = [&] {
       CaptureFilterModel proxy;
       proxy.setSourceModel(&model);
@@ -5016,6 +5034,7 @@ private slots:
 
     qputenv("OMARCHY_OCR_LANGS", "eng");
     runSearch();
+    QVERIFY(!QFile::exists(legacyPath));
     qputenv("OMARCHY_OCR_LANGS", " eng ");
     runSearch();
     qputenv("OMARCHY_OCR_LANGS", "deu+eng");
@@ -5044,7 +5063,7 @@ private slots:
 
     QFile log(logPath);
     QVERIFY(log.open(QIODevice::ReadOnly));
-    QCOMPARE(log.readAll(), QByteArray("run\nrun\nrun\n"));
+    QCOMPARE(log.readAll(), QByteArray("run\nrun\n"));
     const QDir cache(OcrIndex::cacheDirectory());
     QCOMPARE(cache.entryList({QStringLiteral("*.ocr")}, QDir::Files).size(), 1);
     const QFileInfo entry(
@@ -6148,16 +6167,22 @@ private slots:
         }
       }
     }
-    // Incremental publication can flush between the three bounded probes,
-    // while each probe still updates its rows together rather than per file.
-    QVERIFY(dateChanges.count() >= 1 && dateChanges.count() <= 3);
+    // Only changed rows are published, once each, in contiguous ranges.
+    QSet<int> notifiedRows;
+    QVERIFY(!dateChanges.isEmpty());
     for (const auto& change : dateChanges) {
       const auto first = change.at(0).value<QModelIndex>();
       const auto last = change.at(1).value<QModelIndex>();
       QVERIFY(first.isValid() && last.isValid());
       QVERIFY(first.row() <= last.row());
       QVERIFY(change.at(2).value<QList<int>>().contains(CaptureRoles::CapturedRole));
+      for (int row = first.row(); row <= last.row(); ++row) {
+        QVERIFY(!notifiedRows.contains(row));
+        QVERIFY(!model.recordAt(row).path.endsWith(QStringLiteral("photo 32 #.png")));
+        notifiedRows.insert(row);
+      }
     }
+    QCOMPARE(notifiedRows.size(), 64);
 
     QFile log(logPath);
     QVERIFY(log.open(QIODevice::ReadOnly));
@@ -8088,6 +8113,44 @@ private slots:
     QCOMPARE(duplicates.completed(), 0);
     QCOMPARE(similarities.completed(), 0);
     QVERIFY(duplicates.groups().isEmpty() && similarities.groups().isEmpty());
+  }
+
+  void diskThumbnailVersionsSurviveRemountAndReuseValidLegacyTiles() {
+    struct stat info {};
+    info.st_size = 123;
+    info.st_mtim = {456, 789};
+    info.st_ctim = {987, 654};
+    const QString key = FileVersion::diskKey(info);
+    info.st_dev = 100; info.st_ino = 200;
+    QCOMPARE(FileVersion::diskKey(info), key);
+    ++info.st_ctim.tv_nsec;
+    QVERIFY(FileVersion::diskKey(info) != key);
+
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("legacy.bmp"));
+    QImage source(16, 16, QImage::Format_RGB32);
+    source.fill(Qt::blue);
+    QVERIFY(source.save(path, "BMP"));
+    const QFileInfo file(path);
+    const QString identity = QStringLiteral("cover3|%1|%2|%3|8x8|t40")
+        .arg(path).arg(file.size()).arg(file.lastModified().toMSecsSinceEpoch());
+    const QString cache = ThumbnailCache::cacheDirectory() + QLatin1Char('/') +
+        QString::fromLatin1(QCryptographicHash::hash(identity.toUtf8(), QCryptographicHash::Md5).toHex())
+        + QStringLiteral(".jpg");
+    QVERIFY(QDir().mkpath(ThumbnailCache::cacheDirectory()));
+    QImage oldTile(8, 8, QImage::Format_RGB32);
+    oldTile.fill(Qt::red);
+    QVERIFY(oldTile.save(cache));
+    // A deliberately distinct cached color proves the old entry was read.
+    QVERIFY(ThumbnailCache::thumbnail(path, QSize(8, 8), 1.0).pixelColor(4, 4).red() > 200);
+    struct stat status {};
+    QVERIFY(::stat(QFile::encodeName(path).constData(), &status) == 0);
+    const timespec times[2] = {status.st_atim, status.st_mtim};
+    QTest::qWait(5);
+    source.fill(Qt::green);
+    QVERIFY(source.save(path, "BMP"));
+    QVERIFY(::utimensat(AT_FDCWD, QFile::encodeName(path).constData(), times, 0) == 0);
+    QVERIFY(ThumbnailCache::thumbnail(path, QSize(8, 8), 1.0).pixelColor(4, 4).green() > 100);
   }
 
   void thumbnailVersionsCoverPreservedTimesAndNanoseconds() {

@@ -18,8 +18,8 @@ Item {
     // in-memory pixmap cache as well as the disk one.
     property double stamp: 0
     property string thumbnailVersion: ""
-    readonly property string thumbnailIdentity: (thumbnailVersion || String(stamp))
-        + "!" + Screen.devicePixelRatio
+    property real thumbnailDpr: Screen.devicePixelRatio
+    readonly property string thumbnailIdentity: thumbnailVersion || String(stamp)
     property bool favorite: false
     property int rating: 0
     property bool hiddenMark: false
@@ -193,7 +193,7 @@ Item {
             source: !root.thumbnailLayoutReady || root.path === ""
                     || root.width <= 0 || root.height <= 0
                     ? ""
-                    : "image://thumbs/" + Screen.devicePixelRatio
+                    : "image://thumbs/" + root.thumbnailDpr
                       + (root.isVideo ? "@" + root.scrubPercent : "")
                       + "~" + encodeURIComponent(root.thumbnailIdentity)
                       + encodeURIComponent(root.path)

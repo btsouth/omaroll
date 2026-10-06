@@ -1636,7 +1636,7 @@ private slots:
     QCOMPARE(thumbnail->property("status").toInt(), 1);
     QVERIFY(thumbnail->opacity() >= 0.999);
     QCOMPARE(card->property("readyPath").toString(), QStringLiteral("/thumbnail-test/1001.png"));
-    QVERIFY(card->property("readyIdentity").toString().startsWith(QStringLiteral("1!")));
+    QCOMPARE(card->property("readyIdentity").toString(), QStringLiteral("1"));
     // A replacement identity changes the URL even when mtime stays put.
     card->setProperty("thumbnailVersion", QStringLiteral("2"));
     QTRY_COMPARE(provider->count(1001, 2), 1);
@@ -1651,6 +1651,15 @@ private slots:
     provider->completeAll();
     QTRY_VERIFY(card->property("thumbnailPresented").toBool());
 
+    const QString identity = card->property("thumbnailIdentity").toString();
+    const int requests = provider->count(1001, 2);
+    card->setProperty("thumbnailDpr", 2.0);
+    QTRY_COMPARE(provider->count(1001, 2), requests + 1);
+    QCOMPARE(card->property("thumbnailIdentity").toString(), identity);
+    QVERIFY(thumbnail->isVisible());
+    QVERIFY(card->property("thumbnailReady").toBool());
+    provider->completeAll();
+    QTRY_VERIFY(card->property("thumbnailPresented").toBool());
     QVERIFY(!provider->hasEmptySizeRequest());
     QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
   }
@@ -2406,6 +2415,11 @@ private slots:
     QTRY_COMPARE(m_library->searchText(), QStringLiteral("alpine"));
     QCOMPARE(changes.size(), 1);
     QCOMPARE(m_library->count(), 1);
+    search->setProperty("text", QStringLiteral("pending saved search"));
+    QCOMPARE(m_library->currentView().value(QStringLiteral("search")).toString(),
+             QStringLiteral("pending saved search"));
+    search->setProperty("text", QStringLiteral("getter search"));
+    QCOMPARE(m_library->searchText(), QStringLiteral("getter search"));
     search->setProperty("text", QStringLiteral("no-match"));
     QTest::keyClick(m_window, Qt::Key_Return);
     QCOMPARE(m_library->searchText(), QStringLiteral("no-match"));

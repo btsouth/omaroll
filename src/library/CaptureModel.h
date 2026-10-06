@@ -74,6 +74,8 @@ public:
   // records the camera and lens. File identity is checked again here because
   // extraction is asynchronous.
   void applyMetadata(const QList<MetadataUpdate>& updates);
+  void setMetadataIndexing(bool indexing);
+  [[nodiscard]] bool metadataIndexing() const { return m_metadataIndexing; }
 
   // A directory handed to omaroll on the command line or by "Open with",
   // scanned alongside the usual roots for this session only.
@@ -117,6 +119,7 @@ public:
   Q_INVOKABLE QString uriList(const QStringList& paths) const;
 
 signals:
+  void metadataIndexingChanged();
   void rawSizeRead(const QString& path, const QUrl& source, QSize size);
   void countChanged();
   void scanningChanged();
@@ -163,6 +166,7 @@ private:
   QTimer m_midnightTimer;
   QDate m_labelDate;
   bool m_scanning = false;
+  bool m_metadataIndexing = false;
   // A scan requested while one is already running, so the newest state is not
   // lost to a rescan that started a moment too early.
   bool m_rescanQueued = false;

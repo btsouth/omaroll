@@ -329,19 +329,31 @@ FocusScope {
                 dragPaths: root.isChecked(cell.path) ? root.checkedPaths() : [cell.path]
 
                 onActivated: {
-                    root.selectedPath = cell.path
-                    grid.currentIndex = cell.index
+                    const path = cell.path
+                    Captures.commitPendingSearch()
+                    const row = Captures.rowOf(path)
+                    if (row < 0) return
+                    root.selectedPath = path
+                    grid.currentIndex = row
                     grid.forceActiveFocus()
                 }
                 onChosen: {
-                    root.selectedPath = cell.path
-                    grid.currentIndex = cell.index
-                    root.detailRequested(cell.index)
+                    const path = cell.path
+                    Captures.commitPendingSearch()
+                    const row = Captures.rowOf(path)
+                    if (row < 0) return
+                    root.selectedPath = path
+                    grid.currentIndex = row
+                    root.detailRequested(row)
                 }
                 onContextRequested: function(x, y) {
-                    root.selectedPath = cell.path
-                    grid.currentIndex = cell.index
-                    root.contextRequested(cell.index, x, y)
+                    const path = cell.path
+                    Captures.commitPendingSearch()
+                    const row = Captures.rowOf(path)
+                    if (row < 0) return
+                    root.selectedPath = path
+                    grid.currentIndex = row
+                    root.contextRequested(row, x, y)
                 }
                 onToggleChecked: root.toggleChecked(cell.path)
             }
@@ -351,6 +363,7 @@ FocusScope {
         // ones that act on the selection. Single-letter action keys live in
         // Main so they work whether or not the grid has focus.
         Keys.onPressed: function (event) {
+            Captures.commitPendingSearch()
             switch (event.key) {
             case Qt.Key_Return:
             case Qt.Key_Enter:

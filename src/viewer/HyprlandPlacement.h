@@ -11,8 +11,8 @@ class QObject;
 // The first viewer floats centred, by the window rule in hypr/omaroll.lua.
 // Floating a second one would stack it exactly on top of the first, so once a
 // workspace holds more than one viewer they all tile and the user's own
-// layout arranges them. Windows map promptly under the float rule, then IPC
-// tiles them after asynchronous queries see the mapped viewers together.
+// layout arranges them. An asynchronous query chooses the title before mapping,
+// so the second viewer appears directly in its tile.
 // Elsewhere this does nothing and each viewer is simply its own window.
 namespace HyprlandPlacement {
 
@@ -24,6 +24,7 @@ struct Plan {
   int viewers = 0;
   // Addresses of those viewers that are still floating.
   QStringList floating;
+  bool retry = false;
 
   // A viewer about to open there joins the others in tiles.
   [[nodiscard]] bool tileNew() const { return viewers > 0; }

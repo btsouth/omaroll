@@ -131,9 +131,9 @@ void ThumbnailCache::prune(qint64 maxBytes) {
 
 QString ThumbnailCache::cacheKey(const QString& path, const QString& renderPath,
                                  const QSize& pixelSize, int seekPercent) {
-  const QString version = FileVersion::key(path);
-  const QString dependency = renderPath == path ? version : FileVersion::key(renderPath);
-  const QString identity = QStringLiteral("cover4|%1|%2|%3|%4|%5x%6|t%7")
+  const QString version = FileVersion::diskKey(path);
+  const QString dependency = renderPath == path ? version : FileVersion::diskKey(renderPath);
+  const QString identity = QStringLiteral("cover5|%1|%2|%3|%4|%5x%6|t%7")
                                .arg(path, version, renderPath, dependency)
                                .arg(pixelSize.width()).arg(pixelSize.height()).arg(seekPercent);
   return QString::fromLatin1(
@@ -273,6 +273,28 @@ QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
   }
   if (!cached.isNull()) {
     return cached;
+  }
+  // Older tiles have no ctime in their key. Reuse them only when the source
+  // has not changed since the tile was written, including preserved-mtime saves.
+  const QFileInfo source(path);
+  const QString legacyIdentity = QStringLiteral("cover3|%1|%2|%3|%4x%5|t%6")
+      .arg(path).arg(source.size()).arg(source.lastModified().toMSecsSinceEpoch())
+      .arg(pixelSize.width()).arg(pixelSize.height()).arg(seekPercent);
+  const QString legacyPath = directory + QLatin1Char('/') + QString::fromLatin1(
+      QCryptographicHash::hash(legacyIdentity.toUtf8(), QCryptographicHash::Md5).toHex())
+      + QStringLiteral(".jpg");
+  struct stat tileInfo {};
+  const auto unchanged = [&tileInfo](const QString& file) {
+    struct stat info {};
+    if (::stat(QFile::encodeName(file).constData(), &info) != 0) return false;
+    return info.st_ctim.tv_sec < tileInfo.st_mtim.tv_sec ||
+           (info.st_ctim.tv_sec == tileInfo.st_mtim.tv_sec &&
+            info.st_ctim.tv_nsec <= tileInfo.st_mtim.tv_nsec);
+  };
+  if (renderPath == path && ::stat(QFile::encodeName(legacyPath).constData(), &tileInfo) == 0 &&
+      unchanged(path)) {
+    cached.load(legacyPath);
+    if (!cached.isNull()) return isCancelled(cancelled) ? QImage{} : cached;
   }
   if (recentlyFailed(key)) {
     return {};

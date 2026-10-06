@@ -60,7 +60,7 @@ private:
             const QHash<QString, QString>& entryPaths = {});
   void activated(Viewer& viewer);
   void hidden();
-  void reconcilePlacement(quint64 generation);
+  void place(Viewer& viewer, quint64 generation, bool retry = false);
   void updateFrontmost();
 
   QQmlEngine& m_engine;
@@ -69,5 +69,4 @@ private:
   QList<Viewer*> m_recent;
   PlacementQuery m_query = HyprlandPlacement::query;
   std::function<void(const QStringList&)> m_tile = HyprlandPlacement::tile;
-  quint64 m_placementGeneration = 0;
 };

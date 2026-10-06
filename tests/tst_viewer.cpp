@@ -2919,7 +2919,7 @@ private slots:
   // Each file opened from outside gets a viewer of its own. Asking again for
   // what one already shows brings that one forward, a selection stays one
   // viewer, and closing leaves the rest alone with one closed viewer kept.
-  // Placement follows mapping, so compositor queries never delay opening.
+  // The new viewer stays hidden until its map-time title is decided.
   void placementRepliesKeepOpensResponsiveAndRejectClosedWindows() {
     ViewerWindows viewers(*m_engine);
     QList<HyprlandPlacement::Reply> pending;
@@ -2932,29 +2932,83 @@ private slots:
     QVERIFY(first);
     QElapsedTimer timer; timer.start();
     auto* second = viewers.open({media(QStringLiteral("shot 2.jpg"))});
-    qInfo() << "PERF second viewer open ms" << timer.nsecsElapsed() / 1e6;
-    QVERIFY(second && second->isVisible());
-    QVERIFY(pending.isEmpty());
-    QTRY_COMPARE(pending.size(), 1);
+    QVERIFY(second && !second->isVisible());
+    QCOMPARE(pending.size(), 1);
+    // A held compositor reply must not block event delivery.
     bool heartbeat = false;
-    QTimer::singleShot(10, this, [&] { heartbeat = true; });
-    QTRY_VERIFY(heartbeat);
-    QVERIFY(second->isVisible());
+    QTimer::singleShot(5, this, [&] { heartbeat = true; });
+    QTest::qWait(10);
+    QVERIFY(heartbeat);
+    QVERIFY(!second->isVisible());
     HyprlandPlacement::Plan plan;
-    plan.viewers = 2;
-    plan.floating = {QStringLiteral("0xabc"), QStringLiteral("0xdef")};
+    plan.viewers = 1;
+    plan.floating = {QStringLiteral("0xabc")};
     pending.takeFirst()(plan);
+    qInfo() << "PERF second viewer mapped ms" << timer.nsecsElapsed() / 1e6;
+    QVERIFY(second->isVisible());
+    QVERIFY(second->property("mapTiled").toBool());
+    QCOMPARE(second->title(), QStringLiteral("Omaroll"));
     QCOMPARE(tiled, plan.floating);
-    // A later query cannot tile addresses from before a viewer was closed.
+    QTRY_VERIFY(!second->property("mapTiled").toBool());
+    QCOMPARE(second->title(), QStringLiteral("shot 2.jpg · Omaroll"));
+
     auto* third = viewers.open({media(QStringLiteral("shot 10.jpg"))});
-    QVERIFY(third);
-    QTRY_COMPARE(pending.size(), 1);
+    QVERIFY(third && !third->isVisible());
+    // Closing another viewer neither cancels this request nor schedules tiles.
+    first->close();
+    QCoreApplication::processEvents();
+    QCOMPARE(pending.size(), 1);
+    pending.takeFirst()(plan);
+    QVERIFY(third->isVisible() && third->property("mapTiled").toBool());
+    QCOMPARE(tiled.size(), 2);
+    second->close();
+    QTest::qWait(160);
+    QCOMPARE(pending.size(), 0);
+    QCOMPARE(tiled.size(), 2);
+
+    auto* fourth = viewers.open({media(QStringLiteral("Shot 1.jpg"))});
+    QVERIFY(fourth && !fourth->isVisible());
+    fourth->close();
+    pending.takeFirst()(plan);
+    QVERIFY(!fourth->isVisible());
+    QCOMPARE(tiled.size(), 2);
+    third->close();
+  }
+
+  void placementFailureAndWorkspaceSwitchHaveBoundedFallbacks() {
+    ViewerWindows viewers(*m_engine);
+    QList<HyprlandPlacement::Reply> pending;
+    viewers.setPlacementQuery([&](QObject*, HyprlandPlacement::Reply reply) {
+      pending.append(std::move(reply));
+    });
+    viewers.setPlacementTile([](const QStringList&) {});
+    auto* first = viewers.open({media(QStringLiteral("Shot 1.jpg"))});
+    auto* second = viewers.open({media(QStringLiteral("shot 2.jpg"))});
+    QVERIFY(first && second && !second->isVisible());
+    HyprlandPlacement::Plan switched;
+    switched.retry = true;
+    pending.takeFirst()(switched);
+    QCOMPARE(pending.size(), 1);
+    HyprlandPlacement::Plan settled;
+    settled.viewers = 1;
+    pending.takeFirst()(settled);
+    QVERIFY(second->isVisible() && second->property("mapTiled").toBool());
+    auto* third = viewers.open({media(QStringLiteral("shot 10.jpg"))});
+    QVERIFY(third && !third->isVisible());
+    pending.takeFirst()({});
+    QVERIFY(third->isVisible());
+    QVERIFY(!third->property("mapTiled").toBool());
     third->close();
     QCoreApplication::processEvents();
-    pending.takeFirst()(plan);
-    QCOMPARE(tiled, plan.floating);
-    first->close();
-    second->close();
+    QElapsedTimer timer; timer.start();
+    auto* timedOut = viewers.open({media(QStringLiteral("shot 10.jpg"))});
+    QVERIFY(timedOut && !timedOut->isVisible());
+    QTRY_VERIFY(timedOut->isVisible());
+    qInfo() << "PERF placement timeout mapped ms" << timer.nsecsElapsed() / 1e6;
+    QVERIFY(!timedOut->property("mapTiled").toBool());
+    pending.takeFirst()(settled);
+    QVERIFY(!timedOut->property("mapTiled").toBool());
+    first->close(); second->close(); timedOut->close();
   }
 
   void severalViewersOpenSideBySideAndCloseCleanly() {
@@ -2974,11 +3028,11 @@ private slots:
     QCOMPARE(a->title(), QStringLiteral("Shot 1.jpg · Omaroll"));
     QQuickWindow* b = viewers.open({second});
     QVERIFY(b && a != b);
-    QCOMPARE(b->title(), QStringLiteral("shot 2.jpg · Omaroll"));
+    QCOMPARE(b->title(), QStringLiteral("Omaroll"));
     QVERIFY(QTest::qWaitForWindowExposed(a));
     QVERIFY(QTest::qWaitForWindowExposed(b));
     QTRY_COMPARE(b->title(), QStringLiteral("shot 2.jpg · Omaroll"));
-    // Asked after mapping without delaying open.
+    // The query decides the title before mapping.
     QTRY_COMPARE(queries, 1);
     QCOMPARE(viewers.visibleWindows(), (QList<QQuickWindow*>{a, b}));
     QCOMPARE(viewers.sessionOf(a)->path(), first);

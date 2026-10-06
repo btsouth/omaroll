@@ -367,13 +367,18 @@ int CaptureModel::rowOf(const QString& path) const {
   return -1;
 }
 
+void CaptureModel::setMetadataIndexing(bool indexing) {
+  if (m_metadataIndexing == indexing) return;
+  m_metadataIndexing = indexing;
+  emit metadataIndexingChanged();
+}
+
 void CaptureModel::applyMetadata(const QList<MetadataUpdate>& updates) {
   if (updates.isEmpty() || m_records.isEmpty()) {
     return;
   }
 
-  int firstChanged = m_records.size();
-  int lastChanged = -1;
+  QList<int> changedRows;
   bool dateChanged = false;
   bool cameraChanged = false;
   for (const MetadataUpdate& update : updates) {
@@ -403,11 +408,10 @@ void CaptureModel::applyMetadata(const QList<MetadataUpdate>& updates) {
     if (!changed) {
       continue;
     }
-    firstChanged = qMin(firstChanged, row);
-    lastChanged = qMax(lastChanged, row);
+    changedRows.append(row);
   }
 
-  if (lastChanged >= 0) {
+  if (!changedRows.isEmpty()) {
     QList<int> roles;
     if (dateChanged) {
       roles.append({CaptureRoles::CapturedRole, CaptureRoles::DayKeyRole,
@@ -416,7 +420,18 @@ void CaptureModel::applyMetadata(const QList<MetadataUpdate>& updates) {
     if (cameraChanged) {
       roles.append({CaptureRoles::CameraRole, CaptureRoles::LensRole});
     }
-    emit dataChanged(index(firstChanged), index(lastChanged), roles);
+    std::sort(changedRows.begin(), changedRows.end());
+    int first = changedRows.first();
+    int last = first;
+    for (const int row : std::as_const(changedRows)) {
+      if (row <= last + 1) {
+        last = row;
+      } else {
+        emit dataChanged(index(first), index(last), roles);
+        first = last = row;
+      }
+    }
+    emit dataChanged(index(first), index(last), roles);
   }
 }
 
