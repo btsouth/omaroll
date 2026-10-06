@@ -257,8 +257,15 @@ An action whose program is missing is shown greyed with the package to install,
 rather than hidden. The medium decides the list, not the folder: a downloaded
 clip gets the recording actions and a downloaded photo gets the image actions.
 
-Gallery previews open with a compact header. Toggle the inspector for ratings,
-captions and file details, or use the overflow menu for other actions.
+Turn on Show filenames in grid in Settings to keep names visible on thumbnails.
+Long names are shortened with an ellipsis; hover or keyboard focus shows the full name.
+
+Gallery previews open with a compact header. Drag an edge or the bottom-right
+corner to resize the preview; Omaroll remembers the size and fits it to the window.
+Wheel and pinch zoom keep the point under the pointer fixed, including in Compare.
+Toggle the inspector for ratings, captions and file details, or use the overflow
+menu for other actions. Copy path and Copy file name copy plain text for the opened
+entry, preserving a symlink's name and path.
 
 ![The gallery preview with its inspector tucked away](docs/detail.png)
 
@@ -305,6 +312,7 @@ and put on your clipboard.
 | `Ctrl+O` | Choose another application for the current file |
 | `N` | Rename, preserving the extension |
 | `Y` · `S` · `F` | Clipboard · Send · Show in file manager |
+| `Ctrl+Shift+C` | Copy the current file path as text; Copy file name is in the menu |
 | `V` · `Ctrl+H` | Favourite · Hide |
 | `Shift+Del` | Delete the current file or checked files permanently |
 | `Q` · `B` | Crop, rotate, resize the open picture · correct the whole selection |
@@ -402,7 +410,7 @@ in this repository is made.
 omaroll --render shot.png --render-view matte
 ```
 
-Renders a view to a PNG and exits. Views include `grid`, `detail`, `document`, `video`, `matte`, `viewer` and
+Renders a view to a PNG and exits. Views include `grid`, `grid-filenames`, `detail`, `document`, `video`, `matte`, `viewer` and
 `viewer-video`; see [validation](tests/README.md) for the full render matrix. It grabs the scene
 graph rather than the screen, so an overlapping window cannot spoil the shot.
 

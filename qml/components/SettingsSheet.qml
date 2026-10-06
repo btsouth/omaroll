@@ -376,6 +376,36 @@ Item {
             Row {
                 width: parent.width
                 spacing: 12
+                Column {
+                    width: parent.width - filenamesButton.width - 12
+                    Text {
+                        text: "Show filenames in grid"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 13
+                        color: Theme.foreground
+                    }
+                    Text {
+                        width: parent.width
+                        text: "Keep file names visible on thumbnails."
+                        wrapMode: Text.Wrap
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 11
+                        color: Theme.mutedText
+                    }
+                }
+                PillButton {
+                    id: filenamesButton
+                    objectName: "gridFilenamesToggle"
+                    label: Settings.showGridFilenames ? "On" : "Off"
+                    checkable: true
+                    active: Settings.showGridFilenames
+                    onClicked: Settings.showGridFilenames = !Settings.showGridFilenames
+                }
+            }
+
+            Row {
+                width: parent.width
+                spacing: 12
 
                 Column {
                     width: parent.width - clearTextCacheButton.width - 12

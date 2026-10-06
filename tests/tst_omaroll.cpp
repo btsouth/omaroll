@@ -1233,6 +1233,29 @@ private slots:
     QCOMPARE(model.automaticFolders().size(), 2);
   }
 
+  void gridAndPreviewPreferencesPersistAndClamp() {
+    AppSettings settings;
+    QVERIFY(!settings.showGridFilenames());
+    settings.setShowGridFilenames(true);
+    settings.setPreviewWidth(720);
+    settings.setPreviewHeight(480);
+    AppSettings restored;
+    QVERIFY(restored.showGridFilenames());
+    QCOMPARE(restored.previewWidth(), 720);
+    QCOMPARE(restored.previewHeight(), 480);
+    restored.setPreviewWidth(1);
+    restored.setPreviewHeight(1);
+    QCOMPARE(restored.previewWidth(), 500);
+    QCOMPARE(restored.previewHeight(), 360);
+    restored.setPreviewWidth(100000);
+    restored.setPreviewHeight(100000);
+    QCOMPARE(restored.previewWidth(), 8192);
+    QCOMPARE(restored.previewHeight(), 8192);
+    restored.setShowGridFilenames(false);
+    restored.setPreviewWidth(1000);
+    restored.setPreviewHeight(700);
+  }
+
   void additionalLibraryFoldersPersistAndRejectHome() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

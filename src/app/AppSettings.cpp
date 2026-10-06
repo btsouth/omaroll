@@ -44,6 +44,9 @@ constexpr auto kImagePrimaryAction = "actions/imagePrimary";
 constexpr auto kVideoPrimaryAction = "actions/videoPrimary";
 constexpr auto kThumbnailCacheMb = "cache/maximumMb";
 constexpr auto kTileWidth = "view/tileWidth";
+constexpr auto kShowGridFilenames = "view/showGridFilenames";
+constexpr auto kPreviewWidth = "view/previewWidth";
+constexpr auto kPreviewHeight = "view/previewHeight";
 constexpr int kMinimumTileWidth = 160;
 constexpr int kMaximumTileWidth = 480;
 constexpr auto kSlideshowVideos = "slideshow/includeVideos";
@@ -259,6 +262,9 @@ AppSettings::AppSettings(QObject* parent)
   m_thumbnailCacheMb = qBound(64, m_settings.value(kThumbnailCacheMb, 256).toInt(), 1024);
   m_tileWidth =
       qBound(kMinimumTileWidth, m_settings.value(kTileWidth, 240).toInt(), kMaximumTileWidth);
+  m_showGridFilenames = m_settings.value(kShowGridFilenames, false).toBool();
+  m_previewWidth = qBound(500, m_settings.value(kPreviewWidth, 1000).toInt(), 8192);
+  m_previewHeight = qBound(360, m_settings.value(kPreviewHeight, 700).toInt(), 8192);
   m_slideshowVideos = m_settings.value(kSlideshowVideos, false).toBool();
   m_confirmPermanentDelete = m_settings.value(kConfirmPermanentDelete, true).toBool();
   m_slideshowIntervalSeconds = qBound(2, m_settings.value(kSlideshowInterval, 4).toInt(), 20);
@@ -512,6 +518,35 @@ void AppSettings::setTileWidth(int width) {
   m_tileWidth = bounded;
   setValue(kTileWidth, bounded);
   emit tileWidthChanged();
+}
+
+void AppSettings::setShowGridFilenames(bool value) {
+  if (m_showGridFilenames == value) {
+    return;
+  }
+  m_showGridFilenames = value;
+  m_settings.setValue(kShowGridFilenames, value);
+  emit showGridFilenamesChanged();
+}
+
+void AppSettings::setPreviewWidth(int width) {
+  const int bounded = qBound(500, width, 8192);
+  if (m_previewWidth == bounded) {
+    return;
+  }
+  m_previewWidth = bounded;
+  m_settings.setValue(kPreviewWidth, bounded);
+  emit previewWidthChanged();
+}
+
+void AppSettings::setPreviewHeight(int height) {
+  const int bounded = qBound(360, height, 8192);
+  if (m_previewHeight == bounded) {
+    return;
+  }
+  m_previewHeight = bounded;
+  m_settings.setValue(kPreviewHeight, bounded);
+  emit previewHeightChanged();
 }
 
 void AppSettings::setThumbnailCacheMb(int megabytes) {

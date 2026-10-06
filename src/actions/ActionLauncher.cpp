@@ -1,4 +1,5 @@
 #include "actions/ActionLauncher.h"
+#include "edit/ClipboardText.h"
 #include "actions/OpenWithRequest.h"
 #include "app/VideoPlayback.h"
 #include "edit/ClipboardText.h"

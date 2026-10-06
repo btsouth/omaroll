@@ -489,6 +489,183 @@ private slots:
     QCOMPARE(namedAction->text(QAccessible::Name), QStringLiteral("Rename"));
   }
 
+  void filenameToggleKeepsCardAndThumbnailDimensions() {
+    QVERIFY(!m_settings->showGridFilenames());
+    const QString path = pathAt(0);
+    QQuickItem* card = nullptr;
+    QTRY_VERIFY((card = cardFor(path)) != nullptr);
+    const QSizeF size(card->width(), card->height());
+    QQuickItem* thumbnail = find(card, [](QQuickItem* candidate) {
+      return candidate->property("source").toUrl().toString().startsWith(QStringLiteral("image://thumbs/"));
+    });
+    QVERIFY(thumbnail);
+    const QSize sourceSize = thumbnail->property("sourceSize").toSize();
+    const QUrl source = thumbnail->property("source").toUrl();
+    QQuickItem* label = find(card, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("captureFilenameLabel");
+    });
+    QVERIFY(label);
+    QVERIFY(!label->isVisible());
+    QVERIFY(QMetaObject::invokeMethod(item("settingsSheet"), "open"));
+    item("gridFilenamesToggle")->forceActiveFocus();
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTRY_VERIFY(m_settings->showGridFilenames());
+    const auto restore = qScopeGuard([&] { m_settings->setShowGridFilenames(false); m_window->resize(1280, 820); });
+    invoke("dismissTopLayer");
+    QTRY_VERIFY(label->isVisible());
+    QCOMPARE(QSizeF(card->width(), card->height()), size);
+    QCOMPARE(thumbnail->property("sourceSize").toSize(), sourceSize);
+    QCOMPARE(thumbnail->property("source").toUrl(), source);
+    QCOMPARE(label->property("text").toString(), m_library->fileNameAt(0));
+    m_window->resize(560, 420);
+    QTRY_VERIFY(cardFor(path));
+    card = cardFor(path);
+    label = find(card, [](QQuickItem* candidate) { return candidate->objectName() == QStringLiteral("captureFilenameLabel"); });
+    QVERIFY(label);
+    QVERIFY(label->width() > 0 && label->width() <= card->width());
+  }
+
+  void libraryCopiesOpenedEntryPathAndName() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString target = dir.filePath(QStringLiteral("original.png"));
+    const QString alias = dir.filePath(QStringLiteral("alias # 雪.png"));
+    m_disposablePaths.append(target);
+    m_disposablePaths.append(alias);
+    const auto cleanup = qScopeGuard([&] {
+      invoke("dismissTopLayer");
+      dir.remove();
+      m_captures->refresh();
+      const bool removed = QTest::qWaitFor([&] { return !m_captures->scanning() && m_library->rowOf(target) < 0; }, 10000);
+      QVERIFY(removed);
+    });
+    QImage picture(200, 150, QImage::Format_RGB32);
+    picture.fill(Qt::blue);
+    QVERIFY(picture.save(target));
+    QVERIFY(QFile::link(target, alias));
+    m_captures->addExtraFiles({alias});
+    m_captures->setExtraRoot(dir.path());
+    QTRY_VERIFY_WITH_TIMEOUT(!m_captures->scanning(), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(target) >= 0, 10000);
+    const int row = m_library->rowOf(target);
+    QCOMPARE(m_library->deletionPathAt(row), alias);
+    item("library")->setProperty("currentIndex", row);
+    const auto copiedText = [&] {
+      QFile log(m_scratch.filePath(QStringLiteral("clipboard.log")));
+      return log.open(QIODevice::ReadOnly) ? QString::fromUtf8(log.readAll()) : QString();
+    };
+    QTest::keyClick(m_window, Qt::Key_C, Qt::ControlModifier | Qt::ShiftModifier);
+    QTRY_COMPARE(copiedText(), alias);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openContextMenu", Q_ARG(QVariant, row),
+                                     Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
+    QVERIFY(item("contextAction_copy-path"));
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("libraryContextMenu"));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QQuickItem* copyName = item("contextAction_copy-name");
+    copyName->forceActiveFocus();
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_COMPARE(copiedText(), QFileInfo(alias).fileName());
+    QTRY_VERIFY(!menu->property("visible").toBool());
+    openDetail(row);
+    QTRY_VERIFY(item("detail")->isVisible());
+    QTest::keyClick(m_window, Qt::Key_C, Qt::ControlModifier | Qt::ShiftModifier);
+    QTRY_COMPARE(copiedText(), alias);
+    QVERIFY(item("detail")->isVisible());
+    perform(QStringLiteral("copy-name"), target);
+    QTRY_COMPARE(copiedText(), QFileInfo(alias).fileName());
+    QVERIFY(item("detail")->isVisible());
+  }
+
+  void previewResizeRemembersSizeAndClampsToWindow() {
+    QQuickItem* detail = item("detail");
+    const auto restore = qScopeGuard([&] {
+      detail->setProperty("previewWidth", 1000);
+      detail->setProperty("previewHeight", 700);
+      m_settings->setPreviewWidth(1000);
+      m_settings->setPreviewHeight(700);
+      m_window->resize(1280, 820);
+    });
+    openDetail(0);
+    QTRY_VERIFY(detail->isVisible());
+    QQuickItem* panel = item("detailPanel");
+    QQuickItem* handle = item("detailResize_corner");
+    const QSizeF before(panel->width(), panel->height());
+    dragBetween(handle, QPointF(8, 8), QPointF(-72, -52));
+    QTRY_VERIFY(panel->width() < before.width() - 100);
+    QTRY_VERIFY(panel->height() < before.height() - 80);
+    const QSize remembered(m_settings->previewWidth(), m_settings->previewHeight());
+    QCOMPARE(qRound(panel->width()), remembered.width());
+    QCOMPARE(qRound(panel->height()), remembered.height());
+    AppSettings restarted;
+    QCOMPARE(restarted.previewWidth(), remembered.width());
+    QCOMPARE(restarted.previewHeight(), remembered.height());
+    invoke("dismissTopLayer");
+    openDetail(0);
+    QCOMPARE(qRound(panel->width()), remembered.width());
+    m_window->resize(560, 420);
+    QTRY_COMPARE(panel->width(), 500.0);
+    QTRY_COMPARE(panel->height(), 360.0);
+    QCOMPARE(m_settings->previewWidth(), remembered.width());
+    m_window->resize(1280, 820);
+    QTRY_COMPARE(qRound(panel->width()), remembered.width());
+    QVERIFY(QMetaObject::invokeMethod(detail, "setFullScreen", Q_ARG(QVariant, true)));
+    QTRY_VERIFY(!handle->isVisible());
+    QVERIFY(QMetaObject::invokeMethod(detail, "setFullScreen", Q_ARG(QVariant, false)));
+  }
+
+  void imageZoomKeepsThePointerFixed_data() {
+    QTest::addColumn<int>("rotation");
+    for (int rotation : {0, 90, 180, 270}) QTest::newRow(qPrintable(QString::number(rotation))) << rotation;
+  }
+
+  void imageZoomKeepsThePointerFixed() {
+    QFETCH(int, rotation);
+    openDetail(m_library->rowOf(m_oddPath));
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->property("imageReady").toBool());
+    detail->setProperty("imageRotation", rotation);
+    detail->setProperty("imageFlipHorizontal", true);
+    QVERIFY(QMetaObject::invokeMethod(detail, "zoomImageAt", Q_ARG(QVariant, 3.0),
+                                     Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant())));
+    QQuickItem* viewport = item("detailStillViewport");
+    QQuickItem* canvas = item("detailImageCanvas");
+    QTest::qWait(50);
+    const QPointF pointer(viewport->width() * 0.6, viewport->height() * 0.6);
+    const auto underPointer = [&] {
+      return QPointF((viewport->property("contentX").toDouble() + pointer.x() - canvas->x()) / canvas->width(),
+                     (viewport->property("contentY").toDouble() + pointer.y() - canvas->y()) / canvas->height());
+    };
+    const QPointF before = underPointer();
+    const QPointF at = viewport->mapToScene(pointer);
+    for (int delta : {120, -120}) {
+      QWheelEvent wheel(at, m_window->mapToGlobal(at.toPoint()), QPoint(), QPoint(0, delta),
+                        Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+      QCoreApplication::sendEvent(m_window, &wheel);
+      QTest::qWait(30);
+      QVERIFY(QLineF(before, underPointer()).length() < 0.001);
+    }
+  }
+
+  void imagePinchKeepsItsCentroidFixed() {
+    openDetail(m_library->rowOf(m_oddPath));
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->property("imageReady").toBool());
+    QVERIFY(QMetaObject::invokeMethod(detail, "zoomImageAt", Q_ARG(QVariant, 3.0),
+                                     Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant())));
+    QQuickItem* viewport = item("detailStillViewport");
+    QQuickItem* canvas = item("detailImageCanvas");
+    QTest::qWait(50);
+    const QPointF pointer(viewport->width() * 0.6, viewport->height() * 0.6);
+    const auto underPointer = [&] {
+      return QPointF((viewport->property("contentX").toDouble() + pointer.x() - canvas->x()) / canvas->width(),
+                     (viewport->property("contentY").toDouble() + pointer.y() - canvas->y()) / canvas->height());
+    };
+    const QPointF before = underPointer();
+    pinchAt(viewport->mapToScene(pointer).toPoint());
+    QTRY_VERIFY(detail->property("imageZoom").toDouble() > 3.0);
+    QVERIFY(QLineF(before, underPointer()).length() < 0.003);
+  }
+
   void failedThumbnailHasADistinctSettledState() {
     const QString missing = m_scratch.filePath(QStringLiteral("failed-preview.png"));
     m_disposablePaths.append(missing);
@@ -712,13 +889,38 @@ private slots:
     QStringList pair{pathAt(0), pathAt(1)};
     QVERIFY(QMetaObject::invokeMethod(sheet, "open", Q_ARG(QVariant, QVariant(pair))));
     QTRY_VERIFY(sheet->isVisible());
+    QTRY_COMPARE(sheet->width(), qreal(m_window->width()));
+    QTRY_COMPARE(sheet->height(), qreal(m_window->height()));
     QCOMPARE(sheet->property("imageCount").toInt(), 2);
+    QSignalSpy frames(m_window, &QQuickWindow::frameSwapped);
+    m_window->update();
+    QTRY_VERIFY(!frames.isEmpty());
 
     QQuickItem* repeater = find(sheet, [](QQuickItem* candidate) {
       return candidate->objectName() == QStringLiteral("compareRepeater");
     });
     QVERIFY(repeater);
     QCOMPARE(repeater->property("count").toInt(), 2);
+
+    QQuickItem* image = find(sheet, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("compareImage");
+    });
+    QVERIFY(image);
+    const QPointF pointer(image->width() * 0.65, image->height() * 0.6);
+    const QPointF at = image->mapToScene(pointer);
+    QWheelEvent wheel(at, m_window->mapToGlobal(at.toPoint()), QPoint(), QPoint(0, 120),
+                      Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+    QCoreApplication::sendEvent(m_window, &wheel);
+    QTRY_VERIFY(sheet->property("zoom").toDouble() > 1.0);
+    QVERIFY(QLineF(pointer, image->mapFromScene(at)).length() < 0.01);
+
+    const double wheelZoom = sheet->property("zoom").toDouble();
+    frames.clear();
+    m_window->update();
+    QTRY_VERIFY(!frames.isEmpty());
+    pinchAt(at.toPoint());
+    QTRY_VERIFY(sheet->property("zoom").toDouble() > wheelZoom);
+    QVERIFY(QLineF(pointer, image->mapFromScene(at)).length() < 2.0);
 
     // One zoom property drives both pictures; reset returns them to fit.
     sheet->setProperty("zoom", 2.0);
@@ -4587,6 +4789,8 @@ private slots:
   // captures keep arriving while it is open. Every visible tile must still
   // describe the row it sits at, and opening it must open that file.
   void tilesStayMappedAfterResizeAndRescan() {
+    m_settings->setShowGridFilenames(true);
+    const auto restoreFilenames = qScopeGuard([&] { m_settings->setShowGridFilenames(false); });
     QQuickItem* grid = item("library");
     QQuickItem* detail = item("detail");
     // Earlier tests delete explicit files while their last scan is still in
@@ -5212,6 +5416,21 @@ private:
       QTest::qWait(20);
     }
     QTest::mouseRelease(m_window, Qt::LeftButton, Qt::NoModifier, end);
+    QTest::qWait(30);
+  }
+
+  void pinchAt(const QPoint& at) {
+    auto* device = QTest::createTouchDevice();
+    QTest::touchEvent(m_window, device).press(0, at - QPoint(40, 0), m_window)
+                                      .press(1, at + QPoint(40, 0), m_window);
+    QTest::qWait(30);
+    for (int distance : {50, 60, 80}) {
+      QTest::touchEvent(m_window, device).move(0, at - QPoint(distance, 0), m_window)
+                                        .move(1, at + QPoint(distance, 0), m_window);
+      QTest::qWait(30);
+    }
+    QTest::touchEvent(m_window, device).release(0, at - QPoint(80, 0), m_window)
+                                      .release(1, at + QPoint(80, 0), m_window);
     QTest::qWait(30);
   }
 

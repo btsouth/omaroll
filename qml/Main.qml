@@ -153,6 +153,14 @@ ApplicationWindow {
             return
         }
 
+        if (id === "copy-path" || id === "copy-name") {
+            const entry = Captures.deletionPathAt(Captures.rowOf(path))
+            const text = id === "copy-path" ? entry : entry.substring(entry.lastIndexOf("/") + 1)
+            root.say(Actions.copyPlainText(text)
+                     ? (id === "copy-path" ? "Copied path" : "Copied file name") : "Could not copy text")
+            return
+        }
+
         // A letter pressed on the wrong medium: say so rather than hand a PNG
         // to omacut or an mp4 to the matte composer.
         const row = Captures.rowOf(path)
@@ -696,7 +704,9 @@ ApplicationWindow {
             return
         }
         library.currentIndex = 0
-        if (view === "context-menu") {
+        if (view === "grid-filenames") {
+            Settings.showGridFilenames = true
+        } else if (view === "context-menu") {
             root.openContextMenu(0, 100, 100)
         } else if (view === "selection-menu") {
             library.toggleChecked(Captures.pathAt(0))
@@ -1110,6 +1120,8 @@ ApplicationWindow {
                 if (row.id === "hide") row.label = Settings.isHidden(path) ? "Unhide" : "Hide"
                 return row
             })
+        rows.push({id: "copy-path", label: "Copy path", available: true, group: "File", shortcut: "Ctrl+Shift+C"},
+                  {id: "copy-name", label: "Copy file name", available: true, group: "File"})
         rows.unshift({id: "preview", label: "Open in Omaroll", available: true, group: "File"})
         rows.push({id: "organize", label: "Albums and tags…", available: true, group: "Organize"})
         return rows
@@ -1471,7 +1483,7 @@ ApplicationWindow {
         // file from view (trash, hide), opens another sheet (matte) or hands
         // off to an editor still closes it.
         readonly property var keepsViewer: ["preview", "play", "view", "open-document", "frame", "background", "export", "favorite",
-                                            "copy", "ocr", "qr", "send", "tailscale", "files", "open-with"]
+                                            "copy", "copy-path", "copy-name", "ocr", "qr", "send", "tailscale", "files", "open-with"]
         onActionTriggered: function (id) {
             const targets = ["compare", "correctionsbatch"].indexOf(id) >= 0
                 ? root.previewSelection(detail.path) : undefined
@@ -1936,6 +1948,11 @@ ApplicationWindow {
     }
 
     // Shortcuts. All disabled while a sheet is open, which owns its own keys.
+    Shortcut {
+        sequence: "Ctrl+Shift+C"
+        enabled: !root.anySheetOpen && !root.popupOpen
+        onActivated: root.perform("copy-path", root.currentPath())
+    }
     Shortcut {
         sequences: [Registry.shortcutFor("matte")]
         enabled: !root.anySheetOpen && !root.popupOpen
