@@ -5,15 +5,37 @@ on:
   # otherwise run everything twice.
   push:
     branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'LICENSE'
-      - '.github/ISSUE_TEMPLATE/**'
+    paths:
+      - '**'
+      - '!**.md'
+      - '!.github/ISSUE_TEMPLATE/**'
+      # The build reads these Markdown files (CMakeLists.txt installs or
+      # rewrites them), so renaming or deleting one must still run CI.
+      - 'README.md'
+      - 'CONTRIBUTING.md'
+      - 'RELEASING.md'
+      - 'PRIVACY.md'
+      - 'SUPPORT.md'
+      - 'CHANGELOG.md'
+      - 'docs/STATUS.md'
+      - 'docs/ROADMAP.md'
+      - 'tests/**'
   pull_request:
-    paths-ignore:
-      - '**.md'
-      - 'LICENSE'
-      - '.github/ISSUE_TEMPLATE/**'
+    paths:
+      - '**'
+      - '!**.md'
+      - '!.github/ISSUE_TEMPLATE/**'
+      # The build reads these Markdown files (CMakeLists.txt installs or
+      # rewrites them), so renaming or deleting one must still run CI.
+      - 'README.md'
+      - 'CONTRIBUTING.md'
+      - 'RELEASING.md'
+      - 'PRIVACY.md'
+      - 'SUPPORT.md'
+      - 'CHANGELOG.md'
+      - 'docs/STATUS.md'
+      - 'docs/ROADMAP.md'
+      - 'tests/**'
 
 # A newer push to the same pull request replaces the run in progress.
 concurrency:
