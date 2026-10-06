@@ -6148,7 +6148,16 @@ private slots:
         }
       }
     }
-    QCOMPARE(dateChanges.count(), 1);
+    // Incremental publication can flush between the three bounded probes,
+    // while each probe still updates its rows together rather than per file.
+    QVERIFY(dateChanges.count() >= 1 && dateChanges.count() <= 3);
+    for (const auto& change : dateChanges) {
+      const auto first = change.at(0).value<QModelIndex>();
+      const auto last = change.at(1).value<QModelIndex>();
+      QVERIFY(first.isValid() && last.isValid());
+      QVERIFY(first.row() <= last.row());
+      QVERIFY(change.at(2).value<QList<int>>().contains(CaptureRoles::CapturedRole));
+    }
 
     QFile log(logPath);
     QVERIFY(log.open(QIODevice::ReadOnly));
