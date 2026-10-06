@@ -2,8 +2,8 @@
 
 ## Latest release
 
-[Omaroll 1.15.0](https://github.com/btsouth/omaroll/releases/tag/v1.15.0), dated
-6 October 2026. See the [changelog](../CHANGELOG.md#1150) for what it includes.
+[Omaroll 1.15.1](https://github.com/btsouth/omaroll/releases/tag/v1.15.1), dated
+6 October 2026. See the [changelog](../CHANGELOG.md#1151) for what it includes.
 
 The release provides an x86_64 Arch package, source archive and PKGBUILD, with
 checksums and signed build provenance. Installation and verification commands
@@ -11,12 +11,13 @@ are in the [README](../README.md#install-or-update).
 
 ## Current work
 
-Version 1.15.0 adds an optional library folder sidebar, viewer looping, audio
-track and subtitle timing controls, fit modes and shortcut help, and grid
-filenames, pointer zoom, path copying and a resizable preview. A second quick
-viewer maps directly into its Hyprland tile without blocking, metadata appears
-during indexing, and file actions, restores and single-instance hand-offs are
-safer. Physical desktop acceptance on Omarchy covered viewer tiling, video
+Version 1.15.1 adds fill mode (Shift+W) to the quick viewer, which stays on
+while stepping through a folder. Version 1.15.0 added an optional library
+folder sidebar, viewer looping, audio track and subtitle timing controls, fit
+modes and shortcut help, and grid filenames, pointer zoom, path copying and a
+resizable preview. A second quick viewer maps directly into its Hyprland tile
+without blocking, metadata appears during indexing, and file actions, restores
+and single-instance hand-offs are safer. Physical desktop acceptance on Omarchy covered viewer tiling, video
 audio, media keys and clipboard paste into other apps.
 
 [#80](https://github.com/btsouth/omaroll/issues/80) stays open for the

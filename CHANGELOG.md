@@ -1,12 +1,16 @@
 # Changelog
 
-## Unreleased
+## 1.15.1
+
+Tiled quick viewers can fill their tiles instead of showing empty bands.
 
 ### Added
 
 - `Shift+W` or Fill window in the quick viewer menu crops a picture to cover
   the window, centred, so tiled viewers have no empty bands. It stays on while
   stepping through the folder; press it again to fit the whole picture.
+
+[Install or update](https://github.com/btsouth/omaroll#install-or-update).
 
 ## 1.15.0
 
