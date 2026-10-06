@@ -2407,15 +2407,18 @@ private slots:
   }
 
   // Shift+W crops a picture to cover the window, centred, stays centred as
-  // the tile changes shape, and fits the whole picture again on a second press.
+  // the tile changes shape and while stepping through the folder, and fits
+  // the whole picture again on a second press.
   void fillCoversTheWindowCentredAndTogglesBack() {
     QTemporaryDir folder;
     QVERIFY(folder.isValid());
     const QString wide = folder.filePath(QStringLiteral("wide.png"));
+    const QString tall = folder.filePath(QStringLiteral("tall.png"));
     QImage image(1600, 400, QImage::Format_RGB32);
     image.fill(Qt::red);
     QVERIFY(image.save(wide));
-    open({wide});
+    QVERIFY(image.transformed(QTransform().rotate(90)).save(tall));
+    open({wide, tall});
     QTRY_VERIFY(prop("imageReady").toBool());
     QQuickItem* still = item(QStringLiteral("viewerStill"));
     m_window->resize(600, 400);
@@ -2438,10 +2441,18 @@ private slots:
     QTRY_VERIFY(qAbs(prop("displayHeight").toReal() - still->height()) < 0.01);
     QTRY_VERIFY(centred());
 
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QCOMPARE(m_session->path(), tall);
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QCOMPARE(prop("fitMode").toString(), QStringLiteral("fill"));
+    QTRY_VERIFY(qAbs(prop("displayWidth").toReal() - still->width()) < 0.01);
+    QVERIFY(prop("displayHeight").toReal() > still->height());
+    QTRY_VERIFY(centred());
+
     QTest::keyClick(m_window, Qt::Key_W, Qt::ShiftModifier);
     QCOMPARE(prop("fitMode").toString(), QStringLiteral("fit"));
-    QTRY_VERIFY(qAbs(prop("displayWidth").toReal() - still->width()) < 0.01);
-    QVERIFY(prop("displayHeight").toReal() < still->height());
+    QTRY_VERIFY(qAbs(prop("displayHeight").toReal() - still->height()) < 0.01);
+    QVERIFY(prop("displayWidth").toReal() < still->width());
   }
 
   void keyboardPanClampsBothAxesAtActualSize() {
