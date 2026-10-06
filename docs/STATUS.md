@@ -14,10 +14,10 @@ are in the [README](../README.md#install-or-update).
 Version 1.15.1 adds fill mode (Shift+W) to the quick viewer, which stays on
 while stepping through a folder. Version 1.15.0 added an optional library
 folder sidebar, viewer looping, audio track and subtitle timing controls, fit
-modes and shortcut help, and grid filenames, pointer zoom, path copying and a resizable preview. A second quick
-viewer maps directly into its Hyprland tile without blocking, metadata appears
-during indexing, and file actions, restores and single-instance hand-offs are
-safer. Physical desktop acceptance on Omarchy covered viewer tiling, video
+modes and shortcut help, and grid filenames, pointer zoom, path copying and a
+resizable preview. A second quick viewer maps directly into its Hyprland tile
+without blocking, metadata appears during indexing, and file actions, restores
+and single-instance hand-offs are safer. Physical desktop acceptance on Omarchy covered viewer tiling, video
 audio, media keys and clipboard paste into other apps.
 
 [#80](https://github.com/btsouth/omaroll/issues/80) stays open for the
