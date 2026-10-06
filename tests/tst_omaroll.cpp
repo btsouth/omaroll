@@ -4982,6 +4982,7 @@ private slots:
       QVERIFY(qputenv(name, dir.path().toUtf8()));
     }
 
+    { QFile log(logPath); QVERIFY(log.open(QIODevice::WriteOnly)); }
     const QString imagePath = dir.filePath(QStringLiteral("capture-001.png"));
     QImage image(16, 12, QImage::Format_RGB32);
     image.fill(Qt::white);
