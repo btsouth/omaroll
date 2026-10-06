@@ -18,6 +18,7 @@
 #include "app/HeadlessAudio.h"
 #include "app/VideoPlayback.h"
 #include "library/CaptureFilterModel.h"
+#include "library/FolderTreeModel.h"
 #include "library/CaptureModel.h"
 #include "library/DuplicateIndex.h"
 #include "library/MediaMetadataIndex.h"
@@ -236,6 +237,8 @@ private slots:
     m_captures = new CaptureModel(m_settings, this);
     m_library = new CaptureFilterModel(this);
     m_library->setSourceModel(m_captures);
+    m_folderTree = new FolderTreeModel(this);
+    m_folderTree->bind(m_captures, m_library);
     m_duplicates = new DuplicateIndex(m_captures, this);
     connect(m_library, &CaptureFilterModel::duplicatesOnlyChanged, m_duplicates,
             [this] { m_duplicates->setActive(m_library->duplicatesOnly()); });
@@ -301,6 +304,7 @@ private slots:
 
     QQmlContext* context = m_engine->rootContext();
     context->setContextProperty(QStringLiteral("Theme"), m_theme);
+    context->setContextProperty(QStringLiteral("FolderTree"), m_folderTree);
     context->setContextProperty(QStringLiteral("Captures"), m_library);
     context->setContextProperty(QStringLiteral("Library"), m_captures);
     context->setContextProperty(QStringLiteral("Actions"), m_actions);
@@ -4454,6 +4458,236 @@ private slots:
     QVERIFY(QMetaObject::invokeMethod(chooser, "close"));
   }
 
+  void folderSidebarDefaultsTogglesAndPersists() {
+    QVERIFY(!m_settings->showFolderSidebar());
+    QQuickItem* sidebar = item("folderSidebar");
+    QVERIFY(sidebar);
+    QVERIFY(!sidebar->isVisible());
+    const auto restore = qScopeGuard([&] { m_settings->setShowFolderSidebar(false); });
+    QTest::keyClick(m_window, Qt::Key_F9);
+    QTRY_VERIFY(sidebar->isVisible());
+    QVERIFY(m_settings->showFolderSidebar());
+    QVERIFY(AppSettings().showFolderSidebar());
+    click(item("folderSidebarToggle"));
+    QTRY_VERIFY(!sidebar->isVisible());
+    QVERIFY(!AppSettings().showFolderSidebar());
+    click(item("folderSidebarToggle"));
+    QTRY_VERIFY(sidebar->isVisible());
+    QTest::keyClick(m_window, Qt::Key_F9);
+    QTRY_VERIFY(!sidebar->isVisible());
+  }
+
+  void folderSidebarUsesBrowseFiltersAndAllMedia() {
+    const QString folder = QFileInfo(m_oddPath).absolutePath();
+    m_settings->setShowFolderSidebar(true);
+    QVERIFY(m_settings->pinFolderPath(folder));
+    const auto restore = qScopeGuard([&] {
+      m_settings->setShowFolderSidebar(false);
+      m_settings->unpinFolder(folder);
+      m_library->setFolderFilter({});
+      m_library->setKindFilter(-1);
+      m_library->setSearchText({});
+      m_library->setFavoritesOnly(false);
+    });
+    QTRY_VERIFY(item("folderSidebar")->isVisible());
+    QTRY_VERIFY(!item("pinnedFolders")->isVisible());
+    m_library->setKindFilter(2);
+    m_library->setSearchText("alpine");
+    m_library->setFavoritesOnly(true);
+    m_library->setAlbumFilter("temporary", {});
+    m_library->setDateRange("2026-01-01", "2026-01-31", 0);
+    QQuickItem* pin = nullptr;
+    QTRY_VERIFY((pin = find(item("folderSidebar"), [&](QQuickItem* candidate) {
+      return candidate->activeFocusOnTab() && candidate->property("path").toString() == folder;
+    })) != nullptr);
+    QTRY_VERIFY(pin->isVisible() && pin->width() > 100 && pin->height() > 20);
+    clickSettled(pin);
+    QTRY_COMPARE(m_library->folderFilter(), folder);
+    QCOMPARE(m_library->kindFilter(), 2);
+    QCOMPARE(m_library->searchText(), QStringLiteral("alpine"));
+    QVERIFY(m_library->favoritesOnly());
+    QVERIFY(m_library->albumFilter().isEmpty());
+    QVERIFY(m_library->dateFrom().isEmpty());
+    click(item("sidebarAllMedia"));
+    QTRY_VERIFY(m_library->folderFilter().isEmpty());
+    QCOMPARE(m_library->kindFilter(), 2);
+    QCOMPARE(m_library->searchText(), QStringLiteral("alpine"));
+    QVERIFY(m_library->favoritesOnly());
+    m_settings->setShowFolderSidebar(false);
+    QTRY_VERIFY(item("pinnedFolders")->isVisible());
+  }
+
+  void folderSidebarAutoHidesWithoutChangingPreference() {
+    m_settings->setShowFolderSidebar(true);
+    const auto restore = qScopeGuard([&] {
+      m_settings->setShowFolderSidebar(false);
+      m_window->resize(1280, 820);
+    });
+    QTRY_VERIFY(item("folderSidebar")->isVisible());
+    m_window->resize(759, 600);
+    QTRY_VERIFY(!item("folderSidebar")->isVisible());
+    QVERIFY(m_settings->showFolderSidebar());
+    m_window->resize(560, 420);
+    QTRY_VERIFY(!item("folderSidebar")->isVisible());
+    QVERIFY(AppSettings().showFolderSidebar());
+    m_window->resize(760, 600);
+    QTRY_VERIFY(item("folderSidebar")->isVisible());
+    QVERIFY(item("library")->width() > 450);
+  }
+
+  void folderSidebarResizesAndSavesOnRelease() {
+    m_settings->setShowFolderSidebar(true);
+    m_settings->setFolderSidebarWidth(240);
+    const auto restore = qScopeGuard([&] {
+      m_settings->setShowFolderSidebar(false);
+      m_settings->setFolderSidebarWidth(240);
+    });
+    QQuickItem* sidebar = item("folderSidebar");
+    QQuickItem* handle = item("folderSidebarResizeHandle");
+    QTRY_COMPARE(sidebar->width(), 240.0);
+    const QPoint start = centre(handle);
+    QTest::mousePress(m_window, Qt::LeftButton, Qt::NoModifier, start);
+    QTest::mouseMove(m_window, start + QPoint(60, 0));
+    QTRY_COMPARE(sidebar->width(), 300.0);
+    QCOMPARE(m_settings->folderSidebarWidth(), 240);
+    QTest::mouseRelease(m_window, Qt::LeftButton, Qt::NoModifier, start + QPoint(60, 0));
+    QTRY_COMPARE(m_settings->folderSidebarWidth(), 300);
+    QCOMPARE(AppSettings().folderSidebarWidth(), 300);
+  }
+
+  void folderSidebarKeyboardExpandsCollapsesAndOpens() {
+    m_library->setFolderFilter({});
+    const QString folder = QFileInfo(m_oddPath).absolutePath();
+    const QVariantList sources{QVariantMap{{"path", folder}, {"label", "Test library"}}};
+    // Use an unbound projection: a pending scan or queued live rebuild must
+    // never replace the synthetic tree while keyboard input is being tested.
+    FolderTreeModel fixture;
+    fixture.setFolders(sources, {folder + "/b/leaf", folder + "/bc"}, {});
+    m_engine->rootContext()->setContextProperty(QStringLiteral("FolderTree"), &fixture);
+    const auto restore = qScopeGuard([&] {
+      m_settings->setShowFolderSidebar(false);
+      m_library->setFolderFilter({});
+      m_engine->rootContext()->setContextProperty(QStringLiteral("FolderTree"), m_folderTree);
+    });
+    m_settings->setShowFolderSidebar(true);
+    QQuickItem* tree = item("folderSidebarTree");
+    QTRY_COMPARE(tree->property("rows").toInt(), 1);
+    QVERIFY(QMetaObject::invokeMethod(item("folderSidebar"), "focusTree"));
+    QTRY_VERIFY(tree->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTRY_COMPARE(tree->property("rows").toInt(), 3);
+    QTest::keyClick(m_window, Qt::Key_Down);
+    QTRY_COMPARE(tree->property("currentRow").toInt(), 1);
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTRY_COMPARE(tree->property("rows").toInt(), 4);
+    QTest::keyClick(m_window, Qt::Key_Down);
+    QTRY_COMPARE(tree->property("currentRow").toInt(), 2);
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QTRY_COMPARE(tree->property("currentRow").toInt(), 1);
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_COMPARE(m_library->folderFilter(), folder + "/b");
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QTRY_COMPARE(tree->property("rows").toInt(), 3);
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QTRY_COMPARE(tree->property("currentRow").toInt(), 0);
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QTRY_COMPARE(tree->property("rows").toInt(), 1);
+    m_library->setFolderFilter(folder + "/b/leaf");
+    QTRY_COMPARE(tree->property("rows").toInt(), 4);
+    QTRY_COMPARE(tree->property("currentRow").toInt(), 2);
+    QTest::keyClick(m_window, Qt::Key_Up);
+    QTRY_COMPARE(tree->property("currentRow").toInt(), 1);
+    m_library->setFolderFilter({});
+    item("library")->forceActiveFocus();
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QTRY_VERIFY(tree->hasActiveFocus());
+    item("sidebarAddFolder")->forceActiveFocus();
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QTRY_VERIFY(item("library")->hasActiveFocus());
+  }
+
+  void folderSidebarPreservesExpansionAcrossCountAndStructureChanges() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString branch = dir.filePath("b");
+    const QString leaf = dir.filePath("b/leaf");
+    const QString current = dir.filePath("bc");
+    QVERIFY(QDir().mkpath(leaf));
+    QVERIFY(QDir().mkpath(current));
+    QImage image(12, 12, QImage::Format_RGB32);
+    image.fill(Qt::red);
+    QVERIFY(image.save(leaf + "/first.png"));
+    QVERIFY(image.save(current + "/current.png"));
+    const auto restore = qScopeGuard([&] {
+      m_settings->setShowFolderSidebar(false);
+      m_library->setFolderFilter({});
+      m_settings->removeLibraryFolder(dir.path());
+      QTRY_VERIFY(!m_folderTree->indexForPath(dir.path()).isValid());
+    });
+    QVERIFY(m_settings->addLibraryFolder(QUrl::fromLocalFile(dir.path())));
+    QTRY_COMPARE(m_folderTree->data(m_folderTree->indexForPath(leaf), FolderTreeModel::MediaCountRole).toInt(), 1);
+    m_library->setFolderFilter(current);
+    m_settings->setShowFolderSidebar(true);
+    QQuickItem* tree = item("folderSidebarTree");
+    QVERIFY(QMetaObject::invokeMethod(tree, "expandToIndex", Q_ARG(QModelIndex, m_folderTree->indexForPath(branch))));
+    const auto branchRow = [&] {
+      int row = -1;
+      QMetaObject::invokeMethod(tree, "rowAtIndex", Q_RETURN_ARG(int, row),
+                                Q_ARG(QModelIndex, m_folderTree->indexForPath(branch)));
+      return row;
+    };
+    QTRY_VERIFY(branchRow() >= 0);
+    QVERIFY(QMetaObject::invokeMethod(tree, "expand", Q_ARG(int, branchRow())));
+    const auto branchExpanded = [&] {
+      bool expanded = false;
+      QMetaObject::invokeMethod(tree, "isExpanded", Q_RETURN_ARG(bool, expanded), Q_ARG(int, branchRow()));
+      return expanded;
+    };
+    QTRY_VERIFY(branchExpanded());
+    QSignalSpy aboutToReset(m_folderTree, &QAbstractItemModel::modelAboutToBeReset);
+    QVERIFY(image.save(leaf + "/second.png"));
+    m_captures->refresh();
+    QTRY_COMPARE(m_folderTree->data(m_folderTree->indexForPath(leaf), FolderTreeModel::MediaCountRole).toInt(), 2);
+    QCOMPARE(aboutToReset.size(), 0);
+    QVERIFY(branchExpanded());
+    QVERIFY(QDir().mkpath(dir.filePath("a")));
+    QVERIFY(image.save(dir.filePath("a/sibling.png")));
+    m_captures->refresh();
+    QTRY_VERIFY(m_folderTree->indexForPath(dir.filePath("a")).isValid());
+    QCOMPARE(aboutToReset.size(), 1);
+    QTRY_VERIFY(branchExpanded());
+    QCOMPARE(m_library->folderFilter(), current);
+  }
+
+  void folderSidebarShortcutRespectsSearchSheetsAndMenus() {
+    QVERIFY(!m_settings->showFolderSidebar());
+    QTest::keyClick(m_window, Qt::Key_Slash);
+    QTest::keyClick(m_window, Qt::Key_F9);
+    QVERIFY(!m_settings->showFolderSidebar());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QObject* browser = m_window->findChild<QObject*>(QStringLiteral("libraryBrowser"));
+    QVERIFY(QMetaObject::invokeMethod(browser, "open"));
+    QTRY_VERIFY(browser->property("visible").toBool());
+    QTest::keyClick(m_window, Qt::Key_F9);
+    QVERIFY(!m_settings->showFolderSidebar());
+    QVERIFY(QMetaObject::invokeMethod(browser, "close"));
+    m_settings->setShowFolderSidebar(true);
+    const auto restore = qScopeGuard([&] {
+      QMetaObject::invokeMethod(m_window->findChild<QObject*>(QStringLiteral("sidebarFolderMenu")), "close");
+      m_settings->setShowFolderSidebar(false);
+    });
+    const QString folder = QFileInfo(m_oddPath).absolutePath();
+    QQuickItem* row = nullptr;
+    QTRY_VERIFY((row = find(item("folderSidebar"), [&](QQuickItem* candidate) {
+      return candidate->property("path").toString() == folder && candidate->property("folderPath").isValid();
+    })) != nullptr);
+    click(row, Qt::RightButton);
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("sidebarFolderMenu"));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QTest::keyClick(m_window, Qt::Key_F9);
+    QVERIFY(m_settings->showFolderSidebar());
+  }
+
   void pinnedFoldersRemainShortcutsWithoutRemovingTheirSource() {
     QVERIFY(m_settings->pinFolderPath(QFileInfo(m_oddPath).absolutePath()));
     QQuickItem* pins = item("pinnedFolders");
@@ -5468,6 +5702,7 @@ private:
   AppSettings* m_settings = nullptr;
   CaptureModel* m_captures = nullptr;
   CaptureFilterModel* m_library = nullptr;
+  FolderTreeModel* m_folderTree = nullptr;
   ActionLauncher* m_actions = nullptr;
   ActionRegistry* m_registry = nullptr;
   TailscalePeers* m_tailscale = nullptr;

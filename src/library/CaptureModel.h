@@ -32,6 +32,7 @@ class AppSettings;
 // thousands of row operations; the grid preserves its place by path across it.
 class CaptureModel final : public QAbstractListModel {
   Q_OBJECT
+  Q_PROPERTY(QVariantList folderSources READ folderSources NOTIFY folderSourcesChanged)
   Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
   Q_PROPERTY(bool empty READ empty NOTIFY countChanged)
   Q_PROPERTY(bool scanning READ scanning NOTIFY scanningChanged)
@@ -49,6 +50,7 @@ public:
 
   [[nodiscard]] bool empty() const { return m_records.isEmpty(); }
   [[nodiscard]] bool scanning() const { return m_scanning; }
+  [[nodiscard]] QVariantList folderSources() const { return m_folderSources; }
   [[nodiscard]] QVariantList automaticFolders() const;
   Q_INVOKABLE [[nodiscard]] bool folderAvailable(const QString& path) const;
 
@@ -118,6 +120,7 @@ signals:
   void countChanged();
   void scanningChanged();
   void automaticFoldersChanged();
+  void folderSourcesChanged();
   // "Today" became "Yesterday": every day label is stale at once.
   void dayLabelsChanged();
 
@@ -125,6 +128,7 @@ private:
   struct ScanResult {
     QList<CaptureRecord> records;
     QStringList directories;
+    QVariantList folderSources;
   };
 
   [[nodiscard]] QList<CaptureScanner::Root> roots() const;
@@ -137,6 +141,7 @@ private:
 
   AppSettings* m_settings = nullptr;
   QStringList m_extraRoots;
+  QVariantList m_folderSources;
   QHash<QString, QString> m_extraFiles;
   QSet<QString> m_heldPaths;
   QList<CaptureRecord> m_records;

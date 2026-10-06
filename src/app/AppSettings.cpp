@@ -45,6 +45,8 @@ constexpr auto kVideoPrimaryAction = "actions/videoPrimary";
 constexpr auto kThumbnailCacheMb = "cache/maximumMb";
 constexpr auto kTileWidth = "view/tileWidth";
 constexpr auto kShowGridFilenames = "view/showGridFilenames";
+constexpr auto kShowFolderSidebar = "view/showFolderSidebar";
+constexpr auto kFolderSidebarWidth = "view/folderSidebarWidth";
 constexpr auto kPreviewWidth = "view/previewWidth";
 constexpr auto kPreviewHeight = "view/previewHeight";
 constexpr int kMinimumTileWidth = 160;
@@ -263,6 +265,8 @@ AppSettings::AppSettings(QObject* parent)
   m_tileWidth =
       qBound(kMinimumTileWidth, m_settings.value(kTileWidth, 240).toInt(), kMaximumTileWidth);
   m_showGridFilenames = m_settings.value(kShowGridFilenames, false).toBool();
+  m_showFolderSidebar = m_settings.value(kShowFolderSidebar, false).toBool();
+  m_folderSidebarWidth = qBound(180, m_settings.value(kFolderSidebarWidth, 240).toInt(), 400);
   m_previewWidth = qBound(500, m_settings.value(kPreviewWidth, 1000).toInt(), 8192);
   m_previewHeight = qBound(360, m_settings.value(kPreviewHeight, 700).toInt(), 8192);
   m_slideshowVideos = m_settings.value(kSlideshowVideos, false).toBool();
@@ -527,6 +531,21 @@ void AppSettings::setShowGridFilenames(bool value) {
   m_showGridFilenames = value;
   m_settings.setValue(kShowGridFilenames, value);
   emit showGridFilenamesChanged();
+}
+
+void AppSettings::setShowFolderSidebar(bool value) {
+  if (m_showFolderSidebar == value) return;
+  m_showFolderSidebar = value;
+  m_settings.setValue(kShowFolderSidebar, value);
+  emit showFolderSidebarChanged();
+}
+
+void AppSettings::setFolderSidebarWidth(int width) {
+  const int bounded = qBound(180, width, 400);
+  if (m_folderSidebarWidth == bounded) return;
+  m_folderSidebarWidth = bounded;
+  m_settings.setValue(kFolderSidebarWidth, bounded);
+  emit folderSidebarWidthChanged();
 }
 
 void AppSettings::setPreviewWidth(int width) {
