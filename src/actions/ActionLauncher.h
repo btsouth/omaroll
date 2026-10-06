@@ -111,7 +111,6 @@ public:
   // paste into Nautilus or a browser upload expects. copyFile uses image data
   // for supported pictures instead.
   Q_INVOKABLE bool copyUris(const QStringList& paths);
-  Q_INVOKABLE bool copyPlainText(const QString& text);
 
   [[nodiscard]] static QString mimeTypeFor(const QString& path);
 
