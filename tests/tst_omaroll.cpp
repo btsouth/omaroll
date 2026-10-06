@@ -1263,6 +1263,20 @@ private slots:
     QCOMPARE(tree.data(tree.index(2, 0), FolderTreeModel::MediaCountRole).toInt(), 0);
   }
 
+  void folderTreeNestedSourcesResolveToTheFirstRoot() {
+    FolderTreeModel tree;
+    const QVariantList sources{QVariantMap{{"path", "/p"}, {"label", "Pictures"}},
+                               QVariantMap{{"path", "/p/trip"}, {"label", "trip"}}};
+    tree.setFolders(sources, {"/p/trip/day"}, {});
+    QCOMPARE(tree.rowCount(), 2);
+    const QModelIndex pictures = tree.index(0, 0);
+    const QModelIndex trip = tree.indexForPath("/p/trip");
+    QCOMPARE(tree.parent(trip), pictures);
+    QCOMPARE(tree.parent(tree.parent(tree.indexForPath("/p/trip/day"))), pictures);
+    // The later root still exists with its own copy of the subtree.
+    QCOMPARE(tree.rowCount(tree.index(1, 0)), 1);
+  }
+
   void folderTreeCountChangesPreserveIndexesWithoutReset() {
     FolderTreeModel tree;
     QAbstractItemModelTester tester(&tree, QAbstractItemModelTester::FailureReportingMode::QtTest);

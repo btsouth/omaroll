@@ -53,7 +53,9 @@ void FolderTreeModel::setFolders(const QVariantList& sources, const QStringList&
     root->parent = &m_root;
     root->row = static_cast<int>(nextRoot.children.size());
     QHash<QString, Node*> byPath{{path, root.get()}};
-    nextByPath.insert(path, root.get());
+    // Nested sources repeat a folder under each root. The first source owns
+    // its path, so selection and restored expansion land on one stable node.
+    if (!nextByPath.contains(path)) nextByPath.insert(path, root.get());
     const QString prefix = path.endsWith(QLatin1Char('/')) ? path : path + QLatin1Char('/');
     for (const QString& folder : sorted) {
       if (!folder.startsWith(prefix)) continue;
@@ -72,7 +74,7 @@ void FolderTreeModel::setFolders(const QVariantList& sources, const QStringList&
           child = entry.get();
           current->children.push_back(std::move(entry));
           byPath.insert(childPath, child);
-          nextByPath.insert(childPath, child);
+          if (!nextByPath.contains(childPath)) nextByPath.insert(childPath, child);
         }
         current = child;
       }
