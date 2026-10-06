@@ -302,7 +302,7 @@ QString ViewerSession::thumbnailUrl(int index, qreal devicePixelRatio) const {
   return QStringLiteral("image://thumbs/%1%2~%3%4")
       .arg(devicePixelRatio > 0 ? devicePixelRatio : 1.0)
       .arg(isVideoAt(index) ? QStringLiteral("@40") : QString())
-      .arg(ThumbnailSource::version(file, FileVersion::key(file)))
+      .arg(ThumbnailSource::version(file, FileVersion::thumbnailKey(file)))
       .arg(QString::fromUtf8(QUrl::toPercentEncoding(file)));
 }
 
@@ -609,7 +609,7 @@ ViewerSession::PreloadResult ViewerSession::probePreloads(const std::array<QStri
 
 void ViewerSession::refreshDetails() {
   m_contentVersion = FileVersion::key(path());
-  m_thumbnailVersion = ThumbnailSource::version(path(), m_contentVersion);
+  m_thumbnailVersion = ThumbnailSource::version(path(), FileVersion::thumbnailKey(path()));
   watchCurrentFile();
   m_mediaSuffix = CaptureScanner::mediaSuffix(path());
   const QFileInfo info(path());

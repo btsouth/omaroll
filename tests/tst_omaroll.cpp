@@ -8188,6 +8188,17 @@ private slots:
     QCOMPARE(rewritten.inode, original.inode);
     QVERIFY(rewritten.thumbnailVersion != original.thumbnailVersion);
     QVERIFY(ThumbnailCache::thumbnail(path, QSize(8, 8), 1.0).pixelColor(4, 4).blue() > 200);
+    // Restoring the exact mtime still refreshes Qt's URL and the disk entry.
+    QTest::qWait(5);
+    image.fill(Qt::red);
+    QVERIFY(image.save(path, "BMP"));
+    QVERIFY(::utimensat(AT_FDCWD, QFile::encodeName(path).constData(), times, 0) == 0);
+    const auto preservedWrite = scan();
+    QCOMPARE(preservedWrite.modified, rewritten.modified);
+    QCOMPARE(preservedWrite.bytes, rewritten.bytes);
+    QCOMPARE(preservedWrite.inode, rewritten.inode);
+    QVERIFY(preservedWrite.thumbnailVersion != rewritten.thumbnailVersion);
+    QVERIFY(ThumbnailCache::thumbnail(path, QSize(8, 8), 1.0).pixelColor(4, 4).red() > 200);
     image = QImage(40, 32, QImage::Format_RGB32);
     image.fill(Qt::green);
     QVERIFY(image.save(path, "BMP"));

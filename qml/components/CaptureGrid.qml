@@ -355,7 +355,11 @@ FocusScope {
                     grid.currentIndex = row
                     root.contextRequested(row, x, y)
                 }
-                onToggleChecked: root.toggleChecked(cell.path)
+                onToggleChecked: {
+                    const path = cell.path
+                    Captures.commitPendingSearch()
+                    if (Captures.rowOf(path) >= 0) root.toggleChecked(path)
+                }
             }
         }
 

@@ -29,7 +29,7 @@ inline QString version(const QString& requested, const QString& ownVersion) {
   const QString source = path(requested);
   return source == requested ? ownVersion
                             : ownVersion + QLatin1Char('-') + QString::fromLatin1(QCryptographicHash::hash(
-                                  (source + QLatin1Char('|') + FileVersion::key(source)).toUtf8(),
+                                  (source + QLatin1Char('|') + FileVersion::thumbnailKey(source)).toUtf8(),
                                   QCryptographicHash::Sha256).toHex());
 }
 

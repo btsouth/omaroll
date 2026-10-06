@@ -38,4 +38,14 @@ inline QString key(const QString& path, bool followSymlink = true) {
   return key(info);
 }
 
+inline QString thumbnailKey(const struct stat& info) {
+  return key(info) + QStringLiteral("-%1-%2")
+      .arg(qlonglong(info.st_ctim.tv_sec)).arg(qlonglong(info.st_ctim.tv_nsec));
+}
+
+inline QString thumbnailKey(const QString& path) {
+  struct stat info {};
+  return ::stat(QFile::encodeName(path).constData(), &info) == 0 ? thumbnailKey(info) : QString();
+}
+
 } // namespace FileVersion
