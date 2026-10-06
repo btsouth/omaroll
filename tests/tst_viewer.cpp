@@ -3083,6 +3083,33 @@ private slots:
     first->close(); second->close();
   }
 
+  // Two opens close together can both decide before either viewer maps.
+  // Once the second is up, a fresh look tiles the pair.
+  void placementTilesRacingViewersOnceBothHaveMapped() {
+    ViewerWindows viewers(*m_engine);
+    int queries = 0;
+    viewers.setPlacementQuery([&](QObject*, HyprlandPlacement::Reply reply) {
+      HyprlandPlacement::Plan plan;
+      plan.valid = true;
+      if (++queries == 3) {
+        plan.viewers = 2;
+        plan.floating = {QStringLiteral("0xa"), QStringLiteral("0xb")};
+      }
+      reply(plan);
+    });
+    QStringList tiled;
+    viewers.setPlacementTile([&](const QStringList& addresses) { tiled += addresses; });
+    auto* first = viewers.open({media(QStringLiteral("Shot 1.jpg"))});
+    auto* second = viewers.open({media(QStringLiteral("shot 2.jpg"))});
+    QVERIFY(first && second);
+    QTRY_VERIFY(second->isVisible());
+    QVERIFY(!second->property("mapTiled").toBool());
+    QCOMPARE(queries, 2);
+    QTRY_COMPARE(tiled, (QStringList{QStringLiteral("0xa"), QStringLiteral("0xb")}));
+    QCOMPARE(queries, 3);
+    first->close(); second->close();
+  }
+
   void severalViewersOpenSideBySideAndCloseCleanly() {
     ViewerWindows viewers(*m_engine);
     int queries = 0;

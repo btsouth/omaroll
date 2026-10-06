@@ -574,8 +574,11 @@ int main(int argc, char* argv[]) {
                      editProvider->shutdown();
                      pdfProvider->shutdown();
                      rawProvider->shutdown();
+                     // Saves on the pool still use their editors, so a slow one is
+                     // reported and then finished rather than cut off.
                      if (!QThreadPool::globalInstance()->waitForDone(QDeadlineTimer(1500))) {
                        qWarning("Background workers exceeded the shutdown drain deadline");
+                       QThreadPool::globalInstance()->waitForDone();
                      }
                    });
 

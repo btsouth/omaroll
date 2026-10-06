@@ -260,6 +260,18 @@ void ViewerWindows::place(Viewer& viewer, quint64 generation, bool retry) {
     }
     show(viewer, {});
     m_tile(plan.floating);
+    if (unmappedPeer) {
+      // A viewer opened a moment earlier has still not reached the
+      // compositor, so both float. Look again once this one is up.
+      connect(window, &QQuickWindow::frameSwapped, window, [this, window] {
+        QTimer::singleShot(150, window, [this, window] {
+          if (!window->isVisible()) return;
+          m_query(window, [this](HyprlandPlacement::Plan settled) {
+            if (settled.viewers > 1) m_tile(settled.floating);
+          });
+        });
+      }, Qt::SingleShotConnection);
+    }
   });
 }
 
