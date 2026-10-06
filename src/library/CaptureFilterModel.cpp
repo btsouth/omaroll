@@ -23,8 +23,9 @@ CaptureFilterModel::CaptureFilterModel(QObject* parent) : QSortFilterProxyModel(
   m_nameCollator.setCaseSensitivity(Qt::CaseInsensitive);
   m_nameCollator.setNumericMode(true);
   setDynamicSortFilter(true);
-  // lessThan() reads the roles it needs directly, so no single sort role fits;
-  // sorting column 0 just gives the proxy something to order.
+  // Metadata dates can move individual rows without rebuilding the proxy.
+  // Scan and mark changes use the full update path for the other sort modes.
+  setSortRole(CaptureRoles::CapturedRole);
   sort(0);
 
   connect(this, &QAbstractItemModel::rowsInserted, this, &CaptureFilterModel::countChanged);
@@ -118,8 +119,8 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
                  role == CaptureRoles::DayLabelRole || role == CaptureRoles::TimeLabelRole ||
                  role == CaptureRoles::CameraRole || role == CaptureRoles::LensRole;
         });
-        if (!metadataOnly || (m_pairRawJpeg && (!m_cameraFilter.isEmpty() || !m_lensFilter.isEmpty() ||
-                                              m_dateFrom.isValid() || m_dateTo.isValid()))) {
+        if (!metadataOnly || !m_cameraFilter.isEmpty() || !m_lensFilter.isEmpty() ||
+            m_dateFrom.isValid() || m_dateTo.isValid()) {
           pairingChanged();
         }
       }));

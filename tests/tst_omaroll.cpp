@@ -6151,6 +6151,11 @@ private slots:
     QVERIFY(scanned.wait(5000));
     QCOMPARE(model.rowCount(), paths.size());
     QSignalSpy dateChanges(&model, &QAbstractItemModel::dataChanged);
+    CaptureFilterModel liveProxy;
+    liveProxy.setSourceModel(&model);
+    QCoreApplication::processEvents();
+    QSignalSpy proxyChanges(&liveProxy, &QAbstractItemModel::dataChanged);
+    QSignalSpy dateChoices(&liveProxy, &CaptureFilterModel::dateBucketsChanged);
 
     {
       MediaMetadataIndex dates(&model);
@@ -6166,6 +6171,11 @@ private slots:
           QCOMPARE(model.recordAt(row).captured, QDateTime(QDate(2020, 5, 6), QTime(7, 8, 9)));
         }
       }
+    }
+    QCoreApplication::processEvents();
+    QCOMPARE(dateChoices.size(), 1);
+    for (const auto& change : proxyChanges) {
+      QVERIFY(!change.at(2).value<QList<int>>().contains(CaptureModel::CompanionPathRole));
     }
     // Only changed rows are published, once each, in contiguous ranges.
     QSet<int> notifiedRows;
