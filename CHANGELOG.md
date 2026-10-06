@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `Shift+W` or Fill window in the quick viewer menu crops a picture to cover
+  the window, centred, so tiled viewers have no empty bands. Press it again to
+  fit the whole picture.
+
 ## 1.15.0
 
 A second quick viewer opens straight into its tile without stalling the app,

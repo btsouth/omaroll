@@ -2406,6 +2406,44 @@ private slots:
     QTRY_COMPARE(prop("fitMode").toString(), QStringLiteral("fit"));
   }
 
+  // Shift+W crops a picture to cover the window, centred, stays centred as
+  // the tile changes shape, and fits the whole picture again on a second press.
+  void fillCoversTheWindowCentredAndTogglesBack() {
+    QTemporaryDir folder;
+    QVERIFY(folder.isValid());
+    const QString wide = folder.filePath(QStringLiteral("wide.png"));
+    QImage image(1600, 400, QImage::Format_RGB32);
+    image.fill(Qt::red);
+    QVERIFY(image.save(wide));
+    open({wide});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QQuickItem* still = item(QStringLiteral("viewerStill"));
+    m_window->resize(600, 400);
+    QTRY_VERIFY(qAbs(prop("displayWidth").toReal() - still->width()) < 0.01);
+    const auto centred = [still] {
+      return qAbs(still->property("contentX").toReal()
+                  - (still->property("contentWidth").toReal() - still->width()) / 2) < 0.5 &&
+             qAbs(still->property("contentY").toReal()
+                  - (still->property("contentHeight").toReal() - still->height()) / 2) < 0.5;
+    };
+
+    QTest::keyClick(m_window, Qt::Key_W, Qt::ShiftModifier);
+    QCOMPARE(prop("fitMode").toString(), QStringLiteral("fill"));
+    QTRY_VERIFY(qAbs(prop("displayHeight").toReal() - still->height()) < 0.01);
+    QVERIFY(prop("displayWidth").toReal() > still->width());
+    QTRY_VERIFY(centred());
+    QVERIFY(still->property("interactive").toBool());
+
+    m_window->resize(500, 500);
+    QTRY_VERIFY(qAbs(prop("displayHeight").toReal() - still->height()) < 0.01);
+    QTRY_VERIFY(centred());
+
+    QTest::keyClick(m_window, Qt::Key_W, Qt::ShiftModifier);
+    QCOMPARE(prop("fitMode").toString(), QStringLiteral("fit"));
+    QTRY_VERIFY(qAbs(prop("displayWidth").toReal() - still->width()) < 0.01);
+    QVERIFY(prop("displayHeight").toReal() < still->height());
+  }
+
   void keyboardPanClampsBothAxesAtActualSize() {
     QTemporaryDir folder;
     QVERIFY(folder.isValid());

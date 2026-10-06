@@ -22,6 +22,7 @@ Popup {
             {keys: "0", label: "Fit"},
             {keys: "1 / double click", label: "Toggle actual size / fit"},
             {keys: "W", label: "Fit width, starting at the top"},
+            {keys: "Shift+W", label: "Fill the window, or fit again"},
             {keys: "Shift + arrows", label: "Pan a zoomed picture"},
             {keys: "R / Shift+R", label: "Rotate right / left"}]},
         {title: "Video", video: true, rows: [
