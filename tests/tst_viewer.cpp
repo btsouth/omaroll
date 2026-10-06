@@ -2417,8 +2417,10 @@ private slots:
     QImage image(1600, 400, QImage::Format_RGB32);
     image.fill(Qt::red);
     QVERIFY(image.save(wide));
+    const QString tallAgain = folder.filePath(QStringLiteral("tall2.png"));
     QVERIFY(image.transformed(QTransform().rotate(90)).save(tall));
-    open({wide, tall});
+    QVERIFY(image.transformed(QTransform().rotate(90)).save(tallAgain));
+    open({wide, tall, tallAgain});
     QTRY_VERIFY(prop("imageReady").toBool());
     QQuickItem* still = item(QStringLiteral("viewerStill"));
     m_window->resize(600, 400);
@@ -2447,6 +2449,11 @@ private slots:
     QCOMPARE(prop("fitMode").toString(), QStringLiteral("fill"));
     QTRY_VERIFY(qAbs(prop("displayWidth").toReal() - still->width()) < 0.01);
     QVERIFY(prop("displayHeight").toReal() > still->height());
+    QTRY_VERIFY(centred());
+    // A picture of the same size changes no dimensions, and is centred too.
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QCOMPARE(m_session->path(), tallAgain);
+    QTRY_VERIFY(prop("imageReady").toBool());
     QTRY_VERIFY(centred());
 
     QTest::keyClick(m_window, Qt::Key_W, Qt::ShiftModifier);

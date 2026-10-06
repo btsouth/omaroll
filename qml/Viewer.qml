@@ -208,6 +208,7 @@ ApplicationWindow {
         root.viewRotation = 0
         still.contentX = 0
         still.contentY = 0
+        root.keepFillCentred()
     }
 
     // Zoom eases toward a goal rather than jumping. Each wheel notch, key,
