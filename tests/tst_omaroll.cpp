@@ -4945,6 +4945,7 @@ private slots:
 
   void localOcrSearchRunsOnceThenUsesItsPrivateCache() {
     QTemporaryDir dir;
+    QTemporaryDir cacheDir;
     QVERIFY(dir.isValid());
 
     const QByteArray previousCache = qgetenv("XDG_CACHE_HOME");
@@ -4969,7 +4970,7 @@ private slots:
       putBack("OMARCHY_SCREENRECORD_DIR", previousRecordings);
     });
 
-    qputenv("XDG_CACHE_HOME", dir.filePath(QStringLiteral("cache")).toUtf8());
+    qputenv("XDG_CACHE_HOME", cacheDir.path().toUtf8());
     const QString logPath = dir.filePath(QStringLiteral("ocr-runs.log"));
     QFile tesseract(dir.filePath(QStringLiteral("tesseract")));
     QVERIFY(tesseract.open(QIODevice::WriteOnly));
@@ -8142,7 +8143,7 @@ private slots:
     source.fill(Qt::blue);
     QVERIFY(source.save(path, "BMP"));
     const QFileInfo file(path);
-    const QString identity = QStringLiteral("cover3|%1|%2|%3|8x8|t40")
+    const QString identity = QStringLiteral("cover3|%1|%2|%3|8x8|t20")
         .arg(path).arg(file.size()).arg(file.lastModified().toMSecsSinceEpoch());
     const QString cache = ThumbnailCache::cacheDirectory() + QLatin1Char('/') +
         QString::fromLatin1(QCryptographicHash::hash(identity.toUtf8(), QCryptographicHash::Md5).toHex())
