@@ -74,14 +74,7 @@ Item {
     }
 
     function applySearch() {
-        searchDelay.stop()
         Captures.searchText = search.text
-    }
-
-    Timer {
-        id: searchDelay
-        interval: 150
-        onTriggered: root.applySearch()
     }
 
     // Saved views and Open With can change the query outside this field.
@@ -89,7 +82,6 @@ Item {
     Connections {
         target: Captures
         function onSearchTextChanged() {
-            searchDelay.stop()
             if (search.text !== Captures.searchText) {
                 search.text = Captures.searchText
             }
@@ -252,11 +244,7 @@ Item {
                 selectionColor: root.shade(Theme.accent, 0.5)
                 selectedTextColor: Theme.brightForeground
 
-                onTextChanged: {
-                    if (text === Captures.searchText) searchDelay.stop()
-                    else if (text === "") root.applySearch()
-                    else searchDelay.restart()
-                }
+                onTextChanged: Captures.queueSearchText(text)
                 onActiveFocusChanged: if (!activeFocus) root.applySearch()
                 Keys.onEscapePressed: {
                     text = ""

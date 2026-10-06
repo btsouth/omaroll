@@ -81,6 +81,7 @@ public:
 
   [[nodiscard]] QString searchText() const { return m_searchText; }
   void setSearchText(const QString& text);
+  Q_INVOKABLE void queueSearchText(const QString& text);
 
   [[nodiscard]] bool favoritesOnly() const { return m_favoritesOnly; }
   void setFavoritesOnly(bool value);
@@ -235,6 +236,8 @@ private:
   int m_sortMode = NewestFirst;
   QCollator m_nameCollator;
   QString m_searchText;
+  QString m_pendingSearchText;
+  QTimer m_searchTimer;
   QStringList m_searchTerms;
   QString m_folderFilter;
   QStringList m_folders;

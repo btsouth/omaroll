@@ -51,6 +51,10 @@ public:
     ask(QStringLiteral("activeworkspace"));
   }
 
+  ~PlacementQuery() override {
+    if (m_process.state() != QProcess::NotRunning) m_process.kill();
+  }
+
 private:
   void ask(const QString& what) {
     m_process.start(hyprctl(), {QStringLiteral("-j"), what});

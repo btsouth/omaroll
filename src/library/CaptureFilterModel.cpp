@@ -64,6 +64,10 @@ CaptureFilterModel::CaptureFilterModel(QObject* parent) : QSortFilterProxyModel(
     }
   });
 
+  m_searchTimer.setSingleShot(true);
+  m_searchTimer.setInterval(150);
+  connect(&m_searchTimer, &QTimer::timeout, this, [this] { setSearchText(m_pendingSearchText); });
+
   m_ocrFilterTimer.setSingleShot(true);
   m_ocrFilterTimer.setInterval(60);
   connect(&m_ocrFilterTimer, &QTimer::timeout, this, [this] {
@@ -249,8 +253,21 @@ void CaptureFilterModel::setSortMode(int mode) {
   emit sortModeChanged();
 }
 
+void CaptureFilterModel::queueSearchText(const QString& text) {
+  if (text.isEmpty() || text == m_searchText) {
+    setSearchText(text);
+    return;
+  }
+  m_pendingSearchText = text;
+  m_searchTimer.start();
+}
+
 void CaptureFilterModel::setSearchText(const QString& text) {
+  const bool pending = m_searchTimer.isActive();
+  m_searchTimer.stop();
   if (m_searchText == text) {
+    // An explicit reset also cancels uncommitted typing and restores the field.
+    if (pending) emit searchTextChanged();
     return;
   }
   beginFilterUpdate();

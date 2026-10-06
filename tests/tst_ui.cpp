@@ -2417,6 +2417,11 @@ private slots:
     QTest::qWait(200);
     QCOMPARE(m_library->searchText(), QStringLiteral("alpine"));
     m_library->setSearchText(QString());
+    search->setProperty("text", QStringLiteral("pending"));
+    m_library->setSearchText(QString());
+    QCOMPARE(search->property("text").toString(), QString());
+    QTest::qWait(200);
+    QCOMPARE(m_library->searchText(), QString());
   }
 
   void searchFiltersTheGridAndEscapeClearsIt() {
