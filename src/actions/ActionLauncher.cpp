@@ -5,6 +5,9 @@
 #include "sources/FileVersion.h"
 
 #include <QClipboard>
+#include <QCoreApplication>
+#include <QElapsedTimer>
+#include <QSignalBlocker>
 #include <QDir>
 #include <QDBusMessage>
 #include <QDBusPendingCallWatcher>
@@ -25,6 +28,7 @@
 #include <QScopeGuard>
 
 #include <cerrno>
+#include <csignal>
 #include <cstring>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -34,7 +38,48 @@
 using namespace Qt::StringLiterals;
 
 ActionLauncher::ActionLauncher(QObject* parent, std::optional<QDBusConnection> bus)
-    : QObject(parent), m_bus(bus ? *bus : QDBusConnection::sessionBus()) {}
+    : QObject(parent), m_bus(bus ? *bus : QDBusConnection::sessionBus()) {
+  connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit,
+          this, &ActionLauncher::stopTracked);
+}
+
+ActionLauncher::~ActionLauncher() {
+  stopTracked();
+}
+
+void ActionLauncher::stopTracked() {
+  const auto processes = m_trackedProcesses;
+  QList<qint64> groups;
+  QElapsedTimer starting;
+  starting.start();
+  for (auto* process : processes) {
+    const QSignalBlocker blocked(process);
+    if (process->state() == QProcess::Starting) process->waitForStarted(qMax(1, 1000 - int(starting.elapsed())));
+    const qint64 group = process->processId();
+    if (group > 0) {
+      groups.append(group);
+      ::kill(-group, SIGTERM);
+    }
+  }
+  QElapsedTimer wait;
+  wait.start();
+  for (auto* process : processes) {
+    const QSignalBlocker blocked(process);
+    if (process->state() != QProcess::NotRunning) {
+      process->waitForFinished(qMax(1, 500 - int(wait.elapsed())));
+    }
+  }
+  // The helper may already have exited while an encoder ignored SIGTERM.
+  for (const qint64 group : groups) ::kill(-group, SIGKILL);
+  wait.restart();
+  for (auto* process : processes) {
+    const QSignalBlocker blocked(process);
+    if (process->state() != QProcess::NotRunning) {
+      process->waitForFinished(qMax(1, 1000 - int(wait.elapsed())));
+    }
+  }
+  m_trackedProcesses.clear();
+}
 
 bool ActionLauncher::showInFolder(const QString& path) {
   const QFileInfo file(path);
@@ -280,6 +325,8 @@ bool ActionLauncher::runTracked(const QString& program, const QStringList& argum
   process->setProcessEnvironment(externalProcessEnvironment());
   process->setProgram(executable);
   process->setArguments(arguments);
+  process->setUnixProcessParameters(QProcess::UnixProcessFlag::CreateNewSession);
+  m_trackedProcesses.insert(process);
 
   m_pendingOutputs.insert(outputPath);
   emit outputPending(outputPath);
@@ -293,6 +340,7 @@ bool ActionLauncher::runTracked(const QString& program, const QStringList& argum
             if (error != QProcess::FailedToStart) {
               return;
             }
+            m_trackedProcesses.remove(process);
             process->deleteLater();
             m_pendingOutputs.remove(outputPath);
             emit pendingOutputsChanged();
@@ -305,6 +353,7 @@ bool ActionLauncher::runTracked(const QString& program, const QStringList& argum
             const QString finishedVersion = FileVersion::key(outputPath);
             const QFileInfo output(outputPath);
             const bool empty = output.exists() && !output.isSymLink() && output.isFile() && output.size() == 0;
+            m_trackedProcesses.remove(process);
             process->deleteLater();
             m_pendingOutputs.remove(outputPath);
             emit pendingOutputsChanged();

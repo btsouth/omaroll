@@ -7,6 +7,9 @@
 #include <QTemporaryDir>
 #include <QXmlStreamReader>
 
+#include <cmath>
+#include <sys/resource.h>
+
 namespace {
 
 QString normalized(const QString& text) {
@@ -19,6 +22,35 @@ QString normalized(const QString& text) {
 // the taller of the two boxes, which keeps a heading and a footnote apart
 // without measuring fonts.
 constexpr qreal kLineTolerance = 0.5;
+
+QByteArray toolOutput(const QString& executable, const QStringList& arguments, int timeout) {
+  QProcess process;
+  PdfSupport::limitProcess(process);
+  process.setStandardErrorFile(QProcess::nullDevice());
+  QByteArray output("");
+  bool exceeded = false;
+  const auto drain = [&] {
+    const QByteArray chunk = process.readAllStandardOutput();
+    if (output.size() + chunk.size() > 64 * 1024) {
+      exceeded = true;
+      process.kill();
+    } else if (!exceeded) {
+      output += chunk;
+    }
+  };
+  QObject::connect(&process, &QProcess::readyReadStandardOutput, drain);
+  process.start(executable, arguments);
+  if (!process.waitForFinished(timeout)) {
+    process.kill();
+    process.waitForFinished(1000);
+    return {};
+  }
+  drain();
+  if (exceeded || process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+    return {};
+  }
+  return output;
+}
 
 // Splits the selected words into the lines they were written on, keeping the
 // reading order pdftotext emits.
@@ -52,6 +84,19 @@ QList<QList<int>> groupLines(const PdfSupport::PdfPageText& page, const QList<in
 
 namespace PdfSupport {
 
+void limitProcess(QProcess& process) {
+  process.setStandardInputFile(QProcess::nullDevice());
+  process.setChildProcessModifier([&process] {
+    const rlimit memory{512 * 1024 * 1024, 512 * 1024 * 1024};
+    const rlimit file{64 * 1024 * 1024, 64 * 1024 * 1024};
+    const rlimit cpu{30, 30};
+    if (::setrlimit(RLIMIT_AS, &memory) != 0 || ::setrlimit(RLIMIT_FSIZE, &file) != 0 ||
+        ::setrlimit(RLIMIT_CPU, &cpu) != 0) {
+      process.failChildProcessModifier("Could not limit PDF resources");
+    }
+  });
+}
+
 bool available() {
   return !QStandardPaths::findExecutable(QStringLiteral("pdftoppm")).isEmpty();
 }
@@ -60,21 +105,27 @@ bool textAvailable() {
   return !QStandardPaths::findExecutable(QStringLiteral("pdftotext")).isEmpty();
 }
 
-QList<int> findPages(const QString& documentText, const QString& query) {
+QList<int> findPages(const QString& documentText, const QString& query, bool* tooManyPages) {
+  if (tooManyPages) *tooManyPages = false;
   QList<int> pages;
   const QString needle = normalized(query).toCaseFolded();
-  if (needle.isEmpty()) {
-    return pages;
-  }
-  const QStringList pageTexts = documentText.split(QChar(0x0C));
-  for (qsizetype index = 0; index < pageTexts.size(); ++index) {
-    const QString& page = pageTexts.at(index);
-    if (page.trimmed().isEmpty()) {
-      continue;
+  if (needle.isEmpty()) return pages;
+  qsizetype start = 0;
+  int pageNumber = 1;
+  while (start < documentText.size()) {
+    if (pageNumber > 100000) {
+      if (tooManyPages) *tooManyPages = true;
+      return {};
     }
+    const qsizetype separator = documentText.indexOf(QChar(0x0C), start);
+    const qsizetype end = separator < 0 ? documentText.size() : separator;
+    const QString page = documentText.mid(start, end - start);
     if (normalized(page).toCaseFolded().contains(needle)) {
-      pages.append(static_cast<int>(index) + 1);
+      pages.append(pageNumber);
     }
+    if (separator < 0) break;
+    start = separator + 1;
+    ++pageNumber;
   }
   return pages;
 }
@@ -92,25 +143,41 @@ QImage renderPage(const QString& path, int page, const QSize& target) {
   QStringList arguments{QStringLiteral("-f"), QString::number(qMax(1, page)),
                         QStringLiteral("-l"), QString::number(qMax(1, page)),
                         QStringLiteral("-singlefile")};
-  // One dimension may be left open, and that is the useful request for a page
-  // drawn in a column: ask for the width it is drawn at and take whatever
-  // height the page needs, so a tall page stays as sharp as a short one.
-  if (target.width() > 0 && target.height() > 0) {
-    arguments << QStringLiteral("-scale-to")
-              << QString::number(qBound(128, qMax(target.width(), target.height()), 3840));
-  } else if (target.width() > 0) {
-    arguments << QStringLiteral("-scale-to-x") << QString::number(qBound(128, target.width(), 3840))
-              << QStringLiteral("-scale-to-y") << QStringLiteral("-1");
-  } else {
-    arguments << QStringLiteral("-scale-to-y")
-              << QString::number(qBound(128, target.height(), 3840))
-              << QStringLiteral("-scale-to-x") << QStringLiteral("-1");
+  const QByteArray info = toolOutput(QStandardPaths::findExecutable(QStringLiteral("pdfinfo")),
+      {QStringLiteral("-f"), QString::number(qMax(1, page)), QStringLiteral("-l"),
+       QString::number(qMax(1, page)), path}, 10000);
+  static const QRegularExpression geometry(
+      QStringLiteral(R"(^(?:Page\s+\d+\s+size|Page size):\s+([\d.]+)\s+x\s+([\d.]+))"),
+      QRegularExpression::MultilineOption);
+  const auto match = geometry.match(QString::fromLocal8Bit(info));
+  qreal width = match.captured(1).toDouble();
+  qreal height = match.captured(2).toDouble();
+  static const QRegularExpression rotation(
+      QStringLiteral(R"(^(?:Page\s+\d+\s+rot|Page rot):\s+(-?\d+))"),
+      QRegularExpression::MultilineOption);
+  const int degrees = rotation.match(QString::fromLocal8Bit(info)).captured(1).toInt();
+  if (qAbs(degrees % 180) == 90) std::swap(width, height);
+  if (!match.hasMatch() || !std::isfinite(width) || !std::isfinite(height) || width <= 0 || height <= 0) {
+    return {};
   }
-  arguments << QStringLiteral("-png") << path << prefix;
-  QProcess process;
-  process.start(executable, arguments);
-  if (!process.waitForFinished(12000) || process.exitStatus() != QProcess::NormalExit ||
-      process.exitCode() != 0) {
+  qreal scale;
+  if (target.width() > 0 && target.height() > 0) {
+    scale = qBound(128, qMax(target.width(), target.height()), 3840) / qMax(width, height);
+  } else if (target.width() > 0) {
+    scale = qBound(128, target.width(), 3840) / width;
+  } else {
+    scale = qBound(128, target.height(), 3840) / height;
+  }
+  scale = qMin(scale, 3840.0 / qMax(width, height));
+  scale = qMin(scale, std::sqrt(qreal(kPixelLimit - 2 * 3840) / width / height));
+  const int rasterWidth = qMax(1, int(std::floor(width * scale + 0.000001)));
+  const int rasterHeight = qMax(1, int(std::floor(height * scale + 0.000001)));
+  arguments << QStringLiteral("-scale-dimension-before-rotation")
+            << QStringLiteral("-scale-to-x") << QString::number(rasterWidth)
+            << QStringLiteral("-scale-to-y") << QString::number(rasterHeight)
+            << QStringLiteral("-png") << path << prefix;
+  // Both raster edges and their product are bounded before Poppler allocates.
+  if (toolOutput(executable, arguments, 12000).isNull()) {
     return {};
   }
   return QImage(prefix + QStringLiteral(".png"));
@@ -118,10 +185,13 @@ QImage renderPage(const QString& path, int page, const QSize& target) {
 
 PdfPageText parsePageWords(const QByteArray& xml) {
   PdfPageText page;
+  if (xml.size() > kPageByteLimit) return page;
   QXmlStreamReader reader(xml);
   bool readPage = false;
+  qsizetype textSize = 0;
   while (!reader.atEnd()) {
     reader.readNext();
+    if (reader.isDTD() && !reader.entityDeclarations().isEmpty()) return {};
     if (!reader.isStartElement()) {
       continue;
     }
@@ -133,7 +203,8 @@ PdfPageText parsePageWords(const QByteArray& xml) {
       const QXmlStreamAttributes attributes = reader.attributes();
       page.pageSize = QSizeF(attributes.value(QStringLiteral("width")).toDouble(),
                              attributes.value(QStringLiteral("height")).toDouble());
-      if (page.pageSize.width() <= 0 || page.pageSize.height() <= 0) {
+      if (!std::isfinite(page.pageSize.width()) || !std::isfinite(page.pageSize.height()) ||
+          page.pageSize.width() <= 0 || page.pageSize.height() <= 0) {
         return {};
       }
       readPage = true;
@@ -157,6 +228,8 @@ PdfPageText parsePageWords(const QByteArray& xml) {
     PdfWord word;
     word.box = QRectF(topLeft, bottomRight);
     word.text = reader.readElementText();
+    textSize += word.text.size();
+    if (textSize > kPageByteLimit / 2 || page.words.size() >= 100000) return {};
     if (placed && !word.text.isEmpty() && word.box.width() > 0 && word.box.height() > 0) {
       page.words.append(word);
     }

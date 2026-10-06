@@ -7,8 +7,16 @@
 #include <QSizeF>
 #include <QString>
 
+class QProcess;
+
 namespace PdfSupport {
 
+inline constexpr qsizetype kTextByteLimit = 16 * 1024 * 1024;
+inline constexpr qsizetype kPageByteLimit = 4 * 1024 * 1024;
+inline constexpr qint64 kPixelLimit = 8 * 1024 * 1024;
+
+// Apply Poppler child memory, CPU and output-file budgets before it starts.
+void limitProcess(QProcess& process);
 [[nodiscard]] bool available();
 [[nodiscard]] QImage renderPage(const QString& path, int page, const QSize& target);
 
@@ -18,7 +26,8 @@ namespace PdfSupport {
 // The 1-based pages of a document whose text contains query, ignoring case and
 // runs of whitespace (so a phrase split across lines still matches). The text
 // is what pdftotext emits: pages separated by a form feed.
-[[nodiscard]] QList<int> findPages(const QString& documentText, const QString& query);
+[[nodiscard]] QList<int> findPages(const QString& documentText, const QString& query,
+                                   bool* tooManyPages = nullptr);
 
 // One recognized word of a page. The box is in page points, the space
 // pdftotext reports and the space a page is rendered in.
