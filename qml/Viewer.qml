@@ -199,13 +199,16 @@ ApplicationWindow {
         }
     }
 
+    // Fill stays on for this window until asked again, so stepping through a
+    // folder in a tile keeps covering it.
     function resetView() {
         zoomAnimation.stop()
-        root.fitMode = "fit"
+        root.fitMode = root.fitMode === "fill" ? "fill" : "fit"
         root.viewScale = 0
         root.viewRotation = 0
         still.contentX = 0
         still.contentY = 0
+        root.keepFillCentred()
     }
 
     // Zoom eases toward a goal rather than jumping. Each wheel notch, key,
@@ -275,6 +278,10 @@ ApplicationWindow {
         }
         root.setFitMode("fill")
         root.centreView()
+    }
+
+    function keepFillCentred() {
+        if (root.fitMode === "fill" && root.viewScale === 0) Qt.callLater(root.centreView)
     }
 
     function centreView() {
@@ -966,6 +973,7 @@ ApplicationWindow {
     // A closed viewer forgets its file: the next open must not flash the last
     // picture, and a hidden window must not keep playing sound.
     onClosing: {
+        root.fitMode = "fit"
         root.loopVideo = false
         root.slideshowRunning = false
         slideshowTimer.stop()
@@ -1046,9 +1054,11 @@ ApplicationWindow {
                          && (contentWidth > width + 0.5 || contentHeight > height + 0.5)
             contentWidth: Math.max(width, root.displayWidth)
             contentHeight: Math.max(height, root.displayHeight)
-            // A filled picture stays centred as its tile changes size.
-            onWidthChanged: if (root.fitMode === "fill" && root.viewScale === 0) Qt.callLater(root.centreView)
-            onHeightChanged: if (root.fitMode === "fill" && root.viewScale === 0) Qt.callLater(root.centreView)
+            // A filled picture stays centred as its tile or picture changes size.
+            onWidthChanged: root.keepFillCentred()
+            onHeightChanged: root.keepFillCentred()
+            onContentWidthChanged: root.keepFillCentred()
+            onContentHeightChanged: root.keepFillCentred()
 
             // A double click zooms to the real size and back; a picture
             // already shown at its real size zooms to twice that instead. Being

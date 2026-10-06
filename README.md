@@ -113,7 +113,7 @@ process, so a favourite or rating set in one shows in the others.
 | `+` `-` | Zoom in · out |
 | drag · two-finger scroll | Move around a zoomed picture, down a long screenshot |
 | `W` | Fit width, starting at the top of tall pictures |
-| `Shift` + `W` | Fill the window, cropping the edges, or fit again |
+| `Shift` + `W` | Fill the window, cropping the edges, until pressed again |
 | `Shift` + arrows | Pan a picture zoomed beyond fit |
 | `0` · `1` or double click | Fit · toggle fit and actual size |
 | `R` · `Shift+R` | Rotate right · left, the view only, never the file |
