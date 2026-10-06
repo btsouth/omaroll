@@ -574,7 +574,9 @@ int main(int argc, char* argv[]) {
                      editProvider->shutdown();
                      pdfProvider->shutdown();
                      rawProvider->shutdown();
-                     QThreadPool::globalInstance()->waitForDone(QDeadlineTimer(1500));
+                     if (!QThreadPool::globalInstance()->waitForDone(QDeadlineTimer(1500))) {
+                       qWarning("Background workers exceeded the shutdown drain deadline");
+                     }
                    });
 
   ViewerWindows viewers(engine);
