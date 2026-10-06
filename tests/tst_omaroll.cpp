@@ -6946,48 +6946,200 @@ private slots:
     settings.deleteAlbum(album);
   }
 
-  void exportChoicesReachTheTranscoderForEverySelectedFile() {
+  void pictureExportRouting_data() {
+    QTest::addColumn<int>("orientation");
+    QTest::addColumn<QColorSpace>("space");
+    QTest::addColumn<bool>("native");
+    QTest::newRow("untagged-helper") << 1 << QColorSpace() << false;
+    QTest::newRow("srgb-helper") << 1 << QColorSpace(QColorSpace::SRgb) << false;
+    QTest::newRow("orientation-native") << 6 << QColorSpace() << true;
+    QTest::newRow("p3-native") << 1 << QColorSpace(QColorSpace::DisplayP3) << true;
+    QTest::newRow("orientation-p3-native") << 6 << QColorSpace(QColorSpace::DisplayP3) << true;
+  }
+
+  void pictureExportRouting() {
+    QFETCH(int, orientation);
+    QFETCH(QColorSpace, space);
+    QFETCH(bool, native);
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
-    const QByteArray previousPath = qgetenv("PATH");
-    const auto restorePath = qScopeGuard([&] { qputenv("PATH", previousPath); });
-
-    QFile handler(dir.filePath(QStringLiteral("omarchy-transcode")));
-    QVERIFY(handler.open(QIODevice::WriteOnly));
-    handler.write("#!/bin/sh\n"
-                  "printf '%s\\n%s\\n%s\\n' \"$1\" \"$2\" \"$3\" > \"$1.args\"\n"
-                  "out=\"${1%.*}-$3.$2\"\n"
-                  "printf converted > \"$out\"\n");
-    handler.close();
-    QVERIFY(handler.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
-                                   QFileDevice::ExeOwner));
-    QVERIFY(qputenv("PATH", dir.path().toUtf8()));
-
-    const QString first = dir.filePath(QStringLiteral("first photo.png"));
-    const QString second = dir.filePath(QStringLiteral("second # photo.webp"));
-    QImage image(8, 8, QImage::Format_RGB32);
+    const QString source = dir.filePath(QStringLiteral("picture #1.jpg"));
+    const QString output = dir.filePath(QStringLiteral("picture #1-low.png"));
+    QImage image(40, 20, QImage::Format_RGB32);
     image.fill(Qt::green);
-    QVERIFY(image.save(first, "PNG"));
-    QVERIFY(image.save(second, "WEBP"));
+    image.setColorSpace(space);
+    QByteArray bytes;
+    QBuffer buffer(&bytes);
+    QVERIFY(buffer.open(QIODevice::WriteOnly));
+    QVERIFY(image.save(&buffer, "JPG", 95));
+    QFile sourceFile(source);
+    QVERIFY(sourceFile.open(QIODevice::WriteOnly));
+    sourceFile.write(withExifOrientation(bytes, orientation));
+    sourceFile.close();
+
+    QFile helper(dir.filePath(QStringLiteral("omarchy-transcode")));
+    QVERIFY(helper.open(QIODevice::WriteOnly));
+    helper.write("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$1.arguments\"\n"
+                 "cp -- \"$1\" \"${1%.*}-$3.$2\"\n");
+    helper.close();
+    QVERIFY(helper.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    QFile clipboard(dir.filePath(QStringLiteral("wl-copy")));
+    QVERIFY(clipboard.open(QIODevice::WriteOnly));
+    clipboard.write("#!/bin/sh\ncat >/dev/null\n");
+    clipboard.close();
+    QVERIFY(clipboard.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    const QByteArray previousPath = qgetenv("PATH");
+    const auto restore = qScopeGuard([&] { qputenv("PATH", previousPath); });
+    qputenv("PATH", dir.path().toUtf8() + ':' + previousPath);
 
     ActionLauncher launcher;
-    QSignalSpy settled(&launcher, &ActionLauncher::outputSettled);
     ActionRegistry registry(&launcher);
+    QSignalSpy pending(&launcher, &ActionLauncher::outputPending);
+    QSignalSpy settled(&launcher, &ActionLauncher::outputSettled);
+    QSignalSpy reported(&launcher, &ActionLauncher::reported);
+    QSignalSpy failed(&launcher, &ActionLauncher::failed);
     QVERIFY(registry.runBatchWith(QStringLiteral("export"),
-                                  {{QStringLiteral("format"), QStringLiteral("png")},
-                                   {QStringLiteral("resolution"), QStringLiteral("low")}},
-                                  {first, second}));
-    QTRY_COMPARE_WITH_TIMEOUT(settled.size(), 2, 3000);
-
-    for (const QString& path : {first, second}) {
-      QFile arguments(path + QStringLiteral(".args"));
+        {{QStringLiteral("format"), QStringLiteral("png")},
+         {QStringLiteral("resolution"), QStringLiteral("low")}}, {source}));
+    QTRY_COMPARE_WITH_TIMEOUT(settled.size(), 1, 5000);
+    QCOMPARE(pending.size(), 1);
+    QCOMPARE(pending.first().first().toString(), output);
+    QCOMPARE(settled.first().first().toString(), output);
+    QVERIFY(settled.first().at(1).toBool());
+    QVERIFY(failed.isEmpty());
+    QVERIFY(reported.contains({QStringLiteral("Making picture #1-low.png")}));
+    QVERIFY(reported.contains({QStringLiteral("Saved picture #1-low.png beside the original")}));
+    QCOMPARE(QFileInfo::exists(source + QStringLiteral(".arguments")), !native);
+    if (!native) {
+      QFile arguments(source + QStringLiteral(".arguments"));
       QVERIFY(arguments.open(QIODevice::ReadOnly));
-      QCOMPARE(QString::fromUtf8(arguments.readAll()), path + QStringLiteral("\npng\nlow\n"));
-      const QString output = QFileInfo(path).absolutePath() + QLatin1Char('/') +
-                             QFileInfo(path).completeBaseName() + QStringLiteral("-low.png");
-      QFile converted(output);
-      QVERIFY(converted.open(QIODevice::ReadOnly));
-      QCOMPARE(converted.readAll(), QByteArray("converted"));
+      QCOMPARE(arguments.readAll(), source.toUtf8() + "\npng\nlow\n");
+    } else {
+      QImageReader reader(output);
+      QCOMPARE(reader.transformation(), QImageIOHandler::Transformations(QImageIOHandler::TransformationNone));
+      const QImage copy = reader.read();
+      QCOMPARE(copy.size(), orientation == 6 ? QSize(20, 40) : QSize(40, 20));
+      QCOMPARE(copy.colorSpace(), space);
+    }
+  }
+
+  void pictureExportsBakeOrientationAndKeepProfiles() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(QStringLiteral("oriented # P3.jpg"));
+    QImage image(40, 20, QImage::Format_RGB32);
+    image.fill(QColor(30, 90, 140));
+    image.setColorSpace(QColorSpace::DisplayP3);
+    QByteArray bytes;
+    QBuffer buffer(&bytes);
+    QVERIFY(buffer.open(QIODevice::WriteOnly));
+    QVERIFY(image.save(&buffer, "JPG", 95));
+    QFile file(source);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(withExifOrientation(bytes, 6));
+    file.close();
+
+    ActionLauncher launcher;
+    ActionRegistry registry(&launcher);
+    QSignalSpy settled(&launcher, &ActionLauncher::outputSettled);
+    for (const QString& format : {QStringLiteral("png"), QStringLiteral("jpg")}) {
+      QVERIFY(registry.runBatchWith(QStringLiteral("export"),
+          {{QStringLiteral("format"), format}, {QStringLiteral("resolution"), QStringLiteral("low")}},
+          {source}));
+      QTRY_COMPARE_WITH_TIMEOUT(settled.size(), format == QStringLiteral("png") ? 1 : 2, 5000);
+      QVERIFY(settled.last().at(1).toBool());
+      QImageReader reader(settled.last().first().toString());
+      QCOMPARE(reader.transformation(), QImageIOHandler::Transformations(QImageIOHandler::TransformationNone));
+      const QImage copy = reader.read();
+      QCOMPARE(copy.size(), QSize(20, 40));
+      QCOMPARE(copy.colorSpace(), QColorSpace(QColorSpace::DisplayP3));
+    }
+    const QString large = dir.filePath(QStringLiteral("large.png"));
+    image = QImage(1400, 700, QImage::Format_RGB32);
+    image.fill(Qt::green);
+    image.setColorSpace(QColorSpace::DisplayP3);
+    QVERIFY(image.save(large));
+    QVERIFY(registry.runBatchWith(QStringLiteral("export"),
+        {{QStringLiteral("format"), QStringLiteral("png")},
+         {QStringLiteral("resolution"), QStringLiteral("low")}}, {large}));
+    QTRY_COMPARE_WITH_TIMEOUT(settled.size(), 3, 5000);
+    const QImage reduced(settled.last().first().toString());
+    QCOMPARE(reduced.size(), QSize(1080, 540));
+    QCOMPARE(reduced.colorSpace(), image.colorSpace());
+  }
+
+  void animationDetectionDistinguishesStillWebp() {
+    ImageEditor editor;
+    QVERIFY(editor.isAnimated(QFINDTESTDATA("fixtures/viewer/animated.gif")));
+    QVERIFY(editor.isAnimated(QFINDTESTDATA("fixtures/viewer/animated.webp")));
+    QTemporaryDir dir;
+    QImage still(24, 16, QImage::Format_RGB32);
+    still.fill(Qt::red);
+    const QString path = dir.filePath(QStringLiteral("still.webp"));
+    QVERIFY(still.save(path));
+    QVERIFY(!editor.isAnimated(path));
+  }
+
+  void taildropReportsCompletionAndFailure_data() {
+    QTest::addColumn<int>("code");
+    QTest::addColumn<bool>("houseHelper");
+    QTest::newRow("helper-success") << 0 << true;
+    QTest::newRow("helper-failed") << 1 << true;
+    QTest::newRow("helper-failed-start") << 2 << true;
+    QTest::newRow("direct-success") << 0 << false;
+    QTest::newRow("direct-failed") << 1 << false;
+    QTest::newRow("direct-failed-start") << 2 << false;
+  }
+
+  void taildropReportsCompletionAndFailure() {
+    QFETCH(int, code);
+    QFETCH(bool, houseHelper);
+    QTemporaryDir dir;
+    const QByteArray previousPath = qgetenv("PATH");
+    const auto restore = qScopeGuard([&] { qputenv("PATH", previousPath); });
+    QFile helper(dir.filePath(houseHelper ? QStringLiteral("omarchy-tailscale-send") : QStringLiteral("tailscale")));
+    QVERIFY(helper.open(QIODevice::WriteOnly));
+    helper.write(code == 2 ? "#!/missing/interpreter\n" :
+                 code == 1 ? "#!/bin/sh\necho peer-unreachable >&2\nexit 1\n" : "#!/bin/sh\nexit 0\n");
+    helper.close();
+    QVERIFY(helper.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    QVERIFY(qputenv("PATH", dir.path().toUtf8()));
+    ActionLauncher launcher;
+    ActionRegistry registry(&launcher);
+    QSignalSpy failed(&launcher, &ActionLauncher::failed);
+    QSignalSpy reported(&launcher, &ActionLauncher::reported);
+    QVERIFY(registry.runBatchWith(QStringLiteral("tailscale"),
+        {{QStringLiteral("machine"), QStringLiteral("laptop")}}, {QStringLiteral("/tmp/disposable.png")}));
+    if (code == 0) {
+      QTRY_COMPARE_WITH_TIMEOUT(reported.size(), 1, 3000);
+      QVERIFY(reported.first().first().toString().contains(QStringLiteral("Sent files")));
+      QCOMPARE(failed.size(), 0);
+    } else {
+      QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 3000);
+      QCOMPARE(reported.size(), 0);
+      if (code == 1) QVERIFY(failed.first().first().toString().contains(QStringLiteral("peer-unreachable")));
+    }
+    QVERIFY(QFile::remove(helper.fileName()));
+    QVERIFY(!registry.runBatchWith(QStringLiteral("tailscale"),
+        {{QStringLiteral("machine"), QStringLiteral("laptop")}}, {QStringLiteral("/tmp/disposable.png")}));
+  }
+
+  void matteConvertsTaggedPixelsToSrgb() {
+    QTemporaryDir dir;
+    QImage source(100, 60, QImage::Format_RGB32);
+    source.fill(QColor(150, 70, 90));
+    source.setColorSpace(QColorSpace::DisplayP3);
+    const QImage converted = source.convertedToColorSpace(QColorSpace::SRgb);
+    for (int matte = 0; matte < MatteComposer::MatteCount; ++matte) {
+      const QImage result = MatteComposer::compose(source, static_cast<MatteComposer::Matte>(matte),
+                                                  MatteComposer::Original, 0.07);
+      QCOMPARE(result.colorSpace(), matte == MatteComposer::None ? source.colorSpace()
+                                                                : QColorSpace(QColorSpace::SRgb));
+      QCOMPARE(result.pixelColor(result.width() / 2, result.height() / 2),
+               matte == MatteComposer::None ? source.pixelColor(50, 30) : converted.pixelColor(50, 30));
+      const QString path = dir.filePath(QString::number(matte) + QStringLiteral(".png"));
+      QVERIFY(result.save(path));
+      QCOMPARE(QImage(path).colorSpace(), result.colorSpace());
     }
   }
 
@@ -8585,6 +8737,7 @@ private slots:
         image.setPixelColor(x, y, QColor(x % 256, y % 256, (x + y) % 256));
       }
     }
+    image.setColorSpace(QColorSpace::DisplayP3);
     QVERIFY(image.save(source, "JPG", 95));
     const QImage decoded(source);
     QVERIFY(!decoded.isNull());
@@ -8614,10 +8767,15 @@ private slots:
 
     // Losslessness: the inverse turn returns the original pixels exactly. A
     // recompressing path would lose a little on each pass.
-    QSignalSpy back(&editor, &ImageEditor::saved);
-    editor.saveCopy(turned, 3, false, false, 0, 0, 0, 1, 1, 0, 0);
+    QSignalSpy back(&editor, &ImageEditor::batchFinished);
+    editor.saveCopies({turned}, 3, false, false, 0, 0, 42);
     QTRY_COMPARE_WITH_TIMEOUT(back.size(), 1, 15000);
-    QCOMPARE(QImage(back.first().first().toString()), decoded);
+    QCOMPARE(back.first().at(0).toInt(), 1);
+    QCOMPARE(back.first().at(3).toInt(), 42);
+    const QVariantMap result = back.first().at(2).toList().first().toMap();
+    const QImage restored(result.value(QStringLiteral("output")).toString());
+    QCOMPARE(restored, decoded);
+    QCOMPARE(restored.colorSpace(), decoded.colorSpace());
   }
 
   void jpegLosslessIsSkippedWhenItCannotApply() {
@@ -8701,6 +8859,12 @@ private slots:
     QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 2, 20000);
     QCOMPARE(finished.last().at(0).toInt(), 1);
     QCOMPARE(finished.last().at(1).toInt(), 1);
+    const QVariantList results = finished.last().at(2).toList();
+    QCOMPARE(results.size(), 2);
+    QVERIFY(!results.first().toMap().value(QStringLiteral("output")).toString().isEmpty());
+    QCOMPARE(results.last().toMap().value(QStringLiteral("source")).toString(),
+             dir.filePath(QStringLiteral("missing.png")));
+    QVERIFY(!results.last().toMap().value(QStringLiteral("error")).toString().isEmpty());
     // The existing copy was not overwritten; the new one is numbered.
     QVERIFY(QFileInfo::exists(dir.filePath(QStringLiteral("a-edited-2.png"))));
   }

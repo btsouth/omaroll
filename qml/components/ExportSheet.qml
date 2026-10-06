@@ -1,7 +1,6 @@
 import QtQuick
 
-// Format and size choices are owned by omarchy-transcode. This sheet only
-// collects them and hands each original path to the house command unchanged.
+// Conversion uses omarchy-transcode unless picture metadata needs preserving.
 Item {
     id: root
 
@@ -9,6 +8,7 @@ Item {
     property bool isVideo: false
     property string format: ""
     property string resolution: ""
+    property bool hasAnimation: false
     readonly property var formatValues: root.isVideo ? ["mp4", "gif"] : ["jpg", "png"]
     readonly property var formatLabels: root.isVideo ? ["MP4", "GIF"] : ["JPEG", "PNG"]
     readonly property var resolutionValues: root.isVideo ? ["4k", "1080p", "720p"]
@@ -24,6 +24,7 @@ Item {
 
     function open(files, moving) {
         paths = files
+        hasAnimation = !moving && files.some(function (path) { return ImageEdit.isAnimated(path) })
         isVideo = moving
         format = moving ? "mp4" : "jpg"
         resolution = moving ? "1080p" : "medium"
@@ -106,6 +107,7 @@ Item {
             Text {
                 width: parent.width
                 text: "The original stays untouched. The new file is saved beside it."
+                      + (root.hasAnimation ? " Animated pictures save only their first frame." : "")
                 wrapMode: Text.WordWrap
                 font.family: Theme.fontFamily
                 font.pixelSize: 11

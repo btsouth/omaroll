@@ -27,9 +27,10 @@ Item {
         if (peer === undefined) {
             return
         }
-        root.close()
-        Registry.runBatchWith("tailscale", { "machine": peer.machine }, root.paths)
-        root.sent(peer.name, root.paths.length)
+        if (Registry.runBatchWith("tailscale", { "machine": peer.machine }, root.paths)) {
+            root.close()
+            root.sent(peer.name, root.paths.length)
+        }
     }
 
     function shade(base, amount) {

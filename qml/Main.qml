@@ -1719,11 +1719,6 @@ ApplicationWindow {
     CorrectionSheet {
         id: correctionSheet
         objectName: "correctionSheet"
-        onSaved: function (outputPath) {
-            Library.addExtraFiles([outputPath])
-            root.say("Saved a corrected copy beside the original")
-            Library.refresh()
-        }
         onCopied: root.say("Region copied to the clipboard")
         onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
     }
@@ -1731,12 +1726,6 @@ ApplicationWindow {
     BatchCorrectionSheet {
         id: batchSheet
         objectName: "batchCorrectionSheet"
-        onFinished: function (succeeded, failed) {
-            Library.refresh()
-            root.say(failed > 0
-                     ? "Corrected " + succeeded + " of " + (succeeded + failed) + " files"
-                     : "Saved corrected copies beside the originals")
-        }
         onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
     }
 
@@ -1911,6 +1900,26 @@ ApplicationWindow {
         function onOutputAlreadyDone(path) {
             Library.addExtraFiles([path])
             root.openPath(path)
+        }
+    }
+
+    Connections {
+        target: ImageEdit
+        function onSaved(outputPath, jobId) {
+            Library.addExtraFiles([outputPath])
+            Library.refresh()
+            root.say("Saved a corrected copy beside the original")
+        }
+        function onBatchFinished(succeeded, failed, results, jobId) {
+            const outputs = []
+            for (const result of results) {
+                if (result.output !== "") outputs.push(result.output)
+            }
+            Library.addExtraFiles(outputs)
+            Library.refresh()
+            root.say(failed > 0
+                     ? "Corrected " + succeeded + " of " + (succeeded + failed) + " files"
+                     : "Saved corrected copies beside the originals")
         }
     }
 

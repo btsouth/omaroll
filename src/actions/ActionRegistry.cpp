@@ -1,17 +1,22 @@
 #include "actions/ActionRegistry.h"
 
 #include "actions/ActionLauncher.h"
+#include "app/VideoPlayback.h"
+#include "edit/ImageEditor.h"
 #include "sources/CameraRaw.h"
 #include "sources/FileVersion.h"
 
 #include <QFile>
 #include <QFileInfo>
+#include <QFutureWatcher>
 #include <QMimeDatabase>
 #include <QProcess>
 #include <QTimer>
 #include <algorithm>
 #include <QStandardPaths>
 #include <QVariantMap>
+#include <QtConcurrent>
+#include <memory>
 
 using namespace Qt::StringLiterals;
 
@@ -615,6 +620,7 @@ bool ActionRegistry::run(const QString& id, const QStringList& paths,
                                               definition->packageHint,
                                               definition->result == Result::SecretToClipboard,
                                               definition->confirmation, definition->nothingFound);
+  case Result::Submission:
   case Result::Launch:
     break;
   }
@@ -647,6 +653,91 @@ bool ActionRegistry::run(const QString& id, const QStringList& paths,
 
 bool ActionRegistry::launch(const Definition& definition, const QStringList& arguments,
                             const QString& output) {
+  if (definition.id == u"tailscale"_s) {
+    const QString executable = QStandardPaths::findExecutable(definition.program);
+    if (executable.isEmpty()) {
+      emit m_launcher->failed(u"%1 is not installed. Install %2"_s.arg(definition.program, definition.packageHint));
+      return false;
+    }
+    auto* process = new QProcess(this);
+    process->setProcessEnvironment(externalProcessEnvironment());
+    process->setStandardInputFile(QProcess::nullDevice());
+    struct SendState { QByteArray error; bool settled = false; };
+    auto state = std::make_shared<SendState>();
+    const auto drain = [process, state] {
+      state->error = (state->error + process->readAllStandardError()).right(4096);
+      process->readAllStandardOutput();
+    };
+    connect(process, &QProcess::readyReadStandardError, this, drain);
+    connect(process, &QProcess::readyReadStandardOutput, this, drain);
+    const auto finish = [this, process, state, drain](bool success, const QString& detail) {
+      if (state->settled) return;
+      state->settled = true;
+      drain();
+      if (success) m_launcher->report(u"Sent files to the selected machine"_s);
+      else {
+        const QString diagnostics = QString::fromUtf8(state->error).trimmed();
+        emit m_launcher->failed(u"Taildrop failed: %1"_s.arg(diagnostics.isEmpty() ? detail : diagnostics));
+      }
+      process->deleteLater();
+    };
+    connect(process, &QProcess::finished, this, [finish](int code, QProcess::ExitStatus status) {
+      finish(code == 0 && status == QProcess::NormalExit,
+             code == 0 && status == QProcess::NormalExit ? QString() : u"The send did not complete"_s);
+    });
+    connect(process, &QProcess::errorOccurred, this, [process, finish](QProcess::ProcessError error) {
+      if (error == QProcess::FailedToStart) finish(false, process->errorString());
+    });
+    process->start(executable, arguments);
+    return !state->settled;
+  }
+  if (definition.id == u"export"_s && arguments.size() == 3 &&
+      ActionLauncher::mimeTypeFor(arguments.first()).startsWith(u"image/"_s)) {
+    const QByteArray format = arguments.at(1).toUtf8();
+    const QString resolution = arguments.at(2);
+    const int edge = resolution == u"high"_s ? 3160 : resolution == u"medium"_s ? 2160
+                     : resolution == u"low"_s ? 1080 : 0;
+    if ((format != "jpg" && format != "png") || edge == 0) {
+      emit m_launcher->failed(u"Unsupported picture export choices"_s);
+      return false;
+    }
+    m_probingOutputs.insert(output);
+    auto* probe = new QFutureWatcher<bool>(this);
+    connect(probe, &QFutureWatcher<bool>::finished, this,
+            [this, probe, definition, arguments, output, format, edge] {
+      const bool native = probe->result();
+      probe->deleteLater();
+      // Only EXIF-oriented or non-sRGB pictures need the native writer;
+      // every other picture keeps the installed Omarchy conversion helper.
+      if (!native) {
+        m_probingOutputs.remove(output);
+        m_launcher->runTracked(definition.program, arguments, definition.packageHint, output);
+        return;
+      }
+      emit m_launcher->outputPending(output);
+      m_launcher->report(u"Making %1"_s.arg(QFileInfo(output).fileName()));
+      auto* watcher = new QFutureWatcher<QVariantMap>(this);
+      connect(watcher, &QFutureWatcher<QVariantMap>::finished, this, [this, watcher, output] {
+        const QVariantMap result = watcher->result();
+        watcher->deleteLater();
+        m_probingOutputs.remove(output);
+        const QString saved = result.value(u"output"_s).toString();
+        if (!saved.isEmpty()) {
+          m_launcher->report(u"Saved %1 beside the original"_s.arg(QFileInfo(saved).fileName()));
+          m_launcher->copyUris({saved});
+        } else emit m_launcher->failed(result.value(u"error"_s).toString());
+        emit m_launcher->outputSettled(output, saved == output);
+        if (!saved.isEmpty() && saved != output) emit m_launcher->outputSettled(saved, true);
+      });
+      watcher->setFuture(QtConcurrent::run([source = arguments.first(), output, format, edge] {
+        return ImageEditor::exportImage(source, output, format, edge);
+      }));
+    });
+    probe->setFuture(QtConcurrent::run([source = arguments.first()] {
+      return ImageEditor::needsNativeExport(source);
+    }));
+    return true;
+  }
   if (!output.isEmpty()) {
     return m_launcher->runTracked(definition.program, arguments, definition.packageHint, output);
   }

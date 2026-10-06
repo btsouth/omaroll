@@ -36,6 +36,8 @@ Item {
 
     property size sourceSize: Qt.size(0, 0)
     property bool saving: false
+    property int jobGeneration: -1
+    property bool animated: false
     property string errorText: ""
 
     readonly property int workingWidth: quarterTurns % 2 === 0 ? sourceSize.width : sourceSize.height
@@ -56,6 +58,8 @@ Item {
     }
 
     function open(filePath, name) {
+        jobGeneration = ImageEdit.nextJobId()
+        animated = ImageEdit.isAnimated(filePath)
         path = filePath
         fileName = name
         quarterTurns = 0
@@ -66,6 +70,8 @@ Item {
         cropY = 0
         cropW = 1
         cropH = 1
+        cropAspect = 0
+        cropAspectLabel = "Free"
         targetWidth = 0
         targetHeight = 0
         errorText = ""
@@ -81,6 +87,7 @@ Item {
     }
 
     function close() {
+        jobGeneration = -1
         visible = false
     }
 
@@ -105,8 +112,8 @@ Item {
     function resetCropToAspect(ratio, label) {
         cropAspect = ratio
         cropAspectLabel = label === undefined ? (ratio <= 0 ? "Free" : "") : label
-        const pw = preview.paintedWidth
-        const ph = preview.paintedHeight
+        const pw = workingWidth
+        const ph = workingHeight
         if (ratio <= 0) {
             cropX = 0
             cropY = 0
@@ -131,6 +138,11 @@ Item {
 
     function rotate(delta) {
         quarterTurns = ((quarterTurns + delta) % 4 + 4) % 4
+        if (cropAspectLabel === "Original") {
+            resetCropToAspect(workingWidth / workingHeight, "Original")
+        } else if (cropAspect > 0) {
+            resetCropToAspect(cropAspect, cropAspectLabel)
+        }
         errorText = ""
     }
 
@@ -145,24 +157,25 @@ Item {
     }
 
     function save() {
-        if (preview.status !== Image.Ready || saving) {
+        if (preview.status !== Image.Ready || saving || ImageEdit.busy) {
             return
         }
         saving = true
         errorText = ""
         ImageEdit.saveCopy(root.path, root.quarterTurns, root.flipHorizontal, root.flipVertical,
                            root.straighten, root.cropX, root.cropY, root.cropW, root.cropH,
-                           root.targetWidth, root.targetHeight)
+                           root.targetWidth, root.targetHeight, root.jobGeneration)
     }
 
     function copyRegion() {
-        if (preview.status !== Image.Ready || saving) {
+        if (preview.status !== Image.Ready || saving || ImageEdit.busy) {
             return
         }
+        saving = true
         errorText = ""
         ImageEdit.copyRegion(root.path, root.quarterTurns, root.flipHorizontal,
                              root.flipVertical, root.straighten, root.cropX, root.cropY,
-                             root.cropW, root.cropH)
+                             root.cropW, root.cropH, root.jobGeneration)
     }
 
     visible: false
@@ -171,15 +184,19 @@ Item {
 
     Connections {
         target: ImageEdit
-        function onSaved(outputPath) {
+        function onSaved(outputPath, jobId) {
+            if (jobId !== root.jobGeneration || !root.visible) return
             root.saving = false
             root.saved(outputPath)
             root.close()
         }
-        function onCopied() {
+        function onCopied(jobId) {
+            if (jobId !== root.jobGeneration || !root.visible) return
+            root.saving = false
             root.copied()
         }
-        function onFailed(message) {
+        function onFailed(message, jobId) {
+            if (jobId !== root.jobGeneration || !root.visible) return
             root.saving = false
             root.errorText = message
         }
@@ -834,21 +851,22 @@ Item {
                 Item { width: 4; height: 1 }
 
                 PillButton {
-                    label: "Cancel"
+                    label: root.saving ? "Close" : "Cancel"
+                    toolTip: root.saving ? "Saving continues after closing" : ""
                     onClicked: root.close()
                 }
                 PillButton {
                     objectName: "correctionCopyRegion"
                     label: controls.compact ? "Copy" : "Copy region"
                     toolTip: "Copy the cropped region to the clipboard"
-                    active: !root.saving && preview.status === Image.Ready
+                    active: !root.saving && !ImageEdit.busy && preview.status === Image.Ready
                     onClicked: root.copyRegion()
                 }
                 PillButton {
                     objectName: "correctionSave"
-                    label: root.saving ? "Saving…" : controls.compact ? "Save" : "Save a copy"
-                    toolTip: "Save a corrected copy beside the original"
-                    active: !root.saving && preview.status === Image.Ready
+                    label: root.saving ? "Saving…" : root.animated ? "Save first frame" : controls.compact ? "Save" : "Save a copy"
+                    toolTip: root.animated ? "Animation is saved as a still first frame" : "Save a corrected copy beside the original"
+                    active: !root.saving && !ImageEdit.busy && preview.status === Image.Ready
                     onClicked: root.save()
                 }
             }

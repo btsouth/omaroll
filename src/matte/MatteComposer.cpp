@@ -5,6 +5,7 @@
 #include "sources/CameraRaw.h"
 
 #include <QClipboard>
+#include <QColorSpace>
 #include <QFile>
 #include <QFileInfo>
 #include <QFutureWatcher>
@@ -211,8 +212,11 @@ QImage MatteComposer::compose(const QImage& source, Matte matte, Aspect aspect,
     return source;
   }
 
-  const QColor seed = HueExtractor::dominantColor(source);
+  const QImage content = source.colorSpace().isValid()
+      ? source.convertedToColorSpace(QColorSpace::SRgb) : source;
+  const QColor seed = HueExtractor::dominantColor(content);
   QImage canvas = paintBackground(canvasSize, matte, seed);
+  canvas.setColorSpace(QColorSpace::SRgb);
 
   // Fit the capture inside the padded area, never upscaling it.
   const QSize maxContent(canvasSize.width() - padding * 2, canvasSize.height() - padding * 2);
@@ -244,7 +248,7 @@ QImage MatteComposer::compose(const QImage& source, Matte matte, Aspect aspect,
     painter.drawRoundedRect(spread, radius + step, radius + step);
   }
 
-  painter.drawImage(target, source);
+  painter.drawImage(target, content);
   painter.end();
 
   return canvas;
