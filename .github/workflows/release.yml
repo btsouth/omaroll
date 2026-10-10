@@ -104,6 +104,7 @@ jobs:
           fi
           pacman -U --noconfirm "$package_file"
           omaroll --version
+          bash packaging/arch/check-omarchy-stable.sh /usr/bin/omaroll
           QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
             omaroll --render /tmp/omaroll-package-smoke.png --render-view grid --render-size 560x420
           test -s /tmp/omaroll-package-smoke.png

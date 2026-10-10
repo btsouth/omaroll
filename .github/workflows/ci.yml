@@ -89,6 +89,9 @@ jobs:
         run: cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build/release --target all omaroll_benchmark_library
+      - name: Check the build runs on Omarchy stable
+        if: matrix.packages == 'omarchy-stable'
+        run: bash packaging/arch/check-omarchy-stable.sh build/release/omaroll
       - name: Test
         run: ctest --test-dir build/release --output-on-failure --output-junit test-results.xml
       - name: Test rendered media with Mesa OpenGL
