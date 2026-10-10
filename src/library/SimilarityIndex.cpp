@@ -177,7 +177,8 @@ QList<SimilarityIndex::Candidate> SimilarityIndex::candidates() const {
   return result;
 }
 
-SimilarityIndex::CachedHash SimilarityIndex::hashFile(const Candidate& candidate) {
+SimilarityIndex::CachedHash SimilarityIndex::hashFile(const Candidate& candidate,
+                                                      const std::atomic_bool* cancel) {
   CachedHash result{candidate.bytes, candidate.modified};
   QSize original;
   QImage colour;
@@ -196,7 +197,9 @@ SimilarityIndex::CachedHash SimilarityIndex::hashFile(const Candidate& candidate
       return result;
     }
     reader.setScaledSize(QSize(9, 8));
-    colour = ImageBudget::readBounded(reader).convertToFormat(QImage::Format_RGB32);
+    // A stop must not wait for another worker's very large decode.
+    colour = ImageBudget::readBounded(reader, [cancel] { return cancel && cancel->load(); })
+                 .convertToFormat(QImage::Format_RGB32);
   }
   if (colour.width() != 9 || colour.height() != 8) {
     return result;
@@ -279,7 +282,7 @@ void SimilarityIndex::start() {
       }
       CachedHash hash = cache.value(candidate.path);
       if (hash.bytes != candidate.bytes || hash.modified != candidate.modified) {
-        hash = hashFile(candidate);
+        hash = hashFile(candidate, cancel.get());
       }
       hashes.append(hash);
       if (hash.valid) {
