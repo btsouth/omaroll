@@ -37,6 +37,8 @@
 #include "search/QrDetector.h"
 #include "theme/OmarchyTheme.h"
 #include "sources/CameraRaw.h"
+#include "sources/ImageBudget.h"
+#include "thumbs/LargeImageProvider.h"
 #include "thumbs/RawImageProvider.h"
 #include "thumbs/ThumbnailProvider.h"
 #include "viewer/MprisService.h"
@@ -52,6 +54,7 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QImage>
+#include <QImageReader>
 #include <QMediaPlayer>
 #include <QMediaMetaData>
 #include <QMutex>
@@ -296,6 +299,8 @@ private slots:
     m_edits = new EditProvider;
     m_pdfs = new PdfProvider;
     m_raws = new RawImageProvider;
+    m_large = new LargeImageProvider;
+    m_engine->addImageProvider(QLatin1String(LargeImageProvider::kProviderId), m_large);
     m_engine->addImageProvider(QLatin1String(ThumbnailProvider::kProviderId), m_thumbnails);
     m_engine->addImageProvider(QLatin1String(MatteProvider::kProviderId), m_mattes);
     m_engine->addImageProvider(QLatin1String(EditProvider::kProviderId), m_edits);
@@ -349,6 +354,7 @@ private slots:
     m_edits->shutdown();
     m_pdfs->shutdown();
     m_raws->shutdown();
+    m_large->shutdown();
     delete m_engine;
     m_engine = nullptr;
     QThreadPool::globalInstance()->waitForDone();
@@ -655,6 +661,51 @@ private slots:
       QTest::qWait(30);
       QVERIFY(QLineF(before, underPointer()).length() < 0.001);
     }
+  }
+
+  // The library preview shows a very large picture from its reduced copy, at
+  // the picture's own size, and loads full resolution once zoomed past it.
+  void aVeryLargePictureIsPreviewedFromAReducedCopy() {
+    const auto restore = qScopeGuard([this] {
+      ImageBudget::setLimits({});
+      m_captures->readPicture(m_oddPath);
+      invoke("dismissTopLayer");
+    });
+    ImageBudget::setLimits({.displayBytes = 1 * ImageBudget::kMiB});
+    openDetail(m_library->rowOf(m_oddPath));
+    QQuickItem* detail = item("detail");
+    // The sheet may already show this file; ask again under the new budget.
+    m_captures->readPicture(m_oddPath);
+    QQuickItem* still = item("detailStill");
+    QTRY_VERIFY(still->property("source").toUrl().toString().startsWith(QStringLiteral("image://large/")));
+    QTRY_VERIFY(detail->property("imageReady").toBool());
+    QCOMPARE(detail->property("imageSourceWidth").toDouble(), 1536.0);
+    QCOMPARE(detail->property("imageSourceHeight").toDouble(), 1024.0);
+    QQuickItem* full = item("detailFullResolution");
+    QVERIFY(full->property("source").toUrl().isEmpty());
+
+    QVERIFY(QMetaObject::invokeMethod(detail, "zoomImageAt", Q_ARG(QVariant, 3.0),
+                                     Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant())));
+    QTRY_COMPARE(full->property("status").toInt(), 1);
+    QCOMPARE(full->property("source").toUrl().toLocalFile(), m_oddPath);
+    QTRY_COMPARE(full->property("opacity").toReal(), 1.0);
+
+    // Past Qt's limit, a format that decodes whole says why it cannot open,
+    // and nothing is asked of a decoder that would refuse it.
+    const QString scan = m_scratch.filePath(QStringLiteral("too-large.png"));
+    QImage image(1200, 1200, QImage::Format_RGB32);
+    image.fill(Qt::darkGreen);
+    QVERIFY(image.save(scan));
+    QImageReader::setAllocationLimit(2);
+    const auto limit = qScopeGuard([] { QImageReader::setAllocationLimit(256); });
+    QSignalSpy read(m_captures, &CaptureModel::pictureRead);
+    m_captures->readPicture(scan);
+    QTRY_COMPARE(read.count(), 1);
+    const QVariantMap picture = read.first().at(1).toMap();
+    QVERIFY(picture.value(QStringLiteral("reduced")).toBool());
+    QVERIFY(picture.value(QStringLiteral("source")).toUrl().isEmpty());
+    QCOMPARE(picture.value(QStringLiteral("error")).toString(),
+             QStringLiteral("This picture needs about 5 MiB; the limit on this computer is 2 MiB"));
   }
 
   void imagePinchKeepsItsCentroidFixed() {
@@ -5787,6 +5838,7 @@ private:
   QStringList m_expectedQmlWarnings;
   QStringList m_disposablePaths;
   RawImageProvider* m_raws = nullptr;
+  LargeImageProvider* m_large = nullptr;
   QString m_oddPath;
   QString m_pdfPath;
 };

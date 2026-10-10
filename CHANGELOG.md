@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Very large pictures open. A 150-megapixel scan used to fail with "Could not
+  display this picture"; the viewer and library preview now show it from a copy
+  the size of the screen and load full resolution when zoomed in. A picture that
+  needs more memory than the limit says how much
+  ([#115](https://github.com/btsouth/omaroll/issues/115), reported by
+  @dyedfox).
+- Corrections and Mattes say when a picture is too large to preview, instead of
+  "Could not read this file".
+
 ## 1.15.1
 
 Tiled quick viewers can fill their tiles instead of showing empty bands.

@@ -2,6 +2,7 @@
 
 #include "matte/MatteComposer.h"
 #include "sources/CameraRaw.h"
+#include "sources/ImageBudget.h"
 
 #include <QImageReader>
 #include <QMetaObject>
@@ -70,7 +71,9 @@ public:
         }
         reader.setScaledSize(scaled);
       }
-      source = reader.read();
+      // Every matte in the strip is its own preview, decoded in parallel;
+      // whole decodes of a very large PNG or TIFF take turns.
+      source = ImageBudget::readBounded(reader, [this] { return m_cancelled.load(); });
     }
     if (source.isNull()) {
       m_error = QStringLiteral("Could not read %1").arg(m_path);

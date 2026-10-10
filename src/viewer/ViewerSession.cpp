@@ -63,6 +63,7 @@ void ViewerSession::watchVideoStartup(QObject* target) {
 
 ViewerSession::ViewerSession(QObject* parent) : QObject(parent) {
   connect(this, &ViewerSession::currentChanged, this, &ViewerSession::deletionPathChanged);
+  connect(this, &ViewerSession::currentChanged, this, &ViewerSession::pictureChanged);
   connect(this, &ViewerSession::sequenceRevisionChanged, this, &ViewerSession::deletionPathChanged);
   // A burst of writes (a download landing, a batch export) settles before the
   // folder is read again.
@@ -101,7 +102,22 @@ ViewerSession::ViewerSession(QObject* parent) : QObject(parent) {
         urls[i] = ::imageUrl(candidate.path, candidate.version);
       }
     }
+    m_neighbourPictures.clear();
+    for (const PictureResult& picture : result.pictures) {
+      if (!picture.path.isEmpty()) m_neighbourPictures.insert(picture.path, picture);
+    }
     setPreloadUrls(urls);
+  });
+  connect(&m_pictureProbe, &QFutureWatcher<PictureResult>::finished, this, [this] {
+    m_pictureProbeRunning = false;
+    const PictureResult result = m_pictureProbe.result();
+    if (m_pictureKnown || m_picturePath.isEmpty()) return;
+    if (result.path != m_picturePath || result.version != m_pictureVersion) {
+      startPictureProbe();
+      return;
+    }
+    applyPicture(result);
+    emit pictureChanged();
   });
   connect(&m_rawSizeProbe, &QFutureWatcher<RawSizeResult>::finished, this, [this] {
     m_rawSizeProbeRunning = false;
@@ -122,7 +138,64 @@ QUrl ViewerSession::url() const {
   return current.isEmpty() ? QUrl() : QUrl::fromLocalFile(current);
 }
 
-QUrl ViewerSession::imageUrl() const { return ::imageUrl(path(), m_contentVersion); }
+QUrl ViewerSession::imageUrl() const {
+  if (!isPlainStill()) return ::imageUrl(path(), m_contentVersion);
+  // Nothing to load for a picture that cannot be decoded at all; the viewer
+  // shows pictureError instead.
+  if (!m_pictureKnown || !m_plan.error.isEmpty()) return {};
+  return m_plan.reduced ? ImageBudget::reducedUrl(path(), m_contentVersion, m_reducedEdge)
+                        : ::imageUrl(path(), m_contentVersion);
+}
+
+QUrl ViewerSession::detailUrl() const {
+  return reduced() && m_plan.detail ? ::imageUrl(path(), m_contentVersion) : QUrl();
+}
+
+bool ViewerSession::isPlainStill() const {
+  return !path().isEmpty() && CaptureScanner::isImage(m_mediaSuffix) && !isRaw() && !isAnimated();
+}
+
+void ViewerSession::refreshPicture() {
+  if (!isPlainStill()) {
+    m_pictureKnown = false;
+    m_plan = {};
+    m_picturePath.clear();
+    m_pictureVersion.clear();
+    return;
+  }
+  if (m_picturePath == path() && m_pictureVersion == m_contentVersion) return;
+  m_picturePath = path();
+  m_pictureVersion = m_contentVersion;
+  m_pictureKnown = false;
+  m_plan = {};
+  const auto known = m_neighbourPictures.constFind(m_picturePath);
+  if (known != m_neighbourPictures.constEnd() && !m_pictureVersion.isEmpty() &&
+      known->version == m_pictureVersion) {
+    applyPicture(*known);
+    return;
+  }
+  startPictureProbe();
+}
+
+void ViewerSession::startPictureProbe() {
+  if (m_pictureProbeRunning || m_pictureKnown || m_picturePath.isEmpty()) return;
+  m_pictureProbeRunning = true;
+  const QString file = m_picturePath;
+  const QString version = m_pictureVersion;
+  m_pictureProbe.setFuture(QtConcurrent::run([file, version] {
+    // A replacement since the version was taken is read again once the
+    // folder watcher reports it.
+    return PictureResult{file, version,
+                         FileVersion::key(file) == version ? ImageBudget::estimate(file)
+                                                           : ImageBudget::Estimate{}};
+  }));
+}
+
+void ViewerSession::applyPicture(const PictureResult& result) {
+  m_pictureKnown = true;
+  m_plan = ImageBudget::plan(result.estimate);
+  m_reducedEdge = m_plan.reduced ? ImageBudget::reducedEdge(m_plan) : 0;
+}
 
 QString ViewerSession::fileName() const { return QFileInfo(path()).fileName(); }
 
@@ -591,8 +664,12 @@ ViewerSession::PreloadResult ViewerSession::probePreloads(const std::array<QStri
     if (CameraRaw::isRaw(suffix)) continue;
     QImageReader reader(path);
     if (!reader.canRead() || reader.supportsAnimation()) continue;
-    const QSize size = reader.size();
-    if (size.width() <= 0 || size.height() <= 0) continue;
+    const ImageBudget::Estimate estimate = ImageBudget::estimate(reader);
+    if (!estimate.valid()) continue;
+    result.pictures[i] = {path, version, estimate};
+    // Shown from a reduced copy, never preloaded whole.
+    if (ImageBudget::plan(estimate).reduced) continue;
+    const QSize size = estimate.stored;
     const QImage::Format format = reader.imageFormat();
     const int depth = QImage::toPixelFormat(format).bitsPerPixel();
     const quint64 bytesPerPixel = depth <= 0 ? 16 : std::max(4, (depth + 7) / 8);
@@ -612,6 +689,7 @@ void ViewerSession::refreshDetails() {
   m_thumbnailVersion = ThumbnailSource::version(path(), FileVersion::thumbnailKey(path()));
   watchCurrentFile();
   m_mediaSuffix = CaptureScanner::mediaSuffix(path());
+  refreshPicture();
   const QFileInfo info(path());
   // Another file, or this one replaced: its raw size is read again.
   if (m_rawSizePath != path() || m_rawSizeVersion != m_contentVersion || !isRaw()) {

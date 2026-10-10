@@ -4,6 +4,8 @@
 #include "library/CaptureRoles.h"
 #include "sources/CameraRaw.h"
 #include "sources/CaptureLocations.h"
+#include "sources/FileVersion.h"
+#include "sources/ImageBudget.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -444,6 +446,41 @@ QString CaptureModel::dayLabelAt(int row) const {
 
 QUrl CaptureModel::fileUrl(const QString& path) const {
   return CameraRaw::isRawFile(path) ? CameraRaw::previewUrl(path) : QUrl::fromLocalFile(path);
+}
+
+void CaptureModel::readPicture(const QString& path) {
+  const QUrl source = fileUrl(path);
+  // Screens are read here, on the GUI thread.
+  const int edge = ImageBudget::reducedEdge();
+  QtConcurrent::run([path, source, edge] {
+    QVariantMap picture{{QStringLiteral("path"), path}, {QStringLiteral("source"), source}};
+    // An extensionless file is identified by its header, so this is read here
+    // too. Raws, animations, videos and documents keep their own loading.
+    const QString suffix = CaptureScanner::mediaSuffix(path);
+    if (!CaptureScanner::isImage(suffix) || CameraRaw::isRaw(suffix) || suffix == u"gif" ||
+        suffix == u"webp") {
+      return picture;
+    }
+    const QString version = FileVersion::key(path);
+    const ImageBudget::Plan plan = ImageBudget::plan(ImageBudget::estimate(path));
+    if (!plan.reduced) return picture;
+    // Nothing to load when not even the reduced copy can be decoded.
+    picture.insert(QStringLiteral("source"),
+                   plan.error.isEmpty()
+                       ? ImageBudget::reducedUrl(path, version, plan.edge > 0 ? plan.edge : edge)
+                       : QUrl());
+    picture.insert(QStringLiteral("reduced"), true);
+    picture.insert(QStringLiteral("width"), plan.size.width());
+    picture.insert(QStringLiteral("height"), plan.size.height());
+    if (plan.detail) {
+      QUrl detail = QUrl::fromLocalFile(path);
+      detail.setQuery(QStringLiteral("omaroll=") + version);
+      picture.insert(QStringLiteral("detail"), detail);
+    }
+    picture.insert(QStringLiteral("note"), plan.note);
+    picture.insert(QStringLiteral("error"), plan.error);
+    return picture;
+  }).then(this, [this, path](const QVariantMap& picture) { emit pictureRead(path, picture); });
 }
 
 void CaptureModel::readRawSize(const QString& path, const QUrl& source) {

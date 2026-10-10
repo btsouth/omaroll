@@ -24,10 +24,13 @@ Item {
     }
 
     property bool animated: false
+    // Set when the picture is too large for the previews to decode.
+    property string previewProblem: ""
 
     function open() {
         if (Matte.busy) return
         animated = ImageEdit.isAnimated(root.path)
+        previewProblem = ImageEdit.previewProblem(root.path)
         selected = 0
         retryCopy = false
         saveMessage = ""
@@ -180,7 +183,9 @@ Item {
             Text {
                 anchors.centerIn: parent
                 visible: preview.status !== Image.Ready
-                text: preview.status === Image.Error ? "Could not read this file" : "Composing…"
+                text: preview.status === Image.Error
+                      ? (root.previewProblem !== "" ? root.previewProblem : "Could not read this file")
+                      : "Composing…"
                 font.family: Theme.fontFamily
                 font.pixelSize: 12
                 color: preview.status === Image.Error ? Theme.red : Theme.mutedText

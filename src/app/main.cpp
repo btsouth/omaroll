@@ -27,6 +27,8 @@
 #include "subtitles/SubtitleIndex.h"
 #include "sources/CaptureScanner.h"
 #include "theme/OmarchyTheme.h"
+#include "sources/ImageBudget.h"
+#include "thumbs/LargeImageProvider.h"
 #include "thumbs/RawImageProvider.h"
 #include "thumbs/ThumbnailCache.h"
 #include "thumbs/ThumbnailProvider.h"
@@ -400,6 +402,8 @@ int main(int argc, char* argv[]) {
 
   QGuiApplication application(argc, argv);
   startup.mark("application");
+  // Before anything is decoded, Omaroll's icon included.
+  ImageBudget::applyStartupLimit();
   QIcon applicationIcon = QIcon::fromTheme(QStringLiteral("io.github.tsouth89.omaroll"));
   if (applicationIcon.isNull()) {
     applicationIcon = QIcon(QStringLiteral(":/icons/resources/icons/omaroll.svg"));
@@ -546,11 +550,13 @@ int main(int argc, char* argv[]) {
   auto* editProvider = new EditProvider;
   auto* pdfProvider = new PdfProvider;
   auto* rawProvider = new RawImageProvider;
+  auto* largeProvider = new LargeImageProvider;
   engine.addImageProvider(QLatin1String(ThumbnailProvider::kProviderId), thumbnailProvider);
   engine.addImageProvider(QLatin1String(MatteProvider::kProviderId), matteProvider);
   engine.addImageProvider(QLatin1String(EditProvider::kProviderId), editProvider);
   engine.addImageProvider(QLatin1String(PdfProvider::kProviderId), pdfProvider);
   engine.addImageProvider(QLatin1String(RawImageProvider::kProviderId), rawProvider);
+  engine.addImageProvider(QLatin1String(LargeImageProvider::kProviderId), largeProvider);
   // Every window shares these. Each window's own services live in its context.
   engine.rootContext()->setContextProperty(QStringLiteral("Theme"), &theme);
   engine.rootContext()->setContextProperty(QStringLiteral("Actions"), &actions);
@@ -567,13 +573,15 @@ int main(int argc, char* argv[]) {
   // Declared after the engine, so every window goes before it does.
   std::unique_ptr<LibraryWindow> libraryWindow;
   QObject::connect(&application, &QCoreApplication::aboutToQuit, &application,
-                   [&libraryWindow, thumbnailProvider, matteProvider, editProvider, pdfProvider, rawProvider] {
+                   [&libraryWindow, thumbnailProvider, matteProvider, editProvider, pdfProvider, rawProvider,
+                    largeProvider] {
                      if (libraryWindow) libraryWindow->requestStop();
                      thumbnailProvider->shutdown();
                      matteProvider->shutdown();
                      editProvider->shutdown();
                      pdfProvider->shutdown();
                      rawProvider->shutdown();
+                     largeProvider->shutdown();
                      // Saves on the pool still use their editors, so a slow one is
                      // reported and then finished rather than cut off.
                      if (!QThreadPool::globalInstance()->waitForDone(QDeadlineTimer(1500))) {

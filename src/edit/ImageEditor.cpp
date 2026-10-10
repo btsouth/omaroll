@@ -5,6 +5,7 @@
 #include "edit/JpegTransform.h"
 #include "sources/CameraRaw.h"
 #include "sources/CaptureScanner.h"
+#include "sources/ImageBudget.h"
 
 #include <QColorSpace>
 #include <QDir>
@@ -127,7 +128,8 @@ SaveResult saveTransform(const QString& source, const ImageEditor::Transform& tr
   if (output.isEmpty() && error.isEmpty()) {
     const QImage image = readOriented(source);
     if (image.isNull()) {
-      error = QStringLiteral("Could not read %1").arg(QFileInfo(source).fileName());
+      error = ImageBudget::decodeRefusal(ImageBudget::estimate(source));
+      if (error.isEmpty()) error = QStringLiteral("Could not read %1").arg(QFileInfo(source).fileName());
     } else {
       const QImage result = ImageEditor::apply(image, transform);
       if (result.isNull()) {
@@ -233,6 +235,11 @@ QString ImageEditor::outputPathFor(const QString& sourcePath) {
 
 QString ImageEditor::availableOutputPath(const QString& sourcePath) {
   return composedOutputPath(sourcePath, true);
+}
+
+QString ImageEditor::previewProblem(const QString& path) const {
+  if (CameraRaw::isRawFile(path)) return {};
+  return ImageBudget::previewRefusal(ImageBudget::estimate(path));
 }
 
 QSize ImageEditor::orientedSize(const QString& path) const {

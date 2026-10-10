@@ -47,6 +47,8 @@ add_library(omaroll_core STATIC
   src/sources/CaptureLocations.cpp
   src/sources/CaptureLocations.h
   src/sources/FileVersion.h
+  src/sources/ImageBudget.cpp
+  src/sources/ImageBudget.h
   src/actions/ActionLauncher.cpp
   src/actions/ActionLauncher.h
   src/actions/OpenWithRequest.cpp
@@ -87,6 +89,8 @@ add_library(omaroll_core STATIC
   src/search/QrDetector.h
   src/subtitles/SubtitleIndex.cpp
   src/subtitles/SubtitleIndex.h
+  src/thumbs/LargeImageProvider.cpp
+  src/thumbs/LargeImageProvider.h
   src/thumbs/RawImageProvider.cpp
   src/thumbs/RawImageProvider.h
   src/thumbs/ThumbnailCache.cpp
@@ -262,6 +266,12 @@ if(BUILD_TESTING)
   set_tests_properties(omaroll_companion_tests omaroll_editor_tests PROPERTIES
     ENVIRONMENT "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
 
+
+  qt_add_executable(omaroll_large_image_tests tests/tst_large_images.cpp)
+  target_link_libraries(omaroll_large_image_tests PRIVATE omaroll_core Qt6::Test)
+  add_test(NAME omaroll_large_image_tests COMMAND omaroll_large_image_tests)
+  set_tests_properties(omaroll_large_image_tests PROPERTIES ENVIRONMENT
+    "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
 
   qt_add_executable(omaroll_thumbnail_tests tests/tst_thumbnails.cpp)
   target_link_libraries(omaroll_thumbnail_tests PRIVATE omaroll_core Qt6::Test)

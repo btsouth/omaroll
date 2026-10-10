@@ -17,9 +17,11 @@
 #include "app/VideoPlayback.h"
 #include "library/MediaInspector.h"
 #include "sources/FileVersion.h"
+#include "sources/ImageBudget.h"
 #include "subtitles/SubtitleIndex.h"
 #include "sources/CameraRaw.h"
 #include "theme/OmarchyTheme.h"
+#include "thumbs/LargeImageProvider.h"
 #include "thumbs/RawImageProvider.h"
 #include "thumbs/ThumbnailProvider.h"
 #include "viewer/HyprlandPlacement.h"
@@ -194,6 +196,8 @@ private slots:
     m_engine->addImageProvider(QStringLiteral("startup-poster"), new StartupPosterProvider);
     m_raws = new RawImageProvider;
     m_engine->addImageProvider(QLatin1String(RawImageProvider::kProviderId), m_raws);
+    m_large = new LargeImageProvider;
+    m_engine->addImageProvider(QLatin1String(LargeImageProvider::kProviderId), m_large);
 
     QQmlContext* shared = m_engine->rootContext();
     shared->setContextProperty(QStringLiteral("Theme"), m_theme);
@@ -228,6 +232,9 @@ private slots:
     }
     if (m_raws) {
       m_raws->shutdown();
+    }
+    if (m_large) {
+      m_large->shutdown();
     }
     delete m_engine;
     m_engine = nullptr;
@@ -3345,11 +3352,11 @@ private slots:
     QCOMPARE(prop("sourceWidth").toReal(), 48.0);
     QCOMPARE(prop("sourceHeight").toReal(), 64.0);
     // Fitted to the window, the preview is far past its own pixels.
-    QVERIFY(prop("rawDetailWanted").toBool());
-    QQuickItem* detail = item(QStringLiteral("viewerRawDetail"));
+    QVERIFY(prop("detailWanted").toBool());
+    QQuickItem* detail = item(QStringLiteral("viewerDetail"));
     QTRY_COMPARE(detail->property("status").toInt(), 1);
     QCOMPARE(detail->property("sourceSize").toSize(), QSize(48, 64));
-    QCOMPARE(prop("rawDetailPath").toString(), camera);
+    QCOMPARE(prop("detailPath").toString(), camera);
 
     QTest::keyClick(m_window, Qt::Key_A);
     QTRY_COMPARE(prop("status").toString(), QStringLiteral("That one cannot open camera raws"));
@@ -3364,6 +3371,105 @@ private slots:
     QTRY_COMPARE(detail->property("status").toInt(), 1);
     m_window->close();
     m_session->clear();
+  }
+
+  // A picture too large to show whole opens from a copy the size of the
+  // screen, measured as the picture itself. Zoomed past that copy, its full
+  // resolution is loaded over it, and shown only while zoomed in.
+  void aVeryLargePictureOpensFromAReducedCopy() {
+    const auto restore = qScopeGuard([this] {
+      ImageBudget::setLimits({});
+      m_window->close();
+      m_session->clear();
+    });
+    ImageBudget::setLimits({.displayBytes = 1 * ImageBudget::kMiB});
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString scan = dir.filePath(QStringLiteral("scan.jpg"));
+    const QString next = dir.filePath(QStringLiteral("scan-2.jpg"));
+    QImage image(3000, 2000, QImage::Format_RGB32);
+    image.fill(QColor(40, 90, 160));
+    QVERIFY(image.save(scan, nullptr, 85));
+    QVERIFY(image.save(next, nullptr, 85));
+
+    open({scan});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QVERIFY(m_session->reduced());
+    QCOMPARE(m_session->fullSize(), QSize(3000, 2000));
+    QVERIFY(item(QStringLiteral("viewerImage"))->property("source").toUrl().toString()
+                .startsWith(QStringLiteral("image://large/")));
+    QCOMPARE(prop("loadedSize").toSize(), QSize(2048, 1365));
+    QCOMPARE(prop("sourceWidth").toReal(), 3000.0);
+    QCOMPARE(prop("sourceHeight").toReal(), 2000.0);
+    QVERIFY(prop("playbackError").toString().isEmpty());
+    // Fitted, the copy has pixels to spare.
+    QVERIFY(!prop("detailWanted").toBool());
+    QQuickItem* detail = item(QStringLiteral("viewerDetail"));
+    QVERIFY(detail->property("source").toUrl().isEmpty());
+
+    QTest::keyClick(m_window, Qt::Key_1);
+    QTRY_VERIFY(prop("detailWanted").toBool());
+    QCOMPARE(detail->property("source").toUrl(), m_session->detailUrl());
+    QCOMPARE(m_session->detailUrl().toLocalFile(), scan);
+    QTRY_COMPARE(detail->property("status").toInt(), 1);
+    QCOMPARE(detail->property("sourceSize").toSize(), QSize(3000, 2000));
+    QTRY_COMPARE(detail->property("opacity").toReal(), 1.0);
+    // Back to fit: the copy shows again, the decode is kept for next time.
+    QTest::keyClick(m_window, Qt::Key_0);
+    QTRY_VERIFY(!prop("detailWanted").toBool());
+    QTRY_COMPARE(detail->property("opacity").toReal(), 0.0);
+    QCOMPARE(prop("detailPath").toString(), scan);
+
+    // A neighbour's header was read with the preloads, so stepping onto it
+    // does not wait for another read. Too large to preload, it is not.
+    QTRY_COMPARE(m_session->count(), 2);
+    QTest::qWait(500);
+    QVERIFY(m_session->nextPreloadUrl().isEmpty());
+    QVERIFY(m_session->step(1));
+    QCOMPARE(m_session->path(), next);
+    QVERIFY(m_session->reduced());
+    QVERIFY(m_session->imageUrl().toString().startsWith(QStringLiteral("image://large/")));
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QCOMPARE(prop("sourceWidth").toReal(), 3000.0);
+  }
+
+  // Past Qt's limit, a JPEG still opens from its reduced copy and says why
+  // zooming in stays soft. A format that has to decode whole says why it
+  // cannot open at all.
+  void aPictureOverTheLimitSaysHowMuchItNeeds() {
+    const auto restore = qScopeGuard([this] {
+      QImageReader::setAllocationLimit(256);
+      m_window->close();
+      m_session->clear();
+    });
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString photo = dir.filePath(QStringLiteral("photo.jpg"));
+    const QString scan = dir.filePath(QStringLiteral("scan.png"));
+    QImage image(3000, 2000, QImage::Format_RGB32);
+    image.fill(QColor(160, 90, 40));
+    QVERIFY(image.save(photo, nullptr, 85));
+    QVERIFY(image.save(scan));
+    QImageReader::setAllocationLimit(10);
+
+    open({photo});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QVERIFY(m_session->reduced());
+    QVERIFY(m_session->detailUrl().isEmpty());
+    QCOMPARE(m_session->pictureNote(),
+             QStringLiteral("Showing a reduced copy. Full resolution needs about 23 MiB; the "
+                            "limit on this computer is 10 MiB"));
+    QCOMPARE(prop("loadedSize").toSize(), QSize(1536, 1024));
+    QCOMPARE(prop("sourceWidth").toReal(), 3000.0);
+    QTest::keyClick(m_window, Qt::Key_1);
+    QTRY_VERIFY(prop("detailMissing").toBool());
+    QCOMPARE(prop("status").toString(), m_session->pictureNote());
+
+    m_session->open({scan});
+    QTRY_COMPARE(m_session->path(), scan);
+    QTRY_COMPARE(prop("playbackError").toString(),
+                 QStringLiteral("This picture needs about 23 MiB; the limit on this computer is "
+                                "10 MiB"));
   }
 
   void theWindowRaisedNoQmlWarnings() {
@@ -3522,6 +3628,7 @@ private:
   SubtitleIndex* m_subtitles = nullptr;
   ThumbnailProvider* m_thumbnails = nullptr;
   RawImageProvider* m_raws = nullptr;
+  LargeImageProvider* m_large = nullptr;
   QQmlEngine* m_engine = nullptr;
   QQmlContext* m_context = nullptr;
   MprisService* m_mpris = nullptr;

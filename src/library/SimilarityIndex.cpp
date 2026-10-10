@@ -3,6 +3,7 @@
 #include "library/CaptureModel.h"
 #include "library/CaptureRoles.h"
 #include "sources/CameraRaw.h"
+#include "sources/ImageBudget.h"
 
 #include <QFileInfo>
 #include <QImageReader>
@@ -195,7 +196,7 @@ SimilarityIndex::CachedHash SimilarityIndex::hashFile(const Candidate& candidate
       return result;
     }
     reader.setScaledSize(QSize(9, 8));
-    colour = reader.read().convertToFormat(QImage::Format_RGB32);
+    colour = ImageBudget::readBounded(reader).convertToFormat(QImage::Format_RGB32);
   }
   if (colour.width() != 9 || colour.height() != 8) {
     return result;

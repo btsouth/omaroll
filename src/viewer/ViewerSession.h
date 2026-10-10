@@ -1,5 +1,6 @@
 #pragma once
 
+#include "sources/ImageBudget.h"
 #include "sources/RawJpegPairs.h"
 
 #include <QFileSystemWatcher>
@@ -29,7 +30,18 @@ class ViewerSession final : public QObject {
   Q_PROPERTY(QString path READ path NOTIFY currentChanged)
   Q_PROPERTY(QString deletionPath READ deletionPath NOTIFY deletionPathChanged)
   Q_PROPERTY(QUrl url READ url NOTIFY currentChanged)
-  Q_PROPERTY(QUrl imageUrl READ imageUrl NOTIFY currentChanged)
+  // Empty while a still's header is read on a worker, so a very large
+  // picture is never sent to a full decode it does not need.
+  Q_PROPERTY(QUrl imageUrl READ imageUrl NOTIFY pictureChanged)
+  // A very large still: imageUrl is a copy the size of the screen, fullSize
+  // the picture's own upright size, and detailUrl its full resolution when
+  // that can be shown. pictureNote says why it cannot; pictureError why not
+  // even the copy can be decoded.
+  Q_PROPERTY(bool reduced READ reduced NOTIFY pictureChanged)
+  Q_PROPERTY(QSize fullSize READ fullSize NOTIFY pictureChanged)
+  Q_PROPERTY(QUrl detailUrl READ detailUrl NOTIFY pictureChanged)
+  Q_PROPERTY(QString pictureNote READ pictureNote NOTIFY pictureChanged)
+  Q_PROPERTY(QString pictureError READ pictureError NOTIFY pictureChanged)
   Q_PROPERTY(QString contentVersion READ contentVersion NOTIFY currentChanged)
   Q_PROPERTY(QString thumbnailVersion READ thumbnailVersion NOTIFY currentChanged)
   Q_PROPERTY(QString fileName READ fileName NOTIFY currentChanged)
@@ -63,6 +75,11 @@ public:
   }
   [[nodiscard]] QUrl url() const;
   [[nodiscard]] QUrl imageUrl() const;
+  [[nodiscard]] bool reduced() const { return m_pictureKnown && m_plan.reduced; }
+  [[nodiscard]] QSize fullSize() const { return reduced() ? m_plan.size : QSize(); }
+  [[nodiscard]] QUrl detailUrl() const;
+  [[nodiscard]] QString pictureNote() const { return m_pictureKnown ? m_plan.note : QString(); }
+  [[nodiscard]] QString pictureError() const { return m_pictureKnown ? m_plan.error : QString(); }
   [[nodiscard]] QString contentVersion() const { return m_contentVersion; }
   [[nodiscard]] QString thumbnailVersion() const { return m_thumbnailVersion; }
   [[nodiscard]] QString fileName() const;
@@ -140,6 +157,7 @@ public:
 
 signals:
   void currentChanged();
+  void pictureChanged();
   void deletionPathChanged();
   void rawSizeChanged();
   void sequenceChanged();
@@ -173,14 +191,28 @@ private:
   void startPreloadProbe();
   void setPreloadUrls(const std::array<QUrl, 2>& urls);
   void startRawSizeProbe();
+  // A still that is shown from its file, as opposed to a video, a camera raw's
+  // preview or an animation.
+  [[nodiscard]] bool isPlainStill() const;
+  void refreshPicture();
+  void startPictureProbe();
 
   struct PreloadCandidate {
     QString path;
     QString version;
   };
+  struct PictureResult {
+    QString path;
+    QString version;
+    ImageBudget::Estimate estimate;
+  };
+  void applyPicture(const PictureResult& result);
   struct PreloadResult {
     quint64 generation = 0;
     std::array<PreloadCandidate, 2> candidates;
+    // Every neighbour's header, admitted or not, so stepping onto one does
+    // not wait for it to be read again.
+    std::array<PictureResult, 2> pictures;
   };
   static PreloadResult probePreloads(const std::array<QString, 2>& paths, quint64 generation);
 
@@ -229,4 +261,13 @@ private:
   bool m_rawSizeProbeRunning = false;
   QString m_rawSizePath;
   QString m_rawSizeVersion;
+  // The current still's header, read on a worker before it is shown.
+  QFutureWatcher<PictureResult> m_pictureProbe;
+  bool m_pictureProbeRunning = false;
+  bool m_pictureKnown = false;
+  QString m_picturePath;
+  QString m_pictureVersion;
+  ImageBudget::Plan m_plan;
+  int m_reducedEdge = 0;
+  QHash<QString, PictureResult> m_neighbourPictures;
 };

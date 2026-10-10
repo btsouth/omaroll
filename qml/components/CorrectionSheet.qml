@@ -39,6 +39,8 @@ Item {
     property int jobGeneration: -1
     property bool animated: false
     property string errorText: ""
+    // Set when the picture is too large for the preview to decode.
+    property string previewProblem: ""
 
     readonly property int workingWidth: quarterTurns % 2 === 0 ? sourceSize.width : sourceSize.height
     readonly property int workingHeight: quarterTurns % 2 === 0 ? sourceSize.height : sourceSize.width
@@ -60,6 +62,7 @@ Item {
     function open(filePath, name) {
         jobGeneration = ImageEdit.nextJobId()
         animated = ImageEdit.isAnimated(filePath)
+        previewProblem = ImageEdit.previewProblem(filePath)
         path = filePath
         fileName = name
         quarterTurns = 0
@@ -316,8 +319,9 @@ Item {
             Text {
                 anchors.centerIn: parent
                 visible: preview.status !== Image.Ready && !root.saving
-                text: preview.status === Image.Error ? "Could not read this file"
-                                                     : (root.saving ? "Saving…" : "Loading…")
+                text: preview.status === Image.Error
+                      ? (root.previewProblem !== "" ? root.previewProblem : "Could not read this file")
+                      : (root.saving ? "Saving…" : "Loading…")
                 font.family: Theme.fontFamily
                 font.pixelSize: 12
                 color: preview.status === Image.Error ? Theme.red : Theme.mutedText
