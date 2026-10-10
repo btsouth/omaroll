@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.15.2
+
+Very large pictures open, and videos play again with Qt 6.12.
 
 ### Fixed
 
@@ -12,6 +14,11 @@
   @dyedfox).
 - Corrections and Mattes say when a picture is too large to preview, instead of
   "Could not read this file".
+- Videos play with Qt 6.12. Stepping to another video in the quick viewer could
+  leave it stopped, and a playing video could stop by itself, because Qt 6.12
+  stops the player whenever its file is set again.
+
+[Install or update](https://github.com/btsouth/omaroll#install-or-update).
 
 ## 1.15.1
 
