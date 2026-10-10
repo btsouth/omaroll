@@ -29,9 +29,15 @@ jobs:
     runs-on: ubuntu-latest
     container: archlinux:latest
     steps:
+      # Build against Omarchy's stable channel so the package runs on stable, rc
+      # and edge. A build against newer Qt fails to start on older Qt.
+      - name: Use Omarchy stable packages
+        run: |
+          echo 'Server = https://stable-mirror.omarchy.org/$repo/os/$arch' > /etc/pacman.d/mirrorlist
+          pacman -Syyuu --noconfirm
       - name: Install dependencies
         run: >-
-          pacman -Syu --noconfirm --needed
+          pacman -S --noconfirm --needed
           appstream base-devel ccache cmake desktop-file-utils ffmpeg ffmpegthumbnailer
           git github-cli imagemagick kimageformats libavif libheif libraw ninja pkgconf poppler qt6-base
           qt6-declarative qt6-imageformats qt6-multimedia qt6-svg qt6-wayland
@@ -43,8 +49,8 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .ccache
-          key: ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
-          restore-keys: ccache-v1-${{ runner.os }}-${{ runner.arch }}-
+          key: ccache-v1-omarchy-stable-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: ccache-v1-omarchy-stable-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Check release version
         run: |
@@ -98,6 +104,7 @@ jobs:
           fi
           pacman -U --noconfirm "$package_file"
           omaroll --version
+          bash packaging/arch/check-omarchy-stable.sh /usr/bin/omaroll
           QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
             omaroll --render /tmp/omaroll-package-smoke.png --render-view grid --render-size 560x420
           test -s /tmp/omaroll-package-smoke.png
