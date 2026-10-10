@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.15.3
+
+Omaroll starts again on Omarchy's stable and rc channels.
+
+### Fixed
+
+- 1.15.2 was built against Qt 6.12 and failed to start with Qt 6.11, which
+  Omarchy's stable and rc channels still ship ([#119](https://github.com/btsouth/omaroll/issues/119),
+  reported by @dyedfox). Releases are now built against Omarchy's stable
+  packages and refuse to publish a package that needs anything newer.
+
+[Install or update](https://github.com/btsouth/omaroll#install-or-update).
+
 ## 1.15.2
 
 Very large pictures open, and videos play again with Qt 6.12.
