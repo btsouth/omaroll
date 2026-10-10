@@ -60,10 +60,19 @@ jobs:
     timeout-minutes: 30
     runs-on: ubuntu-latest
     container: archlinux:latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Releases build on Omarchy stable; current Arch catches newer Qt early.
+        packages: [omarchy-stable, arch]
+    name: build-and-test (${{ matrix.packages }})
     steps:
+      - name: Use Omarchy stable packages
+        if: matrix.packages == 'omarchy-stable'
+        run: echo 'Server = https://stable-mirror.omarchy.org/$repo/os/$arch' > /etc/pacman.d/mirrorlist
       - name: Install dependencies
         run: >-
-          pacman -Syu --noconfirm --needed
+          pacman -Syyuu --noconfirm --needed
           appstream base-devel ccache cmake desktop-file-utils ffmpeg ffmpegthumbnailer
           git imagemagick kimageformats libavif libheif libraw ninja pkgconf poppler python qt6-base
           qt6-declarative qt6-imageformats qt6-multimedia qt6-svg qt6-wayland
@@ -73,8 +82,8 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .ccache
-          key: ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
-          restore-keys: ccache-v1-${{ runner.os }}-${{ runner.arch }}-
+          key: ccache-v1-${{ matrix.packages }}-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: ccache-v1-${{ matrix.packages }}-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Configure
         run: cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -90,7 +99,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: opengl-renders
+          name: opengl-renders-${{ matrix.packages }}
           path: |
             build/release/opengl-renders/*.png
             build/release/startup.json
@@ -119,12 +128,12 @@ jobs:
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .ccache
-          key: ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          key: ccache-v1-${{ matrix.packages }}-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
       - name: Save test results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: tests-${{ github.job }}-${{ runner.arch }}
+          name: tests-${{ github.job }}-${{ matrix.packages }}-${{ runner.arch }}
           path: '**/test-results.xml'
           if-no-files-found: ignore
           retention-days: 7
