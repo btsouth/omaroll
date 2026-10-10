@@ -57,11 +57,13 @@ ApplicationWindow {
     property string loadedMediaPath: ""
     property string loadedMediaVersion: ""
     property bool reloadingVideo: false
-    readonly property bool imageError: stillLoader.item !== null
-                                       && stillLoader.item.status === Image.Error
+    readonly property bool imageError: Session.pictureError !== ""
+                                       || (stillLoader.item !== null
+                                           && stillLoader.item.status === Image.Error)
     readonly property string playbackError: Session.isVideo ? root.videoError
         : root.imageError ? (Session.isAnimated ? "Could not display this animation"
-                                                : "Could not display this picture")
+                             : Session.pictureError !== "" ? Session.pictureError
+                             : "Could not display this picture")
         : ""
 
     // A still is fitted until it is zoomed; viewScale is then the logical
@@ -80,27 +82,39 @@ ApplicationWindow {
     // A camera raw shows the camera's preview, which can be smaller than the
     // raw. Measured by the raw instead, actual size and the details mean the
     // raw's pixels and the preview stretches over them, unless the two
-    // disagree on shape, as a preview cropped differently would.
-    readonly property bool rawMeasured: Session.isRaw && root.loadedSize.width > 0
-        && Session.rawSize.width > 0 && Session.rawSize.height > 0
-        && Math.abs(Session.rawSize.width / Session.rawSize.height
+    // disagree on shape, as a preview cropped differently would. A very large
+    // picture is shown the same way, from a copy the size of the screen.
+    readonly property size measuredSize: Session.isRaw ? Session.rawSize : Session.fullSize
+    readonly property bool measured: root.loadedSize.width > 0
+        && root.measuredSize.width > 0 && root.measuredSize.height > 0
+        && Math.abs(root.measuredSize.width / root.measuredSize.height
                     / (root.loadedSize.width / root.loadedSize.height) - 1) < 0.02
-    readonly property real sourceWidth: root.rawMeasured ? Session.rawSize.width
-                                                         : root.loadedSize.width
-    readonly property real sourceHeight: root.rawMeasured ? Session.rawSize.height
-                                                          : root.loadedSize.height
+    readonly property real sourceWidth: root.measured ? root.measuredSize.width
+                                                      : root.loadedSize.width
+    readonly property real sourceHeight: root.measured ? root.measuredSize.height
+                                                       : root.loadedSize.height
     // Once that preview would be drawn larger than its own pixels, the raw is
     // demosaiced in the background and laid over it. A preview the size of
-    // the raw, as most cameras write, never needs it.
-    readonly property bool rawDetailWanted: root.rawMeasured && root.imageReady
-        && root.loadedSize.width < Session.rawSize.width * 0.9
-        && root.effectiveScale * root.dpr * Session.rawSize.width > root.loadedSize.width * 1.05
+    // the raw, as most cameras write, never needs it. A large picture loads
+    // its full resolution the same way when there is memory for it.
+    readonly property url detailSource: Session.isRaw ? Session.rawUrl : Session.detailUrl
+    readonly property bool enlargedPastCopy: root.measured && root.imageReady
+        && root.loadedSize.width < root.measuredSize.width * 0.9
+        && root.effectiveScale * root.dpr * root.measuredSize.width > root.loadedSize.width * 1.05
+    readonly property bool detailWanted: root.enlargedPastCopy && root.detailSource.toString() !== ""
+    // Zoomed past the copy with no full resolution to load: say why, once.
+    readonly property bool detailMissing: root.enlargedPastCopy && Session.reduced
+                                          && Session.detailUrl.toString() === ""
+    onDetailMissingChanged: {
+        if (root.detailMissing && Session.pictureNote !== "") root.say(Session.pictureNote)
+    }
     // The file whose full decode last arrived, kept so zooming back out and
     // in again does not drop it and decode it twice.
-    property string rawDetailPath: ""
-    readonly property bool stillReady: stillLoader.item !== null
-                                       && (stillLoader.item.status === Image.Ready
-                                           || stillLoader.item.status === Image.Error)
+    property string detailPath: ""
+    readonly property bool stillReady: Session.pictureError !== ""
+                                       || (stillLoader.item !== null
+                                           && (stillLoader.item.status === Image.Ready
+                                               || stillLoader.item.status === Image.Error))
     property bool animationPlaying: true
 
     // Video, created on the first recording so browsing pictures never starts
@@ -1146,22 +1160,28 @@ ApplicationWindow {
                     }
                 }
 
-                // The full decode of a camera raw, over its preview.
+                // The full decode of a camera raw, over its preview, or a
+                // large picture's full resolution over its reduced copy.
+                // That one only shows while zoomed in: zoomed out, the
+                // mipmapped copy looks better than a full-size texture
+                // shrunk without mipmaps, which it would cost too much to
+                // make.
                 Image {
-                    objectName: "viewerRawDetail"
+                    objectName: "viewerDetail"
                     anchors.fill: parent
-                    source: root.visible && (root.rawDetailWanted
-                                             || root.rawDetailPath === Session.path)
-                            ? Session.rawUrl : ""
+                    source: root.visible && (root.detailWanted
+                                             || root.detailPath === Session.path)
+                            ? root.detailSource : ""
                     asynchronous: true
+                    autoTransform: !Session.isRaw
                     smooth: parent.smooth
-                    mipmap: true
+                    mipmap: Session.isRaw
                     fillMode: Image.Stretch
-                    opacity: status === Image.Ready ? 1 : 0
+                    opacity: status === Image.Ready && (Session.isRaw || root.detailWanted) ? 1 : 0
                     Behavior on opacity { NumberAnimation { duration: 140 } }
                     onStatusChanged: {
                         if (status === Image.Ready) {
-                            root.rawDetailPath = Session.path
+                            root.detailPath = Session.path
                         }
                     }
                 }

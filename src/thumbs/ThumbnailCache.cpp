@@ -3,6 +3,7 @@
 #include "pdf/PdfSupport.h"
 #include "sources/CameraRaw.h"
 #include "sources/CaptureScanner.h"
+#include "sources/ImageBudget.h"
 #include "sources/ThumbnailSource.h"
 
 #include <QCoreApplication>
@@ -168,6 +169,12 @@ QImage ThumbnailCache::renderImage(const QString& path, const QSize& pixelSize, 
       target = original;
     }
     reader.setScaledSize(target);
+  }
+  // A very large PNG or TIFF decodes whole before it is scaled; such decodes
+  // take turns rather than running on every worker at once.
+  const ImageBudget::LargeDecode decode(reader, [cancelled] { return isCancelled(cancelled); });
+  if (!decode.allowed()) {
+    return {};
   }
 
   // An animated image takes the same percent-in frame ffmpegthumbnailer gives

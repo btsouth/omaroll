@@ -3,6 +3,7 @@
 #include "matte/HueExtractor.h"
 #include "edit/CopyOutput.h"
 #include "sources/CameraRaw.h"
+#include "sources/ImageBudget.h"
 
 #include <QClipboard>
 #include <QColorSpace>
@@ -392,7 +393,9 @@ MatteComposer::Result MatteComposer::saveAndCopy(const QString& path, Matte matt
   // Match the RAW preview used by the library and the sheet.
   const QImage source = CameraRaw::isRawFile(path) ? CameraRaw::readPreview(path) : reader.read();
   if (source.isNull()) {
-    outcome.error = QStringLiteral("Could not read %1").arg(info.fileName());
+    outcome.error = CameraRaw::isRawFile(path) ? QString()
+                                               : ImageBudget::decodeRefusal(ImageBudget::estimate(path));
+    if (outcome.error.isEmpty()) outcome.error = QStringLiteral("Could not read %1").arg(info.fileName());
     return outcome;
   }
   const QImage image = compose(source, matte, aspect, paddingFraction);

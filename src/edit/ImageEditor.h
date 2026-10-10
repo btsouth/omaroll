@@ -67,6 +67,9 @@ public:
   // The post-EXIF-orientation pixel size, so the editor can label output sizes
   // and offer sensible presets. Reads only the header plus the orientation tag.
   Q_INVOKABLE QSize orientedSize(const QString& path) const;
+  // Why a sheet's preview of |path| is refused for its size, or empty. Reads
+  // only the header.
+  Q_INVOKABLE QString previewProblem(const QString& path) const;
 
   // Writes "<stem>-edited.<ext>" beside the original, asynchronously. Crop
   // values are fractions (0..1) of the rotated-and-flipped frame; width or

@@ -74,6 +74,19 @@ Item {
     property real imageSourceWidth: 0
     property real imageSourceHeight: 0
     property bool stillReady: false
+    // How the current still is loaded; see CaptureModel::readPicture.
+    property var picture: ({})
+    Connections {
+        target: Library
+        function onPictureRead(path, picture) {
+            if (path !== root.path) return
+            root.picture = picture
+            if (picture.error) {
+                root.playbackError = picture.error
+                root.stillReady = true
+            }
+        }
+    }
     readonly property bool imageReady: visible && !isVideo && !isDocument
                                        && stillLoader.item !== null
                                        && stillLoader.item.status === Image.Ready
@@ -386,7 +399,8 @@ Item {
         subtitleFiles = Subtitles.files(path)
         const keepActionFocus = visible && actionNavigationActive
         const previousActionId = focusedActionId
-        playbackError = ""
+        // Reopening a picture that cannot be decoded keeps saying why.
+        playbackError = picture.path === path && picture.error ? picture.error : ""
         pdfPage = 1
         if (!visible) {
             // A preview opens on the media alone: the inspector is asked for.
@@ -735,6 +749,8 @@ Item {
         animationPlaying = true
         imageSourceWidth = 0
         imageSourceHeight = 0
+        picture = ({})
+        if (path !== "") Library.readPicture(path)
         // The mode and its selection belong to the document that was open.
         pdfSelectMode = false
         if (isDocument) {
@@ -1291,8 +1307,11 @@ Item {
                 id: staticStill
                 Image {
                     id: staticImage
+                    objectName: "detailStill"
+                    // Waits for the header to be read, so a very large
+                    // picture is shown from its reduced copy instead.
                     source: root.visible && !root.isVideo && root.path !== ""
-                            ? Library.fileUrl(root.path) : ""
+                            && root.picture.path === root.path ? root.picture.source : ""
                     asynchronous: true
                     autoTransform: true
                     smooth: true
@@ -1319,13 +1338,42 @@ Item {
                     }
                     onStatusChanged: {
                         if (status === Image.Ready) {
-                            root.imageSourceWidth = sourceSize.width
-                            root.imageSourceHeight = sourceSize.height
+                            // A reduced copy is measured by the picture itself.
+                            const reduced = root.picture.reduced === true
+                            root.imageSourceWidth = reduced ? root.picture.width : sourceSize.width
+                            root.imageSourceHeight = reduced ? root.picture.height : sourceSize.height
                             root.stillReady = true
                             Library.readRawSize(root.path, source)
                         } else if (status === Image.Error) {
-                            root.playbackError = "Could not display this image"
+                            root.playbackError = root.picture.error ? root.picture.error
+                                                                    : "Could not display this image"
                             root.stillReady = true
+                        }
+                    }
+
+                    // A reduced copy enlarged past its own pixels loads the
+                    // full resolution over it when there is memory for it,
+                    // and shows it only while zoomed in that far.
+                    Image {
+                        objectName: "detailFullResolution"
+                        readonly property bool enlarged: root.picture.reduced === true
+                            && staticImage.status === Image.Ready
+                            && staticImage.width * Screen.devicePixelRatio
+                               > staticImage.implicitWidth * 1.05
+                        readonly property bool wanted: enlarged && root.picture.detail !== undefined
+                        readonly property bool missing: enlarged && root.picture.detail === undefined
+                        property string loadedPath: ""
+                        anchors.fill: parent
+                        source: root.visible && root.picture.detail !== undefined
+                                && (wanted || loadedPath === root.path) ? root.picture.detail : ""
+                        asynchronous: true
+                        autoTransform: true
+                        smooth: true
+                        fillMode: Image.Stretch
+                        opacity: status === Image.Ready && wanted ? 1 : 0
+                        onStatusChanged: if (status === Image.Ready) loadedPath = root.path
+                        onMissingChanged: {
+                            if (missing && root.picture.note) root.statusRequested(root.picture.note)
                         }
                     }
                 }

@@ -362,6 +362,13 @@ Raws are never written: annotation, recognition, ordinary image editors, backgro
 print and corrections are not offered for them, and Convert · resize makes a
 JPEG or PNG beside the raw instead.
 
+Very large pictures, such as 150-megapixel scans, open from a copy the size of
+the screen, and full resolution loads when you zoom past it. Omaroll lets one
+picture use up to an eighth of the computer's memory, between 256 MiB and
+2 GiB; a picture that needs more says how much. Set `QT_IMAGEIO_MAXALLOC` to a
+number of megabytes to choose the limit yourself. JPEG always opens, at a
+reduced size if necessary; other formats have to fit the limit to open.
+
 Videos: MP4, M4V, F4V, MKV, WebM, MOV, AVI, DivX, MPEG, VOB, WMV, ASF, FLV,
 Ogg video, OGM, 3GP, 3G2 and MTS/M2TS. Playback uses Qt's FFmpeg backend. An
 optional action can still hand the file to mpv.

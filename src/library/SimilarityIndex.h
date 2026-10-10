@@ -76,7 +76,8 @@ private:
   void setScanning(bool scanning);
   void setProgress(int completed, int total);
   [[nodiscard]] QList<Candidate> candidates() const;
-  [[nodiscard]] static CachedHash hashFile(const Candidate& candidate);
+  [[nodiscard]] static CachedHash hashFile(const Candidate& candidate,
+                                           const std::atomic_bool* cancel = nullptr);
 
   CaptureModel* m_model = nullptr;
   QFutureWatcher<Result> m_watcher;

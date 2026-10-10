@@ -1,6 +1,7 @@
 #include "edit/EditProvider.h"
 
 #include "edit/ImageEditor.h"
+#include "sources/ImageBudget.h"
 
 #include <QImageReader>
 #include <QMetaObject>
@@ -60,7 +61,9 @@ public:
       reader.setScaledSize(scaled);
     }
 
-    const QImage source = reader.read();
+    // Previews follow sliders, several at a time; whole decodes of a very
+    // large PNG or TIFF take turns.
+    const QImage source = ImageBudget::readBounded(reader, [this] { return m_cancelled.load(); });
     if (source.isNull()) {
       m_error = QStringLiteral("Could not read %1").arg(m_path);
       finishOnOwnThread();

@@ -12,6 +12,7 @@
 #include "library/CaptureFilterModel.h"
 #include "library/CaptureModel.h"
 #include "library/DuplicateIndex.h"
+#include "library/FolderTreeModel.h"
 #include "library/MediaInspector.h"
 #include "library/MediaMetadataIndex.h"
 #include "library/SimilarityIndex.h"
@@ -23,6 +24,7 @@
 #include "search/QrDetector.h"
 #include "subtitles/SubtitleIndex.h"
 #include "theme/OmarchyTheme.h"
+#include "thumbs/LargeImageProvider.h"
 #include "thumbs/ThumbnailProvider.h"
 #include "viewer/MprisService.h"
 #include "viewer/ViewerSession.h"
@@ -314,11 +316,12 @@ int main(int argc, char** argv) {
   QQmlEngine engine;
   engine.addImportPath(QStringLiteral(OMAROLL_QML_IMPORT_PATH));
   auto* thumbnails = new ThumbnailProvider; auto* mattes = new MatteProvider;
-  auto* edits = new EditProvider; auto* pdfs = new PdfProvider;
+  auto* edits = new EditProvider; auto* pdfs = new PdfProvider; auto* large = new LargeImageProvider;
   engine.addImageProvider(ThumbnailProvider::kProviderId, thumbnails);
   engine.addImageProvider(MatteProvider::kProviderId, mattes);
   engine.addImageProvider(EditProvider::kProviderId, edits);
   engine.addImageProvider(PdfProvider::kProviderId, pdfs);
+  engine.addImageProvider(LargeImageProvider::kProviderId, large);
   OmarchyTheme theme(profile.filePath(u"state"_s), profile.filePath(u"config"_s));
   AppSettings settings; ActionLauncher actions; ActionRegistry registry(&actions);
   auto* shared = engine.rootContext();
@@ -495,6 +498,8 @@ int main(int argc, char** argv) {
       context->setContextProperty(u"Matte"_s, new MatteComposer(owner)); context->setContextProperty(u"ImageEdit"_s, new ImageEditor(owner));
       context->setContextProperty(u"Qr"_s, new QrDetector(captures, owner)); context->setContextProperty(u"Subtitles"_s, new SubtitleIndex(owner));
       context->setContextProperty(u"Tailscale"_s, new TailscalePeers(owner));
+      auto* folders = new FolderTreeModel(owner); folders->bind(captures, filtered);
+      context->setContextProperty(u"FolderTree"_s, folders);
       context->setContextProperty(u"InitialPaths"_s, QStringList()); context->setContextProperty(u"InitialFolderPath"_s, QString());
       gallery = create("Main", context, galleryRoot); run.window = gallery;
       if (gallery) {
@@ -613,7 +618,7 @@ int main(int argc, char** argv) {
   if (viewer) viewer->close();
   if (galleryRoot) gallery->close();
   viewerRoot.reset(); galleryRoot.reset(); galleryServices.reset();
-  thumbnails->shutdown(); mattes->shutdown(); edits->shutdown(); pdfs->shutdown();
+  thumbnails->shutdown(); mattes->shutdown(); edits->shutdown(); pdfs->shutdown(); large->shutdown();
   if (!QThreadPool::globalInstance()->waitForDone(30000)) run.fatal = u"Image worker teardown timeout"_s;
   result[u"samples"_s] = run.samples; result[u"diagnostics"_s] = run.diagnostics;
   result[u"failed"_s] = run.failed || !run.fatal.isEmpty(); result[u"error"_s] = run.fatal;

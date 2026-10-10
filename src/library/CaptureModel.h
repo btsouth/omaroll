@@ -109,6 +109,12 @@ public:
   // raw is shown from its embedded preview instead; see CameraRaw.
   Q_INVOKABLE QUrl fileUrl(const QString& path) const;
 
+  // What a still preview loads, read on a worker and answered by
+  // pictureRead(): {path, source}, and for a very large picture also
+  // reduced, width and height (its own upright size), detail (its full
+  // resolution, when that can be shown), note and error. See ImageBudget.
+  Q_INVOKABLE void readPicture(const QString& path);
+
   // A camera raw's own size, upright, which its preview may be smaller than.
   // Read on a worker and answered by rawSizeRead(); nothing for other files.
   Q_INVOKABLE void readRawSize(const QString& path, const QUrl& source);
@@ -121,6 +127,7 @@ public:
 signals:
   void metadataIndexingChanged();
   void rawSizeRead(const QString& path, const QUrl& source, QSize size);
+  void pictureRead(const QString& path, const QVariantMap& picture);
   void countChanged();
   void scanningChanged();
   void automaticFoldersChanged();
