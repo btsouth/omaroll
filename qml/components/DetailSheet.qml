@@ -42,6 +42,11 @@ Item {
     // backend just to browse pictures. Loader creation is synchronous.
     readonly property var player: playerLoader.item
     readonly property var audio: player ? player.audioOutput : null
+    // What the player opens. Since Qt 6.12 the player stops on every write to
+    // its source, even of the same file, so it only follows this property,
+    // which changes when the file does.
+    readonly property url videoSource: root.visible && root.isVideo && root.path !== ""
+                                       ? Library.fileUrl(root.path) : ""
     onIsVideoChanged: if (isVideo) {
         Settings.prepareVideoPlayback()
         playerLoader.active = true
@@ -1456,8 +1461,7 @@ Item {
                         id: mediaPlayer
                         objectName: "videoPlayer"
                         property string resumeIdentity: ""
-                        source: root.visible && root.isVideo && root.path !== ""
-                                ? Library.fileUrl(root.path) : ""
+                        source: root.videoSource
                         videoOutput: videoSurface.item
                         audioOutput: AudioOutput {
                             volume: Settings.videoVolume

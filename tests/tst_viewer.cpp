@@ -2042,6 +2042,19 @@ private slots:
     player->pause();
   }
 
+  // Qt 6.12's player stops on any write to its source, so the session saying
+  // the same file again must leave playback alone.
+  void videoKeepsPlayingWhenTheSameFileIsAnnounced() {
+    open({media(QStringLiteral("clip.mp4"))});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY_WITH_TIMEOUT(player->playbackState() == QMediaPlayer::PlayingState, 5000);
+    emit m_session->currentChanged();
+    QTest::qWait(200);
+    QCOMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+    player->pause();
+  }
+
   // Media keys and the shell's player controls reach a playing video, and the
   // player leaves the bus with it.
   void videoIsControlledOverMpris() {
