@@ -120,6 +120,12 @@ ApplicationWindow {
     // Video, created on the first recording so browsing pictures never starts
     // the multimedia backend.
     readonly property var player: playerLoader.item
+    // What the player opens. Since Qt 6.12 the player stops on every write to
+    // its source, even of the same file, so it only follows this property,
+    // which changes when the file does. A binding on the player itself is
+    // rewritten whenever the session notifies, which cancels autoplay.
+    readonly property url videoSource: root.visible && Session.isVideo && !root.reloadingVideo
+                                       ? Session.url : ""
     readonly property bool playing: player !== null
                                     && player.playbackState === MediaPlayer.PlayingState
     property bool resumeAvailable: false
@@ -1242,7 +1248,7 @@ ApplicationWindow {
                     id: mediaPlayer
                     objectName: "viewerPlayer"
                     property string resumeIdentity: ""
-                    source: root.visible && Session.isVideo && !root.reloadingVideo ? Session.url : ""
+                    source: root.videoSource
                     videoOutput: videoSurface.item
                     audioOutput: AudioOutput {
                         volume: Settings.videoVolume
