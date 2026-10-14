@@ -22,62 +22,7 @@ See [project status](STATUS.md) for the latest release and current work.
   and load full resolution whole when it fits
   ([#115](https://github.com/btsouth/omaroll/issues/115)).
 
-## 1.10.0 and 1.11.0 (released)
-
-- Multiple viewers, with repeated opens bringing the existing viewer forward.
-  On Hyprland, viewers opened together tile instead of covering each other.
-- Only the last-used video viewer is heard; the others keep playing silently.
-- Images and videos without extensions use content detection for opening,
-  navigation, library previews and thumbnails.
-- Portrait crop presets (3:4, 2:3, 9:16), grouped correction controls, and
-  subtitle timing buttons that leave room for the video clock and seek bar.
-
-See the [changelog](../CHANGELOG.md) for release details and contributor credits.
-
-## 1.9.1 (released)
-
-- Compact library preview headers, an optional inspector and an overflow menu.
-- Responsive video controls and Resume/Restart choices.
-- Caption edits saved before navigation, and keyboard focus restored after
-  nested actions.
-
-## 1.9.0 (released)
-
-- A quick image and video viewer that opens files without building the library,
-  browses neighboring files, zooms and pans, plays video, and opens the library
-  on Enter.
-- PDF text selection: drag across a page and copy just the selected words.
-- Correct PDF page sizing, readable secondary text in both themes, and document
-  controls that fit narrow windows.
-- Hidden unavailable audio and subtitle controls, plus wheel and touchpad
-  handling that keeps panning separate from zoom.
-- A demo PDF and a render matrix covering every view in the dark palette,
-  the main controls in the light palette, and narrow windows.
-
-See the [release](https://github.com/btsouth/omaroll/releases/tag/v1.9.0)
-and [changelog](../CHANGELOG.md#190).
-
-## 1.8.0 (released)
-
-Ten focused PRs, each squash merged with green CI, the isolated core and UI
-suites and the OpenGL runner:
-
-- Lossless JPEG rotate and flip (jpegtran, with fallbacks for crops, resizes,
-  non-JPEG and EXIF-oriented sources).
-- Crop aspect presets (Free/Original/1:1/4:3/3:2/16:9) held while the frame is
-  dragged, and a ±15° straighten that fills the frame.
-- Correct a selection (B): rotate, flip or resize a whole selection as copies.
-- Verification that a transparent PNG keeps its alpha and a 400-megapixel
-  resize stays inside the output budget.
-- PDF continuous scroll with Fit width / Fit page modes.
-- Print pictures and PDFs through CUPS `lp`.
-- Ctrl+Z undo for favourites, hidden flags, ratings and captions.
-- Sidecar subtitle timing nudge (±0.5 s).
-- Slideshow interval and shuffle options.
-
-[Released](https://github.com/btsouth/omaroll/releases/tag/v1.8.0) from PR #45
-(8f216b8); the published artifacts were verified against SHA256SUMS. Physical
-desktop acceptance was not recorded for this tag and remains in SBS-1121.
+Shipped work is in the [changelog](../CHANGELOG.md).
 
 ## Open questions
 
@@ -109,19 +54,6 @@ Considered for 1.8.0 and left out; revisit only with a fresh decision:
 - **A duplicate/similar review flow.** Provided by the filters, Keep selected
   and compare.
 - **Target-monitor fullscreen.** Hyprland owns window placement.
-
-## Shipped before 1.8.0
-
-- Crop, rotate, flip and resize with Save a copy, Copy region and safe
-  collision handling; orientation baked in and ICC preserved.
-- Compare with synchronized zoom and pan, from a selection or a
-  duplicate/similar set.
-- Albums, nested tags, captions, ratings, favourites, hidden files and saved
-  views, with rename that keeps membership and a versioned backup/restore.
-- Favourites, ratings and captions follow an external move or rename.
-- Video volume, mute and resume; sidecar `.srt`/`.vtt` subtitles.
-- PDF page navigation, page-number jump, text search with match stepping, and
-  Copy page text.
 
 ## Reliability, scale and adoption
 

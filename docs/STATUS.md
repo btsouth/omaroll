@@ -2,28 +2,28 @@
 
 ## Latest release
 
-[Omaroll 1.15.3](https://github.com/btsouth/omaroll/releases/tag/v1.15.3), dated
-10 October 2026. See the [changelog](../CHANGELOG.md#1153) for what it includes.
+[Omaroll 1.16.0](https://github.com/btsouth/omaroll/releases/tag/v1.16.0), dated
+13 October 2026. See the [changelog](../CHANGELOG.md#1160) for what it includes.
 
-The release provides an x86_64 Arch package, source archive and PKGBUILD, with
-checksums and signed build provenance. Installation and verification commands
-are in the [README](../README.md#install-or-update).
+The release provides x86_64 and aarch64 Arch packages, a source archive and
+PKGBUILD, with checksums and signed build provenance. Installation and
+verification commands are in the [README](../README.md#install-or-update).
 
 ## Current work
 
-Version 1.15.3 starts on Omarchy's stable and rc channels again. 1.15.2 was
-built against Qt 6.12, which those channels don't ship yet; releases are now
-built against Omarchy's stable packages. Version 1.15.2 opens very large
-pictures, such as 150-megapixel scans, from a copy the size of the screen and
-loads full resolution when zoomed in. It also keeps videos playing with Qt
-6.12. Version 1.15.1 added fill mode (Shift+W) to
-the quick viewer. Version 1.15.0 added an optional library folder sidebar,
-viewer looping, audio track and subtitle timing controls, fit modes and
-shortcut help, and grid filenames, pointer zoom, path copying and a resizable
-preview. Physical desktop acceptance on Omarchy covered viewer tiling, video
-audio, media keys and clipboard paste into other apps in an earlier release;
-1.15.2 and 1.15.3 were checked in an isolated Omarchy desktop, not on physical
-hardware.
+Version 1.16.0 adds aarch64 packages. They are built and tested on Arch Linux
+ARM in CI, the same way as x86_64, but have not been run on ARM hardware.
+x86_64 packages are built against Omarchy's stable packages so they start on
+the stable and rc channels; Omarchy has no aarch64 stable mirror to build
+against.
+
+Version 1.15.2 opens very large pictures, such as 150-megapixel scans, from a
+copy the size of the screen and loads full resolution when zoomed in. Version
+1.15.0 added an optional library folder sidebar, viewer looping, audio track
+and subtitle timing controls, fit modes and shortcut help. Physical desktop
+acceptance on Omarchy covered viewer tiling, video audio, media keys and
+clipboard paste into other apps in an earlier release; 1.15.2 and later were
+checked in an isolated Omarchy desktop, not on physical hardware.
 
 Use the [roadmap](ROADMAP.md) for future work and open decisions.
 

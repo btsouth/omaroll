@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.16.0
+
+Omaroll runs on ARM.
+
+### Added
+
+- Packages for aarch64 (ARM64) Omarchy and Arch Linux, built and tested the
+  same way as the x86_64 package. The package repository installs the right
+  one for your machine.
+
+[Install or update](https://github.com/btsouth/omaroll#install-or-update).
+
 ## 1.15.3
 
 Omaroll starts again on Omarchy's stable and rc channels.
