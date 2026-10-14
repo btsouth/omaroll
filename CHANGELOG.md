@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.16.1
+
+Photos use less memory, and browsing a folder stays light.
 
 ### Changed
 
@@ -10,6 +12,8 @@
   now preloaded instead of one.
 - Memory from pictures you have moved past is returned to the system, so
   browsing a folder no longer keeps growing.
+
+[Install or update](https://github.com/btsouth/omaroll#install-or-update).
 
 ## 1.16.0
 

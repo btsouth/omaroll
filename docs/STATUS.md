@@ -2,14 +2,19 @@
 
 ## Latest release
 
-[Omaroll 1.16.0](https://github.com/btsouth/omaroll/releases/tag/v1.16.0), dated
-14 October 2026. See the [changelog](../CHANGELOG.md#1160) for what it includes.
+[Omaroll 1.16.1](https://github.com/btsouth/omaroll/releases/tag/v1.16.1), dated
+14 October 2026. See the [changelog](../CHANGELOG.md#1161) for what it includes.
 
 The release provides x86_64 and aarch64 Arch packages, a source archive and
 PKGBUILD, with checksums and signed build provenance. Installation and
 verification commands are in the [README](../README.md#install-or-update).
 
 ## Current work
+
+Version 1.16.1 opens photos larger than the screen from a copy the size of the
+screen, preloads both neighbours as copies and returns freed pictures to the
+system. Its memory and quality measurements ran in an isolated desktop that
+renders in software, not on a physical graphics card.
 
 Version 1.16.0 adds aarch64 packages. They are built and tested on Arch Linux
 ARM in CI, the same way as x86_64, but have not been run on ARM hardware.
