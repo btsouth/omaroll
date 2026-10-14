@@ -89,6 +89,8 @@ jobs:
             packages: arch
             cache: aarch64
             runner: ubuntu-24.04-arm
+            # The pacman download sandbox does not work in this container.
+            pacman_flags: --disable-sandbox
             container: menci/archlinuxarm:base-devel@sha256:5dda87d4b360dff28fe5ce27a20041949aa770a785c52daf82fc9956b2534c39
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container }}
@@ -100,10 +102,9 @@ jobs:
         if: matrix.packages == 'omarchy-stable'
         run: echo 'Server = https://stable-mirror.omarchy.org/$repo/os/$arch' > /etc/pacman.d/mirrorlist
       - name: Install dependencies
-        # -uu lets the stable snapshot downgrade packages newer than it. The
-        # pacman download sandbox does not work in the ARM container.
+        # -uu lets the stable snapshot downgrade packages newer than it.
         run: >-
-          pacman -Syyuu --disable-sandbox --noconfirm --needed
+          pacman -Syyuu ${{ matrix.pacman_flags }} --noconfirm --needed
           appstream base-devel ccache cmake desktop-file-utils ffmpeg ffmpegthumbnailer
           git github-cli imagemagick kimageformats libavif libheif libraw ninja pkgconf poppler qt6-base
           qt6-declarative qt6-imageformats qt6-multimedia qt6-svg qt6-wayland
