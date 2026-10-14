@@ -50,10 +50,7 @@ private:
     if (!estimate.valid()) return {};
     // The scaled size is applied before the EXIF orientation is.
     const bool sideways = estimate.oriented != estimate.stored;
-    const auto targetFor = [&estimate](int edge) {
-      return estimate.oriented.scaled(edge, edge, Qt::KeepAspectRatio)
-          .boundedTo(estimate.oriented).expandedTo(QSize(1, 1));
-    };
+    const auto targetFor = [&estimate](int edge) { return ImageBudget::reducedSize(estimate, edge); };
     QSize target = targetFor(m_edge);
     if (estimate.scalable) {
       // Under a low QT_IMAGEIO_MAXALLOC even the reduced decode can be
@@ -64,7 +61,6 @@ private:
         if (ImageBudget::bytesAt(estimate, sideways ? target.transposed() : target) <= limit) break;
       }
       reader.setScaledSize(sideways ? target.transposed() : target);
-      return reader.read();
     }
     // Takes its turn with background work decoding very large pictures.
     QImage image = ImageBudget::readBounded(
@@ -89,7 +85,7 @@ private:
 
 } // namespace
 
-LargeImageProvider::LargeImageProvider() { m_pool.setMaxThreadCount(1); }
+LargeImageProvider::LargeImageProvider() { m_pool.setMaxThreadCount(2); }
 
 LargeImageProvider::~LargeImageProvider() { shutdown(); }
 

@@ -99,7 +99,9 @@ ViewerSession::ViewerSession(QObject* parent) : QObject(parent) {
       // A replacement after the header was read must not inherit its budget
       // approval or cache identity. This checks metadata, never image headers.
       if (!candidate.path.isEmpty() && FileVersion::key(candidate.path) == candidate.version) {
-        urls[i] = ::imageUrl(candidate.path, candidate.version);
+        urls[i] = candidate.edge > 0
+                      ? ImageBudget::reducedUrl(candidate.path, candidate.version, candidate.edge)
+                      : ::imageUrl(candidate.path, candidate.version);
       }
     }
     m_neighbourPictures.clear();
@@ -193,7 +195,7 @@ void ViewerSession::startPictureProbe() {
 
 void ViewerSession::applyPicture(const PictureResult& result) {
   m_pictureKnown = true;
-  m_plan = ImageBudget::plan(result.estimate);
+  m_plan = ImageBudget::plan(result.estimate, ImageBudget::reducedEdge());
   m_reducedEdge = m_plan.reduced ? ImageBudget::reducedEdge(m_plan) : 0;
 }
 
@@ -362,7 +364,16 @@ QString ViewerSession::neighbourPath(int offset) const {
 
 QUrl ViewerSession::neighbourImageUrl(int offset) const {
   const QString neighbour = neighbourPath(offset);
-  return ::imageUrl(neighbour, FileVersion::key(neighbour));
+  const QString version = FileVersion::key(neighbour);
+  // A picture larger than the screen is shown, and preloaded, as its copy.
+  const auto known = m_neighbourPictures.constFind(neighbour);
+  if (known != m_neighbourPictures.constEnd() && known->version == version) {
+    const ImageBudget::Plan plan = ImageBudget::plan(known->estimate, ImageBudget::reducedEdge());
+    if (plan.reduced && plan.error.isEmpty()) {
+      return ImageBudget::reducedUrl(neighbour, version, ImageBudget::reducedEdge(plan));
+    }
+  }
+  return ::imageUrl(neighbour, version);
 }
 
 QString ViewerSession::thumbnailUrl(int index, qreal devicePixelRatio) const {
@@ -614,19 +625,23 @@ void ViewerSession::refreshPreloads() {
   if (m_pendingPreloadPaths[1] == path() || m_pendingPreloadPaths[1] == m_pendingPreloadPaths[0]) {
     m_pendingPreloadPaths[1].clear();
   }
+  // Screens are read here, on the GUI thread.
+  m_preloadEdge = ImageBudget::reducedEdge();
   std::array<QUrl, 2> retained;
   for (size_t i = 0; i < retained.size(); ++i) {
     const QString& neighbour = m_pendingPreloadPaths[i];
     if (neighbour.isEmpty()) continue;
+    const QString version = FileVersion::key(neighbour);
     for (const QUrl& approved : m_preloadUrls) {
-      if (approved == ::imageUrl(neighbour, FileVersion::key(neighbour))) {
+      if (approved == ::imageUrl(neighbour, version)
+          || approved == ImageBudget::reducedUrl(neighbour, version, m_preloadEdge)) {
         retained[i] = approved;
         break;
       }
     }
   }
   // Keep only still-relevant approvals while fresh headers are being probed.
-  // The displayed Image has already switched to its original-resolution URL.
+  // The displayed Image has already switched to its own URL.
   setPreloadUrls(retained);
   startPreloadProbe();
 }
@@ -637,13 +652,14 @@ void ViewerSession::startPreloadProbe() {
   m_preloadProbeRunning = true;
   const auto paths = m_pendingPreloadPaths;
   const quint64 generation = m_preloadGeneration;
-  m_preloadProbe.setFuture(QtConcurrent::run([paths, generation] {
-    return probePreloads(paths, generation);
+  const int edge = m_preloadEdge;
+  m_preloadProbe.setFuture(QtConcurrent::run([paths, generation, edge] {
+    return probePreloads(paths, generation, edge);
   }));
 }
 
 ViewerSession::PreloadResult ViewerSession::probePreloads(const std::array<QString, 2>& paths,
-                                                         quint64 generation) {
+                                                         quint64 generation, int edge) {
   PreloadResult result;
   result.generation = generation;
   // A decoded-pixel estimate per session, not a process RSS limit. Decoder
@@ -667,9 +683,17 @@ ViewerSession::PreloadResult ViewerSession::probePreloads(const std::array<QStri
     const ImageBudget::Estimate estimate = ImageBudget::estimate(reader);
     if (!estimate.valid()) continue;
     result.pictures[i] = {path, version, estimate};
-    // Shown from a reduced copy, never preloaded whole.
+    // Too large to show whole: its copy waits until it is stepped onto.
     if (ImageBudget::plan(estimate).reduced) continue;
-    const QSize size = estimate.stored;
+    // Larger than the screen: the copy the viewer shows, counted at the size
+    // its decode allocates.
+    const bool reduced = ImageBudget::plan(estimate, edge).reduced;
+    QSize size = estimate.stored;
+    if (reduced) {
+      const QSize copy = ImageBudget::reducedSize(estimate, edge);
+      size = ImageBudget::decodedSize(estimate,
+                                      estimate.oriented != estimate.stored ? copy.transposed() : copy);
+    }
     const QImage::Format format = reader.imageFormat();
     const int depth = QImage::toPixelFormat(format).bitsPerPixel();
     const quint64 bytesPerPixel = depth <= 0 ? 16 : std::max(4, (depth + 7) / 8);
@@ -679,7 +703,7 @@ ViewerSession::PreloadResult ViewerSession::probePreloads(const std::array<QStri
     if (width > remaining / bytesPerPixel / height) continue;
     if (FileVersion::key(path) != version) continue;
     remaining -= width * height * bytesPerPixel;
-    result.candidates[i] = {path, version};
+    result.candidates[i] = {path, version, reduced ? edge : 0};
   }
   return result;
 }

@@ -750,9 +750,10 @@ private slots:
     const QString next = dir.filePath(QStringLiteral("next.") + QString::fromLatin1(nextCodec));
     const QString previous = dir.filePath(QStringLiteral("previous.") + QString::fromLatin1(previousCodec));
     {
-      // Six megapixels: 24 MB at 32 bits, 48 MB at 64 bits. Release the
-      // fixture writer's storage before probing the viewer's own policy.
-      QImage image(3000, 2000, format);
+      // Within the screen's copy, so shown whole: 17 MB at 32 bits, 35 MB at
+      // 64 bits. Release the fixture writer's storage before probing the
+      // viewer's own policy.
+      QImage image(2560, 1700, format);
       image.fill(Qt::red);
       QVERIFY(image.save(next, nextCodec.constData()));
       QVERIFY(image.save(previous, previousCodec.constData()));
@@ -764,6 +765,35 @@ private slots:
     QCoreApplication::sendPostedEvents();
     QCOMPARE(session.nextPreloadUrl().toLocalFile(), next);
     QCOMPARE(!session.previousPreloadUrl().isEmpty(), previousAllowed);
+  }
+
+  // Photos larger than the screen are preloaded as the copies the viewer
+  // shows, so two fit the budget that one whole decode would fill.
+  void neighbourPreloadsAreTheScreensCopies() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString next = dir.filePath(QStringLiteral("next.jpg"));
+    const QString previous = dir.filePath(QStringLiteral("previous.jpg"));
+    {
+      // 48 MB each whole; their copies decode at 2500 x 1875.
+      QImage image(4000, 3000, QImage::Format_RGB32);
+      image.fill(QColor(200, 120, 40));
+      QVERIFY(image.save(next, nullptr, 85));
+      QVERIFY(image.save(previous, nullptr, 85));
+    }
+    ViewerSession session;
+    session.open({media(QStringLiteral("Shot 1.jpg")), next, previous});
+    QVERIFY(QThreadPool::globalInstance()->waitForDone(5000));
+    QCoreApplication::sendPostedEvents();
+    const QString prefix = QStringLiteral("image://large/");
+    QVERIFY(session.nextPreloadUrl().toString().startsWith(prefix));
+    QVERIFY(session.previousPreloadUrl().toString().startsWith(prefix));
+    QCOMPARE(session.nextPreloadUrl(), session.neighbourImageUrl(1));
+    QCOMPARE(session.previousPreloadUrl(), session.neighbourImageUrl(-1));
+    // Stepping on shows the copy that was preloaded.
+    const QUrl preloaded = session.nextPreloadUrl();
+    QVERIFY(session.step(1));
+    QCOMPARE(session.imageUrl(), preloaded);
   }
 
   void neighbourPreloadsSkipAnimationVideoAndUnknownDimensions() {
@@ -3444,6 +3474,40 @@ private slots:
     QVERIFY(m_session->imageUrl().toString().startsWith(QStringLiteral("image://large/")));
     QTRY_VERIFY(prop("imageReady").toBool());
     QCOMPARE(prop("sourceWidth").toReal(), 3000.0);
+  }
+
+  // A photo larger than the screen opens from the screen's copy, as a very
+  // large one does, and zooming in loads its full resolution.
+  void aPhotoLargerThanTheScreenOpensFromACopy() {
+    const auto restore = qScopeGuard([this] {
+      m_window->close();
+      m_session->clear();
+    });
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString photo = dir.filePath(QStringLiteral("photo.jpg"));
+    QImage image(4000, 3000, QImage::Format_RGB32);
+    image.fill(QColor(70, 130, 90));
+    QVERIFY(image.save(photo, nullptr, 85));
+
+    open({photo});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QVERIFY(m_session->reduced());
+    QVERIFY(m_session->pictureNote().isEmpty());
+    const int edge = ImageBudget::reducedEdge();
+    QVERIFY(item(QStringLiteral("viewerImage"))->property("source").toUrl().toString()
+                .startsWith(QStringLiteral("image://large/")));
+    QCOMPARE(prop("loadedSize").toSize(), ImageBudget::reducedSize(ImageBudget::estimate(photo), edge));
+    QCOMPARE(prop("sourceWidth").toReal(), 4000.0);
+    QCOMPARE(prop("sourceHeight").toReal(), 3000.0);
+    QVERIFY(!prop("detailWanted").toBool());
+
+    QTest::keyClick(m_window, Qt::Key_1);
+    QTRY_VERIFY(prop("detailWanted").toBool());
+    QQuickItem* detail = item(QStringLiteral("viewerDetail"));
+    QTRY_COMPARE(detail->property("status").toInt(), 1);
+    QCOMPARE(detail->property("sourceSize").toSize(), QSize(4000, 3000));
+    QTRY_COMPARE(detail->property("opacity").toReal(), 1.0);
   }
 
   // Past Qt's limit, a JPEG still opens from its reduced copy and says why

@@ -20,9 +20,9 @@ class QImageReader;
 // before it is scaled, so past the old 256 MiB those decodes take turns: one
 // at a time, process-wide. JPEG decodes at a reduced size and rarely needs to.
 //
-// The viewers show a very large picture as a copy the size of the screen, at
-// its true dimensions, and only load full resolution once zoomed past that
-// copy. A full decode never reaches the graphics card unless it fits.
+// The viewers show a picture larger than the screen as a copy the size of the
+// screen, at its true dimensions, and only load full resolution once zoomed
+// past that copy. A full decode never reaches the graphics card unless it fits.
 namespace ImageBudget {
 
 inline constexpr qint64 kMiB = 1024 * 1024;
@@ -79,6 +79,8 @@ struct Estimate {
 // over half the picture can mean a whole decode. Other formats that cannot
 // reduce decode whole.
 [[nodiscard]] qint64 bytesAt(const Estimate& estimate, const QSize& scaled);
+// The size such a read decodes at, before scaling the rest of the way.
+[[nodiscard]] QSize decodedSize(const Estimate& estimate, const QSize& scaled);
 
 // Whether a read of |reader| allocates at most |budget|. A scaled size set on
 // a decoder that supports it is measured at that size. Unknown sizes pass:
@@ -127,7 +129,10 @@ struct Plan {
   QString error;
 };
 
-[[nodiscard]] Plan plan(const Estimate& estimate);
+// |screenEdge| is the copy's longest side from reducedEdge(). A picture well
+// past it is shown from the copy too, which is all a fitted view draws; zero
+// reduces only pictures too large to show whole.
+[[nodiscard]] Plan plan(const Estimate& estimate, int screenEdge = 0);
 
 // Why a full decode of this picture is refused by Qt's limit, or empty.
 [[nodiscard]] QString decodeRefusal(const Estimate& estimate);
@@ -139,6 +144,9 @@ struct Plan {
 // screen's in device pixels, within bounds that keep its decode small.
 // Reads the screens, so call it on the GUI thread.
 [[nodiscard]] int reducedEdge(const Plan& plan = {});
+
+// The reduced copy's upright size: the picture within |edge|, never enlarged.
+[[nodiscard]] QSize reducedSize(const Estimate& estimate, int edge);
 
 // What QML loads for the reduced copy, from LargeImageProvider. The file's
 // version keeps a replaced file out of Qt's pixmap cache.

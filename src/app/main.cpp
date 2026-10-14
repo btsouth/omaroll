@@ -57,6 +57,10 @@
 
 #include <memory>
 
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
+
 namespace {
 
 QString optionValue(const QStringList& arguments, const QString& name) {
@@ -339,6 +343,12 @@ private:
 } // namespace
 
 int main(int argc, char* argv[]) {
+#ifdef __GLIBC__
+  // Decoded pictures are freed straight back to the system. glibc otherwise
+  // raises this threshold after the first large free and keeps later pictures
+  // in its heaps, so browsing a folder only ever grows.
+  mallopt(M_MMAP_THRESHOLD, 4 * 1024 * 1024);
+#endif
   const StartupTrace startup;
   QGuiApplication::setApplicationName(QStringLiteral("Omaroll"));
   QGuiApplication::setApplicationDisplayName(QStringLiteral("Omaroll"));

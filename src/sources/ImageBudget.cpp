@@ -103,17 +103,21 @@ Estimate estimate(QImageReader& reader) {
   return result;
 }
 
-qint64 bytesAt(const Estimate& estimate, const QSize& scaled) {
-  if (!estimate.valid()) return -1;
-  if (!estimate.scalable || !scaled.isValid() || scaled.isEmpty()) return estimate.bytes;
-  if (!estimate.jpeg) return imageBytes(scaled, estimate.depth);
+QSize decodedSize(const Estimate& estimate, const QSize& scaled) {
+  if (!estimate.scalable || !scaled.isValid() || scaled.isEmpty()) return estimate.stored;
+  if (!estimate.jpeg) return scaled;
   // As qjpeghandler chooses libjpeg's scale_num over a denominator of 8.
   const double factor = std::min(double(estimate.stored.width()) / scaled.width(),
                                  double(estimate.stored.height()) / scaled.height());
   const int eighths = std::clamp(int(std::ceil(8 / factor)), 1, 8);
-  const QSize decoded((qint64(estimate.stored.width()) * eighths + 7) / 8,
-                      (qint64(estimate.stored.height()) * eighths + 7) / 8);
-  return imageBytes(decoded, estimate.depth);
+  return QSize(int((qint64(estimate.stored.width()) * eighths + 7) / 8),
+               int((qint64(estimate.stored.height()) * eighths + 7) / 8));
+}
+
+qint64 bytesAt(const Estimate& estimate, const QSize& scaled) {
+  if (!estimate.valid()) return -1;
+  if (!estimate.scalable || !scaled.isValid() || scaled.isEmpty()) return estimate.bytes;
+  return imageBytes(decodedSize(estimate, scaled), estimate.depth);
 }
 
 Estimate estimate(const QString& path) {
@@ -160,7 +164,7 @@ QString formatBytes(qint64 bytes) {
                                      QLocale::DataSizeIecFormat);
 }
 
-Plan plan(const Estimate& estimate) {
+Plan plan(const Estimate& estimate, int screenEdge) {
   Plan result;
   if (!estimate.valid()) return result;
   const Limits current = limits();
@@ -168,7 +172,15 @@ Plan plan(const Estimate& estimate) {
   const int longest = std::max(estimate.stored.width(), estimate.stored.height());
   // A lower limit set through QT_IMAGEIO_MAXALLOC also makes a picture large.
   const qint64 threshold = limit > 0 ? std::min(current.displayBytes, limit) : current.displayBytes;
-  if (estimate.bytes <= threshold && longest <= current.textureEdge) return result;
+  if (estimate.bytes <= threshold && longest <= current.textureEdge) {
+    // The viewers only enlarge past a copy at least a tenth smaller than the
+    // picture, so a picture barely past the screen is shown whole.
+    if (screenEdge > 0 && qint64(longest) * 4 > qint64(screenEdge) * 5) {
+      result.reduced = true;
+      result.size = estimate.oriented;
+    }
+    return result;
+  }
 
   result.reduced = true;
   result.size = estimate.oriented;
@@ -212,6 +224,11 @@ int reducedEdge(const Plan& plan) {
     }
   }
   return std::clamp(int(std::ceil(longest)), kMinimumReducedEdge, kMaximumReducedEdge);
+}
+
+QSize reducedSize(const Estimate& estimate, int edge) {
+  return estimate.oriented.scaled(edge, edge, Qt::KeepAspectRatio)
+      .boundedTo(estimate.oriented).expandedTo(QSize(1, 1));
 }
 
 QUrl reducedUrl(const QString& path, const QString& version, int edge) {
