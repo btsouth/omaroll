@@ -200,6 +200,8 @@ private:
   struct PreloadCandidate {
     QString path;
     QString version;
+    // The copy's longest side, for a picture larger than the screen.
+    int edge = 0;
   };
   struct PictureResult {
     QString path;
@@ -214,7 +216,8 @@ private:
     // not wait for it to be read again.
     std::array<PictureResult, 2> pictures;
   };
-  static PreloadResult probePreloads(const std::array<QString, 2>& paths, quint64 generation);
+  static PreloadResult probePreloads(const std::array<QString, 2>& paths, quint64 generation,
+                                     int edge);
 
   QStringList m_paths;
   QHash<QString, QString> m_deletionPaths;
@@ -246,6 +249,7 @@ private:
   // One header probe in flight, with navigation replacing the pending pair.
   // Neither the workers nor their results retain this session.
   quint64 m_preloadGeneration = 0;
+  int m_preloadEdge = 0;
   bool m_preloadProbeRunning = false;
   std::array<QString, 2> m_pendingPreloadPaths;
   std::array<QUrl, 2> m_preloadUrls;

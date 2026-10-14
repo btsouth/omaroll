@@ -6,7 +6,8 @@
 #include <atomic>
 #include <memory>
 
-// The reduced copy of a very large picture, for the viewer and the library.
+// The reduced copy of a picture larger than the screen, for the viewer and
+// the library.
 //
 // Ids come from ImageBudget::reducedUrl():
 //   image://large/<edge>~<version>/<encoded path>
@@ -25,8 +26,8 @@ public:
                                             const QSize& requestedSize) override;
 
 private:
-  // One at a time: two whole decodes of very large pictures at once are what
-  // the allocation limit is there to prevent.
+  // Two, so the picture on screen never waits behind a neighbour's copy.
+  // Whole decodes of very large pictures still take turns process-wide.
   QThreadPool m_pool;
   std::shared_ptr<std::atomic_bool> m_stopping = std::make_shared<std::atomic_bool>(false);
 };

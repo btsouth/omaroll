@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Photos larger than the screen open from a sharp copy the size of the screen,
+  and full resolution loads when you zoom in. Photos use less memory, open a
+  little sooner and show less moiré when fitted. Both neighbouring photos are
+  now preloaded instead of one.
+- Memory from pictures you have moved past is returned to the system, so
+  browsing a folder no longer keeps growing.
+
 ## 1.16.0
 
 Omaroll runs on ARM.

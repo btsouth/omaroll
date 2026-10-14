@@ -235,9 +235,24 @@ private slots:
     // Small enough: shown as it is.
     QVERIFY(!ImageBudget::plan(made(size, 512 * kKiB, false)).reduced);
     QVERIFY(!ImageBudget::plan({}).reduced);
+    ImageBudget::Plan plan;
+
+    // Well past the screen: the screen's copy, then full resolution. Within a
+    // quarter of it, shown whole.
+    plan = ImageBudget::plan(made(QSize(4000, 3000), 512 * kKiB, true), 2560);
+    QVERIFY(plan.reduced);
+    QCOMPARE(plan.size, QSize(4000, 3000));
+    QVERIFY(plan.detail);
+    QCOMPARE(plan.edge, 0);
+    QVERIFY(plan.note.isEmpty());
+    QVERIFY(!ImageBudget::plan(made(QSize(4000, 3000), 512 * kKiB, true)).reduced);
+    QVERIFY(!ImageBudget::plan(made(QSize(3200, 1800), 512 * kKiB, true), 2560).reduced);
+    QVERIFY(ImageBudget::plan(made(QSize(1800, 3201), 512 * kKiB, true), 2560).reduced);
+    QCOMPARE(ImageBudget::reducedSize(made(QSize(4000, 3000), 0, true), 2560), QSize(2560, 1920));
+    QCOMPARE(ImageBudget::reducedSize(made(QSize(400, 300), 0, true), 2560), QSize(400, 300));
 
     // Large but within Qt's limit: a reduced copy, then full resolution.
-    ImageBudget::Plan plan = ImageBudget::plan(made(size, 4 * ImageBudget::kMiB, false));
+    plan = ImageBudget::plan(made(size, 4 * ImageBudget::kMiB, false));
     QVERIFY(plan.reduced);
     QCOMPARE(plan.size, size);
     QVERIFY(plan.detail);

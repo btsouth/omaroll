@@ -462,7 +462,7 @@ void CaptureModel::readPicture(const QString& path) {
       return picture;
     }
     const QString version = FileVersion::key(path);
-    const ImageBudget::Plan plan = ImageBudget::plan(ImageBudget::estimate(path));
+    const ImageBudget::Plan plan = ImageBudget::plan(ImageBudget::estimate(path), edge);
     if (!plan.reduced) return picture;
     // Nothing to load when not even the reduced copy can be decoded.
     picture.insert(QStringLiteral("source"),
