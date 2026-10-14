@@ -3,7 +3,7 @@
 ## Latest release
 
 [Omaroll 1.16.0](https://github.com/btsouth/omaroll/releases/tag/v1.16.0), dated
-13 October 2026. See the [changelog](../CHANGELOG.md#1160) for what it includes.
+14 October 2026. See the [changelog](../CHANGELOG.md#1160) for what it includes.
 
 The release provides x86_64 and aarch64 Arch packages, a source archive and
 PKGBUILD, with checksums and signed build provenance. Installation and
