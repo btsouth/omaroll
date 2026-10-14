@@ -12,8 +12,10 @@ has built successfully and the public artifacts have been verified.
    audio sandbox. Check rendered video with OpenGL.
 4. Test the exact candidate on a real Omarchy desktop using the [desktop acceptance checklist](tests/README.md#desktop-acceptance).
 5. Tag the approved commit as `vX.Y.Z` and push the tag.
-6. Confirm the Release workflow tests the package lifecycle and publishes the
-   source archive, Arch package, checksums, and signed provenance.
+6. Confirm the Release workflow tests the package lifecycle on x86_64 and
+   aarch64 and publishes the source archive, both Arch packages, checksums,
+   and signed provenance. Pull requests that change packaging run the same
+   workflow without publishing.
 7. Download the public artifacts and verify their checksums before announcing.
 
 Record the exact candidate commit and any untested hardware or desktop behavior.
