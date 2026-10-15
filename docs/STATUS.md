@@ -2,8 +2,8 @@
 
 ## Latest release
 
-[Omaroll 1.17.0](https://github.com/btsouth/omaroll/releases/tag/v1.17.0), dated
-14 October 2026. See the [changelog](../CHANGELOG.md#1170) for what it includes.
+[Omaroll 1.18.0](https://github.com/btsouth/omaroll/releases/tag/v1.18.0), dated
+15 October 2026. See the [changelog](../CHANGELOG.md#1180) for what it includes.
 
 The release provides x86_64 and aarch64 Arch packages, a source archive and
 PKGBUILD, with checksums and signed build provenance. Installation and
@@ -11,12 +11,19 @@ verification commands are in the [README](../README.md#install-or-update).
 
 ## Current work
 
+Version 1.18.0 adds frame stepping, names audio and subtitle tracks by their
+language, and brings deep zoom for very large JPEGs to the library's preview
+and the compare view, which also stops decoding large pictures whole. It was
+built and tested against Omarchy stable (Qt 6.11.2) and current Arch (Qt 6.12)
+in CI and in local containers.
+
 Version 1.17.0 starts video playback without waiting for the thumbnail,
-converts wide-gamut photos to sRGB, and zooms into very large JPEGs by decoding
-only the part on screen. Hardware video decoding stays the default; the video
-startup note records the comparison with software decoding. Deep zoom memory
-was measured in an isolated desktop on the graphics card, and the library's
-detail sheet still loads very large pictures whole.
+converts wide-gamut photos to sRGB, and zooms into very large JPEGs in the
+viewer by decoding only the part on screen. Hardware video decoding stays the
+default; the video startup note records the comparison with software
+decoding. On Omarchy stable the first decoded frame moved from about 254 to
+157 ms in a software-rendered container. Deep zoom memory was measured in an
+isolated desktop on the graphics card.
 
 Version 1.16.1 opens photos larger than the screen from a copy the size of the
 screen, preloads both neighbours as copies and returns freed pictures to the

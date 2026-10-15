@@ -37,10 +37,10 @@ command to start getting updates.
 To install one release without adding the repository:
 
 ```bash
-curl -fLO https://github.com/btsouth/omaroll/releases/download/v1.17.0/omaroll-1.17.0-1-x86_64.pkg.tar.zst \
-     -fLO https://github.com/btsouth/omaroll/releases/download/v1.17.0/SHA256SUMS
+curl -fLO https://github.com/btsouth/omaroll/releases/download/v1.18.0/omaroll-1.18.0-1-x86_64.pkg.tar.zst \
+     -fLO https://github.com/btsouth/omaroll/releases/download/v1.18.0/SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
-sudo pacman -U ./omaroll-1.17.0-1-x86_64.pkg.tar.zst
+sudo pacman -U ./omaroll-1.18.0-1-x86_64.pkg.tar.zst
 ```
 
 On ARM, replace `x86_64` with `aarch64` in the package name.
@@ -58,7 +58,7 @@ source build, see [Development](#development).
 The release includes build provenance. To verify the package with GitHub CLI:
 
 ```bash
-gh attestation verify omaroll-1.17.0-1-x86_64.pkg.tar.zst --repo btsouth/omaroll
+gh attestation verify omaroll-1.18.0-1-x86_64.pkg.tar.zst --repo btsouth/omaroll
 ```
 
 ## Open files
@@ -165,8 +165,9 @@ until the viewer closes; subtitle delay resets when the file changes.
   with Ctrl+Z, and back up or restore your organization from Settings.
 - **Find words in pictures.** Search filenames immediately, then add local
   Tesseract results as indexing progresses. Reuse or clear the private text cache.
-- **Preview images, video and PDFs.** Zoom, pan, rotate and flip pictures;
-  play video with sound, seeking, speed, audio tracks and subtitles; search PDF
+- **Preview images, video and PDFs.** Zoom, pan, rotate and flip pictures, in
+  their real colors when they carry a wide-gamut profile; play video with sound,
+  seeking, frame stepping, speed, audio tracks and subtitles; search PDF
   text, select words to copy, and switch between continuous scrolling and fit page.
 - **Make corrections as copies.** Crop with aspect presets, straighten,
   rotate, flip and resize one image or a selection. Save a copy or copy a region.
@@ -367,7 +368,9 @@ print and corrections are not offered for them, and Convert · resize makes a
 JPEG or PNG beside the raw instead.
 
 Very large pictures, such as 150-megapixel scans, open from a copy the size of
-the screen, and full resolution loads when you zoom past it. Omaroll lets one
+the screen. Zoomed past it, a JPEG decodes only the part on screen, so even a
+picture too long for the graphics card is sharp; other formats load full
+resolution when there is memory for it. Omaroll lets one
 picture use up to an eighth of the computer's memory, between 256 MiB and
 2 GiB; a picture that needs more says how much. Set `QT_IMAGEIO_MAXALLOC` to a
 number of megabytes to choose the limit yourself. JPEG always opens, at a
