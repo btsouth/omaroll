@@ -174,6 +174,7 @@ set(OMAROLL_QML_FILES
   qml/components/EditorChooser.qml
   qml/components/PinnedFolders.qml
   qml/components/FolderSidebar.qml
+  qml/components/AlbumActionMenu.qml
   qml/components/AlbumNameSheet.qml
   qml/components/ExportSheet.qml
   qml/components/RenameSheet.qml
@@ -182,6 +183,7 @@ set(OMAROLL_QML_FILES
   qml/components/Icon.qml
   qml/components/IconButton.qml
   qml/components/ViewerInfoPanel.qml
+  qml/components/ViewerKeys.qml
   qml/components/ViewerShortcutHelp.qml
   qml/components/ViewerFilmstrip.qml
   qml/components/ViewerToolbar.qml
