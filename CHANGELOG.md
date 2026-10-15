@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- The library's preview and compare view zoom into very large JPEGs the way
+  the viewer does, decoding only the part on screen. Compare opens very large
+  pictures from copies the size of the screen instead of decoding each one
+  whole, which for two 150-megapixel scans took more than a gigabyte.
+
 ## 1.17.0
 
 Videos start sooner, wide-gamut photos show their real colors, and very large

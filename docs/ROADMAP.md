@@ -16,9 +16,8 @@ See [project status](STATUS.md) for the latest release and current work.
 - Improve desktop integration and reliability from reproducible problems and
   user feedback. Preserve originals and keep specialist editing in the
   existing tools.
-- Zoom into very large pictures in the library's detail sheet the way the
-  quick viewer does, decoding only the part on screen. Very large formats
-  other than JPEG still decode whole.
+- Very large pictures in formats other than JPEG still decode whole when
+  zoomed in, since their decoders cannot read part of a picture.
 
 Shipped work is in the [changelog](../CHANGELOG.md).
 
