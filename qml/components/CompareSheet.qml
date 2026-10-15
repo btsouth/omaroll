@@ -189,11 +189,24 @@ Item {
                         radius: Theme.cornerRadius > 0 ? Math.min(4, Theme.cornerRadius) : 3
                         clip: true
 
+                        // How the picture loads, as in the preview: a very
+                        // large one from a copy the size of the screen, with
+                        // its detail only once zoomed past that copy.
+                        property var picture: ({})
+                        Component.onCompleted: Library.readPicture(cell.modelData)
+                        Connections {
+                            target: Library
+                            function onPictureRead(path, picture) {
+                                if (path === cell.modelData) cell.picture = picture
+                            }
+                        }
+
                         Image {
+                            id: compareImage
                             objectName: "compareImage"
                             anchors.fill: parent
                             anchors.margins: 4
-                            source: Library.fileUrl(cell.modelData)
+                            source: cell.picture.path === cell.modelData ? cell.picture.source : ""
                             fillMode: Image.PreserveAspectFit
                             asynchronous: true
                             colorSpace.namedColorSpace: ColorSpace.SRgb
@@ -205,6 +218,49 @@ Item {
                             transform: Translate {
                                 x: root.panX
                                 y: root.panY
+                            }
+
+                            // The fitted picture itself, inside the cell's margins.
+                            Item {
+                                id: painted
+                                anchors.centerIn: parent
+                                width: compareImage.paintedWidth
+                                height: compareImage.paintedHeight
+                                readonly property bool enlarged: cell.picture.reduced === true
+                                    && compareImage.status === Image.Ready
+                                    && width * root.zoom * Screen.devicePixelRatio
+                                       > compareImage.implicitWidth * 1.05
+
+                                Image {
+                                    objectName: "compareDetail"
+                                    anchors.fill: parent
+                                    source: painted.enlarged && cell.picture.detail !== undefined
+                                            ? cell.picture.detail : ""
+                                    asynchronous: true
+                                    colorSpace.namedColorSpace: ColorSpace.SRgb
+                                    autoTransform: true
+                                    smooth: true
+                                    fillMode: Image.Stretch
+                                    visible: status === Image.Ready
+                                }
+
+                                PictureArea {
+                                    objectName: "compareArea"
+                                    viewport: cell
+                                    wanted: root.visible && painted.enlarged
+                                            && cell.picture.areas === true
+                                    pictureScale: cell.picture.width > 0
+                                                  ? painted.width / cell.picture.width : 0
+                                    // Device pixels per unit here, with the zoom.
+                                    devicePixelRatio: Screen.devicePixelRatio * root.zoom
+                                    fullSize: Qt.size(cell.picture.width || 0,
+                                                      cell.picture.height || 0)
+                                    path: cell.modelData
+                                    urlFor: (rect, size) => Library.areaUrl(
+                                                cell.modelData, cell.picture.version, rect, size)
+                                    viewState: [root.zoom, root.panX, root.panY]
+                                    smooth: true
+                                }
                             }
                         }
 

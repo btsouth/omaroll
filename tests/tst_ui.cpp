@@ -683,12 +683,22 @@ private slots:
     QCOMPARE(detail->property("imageSourceHeight").toDouble(), 1024.0);
     QQuickItem* full = item("detailFullResolution");
     QVERIFY(full->property("source").toUrl().isEmpty());
+    QQuickItem* area = item("detailArea");
+    QVERIFY(!area->isVisible());
 
+    // A JPEG zoomed in loads only the part on screen, never the whole.
     QVERIFY(QMetaObject::invokeMethod(detail, "zoomImageAt", Q_ARG(QVariant, 3.0),
                                      Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant())));
-    QTRY_COMPARE(full->property("status").toInt(), 1);
-    QCOMPARE(full->property("source").toUrl().toLocalFile(), m_oddPath);
-    QTRY_COMPARE(full->property("opacity").toReal(), 1.0);
+    QTRY_VERIFY(area->isVisible());
+    QVERIFY(area->property("source").toUrl().toString().startsWith(QStringLiteral("image://large/")));
+    QCOMPARE(area->property("status").toInt(), 1);
+    const QRectF shown = area->property("shown").toRectF();
+    QVERIFY(shown.width() > 0 && shown.width() < 3000);
+    QVERIFY(full->property("source").toUrl().isEmpty());
+    // Back to fit, it goes.
+    QVERIFY(QMetaObject::invokeMethod(detail, "zoomImageAt", Q_ARG(QVariant, 1.0 / 3.0),
+                                     Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant())));
+    QTRY_VERIFY(!area->isVisible());
 
     // Past Qt's limit, a format that decodes whole says why it cannot open,
     // and nothing is asked of a decoder that would refuse it.
@@ -944,6 +954,45 @@ private slots:
     QVERIFY(!find(item("matteSheet"), [](QQuickItem* child) {
       return child->property("source").toString().startsWith(QStringLiteral("image://matte/"));
     }));
+  }
+
+  // Very large pictures compare from copies the size of the screen, and a
+  // JPEG zoomed past its copy loads only the part on screen.
+  void compareSheetOpensVeryLargePicturesFromCopies() {
+    ImageBudget::setLimits({.displayBytes = 1 * ImageBudget::kMiB});
+    QQuickItem* sheet = item("compareSheet");
+    const auto restore = qScopeGuard([sheet] {
+      ImageBudget::setLimits({});
+      QMetaObject::invokeMethod(sheet, "close");
+    });
+    QStringList pair;
+    for (const QString& name : {QStringLiteral("compare-a.jpg"), QStringLiteral("compare-b.jpg")}) {
+      const QString path = m_scratch.filePath(name);
+      QImage image(4000, 3000, QImage::Format_RGB32);
+      image.fill(QColor(60, 120, 180));
+      QVERIFY(image.save(path, nullptr, 85));
+      pair << path;
+    }
+    QVERIFY(QMetaObject::invokeMethod(sheet, "open", Q_ARG(QVariant, QVariant(pair))));
+    QTRY_VERIFY(sheet->isVisible());
+    QQuickItem* image = find(sheet, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("compareImage");
+    });
+    QVERIFY(image);
+    QTRY_VERIFY(image->property("source").toString().startsWith(QStringLiteral("image://large/")));
+    QTRY_COMPARE(image->property("status").toInt(), 1);
+    QQuickItem* area = find(sheet, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("compareArea");
+    });
+    QVERIFY(area);
+    QVERIFY(!area->isVisible());
+    sheet->setProperty("zoom", 8.0);
+    QTRY_VERIFY(area->isVisible());
+    QCOMPARE(area->property("status").toInt(), 1);
+    const QRectF shown = area->property("shown").toRectF();
+    QVERIFY(shown.width() > 0 && shown.width() < 4000);
+    QVERIFY(QMetaObject::invokeMethod(sheet, "reset"));
+    QTRY_VERIFY(!area->isVisible());
   }
 
   void compareSheetShowsTheSetAndSharesOneZoom() {

@@ -1394,6 +1394,26 @@ Item {
                             if (missing && root.picture.note) root.statusRequested(root.picture.note)
                         }
                     }
+
+                    // A very large JPEG zoomed in: only the part on screen.
+                    PictureArea {
+                        objectName: "detailArea"
+                        viewport: stillViewport
+                        wanted: root.visible && root.picture.areas === true
+                                && root.picture.path === root.path
+                                && staticImage.status === Image.Ready
+                                && staticImage.width * Screen.devicePixelRatio
+                                   > staticImage.implicitWidth * 1.05
+                        pictureScale: root.picture.width > 0 ? staticImage.width / root.picture.width : 0
+                        devicePixelRatio: Screen.devicePixelRatio
+                        fullSize: Qt.size(root.picture.width || 0, root.picture.height || 0)
+                        path: root.path
+                        urlFor: (rect, size) => Library.areaUrl(root.path, root.picture.version,
+                                                                rect, size)
+                        viewState: [root.imageRotation, root.imageFlipHorizontal,
+                                    root.imageFlipVertical]
+                        smooth: true
+                    }
                 }
             }
 

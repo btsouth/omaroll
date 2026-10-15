@@ -465,13 +465,18 @@ void CaptureModel::readPicture(const QString& path) {
     const ImageBudget::Plan plan = ImageBudget::plan(ImageBudget::estimate(path), edge);
     if (!plan.reduced) return picture;
     // Nothing to load when not even the reduced copy can be decoded.
+    // Areas show the detail, so the copy only needs the screen's size.
+    const int copyEdge = plan.edge > 0 && !plan.areas ? plan.edge : edge;
     picture.insert(QStringLiteral("source"),
-                   plan.error.isEmpty()
-                       ? ImageBudget::reducedUrl(path, version, plan.edge > 0 ? plan.edge : edge)
-                       : QUrl());
+                   plan.error.isEmpty() ? ImageBudget::reducedUrl(path, version, copyEdge) : QUrl());
     picture.insert(QStringLiteral("reduced"), true);
     picture.insert(QStringLiteral("width"), plan.size.width());
     picture.insert(QStringLiteral("height"), plan.size.height());
+    if (plan.areas) {
+      picture.insert(QStringLiteral("areas"), true);
+      picture.insert(QStringLiteral("version"), version);
+      return picture;
+    }
     if (plan.detail) {
       QUrl detail = QUrl::fromLocalFile(path);
       detail.setQuery(QStringLiteral("omaroll=") + version);
@@ -481,6 +486,11 @@ void CaptureModel::readPicture(const QString& path) {
     picture.insert(QStringLiteral("error"), plan.error);
     return picture;
   }).then(this, [this, path](const QVariantMap& picture) { emit pictureRead(path, picture); });
+}
+
+QUrl CaptureModel::areaUrl(const QString& path, const QString& version, const QRect& area,
+                           const QSize& size) const {
+  return ImageBudget::areaUrl(path, version, area, size);
 }
 
 void CaptureModel::readRawSize(const QString& path, const QUrl& source) {
