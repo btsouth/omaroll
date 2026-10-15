@@ -2,14 +2,21 @@
 
 ## Latest release
 
-[Omaroll 1.16.1](https://github.com/btsouth/omaroll/releases/tag/v1.16.1), dated
-14 October 2026. See the [changelog](../CHANGELOG.md#1161) for what it includes.
+[Omaroll 1.17.0](https://github.com/btsouth/omaroll/releases/tag/v1.17.0), dated
+14 October 2026. See the [changelog](../CHANGELOG.md#1170) for what it includes.
 
 The release provides x86_64 and aarch64 Arch packages, a source archive and
 PKGBUILD, with checksums and signed build provenance. Installation and
 verification commands are in the [README](../README.md#install-or-update).
 
 ## Current work
+
+Version 1.17.0 starts video playback without waiting for the thumbnail,
+converts wide-gamut photos to sRGB, and zooms into very large JPEGs by decoding
+only the part on screen. Hardware video decoding stays the default; the video
+startup note records the comparison with software decoding. Deep zoom memory
+was measured in an isolated desktop on the graphics card, and the library's
+detail sheet still loads very large pictures whole.
 
 Version 1.16.1 opens photos larger than the screen from a copy the size of the
 screen, preloads both neighbours as copies and returns freed pictures to the

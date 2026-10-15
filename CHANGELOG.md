@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 1.17.0
+
+Videos start sooner, wide-gamut photos show their real colors, and very large
+JPEGs zoom in without loading the whole picture.
 
 ### Changed
 
@@ -17,6 +20,8 @@
   phones or Adobe RGB from cameras, are shown in their real colors instead of
   looking washed out. The viewer, library, thumbnails and compare view all
   convert them; originals and saved copies keep their profile.
+
+[Install or update](https://github.com/btsouth/omaroll#install-or-update).
 
 ## 1.16.1
 
