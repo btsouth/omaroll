@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## 1.18.0
+
+Step through video a frame at a time, and zoom into very large JPEGs in the
+library and compare view too.
+
+### Added
+
+- `,` and `.` pause a video and step one frame back or forward, in the viewer
+  and the library's preview, as in mpv.
 
 ### Changed
 
@@ -8,6 +16,13 @@
   the viewer does, decoding only the part on screen. Compare opens very large
   pictures from copies the size of the screen instead of decoding each one
   whole, which for two 150-megapixel scans took more than a gigabyte.
+
+### Fixed
+
+- Audio and subtitle tracks are named by their language, such as "Track 2:
+  French", instead of only a number.
+
+[Install or update](https://github.com/btsouth/omaroll#install-or-update).
 
 ## 1.17.0
 
