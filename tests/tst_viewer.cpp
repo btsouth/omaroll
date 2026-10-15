@@ -61,6 +61,7 @@
 #include <QQuickWindow>
 #include <QSGRendererInterface>
 #include <QScopeGuard>
+#include <QSemaphore>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QStandardPaths>
@@ -80,28 +81,18 @@ class StartupPosterProvider final : public QQuickImageProvider {
 public:
   StartupPosterProvider() : QQuickImageProvider(QQuickImageProvider::Image) {}
 
+  // A poster requested as "held" loads only once the test releases it.
+  static QSemaphore& held() {
+    static QSemaphore semaphore;
+    return semaphore;
+  }
+
   QImage requestImage(const QString& id, QSize* size, const QSize&) override {
-    QThread::msleep(id.toULong());
+    if (id == QStringLiteral("held")) held().tryAcquire(1, 10000);
     QImage image(160, 90, QImage::Format_RGB32);
     image.fill(QColor(30, 140, 210));
     *size = image.size();
     return image;
-  }
-};
-
-class StartupPlayerProbe final : public QObject {
-  Q_OBJECT
-public:
-  QQuickWindow* window = nullptr;
-  QQuickItem* poster = nullptr;
-  int posterStatusAtCreation = -1;
-
-public slots:
-  void playerChanged() {
-    if (posterStatusAtCreation < 0
-        && window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))) {
-      posterStatusAtCreation = poster->property("status").toInt();
-    }
   }
 };
 
@@ -985,6 +976,8 @@ private slots:
   }
 
   // A slow thumbnail must not hold back the player: both load side by side.
+  // The poster stays loading until released, and the player has to exist
+  // after a few event loop turns, before any fallback timer could expire.
   void videoStartsWithoutWaitingForThePoster() {
     ViewerSession session;
     QQmlContext context(m_context);
@@ -995,26 +988,30 @@ private slots:
     QVERIFY2(root, qPrintable(component.errorString()));
     auto* window = qobject_cast<QQuickWindow*>(root.get());
     QVERIFY(window);
-    const auto hide = qScopeGuard([window] { window->hide(); });
     auto* poster = find(window->contentItem(), [](QQuickItem* item) {
       return item->objectName() == QStringLiteral("viewerVideoPoster");
     });
     QVERIFY(poster);
-    StartupPlayerProbe probe;
-    probe.window = window;
-    probe.poster = poster;
-    QVERIFY(connect(window, SIGNAL(playerChanged()), &probe, SLOT(playerChanged())));
+    // Release the poster before the window goes, so its reader is not blocked.
+    const auto cleanup = qScopeGuard([window] {
+      StartupPosterProvider::held().release();
+      window->hide();
+    });
     // Remove the normal source binding so session changes cannot replace the
     // controlled thumbnail with a real decoder request.
     QVERIFY(QQmlProperty::write(poster, QStringLiteral("source"),
-                                QUrl(QStringLiteral("image://startup-poster/200"))));
+                                QUrl(QStringLiteral("image://startup-poster/held"))));
     session.open({media(QStringLiteral("clip.mp4"))});
     window->show();
-    QTRY_VERIFY_WITH_TIMEOUT(probe.posterStatusAtCreation >= 0, 5000);
-    QVERIFY2(probe.posterStatusAtCreation != 1,
-             "The player waited for the poster to load");
-    auto* player = window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"));
-    QVERIFY(player);
+    QMediaPlayer* player = nullptr;
+    for (int turn = 0; turn < 10 && !player; ++turn) {
+      QCoreApplication::processEvents();
+      player = window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"));
+    }
+    QVERIFY2(player, "The player waited for the poster to load");
+    QCOMPARE(poster->property("status").toInt(), 2); // Image.Loading
+    StartupPosterProvider::held().release();
+    QTRY_COMPARE_WITH_TIMEOUT(poster->property("status").toInt(), 1, 5000);
     QTRY_COMPARE_WITH_TIMEOUT(player->playbackState(), QMediaPlayer::PlayingState, 5000);
   }
 
