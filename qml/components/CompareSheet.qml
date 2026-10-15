@@ -196,6 +196,7 @@ Item {
                             source: Library.fileUrl(cell.modelData)
                             fillMode: Image.PreserveAspectFit
                             asynchronous: true
+                            colorSpace.namedColorSpace: ColorSpace.SRgb
                             smooth: true
                             mipmap: true
                             scale: root.zoom

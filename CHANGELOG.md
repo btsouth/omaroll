@@ -7,6 +7,13 @@
 - Videos start playing about a tenth of a second sooner. The player no longer
   waits for the thumbnail to be drawn first.
 
+### Fixed
+
+- Photos tagged with a wide-gamut color profile, such as Display P3 from
+  phones or Adobe RGB from cameras, are shown in their real colors instead of
+  looking washed out. The viewer, library, thumbnails and compare view all
+  convert them; originals and saved copies keep their profile.
+
 ## 1.16.1
 
 Photos use less memory, and browsing a folder stays light.

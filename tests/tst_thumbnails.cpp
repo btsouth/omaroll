@@ -1,6 +1,7 @@
 #include "thumbs/ThumbnailCache.h"
 #include "thumbs/ThumbnailProvider.h"
 
+#include <QColorSpace>
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -96,6 +97,23 @@ private slots:
     restoreEnvironment("OMAROLL_TEST_THUMB_LOG", m_oldLog);
     restoreEnvironment("OMAROLL_TEST_THUMB_MODE", m_oldMode);
     m_scratch.reset();
+  }
+
+  // A wide-gamut photo is cached in sRGB, so the grid shows its real colors.
+  void wideGamutTilesAreCachedInSrgb() {
+    const QString path = mediaPath(QStringLiteral("p3.png"));
+    QImage image(160, 120, QImage::Format_RGB32);
+    image.fill(QColor(30, 200, 60));
+    image.setColorSpace(QColorSpace(QColorSpace::DisplayP3));
+    QVERIFY(image.save(path));
+    for (int pass = 0; pass < 2; ++pass) {
+      const QImage tile = ThumbnailCache::thumbnail(path, QSize(32, 24), 1);
+      QVERIFY(!tile.isNull());
+      const QColor color = tile.pixelColor(tile.width() / 2, tile.height() / 2);
+      QVERIFY2(color.red() < 12 && qAbs(color.green() - 204) < 8 && color.blue() < 25,
+               qPrintable(QStringLiteral("pass %1: %2").arg(pass).arg(color.name())));
+    }
+    QCOMPARE(cacheFiles().size(), 1);
   }
 
   void cancelledRequestDoesNotCacheOrSuppressRetry() {

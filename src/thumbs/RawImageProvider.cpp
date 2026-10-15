@@ -1,6 +1,7 @@
 #include "thumbs/RawImageProvider.h"
 
 #include "sources/CameraRaw.h"
+#include "sources/DisplayColors.h"
 
 #include <QMetaObject>
 #include <QRunnable>
@@ -45,6 +46,7 @@ public:
            m_image.height() > m_requestedSize.height())) {
         m_image = m_image.scaled(m_requestedSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
       }
+      convertToDisplayColors(m_image);
     }
     if (m_image.isNull()) {
       m_error = m_cancelled.load() || m_stopping->load()

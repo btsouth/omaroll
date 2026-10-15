@@ -46,6 +46,7 @@ add_library(omaroll_core STATIC
   src/sources/CaptureScanner.h
   src/sources/CaptureLocations.cpp
   src/sources/CaptureLocations.h
+  src/sources/DisplayColors.h
   src/sources/FileVersion.h
   src/sources/ImageBudget.cpp
   src/sources/ImageBudget.h

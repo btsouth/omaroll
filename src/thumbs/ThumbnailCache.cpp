@@ -3,6 +3,7 @@
 #include "pdf/PdfSupport.h"
 #include "sources/CameraRaw.h"
 #include "sources/CaptureScanner.h"
+#include "sources/DisplayColors.h"
 #include "sources/ImageBudget.h"
 #include "sources/ThumbnailSource.h"
 
@@ -365,6 +366,9 @@ QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
   if (isCancelled(cancelled)) {
     return {};
   }
+
+  // Cached tiles are sRGB, like everything the grid draws.
+  convertToDisplayColors(rendered);
 
   // JPEG has no alpha and an odd source format (CMYK, 16-bit) is best settled
   // here rather than at texture upload. Transparent pixels land on a neutral

@@ -1,6 +1,7 @@
 #include "edit/EditProvider.h"
 
 #include "edit/ImageEditor.h"
+#include "sources/DisplayColors.h"
 #include "sources/ImageBudget.h"
 
 #include <QImageReader>
@@ -87,6 +88,7 @@ public:
       preview = preview.scaled(m_target, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     }
 
+    convertToDisplayColors(preview);
     m_image = preview;
     finishOnOwnThread();
   }
