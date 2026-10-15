@@ -9,6 +9,8 @@
 #include <QTransform>
 #include <QUrl>
 
+#include <algorithm>
+
 namespace {
 
 constexpr int kFallbackEdge = 4096;
@@ -108,9 +110,9 @@ private:
   }
 
   // Part of the upright picture, decoded at |m_size| at most and never past
-  // its own pixels. A JPEG decodes only the rows down to it, at a reduced
-  // scale when that is enough, so this costs about as much memory as the
-  // screen at any zoom.
+  // its own pixels. A JPEG decodes only the rows down to it, at an eighth,
+  // quarter or half when that is enough, so this costs about as much memory
+  // as the screen at any zoom.
   QImage readArea() {
     QImageReader reader(m_path);
     reader.setAutoTransform(false);
@@ -124,14 +126,37 @@ private:
                        & QRect(QPoint(), stored);
     if (clip.isEmpty()) return {};
     const bool sideways = upright.m11() == 0;
-    const QSize wanted = sideways ? m_size.transposed() : m_size;
-    reader.setClipRect(clip);
-    reader.setScaledSize(clip.size().scaled(wanted.boundedTo(clip.size()), Qt::KeepAspectRatio));
-    QImage image = ImageBudget::readBounded(
-        reader, [this] { return m_cancelled.load() || m_stopping->load(); });
+    const QSize wanted = clip.size().scaled((sideways ? m_size.transposed() : m_size)
+                                                .boundedTo(clip.size()),
+                                            Qt::KeepAspectRatio);
+    // Qt reduces a clipped JPEG only when asked for the whole picture at
+    // the reduced size and the clip within that; a clip at full size with a
+    // smaller output decodes the clip whole first.
+    int reduction = 1;
+    while (reduction < 8 && clip.width() / (reduction * 2) >= wanted.width() &&
+           clip.height() / (reduction * 2) >= wanted.height()) {
+      reduction *= 2;
+    }
+    if (reduction == 1) {
+      reader.setClipRect(clip);
+    } else {
+      const auto reduce = [reduction](int value) { return (value + reduction - 1) / reduction; };
+      reader.setScaledSize(QSize(reduce(stored.width()), reduce(stored.height())));
+      const QRect scaled(clip.x() / reduction, clip.y() / reduction,
+                         std::max(1, clip.width() / reduction),
+                         std::max(1, clip.height() / reduction));
+      reader.setScaledClipRect(scaled & QRect(QPoint(), reader.scaledSize()));
+    }
+    // What this allocates is the clip at that size, within Qt's limit, so it
+    // needs none of the large decode's turns.
+    if (m_cancelled.load() || m_stopping->load()) return {};
+    QImage image = reader.read();
     if (image.isNull()) {
       m_error = reader.errorString();
       return {};
+    }
+    if (image.size() != wanted) {
+      image = image.scaled(wanted, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
     }
     if (!upright.isIdentity()) image = image.transformed(upright, Qt::FastTransformation);
     convertToDisplayColors(image);

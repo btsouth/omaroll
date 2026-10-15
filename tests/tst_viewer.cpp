@@ -3501,6 +3501,8 @@ private slots:
     QVERIFY(flick);
     flick->setProperty("contentX", flick->property("contentWidth").toReal() - m_window->width());
     QTRY_VERIFY(area->property("source").toUrl().toString() != first);
+    // The last area stays while the next one decodes.
+    QVERIFY(area->isVisible());
     QTRY_VERIFY(area->property("shown").toRectF().right() >= 5999);
     QTRY_COMPARE(area->property("status").toInt(), 1);
     const QImage frame = m_window->grabWindow();

@@ -364,6 +364,22 @@ private slots:
     provider.shutdown();
   }
 
+  // Zoomed out a little, the area is most of the picture and small on
+  // screen. It decodes reduced, within a limit the whole picture is far
+  // past, whatever the area's alignment.
+  void aLargeAreaDecodesReduced() {
+    const QString photo = m_dir.filePath(QStringLiteral("area-large.jpg"));
+    QVERIFY(writeImage(photo, QSize(4000, 3000), QImage::Format_RGB32));
+    const auto restore = qScopeGuard([] { QImageReader::setAllocationLimit(256); });
+    QImageReader::setAllocationLimit(10);
+    LargeImageProvider provider;
+    const QImage area = readArea(provider, photo, QRect(13, 7, 3975, 2989), QSize(500, 376));
+    QCOMPARE(area.size(), QSize(500, 376));
+    QVERIFY(area.pixelColor(20, 188).red() > 180);
+    QVERIFY(area.pixelColor(480, 188).red() < 80);
+    provider.shutdown();
+  }
+
   void everyOrientationMatchesTheUprightPicture_data() {
     QTest::addColumn<int>("orientation");
     for (int orientation = 1; orientation <= 8; ++orientation) {

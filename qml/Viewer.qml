@@ -1190,9 +1190,17 @@ ApplicationWindow {
                     cache: false
                     smooth: parent.smooth
                     fillMode: Image.Stretch
-                    visible: wanted && status === Image.Ready && shown.width > 0
-                             && pendingPath === Session.path
-                    onStatusChanged: if (status === Image.Ready) shown = pending
+                    // Not on status: that is Loading again while the next
+                    // area decodes, and the last one should stay meanwhile.
+                    visible: wanted && shown.width > 0 && pendingPath === Session.path
+                    onStatusChanged: {
+                        if (status === Image.Ready) {
+                            shown = pending
+                        } else if (status === Image.Error) {
+                            // Ask again the next time the view moves.
+                            pendingScale = 0
+                        }
+                    }
                     readonly property var view: [wanted, still.contentX, still.contentY,
                                                  still.width, still.height,
                                                  root.effectiveScale, root.viewRotation]
@@ -1235,9 +1243,13 @@ ApplicationWindow {
                         top = clamp(top, fullHeight)
                         bottom = clamp(bottom, fullHeight)
                         if (right <= left || bottom <= top) return
-                        // Already loaded or loading at about this scale.
+                        // Already loaded or loading at about this scale, or
+                        // at the picture's own pixels, which zooming further
+                        // in cannot sharpen.
+                        const ownPixels = pendingScale * root.dpr >= 1 && scale * root.dpr >= 1
                         if (pendingPath === Session.path && pendingScale > 0
-                                && scale <= pendingScale * 1.01 && scale >= pendingScale * 0.6
+                                && (ownPixels || (scale <= pendingScale * 1.01
+                                                  && scale >= pendingScale * 0.6))
                                 && left >= pending.x && top >= pending.y
                                 && right <= pending.x + pending.width
                                 && bottom <= pending.y + pending.height) {
