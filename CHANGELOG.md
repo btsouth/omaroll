@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Videos start playing about a tenth of a second sooner. The player no longer
+  waits for the thumbnail to be drawn first.
+
 ## 1.16.1
 
 Photos use less memory, and browsing a folder stays light.

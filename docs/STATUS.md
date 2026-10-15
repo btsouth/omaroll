@@ -43,6 +43,8 @@ records sizing and recycling fixes, continuous input, and a discarded scheduling
 policy that regressed cached navigation.
 The [screen-sized copies](performance/2026-10-14-screen-copies/README.md) record
 measures memory, startup and picture quality for photos larger than the screen.
+The [video startup](performance/2026-10-14-video-startup/README.md) note records
+first-frame timing and the hardware and software decoding comparison.
 
 The [Omarchy package submission](https://github.com/omacom/omarchy-pkgs/pull/295)
 is still under review. Repository inclusion, default installation and MIME

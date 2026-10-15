@@ -920,7 +920,7 @@ ApplicationWindow {
             root.subtitleChoice = 0
             root.subtitleOffsetMs = 0
             if (Session.isVideo) {
-                root.startPlayerSoon()
+                Qt.callLater(root.startPlayer)
                 root.subtitleFiles = Subtitles.files(Session.path)
             } else {
                 root.subtitleFiles = []
@@ -937,44 +937,14 @@ ApplicationWindow {
         }
     }
 
-    // Creating the multimedia backend is synchronous. Let a frame containing
-    // the poster finish submission, then start the player on the next GUI
-    // turn. A missing or slow thumbnail must not prevent playback.
-    property int playerStartGeneration: 0
-    Component.onCompleted: Session.watchVideoStartup(root)
-    function startPlayerSoon() {
-        if (!playerLoader.active) {
-            ++root.playerStartGeneration
-            playerStart.restart()
-        }
-    }
-    function queuePlayerStart() {
-        playerStart.stop()
-        const generation = root.playerStartGeneration
-        Qt.callLater(function () {
-            if (root && generation === root.playerStartGeneration) root.startPlayer()
-        })
-    }
+    // The backend is created on the first video and kept for later ones.
+    // Creating it takes about a frame, so it starts on the next turn, after the
+    // window is loaded, and the poster and first decoded frame load side by side.
     function startPlayer() {
-        playerStart.stop()
         if (Session.isVideo && !playerLoader.active) {
             Settings.prepareVideoPlayback()
             playerLoader.active = true
         }
-    }
-    function videoStartupReadiness() {
-        return playerStart.running && root.visible && Session.isVideo
-            && videoPoster.status === Image.Ready ? root.playerStartGeneration : 0
-    }
-    function startPlayerAfterPoster(generation) {
-        if (playerStart.running && generation === root.playerStartGeneration) {
-            root.queuePlayerStart()
-        }
-    }
-    Timer {
-        id: playerStart
-        interval: 250
-        onTriggered: root.queuePlayerStart()
     }
 
     onInfoOpenChanged: {
