@@ -6,16 +6,37 @@
 #include <QImageReader>
 #include <QMetaObject>
 #include <QRunnable>
+#include <QTransform>
 #include <QUrl>
 
 namespace {
 
 constexpr int kFallbackEdge = 4096;
 
+// Maps a stored picture of |stored| size to its upright orientation. Qt
+// mirrors first, then turns a quarter clockwise.
+QTransform uprightTransform(const QSize& stored, QImageIOHandler::Transformations transformation) {
+  QTransform mirror;
+  if (transformation & QImageIOHandler::TransformationMirror) {
+    mirror = QTransform(-1, 0, 0, 1, stored.width(), 0);
+  }
+  if (transformation & QImageIOHandler::TransformationFlip) {
+    mirror *= QTransform(1, 0, 0, -1, 0, stored.height());
+  }
+  if (!(transformation & QImageIOHandler::TransformationRotate90)) return mirror;
+  return mirror * QTransform(0, 1, -1, 0, stored.height(), 0);
+}
+
 class LargeImageResponse final : public QQuickImageResponse, public QRunnable {
 public:
   LargeImageResponse(QString path, int edge, std::shared_ptr<std::atomic_bool> stopping)
       : m_path(std::move(path)), m_edge(edge), m_stopping(std::move(stopping)) {
+    setAutoDelete(false);
+  }
+
+  LargeImageResponse(QString path, const QRect& area, const QSize& size,
+                     std::shared_ptr<std::atomic_bool> stopping)
+      : m_path(std::move(path)), m_area(area), m_size(size), m_stopping(std::move(stopping)) {
     setAutoDelete(false);
   }
 
@@ -33,8 +54,15 @@ public:
     QMetaObject::invokeMethod(this, [this] { emit finished(); }, Qt::QueuedConnection);
   }
 
+  void reject(const QString& error) {
+    m_error = error;
+    finishOnOwnThread();
+  }
+
   void run() override {
-    if (!m_cancelled.load() && !m_stopping->load()) m_image = read();
+    if (!m_cancelled.load() && !m_stopping->load()) {
+      m_image = m_area.isValid() ? readArea() : read();
+    }
     if (m_image.isNull() && m_error.isEmpty()) {
       m_error = m_cancelled.load() || m_stopping->load()
                     ? QStringLiteral("Cancelled")
@@ -70,15 +98,50 @@ private:
       m_error = reader.errorString();
       return {};
     }
+    // The target already has the picture's shape; keeping the aspect ratio
+    // again would round a pixel off.
     if (image.width() > target.width() || image.height() > target.height()) {
-      image = image.scaled(target, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+      image = image.scaled(target, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
     }
+    convertToDisplayColors(image);
+    return image;
+  }
+
+  // Part of the upright picture, decoded at |m_size| at most and never past
+  // its own pixels. A JPEG decodes only the rows down to it, at a reduced
+  // scale when that is enough, so this costs about as much memory as the
+  // screen at any zoom.
+  QImage readArea() {
+    QImageReader reader(m_path);
+    reader.setAutoTransform(false);
+    const QSize stored = reader.size();
+    if (stored.isEmpty()) {
+      m_error = reader.errorString();
+      return {};
+    }
+    const QTransform upright = uprightTransform(stored, reader.transformation());
+    const QRect clip = upright.inverted().mapRect(QRectF(m_area)).toAlignedRect()
+                       & QRect(QPoint(), stored);
+    if (clip.isEmpty()) return {};
+    const bool sideways = upright.m11() == 0;
+    const QSize wanted = sideways ? m_size.transposed() : m_size;
+    reader.setClipRect(clip);
+    reader.setScaledSize(clip.size().scaled(wanted.boundedTo(clip.size()), Qt::KeepAspectRatio));
+    QImage image = ImageBudget::readBounded(
+        reader, [this] { return m_cancelled.load() || m_stopping->load(); });
+    if (image.isNull()) {
+      m_error = reader.errorString();
+      return {};
+    }
+    if (!upright.isIdentity()) image = image.transformed(upright, Qt::FastTransformation);
     convertToDisplayColors(image);
     return image;
   }
 
   QString m_path;
   int m_edge = kFallbackEdge;
+  QRect m_area;
+  QSize m_size;
   QImage m_image;
   QString m_error;
   std::atomic_bool m_cancelled{false};
@@ -104,14 +167,30 @@ QQuickImageResponse* LargeImageProvider::requestImageResponse(const QString& id,
   const QString decoded = QUrl::fromPercentEncoding(id.toUtf8());
   const qsizetype separator = decoded.indexOf(QLatin1Char('/'));
   const QString head = separator > 0 ? decoded.left(separator) : QString();
+  const QString path = separator > 0 ? decoded.mid(separator) : QString();
+  // Or "<x>,<y>,<width>,<height>,<output width>,<output height>~<version>".
+  const QStringList area = head.section(QLatin1Char('~'), 0, 0).split(QLatin1Char(','));
+  if (area.size() == 6) {
+    int values[6] = {};
+    bool valid = true;
+    for (int i = 0; i < 6 && valid; ++i) values[i] = area[i].toInt(&valid);
+    const QRect rect(values[0], values[1], values[2], values[3]);
+    const QSize size(values[4], values[5]);
+    auto* response = new LargeImageResponse(path, rect, size, m_stopping);
+    if (!valid || rect.isEmpty() || size.isEmpty()) {
+      response->reject(QStringLiteral("Not an area of %1").arg(path));
+      return response;
+    }
+    m_pool.start(response);
+    return response;
+  }
   bool ok = false;
   int edge = head.section(QLatin1Char('~'), 0, 0).toInt(&ok);
   if (!ok || edge <= 0) edge = kFallbackEdge;
   if (requestedSize.isValid() && !requestedSize.isEmpty()) {
     edge = std::min(edge, std::max(requestedSize.width(), requestedSize.height()));
   }
-  auto* response = new LargeImageResponse(separator > 0 ? decoded.mid(separator) : QString(),
-                                          edge, m_stopping);
+  auto* response = new LargeImageResponse(path, edge, m_stopping);
   m_pool.start(response);
   return response;
 }

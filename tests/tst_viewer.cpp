@@ -32,6 +32,7 @@
 #include <QAudioDevice>
 #include <QClipboard>
 #include <QColorSpace>
+#include <QPainter>
 #include <QDBusArgument>
 #include <QDBusConnection>
 #include <QDBusConnectionInterface>
@@ -3400,12 +3401,13 @@ private slots:
     ImageBudget::setLimits({.displayBytes = 1 * ImageBudget::kMiB});
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
-    const QString scan = dir.filePath(QStringLiteral("scan.jpg"));
-    const QString next = dir.filePath(QStringLiteral("scan-2.jpg"));
+    // A PNG cannot decode part of itself, so it loads full resolution whole.
+    const QString scan = dir.filePath(QStringLiteral("scan.png"));
+    const QString next = dir.filePath(QStringLiteral("scan-2.png"));
     QImage image(3000, 2000, QImage::Format_RGB32);
     image.fill(QColor(40, 90, 160));
-    QVERIFY(image.save(scan, nullptr, 85));
-    QVERIFY(image.save(next, nullptr, 85));
+    QVERIFY(image.save(scan));
+    QVERIFY(image.save(next));
 
     open({scan});
     QTRY_VERIFY(prop("imageReady").toBool());
@@ -3422,6 +3424,7 @@ private slots:
     QQuickItem* detail = item(QStringLiteral("viewerDetail"));
     QVERIFY(detail->property("source").toUrl().isEmpty());
 
+    QVERIFY(!m_session->areas());
     QTest::keyClick(m_window, Qt::Key_1);
     QTRY_VERIFY(prop("detailWanted").toBool());
     QCOMPARE(detail->property("source").toUrl(), m_session->detailUrl());
@@ -3446,6 +3449,68 @@ private slots:
     QVERIFY(m_session->imageUrl().toString().startsWith(QStringLiteral("image://large/")));
     QTRY_VERIFY(prop("imageReady").toBool());
     QCOMPARE(prop("sourceWidth").toReal(), 3000.0);
+  }
+
+  // A very large JPEG zoomed in decodes only the part on screen, at the
+  // screen's resolution, and decodes again where the view moves.
+  void aVeryLargeJpegDecodesOnlyWhatIsOnScreen() {
+    const auto restore = qScopeGuard([this] {
+      ImageBudget::setLimits({});
+      m_window->close();
+      m_session->clear();
+    });
+    ImageBudget::setLimits({.displayBytes = 1 * ImageBudget::kMiB});
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString scan = dir.filePath(QStringLiteral("scan.jpg"));
+    // Blue on the left, orange on the right.
+    QImage image(6000, 4000, QImage::Format_RGB32);
+    image.fill(QColor(40, 90, 160));
+    QPainter(&image).fillRect(3000, 0, 3000, 4000, QColor(220, 130, 40));
+    QVERIFY(image.save(scan, nullptr, 85));
+
+    open({scan});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QVERIFY(m_session->reduced());
+    QVERIFY(m_session->areas());
+    QVERIFY(m_session->detailUrl().isEmpty());
+    QVERIFY(m_session->pictureNote().isEmpty());
+    QQuickItem* area = item(QStringLiteral("viewerArea"));
+    QVERIFY(area);
+    QVERIFY(!area->isVisible());
+    QVERIFY(area->property("source").toUrl().isEmpty());
+
+    QTest::keyClick(m_window, Qt::Key_1);
+    QTRY_VERIFY(prop("enlargedPastCopy").toBool());
+    QVERIFY(!prop("detailMissing").toBool());
+    QTRY_VERIFY(area->isVisible());
+    const QString first = area->property("source").toUrl().toString();
+    QVERIFY(first.startsWith(QStringLiteral("image://large/")));
+    // No more pixels than the view, with its margin, needs.
+    const qreal dpr = m_window->devicePixelRatio();
+    const QSize loaded = area->property("sourceSize").toSize();
+    QVERIFY2(loaded.width() <= qCeil(m_window->width() * dpr * 1.5) + 2
+                 && loaded.height() <= qCeil(m_window->height() * dpr * 1.5) + 2,
+             qPrintable(QStringLiteral("%1x%2").arg(loaded.width()).arg(loaded.height())));
+    const QRectF shown = area->property("shown").toRectF();
+    QVERIFY(shown.contains(QPointF(3000, 2000)));
+    QVERIFY(shown.width() < 6000 && shown.height() < 4000);
+
+    // Panned to the right edge: the orange half is decoded there.
+    QObject* flick = m_window->findChild<QObject*>(QStringLiteral("viewerStill"));
+    QVERIFY(flick);
+    flick->setProperty("contentX", flick->property("contentWidth").toReal() - m_window->width());
+    QTRY_VERIFY(area->property("source").toUrl().toString() != first);
+    QTRY_VERIFY(area->property("shown").toRectF().right() >= 5999);
+    QTRY_COMPARE(area->property("status").toInt(), 1);
+    const QImage frame = m_window->grabWindow();
+    const QColor color = frame.pixelColor(frame.width() * 3 / 4, frame.height() / 2);
+    QVERIFY2(color.red() > 180 && color.blue() < 90, qPrintable(color.name()));
+
+    // Back to fit: the area goes, the copy shows.
+    QTest::keyClick(m_window, Qt::Key_0);
+    QTRY_VERIFY(!area->isVisible());
+    QTRY_VERIFY(area->property("source").toUrl().isEmpty());
   }
 
   // A photo larger than the screen opens from the screen's copy, as a very
@@ -3501,18 +3566,18 @@ private slots:
     QVERIFY(image.save(scan));
     QImageReader::setAllocationLimit(10);
 
+    // A JPEG still opens, from a copy the limit allows, and zoomed in shows
+    // the part on screen, which needs far less than the whole.
     open({photo});
     QTRY_VERIFY(prop("imageReady").toBool());
     QVERIFY(m_session->reduced());
-    QVERIFY(m_session->detailUrl().isEmpty());
-    QCOMPARE(m_session->pictureNote(),
-             QStringLiteral("Showing a reduced copy. Full resolution needs about 23 MiB; the "
-                            "limit on this computer is 10 MiB"));
+    QVERIFY(m_session->areas());
+    QVERIFY(m_session->pictureNote().isEmpty());
     QCOMPARE(prop("loadedSize").toSize(), QSize(1536, 1024));
     QCOMPARE(prop("sourceWidth").toReal(), 3000.0);
     QTest::keyClick(m_window, Qt::Key_1);
-    QTRY_VERIFY(prop("detailMissing").toBool());
-    QCOMPARE(prop("status").toString(), m_session->pictureNote());
+    QTRY_VERIFY(item(QStringLiteral("viewerArea"))->isVisible());
+    QVERIFY(!prop("detailMissing").toBool());
 
     m_session->open({scan});
     QTRY_COMPARE(m_session->path(), scan);

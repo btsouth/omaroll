@@ -16,11 +16,9 @@ See [project status](STATUS.md) for the latest release and current work.
 - Improve desktop integration and reliability from reproducible problems and
   user feedback. Preserve originals and keep specialist editing in the
   existing tools.
-- Deep zoom for very large JPEGs: decode only the region on screen, so full
-  resolution needs no more memory than the screen and pictures longer than a
-  texture are sharp too. Very large pictures currently open from a reduced copy
-  and load full resolution whole when it fits
-  ([#115](https://github.com/btsouth/omaroll/issues/115)).
+- Zoom into very large pictures in the library's detail sheet the way the
+  quick viewer does, decoding only the part on screen. Very large formats
+  other than JPEG still decode whole.
 
 Shipped work is in the [changelog](../CHANGELOG.md).
 

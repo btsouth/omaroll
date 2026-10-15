@@ -14,6 +14,11 @@
 // The picture is decoded with its longest side at most <edge>, upright. A
 // JPEG decodes at that size directly. Other formats decode whole within Qt's
 // allocation limit and are scaled down at once, so only the copy is kept.
+//
+// Ids from ImageBudget::areaUrl() ask for part of a picture instead:
+//   image://large/<x>,<y>,<width>,<height>,<output width>,<output height>~<version>/<path>
+// The area is in upright pixels, and is decoded no larger than the output
+// size, upright. The viewer shows a zoomed-in very large JPEG this way.
 class LargeImageProvider final : public QQuickAsyncImageProvider {
 public:
   static constexpr const char* kProviderId = "large";

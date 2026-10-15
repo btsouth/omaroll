@@ -104,7 +104,7 @@ ApplicationWindow {
     readonly property bool detailWanted: root.enlargedPastCopy && root.detailSource.toString() !== ""
     // Zoomed past the copy with no full resolution to load: say why, once.
     readonly property bool detailMissing: root.enlargedPastCopy && Session.reduced
-                                          && Session.detailUrl.toString() === ""
+                                          && !Session.areas && Session.detailUrl.toString() === ""
     onDetailMissingChanged: {
         if (root.detailMissing && Session.pictureNote !== "") root.say(Session.pictureNote)
     }
@@ -1163,6 +1163,101 @@ ApplicationWindow {
                         if (status === Image.Ready) {
                             root.detailPath = Session.path
                         }
+                    }
+                }
+
+                // A very large JPEG zoomed past its copy: only the part on
+                // screen, with a margin to pan into, decoded at the screen's
+                // resolution once the view settles. The copy shows meanwhile,
+                // and the last area stays until the next one arrives.
+                Image {
+                    id: area
+                    objectName: "viewerArea"
+                    readonly property bool wanted: root.visible && Session.areas
+                                                   && root.enlargedPastCopy
+                    // In the upright picture's own pixels: what is shown, and
+                    // what is loading, with the scale it was asked for at.
+                    property rect shown: Qt.rect(0, 0, 0, 0)
+                    property rect pending: Qt.rect(0, 0, 0, 0)
+                    property real pendingScale: 0
+                    property string pendingPath: ""
+                    x: shown.x * root.effectiveScale
+                    y: shown.y * root.effectiveScale
+                    width: shown.width * root.effectiveScale
+                    height: shown.height * root.effectiveScale
+                    asynchronous: true
+                    retainWhileLoading: true
+                    cache: false
+                    smooth: parent.smooth
+                    fillMode: Image.Stretch
+                    visible: wanted && status === Image.Ready && shown.width > 0
+                             && pendingPath === Session.path
+                    onStatusChanged: if (status === Image.Ready) shown = pending
+                    readonly property var view: [wanted, still.contentX, still.contentY,
+                                                 still.width, still.height,
+                                                 root.effectiveScale, root.viewRotation]
+                    onViewChanged: {
+                        if (wanted) {
+                            settle.restart()
+                        } else {
+                            settle.stop()
+                            source = ""
+                            shown = Qt.rect(0, 0, 0, 0)
+                            pendingScale = 0
+                            pendingPath = ""
+                        }
+                    }
+                    Timer {
+                        id: settle
+                        interval: 120
+                        onTriggered: area.request()
+                    }
+                    function request() {
+                        const picture = area.parent
+                        const scale = root.effectiveScale
+                        if (!wanted || scale <= 0) return
+                        // The window's corners in the picture's pixels. Going
+                        // through the picture also undoes the view's rotation.
+                        let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity
+                        for (const corner of [[0, 0], [still.width, 0], [0, still.height],
+                                              [still.width, still.height]]) {
+                            const at = picture.mapFromItem(still, corner[0], corner[1])
+                            left = Math.min(left, at.x / scale)
+                            right = Math.max(right, at.x / scale)
+                            top = Math.min(top, at.y / scale)
+                            bottom = Math.max(bottom, at.y / scale)
+                        }
+                        const clamp = (v, high) => Math.max(0, Math.min(high, v))
+                        const fullWidth = root.sourceWidth
+                        const fullHeight = root.sourceHeight
+                        left = clamp(left, fullWidth)
+                        right = clamp(right, fullWidth)
+                        top = clamp(top, fullHeight)
+                        bottom = clamp(bottom, fullHeight)
+                        if (right <= left || bottom <= top) return
+                        // Already loaded or loading at about this scale.
+                        if (pendingPath === Session.path && pendingScale > 0
+                                && scale <= pendingScale * 1.01 && scale >= pendingScale * 0.6
+                                && left >= pending.x && top >= pending.y
+                                && right <= pending.x + pending.width
+                                && bottom <= pending.y + pending.height) {
+                            return
+                        }
+                        const marginX = (right - left) / 4
+                        const marginY = (bottom - top) / 4
+                        const x = Math.floor(clamp(left - marginX, fullWidth))
+                        const y = Math.floor(clamp(top - marginY, fullHeight))
+                        const rect = Qt.rect(x, y,
+                                             Math.ceil(clamp(right + marginX, fullWidth)) - x,
+                                             Math.ceil(clamp(bottom + marginY, fullHeight)) - y)
+                        // Never more pixels than the picture has there.
+                        const pixels = Math.min(1, scale * root.dpr)
+                        const size = Qt.size(Math.max(1, Math.round(rect.width * pixels)),
+                                             Math.max(1, Math.round(rect.height * pixels)))
+                        pending = rect
+                        pendingScale = scale
+                        pendingPath = Session.path
+                        source = Session.areaUrl(rect, size)
                     }
                 }
             }

@@ -35,11 +35,13 @@ class ViewerSession final : public QObject {
   Q_PROPERTY(QUrl imageUrl READ imageUrl NOTIFY pictureChanged)
   // A very large still: imageUrl is a copy the size of the screen, fullSize
   // the picture's own upright size, and detailUrl its full resolution when
-  // that can be shown. pictureNote says why it cannot; pictureError why not
-  // even the copy can be decoded.
+  // that can be shown. With areas, the part on screen is loaded from areaUrl()
+  // instead. pictureNote says why neither can be; pictureError why not even
+  // the copy can be decoded.
   Q_PROPERTY(bool reduced READ reduced NOTIFY pictureChanged)
   Q_PROPERTY(QSize fullSize READ fullSize NOTIFY pictureChanged)
   Q_PROPERTY(QUrl detailUrl READ detailUrl NOTIFY pictureChanged)
+  Q_PROPERTY(bool areas READ areas NOTIFY pictureChanged)
   Q_PROPERTY(QString pictureNote READ pictureNote NOTIFY pictureChanged)
   Q_PROPERTY(QString pictureError READ pictureError NOTIFY pictureChanged)
   Q_PROPERTY(QString contentVersion READ contentVersion NOTIFY currentChanged)
@@ -77,8 +79,13 @@ public:
   [[nodiscard]] QUrl imageUrl() const;
   [[nodiscard]] bool reduced() const { return m_pictureKnown && m_plan.reduced; }
   [[nodiscard]] QSize fullSize() const { return reduced() ? m_plan.size : QSize(); }
+  [[nodiscard]] bool areas() const { return reduced() && m_plan.areas; }
+  // |area| of the upright picture, decoded at most |size| large.
+  Q_INVOKABLE QUrl areaUrl(const QRect& area, const QSize& size) const;
   [[nodiscard]] QUrl detailUrl() const;
-  [[nodiscard]] QString pictureNote() const { return m_pictureKnown ? m_plan.note : QString(); }
+  [[nodiscard]] QString pictureNote() const {
+    return m_pictureKnown && !m_plan.areas ? m_plan.note : QString();
+  }
   [[nodiscard]] QString pictureError() const { return m_pictureKnown ? m_plan.error : QString(); }
   [[nodiscard]] QString contentVersion() const { return m_contentVersion; }
   [[nodiscard]] QString thumbnailVersion() const { return m_thumbnailVersion; }

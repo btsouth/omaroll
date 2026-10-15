@@ -2,6 +2,7 @@
 
 #include <QByteArray>
 #include <QImage>
+#include <QRect>
 #include <QSize>
 #include <QString>
 #include <QUrl>
@@ -123,6 +124,10 @@ struct Plan {
   int edge = 0;
   // Full resolution can be loaded when zoomed in.
   bool detail = true;
+  // Zoomed in, the part on screen can be decoded instead, from areaUrl():
+  // very large JPEGs, which decode part of the picture cheaply. The quick
+  // viewer prefers it to detail and needs no note then.
+  bool areas = false;
   // Said once the picture is zoomed past the reduced copy without detail.
   QString note;
   // Set when not even the reduced copy can be decoded.
@@ -151,5 +156,9 @@ struct Plan {
 // What QML loads for the reduced copy, from LargeImageProvider. The file's
 // version keeps a replaced file out of Qt's pixmap cache.
 [[nodiscard]] QUrl reducedUrl(const QString& path, const QString& version, int edge);
+
+// What QML loads for |area| of the upright picture, at most |size| large.
+[[nodiscard]] QUrl areaUrl(const QString& path, const QString& version, const QRect& area,
+                           const QSize& size);
 
 } // namespace ImageBudget
