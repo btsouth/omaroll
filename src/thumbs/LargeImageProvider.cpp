@@ -1,5 +1,6 @@
 #include "thumbs/LargeImageProvider.h"
 
+#include "sources/DisplayColors.h"
 #include "sources/ImageBudget.h"
 
 #include <QImageReader>
@@ -72,6 +73,7 @@ private:
     if (image.width() > target.width() || image.height() > target.height()) {
       image = image.scaled(target, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     }
+    convertToDisplayColors(image);
     return image;
   }
 

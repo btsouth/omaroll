@@ -1116,6 +1116,9 @@ ApplicationWindow {
                 objectName: "viewerImage"
                 source: root.visible && !Session.isVideo ? Session.imageUrl : ""
                 asynchronous: true
+                // Wide-gamut pictures are converted to the screen's sRGB.
+                // The preloaded neighbours match, so they share its cache.
+                colorSpace.namedColorSpace: ColorSpace.SRgb
                 autoTransform: true
                 // Smooth while fitted, even when a small picture is scaled up;
                 // crisp pixels once zoomed well past their real size.
@@ -1149,6 +1152,7 @@ ApplicationWindow {
                                              || root.detailPath === Session.path)
                             ? root.detailSource : ""
                     asynchronous: true
+                    colorSpace.namedColorSpace: ColorSpace.SRgb
                     autoTransform: !Session.isRaw
                     smooth: parent.smooth
                     mipmap: Session.isRaw
@@ -1187,6 +1191,7 @@ ApplicationWindow {
                 objectName: "viewerPrefetch" + modelData
                 visible: false
                 asynchronous: true
+                colorSpace.namedColorSpace: ColorSpace.SRgb
                 autoTransform: true
                 source: root.visible ? (modelData === 1 ? Session.nextPreloadUrl
                                                        : Session.previousPreloadUrl) : ""

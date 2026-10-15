@@ -31,6 +31,7 @@
 
 #include <QAudioDevice>
 #include <QClipboard>
+#include <QColorSpace>
 #include <QDBusArgument>
 #include <QDBusConnection>
 #include <QDBusConnectionInterface>
@@ -1138,6 +1139,28 @@ private slots:
     if (m_theme->surfaceAlpha() < 0.99) {
       QVERIFY2(at(4, middleY).alpha() < 255, qPrintable(at(4, middleY).name(QColor::HexArgb)));
     }
+  }
+
+  // Display P3 green is drawn as its sRGB equivalent, #00cc0d, rather than
+  // the washed-out stored values, #1ec83c.
+  void aWideGamutPictureIsShownInSrgb() {
+    const QString folder = m_scratch.filePath(QStringLiteral("wide-gamut"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString path = folder + QStringLiteral("/p3.png");
+    QImage image(400, 300, QImage::Format_RGB32);
+    image.fill(QColor(30, 200, 60));
+    image.setColorSpace(QColorSpace(QColorSpace::DisplayP3));
+    QVERIFY(image.save(path));
+    open({path});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QTest::qWait(100);
+    const QImage frame = m_window->grabWindow();
+    QVERIFY(!frame.isNull());
+    // Chrome left over from earlier tests can dim the frame a little, so
+    // check what the conversion changes: the stored red and blue are gone.
+    const QColor color = frame.pixelColor(frame.width() / 2, frame.height() / 2);
+    QVERIFY2(color.red() < 10 && color.green() > 150 && color.blue() < 25,
+             qPrintable(color.name()));
   }
 
   void theToolbarHasTheCommonPictureControls() {

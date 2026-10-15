@@ -11,6 +11,7 @@
 #include "thumbs/ThumbnailCache.h"
 
 #include <QBuffer>
+#include <QColorSpace>
 #include <QDataStream>
 #include <QFile>
 #include <QGuiApplication>
@@ -320,6 +321,24 @@ private slots:
     QCOMPARE(read(provider, photo, 2048).size(), QSize(1536, 1024));
     QImageReader::setAllocationLimit(256);
     QCOMPARE(read(provider, photo, 2048).size(), QSize(2048, 1365));
+    provider.shutdown();
+  }
+
+  // Display P3 green, which is #00cc0d in sRGB rather than its stored values.
+  void aWideGamutCopyIsConvertedToSrgb() {
+    const QString path = m_dir.filePath(QStringLiteral("p3.png"));
+    QImage image(1200, 800, QImage::Format_RGB32);
+    image.fill(QColor(30, 200, 60));
+    image.setColorSpace(QColorSpace(QColorSpace::DisplayP3));
+    QVERIFY(image.save(path));
+
+    LargeImageProvider provider;
+    const QImage copy = read(provider, path, 300);
+    QCOMPARE(copy.size(), QSize(300, 200));
+    QCOMPARE(copy.colorSpace(), QColorSpace(QColorSpace::SRgb));
+    const QColor color = copy.pixelColor(150, 100);
+    QVERIFY2(color.red() < 8 && qAbs(color.green() - 204) < 4 && color.blue() < 20,
+             qPrintable(color.name()));
     provider.shutdown();
   }
 

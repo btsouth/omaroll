@@ -1318,6 +1318,7 @@ Item {
                     source: root.visible && !root.isVideo && root.path !== ""
                             && root.picture.path === root.path ? root.picture.source : ""
                     asynchronous: true
+                    colorSpace.namedColorSpace: ColorSpace.SRgb
                     autoTransform: true
                     smooth: true
                     mipmap: true
@@ -1372,6 +1373,7 @@ Item {
                         source: root.visible && root.picture.detail !== undefined
                                 && (wanted || loadedPath === root.path) ? root.picture.detail : ""
                         asynchronous: true
+                        colorSpace.namedColorSpace: ColorSpace.SRgb
                         autoTransform: true
                         smooth: true
                         fillMode: Image.Stretch

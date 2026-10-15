@@ -1,5 +1,6 @@
 #include "thumbs/ThumbnailProvider.h"
 
+#include "sources/DisplayColors.h"
 #include "thumbs/ThumbnailCache.h"
 
 #include <QMetaObject>
@@ -62,6 +63,8 @@ public:
       // let the delegate show its placeholder.
       m_error = QStringLiteral("No thumbnail for %1").arg(m_path);
     } else {
+      // Tiles cached by earlier versions can still carry the original's profile.
+      convertToDisplayColors(image);
       m_image = std::move(image);
     }
     finishOnOwnThread();
