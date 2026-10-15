@@ -122,6 +122,7 @@ process, so a favourite or rating set in one shows in the others.
 | `Space` · `K` | Play · pause a video or animation |
 | click a video | Play · pause |
 | `J` `L` · `↑` `↓` · `M` | Seek ten seconds · volume · mute |
+| `,` `.` | Step one frame back · forward, pausing first |
 | `[` `]` · `Backspace` · `C` | Speed · normal speed · cycle subtitles |
 | `Shift+L` | Loop video on or off; slideshows still advance |
 | `Shift+A` | Cycle audio tracks when more than one is available |
@@ -299,6 +300,7 @@ and put on your clipboard.
 | `Space` in a video or animated-image preview | Play · pause |
 | `←` `→` in a preview | Previous · next file in the same folder |
 | `J` `L` in a video preview | Seek backward · forward five seconds |
+| `,` `.` in a video preview | Step one frame back · forward |
 | `M` · `↑` `↓` or `9` `0` in a video preview | Mute · volume down/up |
 | `[` `]` · `Backspace` in a video preview | Change speed · reset speed |
 | `Home` `End` in a video preview | Start · end |

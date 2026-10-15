@@ -516,6 +516,17 @@ Item {
         root.seekTo(player.position + milliseconds)
     }
 
+    // One frame back or forward, paused, as in mpv. Positions are whole
+    // milliseconds, so aim for the middle of the frame rather than its start.
+    function stepFrame(direction) {
+        if (!root.player || player.duration <= 0) return
+        if (player.playbackState === MediaPlayer.PlayingState) player.pause()
+        const rate = player.metaData.value(MediaMetaData.VideoFrameRate)
+        const frame = rate > 0 ? 1000 / rate : 1000 / 30
+        const current = Math.floor(player.position / frame)
+        root.seekTo(Math.round((Math.max(0, current + direction) + 0.5) * frame))
+    }
+
     function findInPdf() {
         PdfInfo.find(pdfSearch.text)
     }
@@ -605,9 +616,9 @@ Item {
 
     function embeddedTrackLabel(track, index) {
         try {
-            const language = track.stringValue(QMediaMetaData.Language)
+            const language = track.stringValue(MediaMetaData.Language)
             if (language && language.length > 0) {
-                return language.toUpperCase()
+                return language
             }
         } catch (error) {
             // A value without stringValue falls back to the ordinal.
@@ -3222,6 +3233,11 @@ Item {
         }
         if (root.isVideo && (event.key === Qt.Key_J || event.key === Qt.Key_L)) {
             root.seekVideo(event.key === Qt.Key_J ? -5000 : 5000)
+            event.accepted = true
+            return
+        }
+        if (root.isVideo && (event.key === Qt.Key_Comma || event.key === Qt.Key_Period)) {
+            root.stepFrame(event.key === Qt.Key_Comma ? -1 : 1)
             event.accepted = true
             return
         }

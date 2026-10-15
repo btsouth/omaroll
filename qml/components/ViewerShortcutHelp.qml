@@ -29,6 +29,7 @@ Popup {
             {keys: "Space / K", label: "Play / pause"},
             {keys: "← / →", label: "Seek five seconds"},
             {keys: "J / L", label: "Seek ten seconds"},
+            {keys: ", / .", label: "Step one frame back / forward"},
             {keys: "Shift+L", label: "Toggle video loop"},
             {keys: "↑ / ↓", label: "Volume up / down"},
             {keys: "M", label: "Mute / unmute"},
