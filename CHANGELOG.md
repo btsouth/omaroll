@@ -6,6 +6,10 @@
 
 - Videos start playing about a tenth of a second sooner. The player no longer
   waits for the thumbnail to be drawn first.
+- Zooming into a very large JPEG, such as a 150-megapixel scan, decodes only
+  the part on screen. Full resolution needs a fraction of the memory it did,
+  about 410 MiB instead of 1.5 GiB for such a scan at actual size, and pictures
+  too long for the graphics card are now sharp when zoomed in too.
 
 ### Fixed
 

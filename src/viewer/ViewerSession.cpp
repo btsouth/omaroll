@@ -28,6 +28,11 @@ QUrl imageUrl(const QString& path, const QString& version) {
   result.setQuery(QStringLiteral("omaroll=") + version);
   return result;
 }
+// Areas show the detail, so even a picture too long for a texture only needs
+// a copy the size of the screen.
+int copyEdge(const ImageBudget::Plan& plan) {
+  return plan.areas ? ImageBudget::reducedEdge() : ImageBudget::reducedEdge(plan);
+}
 } // namespace
 
 ViewerSession::ViewerSession(QObject* parent) : QObject(parent) {
@@ -119,7 +124,12 @@ QUrl ViewerSession::imageUrl() const {
 }
 
 QUrl ViewerSession::detailUrl() const {
-  return reduced() && m_plan.detail ? ::imageUrl(path(), m_contentVersion) : QUrl();
+  return reduced() && m_plan.detail && !m_plan.areas ? ::imageUrl(path(), m_contentVersion)
+                                                     : QUrl();
+}
+
+QUrl ViewerSession::areaUrl(const QRect& area, const QSize& size) const {
+  return areas() ? ImageBudget::areaUrl(path(), m_contentVersion, area, size) : QUrl();
 }
 
 bool ViewerSession::isPlainStill() const {
@@ -165,7 +175,7 @@ void ViewerSession::startPictureProbe() {
 void ViewerSession::applyPicture(const PictureResult& result) {
   m_pictureKnown = true;
   m_plan = ImageBudget::plan(result.estimate, ImageBudget::reducedEdge());
-  m_reducedEdge = m_plan.reduced ? ImageBudget::reducedEdge(m_plan) : 0;
+  m_reducedEdge = m_plan.reduced ? copyEdge(m_plan) : 0;
 }
 
 QString ViewerSession::fileName() const { return QFileInfo(path()).fileName(); }
@@ -339,7 +349,7 @@ QUrl ViewerSession::neighbourImageUrl(int offset) const {
   if (known != m_neighbourPictures.constEnd() && known->version == version) {
     const ImageBudget::Plan plan = ImageBudget::plan(known->estimate, ImageBudget::reducedEdge());
     if (plan.reduced && plan.error.isEmpty()) {
-      return ImageBudget::reducedUrl(neighbour, version, ImageBudget::reducedEdge(plan));
+      return ImageBudget::reducedUrl(neighbour, version, copyEdge(plan));
     }
   }
   return ::imageUrl(neighbour, version);

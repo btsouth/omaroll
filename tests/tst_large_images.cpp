@@ -12,6 +12,8 @@
 
 #include <QBuffer>
 #include <QColorSpace>
+#include <QPainter>
+#include <QScopeGuard>
 #include <QDataStream>
 #include <QFile>
 #include <QGuiApplication>
@@ -324,6 +326,108 @@ private slots:
     provider.shutdown();
   }
 
+  // Only very large JPEGs, which decode part of themselves cheaply, are
+  // zoomed into by areas; small photos and other formats keep full detail.
+  void onlyVeryLargeJpegsAreShownByArea() {
+    ImageBudget::setLimits({.displayBytes = 1 * ImageBudget::kMiB});
+    const auto restore = qScopeGuard([] { ImageBudget::setLimits({}); });
+    ImageBudget::Estimate jpeg = made(QSize(3000, 2000), 23 * ImageBudget::kMiB, true);
+    jpeg.jpeg = true;
+    ImageBudget::Plan plan = ImageBudget::plan(jpeg, 2560);
+    QVERIFY(plan.reduced);
+    QVERIFY(plan.areas);
+    QVERIFY(!ImageBudget::plan(made(QSize(3000, 2000), 23 * ImageBudget::kMiB, false), 2560).areas);
+    jpeg.bytes = 512 * 1024;
+    plan = ImageBudget::plan(jpeg, 1000);
+    QVERIFY(plan.reduced);
+    QVERIFY(!plan.areas);
+  }
+
+  // An area is in upright pixels, whatever the EXIF orientation, and comes
+  // back upright and no larger than asked.
+  void anAreaIsUprightAndBounded() {
+    const QString turned = m_dir.filePath(QStringLiteral("area-turned.jpg"));
+    QVERIFY(writeImage(turned, QSize(1200, 800), QImage::Format_RGB32, 6));
+    LargeImageProvider provider;
+    // Upright it is 800 x 1200, the yellow half of the stored picture on top.
+    const QImage top = readArea(provider, turned, QRect(0, 0, 800, 560), QSize(400, 280));
+    QCOMPARE(top.size(), QSize(400, 280));
+    QVERIFY(top.pixelColor(200, 140).red() > 180);
+    const QImage bottom = readArea(provider, turned, QRect(100, 640, 600, 560), QSize(1200, 1120));
+    // Never past the picture's own pixels.
+    QCOMPARE(bottom.size(), QSize(600, 560));
+    QVERIFY(bottom.pixelColor(300, 280).red() < 80);
+    // Clipped to the picture; nothing outside it is an error.
+    QCOMPARE(readArea(provider, turned, QRect(600, 1000, 400, 400), QSize(400, 400)).size(),
+             QSize(200, 200));
+    QVERIFY(readArea(provider, turned, QRect(900, 0, 100, 100), QSize(100, 100)).isNull());
+    provider.shutdown();
+  }
+
+  // Zoomed out a little, the area is most of the picture and small on
+  // screen. It decodes reduced, within a limit the whole picture is far
+  // past, whatever the area's alignment.
+  void aLargeAreaDecodesReduced() {
+    const QString photo = m_dir.filePath(QStringLiteral("area-large.jpg"));
+    QVERIFY(writeImage(photo, QSize(4000, 3000), QImage::Format_RGB32));
+    const auto restore = qScopeGuard([] { QImageReader::setAllocationLimit(256); });
+    QImageReader::setAllocationLimit(10);
+    LargeImageProvider provider;
+    const QImage area = readArea(provider, photo, QRect(13, 7, 3975, 2989), QSize(500, 376));
+    QCOMPARE(area.size(), QSize(500, 376));
+    QVERIFY(area.pixelColor(20, 188).red() > 180);
+    QVERIFY(area.pixelColor(480, 188).red() < 80);
+    provider.shutdown();
+  }
+
+  void everyOrientationMatchesTheUprightPicture_data() {
+    QTest::addColumn<int>("orientation");
+    for (int orientation = 1; orientation <= 8; ++orientation) {
+      QTest::addRow("%d", orientation) << orientation;
+    }
+  }
+
+  // Each quarter of the upright picture, read as an area, has the color Qt's
+  // own upright decode has there.
+  void everyOrientationMatchesTheUprightPicture() {
+    QFETCH(int, orientation);
+    QImage image(600, 400, QImage::Format_RGB32);
+    const QColor colors[] = {Qt::red, Qt::green, Qt::blue, Qt::yellow};
+    QPainter painter(&image);
+    painter.fillRect(0, 0, 300, 200, colors[0]);
+    painter.fillRect(300, 0, 300, 200, colors[1]);
+    painter.fillRect(0, 200, 300, 200, colors[2]);
+    painter.fillRect(300, 200, 300, 200, colors[3]);
+    painter.end();
+    QByteArray jpeg;
+    QBuffer buffer(&jpeg);
+    QVERIFY(buffer.open(QIODevice::WriteOnly) && image.save(&buffer, "JPEG", 95));
+    const QString path = m_dir.filePath(QStringLiteral("oriented-%1.jpg").arg(orientation));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(withExifOrientation(jpeg, quint16(orientation)));
+    file.close();
+
+    QImageReader reader(path);
+    reader.setAutoTransform(true);
+    const QImage upright = reader.read();
+    QVERIFY(!upright.isNull());
+    LargeImageProvider provider;
+    const int w = upright.width() / 2;
+    const int h = upright.height() / 2;
+    for (const QPoint corner : {QPoint(0, 0), QPoint(w, 0), QPoint(0, h), QPoint(w, h)}) {
+      const QImage area = readArea(provider, path, QRect(corner, QSize(w, h)), QSize(w, h));
+      QCOMPARE(area.size(), QSize(w, h));
+      const QColor expected = upright.pixelColor(corner + QPoint(w / 2, h / 2));
+      const QColor actual = area.pixelColor(w / 2, h / 2);
+      QVERIFY2(qAbs(expected.red() - actual.red()) < 24 && qAbs(expected.green() - actual.green()) < 24
+                   && qAbs(expected.blue() - actual.blue()) < 24,
+               qPrintable(QStringLiteral("%1,%2: %3 vs %4").arg(corner.x()).arg(corner.y())
+                              .arg(actual.name(), expected.name())));
+    }
+    provider.shutdown();
+  }
+
   // Display P3 green, which is #00cc0d in sRGB rather than its stored values.
   void aWideGamutCopyIsConvertedToSrgb() {
     const QString path = m_dir.filePath(QStringLiteral("p3.png"));
@@ -345,6 +449,19 @@ private slots:
 private:
   QImage read(LargeImageProvider& provider, const QString& path, int edge) {
     const QString url = ImageBudget::reducedUrl(path, FileVersion::key(path), edge).toString();
+    const QString prefix = QStringLiteral("image://large/");
+    if (!url.startsWith(prefix)) return {};
+    std::unique_ptr<QQuickImageResponse> response(
+        provider.requestImageResponse(url.mid(prefix.size()), QSize()));
+    QSignalSpy finished(response.get(), &QQuickImageResponse::finished);
+    if (!finished.wait(10000) && finished.isEmpty()) return {};
+    std::unique_ptr<QQuickTextureFactory> factory(response->textureFactory());
+    return factory ? factory->image() : QImage();
+  }
+
+  QImage readArea(LargeImageProvider& provider, const QString& path, const QRect& area,
+                  const QSize& size) {
+    const QString url = ImageBudget::areaUrl(path, FileVersion::key(path), area, size).toString();
     const QString prefix = QStringLiteral("image://large/");
     if (!url.startsWith(prefix)) return {};
     std::unique_ptr<QQuickImageResponse> response(

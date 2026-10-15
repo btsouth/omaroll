@@ -184,6 +184,9 @@ Plan plan(const Estimate& estimate, int screenEdge) {
 
   result.reduced = true;
   result.size = estimate.oriented;
+  // Decoding only what is on screen needs neither the memory for the whole
+  // picture nor a texture as long as it.
+  result.areas = estimate.jpeg;
   const bool fits = limit == 0 || estimate.bytes <= limit;
   if (!fits && !estimate.scalable) {
     result.detail = false;
@@ -237,6 +240,15 @@ QUrl reducedUrl(const QString& path, const QString& version, int edge) {
   // then the absolute path encoded whole.
   return QUrl(QStringLiteral("image://large/%1~%2")
                   .arg(edge)
+                  .arg(version.isEmpty() ? FileVersion::key(path) : version) +
+              QString::fromLatin1(QUrl::toPercentEncoding(path)));
+}
+
+QUrl areaUrl(const QString& path, const QString& version, const QRect& area, const QSize& size) {
+  if (path.isEmpty() || area.isEmpty() || size.isEmpty()) return {};
+  return QUrl(QStringLiteral("image://large/%1,%2,%3,%4,%5,%6~%7")
+                  .arg(area.x()).arg(area.y()).arg(area.width()).arg(area.height())
+                  .arg(size.width()).arg(size.height())
                   .arg(version.isEmpty() ? FileVersion::key(path) : version) +
               QString::fromLatin1(QUrl::toPercentEncoding(path)));
 }
