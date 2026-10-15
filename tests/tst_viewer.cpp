@@ -1513,6 +1513,43 @@ private slots:
              QSize(qRound(poster->width()), qRound(poster->height())));
   }
 
+  // , and . pause and step one frame, and the paused picture follows.
+  void commaAndPeriodStepOneFrame() {
+    open({media(QStringLiteral("clip.mp4"))});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY_WITH_TIMEOUT(player->playbackState() == QMediaPlayer::PlayingState, 5000);
+    QTRY_VERIFY(player->duration() > 0);
+    QVideoSink* sink = player->videoSink();
+    QVERIFY(sink);
+    // The fixture is 30 frames a second. The frame on show holds the position.
+    const auto showing = [sink, player] {
+      const QVideoFrame frame = sink->videoFrame();
+      const qint64 at = player->position() * 1000;
+      return frame.startTime() <= at && frame.endTime() > at;
+    };
+
+    QTest::keyClick(m_window, Qt::Key_Period);
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    player->setPosition(1000);
+    QTRY_VERIFY(qAbs(sink->videoFrame().endTime() / 1000 - 1000) <= 34);
+    QTest::keyClick(m_window, Qt::Key_Period);
+    QTRY_COMPARE(player->position(), 1017);
+    QTRY_VERIFY(showing());
+    QCOMPARE(sink->videoFrame().startTime(), 1000000);
+    QTest::keyClick(m_window, Qt::Key_Comma);
+    QTRY_COMPARE(player->position(), 983);
+    QTRY_VERIFY(showing());
+    QCOMPARE(sink->videoFrame().startTime() / 1000, 966);
+    QTest::keyClick(m_window, Qt::Key_Comma);
+    QTRY_COMPARE(player->position(), 950);
+    QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    // Never before the start.
+    player->setPosition(10);
+    QTest::keyClick(m_window, Qt::Key_Comma);
+    QTRY_COMPARE(player->position(), 17);
+  }
+
   void videoPlaysWithPlayerKeysAndOneThinBar() {
     open({media(QStringLiteral("clip.mp4"))});
     QMediaPlayer* player = nullptr;
@@ -1721,7 +1758,13 @@ private slots:
     const int audio = player->activeAudioTrack();
     QTest::keyClick(m_window, Qt::Key_A, Qt::ShiftModifier);
     QCOMPARE(player->activeAudioTrack(), (audio + 1) % 2);
-    QVERIFY(prop("status").toString().startsWith(QStringLiteral("Audio: Track ")));
+    // Named by the track's language, read from its metadata.
+    const QString said = prop("status").toString();
+    QVERIFY2(said == QStringLiteral("Audio: Track %1: %2")
+                         .arg(player->activeAudioTrack() + 1)
+                         .arg(player->activeAudioTrack() == 0 ? QStringLiteral("English")
+                                                              : QStringLiteral("French")),
+             qPrintable(said));
     QTest::keyClick(m_window, Qt::Key_Menu);
     QTRY_VERIFY(menu->property("visible").toBool());
     QVERIFY(QMetaObject::invokeMethod(item(QStringLiteral("viewerMenu_audio-track")), "click"));
@@ -1729,6 +1772,10 @@ private slots:
 
     QTest::keyClick(m_window, Qt::Key_X);
     QCOMPARE(prop("subtitleOffsetMs").toInt(), 0);
+    QVariant choices;
+    QVERIFY(QMetaObject::invokeMethod(m_window, "subtitleChoices", Q_RETURN_ARG(QVariant, choices)));
+    QCOMPARE(choices.toList().value(1).toMap().value(QStringLiteral("label")).toString(),
+             QStringLiteral("English"));
     QTest::keyClick(m_window, Qt::Key_C); // Embedded subtitles have no timing controls.
     QVERIFY(!menuIds(menu).contains(QStringLiteral("subtitles-later")));
     QTest::keyClick(m_window, Qt::Key_C); // Sidecar.

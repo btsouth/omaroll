@@ -445,6 +445,17 @@ ApplicationWindow {
         root.player.position = Math.max(0, Math.min(maximum, milliseconds))
     }
 
+    // One frame back or forward, paused, as in mpv. Positions are whole
+    // milliseconds, so aim for the middle of the frame rather than its start.
+    function stepFrame(direction) {
+        if (!root.player || root.player.duration <= 0) return
+        if (root.playing) root.player.pause()
+        const rate = root.player.metaData.value(MediaMetaData.VideoFrameRate)
+        const frame = rate > 0 ? 1000 / rate : 1000 / 30
+        const current = Math.floor(root.player.position / frame)
+        root.seekTo(Math.round((Math.max(0, current + direction) + 0.5) * frame))
+    }
+
     function seek(milliseconds) {
         if (root.player && root.player.duration > 0) {
             root.seekTo(root.player.position + milliseconds)
@@ -499,10 +510,10 @@ ApplicationWindow {
         let label = "Track " + (index + 1)
         try {
             const track = root.player.audioTracks[index]
-            const title = track.stringValue(QMediaMetaData.Title)
-            const language = track.stringValue(QMediaMetaData.Language)
+            const title = track.stringValue(MediaMetaData.Title)
+            const language = track.stringValue(MediaMetaData.Language)
             if (title) label += ": " + title
-            else if (language) label += ": " + language.toUpperCase()
+            else if (language) label += ": " + language
         } catch (error) {
             // A value without stringValue keeps the ordinal.
         }
@@ -524,9 +535,9 @@ ApplicationWindow {
             for (let i = 0; i < tracks.length; ++i) {
                 let label = "Track " + (i + 1)
                 try {
-                    const language = tracks[i].stringValue(QMediaMetaData.Language)
+                    const language = tracks[i].stringValue(MediaMetaData.Language)
                     if (language && language.length > 0) {
-                        label = language.toUpperCase()
+                        label = language
                     }
                 } catch (error) {
                     // A value without stringValue keeps the ordinal.
@@ -2182,6 +2193,11 @@ ApplicationWindow {
                 case Qt.Key_J:
                 case Qt.Key_L:
                     if (video) root.seek(event.key === Qt.Key_J ? -10000 : 10000)
+                    else handled = false
+                    break
+                case Qt.Key_Comma:
+                case Qt.Key_Period:
+                    if (video) root.stepFrame(event.key === Qt.Key_Comma ? -1 : 1)
                     else handled = false
                     break
                 case Qt.Key_Up:
