@@ -109,8 +109,6 @@ public:
   Q_INVOKABLE void open(const QStringList& paths);
   // Merge new requests without losing aliases for retained selection members.
   void setDeletionPaths(const QHash<QString, QString>& entryPaths);
-  // Connect the viewer's poster readiness to completed scene-graph frames.
-  Q_INVOKABLE void watchVideoStartup(QObject* window);
   // Forget the sequence, so a closed window does not flash the last picture
   // when it is opened onto another one.
   Q_INVOKABLE void clear();

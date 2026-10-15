@@ -12,12 +12,10 @@
 #include <QImageReader>
 #include <QLocale>
 #include <QSet>
-#include <QQuickWindow>
 #include <QVariant>
 #include <QtConcurrent>
 
 #include <algorithm>
-#include <atomic>
 #include <memory>
 #include <utility>
 
@@ -31,35 +29,6 @@ QUrl imageUrl(const QString& path, const QString& version) {
   return result;
 }
 } // namespace
-
-void ViewerSession::watchVideoStartup(QObject* target) {
-  auto* window = qobject_cast<QQuickWindow*>(target);
-  if (!window) return;
-  struct State {
-    std::atomic<int> ready{0};
-    int synchronized = 0;
-    int reported = 0;
-  };
-  auto state = std::make_shared<State>();
-  // QML is read on the GUI thread. The render thread then latches that
-  // generation at sync, so a delayed callback cannot use a newer frame.
-  connect(window, &QQuickWindow::afterAnimating, window, [window, state] {
-    QVariant ready;
-    QMetaObject::invokeMethod(window, "videoStartupReadiness", Q_RETURN_ARG(QVariant, ready));
-    state->ready.store(ready.toInt());
-  });
-  connect(window, &QQuickWindow::beforeSynchronizing, window, [state] {
-    state->synchronized = state->ready.load();
-  }, Qt::DirectConnection);
-  connect(window, &QQuickWindow::afterFrameEnd, window, [window, state] {
-    const int generation = state->synchronized;
-    if (generation > 0 && generation != state->reported) {
-      state->reported = generation;
-      QMetaObject::invokeMethod(window, "startPlayerAfterPoster", Qt::QueuedConnection,
-                                Q_ARG(QVariant, QVariant(generation)));
-    }
-  }, Qt::DirectConnection);
-}
 
 ViewerSession::ViewerSession(QObject* parent) : QObject(parent) {
   connect(this, &ViewerSession::currentChanged, this, &ViewerSession::deletionPathChanged);
