@@ -283,6 +283,15 @@ if(BUILD_TESTING)
   set_tests_properties(omaroll_thumbnail_tests PROPERTIES ENVIRONMENT
     "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
 
+  # Hostile files reach the decoders and the helpers. Qt Multimedia starts the
+  # FFmpeg and D-Bus stacks, so leak detection is noisy here for the same
+  # reason as the UI suites; ASan and UBSan still run.
+  qt_add_executable(omaroll_hostile_media_tests tests/tst_hostile_media.cpp)
+  target_link_libraries(omaroll_hostile_media_tests PRIVATE omaroll_core Qt6::Multimedia Qt6::Test)
+  add_test(NAME omaroll_hostile_media_tests COMMAND omaroll_hostile_media_tests)
+  set_tests_properties(omaroll_hostile_media_tests PROPERTIES ENVIRONMENT
+    "${omaroll_test_environment};ASAN_OPTIONS=detect_leaks=0")
+
   # The UI suite loads the real Main.qml and drives it with synthetic input.
   # The module's files are compiled into the omaroll executable, so a second
   # process cannot import them from there; a qmldir over symlinks to the

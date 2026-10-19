@@ -69,8 +69,10 @@ associations are separate upstream decisions.
 ## Validation and remaining coverage
 
 CI covers the core, library UI and quick viewer suites, rendered video with
-OpenGL, dark and light themes, and narrow windows. Release validation also
-checks package installation, upgrade, reinstall and removal.
+OpenGL, dark and light themes, and narrow windows. A Debug job with
+AddressSanitizer and UndefinedBehaviorSanitizer runs the whole test suite and
+gates pull requests. Release validation also checks package installation,
+upgrade, reinstall and removal.
 
 Headless checks do not establish physical audio, multiple-monitor behavior,
 fractional scaling or Wayland presentation performance. Use the
