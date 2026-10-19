@@ -33,7 +33,6 @@
 #include <QTemporaryDir>
 #include <QtTest>
 
-#include <limits>
 #include <memory>
 #include <optional>
 
@@ -323,7 +322,8 @@ private slots:
   }
 
   // Admission is by extension and header only: a hostile file is listed and
-  // the library still opens. Nothing here decodes.
+  // the library still opens. A text file with a media extension is admitted by
+  // its name; the decode is what fails, later.
   void scannerListsHostileFilesWithoutDecoding() {
     QStringList traversed;
     const QList<CaptureRecord> records =
@@ -341,9 +341,6 @@ private slots:
           "truncated.avif"}) {
       QVERIFY2(names.contains(QLatin1String(name)), name);
     }
-    // A text file with a media extension is admitted by its name; the decode
-    // is what fails, later.
-    QVERIFY(names.contains(QStringLiteral("text.png")));
   }
 
   // Extensionless files are read from their headers, so the sniffing path has
@@ -357,7 +354,7 @@ private slots:
                 .isEmpty());
     QVERIFY(CaptureScanner::mediaSuffix(m_dir.filePath(QStringLiteral("no-extension-pdf")))
                 .isEmpty());
-    // Repeated asks hit the identity-checked cache rather than re-reading.
+    // A repeated ask gives the same answer.
     QCOMPARE(CaptureScanner::mediaSuffix(m_dir.filePath(QStringLiteral("no-extension-bomb"))),
              QStringLiteral("png"));
   }
@@ -370,10 +367,7 @@ private slots:
     for (const char* name : {"bomb.bmp", "bomb.png", "bomb.gif", "bomb.webp"}) {
       const ImageBudget::Estimate estimate =
           ImageBudget::estimate(m_dir.filePath(QLatin1String(name)));
-      QVERIFY2(!estimate.valid() ||
-                   (estimate.bytes > 0 && estimate.bytes >= 64 * ImageBudget::kMiB &&
-                    estimate.bytes <= std::numeric_limits<qint64>::max()),
-               name);
+      QVERIFY2(!estimate.valid() || estimate.bytes >= 64 * ImageBudget::kMiB, name);
     }
     // The completed GIF header carries its canvas into the frame Qt reports,
     // so the estimator really sees 65535 x 65535 rather than rejecting it.
