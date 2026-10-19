@@ -48,6 +48,11 @@ public:
   void setPlacementQuery(PlacementQuery query) { m_query = std::move(query); }
   void setPlacementTile(std::function<void(const QStringList&)> tile) { m_tile = std::move(tile); }
 
+  // The placement deadline: how long a new viewer waits for the compositor
+  // before it maps anyway. Tests lengthen it to hold a reply, or shorten it to
+  // reach the fallback.
+  void setPlacementDeadline(int milliseconds) { m_placementDeadlineMs = milliseconds; }
+
 signals:
   // The source entry chosen by the user, before media-path resolution.
   void libraryRequested(const QString& path, QQuickWindow* viewer);
@@ -69,4 +74,5 @@ private:
   QList<Viewer*> m_recent;
   PlacementQuery m_query = HyprlandPlacement::query;
   std::function<void(const QStringList&)> m_tile = HyprlandPlacement::tile;
+  int m_placementDeadlineMs = 100;
 };

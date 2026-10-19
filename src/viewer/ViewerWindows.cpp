@@ -123,7 +123,7 @@ QQuickWindow* ViewerWindows::open(const QStringList& files, const QHash<QString,
       viewer->pending = false;
       ++viewer->placementGeneration;
     }, Qt::SingleShotConnection);
-    QTimer::singleShot(100, viewer->window, [this, viewer, generation] {
+    QTimer::singleShot(m_placementDeadlineMs, viewer->window, [this, viewer, generation] {
       if (!viewer->pending || generation != viewer->placementGeneration) return;
       viewer->pending = false;
       show(*viewer, {});

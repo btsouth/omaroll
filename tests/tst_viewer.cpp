@@ -3071,6 +3071,10 @@ private slots:
   // The new viewer stays hidden until its map-time title is decided.
   void placementRepliesKeepOpensResponsiveAndRejectClosedWindows() {
     ViewerWindows viewers(*m_engine);
+    // A held reply must decide this viewer's mapping, never the placement
+    // deadline. The deadline has its own fallback test, and a loaded machine
+    // must not slip these opens into it before the reply arrives.
+    viewers.setPlacementDeadline(30000);
     QList<HyprlandPlacement::Reply> pending;
     viewers.setPlacementQuery([&](QObject*, HyprlandPlacement::Reply reply) {
       pending.append(std::move(reply));
@@ -3115,6 +3119,9 @@ private slots:
     QCOMPARE(pending.size(), 0);
     QCOMPARE(tiled.size(), 2);
 
+    // This open deliberately reaches the placement deadline instead of a
+    // reply, so bring the fallback back within reach.
+    viewers.setPlacementDeadline(100);
     auto* fourth = viewers.open({media(QStringLiteral("Shot 1.jpg"))});
     QVERIFY(fourth && !fourth->isVisible());
     QTRY_VERIFY(fourth->isVisible());
