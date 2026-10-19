@@ -4405,6 +4405,126 @@ private slots:
     QCOMPARE(records.size(), 2);
   }
 
+  // Special filesystem entries are not media. A FIFO with a picture's name
+  // must never reach a decoder, which would block until a writer ever
+  // appeared; a dangling link and a link to a directory are not files either.
+  void scanSkipsSpecialAndDanglingEntries() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    QImage image(4, 4, QImage::Format_RGB32);
+    image.fill(Qt::red);
+    QVERIFY(image.save(dir.filePath(QStringLiteral("photo.png")), "PNG"));
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("album.jpg"))));
+    QVERIFY(image.save(dir.filePath(QStringLiteral("album.jpg/one.png")), "PNG"));
+
+    QCOMPARE(::mkfifo(QFile::encodeName(dir.filePath(QStringLiteral("pipe.jpg"))).constData(), 0600),
+             0);
+    QVERIFY(QFile::link(QStringLiteral("/nonexistent/omaroll-target"),
+                        dir.filePath(QStringLiteral("broken.png"))));
+    QVERIFY(QFile::link(dir.filePath(QStringLiteral("album.jpg")),
+                        dir.filePath(QStringLiteral("linked-album.jpg"))));
+
+    const auto records =
+        CaptureScanner::scan({{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
+    QStringList names;
+    for (const auto& record : records) {
+      names << record.fileName;
+    }
+    QCOMPARE(names, QStringList{QStringLiteral("photo.png")});
+
+    // Deeper, the directory's contents are reached once even though two
+    // entries resolve to it, and still without the FIFO or the dangling link.
+    QStringList deeper;
+    for (const auto& record :
+         CaptureScanner::scan({{dir.path(), 2, CaptureRecord::Picture, CaptureRecord::Video}})) {
+      deeper << record.fileName;
+    }
+    std::sort(deeper.begin(), deeper.end());
+    QCOMPARE(deeper, QStringList({QStringLiteral("one.png"), QStringLiteral("photo.png")}));
+  }
+
+  // A link that points back up the tree is followed once, not once per level.
+  void scanFollowsALinkCycleOnlyOnce() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("a"))));
+    QImage image(4, 4, QImage::Format_RGB32);
+    image.fill(Qt::blue);
+    QVERIFY(image.save(dir.filePath(QStringLiteral("a/one.png")), "PNG"));
+    QVERIFY(QFile::link(dir.path(), dir.filePath(QStringLiteral("a/back"))));
+
+    QStringList traversed;
+    const auto records = CaptureScanner::scan(
+        {{dir.path(), 4, CaptureRecord::Picture, CaptureRecord::Video}}, nullptr, &traversed);
+    QCOMPARE(records.size(), 1);
+    QCOMPARE(records.first().fileName, QStringLiteral("one.png"));
+    // The root and a/ only; the cycle does not walk the same directory again.
+    QCOMPARE(traversed.size(), 2);
+  }
+
+  // Unusual but legal names are ordinary entries, and each file keeps its own
+  // identity rather than colliding on a shortened key.
+  void scanKeepsUnicodeAndVeryLongNames() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QImage image(4, 4, QImage::Format_RGB32);
+    image.fill(Qt::green);
+    const QString unicode = QStringLiteral("caf\u00e9-\u2615.png");
+    const QString longName = QString(200, QLatin1Char('n')) + QStringLiteral(".png");
+    QVERIFY(image.save(dir.filePath(unicode), "PNG"));
+    QVERIFY(image.save(dir.filePath(longName), "PNG"));
+
+    const auto records =
+        CaptureScanner::scan({{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
+    QCOMPARE(records.size(), 2);
+    QStringList names;
+    for (const auto& record : records) {
+      QVERIFY(!record.thumbnailVersion.isEmpty());
+      names << record.fileName;
+    }
+    QVERIFY(names.contains(unicode));
+    QVERIFY(names.contains(longName));
+  }
+
+  // An unreadable directory is skipped and an unreadable file still lists by
+  // name; neither stops the scan or hangs a decode. Permission bits do not
+  // constrain root, so this is skipped there.
+  void scanSurvivesUnreadableEntries() {
+    if (::geteuid() == 0) {
+      QSKIP("permission bits do not apply to root");
+    }
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QImage image(4, 4, QImage::Format_RGB32);
+    image.fill(Qt::black);
+    const QString sealedDir = dir.filePath(QStringLiteral("locked"));
+    QVERIFY(QDir().mkpath(sealedDir));
+    QVERIFY(image.save(dir.filePath(QStringLiteral("visible.png")), "PNG"));
+    QVERIFY(image.save(sealedDir + QStringLiteral("/hidden.png"), "PNG"));
+    const QString sealedFile = dir.filePath(QStringLiteral("sealed.png"));
+    QVERIFY(image.save(sealedFile, "PNG"));
+
+    QVERIFY(QFile::setPermissions(sealedDir, QFileDevice::Permissions()));
+    QVERIFY(QFile::setPermissions(sealedFile, QFileDevice::Permissions()));
+    const auto restore = qScopeGuard([&] {
+      QFile::setPermissions(sealedDir,
+                            QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+      QFile::setPermissions(sealedFile, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    });
+
+    QStringList names;
+    for (const auto& record :
+         CaptureScanner::scan({{dir.path(), 2, CaptureRecord::Picture, CaptureRecord::Video}})) {
+      names << record.fileName;
+    }
+    QVERIFY(names.contains(QStringLiteral("visible.png")));
+    QVERIFY(!names.contains(QStringLiteral("hidden.png")));
+    // Listed by extension without being opened, and its decode fails cleanly.
+    QVERIFY(names.contains(QStringLiteral("sealed.png")));
+    QVERIFY(ThumbnailCache::thumbnail(sealedFile, QSize(32, 32), 1.0).isNull());
+  }
+
   void downloadsKeepTheirMedium() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

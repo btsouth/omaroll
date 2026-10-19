@@ -53,6 +53,30 @@ Inspect the PNGs in `build/release/opengl-renders/` for layout changes.
 CI runs both suites. Release validation additionally installs the package,
 renders its video view under Xvfb, and checks upgrade, reinstall and removal.
 
+## Sanitizers and hostile input
+
+CI also builds Debug with AddressSanitizer and UndefinedBehaviorSanitizer,
+aborts on the first finding, and runs the whole test suite. The rendered-media
+matrix stays in the release job, where it is not slowed by the sanitizers.
+Reproduce the sanitizer run locally with:
+
+```sh
+cmake -S . -B build/asan -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all" \
+  -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+cmake --build build/asan
+ctest --test-dir build/asan --output-on-failure
+```
+
+`tests/tst_hostile_media.cpp` drives malformed, truncated and lying media
+through the scanner, the image budget, the thumbnail cache, the large-picture
+provider, the PDF helpers and the player. The core suite covers unusual
+filesystem entries: a FIFO, a dangling link, a link cycle, unreadable files and
+unusual names. Both are meant to run under the sanitizers, where a missing
+guard is a crash rather than a quietly wrong tile. The unreadable-entry check is
+skipped as root, where permission bits do not apply. The malformed-media suite
+needs the checked-in viewer fixtures and, for the PDF cases, Poppler.
+
 ## Desktop acceptance
 
 Headless passes do not establish physical audio or live desktop integration.

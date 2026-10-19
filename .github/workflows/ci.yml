@@ -45,21 +45,20 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  # Compiler output is validated against source/dependencies and compiler
-  # content by ccache; package builds stay clean and all tests still run.
-  CCACHE_DIR: ${{ github.workspace }}/.ccache
-  CCACHE_BASEDIR: ${{ github.workspace }}
-  CCACHE_COMPILERCHECK: content
-  CCACHE_MAXSIZE: 500M
-  CMAKE_C_COMPILER_LAUNCHER: ccache
-  CMAKE_CXX_COMPILER_LAUNCHER: ccache
-
 jobs:
   build-and-test:
     timeout-minutes: 30
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container }}
+    env:
+      # Compiler output is validated against source/dependencies and compiler
+      # content by ccache; package builds stay clean and all tests still run.
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_MAXSIZE: 500M
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
     strategy:
       fail-fast: false
       matrix:
@@ -153,6 +152,49 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: tests-${{ github.job }}-${{ matrix.check }}-${{ runner.arch }}
+          path: '**/test-results.xml'
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # AddressSanitizer and UndefinedBehaviorSanitizer on the current Arch
+  # packages. The release build above hides memory errors and undefined
+  # behavior that only a Debug sanitizer build reports, so they run as their
+  # own job and gate the pull request like the rest of CI. The rendered-media
+  # matrix stays in the release job: it is slow under sanitizers and adds no
+  # coverage that the suites below do not already reach.
+  sanitizers:
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    name: sanitizers (address, undefined)
+    env:
+      # UBSan reports abort so the first finding fails the run; ASan keeps its
+      # defaults. Leak detection stays on for the suites that negotiate it in
+      # CMake.
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+    steps:
+      - name: Install dependencies
+        run: >-
+          pacman -Syyuu --noconfirm --needed
+          appstream base-devel cmake desktop-file-utils ffmpeg ffmpegthumbnailer
+          git imagemagick kimageformats libavif libheif libraw ninja pkgconf poppler python qt6-base
+          qt6-declarative qt6-imageformats qt6-multimedia qt6-svg qt6-wayland
+          wl-clipboard xdg-desktop-portal xdg-utils mesa xorg-server-xvfb xorg-xauth
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Configure (Debug, ASan + UBSan)
+        run: >-
+          cmake -S . -B build/asan -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+      - name: Build
+        run: cmake --build build/asan
+      - name: Test
+        run: ctest --test-dir build/asan --output-on-failure --output-junit test-results.xml
+      - name: Save test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tests-sanitizers
           path: '**/test-results.xml'
           if-no-files-found: ignore
           retention-days: 7
