@@ -35,6 +35,7 @@
 
 #include <limits>
 #include <memory>
+#include <optional>
 
 namespace {
 
@@ -123,20 +124,33 @@ QByteArray pngWithClaimedSize(quint32 width, quint32 height) {
   return png;
 }
 
-// A logical screen of the largest a GIF can claim, with no frame behind it.
+// A logical screen of the largest a GIF can claim, with an image descriptor
+// that repeats it and no image data behind that: what Qt reports before it can
+// allocate anything.
 QByteArray gifWithClaimedSize(quint16 width, quint16 height) {
   QByteArray gif = "GIF89a";
   appendLE16(gif, width);
   appendLE16(gif, height);
   gif += char(0x00); // no global colour table
-  gif += char(0x3b); // trailer, before any image descriptor
+  gif += char(0x00); // background colour index
+  gif += char(0x00); // pixel aspect ratio
+  // The frame Qt would draw, so the claimed size survives to the estimate
+  // rather than being rejected as a header-parse error.
+  gif += char(0x2c); // image separator
+  appendLE16(gif, 0);
+  appendLE16(gif, 0);
+  appendLE16(gif, width);
+  appendLE16(gif, height);
+  gif += char(0x00); // no local colour table
+  gif += char(0x3b); // trailer, with the image data intentionally absent
   return gif;
 }
 
 // A WebP VP8X header claiming a huge canvas, with no image data.
 QByteArray webpWithClaimedSize(quint32 width, quint32 height) {
   QByteArray payload;
-  payload += char(0x00); // no alpha, no animation
+  payload += char(0x00);         // no alpha, no animation
+  payload += QByteArray(3, '\0'); // reserved
   const quint32 w = width - 1;
   const quint32 h = height - 1;
   payload += char(w & 0xff);
@@ -361,6 +375,15 @@ private slots:
                     estimate.bytes <= std::numeric_limits<qint64>::max()),
                name);
     }
+    // The completed GIF header carries its canvas into the frame Qt reports,
+    // so the estimator really sees 65535 x 65535 rather than rejecting it.
+    const ImageBudget::Estimate gif =
+        ImageBudget::estimate(m_dir.filePath(QStringLiteral("bomb.gif")));
+    QVERIFY(gif.valid());
+    QVERIFY(gif.bytes >= 64 * ImageBudget::kMiB);
+    // The WebP handler wants image data before it reports a canvas, so this
+    // header-only file is rejected before the estimate; that rejection is the
+    // safe outcome the decode check below asserts.
     // The SVG handler scales, so its surface is measured rather than trusted;
     // it is only read at the size it is drawn at.
     const ImageBudget::Estimate svg =
@@ -424,27 +447,33 @@ private slots:
   // dimensions must be refused there too, not allocated.
   void largePictureReadsRefuseLyingDimensions() {
     LargeImageProvider provider;
-    const auto read = [&provider](const QString& path) -> QImage {
+    // std::nullopt means the request never completed, so a missing result is
+    // told apart from a decode that completed and refused the picture.
+    const auto read = [&provider](const QString& path) -> std::optional<QImage> {
       const QString url = ImageBudget::reducedUrl(path, FileVersion::key(path), 512).toString();
       const QString prefix = QStringLiteral("image://large/");
       if (!url.startsWith(prefix)) {
-        return {};
+        return std::nullopt;
       }
       std::unique_ptr<QQuickImageResponse> response(
           provider.requestImageResponse(url.mid(prefix.size()), QSize()));
       if (!response) {
-        return {};
+        return std::nullopt;
       }
       QSignalSpy finished(response.get(), &QQuickImageResponse::finished);
-      if (!finished.wait(15000) && finished.isEmpty()) {
-        return {};
+      if (finished.isEmpty() && !finished.wait(15000)) {
+        return std::nullopt;
       }
       std::unique_ptr<QQuickTextureFactory> factory(response->textureFactory());
       return factory ? factory->image() : QImage();
     };
-    QVERIFY(!read(m_dir.filePath(QStringLiteral("tiny.jpg"))).isNull());
+    const auto tiny = read(m_dir.filePath(QStringLiteral("tiny.jpg")));
+    QVERIFY(tiny.has_value());
+    QVERIFY(!tiny->isNull());
     for (const char* name : {"bomb.bmp", "bomb.png", "bomb.gif", "bomb.webp"}) {
-      QVERIFY2(read(m_dir.filePath(QLatin1String(name))).isNull(), name);
+      const auto image = read(m_dir.filePath(QLatin1String(name)));
+      QVERIFY2(image.has_value(), name);
+      QVERIFY2(image->isNull(), name);
     }
     provider.shutdown();
   }
