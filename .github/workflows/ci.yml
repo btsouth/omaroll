@@ -45,21 +45,20 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  # Compiler output is validated against source/dependencies and compiler
-  # content by ccache; package builds stay clean and all tests still run.
-  CCACHE_DIR: ${{ github.workspace }}/.ccache
-  CCACHE_BASEDIR: ${{ github.workspace }}
-  CCACHE_COMPILERCHECK: content
-  CCACHE_MAXSIZE: 500M
-  CMAKE_C_COMPILER_LAUNCHER: ccache
-  CMAKE_CXX_COMPILER_LAUNCHER: ccache
-
 jobs:
   build-and-test:
     timeout-minutes: 30
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container }}
+    env:
+      # Compiler output is validated against source/dependencies and compiler
+      # content by ccache; package builds stay clean and all tests still run.
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_MAXSIZE: 500M
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
     strategy:
       fail-fast: false
       matrix:
