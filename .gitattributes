@@ -1,0 +1,5 @@
+# README and website media are served from GitHub; keep them out of release archives.
+/docs/*.mp4 export-ignore
+/docs/*.png export-ignore
+/docs/*.webp export-ignore
+/docs/site export-ignore
