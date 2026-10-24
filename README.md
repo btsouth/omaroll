@@ -4,22 +4,25 @@
 
 # Omaroll
 
-**A quick viewer and a home for your media.**
+[![CI](https://github.com/btsouth/omaroll/actions/workflows/ci.yml/badge.svg)](https://github.com/btsouth/omaroll/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-65b6a0.svg)](LICENSE)
 
-Open a picture or video in its own viewer, with the rest of its folder an arrow
-key away. Open Omaroll itself to browse photos, videos, PDFs, screenshots and
-recordings together, with albums, tags and search. Your files stay where they are.
+**A photo and video viewer as good-looking as the rest of Omarchy.**
 
-Built for Omarchy. Browsing and organization work locally, without accounts or
-telemetry.
+Double-click a picture, video or PDF and it opens in a viewer that follows your
+theme, with the rest of the folder an arrow key away. Press Enter for the
+library: photos, videos, screenshots and recordings together, with albums, tags
+and search, even for the text inside pictures. Your files stay where they are.
+
+Everything works locally, without accounts or telemetry.
 
 > Omaroll is an independent community project, not an official Omarchy application.
 
-[Install](#install-or-update) · [Open files](#open-files) · [Features](#features) · [Contributing](CONTRIBUTING.md)
+[Install](#install-or-update) · [Open files](#open-files) · [Features](#features) · [Homepage](https://btsouth.github.io/omaroll/) · [Contributing](CONTRIBUTING.md)
 
-[![The library over the Ethereal theme, with the wallpaper showing through the chrome](docs/library.png)](https://btsouth.github.io/omaroll/docs/omaroll-demo.mp4?v=1.9.1)
+[![Omaroll's library over the Ethereal theme. Click to play the demo](docs/demo-poster.webp)](https://btsouth.github.io/omaroll/docs/omaroll-demo.mp4?v=1.18.0)
 
-[Watch the 29-second demo](https://btsouth.github.io/omaroll/docs/omaroll-demo.mp4?v=1.9.1)
+[Watch the 38-second demo](https://btsouth.github.io/omaroll/docs/omaroll-demo.mp4?v=1.18.0)
 
 ## Install or update
 
@@ -475,6 +478,12 @@ See [Contributing](CONTRIBUTING.md), [validation and desktop acceptance](tests/R
 [project status](docs/STATUS.md), [the roadmap](docs/ROADMAP.md), and
 [the release process](RELEASING.md). Use disposable media for checks that rename,
 edit or trash files.
+
+## More for Omarchy
+
+- [Omakade](https://github.com/btsouth/omakade): your Steam, Heroic, Lutris and emulator games in one library.
+- [Omaframe](https://github.com/btsouth/omaframe): screenshots and screen recordings, with frames and backgrounds.
+- [Omalink](https://github.com/btsouth/omalink): your Android phone on the desktop, through KDE Connect.
 
 ## License
 

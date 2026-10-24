@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Omaroll is a photo and video viewer and library built for Omarchy.">
+    <meta name="theme-color" content="#09110e">
+    <meta property="og:title" content="Omaroll">
+    <meta property="og:description" content="A photo and video viewer as good-looking as the rest of Omarchy.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://btsouth.github.io/omaroll/">
+    <meta property="og:image" content="https://btsouth.github.io/omaroll/docs/social-preview.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <title>Omaroll | Photos and videos, as good-looking as your desktop</title>
+    <link rel="icon" href="omaroll.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="glow glow-one"></div>
+    <div class="glow glow-two"></div>
+    <header class="nav wrap">
+      <a class="brand" href="#top" aria-label="Omaroll home">
+        <img src="omaroll.svg" width="38" height="38" alt="">
+        <span>OMAROLL</span>
+      </a>
+      <nav aria-label="Main navigation">
+        <a href="#features">Features</a>
+        <a href="#install">Install</a>
+        <a class="nav-cta" href="https://github.com/btsouth/omaroll">GitHub</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero wrap">
+        <div class="eyebrow"><span></span> Built for Omarchy</div>
+        <h1>Your photos,<br><em>as good-looking as your desktop.</em></h1>
+        <p class="lede">Double-click a picture, video or PDF and it opens in a viewer that follows your Omarchy theme, with the rest of the folder an arrow key away. Press Enter for the library.</p>
+        <p class="lede">Free and open source, for x86_64 and ARM64 on Omarchy and Arch Linux.</p>
+        <div class="actions">
+          <a class="button primary" href="#install">Install Omaroll</a>
+          <a class="button secondary" href="https://github.com/btsouth/omaroll#features">See every feature</a>
+        </div>
+
+        <figure class="app-window">
+          <video controls muted playsinline preload="metadata" poster="docs/library.png" width="1920" height="1080">
+            <source src="docs/omaroll-demo.mp4?v=1.18.0" type="video/mp4">
+            Your browser does not support embedded video.
+          </video>
+          <figcaption>The quick viewer and the library in the Ethereal, Osaka Jade, Catppuccin Latte and Tokyo Night themes.</figcaption>
+        </figure>
+      </section>
+
+      <section class="installation wrap" id="install" aria-labelledby="install-title">
+        <h2 id="install-title">Install from the signed repository</h2>
+        <p>One command adds the repository and installs Omaroll:</p>
+        <pre tabindex="0" aria-label="Installation command"><code>curl -fsSL https://pkgs.btso.dev/install.sh | bash -s -- omaroll</code></pre>
+        <p>Updates then arrive with your normal system update (<code>omarchy update</code> or <code>sudo pacman -Syu</code>). Set Omaroll as the default for pictures and videos, or run <code>omaroll photo.jpg</code> from a terminal.</p>
+        <div class="actions">
+          <a class="button secondary" href="https://pkgs.btso.dev/">About the signed repository</a>
+          <a class="button secondary" href="https://github.com/btsouth/omaroll#install-or-update">Other install options</a>
+        </div>
+      </section>
+
+      <section class="principles wrap" id="features">
+        <article>
+          <span class="number">01</span>
+          <h2>Opens instantly</h2>
+          <p>Pictures, videos and PDFs open in one viewer. Arrow through the folder, zoom into huge photos, step video a frame at a time.</p>
+        </article>
+        <article>
+          <span class="number">02</span>
+          <h2>Feels native</h2>
+          <p>Follows your Omarchy palette, font, transparency and theme changes live, in the viewer and the library.</p>
+        </article>
+        <article>
+          <span class="number">03</span>
+          <h2>Leaves files alone</h2>
+          <p>Nothing is imported or copied. Albums, tags and ratings live in Omaroll, and corrections save new copies.</p>
+        </article>
+      </section>
+
+      <section class="details-showcase wrap">
+        <div class="eyebrow"><span></span> A library when you want one</div>
+        <h2>Find it again,<br>without importing anything.</h2>
+        <p>Browse by day, folder or source. Albums, nested tags, ratings and captions, search that reads the text inside screenshots, and a side-by-side check for duplicates.</p>
+        <figure class="app-window detail-window">
+          <img src="docs/detail.png" width="1280" height="820" alt="A photo open in the library preview, with the grid behind it">
+        </figure>
+      </section>
+
+      <section class="sources wrap">
+        <div>
+          <div class="eyebrow"><span></span> Opens what you have</div>
+          <h2>Photos, video,<br>RAW and PDFs.</h2>
+        </div>
+        <div class="source-list">
+          <span>JPEG</span><span>HEIC</span><span>AVIF</span><span>WEBP</span><span>RAW</span><span>GIF</span><span>MP4</span><span>MKV</span><span>PDF</span>
+        </div>
+      </section>
+
+      <section class="more wrap" aria-labelledby="more-title">
+        <div class="eyebrow"><span></span> More for Omarchy</div>
+        <h2 id="more-title">From the same workshop.</h2>
+        <div class="more-list">
+          <a href="https://btsouth.github.io/omakade/">
+            <strong>Omakade</strong>
+            <span>Your Steam, Heroic, Lutris and emulator games in one library.</span>
+          </a>
+          <a href="https://github.com/btsouth/omaframe">
+            <strong>Omaframe</strong>
+            <span>Screenshots and screen recordings, with frames and backgrounds.</span>
+          </a>
+          <a href="https://github.com/btsouth/omalink">
+            <strong>Omalink</strong>
+            <span>Your Android phone on the desktop, through KDE Connect.</span>
+          </a>
+        </div>
+      </section>
+
+      <section class="closing wrap">
+        <p>Omaroll is open source and under active development.</p>
+        <h2>The media viewer<br>your desktop deserves.</h2>
+        <a class="button primary" href="https://github.com/btsouth/omaroll">View on GitHub</a>
+      </section>
+    </main>
+
+    <footer class="wrap">
+      <span>OMAROLL</span>
+      <span>Independent community project · MIT</span>
+    </footer>
+  </body>
+</html>
