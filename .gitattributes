@@ -1,4 +1,5 @@
-# README and website media are served from GitHub; keep them out of release archives.
+# Media shown by the README and the website is served from GitHub, so keep it
+# out of release archives. README.md itself stays: CMake reads it at build time.
 /docs/*.mp4 export-ignore
 /docs/*.png export-ignore
 /docs/*.webp export-ignore
