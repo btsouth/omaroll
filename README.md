@@ -9,10 +9,10 @@
 
 **A photo and video viewer as good-looking as the rest of Omarchy.**
 
-Double-click a picture, video or PDF and it opens in a viewer that follows your
+Double-click a picture or video and it opens in a viewer that follows your
 theme, with the rest of the folder an arrow key away. Press Enter for the
-library: photos, videos, screenshots and recordings together, with albums, tags
-and search, even for the text inside pictures. Your files stay where they are.
+library: photos, videos, PDFs, screenshots and recordings together, with albums,
+tags and search, even for the text inside pictures. Your files stay where they are.
 
 Everything works locally, without accounts or telemetry.
 
