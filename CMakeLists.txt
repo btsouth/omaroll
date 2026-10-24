@@ -222,7 +222,7 @@ foreach(doc CONTRIBUTING.md tests/README.md docs/STATUS.md docs/ROADMAP.md RELEA
     "](https://github.com/btsouth/omaroll/blob/main/${doc})"
     OMAROLL_INSTALL_README "${OMAROLL_INSTALL_README}")
 endforeach()
-foreach(image docs/library.png docs/detail.png docs/matte.png)
+foreach(image docs/demo-poster.webp docs/library.png docs/detail.png docs/matte.png)
   string(REPLACE "](${image})"
     "](https://raw.githubusercontent.com/btsouth/omaroll/main/${image})"
     OMAROLL_INSTALL_README "${OMAROLL_INSTALL_README}")
