@@ -62,9 +62,16 @@ first-frame timing and the hardware and software decoding comparison.
 The [deep zoom](performance/2026-10-14-deep-zoom/README.md) note records area
 decode times and memory for a 150-megapixel JPEG.
 
-The [Omarchy package submission](https://github.com/omacom/omarchy-pkgs/pull/295)
-is still under review. Repository inclusion, default installation and MIME
-associations are separate upstream decisions.
+Omaroll is in Omarchy's package repository
+([omarchy-pkgs#295](https://github.com/omacom/omarchy-pkgs/pull/295), merged 26
+October 2026). It is on edge and reaches rc and stable when Omarchy promotes
+them. Omarchy's updater watches our GitHub releases, so a release needs no
+upstream PR as long as it keeps the `vX.Y.Z` tag, the `omaroll-X.Y.Z.tar.gz`
+and `SHA256SUMS` assets and is not marked as a prerelease. Dependency changes
+need a PR there with a `pkgrel` bump. Our signed repository keeps Omaroll for
+plain Arch and for channels Omarchy has not reached; it stays after `[omarchy]`
+in `pacman.conf`, so Omarchy's package wins where both exist. Default
+installation and MIME associations are separate upstream decisions.
 
 ## Validation and remaining coverage
 
