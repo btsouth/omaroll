@@ -42,7 +42,8 @@ curl -fsSL https://pkgs.btso.dev/install.sh | bash -s -- omaroll
 ```
 
 This adds the [repository](https://github.com/btsouth/pkgs), so Omaroll then
-updates with the rest of your system (`omarchy update` or `sudo pacman -Syu`).
+updates with the rest of your system (`omarchy update` on Omarchy,
+`sudo pacman -Syu` on plain Arch).
 Once Omarchy's repository carries Omaroll on your channel, updates come from
 Omarchy instead, with nothing to change. If you installed an earlier release by
 hand, run the same command to start getting updates.
