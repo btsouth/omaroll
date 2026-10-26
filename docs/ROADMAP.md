@@ -59,11 +59,10 @@ Considered for 1.8.0 and left out; revisit only with a fresh decision:
 - Extend the benchmarks with warm navigation and 50k mixed libraries where
   they can run headless; the Wayland presentation and GPU memory numbers need
   the desktop.
-- The [Omarchy package submission](https://github.com/omacom/omarchy-pkgs/pull/295)
-  is under review.
+- Omaroll is in [Omarchy's package repository](https://github.com/omacom/omarchy-pkgs/pull/295),
+  on edge first and on rc and stable as Omarchy promotes them.
 
-Repository inclusion, installation by default and MIME defaults are separate
-upstream decisions. Advanced editing remains available through Omarchy's
+Installation by default and MIME defaults are separate upstream decisions. Advanced editing remains available through Omarchy's
 existing tools.
 
 Report concrete missing workflows and reproducible problems in
