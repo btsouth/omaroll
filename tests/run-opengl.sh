@@ -12,8 +12,15 @@ export QT_QUICK_BACKEND=rhi QSG_RHI_BACKEND=opengl LIBGL_ALWAYS_SOFTWARE=1
 export OMAROLL_REQUIRE_OPENGL=1
 export QT_AUDIO_BACKEND=pulseaudio PULSE_SERVER=unix:/nonexistent PIPEWIRE_REMOTE=omaroll-no-audio
 
-timeout 180 "$build_dir/omaroll_ui_tests"
-timeout 120 "$build_dir/omaroll_viewer_tests"
+# Separate processes with their own scratch profiles, so they can overlap.
+timeout 180 "$build_dir/omaroll_ui_tests" &
+ui_tests=$!
+timeout 120 "$build_dir/omaroll_viewer_tests" &
+viewer_tests=$!
+suites_failed=0
+wait "$ui_tests" || suites_failed=1
+wait "$viewer_tests" || suites_failed=1
+(( suites_failed == 0 ))
 
 # Every render is its own process under a disposable profile, so it draws with
 # the fixture's palette rather than whatever theme this machine happens to use.
