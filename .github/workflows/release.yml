@@ -130,7 +130,7 @@ jobs:
         run: |
           cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build/release
-          ctest --test-dir build/release --output-on-failure --output-junit test-results.xml
+          ctest --test-dir build/release --parallel 4 --output-on-failure --output-junit test-results.xml
           desktop-file-validate packaging/io.github.tsouth89.omaroll.desktop
           appstreamcli validate packaging/io.github.tsouth89.omaroll.metainfo.xml
       - name: Test rendered media with Mesa OpenGL
