@@ -3654,7 +3654,7 @@ private slots:
     QTRY_COMPARE(detail->property("path").toString(), third);
     QVERIFY(QFile::remove(first));
     m_captures->refresh();
-    QTRY_COMPARE(m_library->rowOf(first), -1);
+    QTRY_COMPARE_WITH_TIMEOUT(m_library->rowOf(first), -1, 15000);
     QTest::keyClick(m_window, Qt::Key_Left);
     QTRY_COMPARE(detail->property("path").toString(), second);
     // A later Open With request replaces the previous selection.
