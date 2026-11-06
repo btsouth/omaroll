@@ -62,7 +62,7 @@ jobs:
           sed -e "s/@VERSION@/$VERSION/g" -e "s/@SOURCE_SHA256@/$source_sha/g" \
             packaging/arch/PKGBUILD.in > "source/PKGBUILD-$VERSION"
       - name: Upload source
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-source
           path: source/
@@ -137,7 +137,7 @@ jobs:
         run: xvfb-run -a bash tests/run-opengl.sh build/release
       - name: Save rendered views
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: opengl-renders-release-${{ matrix.arch }}
           path: build/release/opengl-renders/*.png
@@ -197,7 +197,7 @@ jobs:
           test ! -e /usr/bin/omaroll
           pacman -U --noconfirm "$PACKAGE_FILE"
       - name: Upload package
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-${{ matrix.arch }}
           path: ${{ env.PACKAGE_FILE }}
@@ -207,7 +207,7 @@ jobs:
         run: ccache --show-stats
       - name: Save test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tests-${{ github.job }}-${{ matrix.arch }}
           path: '**/test-results.xml'
