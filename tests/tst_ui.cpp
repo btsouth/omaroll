@@ -3638,7 +3638,10 @@ private slots:
       QMetaObject::invokeMethod(m_window, "openFolder", Q_ARG(QVariant, QString()));
       m_captures->refresh();
     });
-    QTRY_VERIFY_WITH_TIMEOUT(detail->isVisible(), 5000);
+    // The viewer opens once the library has rescanned with every filter cleared.
+    // Under ASan with the other heavy suites running in parallel that takes 6 to
+    // 10 seconds in CI, so allow the same budget as the suite's other scan waits.
+    QTRY_VERIFY_WITH_TIMEOUT(detail->isVisible(), 15000);
     QTRY_COMPARE(detail->property("path").toString(), second);
     QTRY_VERIFY(detail->property("canNavigate").toBool());
     QCOMPARE(detail->property("selectionLabel").toString(), QStringLiteral("1 of 3 selected files"));
@@ -3651,7 +3654,7 @@ private slots:
     QTRY_COMPARE(detail->property("path").toString(), third);
     QVERIFY(QFile::remove(first));
     m_captures->refresh();
-    QTRY_COMPARE(m_library->rowOf(first), -1);
+    QTRY_COMPARE_WITH_TIMEOUT(m_library->rowOf(first), -1, 15000);
     QTest::keyClick(m_window, Qt::Key_Left);
     QTRY_COMPARE(detail->property("path").toString(), second);
     // A later Open With request replaces the previous selection.
