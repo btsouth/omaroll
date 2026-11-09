@@ -1,4 +1,5 @@
 #include "library/CaptureModel.h"
+#include "app/StartupTrace.h"
 
 #include "actions/FileDrag.h"
 
@@ -762,6 +763,7 @@ void CaptureModel::adoptResults(ScanResult result) {
   m_followedUpEmpty = followUpNow;
   if (!followUpNow) {
     m_scanning = false;
+    StartupTrace::note("scan_applied");
     emit scanningChanged();
   }
   emit countChanged();

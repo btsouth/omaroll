@@ -32,6 +32,8 @@ add_library(omaroll_core STATIC
   src/app/PlaybackHeap.h
   src/app/VideoPresentation.h
   src/app/VideoPlayback.h
+  src/app/VideoWarmup.cpp
+  src/app/VideoWarmup.h
   src/library/CaptureRecord.h
   src/library/CaptureRoles.h
   src/library/CaptureModel.cpp
@@ -278,7 +280,7 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/README.md" OMAROLL_INSTALL_README)
 # Links keep any #anchor, so match up to the file name only.
 foreach(doc CONTRIBUTING.md tests/README.md docs/STATUS.md docs/ROADMAP.md RELEASING.md
     docs/shortcuts.md docs/actions.md docs/search.md
-    docs/performance/2026-11-09-playback-cost/README.md)
+    docs/performance/2026-11-09-playback-cost/README.md docs/performance/README.md)
   string(REPLACE "](${doc}"
     "](https://github.com/btsouth/omaroll/blob/main/${doc}"
     OMAROLL_INSTALL_README "${OMAROLL_INSTALL_README}")

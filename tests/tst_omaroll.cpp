@@ -10,6 +10,7 @@
 #include "app/HyprlandSetup.h"
 #include "app/HeadlessAudio.h"
 #include "app/VideoPlayback.h"
+#include "app/VideoWarmup.h"
 #include "app/SingleInstance.h"
 #include "app/OpenRequest.h"
 #include "app/LaunchRequest.h"
@@ -74,6 +75,8 @@
 #include <QTransform>
 #include <QTimer>
 #include <QThreadPool>
+#include <QFileInfo>
+#include <QLibraryInfo>
 #include <QtTest>
 
 #include <fcntl.h>
@@ -95,6 +98,8 @@
 #include <cstdio>
 #include <future>
 #include <memory>
+#include <cstring>
+#include <dlfcn.h>
 #include <thread>
 
 using namespace Qt::StringLiterals;
@@ -558,6 +563,28 @@ private slots:
     QTest::newRow("custom-encoder") << false << QString() << true << QStringLiteral("vaapi") << false;
     QTest::newRow("software") << true << QStringLiteral(",") << true << QStringLiteral(",") << false;
     QTest::newRow("explicit-empty") << true << QStringLiteral("") << true << QStringLiteral("") << false;
+  }
+
+  // A direct video launch checks the driver and loads the backend on a
+  // worker. Its answer must be the one the window thread would have found.
+  void videoWarmupAnswersAsTheDirectCheck() {
+    const bool chosen = videoPlaybackEnvironment().inherited().contains(
+        QStringLiteral("QT_FFMPEG_DECODING_HW_DEVICE_TYPES"));
+    const bool expected = !chosen && VideoPlaybackEnvironment::cudaDriverAvailable();
+    QVERIFY(!VideoWarmup::started());
+    VideoWarmup::start();
+    VideoWarmup::start(); // once only
+    QVERIFY(VideoWarmup::started());
+    QCOMPARE(VideoWarmup::cudaDriverAvailable(), expected);
+    QVERIFY(QThreadPool::globalInstance()->waitForDone(30000));
+    const QString backend = QLibraryInfo::path(QLibraryInfo::PluginsPath)
+                            + QStringLiteral("/multimedia/libffmpegmediaplugin.so");
+    if (QFileInfo::exists(backend)) {
+      // Resident without loading it here.
+      void* handle = dlopen(QFile::encodeName(backend).constData(), RTLD_NOW | RTLD_NOLOAD);
+      QVERIFY2(handle, dlerror());
+      dlclose(handle);
+    }
   }
 
   void cudaPrecheckRejectsMissingPrerequisites() {
@@ -9552,6 +9579,89 @@ private slots:
     QCOMPARE(PlaybackHeap::mmapThreshold(), PlaybackHeap::pictureMmapThreshold);
     PlaybackHeap::release(); // unbalanced releases are ignored
     QCOMPARE(PlaybackHeap::holders(), 0);
+  }
+
+  // The #159 regression, without a GPU: frames the size of Qt's copies of
+  // hardware frames, made and handed over on a decoder thread, must come from
+  // the heap for as long as they flow, not be mapped and faulted in one by one.
+  void videoPresentationReusesFrameBuffersWhileFramesFlow() {
+#if !defined(__GLIBC__) || defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__) || \
+    (defined(__has_feature) && (__has_feature(address_sanitizer) || __has_feature(thread_sanitizer) || \
+                                __has_feature(memory_sanitizer)))
+    QSKIP("Needs glibc's own allocator");
+#else
+    const QVideoFrameFormat format(QSize(3840, 2160), QVideoFrameFormat::Format_NV12);
+    // Minor page faults per frame made and written on a fresh thread. A
+    // mapped 12 MB frame faults about 3,000 pages.
+    const auto faultsPerFrame = [&format](QVideoSink* sink, int frames) {
+      long faults = 0;
+      std::thread decoder([&] {
+        const auto fill = [&](int value) {
+          QVideoFrame frame(format);
+          if (!frame.map(QVideoFrame::WriteOnly)) return QVideoFrame();
+          for (int plane = 0; plane < frame.planeCount(); ++plane) {
+            memset(frame.bits(plane), value, size_t(frame.mappedBytes(plane)));
+          }
+          frame.unmap();
+          return frame;
+        };
+        // Settle first: the heap grows once to hold a few frames.
+        for (int warm = 0; warm < 4; ++warm) {
+          if (sink) sink->setVideoFrame(fill(warm));
+        }
+        rusage before {};
+        getrusage(RUSAGE_THREAD, &before);
+        for (int index = 0; index < frames; ++index) {
+          QVideoFrame frame = fill(index);
+          if (sink) sink->setVideoFrame(frame);
+        }
+        rusage after {};
+        getrusage(RUSAGE_THREAD, &after);
+        faults = after.ru_minflt - before.ru_minflt;
+      });
+      decoder.join();
+      return faults / frames;
+    };
+
+    // A frame's pages: about 3,000 with 4 KB pages, fewer with larger ones.
+    const long pageBytes = sysconf(_SC_PAGESIZE);
+    const long framePages = long(format.frameWidth()) * format.frameHeight() * 3 / 2 / pageBytes;
+    PlaybackHeap::usePictureDefaults();
+    // The control: with the picture settings, each frame is mapped.
+    const long mapped = faultsPerFrame(nullptr, 12);
+    if (mapped <= framePages / 3) {
+      QFile hugePages(QStringLiteral("/sys/kernel/mm/transparent_hugepage/enabled"));
+      const bool huge = hugePages.open(QIODevice::ReadOnly) && hugePages.readAll().contains("[always]");
+      if (huge) QSKIP("Transparent huge pages map a frame in a few faults, so the measure cannot tell");
+#if !defined(Q_PROCESSOR_X86)
+      // The ARM runner's allocator already reuses these frames with the
+      // picture settings (7 faults a frame of 3,037 pages), so there is no
+      // mapped baseline to compare against. x86 keeps the check.
+      QSKIP(qPrintable(QStringLiteral("This allocator reuses frames without the video settings: "
+                                      "%1 faults per frame of %2 pages").arg(mapped).arg(framePages)));
+#endif
+      QFAIL(qPrintable(QStringLiteral("the measure no longer sees mapped frames: %1 faults per frame, %2 pages")
+                           .arg(mapped).arg(framePages)));
+    }
+
+    QVideoSink output;
+    {
+      VideoPresentation presentation(&output);
+      presentation.videoSink()->setVideoFrame(QVideoFrame(format));
+      QTRY_VERIFY(presentation.ready());
+      for (int burst = 0; burst < 3; ++burst) {
+        const long faults = faultsPerFrame(presentation.videoSink(), 30);
+        QCoreApplication::processEvents();
+        // About a thirtieth of a mapped frame: 100 with 4 KB pages.
+        QVERIFY2(faults < std::max(10L, framePages / 30),
+                 qPrintable(QStringLiteral("%1 faults per frame of %2 pages").arg(faults).arg(framePages)));
+        QCOMPARE(PlaybackHeap::holders(), 1);
+        QCOMPARE(PlaybackHeap::mmapThreshold(), PlaybackHeap::videoMmapThreshold);
+      }
+    }
+    QCOMPARE(PlaybackHeap::holders(), 0);
+    QCOMPARE(PlaybackHeap::mmapThreshold(), PlaybackHeap::pictureMmapThreshold);
+#endif
   }
 
   void hdrTransferDetails_data() {

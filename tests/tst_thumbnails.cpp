@@ -200,7 +200,7 @@ private slots:
     QFETCH(QString, action);
     QVERIFY(writeFile(modePath(), "wait"));
     auto provider = std::make_unique<ThumbnailProvider>();
-    const int workers = qBound(2, QThread::idealThreadCount() - 1, 4);
+    const int workers = ThumbnailProvider::workerCount();
     const int queued = 12;
     const int total = workers + queued;
     int finished = 0;

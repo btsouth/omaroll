@@ -3,6 +3,8 @@
 #include <QProcessEnvironment>
 #include <QFile>
 #include <QLibrary>
+
+#include "app/VideoWarmup.h"
 #include <utility>
 
 // Qt's FFmpeg backend probes both decode and encode hardware lists at startup.
@@ -58,12 +60,15 @@ public:
 
   void apply() const {
 #ifdef Q_OS_LINUX
-    const bool cudaAvailable = !m_inherited.contains(decodingKey) && cudaDriverAvailable();
+    // A direct video launch has checked already, off the window thread.
+    const bool cudaAvailable = !m_inherited.contains(decodingKey) && VideoWarmup::cudaDriverAvailable();
     const auto environment = playbackEnvironment(cudaAvailable);
     qputenv("QT_FFMPEG_DECODING_HW_DEVICE_TYPES", environment.value(decodingKey).toUtf8());
     qputenv("QT_FFMPEG_ENCODING_HW_DEVICE_TYPES", environment.value(encodingKey).toUtf8());
 #endif
   }
+
+  [[nodiscard]] const QProcessEnvironment& inherited() const { return m_inherited; }
 
 private:
   inline static const QString decodingKey = QStringLiteral("QT_FFMPEG_DECODING_HW_DEVICE_TYPES");

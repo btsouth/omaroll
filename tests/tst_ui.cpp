@@ -7384,8 +7384,17 @@ private slots:
     // New pictures in the sheet keep the render waiting until they load, so
     // it never saves a half-drawn sheet.
     QVERIFY(item("compareSheet")->isVisible());
-    QStringList reversed(shown.crbegin(), shown.crend());
-    item("compareSheet")->setProperty("paths", reversed);
+    // The other set, so the sheet has not drawn these before: the same
+    // pictures again could come straight from the image cache.
+    const bool showedCabin = std::any_of(shown.cbegin(), shown.cend(), [](const QString& path) {
+      return QFileInfo(path).fileName().startsWith(QStringLiteral("winter-cabin"));
+    });
+    const QStringList otherNames = showedCabin
+        ? QStringList({QStringLiteral("coastal-wave.jpg"), QStringLiteral("coastal-wave-2.jpg")})
+        : QStringList({QStringLiteral("winter-cabin.jpg"), QStringLiteral("winter-cabin-small.jpg")});
+    QStringList other;
+    for (const QString& name : otherNames) other << m_demoPictures + QLatin1Char('/') + name;
+    item("compareSheet")->setProperty("paths", other);
     QVERIFY(!ready());
     QTRY_VERIFY_WITH_TIMEOUT(ready(), 10000);
   }
