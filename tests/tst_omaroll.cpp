@@ -1367,6 +1367,16 @@ private slots:
     QVERIFY(!HyprlandSetup::installRules(hypr).ok);
     QVERIFY(!QFile::exists(rules));
 
+    // A block comment left open swallows anything added after it, so install
+    // refuses instead of claiming rules that never load (found by fuzz_hyprland).
+    const QByteArray open = "dofile(\"bootstrap.lua\")\nrequire(\"default.hypr.omarchy\")\n--[[\nold stuff\n";
+    write(config, open);
+    auto refused = HyprlandSetup::installRules(hypr);
+    QVERIFY(!refused.ok);
+    QVERIFY2(refused.message.contains(QStringLiteral("never closed")), qPrintable(refused.message));
+    QCOMPARE(read(config), open);
+    QVERIFY(!QFile::exists(rules));
+
     const QByteArray original = "dofile(\"bootstrap.lua\")\nrequire(\"default.hypr.omarchy\")\nrequire(\"hypr.bindings\")\n";
     write(config, original);
     QCOMPARE(HyprlandSetup::rulesState(hypr), HyprlandSetup::RulesState::NotInstalled);

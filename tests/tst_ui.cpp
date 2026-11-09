@@ -56,6 +56,9 @@
 #include <QDir>
 #include <QJSValue>
 #include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QImage>
@@ -202,6 +205,48 @@ class UiTest : public QObject {
   Q_OBJECT
 
 private slots:
+  // Organization that loads far smaller than today's backup is offered for
+  // restore once, after the first frame, and Keep as is ends it.
+  void incompleteOrganizationIsOfferedForRestoreOnce() {
+    m_settings->flushBackups();
+    const QDir backups(m_settings->backupDirectory());
+    QVERIFY(QDir().mkpath(backups.path()));
+    const QString today = backups.filePath(QStringLiteral("daily-%1.json")
+                                               .arg(QDate::currentDate().toString(Qt::ISODate)));
+    QJsonArray favorites;
+    for (int i = 0; i < 1000; ++i) favorites.append(QStringLiteral("/gone/%1.jpg").arg(i));
+    const QJsonObject snapshot{{QStringLiteral("format"), QStringLiteral("omaroll.organization")},
+                               {QStringLiteral("version"), 1},
+                               {QStringLiteral("favorites"), favorites}};
+    {
+      QFile file(today);
+      QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+      file.write(QJsonDocument(snapshot).toJson());
+    }
+    m_settings->recheckOrganizationHealth();
+    m_settings->flushBackups();
+    QVERIFY(!m_settings->launchWarning().isEmpty());
+    QVERIFY(m_settings->canRestoreOrganization());
+    QQuickItem* sheet = item("launchRestore");
+    QTRY_VERIFY(sheet->isVisible());
+    QVERIFY2(sheet->property("detail").toString().contains(QStringLiteral("1000 items")),
+             qPrintable(sheet->property("detail").toString()));
+    QQuickItem* keep = find(sheet, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("confirmSheetCancel");
+    });
+    QVERIFY(keep);
+    QCOMPARE(keep->property("label").toString(), QStringLiteral("Keep as is"));
+    QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier,
+                      keep->mapToScene(QPointF(keep->width() / 2, keep->height() / 2)).toPoint());
+    QTRY_VERIFY(!sheet->isVisible());
+    QVERIFY(m_settings->launchWarning().isEmpty());
+    QVERIFY(!m_settings->canRestoreOrganization());
+    m_settings->flushBackups();
+    QFile file(today);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QVERIFY(!file.readAll().contains("/gone/999.jpg"));
+  }
+
   void helpFiltersByContextAndDiagnosticsArePrivate() {
     const auto restoreSize = qScopeGuard([&] { m_window->resize(1280, 820); });
     m_window->resize(1920, 1080);

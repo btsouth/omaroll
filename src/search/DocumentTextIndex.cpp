@@ -8,6 +8,7 @@
 #include "sources/FileVersion.h"
 
 #include <QCryptographicHash>
+#include <QtEndian>
 #include <QDataStream>
 #include <QDeadlineTimer>
 #include <QDir>
@@ -64,6 +65,13 @@ CacheEntry readEntry(const QString& file, qint64 limit, bool withText) {
 // The text of a valid entry, or a null string when it does not decompress.
 QString entryText(const CacheEntry& entry, qsizetype limit) {
   if (entry.compressed.isEmpty()) return QString(QLatin1String(""));
+  // qUncompress allocates the size its first four bytes claim before reading
+  // any data, so a damaged entry could ask for gigabytes. Saved text is at
+  // most |limit| characters, four UTF-8 bytes each at worst.
+  if (entry.compressed.size() < 4 ||
+      qFromBigEndian<quint32>(entry.compressed.constData()) > quint64(limit) * 4) {
+    return {};
+  }
   const QByteArray text = qUncompress(entry.compressed);
   if (text.isEmpty()) return {};
   return QString::fromUtf8(text).left(limit);

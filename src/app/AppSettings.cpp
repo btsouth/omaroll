@@ -1680,7 +1680,7 @@ int AppSettings::organizationSize(const OrganizationState& state) {
 
 void AppSettings::checkOrganizationHealth(bool existingProfile) {
   m_healthPending = true;
-  m_snapshotAfterHealth = existingProfile;
+  m_snapshotAfterHealth = m_snapshotAfterHealth || existingProfile;
   m_health = std::make_shared<HealthReport>();
   const QDate today = QDate::currentDate();
   QPointer<AppSettings> self(this);

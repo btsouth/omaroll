@@ -148,6 +148,9 @@ public:
   // compared with is kept as a before-restore copy first, then today's
   // snapshot is taken from what is here now, so the warning does not return.
   Q_INVOKABLE void keepCurrentOrganization();
+  // Compares what is here with today's or yesterday's snapshot again, as each
+  // launch does after loading. For tests.
+  void recheckOrganizationHealth() { checkOrganizationHealth(false); }
   [[nodiscard]] bool showHidden() const { return m_showHidden; }
   void setShowHidden(bool value);
 
