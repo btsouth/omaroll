@@ -3099,6 +3099,29 @@ private slots:
     QTRY_VERIFY(item(QStringLiteral("viewerKeys"))->hasActiveFocus());
   }
 
+  void typingInShortcutHelpFiltersAndCtrlQAsksToQuit() {
+    open({media(QStringLiteral("Shot 1.jpg"))});
+    QObject* help = m_window->findChild<QObject*>(QStringLiteral("viewerShortcutHelp"));
+    QVERIFY(help);
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(help->property("visible").toBool());
+    // Typing right away filters, without clicking the field first.
+    for (const char key : {'t', 'r', 'a', 's', 'h'}) QTest::keyClick(m_window, key);
+    QQuickItem* filter = item(QStringLiteral("shortcutFilter"));
+    QVERIFY(filter);
+    QTRY_COMPARE(filter->property("text").toString(), QStringLiteral("trash"));
+    QCOMPARE(help->property("filter").toString(), QStringLiteral("trash"));
+    QVERIFY(filter->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!help->property("visible").toBool());
+    QTRY_VERIFY(item(QStringLiteral("viewerKeys"))->hasActiveFocus());
+
+    // Ctrl+Q asks the engine to quit; main.cpp connects that to the app.
+    QSignalSpy quit(m_engine, &QQmlEngine::quit);
+    QTest::keyClick(m_window, Qt::Key_Q, Qt::ControlModifier);
+    QTRY_COMPARE(quit.count(), 1);
+  }
+
   void shortcutHelpShowsAvailableVideoControls() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

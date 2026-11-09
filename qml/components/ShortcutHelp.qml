@@ -77,6 +77,13 @@ Popup {
                 target = maximum;
                 break;
             default:
+                // Typing starts filtering, so "trash" right after F1 finds it.
+                if (event.text.length > 0 && event.text.trim() !== ""
+                        && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))) {
+                    search.forceActiveFocus();
+                    search.insert(search.cursorPosition, event.text);
+                    event.accepted = true;
+                }
                 return;
             }
             flick.contentY = Math.max(0, Math.min(maximum, target));
@@ -102,6 +109,7 @@ Popup {
             anchors.topMargin: 12
             width: parent.width
             placeholderText: "Filter shortcuts"
+            Accessible.name: "Filter shortcuts"
             color: Theme.foreground
             font.family: Theme.fontFamily
             onTextChanged: root.filter = text

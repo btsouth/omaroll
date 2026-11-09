@@ -173,8 +173,11 @@ Options:
                          library if it is not already watched.
   --start <time>         Start the request's first video at seconds, mm:ss or
                          hh:mm:ss (fractions allowed). Overrides saved resume.
-  --set-default [group]   Use Omaroll for images, videos, pdf or all (default).
-  --unset-default [group] Restore replaced handlers. all = images and videos.
+  --set-default [group]  Use Omaroll for images, videos, pdf or all (images
+                         and videos, the default).
+  --unset-default [group]
+                         Put back the apps --set-default replaced, for the
+                         same groups.
   --demo                 Browse a deterministic fictional library instead of
                          your own files. Nothing personal appears on screen.
   --render <file.png>    Render the window to a PNG and exit. Draws offscreen,
@@ -615,6 +618,10 @@ int main(int argc, char* argv[]) {
   ExternalEditors editors(&actions);
 
   QQmlApplicationEngine engine;
+  // Windows are built with QQmlComponent rather than engine.load(), so the
+  // engine never wires Qt.quit() up itself and Ctrl+Q would do nothing.
+  QObject::connect(&engine, &QQmlEngine::quit, &application, &QCoreApplication::quit,
+                   Qt::QueuedConnection);
   auto* thumbnailProvider = new ThumbnailProvider;
   auto* matteProvider = new MatteProvider;
   auto* editProvider = new EditProvider;
