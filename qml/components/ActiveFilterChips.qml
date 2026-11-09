@@ -80,7 +80,8 @@ Flow {
     }
 
     // One filter pass in C++, rather than one per facet.
-    function clearAll() { Captures.clearFacets(false) }
+    // "Clear all" clears every chip shown, the search too when it is one.
+    function clearAll() { Captures.clearFacets(showSearch && Captures.searchText !== "") }
 
     function clear(key) {
         // A saved view set everything it shows, search included.

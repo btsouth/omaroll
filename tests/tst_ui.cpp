@@ -2453,6 +2453,16 @@ private slots:
       QTest::mouseClick(m_window, Qt::LeftButton, {},
                         clear->mapToScene(QPointF(clear->width() / 2, clear->height() / 2)).toPoint());
       QTRY_VERIFY(m_library->searchText().isEmpty());
+      // With another chip beside it, Clear all clears the search as well.
+      m_library->setSearchText(everything);
+      // A date range that keeps every tile, so the selection stays.
+      m_library->setDateRange(QStringLiteral("1970-01-01"), QStringLiteral("2100-12-31"));
+      const auto clearDates = qScopeGuard([&] { m_library->clearDateRange(); });
+      QTRY_COMPARE(grid->property("checkedCount").toInt(), 6);
+      QTRY_VERIFY(chipShown());
+      QMetaObject::invokeMethod(item("activeFilterChips"), "clearAll");
+      QTRY_VERIFY(m_library->searchText().isEmpty());
+      QVERIFY(m_library->dateFrom().isEmpty());
     }
     // Every header button sits on the row's centre line, inside the window,
     // and clear of the status and of each other.
