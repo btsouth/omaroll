@@ -12,6 +12,7 @@
   as a picture into chat apps and editors and shows up in clipboard history.
   A terminal still gets the file's URI as text.
 - Diagnostics report VA-API: the installed drivers, or why there are none.
+- Diagnostics name the Hyprland config in use while Hyprland runs.
 - Searchable shortcut help in the viewer, library and preview, with grouped key caps.
 - About in Settings with version links and privacy-safe Copy diagnostics.
 - Themed tooltips and library footer hints that fit whole labels.
@@ -121,6 +122,8 @@
 
 - `--unset-default` ends with how many other types keep their system default,
   instead of saying they "still open with Omaroll".
+- The homepage is published with each release instead of from main, so its
+  commands work with the version you can install.
 - The `--set-default` restore record moved from `~/.config/Omaroll` to
   `~/.config/omaroll`, beside the settings. An existing one moves on the next run.
 - A video opened from a file manager starts its decoder sooner: the GPU
@@ -173,6 +176,9 @@
 
 ### Fixed
 
+- Diagnostics without pacman's database, as in a container, ask `hyprctl` for
+  the Hyprland version and say "unknown" when nothing can tell, instead of
+  "not installed" and the Omarchy version file's guess.
 - A file opened through a running Omaroll brings its window to the front: the
   launcher's activation token is passed along with the request.
 - An invalid `--start` time is shown as a desktop notice too, not only on stderr.

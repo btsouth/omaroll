@@ -1,16 +1,16 @@
 name: Pages
 
+# The homepage shows the latest release, not main, so its commands always work
+# with what people can install. Release dispatches this after publishing: a
+# release made with the workflow token starts no release event, and the
+# github-pages environment only deploys from main. Run it by hand to redeploy.
 on:
-  push:
-    branches: [main]
-    paths:
-      - docs/site/**
-      - docs/*.png
-      - docs/*.webp
-      - docs/*.mp4
-      - resources/icons/omaroll.svg
-      - .github/workflows/pages.yml
   workflow_dispatch:
+    inputs:
+      ref:
+        description: Tag or branch to publish (empty for the latest release)
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -29,7 +29,20 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
+      - name: Pick the release
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED: ${{ inputs.ref }}
+        run: |
+          ref="${REQUESTED:-$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)}"
+          test -n "$ref"
+          echo "Publishing $ref"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ steps.source.outputs.ref }}
+          persist-credentials: false
       # The homepage sits at the root. Media stays under docs/ so links to
       # the demo from older READMEs and posts keep working.
       - name: Assemble site
