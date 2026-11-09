@@ -2,6 +2,7 @@
 #include "actions/TrashRestore.h"
 #include "sources/FileVersion.h"
 #include "app/VideoPlayback.h"
+#include "app/VideoPresentation.h"
 
 #include "library/CaptureRecord.h"
 
@@ -2259,4 +2260,18 @@ void AppSettings::reconcileMarks(const QList<CaptureRecord>& records) {
   clearMarksUndo();
   persistMarks();
   emit marksChanged();
+}
+
+QObject* AppSettings::videoPresentation(QObject* sink) const {
+  auto* output = qobject_cast<QVideoSink*>(sink);
+  return output ? new VideoPresentation(output) : nullptr;
+}
+
+qint64 AppSettings::videoSeekTarget(double milliseconds, double frameRate) const {
+  // Qt's FFmpeg seek can select the preceding frame at its exact start.
+  // Enter the requested frame by one millisecond, only at a boundary.
+  const double frames = milliseconds * frameRate / 1000.0;
+  const bool boundary = frameRate > 0 && milliseconds > 0
+      && std::abs(frames - std::round(frames)) < 0.0001;
+  return std::max<qint64>(0, std::llround(milliseconds) + (boundary ? 1 : 0));
 }

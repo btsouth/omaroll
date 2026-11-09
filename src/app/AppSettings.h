@@ -161,6 +161,8 @@ public:
 
   [[nodiscard]] qreal videoVolume() const { return m_videoVolume; }
   Q_INVOKABLE void prepareVideoPlayback() const;
+  Q_INVOKABLE QObject* videoPresentation(QObject* sink) const;
+  Q_INVOKABLE qint64 videoSeekTarget(double milliseconds, double frameRate) const;
   void setVideoVolume(qreal value);
   [[nodiscard]] bool videoMuted() const { return m_videoMuted; }
   void setVideoMuted(bool value);

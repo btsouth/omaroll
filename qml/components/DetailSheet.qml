@@ -11,6 +11,8 @@ import QtMultimedia
 Item {
     id: root
 
+    readonly property var presentation: videoSurface.item
+        ? Settings.videoPresentation(videoSurface.item.videoSink) : null
     property string path: ""
     readonly property bool captionEditing: captionField.activeFocus
     property bool canCompare: false
@@ -171,7 +173,7 @@ Item {
     }
     readonly property string subtitleOverlayText: externalSubtitle !== ""
         ? externalCueText
-        : (output.videoSink ? output.videoSink.subtitleText : "")
+        : (root.presentation ? root.presentation.subtitleText : "")
     readonly property bool hasSubtitleChoices: (player && player.subtitleTracks.length > 0)
                                                || subtitleFiles.length > 0
     readonly property string subtitleChoiceLabel: {
@@ -509,7 +511,7 @@ Item {
         root.resumeAvailable = false
         root.resumePending = false
         const maximum = player.duration > 0 ? player.duration - 1 : Math.max(0, milliseconds)
-        player.position = Math.max(0, Math.min(maximum, milliseconds))
+        player.position = Math.max(0, Math.min(maximum, Settings.videoSeekTarget(milliseconds, root.player.metaData.value(MediaMetaData.VideoFrameRate))))
     }
 
     function seekVideo(milliseconds) {
@@ -1052,7 +1054,7 @@ Item {
                 asynchronous: true
                 smooth: true
                 mipmap: true
-                visible: root.isVideo && !(player && player.hasVideo)
+                visible: root.isVideo && !(root.presentation && root.presentation.ready)
                 // The thumbnail provider applies the ratio from its URL once.
                 sourceSize: Qt.size(Math.round(width), Math.round(height))
                 source: !root.visible || !root.isVideo || root.path === "" ? ""
@@ -1495,13 +1497,14 @@ Item {
                         objectName: "videoPlayer"
                         property string resumeIdentity: ""
                         source: root.videoSource
-                        videoOutput: videoSurface.item
+                        videoOutput: root.presentation
                         audioOutput: AudioOutput {
                             volume: Settings.videoVolume
                             muted: Settings.videoMuted || !root.audible
                         }
                         loops: 1
                         onSourceChanged: {
+                            if (root.presentation) root.presentation.reset()
                             if (source.toString() !== "") {
                                 mediaPlayer.resumeIdentity = Settings.videoIdentity(root.path)
                                 Mpris.track(mediaPlayer, root)
@@ -1621,7 +1624,8 @@ Item {
                 anchors.fill: parent
                 anchors.margins: 16
                 anchors.bottomMargin: stage.videoFooterHeight
-                visible: root.isVideo && player && player.hasVideo
+                visible: root.isVideo && root.presentation && root.presentation.hasFrame
+                         && (root.presentation.ready || videoPoster.status !== Image.Ready)
                 readonly property rect sourceRect: videoSurface.item
                                                    ? videoSurface.item.sourceRect : Qt.rect(0, 0, 0, 0)
                 readonly property QtObject videoSink: videoSurface.item ? videoSurface.item.videoSink : null

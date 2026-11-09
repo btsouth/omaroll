@@ -2046,11 +2046,55 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_C);
     QTRY_VERIFY(captions->property("active").toBool());
     QCOMPARE(player->activeSubtitleTrack(), 0);
+    player->pause();
+    player->setPosition(1001);
+    QTRY_VERIFY(player->videoSink()->subtitleText().contains(QStringLiteral("Omaroll subtitle test")));
+    auto* overlay = item(QStringLiteral("viewerSubtitles"));
+    QTRY_VERIFY(overlay->isVisible());
+    if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
+      // With our overlay hidden, embedded text must change no video pixels.
+      // This fails if Qt's VideoOutput also paints a second caption.
+      const auto capture = [&] {
+        auto* output = item(QStringLiteral("viewerVideoOutput"));
+        const QImage image = m_window->grabWindow();
+        const QRectF rect = output->mapRectToScene(output->boundingRect());
+        return image.copy(QRectF(rect.topLeft() * image.devicePixelRatio(),
+                                rect.size() * image.devicePixelRatio()).toAlignedRect());
+      };
+      QTest::qWait(150);
+      const QImage themed = capture();
+      overlay->setVisible(false);
+      QTest::qWait(100);
+      const QImage embeddedOnly = capture();
+      QVERIFY(themed != embeddedOnly); // The themed caption really drew pixels.
+      player->videoSink()->setSubtitleText({});
+      QTest::qWait(100);
+      QCOMPARE(capture(), embeddedOnly);
+      overlay->setVisible(true);
+    }
     QTest::keyClick(m_window, Qt::Key_C);
     QTRY_VERIFY(!captions->property("active").toBool());
     QCOMPARE(player->activeSubtitleTrack(), -1);
     m_window->setProperty("chromePinned", false);
     player->pause();
+  }
+
+  void exactFrameBoundarySeek() {
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("boundary.mkv"));
+    QProcess encoder;
+    encoder.start(QStringLiteral("ffmpeg"), {"-v", "error", "-f", "lavfi", "-i",
+                  "testsrc2=s=160x90:r=30:d=4", "-c:v", "ffv1", path});
+    QVERIFY(encoder.waitForFinished(20000));
+    QCOMPARE(encoder.exitCode(), 0);
+    open({path});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY(player->hasVideo());
+    player->pause();
+    QVERIFY(QMetaObject::invokeMethod(m_window, "seekTo", Q_ARG(QVariant, 2000)));
+    QTRY_VERIFY_WITH_TIMEOUT(player->videoSink()->videoFrame().startTime() >= 2000000, 5000);
+    QVERIFY(player->videoSink()->videoFrame().startTime() < 2034000);
   }
 
   // Video codecs and containers encoded here so the check needs no downloads.

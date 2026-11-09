@@ -133,7 +133,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
       {.id = u"play"_s,
        .label = u"Open in mpv"_s,
        .program = u"mpv"_s,
-       .arguments = {u"{path}"_s},
+       .arguments = {u"--start={seek}"_s, u"--"_s, u"{path}"_s},
        .shortcut = u"P"_s,
        .packageHint = u"mpv"_s,
        .media = Moving},
@@ -596,6 +596,7 @@ bool ActionRegistry::run(const QString& id, const QStringList& paths,
     for (auto it = placeholders.cbegin(); it != placeholders.cend(); ++it) {
       argument.replace(QLatin1Char('{') + it.key() + QLatin1Char('}'), it.value().toString());
     }
+    argument.replace(u"{seek}"_s, u"0"_s);
     return argument;
   };
 
