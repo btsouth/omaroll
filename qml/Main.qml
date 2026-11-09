@@ -66,7 +66,7 @@ ApplicationWindow {
                                       || albumNameSheet.visible
                                       || exportSheet.visible || renameSheet.visible
                                       || tailscaleSheet.visible || textReviewSheet.visible
-                                      || editorChooser.visible
+                                      || editorChooser.visible || folderDropConfirm.visible
     readonly property bool anySheetOpen: modalOpen || detail.visible
     // A popup menu is up; the press that closes it must not also land under it.
     readonly property bool folderSidebarVisible: Settings.showFolderSidebar && width >= 760
@@ -329,6 +329,8 @@ ApplicationWindow {
             confirm.close()
         } else if (permanentConfirm.visible) {
             permanentConfirm.close()
+        } else if (folderDropConfirm.visible) {
+            folderDropConfirm.close()
         } else if (editorChooser.visible) {
             editorChooser.close()
         } else if (exportSheet.visible) {
@@ -1680,6 +1682,7 @@ ApplicationWindow {
         }
 
         Text {
+            objectName: "footerStatus"
             anchors.left: parent.left
             anchors.leftMargin: 20
             anchors.right: notice.undoable ? footerUndo.left : helpHint.left
@@ -2020,6 +2023,95 @@ ApplicationWindow {
             root.deletePermanently(targets)
         }
         onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
+    }
+
+    // Files dragged in from another app open in the viewer, as from the file
+    // manager; folders are offered as library folders first. The library's
+    // own tiles are not dropped back on it.
+    function openDropped(urls) {
+        const sorted = Actions.sortDrop(urls)
+        if (sorted.folders.length > 0) {
+            // Asked here first; the files open once it is answered, so the
+            // viewer cannot come up over the question.
+            folderDropConfirm.folders = sorted.folders
+            folderDropConfirm.folderUrls = sorted.folderUrls
+            folderDropConfirm.pendingFiles = sorted.files
+            root.raise()
+            root.requestActivate()
+            folderDropConfirm.open()
+        } else if (sorted.files.length > 0) {
+            Actions.openFiles(sorted.files)
+        }
+        if (sorted.note !== "") root.say(sorted.note)
+        else if (sorted.files.length === 0 && sorted.folders.length === 0) root.say("Nothing there to open")
+    }
+
+    function addDroppedFolders(folders, urls) {
+        let added = 0
+        for (const url of urls) {
+            if (Settings.addLibraryFolder(url)) ++added
+        }
+        if (folders.length === 1) {
+            root.say(added === 1 ? "Folder added. Omaroll is scanning it now."
+                                 : "That folder is already added, unavailable, or is your home folder")
+            if (added === 1) root.openFolder(folders[0])
+        } else {
+            root.say(added === folders.length ? "Added " + added + " folders. Omaroll is scanning them now."
+                     : added > 0 ? "Added " + added + " of " + folders.length
+                                   + " folders; the rest are already added, unavailable, or your home folder"
+                     : "Those folders are already added, unavailable, or your home folder")
+        }
+    }
+
+    ConfirmSheet {
+        id: folderDropConfirm
+        objectName: "folderDropConfirm"
+        property var folders: []
+        property var folderUrls: []
+        // Dropped with the folders; opened when the question is answered.
+        property var pendingFiles: []
+        title: folders.length === 1 ? "Add this folder to Omaroll?"
+                                    : "Add these " + folders.length + " folders to Omaroll?"
+        detail: folders.join("\n") + "\n\nOmaroll watches " + (folders.length === 1 ? "it" : "them")
+                + " for pictures and videos. Nothing is moved or copied."
+        confirmLabel: folders.length === 1 ? "Add folder" : "Add folders"
+        onAccepted: {
+            const folders = folderDropConfirm.folders
+            const urls = folderDropConfirm.folderUrls
+            folderDropConfirm.folders = []
+            folderDropConfirm.folderUrls = []
+            root.addDroppedFolders(folders, urls)
+        }
+        onVisibleChanged: {
+            if (visible) return
+            root.restoreFocusAfterSheet()
+            const files = folderDropConfirm.pendingFiles
+            folderDropConfirm.pendingFiles = []
+            if (files.length > 0) Actions.openFiles(files)
+        }
+    }
+
+    DropArea {
+        id: libraryDrop
+        objectName: "libraryDropArea"
+        anchors.fill: parent
+        keys: ["text/uri-list"]
+        // Not under a sheet, the detail view or an open menu.
+        enabled: !root.anySheetOpen && !root.popupOpen
+        onEntered: function (drag) {
+            if (!drag.hasUrls || drag.source !== null) drag.accepted = false
+            else drag.accept(Qt.CopyAction)
+        }
+        onDropped: function (drop) {
+            if (!drop.hasUrls || drop.source !== null) return
+            drop.accept(Qt.CopyAction)
+            root.openDropped(drop.urls)
+        }
+    }
+    DropHighlight {
+        objectName: "libraryDropHighlight"
+        shown: libraryDrop.containsDrag
+        label: "Drop files to open them, or folders to add them"
     }
 
     // Transient status line, so a result or a missing handler is reported where

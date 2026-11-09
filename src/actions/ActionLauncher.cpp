@@ -1,4 +1,5 @@
 #include "actions/ActionLauncher.h"
+#include "actions/FileDrag.h"
 #include "actions/TrashRestore.h"
 #include "edit/ClipboardText.h"
 #include "actions/FileChooserRequest.h"
@@ -162,6 +163,25 @@ bool ActionLauncher::openWith(const QString& path) {
   });
   m_pendingOpenWith.insert(path);
   return request->start(path);
+}
+
+void ActionLauncher::openFiles(const QStringList& paths) {
+  if (!paths.isEmpty()) emit openRequested(paths);
+}
+
+QVariantMap ActionLauncher::fileDragData(const QStringList& paths) const {
+  return FileDrag::mimeData(paths);
+}
+
+QVariantMap ActionLauncher::sortDrop(const QList<QUrl>& urls) const {
+  const FileDrag::Sorted sorted = FileDrag::sort(urls);
+  QVariantList folderUrls;
+  for (const QString& folder : sorted.folders) folderUrls.append(QUrl::fromLocalFile(folder));
+  return {{u"files"_s, sorted.files},
+          {u"folders"_s, sorted.folders},
+          {u"folderUrls"_s, folderUrls},
+          {u"skipped"_s, sorted.skipped},
+          {u"note"_s, FileDrag::skippedNote(sorted.skipped)}};
 }
 
 bool ActionLauncher::chooseFilesToOpen() {

@@ -16,6 +16,8 @@ Item {
     property string toolTip: ""
     property string shortcut: ""
     property bool active: false
+    // A toggle, on while |active|, as assistive technology is told.
+    property bool checkable: false
     property bool raised: false
     property real iconSize: 18
     readonly property bool hovered: mouse.containsMouse
@@ -30,6 +32,8 @@ Item {
     activeFocusOnTab: true
     opacity: root.enabled ? 1 : 0.42
     Accessible.role: Accessible.Button
+    Accessible.checkable: root.checkable
+    Accessible.checked: root.checkable && root.active
     Accessible.name: root.toolTip
     Accessible.description: root.shortcut !== "" ? "Shortcut " + root.shortcut : ""
     Accessible.onPressAction: if (root.enabled) root.clicked()

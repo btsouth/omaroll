@@ -25,10 +25,11 @@
 //      preview showed.
 //   5. The result is resized to the requested edge, preserving aspect ratio.
 //
-// Metadata policy: the ICC color profile travels with the pixels; other EXIF
-// tags (including the orientation tag, now baked in) are not copied to the
-// copy. That is deliberate: a rotated copy that still claimed the old
-// orientation would display sideways everywhere else.
+// Metadata policy: the ICC color profile travels with the pixels. A JPEG
+// copy keeps the original's EXIF, XMP and IPTC with the orientation tag set
+// to upright, since the turn is now in the pixels; a rotated copy that still
+// claimed the old orientation would display sideways everywhere else. Other
+// formats' encoders cannot write EXIF, and the copy's note says so.
 class ImageEditor final : public QObject {
   Q_OBJECT
   Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
@@ -79,6 +80,16 @@ public:
                             qreal cropWidth, qreal cropHeight, int targetWidth, int targetHeight,
                             int jobId = 0);
 
+  // The viewer's turn and flips, written as "<stem>-edited.<ext>" beside the
+  // original, which is never touched. |entryPath| is the name it is listed
+  // under when that is a link to |path|: the copy goes beside the link. A
+  // JPEG is turned losslessly by jpegtran where it can be, its EXIF kept and
+  // marked upright; otherwise it is re-encoded and |note| says why, as it
+  // does when the format changes or metadata could not be kept. Emits
+  // viewCopySaved() or failed().
+  Q_INVOKABLE void saveViewCopy(const QString& path, int quarterTurns, bool flipHorizontal,
+                                bool flipVertical, int jobId = 0, const QString& entryPath = {});
+
   // Copies the selected region (same pipeline, no resize) to the clipboard.
   // Emits copied() or failed(). Nothing is written to disk.
   Q_INVOKABLE void copyRegion(const QString& path, int quarterTurns, bool flipHorizontal,
@@ -110,6 +121,7 @@ public:
 
 signals:
   void saved(const QString& outputPath, int jobId);
+  void viewCopySaved(const QString& outputPath, const QString& note, int jobId);
   void copied(int jobId);
   void failed(const QString& message, int jobId);
   void busyChanged();

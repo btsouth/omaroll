@@ -1,5 +1,7 @@
 #include "library/CaptureModel.h"
 
+#include "actions/FileDrag.h"
+
 #include "app/AppSettings.h"
 #include "library/CaptureRoles.h"
 #include "sources/CameraRaw.h"
@@ -513,11 +515,7 @@ void CaptureModel::readRawSize(const QString& path, const QUrl& source) {
 }
 
 QString CaptureModel::uriList(const QStringList& paths) const {
-  QString list;
-  for (const QString& path : paths) {
-    list += QUrl::fromLocalFile(path).toString(QUrl::FullyEncoded) + QStringLiteral("\r\n");
-  }
-  return list;
+  return FileDrag::uriList(paths);
 }
 
 void CaptureModel::refresh() {
@@ -767,6 +765,17 @@ void CaptureModel::adoptResults(ScanResult result) {
     }
   }
 }
+
+#ifdef OMAROLL_TESTING
+void CaptureModel::setRecordsForTesting(QList<CaptureRecord> records) {
+  beginResetModel();
+  m_records = std::move(records);
+  // Before the reset ends, so its observers find rows by path in the new list.
+  rebuildRowIndex();
+  endResetModel();
+  emit countChanged();
+}
+#endif
 
 void CaptureModel::rebuildRowIndex() {
   m_rowsByPath.clear();

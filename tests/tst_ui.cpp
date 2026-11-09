@@ -34,6 +34,7 @@
 #include "pdf/PdfProvider.h"
 #include "pdf/PdfSupport.h"
 #include "search/OcrIndex.h"
+#include "search/SearchQuery.h"
 #include "subtitles/SubtitleIndex.h"
 #include "search/QrDetector.h"
 #include "theme/OmarchyTheme.h"
@@ -61,6 +62,7 @@
 #include <QImageReader>
 #include <QMediaPlayer>
 #include <QMediaMetaData>
+#include <QMimeData>
 #include <QMutex>
 #include <QMutexLocker>
 #include <QPainter>
@@ -89,6 +91,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <memory>
 
 // Twelve seconds of moving pattern with a keyframe every two seconds, so a
@@ -2007,6 +2010,148 @@ private slots:
     QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
   }
 
+  // In a large library a search that hides or brings back thousands of rows
+  // applies in one go, as a layout change, so every visible delegate is
+  // reused for another row. The selected file, the scroll anchor and every
+  // visible thumbnail come back, each tile showing its own file.
+  void largeSearchChangesKeepTheGridPlaceAndThumbnails() {
+    CaptureModel captures(m_settings);
+    QTRY_VERIFY_WITH_TIMEOUT(!captures.scanning(), 15000);
+    constexpr int kRows = 6000;
+    QList<CaptureRecord> records;
+    records.reserve(kRows);
+    const QDateTime newest(QDate(2026, 1, 1), QTime(12, 0));
+    for (int row = 0; row < kRows; ++row) {
+      CaptureRecord record;
+      record.fileName = QStringLiteral("%1.png").arg(row);
+      record.path = QStringLiteral("/large-grid-test/") + record.fileName;
+      record.kind = CaptureRecord::Picture;
+      record.captured = newest.addSecs(-qint64(row) * 60);
+      record.modified = record.captured.toMSecsSinceEpoch();
+      record.bytes = 1000;
+      records.append(record);
+    }
+    captures.setRecordsForTesting(records);
+    CaptureFilterModel library;
+    library.setSourceModel(&captures);
+    QCOMPARE(library.rowCount(), kRows);
+    QCOMPARE(library.pathAt(10), records.at(10).path);
+
+    QQmlApplicationEngine engine;
+    engine.addImportPath(QStringLiteral(OMAROLL_QML_IMPORT_PATH));
+    auto* provider = new HeldThumbnailProvider;
+    engine.addImageProvider(QStringLiteral("thumbs"), provider);
+    auto* context = engine.rootContext();
+    context->setContextProperty(QStringLiteral("Theme"), m_theme);
+    context->setContextProperty(QStringLiteral("Settings"), m_settings);
+    context->setContextProperty(QStringLiteral("Captures"), &library);
+    context->setContextProperty(QStringLiteral("Library"), &captures);
+    context->setContextProperty(QStringLiteral("MediaMetadata"), m_mediaMetadata);
+    QStringList warnings;
+    connect(&engine, &QQmlEngine::warnings, &engine, [&warnings](const QList<QQmlError>& errors) {
+      for (const auto& error : errors) warnings.append(error.toString());
+    });
+    engine.loadData(R"QML(
+      import QtQuick
+      import Omaroll
+      Window {
+        width: Settings.tileWidth * 3 + 24
+        height: Math.round(Settings.tileWidth * 0.68) * 3
+        CaptureGrid { objectName: "largeGrid"; anchors.fill: parent; model: Captures }
+      }
+    )QML");
+    QVERIFY2(!engine.rootObjects().isEmpty(), qPrintable(warnings.join('\n')));
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst());
+    QVERIFY(window);
+    const auto release = qScopeGuard([&] { provider->completeAll(); });
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    auto* grid = window->findChild<QQuickItem*>(QStringLiteral("largeGrid"));
+    QVERIFY(grid);
+    auto* view = find(grid, [](QQuickItem* candidate) {
+      return candidate->property("cellHeight").isValid();
+    });
+    QVERIFY(view);
+    QTRY_COMPARE(grid->width(), qreal(window->width()));
+    auto* relayout = window->findChild<QObject*>(QStringLiteral("gridRelayoutTimer"));
+    QVERIFY(relayout);
+    QTRY_VERIFY(!relayout->property("running").toBool());
+    QTRY_VERIFY(grid->property("layoutReady").toBool());
+    const int columns = grid->property("columns").toInt();
+    QVERIFY(columns >= 2);
+    const auto settled = [&] {
+      provider->completeAll();
+      QVariant ready;
+      QMetaObject::invokeMethod(grid, "viewportReady", Q_RETURN_ARG(QVariant, ready));
+      return ready.toBool();
+    };
+    const auto topLeftPath = [&] {
+      int index = -1;
+      QMetaObject::invokeMethod(view, "indexAt", Q_RETURN_ARG(int, index),
+                                Q_ARG(qreal, view->property("contentX").toReal() + 4),
+                                Q_ARG(qreal, view->property("contentY").toReal() + 4));
+      return index >= 0 ? library.pathAt(index) : QString();
+    };
+    // Every visible cell holds its own row's file, and its thumbnail is of
+    // that file.
+    const auto cellsMatchRows = [&] {
+      const qreal cellHeight = view->property("cellHeight").toReal();
+      const qreal top = view->property("contentY").toReal() - view->property("originY").toReal();
+      const int first = std::max(0, int(top / cellHeight)) * columns;
+      const int end = std::min(library.rowCount(),
+                               int(std::ceil((top + view->height()) / cellHeight)) * columns);
+      for (int index = first; index < end; ++index) {
+        QQuickItem* cell = nullptr;
+        QMetaObject::invokeMethod(view, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, cell),
+                                  Q_ARG(int, index));
+        if (!cell || cell->property("path").toString() != library.pathAt(index)) return false;
+        auto* card = find(cell, [](QQuickItem* candidate) {
+          return candidate->property("readyPath").isValid();
+        });
+        if (!card || card->property("readyPath").toString() != library.pathAt(index)) return false;
+      }
+      return end > first;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(settled(), 10000);
+
+    // Deep in the library, with a tile selected.
+    const qreal cellHeight = view->property("cellHeight").toReal();
+    view->setProperty("contentY", cellHeight * 700);
+    QTRY_VERIFY_WITH_TIMEOUT(settled(), 10000);
+    const QString anchor = topLeftPath();
+    QCOMPARE(anchor, library.pathAt(700 * columns));
+    // An odd row, which only stays because it is the selected one.
+    const int selectedRow = 701 * columns + ((701 * columns) % 2 == 0 ? 1 : 2);
+    const QString selected = library.pathAt(selectedRow);
+    grid->setProperty("currentIndex", selectedRow);
+    QCOMPARE(grid->property("selectedPath").toString(), selected);
+    QTRY_VERIFY(cellsMatchRows());
+
+    // Leave out every odd row but those two: thousands of changes at once.
+    int dropped = 0;
+    for (int row = 1; row < kRows; row += 2) {
+      if (records.at(row).path != anchor && records.at(row).path != selected) {
+        library.setOcrText(records.at(row).path, QStringLiteral("drop"));
+        ++dropped;
+      }
+    }
+    QSignalSpy layouts(&library, &QAbstractItemModel::layoutChanged);
+    QSignalSpy removed(&library, &QAbstractItemModel::rowsRemoved);
+    for (const QString& query : {QStringLiteral("-drop"), QString()}) {
+      layouts.clear();
+      removed.clear();
+      library.setSearchText(query);
+      QCOMPARE(library.rowCount(), query.isEmpty() ? kRows : kRows - dropped);
+      QVERIFY2(layouts.size() >= 1 && removed.isEmpty(), qPrintable(query));
+      QTRY_COMPARE(grid->property("currentIndex").toInt(), library.rowOf(selected));
+      QCOMPARE(grid->property("selectedPath").toString(), selected);
+      QTRY_COMPARE(topLeftPath(), anchor);
+      QTRY_VERIFY_WITH_TIMEOUT(settled(), 10000);
+      QTRY_VERIFY(cellsMatchRows());
+    }
+    QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
+  }
+
   void imageViewerSupportsActualSizeFlipsDeepZoomAndAnimationPause() {
     int imageRow = -1;
     for (int row = 0; row < m_library->rowCount(); ++row) {
@@ -2816,17 +2961,23 @@ private slots:
     const int all = m_library->rowCount();
     const QString matched = pathAt(1);
     const QString other = pathAt(2);
+    // Pictures take text from the picture index and PDFs from their own;
+    // either may sit in these rows.
+    const auto setText = [this](const QString& path, const QString& text) {
+      m_library->setOcrText(path, text);
+      m_library->setDocumentText(path, text);
+    };
     const auto restore = qScopeGuard([&] {
-      m_library->setOcrText(matched, QString());
-      m_library->setOcrText(other, QString());
+      setText(matched, QString());
+      setText(other, QString());
       m_library->setSearchText(QString());
     });
     for (int round = 0; round < 3; ++round) {
       m_library->setSearchText(QStringLiteral("zqxinvoice"));
       QTRY_COMPARE(m_library->rowCount(), 0);
-      m_library->setOcrText(matched, QStringLiteral("ACME HARDWARE ZQXINVOICE 7781"));
+      setText(matched, QStringLiteral("ACME HARDWARE ZQXINVOICE 7781"));
       QTRY_COMPARE(m_library->rowCount(), 1);
-      m_library->setOcrText(other, QStringLiteral("zqxinvoice paid"));
+      setText(other, QStringLiteral("zqxinvoice paid"));
       QTRY_COMPARE(m_library->rowCount(), 2);
       QTRY_VERIFY(viewportReady());
       for (const QString& path : {matched, other}) {
@@ -2844,9 +2995,208 @@ private slots:
       m_library->setSearchText(QString());
       QTRY_COMPARE(m_library->rowCount(), all);
       QTRY_VERIFY(viewportReady());
-      m_library->setOcrText(matched, QString());
-      m_library->setOcrText(other, QString());
+      setText(matched, QString());
+      setText(other, QString());
     }
+  }
+
+  // Up and Down walk the suggestions and wrap, Enter or Tab takes one, Esc
+  // closes them before it clears the field, and Enter with nothing
+  // highlighted searches for what was typed.
+  void searchSuggestionsFollowTheKeyboard() {
+    auto* search = item("libraryFilterSearch");
+    auto* popup = m_window->findChild<QObject*>(QStringLiteral("searchSuggestions"));
+    QVERIFY(popup);
+    const auto restore = qScopeGuard([&] {
+      search->setProperty("text", QString());
+      m_library->setSearchText(QString());
+    });
+    QTest::keyClick(m_window, Qt::Key_Slash);
+    QTRY_VERIFY(search->hasActiveFocus());
+    typeText(QStringLiteral("type:"));
+    QTRY_VERIFY(popup->property("visible").toBool());
+    const QVariantList rows = popup->property("rows").toList();
+    QCOMPARE(rows.size(), SearchQuery::typeNames().size());
+    QCOMPARE(popup->property("highlighted").toInt(), -1);
+    QTest::keyClick(m_window, Qt::Key_Down);
+    QCOMPARE(popup->property("highlighted").toInt(), 0);
+    QTest::keyClick(m_window, Qt::Key_Down);
+    QCOMPARE(popup->property("highlighted").toInt(), 1);
+    QTest::keyClick(m_window, Qt::Key_Up);
+    QTest::keyClick(m_window, Qt::Key_Up);
+    QCOMPARE(popup->property("highlighted").toInt(), rows.size() - 1);
+    // Enter takes the highlighted value and searches at once; the field
+    // keeps the keyboard for the next word.
+    QTest::keyClick(m_window, Qt::Key_Return);
+    const QString last = rows.last().toMap().value(QStringLiteral("insert")).toString();
+    QCOMPARE(search->property("text").toString(), last + QLatin1Char(' '));
+    QCOMPARE(m_library->searchText(), last + QLatin1Char(' '));
+    QVERIFY(search->hasActiveFocus());
+    QTRY_VERIFY(!popup->property("visible").toBool());
+
+    // Tab completes the first suggestion, here a field name.
+    typeText(QStringLiteral("cam"));
+    QTRY_VERIFY(popup->property("visible").toBool());
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QCOMPARE(search->property("text").toString(), last + QStringLiteral(" camera:"));
+    QVERIFY(search->hasActiveFocus());
+
+    // Esc closes the list first and leaves the text; a second Esc clears it.
+    search->setProperty("text", QString());
+    typeText(QStringLiteral("type:"));
+    QTRY_VERIFY(popup->property("visible").toBool());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!popup->property("visible").toBool());
+    QCOMPARE(search->property("text").toString(), QStringLiteral("type:"));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QCOMPARE(search->property("text").toString(), QString());
+
+    // With nothing highlighted, Enter searches for the text as typed.
+    QTest::keyClick(m_window, Qt::Key_Slash);
+    QTRY_VERIFY(search->hasActiveFocus());
+    typeText(QStringLiteral("type:v"));
+    QTRY_VERIFY(popup->property("visible").toBool());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QCOMPARE(m_library->searchText(), QStringLiteral("type:v"));
+    QTRY_VERIFY(!popup->property("visible").toBool());
+    QTRY_VERIFY(item("library")->hasActiveFocus());
+  }
+
+  // Each chip clears its own facet; Clear all clears every one in a single
+  // filter pass, and a saved view's chip clears its search too.
+  void filterChipsClearOneFacetOrAllAtOnce() {
+    const auto restore = qScopeGuard([&] {
+      m_library->clearFacets(true);
+    });
+    const QString folder = QFileInfo(pathAt(0)).absolutePath();
+    m_library->setFolderFilter(folder);
+    m_library->setDateRange(QStringLiteral("2000-01-01"), QStringLiteral("2099-12-31"));
+    m_library->setMinimumRating(0);
+    QVERIFY(m_library->rowCount() > 0);
+    const auto shown = [this](const QString& name) {
+      return find(m_window->contentItem(), [&name](QQuickItem* candidate) {
+               return candidate->objectName() == name && candidate->isVisible();
+             }) != nullptr;
+    };
+    auto* chips = item("activeFilterChips");
+    QTRY_VERIFY(chips->isVisible());
+    QTRY_VERIFY(shown(QStringLiteral("filterChip-folder")));
+    QTRY_VERIFY(shown(QStringLiteral("filterChip-date")));
+    click(item("filterChipClear-date"));
+    QTRY_VERIFY(m_library->dateFrom().isEmpty());
+    QCOMPARE(m_library->folderFilter(), QDir::cleanPath(folder));
+
+    m_library->setDateRange(QStringLiteral("2000-01-01"), QStringLiteral("2099-12-31"));
+    m_library->setTagFilter(QStringLiteral("ui-chip-tag"), {pathAt(0)});
+    QTRY_VERIFY(item("filterChipsClearAll")->isVisible());
+    // Each filter pass ends by refreshing the pairing roles of every row.
+    QSignalSpy changes(m_library, &QAbstractItemModel::dataChanged);
+    const auto passes = [&] {
+      int count = 0;
+      for (const QList<QVariant>& arguments : std::as_const(changes)) {
+        count += arguments.at(2).value<QList<int>>().contains(CaptureModel::CompanionPathRole) ? 1 : 0;
+      }
+      return count;
+    };
+    QQuickItem* clearAll = item("filterChipsClearAll");
+    // The pointer travels there, leaving the hovered chip and its tooltip.
+    QTest::mouseMove(m_window, centre(clearAll));
+    QTest::qWait(50);
+    click(clearAll);
+    QTRY_VERIFY(m_library->folderFilter().isEmpty());
+    QVERIFY(m_library->dateFrom().isEmpty());
+    QVERIFY(m_library->tagFilter().isEmpty());
+    QCOMPARE(passes(), 1);
+    QTRY_VERIFY(!chips->isVisible());
+
+    m_library->applyView(QStringLiteral("UI chips"),
+                         {{QStringLiteral("query"), QStringLiteral("alpine")},
+                          {QStringLiteral("folder"), folder}});
+    QTRY_VERIFY(shown(QStringLiteral("filterChipClear-view")));
+    click(item("filterChipClear-view"));
+    QTRY_VERIFY(m_library->smartCollectionFilter().isEmpty());
+    QVERIFY(m_library->searchText().isEmpty());
+    QVERIFY(m_library->folderFilter().isEmpty());
+  }
+
+  // Clear all is reached with Tab after the chips and taken with Space or
+  // Return, with a visible focus ring.
+  void clearAllFiltersFromTheKeyboard() {
+    const auto restore = qScopeGuard([&] { m_library->clearFacets(true); });
+    const QString folder = QFileInfo(pathAt(0)).absolutePath();
+    const auto narrow = [&] {
+      m_library->setFolderFilter(folder);
+      m_library->setDateRange(QStringLiteral("2000-01-01"), QStringLiteral("2099-12-31"));
+    };
+    narrow();
+    QQuickItem* clearAll = item("filterChipsClearAll");
+    QTRY_VERIFY(clearAll->isVisible());
+    QVERIFY(clearAll->activeFocusOnTab());
+    QQuickItem* lastChip = item("filterChipClear-date");
+    lastChip->forceActiveFocus(Qt::TabFocusReason);
+    QTRY_VERIFY(lastChip->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QTRY_VERIFY(clearAll->hasActiveFocus());
+    QVERIFY(item("filterChipsClearAllFocus")->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTRY_VERIFY(m_library->folderFilter().isEmpty());
+    QVERIFY(m_library->dateFrom().isEmpty());
+
+    narrow();
+    QTRY_VERIFY(clearAll->isVisible());
+    clearAll->forceActiveFocus(Qt::TabFocusReason);
+    QTRY_VERIFY(clearAll->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(m_library->folderFilter().isEmpty());
+    QVERIFY(m_library->dateFrom().isEmpty());
+  }
+
+  // A suggestion over a tile takes the click alone: the tile is not
+  // selected and the search field keeps the keyboard.
+  void suggestionClicksDoNotReachTiles() {
+    auto* search = item("libraryFilterSearch");
+    auto* popup = m_window->findChild<QObject*>(QStringLiteral("searchSuggestions"));
+    QVERIFY(popup);
+    QQuickItem* grid = item("library");
+    const auto restore = qScopeGuard([&] {
+      search->setProperty("text", QString());
+      m_library->setSearchText(QString());
+    });
+    QTest::keyClick(m_window, Qt::Key_Slash);
+    QTRY_VERIFY(search->hasActiveFocus());
+    typeText(QStringLiteral("type:"));
+    QTRY_VERIFY(popup->property("visible").toBool());
+    // The lowest row, which lies over the grid.
+    QQuickItem* lowest = nullptr;
+    find(m_window->contentItem(), [&lowest](QQuickItem* candidate) {
+      if (candidate->objectName() == QStringLiteral("searchSuggestionRow") &&
+          candidate->isVisible() &&
+          (!lowest || candidate->mapToScene(QPointF()).y() > lowest->mapToScene(QPointF()).y())) {
+        lowest = candidate;
+      }
+      return false;
+    });
+    QVERIFY(lowest);
+    QTRY_VERIFY(lowest->width() > 0);
+    const QPoint at = centre(lowest);
+    QQuickItem* tile = find(grid, [&at](QQuickItem* candidate) {
+      return candidate->isVisible() && candidate->property("selectionMode").isValid() &&
+             !candidate->property("path").toString().isEmpty() &&
+             candidate->contains(candidate->mapFromScene(QPointF(at)));
+    });
+    QVERIFY2(tile, "no tile under the suggestion");
+    const QString tilePath = tile->property("path").toString();
+    QVERIFY(grid->property("selectedPath").toString() != tilePath);
+    const QVariantList rows = popup->property("rows").toList();
+    const int index = lowest->parentItem()->property("index").toInt();
+    const QString insert = rows.at(index).toMap().value(QStringLiteral("insert")).toString();
+
+    QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, at);
+    QTRY_COMPARE(search->property("text").toString(), insert + QLatin1Char(' '));
+    // Past the double-click interval, where a tile would have been chosen.
+    QTest::qWait(QGuiApplication::styleHints()->mouseDoubleClickInterval() + 50);
+    QVERIFY(search->hasActiveFocus());
+    QVERIFY(grid->property("selectedPath").toString() != tilePath);
   }
 
   void emptySearchResultsRecoverKeyboardNavigation() {
@@ -5318,8 +5668,11 @@ private slots:
     QCOMPARE(m_library->kindFilter(), 2);
     QCOMPARE(m_library->searchText(), QStringLiteral("alpine"));
     QVERIFY(m_library->favoritesOnly());
-    QVERIFY(m_library->albumFilter().isEmpty());
-    QVERIFY(m_library->dateFrom().isEmpty());
+    // Browse facets combine, so a folder narrows the album and date in view.
+    QCOMPARE(m_library->albumFilter(), QStringLiteral("temporary"));
+    QCOMPARE(m_library->dateFrom(), QStringLiteral("2026-01-01"));
+    m_library->setAlbumFilter({}, {});
+    m_library->clearDateRange();
     click(item("sidebarAllMedia"));
     QTRY_VERIFY(m_library->folderFilter().isEmpty());
     QCOMPARE(m_library->kindFilter(), 2);
@@ -5498,6 +5851,146 @@ private slots:
     QTRY_VERIFY(menu->property("visible").toBool());
     QTest::keyClick(m_window, Qt::Key_F9);
     QVERIFY(m_settings->showFolderSidebar());
+  }
+
+  // Dragged in from another app: files open as they would from the file
+  // manager, folders are offered as library folders first, and anything
+  // that is not a local file is named.
+  void filesAndFoldersDroppedOnTheLibrary() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString root = QFileInfo(dir.path()).canonicalFilePath();
+    const QString picture = root + QStringLiteral("/dropped.jpg");
+    const QString first = root + QStringLiteral("/first");
+    const QString second = root + QStringLiteral("/second");
+    QImage image(64, 48, QImage::Format_RGB32);
+    image.fill(Qt::darkCyan);
+    QVERIFY(image.save(picture));
+    QVERIFY(QDir().mkpath(first));
+    QVERIFY(QDir().mkpath(second));
+    const auto cleanup = qScopeGuard([this, first, second] {
+      m_settings->removeLibraryFolder(first);
+      m_settings->removeLibraryFolder(second);
+    });
+    QSignalSpy opened(m_actions, &ActionLauncher::openRequested);
+    QQuickItem* confirm = item("folderDropConfirm");
+
+    QVERIFY(dropOn(m_window, {QUrl::fromLocalFile(picture)}, [this] {
+      QVERIFY(item("libraryDropHighlight")->property("shown").toBool());
+    }));
+    QTRY_COMPARE(opened.size(), 1);
+    QCOMPARE(opened.last().first().toStringList(), QStringList{picture});
+    QVERIFY(!confirm->isVisible());
+    QTRY_VERIFY(!item("libraryDropHighlight")->property("shown").toBool());
+
+    // A folder is a question first, and Escape leaves it out.
+    QVERIFY(dropOn(m_window, {QUrl::fromLocalFile(first)}));
+    QTRY_VERIFY(confirm->isVisible());
+    QCOMPARE(confirm->property("title").toString(), QStringLiteral("Add this folder to Omaroll?"));
+    QCOMPARE(opened.size(), 1);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!confirm->isVisible());
+    QVERIFY(!m_settings->libraryFolders().contains(first));
+
+    // Mixed: both folders are asked about together and the web address is
+    // named. The file opens once that is answered, so the viewer does not
+    // come up over the question.
+    QVERIFY(dropOn(m_window, {QUrl::fromLocalFile(picture), QUrl::fromLocalFile(first),
+                              QUrl::fromLocalFile(second),
+                              QUrl(QStringLiteral("https://example.com/cat.png"))}));
+    QTRY_VERIFY(confirm->isVisible());
+    QCOMPARE(opened.size(), 1);
+    QCOMPARE(confirm->property("title").toString(), QStringLiteral("Add these 2 folders to Omaroll?"));
+    QCOMPARE(item("footerStatus")->property("text").toString(), QStringLiteral("Skipped: cat.png"));
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!confirm->isVisible());
+    QTRY_COMPARE(opened.size(), 2);
+    QCOMPARE(opened.last().first().toStringList(), QStringList{picture});
+    QVERIFY(m_settings->libraryFolders().contains(first));
+    QVERIFY(m_settings->libraryFolders().contains(second));
+    QCOMPARE(item("footerStatus")->property("text").toString(),
+             QStringLiteral("Added 2 folders. Omaroll is scanning them now."));
+
+    // Added already: said, not added twice.
+    QVERIFY(dropOn(m_window, {QUrl::fromLocalFile(first), QUrl::fromLocalFile(second)}));
+    QTRY_VERIFY(confirm->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!confirm->isVisible());
+    QCOMPARE(item("footerStatus")->property("text").toString(),
+             QStringLiteral("Those folders are already added, unavailable, or your home folder"));
+    QCOMPARE(m_settings->libraryFolders().count(first), 1);
+    QTRY_VERIFY(!m_captures->scanning());
+  }
+
+  // A linked folder is added as the folder it links to, and the library
+  // then shows that folder rather than an empty view of the link's name.
+  void droppedLinkedFolderShowsTheFolderItAdds() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString root = QFileInfo(dir.path()).canonicalFilePath();
+    const QString real = root + QStringLiteral("/real");
+    const QString link = root + QStringLiteral("/link");
+    QVERIFY(QDir().mkpath(real));
+    QImage image(64, 48, QImage::Format_RGB32);
+    image.fill(Qt::darkMagenta);
+    QVERIFY(image.save(real + QStringLiteral("/inside.png")));
+    QVERIFY(QFile::link(real, link));
+    const auto cleanup = qScopeGuard([this, real] {
+      m_settings->removeLibraryFolder(real);
+      QMetaObject::invokeMethod(m_window, "showAllMedia", Q_ARG(QVariant, QString()));
+    });
+    QQuickItem* confirm = item("folderDropConfirm");
+    QVERIFY(dropOn(m_window, {QUrl::fromLocalFile(link)}));
+    QTRY_VERIFY(confirm->isVisible());
+    QVERIFY2(confirm->property("detail").toString().startsWith(real),
+             qPrintable(confirm->property("detail").toString()));
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!confirm->isVisible());
+    QVERIFY(m_settings->libraryFolders().contains(real));
+    QTRY_COMPARE(m_library->folderFilter(), real);
+    // A scan of the new folder, which can be slow beside a busy suite.
+    QTRY_COMPARE_WITH_TIMEOUT(m_library->rowCount(), 1, 20000);
+    QTRY_VERIFY(!m_captures->scanning());
+  }
+
+  // Many skipped names are counted, not listed without end.
+  void droppedSkippedNamesAreCapped() {
+    QList<QUrl> urls;
+    for (int i = 1; i <= 9; ++i) urls.append(QUrl(QStringLiteral("https://example.com/%1.png").arg(i)));
+    QVERIFY(dropOn(m_window, urls));
+    QTRY_COMPARE(item("footerStatus")->property("text").toString(),
+                 QStringLiteral("Skipped: 1.png, 2.png, 3.png, 4.png, 5.png and 4 more"));
+  }
+
+  // Under an open menu or the detail view, a drop does not land behind it.
+  void dropsWaitForMenusAndTheDetailView() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString picture = QFileInfo(dir.path()).canonicalFilePath() + QStringLiteral("/over.png");
+    QImage image(64, 48, QImage::Format_RGB32);
+    image.fill(Qt::darkYellow);
+    QVERIFY(image.save(picture));
+    QSignalSpy opened(m_actions, &ActionLauncher::openRequested);
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("libraryContextMenu"));
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openContextMenu", Q_ARG(QVariant, 0),
+                                      Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    dropOn(m_window, {QUrl::fromLocalFile(picture)});
+    QTest::qWait(50);
+    QCOMPARE(opened.size(), 0);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!menu->property("visible").toBool());
+
+    openDetail(0);
+    QTRY_VERIFY(item("detail")->isVisible());
+    dropOn(m_window, {QUrl::fromLocalFile(picture)});
+    QTest::qWait(50);
+    QCOMPARE(opened.size(), 0);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!item("detail")->isVisible());
+
+    QVERIFY(dropOn(m_window, {QUrl::fromLocalFile(picture)}));
+    QTRY_COMPARE(opened.size(), 1);
   }
 
   void pinnedFoldersRemainShortcutsWithoutRemovingTheirSource() {
@@ -6521,6 +7014,22 @@ private:
       }
     }
     return nullptr;
+  }
+
+  // Files dragged in from another app: enter, move, then drop at the middle.
+  static bool dropOn(QQuickWindow* window, const QList<QUrl>& urls,
+                     const std::function<void()>& whileOver = {}) {
+    QMimeData data;
+    data.setUrls(urls);
+    const QPoint at(window->width() / 2, window->height() / 2);
+    QDragEnterEvent enter(at, Qt::CopyAction, &data, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(window, &enter);
+    QDragMoveEvent move(at, Qt::CopyAction, &data, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(window, &move);
+    if (whileOver) whileOver();
+    QDropEvent drop(QPointF(at), Qt::CopyAction, &data, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(window, &drop);
+    return drop.isAccepted();
   }
 
   QQuickItem* item(const QString& objectName) const {
