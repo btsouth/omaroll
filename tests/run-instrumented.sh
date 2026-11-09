@@ -48,7 +48,7 @@ case "$mode" in
       mapfile -t tests < <(QT_QPA_PLATFORM=offscreen "$build/$binary" -functions | sed 's/()$//' |
         grep -E "$pattern" | grep -Ev '^(init|cleanup|initTestCase|cleanupTestCase)$')
       echo "tsan: ${#tests[@]} $binary tests"
-      local results="$build/tsan-tests-$binary.txt" status=0
+      local results="$PWD/$build/tsan-tests-$binary.txt" status=0
       (cd "$build" && QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software PULSE_SERVER=unix:/nonexistent \
         PIPEWIRE_REMOTE=omaroll-no-audio \
         TSAN_OPTIONS="halt_on_error=0:exitcode=0:report_thread_leaks=0:second_deadlock_stack=1:log_path=$PWD/tsan-report:suppressions=$OLDPWD/tests/tsan.supp" \
