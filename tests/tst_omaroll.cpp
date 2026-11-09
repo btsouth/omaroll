@@ -3700,14 +3700,14 @@ private slots:
       QVERIFY(!settings.launchWarning().isEmpty());
       QSignalSpy warning(&settings, &AppSettings::launchWarningChanged);
       // Without room for the copy aside, the fuller backup is not replaced.
-      const QString backups = settings.backupDirectory();
+      const QString backupFolder = settings.backupDirectory();
       const QByteArray fuller = readAllOf(todaysSnapshot(settings));
-      QVERIFY(QFile::setPermissions(backups, QFileDevice::ReadOwner | QFileDevice::ExeOwner));
+      QVERIFY(QFile::setPermissions(backupFolder, QFileDevice::ReadOwner | QFileDevice::ExeOwner));
       {
         const auto unlock = qScopeGuard([&] {
-          QFile::setPermissions(backups, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+          QFile::setPermissions(backupFolder, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
         });
-        if (QFile probe(backups + QStringLiteral("/probe")); !probe.open(QIODevice::WriteOnly)) {
+        if (QFile probe(backupFolder + QStringLiteral("/probe")); !probe.open(QIODevice::WriteOnly)) {
           QVERIFY(!settings.keepCurrentOrganization().isEmpty());
           QVERIFY(!settings.launchWarning().isEmpty());
           QVERIFY(settings.canRestoreOrganization());
