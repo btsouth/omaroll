@@ -469,7 +469,12 @@ int main(int argc, char** argv) {
     }, [&, target] {
       QVariant ready;
       QMetaObject::invokeMethod(grid, "viewportReady", Q_RETURN_ARG(QVariant, ready));
-      return !captures->scanning() && std::abs(viewport->property("contentY").toDouble() - target) < 1 && ready.toBool();
+      // A ListView with rows of two heights estimates where far rows sit and
+      // moves its origin as it learns, so a target past its ends settles there.
+      const double origin = viewport->property("originY").toDouble();
+      const double end = origin + viewport->property("contentHeight").toDouble() - viewport->height();
+      const double settled = std::clamp(target, origin, std::max(origin, end));
+      return !captures->scanning() && std::abs(viewport->property("contentY").toDouble() - settled) < 1 && ready.toBool();
     }, galleryNext);
   };
   QTimer::singleShot(0, &run, [&] {
@@ -507,11 +512,16 @@ int main(int argc, char** argv) {
       gallery = create("Main", context, galleryRoot); run.window = gallery;
       if (gallery) {
         grid = findItem(gallery->contentItem(), [](auto* item) { return item->objectName() == u"library"; });
-        if (grid) viewport = findItem(grid, [](auto* item) { return item->property("contentY").isValid() && item->property("cellHeight").isValid(); });
-        if (!viewport) run.fatal = u"Could not find gallery GridView"_s;
+        if (!grid) run.fatal = u"Could not find the gallery"_s;
       }
     }, [&] {
       QVariant ready;
+      // The flat GridView for name and size sorts, the sections' ListView
+      // for date sorts: whichever shows once the library has rows.
+      if (grid && !viewport) viewport = findItem(grid, [](auto* item) {
+        return item->property("contentY").isValid() && item->isVisible() && item->height() > 0
+               && (item->property("cellHeight").isValid() || item->objectName() == u"reviewSetsList");
+      });
       if (!grid || !viewport) return false;
       QMetaObject::invokeMethod(grid, "viewportReady", Q_RETURN_ARG(QVariant, ready));
       return !captures->scanning() && ready.toBool();
