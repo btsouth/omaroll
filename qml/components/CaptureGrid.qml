@@ -651,6 +651,8 @@ FocusScope {
             }
         }
         onContentYChanged: root.updateDay()
+        // Rows arriving above can move where the rows start under a band.
+        onOriginYChanged: if (!root.sectioned) band.rebase()
         onCountChanged: {
             // Removing the selected last row can leave GridView's index one
             // past the end until its next polish pass. Keep every keyboard
@@ -774,8 +776,13 @@ FocusScope {
         Keys.onPressed: function (event) { root.handleKey(event) }
 
         function pointInfo(x, y) {
+            return grid.infoAt(grid.contentY + Math.max(0, Math.min(y, grid.height - 1)))
+        }
+        // The same for a point in the grid's content, measured from where
+        // the rows start now.
+        function infoAt(contentY) {
             const total = Math.ceil(grid.count / root.columns)
-            const cy = grid.contentY - grid.originY + Math.max(0, Math.min(y, grid.height - 1))
+            const cy = contentY - grid.originY
             const row = Math.floor(cy / grid.cellHeight)
             if (row >= total) return {row: total, offset: 0, header: false, past: true}
             return {row: row, offset: cy - row * grid.cellHeight, header: false, past: false}
@@ -952,6 +959,8 @@ FocusScope {
         // loses what left the library, as the selection did.
         function rowsShifted() {
             if (startInfo === null) return
+            // The flat grid lays its rows out again on its next pass.
+            if (!root.sectioned) Qt.callLater(band.rebase)
             lastKey = null
             lastPaths = null
             const kept = {}
@@ -961,11 +970,19 @@ FocusScope {
             base = kept
         }
 
-        // The sections were rebuilt: find the start again where the band
-        // is drawn, or by its row when that spot has scrolled out of the
-        // laid-out rows, then select what the band covers now.
+        // Rows moved under the band: find the start again where the band is
+        // drawn, then select what it covers now. The flat grid's rows start
+        // at its origin, which a rescan can move; the sections' rows by
+        // their place in the list, or by their row key when that spot has
+        // scrolled out of the laid-out rows.
         function rebase() {
-            if (startInfo === null || !root.sectioned) return
+            if (startInfo === null) return
+            if (!root.sectioned) {
+                startInfo = grid.infoAt(startContentY)
+                lastKey = null
+                refresh()
+                return
+            }
             let info = reviewSets.infoAt(startX, startContentY)
             if (!info.found) {
                 info = Object.assign({}, startInfo)
@@ -978,10 +995,14 @@ FocusScope {
         }
 
         function finish() {
-            if (dragging && lastPaths !== null && lastPaths.length > 0) {
+            if (dragging && lastPaths !== null) {
                 // The tile nearest where the band started anchors a Shift+click.
-                const downward = mouseY >= viewStartY
-                root.anchorPath = downward ? lastPaths[0] : lastPaths[lastPaths.length - 1]
+                // A band that touched nothing keeps the anchor, but either way
+                // the band's selection is what a Shift range now builds on.
+                if (lastPaths.length > 0) {
+                    const downward = mouseY >= viewStartY
+                    root.anchorPath = downward ? lastPaths[0] : lastPaths[lastPaths.length - 1]
+                }
                 root.anchorBase = root.checkedSet
                 root.resetRange()
             }

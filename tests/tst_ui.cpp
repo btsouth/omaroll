@@ -1337,6 +1337,7 @@ private slots:
       invoke("dismissTopLayer");
       QMetaObject::invokeMethod(grid, "clearChecked");
       m_library->setSearchText({});
+      m_library->setSortMode(CaptureFilterModel::NewestFirst);
       m_library->setFolderFilter({});
       dir.remove();
       rescan();
@@ -1424,9 +1425,12 @@ private slots:
     QVERIFY(!item("detail")->isVisible());
 
     // A band that touches no tile, drawn in the empty end of a short row,
-    // replaces the selection with nothing.
-    QMetaObject::invokeMethod(grid, "checkAll");
-    QTRY_COMPARE(grid->property("checkedCount").toInt(), added.size());
+    // replaces a Shift range with nothing.
+    QTRY_VERIFY((card = cardFor(added.at(0))) != nullptr);
+    QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, centre(card));
+    QTRY_VERIFY((card = cardFor(added.at(2))) != nullptr);
+    QTest::mouseClick(m_window, Qt::LeftButton, Qt::ShiftModifier, centre(card));
+    QTRY_COMPARE(checkedPaths(), (QStringList{added.at(0), added.at(1), added.at(2)}));
     QQuickItem* last = nullptr;
     QTRY_VERIFY((last = cardFor(added.at(dayFirst.at(1) + 1))) != nullptr);
     const qreal cell = grid->property("cellWidth").toReal();
@@ -1440,6 +1444,13 @@ private slots:
     QTRY_VERIFY(!item("rubberBandRect")->isVisible());
     QCOMPARE(grid->property("checkedCount").toInt(), 0);
     QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
+    // Shift+click on the same end again builds on that empty selection.
+    QTRY_VERIFY((card = cardFor(added.at(2))) != nullptr);
+    QTest::mouseClick(m_window, Qt::LeftButton, Qt::ShiftModifier, centre(card));
+    QTRY_COMPARE(checkedPaths(), (QStringList{added.at(0), added.at(1), added.at(2)}));
+    QCOMPARE(grid->property("checkedCount").toInt(), 3);
+    QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
+    QMetaObject::invokeMethod(grid, "clearChecked");
 
     // A band held while a new day arrives above the view: what it selects
     // stays inside what it draws.
@@ -1483,6 +1494,85 @@ private slots:
     QTest::mouseRelease(m_window, Qt::LeftButton, Qt::NoModifier, to + QPoint(3, 3), 16);
     QTRY_VERIFY(!item("rubberBandRect")->isVisible());
     QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
+    QMetaObject::invokeMethod(grid, "clearChecked");
+    added.prepend(arriving);
+
+    // The same in the flat grid: a capture arriving at the top while a band
+    // is held deep in the grid.
+    m_library->setSortMode(CaptureFilterModel::RatingFirst);
+    QQuickItem* flat = item("flatGrid");
+    QTRY_VERIFY(flat->isVisible());
+    QTest::qWait(300);
+    const qreal flatCell = flat->property("cellHeight").toReal();
+    QMetaObject::invokeMethod(grid, "scrollTo", Q_ARG(QVariant, flatCell * 3));
+    QTest::qWait(150);
+    const int columns = grid->property("columns").toInt();
+    const auto visibleCard = [&](int row, int column) -> QQuickItem* {
+      int index = -1;
+      QMetaObject::invokeMethod(flat, "indexAt", Q_RETURN_ARG(int, index),
+                                Q_ARG(qreal, flat->property("contentX").toReal() + 4),
+                                Q_ARG(qreal, flat->property("contentY").toReal() + 4));
+      return index < 0 ? nullptr : cardFor(m_library->pathAt(index + row * columns + column));
+    };
+    QQuickItem* flatStart = nullptr;
+    QQuickItem* flatEnd = nullptr;
+    QTRY_VERIFY((flatStart = visibleCard(1, 0)) != nullptr && (flatEnd = visibleCard(2, 1)) != nullptr);
+    const QPoint flatFrom = flatStart->mapToScene(QPointF(flatStart->width() + 3, flatStart->height() / 2)).toPoint();
+    const QPoint flatTo = centre(flatEnd);
+    QTest::mousePress(m_window, Qt::LeftButton, Qt::NoModifier, flatFrom);
+    for (int step = 1; step <= 4; ++step) QTest::mouseMove(m_window, flatFrom + (flatTo - flatFrom) * step / 6, 16);
+    QTRY_VERIFY(item("rubberBandRect")->isVisible());
+    QTRY_VERIFY(grid->property("checkedCount").toInt() > 0);
+    QStringList newer;
+    for (int hour : {13, 14}) {
+      const QString path = dir.filePath(QStringLiteral("screenshot-2019-05-30_%1-00-00.png").arg(hour));
+      QVERIFY(picture.save(path));
+      m_disposablePaths.append(path);
+      newer.append(path);
+    }
+    m_captures->addExtraFiles(newer);
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(newer.first()) >= 0 && m_library->rowOf(newer.last()) >= 0, 10000);
+    QTest::qWait(200);
+    for (int step = 5; step <= 6; ++step) QTest::mouseMove(m_window, flatFrom + (flatTo - flatFrom) * step / 6, 16);
+    QTest::mouseMove(m_window, flatTo + QPoint(3, 3), 16);
+    QTest::qWait(50);
+    QVERIFY(bandRect->isVisible());
+    const QRectF flatDrawn = bandRect->mapRectToScene(bandRect->boundingRect());
+    const QStringList flatSelected = checkedPaths();
+    QVERIFY(!flatSelected.isEmpty());
+    for (const QString& path : flatSelected) {
+      QQuickItem* tile = cardFor(path);
+      QVERIFY2(tile, qPrintable(path + QStringLiteral(" is selected but not on screen")));
+      const QRectF rect = tile->mapRectToScene(tile->boundingRect());
+      QVERIFY2(rect.intersects(flatDrawn),
+               qPrintable(QStringLiteral("%1 at %2,%3 is outside the band %4,%5 %6x%7")
+                              .arg(path).arg(rect.x()).arg(rect.y()).arg(flatDrawn.x()).arg(flatDrawn.y())
+                              .arg(flatDrawn.width()).arg(flatDrawn.height())));
+    }
+    QTest::mouseRelease(m_window, Qt::LeftButton, Qt::NoModifier, flatTo + QPoint(3, 3), 16);
+    QTRY_VERIFY(!item("rubberBandRect")->isVisible());
+    QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
+    QMetaObject::invokeMethod(grid, "clearChecked");
+
+    // From a name sort to a date sort, the sections open on the current
+    // tile. Names put the oldest capture first; by date it is the last.
+    m_library->setSortMode(CaptureFilterModel::NameAscending);
+    QTRY_VERIFY(flat->isVisible());
+    QTest::qWait(200);
+    const QString oldest = m_library->pathAt(0);
+    QCOMPARE(oldest, added.last());
+    grid->setProperty("currentIndex", 0);
+    QTRY_COMPARE(grid->property("selectedPath").toString(), oldest);
+    m_library->setSortMode(CaptureFilterModel::NewestFirst);
+    QTRY_VERIFY(view->isVisible());
+    QTRY_COMPARE(grid->property("selectedPath").toString(), oldest);
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+      QQuickItem* current = cardFor(oldest);
+      if (!current) return false;
+      const QRectF viewport = list->mapRectToScene(list->boundingRect());
+      const QRectF rect = current->mapRectToScene(current->boundingRect());
+      return rect.top() >= viewport.top() - 1 && rect.bottom() <= viewport.bottom() + 1;
+    }(), 3000);
   }
 
   // A longer dated library: exact jumps and the scrollbar, the page keys,

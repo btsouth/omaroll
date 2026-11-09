@@ -253,7 +253,12 @@ FocusScope {
 
     onVisibleChanged: {
         root.revealPending = true
-        if (visible) root.sections.rebuildNow()
+        // Active first: the Binding may not have caught up yet, and a rebuild
+        // while inactive has no rows to reveal the current tile in.
+        if (visible) {
+            root.sections.active = true
+            root.sections.rebuildNow()
+        }
     }
     onReviewModeChanged: root.revealPending = true
 
@@ -271,7 +276,8 @@ FocusScope {
             // moving the index; start again from the tile there now.
             if (root.host && Captures.rowOf(root.currentPath) < 0)
                 root.currentPath = Captures.pathAt(root.host.currentIndex)
-            if (root.revealPending && root.visible) {
+            // Only a rebuild with rows can show the current tile.
+            if (root.revealPending && root.visible && root.sections.active) {
                 root.revealPending = false
                 root.topPath = ""
                 Qt.callLater(root.revealCurrent)
