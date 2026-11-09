@@ -2739,7 +2739,9 @@ private slots:
 
   // Text read after a search starts brings its rows back on recycled
   // delegates. Each shows its thumbnail and the matched text, and the grid
-  // shows every thumbnail again once the search is cleared.
+  // shows every thumbnail again once the search is cleared. Which order a
+  // recycled delegate receives its roles in is Qt's choice, so the card test
+  // above pins the order that used to leave tiles blank.
   void textMatchesFoundMidSearchKeepTheirThumbnails() {
     QQuickItem* grid = item("library");
     const auto viewportReady = [grid] {
