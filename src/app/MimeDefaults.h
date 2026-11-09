@@ -61,6 +61,7 @@ private:
   bool m_videosDefault = false;
   bool m_applying = false;
   bool m_checking = false;
+  bool m_recheck = false;
   bool m_unset = false;
   QFutureWatcher<Result> m_change;
   QFutureWatcher<State> m_check;

@@ -87,6 +87,12 @@ MimeDefaults::MimeDefaults(QObject *parent) : QObject(parent) {
   connect(&m_check, &QFutureWatcher<State>::finished, this, [this] {
     const State state = m_check.result();
     m_checking = false;
+    // Asked again while this ran: what it read may be from before a change.
+    if (m_recheck) {
+      m_recheck = false;
+      refresh();
+      return;
+    }
     m_known = true;
     m_imagesDefault = state.images;
     m_videosDefault = state.videos;
@@ -115,7 +121,10 @@ void MimeDefaults::applyAsync(bool unset, const QString &group) {
 }
 
 void MimeDefaults::refresh() {
-  if (m_checking) return;
+  if (m_checking) {
+    m_recheck = true;
+    return;
+  }
   m_checking = true;
   emit stateChanged();
   m_check.setFuture(QtConcurrent::run([] { return query(); }));

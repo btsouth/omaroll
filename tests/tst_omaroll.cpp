@@ -747,6 +747,18 @@ private slots:
              qPrintable(finished.first().at(1).toString()));
     QTRY_VERIFY_WITH_TIMEOUT(defaults.known() && !defaults.busy(), 10000);
     QVERIFY(defaults.imagesDefault());
+
+    // A check asked for while one runs is not lost: the running one read the
+    // state from before the change, and a second one follows it.
+    defaults.refresh();
+    QThreadPool::globalInstance()->waitForDone();
+    QVERIFY(other.open(QIODevice::WriteOnly));
+    other.write("[Desktop Entry]\nType=Application\nName=Other\nExec=/usr/bin/true %f\nMimeType=image/png;image/jpeg;\n");
+    other.close();
+    QVERIFY(writeDefaults("[Default Applications]\nimage/jpeg=other.desktop;\n"));
+    defaults.refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(!defaults.busy(), 10000);
+    QVERIFY(!defaults.imagesDefault());
   }
 
   void defaultViewerChangesAreSummarized() {
