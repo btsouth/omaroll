@@ -3,7 +3,6 @@
 #include "app/VideoPlayback.h"
 #include "app/VideoPresentation.h"
 #include "sources/FileVersion.h"
-#include "app/VideoPlayback.h"
 
 #include "library/CaptureRecord.h"
 
