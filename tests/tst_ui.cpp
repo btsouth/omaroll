@@ -1171,8 +1171,12 @@ private slots:
     // picks nothing.
     QMetaObject::invokeMethod(grid, "clearChecked");
     const int before = grid->property("currentIndex").toInt();
+    // The short row is the last one; bring it into view.
+    QMetaObject::invokeMethod(grid, "scrollTo", Q_ARG(QVariant, 1e9));
+    QTest::qWait(100);
     QQuickItem* lastCard = nullptr;
     QTRY_VERIFY((lastCard = cardFor(added.last())) != nullptr);
+    QVERIFY(centre(lastCard).y() > 0 && centre(lastCard).y() < m_window->height());
     const QPoint past = lastCard->mapToScene(QPointF(lastCard->width() * 1.5 + 12, lastCard->height() / 2)).toPoint();
     QVERIFY(past.x() < m_window->width() - 20);
     QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, past);
