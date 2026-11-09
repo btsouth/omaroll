@@ -3636,8 +3636,9 @@ private slots:
     QVERIFY(prop("playbackError").toString().isEmpty());
     // The upright preview is 24x32; the raw, 48x64.
     QCOMPARE(prop("loadedSize").toSize(), QSize(24, 32));
-    QCOMPARE(prop("sourceWidth").toReal(), 48.0);
-    QCOMPARE(prop("sourceHeight").toReal(), 64.0);
+    // The raw's own size comes from a probe that can finish after the preview.
+    QTRY_COMPARE(prop("sourceWidth").toReal(), 48.0);
+    QTRY_COMPARE(prop("sourceHeight").toReal(), 64.0);
     // Fitted to the window, the preview is far past its own pixels.
     QVERIFY(prop("detailWanted").toBool());
     QQuickItem* detail = item(QStringLiteral("viewerDetail"));
