@@ -548,6 +548,11 @@ graph rather than the screen, so an overlapping window cannot spoil the shot.
 - **High DPI.** Thumbnails are generated at `devicePixelRatio` and the cache is
   keyed on the rendered pixel size, so a 1.25x or 1.5x monitor gets crisp tiles
   rather than upscaled ones.
+- **Playback cost.** A 4K60 video plays with hardware decoding at about 22%
+  of a core for H.264 and 41% for 10-bit HEVC on an NVIDIA RTX 4070 SUPER,
+  in line with a plain Qt player; mpv uses 6 to 8% there because it keeps
+  frames on the graphics card. See
+  [the measurements](docs/performance/2026-11-09-playback-cost/README.md).
 - **Cache and state.** Thumbnails in `~/.cache/omaroll/thumbs`, bounded at 256MB
   by default, configurable from 64MB to 1GB, and pruned least-recently-used.
   Embedded media dates use a small identity-checked index in the same cache

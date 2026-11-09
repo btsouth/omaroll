@@ -214,6 +214,30 @@ Use `xvfb-run -a` around the startup command on headless CI hosts that need an
 X display for Mesa. These measurements are informational, not CI timing gates.
 Wayland presentation and cold disk reads require separate measurements.
 
+The playback probe plays a 4K clip in the quick viewer and reports the
+process's CPU as a share of one core, its busiest threads and its minor page
+faults over four seconds, starting 1.5 seconds after the first decoded frame.
+It generates a 4K30 H.264 clip unless `--clip` names one. By default it runs
+offscreen with software decoding and llvmpipe; CI runs it that way with a loose
+`--max-cpu 350` budget on x86_64 and no budget on aarch64. Software-decoded
+frames come from FFmpeg's buffer pool, so CI cannot see per-frame copies of
+hardware frames. Check that path with `--gpu`, which opens a real window on
+the session's GPU with Omaroll's hardware decoders, inside omabox:
+
+```sh
+xvfb-run -a python3 tests/benchmark_playback.py build/release/omaroll --runs 3 --max-cpu 350
+ffmpeg -f lavfi -i testsrc2=size=3840x2160:rate=60 -t 20 -c:v hevc_nvenc -profile:v main10 \
+  -pix_fmt p010le -b:v 40M build/release/hevc10-2160p60.mp4
+omabox run -- python3 tests/benchmark_playback.py build/release/omaroll --gpu --runs 3 \
+  --clip "$PWD/build/release/hevc10-2160p60.mp4" --max-cpu 50 --max-faults 50000
+```
+
+On the NVIDIA reference machine a 4K60 10-bit HEVC clip measured 33% of a
+core and about 2,700 faults a second; mapping every frame measured 68% and
+367,000 ([details](../docs/performance/2026-11-09-playback-cost/README.md)).
+Any 4K60 10-bit file works; `hevc_nvenc` needs an NVIDIA card, `libx265` does
+the same in software.
+
 For mixed media, generate a separate corpus before measuring (requires
 ImageMagick 7 and FFmpeg tools). Use a new or empty directory:
 

@@ -113,6 +113,14 @@ jobs:
         run: xvfb-run -a bash tests/run-opengl.sh build/release
       - name: Check startup readiness (informational timings)
         run: xvfb-run -a python3 tests/benchmark_startup.py build/release/omaroll --runs 1 > build/release/startup.json
+      # Runners have no GPU, so this plays a 4K clip with software decoding
+      # and rendering. The hardware-decoding path is checked with --gpu in a
+      # disposable desktop; see tests/README.md.
+      - name: Check 4K playback CPU budget
+        run: >-
+          xvfb-run -a python3 tests/benchmark_playback.py build/release/omaroll --runs 3
+          ${{ matrix.check != 'aarch64' && '--max-cpu 350' || '' }}
+          > build/release/playback.json
       - name: Save rendered views
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -121,6 +129,7 @@ jobs:
           path: |
             build/release/opengl-renders/*.png
             build/release/startup.json
+            build/release/playback.json
           if-no-files-found: ignore
           retention-days: 7
       - name: Validate metadata

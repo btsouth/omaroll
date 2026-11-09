@@ -40,6 +40,9 @@
 
 ### Fixed
 
+- 4K video playback uses about half the CPU it did with hardware decoding:
+  41% instead of 74% of a core for 10-bit HEVC at 60 fps, and 22% instead of
+  37% for H.264. Frame buffers were mapped and unmapped on every frame.
 - `Ctrl+Q` quits again from the viewer and the library.
 - Switching subtitles or the audio track just after a video opens no longer
   freezes the picture while the clock keeps running.

@@ -7673,6 +7673,52 @@ private slots:
     QTRY_VERIFY(presentation.ready());
   }
 
+  // Qt copies each hardware-decoded frame into a new buffer. Mapping and
+  // faulting in every one of them doubled the render thread's cost at 4K.
+  void videoPresentationKeepsFrameBuffersInTheHeap() {
+    // Whether a 4K 10-bit (P010) frame buffer is mapped rather than taken
+    // from the heap. Only glibc's own allocator reports this.
+    const auto frameBufferIsMapped = [] {
+#if defined(__GLIBC__) && !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__)
+      constexpr size_t frameBytes = size_t(3840) * 2160 * 3;
+      for (int frame = 0; frame < 3; ++frame) {
+        const size_t before = mallinfo2().hblkhd;
+        void* volatile block = malloc(frameBytes);
+        const size_t during = mallinfo2().hblkhd;
+        free(block);
+        if (during >= before + frameBytes) return true;
+      }
+#endif
+      return false;
+    };
+    PlaybackHeap::usePictureDefaults();
+    QCOMPARE(PlaybackHeap::mmapThreshold(), PlaybackHeap::pictureMmapThreshold);
+    QVideoSink output;
+    QVideoFrame frame(QVideoFrameFormat(QSize(160, 90), QVideoFrameFormat::Format_BGRA8888));
+    {
+      VideoPresentation presentation(&output);
+      presentation.videoSink()->setVideoFrame(frame);
+      QTRY_VERIFY(presentation.ready());
+      QCOMPARE(PlaybackHeap::holders(), 1);
+      QCOMPARE(PlaybackHeap::mmapThreshold(), PlaybackHeap::videoMmapThreshold);
+      QVERIFY(!frameBufferIsMapped());
+      presentation.reset();
+      QCOMPARE(PlaybackHeap::holders(), 0);
+      QCOMPARE(PlaybackHeap::mmapThreshold(), PlaybackHeap::pictureMmapThreshold);
+      presentation.videoSink()->setVideoFrame({}); // a source change clears the input
+      presentation.videoSink()->setVideoFrame(frame);
+      QTRY_VERIFY(presentation.ready());
+      VideoPresentation preview(&output);
+      preview.videoSink()->setVideoFrame(frame);
+      QTRY_VERIFY(preview.ready());
+      QCOMPARE(PlaybackHeap::holders(), 2);
+    }
+    QCOMPARE(PlaybackHeap::holders(), 0);
+    QCOMPARE(PlaybackHeap::mmapThreshold(), PlaybackHeap::pictureMmapThreshold);
+    PlaybackHeap::release(); // unbalanced releases are ignored
+    QCOMPARE(PlaybackHeap::holders(), 0);
+  }
+
   void hdrTransferDetails_data() {
     QTest::addColumn<QString>("transfer");
     QTest::addColumn<QString>("label");
