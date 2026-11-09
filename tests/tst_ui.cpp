@@ -5180,7 +5180,13 @@ private slots:
       QVERIFY(themed != embeddedOnly);
       input->setSubtitleText({});
       QTest::qWait(100);
-      QCOMPARE(capture(), embeddedOnly);
+      const QImage withoutCaptions = capture();
+      if (withoutCaptions != embeddedOnly && qEnvironmentVariableIsSet("OMAROLL_PIXEL_EVIDENCE")) {
+        const QString dir = qEnvironmentVariable("OMAROLL_PIXEL_EVIDENCE");
+        embeddedOnly.save(dir + "/embedded-only.png");
+        withoutCaptions.save(dir + "/without-captions.png");
+      }
+      QCOMPARE(withoutCaptions, embeddedOnly);
       overlay->setVisible(true);
     }
     player->play();
