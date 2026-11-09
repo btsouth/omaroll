@@ -9585,7 +9585,9 @@ private slots:
   // hardware frames, made and handed over on a decoder thread, must come from
   // the heap for as long as they flow, not be mapped and faulted in one by one.
   void videoPresentationReusesFrameBuffersWhileFramesFlow() {
-#if !defined(__GLIBC__) || defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#if !defined(__GLIBC__) || defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__) || \
+    (defined(__has_feature) && (__has_feature(address_sanitizer) || __has_feature(thread_sanitizer) || \
+                                __has_feature(memory_sanitizer)))
     QSKIP("Needs glibc's own allocator");
 #else
     const QVideoFrameFormat format(QSize(3840, 2160), QVideoFrameFormat::Format_NV12);
