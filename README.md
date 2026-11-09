@@ -116,8 +116,16 @@ seconds and audio-only files show the time alone.
 
 A picture or video opens in the viewer: the media fills the window, a small
 picture included, and the name, the controls and the menu appear when the
-pointer moves. Rotating turns the view only; a rotated copy is saved from the
-library. Pictures and videos in the folder are listed by filename; press `B`
+pointer moves. Rotating and flipping turn the view only. Once the view is
+turned or flipped, **Save rotated copy** (`Ctrl+S`, or the save button in the
+toolbar) writes `name-edited.ext` beside the original, with the original's
+permissions, and opens it; the original is never changed. A JPEG is turned
+losslessly with `jpegtran` when its size allows, with an EXIF orientation tag
+folded into the same turn, and keeps its EXIF (date taken, camera, place)
+marked upright. The notice says when the copy had to be re-encoded, when it is
+saved in another format (a GIF is saved as PNG) and when metadata could not be
+kept. A lossless WebP stays lossless.
+Pictures and videos in the folder are listed by filename; press `B`
 for a filmstrip of them above the controls, and click one to open it. Use the arrows
 to step through pictures, or Page Up and Page Down to change files while a video
 is playing. Folders, PDFs and a plain `omaroll` open the library, and so does
@@ -137,6 +145,12 @@ memory limit. Open with, Show in folder and Move to Trash stay available, and
 the zoom and rotate controls are off. A JPEG or PNG that ends early, as an
 unfinished download does, shows with a "cut off" note, since the missing part
 otherwise looks like grey picture. In the filmstrip such files are marked.
+
+Drag the file name in the viewer's header, or `Ctrl`+drag the picture, to drop
+the file itself into a file manager, browser or chat; a plain drag still pans.
+Drop pictures or videos on a viewer to open them there, with skipped files
+named. Drop files on the library to open them in the viewer, or folders to add
+them to the library after a confirmation.
 
 `Tab` and `Shift+Tab` move through the viewer's controls with a focus ring,
 then back to the picture; `Esc` returns to the picture. The viewer's shortcuts
@@ -184,6 +198,9 @@ process, so a favourite or rating set in one shows in the others.
 | `Shift` + arrows | Pan a picture zoomed beyond fit |
 | `0` · `1` or double click | Fit · toggle fit and actual size |
 | `R` · `Shift+R` | Rotate right · left, the view only, never the file |
+| `Shift+H` · `Shift+V` | Flip horizontally · vertically, the view only |
+| `Ctrl+S` | Save a rotated or flipped copy beside the original |
+| `Ctrl` + drag · drag the name | Drag the file into another app |
 | `Space` · `K` | Play · pause a video or animation |
 | click a video | Play · pause |
 | `J` `L` · `↑` `↓` · `M` | Seek ten seconds · volume · mute |

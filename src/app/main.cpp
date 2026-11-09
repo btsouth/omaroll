@@ -612,6 +612,11 @@ int main(int argc, char* argv[]) {
   ActionRegistry registry(&actions);
   ExternalEditors editors(&actions);
 
+  // The viewers' copies of a turned or flipped picture. Shared, each viewer
+  // answering only its own jobs; declared before the engine so it outlives
+  // every window, and its saves finish in the drain at quit.
+  ImageEditor viewerEditor;
+
   QQmlApplicationEngine engine;
   // Windows are built with QQmlComponent rather than engine.load(), so the
   // engine never wires Qt.quit() up itself and Ctrl+Q would do nothing.
@@ -634,6 +639,8 @@ int main(int argc, char* argv[]) {
   engine.rootContext()->setContextProperty(QStringLiteral("Theme"), &theme);
   engine.rootContext()->setContextProperty(QStringLiteral("Actions"), &actions);
   engine.rootContext()->setContextProperty(QStringLiteral("Settings"), &settings);
+  // The library's own editor, in its window's context, takes this name there.
+  engine.rootContext()->setContextProperty(QStringLiteral("ImageEdit"), &viewerEditor);
   MimeDefaults mimeDefaults;
   engine.rootContext()->setContextProperty(QStringLiteral("MimeDefaults"), &mimeDefaults);
   engine.rootContext()->setContextProperty(QStringLiteral("Registry"), &registry);

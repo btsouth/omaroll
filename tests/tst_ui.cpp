@@ -61,6 +61,7 @@
 #include <QImageReader>
 #include <QMediaPlayer>
 #include <QMediaMetaData>
+#include <QMimeData>
 #include <QMutex>
 #include <QMutexLocker>
 #include <QPainter>
@@ -5449,6 +5450,146 @@ private slots:
     QVERIFY(m_settings->showFolderSidebar());
   }
 
+  // Dragged in from another app: files open as they would from the file
+  // manager, folders are offered as library folders first, and anything
+  // that is not a local file is named.
+  void filesAndFoldersDroppedOnTheLibrary() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString root = QFileInfo(dir.path()).canonicalFilePath();
+    const QString picture = root + QStringLiteral("/dropped.jpg");
+    const QString first = root + QStringLiteral("/first");
+    const QString second = root + QStringLiteral("/second");
+    QImage image(64, 48, QImage::Format_RGB32);
+    image.fill(Qt::darkCyan);
+    QVERIFY(image.save(picture));
+    QVERIFY(QDir().mkpath(first));
+    QVERIFY(QDir().mkpath(second));
+    const auto cleanup = qScopeGuard([this, first, second] {
+      m_settings->removeLibraryFolder(first);
+      m_settings->removeLibraryFolder(second);
+    });
+    QSignalSpy opened(m_actions, &ActionLauncher::openRequested);
+    QQuickItem* confirm = item("folderDropConfirm");
+
+    QVERIFY(dropOn(m_window, {QUrl::fromLocalFile(picture)}, [this] {
+      QVERIFY(item("libraryDropHighlight")->property("shown").toBool());
+    }));
+    QTRY_COMPARE(opened.size(), 1);
+    QCOMPARE(opened.last().first().toStringList(), QStringList{picture});
+    QVERIFY(!confirm->isVisible());
+    QTRY_VERIFY(!item("libraryDropHighlight")->property("shown").toBool());
+
+    // A folder is a question first, and Escape leaves it out.
+    QVERIFY(dropOn(m_window, {QUrl::fromLocalFile(first)}));
+    QTRY_VERIFY(confirm->isVisible());
+    QCOMPARE(confirm->property("title").toString(), QStringLiteral("Add this folder to Omaroll?"));
+    QCOMPARE(opened.size(), 1);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!confirm->isVisible());
+    QVERIFY(!m_settings->libraryFolders().contains(first));
+
+    // Mixed: both folders are asked about together and the web address is
+    // named. The file opens once that is answered, so the viewer does not
+    // come up over the question.
+    QVERIFY(dropOn(m_window, {QUrl::fromLocalFile(picture), QUrl::fromLocalFile(first),
+                              QUrl::fromLocalFile(second),
+                              QUrl(QStringLiteral("https://example.com/cat.png"))}));
+    QTRY_VERIFY(confirm->isVisible());
+    QCOMPARE(opened.size(), 1);
+    QCOMPARE(confirm->property("title").toString(), QStringLiteral("Add these 2 folders to Omaroll?"));
+    QCOMPARE(item("footerStatus")->property("text").toString(), QStringLiteral("Skipped: cat.png"));
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!confirm->isVisible());
+    QTRY_COMPARE(opened.size(), 2);
+    QCOMPARE(opened.last().first().toStringList(), QStringList{picture});
+    QVERIFY(m_settings->libraryFolders().contains(first));
+    QVERIFY(m_settings->libraryFolders().contains(second));
+    QCOMPARE(item("footerStatus")->property("text").toString(),
+             QStringLiteral("Added 2 folders. Omaroll is scanning them now."));
+
+    // Added already: said, not added twice.
+    QVERIFY(dropOn(m_window, {QUrl::fromLocalFile(first), QUrl::fromLocalFile(second)}));
+    QTRY_VERIFY(confirm->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!confirm->isVisible());
+    QCOMPARE(item("footerStatus")->property("text").toString(),
+             QStringLiteral("Those folders are already added, unavailable, or your home folder"));
+    QCOMPARE(m_settings->libraryFolders().count(first), 1);
+    QTRY_VERIFY(!m_captures->scanning());
+  }
+
+  // A linked folder is added as the folder it links to, and the library
+  // then shows that folder rather than an empty view of the link's name.
+  void droppedLinkedFolderShowsTheFolderItAdds() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString root = QFileInfo(dir.path()).canonicalFilePath();
+    const QString real = root + QStringLiteral("/real");
+    const QString link = root + QStringLiteral("/link");
+    QVERIFY(QDir().mkpath(real));
+    QImage image(64, 48, QImage::Format_RGB32);
+    image.fill(Qt::darkMagenta);
+    QVERIFY(image.save(real + QStringLiteral("/inside.png")));
+    QVERIFY(QFile::link(real, link));
+    const auto cleanup = qScopeGuard([this, real] {
+      m_settings->removeLibraryFolder(real);
+      QMetaObject::invokeMethod(m_window, "showAllMedia", Q_ARG(QVariant, QString()));
+    });
+    QQuickItem* confirm = item("folderDropConfirm");
+    QVERIFY(dropOn(m_window, {QUrl::fromLocalFile(link)}));
+    QTRY_VERIFY(confirm->isVisible());
+    QVERIFY2(confirm->property("detail").toString().startsWith(real),
+             qPrintable(confirm->property("detail").toString()));
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!confirm->isVisible());
+    QVERIFY(m_settings->libraryFolders().contains(real));
+    QTRY_COMPARE(m_library->folderFilter(), real);
+    // A scan of the new folder, which can be slow beside a busy suite.
+    QTRY_COMPARE_WITH_TIMEOUT(m_library->rowCount(), 1, 20000);
+    QTRY_VERIFY(!m_captures->scanning());
+  }
+
+  // Many skipped names are counted, not listed without end.
+  void droppedSkippedNamesAreCapped() {
+    QList<QUrl> urls;
+    for (int i = 1; i <= 9; ++i) urls.append(QUrl(QStringLiteral("https://example.com/%1.png").arg(i)));
+    QVERIFY(dropOn(m_window, urls));
+    QTRY_COMPARE(item("footerStatus")->property("text").toString(),
+                 QStringLiteral("Skipped: 1.png, 2.png, 3.png, 4.png, 5.png and 4 more"));
+  }
+
+  // Under an open menu or the detail view, a drop does not land behind it.
+  void dropsWaitForMenusAndTheDetailView() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString picture = QFileInfo(dir.path()).canonicalFilePath() + QStringLiteral("/over.png");
+    QImage image(64, 48, QImage::Format_RGB32);
+    image.fill(Qt::darkYellow);
+    QVERIFY(image.save(picture));
+    QSignalSpy opened(m_actions, &ActionLauncher::openRequested);
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("libraryContextMenu"));
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openContextMenu", Q_ARG(QVariant, 0),
+                                      Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    dropOn(m_window, {QUrl::fromLocalFile(picture)});
+    QTest::qWait(50);
+    QCOMPARE(opened.size(), 0);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!menu->property("visible").toBool());
+
+    openDetail(0);
+    QTRY_VERIFY(item("detail")->isVisible());
+    dropOn(m_window, {QUrl::fromLocalFile(picture)});
+    QTest::qWait(50);
+    QCOMPARE(opened.size(), 0);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!item("detail")->isVisible());
+
+    QVERIFY(dropOn(m_window, {QUrl::fromLocalFile(picture)}));
+    QTRY_COMPARE(opened.size(), 1);
+  }
+
   void pinnedFoldersRemainShortcutsWithoutRemovingTheirSource() {
     QVERIFY(m_settings->pinFolderPath(QFileInfo(m_oddPath).absolutePath()));
     QQuickItem* pins = item("pinnedFolders");
@@ -6470,6 +6611,22 @@ private:
       }
     }
     return nullptr;
+  }
+
+  // Files dragged in from another app: enter, move, then drop at the middle.
+  static bool dropOn(QQuickWindow* window, const QList<QUrl>& urls,
+                     const std::function<void()>& whileOver = {}) {
+    QMimeData data;
+    data.setUrls(urls);
+    const QPoint at(window->width() / 2, window->height() / 2);
+    QDragEnterEvent enter(at, Qt::CopyAction, &data, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(window, &enter);
+    QDragMoveEvent move(at, Qt::CopyAction, &data, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(window, &move);
+    if (whileOver) whileOver();
+    QDropEvent drop(QPointF(at), Qt::CopyAction, &data, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(window, &drop);
+    return drop.isAccepted();
   }
 
   QQuickItem* item(const QString& objectName) const {

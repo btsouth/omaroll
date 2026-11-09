@@ -2,11 +2,13 @@
 
 #include "edit/ClipboardImage.h"
 #include "edit/CopyOutput.h"
+#include "edit/JpegExif.h"
 #include "edit/JpegTransform.h"
 #include "sources/CameraRaw.h"
 #include "sources/CaptureScanner.h"
 #include "sources/ImageBudget.h"
 
+#include <QBuffer>
 #include <QColorSpace>
 #include <QDir>
 #include <QFile>
@@ -45,11 +47,20 @@ QByteArray writableFormat(const QString& sourcePath) {
   return "png";
 }
 
+// The format |sourcePath| is in, named as writableFormat() names formats.
+QByteArray sourceFormat(const QString& sourcePath) {
+  const QByteArray extension = CaptureScanner::mediaSuffix(sourcePath).toUtf8();
+  if (extension == "jpeg") return "jpg";
+  if (extension == "tif") return "tiff";
+  return extension;
+}
+
 // "<name>-edited.<ext>", or "<name>-edited-2.<ext>" when that is taken. The
 // stem is trimmed so a name already near the filesystem limit still fits with
-// the suffix appended.
-QString composedOutputPath(const QString& sourcePath, bool mustBeFree) {
-  const QFileInfo info(sourcePath);
+// the suffix appended. |beside| names the folder and stem when it is not the
+// file itself: a link, whose copy belongs where the link is.
+QString composedOutputPath(const QString& sourcePath, bool mustBeFree, const QString& beside = {}) {
+  const QFileInfo info(beside.isEmpty() ? sourcePath : beside);
   const QByteArray format = writableFormat(sourcePath);
   QString stem = info.completeBaseName();
   constexpr int kNameMax = 255;
@@ -73,6 +84,40 @@ QString composedOutputPath(const QString& sourcePath, bool mustBeFree) {
   return output;
 }
 
+// The start of a file, where JPEG keeps its metadata segments.
+QByteArray readHead(const QString& path, qint64 bytes = 4 * 1024 * 1024) {
+  QFile file(path);
+  return file.open(QIODevice::ReadOnly) ? file.read(bytes) : QByteArray();
+}
+
+// A WebP whose picture is VP8L, the lossless codec, rather than VP8.
+bool isLosslessWebp(const QString& path) {
+  QFile file(path);
+  if (!file.open(QIODevice::ReadOnly)) return false;
+  const QByteArray header = file.read(12);
+  if (header.size() < 12 || !header.startsWith("RIFF") || header.mid(8, 4) != "WEBP") return false;
+  for (int chunk = 0; chunk < 32; ++chunk) {
+    const QByteArray head = file.read(8);
+    if (head.size() < 8) return false;
+    const QByteArray kind = head.left(4);
+    if (kind == "VP8L") return true;
+    if (kind == "VP8 ") return false;
+    const quint32 size = quint32(quint8(head[4])) | (quint32(quint8(head[5])) << 8) |
+                         (quint32(quint8(head[6])) << 16) | (quint32(quint8(head[7])) << 24);
+    if (!file.seek(file.pos() + size + (size & 1))) return false;
+  }
+  return false;
+}
+
+// Whether a picture that is not a JPEG carries EXIF, which the encoders here
+// cannot write back: an "Exif" header or item (TIFF-in-JPEG style, HEIF and
+// AVIF), PNG's eXIf chunk or WebP's EXIF chunk.
+bool hasForeignExif(const QString& path) {
+  const QByteArray head = readHead(path, 256 * 1024);
+  return head.contains(QByteArrayLiteral("Exif")) || head.contains(QByteArrayLiteral("eXIf")) ||
+         (head.startsWith("RIFF") && head.contains(QByteArrayLiteral("EXIF")));
+}
+
 QImage readOriented(const QString& path) {
   QImageReader reader(path);
   reader.setAutoTransform(true);
@@ -90,34 +135,103 @@ QString writeImage(const QImage& image, const QString& preferred, const QByteArr
   return output.publish();
 }
 
+// A corrected copy, encoded in memory so the original's metadata can be
+// inserted into a JPEG, then published like any other copy.
+QString writeCopy(const QImage& image, const QString& preferred, const QByteArray& format,
+                  const QString& source, const QByteArray& metadata) {
+  QByteArray encoded;
+  QBuffer buffer(&encoded);
+  if (!buffer.open(QIODevice::WriteOnly)) return {};
+  QImageWriter writer(&buffer, format);
+  // A lossless WebP stays lossless (Qt's WebP writer takes 100 as lossless);
+  // the lossy formats keep the quality corrections have always used.
+  if (format == "webp") writer.setQuality(isLosslessWebp(source) ? 100 : 92);
+  else if (format == "jpg" || format == "avif") writer.setQuality(92);
+  if (!writer.write(image)) return {};
+  buffer.close();
+  if (format == "jpg" && !metadata.isEmpty()) {
+    encoded = JpegExif::withSegments(encoded, metadata);
+    JpegExif::normalize(encoded, image.size());
+  }
+  CopyOutput output(preferred);
+  if (!output.device() || output.device()->write(encoded) != encoded.size()) return {};
+  output.matchPermissions(source);
+  return output.publish();
+}
+
 struct SaveResult {
   QString output;
   QString error;
+  // What the copy is not, that a reader would assume it is: re-encoded rather
+  // than turned losslessly, in another format, or without the metadata.
+  // Empty when there is nothing to say.
+  QString note;
 };
 
-SaveResult saveTransform(const QString& source, const ImageEditor::Transform& transform) {
-  if (CameraRaw::isRawFile(source)) return {{}, kRawRefusal};
+SaveResult saveTransform(const QString& source, const ImageEditor::Transform& transform,
+                         const QString& beside = {}) {
+  if (CameraRaw::isRawFile(source)) return {{}, kRawRefusal, {}};
   QString error;
   QString output;
+  QStringList notes;
   const QByteArray format = writableFormat(source);
+  const QByteArray original = sourceFormat(source);
+  if (!original.isEmpty() && original != format) {
+    notes << QStringLiteral("Saved as %1, since %2 files cannot be written here")
+                 .arg(QString::fromLatin1(format).toUpper(), QString::fromUtf8(original).toUpper());
+  }
+  const QString preferred = composedOutputPath(source, false, beside);
 
-  // A quarter turn or flip with no crop and no resize on a plain JPEG is done
+  // A quarter turn or flip with no crop and no resize on a JPEG is done
   // losslessly by jpegtran: the pixels are never decoded or re-encoded. An
-  // image with an EXIF orientation tag is left to the recompressing path,
-  // which bakes the tag in correctly.
+  // EXIF orientation tag is folded into the same single transform, and the
+  // copy's tag then says upright, so the rest of its metadata stays as it is.
   const bool fullFrame = transform.cropX == 0.0 && transform.cropY == 0.0 &&
                          transform.cropW == 1.0 && transform.cropH == 1.0;
   const bool noResize = transform.targetWidth <= 0 && transform.targetHeight <= 0;
   const bool turned = (((transform.quarterTurns % 4) + 4) % 4) != 0 ||
                       transform.flipHorizontal || transform.flipVertical;
   if (format == QByteArrayLiteral("jpg") && turned && qFuzzyIsNull(transform.straightenDegrees) &&
-      fullFrame && noResize && JpegTransform::available()) {
+      fullFrame && noResize) {
     QImageReader probe(source);
-    if (probe.transformation() == QImageIOHandler::TransformationNone) {
-      CopyOutput candidate(composedOutputPath(source, false));
-      if (candidate.device() &&
-          JpegTransform::apply(source, candidate.encoderPath(), transform.quarterTurns,
-                               transform.flipHorizontal, transform.flipVertical)) {
+    const JpegTransform::Symmetry symmetry =
+        JpegTransform::compose(probe.transformation(), transform.quarterTurns,
+                               transform.flipHorizontal, transform.flipVertical);
+    const QSize stored = probe.size();
+    const QSize upright = symmetry.quarterTurns % 2 ? stored.transposed() : stored;
+    CopyOutput candidate(preferred);
+    bool written = false;
+    if (!candidate.device()) {
+      // Left to the encoding path, which reports the folder.
+    } else if (symmetry.identity()) {
+      // The tag already undoes the turn: the same bytes, now marked upright.
+      QFile file(source);
+      written = file.open(QIODevice::ReadOnly) &&
+                candidate.device()->write(file.readAll()) == file.size();
+    } else if (!JpegTransform::available()) {
+      notes << QStringLiteral("Re-encoded, since jpegtran is not installed");
+    } else {
+      switch (JpegTransform::apply(source, candidate.encoderPath(), symmetry.quarterTurns,
+                                   symmetry.flipHorizontal, false)) {
+      case JpegTransform::Result::Done:
+        written = true;
+        break;
+      case JpegTransform::Result::NotPerfect:
+        notes << QStringLiteral("Re-encoded, since its size cannot be turned losslessly");
+        break;
+      case JpegTransform::Result::Failed:
+        notes << QStringLiteral("Re-encoded, since jpegtran could not turn it");
+        break;
+      }
+    }
+    if (written) {
+      QFile* device = candidate.device();
+      QByteArray bytes = device->seek(0) ? device->readAll() : QByteArray();
+      if (JpegExif::normalize(bytes, upright) && (!device->seek(0) || device->write(bytes) != bytes.size())) {
+        error = QStringLiteral("Could not safely save a copy beside %1").arg(QFileInfo(source).fileName());
+      } else {
+        // After jpegtran has written: a read-only mode would stop it opening the copy.
+        candidate.matchPermissions(source);
         output = candidate.publish();
         if (output.isEmpty()) error = QStringLiteral("Could not safely save a copy beside %1")
                                          .arg(QFileInfo(source).fileName());
@@ -135,7 +249,12 @@ SaveResult saveTransform(const QString& source, const ImageEditor::Transform& tr
       if (result.isNull()) {
         error = QStringLiteral("That correction left nothing to save");
       } else {
-        output = writeImage(result, composedOutputPath(source, false), format);
+        // The date taken, camera and place come along; the orientation is now
+        // in the pixels.
+        QByteArray metadata;
+        if (format == "jpg") metadata = JpegExif::metadataSegments(readHead(source));
+        else if (hasForeignExif(source)) notes << QStringLiteral("Its EXIF metadata was not copied");
+        output = writeCopy(result, preferred, format, source, metadata);
         if (output.isEmpty()) {
           error = QStringLiteral("Could not safely save a copy beside %1; check its folder")
                       .arg(QFileInfo(source).fileName());
@@ -144,7 +263,7 @@ SaveResult saveTransform(const QString& source, const ImageEditor::Transform& tr
     }
   }
 
-  return {output, error};
+  return {output, error, error.isEmpty() ? notes.join(QStringLiteral(". ")) : QString()};
 }
 
 } // namespace
@@ -303,7 +422,8 @@ void ImageEditor::saveCopy(const QString& path, int quarterTurns, bool flipHoriz
     transform.cropH = ch;
     transform.targetWidth = targetW;
     transform.targetHeight = targetH;
-    const auto [output, error] = saveTransform(source, transform);
+    const auto [output, error, note] = saveTransform(source, transform);
+    (void)note;
 
     QMetaObject::invokeMethod(
         this,
@@ -314,6 +434,51 @@ void ImageEditor::saveCopy(const QString& path, int quarterTurns, bool flipHoriz
             emit failed(error, jobId);
           } else {
             emit saved(output, jobId);
+          }
+        },
+        Qt::QueuedConnection);
+  });
+}
+
+void ImageEditor::saveViewCopy(const QString& path, int quarterTurns, bool flipHorizontal,
+                               bool flipVertical, int jobId, const QString& entryPath) {
+  if (m_busy) {
+    emit failed(QStringLiteral("Still saving the last copy"), jobId);
+    return;
+  }
+  if (!QFileInfo(path).isFile()) {
+    emit failed(QStringLiteral("That file is no longer there"), jobId);
+    return;
+  }
+  if (CameraRaw::isRawFile(path)) {
+    emit failed(kRawRefusal, jobId);
+    return;
+  }
+  Transform transform;
+  transform.quarterTurns = quarterTurns;
+  transform.flipHorizontal = flipHorizontal;
+  transform.flipVertical = flipVertical;
+  if ((((quarterTurns % 4) + 4) % 4) == 0 && flipHorizontal == flipVertical &&
+      !flipHorizontal) {
+    emit failed(QStringLiteral("The picture is not turned or flipped"), jobId);
+    return;
+  }
+
+  m_busy = true;
+  emit busyChanged();
+  const QString source = path;
+  const QString beside = entryPath == path ? QString() : entryPath;
+  (void)QtConcurrent::run([this, source, beside, transform, jobId] {
+    const auto [output, error, note] = saveTransform(source, transform, beside);
+    QMetaObject::invokeMethod(
+        this,
+        [this, output, error, note, jobId] {
+          m_busy = false;
+          emit busyChanged();
+          if (!error.isEmpty()) {
+            emit failed(error, jobId);
+          } else {
+            emit viewCopySaved(output, note, jobId);
           }
         },
         Qt::QueuedConnection);
@@ -422,7 +587,8 @@ void ImageEditor::saveCopies(const QStringList& paths, int quarterTurns, bool fl
     transform.targetWidth = targetW;
     transform.targetHeight = targetH;
     for (const QString& source : sources) {
-      const auto [output, error] = saveTransform(source, transform);
+      const auto [output, error, note] = saveTransform(source, transform);
+      (void)note;
       if (error.isEmpty()) ++succeeded;
       else ++failedCount;
       results.append(QVariantMap{{QStringLiteral("source"), source},

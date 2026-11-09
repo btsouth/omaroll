@@ -16,6 +16,9 @@ public:
 
   [[nodiscard]] QFile* device() { return m_file.isOpen() ? &m_file : nullptr; }
   [[nodiscard]] QString encoderPath() const;
+  // Narrows the copy's mode to |source|'s before it is published, so a
+  // private original never gets a copy others can read.
+  void matchPermissions(const QString& source);
   [[nodiscard]] QString publish();
 
 private:
