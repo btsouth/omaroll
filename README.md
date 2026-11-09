@@ -24,6 +24,10 @@ Everything works locally, without accounts or telemetry.
 
 [Watch the 38-second demo](https://btsouth.github.io/omaroll/docs/omaroll-demo.mp4?v=1.18.0)
 
+Press **?** or **F1** in the viewer, library or library preview for searchable,
+context-specific shortcut help. Settings includes About and **Copy diagnostics**
+for bug reports.
+
 ## Install or update
 
 Requires Omarchy or Arch Linux on x86_64 or aarch64, with Qt 6.8+ and Poppler.
@@ -94,6 +98,12 @@ To open a picture or video from a terminal:
 omaroll photo.jpg
 omaroll clip.mp4
 ```
+
+Video captions use Omaroll's themed overlay for embedded tracks and sidecars.
+The info panel identifies PQ/HDR10, HLG and Dolby Vision metadata when present;
+this describes the file, not a guarantee of HDR display output. Open in mpv
+continues at the current playback position. When changing videos, a poster or
+the previous picture stays visible until the new clip's first decoded frame.
 
 A picture or video opens in the viewer: the media fills the window, a small
 picture included, and the name, the controls and the menu appear when the

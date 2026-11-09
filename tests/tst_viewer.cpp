@@ -2349,7 +2349,7 @@ private slots:
                        {metadata.value(QStringLiteral("mpris:trackid")), qlonglong(1000000)}).type(),
              QDBusMessage::ReplyMessage);
     QVERIFY(!prop("resumeAvailable").toBool());
-    QTRY_COMPARE(player->position(), 1000);
+    QTRY_COMPARE(player->position(), 1001); // Enter the frame at the exact boundary.
     QCOMPARE(mprisCall(remote, QStringLiteral("PlayPause")).type(), QDBusMessage::ReplyMessage);
     QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
     m_window->setProperty("resumeAvailable", true);
@@ -2396,11 +2396,101 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_C);
     QTRY_VERIFY(captions->property("active").toBool());
     QCOMPARE(player->activeSubtitleTrack(), 0);
+    player->setPosition(1001);
+    QTRY_VERIFY(player->videoSink()->subtitleText().contains(QStringLiteral("Omaroll subtitle test")));
+    player->pause();
+    auto* overlay = item(QStringLiteral("viewerSubtitles"));
+    QTRY_VERIFY(overlay->isVisible());
+    if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
+      // With our overlay hidden, embedded text must change no video pixels.
+      // This fails if Qt's VideoOutput also paints a second caption.
+      const auto capture = [&] {
+        auto* output = item(QStringLiteral("viewerVideoOutput"));
+        const QImage image = m_window->grabWindow();
+        const QRectF rect = output->mapRectToScene(output->boundingRect());
+        return image.copy(QRectF(rect.topLeft() * image.devicePixelRatio(),
+                                rect.size() * image.devicePixelRatio()).toAlignedRect());
+      };
+      // Caption controls also show a transient notice and a hover tooltip.
+      // Clear those independently changing overlays before comparing pixels.
+      QTest::mouseMove(m_window, QPoint(5, 5));
+      QVERIFY(QMetaObject::invokeMethod(m_window, "say", Q_ARG(QVariant, QString())));
+      // Pause acknowledgement can precede the last queued frame on slower
+      // decoders. Detach delivery and re-submit one immutable frame, so the
+      // only pixels allowed to change in this comparison are captions.
+      auto* input = player->videoSink();
+      auto* originalOutput = player->videoOutput();
+      const QVideoFrame frozen = input->videoFrame();
+      const QString cue = input->subtitleText();
+      player->setVideoOutput(nullptr);
+      const auto restoreOutput = qScopeGuard([&] { player->setVideoOutput(originalOutput); });
+      input->setVideoFrame(frozen);
+      input->setSubtitleText(cue);
+      QTest::qWait(100);
+      const QImage themed = capture();
+      overlay->setVisible(false);
+      QTest::qWait(100);
+      const QImage embeddedOnly = capture();
+      QVERIFY(themed != embeddedOnly); // The themed caption really drew pixels.
+      input->setSubtitleText({});
+      QTest::qWait(100);
+      QCOMPARE(capture(), embeddedOnly);
+      overlay->setVisible(true);
+    }
     QTest::keyClick(m_window, Qt::Key_C);
     QTRY_VERIFY(!captions->property("active").toBool());
     QCOMPARE(player->activeSubtitleTrack(), -1);
     m_window->setProperty("chromePinned", false);
     player->pause();
+  }
+
+  void videoNavigationRetainsPictureWhileLoading() {
+    QTemporaryDir dir;
+    const QString first = dir.filePath(QStringLiteral("a.mkv"));
+    const QString second = dir.filePath(QStringLiteral("b.mkv"));
+    const QString fixture = QFINDTESTDATA("fixtures/viewer/tracks.mkv");
+    QVERIFY(QFile::copy(fixture, first));
+    QVERIFY(QFile::copy(fixture, second));
+    open({first, second});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY(player->videoSink() && player->videoSink()->videoFrame().isValid());
+    auto* output = item(QStringLiteral("viewerVideoOutput"));
+    auto* sink = output->property("videoSink").value<QVideoSink*>();
+    QVERIFY(sink);
+    bool sawClear = false;
+    bool retained = true;
+    const auto connection = connect(player->videoSink(), &QVideoSink::videoFrameChanged,
+        this, [&](const QVideoFrame& frame) {
+          if (frame.isValid()) return;
+          sawClear = true;
+          retained = retained && sink->videoFrame().isValid();
+        });
+    const auto disconnect = qScopeGuard([&] { QObject::disconnect(connection); });
+    QTest::keyClick(m_window, Qt::Key_PageDown);
+    QTRY_COMPARE(m_session->path(), second);
+    QTRY_VERIFY(sawClear);
+    QVERIFY(retained);
+    QTRY_VERIFY(player->videoSink()->videoFrame().isValid());
+  }
+
+  void exactFrameBoundarySeek() {
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("boundary.mkv"));
+    QProcess encoder;
+    encoder.start(QStringLiteral("ffmpeg"), {"-v", "error", "-f", "lavfi", "-i",
+                  "testsrc2=s=160x90:r=30:d=4", "-c:v", "ffv1", path});
+    QVERIFY(encoder.waitForFinished(20000));
+    QCOMPARE(encoder.exitCode(), 0);
+    open({path});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY(player->hasVideo());
+    player->pause();
+    QVERIFY(QMetaObject::invokeMethod(m_window, "seekTo", Q_ARG(QVariant, 2000)));
+    QTRY_COMPARE(player->position(), 2001); // Seek inside frame 60, never its preceding boundary.
+    QTRY_VERIFY_WITH_TIMEOUT(player->videoSink()->videoFrame().startTime() >= 2000000, 5000);
+    QVERIFY(player->videoSink()->videoFrame().startTime() < 2034000);
   }
 
   // Video codecs and containers encoded here so the check needs no downloads.
@@ -2963,9 +3053,11 @@ private slots:
   void shortcutHelpIsModalScrollableAndRestoresFocus_data() {
     QTest::addColumn<bool>("video");
     QTest::addColumn<QSize>("size");
-    QTest::newRow("picture") << false << QSize(1200, 800);
+    QTest::newRow("picture") << false << QSize(420, 800);
+    QTest::newRow("wide-picture") << false << QSize(1920, 1080);
     QTest::newRow("narrow-picture") << false << QSize(320, 240);
-    QTest::newRow("video") << true << QSize(1200, 800);
+    QTest::newRow("video") << true << QSize(420, 800);
+    QTest::newRow("wide-video") << true << QSize(1920, 1080);
   }
 
   void shortcutHelpIsModalScrollableAndRestoresFocus() {
@@ -2985,13 +3077,17 @@ private slots:
     QVERIFY(scroll);
     QQuickItem* flick = scroll->property("contentItem").value<QQuickItem*>();
     QVERIFY(flick);
-    QTRY_VERIFY(flick->property("contentHeight").toReal() > flick->height());
     const QString path = m_session->path();
-    QTest::keyClick(m_window, Qt::Key_PageDown);
-    QTRY_VERIFY(flick->property("contentY").toReal() > 0);
-    QCOMPARE(m_session->path(), path);
-    QTest::keyClick(m_window, Qt::Key_Home);
-    QTRY_COMPARE(flick->property("contentY").toReal(), 0.0);
+    if (size.width() >= 1920) {
+      QTRY_VERIFY(flick->property("contentHeight").toReal() <= flick->height());
+    } else {
+      QTRY_VERIFY(flick->property("contentHeight").toReal() > flick->height());
+      QTest::keyClick(m_window, Qt::Key_PageDown);
+      QTRY_VERIFY(flick->property("contentY").toReal() > 0);
+      QCOMPARE(m_session->path(), path);
+      QTest::keyClick(m_window, Qt::Key_Home);
+      QTRY_COMPARE(flick->property("contentY").toReal(), 0.0);
+    }
     QTest::keyClick(m_window, Qt::Key_Question, Qt::ShiftModifier);
     QTRY_VERIFY(!help->property("visible").toBool());
     QTRY_VERIFY(item(QStringLiteral("viewerKeys"))->hasActiveFocus());
@@ -3986,8 +4082,9 @@ private slots:
     QVERIFY(prop("playbackError").toString().isEmpty());
     // The upright preview is 24x32; the raw, 48x64.
     QCOMPARE(prop("loadedSize").toSize(), QSize(24, 32));
-    QCOMPARE(prop("sourceWidth").toReal(), 48.0);
-    QCOMPARE(prop("sourceHeight").toReal(), 64.0);
+    // The raw's own size comes from a probe that can finish after the preview.
+    QTRY_COMPARE(prop("sourceWidth").toReal(), 48.0);
+    QTRY_COMPARE(prop("sourceHeight").toReal(), 64.0);
     // Fitted to the window, the preview is far past its own pixels.
     QVERIFY(prop("detailWanted").toBool());
     QQuickItem* detail = item(QStringLiteral("viewerDetail"));

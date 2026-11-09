@@ -1,3 +1,4 @@
+#include "app/ShortcutTable.h"
 #include "actions/ActionRegistry.h"
 
 #include "actions/ActionLauncher.h"
@@ -40,7 +41,7 @@ ActionRegistry::Definition annotateRow() {
             .label = u"Annotate"_s,
             .program = configured,
             .arguments = {u"{path}"_s},
-            .shortcut = u"A"_s,
+            .shortcut = ShortcutTable::hint(QStringLiteral("library"), QStringLiteral("annotate")),
             .packageHint = QFileInfo(configured).fileName(),
             .media = Media::Still,
             .raws = false};
@@ -52,7 +53,7 @@ ActionRegistry::Definition annotateRow() {
                         u"{dir}/{stem}-annotated.png"_s, u"--actions-on-enter"_s,
                         u"save-to-clipboard"_s, u"--save-after-copy"_s, u"--copy-command"_s,
                         u"wl-copy"_s},
-          .shortcut = u"A"_s,
+          .shortcut = ShortcutTable::hint(QStringLiteral("library"), QStringLiteral("annotate")),
           .packageHint = u"tensaku"_s,
           .media = Media::Still,
           .raws = false};
@@ -65,7 +66,7 @@ ActionRegistry::Definition sendRow() {
             .label = u"Send with LocalSend"_s,
             .program = u"omarchy-menu-share"_s,
             .arguments = {u"file"_s, u"{path}"_s},
-            .shortcut = u"S"_s,
+            .shortcut = ShortcutTable::hint(QStringLiteral("library"), QStringLiteral("send")),
             .packageHint = u"localsend"_s,
             .media = Media::Any,
             .batch = true};
@@ -74,7 +75,7 @@ ActionRegistry::Definition sendRow() {
           .label = u"Send with LocalSend"_s,
           .program = u"localsend"_s,
           .arguments = {u"--headless"_s, u"send"_s, u"{path}"_s},
-          .shortcut = u"S"_s,
+          .shortcut = ShortcutTable::hint(QStringLiteral("library"), QStringLiteral("send")),
           .packageHint = u"localsend"_s,
           .media = Media::Any,
           .batch = true};
@@ -109,7 +110,7 @@ ActionRegistry::Definition tailscaleRow() {
 ActionRegistry::Definition developRow() {
   return {.id = u"develop"_s,
           .label = u"Open in RAW editor"_s,
-          .shortcut = u"D"_s,
+          .shortcut = ShortcutTable::hint(QStringLiteral("library"), QStringLiteral("develop")),
           .media = ActionRegistry::Media::Raw};
 }
 
@@ -125,7 +126,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .label = u"Trim"_s,
        .program = u"omacut"_s,
        .arguments = {u"{path}"_s},
-       .shortcut = u"T"_s,
+       .shortcut = ShortcutTable::hint(QStringLiteral("library"), QStringLiteral("trim")),
        .packageHint = u"omacut"_s,
        .media = Moving,
        .primary = true},
@@ -133,8 +134,8 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
       {.id = u"play"_s,
        .label = u"Open in mpv"_s,
        .program = u"mpv"_s,
-       .arguments = {u"{path}"_s},
-       .shortcut = u"P"_s,
+       .arguments = {u"--start={seek}"_s, u"--"_s, u"{path}"_s},
+       .shortcut = ShortcutTable::hint(QStringLiteral("library"), QStringLiteral("play")),
        .packageHint = u"mpv"_s,
        .media = Moving},
 
@@ -147,7 +148,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .arguments = {u"-hide_banner"_s, u"-loglevel"_s, u"error"_s, u"-ss"_s, u"{seek}"_s, u"-i"_s,
                      u"{path}"_s, u"-frames:v"_s, u"1"_s, u"-update"_s, u"1"_s,
                      u"{dir}/{stem}-frame-{frame}.png"_s},
-       .shortcut = u"G"_s,
+       .shortcut = ShortcutTable::hint(QStringLiteral("library"), QStringLiteral("frame")),
        .packageHint = u"ffmpeg"_s,
        .media = Moving,
        .output = u"{stem}-frame-{frame}.png"_s},
@@ -176,7 +177,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
       // A dependency-free background picker. Richer framing uses Omaframe.
       {.id = u"matte"_s,
        .label = u"Add background"_s,
-       .shortcut = u"M"_s,
+       .shortcut = ShortcutTable::hint(QStringLiteral("library"), QStringLiteral("matte")),
        .media = Still,
        .primary = true},
 
@@ -185,7 +186,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
       // a full editor over the file.
       {.id = u"corrections"_s,
        .label = u"Crop, rotate, resize"_s,
-       .shortcut = u"Q"_s,
+       .shortcut = ShortcutTable::hint(QStringLiteral("library"), QStringLiteral("corrections")),
        .media = Still,
        .raws = false},
 
@@ -193,7 +194,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
       // copy. QML gathers the checked files.
       {.id = u"correctionsbatch"_s,
        .label = u"Correct a selection"_s,
-       .shortcut = u"B"_s,
+       .shortcut = ShortcutTable::hint(QStringLiteral("library"), QStringLiteral("correctionsbatch")),
        .media = Still,
        .raws = false},
 
@@ -201,7 +202,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
       // the selection, or the open picture's duplicate/similar set.
       {.id = u"compare"_s,
        .label = u"Compare side by side"_s,
-       .shortcut = u"K"_s,
+       .shortcut = ShortcutTable::hint(QStringLiteral("library"), QStringLiteral("compare")),
        .media = Still},
 
       // tensaku-edit, Omarchy's wrapper, saves over the input. Fine for the
@@ -229,7 +230,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .program = u"tesseract"_s,
        .arguments = {u"{path}"_s, u"stdout"_s, u"--oem"_s, u"1"_s, u"-l"_s, ocrLanguages(),
                      u"--dpi"_s, u"300"_s, u"-c"_s, u"preserve_interword_spaces=1"_s},
-       .shortcut = u"C"_s,
+       .shortcut = ShortcutTable::hint(QStringLiteral("library"), QStringLiteral("ocr")),
        .packageHint = u"tesseract"_s,
        .media = Still,
        .raws = false,
@@ -293,7 +294,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .label = u"Convert / resize"_s,
        .program = u"omarchy-transcode"_s,
        .arguments = {u"{path}"_s, u"{format}"_s, u"{resolution}"_s},
-       .shortcut = u"E"_s,
+       .shortcut = ShortcutTable::hint(QStringLiteral("library"), QStringLiteral("export")),
        .packageHint = u"Omarchy"_s,
        .media = Visual,
        .output = u"{stem}-{resolution}.{format}"_s},
@@ -301,7 +302,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
       developRow(),
       {.id = u"choose-editor"_s,
        .label = u"Choose RAW editor…"_s,
-       .shortcut = u"Shift+D"_s,
+       .shortcut = ShortcutTable::hint(QStringLiteral("library"), QStringLiteral("choose-editor")),
        .media = Raw},
 
       // --- Anything -------------------------------------------------------
@@ -309,7 +310,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .label = u"Open document"_s,
        .program = u"sushi"_s,
        .arguments = {u"{path}"_s},
-       .shortcut = u"O"_s,
+       .shortcut = ShortcutTable::hint(QStringLiteral("library"), QStringLiteral("open-document")),
        .packageHint = u"sushi"_s,
        .media = Document,
        .primary = true},
@@ -319,7 +320,7 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
       {.id = u"copy"_s,
        .label = u"Copy image"_s,
        .program = u"wl-copy"_s,
-       .shortcut = u"Y"_s,
+       .shortcut = ShortcutTable::hint(QStringLiteral("library"), QStringLiteral("copy")),
        .packageHint = u"wl-clipboard"_s,
        .media = Any,
        .result = CopyFile},
@@ -346,17 +347,17 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
 
       {.id = u"files"_s,
        .label = u"Show in file manager"_s,
-       .shortcut = u"F"_s},
+       .shortcut = ShortcutTable::hint(QStringLiteral("library"), QStringLiteral("files"))},
 
       {.id = u"open-with"_s,
        .label = u"Open with…"_s,
-       .shortcut = u"Ctrl+O"_s},
+       .shortcut = ShortcutTable::hint(QStringLiteral("library"), QStringLiteral("open-with"))},
 
       // Native: QML owns these.
-      {.id = u"rename"_s, .label = u"Rename"_s, .shortcut = u"N"_s},
-      {.id = u"favorite"_s, .label = u"Favourite"_s, .shortcut = u"V"_s},
-      {.id = u"hide"_s, .label = u"Hide"_s, .shortcut = u"Ctrl+H"_s},
-      {.id = u"trash"_s, .label = u"Move to Trash"_s, .shortcut = u"Del"_s},
+      {.id = u"rename"_s, .label = u"Rename"_s, .shortcut = ShortcutTable::hint(QStringLiteral("library"), QStringLiteral("rename"))},
+      {.id = u"favorite"_s, .label = u"Favourite"_s, .shortcut = ShortcutTable::hint(QStringLiteral("library"), QStringLiteral("favorite"))},
+      {.id = u"hide"_s, .label = u"Hide"_s, .shortcut = ShortcutTable::hint(QStringLiteral("library"), QStringLiteral("hide"))},
+      {.id = u"trash"_s, .label = u"Move to Trash"_s, .shortcut = ShortcutTable::hint(QStringLiteral("library"), QStringLiteral("trash"))},
   };
 }
 
@@ -596,6 +597,7 @@ bool ActionRegistry::run(const QString& id, const QStringList& paths,
     for (auto it = placeholders.cbegin(); it != placeholders.cend(); ++it) {
       argument.replace(QLatin1Char('{') + it.key() + QLatin1Char('}'), it.value().toString());
     }
+    argument.replace(u"{seek}"_s, u"0"_s);
     return argument;
   };
 

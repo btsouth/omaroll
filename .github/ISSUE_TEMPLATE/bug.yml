@@ -6,18 +6,12 @@ body:
   - type: markdown
     attributes:
       value: Please remove private filenames and paths from screenshots or logs.
-  - type: input
-    id: version
+  - type: textarea
+    id: diagnostics
     attributes:
-      label: Omaroll version
-      placeholder: 1.0.0
-    validations:
-      required: true
-  - type: input
-    id: system
-    attributes:
-      label: System
-      placeholder: Omarchy version, active theme, graphics hardware
+      label: Diagnostics
+      description: Open Settings, choose Copy diagnostics in About, then paste the result here.
+      render: text
     validations:
       required: true
   - type: textarea

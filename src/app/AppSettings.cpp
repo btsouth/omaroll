@@ -1,11 +1,17 @@
 #include "app/AppSettings.h"
 #include "actions/TrashRestore.h"
-#include "sources/FileVersion.h"
 #include "app/VideoPlayback.h"
+#include "app/VideoPresentation.h"
+#include "sources/FileVersion.h"
 
 #include "library/CaptureRecord.h"
 
 #include <QCoreApplication>
+#include <QGuiApplication>
+#include <QClipboard>
+#include <QStandardPaths>
+#include <QSysInfo>
+#include <QRegularExpression>
 #include <QCache>
 #include <QCryptographicHash>
 #include <QDateTime>
@@ -2259,4 +2265,74 @@ void AppSettings::reconcileMarks(const QList<CaptureRecord>& records) {
   clearMarksUndo();
   persistMarks();
   emit marksChanged();
+}
+
+QObject* AppSettings::videoPresentation(QObject* object) const {
+  auto* surface = qobject_cast<QQuickItem*>(object);
+  auto* output = surface ? surface->property("videoSink").value<QVideoSink*>() : nullptr;
+  return output ? new VideoPresentation(output, surface) : nullptr;
+}
+
+qint64 AppSettings::videoSeekTarget(double milliseconds, double frameRate) const {
+  // Qt's FFmpeg seek can select the preceding frame at its exact start.
+  // Enter the requested frame by one millisecond, only at a boundary.
+  const double frames = milliseconds * frameRate / 1000.0;
+  const bool boundary = frameRate > 0 && milliseconds > 0
+      && std::abs(frames - std::round(frames)) < 0.0001;
+  return std::max<qint64>(0, std::llround(milliseconds) + (boundary ? 1 : 0));
+}
+
+QString AppSettings::diagnostics(const QString &theme, qreal scale) const {
+  // Only bounded identifiers and presence flags leave the app. Never include
+  // executable paths, environment values, media names or operating-system user
+  // data.
+  QString safeTheme = theme;
+  safeTheme.remove(QRegularExpression(QStringLiteral("[^a-zA-Z0-9 _().-]")));
+  safeTheme = safeTheme.left(80);
+  const QByteArray requestedBackend = qgetenv("QT_MEDIA_BACKEND");
+  const QString backend =
+      requestedBackend == "gstreamer" ? QStringLiteral("GStreamer")
+      : requestedBackend.isEmpty() || requestedBackend == "ffmpeg"
+          ? QStringLiteral("FFmpeg")
+          : QStringLiteral("custom Qt backend");
+  QStringList lines = {
+      QStringLiteral("Omaroll: ") + appVersion(),
+      QStringLiteral("Qt: ") + qtVersion(),
+      QStringLiteral("Platform: ") + QGuiApplication::platformName() +
+          QStringLiteral(" / ") + QSysInfo::kernelType(),
+      QStringLiteral("Theme: ") + safeTheme,
+      QStringLiteral("Scale factor: ") + QString::number(scale),
+      QStringLiteral("Video decoding backend: Qt Multimedia ") + backend +
+          QStringLiteral(
+              " (actual hardware/software decoder depends on media)")};
+  const QStringList tools = {QStringLiteral("tesseract"),
+                             QStringLiteral("mpv"),
+                             QStringLiteral("ffmpeg"),
+                             QStringLiteral("ffprobe"),
+                             QStringLiteral("omarchy-transcode"),
+                             QStringLiteral("omarchy-menu-share"),
+                             QStringLiteral("omarchy-theme-bg-set"),
+                             QStringLiteral("satty"),
+                             QStringLiteral("tensaku"),
+                             QStringLiteral("omaframe"),
+                             QStringLiteral("omacut"),
+                             QStringLiteral("magick"),
+                             QStringLiteral("wl-copy"),
+                             QStringLiteral("gimp"),
+                             QStringLiteral("krita"),
+                             QStringLiteral("ART"),
+                             QStringLiteral("digikam"),
+                             QStringLiteral("omarchy-tailscale-send"),
+                             QStringLiteral("darktable"),
+                             QStringLiteral("rawtherapee")};
+  for (const auto &tool : tools)
+    lines << tool + QStringLiteral(": ") +
+                 (QStandardPaths::findExecutable(tool).isEmpty()
+                      ? QStringLiteral("missing")
+                      : QStringLiteral("present"));
+  return lines.join(QLatin1Char('\n'));
+}
+
+void AppSettings::copyDiagnostics(const QString &theme, qreal scale) const {
+  QGuiApplication::clipboard()->setText(diagnostics(theme, scale));
 }

@@ -9,6 +9,10 @@ import Omaroll
 // workbench belong to the library, one key away.
 ApplicationWindow {
     id: root
+    readonly property bool tooltipsBlocked: root.blockingActionOpen
+    property bool keyboardNavigation: false
+    TapHandler { acceptedButtons: Qt.AllButtons; onPressedChanged: if (pressed) root.keyboardNavigation = false }
+
 
     width: 1180
     height: 780
@@ -25,6 +29,8 @@ ApplicationWindow {
     // A viewer opened beside another maps under the plain title so that rule
     // leaves it tiled, then takes its own; see HyprlandPlacement.
     title: Session.fileName !== "" && !root.mapTiled ? Session.fileName + " · Omaroll" : "Omaroll"
+    readonly property var presentation: videoSurface.item
+        ? Settings.videoPresentation(videoSurface.item) : null
     property bool mapTiled: false
     // With several viewers open, messages that belong to no viewer in
     // particular appear only in the one used last.
@@ -153,7 +159,7 @@ ApplicationWindow {
         void Subtitles.revision
         return externalSubtitle !== "" && player
         ? Subtitles.textAt(externalSubtitle, Math.round(player.position) - root.subtitleOffsetMs)
-        : (videoOutput.videoSink ? videoOutput.videoSink.subtitleText : "")
+        : (root.presentation ? root.presentation.subtitleText : "")
     }
 
     readonly property bool favorite: { void root.marksVersion; return Settings.isFavorite(Session.path) }
@@ -522,6 +528,10 @@ ApplicationWindow {
     }
 
     function seekTo(milliseconds) {
+        root.seekTarget(milliseconds, true)
+    }
+
+    function seekTarget(milliseconds, roundBoundary) {
         if (!root.player) {
             return
         }
@@ -529,7 +539,9 @@ ApplicationWindow {
         const maximum = duration > 0 ? duration - 1 : Math.max(0, milliseconds)
         root.resumeAvailable = false
         root.resumePending = false
-        root.player.position = Math.max(0, Math.min(maximum, milliseconds))
+        root.player.position = Math.max(0, Math.min(maximum, roundBoundary
+            ? Settings.videoSeekTarget(milliseconds, root.player.metaData.value(MediaMetaData.VideoFrameRate))
+            : Math.round(milliseconds)))
     }
 
     // One frame back or forward, paused, as in mpv. Positions are whole
@@ -545,7 +557,7 @@ ApplicationWindow {
 
     function seek(milliseconds) {
         if (root.player && root.player.duration > 0) {
-            root.seekTo(root.player.position + milliseconds)
+            root.seekTarget(root.player.position + milliseconds, false)
         }
     }
 
@@ -806,13 +818,7 @@ ApplicationWindow {
     // The keys a viewer is expected to have, and what the menu shows beside
     // each entry. They are this window's own: F is full screen here, as in
     // every player, rather than the library's Open containing folder.
-    readonly property var viewerShortcuts: ({
-        library: "Enter", copy: "Y", "open-with": "Ctrl+O", annotate: "A", develop: "D", "choose-editor": "Shift+D", send: "S", trim: "T", frame: "G",
-        play: "P", rotate: "R", slideshow: "F5", fullscreen: "F", info: "I", filmstrip: "B",
-        "video-loop": "Shift+L", "audio-track": "Shift+A",
-        "subtitles-earlier": "Z", "subtitles-later": "X",
-        favorite: "V", trash: "Del", "copy-path": "Ctrl+Shift+C", "fit-width": "W", fill: "Shift+W", help: "? / F1", fit: "0", actual: "1"
-    })
+    readonly property var viewerShortcuts: ShortcutCatalog.quickHints
 
     // Handed-off actions, in the order the menu offers them. Only what is
     // installed and suits the medium is shown.
@@ -952,6 +958,9 @@ ApplicationWindow {
             return
         case "trash":
             root.requestTrash()
+            return
+        case "play":
+            Registry.runBatchWith("play", {"seek": (Math.max(0, root.player ? root.player.position : 0) / 1000).toFixed(3)}, [path])
             return
         case "frame": {
             if (!Session.isVideo || !root.player) {
@@ -1338,7 +1347,7 @@ ApplicationWindow {
             id: videoPoster
             objectName: "viewerVideoPoster"
             anchors.fill: parent
-            visible: Session.isVideo && !(root.player && root.player.hasVideo)
+            visible: Session.isVideo && !(root.presentation && root.presentation.ready)
             fillMode: Image.PreserveAspectFit
             asynchronous: true
             smooth: true
@@ -1376,12 +1385,13 @@ ApplicationWindow {
                         function onStartPositionChanged() { mediaPlayer.applyLaunchStart() }
                     }
                     source: root.videoSource
-                    videoOutput: videoSurface.item
+                    videoOutput: root.presentation
                     audioOutput: AudioOutput {
                         volume: Settings.videoVolume
                         muted: Settings.videoMuted || !root.audible
                     }
                     onSourceChanged: {
+                        if (root.presentation) root.presentation.reset()
                         root.videoError = ""
                         if (source.toString() !== "") {
                             playbackRate = Settings.rememberPlaybackSpeed ? Settings.videoPlaybackRate : 1
@@ -1469,7 +1479,8 @@ ApplicationWindow {
         Item {
             id: videoOutput
             anchors.fill: parent
-            visible: Session.isVideo && root.player !== null && root.player.hasVideo
+            visible: Session.isVideo && root.presentation && root.presentation.hasFrame
+                     && (root.presentation.ready || videoPoster.status !== Image.Ready)
             readonly property QtObject videoSink: videoSurface.item ? videoSurface.item.videoSink : null
 
             Loader {
@@ -1831,7 +1842,7 @@ ApplicationWindow {
                     objectName: "viewerInfoButton"
                     icon: "info"
                     toolTip: root.infoOpen ? "Hide details" : "Details"
-                    shortcut: "I"
+                    shortcut: root.viewerShortcuts.info
                     active: root.infoOpen
                     onClicked: root.infoOpen = !root.infoOpen
                 }
@@ -1839,7 +1850,7 @@ ApplicationWindow {
                     objectName: "viewerLibraryButton"
                     icon: "grid"
                     toolTip: "Open in library"
-                    shortcut: "Enter"
+                    shortcut: root.viewerShortcuts.library
                     onClicked: Session.openInLibrary()
                 }
                 IconButton {
@@ -1871,7 +1882,7 @@ ApplicationWindow {
             icon: "chevron-left"
             iconSize: 20
             toolTip: "Previous"
-            shortcut: Session.isVideo ? "Page Up" : "Left"
+            shortcut: ShortcutCatalog.display([ShortcutCatalog.sequence("quick", Session.isVideo ? "step" : "previous")[0]])
             onClicked: root.step(-1)
         }
         IconButton {
@@ -1888,7 +1899,7 @@ ApplicationWindow {
             icon: "chevron-right"
             iconSize: 20
             toolTip: "Next"
-            shortcut: Session.isVideo ? "Page Down" : "Right"
+            shortcut: ShortcutCatalog.display([ShortcutCatalog.sequence("quick", Session.isVideo ? "step" : "previous")[1]])
             onClicked: root.step(1)
         }
 
@@ -2253,7 +2264,7 @@ ApplicationWindow {
         }
     }
 
-    ViewerShortcutHelp {
+    ShortcutHelp {
         id: shortcutHelp
         objectName: "viewerShortcutHelp"
         video: Session.isVideo

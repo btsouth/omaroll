@@ -163,9 +163,10 @@ FocusScope {
                 folderMenu.popup(rowItem, 0, height)
             }
         }
-        ToolTip.visible: mouse.containsMouse && path !== ""
-        ToolTip.text: path
-        ToolTip.delay: 600
+        ThemedToolTip {
+            requested: mouse.containsMouse && path !== ""
+            text: path
+        }
     }
 
     FolderRow {

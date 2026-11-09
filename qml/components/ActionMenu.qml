@@ -106,10 +106,6 @@ Menu {
                        ? root.shade(Theme.foreground, 0.09) : "transparent"
                 radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 3) : 0
             }
-            ToolTip.visible: hovered && !separator
-            ToolTip.delay: 600
-            ToolTip.text: modelData.label + (modelData.available === false && modelData.hint
-                                           ? " · needs " + modelData.hint : "")
             Shortcut {
                 sequences: entry.modelData.shortcut ? [entry.modelData.shortcut] : []
                 enabled: root.visible && entry.enabled

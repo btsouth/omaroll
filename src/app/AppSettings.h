@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QByteArray>
+#include "app/ShortcutTable.h"
 #include <QList>
 #include <QMap>
 #include <QObject>
@@ -85,6 +86,14 @@ class AppSettings final : public QObject {
   Q_PROPERTY(int latestUndoId READ latestUndoId NOTIFY undoChanged)
 
 public:
+  Q_PROPERTY(QVariantList shortcutRows READ shortcutRows CONSTANT)
+  QVariantList shortcutRows() const { return ShortcutTable::rows(); }
+  Q_PROPERTY(QString appVersion READ appVersion CONSTANT)
+  Q_PROPERTY(QString qtVersion READ qtVersion CONSTANT)
+  QString appVersion() const { return QStringLiteral(OMAROLL_VERSION); }
+  QString qtVersion() const { return QString::fromLatin1(qVersion()); }
+  Q_INVOKABLE QString diagnostics(const QString &theme, qreal scale) const;
+  Q_INVOKABLE void copyDiagnostics(const QString &theme, qreal scale) const;
   explicit AppSettings(QObject* parent = nullptr);
 
   [[nodiscard]] QString organizationError() const { return m_organizationError; }
@@ -161,6 +170,8 @@ public:
 
   [[nodiscard]] qreal videoVolume() const { return m_videoVolume; }
   Q_INVOKABLE void prepareVideoPlayback() const;
+  Q_INVOKABLE QObject* videoPresentation(QObject* sink) const;
+  Q_INVOKABLE qint64 videoSeekTarget(double milliseconds, double frameRate) const;
   void setVideoVolume(qreal value);
   [[nodiscard]] bool videoMuted() const { return m_videoMuted; }
   void setVideoMuted(bool value);

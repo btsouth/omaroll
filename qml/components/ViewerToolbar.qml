@@ -68,7 +68,7 @@ Rectangle {
             visible: !root.compact
             icon: "zoom-out"
             toolTip: "Zoom out"
-            shortcut: "−"
+            shortcut: ShortcutCatalog.quickHints["zoom-out"]
             onClicked: root.zoomOut()
         }
         IconButton {
@@ -77,7 +77,7 @@ Rectangle {
             visible: !root.compact
             label: root.fitted ? "1:1" : "Fit"
             toolTip: root.fitted ? "Actual size" : "Fit to window"
-            shortcut: root.fitted ? "1" : "0"
+            shortcut: root.fitted ? ShortcutCatalog.quickHints.actual : ShortcutCatalog.quickHints.fit
             onClicked: root.toggleFit()
         }
         IconButton {
@@ -86,7 +86,7 @@ Rectangle {
             visible: !root.compact
             icon: "zoom-in"
             toolTip: "Zoom in"
-            shortcut: "+"
+            shortcut: ShortcutCatalog.quickHints["zoom-in"]
             onClicked: root.zoomIn()
         }
         Divider { visible: !root.compact }
@@ -96,7 +96,7 @@ Rectangle {
             enabled: root.canStep
             icon: "chevron-left"
             toolTip: "Previous"
-            shortcut: "Left"
+            shortcut: ShortcutCatalog.sequence("quick", "previous")[0]
             onClicked: root.previous()
         }
         IconButton {
@@ -105,7 +105,7 @@ Rectangle {
             icon: root.slideshowRunning ? "pause" : "play"
             active: root.slideshowRunning
             toolTip: root.slideshowRunning ? "Stop slideshow" : "Slideshow"
-            shortcut: "F5"
+            shortcut: ShortcutCatalog.quickHints.slideshow
             onClicked: root.slideshow()
         }
         IconButton {
@@ -113,7 +113,7 @@ Rectangle {
             enabled: root.canStep
             icon: "chevron-right"
             toolTip: "Next"
-            shortcut: "Right"
+            shortcut: ShortcutCatalog.sequence("quick", "previous")[1]
             onClicked: root.next()
         }
         Divider {}
@@ -123,7 +123,7 @@ Rectangle {
             enabled: root.viewControls
             icon: "rotate-left"
             toolTip: "Rotate left"
-            shortcut: "Shift+R"
+            shortcut: ShortcutCatalog.sequence("quick", "rotate")[1]
             onClicked: root.rotateLeft()
         }
         IconButton {
@@ -131,7 +131,7 @@ Rectangle {
             enabled: root.viewControls
             icon: "rotate-right"
             toolTip: "Rotate right"
-            shortcut: "R"
+            shortcut: ShortcutCatalog.sequence("quick", "rotate")[0]
             onClicked: root.rotateRight()
         }
         Divider {}
@@ -140,7 +140,7 @@ Rectangle {
             objectName: "viewerTrashButton"
             icon: "trash"
             toolTip: "Move to Trash"
-            shortcut: "Del"
+            shortcut: ShortcutCatalog.sequence("quick", "trash")[0]
             onClicked: root.trash()
         }
     }

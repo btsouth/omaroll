@@ -45,6 +45,7 @@
 #include "viewer/MprisService.h"
 
 #include <QAccessible>
+#include <QJSValue>
 #include <QAudioBuffer>
 #include <QAudioBufferOutput>
 #include <QAudioDevice>
@@ -179,6 +180,66 @@ class UiTest : public QObject {
   Q_OBJECT
 
 private slots:
+  void helpFiltersByContextAndDiagnosticsArePrivate() {
+    const auto restoreSize = qScopeGuard([&] { m_window->resize(1280, 820); });
+    m_window->resize(1920, 1080);
+    QObject* help = m_window->findChild<QObject*>(QStringLiteral("libraryShortcutHelp"));
+    QVERIFY(help);
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(help->property("visible").toBool());
+    QCOMPARE(help->property("context").toString(), QStringLiteral("library"));
+    auto* content = help->property("contentItem").value<QQuickItem*>();
+    QVERIFY(content);
+    auto* scroll = content->findChild<QQuickItem*>(QStringLiteral("viewerShortcutScroll"));
+    QVERIFY(scroll);
+    auto* flick = scroll->property("contentItem").value<QQuickItem*>();
+    QVERIFY(flick);
+    QTRY_VERIFY(flick->property("contentHeight").toReal() <= flick->height());
+    help->setProperty("filter", QStringLiteral("zz-no-match-zz"));
+    QCoreApplication::processEvents();
+    const auto groups = help->property("groups").value<QJSValue>();
+    QCOMPARE(groups.property(QStringLiteral("length")).toInt(), 0);
+    help->setProperty("filter", QStringLiteral("search"));
+    QCoreApplication::processEvents();
+    QVERIFY(help->property("groups").value<QJSValue>().property(QStringLiteral("length")).toInt() > 0);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!help->property("visible").toBool());
+    openDetail(0);
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(help->property("visible").toBool());
+    QCOMPARE(help->property("context").toString(), QStringLiteral("preview"));
+    QTRY_VERIFY(flick->property("contentHeight").toReal() <= flick->height());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!help->property("visible").toBool());
+    const QString report = m_settings->diagnostics(QDir::homePath() + QStringLiteral("/theme"), 1.5);
+    QVERIFY(!report.contains(QDir::homePath()));
+    QVERIFY(report.contains(QStringLiteral("Qt: ")));
+    QVERIFY(report.contains(QStringLiteral("Scale factor: 1.5")));
+    QVERIFY(report.contains(QStringLiteral("ffmpeg: ")));
+  }
+
+  void footerDropsWholeHintsAtNarrowWidth() {
+    const auto restoreSize = qScopeGuard([&] { m_window->resize(1280, 820); });
+    m_window->resize(560, 700);
+    QCoreApplication::processEvents();
+    auto* hints = m_window->findChild<QQuickItem*>(QStringLiteral("footerHints"));
+    QVERIFY(hints);
+    int visible = 0;
+    const auto visit = [&](auto&& self, QQuickItem* parent) -> void {
+      for (auto* child : parent->childItems()) {
+        if (child->isVisible() && child->property("text").isValid()) {
+          ++visible;
+          QCOMPARE(child->property("elide").toInt(), 3); // Text.ElideNone
+          QVERIFY(child->mapToItem(hints, QPointF(child->width(), 0)).x() <= hints->width() + 1);
+        }
+        self(self, child);
+      }
+    };
+    visit(visit, hints);
+    QVERIFY(visible > 0);
+    QVERIFY(visible < 8);
+  }
+
   void initTestCase() {
     QVERIFY(m_scratch.isValid());
     QQuickStyle::setStyle(QStringLiteral("Basic"));
@@ -508,14 +569,31 @@ private slots:
     QTRY_VERIFY(filenameTip());
     QCOMPARE(filenameTip()->property("text").toString(), m_library->fileNameAt(0));
     QTRY_VERIFY(cardFor(path) && cardFor(path)->property("keyboardCurrent").toBool());
+    // Initial selection alone must not leave a keyboard tooltip behind.
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTest::keyClick(m_window, Qt::Key_Left);
     QTRY_VERIFY_WITH_TIMEOUT(filenameTip() && filenameTip()->property("visible").toBool(), 1500);
     QVERIFY(QMetaObject::invokeMethod(m_window, "openContextMenu", Q_ARG(QVariant, 0),
                                     Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
+    QTRY_VERIFY(filenameTip() && !filenameTip()->property("visible").toBool());
     QQuickItem* rename = item("contextAction_rename");
     QCOMPARE(rename->property("text").toString(), QStringLiteral("Rename"));
     auto* namedAction = QAccessible::queryAccessibleInterface(rename);
     QVERIFY(namedAction);
     QCOMPARE(namedAction->text(QAccessible::Name), QStringLiteral("Rename"));
+    // Once the menu closes, moving with the keyboard shows tips again, on
+    // other tiles and on the one that was up.
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(item("library")->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Right);
+    const auto tipOn = [&](int row) {
+      QQuickItem* live = cardFor(pathAt(row));
+      QObject* tip = live ? live->findChild<QObject*>(QStringLiteral("captureFilenameTip")) : nullptr;
+      return tip && tip->property("visible").toBool();
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(tipOn(1), 1500);
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QTRY_VERIFY_WITH_TIMEOUT(tipOn(0), 1500);
   }
 
   void filenameToggleKeepsCardAndThumbnailDimensions() {
@@ -564,7 +642,7 @@ private slots:
     const auto cleanup = qScopeGuard([&] {
       invoke("dismissTopLayer");
       dir.remove();
-      m_captures->refresh();
+      rescan();
       const bool removed = QTest::qWaitFor([&] { return !m_captures->scanning() && m_library->rowOf(target) < 0; }, 10000);
       QVERIFY(removed);
     });
@@ -785,7 +863,7 @@ private slots:
     const auto cleanup = qScopeGuard([&] {
       invoke("dismissTopLayer");
       dir.remove();
-      m_captures->refresh();
+      rescan();
       QTRY_VERIFY(!m_captures->scanning());
     });
     QTRY_VERIFY(m_library->rowOf(good) >= 0 && m_library->rowOf(changed) >= 0);
@@ -835,7 +913,7 @@ private slots:
       m_library->setAlbumFilter({}, {});
       m_settings->deleteAlbum(album);
       dir.remove();
-      m_captures->refresh();
+      rescan();
       QTRY_VERIFY(!m_captures->scanning());
     });
     QTRY_VERIFY(m_library->rowOf(source) >= 0 && m_library->rowOf(other) >= 0);
@@ -1071,7 +1149,7 @@ private slots:
       QFile::remove(second);
       QFile::remove(firstCopy);
       QFile::remove(secondCopy);
-      m_captures->refresh();
+      rescan();
       QTRY_VERIFY(!m_captures->scanning());
       QTRY_COMPARE(m_captures->rowOf(firstCopy), -1);
       QTRY_COMPARE(m_captures->rowOf(secondCopy), -1);
@@ -1132,7 +1210,7 @@ private slots:
     const auto cleanup = qScopeGuard([&] {
       invoke("dismissTopLayer"); QFile::remove(path); QFile::remove(missing);
       QFile::remove(ImageEditor::outputPathFor(missing));
-      m_captures->refresh();
+      rescan();
       QTRY_VERIFY(!m_captures->scanning());
       QTRY_COMPARE(m_captures->rowOf(path), -1);
       QTRY_COMPARE(m_captures->rowOf(ImageEditor::outputPathFor(missing)), -1);
@@ -1902,7 +1980,7 @@ private slots:
     const auto cleanup = qScopeGuard([&] {
       QFile::remove(sidecar);
       invoke("dismissTopLayer");
-      m_captures->refresh();
+      rescan();
       m_window->resize(1280, 820);
     });
 
@@ -2369,7 +2447,7 @@ private slots:
     const auto restore = qScopeGuard([&] {
       invoke("dismissTopLayer");
       for (const QString& path : paths) m_settings->removeLibraryFolder(path);
-      m_captures->refresh();
+      rescan();
       const bool removed = QTest::qWaitFor([&] {
         return std::all_of(paths.cbegin(), paths.cend(), [&](const QString& path) {
           return m_captures->rowOf(path + QStringLiteral("/picture.png")) < 0;
@@ -3054,7 +3132,7 @@ private slots:
     QVERIFY(source.scaled(source.width() * 2, source.height() * 2, Qt::IgnoreAspectRatio,
                           Qt::SmoothTransformation)
                 .save(recompressed, "JPG", 58));
-    m_captures->refresh();
+    rescan();
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(recompressed) >= 0, 5000);
 
     QObject* browser = m_window->findChild<QObject*>(QStringLiteral("libraryBrowser"));
@@ -3071,7 +3149,7 @@ private slots:
 
     m_library->setSimilarOnly(false);
     QVERIFY(QFile::remove(recompressed));
-    m_captures->refresh();
+    rescan();
     QTRY_COMPARE_WITH_TIMEOUT(m_library->rowOf(recompressed), -1, 5000);
   }
 
@@ -3285,9 +3363,9 @@ private slots:
         QMetaObject::invokeMethod(popup, "close");
       QMetaObject::invokeMethod(detail, "close");
       QFile::remove(qrPath);
-      m_captures->refresh();
+      rescan();
     });
-    m_captures->refresh();
+    rescan();
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(qrPath) >= 0, 5000);
     QObject* menu = m_window->findChild<QObject*>("libraryContextMenu");
     QVERIFY(menu);
@@ -3384,7 +3462,7 @@ private slots:
 
     QMetaObject::invokeMethod(detail, "close");
     QVERIFY(QFile::remove(qrPath));
-    m_captures->refresh();
+    rescan();
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(qrPath) < 0, 5000);
   }
 
@@ -3717,7 +3795,7 @@ private slots:
       invoke("dismissTopLayer");
       m_settings->setSlideshowShuffle(previousShuffle);
       QMetaObject::invokeMethod(m_window, "openFolder", Q_ARG(QVariant, QString()));
-      m_captures->refresh();
+      rescan();
     });
     m_captures->addExtraFiles({first, second, child});
     QVERIFY(QMetaObject::invokeMethod(m_window, "openPath", Q_ARG(QVariant, first)));
@@ -3754,7 +3832,7 @@ private slots:
     QQuickItem* detail = item("detail");
     const auto restore = qScopeGuard([&] {
       QMetaObject::invokeMethod(m_window, "openFolder", Q_ARG(QVariant, QString()));
-      m_captures->refresh();
+      rescan();
     });
     // The viewer opens once the library has rescanned with every filter cleared.
     // Under ASan with the other heavy suites running in parallel that takes 6 to
@@ -3771,7 +3849,7 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_Left);
     QTRY_COMPARE(detail->property("path").toString(), third);
     QVERIFY(QFile::remove(first));
-    m_captures->refresh();
+    rescan();
     QTRY_COMPARE_WITH_TIMEOUT(m_library->rowOf(first), -1, 15000);
     QTest::keyClick(m_window, Qt::Key_Left);
     QTRY_COMPARE(detail->property("path").toString(), second);
@@ -3812,7 +3890,7 @@ private slots:
       painter.drawText(QPoint(100, 140), QStringLiteral("Second page"));
       painter.end();
     }
-    m_captures->refresh();
+    rescan();
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(m_pdfPath) >= 0, 5000);
     const int row = m_library->rowOf(m_pdfPath);
     QVERIFY(row >= 0);
@@ -3895,7 +3973,7 @@ private slots:
 
     invoke("dismissTopLayer");
     QVERIFY(QFile::remove(m_pdfPath));
-    m_captures->refresh();
+    rescan();
     QTRY_COMPARE_WITH_TIMEOUT(m_library->rowOf(m_pdfPath), -1, 5000);
   }
 
@@ -3916,7 +3994,7 @@ private slots:
     // The clipboard the app is handed is a stub script, so the log starts empty
     // and proves what a copy actually put there.
     QFile::remove(m_scratch.filePath(QStringLiteral("clipboard.log")));
-    m_captures->refresh();
+    rescan();
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(m_pdfPath) >= 0, 5000);
     QVERIFY(QMetaObject::invokeMethod(m_window, "openPath", Q_ARG(QVariant, m_pdfPath)));
     const auto restoreFilter = qScopeGuard([&] { m_library->setFolderFilter(QString()); });
@@ -4072,7 +4150,7 @@ private slots:
     invoke("dismissTopLayer");
     QTRY_VERIFY_WITH_TIMEOUT(!m_pdfInfo->hasSelection(), 3000);
     QVERIFY(QFile::remove(m_pdfPath));
-    m_captures->refresh();
+    rescan();
     QTRY_COMPARE_WITH_TIMEOUT(m_library->rowOf(m_pdfPath), -1, 5000);
   }
 
@@ -4093,7 +4171,7 @@ private slots:
     // The tiles and the viewer keep asking for this file's thumbnail after it is
     // removed, which is a disposable fixture rather than a QML warning.
     m_disposablePaths.append(path);
-    m_captures->refresh();
+    rescan();
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(path) >= 0, 5000);
     QVERIFY(QMetaObject::invokeMethod(m_window, "openPath", Q_ARG(QVariant, path)));
     // Leave nothing behind on any exit path: opening one file narrows the library
@@ -4105,7 +4183,7 @@ private slots:
       invoke("dismissTopLayer");
       m_library->setFolderFilter(QString());
       QFile::remove(path);
-      m_captures->refresh();
+      rescan();
     });
     QQuickItem* detail = item("detail");
     QTRY_VERIFY(detail->isVisible());
@@ -4164,7 +4242,7 @@ private slots:
 
     invoke("dismissTopLayer");
     QVERIFY(QFile::remove(path));
-    m_captures->refresh();
+    rescan();
     QTRY_COMPARE_WITH_TIMEOUT(m_library->rowOf(path), -1, 5000);
   }
 
@@ -4289,7 +4367,7 @@ private slots:
     QVERIFY(QFileInfo::exists(kept));
     m_library->setDuplicatesOnly(false);
     QVERIFY(dir.remove());
-    m_captures->refresh();
+    rescan();
     QTRY_VERIFY_WITH_TIMEOUT(m_captures->rowOf(kept) < 0 && m_captures->rowOf(copy) < 0, 10000);
   }
 
@@ -4358,7 +4436,7 @@ private slots:
       QVERIFY(!QFileInfo::exists(dir.filePath(QStringLiteral("renamed.png"))));
     }
     QVERIFY(dir.remove());
-    m_captures->refresh();
+    rescan();
     QTRY_VERIFY_WITH_TIMEOUT(m_captures->rowOf(media) < 0, 10000);
   }
 
@@ -4399,7 +4477,7 @@ private slots:
       invoke("dismissTopLayer");
       m_library->setDuplicatesOnly(false);
       dir.remove();
-      m_captures->refresh();
+      rescan();
       QTRY_VERIFY(!m_captures->scanning());
     });
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(first) >= 0 && m_library->rowOf(second) >= 0 &&
@@ -4514,6 +4592,18 @@ private slots:
     QVERIFY(picture.save(second));
     m_captures->addExtraFiles({first, second});
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(second) >= 0, 10000);
+    // Let the tile's thumbnail load before the file becomes a directory, or
+    // its late request logs a warning the final check would count.
+    const auto thumbnailSettled = [&] {
+      QQuickItem* card = cardFor(second);
+      if (!card) return true; // not on screen, so never requested
+      QQuickItem* thumbnail = find(card, [](QQuickItem* candidate) {
+        return candidate->property("source").toUrl().toString().startsWith(QStringLiteral("image://thumbs/"));
+      });
+      const int status = thumbnail ? thumbnail->property("status").toInt() : 1;
+      return status == 1 || status == 3; // Image.Ready or Image.Error
+    };
+    QTRY_VERIFY(thumbnailSettled());
     QVERIFY(QMetaObject::invokeMethod(m_window, "requestPermanentDelete",
                                      Q_ARG(QVariant, QVariant(QStringList{first, second}))));
     QTRY_VERIFY(item("permanentConfirm")->isVisible());
@@ -4585,7 +4675,7 @@ private slots:
     const auto cleanup = qScopeGuard([&] {
       invoke("dismissTopLayer");
     });
-    m_captures->refresh();
+    rescan();
     QTRY_VERIFY(m_library->rowOf(path) >= 0);
     openDetail(m_library->rowOf(path));
     QQuickItem* animation = item("animatedImage");
@@ -4618,7 +4708,7 @@ private slots:
     const auto cleanup = qScopeGuard([&] {
       invoke("dismissTopLayer");
     });
-    m_captures->refresh();
+    rescan();
     QTRY_VERIFY(m_library->rowOf(path) >= 0);
     openDetail(m_library->rowOf(path));
     QTRY_COMPARE(item("animatedImage")->property("status").toInt(), 1);
@@ -4723,7 +4813,7 @@ private slots:
     QVERIFY(configureRawEditorRecorder());
     const QString raw = QFileInfo(m_oddPath).absolutePath() + QStringLiteral("/shortcut.dng");
     QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/raw/camera.dng"), raw));
-    m_captures->refresh();
+    rescan();
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(raw) >= 0, 5000);
     QQuickItem* detail = item("detail");
     QObject* chooser = m_window->findChild<QObject*>(QStringLiteral("editorChooser"));
@@ -4758,7 +4848,7 @@ private slots:
     const QString raw = folder + QStringLiteral("/live-pair.dng");
     const QString jpeg = folder + QStringLiteral("/live-pair.jpg");
     QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/raw/camera.dng"), raw));
-    m_captures->refresh();
+    rescan();
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(raw) >= 0, 5000);
     openDetail(m_library->rowOf(raw));
     QObject* actions = item("detail")->findChild<QObject*>(QStringLiteral("viewerActions"));
@@ -4767,19 +4857,19 @@ private slots:
     QImage image(48, 64, QImage::Format_RGB32);
     image.fill(Qt::cyan);
     QVERIFY(image.save(jpeg, "JPEG"));
-    m_captures->refresh();
+    rescan();
     QTRY_COMPARE(actions->property("count").toInt(), original + 1);
     m_library->setPairRawJpeg(false);
     QTRY_COMPARE(actions->property("count").toInt(), original);
     m_library->setPairRawJpeg(true);
     QTRY_COMPARE(actions->property("count").toInt(), original + 1);
     QVERIFY(QFile::remove(jpeg));
-    m_captures->refresh();
+    rescan();
     QTRY_COMPARE(actions->property("count").toInt(), original);
     QVERIFY(image.save(jpeg, "JPEG"));
     const QString ambiguous = folder + QStringLiteral("/LIVE-PAIR.jpeg");
     QVERIFY(image.save(ambiguous, "JPEG"));
-    m_captures->refresh();
+    rescan();
     QTRY_COMPARE(m_captures->companionPathAt(m_captures->rowOf(raw)), QString());
     QTRY_COMPARE(actions->property("count").toInt(), original);
   }
@@ -5001,13 +5091,13 @@ private slots:
     QTRY_VERIFY(branchExpanded());
     QSignalSpy aboutToReset(m_folderTree, &QAbstractItemModel::modelAboutToBeReset);
     QVERIFY(image.save(leaf + "/second.png"));
-    m_captures->refresh();
+    rescan();
     QTRY_COMPARE(m_folderTree->data(m_folderTree->indexForPath(leaf), FolderTreeModel::MediaCountRole).toInt(), 2);
     QCOMPARE(aboutToReset.size(), 0);
     QVERIFY(branchExpanded());
     QVERIFY(QDir().mkpath(dir.filePath("a")));
     QVERIFY(image.save(dir.filePath("a/sibling.png")));
-    m_captures->refresh();
+    rescan();
     QTRY_VERIFY(m_folderTree->indexForPath(dir.filePath("a")).isValid());
     QCOMPARE(aboutToReset.size(), 1);
     QTRY_VERIFY(branchExpanded());
@@ -5065,7 +5155,7 @@ private slots:
     QImage image(48, 64, QImage::Format_RGB32);
     image.fill(Qt::cyan);
     QVERIFY(image.save(jpeg, "JPEG"));
-    m_captures->refresh();
+    rescan();
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(raw) >= 0, 5000);
     QTRY_COMPARE(m_library->rowOf(jpeg), -1);
     openDetail(m_library->rowOf(raw));
@@ -5093,9 +5183,9 @@ private slots:
     const auto cleanup = qScopeGuard([&] {
       invoke("dismissTopLayer");
       QFile::remove(path);
-      m_captures->refresh();
+      rescan();
     });
-    m_captures->refresh();
+    rescan();
     QTRY_VERIFY(m_library->rowOf(path) >= 0);
     QTRY_VERIFY_WITH_TIMEOUT(cardFor(path) != nullptr, 5000);
     QCOMPARE(cardFor(path)->property("rawFormat").toString(), QStringLiteral("DNG"));
@@ -5141,12 +5231,12 @@ private slots:
     const auto cleanup = qScopeGuard([&] {
       invoke("dismissTopLayer");
       QFile::remove(path);
-      m_captures->refresh();
+      rescan();
     });
     const QString still = QFINDTESTDATA("fixtures/viewer/transparent.png");
     const QString video = QFINDTESTDATA("fixtures/viewer/tracks.mkv");
     QVERIFY(QFile::copy(still, path));
-    m_captures->refresh();
+    rescan();
     QTRY_VERIFY(m_library->rowOf(path) >= 0);
     openDetail(m_library->rowOf(path));
     QQuickItem* detail = item("detail");
@@ -5154,13 +5244,13 @@ private slots:
     QVERIFY(!detail->property("isVideo").toBool());
     QVERIFY(QFile::remove(path));
     QVERIFY(QFile::copy(video, path));
-    m_captures->refresh();
+    rescan();
     QTRY_VERIFY_WITH_TIMEOUT(detail->property("isVideo").toBool(), 5000);
     QVERIFY(detail->isVisible());
     QCOMPARE(detail->property("path").toString(), path);
     QVERIFY(QFile::remove(path));
     QVERIFY(QFile::copy(still, path));
-    m_captures->refresh();
+    rescan();
     QTRY_VERIFY_WITH_TIMEOUT(!detail->property("isVideo").toBool(), 5000);
     QTRY_VERIFY(detail->property("imageReady").toBool());
     QVERIFY(detail->isVisible());
@@ -5176,7 +5266,7 @@ private slots:
       m_window->resize(1280, 820);
       invoke("dismissTopLayer");
     });
-    m_captures->refresh();
+    rescan();
     QTRY_VERIFY(m_library->rowOf(path) >= 0);
     m_settings->setVideoPosition(path, 7000);
     openDetail(m_library->rowOf(path));
@@ -5201,7 +5291,7 @@ private slots:
                        1000000);
     QVERIFY(!item("detail")->property("resumeAvailable").toBool());
     QVERIFY(!item("detail")->property("resumePending").toBool());
-    QTRY_COMPARE(player->position(), 1000);
+    QTRY_COMPARE(player->position(), 1001); // Enter the frame at the exact boundary.
     item("detail")->setProperty("resumeAvailable", true);
     click(item("resumeButton"));
     QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
@@ -5267,6 +5357,51 @@ private slots:
     QVERIFY(player->videoSink());
     player->setPosition(1000);
     QTRY_VERIFY(player->videoSink()->subtitleText().contains(QStringLiteral("Omaroll subtitle test")));
+    if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
+      player->pause();
+      QTest::qWait(150);
+      auto* overlay = item("subtitleOverlay");
+      QTRY_VERIFY(overlay->isVisible());
+      const auto capture = [&] {
+        auto* output = item("videoOutput");
+        const QImage image = m_window->grabWindow();
+        const QRectF rect = output->mapRectToScene(output->boundingRect());
+        return image.copy(QRectF(rect.topLeft() * image.devicePixelRatio(),
+                                rect.size() * image.devicePixelRatio()).toAlignedRect());
+      };
+      // Caption controls also show a transient notice and a hover tooltip.
+      // Clear those independently changing overlays before comparing pixels.
+      QTest::mouseMove(m_window, QPoint(5, 5));
+      QVERIFY(QMetaObject::invokeMethod(m_window, "say", Q_ARG(QVariant, QString())));
+      // Pause acknowledgement can precede the last queued frame on slower
+      // decoders. Detach delivery and re-submit one immutable frame, so the
+      // only pixels allowed to change in this comparison are captions.
+      auto* input = player->videoSink();
+      auto* originalOutput = player->videoOutput();
+      const QVideoFrame frozen = input->videoFrame();
+      const QString cue = input->subtitleText();
+      player->setVideoOutput(nullptr);
+      const auto restoreOutput = qScopeGuard([&] { player->setVideoOutput(originalOutput); });
+      input->setVideoFrame(frozen);
+      input->setSubtitleText(cue);
+      QTest::qWait(100);
+      const QImage themed = capture();
+      overlay->setVisible(false);
+      QTest::qWait(100);
+      const QImage embeddedOnly = capture();
+      QVERIFY(themed != embeddedOnly);
+      input->setSubtitleText({});
+      QTest::qWait(100);
+      const QImage withoutCaptions = capture();
+      if (withoutCaptions != embeddedOnly && qEnvironmentVariableIsSet("OMAROLL_PIXEL_EVIDENCE")) {
+        const QString dir = qEnvironmentVariable("OMAROLL_PIXEL_EVIDENCE");
+        embeddedOnly.save(dir + "/embedded-only.png");
+        withoutCaptions.save(dir + "/without-captions.png");
+      }
+      QCOMPARE(withoutCaptions, embeddedOnly);
+      overlay->setVisible(true);
+    }
+    player->play();
     player->setPosition(7000);
     QTRY_VERIFY(player->videoSink()->subtitleText().contains(QStringLiteral("Second subtitle")));
     click(item("subtitleButton"));
@@ -5391,7 +5526,7 @@ private slots:
     QQuickItem* detail = item("detail");
     // Earlier tests delete explicit files while their last scan is still in
     // flight. Count a fresh disk snapshot, not those departing rows.
-    m_captures->refresh();
+    rescan();
     QTRY_VERIFY_WITH_TIMEOUT(!m_captures->scanning() && [&] {
       for (int row = 0; row < m_captures->rowCount(); ++row) {
         if (!QFileInfo::exists(m_captures->pathAt(row))) return false;
@@ -5405,7 +5540,7 @@ private slots:
       for (const QString& path : added) {
         QFile::remove(path);
       }
-      m_captures->refresh();
+      rescan();
       const bool removed = QTest::qWaitFor([&] {
         return std::all_of(added.cbegin(), added.cend(), [&](const QString& path) {
           return m_captures->rowOf(path) < 0;
@@ -5580,7 +5715,7 @@ private slots:
       added.append(QFileInfo(target).canonicalFilePath());
       m_disposablePaths.append(added.last());
     }
-    m_captures->refresh();
+    rescan();
     QTRY_COMPARE_WITH_TIMEOUT(m_library->rowCount(), before + 3, 15000);
     checkCards("after rescan");
     if (QTest::currentTestFailed()) return;
@@ -5651,7 +5786,7 @@ private slots:
       added.append(QFileInfo(target).canonicalFilePath());
       m_disposablePaths.append(added.last());
     }
-    m_captures->refresh();
+    rescan();
     QTRY_COMPARE_WITH_TIMEOUT(m_library->rowCount(), beforeMore + 3, 15000);
     view->setProperty("contentY", 0);
     QTRY_COMPARE(view->property("contentY").toReal(), 0.0);
@@ -5858,6 +5993,14 @@ private:
   void perform(const QString& id, const QString& path) {
     QMetaObject::invokeMethod(m_window, "perform", Q_ARG(QVariant, id), Q_ARG(QVariant, path),
                               Q_ARG(QVariant, QVariant()));
+  }
+
+  // Rescans the library and waits for that scan to finish, however slow the
+  // machine (an emulated aarch64 runner or a sanitizer build), so the checks
+  // that follow see its result instead of racing it.
+  void rescan() {
+    m_captures->refresh();
+    QVERIFY(QTest::qWaitFor([&] { return !m_captures->scanning(); }, 60000));
   }
 
   void openDetail(int row) {
