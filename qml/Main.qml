@@ -732,10 +732,12 @@ ApplicationWindow {
     }
 
     // The compare render waits for the similar-picture scan, then opens the
-    // first set it found.
+    // first set it found. Sets kept from before the scan may name files that
+    // have gone since.
     property bool compareWhenSimilar: false
     function openRenderCompare() {
-        if (!root.compareWhenSimilar || Similarities.groupCount === 0 || library.count === 0) return
+        if (!root.compareWhenSimilar || Similarities.scanning || Similarities.groupCount === 0
+                || library.count === 0) return
         const set = Similarities.groupPaths(Captures.pathAt(0))
         if (set.length < 2) return
         root.compareWhenSimilar = false
@@ -745,6 +747,7 @@ ApplicationWindow {
         target: Similarities
         enabled: root.compareWhenSimilar
         function onGroupsChanged() { Qt.callLater(root.openRenderCompare) }
+        function onScanningChanged() { Qt.callLater(root.openRenderCompare) }
     }
 
     // Asked by --render before it grabs: false while a view still waits on
