@@ -477,6 +477,9 @@ private slots:
       QCoreApplication::processEvents();
     }
     QTRY_VERIFY(!prop("anySheetOpen").toBool());
+    // A test that resized the window leaves the grid rebuilding its columns,
+    // and a key pressed while the model is detached for that is lost.
+    QTRY_VERIFY(item("library")->property("layoutSettled").toBool());
     m_library->setDuplicatesOnly(false);
     m_library->setSimilarOnly(false);
     QMetaObject::invokeMethod(item("library"), "clearChecked");
@@ -604,9 +607,11 @@ private slots:
     QCOMPARE(filenameTip()->property("text").toString(), m_library->fileNameAt(0));
     QTRY_VERIFY(cardFor(path) && cardFor(path)->property("keyboardCurrent").toBool());
     // Initial selection alone must not leave a keyboard tooltip behind.
+    QVERIFY(item("library")->property("layoutSettled").toBool());
     QTest::keyClick(m_window, Qt::Key_Right);
     QTest::keyClick(m_window, Qt::Key_Left);
-    QTRY_VERIFY_WITH_TIMEOUT(filenameTip() && filenameTip()->property("visible").toBool(), 1500);
+    QTRY_COMPARE(item("library")->property("currentIndex").toInt(), 0);
+    QTRY_VERIFY(filenameTip() && filenameTip()->property("visible").toBool());
     QVERIFY(QMetaObject::invokeMethod(m_window, "openContextMenu", Q_ARG(QVariant, 0),
                                     Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
     QTRY_VERIFY(filenameTip() && !filenameTip()->property("visible").toBool());
@@ -625,9 +630,11 @@ private slots:
       QObject* tip = live ? live->findChild<QObject*>(QStringLiteral("captureFilenameTip")) : nullptr;
       return tip && tip->property("visible").toBool();
     };
-    QTRY_VERIFY_WITH_TIMEOUT(tipOn(1), 1500);
+    QTRY_COMPARE(item("library")->property("currentIndex").toInt(), 1);
+    QTRY_VERIFY(tipOn(1));
     QTest::keyClick(m_window, Qt::Key_Left);
-    QTRY_VERIFY_WITH_TIMEOUT(tipOn(0), 1500);
+    QTRY_COMPARE(item("library")->property("currentIndex").toInt(), 0);
+    QTRY_VERIFY(tipOn(0));
   }
 
   void filenameToggleKeepsCardAndThumbnailDimensions() {
@@ -3685,7 +3692,7 @@ private slots:
     QVERIFY(QFileInfo::exists(m_library->pathAt(1)));
     QQuickItem* keep = pill(m_window->contentItem(), QStringLiteral("Keep selected"));
     QVERIFY(keep);
-    click(keep);
+    clickPlaced(keep);
     QTRY_VERIFY(item("confirm")->isVisible());
     QVERIFY(item("confirm")->property("title").toString().startsWith(QStringLiteral("Keep ")));
     QTest::keyClick(m_window, Qt::Key_Escape);
@@ -4942,7 +4949,7 @@ private slots:
     const int keptRow = m_library->rowOf(kept);
     QVERIFY(keptRow >= 0);
     item("library")->setProperty("currentIndex", keptRow);
-    click(pill(m_window->contentItem(), QStringLiteral("Keep selected")));
+    clickPlaced(pill(m_window->contentItem(), QStringLiteral("Keep selected")));
     QTRY_VERIFY(item("confirm")->isVisible());
     QTest::keyClick(m_window, Qt::Key_Return);
     QTRY_VERIFY(!item("confirm")->isVisible());
@@ -5180,11 +5187,13 @@ private slots:
       m_library->setSimilarOnly(false);
       dir.remove();
       m_captures->refresh();
-      QTRY_VERIFY_WITH_TIMEOUT(!m_captures->scanning(), 15000);
+      waitForScan();
     });
-    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(original) >= 0 && m_library->rowOf(small) >= 0 &&
-                                 m_library->rowOf(large) >= 0,
-                             10000);
+    // The added files arrive with the scan they start, which takes over ten
+    // seconds on an emulated aarch64 runner.
+    waitForScan();
+    QTRY_VERIFY(m_library->rowOf(original) >= 0 && m_library->rowOf(small) >= 0 &&
+                m_library->rowOf(large) >= 0);
 
     m_library->setSimilarOnly(true);
     QTRY_COMPARE_WITH_TIMEOUT(m_similarities->groupPaths(original),
@@ -7137,6 +7146,15 @@ private:
     QVERIFY(target);
     QTRY_VERIFY(centre(target).x() > 0 && centre(target).x() < m_window->width());
     QTest::qWait(120);
+    click(target);
+  }
+
+  // A pill that has just appeared in a row has its size before the row has
+  // placed it, and a click at its old place lands on a neighbour. Click once
+  // the window's pending layout has run.
+  void clickPlaced(QQuickItem* target) {
+    QVERIFY(target);
+    QVERIFY(QQuickTest::qWaitForPolish(m_window));
     click(target);
   }
 

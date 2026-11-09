@@ -989,23 +989,39 @@ private slots:
     QVERIFY2(first.contains(QStringLiteral("Zürich")), qPrintable(first));
     QVERIFY(first.startsWith(QChar(0x2026)));
 
-    qint64 best = std::numeric_limits<qint64>::max();
-    for (int attempt = 0; attempt < 3; ++attempt) {
-      const qint64 cpu = threadMicros();
+    // CPU time stretches with the machine's load, so the budget is set by
+    // work timed alongside it: one plain scan of each document's folded
+    // text for the match, which every snippet read has to do anyway.
+    // Refolding a document per read costs about fifty of those scans; a
+    // read here costs under two. Each attempt times both back to back, and
+    // the best ratio of several counts.
+    const SearchText::FoldedText folded = SearchText::FoldedText::make(
+        body + QStringLiteral(" Final total for Zürich 0 closes it."));
+    const QByteArray needle = SearchText::fold(QStringLiteral("zurich")).toUtf8();
+    qsizetype found = 0;
+    double ratio = std::numeric_limits<double>::max();
+    qint64 reads = 0;
+    qint64 scans = 0;
+    for (int attempt = 0; attempt < 7; ++attempt) {
+      qint64 cpu = threadMicros();
+      for (int row = 0; row < kDocuments; ++row) found += folded.folded.indexOf(needle) > 0;
+      const qint64 scan = std::max<qint64>(1, threadMicros() - cpu);
+      cpu = threadMicros();
       for (int row = 0; row < proxy.count(); ++row) (void)proxy.ocrSnippetAt(row);
-      best = std::min(best, threadMicros() - cpu);
+      const qint64 read = threadMicros() - cpu;
+      if (double(read) / double(scan) < ratio) {
+        ratio = double(read) / double(scan);
+        reads = read;
+        scans = scan;
+      }
     }
-    qInfo().noquote() << QStringLiteral("%1 snippets of 512K-character text: %2 ms CPU")
+    QCOMPARE(found, qsizetype(7 * kDocuments));
+    qInfo().noquote() << QStringLiteral("%1 snippets of 512K-character text: %2 ms CPU, %3x a scan (%4 ms)")
                              .arg(kDocuments)
-                             .arg(best / 1000.0, 0, 'f', 2);
-#if OMAROLL_SANITIZED
-    const qint64 budget = 60'000;
-#elif defined(NDEBUG)
-    const qint64 budget = 3'000;
-#else
-    const qint64 budget = 15'000;
-#endif
-    QVERIFY2(best < budget, qPrintable(QString::number(best)));
+                             .arg(reads / 1000.0, 0, 'f', 2)
+                             .arg(ratio, 0, 'f', 2)
+                             .arg(scans / 1000.0, 0, 'f', 2);
+    QVERIFY2(ratio < 5, qPrintable(QString::number(ratio)));
   }
 
   // A supplementary character at either end of the context, or ending the
