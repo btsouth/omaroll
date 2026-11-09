@@ -2559,9 +2559,21 @@ private slots:
       QVERIFY(snapshot.open(QIODevice::ReadOnly));
       QCOMPARE(snapshot.readAll(), bytes); // Daily snapshot is immutable.
       snapshot.close();
+      // Snapshots hold file paths, so only the owner can read them.
+      const auto permissions = QFileInfo(latest).permissions();
+      QVERIFY(!(permissions & (QFileDevice::ReadGroup | QFileDevice::ReadOther)));
+      QVERIFY(!(QFileInfo(backups).permissions() & (QFileDevice::ReadOther | QFileDevice::ExeOther)));
       QVERIFY(settings.importOrganization(latest).value("ok").toBool());
       QCOMPARE(settings.albumNames(), QStringList{"Remember me"});
       QCOMPARE(backupDir.entryList({"before-restore-*.json"}, QDir::Files).size(), 1);
+      // Every retained snapshot is readable by the current importer, and the
+      // pre-restore copies stay bounded.
+      for (const QString& name : backupDir.entryList({"daily-*.json", "weekly-*.json"}, QDir::Files)) {
+        const auto result = settings.importOrganization(backupDir.filePath(name));
+        QVERIFY2(result.value("ok").toBool(), qPrintable(name + ": " + result.value("message").toString()));
+      }
+      QCOMPARE(backupDir.entryList({"before-restore-*.json"}, QDir::Files).size(), 4);
+      QCOMPARE(settings.albumNames(), QStringList{"Remember me"});
     }
     // An unreadable newest snapshot must fall back without mutating settings.
     QFile broken(QDir(backups).filePath("before-restore-broken.json"));
@@ -2570,13 +2582,14 @@ private slots:
     broken.close();
     QFile damaged(ini);
     QVERIFY(damaged.open(QIODevice::WriteOnly));
-    const QByteArray bad("[library]\n[truncated\n");
+    const QByteArray bad("[library]\nsortMode=3\n[truncated\n");
     QCOMPARE(damaged.write(bad), bad.size());
     damaged.close();
     {
       AppSettings settings;
       QVERIFY(settings.canRestoreOrganization());
       QVERIFY(!settings.organizationError().isEmpty());
+      QCOMPARE(settings.sortMode(), 3);
       QVERIFY(settings.restoreLastGoodBackup().value("ok").toBool());
       QVERIFY(settings.albumNames().contains("Remember me"));
       QVERIFY(settings.organizationError().isEmpty());
@@ -2592,6 +2605,8 @@ private slots:
     AppSettings restarted;
     QVERIFY(restarted.albumNames().contains("Remember me"));
     QVERIFY(restarted.tagNames().contains("After recovery"));
+    // Preferences that were still readable in the damaged file survive recovery.
+    QCOMPARE(restarted.sortMode(), 3);
   }
 
   void damagedSettingsArePreservedWhenOrganizationCannotSave() {
@@ -2971,7 +2986,10 @@ private slots:
     QVERIFY(dir.isValid());
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        dir.filePath(QStringLiteral("profile")));
-    const auto restoreProfile = qScopeGuard([this] {
+    const QByteArray oldData = qgetenv("XDG_DATA_HOME");
+    qputenv("XDG_DATA_HOME", dir.filePath(QStringLiteral("data")).toUtf8());
+    const auto restoreProfile = qScopeGuard([this, oldData] {
+      qputenv("XDG_DATA_HOME", oldData);
       QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                          m_scratch.filePath(QStringLiteral("config")));
     });
@@ -2992,6 +3010,9 @@ private slots:
       QCOMPARE(settings.videoPosition(first), 12000);
       QCOMPARE(settings.videoPosition(second), 34000);
       settings.setVideoPosition(second, 45000);
+      // The migration rewrites saved state, so it took a snapshot first.
+      QCOMPARE(QDir(settings.backupDirectory())
+                   .entryList({QStringLiteral("before-restore-*.json")}, QDir::Files).size(), 1);
     }
     stored.sync();
     QVERIFY(!stored.contains(QStringLiteral("playback/positions")));
@@ -4326,6 +4347,31 @@ private slots:
     // A WebVTT cue with no hours, and its note skipped.
     QTRY_COMPARE(subtitles.textAt(vtt, 1500), QStringLiteral("VTT cue"));
     QCOMPARE(subtitles.textAt(vtt, 2500), QString());
+  }
+
+  // Fuzzer finding: an hour count near the qint64 limit overflowed while it
+  // was converted to milliseconds (UBSan signed-integer-overflow).
+  void subtitleTimestampsPastTheMillisecondRangeAreSkipped() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString video = dir.filePath(QStringLiteral("clip.mp4"));
+    {
+      QFile file(video);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+    }
+    const QString srt = dir.filePath(QStringLiteral("clip.srt"));
+    {
+      QFile file(srt);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("1\n9223372036854775807:00:00,000 --> 9223372036854775807:00:01,000\nOverflow\n\n"
+                 "2\n00:00:00:2562047788015:00,000 --> 00:00:01,000\nToo many fields\n\n"
+                 "3\n2562047788016:00:00,000 --> 2562047788016:00:01,000\nPast milliseconds\n\n"
+                 "4\n00:00:01,000 --> 00:00:02,000\nKept\n\n");
+    }
+    SubtitleIndex subtitles;
+    QVERIFY(subtitles.files(video).contains(srt));
+    QTRY_COMPARE(subtitles.cueCount(srt), 1);
+    QCOMPARE(subtitles.textAt(srt, 1500), QStringLiteral("Kept"));
   }
 
   void externalSubtitlesIgnoreUnrelatedSidecars() {

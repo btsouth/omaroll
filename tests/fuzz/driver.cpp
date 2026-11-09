@@ -25,6 +25,9 @@ struct Environment {
     if (!dir.isValid()) std::abort();
     qputenv("XDG_DATA_HOME", dir.path().toUtf8());
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, dir.path());
+    // Warnings about rejected input are expected on nearly every run and
+    // only slow the fuzzer down. Crashes and sanitizer reports still print.
+    qInstallMessageHandler([](QtMsgType, const QMessageLogContext&, const QString&) {});
   }
 };
 }
@@ -43,7 +46,11 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 #elif FUZZ_KIND == 5
   QBuffer buffer; buffer.setData(bytes); buffer.open(QIODevice::ReadOnly);
   QImageReader reader(&buffer);
-  (void)ImageBudget::estimate(reader);
+  const ImageBudget::Estimate estimate = ImageBudget::estimate(reader);
+  // The header's dimensions feed the memory arithmetic, so run that too.
+  (void)ImageBudget::plan(estimate, 2560);
+  (void)ImageBudget::bytesAt(estimate, estimate.stored / 3);
+  (void)ImageBudget::decodedSize(estimate, estimate.stored / 3);
 #else
   const QString path = env.dir.filePath(QStringLiteral("input.raw"));
   QFile file(path);

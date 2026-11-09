@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
+#include <QtNumeric>
 
 #include <algorithm>
 
@@ -30,18 +31,23 @@ qint64 parseTimestamp(const QString& value) {
     }
   }
   const QStringList parts = dot.first().split(QLatin1Char(':'));
-  qint64 seconds = 0;
-  if (parts.size() == 3) {
-    seconds = parts.at(0).toLongLong() * 3600 + parts.at(1).toLongLong() * 60 +
-              parts.at(2).toLongLong();
-  } else if (parts.size() == 2) {
-    seconds = parts.at(0).toLongLong() * 60 + parts.at(1).toLongLong();
-  } else if (parts.size() == 1) {
-    seconds = parts.at(0).toLongLong();
-  } else {
+  if (parts.size() > 3) {
     return -1;
   }
-  return seconds * 1000 + milliseconds;
+  // A malformed file can name any number of hours; one past what milliseconds
+  // can hold is unparsable rather than an overflow.
+  qint64 seconds = 0;
+  for (const QString& part : parts) {
+    if (qMulOverflow(seconds, qint64(60), &seconds) ||
+        qAddOverflow(seconds, part.toLongLong(), &seconds)) {
+      return -1;
+    }
+  }
+  qint64 result = 0;
+  if (qMulOverflow(seconds, qint64(1000), &result) || qAddOverflow(result, milliseconds, &result)) {
+    return -1;
+  }
+  return result;
 }
 
 // Drop the inline markup both formats allow, plus the brace tags ASS leaves

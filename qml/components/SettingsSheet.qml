@@ -324,6 +324,22 @@ Item {
                 color: Theme.red
             }
 
+            PillButton {
+                objectName: "restoreBackupButton"
+                visible: Settings.canRestoreOrganization
+                label: "Restore last good backup"
+                onClicked: {
+                    const result = Settings.restoreLastGoodBackup()
+                    root.organizationOk = result.ok
+                    root.organizationMessage = result.message
+                    if (result.ok) {
+                        Captures.setAlbumFilter("", [])
+                        Captures.setTagFilter("", [])
+                        Captures.clearSmartCollection()
+                    }
+                }
+            }
+
             Column {
                 width: parent.width
                 spacing: 7

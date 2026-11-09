@@ -2191,14 +2191,6 @@ ApplicationWindow {
         onActivated: library.checkedCount > 0 ? root.markChecked("favorite")
                                               : root.perform("favorite", root.currentPath())
     }
-    Button {
-        text: "Restore last good backup"
-        visible: Settings.canRestoreOrganization
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom: parent.bottom
-        onClicked: root.say(Settings.restoreLastGoodBackup().message)
-    }
-
     // Undo the destructive organization marks, from the grid or the viewer.
     Shortcut {
         sequences: ShortcutCatalog.sequence("library", "undo")

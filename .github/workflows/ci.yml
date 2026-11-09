@@ -245,7 +245,7 @@ jobs:
     steps:
       - name: Install dependencies
         run: >-
-          pacman -Syu --noconfirm --needed base-devel clang llvm cmake ninja
+          pacman -Syu --noconfirm --needed base-devel clang llvm compiler-rt cmake ninja
           ffmpeg ffmpegthumbnailer git imagemagick kimageformats libavif libheif libraw
           imath openexr poppler qt6-base qt6-declarative qt6-imageformats qt6-multimedia
           qt6-svg qt6-wayland xdg-utils mesa

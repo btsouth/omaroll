@@ -401,7 +401,8 @@ AppSettings::AppSettings(QObject* parent)
     m_settings.remove(kLegacyVideoPositions);
     m_settings.sync();
   }
-  snapshotOrganization();
+  // A fresh profile has nothing to keep; its first organization save takes the snapshot.
+  if (existingProfile) snapshotOrganization();
   m_previousVisit = m_settings.value(kLastVisit).toString();
   setValue(kLastVisit, QDateTime::currentDateTime().toString(Qt::ISODate));
 }
@@ -1389,12 +1390,17 @@ bool AppSettings::snapshotOrganization(const QDate& date, bool beforeRestore) co
   if (m_settings.status() != QSettings::NoError || !date.isValid()) return false;
   QDir dir(backupDirectory());
   if (!QDir().mkpath(dir.path())) return false;
+  // Snapshots list the paths of organized files, so keep them private.
+  constexpr auto ownerOnly = QFileDevice::ReadOwner | QFileDevice::WriteOwner;
+  QFile::setPermissions(dir.path(), ownerOnly | QFileDevice::ExeOwner);
   const QString daily = QStringLiteral("daily-%1.json").arg(date.toString(Qt::ISODate));
   const QString name = beforeRestore
       ? QStringLiteral("before-restore-%1.json").arg(QUuid::createUuid().toString(QUuid::WithoutBraces))
       : daily;
-  if ((beforeRestore || !dir.exists(name)) &&
-      !exportOrganization(dir.filePath(name)).value(QStringLiteral("ok")).toBool()) return false;
+  if (beforeRestore || !dir.exists(name)) {
+    if (!exportOrganization(dir.filePath(name)).value(QStringLiteral("ok")).toBool()) return false;
+    QFile::setPermissions(dir.filePath(name), ownerOnly);
+  }
   // Keep the first successful daily snapshot of each ISO week independently.
   const QDate monday = date.addDays(1 - date.dayOfWeek());
   const QString weekly = QStringLiteral("weekly-%1.json").arg(monday.toString(Qt::ISODate));
@@ -1750,11 +1756,16 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
     const QString ini = m_settings.fileName();
     if (!QFile::copy(ini, ini + QStringLiteral(".damaged-") + QUuid::createUuid().toString(QUuid::WithoutBraces)))
       return {{QStringLiteral("ok"), false}, {QStringLiteral("message"), QStringLiteral("Could not preserve damaged settings")}};
+    // Keep whatever preferences and folders could still be read; the
+    // organization keys are replaced by the import below.
+    QVariantMap readable;
+    for (const QString& key : m_settings.allKeys()) readable.insert(key, m_settings.value(key));
     QSaveFile clean(ini);
     if (!clean.open(QIODevice::WriteOnly) || clean.write("[General]\n") != 10 || !clean.commit())
       return {{QStringLiteral("ok"), false}, {QStringLiteral("message"), QStringLiteral("Could not repair settings")}};
     std::destroy_at(&m_settings);
     std::construct_at(&m_settings, ini, QSettings::IniFormat);
+    for (auto it = readable.cbegin(); it != readable.cend(); ++it) m_settings.setValue(it.key(), it.value());
   } else if (!snapshotOrganization(QDate::currentDate(), true)) {
     return {{QStringLiteral("ok"), false}, {QStringLiteral("message"), QStringLiteral("Could not save a backup before restoring")}};
   }
@@ -2051,7 +2062,7 @@ bool AppSettings::syncOrganization() {
   m_settings.sync();
   const QString error = m_settings.status() == QSettings::NoError ? QString()
       : m_settings.status() == QSettings::FormatError
-          ? QStringLiteral("Your settings file is damaged. Keep a copy and repair it before saving organization.")
+          ? QStringLiteral("Your settings file is damaged. Restore the last good backup in Settings, or keep a copy and repair it before saving organization.")
           : QStringLiteral("Could not save organization. Check that your settings folder is writable and has free space.");
   if (m_organizationError != error) {
     m_organizationError = error;
