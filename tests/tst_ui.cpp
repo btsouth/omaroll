@@ -3217,6 +3217,57 @@ private slots:
 
   // A search or filter that matches nothing says so and offers the way
   // back, rather than calling a populated folder empty.
+  void libraryLoadingStateWaitsForTheScanInsteadOfTheEmptyState() {
+    // The main window's library is loaded, so its loading state is hidden and
+    // the empty state is the one that answers for an empty view.
+    QQuickItem* mainLoading = item(QStringLiteral("libraryLoadingState"));
+    QVERIFY(mainLoading);
+    QVERIFY(!mainLoading->isVisible());
+    QVERIFY(!mainLoading->property("waiting").toBool());
+
+    QQmlApplicationEngine engine;
+    engine.addImportPath(QStringLiteral(OMAROLL_QML_IMPORT_PATH));
+    engine.rootContext()->setContextProperty(QStringLiteral("Theme"), m_theme);
+    QStringList warnings;
+    connect(&engine, &QQmlEngine::warnings, &engine, [&warnings](const QList<QQmlError>& errors) {
+      for (const auto& error : errors) warnings.append(error.toString());
+    });
+    // No second window: it would take keyboard focus from the main one.
+    engine.loadData(R"QML(
+      import QtQuick
+      import Omaroll
+      Item {
+        width: 320; height: 200
+        LoadingState { objectName: "loading"; anchors.centerIn: parent; width: 280 }
+      }
+    )QML");
+    QVERIFY2(!engine.rootObjects().isEmpty(), qPrintable(warnings.join('\n')));
+    auto* root = qobject_cast<QQuickItem*>(engine.rootObjects().constFirst());
+    QVERIFY(root);
+    auto* loading = root->findChild<QQuickItem*>(QStringLiteral("loading"));
+    QVERIFY(loading);
+    QVERIFY(!loading->isVisible());
+
+    // A scan that answers quickly never shows it.
+    loading->setProperty("waiting", true);
+    QTest::qWait(60);
+    QVERIFY(!loading->isVisible());
+    loading->setProperty("waiting", false);
+    QTest::qWait(300);
+    QVERIFY(!loading->isVisible());
+
+    // A slow one does, until it answers, and starts over the next time.
+    loading->setProperty("waiting", true);
+    QTRY_VERIFY_WITH_TIMEOUT(loading->isVisible(), 2000);
+    QVERIFY(loading->property("text").toString().startsWith(QStringLiteral("Looking for")));
+    loading->setProperty("waiting", false);
+    QVERIFY(!loading->isVisible());
+    loading->setProperty("waiting", true);
+    QVERIFY(!loading->isVisible());
+    QTRY_VERIFY_WITH_TIMEOUT(loading->isVisible(), 2000);
+    QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
+  }
+
   void emptyStatesSayWhyNothingIsShownAndOfferTheWayOut() {
     const auto named = [this](const QString& name) {
       return find(m_window->contentItem(), [&name](QQuickItem* candidate) {

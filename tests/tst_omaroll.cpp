@@ -78,6 +78,7 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -452,6 +453,87 @@ void writeSmallFile(const QString& path, const QByteArray& content) {
   QFile file(path);
   if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) file.write(content);
 }
+
+// PNGs in a scratch library, a fake ImageMagick first on PATH and a private
+// metadata cache. The environment is restored when it goes away.
+class MetadataSandbox {
+public:
+  // The script's body runs after `records`, a shell function that prints a
+  // dated record for every file it was given.
+  explicit MetadataSandbox(const QByteArray& body) {
+    for (const char* name : kNames) m_saved.append(qgetenv(name));
+    QDir().mkpath(bin());
+    QDir().mkpath(media());
+    QFile magick(bin() + QStringLiteral("/magick"));
+    if (magick.open(QIODevice::WriteOnly)) {
+      magick.write("#!/bin/sh\n"
+                   "records() {\n"
+                   "  index=0\n"
+                   "  while [ \"$#\" -gt 0 ]; do\n"
+                   "    if [ \"$1\" = -format ] && [ \"$#\" -ge 3 ]; then\n"
+                   "      printf '\\036OMAROLL_DATE:%s\\n2020:05:06 07:08:09\\n\\n' \"$index\"\n"
+                   "      index=$((index + 1))\n"
+                   "      shift 3\n"
+                   "    else\n"
+                   "      shift\n"
+                   "    fi\n"
+                   "  done\n"
+                   "}\n" +
+                   body);
+      magick.close();
+      magick.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                            QFileDevice::ExeOwner);
+    }
+    qputenv("PATH", (bin() + QStringLiteral(":/usr/bin:/bin")).toUtf8());
+    qputenv("XDG_CACHE_HOME", m_dir.filePath(QStringLiteral("cache")).toUtf8());
+    qputenv("OMAROLL_METADATA_LOG", file(QStringLiteral("probe.log")).toUtf8());
+    for (const char* name : {"XDG_PICTURES_DIR", "XDG_VIDEOS_DIR", "XDG_DOWNLOAD_DIR",
+                             "OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR"}) {
+      qputenv(name, media().toUtf8());
+    }
+  }
+  ~MetadataSandbox() {
+    for (int index = 0; index < static_cast<int>(std::size(kNames)); ++index) {
+      const QByteArray& value = m_saved.at(index);
+      value.isNull() ? qunsetenv(kNames[index]) : qputenv(kNames[index], value);
+    }
+  }
+  [[nodiscard]] bool valid() const { return m_dir.isValid(); }
+  [[nodiscard]] QString bin() const { return m_dir.filePath(QStringLiteral("bin")); }
+  [[nodiscard]] QString media() const { return m_dir.filePath(QStringLiteral("media")); }
+  [[nodiscard]] QString file(const QString& name) const { return m_dir.filePath(name); }
+  [[nodiscard]] QByteArray log() const {
+    QFile log(file(QStringLiteral("probe.log")));
+    return log.open(QIODevice::ReadOnly) ? log.readAll() : QByteArray();
+  }
+  QStringList addImages(int count, const QString& folder = {}) {
+    static const QByteArray png = [] {
+      QImage image(4, 4, QImage::Format_RGB32);
+      image.fill(Qt::white);
+      QByteArray bytes;
+      QBuffer buffer(&bytes);
+      buffer.open(QIODevice::WriteOnly);
+      image.save(&buffer, "PNG");
+      return bytes;
+    }();
+    const QString directory = folder.isEmpty() ? media() : media() + QLatin1Char('/') + folder;
+    QStringList paths;
+    for (int index = 0; index < count; ++index) {
+      const QString path =
+          directory + QStringLiteral("/photo %1.png").arg(index, 4, 10, QLatin1Char('0'));
+      writeSmallFile(path, png);
+      paths.append(path);
+    }
+    return paths;
+  }
+
+private:
+  static constexpr const char* kNames[] = {
+      "PATH", "XDG_CACHE_HOME", "OMAROLL_METADATA_LOG", "XDG_PICTURES_DIR", "XDG_VIDEOS_DIR",
+      "XDG_DOWNLOAD_DIR", "OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR"};
+  QTemporaryDir m_dir;
+  QList<QByteArray> m_saved;
+};
 
 } // namespace
 
@@ -8089,6 +8171,255 @@ private slots:
     for (const QString& path : std::as_const(paths)) {
       QVERIFY(model.rowOf(path) >= 0);
     }
+  }
+
+  void exifDateFastPathMatchesTheGeneralParser() {
+    // Shapes ImageMagick reports, malformed and missing values, and local
+    // times next to zone transitions, in zones with an hour, half an hour and
+    // no daylight saving. The direct reader must agree with the general one.
+    QStringList values = {
+        QString(), QStringLiteral("undefined"), QStringLiteral("garbage"),
+        QStringLiteral("2020:05:06 07:08:09"), QStringLiteral("2020-05-06 07:08:09"),
+        QStringLiteral("2020:05:06 07:08:09.123"), QStringLiteral("2020-05-06 07:08:09.123"),
+        QStringLiteral("2020:05:06 07:08:09.5"), QStringLiteral("2020:05:06 07:08:09.123456"),
+        QStringLiteral("2020:05:06 07:08:09+02:00"), QStringLiteral("  2020:05:06 07:08:09  "),
+        QStringLiteral("2020:05:06 07:08:09\r"), QStringLiteral("0000:00:00 00:00:00"),
+        QStringLiteral("    :  :     :  :  "), QStringLiteral("2020:02:30 10:00:00"),
+        QStringLiteral("2020:13:01 10:00:00"), QStringLiteral("2020:05:06 24:00:00"),
+        QStringLiteral("2020:05:06 7:08:09"), QStringLiteral("2020:5:6 07:08:09"),
+        QStringLiteral("2020-05-06T07:08:09"), QStringLiteral("1999:12:31 23:59:60"),
+        QStringLiteral("2020:05:06 07:08:0x"), QStringLiteral("２０２０:05:06 07:08:09"),
+        QStringLiteral("2020:05-06 07:08:09"), QStringLiteral("1601:01:01 00:00:00"),
+        QStringLiteral("9999:12:31 23:59:59")};
+    for (const QDate day : {QDate(2026, 3, 8), QDate(2026, 11, 1), QDate(2026, 3, 29),
+                            QDate(2026, 10, 25), QDate(2026, 4, 5), QDate(2026, 10, 4)}) {
+      for (int minutes = 0; minutes < 4 * 60; minutes += 15) {
+        const QString stamp = day.toString(QStringLiteral("yyyy:MM:dd ")) +
+                              QTime(0, 0).addSecs(minutes * 60).toString(QStringLiteral("HH:mm:ss"));
+        values << stamp << stamp + QStringLiteral(".250") << QString(stamp).replace(4, 1, u'-').replace(7, 1, u'-');
+      }
+    }
+
+    const QByteArray previousZone = qgetenv("TZ");
+    const auto restore = qScopeGuard([&] {
+      previousZone.isNull() ? qunsetenv("TZ") : qputenv("TZ", previousZone);
+      tzset();
+    });
+    for (const char* zone : {"UTC", "America/New_York", "Europe/London", "Australia/Lord_Howe",
+                             "Asia/Kolkata"}) {
+      qputenv("TZ", zone);
+      tzset();
+      for (const QString& value : std::as_const(values)) {
+        const QDateTime fast = MediaMetadataIndex::parseExifDate(value);
+        const QDateTime general = MediaMetadataIndex::parseExifDateGeneral(value);
+        const QString context = QStringLiteral("%1 in %2").arg(value, QLatin1String(zone));
+        QVERIFY2(fast.isValid() == general.isValid(), qPrintable(context));
+        if (!general.isValid()) continue;
+        QVERIFY2(fast == general, qPrintable(context));
+        QVERIFY2(fast.date() == general.date() && fast.time() == general.time(), qPrintable(context));
+        QVERIFY2(fast.timeSpec() == general.timeSpec(), qPrintable(context));
+        QVERIFY2(fast.offsetFromUtc() == general.offsetFromUtc(), qPrintable(context));
+      }
+
+      // Whole records, as identify prints them: the original date wins, the
+      // digitized date fills in, and an empty or broken record has none.
+      QCOMPARE(MediaMetadataIndex::parseImageDate("2020:05:06 07:08:09\n2019:01:02 03:04:05\n"),
+               MediaMetadataIndex::parseExifDateGeneral(QStringLiteral("2020:05:06 07:08:09")));
+      QCOMPARE(MediaMetadataIndex::parseImageDate("0000:00:00 00:00:00\n2019:01:02 03:04:05\n"),
+               MediaMetadataIndex::parseExifDateGeneral(QStringLiteral("2019:01:02 03:04:05")));
+      QVERIFY(!MediaMetadataIndex::parseImageDate("\n\n").isValid());
+      QVERIFY(!MediaMetadataIndex::parseImageDate("not a date\nundefined\n").isValid());
+      // Videos keep UTC stamps as the same instant, shown in local time.
+      const QDateTime video = MediaMetadataIndex::parseVideoDate(
+          R"({"format":{"tags":{"creation_time":"2026-11-01T05:30:00.000000Z"}}})");
+      QCOMPARE(video, QDateTime(QDate(2026, 11, 1), QTime(5, 30), QTimeZone::UTC).toLocalTime());
+      QCOMPARE(video.timeSpec(), Qt::LocalTime);
+    }
+  }
+
+  void metadataProbesRunInParallelAtLowPriorityWithinTheBound() {
+    // Each probe marks itself running, notes how many are, and its niceness.
+    MetadataSandbox sandbox(
+        "slots=\"$OMAROLL_METADATA_LOG.slots\"\n"
+        "mkdir -p \"$slots\"\n"
+        "mkdir \"$slots/$$\"\n"
+        "running=$(ls \"$slots\" | wc -l)\n"
+        "nice=$(cut -d' ' -f19 /proc/$$/stat)\n"
+        "io=$(ionice -p $$ 2>/dev/null | tr -d ' ')\n"
+        "printf 'probe %s %s %s\\n' \"$running\" \"$nice\" \"${io:-none}\" >> \"$OMAROLL_METADATA_LOG\"\n"
+        "/bin/sleep 0.6\n"
+        "records \"$@\"\n"
+        "rmdir \"$slots/$$\"\n");
+    QVERIFY(sandbox.valid());
+    const int batches = 7;
+    const QStringList paths = sandbox.addImages(32 * batches);
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QTRY_COMPARE_WITH_TIMEOUT(model.rowCount(), paths.size(), 5000);
+
+    QElapsedTimer elapsed;
+    elapsed.start();
+    MediaMetadataIndex dates(&model);
+    QTRY_VERIFY_WITH_TIMEOUT(dates.indexing(), 2000);
+    QTRY_VERIFY_WITH_TIMEOUT(!dates.indexing(), 20000);
+    QCOMPARE(dates.completed(), paths.size());
+    for (const QString& path : paths) {
+      QCOMPARE(model.recordAt(model.rowOf(path)).captured, QDateTime(QDate(2020, 5, 6), QTime(7, 8, 9)));
+    }
+
+    const QList<QByteArray> probes = sandbox.log().split('\n');
+    int started = 0;
+    int widest = 0;
+    for (const QByteArray& line : probes) {
+      const QList<QByteArray> fields = line.split(' ');
+      if (fields.size() != 4 || fields.first() != "probe") continue;
+      ++started;
+      widest = std::max(widest, fields.at(1).toInt());
+      QVERIFY2(fields.at(2).toInt() >= 10, line.constData());
+      // Best effort, lowest level, wherever ionice is installed.
+      if (fields.at(3) != "none") QVERIFY2(fields.at(3) == "best-effort:prio7", line.constData());
+    }
+    // The index's own pool threads, which parse the output, run at nice 10 too.
+    // They stay alive for a while after the work ends.
+    int lowered = 0;
+    for (const QString& task : QDir(QStringLiteral("/proc/self/task")).entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+      QFile stat(QStringLiteral("/proc/self/task/%1/stat").arg(task));
+      if (!stat.open(QIODevice::ReadOnly)) continue;
+      const QByteArray line = stat.readAll();
+      // Fields after the parenthesised name; nice is field 19 overall.
+      const QList<QByteArray> rest = line.mid(line.lastIndexOf(')') + 2).split(' ');
+      if (rest.size() > 16 && rest.at(16).toInt() == 10) ++lowered;
+    }
+    QVERIFY2(lowered >= 1, "no metadata worker thread at nice 10");
+    QCOMPARE(started, batches);
+    const int bound = MediaMetadataIndex::maximumParallelProbes();
+    QVERIFY(bound >= 2 && bound <= 4);
+    QVERIFY2(widest >= 2 && widest <= bound, qPrintable(QString::number(widest)));
+    // Serial probes would take at least batches * 0.6 s.
+    qInfo() << "PERF parallel metadata ms" << elapsed.elapsed() << "widest" << widest;
+  }
+
+  void metadataProbesStopWhenTheirFilesLeaveAndOnQuit() {
+    // A probe that never answers on its own; it records its pid first.
+    MetadataSandbox sandbox("printf '%s\\n' \"$$\" >> \"$OMAROLL_METADATA_LOG\"\n"
+                            "exec /bin/sleep 30\n");
+    QVERIFY(sandbox.valid());
+    QStringList paths = sandbox.addImages(3, QStringLiteral("trip"));
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    const auto pids = [&sandbox] {
+      QList<qint64> found;
+      for (const QByteArray& line : sandbox.log().split('\n')) {
+        if (!line.isEmpty()) found.append(line.toLongLong());
+      }
+      return found;
+    };
+    const auto running = [](qint64 pid) {
+      return QFileInfo::exists(QStringLiteral("/proc/%1").arg(pid));
+    };
+
+    {
+      CaptureModel model(&settings);
+      QTRY_COMPARE_WITH_TIMEOUT(model.rowCount(), paths.size(), 5000);
+      MediaMetadataIndex dates(&model);
+      QTRY_COMPARE_WITH_TIMEOUT(pids().size(), 1, 5000);
+      const qint64 first = pids().first();
+      QVERIFY(running(first));
+
+      // The folder goes away: its probe stops instead of running out its
+      // timeout, and indexing ends.
+      QVERIFY(QDir(sandbox.media() + QStringLiteral("/trip")).removeRecursively());
+      model.refresh();
+      QTRY_COMPARE_WITH_TIMEOUT(model.rowCount(), 0, 5000);
+      QTRY_VERIFY_WITH_TIMEOUT(!dates.indexing(), 3000);
+      QTRY_VERIFY_WITH_TIMEOUT(!running(first), 3000);
+      QCOMPARE(pids().size(), 1);
+
+      // New files are still read afterwards.
+      paths = sandbox.addImages(2, QStringLiteral("later"));
+      model.refresh();
+      QTRY_COMPARE_WITH_TIMEOUT(pids().size(), 2, 5000);
+      QVERIFY(dates.indexing());
+
+      // Quitting stops a running probe at once.
+      const qint64 second = pids().last();
+      QVERIFY(running(second));
+      QElapsedTimer quitting;
+      quitting.start();
+      dates.requestStop();
+      QTRY_VERIFY_WITH_TIMEOUT(!running(second), 2000);
+      QVERIFY(quitting.elapsed() < 2000);
+    }
+    QCOMPARE(pids().size(), 2);
+  }
+
+  void metadataProgressIsThrottledAndUpdatesAreBatched() {
+    MetadataSandbox sandbox("/bin/sleep 0.15\nrecords \"$@\"\n");
+    QVERIFY(sandbox.valid());
+    const QStringList paths = sandbox.addImages(32 * 24);
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QTRY_COMPARE_WITH_TIMEOUT(model.rowCount(), paths.size(), 5000);
+    QSignalSpy changes(&model, &QAbstractItemModel::dataChanged);
+
+    QElapsedTimer elapsed;
+    elapsed.start();
+    MediaMetadataIndex dates(&model);
+    QSignalSpy progress(&dates, &MediaMetadataIndex::progressChanged);
+    QList<int> published;
+    connect(&dates, &MediaMetadataIndex::progressChanged, this,
+            [&] { published.append(dates.completed()); });
+    QTRY_VERIFY_WITH_TIMEOUT(dates.indexing(), 2000);
+    QTRY_VERIFY_WITH_TIMEOUT(!dates.indexing(), 30000);
+    const qint64 took = elapsed.elapsed();
+    QCOMPARE(dates.completed(), paths.size());
+    // The count shown is the final one, and it changed about once a second
+    // rather than once per finished batch.
+    QVERIFY(!published.isEmpty());
+    QCOMPARE(published.last(), paths.size());
+    const qsizetype allowed = 3 + took / MediaMetadataIndex::kProgressIntervalMs;
+    QVERIFY2(progress.size() <= allowed && progress.size() < 24,
+             qPrintable(QStringLiteral("%1 updates in %2 ms").arg(progress.size()).arg(took)));
+
+    // Rows reach the model in a few spans, not one notification per row.
+    QSet<int> rows;
+    for (const auto& change : std::as_const(changes)) {
+      for (int row = change.at(0).value<QModelIndex>().row();
+           row <= change.at(1).value<QModelIndex>().row(); ++row) {
+        rows.insert(row);
+      }
+    }
+    QCOMPARE(rows.size(), paths.size());
+    QVERIFY2(changes.size() <= 24, qPrintable(QString::number(changes.size())));
+    qInfo() << "PERF throttled progress" << progress.size() << "spans" << changes.size() << "ms"
+            << took;
+  }
+
+  void supersededEmptyScanDoesNotReportAnEmptyLibrary() {
+    // The usual folders are empty; the files are in a folder passed when the
+    // library opens, which supersedes the scan already under way.
+    MetadataSandbox sandbox("records \"$@\"\n");
+    QVERIFY(sandbox.valid());
+    QTemporaryDir opened;
+    QVERIFY(opened.isValid());
+    QImage image(4, 4, QImage::Format_RGB32);
+    image.fill(Qt::red);
+    QVERIFY(image.save(opened.filePath(QStringLiteral("a.png")), "PNG"));
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QVERIFY(model.scanning());
+    QList<int> settledCounts;
+    connect(&model, &CaptureModel::scanningChanged, this, [&] {
+      if (!model.scanning()) settledCounts.append(model.rowCount());
+    });
+    model.setExtraRoot(opened.path());
+    QTRY_COMPARE_WITH_TIMEOUT(model.rowCount(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!model.scanning(), 5000);
+    // Scanning ends once, with the folder's file already in place.
+    QCOMPARE(settledCounts, QList<int> {1});
   }
 
   void mpvHandoffIncludesPosition() {
