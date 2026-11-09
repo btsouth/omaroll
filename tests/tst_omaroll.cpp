@@ -1942,7 +1942,9 @@ private slots:
     const QStringList bare =
         Diagnostics::report(empty, QStringLiteral("none (command line)"), QString(), 0).split(u'\n');
     QVERIFY(bare.contains(QStringLiteral("Omarchy: development checkout")));
-    QVERIFY(bare.contains(QStringLiteral("Hyprland: not installed")));
+    // No pacman database: absent from it says nothing.
+    QVERIFY(bare.contains(QStringLiteral("Hyprland: unknown")));
+    QVERIFY(bare.filter(QStringLiteral("Hyprland config")).isEmpty());
     QVERIFY(bare.contains(QStringLiteral("GPU: not found")));
     QCOMPARE(bare.filter(QStringLiteral("VA-API: ")).size(), 1);
     QVERIFY(bare.filter(QStringLiteral("Scale factor")).isEmpty());
@@ -1955,6 +1957,112 @@ private slots:
     empty.omarchyPath.clear();
     QVERIFY(Diagnostics::missing(empty).size() > 10);
     QCOMPARE(Diagnostics::themeName(empty), QStringLiteral("not found"));
+  }
+
+  void diagnosticsAskHyprctlWhenPacmanCannotSay() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString sleep = QStandardPaths::findExecutable(QStringLiteral("sleep"));
+    QVERIFY(!sleep.isEmpty());
+    const QString bin = root.filePath(QStringLiteral("bin"));
+    QVERIFY(QDir().mkpath(bin));
+    // A stand-in hyprctl on PATH, run by the real runner. It logs each call.
+    const auto fakeHyprctl = [&](const QByteArray& body) {
+      QFile script(bin + QStringLiteral("/hyprctl"));
+      QVERIFY(script.open(QIODevice::WriteOnly | QIODevice::Truncate));
+      script.write("#!/bin/sh\necho \"$*\" >> '" + root.filePath(QStringLiteral("calls")).toUtf8() +
+                   "'\n" + body);
+      script.close();
+      script.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    };
+    const auto calls = [&] {
+      QFile log(root.filePath(QStringLiteral("calls")));
+      return log.open(QIODevice::ReadOnly) ? QString::fromUtf8(log.readAll()).trimmed() : QString();
+    };
+    const QByteArray previousPath = qgetenv("PATH");
+    const QByteArray previousSignature = qgetenv("HYPRLAND_INSTANCE_SIGNATURE");
+    const auto restore = qScopeGuard([&] {
+      qputenv("PATH", previousPath);
+      previousSignature.isNull() ? qunsetenv("HYPRLAND_INSTANCE_SIGNATURE")
+                                 : qputenv("HYPRLAND_INSTANCE_SIGNATURE", previousSignature);
+    });
+    qputenv("PATH", bin.toUtf8());
+    qputenv("HYPRLAND_INSTANCE_SIGNATURE", "test");
+
+    // A container without pacman's database, as a bug reporter's may be.
+    QVERIFY(QDir().mkpath(root.filePath(QStringLiteral("share"))));
+    {
+      QFile version(root.filePath(QStringLiteral("share/version")));
+      QVERIFY(version.open(QIODevice::WriteOnly));
+      version.write("4.0.0.alpha\n");
+    }
+    Diagnostics::Sources sources = Diagnostics::Sources::system();
+    QVERIFY(sources.hyprlandRunning);
+    sources.pacmanLocal = root.filePath(QStringLiteral("none"));
+    sources.omarchyPath.clear();
+    sources.omarchyInstalled = root.filePath(QStringLiteral("share"));
+    const auto report = [&] {
+      return Diagnostics::report(sources, QStringLiteral("none (command line)"), QString(), 0).split(u'\n');
+    };
+
+    fakeHyprctl("case \"$*\" in\n"
+                "  '-j version') printf '{\"version\":\"0.57.1\",\"tag\":\"v0.57.1\"}' ;;\n"
+                "  '-j status') printf '{\"configProvider\":\"lua\",\"backend\":\"wayland\"}' ;;\n"
+                "  *) exit 1 ;;\n"
+                "esac\n");
+    QStringList lines = report();
+    QVERIFY2(lines.contains(QStringLiteral("Hyprland: 0.57.1 (from hyprctl)")), qPrintable(lines.join(u'\n')));
+    QVERIFY2(lines.contains(QStringLiteral("Hyprland config: lua (hyprland.lua)")), qPrintable(lines.join(u'\n')));
+    QVERIFY2(lines.contains(QStringLiteral("Omarchy: unknown (version file says 4.0.0.alpha)")),
+             qPrintable(lines.join(u'\n')));
+    QVERIFY(lines.filter(QStringLiteral("Session: ")).first().endsWith(u", Hyprland running"));
+    QVERIFY(!lines.join(u'\n').contains(root.path()));
+
+    // An older hyprctl with only a tag, and no status request.
+    fakeHyprctl("case \"$*\" in\n"
+                "  '-j version') printf '{\"tag\":\"v0.48.0\"}' ;;\n"
+                "  *) echo unknown request ;;\n"
+                "esac\n");
+    lines = report();
+    QVERIFY2(lines.contains(QStringLiteral("Hyprland: 0.48.0 (from hyprctl)")), qPrintable(lines.join(u'\n')));
+    QVERIFY2(lines.contains(QStringLiteral("Hyprland config: unknown")), qPrintable(lines.join(u'\n')));
+
+    // Failing, then hanging: unknown, not "not installed" or empty.
+    fakeHyprctl("echo 'Could not connect to Hyprland' >&2\nexit 1\n");
+    lines = report();
+    QVERIFY2(lines.contains(QStringLiteral("Hyprland: unknown")), qPrintable(lines.join(u'\n')));
+    QVERIFY(lines.contains(QStringLiteral("Hyprland config: unknown")));
+    fakeHyprctl("exec '" + sleep.toUtf8() + "' 5\n");
+    QElapsedTimer timer;
+    timer.start();
+    QCOMPARE(Diagnostics::hyprlandVersion(sources), QStringLiteral("unknown"));
+    QVERIFY2(timer.elapsed() < 4000, qPrintable(QString::number(timer.elapsed())));
+
+    // A pacman package wins, and hyprctl is not asked for the version.
+    QVERIFY(QDir().mkpath(root.filePath(QStringLiteral("local/hyprland-0.57.1-2"))));
+    QVERIFY(QDir().mkpath(root.filePath(QStringLiteral("local/omarchy-3.2.0-1"))));
+    sources.pacmanLocal = root.filePath(QStringLiteral("local"));
+    QFile::remove(root.filePath(QStringLiteral("calls")));
+    QCOMPARE(Diagnostics::hyprlandVersion(sources), QStringLiteral("0.57.1-2"));
+    QCOMPARE(Diagnostics::omarchyVersion(sources), QStringLiteral("3.2.0-1 (omarchy)"));
+    QCOMPARE(calls(), QString());
+
+    // Not running: hyprctl is never run. A database without Hyprland means
+    // it isn't installed; no database means nobody can say.
+    sources.hyprlandRunning = false;
+    QVERIFY(QDir(root.filePath(QStringLiteral("local/hyprland-0.57.1-2"))).removeRecursively());
+    lines = report();
+    QVERIFY2(lines.contains(QStringLiteral("Hyprland: not installed")), qPrintable(lines.join(u'\n')));
+    QVERIFY(lines.filter(QStringLiteral("Hyprland config")).isEmpty());
+    sources.pacmanLocal = root.filePath(QStringLiteral("none"));
+    QCOMPARE(Diagnostics::hyprlandVersion(sources), QStringLiteral("unknown"));
+    QCOMPARE(calls(), QString());
+
+    // Running, but hyprctl isn't installed.
+    sources.hyprlandRunning = true;
+    QVERIFY(QFile::remove(bin + QStringLiteral("/hyprctl")));
+    QCOMPARE(Diagnostics::hyprlandVersion(sources), QStringLiteral("unknown"));
+    QCOMPARE(Diagnostics::hyprlandConfig(sources), QStringLiteral("unknown"));
   }
 
   void windowRulesOfferStaysDismissed() {

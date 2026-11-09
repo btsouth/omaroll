@@ -9,14 +9,16 @@
 
 // The text behind Copy diagnostics and `omaroll --diagnostics`. Only bounded
 // identifiers and presence flags: never executable paths, environment values,
-// media names or user data. Everything is read from files that need no root
-// and no running compositor, so it also works when no window can open.
+// media names or user data. Nearly everything is read from files that need no
+// root and no running compositor, so it also works when no window can open.
+// Only a running Hyprland is asked, through hyprctl, for what the files miss.
 namespace Diagnostics {
 
 // Where the facts come from. Tests point these at fake trees.
 struct Sources {
   QString pacmanLocal = QStringLiteral("/var/lib/pacman/local");
-  QString omarchyPath;  // $OMARCHY_PATH, else /usr/share/omarchy
+  QString omarchyPath;  // $OMARCHY_PATH, else omarchyInstalled
+  QString omarchyInstalled = QStringLiteral("/usr/share/omarchy");
   QString drm = QStringLiteral("/sys/class/drm");
   QString modules = QStringLiteral("/sys/module");
   // Render nodes, and where libva looks for drivers: $LIBVA_DRIVERS_PATH,
@@ -39,6 +41,11 @@ struct Sources {
   // when the data is there instead.
   QString tessdataBelowPrefix;
   QString ocrLanguages = QStringLiteral("eng");
+  // $HYPRLAND_INSTANCE_SIGNATURE is set. hyprctl runs hyprctl from PATH with
+  // these arguments and returns what it printed, or nothing when it is
+  // missing, fails or takes over a second.
+  bool hyprlandRunning = false;
+  std::function<QByteArray(const QStringList&)> hyprctl;
 
   static Sources system();
 };
@@ -61,8 +68,14 @@ QVariantList missing(const Sources& sources);
 
 // "0.57.1-2" for an installed pacman package, empty when absent.
 QString packageVersion(const QString& pacmanLocal, const QString& name);
+// Each says "unknown" when there is no pacman database to read and nothing
+// else answers, rather than "not installed" or a version file's guess.
 QString omarchyVersion(const Sources& sources);
+// Falls back to `hyprctl -j version` while Hyprland is running.
 QString hyprlandVersion(const Sources& sources);
+// Which config Hyprland loaded, from `hyprctl -j status`: "lua
+// (hyprland.lua)", or "unknown" when it doesn't say.
+QString hyprlandConfig(const Sources& sources);
 // One line per display adapter: vendor, PCI id, kernel driver and version.
 QStringList graphics(const Sources& sources);
 // VA-API: the installed VA drivers by name ("radeonsi, iHD"), or why video

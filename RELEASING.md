@@ -17,6 +17,8 @@ has built successfully and the public artifacts have been verified.
    and signed provenance. Pull requests that change packaging run the same
    workflow without publishing.
 7. Download the public artifacts and verify their checksums before announcing.
+8. Check that the Pages run the release started has deployed the homepage from
+   the new tag. The site only follows releases; run Pages by hand to redeploy.
 
 Record the exact candidate commit and any untested hardware or desktop behavior.
 Upstream package acceptance and MIME defaults remain separate from releasing.

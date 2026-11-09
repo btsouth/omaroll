@@ -39,8 +39,7 @@ Everything works locally, without accounts or telemetry.
 
 3. Double-click a picture or video in your file manager, or run
    `omaroll photo.jpg`. Run `omaroll` on its own for the library.
-4. Press `?` or `F1` in the library or the viewer for its shortcuts. Close any
-   open sheet or menu first.
+4. Press `?` or `F1` in the library or the viewer for its shortcuts.
 5. Optional: Omarchy dims every window a little. To keep pictures at full
    opacity and float the viewer, add Omaroll's Hyprland rules.
    `omaroll --remove-window-rules` takes them out, and Settings has the same
@@ -130,21 +129,8 @@ types could not be changed; add `--verbose` to list every type.
 manager.
 Settings has the same choice as **Set as default** and **Restore previous
 apps**, and says how many types changed and which apps were replaced.
-Restoring puts each line of `mimeapps.list` (in `$XDG_CONFIG_HOME`, or
-`~/.config` when that is unset or empty) back as it was and removes what
-Omaroll added, including a `[Default Applications]` section or a whole file
-that was not there before, so setting and restoring any number of times leaves
-the file unchanged. The exceptions: restoring takes Omaroll out of that file
-for the types it restores (pictures and videos, or PDFs with `pdf`), so an
-Added Associations entry for Omaroll that you wrote yourself goes too, while
-Removed Associations entries stay. It does the same in the desktop's own list
-beside it, such as `hyprland-mimeapps.list`, and in the lists in
-`~/.local/share/applications`, without putting anything back there. And an
-app you chose after `--set-default` stays your choice. Types that had no
-setting of yours to put back keep their system default, and the summary counts
-them. What `--set-default` replaced is kept in
-`~/.config/omaroll/mime-defaults.ini`; a record left in `~/.config/Omaroll` by
-an older version moves there on the next run.
+Restoring puts your `mimeapps.list` back as it was, and types you had set
+nothing for keep their system default. `man omaroll` has the details.
 
 To open a picture or video from a terminal:
 
@@ -275,17 +261,9 @@ Every viewer shortcut is listed in [Shortcuts](docs/shortcuts.md#viewer), and
   after confirmation, as one step Undo puts back.
 - **Share and hand off.** Drag actual files into another app, copy images or
   text, send with LocalSend or Taildrop, and open specialist tools for trimming,
-  annotation, conversion and editing. A copied JPEG goes on as itself and as
-  PNG, so it can show up in Omarchy's clipboard history while apps that take
-  JPEG still get the original bytes. A WebP, HEIC, AVIF, JPEG XL, GIF or other
-  picture Qt reads goes on as a file reference, which pastes as its URI in a
-  terminal, with a PNG beside it (the first frame for an animation). The PNG is
-  added for pictures of up to 24 megapixels that fit the image memory limit,
-  and the history waits two seconds for it, so on a slow machine a large photo
-  may still be missed. It needs a compositor with ext-data-control, which
-  Omarchy's Hyprland has. Elsewhere, and for larger pictures, there is no PNG:
-  a JPEG goes on as JPEG only and other formats as a file reference only. Both
-  paste as before, but the history keeps no picture of them.
+  annotation, conversion and editing. A copied picture also goes on as PNG, so
+  it shows up in Omarchy's clipboard history; [Library actions](docs/actions.md#copying-pictures)
+  has the limits.
 - **Media keys and players.** A playing video answers media keys and the
   shell's player controls, with a poster frame as its cover art.
 - **Present and finish.** Run a fullscreen slideshow, choose a screenshot
@@ -399,22 +377,14 @@ This writes a copy of `/usr/share/omaroll/hypr/omaroll.lua` to
 loads it if it is there.
 `omaroll --remove-window-rules` takes both out again, leaving `hyprland.lua`
 exactly as it was, and **Hyprland window rules** in Settings does either. The
-empty library offers installation once, until installed or dismissed, and
-`--set-default` points to the command too. It
-needs Omarchy's Lua Hyprland config. A line of your own that only says
-`require("hypr.omaroll")` is removed too; any other line that loads the rules is
-reported and left for you to edit. A `~/.config/hypr/omaroll.lua` you wrote
-yourself is never replaced or removed.
+empty library offers installation once, until installed or dismissed. It needs
+Omarchy's Lua Hyprland config; `man omaroll` covers lines and files of your own.
 
-When a second viewer opens on the same workspace, Omaroll tiles it and the
-viewers already there (each Omaroll tiles its own viewers; normally one Omaroll
-holds them all), so your layout arranges them instead of stacking them in
-the middle. They stay tiled as the others close; the next viewer opened on its
-own floats again. This is on purpose: a viewer that tiles beside another one
-does not mean the float rule failed.
-A viewer opened this way maps under the library's title, "Omaroll", for a
-moment before taking its own, so rules you have keyed on that exact title also
-apply to it.
+A second viewer opened on the same workspace tiles with the ones already there
+instead of stacking in the middle. That is on purpose, not a failed float rule;
+the next viewer opened on its own floats again. A viewer opened this way maps
+under the library's title, "Omaroll", for a moment, so rules keyed on that
+title also apply to it.
 
 ## First run
 

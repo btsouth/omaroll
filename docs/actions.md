@@ -26,7 +26,7 @@ and **About** in Settings lists every missing tool with its `pacman` command.
 | PDF | Open document *(default)* | `sushi` |
 | Any | Open in Omaroll · Albums and tags | native |
 | Any | Rename in place | native, extension preserved |
-| Any | Copy image or file | PNG pixels; a JPEG as itself and, up to 24 MP where the compositor has ext-data-control, as PNG so it reaches clipboard history (otherwise JPEG only, which the history skips); other formats as file URIs (`wl-copy`) |
+| Any | Copy image or file | the picture, with a PNG for clipboard history ([details](#copying-pictures)); other files as file URIs (`wl-copy`) |
 | Any | Send with LocalSend | `omarchy-menu-share` |
 | Any | Send to a machine | `omarchy-tailscale-send`, after picking the machine |
 | Any | Show in file manager | select the file in the configured folder handler when supported, or open its folder through `xdg-open` |
@@ -100,3 +100,18 @@ menu for other actions. Copy path and Copy file name copy plain text for the ope
 entry, preserving a symlink's name and path.
 
 ![The gallery preview with its inspector tucked away](detail.png)
+
+## Copying pictures
+
+A copied JPEG goes on as itself and as PNG, so it can show up in Omarchy's
+clipboard history while apps that take JPEG still get the original bytes. A
+WebP, HEIC, AVIF, JPEG XL, GIF or other picture Qt reads goes on as a file
+reference, which pastes as its URI in a terminal, with a PNG beside it (the
+first frame for an animation).
+
+The PNG is added for pictures of up to 24 megapixels that fit the image memory
+limit, and the history waits two seconds for it, so on a slow machine a large
+photo may still be missed. It needs a compositor with ext-data-control, which
+Omarchy's Hyprland has. Elsewhere, and for larger pictures, there is no PNG: a
+JPEG goes on as JPEG only and other formats as a file reference only. Both
+paste as before, but the history keeps no picture of them.

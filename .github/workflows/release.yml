@@ -223,6 +223,7 @@ jobs:
       contents: write
       id-token: write
       attestations: write
+      actions: write
     env:
       VERSION: ${{ needs.source.outputs.version }}
     steps:
@@ -276,3 +277,9 @@ jobs:
           --repo "$GITHUB_REPOSITORY"
           --title "Omaroll $VERSION"
           --notes-file RELEASE_NOTES.md
+      # The homepage follows releases. A dispatch is the one event the
+      # workflow token can start.
+      - name: Deploy the homepage
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main -f ref="$GITHUB_REF_NAME"
