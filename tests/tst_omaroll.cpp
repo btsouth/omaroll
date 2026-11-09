@@ -11527,10 +11527,13 @@ private slots:
     ActionRegistry registry(&launcher);
     QVERIFY(registry.available(QStringLiteral("files"))); // No Nautilus in PATH.
     QVERIFY(registry.run(QStringLiteral("files"), path));
-    QTRY_VERIFY(QFileInfo::exists(logPath));
-    QFile log(logPath);
-    QVERIFY(log.open(QIODevice::ReadOnly));
-    QCOMPARE(QString::fromUtf8(log.readAll()), folder + QLatin1Char('\n'));
+    // The shell creates the log before printf writes it, so read it afresh
+    // until it holds the line.
+    const auto logged = [&logPath] {
+      QFile log(logPath);
+      return log.open(QIODevice::ReadOnly) ? QString::fromUtf8(log.readAll()) : QString();
+    };
+    QTRY_COMPARE(logged(), folder + QLatin1Char('\n'));
   }
 
   void fileActionPromptsRejectReplacementAndInPlaceChanges_data() {
