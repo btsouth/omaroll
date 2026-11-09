@@ -2046,9 +2046,9 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_C);
     QTRY_VERIFY(captions->property("active").toBool());
     QCOMPARE(player->activeSubtitleTrack(), 0);
-    player->pause();
     player->setPosition(1001);
     QTRY_VERIFY(player->videoSink()->subtitleText().contains(QStringLiteral("Omaroll subtitle test")));
+    player->pause();
     auto* overlay = item(QStringLiteral("viewerSubtitles"));
     QTRY_VERIFY(overlay->isVisible());
     if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
