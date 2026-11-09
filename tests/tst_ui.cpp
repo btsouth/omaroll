@@ -2568,7 +2568,9 @@ private slots:
       QVERIFY(m_settings->addLibraryFolder(QUrl::fromLocalFile(path)));
       paths.append(path);
     }
-    QTRY_VERIFY_WITH_TIMEOUT(m_library->folders().contains(paths.constLast()), 5000);
+    // Each added folder asks for a scan; read the library once they are done.
+    rescan();
+    QTRY_VERIFY(m_library->folders().contains(paths.constLast()));
     m_window->resize(560, 420);
     QObject* browser = m_window->findChild<QObject*>(QStringLiteral("libraryBrowser"));
     QVERIFY(QMetaObject::invokeMethod(browser, "open"));
