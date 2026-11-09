@@ -244,9 +244,15 @@ Finding videoFailure(const QString& path, const QString& playerError, const QStr
   const QMimeType named = mimes.mimeTypeForFile(path, QMimeDatabase::MatchExtension);
   const QString namedFormat = named.isValid() && !named.isDefault() ? named.comment()
                                                                     : QStringLiteral("video");
+  // Some video containers have application/ types: ASF (WMV), MXF and
+  // RealMedia. A content type the name's own type builds on counts as well.
   const bool media = content.name().startsWith(u"video/") || content.name().startsWith(u"audio/") ||
                      content.inherits(QStringLiteral("video/x-matroska")) ||
-                     content.inherits(QStringLiteral("application/ogg"));
+                     content.inherits(QStringLiteral("application/ogg")) ||
+                     content.inherits(QStringLiteral("application/vnd.ms-asf")) ||
+                     content.inherits(QStringLiteral("application/mxf")) ||
+                     content.inherits(QStringLiteral("application/vnd.rn-realmedia")) ||
+                     (named.isValid() && named.inherits(content.name()));
   if (content.isValid() && !content.isDefault() && !media) {
     return {QStringLiteral("not-video"), QStringLiteral("This file isn't a video"),
             QStringLiteral("Its contents look like %1, not %2.")

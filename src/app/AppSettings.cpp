@@ -98,7 +98,6 @@ constexpr int kMaximumResumeEntries = 500;
 constexpr qint64 kMinimumResumeMs = 5000;
 constexpr auto kOrganizationFormat = "omaroll.organization";
 // Today's snapshot is taken again this long after the last organization change.
-constexpr int kSnapshotRefreshMs = 3 * 60 * 1000;
 constexpr qint64 kMaximumOrganizationBytes = 16 * 1024 * 1024;
 
 QString normalizedFolder(const QString& path, bool mustExist) {
@@ -469,7 +468,6 @@ AppSettings::AppSettings(QObject* parent)
   m_healthPoll.setInterval(25);
   connect(&m_healthPoll, &QTimer::timeout, this, &AppSettings::applyOrganizationHealth);
   m_snapshotRefresh.setSingleShot(true);
-  m_snapshotRefresh.setInterval(kSnapshotRefreshMs);
   connect(&m_snapshotRefresh, &QTimer::timeout, this, [this] {
     if (!m_snapshotDirty || snapshotsHeld()) return;
     m_snapshotDirty = false;
@@ -1690,7 +1688,10 @@ void AppSettings::checkOrganizationHealth(bool existingProfile) {
   // the report's own mutex.
   m_healthPoll.start();
   m_backupWriter->post([report = m_health, path = backupDirectory(), today] {
-    for (const QDate& day : {today, today.addDays(-1)}) {
+    // The newest daily snapshot within the week the dailies are kept, so a
+    // profile damaged after a few days away is still caught.
+    for (int back = 0; back < 7; ++back) {
+      const QDate day = today.addDays(-back);
       QFile file(QDir(path).filePath(QStringLiteral("daily-%1.json").arg(day.toString(Qt::ISODate))));
       if (file.size() > kMaximumOrganizationBytes || !file.open(QIODevice::ReadOnly)) continue;
       const QJsonDocument document = QJsonDocument::fromJson(file.read(kMaximumOrganizationBytes));
@@ -1728,8 +1729,11 @@ void AppSettings::applyOrganizationHealth() {
   if (settingsStatus() == QSettings::NoError && looksIncomplete(loaded, size)) {
     m_organizationSuspect = true;
     m_suspectSnapshot = snapshot;
-    const QString day = date == QDate::currentDate() ? QStringLiteral("today's backup")
-                                                     : QStringLiteral("yesterday's backup");
+    const QDate today = QDate::currentDate();
+    const QString day = date == today ? QStringLiteral("today's backup")
+                        : date == today.addDays(-1)
+                            ? QStringLiteral("yesterday's backup")
+                            : QStringLiteral("the backup from %1").arg(QLocale().toString(date, QStringLiteral("d MMMM")));
     m_launchWarning = QStringLiteral("Your albums, tags and marks look incomplete: %1 has %2 %3, and only %4 loaded. "
                                      "Restore the backup? What is here now is kept in a backup first.")
                           .arg(day)
@@ -1741,10 +1745,18 @@ void AppSettings::applyOrganizationHealth() {
     return;
   }
   if (m_snapshotAfterHealth) scheduleDailySnapshot();
-  if (m_snapshotDirty) m_snapshotRefresh.start();
+  if (m_snapshotDirty) startSnapshotRefresh();
+}
+
+void AppSettings::startSnapshotRefresh() {
+  const qint64 left = m_snapshotDirtySince.isValid()
+                          ? m_snapshotMaxWait - m_snapshotDirtySince.elapsed()
+                          : m_snapshotMaxWait;
+  m_snapshotRefresh.start(static_cast<int>(std::clamp<qint64>(left, 0, m_snapshotRefreshDelay)));
 }
 
 void AppSettings::noteOrganizationSaved() {
+  if (!m_snapshotDirty) m_snapshotDirtySince.start();
   m_snapshotDirty = true;
   if (snapshotsHeld()) {
     m_snapshotAfterHealth = true;
@@ -1752,7 +1764,7 @@ void AppSettings::noteOrganizationSaved() {
   }
   // Today's first snapshot is taken now; later changes refresh it once they settle.
   if (m_snapshotDate != QDate::currentDate()) scheduleDailySnapshot();
-  m_snapshotRefresh.start();
+  startSnapshotRefresh();
 }
 
 void AppSettings::keepCurrentOrganization() {

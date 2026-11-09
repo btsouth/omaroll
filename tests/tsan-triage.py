@@ -97,11 +97,43 @@ def frame_functions(frames):
     return out
 
 
+# A lambda's capture block being moved or copied, "Class::method()::$_0::$_0(".
+CAPTURE_COPY = re.compile(r"::\$_\d+::\$_\d+\(")
+# A copy or move constructor, "X::X(X const&)" or "X::X(X&&)", the only code of
+# ours that copying a capture runs.
+COPY_CONSTRUCTOR = re.compile(r"(?:^|::)(\w+)(?:<.*>)?::\1\((?:[\w:]*::)?\1(?:<.*>)?(?: const&|&&)\)")
+FRAME_SOURCE = re.compile(r"^\s*#\d+ .*? (/\S+):\d+")
+
+
+def handing_over(task):
+    """The pooled side is still taking the task over: reading its vtable
+    (RunFunctionTaskBase::run is the first frame), or copying the captures out
+    of the stored call, with only Qt and libstdc++ headers and copy
+    constructors on the way. Our own lambda body running is not this."""
+    functions = frame_functions(task)
+    if functions and TASK_RUN.search(functions[0][0]) and "RunFunctionTaskBase" in functions[0][0]:
+        return True
+    for index, frame in enumerate(task):
+        if not CAPTURE_COPY.search(frame):
+            continue
+        if not any("runFunctor" in later for later in task[index + 1:index + 6]):
+            return False
+        for earlier in task[:index]:
+            source = FRAME_SOURCE.match(earlier)
+            match = FRAME.match(earlier)
+            header = source is not None and source.group(1).startswith("/usr/")
+            copy = match is not None and COPY_CONSTRUCTOR.search(match.group(1))
+            if not header and not copy:
+                return False
+        return True
+    return False
+
+
 def task_start_handoff(stacks):
     if len(stacks) != 2:
         return False
     for task, other in (stacks, stacks[::-1]):
-        if not any(TASK_RUN.search(frame) for frame in task):
+        if not any(TASK_RUN.search(frame) for frame in task) or not handing_over(task):
             continue
         if any(TASK_START.search(frame) for frame in other):
             return True
@@ -141,16 +173,48 @@ def made_by_library(frames):
     return False
 
 
-def qt_internal(stacks):
-    """One side is Qt alone and the other access happened inside a library
-    call too. Two of our threads racing on a QString both show our frames
-    under the Qt call, so they never match."""
+def allocated_as_qimage(block):
+    """The memory is a QImage's pixel buffer, which Qt's own threads convert
+    and encode (QImage's threaded conversions, the PNG writer)."""
+    location = re.search(r"^  Location is heap block .* allocated by [^\n]*:\n((?:\s*#\d+ .*\n?)+)",
+                         block, re.M)
+    if not location:
+        return False
+    function, module = first_frame(location.group(1).splitlines())
+    return function is not None and module.startswith("libQt6Gui") and function.startswith("QImageData::")
+
+
+def qt_internal(block, stacks):
+    """Both sides are Qt alone, or one side is Qt alone working on a QImage's
+    pixels while the other is inside a library call on the same image.
+
+    Qt has no frame pointers, so a pooled thread of ours that races on a
+    QString through Qt calls can also look Qt-only. When the other side has
+    frames of ours below the library call, only image work is let through: a
+    QImage's pixel buffer, or both accesses inside libQt6Gui, where QImage's
+    threaded conversions and QPainter's threaded fills run. Strings, byte
+    arrays and containers live in libQt6Core and still fail. The residual
+    risk is our own pooled code racing on a QImage it shares non-const, which
+    implicit sharing makes rare."""
     if len(stacks) != 2:
         return False
     for one, other in (stacks, stacks[::-1]):
-        if qt_only(one) and (qt_only(other) or made_by_library(other)):
+        if not qt_only(one):
+            continue
+        if qt_only(other):
+            return True
+        if made_by_library(other) and (allocated_as_qimage(block)
+                                       or (library_module(one) == "libQt6Gui"
+                                           and library_module(other) == "libQt6Gui")):
             return True
     return False
+
+
+def library_module(frames):
+    """The library of the first frame past the interceptors, without its
+    version suffix: libQt6Gui for "libQt6Gui.so.6"."""
+    _, module = first_frame(frames)
+    return module.split(".so", 1)[0] if module else None
 
 
 def qt_descriptor_reuse(block, stacks):
@@ -187,7 +251,7 @@ def classify(block):
     if any(names.get(thread) in KNOWN_QT_THREADS for thread in threads):
         return "external"
     if (task_start_handoff(stacks) or pool_bookkeeping(block, stacks, threads)
-            or qt_internal(stacks) or qt_descriptor_reuse(block, stacks)):
+            or qt_internal(block, stacks) or qt_descriptor_reuse(block, stacks)):
         return "external"
     for frames in stacks:
         function, module = first_frame(frames)

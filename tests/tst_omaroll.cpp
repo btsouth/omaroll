@@ -3538,6 +3538,29 @@ private slots:
         .filePath(QStringLiteral("daily-%1.json").arg(QDate::currentDate().toString(Qt::ISODate)));
   }
 
+  // Steady editing keeps postponing the refresh, but never past its cap, so a
+  // long session that ends in a crash still has most of its changes saved.
+  void todaysSnapshotRefreshesDuringSteadyEditing() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto reset = scratchProfile(dir);
+    AppSettings settings;
+    QVERIFY(settings.createAlbum(QStringLiteral("Start")));
+    settings.flushBackups();
+    settings.setBackupRefreshDelay(400);
+    settings.setBackupRefreshMaxWait(600);
+    QElapsedTimer editing;
+    editing.start();
+    bool saved = false;
+    for (int n = 0; editing.elapsed() < 3000 && !saved; ++n) {
+      QVERIFY(settings.createTag(QStringLiteral("steady%1").arg(n)));
+      QTest::qWait(100);
+      settings.flushBackups();
+      saved = readAllOf(todaysSnapshot(settings)).contains("steady0");
+    }
+    QVERIFY2(saved, "the refresh waited for the editing to stop");
+  }
+
   // Organization made after the day's first snapshot is in today's snapshot
   // once it settles, and at a clean exit, so a restore brings it back.
   void todaysSnapshotFollowsLaterChanges() {
@@ -3621,6 +3644,38 @@ private slots:
       QVERIFY(settings.launchWarning().isEmpty());
       QVERIFY(!settings.canRestoreOrganization());
     }
+  }
+
+  // After a few days away the newest snapshot of the week is the one to check
+  // against, not only today's and yesterday's.
+  void launchChecksTheNewestSnapshotOfTheWeek() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto reset = scratchProfile(dir);
+    const QString file = dir.filePath(QStringLiteral("away.jpg"));
+    writeSmallFile(file, "away");
+    QString backups;
+    {
+      AppSettings settings;
+      settings.setFavorite({file}, true);
+      QVERIFY(settings.createAlbum(QStringLiteral("Before the trip")));
+      settings.flushBackups();
+      backups = settings.backupDirectory();
+    }
+    const QDate today = QDate::currentDate();
+    QDir folder(backups);
+    const QString daily = QStringLiteral("daily-%1.json");
+    QVERIFY(folder.rename(daily.arg(today.toString(Qt::ISODate)),
+                          daily.arg(today.addDays(-3).toString(Qt::ISODate))));
+    damage(settingsFile(), "[library]\nsortMode=3\n");
+    AppSettings settings;
+    settings.flushBackups();
+    QVERIFY2(settings.launchWarning().contains(QStringLiteral("the backup from")),
+             qPrintable(settings.launchWarning()));
+    const auto result = settings.restoreLastGoodBackup();
+    QVERIFY2(result.value(QStringLiteral("ok")).toBool(), qPrintable(result.value(QStringLiteral("message")).toString()));
+    QVERIFY(settings.isFavorite(file));
+    QVERIFY(settings.albumNames().contains(QStringLiteral("Before the trip")));
   }
 
   // Keeping what loaded keeps the fuller snapshot as a before-restore copy and

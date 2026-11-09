@@ -13,6 +13,7 @@
 #include <QSet>
 #include <QSettings>
 #include <QStringList>
+#include <QElapsedTimer>
 #include <QTimer>
 #include <QUrl>
 #include <QVariantMap>
@@ -307,7 +308,8 @@ public:
   void flushBackups();
   // How long after the last organization change today's snapshot is taken
   // again. Tests shorten it.
-  void setBackupRefreshDelay(int milliseconds) { m_snapshotRefresh.setInterval(milliseconds); }
+  void setBackupRefreshDelay(int milliseconds) { m_snapshotRefreshDelay = milliseconds; }
+  void setBackupRefreshMaxWait(int milliseconds) { m_snapshotMaxWait = milliseconds; }
   [[nodiscard]] QString backupDirectory() const;
   Q_INVOKABLE [[nodiscard]] QVariantMap exportOrganization(const QString& path) const;
   // Restores by replacing the current organization. Callers should confirm
@@ -490,6 +492,12 @@ private:
   QTimer m_healthPoll;
   // A change saved since today's snapshot was last encoded.
   bool m_snapshotDirty = false;
+  // Steady editing keeps restarting the refresh; it still runs this long
+  // after the first change it has not taken.
+  QElapsedTimer m_snapshotDirtySince;
+  int m_snapshotRefreshDelay = 3 * 60 * 1000;
+  int m_snapshotMaxWait = 15 * 60 * 1000;
+  void startSnapshotRefresh();
   // Until the launch check reports, and while organization looks incomplete,
   // no snapshot is written, so a damaged load cannot replace a good backup.
   bool m_healthPending = false;
