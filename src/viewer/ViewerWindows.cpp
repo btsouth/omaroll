@@ -14,10 +14,12 @@
 #include <QQmlEngine>
 #include <QQuickWindow>
 #include <QPointer>
+#include <QScopeGuard>
 #include <QScreen>
 #include <QTimer>
 
 #include <algorithm>
+#include <utility>
 
 struct ViewerWindows::Viewer {
   explicit Viewer(QQmlEngine& engine) : context(engine.rootContext()) {
@@ -74,6 +76,10 @@ struct ViewerWindows::Viewer {
   QList<QMetaObject::Connection> connections;
   bool pending = false;
   quint64 placementGeneration = 0;
+  // The launcher's XDG activation token for the request this viewer is about
+  // to show. Placement can hold the show back while other requests arrive,
+  // so each viewer keeps its own until it is shown.
+  QByteArray activationToken;
 };
 
 ViewerWindows::ViewerWindows(QQmlEngine& engine, QObject* parent)
@@ -89,11 +95,14 @@ ViewerWindows::~ViewerWindows() {
 }
 
 QQuickWindow* ViewerWindows::open(const QStringList& files, const QHash<QString, QString>& entryPaths) {
+  // Present only while a forwarded request (or this launch) is handled.
+  const QByteArray token = qgetenv("XDG_ACTIVATION_TOKEN");
   for (const auto& viewer : m_viewers) {
     if (viewer->shows(files)) {
       QHash<QString, QString> requestedEntries;
       for (const auto& file : files) requestedEntries.insert(file, entryPaths.value(file, file));
       viewer->session.setDeletionPaths(requestedEntries);
+      if (!token.isEmpty()) viewer->activationToken = token;
       if (!viewer->pending) show(*viewer, {});
       return viewer->window;
     }
@@ -113,6 +122,7 @@ QQuickWindow* ViewerWindows::open(const QStringList& files, const QHash<QString,
   });
   viewer->session.open(files);
   viewer->session.setDeletionPaths(entryPaths);
+  viewer->activationToken = token;
   viewer->window->setProperty("mapTiled", false);
   const quint64 generation = ++viewer->placementGeneration;
   if (others) {
@@ -199,6 +209,12 @@ ViewerWindows::Viewer* ViewerWindows::create() {
 void ViewerWindows::show(Viewer& viewer, const QStringList& files,
                          const QHash<QString, QString>& entryPaths) {
   QQuickWindow* window = viewer.window;
+  // Qt's Wayland plugin reads the token from the environment when the window
+  // is shown or asks to be activated, so it is there for this window alone,
+  // and gone afterwards whether or not it was used.
+  const QByteArray token = std::exchange(viewer.activationToken, {});
+  if (!token.isEmpty()) qputenv("XDG_ACTIVATION_TOKEN", token);
+  const auto clearToken = qScopeGuard([] { qunsetenv("XDG_ACTIVATION_TOKEN"); });
   if (!files.isEmpty()) {
     viewer.session.open(files);
   }

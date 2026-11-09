@@ -191,9 +191,10 @@ SingleInstance::SingleInstance(const QString& serverName, QObject* parent)
         }
         accepted = true;
         // The launcher's token lets the window that takes the request come
-        // to the front: Qt's Wayland plugin reads it in requestActivate(),
-        // which the handlers call before they return. It is there only for
-        // that call, so a request that opened nothing, or a session without
+        // to the front: Qt's Wayland plugin reads it from the environment
+        // when that window is shown or activated. It is there only while the
+        // handlers run (a viewer still waiting for placement keeps its own
+        // copy), so a request that opened nothing, or a session without
         // Wayland, can't hand it to a later child process. The environment is
         // touched only from the GUI thread, where the windows are.
         const bool guiThread = QCoreApplication::instance() &&
