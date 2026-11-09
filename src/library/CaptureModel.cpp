@@ -751,6 +751,16 @@ void CaptureModel::adoptResults(ScanResult result) {
   }
 }
 
+#ifdef OMAROLL_TESTING
+void CaptureModel::setRecordsForTesting(QList<CaptureRecord> records) {
+  beginResetModel();
+  m_records = std::move(records);
+  endResetModel();
+  rebuildRowIndex();
+  emit countChanged();
+}
+#endif
+
 void CaptureModel::rebuildRowIndex() {
   m_rowsByPath.clear();
   m_rowsByPath.reserve(m_records.size());

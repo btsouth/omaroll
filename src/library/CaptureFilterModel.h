@@ -10,6 +10,11 @@
 #include <QVariantList>
 #include <QVariantMap>
 
+#include "search/SearchQuery.h"
+
+#include <vector>
+
+class AppSettings;
 struct CaptureRecord;
 
 // Sorting, kind filtering and search over the library.
@@ -91,6 +96,15 @@ public:
   void setSearchText(const QString& text);
   Q_INVOKABLE void queueSearchText(const QString& text);
   Q_INVOKABLE void commitPendingSearch();
+  // The plain words and phrases of the committed search, without field
+  // tokens. Text indexing only starts for these.
+  [[nodiscard]] QString textSearch() const;
+  // Values to offer for the token under the cursor: tag:, album:, in:,
+  // camera:, lens:, type:, before: and after:, or a field name for a word
+  // that starts one. Rows are {label, detail, insert, start, end, complete};
+  // replacing [start, end) with insert (plus a space when complete) accepts one.
+  Q_INVOKABLE [[nodiscard]] QVariantList searchSuggestions(const QString& text,
+                                                           int cursor) const;
 
   [[nodiscard]] bool favoritesOnly() const { return m_favoritesOnly; }
   void setFavoritesOnly(bool value);
@@ -241,13 +255,42 @@ protected:
   [[nodiscard]] bool lessThan(const QModelIndex& left, const QModelIndex& right) const override;
 
 private:
+  // Folded search fields of one source row. The raw strings are kept so a
+  // row can be checked against its record by pointer: implicitly shared text
+  // that has not been replaced is the same text.
+  struct SearchKeys {
+    QString path;
+    QString fileName;
+    QString camera;
+    QString lens;
+    QString caption;
+    quint64 organization = 0;
+    QString name;
+    QString folder;
+    QString cameraKey;
+    QString lensKey;
+    QString captionKey;
+    QString tags;
+    QString albums;
+    quint64 text = 0;
+    // Folded picture or PDF text, or empty.
+    QString ocr;
+  };
+
   void beginFilterUpdate();
   void endFilterUpdate();
   void rebuildPairing();
+  [[nodiscard]] bool manyRowsChange();
+  void applySearchText(const QString& text);
+  void reloadOrganization();
   // What emptyReason() may leave out when asking whether anything matches.
   enum Relax { RelaxNothing = 0, RelaxSearch = 1, RelaxRefinements = 2 };
-  [[nodiscard]] bool matchesFilters(const CaptureRecord& record, int relax = RelaxNothing) const;
+  [[nodiscard]] bool matchesFilters(int sourceRow, const CaptureRecord& record,
+                                    int relax = RelaxNothing) const;
   [[nodiscard]] bool anyMatches(int relax) const;
+  [[nodiscard]] bool matchesSearch(int sourceRow, const CaptureRecord& record) const;
+  [[nodiscard]] const SearchKeys& searchKeys(int sourceRow, const CaptureRecord& record) const;
+  [[nodiscard]] QString folderKey(const QString& path) const;
   [[nodiscard]] bool rebuildFolderIndex();
   [[nodiscard]] bool rebuildDateIndex();
   [[nodiscard]] bool rebuildCameraIndex();
@@ -263,6 +306,19 @@ private:
   QString m_pendingSearchText;
   QTimer m_searchTimer;
   QStringList m_searchTerms;
+  SearchQuery m_query;
+  mutable std::vector<SearchKeys> m_searchKeys;
+  mutable QHash<QString, QString> m_folderKeys;
+  AppSettings* m_settings = nullptr;
+  // Folded tag and album names per path, one per line.
+  QHash<QString, QString> m_tagText;
+  QHash<QString, QString> m_albumText;
+  quint64 m_organizationVersion = 1;
+  quint64 m_textVersion = 1;
+  // While a filter change is applied, each row's verdict from the pass that
+  // sized the change, so Qt's own pass does not filter every row again.
+  std::vector<char> m_accepted;
+  bool m_acceptedValid = false;
   QString m_folderFilter;
   QStringList m_folders;
   QHash<QString, int> m_folderItemCounts;
@@ -300,5 +356,6 @@ private:
   bool m_metadataIndexesDirty = false;
   QTimer m_duplicateOrderTimer;
   QTimer m_ocrFilterTimer;
+  QTimer m_releaseKeysTimer;
   QList<QMetaObject::Connection> m_sourceConnections;
 };

@@ -5244,8 +5244,11 @@ private slots:
     QCOMPARE(m_library->kindFilter(), 2);
     QCOMPARE(m_library->searchText(), QStringLiteral("alpine"));
     QVERIFY(m_library->favoritesOnly());
-    QVERIFY(m_library->albumFilter().isEmpty());
-    QVERIFY(m_library->dateFrom().isEmpty());
+    // Browse facets combine, so a folder narrows the album and date in view.
+    QCOMPARE(m_library->albumFilter(), QStringLiteral("temporary"));
+    QCOMPARE(m_library->dateFrom(), QStringLiteral("2026-01-01"));
+    m_library->setAlbumFilter({}, {});
+    m_library->clearDateRange();
     click(item("sidebarAllMedia"));
     QTRY_VERIFY(m_library->folderFilter().isEmpty());
     QCOMPARE(m_library->kindFilter(), 2);

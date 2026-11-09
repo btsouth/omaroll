@@ -2,6 +2,7 @@
 
 #include <QDate>
 #include <QByteArray>
+#include <QHash>
 #include "app/ShortcutTable.h"
 #include <QList>
 #include <QMap>
@@ -220,6 +221,10 @@ public:
   [[nodiscard]] QStringList tagNames() const;
   Q_INVOKABLE [[nodiscard]] QStringList tagPaths(const QString& name) const;
   Q_INVOKABLE [[nodiscard]] QStringList tagsForPath(const QString& path) const;
+  // Every available file's directly assigned tags or albums, for search. One
+  // pass over the collections rather than one per file.
+  [[nodiscard]] QHash<QString, QStringList> tagsByPath() const;
+  [[nodiscard]] QHash<QString, QStringList> albumsByPath() const;
   Q_INVOKABLE [[nodiscard]] int tagItemCount(const QString& name) const;
   Q_INVOKABLE bool createTag(const QString& name);
   Q_INVOKABLE void deleteTag(const QString& name);

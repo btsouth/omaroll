@@ -155,7 +155,12 @@ inline QVariantList rows() {
   {"context": "preview", "id": "trash", "keys": ["Del"], "label": "Move to Trash", "group": "Actions", "flag": "", "tokens": ["Delete"]},
   {"context": "preview", "id": "undo", "keys": ["Ctrl+Z"], "label": "Undo", "group": "Organization", "flag": "", "tokens": ["Z"]},
   {"context": "preview", "id": "rating", "keys": ["Alt+0", "Alt+1", "Alt+2", "Alt+3", "Alt+4", "Alt+5"], "label": "Clear / set rating", "group": "Organization", "flag": "", "tokens": ["0", "1", "2", "3", "4", "5"]},
-  {"context": "preview", "id": "quit", "keys": ["Ctrl+Q"], "label": "Quit", "group": "Window", "flag": "", "tokens": ["Q"]}
+  {"context": "preview", "id": "quit", "keys": ["Ctrl+Q"], "label": "Quit", "group": "Window", "flag": "", "tokens": ["Q"]},
+  {"context": "search", "id": "words", "keys": ["cafe", "\"exact phrase\""], "label": "Names, text, captions, tags, albums, folders and cameras", "group": "Search syntax", "flag": "", "tokens": ["", ""]},
+  {"context": "search", "id": "collections", "keys": ["tag:travel", "album:trip", "in:pictures/2024"], "label": "Tag, album or folder", "group": "Search syntax", "flag": "", "tokens": ["", "", ""]},
+  {"context": "search", "id": "camera", "keys": ["camera:fuji", "lens:35mm", "type:video"], "label": "Camera, lens or kind of file", "group": "Search syntax", "flag": "", "tokens": ["", "", ""]},
+  {"context": "search", "id": "dates", "keys": ["after:2023", "before:2024-06"], "label": "Later or earlier than a year, month or day", "group": "Search syntax", "flag": "", "tokens": ["", ""]},
+  {"context": "search", "id": "exclude", "keys": ["-draft", "-tag:work"], "label": "Leave out matches", "group": "Search syntax", "flag": "", "tokens": ["", ""]}
 ]
 )shortcuts")
                                .array()

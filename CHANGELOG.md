@@ -42,6 +42,16 @@
   copy before every restore). If the settings file is damaged, Settings offers
   Restore last good backup. It asks first, says which day it restored, keeps
   the damaged file beside it and saves whatever organization it still held.
+- Search also matches tags, album names, folders, cameras, lenses and PDF
+  text, and ignores accents, so "cafe" finds "café". PDF text is read in the
+  background from the first 50 pages and cached.
+- Search fields: `tag:`, `album:`, `in:`, `camera:`, `lens:`, `type:`,
+  `before:` and `after:`, plus quoted phrases and `-word` to leave matches out.
+  Typing a field suggests values from the library, and the help sheet lists
+  the syntax.
+- Browse choices combine, so a folder, date and camera narrow together. Each
+  active one shows as a chip with its own clear button, and saved views keep
+  the search and the album too.
 
 ### Fixed
 

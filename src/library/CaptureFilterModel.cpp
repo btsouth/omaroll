@@ -1,5 +1,6 @@
 #include "library/CaptureFilterModel.h"
 
+#include "app/AppSettings.h"
 #include "library/CaptureModel.h"
 #include "library/CaptureRoles.h"
 
@@ -69,6 +70,13 @@ CaptureFilterModel::CaptureFilterModel(QObject* parent) : QSortFilterProxyModel(
   m_searchTimer.setInterval(150);
   connect(&m_searchTimer, &QTimer::timeout, this, [this] { setSearchText(m_pendingSearchText); });
 
+  m_releaseKeysTimer.setSingleShot(true);
+  m_releaseKeysTimer.setInterval(60'000);
+  connect(&m_releaseKeysTimer, &QTimer::timeout, this, [this] {
+    std::vector<SearchKeys>().swap(m_searchKeys);
+    m_folderKeys.clear();
+  });
+
   m_ocrFilterTimer.setSingleShot(true);
   m_ocrFilterTimer.setInterval(60);
   connect(&m_ocrFilterTimer, &QTimer::timeout, this, [this] {
@@ -91,6 +99,8 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
     disconnect(connection);
   }
   m_sourceConnections.clear();
+  m_searchKeys.clear();
+  m_settings = nullptr;
 
   QSortFilterProxyModel::setSourceModel(model);
   if (!model) {
@@ -120,11 +130,19 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
                  role == CaptureRoles::CameraRole || role == CaptureRoles::LensRole;
         });
         if (!metadataOnly || !m_cameraFilter.isEmpty() || !m_lensFilter.isEmpty() ||
-            m_dateFrom.isValid() || m_dateTo.isValid()) {
+            m_dateFrom.isValid() || m_dateTo.isValid() || !m_query.isEmpty()) {
           pairingChanged();
         }
       }));
   if (auto* captures = qobject_cast<CaptureModel*>(model)) {
+    // Tag and album names are searched, so membership follows the settings.
+    m_settings = captures->settings();
+    if (m_settings) {
+      m_sourceConnections.append(connect(m_settings, &AppSettings::tagsChanged, this,
+                                         &CaptureFilterModel::reloadOrganization));
+      m_sourceConnections.append(connect(m_settings, &AppSettings::albumsChanged, this,
+                                         &CaptureFilterModel::reloadOrganization));
+    }
     m_sourceConnections.append(connect(captures, &CaptureModel::metadataIndexingChanged, this,
         [this, captures] {
           if (!captures->metadataIndexing() && m_metadataIndexesDirty) {
@@ -185,6 +203,7 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
   (void)rebuildFolderIndex();
   (void)rebuildDateIndex();
   (void)rebuildCameraIndex();
+  reloadOrganization();
   emit foldersChanged();
   emit dateBucketsChanged();
   emit camerasChanged();
@@ -200,15 +219,46 @@ void CaptureFilterModel::beginFilterUpdate() {
 
 void CaptureFilterModel::endFilterUpdate() {
   rebuildPairing();
+  if (manyRowsChange()) {
+    // Qt applies a filter change one run of rows at a time and rebuilds its
+    // row map for each run. A search widening across a large library flips
+    // thousands of scattered runs, which costs far more than one fresh
+    // mapping and one layout change. The mapping is built now, while the
+    // verdicts above are still current.
+    invalidate();
+    (void)rowCount();
+  } else {
 #if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
-  endFilterChange(Direction::Rows);
+    endFilterChange(Direction::Rows);
 #else
-  invalidateFilter();
+    invalidateFilter();
 #endif
+  }
+  m_acceptedValid = false;
   if (rowCount() > 0) {
     emit dataChanged(index(0, 0), index(rowCount() - 1, 0),
                      {CaptureModel::CompanionPathRole, CaptureRoles::RawFormatRole});
   }
+}
+
+bool CaptureFilterModel::manyRowsChange() {
+  // Small libraries and small changes keep Qt's row-by-row update, which
+  // lets the grid keep its delegates.
+  constexpr int kIncrementalRows = 4096;
+  constexpr int kIncrementalChanges = 512;
+  m_acceptedValid = false;
+  if (!sourceModel()) return false;
+  const int rows = sourceModel()->rowCount();
+  if (rows < kIncrementalRows) return false;
+  m_accepted.resize(rows);
+  int changed = 0;
+  for (int row = 0; row < rows; ++row) {
+    const bool accepted = filterAcceptsRow(row, {});
+    m_accepted[row] = accepted;
+    if (accepted != mapFromSource(sourceModel()->index(row, 0)).isValid()) ++changed;
+  }
+  m_acceptedValid = true;
+  return changed > kIncrementalChanges;
 }
 
 void CaptureFilterModel::rebuildPairing() {
@@ -218,7 +268,7 @@ void CaptureFilterModel::rebuildPairing() {
   QSet<QString> eligible;
   for (int row = 0; row < sourceModel()->rowCount(); ++row) {
     const CaptureRecord& record = sourceRecord(row);
-    if (!record.companionPath.isEmpty() && matchesFilters(record)) eligible.insert(record.path);
+    if (!record.companionPath.isEmpty() && matchesFilters(row, record)) eligible.insert(record.path);
   }
   for (int row = 0; row < sourceModel()->rowCount(); ++row) {
     const CaptureRecord& record = sourceRecord(row);
@@ -299,9 +349,7 @@ void CaptureFilterModel::setSearchText(const QString& text) {
     return;
   }
   beginFilterUpdate();
-  m_searchText = text;
-  m_searchTerms =
-      text.toCaseFolded().split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+  applySearchText(text);
   endFilterUpdate();
   clearSmartCollection();
   if (rowCount() > 0) {
@@ -665,6 +713,7 @@ QVariantMap CaptureFilterModel::currentView() {
   view.insert(QStringLiteral("dateField"), m_dateField);
   view.insert(QStringLiteral("modifiedAfter"), m_modifiedAfter);
   view.insert(QStringLiteral("tag"), m_tagFilter);
+  view.insert(QStringLiteral("album"), m_albumFilter);
   view.insert(QStringLiteral("camera"), m_cameraFilter);
   view.insert(QStringLiteral("lens"), m_lensFilter);
   view.insert(QStringLiteral("minRating"), m_minimumRating);
@@ -675,9 +724,7 @@ QVariantMap CaptureFilterModel::currentView() {
 void CaptureFilterModel::applyView(const QString& name, const QVariantMap& view,
                                    const QStringList& tagPaths) {
   beginFilterUpdate();
-  m_searchText = view.value(QStringLiteral("search")).toString();
-  m_searchTerms = m_searchText.toCaseFolded().split(QRegularExpression(QStringLiteral("\\s+")),
-                                                    Qt::SkipEmptyParts);
+  applySearchText(view.value(QStringLiteral("search")).toString());
   m_kindFilter = qBound(kAllKinds, view.value(QStringLiteral("kind"), kAllKinds).toInt(),
                         static_cast<int>(CaptureRecord::Document));
   m_folderFilter = view.value(QStringLiteral("folder")).toString();
@@ -695,8 +742,18 @@ void CaptureFilterModel::applyView(const QString& name, const QVariantMap& view,
   m_minimumRating = qBound(0, view.value(QStringLiteral("minRating")).toInt(), 5);
   m_sortMode = qBound(0, view.value(QStringLiteral("sort"), NewestFirst).toInt(),
                       static_cast<int>(RatingFirst));
-  m_albumFilter.clear();
+  // Facets combine, so a saved view keeps its album as well. Membership is
+  // read now rather than stored, so the view follows later additions.
+  m_albumFilter = view.value(QStringLiteral("album")).toString();
   m_albumPaths.clear();
+  if (!m_albumFilter.isEmpty() && m_settings) {
+    const QStringList albumPaths = m_settings->albumPaths(m_albumFilter);
+    m_albumPaths = QSet<QString>(albumPaths.begin(), albumPaths.end());
+  }
+  if (!m_tagFilter.isEmpty() && tagPaths.isEmpty() && m_settings) {
+    const QStringList paths = m_settings->tagPaths(m_tagFilter);
+    m_tagPaths = QSet<QString>(paths.begin(), paths.end());
+  }
   m_duplicatesOnly = false;
   m_similarOnly = false;
   m_smartCollectionFilter = name;
@@ -968,9 +1025,10 @@ void CaptureFilterModel::setOcrText(const QString& path, const QString& text) {
       return;
     }
     m_ocrText.insert(path, text);
-    m_ocrFolded.insert(path, text.toCaseFolded());
+    m_ocrFolded.insert(path, SearchText::fold(text));
   }
-  if (!m_searchTerms.isEmpty()) {
+  ++m_textVersion;
+  if (m_query.hasText()) {
     m_ocrFilterTimer.start();
   }
 }
@@ -1035,22 +1093,29 @@ QString CaptureFilterModel::ocrSnippet(const CaptureRecord& record) const {
   if (text.isEmpty()) {
     return {};
   }
-  const QString name = record.fileName.toCaseFolded();
-  const QString folded = text.toCaseFolded();
-  QString matchedOnlyInText;
+  const QString name = SearchText::fold(record.fileName);
+  QList<qsizetype> sources;
+  const QString folded = SearchText::fold(text, &sources);
+  qsizetype foldedMatch = -1;
+  qsizetype foldedLength = 0;
   for (const QString& term : m_searchTerms) {
-    if (!name.contains(term) && folded.contains(term)) {
-      matchedOnlyInText = term;
+    const qsizetype at = name.contains(term) ? -1 : folded.indexOf(term);
+    if (at >= 0) {
+      foldedMatch = at;
+      foldedLength = term.size();
       break;
     }
   }
-  if (matchedOnlyInText.isEmpty()) {
+  if (foldedMatch < 0 || sources.size() != folded.size()) {
     return {};
   }
 
-  const qsizetype match = text.indexOf(matchedOnlyInText, 0, Qt::CaseInsensitive);
+  // Folding can change lengths ("ﬁ" is two letters), so the match is mapped
+  // back to the recognized text it came from.
+  const qsizetype match = sources.at(foldedMatch);
+  const qsizetype matchEnd = sources.at(foldedMatch + foldedLength - 1) + 1;
   const qsizetype start = qMax<qsizetype>(0, match - 44);
-  const qsizetype end = qMin<qsizetype>(text.size(), match + matchedOnlyInText.size() + 56);
+  const qsizetype end = qMin<qsizetype>(text.size(), matchEnd + 56);
   QString snippet = text.mid(start, end - start).simplified();
   if (start > 0) {
     snippet.prepend(QChar(0x2026));
@@ -1136,11 +1201,15 @@ bool CaptureFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex& sour
   if (sourceParent.isValid()) {
     return false;
   }
+  if (m_acceptedValid && sourceRow < static_cast<int>(m_accepted.size())) {
+    return m_accepted[sourceRow];
+  }
   const CaptureRecord& record = sourceRecord(sourceRow);
-  return !m_groupedOutPaths.contains(record.path) && matchesFilters(record);
+  return !m_groupedOutPaths.contains(record.path) && matchesFilters(sourceRow, record);
 }
 
-bool CaptureFilterModel::matchesFilters(const CaptureRecord& record, int relax) const {
+bool CaptureFilterModel::matchesFilters(int sourceRow, const CaptureRecord& record,
+                                        int relax) const {
   if (!m_showHidden && record.hidden) {
     return false;
   }
@@ -1198,23 +1267,13 @@ bool CaptureFilterModel::matchesFilters(const CaptureRecord& record, int relax) 
       return false;
     }
   }
-  if ((relax & RelaxSearch) == 0 && !m_searchTerms.isEmpty()) {
-    const QString name = record.fileName.toCaseFolded();
-    const QString text = m_ocrFolded.value(record.path);
-    const QString caption = record.caption.toCaseFolded();
-    for (const QString& term : m_searchTerms) {
-      if (!name.contains(term) && !text.contains(term) && !caption.contains(term)) {
-        return false;
-      }
-    }
-  }
-  return true;
+  return (relax & RelaxSearch) != 0 || m_query.isEmpty() || matchesSearch(sourceRow, record);
 }
 
 bool CaptureFilterModel::anyMatches(int relax) const {
   if (!sourceModel()) return false;
   for (int row = 0; row < sourceModel()->rowCount(); ++row) {
-    if (matchesFilters(sourceRecord(row), relax)) return true;
+    if (matchesFilters(row, sourceRecord(row), relax)) return true;
   }
   return false;
 }
@@ -1225,7 +1284,7 @@ QString CaptureFilterModel::emptyReason() const {
   if (m_duplicatesOnly) return QStringLiteral("duplicates");
   if (m_similarOnly) return QStringLiteral("similar");
   // Read only while the grid is empty, so walking the library is rare.
-  if (!m_searchTerms.isEmpty() && anyMatches(RelaxSearch)) return QStringLiteral("search");
+  if (!m_query.isEmpty() && anyMatches(RelaxSearch)) return QStringLiteral("search");
   const bool refined = m_kindFilter != kAllKinds || m_favoritesOnly || m_minimumRating > 0 ||
                        !m_cameraFilter.isEmpty() || !m_lensFilter.isEmpty();
   if (refined && anyMatches(RelaxSearch | RelaxRefinements)) return QStringLiteral("filters");
@@ -1253,4 +1312,316 @@ bool CaptureFilterModel::lessThan(const QModelIndex& left, const QModelIndex& ri
     }
   }
   return recordLessThan(a, b);
+}
+
+void CaptureFilterModel::applySearchText(const QString& text) {
+  m_searchText = text;
+  m_query = SearchQuery::parse(text);
+  m_searchTerms = m_query.textValues();
+  // Folded keys cost memory in a large library, so they go a while after the
+  // search is cleared; searching again soon after reuses them.
+  if (m_query.isEmpty()) m_releaseKeysTimer.start();
+  else m_releaseKeysTimer.stop();
+}
+
+QString CaptureFilterModel::textSearch() const {
+  return m_query.textValues(true).join(QLatin1Char(' '));
+}
+
+void CaptureFilterModel::reloadOrganization() {
+  QHash<QString, QString> tags;
+  QHash<QString, QString> albums;
+  const auto fold = [](const QHash<QString, QStringList>& byPath, QHash<QString, QString>* out) {
+    out->reserve(byPath.size());
+    for (auto it = byPath.cbegin(); it != byPath.cend(); ++it) {
+      QStringList names;
+      names.reserve(it.value().size());
+      for (const QString& name : it.value()) names.append(SearchText::fold(name));
+      out->insert(it.key(), names.join(QLatin1Char('\n')));
+    }
+  };
+  if (m_settings) {
+    fold(m_settings->tagsByPath(), &tags);
+    fold(m_settings->albumsByPath(), &albums);
+  }
+  if (tags == m_tagText && albums == m_albumText) return;
+  m_tagText = std::move(tags);
+  m_albumText = std::move(albums);
+  ++m_organizationVersion;
+  if (m_query.isEmpty() || !sourceModel()) return;
+  beginFilterUpdate();
+  endFilterUpdate();
+  emit countChanged();
+}
+
+// Folders are searched as written from home, so "home" or a user name does
+// not match the whole library.
+QString CaptureFilterModel::folderKey(const QString& path) const {
+  const qsizetype slash = path.lastIndexOf(QLatin1Char('/'));
+  const QString directory = slash > 0 ? path.left(slash) : QString();
+  const auto found = m_folderKeys.constFind(directory);
+  if (found != m_folderKeys.cend()) return found.value();
+  static const QString home = QDir::homePath();
+  QString key = directory;
+  if (directory == home) {
+    key = QStringLiteral("~");
+  } else if (directory.startsWith(home) && directory.at(home.size()) == QLatin1Char('/')) {
+    key = QStringLiteral("~") + directory.mid(home.size());
+  }
+  key = SearchText::fold(key);
+  // Bounded: a library has far fewer folders than files, and a rescan that
+  // churns through many renamed folders starts the cache over.
+  if (m_folderKeys.size() > 65536) m_folderKeys.clear();
+  m_folderKeys.insert(directory, key);
+  return key;
+}
+
+const CaptureFilterModel::SearchKeys& CaptureFilterModel::searchKeys(
+    int sourceRow, const CaptureRecord& record) const {
+  if (sourceRow >= static_cast<int>(m_searchKeys.size())) {
+    m_searchKeys.resize(std::max<size_t>(sourceRow + 1, sourceModel()->rowCount()));
+  }
+  SearchKeys& keys = m_searchKeys[sourceRow];
+  const auto same = [](const QString& first, const QString& second) {
+    return first.constData() == second.constData() && first.size() == second.size();
+  };
+  if (!same(keys.path, record.path) || !same(keys.fileName, record.fileName) ||
+      !same(keys.camera, record.camera) || !same(keys.lens, record.lens) ||
+      !same(keys.caption, record.caption)) {
+    keys.path = record.path;
+    keys.fileName = record.fileName;
+    keys.camera = record.camera;
+    keys.lens = record.lens;
+    keys.caption = record.caption;
+    keys.name = SearchText::fold(record.fileName);
+    keys.folder = folderKey(record.path);
+    keys.cameraKey = SearchText::fold(record.camera);
+    keys.lensKey = SearchText::fold(record.lens);
+    keys.captionKey = SearchText::fold(record.caption);
+    keys.organization = 0;
+  }
+  if (keys.organization != m_organizationVersion) {
+    keys.tags = m_tagText.value(record.path);
+    keys.albums = m_albumText.value(record.path);
+    keys.organization = m_organizationVersion;
+  }
+  // Text arrives a picture at a time; rows look it up again only after some
+  // arrived, not on every keystroke.
+  if (keys.text != m_textVersion) {
+    keys.ocr = m_ocrFolded.value(record.path);
+    keys.text = m_textVersion;
+  }
+  return keys;
+}
+
+bool CaptureFilterModel::matchesSearch(int sourceRow, const CaptureRecord& record) const {
+  const SearchKeys& keys = searchKeys(sourceRow, record);
+  for (const SearchQuery::Term& term : m_query.terms) {
+    bool hit = false;
+    switch (term.field) {
+    case SearchQuery::Text:
+      hit = keys.name.contains(term.value) || keys.folder.contains(term.value) ||
+            keys.captionKey.contains(term.value) || keys.tags.contains(term.value) ||
+            keys.albums.contains(term.value) || keys.cameraKey.contains(term.value) ||
+            keys.lensKey.contains(term.value) || keys.ocr.contains(term.value);
+      break;
+    case SearchQuery::Tag:
+      hit = SearchText::containsWordStart(keys.tags, term.value);
+      break;
+    case SearchQuery::Album:
+      hit = SearchText::containsWordStart(keys.albums, term.value);
+      break;
+    case SearchQuery::Folder:
+      hit = SearchText::containsWordStart(keys.folder, term.value);
+      break;
+    case SearchQuery::Camera:
+      hit = SearchText::containsWordStart(keys.cameraKey, term.value);
+      break;
+    case SearchQuery::Lens:
+      hit = SearchText::containsWordStart(keys.lensKey, term.value);
+      break;
+    case SearchQuery::Type:
+      switch (term.type) {
+      case SearchQuery::Screenshot: hit = record.kind == CaptureRecord::Screenshot; break;
+      case SearchQuery::Recording: hit = record.kind == CaptureRecord::Recording; break;
+      // Photos and other stills; screenshots have their own type.
+      case SearchQuery::Image:
+        hit = !record.isVideo() && !record.isDocument() &&
+              record.kind != CaptureRecord::Screenshot;
+        break;
+      case SearchQuery::Video: hit = record.isVideo(); break;
+      case SearchQuery::Download: hit = record.kind == CaptureRecord::Download; break;
+      case SearchQuery::Pdf: hit = record.isDocument(); break;
+      case SearchQuery::Raw: hit = record.isRaw(); break;
+      case SearchQuery::Animated: hit = record.animated; break;
+      }
+      break;
+    case SearchQuery::Before:
+    case SearchQuery::After: {
+      const QDate date = record.captured.date();
+      hit = date.isValid() &&
+            (term.field == SearchQuery::Before ? date < term.date : date > term.date);
+      break;
+    }
+    }
+    if (hit == term.negated) return false;
+  }
+  return true;
+}
+
+namespace {
+
+QString quotedValue(const QString& value) {
+  return value.contains(QLatin1Char(' ')) || value.contains(QLatin1Char('\t'))
+             ? QStringLiteral("\"%1\"").arg(value)
+             : value;
+}
+
+QString homeRelative(const QString& path) {
+  static const QString home = QDir::homePath();
+  if (path == home) return QStringLiteral("~");
+  if (path.startsWith(home) && path.size() > home.size() && path.at(home.size()) == QLatin1Char('/')) {
+    return QStringLiteral("~") + path.mid(home.size());
+  }
+  return path;
+}
+
+} // namespace
+
+QVariantList CaptureFilterModel::searchSuggestions(const QString& text, int cursor) const {
+  constexpr int kMaximum = 8;
+  cursor = qBound(0, cursor, static_cast<int>(text.size()));
+  // The token under the cursor: back to the last space outside quotes, and
+  // forward to the next one, so accepting mid-word replaces the whole word.
+  bool quoted = false;
+  int start = 0;
+  for (int index = 0; index < cursor; ++index) {
+    if (text.at(index) == QLatin1Char('"')) quoted = !quoted;
+    else if (text.at(index).isSpace() && !quoted) start = index + 1;
+  }
+  int end = cursor;
+  while (end < text.size() && !(text.at(end).isSpace() && !quoted)) {
+    if (text.at(end) == QLatin1Char('"')) quoted = !quoted;
+    ++end;
+  }
+  QString token = text.mid(start, cursor - start);
+  QString prefix;
+  if (token.startsWith(QLatin1Char('-'))) {
+    prefix = QStringLiteral("-");
+    token.remove(0, 1);
+  }
+  QVariantList rows;
+  const qsizetype colon = token.indexOf(QLatin1Char(':'));
+  if (colon < 0) {
+    // A word that starts a field name offers the field, so the syntax can be
+    // found without the help sheet.
+    const QString lowered = token.toLower();
+    if (lowered.size() < 2) return rows;
+    for (const QString& field : SearchQuery::fieldNames()) {
+      if (field.startsWith(lowered) && field != lowered) {
+        rows.append(QVariantMap{{QStringLiteral("label"), field + QLatin1Char(':')},
+                                {QStringLiteral("detail"), QStringLiteral("Search field")},
+                                {QStringLiteral("insert"), prefix + field + QLatin1Char(':')},
+                                {QStringLiteral("start"), start},
+                                {QStringLiteral("end"), end},
+                                {QStringLiteral("complete"), false}});
+      }
+    }
+    return rows;
+  }
+
+  const QString fieldName = token.left(colon);
+  const int field = SearchQuery::fieldFor(fieldName);
+  if (field < 0) return rows;
+  QString partial = token.mid(colon + 1);
+  if (partial.startsWith(QLatin1Char('"'))) partial.remove(0, 1);
+  const QString needle = SearchText::fold(partial.simplified());
+
+  struct Candidate {
+    QString value;
+    QString label;
+    QString detail;
+  };
+  QList<Candidate> candidates;
+  const auto counted = [](int count) {
+    return count == 1 ? QStringLiteral("1 item") : QStringLiteral("%1 items").arg(count);
+  };
+  switch (field) {
+  case SearchQuery::Tag:
+    if (m_settings) {
+      for (const QString& name : m_settings->tagNames()) {
+        candidates.append({name, name, counted(m_settings->tagItemCount(name))});
+      }
+    }
+    break;
+  case SearchQuery::Album:
+    if (m_settings) {
+      for (const QString& name : m_settings->albumNames()) {
+        candidates.append({name, name, counted(m_settings->albumItemCount(name))});
+      }
+    }
+    break;
+  case SearchQuery::Folder:
+    for (const QString& folder : m_folders) {
+      const QString relative = homeRelative(folder);
+      candidates.append({relative, relative, counted(m_folderItemCounts.value(folder))});
+    }
+    break;
+  case SearchQuery::Camera:
+  case SearchQuery::Lens:
+    for (const QVariant& row : field == SearchQuery::Camera ? m_cameras : m_lenses) {
+      const QVariantMap choice = row.toMap();
+      const QString name = choice.value(QStringLiteral("name")).toString();
+      candidates.append({name, name, counted(choice.value(QStringLiteral("count")).toInt())});
+    }
+    break;
+  case SearchQuery::Type:
+    for (const QString& name : SearchQuery::typeNames()) {
+      candidates.append({name, name, QStringLiteral("Kind of file")});
+    }
+    break;
+  case SearchQuery::Before:
+  case SearchQuery::After: {
+    // Years the library has, newest first; once a year is typed, its months.
+    QStringList seen;
+    const bool months = partial.size() >= 5 && partial.at(4) == QLatin1Char('-');
+    for (const QVariant& row : m_dateBuckets) {
+      const QVariantMap bucket = row.toMap();
+      const QString key = bucket.value(QStringLiteral("key")).toString();
+      const QString value = months ? key : key.left(4);
+      if (seen.contains(value)) continue;
+      seen.append(value);
+      candidates.append({value, months ? bucket.value(QStringLiteral("label")).toString() : value,
+                         field == SearchQuery::Before ? QStringLiteral("Earlier than this")
+                                                      : QStringLiteral("Later than this")});
+    }
+    break;
+  }
+  default:
+    break;
+  }
+
+  // Values starting with what was typed come first, then word starts inside.
+  QList<Candidate> leading;
+  QList<Candidate> inner;
+  for (const Candidate& candidate : std::as_const(candidates)) {
+    const QString folded = SearchText::fold(candidate.value);
+    // Nothing to offer for a value that is already typed in full.
+    if (folded == needle && !partial.startsWith(QLatin1Char('"'))) continue;
+    if (folded.startsWith(needle)) leading.append(candidate);
+    else if (SearchText::containsWordStart(folded, needle)) inner.append(candidate);
+  }
+  leading.append(inner);
+  for (const Candidate& candidate : std::as_const(leading)) {
+    if (rows.size() >= kMaximum) break;
+    rows.append(QVariantMap{
+        {QStringLiteral("label"), candidate.label},
+        {QStringLiteral("detail"), candidate.detail},
+        {QStringLiteral("insert"),
+         prefix + fieldName + QLatin1Char(':') + quotedValue(candidate.value)},
+        {QStringLiteral("start"), start},
+        {QStringLiteral("end"), end},
+        {QStringLiteral("complete"), true}});
+  }
+  return rows;
 }

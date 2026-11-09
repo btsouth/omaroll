@@ -214,14 +214,15 @@ until the viewer closes; subtitle delay resets when the file changes.
 ## Features
 
 - **Browse your media.** See files by day, source or folder; filter by kind,
-  date, camera or lens, and resize the grid. Original photo and video dates are
+  date, camera or lens, combine those filters, and resize the grid. Original photo and video dates are
   used when available. Add folders without importing or copying their files.
 - **Organize without changing originals.** Albums, nested tags, captions,
   favourites, ratings and saved searches live in Omaroll's settings. Undo marks
   and moves to Trash with Ctrl+Z, and back up or restore your organization from Settings.
-- **Find words in pictures.** Search filenames immediately, then add local
-  Tesseract results as indexing progresses, or index the library in the
-  background. Reuse or clear the private text cache.
+- **Find words in pictures and PDFs.** One search box covers names, picture
+  and PDF text, captions, tags, albums, folders and cameras, ignoring accents.
+  Narrow it with `tag:`, `in:`, `camera:`, `type:` or `before:`, quote a
+  phrase or leave out a `-word`. Reuse or clear the private text cache.
 - **Preview images, video and PDFs.** Zoom, pan, rotate and flip pictures, in
   their real colors when they carry a wide-gamut profile; play video with sound,
   seeking, frame stepping, speed, audio tracks and subtitles; search PDF
@@ -343,8 +344,36 @@ entry, preserving a symlink's name and path.
 
 ## Search
 
-The search box matches filenames, captions and the text inside pictures. Text
-is read locally by Tesseract and kept in a private cache. By default it is
+The search box matches filenames, captions, tags, album names, the folder
+path, camera and lens, the text inside pictures and the text of PDFs. Case and
+accents are ignored, so `cafe` finds `café-paris.jpg` and `CAFÉ` finds "cafe".
+Every word must match. Fields narrow the search:
+
+| Type | To find |
+|---|---|
+| `tag:travel` · `album:iceland` | Tagged, or in an album. A tag also matches its nested tags |
+| `in:pictures/2024` · `in:~/Pictures` | In a folder, written from home or in full |
+| `camera:fuji` · `lens:35mm` | Taken with a camera or lens |
+| `type:video` (or `kind:`) | `screenshot`, `recording`, `photo`, `video`, `download`, `pdf`, `raw`, `animated` |
+| `before:2024` · `after:2023-06` · `after:2024-06-01` | Earlier or later than a year, month or day |
+| `"exact phrase"` · `tag:"road trip"` | Words side by side |
+| `-draft` · `-tag:work` · `-"old copy"` | Leave those out |
+
+A field value matches the start of a word, so `camera:fuji` finds
+"FUJIFILM X-T4" and `tag:japan` finds "Travel/Japan". `before:` is earlier
+than the whole period and `after:` later, so `after:2023 before:2025` is 2024.
+Anything else with a colon is searched as plain text. Typing a field offers
+the library's tags, albums, folders, cameras, kinds and years; Up and Down pick
+one and Enter or Tab takes it. **?** lists the syntax too.
+
+Choices in **Browse** combine: a folder, an album, a tag, a date, a camera or
+lens and a minimum rating narrow together. Each shows as a chip under the
+filter bar with its own clear button. **Save current view** keeps the search,
+tokens included, and every chip.
+
+Picture text is read locally by Tesseract and kept in a private cache. PDF
+text comes from `pdftotext`, the first 50 pages of each document, read in the
+background one document at a time and cached the same way. By default it is
 read while a search is open, one picture at a time, screenshots first; the
 status line counts the pictures read, and a notice under the results says
 when some have not been read yet.
@@ -435,7 +464,7 @@ and put on your clipboard.
 | `Ctrl` + wheel · `Ctrl` `+` `-` `0` | Bigger or smaller tiles · reset |
 | drag | Drop the file, or the whole selection, into another app |
 | `Del` | Move to Trash, with confirm; Undo in the footer or `Ctrl+Z` puts it back |
-| `/` · `R` | Search filenames and picture text · Rescan |
+| `/` · `R` | Search names, text, tags and folders · Rescan |
 | `Esc` | Leave a PDF text selection, clear the tile selection, then close |
 
 </details>
