@@ -14,12 +14,11 @@ case "$mode" in
       '-DCMAKE_CXX_FLAGS=-fsanitize=thread -fno-omit-frame-pointer' -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread
     # Some core tests launch the omaroll executable itself.
     cmake --build "$build" --parallel 4 --target omaroll omaroll_tests
-    # Arch's Qt is not built with TSan. ignore_noninstrumented_modules drops
-    # reports raised by malloc/memcpy-style interceptors called from inside
-    # uninstrumented libraries (Qt's own containers and thread pool), whose
-    # locking TSan cannot see. Races in our code are still reported.
+    # Arch's Qt is not built with TSan; tests/tsan.supp explains each
+    # suppression. (ignore_noninstrumented_modules is not usable: it also hides
+    # Qt's own thread joins, and TSan then aborts when a thread id is reused.)
     QT_QPA_PLATFORM=offscreen \
-      TSAN_OPTIONS="halt_on_error=1:second_deadlock_stack=1:ignore_noninstrumented_modules=1:suppressions=$PWD/tests/tsan.supp" \
+      TSAN_OPTIONS="halt_on_error=1:second_deadlock_stack=1:suppressions=$PWD/tests/tsan.supp" \
       ctest --test-dir "$build" -R '^omaroll_tests$' --output-on-failure
     ;;
   coverage)

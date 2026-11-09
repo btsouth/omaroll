@@ -10,3 +10,9 @@ race:QCoreApplication::removePostedEvents
 # ViewerSession is destroyed right after its listing finished); TSan reports
 # only the unordered QMap accesses. Match only that teardown frame.
 race:QtPrivate::ResultStoreBase::clear
+# Qt's internal allocations (thread pool bookkeeping, container growth inside
+# libQt6Core) are guarded by Qt's own mutexes, which the uninstrumented library
+# never reports. Seen as a malloc in one pool thread and a realloc in another,
+# with no Omaroll frame in either access. Omaroll never calls realloc itself;
+# its own container accesses are instrumented and reported where they happen.
+race:^realloc$

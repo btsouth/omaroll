@@ -4423,12 +4423,12 @@ private slots:
     QTRY_COMPARE(inspector.pageCount(), 1);
     inspector.find(QStringLiteral("alpha"));
     inspector.find(QStringLiteral("beta")); // reuse in-flight extraction, answer latest query
-    QTRY_COMPARE(inspector.matches(), QVariantList({2}));
+    QTRY_COMPARE(inspector.matches(), QVariantList{QVariant(2)});
     inspector.find(QStringLiteral("alpha"));
-    QTRY_COMPARE(inspector.matches(), QVariantList({1}));
+    QTRY_COMPARE(inspector.matches(), QVariantList{QVariant(1)});
     inspector.clearSearch();
     inspector.find(QStringLiteral("beta"));
-    QTRY_COMPARE(inspector.matches(), QVariantList({2}));
+    QTRY_COMPARE(inspector.matches(), QVariantList{QVariant(2)});
     QFile calls(log);
     QVERIFY(calls.open(QIODevice::ReadOnly));
     QCOMPARE(calls.readAll().count("call"), 1);
