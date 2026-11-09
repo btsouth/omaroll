@@ -8,8 +8,9 @@ race:QCoreApplication::removePostedEvents
 # a QFuture's final release is invisible to it. The last owner clears the
 # result store after the worker dropped its reference (seen when a
 # ViewerSession is destroyed right after its listing finished); TSan reports
-# only the unordered QMap accesses. Match only that teardown frame.
-race:QtPrivate::ResultStoreBase::clear
+# only the unordered result-store accesses (clear, syncPendingResults). Match
+# only Qt's result store, never the code that produced the result.
+race:QtPrivate::ResultStoreBase::
 # Qt's internal allocations (thread pool bookkeeping, container growth inside
 # libQt6Core) are guarded by Qt's own mutexes, which the uninstrumented library
 # never reports. Seen as a malloc in one pool thread and a realloc in another,
