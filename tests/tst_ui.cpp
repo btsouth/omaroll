@@ -6402,7 +6402,11 @@ private:
   }
 
   void pinchAt(const QPoint& at) {
-    auto* device = QTest::createTouchDevice();
+    static auto* device = [] {
+      auto* touch = QTest::createTouchDevice();
+      touch->setParent(qApp); // The test owns this synthetic device.
+      return touch;
+    }();
     QTest::touchEvent(m_window, device).press(0, at - QPoint(40, 0), m_window)
                                       .press(1, at + QPoint(40, 0), m_window);
     QTest::qWait(30);

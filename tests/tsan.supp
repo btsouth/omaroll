@@ -1,1 +1,6 @@
 # Add only confirmed external-library races, with the finding documented here.
+# Arch's uninstrumented Qt 6.12 posts QFutureCallOutEvents on pooled threads
+# and deletes them in QCoreApplication::removePostedEvents during watcher
+# teardown. The event-queue mutex lives in Qt, so TSan misses that ordering.
+# Match only this event reclamation frame, not QtConcurrent worker frames.
+race:QCoreApplication::removePostedEvents
