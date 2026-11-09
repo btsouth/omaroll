@@ -139,8 +139,8 @@ the startup budgets by three.
 
 The fault budget is per second, so a runner that decodes fewer frames also
 faults less. The per-frame guard is `omaroll_tests`, which sends 4K frames
-through the presentation and fails above 100 faults a frame on x86 (ARM's allocator already reuses
-those frames, so the test skips there).
+through the presentation and fails above 100 faults a frame. It skips when frames are not
+mapped even with the picture settings, as on ARM, since then there is nothing to compare.
 
 Software-decoded frames come from FFmpeg's buffer pool, so the playback check
 cannot see the per-frame copies of hardware frames that #159 fixed.
