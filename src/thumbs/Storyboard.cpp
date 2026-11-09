@@ -32,6 +32,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <limits>
 #include <cmath>
 #include <cstdio>
 #include <vector>
@@ -114,13 +115,37 @@ bool StoryboardFrames::insert(qint64 time, const QByteArray& jpeg) {
   return true;
 }
 
+void StoryboardFrames::markSampled(qint64 target) {
+  const auto at = std::lower_bound(sampled.begin(), sampled.end(), target);
+  if (at == sampled.end() || *at != target) {
+    sampled.insert(at - sampled.begin(), target);
+  }
+}
+
+bool StoryboardFrames::wasSampled(qint64 target) const {
+  return std::binary_search(sampled.cbegin(), sampled.cend(), target);
+}
+
+bool StoryboardFrames::merge(const StoryboardFrames& other) {
+  bool added = false;
+  for (qsizetype index = 0; index < other.times.size(); ++index) {
+    added = insert(other.times.at(index), other.jpegs.at(index)) || added;
+  }
+  for (const qint64 target : other.sampled) {
+    markSampled(target);
+  }
+  complete = complete || other.complete;
+  return added;
+}
+
 // ---------------------------------------------------------------------------
 // Disk cache
 
 namespace {
 
 constexpr quint32 kMagic = 0x4f4d5342; // "OMSB"
-constexpr quint16 kFormat = 1;
+// 2 added the sampled times and the complete flag.
+constexpr quint16 kFormat = 2;
 constexpr int kMaximumStoredFrames = 4 * StoryboardPlan::kMaximumFrames;
 constexpr qsizetype kMaximumFrameBytes = 2 * 1024 * 1024;
 const QString kSuffix = QStringLiteral(".storyboard");
@@ -145,9 +170,11 @@ QString StoryboardCache::key(const QString& path, const QSize& pixelBox) {
   if (path.isEmpty() || version.isEmpty()) {
     return {};
   }
+  // One multi-argument arg(), so a "%2" in the path is never substituted.
   const QString identity = QStringLiteral("storyboard%1|%2|%3|%4x%5")
-                               .arg(kFormat).arg(path, version)
-                               .arg(pixelBox.width()).arg(pixelBox.height());
+                               .arg(QString::number(kFormat), path, version,
+                                    QString::number(pixelBox.width()),
+                                    QString::number(pixelBox.height()));
   return QString::fromLatin1(
       QCryptographicHash::hash(identity.toUtf8(), QCryptographicHash::Md5).toHex());
 }
@@ -186,6 +213,21 @@ std::optional<StoryboardFrames> StoryboardCache::load(const QString& key) {
     frames.times.append(time);
     frames.jpegs.append(jpeg);
   }
+  qint32 sampledCount = 0;
+  in >> sampledCount >> frames.complete;
+  if (in.status() != QDataStream::Ok || sampledCount < 0 || sampledCount > kMaximumStoredFrames) {
+    return std::nullopt;
+  }
+  frames.sampled.reserve(sampledCount);
+  for (qint32 index = 0; index < sampledCount; ++index) {
+    qint64 target = 0;
+    in >> target;
+    if (in.status() != QDataStream::Ok || target < 0 ||
+        (!frames.sampled.isEmpty() && target <= frames.sampled.constLast())) {
+      return std::nullopt;
+    }
+    frames.sampled.append(target);
+  }
   file.close();
   // Recently used, for eviction. Relatime makes the access time unreliable.
   ::utimensat(AT_FDCWD, QFile::encodeName(path).constData(), nullptr, 0);
@@ -199,10 +241,10 @@ bool StoryboardCache::save(const QString& key, const StoryboardFrames& frames) {
   const QString path = entryPath(key);
   QDir().mkpath(directory());
   // Written beside and renamed into place, so a reader sees a whole file or none.
-  const QString staging = QStringLiteral("%1.%2.%3.tmp")
-                              .arg(path)
-                              .arg(QCoreApplication::applicationPid())
-                              .arg(reinterpret_cast<quintptr>(QThread::currentThreadId()));
+  const QString staging = path + QLatin1Char('.') +
+                          QString::number(QCoreApplication::applicationPid()) + QLatin1Char('.') +
+                          QString::number(reinterpret_cast<quintptr>(QThread::currentThreadId())) +
+                          QStringLiteral(".tmp");
   QFile file(staging);
   if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
     return false;
@@ -212,6 +254,10 @@ bool StoryboardCache::save(const QString& key, const StoryboardFrames& frames) {
   out << kMagic << kFormat << frames.frameSize << qint32(frames.times.size());
   for (qsizetype index = 0; index < frames.times.size(); ++index) {
     out << frames.times.at(index) << frames.jpegs.at(index);
+  }
+  out << qint32(frames.sampled.size()) << frames.complete;
+  for (const qint64 target : frames.sampled) {
+    out << target;
   }
   const bool written = out.status() == QDataStream::Ok && file.flush();
   file.close();
@@ -276,7 +322,9 @@ void rememberFailure(const QString& key) {
 }
 
 // One storyboard decodes at a time; cache reads have their own lane so a
-// cached video opens with previews while another is still extracting.
+// cached video opens with previews while another is still extracting. Of the
+// storyboards waiting for the decoder, the newest goes first. A window that
+// loses focus cancels its own, so the one in front never waits behind it.
 QThreadPool& extractionPool() {
   static QThreadPool pool;
   static const bool configured = [] {
@@ -301,8 +349,9 @@ QThreadPool& cachePool() {
 QMutex g_registryMutex;
 QHash<QString, std::shared_ptr<const StoryboardFrames>> g_registry;
 
-// The helper deadline the thumbnail cache uses for one frame.
-constexpr int kFrameTimeoutMs = 8000;
+// The helper deadline the thumbnail cache uses for one frame. A sample that
+// misses it is tried again the next time the video opens.
+std::atomic_int g_frameTimeoutMs{8000};
 constexpr int kPollMs = 20;
 // The first few samples all failing means there is no usable video.
 constexpr int kGiveUpAttempts = 3;
@@ -343,8 +392,14 @@ QStringList frameArguments(const QString& path, qint64 at, const QSize& box) {
 }
 
 qint64 frameTimeFrom(const QByteArray& log, qint64 target) {
-  static const QRegularExpression pts(QStringLiteral("pts_time:\\s*(-?[0-9]+(?:\\.[0-9]+)?)"));
-  const QRegularExpressionMatch match = pts.match(QString::fromLatin1(log));
+  // showinfo's line for the first frame through the filter. Only that line:
+  // the input's path, and its metadata, are in the log too and may contain
+  // anything, "pts_time:" included.
+  static const QRegularExpression pts(
+      QStringLiteral("^\\[Parsed_showinfo_[0-9]+ @ 0x[0-9a-fA-F]+\\] n:\\s*0 .*?"
+                     "\\bpts_time:\\s*(-?[0-9]+(?:\\.[0-9]+)?)"),
+      QRegularExpression::MultilineOption);
+  const QRegularExpressionMatch match = pts.match(QString::fromUtf8(log));
   if (!match.hasMatch()) {
     return target;
   }
@@ -356,10 +411,18 @@ qint64 frameTimeFrom(const QByteArray& log, qint64 target) {
 } // namespace
 
 struct StoryboardJob {
+  // The source as the owner has it. The absolute path and the key are worked
+  // out on the cache lane, since both may touch a slow mount.
+  QString source;
   QString path;
   QString key;
   QSize box;
   QList<qint64> times;
+  // What the owner already has, from an earlier run that was cancelled or
+  // cut short, then whatever the cache adds. Only used if `knownKey` is
+  // still the file's key.
+  StoryboardFrames known;
+  QString knownKey;
   quint64 generation = 0;
   quint64 serial = 0;
   std::atomic_bool cancelled{false};
@@ -390,14 +453,44 @@ struct StoryboardJob {
     cancelled.store(true);
   }
 
-  void postFrame(qint64 time, const QByteArray& jpeg) {
-    post([generation = generation, time, jpeg](Storyboard* target) {
-      target->acceptFrame(generation, time, jpeg);
+  // A sample tried to the end: its frame, or no jpeg when ffmpeg found
+  // nothing there.
+  void postSample(qint64 target, qint64 time, const QByteArray& jpeg) {
+    post([generation = generation, target, time, jpeg](Storyboard* owner_) {
+      owner_->acceptSample(generation, target, time, jpeg);
     });
   }
 
-  void postFinished(bool succeeded) {
-    post([serial = serial, succeeded](Storyboard* target) { target->finish(serial, succeeded); });
+  void postKey() {
+    post([serial = serial, key = key](Storyboard* owner_) { owner_->adoptKey(serial, key); });
+  }
+
+  void postCached(const StoryboardFrames& frames) {
+    post([serial = serial, frames](Storyboard* owner_) { owner_->acceptCached(serial, frames); });
+  }
+
+  void postFinished(bool succeeded, bool complete) {
+    post([serial = serial, succeeded, complete](Storyboard* owner_) {
+      owner_->finish(serial, succeeded, complete);
+    });
+  }
+
+  // Folds the cache entry, if any, into `known` and tells the owner. True
+  // when the entry was complete, which leaves nothing to decode.
+  bool absorbCache() {
+    std::optional<StoryboardFrames> cached = StoryboardCache::load(key);
+    if (!cached) {
+      return false;
+    }
+    if (known.merge(*cached) || cached->complete) {
+      postCached(*cached);
+    }
+    return cached->complete;
+  }
+
+  [[nodiscard]] bool allSampled(const StoryboardFrames& frames) const {
+    return std::all_of(times.cbegin(), times.cend(),
+                       [&frames](qint64 target) { return frames.wasSampled(target); });
   }
 
   void extract();
@@ -411,9 +504,13 @@ void StoryboardJob::extract() {
   if (isCancelled()) {
     return;
   }
+  // Another window may have filled the cache while this one waited.
+  if (absorbCache()) {
+    return;
+  }
   const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
   if (ffmpeg.isEmpty() || times.isEmpty()) {
-    postFinished(false);
+    postFinished(false, false);
     return;
   }
 
@@ -423,12 +520,19 @@ void StoryboardJob::extract() {
     QElapsedTimer elapsed;
   };
   std::vector<Running> running;
-  const QList<int> order = StoryboardPlan::extractionOrder(int(times.size()));
+  StoryboardFrames frames = known;
+  // Coarse to fine, without the samples an earlier run already tried.
+  QList<qint64> pending;
+  for (const int index : StoryboardPlan::extractionOrder(int(times.size()))) {
+    if (!frames.wasSampled(times.at(index))) {
+      pending.append(times.at(index));
+    }
+  }
   qsizetype next = 0;
   int attempts = 0;
-  int successes = 0;
   int timeouts = 0;
-  StoryboardFrames frames;
+  int tried = 0;
+  const int frameTimeoutMs = g_frameTimeoutMs.load();
 
   const auto stop = [](Running& item) {
     if (item.process->state() != QProcess::NotRunning) {
@@ -439,15 +543,15 @@ void StoryboardJob::extract() {
   };
 
   while (!isCancelled()) {
-    const bool givenUp = attempts >= kGiveUpAttempts && successes == 0;
+    const bool givenUp = attempts >= kGiveUpAttempts && frames.isEmpty();
     while (!givenUp && !paused.load() && running.size() < size_t(Storyboard::kParallelProcesses) &&
-           next < order.size()) {
+           next < pending.size()) {
       Running item;
-      item.target = times.at(order.at(next++));
+      item.target = pending.at(next++);
       item.process = std::make_unique<QProcess>();
       // Out of the way of playback and the desktop: the lowest CPU priority
-      // and the lowest best-effort disk priority, which still makes progress
-      // on a busy machine where the idle classes could starve it.
+      // and the lowest best-effort disk priority (level 7), which still makes
+      // progress on a busy machine where the idle class could starve it.
       item.process->setChildProcessModifier([] {
         ::setpriority(PRIO_PROCESS, 0, 19);
         constexpr int kBestEffort = 2;
@@ -461,7 +565,7 @@ void StoryboardJob::extract() {
       running.push_back(std::move(item));
     }
     if (running.empty()) {
-      if (givenUp || next >= order.size()) {
+      if (givenUp || next >= pending.size()) {
         break;
       }
       QThread::msleep(kPollMs); // paused
@@ -478,16 +582,21 @@ void StoryboardJob::extract() {
         const QByteArray jpeg = process.readAllStandardOutput();
         const bool okay = process.exitStatus() == QProcess::NormalExit &&
                           process.exitCode() == 0 && jpeg.startsWith("\xff\xd8");
-        if (okay && !isCancelled()) {
-          const qint64 time = frameTimeFrom(process.readAllStandardError(), item->target);
-          if (frames.insert(time, jpeg)) {
-            postFrame(time, jpeg);
+        if (!isCancelled()) {
+          // Tried to the end either way; a sample ffmpeg turns down would
+          // be turned down again.
+          const qint64 time = okay ? frameTimeFrom(process.readAllStandardError(), item->target) : -1;
+          if (okay) {
+            frames.insert(time, jpeg);
           }
-          ++successes;
+          frames.markSampled(item->target);
+          ++tried;
+          postSample(item->target, time, okay ? jpeg : QByteArray());
         }
         g_running.fetch_sub(1);
         item = running.erase(item);
-      } else if (item->elapsed.elapsed() > kFrameTimeoutMs) {
+      } else if (item->elapsed.elapsed() > frameTimeoutMs) {
+        // Left out of `sampled`, so the next run tries it again.
         ++attempts;
         ++timeouts;
         stop(*item);
@@ -501,6 +610,13 @@ void StoryboardJob::extract() {
   for (Running& item : running) {
     stop(item);
   }
+  frames.complete = allSampled(frames);
+  // What was decoded is kept, cancelled or not, so switching away and back
+  // never decodes a sample twice.
+  if (tried > 0 && !frames.isEmpty()) {
+    StoryboardCache::save(key, frames);
+    StoryboardCache::prune();
+  }
   if (isCancelled()) {
     return;
   }
@@ -510,12 +626,10 @@ void StoryboardJob::extract() {
     if (timeouts == 0) {
       rememberFailure(key);
     }
-    postFinished(false);
+    postFinished(false, false);
     return;
   }
-  StoryboardCache::save(key, frames);
-  StoryboardCache::prune();
-  postFinished(true);
+  postFinished(true, frames.complete);
 }
 
 // ---------------------------------------------------------------------------
@@ -596,6 +710,10 @@ void Storyboard::shutdown() {
 int Storyboard::runningProcesses() { return g_running.load(); }
 int Storyboard::launchedProcesses() { return g_launched.load(); }
 
+#ifdef OMAROLL_TESTING
+void Storyboard::setFrameTimeoutMs(int milliseconds) { g_frameTimeoutMs.store(milliseconds); }
+#endif
+
 void Storyboard::setSource(const QString& source) {
   if (m_source == source) return;
   m_source = source;
@@ -649,16 +767,16 @@ QString Storyboard::frameUrl(int index) const {
     return {};
   }
   return QStringLiteral("image://%1/%2/%3")
-      .arg(QLatin1String(kProviderId), m_token)
-      .arg(m_frames.times.at(index));
+      .arg(QLatin1String(kProviderId), m_token, QString::number(m_frames.times.at(index)));
 }
 
 void Storyboard::reconsider() {
   const QSize box = StoryboardPlan::pixelBox(m_devicePixelRatio);
   const bool eligible = !m_source.isEmpty() &&
                         m_duration >= qreal(StoryboardPlan::kMinimumDurationMs);
-  const QString identity = eligible ? QStringLiteral("%1|%2x%3").arg(m_source)
-                                          .arg(box.width()).arg(box.height())
+  // Concatenated, not arg(), so a "%1" in the path stays in the path.
+  const QString identity = eligible ? m_source + QLatin1Char('|') + QString::number(box.width()) +
+                                          QLatin1Char('x') + QString::number(box.height())
                                     : QString();
   if (identity != m_identity) {
     cancel();
@@ -671,8 +789,9 @@ void Storyboard::reconsider() {
   }
   if (!m_active) {
     m_startTimer.stop();
-    // Whatever was decoded so far stays on show, but no decoder runs for a
-    // viewer that is closed or showing something else.
+    // Whatever was decoded so far stays on show, and the job saves it, but no
+    // decoder runs for a viewer that is closed, behind another window or
+    // showing something else.
     if (m_job) {
       cancel();
       emit stateChanged();
@@ -688,17 +807,17 @@ void Storyboard::start() {
   if (m_job || m_identity.isEmpty() || !m_active || m_complete || m_failed) {
     return;
   }
-  const QSize box = StoryboardPlan::pixelBox(m_devicePixelRatio);
   auto job = std::make_shared<StoryboardJob>();
-  job->path = QFileInfo(m_source).absoluteFilePath();
-  job->key = StoryboardCache::key(job->path, box);
-  job->box = box;
+  job->source = m_source;
+  job->box = StoryboardPlan::pixelBox(m_devicePixelRatio);
   job->times = StoryboardPlan::sampleTimes(qint64(m_duration));
+  job->known = m_frames;
+  job->knownKey = m_framesKey;
   job->generation = m_generation;
   job->serial = ++g_jobs;
   job->paused.store(m_paused);
   job->attach(this);
-  if (job->key.isEmpty() || job->times.isEmpty() || knownFailure(job->key)) {
+  if (job->times.isEmpty()) {
     m_failed = true;
     emit stateChanged();
     return;
@@ -711,13 +830,22 @@ void Storyboard::start() {
     if (job->isCancelled()) {
       return;
     }
-    if (std::optional<StoryboardFrames> cached = StoryboardCache::load(job->key)) {
-      job->post([serial = job->serial, frames = std::move(*cached)](Storyboard* target) {
-        target->acceptAll(serial, frames);
-      });
+    job->path = QFileInfo(job->source).absoluteFilePath();
+    job->key = StoryboardCache::key(job->path, job->box);
+    if (job->key.isEmpty() || knownFailure(job->key)) {
+      job->postFinished(false, false);
       return;
     }
-    extractionPool().start([job] { job->extract(); });
+    if (job->knownKey != job->key) {
+      job->known = {};
+    }
+    job->postKey();
+    if (job->absorbCache()) {
+      return;
+    }
+    // Of the storyboards waiting for the decoder, the newest goes first.
+    const int priority = int(std::min<quint64>(job->serial, quint64(std::numeric_limits<int>::max())));
+    extractionPool().start([job] { job->extract(); }, priority);
   });
 }
 
@@ -734,6 +862,7 @@ void Storyboard::clear() {
   const bool hadFrames = !m_frames.isEmpty();
   const bool hadState = m_complete || m_failed || m_fromCache;
   m_frames = {};
+  m_framesKey.clear();
   m_complete = false;
   m_failed = false;
   m_fromCache = false;
@@ -752,33 +881,59 @@ void Storyboard::publish() {
   g_registry.insert(m_token, std::move(snapshot));
 }
 
-void Storyboard::acceptFrame(quint64 generation, qint64 time, const QByteArray& jpeg) {
-  if (generation != m_generation || !m_frames.insert(time, jpeg)) {
+void Storyboard::acceptSample(quint64 generation, qint64 target, qint64 time,
+                              const QByteArray& jpeg) {
+  if (generation != m_generation) {
+    return;
+  }
+  m_frames.markSampled(target);
+  if (jpeg.isEmpty() || !m_frames.insert(time, jpeg)) {
     return;
   }
   publish();
   emit framesChanged();
 }
 
-void Storyboard::acceptAll(quint64 serial, const StoryboardFrames& frames) {
+void Storyboard::acceptCached(quint64 serial, const StoryboardFrames& frames) {
   if (!m_job || m_job->serial != serial) {
     return;
   }
-  m_frames = frames;
-  m_job.reset();
-  m_complete = true;
-  m_fromCache = true;
-  publish();
-  emit framesChanged();
-  emit stateChanged();
+  const bool added = m_frames.merge(frames);
+  if (frames.complete) {
+    m_job.reset();
+    m_complete = true;
+    m_fromCache = true;
+  }
+  if (added) {
+    publish();
+    emit framesChanged();
+  }
+  if (frames.complete) {
+    emit stateChanged();
+  }
 }
 
-void Storyboard::finish(quint64 serial, bool succeeded) {
+void Storyboard::adoptKey(quint64 serial, const QString& key) {
+  if (!m_job || m_job->serial != serial || key == m_framesKey) {
+    return;
+  }
+  const bool hadFrames = !m_frames.isEmpty();
+  m_frames = {};
+  m_framesKey = key;
+  if (hadFrames) {
+    publish();
+    emit framesChanged();
+  }
+}
+
+void Storyboard::finish(quint64 serial, bool succeeded, bool complete) {
   if (!m_job || m_job->serial != serial) {
     return;
   }
   m_job.reset();
-  m_complete = succeeded;
+  // A partial storyboard stays incomplete: the samples that timed out are
+  // tried again the next time it starts.
+  m_complete = succeeded && complete;
   m_failed = !succeeded && m_frames.isEmpty();
   emit stateChanged();
 }

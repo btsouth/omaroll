@@ -502,6 +502,7 @@ Item {
         if (!root.player) return
         root.resumeAvailable = false
         root.resumePending = false
+        scrubSettle.restart()
         const maximum = player.duration > 0 ? player.duration - 1 : Math.max(0, milliseconds)
         player.position = Math.max(0, Math.min(maximum, roundBoundary
             ? Settings.videoSeekTarget(milliseconds, root.player.metaData.value(MediaMetaData.VideoFrameRate))
@@ -2262,14 +2263,16 @@ Item {
                 }
 
                 // Keyframes for the seek preview, decoded in the background
-                // once the video is showing and held while the user seeks.
+                // once the video is showing and held for a second after any
+                // seek: a drag, a tap or a key. Only while this window has
+                // focus, so a quick viewer opened in front gets the decoder.
                 Storyboard {
                     id: previewFrames
                     objectName: "videoStoryboard"
                     source: root.isVideo ? root.path : ""
                     duration: player ? player.duration : 0
                     devicePixelRatio: Screen.devicePixelRatio
-                    active: root.visible && transport.visible && !!root.presentation
+                    active: root.visible && transport.visible && root.Window.active && !!root.presentation
                             && root.presentation.ready === true && !!player && player.hasVideo === true
                     paused: scrubDrag.active || scrubSettle.running
                 }
@@ -3332,6 +3335,7 @@ Item {
             return
         }
         if (root.isVideo && (event.key === ShortcutCatalog.previewKeyCodes["Home"] || event.key === ShortcutCatalog.previewKeyCodes["End"])) {
+            scrubSettle.restart()
             player.position = event.key === ShortcutCatalog.previewKeyCodes["Home"] ? 0 : player.duration
             event.accepted = true
             return

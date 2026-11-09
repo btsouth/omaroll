@@ -108,8 +108,9 @@ the previous picture stays visible until the new clip's first decoded frame.
 Hovering the seek bar, in the viewer or the library preview, shows the frame at
 that time above it. Once a video is playing, Omaroll has ffmpeg decode up to 100
 keyframes in the background, at low priority and at most two at a time, and
-waits while you seek. They're cached, so a video opened again has previews at
-once. Clips under five seconds and audio-only files show the time alone.
+waits while you seek. Only the focused window decodes; what's done so far is
+kept when you switch away. They're cached, so a video opened again has previews
+at once. Clips under five seconds and audio-only files show the time alone.
 
 A picture or video opens in the viewer: the media fills the window, a small
 picture included, and the name, the controls and the menu appear when the

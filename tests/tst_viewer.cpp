@@ -67,6 +67,7 @@
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
+#include <QPointer>
 #include <QScopeGuard>
 #include <QSemaphore>
 #include <QSettings>
@@ -84,6 +85,7 @@
 #include <functional>
 #include <memory>
 #include <limits>
+#include <signal.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -2439,6 +2441,10 @@ private slots:
     QTest::mouseRelease(m_window, Qt::LeftButton, Qt::NoModifier, along(0.8));
     QTRY_VERIFY(player->position() > 8000);
     QTRY_VERIFY_WITH_TIMEOUT(!storyboard->paused(), 3000);
+    // A keyboard seek holds it too, for a moment.
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QVERIFY(storyboard->paused());
+    QTRY_VERIFY_WITH_TIMEOUT(!storyboard->paused(), 3000);
 
     // A narrow viewer keeps the preview inside the window.
     m_window->resize(320, 240);
@@ -2448,6 +2454,7 @@ private slots:
     const QRectF narrow = preview->mapRectToScene(preview->boundingRect());
     QVERIFY2(narrow.left() >= 0 && narrow.right() <= m_window->width(),
              qPrintable(QStringLiteral("%1..%2").arg(narrow.left()).arg(narrow.right())));
+    QVERIFY2(narrow.top() >= 0, qPrintable(QString::number(narrow.top())));
     QTest::mouseMove(m_window, along(0.02));
     QTRY_VERIFY(preview->mapRectToScene(preview->boundingRect()).left() >= 0);
     m_window->resize(1200, 800);
@@ -2459,6 +2466,77 @@ private slots:
     m_session->open({media(QStringLiteral("Shot 1.jpg"))});
     QTRY_COMPARE(storyboard->frameCount(), 0);
     QVERIFY(!storyboard->running());
+  }
+
+  // Only the focused viewer decodes previews: one left behind another window
+  // stops its decoders, as does closing it.
+  void previewDecodersFollowFocusAndStopOnClose() {
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty()) {
+      QSKIP("ffmpeg is not installed");
+    }
+    const QString path = m_scratch.filePath(QStringLiteral("storyboard-focus.mkv"));
+    QVERIFY(QFile::exists(path) || !makeStoryboardVideo(path).isEmpty());
+    // Storyboard decodes hang and log their pid; anything else is ffmpeg.
+    QTemporaryDir bin;
+    QVERIFY(bin.isValid());
+    const QString log = bin.filePath(QStringLiteral("starts"));
+    const QString helper = bin.filePath(QStringLiteral("ffmpeg"));
+    {
+      QFile script(helper);
+      QVERIFY(script.open(QIODevice::WriteOnly));
+      script.write(QStringLiteral("#!/bin/sh\ncase \" $* \" in *\" -skip_frame \"*) echo $$ >> '%1'; exec sleep 30;; esac\n"
+                                  "exec '%2' \"$@\"\n").arg(log, ffmpeg).toUtf8());
+    }
+    QVERIFY(QFile::setPermissions(helper, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    const QByteArray oldPath = qgetenv("PATH");
+    qputenv("PATH", QFile::encodeName(bin.path()) + ':' + oldPath);
+    const auto restore = qScopeGuard([&] { qputenv("PATH", oldPath); });
+    const auto pids = [&log] {
+      QList<qint64> found;
+      QFile file(log);
+      if (file.open(QIODevice::ReadOnly)) {
+        for (const QByteArray& line : file.readAll().split('\n')) {
+          if (!line.isEmpty()) found.append(line.toLongLong());
+        }
+      }
+      return found;
+    };
+    const auto alive = [](qint64 pid) { return ::kill(pid_t(pid), 0) == 0; };
+
+    open({path});
+    QPointer<Storyboard> storyboard = m_window->findChild<Storyboard*>(QStringLiteral("viewerStoryboard"));
+    QVERIFY(storyboard);
+    QTRY_VERIFY_WITH_TIMEOUT(pids().size() == Storyboard::kParallelProcesses, 10000);
+    QVERIFY(storyboard->active());
+    const QList<qint64> first = pids();
+
+    // Another window takes focus: this one's decoders stop.
+    QQuickWindow other;
+    other.resize(200, 200);
+    other.show();
+    other.requestActivate();
+    QTRY_VERIFY(other.isActive());
+    QTRY_VERIFY(!storyboard->active());
+    for (const qint64 pid : first) QTRY_VERIFY_WITH_TIMEOUT(!alive(pid), 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(Storyboard::runningProcesses(), 0, 3000);
+    QTest::qWait(Storyboard::kStartDelayMs + 200);
+    QCOMPARE(pids().size(), first.size());
+
+    // Back in front, it carries on.
+    other.close();
+    m_window->requestActivate();
+    QTRY_VERIFY(m_window->isActive());
+    QTRY_VERIFY(storyboard->active());
+    QTRY_VERIFY_WITH_TIMEOUT(pids().size() == 2 * Storyboard::kParallelProcesses, 10000);
+    const QList<qint64> second = pids().mid(first.size());
+
+    // Closing the viewer window stops them too.
+    m_window->close();
+    QTRY_VERIFY(!m_window->isVisible());
+    for (const qint64 pid : second) QTRY_VERIFY_WITH_TIMEOUT(!alive(pid), 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(Storyboard::runningProcesses(), 0, 3000);
+    QVERIFY(!storyboard || !storyboard->running());
   }
 
   void explicitStartOverridesSavedResume() {

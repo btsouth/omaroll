@@ -5612,6 +5612,31 @@ private slots:
     QTest::mouseMove(m_window, along(0.95));
     QTRY_VERIFY(frame->property("source").toString() != middle);
 
+    // A tap or a key seeks too, and holds new decodes for a moment.
+    QVERIFY(!storyboard->paused());
+    QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, along(0.25));
+    QVERIFY(storyboard->paused());
+    QTRY_VERIFY_WITH_TIMEOUT(!storyboard->paused(), 3000);
+    QTest::keyClick(m_window, Qt::Key_Home);
+    QVERIFY(storyboard->paused());
+    QTRY_COMPARE(player->position(), 0);
+    QTRY_VERIFY_WITH_TIMEOUT(!storyboard->paused(), 3000);
+
+    // Behind another window, such as a quick viewer, the sheet leaves the
+    // decoder to it.
+    QVERIFY(storyboard->active());
+    {
+      QQuickWindow other;
+      other.resize(200, 200);
+      other.show();
+      other.requestActivate();
+      QTRY_VERIFY(other.isActive());
+      QTRY_VERIFY(!storyboard->active());
+    }
+    m_window->requestActivate();
+    QTRY_VERIFY(m_window->isActive());
+    QTRY_VERIFY(storyboard->active());
+
     // In a narrow window the preview stays inside it.
     m_window->resize(560, 420);
     QTRY_VERIFY(seek->isVisible() && seek->width() > 0

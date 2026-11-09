@@ -19,6 +19,9 @@ Rectangle {
     property bool frameShown: false
     property real devicePixelRatio: 1
     readonly property bool scrubbing: scrubMouse.pressed
+    // Any seek, from the bar, the keyboard or elsewhere, holds new preview
+    // decodes for a second so they never compete with it.
+    function noteSeek() { seekSettle.restart() }
     readonly property alias storyboard: previewFrames
     readonly property bool hovered: hover.hovered
 
@@ -192,14 +195,17 @@ Rectangle {
     }
 
     // Keyframes for the seek preview, decoded in the background once the
-    // video is showing and held while the user seeks.
+    // video is showing and held while the user seeks. Only the focused
+    // window decodes, so a viewer left open behind it never holds the
+    // decoder the one in front is waiting for.
     Storyboard {
         id: previewFrames
         source: root.source
         duration: root.duration
         devicePixelRatio: root.devicePixelRatio
         objectName: "viewerStoryboard"
-        active: root.visible && !!root.Window.window && root.Window.window.visible && root.frameShown
+        active: root.visible && !!root.Window.window && root.Window.window.visible
+                && root.Window.active && root.frameShown
                 && !!root.player && root.player.hasVideo === true
         paused: scrubMouse.pressed || seekSettle.running
     }

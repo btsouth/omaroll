@@ -42,13 +42,22 @@ inline constexpr int kBoxHeight = 108;
 } // namespace StoryboardPlan
 
 // Frames as decoded JPEG bytes, ordered by their real timestamps. Two samples
-// that land on the same keyframe are one frame.
+// that land on the same keyframe are one frame. `sampled` lists the sample
+// times already tried to the end, with or without a frame, so a storyboard
+// that was cut short or timed out fills in only the rest. It is `complete`
+// once every planned sample has been tried.
 struct StoryboardFrames {
   QSize frameSize;
   QList<qint64> times;
   QList<QByteArray> jpegs;
+  QList<qint64> sampled;
+  bool complete = false;
 
   bool insert(qint64 time, const QByteArray& jpeg);
+  void markSampled(qint64 target);
+  [[nodiscard]] bool wasSampled(qint64 target) const;
+  // Adds the other's frames and samples. True when a frame was added.
+  bool merge(const StoryboardFrames& other);
   [[nodiscard]] bool isEmpty() const { return times.isEmpty(); }
 };
 
@@ -60,9 +69,10 @@ inline constexpr qint64 kMaximumBytes = 64LL * 1024 * 1024;
 
 [[nodiscard]] QString directory();
 // Keyed by path, size, mtime and ctime, and the frame box. Empty when the
-// file cannot be read.
+// file cannot be read. This stats the file, so call it off the GUI thread.
 [[nodiscard]] QString key(const QString& path, const QSize& pixelBox);
-// A hit counts as a use for eviction.
+// A hit counts as a use for eviction. A partial entry loads too; check
+// `complete`.
 [[nodiscard]] std::optional<StoryboardFrames> load(const QString& key);
 bool save(const QString& key, const StoryboardFrames& frames);
 // Least recently used first.
@@ -73,9 +83,12 @@ void prune(qint64 maximumBytes = kMaximumBytes);
 struct StoryboardJob;
 
 // One video's storyboard, for QML. Extraction waits until `active` (the first
-// frame is on screen), holds while `paused` (the user is seeking), and stops
-// when the source changes or the object goes away. Frames are served by the
-// "storyboard" image provider at the URLs frameUrl() gives.
+// frame is on screen in the focused window), holds new decodes while `paused`
+// (the user is seeking), and stops when the source changes, `active` goes
+// false or the object goes away. Whatever was decoded by then is kept, in
+// memory and in the cache, and the next run decodes only the samples still
+// missing. Frames are served by the "storyboard" image provider at the URLs
+// frameUrl() gives.
 class Storyboard : public QObject {
   Q_OBJECT
   Q_PROPERTY(QString source READ source WRITE setSource NOTIFY sourceChanged)
@@ -111,6 +124,10 @@ public:
   // Process counters, for tests and measurements.
   [[nodiscard]] static int runningProcesses();
   [[nodiscard]] static int launchedProcesses();
+#ifdef OMAROLL_TESTING
+  // How long one sample may take before it is given up for this run.
+  static void setFrameTimeoutMs(int milliseconds);
+#endif
 
   [[nodiscard]] QString source() const { return m_source; }
   void setSource(const QString& source);
@@ -150,9 +167,10 @@ private:
   void cancel();
   void clear();
   void publish();
-  void acceptFrame(quint64 generation, qint64 time, const QByteArray& jpeg);
-  void acceptAll(quint64 serial, const StoryboardFrames& frames);
-  void finish(quint64 serial, bool succeeded);
+  void acceptSample(quint64 generation, qint64 target, qint64 time, const QByteArray& jpeg);
+  void acceptCached(quint64 serial, const StoryboardFrames& frames);
+  void adoptKey(quint64 serial, const QString& key);
+  void finish(quint64 serial, bool succeeded, bool complete);
 
   QString m_source;
   qreal m_duration = 0;
@@ -165,6 +183,9 @@ private:
   quint64 m_instance = 0;
   quint64 m_generation = 0;
   StoryboardFrames m_frames;
+  // The file version m_frames came from. A file rewritten under the same
+  // path starts over rather than mixing old frames with new.
+  QString m_framesKey;
   bool m_complete = false;
   bool m_failed = false;
   bool m_fromCache = false;

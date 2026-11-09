@@ -540,6 +540,7 @@ ApplicationWindow {
         root.resumeAvailable = false
         root.resumePending = false
         root.player.launchTarget = -1
+        transport.noteSeek()
         root.player.position = Math.max(0, Math.min(maximum, roundBoundary
             ? Settings.videoSeekTarget(milliseconds, root.player.metaData.value(MediaMetaData.VideoFrameRate))
             : Math.round(milliseconds)))
