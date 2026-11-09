@@ -196,21 +196,23 @@ constexpr ext_data_control_device_v1_listener kDevice{dataOffer, selection, fini
 
 // wl_display_dispatch, plus reaping writers as they finish.
 void serve(State& state, wl_display* display) {
-  if (state.childFd < 0) {
-    while (!state.cancelled && wl_display_dispatch(display) >= 0) {
-    }
-    return;
-  }
   while (!state.cancelled) {
     while (wl_display_prepare_read(display) != 0) {
       if (wl_display_dispatch_pending(display) < 0) return;
     }
-    if (wl_display_flush(display) < 0 && errno != EAGAIN) {
+    if (state.cancelled) {
       wl_display_cancel_read(display);
       return;
     }
-    pollfd fds[2] = {{state.displayFd, POLLIN, 0}, {state.childFd, POLLIN, 0}};
-    if (poll(fds, 2, -1) < 0) {
+    const int flushed = wl_display_flush(display);
+    if (flushed < 0 && errno != EAGAIN) {
+      wl_display_cancel_read(display);
+      return;
+    }
+    pollfd fds[2] = {{state.displayFd, short(POLLIN | (flushed < 0 ? POLLOUT : 0)), 0},
+                     {state.childFd, POLLIN, 0}};
+    // If signalfd is unavailable, still reap while the clipboard is idle.
+    if (poll(fds, 2, state.childFd < 0 ? 100 : -1) < 0) {
       wl_display_cancel_read(display);
       if (errno == EINTR) continue;
       return;
@@ -224,8 +226,8 @@ void serve(State& state, wl_display* display) {
       signalfd_siginfo info;
       while (read(state.childFd, &info, sizeof info) == sizeof info) {
       }
-      reap(state);
     }
+    reap(state);
     if (wl_display_dispatch_pending(display) < 0) return;
   }
 }

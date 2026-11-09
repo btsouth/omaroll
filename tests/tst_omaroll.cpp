@@ -1924,6 +1924,44 @@ private slots:
     QCOMPARE(Diagnostics::themeName(empty), QStringLiteral("not found"));
   }
 
+  void windowRulesOfferStaysDismissed() {
+    QTemporaryDir profile;
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, profile.path());
+    const auto restore = qScopeGuard([&] {
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                         m_scratch.filePath("config"));
+    });
+    {
+      AppSettings settings;
+      QVERIFY(!settings.windowRulesOfferDismissed());
+      settings.dismissWindowRulesOffer();
+      QVERIFY(settings.windowRulesOfferDismissed());
+    }
+    {
+      AppSettings settings;
+      QVERIFY(settings.windowRulesOfferDismissed());
+    }
+    // Installation also ends the offer permanently, including after removal.
+    QSettings state(QSettings::IniFormat, QSettings::UserScope, "omaroll", "omaroll");
+    state.remove(AppSettings::kWindowRulesOfferDismissedKey);
+    state.sync();
+    const QString hypr = profile.filePath("hypr");
+    QVERIFY(QDir().mkpath(hypr));
+    QFile config(hypr + "/hyprland.lua");
+    QVERIFY(config.open(QIODevice::WriteOnly));
+    config.write("require(\"default.hypr.omarchy\")\n");
+    config.close();
+    AppSettings settings;
+    settings.setHyprDirectory(hypr);
+    QVERIFY(!settings.windowRulesOfferDismissed());
+    settings.installWindowRules();
+    QCOMPARE(settings.windowRules(), QStringLiteral("installed"));
+    QVERIFY(settings.windowRulesOfferDismissed());
+    settings.removeWindowRules();
+    QCOMPARE(settings.windowRules(), QStringLiteral("available"));
+    QVERIFY(settings.windowRulesOfferDismissed());
+  }
+
   void windowRulesInstallAndRemoveCleanly() {
     QTemporaryDir root;
     QVERIFY(root.isValid());

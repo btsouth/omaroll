@@ -368,6 +368,12 @@ notes don't cover. An optional action can still hand the file to mpv.
 
 Documents: PDF. Thumbnails, previews, and page counts use Poppler locally.
 
+The default-handler restore record lives beside settings in
+`~/.config/omaroll/mime-defaults.ini`; older records move there automatically.
+`--unset-default` reports exact restore counts and how many types keep their
+system default. Invalid `--start` values also send a desktop notice. Diagnostics
+list VA-API render-node and driver prerequisites without probing decoding.
+
 ## Theme and window rules
 
 Omaroll paints its own translucent chrome from your theme and draws every
@@ -507,9 +513,3 @@ edit or trash files.
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
-The default-handler restore record lives beside settings in
-`~/.config/omaroll/mime-defaults.ini`; older records move there automatically.
-`--unset-default` reports exact restore counts and how many types keep their
-system default. Invalid `--start` values also send a desktop notice. Diagnostics
-list VA-API render-node and driver prerequisites without probing decoding.
