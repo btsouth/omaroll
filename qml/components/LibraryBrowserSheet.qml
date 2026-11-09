@@ -381,7 +381,7 @@ FocusScope {
                 Column {
                     id: controlsColumn
                     width: controlsFlickable.width
-                    spacing: root.compact ? 8 : 12
+                    spacing: root.compact ? 10 : 16
 
                     Row {
                         width: parent.width

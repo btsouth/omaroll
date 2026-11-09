@@ -160,7 +160,7 @@ Rectangle {
             text: root.zoomText
             font.family: Theme.fontFamily
             font.pixelSize: 12
-            color: Theme.mutedText
+            color: Osd.mutedText
             Accessible.role: Accessible.StaticText
             Accessible.name: "Zoom " + root.zoomText
         }
