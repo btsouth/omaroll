@@ -2438,7 +2438,12 @@ private slots:
       QTRY_VERIFY(chipShown());
       QTest::keyClick(m_window, Qt::Key_Slash);
       QTRY_VERIFY(item("footerStatus")->property("text").toString().contains(QStringLiteral("to search")));
-      QQuickItem* clear = item("filterChipClear-search");
+      QVERIFY2(chipShown(), qPrintable(QStringLiteral("chip gone after the search key; query '%1', field shown %2")
+                                           .arg(m_library->searchText())
+                                           .arg(item("librarySearchBox")->isVisible())));
+      QQuickItem* clear = find(m_window->contentItem(), [](QQuickItem* candidate) {
+        return candidate->objectName() == QStringLiteral("filterChipClear-search");
+      });
       QVERIFY(clear);
       QTest::mouseClick(m_window, Qt::LeftButton, {},
                         clear->mapToScene(QPointF(clear->width() / 2, clear->height() / 2)).toPoint());
