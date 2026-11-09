@@ -8120,7 +8120,8 @@ private slots:
         "mkdir \"$slots/$$\"\n"
         "running=$(ls \"$slots\" | wc -l)\n"
         "nice=$(cut -d' ' -f19 /proc/$$/stat)\n"
-        "printf 'probe %s %s\\n' \"$running\" \"$nice\" >> \"$OMAROLL_METADATA_LOG\"\n"
+        "io=$(ionice -p $$ 2>/dev/null | tr -d ' ')\n"
+        "printf 'probe %s %s %s\\n' \"$running\" \"$nice\" \"${io:-none}\" >> \"$OMAROLL_METADATA_LOG\"\n"
         "/bin/sleep 0.6\n"
         "records \"$@\"\n"
         "rmdir \"$slots/$$\"\n");
@@ -8147,11 +8148,25 @@ private slots:
     int widest = 0;
     for (const QByteArray& line : probes) {
       const QList<QByteArray> fields = line.split(' ');
-      if (fields.size() != 3 || fields.first() != "probe") continue;
+      if (fields.size() != 4 || fields.first() != "probe") continue;
       ++started;
       widest = std::max(widest, fields.at(1).toInt());
       QVERIFY2(fields.at(2).toInt() >= 10, line.constData());
+      // Best effort, lowest level, wherever ionice is installed.
+      if (fields.at(3) != "none") QVERIFY2(fields.at(3) == "best-effort:prio7", line.constData());
     }
+    // The index's own pool threads, which parse the output, run at nice 10 too.
+    // They stay alive for a while after the work ends.
+    int lowered = 0;
+    for (const QString& task : QDir(QStringLiteral("/proc/self/task")).entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+      QFile stat(QStringLiteral("/proc/self/task/%1/stat").arg(task));
+      if (!stat.open(QIODevice::ReadOnly)) continue;
+      const QByteArray line = stat.readAll();
+      // Fields after the parenthesised name; nice is field 19 overall.
+      const QList<QByteArray> rest = line.mid(line.lastIndexOf(')') + 2).split(' ');
+      if (rest.size() > 16 && rest.at(16).toInt() == 10) ++lowered;
+    }
+    QVERIFY2(lowered >= 1, "no metadata worker thread at nice 10");
     QCOMPARE(started, batches);
     const int bound = MediaMetadataIndex::maximumParallelProbes();
     QVERIFY(bound >= 2 && bound <= 4);

@@ -189,4 +189,6 @@ private:
   // A scan requested while one is already running, so the newest state is not
   // lost to a rescan that started a moment too early.
   bool m_rescanQueued = false;
+  // The last scan came back empty and its follow-up started at once.
+  bool m_followedUpEmpty = false;
 };

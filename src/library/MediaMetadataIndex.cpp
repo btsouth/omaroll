@@ -103,6 +103,15 @@ void lowerPriority(qint64 pid) {
 #endif
 }
 
+// Pool threads parse and read raw headers. QThread::LowPriority maps to nice 0
+// under Linux's normal scheduler, so lower each worker thread the same way as
+// the probes, once per thread. The pool is this index's own.
+void lowerThisThread() {
+  thread_local bool lowered = false;
+  if (std::exchange(lowered, true)) return;
+  lowerPriority(static_cast<qint64>(syscall(SYS_gettid)));
+}
+
 QString identityKey(qint64 modified, qint64 bytes, quint64 device, quint64 inode) {
   return QStringLiteral("%1:%2:%3:%4").arg(modified).arg(bytes).arg(device).arg(inode);
 }
@@ -116,6 +125,8 @@ struct MediaMetadataIndex::Probe {
   // Removed from the library while running: the result is discarded and the
   // process is stopped early.
   bool cancelled = false;
+  // The same, for a raw probe's worker, which stops between files.
+  std::shared_ptr<std::atomic_bool> stop = std::make_shared<std::atomic_bool>(false);
   bool parsing = false;
   bool finished = false;
   std::unique_ptr<QProcess> process;
@@ -191,7 +202,6 @@ MediaMetadataIndex::MediaMetadataIndex(CaptureModel* model, QObject* parent)
 
   m_parallel = maximumParallelProbes();
   m_pool.setMaxThreadCount(m_parallel);
-  m_pool.setThreadPriority(QThread::LowPriority);
 
   m_progressTimer.setSingleShot(true);
   m_progressTimer.setInterval(kProgressIntervalMs);
@@ -479,10 +489,12 @@ bool MediaMetadataIndex::startProbe() {
     QStringList paths;
     for (const Candidate& candidate : std::as_const(raw->batch)) paths.append(candidate.path);
     const auto stopping = m_stopping;
-    raw->parse.setFuture(QtConcurrent::run(&m_pool, [paths, stopping] {
+    const auto stop = raw->stop;
+    raw->parse.setFuture(QtConcurrent::run(&m_pool, [paths, stopping, stop] {
+      lowerThisThread();
       Parsed parsed;
       for (int index = 0; index < paths.size(); ++index) {
-        if (stopping->load()) break;
+        if (stopping->load() || stop->load()) break;
         parsed.results.insert(index, rawDetails(paths.at(index)));
         parsed.completed.insert(index);
       }
@@ -550,6 +562,7 @@ void MediaMetadataIndex::processFinished(Probe* probe, bool successful) {
   const bool video = probe->kind == Probe::Kind::Video;
   // Only the copy of the output crosses to the worker.
   probe->parse.setFuture(QtConcurrent::run(&m_pool, [output, video, successful] {
+    lowerThisThread();
     Parsed parsed;
     if (video) {
       if (successful) {
@@ -598,6 +611,7 @@ void MediaMetadataIndex::cancelStaleProbes() {
       continue;
     }
     probe->cancelled = true;
+    probe->stop->store(true);
     if (probe->process && probe->process->state() != QProcess::NotRunning) {
       probe->process->kill();
     }
