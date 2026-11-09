@@ -470,6 +470,7 @@ AppSettings::AppSettings(QObject* parent)
   connect(&m_healthPoll, &QTimer::timeout, this, &AppSettings::applyOrganizationHealth);
   m_snapshotRefresh.setSingleShot(true);
   connect(&m_snapshotRefresh, &QTimer::timeout, this, [this] {
+    noteSnapshotFailure();
     if (!m_snapshotDirty || snapshotsHeld()) return;
     m_snapshotDirty = false;
     scheduleDailySnapshot(true);
@@ -489,7 +490,14 @@ AppSettings::~AppSettings() {
   m_snapshotRefresh.stop();
   m_healthPoll.stop();
   flushBackups();
+  // A refresh that failed (a full disk, a folder that was not writable) is
+  // still owed, so the exit tries once more.
+  noteSnapshotFailure();
   if (m_snapshotDirty && !snapshotsHeld()) scheduleDailySnapshot(true);
+}
+
+void AppSettings::noteSnapshotFailure() {
+  if (m_snapshotWriteFailed->exchange(false)) m_snapshotDirty = true;
 }
 
 void AppSettings::setShowHidden(bool value) {
@@ -1547,8 +1555,11 @@ bool prepareBackupDirectory(const QString& path) {
 
 bool writeBackupFile(const QString& path, const QByteArray& payload) {
   QSaveFile file(path);
-  if (!file.open(QIODevice::WriteOnly) || file.write(payload) != payload.size() || !file.commit())
-    return false;
+  if (!file.open(QIODevice::WriteOnly)) return false;
+  // Owner-only from the start: the temporary file becomes the snapshot. The
+  // mode is set again after the rename for file systems that ignore this.
+  file.setPermissions(kOwnerOnly);
+  if (file.write(payload) != payload.size() || !file.commit()) return false;
   QFile::setPermissions(path, kOwnerOnly);
   return true;
 }
@@ -1667,6 +1678,8 @@ int AppSettings::organizationSize(const OrganizationState& state) {
 }
 
 void AppSettings::checkOrganizationHealth(bool existingProfile) {
+  // What loaded, before any edit made while the check runs can add to it.
+  m_loadedSize = organizationSize(organizationState());
   m_healthPending = true;
   m_snapshotAfterHealth = m_snapshotAfterHealth || existingProfile;
   m_health = std::make_shared<HealthReport>();
@@ -1714,9 +1727,10 @@ void AppSettings::applyOrganizationHealth() {
     size = m_health->snapshotSize;
   }
   m_healthPending = false;
-  const int loaded = organizationSize(organizationState());
-  // Changes made since the launch only add to what loaded; a load that still
-  // looks incomplete next to the snapshot is not snapshotted over it.
+  // Compared with what loaded, not with edits made while the check ran, which
+  // could hide a damaged load; one that looks incomplete is not snapshotted
+  // over the backup.
+  const int loaded = m_loadedSize;
   if (settingsStatus() == QSettings::NoError && looksIncomplete(loaded, size)) {
     m_organizationSuspect = true;
     m_suspectSnapshot = snapshot;
@@ -1795,8 +1809,9 @@ void AppSettings::scheduleDailySnapshot(bool replace) {
   // Retried on the next start if the write fails, not on every save.
   m_snapshotDate = today;
   // Encoding is quick; the directory work and the synced writes are not.
-  m_backupWriter->post([path = backupDirectory(), today, payload = encodeOrganization(organizationState()), replace] {
-    writeScheduledBackups(path, today, payload, replace);
+  m_backupWriter->post([path = backupDirectory(), today, payload = encodeOrganization(organizationState()), replace,
+                        failed = m_snapshotWriteFailed] {
+    if (!writeScheduledBackups(path, today, payload, replace)) failed->store(true);
   });
 }
 

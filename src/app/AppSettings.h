@@ -18,6 +18,7 @@
 #include <QUrl>
 #include <QVariantMap>
 
+#include <atomic>
 #include <memory>
 
 struct CaptureRecord;
@@ -509,6 +510,12 @@ private:
   QTimer m_healthPoll;
   // A change saved since today's snapshot was last encoded.
   bool m_snapshotDirty = false;
+  // Set by the backup thread when a scheduled write fails; the change is then
+  // owed again and retried by the next refresh or at exit.
+  std::shared_ptr<std::atomic<bool>> m_snapshotWriteFailed = std::make_shared<std::atomic<bool>>(false);
+  void noteSnapshotFailure();
+  // How much organization the profile held when it loaded.
+  int m_loadedSize = 0;
   // Steady editing keeps restarting the refresh; it still runs this long
   // after the first change it has not taken.
   QElapsedTimer m_snapshotDirtySince;

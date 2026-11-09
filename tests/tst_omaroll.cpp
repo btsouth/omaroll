@@ -4007,6 +4007,60 @@ private slots:
 
   // Organization made after the day's first snapshot is in today's snapshot
   // once it settles, and at a clean exit, so a restore brings it back.
+  // A refresh that fails while the backup folder can't be written is owed
+  // again and taken at exit once it can.
+  void aFailedSnapshotRefreshIsRetriedAtExit() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto reset = scratchProfile(dir);
+    const QString picture = dir.filePath(QStringLiteral("retry.jpg"));
+    writeSmallFile(picture, "one");
+    QString today;
+    {
+      AppSettings settings;
+      QVERIFY(settings.createAlbum(QStringLiteral("Before")));
+      settings.flushBackups();
+      today = todaysSnapshot(settings);
+      QVERIFY(readAllOf(today).contains("Before"));
+      // A file where the backups folder goes can't be written through, even
+      // as root (a mode change would not stop root, and the writer puts its
+      // folder's own mode back anyway).
+      const QString backups = settings.backupDirectory();
+      QVERIFY(QDir(backups).removeRecursively());
+      writeSmallFile(backups, "in the way");
+      settings.setBackupRefreshDelay(10);
+      settings.setFavorite({picture}, true);
+      QTest::qWait(200);
+      settings.flushBackups();
+      QVERIFY(QFileInfo(backups).isFile());
+      // Writable again before the exit.
+      QVERIFY(QFile::remove(backups));
+    }
+    QVERIFY2(readAllOf(today).contains("retry.jpg"), qPrintable(today));
+  }
+
+  // The check compares what loaded, so albums made before it reports can't
+  // hide a damaged load.
+  void launchCheckComparesWhatLoadedNotLaterEdits() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto reset = scratchProfile(dir);
+    QStringList files;
+    for (int i = 0; i < 6; ++i) {
+      files.append(dir.filePath(QStringLiteral("l%1.jpg").arg(i)));
+      writeSmallFile(files.last(), QByteArray::number(i));
+    }
+    {
+      AppSettings settings;
+      settings.setFavorite(files, true);
+    }
+    damage(settingsFile(), "[library]\nsortMode=3\n");
+    AppSettings settings;
+    for (int i = 0; i < 10; ++i) QVERIFY(settings.createAlbum(QStringLiteral("New %1").arg(i)));
+    settings.flushBackups();
+    QVERIFY2(settings.launchWarning().contains(QStringLiteral("only 0 loaded")), qPrintable(settings.launchWarning()));
+  }
+
   void todaysSnapshotFollowsLaterChanges() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

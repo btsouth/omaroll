@@ -461,8 +461,10 @@ cannot spoil the shot. `man omaroll` lists every option with examples.
   want to keep them. Omaroll also keeps automatic backups of your organization
   in `~/.local/share/omaroll/backups` (7 daily, 4 weekly, readable only by you).
   Today's is refreshed a few minutes after each change and at exit. If a
-  launch finds the settings damaged or emptied, it offers to restore one;
-  Settings has Restore last good backup, and Import reads any of them. The thumbnail cache can be deleted and regenerated.
+  launch finds the settings damaged, or albums, tags and marks far smaller
+  than a backup from the past seven days, it offers that fuller backup once.
+  Older backups are still there: Settings has Restore last good backup, and
+  Import reads any of them. The thumbnail cache can be deleted and regenerated.
 
 ## Development
 

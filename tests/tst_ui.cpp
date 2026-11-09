@@ -217,9 +217,16 @@ private slots:
                                                .arg(QDate::currentDate().toString(Qt::ISODate)));
     QJsonArray favorites;
     for (int i = 0; i < 1000; ++i) favorites.append(QStringLiteral("/gone/%1.jpg").arg(i));
+    // Complete, as an import would accept it; anything less is passed over.
     const QJsonObject snapshot{{QStringLiteral("format"), QStringLiteral("omaroll.organization")},
                                {QStringLiteral("version"), 1},
-                               {QStringLiteral("favorites"), favorites}};
+                               {QStringLiteral("albums"), QJsonObject()},
+                               {QStringLiteral("tags"), QJsonObject()},
+                               {QStringLiteral("favorites"), favorites},
+                               {QStringLiteral("hidden"), QJsonArray()},
+                               {QStringLiteral("ratings"), QJsonObject()},
+                               {QStringLiteral("captions"), QJsonObject()},
+                               {QStringLiteral("smartCollections"), QJsonObject()}};
     {
       QFile file(today);
       QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
@@ -238,8 +245,31 @@ private slots:
     });
     QVERIFY(keep);
     QCOMPARE(keep->property("label").toString(), QStringLiteral("Keep as is"));
-    QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier,
-                      keep->mapToScene(QPointF(keep->width() / 2, keep->height() / 2)).toPoint());
+    const auto clickKeep = [&] {
+      QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier,
+                        keep->mapToScene(QPointF(keep->width() / 2, keep->height() / 2)).toPoint());
+    };
+    const auto askAgain = [&] {
+      QVERIFY(m_window->setProperty("launchRestoreAsked", false));
+      QVERIFY(QMetaObject::invokeMethod(m_window, "offerLaunchRestore"));
+      QTRY_VERIFY(sheet->isVisible());
+    };
+    // Escape leaves it unanswered: the sheet goes, the offer stays.
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!sheet->isVisible());
+    QVERIFY(!m_settings->launchWarning().isEmpty());
+    QVERIFY(m_settings->canRestoreOrganization());
+    // Keep as is that cannot copy the fuller backup aside asks again, saying why.
+    askAgain();
+    const QString held = today + QStringLiteral(".held");
+    QVERIFY(QFile::rename(today, held));
+    clickKeep();
+    QTRY_VERIFY(sheet->isVisible());
+    QVERIFY2(sheet->property("detail").toString().startsWith(QStringLiteral("Could not keep a copy")),
+             qPrintable(sheet->property("detail").toString()));
+    QVERIFY(!m_settings->launchWarning().isEmpty());
+    QVERIFY(QFile::rename(held, today));
+    clickKeep();
     QTRY_VERIFY(!sheet->isVisible());
     QVERIFY(m_settings->launchWarning().isEmpty());
     QVERIFY(!m_settings->canRestoreOrganization());

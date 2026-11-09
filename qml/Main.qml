@@ -326,7 +326,10 @@ ApplicationWindow {
     }
 
     function dismissTopLayer() {
-        if (confirm.visible) {
+        if (launchRestore.visible) {
+            // Unanswered: Settings keeps Restore, and the next launch asks again.
+            launchRestore.close()
+        } else if (confirm.visible) {
             confirm.close()
         } else if (permanentConfirm.visible) {
             permanentConfirm.close()
@@ -2254,7 +2257,11 @@ ApplicationWindow {
         }
         onCancelled: {
             const error = Settings.keepCurrentOrganization()
-            if (error !== "") root.say(error)
+            if (error === "") return
+            // Nothing was decided: ask again with the reason, so it can be
+            // retried or the backup restored without a restart.
+            launchRestore.detail = error + "\n\n" + Settings.launchWarning
+            launchRestore.open()
         }
         onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
     }

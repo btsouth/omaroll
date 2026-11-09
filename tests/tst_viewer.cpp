@@ -2639,8 +2639,12 @@ private slots:
       const auto restorePath = qScopeGuard([path] { qputenv("PATH", path); });
       QTest::keyClick(m_window, Qt::Key_P);
       QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(log), 5000);
-      QFile args(log);
-      QTRY_VERIFY(args.open(QIODevice::ReadOnly) && args.readAll().contains(broken.toUtf8()));
+      // The shell creates the log before it writes, so read it afresh each try.
+      const auto logged = [&log] {
+        QFile args(log);
+        return args.open(QIODevice::ReadOnly) ? args.readAll() : QByteArray();
+      };
+      QTRY_VERIFY(logged().contains(broken.toUtf8()));
     }
     QTest::keyClick(m_window, Qt::Key_Right);
     QTRY_COMPARE(m_session->path(), fine);
