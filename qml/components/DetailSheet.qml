@@ -3109,7 +3109,7 @@ Item {
     }
 
     Shortcut {
-        sequences: ["Alt+C"]
+        sequences: ShortcutCatalog.sequence("preview", "caption")
         enabled: root.visible && !root.contextMenuOpen && root.enabled
         onActivated: {
             root.actionNavigationActive = false
@@ -3119,14 +3119,14 @@ Item {
     }
 
     Shortcut {
-        sequence: "Ctrl+Shift+C"
+        sequences: ShortcutCatalog.sequence("preview", "copy-path")
         enabled: root.visible && root.enabled && !root.contextMenuOpen
         onActivated: root.invokeAction("copy-path")
     }
 
     Keys.onPressed: function (event) {
-        if ((event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) && root.Window.window) root.Window.window.keyboardNavigation = true
-        if (event.key === Qt.Key_Delete && (event.modifiers & Qt.ShiftModifier)
+        if ((event.key === ShortcutCatalog.previewKeyCodes["Tab"] || event.key === ShortcutCatalog.previewKeyCodes["Backtab"]) && root.Window.window) root.Window.window.keyboardNavigation = true
+        if (event.key === ShortcutCatalog.previewKeyCodes["Delete"] && (event.modifiers & Qt.ShiftModifier)
                 && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier))) {
             if (pdfSearch.activeFocus) return
             if (!event.isAutoRepeat && !root.contextMenuOpen) root.invokeAction("permanent-delete")
@@ -3134,20 +3134,20 @@ Item {
             return
         }
         if (!(event.modifiers & (Qt.ControlModifier | Qt.AltModifier))
-                && (event.key === Qt.Key_D || event.key === Qt.Key_O)
+                && (event.key === ShortcutCatalog.previewKeyCodes["D"] || event.key === ShortcutCatalog.previewKeyCodes["O"])
                 && Registry.appliesToKind("develop", root.isVideo, root.isDocument, root.path)) {
             root.invokeAction(event.modifiers & Qt.ShiftModifier ? "choose-editor" : "develop")
             event.accepted = true
             return
         }
-        if (event.key === Qt.Key_Backtab
-                || (event.key === Qt.Key_Tab && (event.modifiers & Qt.ShiftModifier))) {
+        if (event.key === ShortcutCatalog.previewKeyCodes["Backtab"]
+                || (event.key === ShortcutCatalog.previewKeyCodes["Tab"] && (event.modifiers & Qt.ShiftModifier))) {
             if (root.Window.window && root.Window.window.activeFocusItem !== root) return
             root.focusPreview()
             event.accepted = true
             return
         }
-        if (event.key === Qt.Key_Tab) {
+        if (event.key === ShortcutCatalog.previewKeyCodes["Tab"]) {
             if (root.Window.window && root.Window.window.activeFocusItem !== root) return
             root.focusFirstAction()
             event.accepted = true
@@ -3169,13 +3169,13 @@ Item {
             return
         }
         // Ctrl+C copies the words picked on the page rather than the file.
-        if (root.isDocument && PdfInfo.hasSelection && event.key === Qt.Key_C
+        if (root.isDocument && PdfInfo.hasSelection && event.key === ShortcutCatalog.previewKeyCodes["C"]
                 && (event.modifiers & Qt.ControlModifier)) {
             PdfInfo.copySelection()
             event.accepted = true
             return
         }
-        if (event.key === Qt.Key_Escape) {
+        if (event.key === ShortcutCatalog.previewKeyCodes["Escape"]) {
             // The window owns Escape through its own shortcut; this is the
             // fallback for the paths that shortcut does not cover, and it
             // leaves a text selection the same way.
@@ -3183,7 +3183,7 @@ Item {
             event.accepted = true
             return
         }
-        if (event.key === Qt.Key_Space) {
+        if (event.key === ShortcutCatalog.previewKeyCodes["Space"]) {
             if (root.isVideo) {
                 root.toggleVideoPlayback()
             } else if (root.isAnimatedImage) {
@@ -3203,7 +3203,7 @@ Item {
             return
         }
         if (!root.isVideo && (event.key === root.viewerShortcuts.zoomIn.key
-                              || event.key === Qt.Key_Equal)) {
+                              || event.key === ShortcutCatalog.previewKeyCodes["Equal"])) {
             root.adjustImageZoom(1.25)
             event.accepted = true
             return
@@ -3240,8 +3240,8 @@ Item {
             event.accepted = true
             return
         }
-        if (root.isDocument && (event.key === Qt.Key_PageDown || event.key === Qt.Key_PageUp)) {
-            const next = root.pdfPage + (event.key === Qt.Key_PageDown ? 1 : -1)
+        if (root.isDocument && (event.key === ShortcutCatalog.previewKeyCodes["PageDown"] || event.key === ShortcutCatalog.previewKeyCodes["PageUp"])) {
+            const next = root.pdfPage + (event.key === ShortcutCatalog.previewKeyCodes["PageDown"] ? 1 : -1)
             if (next >= 1 && next <= PdfInfo.pageCount) {
                 root.stillReady = false
                 root.pdfPage = next
@@ -3249,40 +3249,40 @@ Item {
             event.accepted = true
             return
         }
-        if (root.isVideo && (event.key === Qt.Key_J || event.key === Qt.Key_L)) {
-            root.seekVideo(event.key === Qt.Key_J ? -5000 : 5000)
+        if (root.isVideo && (event.key === ShortcutCatalog.previewKeyCodes["J"] || event.key === ShortcutCatalog.previewKeyCodes["L"])) {
+            root.seekVideo(event.key === ShortcutCatalog.previewKeyCodes["J"] ? -5000 : 5000)
             event.accepted = true
             return
         }
-        if (root.isVideo && (event.key === Qt.Key_Comma || event.key === Qt.Key_Period)) {
-            root.stepFrame(event.key === Qt.Key_Comma ? -1 : 1)
+        if (root.isVideo && (event.key === ShortcutCatalog.previewKeyCodes["Comma"] || event.key === ShortcutCatalog.previewKeyCodes["Period"])) {
+            root.stepFrame(event.key === ShortcutCatalog.previewKeyCodes["Comma"] ? -1 : 1)
             event.accepted = true
             return
         }
-        if (root.isVideo && event.key === Qt.Key_M) {
+        if (root.isVideo && event.key === ShortcutCatalog.previewKeyCodes["M"]) {
             Settings.videoMuted = !Settings.videoMuted
             event.accepted = true
             return
         }
-        if (root.isVideo && (event.key === Qt.Key_Up || event.key === Qt.Key_Down
-                             || event.key === Qt.Key_9 || event.key === Qt.Key_0)) {
-            root.adjustVolume(event.key === Qt.Key_Up || event.key === Qt.Key_0 ? 0.05 : -0.05)
+        if (root.isVideo && (event.key === ShortcutCatalog.previewKeyCodes["Up"] || event.key === ShortcutCatalog.previewKeyCodes["Down"]
+                             || event.key === ShortcutCatalog.previewKeyCodes["9"] || event.key === ShortcutCatalog.previewKeyCodes["0"])) {
+            root.adjustVolume(event.key === ShortcutCatalog.previewKeyCodes["Up"] || event.key === ShortcutCatalog.previewKeyCodes["0"] ? 0.05 : -0.05)
             event.accepted = true
             return
         }
-        if (root.isVideo && (event.key === Qt.Key_BracketLeft
-                             || event.key === Qt.Key_BracketRight)) {
-            root.adjustPlaybackRate(event.key === Qt.Key_BracketLeft ? -0.25 : 0.25)
+        if (root.isVideo && (event.key === ShortcutCatalog.previewKeyCodes["BracketLeft"]
+                             || event.key === ShortcutCatalog.previewKeyCodes["BracketRight"])) {
+            root.adjustPlaybackRate(event.key === ShortcutCatalog.previewKeyCodes["BracketLeft"] ? -0.25 : 0.25)
             event.accepted = true
             return
         }
-        if (root.isVideo && event.key === Qt.Key_Backspace) {
+        if (root.isVideo && event.key === ShortcutCatalog.previewKeyCodes["Backspace"]) {
             player.playbackRate = 1
             event.accepted = true
             return
         }
-        if (root.isVideo && (event.key === Qt.Key_Home || event.key === Qt.Key_End)) {
-            player.position = event.key === Qt.Key_Home ? 0 : player.duration
+        if (root.isVideo && (event.key === ShortcutCatalog.previewKeyCodes["Home"] || event.key === ShortcutCatalog.previewKeyCodes["End"])) {
+            player.position = event.key === ShortcutCatalog.previewKeyCodes["Home"] ? 0 : player.duration
             event.accepted = true
             return
         }
