@@ -2548,11 +2548,12 @@ private slots:
       invoke("dismissTopLayer");
       for (const QString& path : paths) m_settings->removeLibraryFolder(path);
       rescan();
+      // Removing folders schedules its own rescan; wait for that one too.
       const bool removed = QTest::qWaitFor([&] {
-        return std::all_of(paths.cbegin(), paths.cend(), [&](const QString& path) {
+        return !m_captures->scanning() && std::all_of(paths.cbegin(), paths.cend(), [&](const QString& path) {
           return m_captures->rowOf(path + QStringLiteral("/picture.png")) < 0;
         });
-      }, 5000);
+      }, 60000);
       m_window->resize(previous);
       QVERIFY(removed);
     });
