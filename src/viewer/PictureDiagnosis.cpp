@@ -258,7 +258,8 @@ Finding videoFailure(const QString& path, const QString& playerError, const QStr
             QStringLiteral("Its data can't be read%1. A download or copy may not have finished.")
                 .arg(reason.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(reason))};
   };
-  const QString program = ffmpeg.isEmpty() ? QStandardPaths::findExecutable(QStringLiteral("ffmpeg")) : ffmpeg;
+  QString program = ffmpeg.isEmpty() ? QStandardPaths::findExecutable(QStringLiteral("ffmpeg")) : ffmpeg;
+  if (!program.isEmpty() && !QFileInfo(program).isExecutable()) program.clear();
   if (program.isEmpty()) {
     // Without ffmpeg only the player's own words are left.
     if (reported.contains(u"decoder", Qt::CaseInsensitive) || reported.contains(u"codec", Qt::CaseInsensitive)) {
