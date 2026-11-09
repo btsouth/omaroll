@@ -5,10 +5,9 @@ on:
     - cron: '23 5 * * *'
   workflow_dispatch:
 
-# A newer push to the same pull request replaces the run in progress.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read

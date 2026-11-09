@@ -296,38 +296,6 @@ AppSettings::AppSettings(QObject* parent)
   m_rememberPlaybackSpeed = m_settings.value(kRememberPlaybackSpeed, false).toBool();
   const qreal savedRate = m_settings.value(kVideoPlaybackRate, 1.0).toDouble();
   m_videoPlaybackRate = std::isfinite(savedRate) ? qBound(0.25, savedRate, 4.0) : 1.0;
-  m_videoRecency = m_settings.value(kVideoPositionRecency).toStringList();
-  QVariantMap storedPositions = m_settings.value(kVideoPositions).toMap();
-  if (m_settings.status() != QSettings::FormatError &&
-      storedPositions.isEmpty() && m_settings.contains(kLegacyVideoPositions)) {
-    m_videoRecency.clear();
-    const QVariantMap legacy = m_settings.value(kLegacyVideoPositions).toMap();
-    // The old map loads in key order too. Preserve that order while changing
-    // identities, rather than sorting by the new device/inode keys.
-    for (auto it = legacy.cbegin(); it != legacy.cend(); ++it) {
-      const QString key = FileVersion::key(it.key());
-      const qint64 position = it.value().toLongLong();
-      if (!key.isEmpty() && QFileInfo(it.key()).isFile() && position >= kMinimumResumeMs &&
-          !storedPositions.contains(key) && m_videoRecency.size() < kMaximumResumeEntries) {
-        storedPositions.insert(key, position);
-        m_videoRecency.append(key);
-      }
-    }
-    setValue(kVideoPositions, storedPositions);
-    setValue(kVideoPositionRecency, m_videoRecency);
-  }
-  for (auto it = storedPositions.cbegin(); it != storedPositions.cend(); ++it) {
-    const qint64 position = it.value().toLongLong();
-    if (!it.key().isEmpty() && position >= kMinimumResumeMs) {
-      m_videoPositions.insert(it.key(), position);
-      if (!m_videoRecency.contains(it.key())) m_videoRecency.append(it.key());
-    }
-  }
-  m_videoRecency.removeIf([this](const QString& key) { return !m_videoPositions.contains(key); });
-  if (m_settings.status() != QSettings::FormatError && m_settings.contains(kLegacyVideoPositions)) {
-    m_settings.remove(kLegacyVideoPositions);
-    m_settings.sync();
-  }
   const QVariantMap storedAlbums = m_settings.value(kAlbums).toMap();
   const auto restoreCollections = [](const QVariantMap& storedCollections,
                                          QMap<QString, QList<AlbumEntry>>& target,
@@ -398,6 +366,41 @@ AppSettings::AppSettings(QObject* parent)
     m_markIdentities.insert(it.key(), entry);
   }
 
+  // Organization must be fully loaded before a pre-migration snapshot.
+  const bool migrationBackedUp = !m_settings.contains(kLegacyVideoPositions) ||
+      snapshotOrganization(QDate::currentDate(), true);
+  m_videoRecency = m_settings.value(kVideoPositionRecency).toStringList();
+  QVariantMap storedPositions = m_settings.value(kVideoPositions).toMap();
+  if (migrationBackedUp && m_settings.status() != QSettings::FormatError &&
+      storedPositions.isEmpty() && m_settings.contains(kLegacyVideoPositions)) {
+    m_videoRecency.clear();
+    const QVariantMap legacy = m_settings.value(kLegacyVideoPositions).toMap();
+    // The old map loads in key order too. Preserve that order while changing
+    // identities, rather than sorting by the new device/inode keys.
+    for (auto it = legacy.cbegin(); it != legacy.cend(); ++it) {
+      const QString key = FileVersion::key(it.key());
+      const qint64 position = it.value().toLongLong();
+      if (!key.isEmpty() && QFileInfo(it.key()).isFile() && position >= kMinimumResumeMs &&
+          !storedPositions.contains(key) && m_videoRecency.size() < kMaximumResumeEntries) {
+        storedPositions.insert(key, position);
+        m_videoRecency.append(key);
+      }
+    }
+    setValue(kVideoPositions, storedPositions);
+    setValue(kVideoPositionRecency, m_videoRecency);
+  }
+  for (auto it = storedPositions.cbegin(); it != storedPositions.cend(); ++it) {
+    const qint64 position = it.value().toLongLong();
+    if (!it.key().isEmpty() && position >= kMinimumResumeMs) {
+      m_videoPositions.insert(it.key(), position);
+      if (!m_videoRecency.contains(it.key())) m_videoRecency.append(it.key());
+    }
+  }
+  m_videoRecency.removeIf([this](const QString& key) { return !m_videoPositions.contains(key); });
+  if (migrationBackedUp && m_settings.status() != QSettings::FormatError && m_settings.contains(kLegacyVideoPositions)) {
+    m_settings.remove(kLegacyVideoPositions);
+    m_settings.sync();
+  }
   snapshotOrganization();
   m_previousVisit = m_settings.value(kLastVisit).toString();
   setValue(kLastVisit, QDateTime::currentDateTime().toString(Qt::ISODate));

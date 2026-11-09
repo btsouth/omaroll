@@ -2550,6 +2550,11 @@ private slots:
       QCOMPARE(settings.albumNames(), QStringList{"Remember me"});
       QCOMPARE(backupDir.entryList({"before-restore-*.json"}, QDir::Files).size(), 1);
     }
+    // An unreadable newest snapshot must fall back without mutating settings.
+    QFile broken(QDir(backups).filePath("before-restore-broken.json"));
+    QVERIFY(broken.open(QIODevice::WriteOnly));
+    QVERIFY(broken.write("{broken") > 0);
+    broken.close();
     QFile damaged(ini);
     QVERIFY(damaged.open(QIODevice::WriteOnly));
     const QByteArray bad("[library]\n[truncated\n");
