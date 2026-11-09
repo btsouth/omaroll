@@ -1499,8 +1499,8 @@ private slots:
     QMetaObject::invokeMethod(grid, "clearChecked");
     added.prepend(arriving);
 
-    // The same in the flat grid: a capture arriving at the top while a band
-    // is held deep in the grid.
+    // The same in the flat grid: captures leaving above while a band is held
+    // deep in the grid.
     m_library->setSortMode(CaptureFilterModel::RatingFirst);
     QQuickItem* flat = item("flatGrid");
     QTRY_VERIFY(flat->isVisible());
@@ -1525,16 +1525,16 @@ private slots:
     for (int step = 1; step <= 4; ++step) QTest::mouseMove(m_window, flatFrom + (flatTo - flatFrom) * step / 6, 16);
     QTRY_VERIFY(item("rubberBandRect")->isVisible());
     QTRY_VERIFY(grid->property("checkedCount").toInt() > 0);
-    QStringList newer;
-    for (int hour : {13, 14}) {
-      const QString path = dir.filePath(QStringLiteral("screenshot-2019-05-30_%1-00-00.png").arg(hour));
-      QVERIFY(picture.save(path));
-      m_disposablePaths.append(path);
-      newer.append(path);
-    }
-    m_captures->addExtraFiles(newer);
-    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(newer.first()) >= 0 && m_library->rowOf(newer.last()) >= 0, 10000);
-    QTest::qWait(200);
+    // A rescan finds the seven newest gone: rows leave above the band and
+    // the grid moves where its rows start.
+    const qreal originBefore = flat->property("originY").toReal();
+    const int remaining = m_library->count() - 7;
+    for (int i = 0; i < 7; ++i) QVERIFY(QFile::remove(m_library->pathAt(i)));
+    rescan();
+    QTRY_VERIFY_WITH_TIMEOUT(!m_captures->scanning() && m_library->count() == remaining, 15000);
+    QTest::qWait(300);
+    QVERIFY2(flat->property("originY").toReal() != originBefore,
+             "the grid kept its origin, so this no longer tests a moved origin");
     for (int step = 5; step <= 6; ++step) QTest::mouseMove(m_window, flatFrom + (flatTo - flatFrom) * step / 6, 16);
     QTest::mouseMove(m_window, flatTo + QPoint(3, 3), 16);
     QTest::qWait(50);
