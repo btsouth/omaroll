@@ -41,7 +41,7 @@ inline QVariantList rows() {
   {"context": "quick", "id": "normal-speed", "keys": ["Backspace"], "label": "Normal speed", "group": "Playback", "flag": "video", "tokens": ["Backspace"]},
   {"context": "quick", "id": "audio-track", "keys": ["Shift+A"], "label": "Cycle audio tracks", "group": "Playback", "flag": "audio", "tokens": ["A"]},
   {"context": "quick", "id": "subtitles", "keys": ["C"], "label": "Cycle subtitles", "group": "Playback", "flag": "video", "tokens": ["C"]},
-  {"context": "quick", "id": "subtitle-offset", "keys": ["Z", "X"], "label": "Sidecar subtitles earlier / later by 0.5 seconds", "group": "Playback", "flag": "sidecar", "tokens": ["Z", "X"]},
+  {"context": "quick", "id": "subtitle-offset", "keys": ["Z", "X"], "label": "Subtitles earlier / later by 0.5 seconds", "group": "Playback", "flag": "sidecar", "tokens": ["Z", "X"]},
   {"context": "quick", "id": "trim", "keys": ["T"], "label": "Trim video", "group": "Playback", "flag": "video", "tokens": ["T"]},
   {"context": "quick", "id": "frame", "keys": ["G"], "label": "Save video frame", "group": "Playback", "flag": "video", "tokens": ["G"]},
   {"context": "quick", "id": "play", "keys": ["P"], "label": "Open in mpv", "group": "Playback", "flag": "video", "tokens": ["P"]},

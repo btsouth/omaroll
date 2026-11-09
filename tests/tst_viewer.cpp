@@ -4444,6 +4444,152 @@ private slots:
     player->pause();
   }
 
+  // PQ and HLG video is drawn without tone mapping. A notice with the
+  // controls says so and hands it to mpv at the position, and the viewer
+  // pauses so only one player is heard. SDR video gets no notice.
+  void hdrVideoOffersMpvAndPausesOnHandoff_data() {
+    QTest::addColumn<QString>("transfer");
+    QTest::addColumn<QString>("shown");
+    QTest::newRow("pq") << QStringLiteral("smpte2084") << QStringLiteral("PQ");
+    QTest::newRow("hlg") << QStringLiteral("arib-std-b67") << QStringLiteral("HLG");
+    QTest::newRow("sdr") << QStringLiteral("bt709") << QString();
+  }
+
+  void hdrVideoOffersMpvAndPausesOnHandoff() {
+    QFETCH(QString, transfer);
+    QFETCH(QString, shown);
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty()) QSKIP("ffmpeg is not installed");
+    const QString folder = m_scratch.filePath(QStringLiteral("hdr"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString path = folder + QStringLiteral("/clip-%1.mp4").arg(transfer);
+    if (!QFile::exists(path)) {
+      QProcess encoder;
+      encoder.start(ffmpeg, {QStringLiteral("-hide_banner"), QStringLiteral("-loglevel"), QStringLiteral("error"),
+                             QStringLiteral("-y"), QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+                             QStringLiteral("testsrc2=s=320x180:r=10:d=6"), QStringLiteral("-vf"),
+                             // FFmpeg 9 tags the stream from the frames, not -color_trc.
+                             QStringLiteral("setparams=color_primaries=%1:color_trc=%2:colorspace=%3,format=yuv420p")
+                                 .arg(transfer == u"bt709" ? QStringLiteral("bt709") : QStringLiteral("bt2020"), transfer,
+                                      transfer == u"bt709" ? QStringLiteral("bt709") : QStringLiteral("bt2020nc")),
+                             QStringLiteral("-c:v"), QStringLiteral("libx264"), path});
+      QVERIFY(encoder.waitForFinished(30000));
+      QVERIFY2(encoder.exitStatus() == QProcess::NormalExit && encoder.exitCode() == 0,
+               encoder.readAllStandardError().constData());
+    }
+    QTemporaryDir bin;
+    QVERIFY(bin.isValid());
+    const QString log = bin.filePath(QStringLiteral("mpv.log"));
+    QFile mpv(bin.filePath(QStringLiteral("mpv")));
+    QVERIFY(mpv.open(QIODevice::WriteOnly));
+    mpv.write("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"" + log.toUtf8() + "\"\n");
+    mpv.close();
+    QVERIFY(mpv.setPermissions(mpv.permissions() | QFileDevice::ExeOwner));
+    const QByteArray systemPath = qgetenv("PATH");
+    qputenv("PATH", bin.path().toUtf8() + ':' + systemPath);
+    const auto restorePath = qScopeGuard([systemPath] { qputenv("PATH", systemPath); });
+
+    open({path});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QObject* presentation = m_window->property("presentation").value<QObject*>();
+    QVERIFY(presentation);
+    QTRY_VERIFY_WITH_TIMEOUT(presentation->property("ready").toBool(), 10000);
+    QCOMPARE(presentation->property("hdr").toString(), shown);
+    m_window->setProperty("chromePinned", true);
+    const auto unpin = qScopeGuard([this] { m_window->setProperty("chromePinned", false); });
+    QQuickItem* notice = item(QStringLiteral("viewerHdrNotice"));
+    QTRY_COMPARE(notice->isVisible(), !shown.isEmpty());
+    if (shown.isEmpty()) {
+      player->pause();
+      return;
+    }
+    QVERIFY(item(QStringLiteral("viewerHdrNoticeText"))->property("text").toString()
+                .startsWith(shown == u"PQ" ? QStringLiteral("HDR10 video") : QStringLiteral("HLG video")));
+    // Inside the window, clear of the header.
+    const QRectF bounds = notice->mapRectToScene(notice->boundingRect());
+    QVERIFY(bounds.left() >= 0 && bounds.right() <= m_window->width());
+    QVERIFY(bounds.top() >= item(QStringLiteral("viewerHeader"))->height() - 4);
+    QQuickItem* play = item(QStringLiteral("viewerHdrPlay"));
+    QTRY_VERIFY_WITH_TIMEOUT(player->playbackState() == QMediaPlayer::PlayingState && player->position() >= 500, 10000);
+    // The button needs mpv on the path when the window was made; P is the
+    // same action either way.
+    if (play->isVisible()) click(play);
+    else QTest::keyClick(m_window, Qt::Key_P);
+    const auto logged = [&log] {
+      QFile args(log);
+      return args.open(QIODevice::ReadOnly) ? args.readAll() : QByteArray();
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(logged().contains(path.toUtf8()), 5000);
+    QVERIFY2(logged().contains("--start="), logged().constData());
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+  }
+
+  // Z and X shift an embedded text track too, through a copy of the track,
+  // and the caption size setting scales the overlay.
+  void embeddedSubtitlesTakeADelayAndASize() {
+    if (QStandardPaths::findExecutable(QStringLiteral("ffmpeg")).isEmpty()) QSKIP("ffmpeg is not installed");
+    const QString folder = m_scratch.filePath(QStringLiteral("embedded-delay"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString path = folder + QStringLiteral("/tracks.mkv");
+    QVERIFY(QFile::exists(path) || QFile::copy(QFINDTESTDATA("fixtures/viewer/tracks.mkv"), path));
+    open({path});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY_WITH_TIMEOUT(player->playbackState() == QMediaPlayer::PlayingState, 5000);
+    QTRY_COMPARE(player->subtitleTracks().size(), 1);
+    QTest::keyClick(m_window, Qt::Key_X);
+    QCOMPARE(prop("subtitleOffsetMs").toInt(), 0); // Nothing shown, nothing to shift.
+    QCOMPARE(prop("status").toString(), QStringLiteral("Turn on subtitles first"));
+    QTest::keyClick(m_window, Qt::Key_C);
+    QTRY_COMPARE(player->activeSubtitleTrack(), 0);
+    // Qt hands over embedded cues as it plays, so the unshifted one is
+    // checked playing; the shifted ones come from the copy and hold paused.
+    player->setPosition(6500);
+    QTRY_COMPARE_WITH_TIMEOUT(prop("subtitleText").toString(), QStringLiteral("Second subtitle"), 5000);
+    player->pause();
+    player->setPosition(6500);
+
+    QTest::keyClick(m_window, Qt::Key_X);
+    QTest::keyClick(m_window, Qt::Key_X);
+    QCOMPARE(prop("subtitleOffsetMs").toInt(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(!prop("embeddedSubtitleCopy").toString().isEmpty(), 15000);
+    // A second later: the first cue is still up at 6.5 s.
+    QTRY_COMPARE(prop("subtitleText").toString(), QStringLiteral("Omaroll subtitle test"));
+    for (int i = 0; i < 4; ++i) QTest::keyClick(m_window, Qt::Key_Z);
+    QCOMPARE(prop("subtitleOffsetMs").toInt(), -1000);
+    player->setPosition(5500);
+    QTRY_COMPARE(prop("subtitleText").toString(), QStringLiteral("Second subtitle"));
+
+    auto* overlay = item(QStringLiteral("viewerSubtitles"));
+    QTRY_VERIFY(overlay->isVisible());
+    const int normal = overlay->property("font").value<QFont>().pixelSize();
+    m_settings->setCaptionScale(200);
+    const auto restoreScale = qScopeGuard([this] { m_settings->setCaptionScale(100); });
+    QCOMPARE(overlay->property("font").value<QFont>().pixelSize(), normal * 2);
+    m_settings->setCaptionScale(33); // Not one of the sizes.
+    QCOMPARE(m_settings->captionScale(), 200);
+  }
+
+  // The copy behind an embedded delay: a text track comes out as SubRip, a
+  // file without one fails rather than waiting forever.
+  void embeddedSubtitleTracksAreCopiedOut() {
+    if (QStandardPaths::findExecutable(QStringLiteral("ffmpeg")).isEmpty()) QSKIP("ffmpeg is not installed");
+    SubtitleIndex index;
+    const QString tracks = QFINDTESTDATA("fixtures/viewer/tracks.mkv");
+    QVERIFY(index.embedded(tracks, 0).isEmpty());
+    QCOMPARE(index.embeddedState(tracks, 0), QStringLiteral("working"));
+    QTRY_VERIFY_WITH_TIMEOUT(!index.embedded(tracks, 0).isEmpty(), 15000);
+    QCOMPARE(index.embeddedState(tracks, 0), QStringLiteral("ready"));
+    const QString copy = index.embedded(tracks, 0);
+    QTRY_COMPARE(index.cueCount(copy), 2);
+    QCOMPARE(index.textAt(copy, 7000), QStringLiteral("Second subtitle"));
+    const QString clip = media(QStringLiteral("clip.mp4"));
+    QVERIFY(index.embedded(clip, 0).isEmpty());
+    QTRY_COMPARE_WITH_TIMEOUT(index.embeddedState(clip, 0), QStringLiteral("failed"), 15000);
+    QVERIFY(index.embedded(clip, 0).isEmpty());
+  }
+
   // Qt 6.12's player stops on any write to its source, so the session saying
   // the same file again must leave playback alone.
   void videoKeepsPlayingWhenTheSameFileIsAnnounced() {

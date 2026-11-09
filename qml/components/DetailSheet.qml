@@ -168,18 +168,41 @@ Item {
     property var subtitleFiles: []
     property string externalSubtitle: ""
     property int subtitleChoice: 0
-    // A timing nudge for sidecar subtitles, which are the ones omaroll draws
-    // itself. Positive shows the cue later.
+    // A timing nudge for subtitles. Positive shows the cue later. An embedded
+    // text track is shifted through a copy of it, read like a sidecar.
     property int subtitleOffsetMs: 0
+    // Kept here: Qt 6.12 does not notify a change of activeSubtitleTrack.
+    property int embeddedSubtitleTrack: -1
+    readonly property string embeddedSubtitleCopy: {
+        void Subtitles.revision
+        return subtitleOffsetMs !== 0 && embeddedSubtitleTrack >= 0 && isVideo && path !== ""
+            ? Subtitles.embedded(path, embeddedSubtitleTrack) : ""
+    }
     readonly property string externalCueText: {
         void Subtitles.revision
-        return externalSubtitle !== "" && player
-        ? Subtitles.textAt(externalSubtitle, Math.round(player.position) - root.subtitleOffsetMs)
+        const cues = externalSubtitle !== "" ? externalSubtitle : embeddedSubtitleCopy
+        return cues !== "" && player
+        ? Subtitles.textAt(cues, Math.round(player.position) - root.subtitleOffsetMs)
         : ""
     }
-    readonly property string subtitleOverlayText: externalSubtitle !== ""
+    readonly property string subtitleOverlayText: externalSubtitle !== "" || embeddedSubtitleCopy !== ""
         ? externalCueText
         : (root.presentation ? root.presentation.subtitleText : "")
+    // A picture-based track can't be copied, so it can't be shifted.
+    readonly property bool embeddedDelayFailed: {
+        void Subtitles.revision
+        return subtitleOffsetMs !== 0 && embeddedSubtitleTrack >= 0 && isVideo && path !== ""
+            && Subtitles.embeddedState(path, embeddedSubtitleTrack) === "failed"
+    }
+    onEmbeddedDelayFailedChanged: {
+        if (!embeddedDelayFailed) return
+        subtitleOffsetMs = 0
+        statusRequested("Subtitle delay works only for text subtitles")
+    }
+    // mpv takes over at the current position: stop here so only one plays.
+    function pauseForHandoff() {
+        if (player && player.playbackState === MediaPlayer.PlayingState) player.pause()
+    }
     readonly property bool hasSubtitleChoices: (player && player.subtitleTracks.length > 0)
                                                || subtitleFiles.length > 0
     readonly property string subtitleChoiceLabel: {
@@ -394,6 +417,7 @@ Item {
         resumePending = true
         externalSubtitle = ""
         subtitleChoice = 0
+        embeddedSubtitleTrack = -1
         subtitleOffsetMs = 0
         subtitleFiles = Subtitles.files(path)
         const keepActionFocus = visible && actionNavigationActive
@@ -660,6 +684,7 @@ Item {
     }
 
     function setSubtitleTrack(index) {
+        embeddedSubtitleTrack = index
         if (player.activeSubtitleTrack === index) return
         player.activeSubtitleTrack = index
         if (presentation) presentation.trackChanged()
@@ -1618,6 +1643,39 @@ Item {
                 }
             }
 
+            // Qt draws PQ and HLG video without tone mapping; mpv maps them.
+            Rectangle {
+                objectName: "detailHdrNotice"
+                readonly property string transfer: root.isVideo && !root.videoFailed && !!root.presentation
+                                                   ? root.presentation.hdr : ""
+                visible: transfer !== "" && root.playbackError === "" && !root.slideshowRunning
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: transport.top
+                anchors.bottomMargin: 10
+                width: Math.min(hdrText.implicitWidth + 16, parent.width - 32)
+                height: hdrText.implicitHeight + 8
+                radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 6) : 3
+                color: Osd.panel
+                border.width: 1
+                border.color: Osd.border
+
+                Text {
+                    id: hdrText
+                    objectName: "detailHdrNoticeText"
+                    anchors.centerIn: parent
+                    width: Math.min(implicitWidth, parent.parent.width - 48)
+                    elide: Text.ElideRight
+                    text: (parent.transfer === "PQ" ? "HDR10" : "HLG")
+                          + " video: colours aren't tone-mapped here"
+                          + (Registry.available("play") ? "  ·  P opens it in mpv" : "")
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 12
+                    color: Osd.foreground
+                    Accessible.role: Accessible.StaticText
+                    Accessible.name: text
+                }
+            }
+
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: transport.top
@@ -1671,7 +1729,7 @@ Item {
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.Wrap
                 font.family: Theme.fontFamily
-                font.pixelSize: Math.max(16, Math.min(28, output.height / 24))
+                font.pixelSize: Math.round(Math.max(16, Math.min(28, output.height / 24)) * Settings.captionScale / 100)
                 font.weight: Font.DemiBold
                 color: "white"
                 style: Text.Outline
@@ -2119,7 +2177,8 @@ Item {
                 // Whether a sidecar's timing nudge is on offer at all, apart
                 // from the room it gets: the top controls stack on this
                 // minimum, and the nudge's visibility follows that width.
-                readonly property bool subtitleOffsetOffered: root.externalSubtitle !== ""
+                readonly property bool subtitleOffsetOffered: (root.externalSubtitle !== ""
+                                                               || root.embeddedSubtitleTrack >= 0)
                                                               && root.hasSubtitleChoices
                 // Measured from the parts, which keep their size while hidden,
                 // so the nudge's own visibility can depend on it. The clock
@@ -2279,14 +2338,14 @@ Item {
                     color: Osd.mutedText
                 }
 
-                // A timing nudge for sidecar subtitles only, which omaroll draws.
+                // A timing nudge for the subtitles shown, which omaroll draws.
                 // It sits between the clock and the track controls, and leaves
                 // with the CC button it belongs to, or before the scrub would
                 // shrink below its minimum, when the row runs short.
                 Row {
                     id: subtitleOffsetControls
                     objectName: "subtitleOffsetControls"
-                    visible: root.externalSubtitle !== "" && subtitleButton.width > 0
+                    visible: transport.subtitleOffsetOffered && subtitleButton.width > 0
                              && transport.width >= playButton.width + 14
                                 + transport.scrubMinimum + 14
                                 + transport.subtitleOffsetWidest + 8

@@ -33,7 +33,7 @@ The viewer opens when you double-click a picture or video, or run
 | `[` `]` · `Backspace` · `C` | Speed · normal speed · cycle subtitles |
 | `Shift+L` | Loop video on or off; slideshows still advance |
 | `Shift+A` | Cycle audio tracks when more than one is available |
-| `Z` `X` | Show sidecar subtitles 0.5 seconds earlier · later, up to 10 seconds |
+| `Z` `X` | Show subtitles 0.5 seconds earlier · later, up to 10 seconds; an embedded track needs to be text, not pictures |
 | `F` · `F11` · double click a video | Full screen |
 | `F5` | Slideshow |
 | `I` | Details: size, date, rating, camera or codec |
@@ -60,6 +60,8 @@ Settings offers **Remember playback speed**, off by default. When enabled,
 the last speed chosen in the quick viewer applies to newly opened videos.
 `Backspace` also resets that preference to normal speed. Video loop lasts
 until the viewer closes; subtitle delay resets when the file changes.
+**Caption size** sets subtitles from 75% to 200% of their usual size, in the
+viewer and the library preview.
 
 ## Library and preview
 

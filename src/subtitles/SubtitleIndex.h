@@ -5,6 +5,9 @@
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QTemporaryDir>
+
+#include <memory>
 
 // Sidecar subtitles: the .srt or .vtt sitting next to a video, which Qt
 // Multimedia will not load by itself.
@@ -46,6 +49,15 @@ public:
   // Number of parsed cues, for tests and diagnostics.
   Q_INVOKABLE [[nodiscard]] int cueCount(const QString& subtitlePath);
 
+  // An embedded text track (the video's track-th subtitle stream) copied out
+  // with ffmpeg into a private SubRip file, so its cues can be shifted like a
+  // sidecar's. Empty until the copy is ready; the first call starts it and
+  // changed() follows. A copy lives until the app quits or the video changes.
+  Q_INVOKABLE [[nodiscard]] QString embedded(const QString& videoPath, int track);
+  // "working", "ready" or "failed" (a picture-based track, or no ffmpeg) for
+  // a track embedded() was asked for; empty before.
+  Q_INVOKABLE [[nodiscard]] QString embeddedState(const QString& videoPath, int track) const;
+
   [[nodiscard]] int revision() const { return m_revision; }
 
 signals:
@@ -64,7 +76,20 @@ private:
                       qint64 position, QStringList& active);
   void invalidate(const QString& path);
 
+  struct Extraction {
+    QString version;
+    QString state;
+    QString path;
+  };
+  static QString embeddedKey(const QString& videoPath, int track) {
+    return videoPath + QLatin1Char('\n') + QString::number(track);
+  }
+
   QHash<QString, Parsed> m_cache;
+  QHash<QString, Extraction> m_extractions;
+  // Made on first use, removed when the app quits.
+  std::unique_ptr<QTemporaryDir> m_extracted;
+  int m_extractedCount = 0;
   QHash<QString, quint64> m_pending;
   QFileSystemWatcher m_watcher;
   quint64 m_generation = 0;

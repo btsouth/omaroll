@@ -140,10 +140,15 @@ omaroll photo.jpg
 omaroll clip.mp4
 ```
 
-Video captions use Omaroll's themed overlay for embedded tracks and sidecars.
+Video captions use Omaroll's themed overlay for embedded tracks and sidecars,
+at the **Caption size** chosen in Settings. `Z` and `X` shift them half a second
+earlier or later; an embedded track is copied out with ffmpeg for that, so it
+has to be text rather than pictures.
 The info panel identifies PQ/HDR10, HLG and Dolby Vision metadata when present;
-this describes the file, not a guarantee of HDR display output. Open in mpv
-continues at the current playback position. When changing videos, a poster or
+this describes the file, not a guarantee of HDR display output. Omaroll draws
+HDR10 and HLG video without tone mapping, so their colours are off; a notice
+with the controls says so and offers Open in mpv, which maps them. Open in mpv
+continues at the current playback position and pauses Omaroll's player. When changing videos, a poster or
 the previous picture stays visible until the new clip's first decoded frame.
 
 Hovering the seek bar, in the viewer or the library preview, shows the time

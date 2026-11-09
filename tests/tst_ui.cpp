@@ -1001,7 +1001,8 @@ private slots:
                                             std::pair{"thumbnailCacheButton", "thumbnailCacheMb"},
                                             std::pair{"slideshowIntervalButton", "slideshowIntervalSeconds"},
                                             std::pair{"imageDefaultButton", "imagePrimaryAction"},
-                                            std::pair{"videoDefaultButton", "videoPrimaryAction"}}) {
+                                            std::pair{"videoDefaultButton", "videoPrimaryAction"},
+                                            std::pair{"captionScaleButton", "captionScale"}}) {
       QQuickItem* control = child(QString::fromLatin1(object));
       QVERIFY2(control, object);
       const QVariant before = m_settings->property(property);
@@ -3930,6 +3931,78 @@ private slots:
     QCOMPARE(detail->property("playbackState").toInt(), static_cast<int>(QMediaPlayer::StoppedState));
     QVERIFY(!output->isVisible());
     QVERIFY(!item("detailVideoPoster")->isVisible());
+    invoke("dismissTopLayer");
+  }
+
+  // Open in mpv from the preview hands over the position and pauses the
+  // preview, so only one player is heard.
+  void previewPausesOnMpvHandoff() {
+    int videoRow = -1;
+    for (int row = 0; row < m_library->rowCount() && videoRow < 0; ++row) {
+      if (m_library->isVideoAt(row)) videoRow = row;
+    }
+    QVERIFY(videoRow >= 0);
+    QTemporaryDir bin;
+    QVERIFY(bin.isValid());
+    const QString log = bin.filePath(QStringLiteral("mpv.log"));
+    QFile mpv(bin.filePath(QStringLiteral("mpv")));
+    QVERIFY(mpv.open(QIODevice::WriteOnly));
+    mpv.write("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"" + log.toUtf8() + "\"\n");
+    mpv.close();
+    QVERIFY(mpv.setPermissions(mpv.permissions() | QFileDevice::ExeOwner));
+    const QByteArray systemPath = qgetenv("PATH");
+    qputenv("PATH", bin.path().toUtf8() + ':' + systemPath);
+    const auto restorePath = qScopeGuard([systemPath] { qputenv("PATH", systemPath); });
+
+    openDetail(videoRow);
+    QQuickItem* detail = item("detail");
+    QTRY_COMPARE_WITH_TIMEOUT(detail->property("playbackState").toInt(),
+                              static_cast<int>(QMediaPlayer::PlayingState), 5000);
+    const QString path = detail->property("path").toString();
+    QMetaObject::invokeMethod(m_window, "perform", Q_ARG(QVariant, QStringLiteral("play")),
+                              Q_ARG(QVariant, path), Q_ARG(QVariant, true));
+    const auto logged = [&log] {
+      QFile args(log);
+      return args.open(QIODevice::ReadOnly) ? args.readAll() : QByteArray();
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(logged().contains(path.toUtf8()), 5000);
+    QVERIFY2(logged().contains("--start="), logged().constData());
+    QTRY_COMPARE(detail->property("playbackState").toInt(), static_cast<int>(QMediaPlayer::PausedState));
+    invoke("dismissTopLayer");
+  }
+
+  // An HDR10 video in the preview says its colours aren't tone-mapped.
+  void previewSaysHdrIsNotToneMapped() {
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty()) QSKIP("ffmpeg is not installed");
+    int videoRow = -1;
+    for (int row = 0; row < m_library->rowCount() && videoRow < 0; ++row) {
+      if (m_library->isVideoAt(row)) videoRow = row;
+    }
+    QVERIFY(videoRow >= 0);
+    const QString hdr = m_scratch.filePath(QStringLiteral("hdr-preview.mp4"));
+    m_disposablePaths.append(hdr);
+    QProcess encoder;
+    encoder.start(ffmpeg, {QStringLiteral("-hide_banner"), QStringLiteral("-loglevel"), QStringLiteral("error"),
+                           QStringLiteral("-y"), QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+                           QStringLiteral("testsrc2=s=320x180:r=10:d=4"), QStringLiteral("-vf"),
+                           QStringLiteral("setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc,"
+                                          "format=yuv420p"),
+                           QStringLiteral("-c:v"), QStringLiteral("libx264"), hdr});
+    QVERIFY(encoder.waitForFinished(30000));
+    QVERIFY2(encoder.exitCode() == 0, encoder.readAllStandardError().constData());
+
+    openDetail(videoRow);
+    QQuickItem* detail = item("detail");
+    QObject* presentation = nullptr;
+    QTRY_VERIFY((presentation = detail->property("presentation").value<QObject*>()));
+    QTRY_VERIFY_WITH_TIMEOUT(presentation->property("ready").toBool(), 10000);
+    QQuickItem* notice = item("detailHdrNotice");
+    QVERIFY(!notice->isVisible());
+    detail->setProperty("path", hdr);
+    QTRY_COMPARE_WITH_TIMEOUT(presentation->property("hdr").toString(), QStringLiteral("PQ"), 10000);
+    QTRY_VERIFY(notice->isVisible());
+    QVERIFY(item("detailHdrNoticeText")->property("text").toString().startsWith(QStringLiteral("HDR10 video")));
     invoke("dismissTopLayer");
   }
 

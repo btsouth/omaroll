@@ -279,6 +279,7 @@ ApplicationWindow {
             return
         case "play":
             Registry.runBatchWith("play", {"seek": (Math.max(0, detail.visible && detail.path === path ? detail.playbackPosition : 0) / 1000).toFixed(3)}, [path])
+            if (detail.visible && detail.path === path) detail.pauseForHandoff()
             return
         case "frame": {
             if (!detail.visible || detail.path !== path || !video) {

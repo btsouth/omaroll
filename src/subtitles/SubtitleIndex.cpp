@@ -1,10 +1,14 @@
 #include "subtitles/SubtitleIndex.h"
 
+#include "sources/FileVersion.h"
+
 #include <QDir>
 #include <QFutureWatcher>
 #include <QtConcurrentRun>
 #include <QFile>
 #include <QFileInfo>
+#include <QProcess>
+#include <QStandardPaths>
 #include <QRegularExpression>
 #include <QtNumeric>
 
@@ -330,4 +334,70 @@ QString SubtitleIndex::textAt(const QString& subtitlePath, qint64 positionMs) {
 
 int SubtitleIndex::cueCount(const QString& subtitlePath) {
   return static_cast<int>(cuesFor(subtitlePath).cues.size());
+}
+
+QString SubtitleIndex::embeddedState(const QString& videoPath, int track) const {
+  const auto found = m_extractions.constFind(embeddedKey(videoPath, track));
+  return found == m_extractions.cend() ? QString() : found->state;
+}
+
+QString SubtitleIndex::embedded(const QString& videoPath, int track) {
+  if (videoPath.isEmpty() || track < 0) return {};
+  const QString key = embeddedKey(videoPath, track);
+  const QString version = FileVersion::key(videoPath);
+  const auto found = m_extractions.constFind(key);
+  if (found != m_extractions.cend() && found->version == version) {
+    return found->state == u"ready" ? found->path : QString();
+  }
+  const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+  if (!m_extracted) m_extracted = std::make_unique<QTemporaryDir>();
+  if (ffmpeg.isEmpty() || !m_extracted->isValid()) {
+    m_extractions.insert(key, {version, QStringLiteral("failed"), {}});
+    // Called from bindings: say so on the next turn, not inside this one.
+    QMetaObject::invokeMethod(this, [this] {
+      ++m_revision;
+      emit changed();
+    }, Qt::QueuedConnection);
+    return {};
+  }
+  const QString output = m_extracted->filePath(QStringLiteral("%1.srt").arg(++m_extractedCount));
+  m_extractions.insert(key, {version, QStringLiteral("working"), output});
+  auto* watcher = new QFutureWatcher<bool>(this);
+  connect(watcher, &QFutureWatcher<bool>::finished, this, [this, watcher, key, version, output] {
+    const auto current = m_extractions.find(key);
+    if (current != m_extractions.end() && current->version == version && current->path == output) {
+      current->state = watcher->result() ? QStringLiteral("ready") : QStringLiteral("failed");
+      ++m_revision;
+      emit changed();
+    }
+    watcher->deleteLater();
+  });
+  watcher->setFuture(QtConcurrent::run([ffmpeg, videoPath, track, output] {
+    // Text tracks only: a picture-based one (PGS, VobSub) has no text to
+    // write, and ffmpeg refuses.
+    const QString partial = output + QStringLiteral(".part");
+    QProcess process;
+    process.setStandardOutputFile(QProcess::nullDevice());
+    process.setStandardErrorFile(QProcess::nullDevice());
+    process.start(ffmpeg, {QStringLiteral("-hide_banner"), QStringLiteral("-nostdin"), QStringLiteral("-v"),
+                           QStringLiteral("error"), QStringLiteral("-y"), QStringLiteral("-i"), videoPath,
+                           QStringLiteral("-map"), QStringLiteral("0:s:%1").arg(track), QStringLiteral("-c:s"),
+                           QStringLiteral("srt"), QStringLiteral("-f"), QStringLiteral("srt"), partial});
+    if (!process.waitForStarted(5000)) return false;
+    if (!process.waitForFinished(120000)) {
+      process.kill();
+      process.waitForFinished(1000);
+      QFile::remove(partial);
+      return false;
+    }
+    const bool written = process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0
+                         && QFileInfo(partial).isFile();
+    if (!written) {
+      QFile::remove(partial);
+      return false;
+    }
+    QFile::remove(output);
+    return QFile::rename(partial, output);
+  }));
+  return {};
 }

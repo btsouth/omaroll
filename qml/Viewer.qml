@@ -207,11 +207,34 @@ ApplicationWindow {
     property int subtitleChoice: 0
     property int subtitleOffsetMs: 0
     readonly property bool hasAudioChoices: root.player && root.player.audioTracks.length > 1
+    // The embedded text track in use, if any. Its cues are drawn as Qt
+    // decodes them, unshifted; with a delay they come from a copy of the
+    // track instead, read like a sidecar.
+    // Kept here: Qt 6.12 does not notify a change of activeSubtitleTrack.
+    property int embeddedSubtitleTrack: -1
+    readonly property string embeddedSubtitleCopy: {
+        void Subtitles.revision
+        return root.subtitleOffsetMs !== 0 && root.embeddedSubtitleTrack >= 0 && Session.isVideo
+            ? Subtitles.embedded(Session.path, root.embeddedSubtitleTrack) : ""
+    }
     readonly property string subtitleText: {
         void Subtitles.revision
-        return externalSubtitle !== "" && player
-        ? Subtitles.textAt(externalSubtitle, Math.round(player.position) - root.subtitleOffsetMs)
+        const cues = root.externalSubtitle !== "" ? root.externalSubtitle : root.embeddedSubtitleCopy
+        return cues !== "" && player
+        ? Subtitles.textAt(cues, Math.round(player.position) - root.subtitleOffsetMs)
         : (root.presentation ? root.presentation.subtitleText : "")
+    }
+    // A picture-based track (or no ffmpeg) can't be copied, so it can't be
+    // shifted: take the delay back and say so.
+    readonly property bool embeddedDelayFailed: {
+        void Subtitles.revision
+        return root.subtitleOffsetMs !== 0 && root.embeddedSubtitleTrack >= 0 && Session.isVideo
+            && Subtitles.embeddedState(Session.path, root.embeddedSubtitleTrack) === "failed"
+    }
+    onEmbeddedDelayFailedChanged: {
+        if (!root.embeddedDelayFailed) return
+        root.subtitleOffsetMs = 0
+        root.say("Subtitle delay works only for text subtitles")
     }
 
     readonly property bool favorite: { void root.marksVersion; return Settings.isFavorite(Session.path) }
@@ -803,7 +826,16 @@ ApplicationWindow {
     }
 
     function adjustSubtitleOffset(amount) {
-        if (!Session.isVideo || root.externalSubtitle === "") return
+        if (!Session.isVideo) return
+        if (root.externalSubtitle === "" && root.embeddedSubtitleTrack < 0) {
+            root.say("Turn on subtitles first")
+            return
+        }
+        if (root.externalSubtitle === ""
+                && Subtitles.embeddedState(Session.path, root.embeddedSubtitleTrack) === "failed") {
+            root.say("Subtitle delay works only for text subtitles")
+            return
+        }
         root.subtitleOffsetMs = Math.max(-10000, Math.min(10000, root.subtitleOffsetMs + amount))
         root.say("Subtitle delay " + (root.subtitleOffsetMs > 0 ? "+" : "")
                  + (root.subtitleOffsetMs / 1000).toFixed(1) + " s")
@@ -845,6 +877,7 @@ ApplicationWindow {
         const subtitleTrack = choice.kind === "embedded" ? choice.index : -1
         const trackChanged = root.player.activeSubtitleTrack !== subtitleTrack
         root.player.activeSubtitleTrack = subtitleTrack
+        root.embeddedSubtitleTrack = subtitleTrack
         if (trackChanged && root.presentation) root.presentation.trackChanged()
         root.externalSubtitle = choice.kind === "external" ? choice.path : ""
         root.say(choice.kind === "off" ? "Subtitles off" : "Subtitles: " + choice.label)
@@ -1225,6 +1258,8 @@ ApplicationWindow {
             return
         case "play":
             Registry.runBatchWith("play", {"seek": (Math.max(0, root.player ? root.player.position : 0) / 1000).toFixed(3)}, [path])
+            // mpv takes over from here; two players would both be heard.
+            if (Session.isVideo && root.playing) root.player.pause()
             return
         case "frame": {
             if (!Session.isVideo || !root.player) {
@@ -1312,6 +1347,7 @@ ApplicationWindow {
             root.resumePending = true
             root.externalSubtitle = ""
             root.subtitleChoice = 0
+            root.embeddedSubtitleTrack = -1
             root.subtitleOffsetMs = 0
             if (Session.isVideo) {
                 Qt.callLater(root.startPlayer)
@@ -1860,7 +1896,7 @@ ApplicationWindow {
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.Wrap
             font.family: Theme.fontFamily
-            font.pixelSize: Math.max(16, Math.min(30, parent.height / 24))
+            font.pixelSize: Math.round(Math.max(16, Math.min(30, parent.height / 24)) * Settings.captionScale / 100)
             font.weight: Font.DemiBold
             color: "white"
             style: Text.Outline
@@ -2358,6 +2394,57 @@ ApplicationWindow {
             }
         }
 
+        // Qt draws PQ and HLG video without tone mapping, so its colours are
+        // off; mpv maps them. Said with the controls, with that handoff.
+        Rectangle {
+            id: hdrNotice
+            objectName: "viewerHdrNotice"
+            readonly property string transfer: Session.isVideo && !root.videoUnplayable && !!root.presentation
+                                               ? root.presentation.hdr : ""
+            visible: hdrNotice.transfer !== "" && !root.slideshowRunning
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.top: parent.top
+            anchors.topMargin: 62
+            width: Math.min(hdrRow.implicitWidth + 20, parent.width - 32)
+            height: hdrRow.implicitHeight + 12
+            radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 8) : 3
+            color: Osd.panel
+            border.width: 1
+            border.color: Osd.border
+
+            Row {
+                id: hdrRow
+                anchors.centerIn: parent
+                spacing: 10
+
+                Text {
+                    objectName: "viewerHdrNoticeText"
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Math.min(implicitWidth, hdrNotice.parent.width - 52
+                                    - (hdrPlay.visible ? hdrPlay.width + 10 : 0))
+                    elide: Text.ElideRight
+                    text: (hdrNotice.transfer === "PQ" ? "HDR10" : "HLG")
+                          + " video: colours aren't tone-mapped here"
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 12
+                    color: Osd.foreground
+                    Accessible.role: Accessible.StaticText
+                    Accessible.name: text
+                }
+                PillButton {
+                    id: hdrPlay
+                    objectName: "viewerHdrPlay"
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: Registry.available("play")
+                    osd: true
+                    label: "Open in mpv"
+                    shortcut: ShortcutCatalog.quickHints.play
+                    toolTip: "Continue in mpv from here"
+                    onClicked: root.perform("play")
+                }
+            }
+        }
+
         ViewerTransport {
             id: transport
             objectName: "viewerTransport"
@@ -2693,7 +2780,7 @@ ApplicationWindow {
         video: Session.isVideo
         animated: Session.isAnimated
         audioChoices: root.hasAudioChoices
-        sidecarSubtitles: root.externalSubtitle !== ""
+        sidecarSubtitles: root.externalSubtitle !== "" || root.embeddedSubtitleTrack >= 0
         onClosed: keys.forceActiveFocus()
     }
 
