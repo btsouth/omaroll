@@ -77,8 +77,16 @@ gh attestation verify omaroll-1.18.0-1-x86_64.pkg.tar.zst --repo btsouth/omaroll
 
 ## Open files
 
-Set Omaroll as the default for pictures and videos, or open one from a
-terminal:
+To make Omaroll the default for pictures and videos, run:
+
+```bash
+omaroll --set-default
+```
+
+`omaroll --set-default pdf` does the same for PDFs, and `omaroll --unset-default`
+puts back the apps it replaced. Folders keep opening in your file manager.
+
+To open a picture or video from a terminal:
 
 ```bash
 omaroll photo.jpg
@@ -101,6 +109,16 @@ omaroll --library photo.jpg
 
 Images and videos without a filename extension are recognized from their file
 headers. Their names stay unchanged; unrelated files are ignored.
+
+To start a video in the viewer at a given time, use `--start` with seconds,
+mm:ss or hh:mm:ss. It applies to the first video you open and takes precedence
+over the saved position:
+
+```bash
+omaroll --start=1:23 clip.mp4
+```
+
+File managers can pass the same option to hand over a preview's position.
 
 Several files can be opened together, in the order given:
 

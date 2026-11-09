@@ -45,7 +45,7 @@ public:
   [[nodiscard]] static bool isDocument(const QString& suffix);
   [[nodiscard]] static bool isSupported(const QString& suffix);
 
-  // Existing extensions stay authoritative. Without one, inspect at most
-  // 16 KiB of a regular file and accept only recognized image/video types.
-  [[nodiscard]] static QString mediaSuffix(const QString& path);
+  // Known extensions stay authoritative. Sniff extensionless files, and unknown
+  // extensions when explicitly opened, using at most 16 KiB of content.
+  [[nodiscard]] static QString mediaSuffix(const QString& path, bool explicitOpen = false);
 };

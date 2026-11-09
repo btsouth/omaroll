@@ -9,6 +9,7 @@
 OpenRequest OpenRequest::fromPaths(const QStringList& paths) {
   OpenRequest result;
   QSet<QString> seen;
+  QStringList failures;
   for (const QString& path : paths) {
     const QFileInfo info(path);
     if (!info.exists()) {
@@ -25,7 +26,7 @@ OpenRequest OpenRequest::fromPaths(const QStringList& paths) {
           result.error = QStringLiteral("choose a media folder, not your home or filesystem root");
         }
       }
-    } else if (!info.isFile() || !CaptureScanner::isSupported(CaptureScanner::mediaSuffix(path))) {
+    } else if (!info.isFile() || !CaptureScanner::isSupported(CaptureScanner::mediaSuffix(path, true))) {
       result.error = QStringLiteral("unsupported media file: %1").arg(path);
     } else {
       const QString canonical = info.canonicalFilePath();
@@ -36,11 +37,19 @@ OpenRequest OpenRequest::fromPaths(const QStringList& paths) {
       }
     }
     if (!result.error.isEmpty()) {
-      result.files.clear();
-      result.entryPaths.clear();
-      result.folder.clear();
-      break;
+      // A protected folder remains an error; skip other invalid selection entries.
+      if (info.isDir() && paths.size() == 1) {
+        result.files.clear();
+        result.entryPaths.clear();
+        result.folder.clear();
+        return result;
+      }
+      failures.append(result.error);
+      result.skipped.append(path);
+      result.error.clear();
     }
   }
+  if (!result.skipped.isEmpty() && result.files.isEmpty() && result.folder.isEmpty())
+    result.error = failures.join(QLatin1Char('\n'));
   return result;
 }

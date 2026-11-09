@@ -7,6 +7,8 @@
 #include "app/VideoPlayback.h"
 #include "app/SingleInstance.h"
 #include "app/OpenRequest.h"
+#include "app/LaunchRequest.h"
+#include "app/MimeDefaults.h"
 #include <QLocalSocket>
 #include <QMimeDatabase>
 #include <QJsonArray>
@@ -381,6 +383,9 @@ private slots:
     QTest::newRow("oversized-line") << (QByteArray(1024 * 1024 + 1, 'x') + '\n');
     QTest::newRow("invalid-json") << QByteArray("not json\n");
     QTest::newRow("invalid-path") << QByteArray("{\"paths\":[42]}\n");
+    QTest::newRow("invalid-start") << QByteArray("{\"paths\":[],\"startMs\":\"1\"}\n");
+    QTest::newRow("fractional-start") << QByteArray("{\"paths\":[],\"startMs\":1.5}\n");
+    QTest::newRow("invalid-skipped") << QByteArray("{\"paths\":[],\"skipped\":[42]}\n");
     QTest::newRow("invalid-library") << QByteArray("{\"paths\":[],\"library\":42}\n");
     QTest::newRow("trailing-frame") << QByteArray("{\"paths\":[]}\n{\"paths\":[]}\n");
     QTest::newRow("too-many-paths") << (QJsonDocument(QJsonObject{
@@ -632,6 +637,160 @@ private slots:
     QCOMPARE(valid.get(), SingleInstance::Result::Forwarded);
   }
 
+  void unsupportedLaunchReportsAndNotifiesWithoutOpening() {
+    QTemporaryDir dir;
+    QFile notify(dir.filePath("notify-send"));
+    QVERIFY(notify.open(QIODevice::WriteOnly));
+    notify.write("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$OMAROLL_NOTIFY_LOG\"\n");
+    notify.close();
+    QVERIFY(notify.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    QFile input(dir.filePath("unsupported.txt"));
+    QVERIFY(input.open(QIODevice::WriteOnly));
+    input.write("ordinary text"); input.close();
+    auto env = QProcessEnvironment::systemEnvironment();
+    env.insert("PATH", dir.path() + ":" + env.value("PATH"));
+    env.insert("OMAROLL_NOTIFY_LOG", dir.filePath("notification"));
+    env.insert("QT_QPA_PLATFORM", "offscreen");
+    env.insert("XDG_CONFIG_HOME", dir.path());
+    QProcess process;
+    process.setProcessEnvironment(env);
+    process.start(QCoreApplication::applicationDirPath() + "/omaroll", {"--", input.fileName()});
+    QVERIFY(process.waitForFinished(5000));
+    QCOMPARE(process.exitCode(), 2);
+    QVERIFY(process.readAllStandardError().contains("unsupported media file"));
+    QFile log(dir.filePath("notification"));
+    QVERIFY(log.open(QIODevice::ReadOnly));
+    QVERIFY(log.readAll().contains(input.fileName().toUtf8()));
+  }
+
+  void mimeDefaultsRestoreAndRemoveOnlyOmaroll() {
+    QTemporaryDir dir;
+    const auto oldConfig = qgetenv("XDG_CONFIG_HOME");
+    const auto oldData = qgetenv("XDG_DATA_HOME");
+    const auto oldDesktop = qgetenv("XDG_CURRENT_DESKTOP");
+    const auto oldPath = qgetenv("PATH");
+    const auto cleanup = qScopeGuard([&] {
+      for (const auto& pair : QList<QPair<const char*, QByteArray>>{
+             {"XDG_CONFIG_HOME", oldConfig}, {"XDG_DATA_HOME", oldData}, {"XDG_CURRENT_DESKTOP", oldDesktop}, {"PATH", oldPath}})
+        pair.second.isNull() ? qunsetenv(pair.first) : qputenv(pair.first, pair.second);
+    });
+    qputenv("XDG_CONFIG_HOME", dir.filePath("config").toUtf8());
+    qputenv("XDG_DATA_HOME", dir.filePath("data").toUtf8());
+    qputenv("XDG_CURRENT_DESKTOP", "");
+    qputenv("PATH", QCoreApplication::applicationDirPath().toUtf8() + ":" + oldPath);
+    QVERIFY(QDir().mkpath(dir.filePath("data/applications")));
+    QVERIFY(QDir().mkpath(dir.filePath("config")));
+    const QString desktop = "io.github.tsouth89.omaroll.desktop";
+    QVERIFY(QFile::copy(QFINDTESTDATA("../packaging/io.github.tsouth89.omaroll.desktop"),
+                       dir.filePath("data/applications/") + desktop));
+    QFile other(dir.filePath("data/applications/other.desktop"));
+    QVERIFY(other.open(QIODevice::WriteOnly));
+    other.write("[Desktop Entry]\nType=Application\nName=Other\nExec=/usr/bin/true %f\nMimeType=image/png;application/pdf;\n");
+    other.close();
+    const auto writeDefaults = [&](const QByteArray& contents) {
+      QFile f(dir.filePath("config/mimeapps.list"));
+      return f.open(QIODevice::WriteOnly) && f.write(contents) == contents.size();
+    };
+    QVERIFY(writeDefaults("[Default Applications]\nimage/png=other.desktop;\napplication/pdf=other.desktop;\ninode/directory=other.desktop;\n"));
+    MimeDefaults defaults;
+    const QString report = defaults.apply(false, "images");
+    QVERIFY2(defaults.succeeded(), qPrintable(report));
+    QVERIFY2(report.contains("image/png: other.desktop -> " + desktop), qPrintable(report));
+    // Repeating the command must retain the original replaced handler.
+    defaults.apply(false, "images");
+    QVERIFY(defaults.succeeded());
+    const QString restored = defaults.apply(true, "images");
+    QVERIFY2(defaults.succeeded(), qPrintable(restored));
+    QVERIFY(restored.contains("image/png: restored other.desktop"));
+    // A handler chosen after an earlier --set-default is the one put back.
+    defaults.apply(false, "images");
+    QVERIFY(defaults.succeeded());
+    QFile third(dir.filePath("data/applications/third.desktop"));
+    QVERIFY(third.open(QIODevice::WriteOnly));
+    third.write("[Desktop Entry]\nType=Application\nName=Third\nExec=/usr/bin/true %f\nMimeType=image/png;\n");
+    third.close();
+    QVERIFY(writeDefaults("[Default Applications]\nimage/png=third.desktop;\napplication/pdf=other.desktop;\ninode/directory=other.desktop;\n"));
+    defaults.apply(false, "images");
+    QVERIFY(defaults.succeeded());
+    const QString newer = defaults.apply(true, "images");
+    QVERIFY2(newer.contains("image/png: restored third.desktop"), qPrintable(newer));
+    QVERIFY(writeDefaults("[Default Applications]\nimage/png=other.desktop;\napplication/pdf=other.desktop;\ninode/directory=other.desktop;\n"));
+    QFile config(dir.filePath("config/mimeapps.list"));
+    QVERIFY(config.open(QIODevice::ReadOnly));
+    auto contents = config.readAll(); config.close();
+    QVERIFY(contents.contains("inode/directory=other.desktop;"));
+    QVERIFY(contents.contains("application/pdf=other.desktop;"));
+    // No saved record: remove only Omaroll, including Added Associations.
+    QVERIFY(writeDefaults("[Default Applications]\nimage/png=io.github.tsouth89.omaroll.desktop;other.desktop;\n[Added Associations]\nimage/png=io.github.tsouth89.omaroll.desktop;other.desktop;\n"));
+    defaults.apply(true, "images");
+    QVERIFY(defaults.succeeded());
+    QVERIFY(config.open(QIODevice::ReadOnly));
+    contents = config.readAll();
+    QVERIFY(!contents.contains(desktop.toUtf8()));
+    QVERIFY(contents.contains("image/png=other.desktop;"));
+    const auto all = MimeDefaults::types(dir.filePath("data/applications/") + desktop, "all");
+    QVERIFY(!all.contains("inode/directory"));
+    QVERIFY(!all.contains("application/pdf"));
+    QVERIFY(all.contains("image/png"));
+    QVERIFY(all.contains("video/mp4"));
+    QVERIFY(MimeDefaults::types(dir.filePath("data/applications/") + desktop, "bad").isEmpty());
+  }
+
+  void explicitStartParsingAndFirstVideo() {
+    for (const auto& pair : QList<QPair<QString, qint64>>{{"0", 0}, {"83.5", 83500},
+             {"01:23.5", 83500}, {"1:02:03", 3723000}}) {
+      const auto parsed = LaunchRequest::parseStart(pair.first);
+      QVERIFY(parsed.has_value());
+      QCOMPARE(*parsed, pair.second);
+    }
+    for (const auto& value : QStringList{"", "-1", "nan", "1:60", "1:2:3:4", "1e99", "99999999999999999999"})
+      QVERIFY(!LaunchRequest::parseStart(value));
+    QCOMPARE(LaunchRequest::firstVideo({"/a.png", "/b.mp4", "/c.mkv"}), QStringLiteral("/b.mp4"));
+    QVERIFY(LaunchRequest::firstVideo({"/a.png"}).isEmpty());
+
+    // The time belongs to one window: another showing the same video never
+    // takes it, it is used once, and opening other files drops it.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString clip = dir.filePath("b.mp4");
+    const QString other = dir.filePath("x.png");
+    for (const QString& path : {clip, other}) {
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+    }
+    ViewerSession receiving;
+    ViewerSession bystander;
+    receiving.open({clip});
+    bystander.open({clip});
+    receiving.setStartPosition(clip, 1500);
+    QCOMPARE(bystander.pendingStartPosition(clip), -1);
+    QCOMPARE(receiving.pendingStartPosition(other), -1);
+    QCOMPARE(receiving.takeStartPosition(clip), 1500);
+    QCOMPARE(receiving.takeStartPosition(clip), -1);
+    receiving.setStartPosition(clip, 0);
+    receiving.open({other});
+    QCOMPARE(receiving.pendingStartPosition(clip), -1);
+    receiving.setStartPosition(clip, 0);
+    receiving.clear();
+    QCOMPARE(receiving.pendingStartPosition(clip), -1);
+  }
+
+  void singleInstanceForwardsStartAndSkippedNames() {
+    const QString server = "omaroll-start-" + QString::number(QCoreApplication::applicationPid());
+    SingleInstance first(server);
+    QCOMPARE(first.claimOrNotify(), SingleInstance::Result::Primary);
+    QSignalSpy activation(&first, &SingleInstance::activationRequested);
+    auto sent = std::async(std::launch::async, [server] {
+      SingleInstance sender(server);
+      return sender.claimOrNotify({"/clip.mp4"}, false, 83500, {"/skip # 雪.txt"});
+    });
+    QTRY_VERIFY(sent.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready);
+    QCOMPARE(sent.get(), SingleInstance::Result::Forwarded);
+    QTRY_COMPARE(activation.size(), 1);
+    QCOMPARE(activation.first().at(2).toLongLong(), 83500);
+    QCOMPARE(activation.first().at(3).toStringList(), QStringList{"/skip # 雪.txt"});
+  }
+
   void openRequestValidatesAndPreservesSelection() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -651,14 +810,16 @@ private slots:
     const OpenRequest folder = OpenRequest::fromPaths({dir.path()});
     QVERIFY(folder.error.isEmpty());
     QCOMPARE(folder.folder, dir.path());
-    for (const QStringList& paths : {QStringList{first, dir.filePath("missing.png")},
-                                     QStringList{first, dir.path()},
-                                     QStringList{QDir::homePath()}}) {
+    for (const QStringList& paths : {QStringList{QDir::homePath()}}) {
       const OpenRequest rejected = OpenRequest::fromPaths(paths);
       QVERIFY(!rejected.error.isEmpty());
       QVERIFY(rejected.files.isEmpty());
       QVERIFY(rejected.folder.isEmpty());
     }
+    const auto mixed = OpenRequest::fromPaths({first, dir.filePath("missing.png"), dir.path()});
+    QCOMPARE(mixed.files, QStringList{first});
+    QVERIFY(mixed.error.isEmpty());
+    QVERIFY(mixed.note().contains("missing.png"));
     // Explicit files do not pull in neighbors and may include dotfiles.
     const auto records = CaptureScanner::scan({{second, 1}, {first, 1}, {alias, 1}});
     QCOMPARE(records.size(), 2);
@@ -687,7 +848,7 @@ private slots:
     QCOMPARE(activation.first().first().toStringList(), QStringList{path});
   }
 
-  void executableForwardsCanonicalSelectionAndRejectsInvalidBatch() {
+  void executableForwardsCanonicalSelectionAndSkipsInvalidEntries() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString first = dir.filePath(QStringLiteral("--render=雪.png"));
@@ -732,11 +893,19 @@ private slots:
     for (const auto* child : launches) QCOMPARE(child->exitCode(), 0);
     QCOMPARE(activation.size(), 12);
     activation.clear();
-    process.start(binary, {first, dir.filePath(QStringLiteral("missing.png"))});
+    const QString missing = dir.filePath(QStringLiteral("missing.png"));
+    process.start(binary, {"--start", "00:02.5", first, missing});
+    QTRY_VERIFY_WITH_TIMEOUT(process.state() == QProcess::NotRunning, 5000);
+    QCOMPARE(process.exitCode(), 0);
+    QTRY_COMPARE(activation.size(), 1);
+    QCOMPARE(activation.first().at(0).toStringList(), QStringList{first});
+    QCOMPARE(activation.first().at(2).toLongLong(), 2500);
+    QCOMPARE(activation.first().at(3).toStringList(), QStringList{missing});
+    activation.clear();
+    process.start(binary, {missing});
     QVERIFY(process.waitForFinished(5000));
     QCOMPARE(process.exitCode(), 2);
     QVERIFY(process.readAllStandardError().contains("does not exist"));
-    QTest::qWait(30);
     QVERIFY(activation.isEmpty());
   }
 
@@ -800,11 +969,74 @@ private slots:
                                   QStringLiteral("3g2"), QStringLiteral("VOB")}) {
       QVERIFY2(CaptureScanner::isVideo(suffix), qPrintable(suffix));
     }
-    // Shared with TypeScript and audio, so they stay unclaimed.
-    for (const QString& suffix : {QStringLiteral("ts"), QStringLiteral("ogg"),
-                                  QStringLiteral("ogx"), QStringLiteral("mp2")}) {
-      QVERIFY2(!CaptureScanner::isSupported(suffix), qPrintable(suffix));
+    // Ambiguous suffixes open only after their content is checked, and
+    // Blu-ray index and playlist files share video/mp2t's globs without
+    // holding any video.
+    const QStringList sniffedOnly = {"ts", "ogg", "mp2", "3ga"};
+    const QStringList notMedia = {"bdm", "bdmv", "clpi", "cpi", "mpl", "mpls", "qtvr"};
+    for (const auto& name : claimed) {
+      if (name == u"inode/directory") continue;
+      for (const auto& glob : mimes.mimeTypeForName(name).globPatterns()) {
+        QString sample = glob;
+        sample.replace("*", "sample");
+        sample.replace("[0-9]", "1");
+        const QString suffix = QFileInfo(sample).suffix().toLower();
+        if (sniffedOnly.contains(suffix) || notMedia.contains(suffix)) {
+          QVERIFY2(!CaptureScanner::isSupported(suffix), qPrintable(name + " " + glob));
+          continue;
+        }
+        QVERIFY2(CaptureScanner::isSupported(CaptureScanner::mediaSuffix(sample)),
+                 qPrintable(name + " " + glob));
+      }
     }
+  }
+
+  void ambiguousSuffixesOpenByContentOnlyWhenChosen() {
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty()) {
+      QSKIP("ffmpeg is not installed");
+    }
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto encode = [&](const QStringList& arguments) {
+      QProcess encoder;
+      encoder.start(ffmpeg, QStringList{QStringLiteral("-hide_banner"), QStringLiteral("-loglevel"),
+                                        QStringLiteral("error"), QStringLiteral("-f"),
+                                        QStringLiteral("lavfi")} + arguments);
+      return encoder.waitForFinished(10000) && encoder.exitStatus() == QProcess::NormalExit &&
+             encoder.exitCode() == 0;
+    };
+    const QString stream = dir.filePath(QStringLiteral("recording.ts"));
+    QVERIFY(encode({QStringLiteral("-i"), QStringLiteral("color=c=blue:s=64x36:d=0.5:r=10"),
+                    QStringLiteral("-c:v"), QStringLiteral("mpeg2video"), QStringLiteral("-f"),
+                    QStringLiteral("mpegts"), stream}));
+    const QString song = dir.filePath(QStringLiteral("song.ogg"));
+    const bool haveSong = encode({QStringLiteral("-i"), QStringLiteral("sine=d=0.5"),
+                                  QStringLiteral("-c:a"), QStringLiteral("libopus"), song});
+    QFile script(dir.filePath(QStringLiteral("app.ts")));
+    QVERIFY(script.open(QIODevice::WriteOnly));
+    script.write("export const answer: number = 42;\n");
+    script.close();
+
+    // Library scans and folder steps never list them by suffix.
+    for (const QString& name : {QStringLiteral("recording.ts"), QStringLiteral("app.ts"),
+                                QStringLiteral("song.ogg")}) {
+      QVERIFY2(!CaptureScanner::isSupported(CaptureScanner::mediaSuffix(dir.filePath(name))),
+               qPrintable(name));
+    }
+    const auto records = CaptureScanner::scan({{dir.path(), 1}});
+    QVERIFY(records.isEmpty());
+
+    // Chosen explicitly, a real transport stream opens as video; the rest don't.
+    QVERIFY(CaptureScanner::isVideo(CaptureScanner::mediaSuffix(stream, true)));
+    QVERIFY(CaptureScanner::isVideo(CaptureScanner::mediaSuffix(stream)));
+    QVERIFY(!CaptureScanner::isSupported(CaptureScanner::mediaSuffix(script.fileName(), true)));
+    if (haveSong) {
+      QVERIFY(!CaptureScanner::isSupported(CaptureScanner::mediaSuffix(song, true)));
+    }
+    const OpenRequest request = OpenRequest::fromPaths({stream, script.fileName()});
+    QCOMPARE(request.files, QStringList{QFileInfo(stream).canonicalFilePath()});
+    QCOMPARE(request.skipped, QStringList{script.fileName()});
   }
 
   void extensionlessMediaOpensNavigatesAndAppearsInTheLibrary() {
@@ -917,8 +1149,8 @@ private slots:
     }
     const QString disguised = dir.filePath(QStringLiteral("image.txt"));
     QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/viewer/transparent.png"), disguised));
-    QVERIFY(!OpenRequest::fromPaths({disguised}).error.isEmpty());
-    QVERIFY(!ViewerSession::canOpen({disguised}));
+    QVERIFY(OpenRequest::fromPaths({disguised}).error.isEmpty());
+    QVERIFY(ViewerSession::canOpen({disguised}));
     QVERIFY(CaptureScanner::scan({{dir.path(), 1}}).isEmpty());
     QVERIFY(CaptureScanner::mediaSuffix(dir.path()).isEmpty());
     QVERIFY(CaptureScanner::mediaSuffix(dir.filePath("missing")).isEmpty());
@@ -4657,7 +4889,9 @@ private slots:
     settle();
     forward({QStringLiteral("--"), second});
     settle();
-    forward({QStringLiteral("--"), first});
+    forward({QStringLiteral("--start=00:01.5"), QStringLiteral("--"), first, dir.filePath("skipped.txt")});
+    settle();
+    forward({QStringLiteral("--start"), QStringLiteral("0"), QStringLiteral("--"), second});
     settle();
     forward({QStringLiteral("--library"), QStringLiteral("--"), second});
     settle();

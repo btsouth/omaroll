@@ -199,7 +199,26 @@ bool ViewerSession::isAnimated() const {
   return m_mediaSuffix == u"gif" || m_mediaSuffix == u"webp";
 }
 
+void ViewerSession::setStartPosition(const QString& path, qint64 milliseconds) {
+  m_startPath = milliseconds >= 0 ? path : QString();
+  m_startMs = milliseconds >= 0 ? milliseconds : -1;
+  emit startPositionChanged();
+}
+
+qint64 ViewerSession::takeStartPosition(const QString& path) {
+  const qint64 result = pendingStartPosition(path);
+  if (result >= 0) {
+    m_startPath.clear();
+    m_startMs = -1;
+  }
+  return result;
+}
+
 void ViewerSession::open(const QStringList& paths) {
+  if (!m_startPath.isEmpty() && !paths.contains(m_startPath)) {
+    m_startPath.clear();
+    m_startMs = -1;
+  }
   if (paths.isEmpty()) {
     clear();
     return;
@@ -237,6 +256,8 @@ void ViewerSession::setDeletionPaths(const QHash<QString, QString>& entryPaths) 
 
 void ViewerSession::clear() {
   ++m_generation;
+  m_startPath.clear();
+  m_startMs = -1;
   m_folderPaths.clear();
   m_deletionPaths.clear();
   m_explicitEntryPaths.clear();
@@ -492,6 +513,8 @@ QStringList ViewerSession::siblings(const QString& folder, const QString& keep,
     if (name.startsWith(QLatin1Char('.')) && !(keepHere && name == kept)) {
       continue;
     }
+    if (name != kept && !QFileInfo(name).suffix().isEmpty() &&
+        !CaptureScanner::isSupported(QFileInfo(name).suffix()) && !name.endsWith(u".svg.gz", Qt::CaseInsensitive)) continue;
     const QString suffix = CaptureScanner::mediaSuffix(directory.filePath(name));
     if (CaptureScanner::isImage(suffix) || CaptureScanner::isVideo(suffix)) {
       names.append(name);

@@ -17,6 +17,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <cmath>
 
 namespace {
 constexpr qint64 maxFrameBytes = 1024 * 1024;
@@ -142,8 +143,21 @@ SingleInstance::SingleInstance(const QString& serverName, QObject* parent)
           socket->abort();
           return;
         }
+        const auto start = object.value(QStringLiteral("startMs"));
+        if (!start.isUndefined() && (!start.isDouble() || start.toDouble() < -1 ||
+            start.toDouble() > 9007199254740991.0 || std::floor(start.toDouble()) != start.toDouble())) { socket->abort(); return; }
+        QStringList skipped;
+        const auto skippedValue = object.value(QStringLiteral("skipped"));
+        if (!skippedValue.isUndefined()) {
+          if (!skippedValue.isArray() || skippedValue.toArray().size() > maxPaths) { socket->abort(); return; }
+          for (const auto& name : skippedValue.toArray()) {
+            if (!name.isString()) { socket->abort(); return; }
+            skipped.append(name.toString());
+          }
+        }
         accepted = true;
-        emit activationRequested(paths, object.value(QStringLiteral("library")).toBool());
+        emit activationRequested(paths, object.value(QStringLiteral("library")).toBool(),
+                                 start.isUndefined() ? -1 : qint64(start.toDouble()), skipped);
         socket->write(acknowledgement);
         socket->disconnectFromServer();
       };
@@ -153,14 +167,16 @@ SingleInstance::SingleInstance(const QString& serverName, QObject* parent)
   });
 }
 
-SingleInstance::Result SingleInstance::claimOrNotify(const QStringList& paths, bool library) {
-  if (paths.size() > maxPaths) {
+SingleInstance::Result SingleInstance::claimOrNotify(const QStringList& paths, bool library, qint64 startMs, const QStringList& skipped) {
+  if (paths.size() > maxPaths || skipped.size() > maxPaths || startMs < -1 || startMs > 9007199254740991LL) {
     qWarning() << "omaroll: the open request exceeds the single-instance limit";
     return Result::Error;
   }
   QJsonObject message{{QStringLiteral("paths"), QJsonArray::fromStringList(paths)},
                       {QStringLiteral("path"), paths.value(0)},
-                      {QStringLiteral("library"), library}};
+                      {QStringLiteral("library"), library},
+                      {QStringLiteral("startMs"), double(startMs)},
+                      {QStringLiteral("skipped"), QJsonArray::fromStringList(skipped)}};
   const QByteArray frame = QJsonDocument(message).toJson(QJsonDocument::Compact) + '\n';
   if (frame.size() > maxFrameBytes) {
     qWarning() << "omaroll: the open request exceeds the single-instance limit";

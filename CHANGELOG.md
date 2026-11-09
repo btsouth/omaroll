@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `omaroll --set-default` makes Omaroll the default for pictures and videos,
+  and `--unset-default` puts back the apps it replaced. Add `pdf` for PDFs.
+- `--start` opens a video at a given time, so a file manager's preview can
+  hand over its position.
+
+### Fixed
+
+- Opening several files where one isn't supported now opens the rest and names
+  the skipped files, instead of opening nothing.
+- Files with less common extensions for supported types, such as `.jfif`,
+  open, and a `.ts` or `.ogg` file you open is checked for video by its content.
+- The package now installs the EXR, JPEG XL and JPEG 2000 libraries it needs.
+
 ## 1.18.0
 
 Step through video a frame at a time, and zoom into very large JPEGs in the

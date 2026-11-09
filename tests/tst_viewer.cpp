@@ -1948,6 +1948,26 @@ private slots:
     window->close();
   }
 
+  void explicitStartOverridesSavedResume() {
+    const QString path = m_scratch.filePath("explicit-start.mkv");
+    QVERIFY(QFile::exists(path) || QFile::copy(QFINDTESTDATA("fixtures/viewer/tracks.mkv"), path));
+    m_settings->setVideoPosition(path, 7000);
+    m_session->setStartPosition(path, 1000);
+    open({path});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_COMPARE(m_session->pendingStartPosition(path), -1);
+    QTRY_VERIFY(player->position() >= 900 && player->position() < 5000);
+    QVERIFY(!prop("resumeAvailable").toBool());
+    QVERIFY(!prop("resumePending").toBool());
+    player->pause();
+    // A forwarded request for the already-open source seeks again, including zero.
+    m_session->setStartPosition(path, 0);
+    QTRY_VERIFY(player->position() < 1500);
+    QCOMPARE(m_session->pendingStartPosition(path), -1);
+    QVERIFY(!prop("resumeAvailable").toBool());
+  }
+
   void remoteCommandsRespectResumeIntent() {
     if (!QDBusConnection(QStringLiteral("omaroll-test-client")).isConnected())
       QSKIP("dbus-daemon is not available");

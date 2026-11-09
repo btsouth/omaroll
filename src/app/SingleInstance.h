@@ -16,10 +16,11 @@ public:
   explicit SingleInstance(const QString& serverName = {}, QObject* parent = nullptr);
   // |library| asks the running instance for the library window even when every
   // path could open in the viewer, as --library does on the command line.
-  [[nodiscard]] Result claimOrNotify(const QStringList& paths = {}, bool library = false);
+  [[nodiscard]] Result claimOrNotify(const QStringList& paths = {}, bool library = false, qint64 startMs = -1,
+                                     const QStringList& skipped = {});
 
 signals:
-  void activationRequested(const QStringList& paths, bool library);
+  void activationRequested(const QStringList& paths, bool library, qint64 startMs, const QStringList& skipped);
 
 private:
   QString m_serverName;

@@ -6,6 +6,8 @@
 #include "app/DemoLibrary.h"
 #include "app/HeadlessAudio.h"
 #include "app/OpenRequest.h"
+#include "app/LaunchRequest.h"
+#include "app/MimeDefaults.h"
 #include "app/SingleInstance.h"
 #include "app/StartupTrace.h"
 #include "app/VideoPlayback.h"
@@ -36,6 +38,9 @@
 #include "viewer/ViewerSession.h"
 #include "viewer/ViewerWindows.h"
 
+#include <QCoreApplication>
+#include <QProcess>
+#include <QStandardPaths>
 #include <QDir>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -96,7 +101,7 @@ bool optionPresent(const QStringList& arguments, const QString& name) {
 
 QString argumentError(const QStringList& arguments) {
   static const QStringList valueOptions = {
-      QStringLiteral("--render"), QStringLiteral("--render-view"), QStringLiteral("--render-size")};
+      QStringLiteral("--start"), QStringLiteral("--render"), QStringLiteral("--render-view"), QStringLiteral("--render-size")};
   static const QStringList flagOptions = {QStringLiteral("--demo"), QStringLiteral("--help"),
                                           QStringLiteral("-h"), QStringLiteral("--library"),
                                           QStringLiteral("--version")};
@@ -135,7 +140,7 @@ QString argumentError(const QStringList& arguments) {
 // Paths after -- are literal, including names beginning with a dash.
 QStringList positionalArguments(const QStringList& arguments) {
   static const QStringList valueOptions = {
-      QStringLiteral("--render"), QStringLiteral("--render-view"), QStringLiteral("--render-size")};
+      QStringLiteral("--start"), QStringLiteral("--render"), QStringLiteral("--render-view"), QStringLiteral("--render-size")};
   QStringList paths;
   bool literal = false;
   for (qsizetype index = 1; index < arguments.size(); ++index) {
@@ -166,6 +171,10 @@ Options:
   --library              Open files in the library instead of the viewer. The
                          file is selected and its folder is added to the
                          library if it is not already watched.
+  --start <time>         Start the request's first video at seconds, mm:ss or
+                         hh:mm:ss (fractions allowed). Overrides saved resume.
+  --set-default [group]   Use Omaroll for images, videos, pdf or all (default).
+  --unset-default [group] Restore replaced handlers. all = images and videos.
   --demo                 Browse a deterministic fictional library instead of
                          your own files. Nothing personal appears on screen.
   --render <file.png>    Render the window to a PNG and exit. Draws offscreen,
@@ -373,6 +382,25 @@ int main(int argc, char* argv[]) {
     }
   }
 
+  QStringList rawArguments;
+  for (int i = 0; i < argc; ++i) rawArguments.append(QString::fromLocal8Bit(argv[i]));
+  if (optionPresent(rawArguments, "--set-default") || optionPresent(rawArguments, "--unset-default")) {
+    QCoreApplication core(argc, argv);
+    const bool unset = optionPresent(rawArguments, "--unset-default");
+    if (unset && optionPresent(rawArguments, "--set-default")) {
+      QTextStream(stderr) << "omaroll: use either --set-default or --unset-default\n";
+      return 2;
+    }
+    const QString option = unset ? "--unset-default" : "--set-default";
+    QString group = optionValue(rawArguments, option);
+    if (group.isEmpty()) group = "all";
+    const int expected = rawArguments.contains(option) && !optionValue(rawArguments, option).isEmpty() ? 3 : 2;
+    if (rawArguments.size() != expected) { QTextStream(stderr) << "Default operation accepts only one group\n"; return 2; }
+    MimeDefaults defaults;
+    QTextStream(stdout) << defaults.apply(unset, group) << Qt::endl;
+    return defaults.succeeded() ? 0 : 2;
+  }
+
   // On Wayland this is what becomes app_id. The Hyprland media-opacity rule
   // matches on it, so it must stay in lockstep with the .desktop filename and
   // StartupWMClass. Changing it silently breaks the transparency opt-out.
@@ -476,11 +504,23 @@ int main(int argc, char* argv[]) {
       return 2;
     }
   }
+  qint64 startMs = -1;
+  if (optionPresent(arguments, "--start")) {
+    const auto parsed = LaunchRequest::parseStart(optionValue(arguments, "--start"));
+    if (!parsed) { qWarning("omaroll: invalid --start time"); return 2; }
+    startMs = *parsed;
+  }
   const bool demo = rendering || optionPresent(arguments, QStringLiteral("--demo"));
   const OpenRequest request =
       OpenRequest::fromPaths(demo ? QStringList() : positionalArguments(arguments));
   if (!request.error.isEmpty()) {
-    qWarning().noquote() << "omaroll:" << request.error;
+    QTextStream(stderr) << "omaroll: " << request.error << Qt::endl;
+    const QString notify = QStandardPaths::findExecutable("notify-send");
+    if (!notify.isEmpty()) {
+      QProcess notification;
+      notification.start(notify, {"--", "Omaroll", request.error});
+      if (!notification.waitForFinished(2000)) { notification.kill(); notification.waitForFinished(); }
+    }
     return 2;
   }
   QStringList requestedPaths;
@@ -497,7 +537,11 @@ int main(int argc, char* argv[]) {
   // should take over, or be refused by, a real session's instance.
   SingleInstance instance;
   if (!rendering && !demo) {
-    const auto result = instance.claimOrNotify(requestedPaths, preferLibrary);
+    // Said here too, since a running older version ignores the skipped names.
+    if (!request.skipped.isEmpty()) {
+      QTextStream(stderr) << "omaroll: " << request.note() << Qt::endl;
+    }
+    const auto result = instance.claimOrNotify(requestedPaths, preferLibrary, startMs, request.skipped);
     if (result == SingleInstance::Result::Forwarded) return 0;
     if (result == SingleInstance::Result::Error) return 1;
   }
@@ -571,6 +615,8 @@ int main(int argc, char* argv[]) {
   engine.rootContext()->setContextProperty(QStringLiteral("Theme"), &theme);
   engine.rootContext()->setContextProperty(QStringLiteral("Actions"), &actions);
   engine.rootContext()->setContextProperty(QStringLiteral("Settings"), &settings);
+  MimeDefaults mimeDefaults;
+  engine.rootContext()->setContextProperty(QStringLiteral("MimeDefaults"), &mimeDefaults);
   engine.rootContext()->setContextProperty(QStringLiteral("Registry"), &registry);
   engine.rootContext()->setContextProperty(QStringLiteral("Editors"), &editors);
   engine.rootContext()->setContextProperty(QStringLiteral("DemoMode"), demo);
@@ -627,26 +673,39 @@ int main(int argc, char* argv[]) {
                        viewer->close();
                      }
                    });
-  const auto openViewer = [&](const QStringList& files, const QHash<QString, QString>& entries = {}) {
-    return viewers.open(files, entries);
+  // A --start time belongs to the window that receives the request, so it
+  // can't seek another window showing the same video, or linger.
+  const auto openViewer = [&](const QStringList& files, const QHash<QString, QString>& entries = {},
+                              qint64 start = -1) {
+    QQuickWindow* opened = viewers.open(files, entries);
+    if (start >= 0 && opened) {
+      if (ViewerSession* session = viewers.sessionOf(opened)) {
+        session->setStartPosition(LaunchRequest::firstVideo(files), start);
+      }
+    }
+    return opened;
   };
 
   const bool startInViewer = rendering ? renderingViewer : opensInViewer(request, preferLibrary);
   QQuickWindow* window = startInViewer
                              ? openViewer(rendering ? viewerRenderFiles : request.files,
-                                          rendering ? QHash<QString, QString>() : request.entryPaths)
+                                          rendering ? QHash<QString, QString>() : request.entryPaths,
+                                          rendering ? -1 : startMs)
                              : openLibrary(request);
   startup.mark("qml");
   if (!window) {
     return 1;
   }
   startup.watch(window);
+  if (!request.note().isEmpty()) QTimer::singleShot(0, window, [window, request] {
+    QMetaObject::invokeMethod(window, "say", Q_ARG(QVariant, request.note()));
+  });
 
   if (!rendering && !demo) {
     QObject::connect(
         &instance, &SingleInstance::activationRequested, &application,
-        [&](const QStringList& paths, bool library) {
-          const OpenRequest opened = OpenRequest::fromPaths(paths);
+        [&](const QStringList& paths, bool library, qint64 start, const QStringList& skipped) {
+          OpenRequest opened = OpenRequest::fromPaths(paths);
           if (!opened.error.isEmpty()) {
             // Said in whichever window is in front; both have a status line.
             QQuickWindow* shown = viewers.frontmost() ? viewers.frontmost()
@@ -659,11 +718,11 @@ int main(int argc, char* argv[]) {
             }
             return;
           }
-          if (opensInViewer(opened, library)) {
-            openViewer(opened.files, opened.entryPaths);
-          } else {
-            openLibrary(opened);
-          }
+          opened.skipped.append(skipped);
+          QQuickWindow* receiver = opensInViewer(opened, library)
+              ? openViewer(opened.files, opened.entryPaths, start) : openLibrary(opened);
+          if (receiver && !opened.note().isEmpty())
+            QMetaObject::invokeMethod(receiver, "say", Q_ARG(QVariant, opened.note()));
         });
   }
 
