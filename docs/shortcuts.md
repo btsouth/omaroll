@@ -46,13 +46,14 @@ The viewer opens when you double-click a picture or video, or run
 | `T` · `G` · `P` | Trim · save the current frame · open in mpv |
 | `Del` | Move to Trash, with confirm; Undo on the notice or `Ctrl+Z` puts it back |
 | `Shift+Del` | Delete permanently, with confirmation on by default |
-| right click · menu button | Everything else that suits the file |
+| right click · menu button | Everything else that suits the file, under View, Share and Edit |
 | `Enter` · grid button | Open the file in the library |
 | `Esc` | Close help, leave the slideshow or full screen, close the details, then close |
 
 In both image viewers, `1` goes to actual size from a custom zoom. Press it
-again at actual size to fit the image. The quick viewer menu also offers Fit
-without enlarging and Copy file name. Turn off **Enlarge small pictures to fit**
+again at actual size to fit the image. The quick viewer menu's View submenu
+also offers Fit without enlarging, and Share has Copy file name. In a short
+window the menu scrolls with the wheel or the arrow keys. Turn off **Enlarge small pictures to fit**
 in Settings to show small pictures at 100% when fitted.
 
 Settings offers **Remember playback speed**, off by default. When enabled,

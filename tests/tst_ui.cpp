@@ -58,6 +58,7 @@
 #include <QJSValue>
 #include <QFile>
 #include <QFileInfo>
+#include <QRegularExpression>
 #include <QGuiApplication>
 #include <QImage>
 #include <QImageReader>
@@ -239,6 +240,59 @@ private slots:
     QVERIFY(report.contains(QStringLiteral("Qt: ")));
     QVERIFY(report.contains(QStringLiteral("Scale factor: 1.5")));
     QVERIFY(report.contains(QStringLiteral("ffmpeg: ")));
+  }
+
+  void libraryHelpCapsStayInTheirColumn() {
+    const auto restoreSize = qScopeGuard([&] { m_window->resize(1280, 820); });
+    m_window->resize(1280, 820);
+    QObject* help = m_window->findChild<QObject*>(QStringLiteral("libraryShortcutHelp"));
+    QVERIFY(help);
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(help->property("visible").toBool());
+    const auto close = qScopeGuard([&] {
+      help->setProperty("filter", QString());
+      QTest::keyClick(m_window, Qt::Key_Escape);
+    });
+    auto* content = help->property("contentItem").value<QQuickItem*>();
+    QVERIFY(content);
+    auto row = [&](const QString& label) {
+      return find(content, [&](QQuickItem* candidate) {
+        return candidate->property("modelData").toMap().value(QStringLiteral("label")).toString() == label;
+      });
+    };
+    // "Ctrl++" is Ctrl and Plus, not Ctrl and two blank caps.
+    QQuickItem* larger = nullptr;
+    QTRY_VERIFY((larger = row(QStringLiteral("Larger tiles"))));
+    const QVariantList caps = larger->property("modelData").toMap().value(QStringLiteral("caps")).toList();
+    QCOMPARE(caps.size(), 2);
+    QCOMPARE(caps.at(0).toStringList(), (QStringList{QStringLiteral("Ctrl"), QStringLiteral("+")}));
+    QCOMPARE(caps.at(1).toStringList(), (QStringList{QStringLiteral("Ctrl"), QStringLiteral("=")}));
+    // Four alternatives wrap inside their column instead of running past it.
+    QQuickItem* far = row(QStringLiteral("Extend the selection to the first / last tile or a page"));
+    QVERIFY(far);
+    QQuickItem* keys = find(far, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("shortcutCaps");
+    });
+    QVERIFY(keys);
+    QTRY_VERIFY(keys->x() >= -0.5 && keys->x() + keys->width() <= far->width() + 0.5);
+    for (QQuickItem* alternative : keys->childItems()) {
+      if (alternative->width() > 0)
+        QVERIFY2(alternative->x() + alternative->width() <= keys->width() + 0.5, "a key cap runs past its column");
+    }
+    // The RAW rows moved to Actions in the library help.
+    const QVariantList groups = help->property("groups").value<QJSValue>().toVariant().toList();
+    int rawRows = 0;
+    for (const QVariant& group : groups) {
+      const QVariantMap map = group.toMap();
+      for (const QVariant& entry : map.value(QStringLiteral("rows")).toList()) {
+        const QString label = entry.toMap().value(QStringLiteral("label")).toString();
+        if (label == QStringLiteral("Develop RAW") || label == QStringLiteral("Choose RAW editor")) {
+          QCOMPARE(map.value(QStringLiteral("title")).toString(), QStringLiteral("Actions"));
+          ++rawRows;
+        }
+      }
+    }
+    QCOMPARE(rawRows, 2);
   }
 
   void aboutLinksMissingToolsAndWindowRules() {
@@ -691,6 +745,221 @@ private slots:
     QVERIFY(scrolled);
   }
 
+  // Every on/off setting is a switch that says its state to assistive
+  // technology, flips from the mouse, the keyboard or its words, and is kept
+  // for the next start. The settings with several values step through them.
+  void everySettingTogglesAndPersists() {
+    QQuickItem* settings = item("settingsSheet");
+    QVERIFY(QMetaObject::invokeMethod(settings, "open"));
+    QTRY_VERIFY(settings->isVisible());
+    QQuickItem* scroll = item("settingsScroll");
+    const auto restore = qScopeGuard([&] { QMetaObject::invokeMethod(settings, "close"); });
+    const auto child = [&](const QString& name) {
+      return find(settings, [&name](QQuickItem* candidate) { return candidate->objectName() == name; });
+    };
+    // Shown in the scrolled list, after the list follows the focus to it.
+    const auto inView = [&](QQuickItem* control) {
+      const QPointF top = control->mapToItem(scroll, QPointF());
+      return top.y() >= 0 && top.y() + control->height() <= scroll->height();
+    };
+    struct Switch { const char* object; const char* property; const char* name; QObject* owner; };
+    const QList<Switch> switches = {
+        {"scanDownloadsToggle", "scanDownloads", "Scan Downloads", m_settings},
+        {"showHiddenToggle", "showHidden", "Hidden items", m_library},
+        {"gridFilenamesToggle", "showGridFilenames", "Show filenames in grid", m_settings},
+        {"pairRawJpegToggle", "pairRawJpeg", "Pair RAW and JPEG", m_settings},
+        {"permanentDeleteConfirmation", "confirmPermanentDelete", "Confirm permanent deletion", m_settings},
+        {"enlargeSmallPicturesButton", "enlargeSmallPictures", "Enlarge small pictures to fit", m_settings},
+        {"slideshowShuffleToggle", "slideshowShuffle", "Shuffle slideshow", m_settings},
+        {"rememberPlaybackSpeedButton", "rememberPlaybackSpeed", "Remember playback speed", m_settings},
+        {"slideshowVideosToggle", "slideshowVideos", "Include videos in slideshow", m_settings},
+        {"backgroundTextIndexToggle", "backgroundTextIndex", "Index text in the background", m_settings},
+        {"textIndexScreenshotsOnlyToggle", "textIndexScreenshotsOnly", "Index screenshots only", m_settings},
+    };
+    int way = 0;
+    for (const Switch& entry : switches) {
+      const QString object = QString::fromLatin1(entry.object);
+      QQuickItem* control = child(object);
+      QVERIFY2(control, entry.object);
+      if (object == QStringLiteral("textIndexScreenshotsOnlyToggle")) {
+        // Shown only while background indexing is on.
+        m_settings->setBackgroundTextIndex(true);
+      }
+      if (object.startsWith(QStringLiteral("backgroundTextIndex")) || object.startsWith(QStringLiteral("textIndex"))) {
+        if (!m_textIndex->available()) continue;
+      }
+      QTRY_VERIFY2(control->isVisible(), entry.object);
+      const bool before = entry.owner->property(entry.property).toBool();
+      const auto putBack = qScopeGuard([&] {
+        entry.owner->setProperty(entry.property, before);
+        if (object == QStringLiteral("textIndexScreenshotsOnlyToggle")) m_settings->setBackgroundTextIndex(false);
+      });
+
+      QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(control);
+      QVERIFY(accessible);
+      QCOMPARE(accessible->role(), QAccessible::CheckBox);
+      QCOMPARE(accessible->text(QAccessible::Name), QString::fromLatin1(entry.name));
+      QVERIFY(accessible->state().checkable);
+      QCOMPARE(bool(accessible->state().checked), before);
+
+      control->forceActiveFocus();
+      QTRY_VERIFY2(inView(control), entry.object);
+      // Background indexing rewrites its status line as it starts, which can
+      // move the rows below it; press where the switch is once it stays put.
+      QPointF placed = control->mapToScene(QPointF());
+      QTRY_VERIFY2([&] {
+        const QPointF now = control->mapToScene(QPointF());
+        const bool still = now == placed;
+        placed = now;
+        QTest::qWait(60);
+        return still && control->mapToScene(QPointF()) == now && inView(control);
+      }(), entry.object);
+      switch (way++ % 3) {
+        case 0: QTest::keyClick(m_window, Qt::Key_Space); break;
+        case 1: click(control); break;
+        default: {
+          // The words beside a switch flip it too.
+          QQuickItem* row = control->parentItem()->parentItem();
+          QVERIFY(row->property("toggle").value<QObject*>() == control);
+          QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier,
+                            row->mapToScene(QPointF(20, row->height() / 2)).toPoint());
+        }
+      }
+      QTRY_VERIFY2_WITH_TIMEOUT(entry.owner->property(entry.property).toBool() == !before,
+                                qPrintable(QStringLiteral("%1 by way %2").arg(object).arg((way - 1) % 3)), 2000);
+      QTRY_COMPARE(bool(QAccessible::queryAccessibleInterface(control)->state().checked), !before);
+      QCOMPARE(control->property("checked").toBool(), !before);
+      if (entry.owner == m_settings) {
+        AppSettings restarted;
+        QCOMPARE(restarted.property(entry.property).toBool(), !before);
+      }
+      QTest::keyClick(m_window, Qt::Key_Return);
+      QTRY_VERIFY2(entry.owner->property(entry.property).toBool() == before, entry.object);
+    }
+
+    // The several-value settings step to the next value, and keep it.
+    for (const auto& [object, property] : {std::pair{"folderDepthButton", "recursionDepth"},
+                                            std::pair{"thumbnailCacheButton", "thumbnailCacheMb"},
+                                            std::pair{"slideshowIntervalButton", "slideshowIntervalSeconds"},
+                                            std::pair{"imageDefaultButton", "imagePrimaryAction"},
+                                            std::pair{"videoDefaultButton", "videoPrimaryAction"}}) {
+      QQuickItem* control = child(QString::fromLatin1(object));
+      QVERIFY2(control, object);
+      const QVariant before = m_settings->property(property);
+      const auto putBack = qScopeGuard([&] { m_settings->setProperty(property, before); });
+      const QString name = control->property("accessibleName").toString();
+      QVERIFY2(name.endsWith(control->property("label").toString()), qPrintable(name));
+      control->forceActiveFocus();
+      QTRY_VERIFY2(inView(control), object);
+      click(control);
+      if (QByteArray(property).endsWith("PrimaryAction")) {
+        // Only installed handlers are offered; with one, there is nothing to step to.
+        QVariant offered;
+        const QVariantList all = QByteArray(property).startsWith("image")
+            ? QVariantList{QStringLiteral("preview"), QStringLiteral("omaframe"), QStringLiteral("corrections"), QStringLiteral("matte"), QStringLiteral("view"), QStringLiteral("edit")}
+            : QVariantList{QStringLiteral("preview"), QStringLiteral("trim"), QStringLiteral("play")};
+        QVERIFY(QMetaObject::invokeMethod(settings, "availableDefaults", Q_RETURN_ARG(QVariant, offered),
+                                          Q_ARG(QVariant, all)));
+        if (offered.metaType() == QMetaType::fromType<QJSValue>()) offered = offered.value<QJSValue>().toVariant();
+        if (offered.toList().size() < 2) continue;
+      }
+      QTRY_VERIFY2(m_settings->property(property) != before, object);
+      AppSettings restarted;
+      QCOMPARE(restarted.property(property), m_settings->property(property));
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(!m_captures->scanning(), 15000);
+    QTest::mouseMove(m_window, QPoint(5, 5));
+  }
+
+  // Sections with a side index on a big window, one column on a small one,
+  // and nothing smaller than 12 px to read.
+  void settingsSectionsFitWideAndNarrowWindows() {
+    QQuickItem* settings = item("settingsSheet");
+    const auto restore = qScopeGuard([&] {
+      QMetaObject::invokeMethod(settings, "close");
+      m_window->resize(1280, 820);
+      QTRY_COMPARE(m_window->width(), 1280);
+      // The wheel left the pointer over the grid, where a tile's hover tip
+      // would answer for the next test's keyboard one.
+      QTest::mouseMove(m_window, QPoint(5, 5));
+      QTRY_VERIFY(item("library")->property("layoutReady").toBool());
+      QTRY_VERIFY(item("library")->hasActiveFocus());
+    });
+    m_window->resize(1600, 1000);
+    QTRY_COMPARE(m_window->width(), 1600);
+    QTRY_COMPARE(m_window->height(), 1000);
+    QVERIFY(QMetaObject::invokeMethod(settings, "open"));
+    QTRY_VERIFY(settings->isVisible());
+    QQuickItem* card = item("settingsCard");
+    QQuickItem* scroll = item("settingsScroll");
+    // Well past the old 520 by 620 column: it takes the room the window gives.
+    QTRY_VERIFY2(card->width() > 800, qPrintable(QString::number(card->width())));
+    QVERIFY2(card->height() >= qMin(880.0, settings->height() - 64) - 1,
+             qPrintable(QStringLiteral("%1 of %2").arg(card->height()).arg(settings->height())));
+    QVERIFY(card->height() > 700);
+    QQuickItem* index = item("settingsIndex");
+    QVERIFY(index->isVisible());
+    const QStringList titles = {QStringLiteral("Library"), QStringLiteral("Viewer"), QStringLiteral("Video"),
+                                QStringLiteral("Search and text"), QStringLiteral("Albums and backups"),
+                                QStringLiteral("Integration"), QStringLiteral("About")};
+    QCOMPARE(settings->property("sectionItems").toList().size(), titles.size());
+    for (int i = 0; i < titles.size(); ++i) {
+      QQuickItem* entry = item(QStringLiteral("settingsIndex_%1").arg(i));
+      QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(entry);
+      QVERIFY(accessible);
+      QCOMPARE(accessible->text(QAccessible::Name), titles.at(i));
+    }
+    // An index entry brings its section up and is marked as the one shown.
+    click(item(QStringLiteral("settingsIndex_4")));
+    QTRY_COMPARE(settings->property("currentSection").toInt(), 4);
+    QQuickItem* albums = item(QStringLiteral("settingsSection_albums"));
+    QTRY_VERIFY(albums->mapToItem(scroll, QPointF()).y() >= -1);
+    QVERIFY(albums->mapToItem(scroll, QPointF()).y() < scroll->height() / 2);
+    QVERIFY(item("settingsTopFade")->isVisible());
+    // The wheel moves the list and lets the index follow.
+    const QPoint over = scroll->mapToScene(QPointF(scroll->width() / 2, scroll->height() / 2)).toPoint();
+    for (int notch = 0; notch < 40; ++notch) {
+      QWheelEvent wheel(over, m_window->mapToGlobal(over), QPoint(), QPoint(0, 120), Qt::NoButton,
+                        Qt::NoModifier, Qt::NoScrollPhase, false);
+      QCoreApplication::sendEvent(m_window, &wheel);
+    }
+    QTRY_COMPARE(scroll->property("contentY").toReal(), 0.0);
+    QTRY_COMPARE(settings->property("currentSection").toInt(), 0);
+    QVERIFY(!item("settingsTopFade")->isVisible());
+    QVERIFY(item("settingsBottomFade")->isVisible());
+
+    // Supporting text is 12 px or more everywhere in the sheet.
+    const auto smallText = [&]() {
+      QStringList small;
+      find(card, [&small](QQuickItem* candidate) {
+        const QVariant font = candidate->property("font");
+        if (candidate->isVisible() && candidate->property("text").isValid() && font.isValid()
+            && font.value<QFont>().pixelSize() > 0 && font.value<QFont>().pixelSize() < 12)
+          small.append(candidate->property("text").toString());
+        return false;
+      });
+      return small;
+    };
+    QVERIFY2(smallText().isEmpty(), qPrintable(smallText().join(u'|')));
+
+    // At the narrowest window the sheet keeps a margin, drops the index and
+    // still scrolls to its end.
+    m_window->resize(560, 700);
+    QTRY_COMPARE(m_window->width(), 560);
+    QTRY_VERIFY(!index->isVisible());
+    QVERIFY(card->width() <= 560 - 24);
+    QVERIFY(card->height() <= 700 - 24);
+    const QRectF cardBounds = card->mapRectToScene(card->boundingRect());
+    QVERIFY(cardBounds.left() >= 0 && cardBounds.right() <= 560);
+    QQuickItem* about = item(QStringLiteral("settingsSection_about"));
+    // The last section comes up with its title in view.
+    QVERIFY(QMetaObject::invokeMethod(settings, "showSection", Q_ARG(QVariant, 6)));
+    QTRY_VERIFY(about->mapToItem(scroll, QPointF()).y() >= 0);
+    QVERIFY(about->mapToItem(scroll, QPointF()).y() < 40);
+    QCOMPARE(settings->property("currentSection").toInt(), 6);
+    QVERIFY2(smallText().isEmpty(), qPrintable(smallText().join(u'|')));
+  }
+
   // Date sorts put a header over each day or month, with its count and a
   // control that selects it; tiles from other days carry their date; and
   // selection works as in a file manager across those sections.
@@ -766,15 +1035,18 @@ private slots:
     // The header is at the top, so the floating day pill has nothing to add.
     QCOMPARE(grid->property("currentDayLabel").toString(), QString());
 
-    // Tiles away from today show their short date before the time.
+    // Inside a day's section a tile shows only its time; the header has the
+    // day. Assistive technology still hears the date.
     QQuickItem* first = nullptr;
     QTRY_VERIFY((first = cardFor(added.first())) != nullptr);
     QQuickItem* when = find(first, [](QQuickItem* candidate) {
       return candidate->objectName() == QStringLiteral("captureWhenLabel");
     });
     QVERIFY(when);
-    QVERIFY2(when->property("text").toString().startsWith(
-                 locale.toString(QDate(2019, 5, 4), QStringLiteral("d MMM yyyy")) + QStringLiteral(" · ")),
+    QVERIFY2(!when->property("text").toString().contains(QStringLiteral(" · ")),
+             qPrintable(when->property("text").toString()));
+    QVERIFY2(!when->property("text").toString().contains(
+                 locale.toString(QDate(2019, 5, 4), QStringLiteral("d MMM"))),
              qPrintable(when->property("text").toString()));
     QVERIFY(when->width() <= first->width());
     QVERIFY(QAccessible::queryAccessibleInterface(first)->text(QAccessible::Name).contains(
@@ -1873,7 +2145,7 @@ private slots:
     for (int step = 1; step <= 6; ++step) QTest::mouseMove(m_window, from + (edge - from) * step / 6, 16);
     QTRY_VERIFY(item("rubberBandRect")->isVisible());
     const qreal startY = list->property("contentY").toReal();
-    QTRY_VERIFY_WITH_TIMEOUT(list->property("contentY").toReal() > startY + cellHeight, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(list->property("contentY").toReal() > startY + 4 * cellHeight, 5000);
     QTest::mouseRelease(m_window, Qt::LeftButton, Qt::NoModifier, edge, 16);
     QTRY_VERIFY(!item("rubberBandRect")->isVisible());
     // It selected tiles that were below the viewport when the drag began.
@@ -2073,6 +2345,14 @@ private slots:
     QTRY_VERIFY(detail->isVisible());
     QQuickItem* panel = item("detailPanel");
     QQuickItem* handle = item("detailResize_corner");
+    // The grip is drawn inside the panel's corner, not over its edge.
+    QQuickItem* grip = item("detailResizeGrip");
+    QVERIFY(grip->isVisible());
+    const QRectF gripBounds = grip->mapRectToScene(grip->boundingRect());
+    const QRectF panelBounds = panel->mapRectToScene(panel->boundingRect());
+    QVERIFY(panelBounds.contains(gripBounds));
+    QVERIFY(panelBounds.right() - gripBounds.right() < 12);
+    QVERIFY(panelBounds.bottom() - gripBounds.bottom() < 12);
     const QSizeF before(panel->width(), panel->height());
     dragBetween(handle, QPointF(8, 8), QPointF(-72, -52));
     QTRY_VERIFY(panel->width() < before.width() - 100);
@@ -2319,6 +2599,184 @@ private slots:
                                       Q_ARG(QVariant, path)));
       QVERIFY(checked.toBool());
     }
+  }
+
+  void libraryHeaderKeepsOnePrimaryRow_data() {
+    QTest::addColumn<int>("width");
+    QTest::addColumn<bool>("selection");
+    // 941 is Omarchy's default half tile on a 1920 screen.
+    for (int width : {560, 941, 1280, 1920}) {
+      QTest::newRow(qPrintable(QStringLiteral("%1").arg(width))) << width << false;
+      QTest::newRow(qPrintable(QStringLiteral("%1 selected").arg(width))) << width << true;
+    }
+  }
+
+  void libraryHeaderKeepsOnePrimaryRow() {
+    QFETCH(int, width);
+    QFETCH(bool, selection);
+    const bool downloads = m_settings->scanDownloads();
+    m_settings->setScanDownloads(true);
+    QQuickItem* grid = item("library");
+    const auto restore = qScopeGuard([&] {
+      QMetaObject::invokeMethod(grid, "clearChecked");
+      m_settings->setScanDownloads(downloads);
+      m_window->resize(1280, 820);
+    });
+    m_window->resize(width, 760);
+    if (selection) {
+      for (int row = 0; row < 6; ++row)
+        QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, pathAt(row)));
+      QTRY_COMPARE(grid->property("checkedCount").toInt(), 6);
+    }
+    waitForLayout(QSize(width, 760));
+    QTRY_COMPARE(item("headerSearchSlot")->parentItem()->width(), qreal(width));
+    waitForLayout();
+
+    // The title, the status and its count, whole and clear of everything else.
+    QQuickItem* status = item("libraryStatus");
+    if (selection) QTRY_COMPARE(status->property("text").toString(), QStringLiteral("6 selected"));
+    QVERIFY2(status->width() + 1 >= status->property("implicitWidth").toReal(),
+             qPrintable(QStringLiteral("%1 < %2").arg(status->width()).arg(status->property("implicitWidth").toReal())));
+    const QRectF statusRect = status->mapRectToScene(status->boundingRect());
+    QQuickItem* slot = item("headerSearchSlot");
+    QQuickItem* search = item("librarySearchBox");
+    QQuickItem* actions = item("folderSidebarToggle")->parentItem();
+    QVERIFY(statusRect.right() < slot->mapToScene(QPointF()).x());
+    if (search->isVisible()) {
+      const QRectF searchRect = search->mapRectToScene(search->boundingRect());
+      QVERIFY(searchRect.width() >= 110);
+      QVERIFY(searchRect.left() > statusRect.right());
+      QVERIFY(searchRect.right() < actions->mapToScene(QPointF()).x());
+      if (width >= 1280) QVERIFY(searchRect.width() >= (selection ? 200 : 300));
+    } else {
+      QVERIFY2(selection && width < 941, "the search gives way only to a selection in a narrow window");
+      // A typed query stays in sight as a chip with its own clear, and the
+      // search key says why it cannot open the field.
+      const auto clearSearch = qScopeGuard([&] { m_library->setSearchText({}); });
+      // Filter first, then select what it shows, so the selection survives
+      // the search and the field stays hidden.
+      QMetaObject::invokeMethod(grid, "clearChecked");
+      const QString query = QFileInfo(pathAt(0)).completeBaseName();
+      m_library->setSearchText(query);
+      QTRY_VERIFY(m_library->count() >= 1);
+      const int selected = std::min(6, m_library->count());
+      for (int row = 0; row < selected; ++row)
+        QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, pathAt(row)));
+      QTRY_COMPARE(grid->property("checkedCount").toInt(), selected);
+      const auto reselect = qScopeGuard([&] {
+        m_library->setSearchText({});
+        QMetaObject::invokeMethod(grid, "clearChecked");
+        for (int row = 0; row < 6; ++row)
+          QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, pathAt(row)));
+      });
+      QTRY_VERIFY(!search->isVisible());
+      const auto chipShown = [this] {
+        return find(m_window->contentItem(), [](QQuickItem* candidate) {
+                 return candidate->objectName() == QStringLiteral("filterChip-search") && candidate->isVisible();
+               }) != nullptr;
+      };
+      QTRY_VERIFY(chipShown());
+      QTest::keyClick(m_window, Qt::Key_Slash);
+      QTRY_VERIFY(item("footerStatus")->property("text").toString().contains(QStringLiteral("to search")));
+      QVERIFY2(chipShown(), qPrintable(QStringLiteral("chip gone after the search key; query '%1', field shown %2")
+                                           .arg(m_library->searchText())
+                                           .arg(item("librarySearchBox")->isVisible())));
+      QQuickItem* clear = find(m_window->contentItem(), [](QQuickItem* candidate) {
+        return candidate->objectName() == QStringLiteral("filterChipClear-search");
+      });
+      QVERIFY(clear);
+      QTest::mouseClick(m_window, Qt::LeftButton, {},
+                        clear->mapToScene(QPointF(clear->width() / 2, clear->height() / 2)).toPoint());
+      QTRY_VERIFY(m_library->searchText().isEmpty());
+      // With another chip beside it, Clear all clears the search as well.
+      m_library->setSearchText(query);
+      // A date range that keeps every tile, so the selection stays.
+      m_library->setDateRange(QStringLiteral("1970-01-01"), QStringLiteral("2100-12-31"));
+      const auto clearDates = qScopeGuard([&] { m_library->clearDateRange(); });
+      QTRY_COMPARE(grid->property("checkedCount").toInt(), selected);
+      QTRY_VERIFY(chipShown());
+      QMetaObject::invokeMethod(item("activeFilterChips"), "clearAll");
+      QTRY_VERIFY(m_library->searchText().isEmpty());
+      QVERIFY(m_library->dateFrom().isEmpty());
+    }
+    // Every header button sits on the row's centre line, inside the window,
+    // and clear of the status and of each other.
+    QQuickItem* header = actions->parentItem();
+    const qreal middle = header->mapToScene(QPointF(0, header->height() / 2)).y();
+    qreal previousRight = statusRect.right();
+    QList<QQuickItem*> buttons;
+    for (QQuickItem* child : actions->childItems())
+      if (child->isVisible() && child->width() > 0) buttons.append(child);
+    std::sort(buttons.begin(), buttons.end(), [](QQuickItem* a, QQuickItem* b) { return a->x() < b->x(); });
+    for (QQuickItem* button : std::as_const(buttons)) {
+      const QRectF rect = button->mapRectToScene(button->boundingRect());
+      QVERIFY2(qAbs(rect.center().y() - middle) <= 1.0,
+               qPrintable(button->property("label").toString() + QStringLiteral(" off centre")));
+      QVERIFY2(rect.left() >= previousRight, qPrintable(button->property("label").toString()));
+      QVERIFY2(rect.right() <= width - 19, qPrintable(button->property("label").toString()));
+      previousRight = rect.right();
+    }
+    // A selection keeps Actions, Trash and Clear; the rest only where they fit.
+    QCOMPARE(item("selectionActionsButton")->isVisible(), selection);
+    if (selection) {
+      QVERIFY(pill(m_window->contentItem(), QStringLiteral("Trash 6")));
+      QVERIFY(pill(m_window->contentItem(), QStringLiteral("Clear")));
+      if (width >= 1280) QVERIFY(pill(m_window->contentItem(), QStringLiteral("Organize")));
+      if (width >= 1920) QVERIFY(pill(m_window->contentItem(), QStringLiteral("Hide")));
+    }
+    // The gear is a line icon, never the colour emoji.
+    QQuickItem* settings = item("settingsButton");
+    QCOMPARE(settings->property("icon").toString(), QStringLiteral("settings"));
+    QCOMPARE(settings->property("accessibleName").toString(), QStringLiteral("Settings"));
+
+    // Kind: full names in a segmented control, or a menu when narrow.
+    QQuickItem* segments = item("kindSegments");
+    QQuickItem* kindMenu = item("kindMenuButton");
+    QVERIFY(segments->isVisible() != kindMenu->isVisible());
+    if (width >= 1280) QVERIFY(segments->isVisible());
+    const QStringList full{QStringLiteral("All"), QStringLiteral("Screenshots"), QStringLiteral("Recordings"),
+                           QStringLiteral("Pictures"), QStringLiteral("Videos"), QStringLiteral("Downloads"),
+                           QStringLiteral("PDFs")};
+    if (segments->isVisible()) {
+      QStringList labels;
+      find(segments, [&labels](QQuickItem* candidate) {
+        if (candidate->property("segment").toBool() && candidate->isVisible())
+          labels.append(candidate->property("label").toString());
+        return false;
+      });
+      QCOMPARE(labels, full);
+      QVERIFY(segments->mapRectToScene(segments->boundingRect()).right() <= width - 19);
+    } else {
+      QVERIFY(kindMenu->property("label").toString().startsWith(QStringLiteral("All")));
+    }
+    QQuickItem* browse = item("libraryBrowseButton");
+    QVERIFY(browse->mapRectToScene(browse->boundingRect()).right() <= width - 19);
+  }
+
+  void openFolderPinsFromTheChipRow() {
+    const QString folder = QFileInfo(pathAt(0)).absolutePath();
+    const auto restore = qScopeGuard([&] {
+      m_settings->unpinFolder(folder);
+      m_library->setFolderFilter({});
+      m_window->resize(1280, 820);
+    });
+    m_window->resize(941, 760);
+    m_library->setFolderFilter(folder);
+    waitForLayout(QSize(941, 760));
+    QQuickItem* pin = item("pinCurrentFolder");
+    QQuickItem* chips = item("activeFilterChips");
+    QTRY_VERIFY(pin->isVisible() && chips->isVisible());
+    // The pin button shares the folder chip's row instead of adding one.
+    const QRectF pinRect = pin->mapRectToScene(pin->boundingRect());
+    const QRectF chipRect = chips->mapRectToScene(chips->boundingRect());
+    QVERIFY(pinRect.top() < chipRect.bottom() && chipRect.top() < pinRect.bottom());
+    QVERIFY(pinRect.left() >= chipRect.right());
+    QCOMPARE(item("pinnedFolders")->isVisible(), false);
+    const qreal gridTop = item("library")->mapToScene(QPointF()).y();
+    QVERIFY2(gridTop < 58 + 40 + 40 + 20, qPrintable(QString::number(gridTop)));
+    click(pin);
+    QTRY_VERIFY(m_settings->isFolderPinned(folder));
+    QTRY_COMPARE(pin->property("label").toString(), QStringLiteral("Unpin folder"));
   }
 
   void longLibraryNamesAndStatusFitNarrowWindows_data() {
@@ -2936,7 +3394,7 @@ private slots:
     // Two quick clicks on Rotate: two rotations, and never the double-tap that
     // used to open whatever tile sat under the button.
     QQuickItem* rotate = nullptr;
-    QTRY_VERIFY_WITH_TIMEOUT((rotate = pill(detail, QStringLiteral("Rotate"))) != nullptr, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT((rotate = pill(detail, QStringLiteral("Rotate right"))) != nullptr, 5000);
     QTest::mouseDClick(m_window, Qt::LeftButton, Qt::NoModifier, centre(rotate));
     settle();
     QVERIFY(detail->isVisible());
@@ -3610,6 +4068,128 @@ private slots:
     QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
   }
 
+  // The preview has the quick viewer's icon toolbar, and each of its buttons
+  // does what its name says.
+  void previewToolbarDrivesThePicture() {
+    int imageRow = -1;
+    for (int row = 0; row < m_library->rowCount(); ++row) {
+      if (!m_library->isVideoAt(row) && !m_library->isDocumentAt(row)) {
+        imageRow = row;
+        break;
+      }
+    }
+    QVERIFY(imageRow >= 0);
+    openDetail(imageRow);
+    QQuickItem* detail = item("detail");
+    const auto restore = qScopeGuard([&] {
+      QMetaObject::invokeMethod(detail, "setSlideshow", Q_ARG(QVariant, false));
+      QMetaObject::invokeMethod(detail, "setFullScreen", Q_ARG(QVariant, false));
+      QMetaObject::invokeMethod(detail, "resetImageView");
+      invoke("dismissTopLayer");
+    });
+    QTRY_VERIFY(detail->property("stillReady").toBool());
+    QQuickItem* bar = item("previewToolbar");
+    QTRY_VERIFY(bar->isVisible());
+    // Icons, named for assistive technology; no text pills left over.
+    for (const auto& [name, label] : {std::pair{"previewZoomOut", "Zoom out"}, std::pair{"previewZoomIn", "Zoom in"},
+                                      std::pair{"previewRotateLeft", "Rotate left"},
+                                      std::pair{"previewRotateRight", "Rotate right"},
+                                      std::pair{"previewFlipHorizontal", "Flip horizontally"},
+                                      std::pair{"previewFlipVertical", "Flip vertically"},
+                                      std::pair{"previewFullScreenButton", "Full screen"}}) {
+      QQuickItem* button = item(QString::fromLatin1(name));
+      QVERIFY2(button->isVisible(), name);
+      QVERIFY2(!button->property("icon").toString().isEmpty(), name);
+      QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(button);
+      QVERIFY(accessible);
+      QCOMPARE(accessible->text(QAccessible::Name), QString::fromLatin1(label));
+    }
+    QVERIFY(!item("previewTrashButton")->isVisible());
+    QVERIFY(!pill(detail, QStringLiteral("Flip H")));
+    QVERIFY(!pill(detail, QStringLiteral("Start slideshow")));
+    // The keys shown are the preview's own.
+    QCOMPARE(item("previewRotateRight")->property("shortcut").toString(), QStringLiteral("R"));
+    QCOMPARE(item("previewFullScreenButton")->property("shortcut").toString(), QStringLiteral("F11"));
+
+    click(item("previewZoomIn"));
+    QTRY_COMPARE(detail->property("imageZoom").toDouble(), 1.25);
+    click(item("previewZoomOut"));
+    QTRY_COMPARE(detail->property("imageZoom").toDouble(), 1.0);
+    click(item("previewRotateRight"));
+    QTRY_COMPARE(detail->property("imageRotation").toInt(), 90);
+    click(item("previewRotateLeft"));
+    click(item("previewRotateLeft"));
+    QTRY_COMPARE(detail->property("imageRotation").toInt(), 270);
+    click(item("previewFlipHorizontal"));
+    QTRY_VERIFY(detail->property("imageFlipHorizontal").toBool());
+    QVERIFY(item("previewFlipHorizontal")->property("active").toBool());
+    click(item("previewFlipVertical"));
+    QTRY_VERIFY(detail->property("imageFlipVertical").toBool());
+    // The toggle follows the view: fitted offers 1:1; at actual size or any
+    // other zoom it offers Fit, which also undoes turns and flips, as 0 does.
+    QMetaObject::invokeMethod(detail, "resetImageView");
+    QQuickItem* fit = item("previewFitToggle");
+    QQuickItem* level = item("previewZoomLevel");
+    QVERIFY(level->isVisible());
+    const auto percent = [&] {
+      return QStringLiteral("%1%").arg(qRound(detail->property("displayedImageScale").toDouble() * 100));
+    };
+    QTRY_COMPARE(level->property("text").toString(), percent());
+    const bool fitIsActual = qAbs(detail->property("displayedImageScale").toDouble() - 1.0) < 0.01;
+    if (!fitIsActual) {
+      QCOMPARE(fit->property("label").toString(), QStringLiteral("1:1"));
+      QCOMPARE(fit->property("shortcut").toString(), QStringLiteral("1"));
+      click(fit);
+      QTRY_VERIFY(qAbs(detail->property("displayedImageScale").toDouble() - 1.0) < 0.01);
+      QTRY_COMPARE(level->property("text").toString(), QStringLiteral("100%"));
+      QTRY_COMPARE(fit->property("label").toString(), QStringLiteral("Fit"));
+      click(fit);
+      QTRY_COMPARE(detail->property("imageZoom").toDouble(), 1.0);
+      QTRY_COMPARE(fit->property("label").toString(), QStringLiteral("1:1"));
+    } else {
+      QCOMPARE(fit->property("label").toString(), QStringLiteral("Fit"));
+      QVERIFY(fit->property("active").toBool());
+    }
+    // Zoomed past fit, the way back is Fit, not actual size.
+    click(item("previewZoomIn"));
+    QTRY_COMPARE(detail->property("imageZoom").toDouble(), 1.25);
+    QTRY_COMPARE(level->property("text").toString(), percent());
+    QCOMPARE(fit->property("label").toString(), QStringLiteral("Fit"));
+    QCOMPARE(fit->property("shortcut").toString(), QStringLiteral("0"));
+    QVERIFY(!fit->property("active").toBool());
+    // A turn fits the picture again, so turn first and zoom after.
+    click(fit);
+    QTRY_COMPARE(detail->property("imageZoom").toDouble(), 1.0);
+    click(item("previewRotateRight"));
+    QTRY_COMPARE(detail->property("imageRotation").toInt(), 90);
+    click(item("previewFlipVertical"));
+    QTRY_VERIFY(detail->property("imageFlipVertical").toBool());
+    click(item("previewZoomIn"));
+    QTRY_COMPARE(detail->property("imageZoom").toDouble(), 1.25);
+    QTRY_COMPARE(fit->property("label").toString(), QStringLiteral("Fit"));
+    click(fit);
+    QTRY_COMPARE(detail->property("imageZoom").toDouble(), 1.0);
+    QCOMPARE(detail->property("imageRotation").toInt(), 0);
+    QVERIFY(!detail->property("imageFlipHorizontal").toBool());
+    QVERIFY(!detail->property("imageFlipVertical").toBool());
+    click(item("previewFullScreenButton"));
+    QTRY_VERIFY(detail->property("fullScreen").toBool());
+    QCOMPARE(item("previewFullScreenButton")->property("icon").toString(), QStringLiteral("fullscreen-exit"));
+    click(item("previewFullScreenButton"));
+    QTRY_VERIFY(!detail->property("fullScreen").toBool());
+    if (detail->property("canNavigate").toBool()) {
+      const QString shown = detail->property("path").toString();
+      click(item("previewToolbarNext"));
+      QTRY_VERIFY(detail->property("path").toString() != shown);
+      click(item("previewToolbarPrevious"));
+      QTRY_COMPARE(detail->property("path").toString(), shown);
+      click(item("previewSlideshowButton"));
+      QTRY_VERIFY(detail->property("slideshowRunning").toBool());
+      // While it runs, the bar steps aside for the slideshow's own controls.
+      QTRY_VERIFY(!bar->isVisible());
+    }
+  }
+
   void imageViewerSupportsActualSizeFlipsDeepZoomAndAnimationPause() {
     int imageRow = -1;
     for (int row = 0; row < m_library->rowCount(); ++row) {
@@ -3634,8 +4214,8 @@ private slots:
     QTRY_COMPARE(detail->property("imageZoom").toDouble(), 1.0);
     QTest::keyClick(m_window, Qt::Key_1);
     QTRY_VERIFY(qAbs(detail->property("displayedImageScale").toDouble() - 1.0) < 0.01);
-    click(item("flipHorizontalButton"));
-    click(item("flipVerticalButton"));
+    click(item("previewFlipHorizontal"));
+    click(item("previewFlipVertical"));
     QVERIFY(detail->property("imageFlipHorizontal").toBool());
     QVERIFY(detail->property("imageFlipVertical").toBool());
 
@@ -3662,15 +4242,23 @@ private slots:
     QVERIFY(!detail->property("animationPlaying").toBool());
     QCOMPARE(action.size(), 0);
 
+    // A narrow stage keeps the toolbar whole: flip, then zoom, give way,
+    // and the keys still do both.
     m_window->resize(560, 420);
-    QTRY_VERIFY(!item("actualSizeButton")->isVisible());
-    QVERIFY(!item("flipHorizontalButton")->isVisible());
-    QVERIFY(!item("flipVerticalButton")->isVisible());
-    QQuickItem* fit = pill(detail, QStringLiteral("Fit"));
-    QVERIFY(fit);
-    QVERIFY(fit->mapToScene(QPointF(0, 0)).x() >= 0);
+    QTRY_VERIFY(!item("previewFlipHorizontal")->isVisible());
+    QVERIFY(!item("previewFlipVertical")->isVisible());
+    QQuickItem* bar = item("previewToolbar");
+    QTRY_VERIFY(bar->isVisible());
+    const QRectF barBounds = bar->mapRectToScene(bar->boundingRect());
+    const QRectF stageBounds = item("previewToolbar")->parentItem()->mapRectToScene(
+        item("previewToolbar")->parentItem()->boundingRect());
+    QVERIFY2(barBounds.left() >= stageBounds.left() && barBounds.right() <= stageBounds.right(),
+             qPrintable(QStringLiteral("%1-%2 in %3-%4").arg(barBounds.left()).arg(barBounds.right())
+                            .arg(stageBounds.left()).arg(stageBounds.right())));
+    QVERIFY(item("previewRotateRight")->isVisible());
     m_window->resize(1280, 820);
-    QTRY_VERIFY(item("actualSizeButton")->isVisible());
+    QTRY_VERIFY(item("previewFitToggle")->isVisible());
+    QTRY_VERIFY(item("previewFlipHorizontal")->isVisible());
   }
 
   // Qt on Wayland can report a mouse wheel as a touchpad. Its notches must
@@ -4640,6 +5228,15 @@ private slots:
       return false;
     });
     QVERIFY(!suggestionRows.isEmpty());
+    // The search sits in the header, so a short list ends above the grid.
+    // Lower the list over the tiles: the point is that a click on it stays
+    // on it, whatever lies underneath.
+    {
+      const qreal top = suggestionRows.first()->mapToScene(QPointF()).y();
+      const qreal target = grid->mapToScene(QPointF(0, 60)).y();
+      if (top < target) popup->setProperty("y", popup->property("y").toReal() + target - top);
+      QTRY_VERIFY(suggestionRows.first()->mapToScene(QPointF()).y() >= target - 1);
+    }
     std::sort(suggestionRows.begin(), suggestionRows.end(), [](QQuickItem* a, QQuickItem* b) {
       return a->mapToScene(QPointF()).y() > b->mapToScene(QPointF()).y();
     });
@@ -5399,10 +5996,10 @@ private slots:
     QCOMPARE(all->property("resolvedToolTip").toString(), QStringLiteral("All  ·  1"));
 
     openDetail(0);
-    QQuickItem* rotate = pill(item("detail"), QStringLiteral("Rotate"));
+    QQuickItem* rotate = pill(item("detail"), QStringLiteral("Rotate right"));
     QTRY_VERIFY(rotate != nullptr);
     QCOMPARE(rotate->property("shortcut").toString(), QStringLiteral("R"));
-    QCOMPARE(rotate->property("resolvedToolTip").toString(), QStringLiteral("Rotate  ·  R"));
+    QCOMPARE(rotate->property("resolvedToolTip").toString(), QStringLiteral("Rotate right  ·  R"));
   }
 
   void extractedTextOpensASelectableLayoutPreservingReview() {
@@ -8668,9 +9265,10 @@ private:
   }
 
   // A visible PillButton by its label or its compact-mode tooltip.
+  // A text button, or an icon button by its name.
   static QQuickItem* pill(QQuickItem* within, const QString& label) {
     return find(within, [&label](QQuickItem* candidate) {
-      return candidate->property("floating").isValid() &&
+      return (candidate->property("floating").isValid() || candidate->property("raised").isValid()) &&
              (candidate->property("label").toString() == label ||
               candidate->property("toolTip").toString() == label) &&
              candidate->isVisible() && candidate->width() > 0;

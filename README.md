@@ -274,6 +274,11 @@ Every viewer shortcut is listed in [Shortcuts](docs/shortcuts.md#viewer), and
 - **Present and finish.** Run a fullscreen slideshow, choose a screenshot
   background for sharing, and follow your Omarchy palette and font as they change.
 
+Settings, the gear in the library header, is grouped into Library,
+Viewer, Video, Search and text, Albums and backups, Integration and About, with
+a side index on a wide window and a switch for each on/off choice. Nothing in
+it is needed for Omaroll to work.
+
 ## Library actions
 
 The library offers actions for the current file or selection: trim, convert,

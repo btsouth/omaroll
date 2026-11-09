@@ -1,6 +1,10 @@
 import QtQuick
 import QtQuick.Controls.Basic
 
+// Every shortcut for the viewer, the library or the preview, from the
+// shared table. One row per shortcut: what it does on the left, its keys on
+// the right, one cap per key. The sheet is as large as what it lists, up to
+// the window, and scrolls only when it truly cannot fit.
 Popup {
     id: root
     property bool video: false
@@ -10,8 +14,18 @@ Popup {
     property string context: "quick"
     property string filter: ""
     readonly property var groups: ShortcutCatalog.groups(context, video, animated, audioChoices, sidecarSubtitles, filter)
-    function columnsForWidth(width) {
-        const count = width >= 1000 ? 3 : width >= 680 ? 2 : 1;
+
+    readonly property int columnGap: 28
+    readonly property int preferredColumnWidth: 400
+    readonly property int minimumColumnWidth: 340
+    readonly property real room: Math.max(0, (parent ? parent.width : 0) - 24)
+    readonly property int columnCount: {
+        const fit = Math.floor((room - 2 * padding + columnGap) / (minimumColumnWidth + columnGap))
+        return Math.max(1, Math.min(3, fit, groups.length))
+    }
+
+    // Groups into columns, longest first, each into the shortest column so far.
+    function columnsFor(count) {
         let columns = [], sizes = [];
         for (let i = 0; i < count; ++i) {
             columns.push([]);
@@ -27,25 +41,29 @@ Popup {
         }
         return columns;
     }
+
     parent: Overlay.overlay
-    width: Math.min(1320, parent.width - 24)
-    height: Math.min(1020, parent.height - 24)
-    x: (parent.width - width) / 2
-    y: (parent.height - height) / 2
+    width: Math.min(room, columnCount * preferredColumnWidth + columnGap * (columnCount - 1) + 2 * padding)
+    readonly property real naturalHeight: heading.implicitHeight + 12 + search.implicitHeight + 12
+                                          + Math.max(columnsRow.implicitHeight, 40) + 2 * padding
+    height: Math.min(naturalHeight, (parent ? parent.height : 0) - 24)
+    x: Math.round(((parent ? parent.width : 0) - width) / 2)
+    y: Math.round(((parent ? parent.height : 0) - height) / 2)
     modal: true
     focus: true
     onOpened: {
         search.text = "";
         root.filter = "";
+        scroll.contentItem.contentY = 0;
         contentItem.forceActiveFocus();
     }
-    padding: 16
+    padding: 18
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     background: Rectangle {
         color: Theme.background
         radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 4
         border.width: 1
-        border.color: Theme.mutedText
+        border.color: Qt.rgba(Theme.foreground.r, Theme.foreground.g, Theme.foreground.b, 0.22)
     }
     contentItem: Item {
         Keys.onPressed: function (event) {
@@ -99,6 +117,7 @@ Popup {
         }
         PillButton {
             anchors.right: parent.right
+            anchors.verticalCenter: heading.verticalCenter
             label: "Close"
             onClicked: root.close()
         }
@@ -109,6 +128,7 @@ Popup {
             anchors.topMargin: 12
             width: parent.width
             placeholderText: "Filter shortcuts"
+            placeholderTextColor: Theme.mutedText
             Accessible.name: "Filter shortcuts"
             color: Theme.foreground
             font.family: Theme.fontFamily
@@ -117,8 +137,18 @@ Popup {
                 color: Theme.surfaceBackground
                 radius: Theme.cornerRadius
                 border.width: 1
-                border.color: Theme.mutedText
+                border.color: search.activeFocus ? Theme.accent
+                                                 : Qt.rgba(Theme.foreground.r, Theme.foreground.g, Theme.foreground.b, 0.22)
             }
+        }
+        Text {
+            anchors.top: search.bottom
+            anchors.topMargin: 14
+            visible: root.groups.length === 0
+            text: "No shortcut matches “" + root.filter + "”"
+            color: Theme.mutedText
+            font.family: Theme.fontFamily
+            font.pixelSize: 12
         }
         ScrollView {
             id: scroll
@@ -131,59 +161,118 @@ Popup {
             contentWidth: availableWidth
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             Row {
+                id: columnsRow
                 width: scroll.availableWidth
-                spacing: 20
-                readonly property int columns: width >= 1000 ? 3 : width >= 680 ? 2 : 1
+                spacing: root.columnGap
                 Repeater {
-                    model: root.columnsForWidth(scroll.availableWidth)
+                    model: root.columnsFor(root.columnCount)
                     Column {
                         required property var modelData
-                        width: (scroll.availableWidth - 20 * (parent.columns - 1)) / parent.columns
+                        width: Math.floor((columnsRow.width - root.columnGap * (root.columnCount - 1))
+                                          / root.columnCount) - 1
                         spacing: 16
                         Repeater {
                             model: parent.modelData
                             Column {
                                 required property var modelData
                                 width: parent.width
-                                spacing: 4
+                                spacing: 2
                                 Text {
                                     text: parent.modelData.title
                                     color: Theme.accent
                                     font.family: Theme.fontFamily
                                     font.pixelSize: 13
                                     font.weight: Font.DemiBold
+                                    bottomPadding: 4
                                 }
                                 Repeater {
                                     model: parent.modelData.rows
-                                    Column {
+                                    // One shortcut. Its keys as one string, for
+                                    // assistive technology and for the tests.
+                                    Item {
+                                        id: shortcutRow
                                         required property var modelData
+                                        readonly property string text: modelData.keys
+                                        // Keys that would crowd the label go under it.
+                                        readonly property bool stacked: caps.naturalWidth > width * 0.6
                                         width: parent.width
-                                        spacing: 2
-                                        Rectangle {
-                                            width: Math.min(parent.width, keyText.implicitWidth + 12)
-                                            height: keyText.implicitHeight + 6
-                                            radius: Math.min(Theme.cornerRadius, 4)
-                                            color: Theme.surfaceBackground
-                                            border.width: 1
-                                            border.color: Theme.mutedText
-                                            Text {
-                                                id: keyText
-                                                anchors.centerIn: parent
-                                                width: parent.width - 12
-                                                text: parent.parent.modelData.keys
-                                                wrapMode: Text.WordWrap
-                                                color: Theme.brightForeground
-                                                font.family: Theme.fontFamily
-                                                font.pixelSize: 12
-                                            }
-                                        }
+                                        height: stacked ? label.implicitHeight + 4 + caps.height + 4
+                                                        : Math.max(label.implicitHeight, caps.height) + 6
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: modelData.label + ", " + modelData.keys
+
                                         Text {
-                                            width: parent.width
-                                            text: parent.modelData.label
+                                            id: label
+                                            anchors.left: parent.left
+                                            y: shortcutRow.stacked ? 2 : Math.round((shortcutRow.height - implicitHeight) / 2)
+                                            width: shortcutRow.stacked ? parent.width
+                                                                       : parent.width - caps.naturalWidth - 14
+                                            text: shortcutRow.modelData.label
                                             wrapMode: Text.WordWrap
                                             color: Theme.foreground
                                             font.family: Theme.fontFamily
                                             font.pixelSize: 12
+                                        }
+                                        // Under the label, many alternatives wrap
+                                        // within the column rather than run past it.
+                                        Flow {
+                                            id: caps
+                                            objectName: "shortcutCaps"
+                                            // One line's width, from the alternatives
+                                            // themselves, so it never depends on the wrap.
+                                            readonly property real naturalWidth: {
+                                                let total = 0
+                                                for (let i = 0; i < children.length; ++i) {
+                                                    const child = children[i]
+                                                    if (child.width > 0)
+                                                        total += child.width + (total > 0 ? spacing : 0)
+                                                }
+                                                return total
+                                            }
+                                            anchors.right: parent.right
+                                            width: shortcutRow.stacked ? parent.width : naturalWidth
+                                            y: shortcutRow.stacked ? label.implicitHeight + 6
+                                                                   : Math.round((shortcutRow.height - height) / 2)
+                                            spacing: 6
+                                            Repeater {
+                                                model: shortcutRow.modelData.caps
+                                                Row {
+                                                    id: alternative
+                                                    required property var modelData
+                                                    required property int index
+                                                    spacing: 3
+                                                    Text {
+                                                        visible: alternative.index > 0
+                                                        anchors.verticalCenter: parent.verticalCenter
+                                                        text: "/"
+                                                        color: Theme.mutedText
+                                                        font.family: Theme.fontFamily
+                                                        font.pixelSize: 11
+                                                        rightPadding: 3
+                                                    }
+                                                    Repeater {
+                                                        model: alternative.modelData
+                                                        Rectangle {
+                                                            required property string modelData
+                                                            width: Math.max(22, capText.implicitWidth + 12)
+                                                            height: capText.implicitHeight + 6
+                                                            radius: Math.min(Theme.cornerRadius, 4)
+                                                            color: Theme.surfaceBackground
+                                                            border.width: 1
+                                                            border.color: Qt.rgba(Theme.foreground.r, Theme.foreground.g,
+                                                                                  Theme.foreground.b, 0.28)
+                                                            Text {
+                                                                id: capText
+                                                                anchors.centerIn: parent
+                                                                text: parent.modelData
+                                                                color: Theme.brightForeground
+                                                                font.family: Theme.fontFamily
+                                                                font.pixelSize: 11
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -191,6 +280,21 @@ Popup {
                         }
                     }
                 }
+            }
+        }
+        // More below: the last rows fade rather than stop at a hard edge.
+        Rectangle {
+            objectName: "shortcutHelpFade"
+            anchors.left: scroll.left
+            anchors.right: scroll.right
+            anchors.bottom: scroll.bottom
+            height: 32
+            readonly property var flick: scroll.contentItem
+            visible: flick.contentHeight > flick.height + 1
+                     && flick.contentY < flick.contentHeight - flick.height - 1
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: Qt.rgba(Theme.background.r, Theme.background.g, Theme.background.b, 0) }
+                GradientStop { position: 1.0; color: Theme.background }
             }
         }
     }

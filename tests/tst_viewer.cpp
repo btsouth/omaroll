@@ -57,6 +57,8 @@
 #include <QGuiApplication>
 #include <QImageReader>
 #include <QJSValue>
+#include <cmath>
+#include <QQmlListReference>
 #include <QMediaDevices>
 #include <QMediaMetaData>
 #include <QMediaPlayer>
@@ -630,6 +632,150 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_Right);
     QCOMPARE(m_session->path(), first);
     QVERIFY(prop("slideshowRunning").toBool());
+  }
+
+  // WCAG relative luminance and contrast, for the checks below.
+  static double luminance(const QColor& colour) {
+    const auto channel = [](double value) {
+      return value <= 0.04045 ? value / 12.92 : std::pow((value + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * channel(colour.redF()) + 0.7152 * channel(colour.greenF()) +
+           0.0722 * channel(colour.blueF());
+  }
+  static double contrast(const QColor& a, const QColor& b) {
+    const double first = luminance(a), second = luminance(b);
+    return (std::max(first, second) + 0.05) / (std::min(first, second) + 0.05);
+  }
+  // A translucent colour over an opaque one.
+  static QColor over(const QColor& top, const QColor& bottom) {
+    const double a = top.alphaF();
+    return QColor::fromRgbF(top.redF() * a + bottom.redF() * (1 - a), top.greenF() * a + bottom.greenF() * (1 - a),
+                            top.blueF() * a + bottom.blueF() * (1 - a));
+  }
+
+  void controlsOverMediaStayDarkInEveryTheme_data() {
+    QTest::addColumn<QString>("palette");
+    QTest::newRow("dark") << QStringLiteral("dark");
+    QTest::newRow("light") << QStringLiteral("light");
+  }
+
+  void controlsOverMediaStayDarkInEveryTheme() {
+    QFETCH(QString, palette);
+    QTemporaryDir themeDir;
+    QVERIFY(themeDir.isValid());
+    const QString themeRoot = themeDir.filePath(QStringLiteral("omarchy/current/theme"));
+    QVERIFY(QDir().mkpath(themeRoot));
+    const QString fixture = QFINDTESTDATA("fixtures/themes") + QLatin1Char('/') + palette;
+    for (const auto& name : {QStringLiteral("colors.toml"), QStringLiteral("shell.toml")})
+      QVERIFY(QFile::copy(fixture + QStringLiteral("/theme/") + name, themeRoot + QLatin1Char('/') + name));
+    OmarchyTheme theme(themeDir.path(), themeDir.path());
+    m_engine->rootContext()->setContextProperty(QStringLiteral("Theme"), &theme);
+    const auto restoreTheme = qScopeGuard([&] {
+      m_engine->rootContext()->setContextProperty(QStringLiteral("Theme"), m_theme);
+    });
+    if (palette == QStringLiteral("light")) QVERIFY(luminance(theme.background()) > 0.6);
+
+    // The worst case under a panel: a white frame.
+    const QColor white(Qt::white);
+    open({media(QStringLiteral("clip.mp4"))});
+    QQuickItem* transport = item(QStringLiteral("viewerTransport"));
+    QTRY_VERIFY(transport->isVisible());
+    const QColor panel = transport->property("color").value<QColor>();
+    const QColor backing = over(panel, white);
+    QVERIFY2(luminance(backing) < 0.08, qPrintable(panel.name(QColor::HexArgb)));
+    // Time text, the seek track and its fill clear WCAG AA on that.
+    for (const char* name : {"viewerElapsed", "viewerDuration"}) {
+      const QColor text = item(QString::fromLatin1(name))->property("color").value<QColor>();
+      QVERIFY2(contrast(text, backing) >= 4.5, name);
+    }
+    const QColor track = over(item(QStringLiteral("viewerSeekTrack"))->property("color").value<QColor>(), backing);
+    QVERIFY2(contrast(track, backing) >= 3.0, qPrintable(QString::number(contrast(track, backing))));
+    const QColor fill = item(QStringLiteral("viewerSeekFill"))->property("color").value<QColor>();
+    QVERIFY2(contrast(fill, backing) >= 4.5, qPrintable(fill.name()));
+    // Icons are light on it too, whatever the theme's foreground.
+    QQuickItem* play = item(QStringLiteral("viewerPlayButton"));
+    QVERIFY(play->property("osd").toBool());
+    QVERIFY(contrast(play->property("textColour").value<QColor>(), backing) >= 4.5);
+
+    // The top scrim is dark, never the theme's light surface.
+    QQuickItem* scrim = item(QStringLiteral("viewerHeaderScrim"));
+    QVariant gradientValue = scrim->property("gradient");
+    QObject* gradient = gradientValue.value<QObject*>();
+    if (!gradient) gradient = gradientValue.value<QJSValue>().toQObject();
+    QVERIFY(gradient);
+    QQmlListReference stops(gradient, "stops");
+    QVERIFY(stops.count() >= 2);
+    const QColor top = stops.at(0)->property("color").value<QColor>();
+    QVERIFY2(luminance(over(top, white)) < 0.15, qPrintable(top.name(QColor::HexArgb)));
+    QVERIFY(contrast(item(QStringLiteral("viewerTitle"))->property("color").value<QColor>(), over(top, white)) >= 4.5);
+
+    // The picture toolbar matches the video bar.
+    open({media(QStringLiteral("Shot 1.jpg"))});
+    QQuickItem* toolbar = item(QStringLiteral("viewerToolbar"));
+    QTRY_VERIFY(toolbar->isVisible());
+    QCOMPARE(toolbar->property("color").value<QColor>(), panel);
+    QVERIFY(item(QStringLiteral("viewerZoomIn"))->property("osd").toBool());
+    // A light theme's pale surround gets a hairline round the picture.
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QCOMPARE(item(QStringLiteral("viewerPictureEdge"))->isVisible(), luminance(theme.surfaceBackground()) > 0.4);
+  }
+
+  void shortcutHelpFitsALaptopViewer_data() {
+    QTest::addColumn<bool>("video");
+    QTest::newRow("picture") << false;
+    QTest::newRow("video") << true;
+  }
+
+  void shortcutHelpFitsALaptopViewer() {
+    QFETCH(bool, video);
+    open({media(video ? QStringLiteral("clip.mp4") : QStringLiteral("Shot 1.jpg"))});
+    const QSize before = m_window->size();
+    const auto restore = qScopeGuard([&] { m_window->resize(before); });
+    m_window->resize(1280, 720);
+    QTRY_COMPARE(m_window->size(), QSize(1280, 720));
+    QObject* help = m_window->findChild<QObject*>(QStringLiteral("viewerShortcutHelp"));
+    QVERIFY(help);
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(help->property("visible").toBool());
+    QQuickItem* flick = item(QStringLiteral("viewerShortcutScroll"))->property("contentItem").value<QQuickItem*>();
+    QVERIFY(flick);
+    // Everything shows without scrolling, inside the window.
+    QTRY_VERIFY(flick->property("contentHeight").toReal() <= flick->height() + 0.5);
+    const qreal fullHeight = help->property("height").toReal();
+    QVERIFY(fullHeight <= 720 - 24);
+    QVERIFY(!item(QStringLiteral("shortcutHelpFade"))->isVisible());
+
+    // One row per shortcut, label left and caps right, one cap per key, with
+    // the pan arrows collapsed.
+    auto* content = help->property("contentItem").value<QQuickItem*>();
+    if (!video) {
+      QQuickItem* pan = find(content, [](QQuickItem* candidate) {
+        return candidate->property("text").toString() ==
+               QStringLiteral("Shift+Left / Shift+Right / Shift+Up / Shift+Down");
+      });
+      QVERIFY(pan);
+      const QVariantList caps = pan->property("modelData").toMap().value(QStringLiteral("caps")).toList();
+      QCOMPARE(caps.size(), 1);
+      QCOMPARE(caps.first().toStringList(), (QStringList{QStringLiteral("Shift"), QStringLiteral("Arrows")}));
+      QVERIFY(!pan->property("stacked").toBool());
+      // The RAW entries are actions now.
+      QVariant groups = help->property("groups");
+      bool rawInActions = false;
+      for (const QVariant& group : groups.value<QJSValue>().toVariant().toList()) {
+        const QVariantMap map = group.toMap();
+        for (const QVariant& row : map.value(QStringLiteral("rows")).toList()) {
+          if (row.toMap().value(QStringLiteral("label")).toString() == QStringLiteral("Open RAW editor"))
+            rawInActions = map.value(QStringLiteral("title")).toString() == QStringLiteral("Actions");
+        }
+      }
+      QVERIFY(rawInActions);
+    }
+
+    // A filter down to a few rows shrinks the sheet.
+    help->setProperty("filter", QStringLiteral("trash"));
+    QTRY_VERIFY(help->property("height").toReal() < fullHeight / 2);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!help->property("visible").toBool());
   }
 
   void detailsStayInsideAShortWindowAndScrollToTheFolder_data() {
@@ -1331,6 +1477,7 @@ private slots:
       QVERIFY(!vertical->state().checked);
     }
     QVERIFY(item(QStringLiteral("viewerSaveCopy"))->isVisible());
+    QVERIFY(item(QStringLiteral("viewerSaveCopy"))->isEnabled());
 
     // The left of the screen, blue, goes to the top.
     QTest::keyClick(m_window, Qt::Key_R);
@@ -1380,7 +1527,9 @@ private slots:
     QVERIFY(!prop("viewFlipHorizontal").toBool());
     QVERIFY(!prop("viewFlipVertical").toBool());
     QVERIFY(!menuIds(menu).contains(QStringLiteral("save-view-copy")));
-    QVERIFY(!item(QStringLiteral("viewerSaveCopy"))->isVisible());
+    // Kept in place on the bar, greyed until there is a turn or flip to save.
+    QVERIFY(item(QStringLiteral("viewerSaveCopy"))->isVisible());
+    QVERIFY(!item(QStringLiteral("viewerSaveCopy"))->isEnabled());
     QCOMPARE(digest(first), before);
     QCOMPARE(QDir(folder).entryList(QDir::Files).size(), 2);
 
@@ -1393,6 +1542,67 @@ private slots:
     QMediaPlayer* player = nullptr;
     QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
     player->pause();
+  }
+
+  // Save comes up after a turn or flip and goes while the copy is written
+  // and after. Its place on a still's toolbar is kept throughout, so no
+  // button moves under the pointer either way, on the bar or off it.
+  void toolbarKeepsItsPlaceAfterSaveCopy() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString folder = QFileInfo(dir.path()).canonicalFilePath();
+    const QString source = folder + QStringLiteral("/plain.png");
+    QImage picture(240, 160, QImage::Format_RGB32);
+    picture.fill(QColor(30, 120, 200));
+    QVERIFY(picture.save(source));
+    open({source});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    m_window->setProperty("chromePinned", true);
+    const auto unpin = qScopeGuard([&] { m_window->setProperty("chromePinned", false); });
+    QQuickItem* save = item(QStringLiteral("viewerSaveCopy"));
+    QQuickItem* slot = item(QStringLiteral("viewerSaveCopySlot"));
+    QQuickItem* trash = item(QStringLiteral("viewerTrashButton"));
+    QQuickItem* flip = item(QStringLiteral("viewerFlipHorizontal"));
+    QQuickItem* rotate = item(QStringLiteral("viewerRotateRight"));
+    // Nothing to save yet: the place is there, greyed.
+    QTRY_VERIFY(slot->isVisible());
+    QVERIFY(save->isVisible() && !save->isEnabled());
+    QTest::qWait(30);
+    const qreal trashX = trash->mapToScene(QPointF()).x();
+    const qreal flipX = flip->mapToScene(QPointF()).x();
+    const auto centre = [](QQuickItem* target) {
+      return target->mapToScene(QPointF(target->width() / 2, target->height() / 2)).toPoint();
+    };
+
+    // Appearing: flip from the bar, and the button under the pointer stays.
+    QTest::mouseMove(m_window, centre(flip));
+    QTRY_VERIFY(item(QStringLiteral("viewerToolbar"))->property("hovered").toBool());
+    QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, centre(flip));
+    QTRY_VERIFY(save->isEnabled());
+    QTest::qWait(30);
+    QCOMPARE(flip->mapToScene(QPointF()).x(), flipX);
+    QCOMPARE(trash->mapToScene(QPointF()).x(), trashX);
+    // A turn on top changes nothing on the bar.
+    QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, centre(rotate));
+    QTRY_VERIFY(prop("viewRotation").toInt() != 0);
+    QVERIFY(save->isEnabled());
+    QCOMPARE(trash->mapToScene(QPointF()).x(), trashX);
+
+    // Going: save, while the copy is written and once it is open.
+    const QPoint onSave = centre(save);
+    QTest::mouseMove(m_window, onSave);
+    QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, onSave);
+    QTRY_VERIFY_WITH_TIMEOUT(m_session->path() != source, 15000);
+    QTRY_VERIFY(!save->isEnabled());
+    QVERIFY(slot->isVisible());
+    QTest::qWait(30);
+    QCOMPARE(trash->mapToScene(QPointF()).x(), trashX);
+    // Off the bar the place stays too: the copy is a still that can be turned.
+    QTest::mouseMove(m_window, QPoint(m_window->width() / 2, 40));
+    QTRY_VERIFY(!item(QStringLiteral("viewerToolbar"))->property("hovered").toBool());
+    QTest::qWait(30);
+    QVERIFY(slot->isVisible());
+    QCOMPARE(trash->mapToScene(QPointF()).x(), trashX);
   }
 
   void savesWhatTheViewShowsAsACopy_data() {
@@ -1436,7 +1646,7 @@ private slots:
     QTRY_COMPARE(prop("status").toString(), QStringLiteral("Rotate or flip the picture first"));
     QTest::keyClick(m_window, Qt::Key_R);
     if (flip) QTest::keyClick(m_window, Qt::Key_H, Qt::ShiftModifier);
-    QTRY_VERIFY(item(QStringLiteral("viewerSaveCopy"))->isVisible());
+    QTRY_VERIFY(item(QStringLiteral("viewerSaveCopy"))->isEnabled());
     if (jpeg) QTest::keyClick(m_window, Qt::Key_S, Qt::ControlModifier);
     else click(item(QStringLiteral("viewerSaveCopy")));
 
@@ -1743,6 +1953,137 @@ private slots:
     QVERIFY(list);
     // Taller than the window: it scrolls.
     QVERIFY(list->property("interactive").toBool());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!menu->property("visible").toBool());
+  }
+
+  // The menu is a short top level with View, Share and Edit submenus. It keeps
+  // every action and its key, stays inside an 820 px window, and in a short
+  // one scrolls with the wheel and follows the keyboard.
+  void viewerMenuIsGroupedFitsAndScrolls() {
+    open({media(QStringLiteral("Shot 1.jpg")), media(QStringLiteral("shot 2.jpg"))});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    m_window->resize(1280, 820);
+    QTRY_COMPARE(m_window->height(), 820);
+    auto* menu = m_window->findChild<QObject*>(QStringLiteral("viewerMenu"));
+    auto* viewMenu = m_window->findChild<QObject*>(QStringLiteral("viewerSubmenu_view"));
+    auto* shareMenu = m_window->findChild<QObject*>(QStringLiteral("viewerSubmenu_share"));
+    QVERIFY(menu && viewMenu && shareMenu);
+    const auto inWindow = [&](QObject* popup) {
+      auto* box = popup->property("background").value<QQuickItem*>();
+      const QRectF bounds = box->mapRectToScene(box->boundingRect());
+      return bounds.top() >= 0 && bounds.bottom() <= m_window->height() && bounds.left() >= 0
+             && bounds.right() <= m_window->width();
+    };
+    // As the toolbar's More button opens it.
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openViewForRender", Q_ARG(QVariant, QStringLiteral("viewer-menu"))));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QTest::qWait(50);
+    QVERIFY(inWindow(menu));
+    QVERIFY(!menu->property("contentItem").value<QQuickItem*>()->property("interactive").toBool());
+    // Short at the top: the groups and the common window actions.
+    int topRows = 0;
+    for (const QVariant& row : menu->property("rows").toList())
+      topRows += row.toMap().value(QStringLiteral("separator")).toBool() ? 0 : 1;
+    QVERIFY2(topRows <= 12, qPrintable(QString::number(topRows)));
+    for (const QString& group : {QStringLiteral("view"), QStringLiteral("share"), QStringLiteral("edit")}) {
+      QQuickItem* row = item(QStringLiteral("viewerMenu_group-") + group);
+      QVERIFY(row->property("subMenu").value<QObject*>());
+      QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(row);
+      QVERIFY(accessible);
+      QCOMPARE(accessible->role(), QAccessible::MenuItem);
+      QVERIFY(!accessible->text(QAccessible::Name).isEmpty());
+    }
+    // Every action is still offered, with its key.
+    const QStringList ids = menuIds(menu);
+    for (const QString& id : {QStringLiteral("library"), QStringLiteral("fit"), QStringLiteral("fit-width"),
+                              QStringLiteral("fill"), QStringLiteral("actual"), QStringLiteral("fit-shrink"),
+                              QStringLiteral("rotate"), QStringLiteral("flip-horizontal"),
+                              QStringLiteral("flip-vertical"), QStringLiteral("filmstrip"),
+                              QStringLiteral("copy"), QStringLiteral("copy-path"), QStringLiteral("copy-name"),
+                              QStringLiteral("open-with"), QStringLiteral("files"),
+                              QStringLiteral("slideshow"), QStringLiteral("fullscreen"), QStringLiteral("info"),
+                              QStringLiteral("help"), QStringLiteral("favorite"), QStringLiteral("trash")})
+      QVERIFY2(ids.contains(id), qPrintable(id));
+    QCOMPARE(menuRow(QStringLiteral("rotate"))->property("shortcutText").toString(), QStringLiteral("R"));
+    QCOMPARE(menuRow(QStringLiteral("copy-path"))->property("shortcutText").toString(),
+             QStringLiteral("Ctrl+Shift+C"));
+
+    QVERIFY(QMetaObject::invokeMethod(menu, "close"));
+    QTRY_VERIFY(!menu->property("visible").toBool());
+    QTRY_VERIFY(!viewMenu->property("visible").toBool() && !shareMenu->property("visible").toBool());
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openViewForRender", Q_ARG(QVariant, QStringLiteral("viewer-menu"))));
+    QTRY_VERIFY(menu->property("visible").toBool());
+
+    // View opens beside it, also inside the window, and its rows act.
+    QQuickItem* viewRow = item(QStringLiteral("viewerMenu_group-view"));
+    QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier,
+                      viewRow->mapToScene(QPointF(viewRow->width() / 2, viewRow->height() / 2)).toPoint());
+    QTRY_VERIFY(viewMenu->property("visible").toBool());
+    QTest::qWait(50);
+    QVERIFY(inWindow(viewMenu));
+    QQuickItem* fitWidth = menuRow(QStringLiteral("fit-width"));
+    QTRY_VERIFY(fitWidth->isVisible());
+    QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier,
+                      fitWidth->mapToScene(QPointF(fitWidth->width() / 2, fitWidth->height() / 2)).toPoint());
+    QTRY_VERIFY(!viewMenu->property("visible").toBool());
+    QTRY_VERIFY(!menu->property("visible").toBool());
+    QCOMPARE(prop("fitMode").toString(), QStringLiteral("width"));
+
+    // A short window: held inside it, scrolled by the wheel both ways.
+    m_window->resize(640, 300);
+    QTRY_COMPARE(m_window->height(), 300);
+    QMetaObject::invokeMethod(m_window, "showActionMenu");
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QTest::qWait(50);
+    QVERIFY(inWindow(menu));
+    auto* list = menu->property("contentItem").value<QQuickItem*>();
+    QVERIFY(list->property("interactive").toBool());
+    QVERIFY(item(QStringLiteral("viewerMenuBottomFade"))->isVisible());
+    const QPoint over = list->mapToScene(QPointF(list->width() / 2, list->height() / 2)).toPoint();
+    const auto wheel = [&](int notches) {
+      for (int i = 0; i < std::abs(notches); ++i) {
+        QWheelEvent event(over, m_window->mapToGlobal(over), QPoint(), QPoint(0, notches < 0 ? -120 : 120),
+                          Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QCoreApplication::sendEvent(m_window, &event);
+      }
+    };
+    wheel(-10);
+    QTRY_VERIFY(list->property("contentY").toReal() > list->property("originY").toReal() + 20);
+    QVERIFY(list->property("atYEnd").toBool());
+    QVERIFY(!item(QStringLiteral("viewerMenuBottomFade"))->isVisible());
+    QVERIFY(item(QStringLiteral("viewerMenuTopFade"))->isVisible());
+    // The wheel stays on the menu: the picture did not zoom.
+    QCOMPARE(prop("viewScale").toReal(), 0.0);
+    wheel(10);
+    QTRY_VERIFY(list->property("atYBeginning").toBool());
+    // The keyboard's row is always in view.
+    for (int step = 0; step < 14; ++step) {
+      QTest::keyClick(m_window, Qt::Key_Down);
+      const int current = menu->property("currentIndex").toInt();
+      if (current < 0) continue;
+      QQuickItem* highlighted = nullptr;
+      QVERIFY(QMetaObject::invokeMethod(menu, "itemAt", Q_RETURN_ARG(QQuickItem*, highlighted),
+                                        Q_ARG(int, current)));
+      QVERIFY(highlighted);
+      QTRY_VERIFY(highlighted->mapToItem(list, QPointF()).y() >= -1);
+      QTRY_VERIFY(highlighted->mapToItem(list, QPointF(0, highlighted->height())).y() <= list->height() + 1);
+    }
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!menu->property("visible").toBool());
+
+    // Each submenu fits the short window too.
+    QMetaObject::invokeMethod(m_window, "showActionMenu");
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QQuickItem* shareRow = item(QStringLiteral("viewerMenu_group-share"));
+    QTRY_VERIFY(shareRow->mapToItem(list, QPointF()).y() >= 0);
+    QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier,
+                      shareRow->mapToScene(QPointF(shareRow->width() / 2, shareRow->height() / 2)).toPoint());
+    QTRY_VERIFY(shareMenu->property("visible").toBool());
+    QTest::qWait(50);
+    QVERIFY(inWindow(shareMenu));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!shareMenu->property("visible").toBool());
     QTest::keyClick(m_window, Qt::Key_Escape);
     QTRY_VERIFY(!menu->property("visible").toBool());
   }
@@ -2281,6 +2622,9 @@ private slots:
     QTRY_VERIFY(menu->property("visible").toBool());
     // Menu rows live in the window's overlay, beside the content.
     QQuickItem* top = m_window->contentItem();
+    // Rotate is in View.
+    QVERIFY(QMetaObject::invokeMethod(item(QStringLiteral("viewerMenu_group-view")), "click"));
+    QTRY_VERIFY(m_window->findChild<QObject*>(QStringLiteral("viewerSubmenu_view"))->property("visible").toBool());
     QQuickItem* rotate = nullptr;
     QTRY_VERIFY((rotate = find(top, [](QQuickItem* candidate) {
                    return candidate->objectName() == QStringLiteral("viewerMenu_rotate");
@@ -2291,11 +2635,10 @@ private slots:
     QCOMPARE(row->text(QAccessible::Description), QStringLiteral("Shortcut R"));
     // Every row the menu exposes has a name, and the separators are left
     // out of it altogether.
+    // The rows of the View submenu that holds Rotate.
     QList<QQuickItem*> entries;
-    find(top, [&entries](QQuickItem* candidate) {
+    for (QQuickItem* candidate : rotate->parentItem()->childItems())
       if (candidate->inherits("QQuickMenuItem")) entries.append(candidate);
-      return false;
-    });
     int separators = 0;
     for (QQuickItem* entry : entries) separators += entry->property("separator").toBool() ? 1 : 0;
     QVERIFY(separators > 0);
@@ -2316,6 +2659,9 @@ private slots:
       QAccessibleInterface* face = QAccessible::queryAccessibleInterface(entry);
       QVERIFY(!face || face->role() == QAccessible::Separator);
     }
+    // Escape leaves View, then the menu.
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!m_window->findChild<QObject*>(QStringLiteral("viewerSubmenu_view"))->property("visible").toBool());
     QTest::keyClick(m_window, Qt::Key_Escape);
     QTRY_VERIFY(!menu->property("visible").toBool());
   }
@@ -2637,7 +2983,7 @@ private slots:
     QObject* menu = m_window->findChild<QObject*>(QStringLiteral("viewerMenu"));
     QVERIFY(menu);
     QTRY_VERIFY(menu->property("visible").toBool());
-    QVERIFY(QMetaObject::invokeMethod(item(QStringLiteral("viewerMenu_video-loop")), "click"));
+    QVERIFY(QMetaObject::invokeMethod(menuRow(QStringLiteral("video-loop")), "click"));
     QVERIFY(!prop("loopVideo").toBool());
   }
 
@@ -2749,7 +3095,7 @@ private slots:
              qPrintable(said));
     QTest::keyClick(m_window, Qt::Key_Menu);
     QTRY_VERIFY(menu->property("visible").toBool());
-    QVERIFY(QMetaObject::invokeMethod(item(QStringLiteral("viewerMenu_audio-track")), "click"));
+    QVERIFY(QMetaObject::invokeMethod(menuRow(QStringLiteral("audio-track")), "click"));
     QCOMPARE(player->activeAudioTrack(), audio);
 
     QTest::keyClick(m_window, Qt::Key_X);
@@ -2784,7 +3130,7 @@ private slots:
       QVERIFY(m_window->grabWindow().save(QCoreApplication::applicationDirPath()
           + QStringLiteral("/video-menu-%1-narrow.png").arg(palette)));
     }
-    QVERIFY(QMetaObject::invokeMethod(item(QStringLiteral("viewerMenu_subtitles-earlier")), "click"));
+    QVERIFY(QMetaObject::invokeMethod(menuRow(QStringLiteral("subtitles-earlier")), "click"));
     QCOMPARE(prop("subtitleOffsetMs").toInt(), 0);
     QTest::keyClick(m_window, Qt::Key_Z);
     QCOMPARE(prop("subtitleOffsetMs").toInt(), -500);
@@ -3935,7 +4281,7 @@ private slots:
     QTRY_VERIFY(menu->property("visible").toBool());
     QVERIFY(menuIds(menu).contains(QStringLiteral("copy-path")));
     QVERIFY(menuIds(menu).contains(QStringLiteral("copy-name")));
-    QVERIFY(QMetaObject::invokeMethod(item(QStringLiteral("viewerMenu_copy-name")), "click"));
+    QVERIFY(QMetaObject::invokeMethod(menuRow(QStringLiteral("copy-name")), "click"));
     QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("opened ü name.png"));
   }
 
@@ -4090,7 +4436,7 @@ private slots:
     QTest::mouseClick(m_window, Qt::RightButton, Qt::NoModifier, QPoint(150, 120));
     QObject* menu = m_window->findChild<QObject*>(QStringLiteral("viewerMenu"));
     QTRY_VERIFY(menu->property("visible").toBool());
-    QVERIFY(QMetaObject::invokeMethod(item(QStringLiteral("viewerMenu_fit-shrink")), "click"));
+    QVERIFY(QMetaObject::invokeMethod(menuRow(QStringLiteral("fit-shrink")), "click"));
     QTRY_COMPARE(prop("zoomPercent").toInt(), 100);
     QTest::keyClick(m_window, Qt::Key_0);
     QTRY_VERIFY(prop("zoomPercent").toInt() > 100);
@@ -4291,7 +4637,7 @@ private slots:
     QCOMPARE(m_session->path(), first);
     QVERIFY(menu->property("visible").toBool());
     QVERIFY(prop("slideshowRunning").toBool());
-    QVERIFY(QMetaObject::invokeMethod(item(QStringLiteral("viewerMenu_favorite")), "click"));
+    QVERIFY(QMetaObject::invokeMethod(menuRow(QStringLiteral("favorite")), "click"));
     QTRY_VERIFY(!menu->property("visible").toBool());
     QVERIFY(m_settings->isFavorite(first));
     QVERIFY(!m_settings->isFavorite(second));
@@ -4320,7 +4666,7 @@ private slots:
     QVERIFY(menu);
     QTest::mouseClick(m_window, Qt::RightButton, Qt::NoModifier, QPoint(m_window->width() / 2, m_window->height() / 2));
     QTRY_VERIFY(menu->property("visible").toBool());
-    QVERIFY(QMetaObject::invokeMethod(item(QStringLiteral("viewerMenu_slideshow")), "click"));
+    QVERIFY(QMetaObject::invokeMethod(menuRow(QStringLiteral("slideshow")), "click"));
     QTRY_COMPARE_WITH_TIMEOUT(m_session->path(), image, 1500);
     QTRY_VERIFY(!menu->property("visible").toBool());
     QVERIFY(prop("slideshowRunning").toBool());
@@ -5537,6 +5883,31 @@ private:
     if (!found) {
       qFatal("no item named %s", qPrintable(objectName));
     }
+    return found;
+  }
+
+  // A row of the open viewer menu by action id. A row in View, Share or Edit
+  // is placed once its submenu opens, so that submenu is opened first.
+  QQuickItem* menuRow(const QString& id) {
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("viewerMenu"));
+    QString group;
+    for (const QVariant& entry : menu->property("entries").toList()) {
+      const QVariantMap map = entry.toMap();
+      if (map.value(QStringLiteral("id")).toString() == id) group = map.value(QStringLiteral("group")).toString();
+    }
+    const QString name = QStringLiteral("viewerMenu_") + id;
+    const auto lookup = [&] {
+      return find(m_window->contentItem(), [&name](QQuickItem* candidate) { return candidate->objectName() == name; });
+    };
+    if (!group.isEmpty()) {
+      QObject* submenu = m_window->findChild<QObject*>(QStringLiteral("viewerSubmenu_") + group);
+      if (submenu && !submenu->property("visible").toBool()) {
+        QMetaObject::invokeMethod(item(QStringLiteral("viewerMenu_group-") + group), "click");
+        QTest::qWaitFor([&] { return submenu->property("visible").toBool() && lookup(); }, 3000);
+      }
+    }
+    QQuickItem* found = lookup();
+    if (!found) qFatal("no menu row %s", qPrintable(id));
     return found;
   }
 

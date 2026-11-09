@@ -36,6 +36,37 @@ Item {
         return Qt.rgba(base.r, base.g, base.b, amount)
     }
 
+    // The sections, in order, for the side index.
+    readonly property var sectionItems: [librarySection, viewerSection, videoSection, searchSection,
+                                         albumsSection, integrationSection, aboutSection]
+    // The section asked for from the index, until the list is next moved by
+    // hand: the last few cannot scroll to the top, so position alone would
+    // mark the final one.
+    property int requestedSection: -1
+    readonly property int currentSection: {
+        if (root.requestedSection >= 0) return root.requestedSection
+        const top = settingsFlickable.contentY
+        const maximum = settingsFlickable.contentHeight - settingsFlickable.height
+        if (maximum > 0 && top >= maximum - 1) return root.sectionItems.length - 1
+        let current = 0
+        for (let i = 0; i < root.sectionItems.length; ++i) {
+            if (root.sectionItems[i].y + column.y <= top + 48) current = i
+        }
+        return current
+    }
+
+    function showSection(index) {
+        const section = root.sectionItems[index]
+        if (!section) return
+        const maximum = Math.max(0, settingsFlickable.contentHeight - settingsFlickable.height)
+        const target = Math.max(0, section.y + column.y - 12)
+        // Within a little of the end, go to the end rather than leave a
+        // sliver of padding below the last section, if its title stays shown.
+        settingsFlickable.contentY = maximum - target < 48 && section.y + column.y >= maximum
+                                     ? maximum : Math.min(maximum, target)
+        root.requestedSection = index
+    }
+
     function applyPendingRestore() {
         if (root.pendingRestorePath === "") {
             return
@@ -90,6 +121,8 @@ Item {
         windowRulesState = Settings.windowRules
         missingTools = Settings.missingTools()
         MimeDefaults.refresh()
+        requestedSection = -1
+        settingsFlickable.contentY = 0
         visible = true
         forceActiveFocus()
     }
@@ -126,13 +159,16 @@ Item {
         enabled: root.visible
         acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
         onWheel: function(event) {
-            const delta = event.pixelDelta.y !== 0
+            // Pixels only for a touchpad's phased swipe: Wayland gives a
+            // wheel notch a pixel delta of a few pixels as well.
+            const delta = event.phase !== Qt.NoScrollPhase && event.pixelDelta.y !== 0
                           ? event.pixelDelta.y : event.angleDelta.y / 2
             const minimum = settingsFlickable.originY
             const maximum = minimum + Math.max(
                                 0, settingsFlickable.contentHeight - settingsFlickable.height)
             settingsFlickable.contentY = Math.max(
                         minimum, Math.min(maximum, settingsFlickable.contentY - delta))
+            root.requestedSection = -1
             event.accepted = true
         }
     }
@@ -156,10 +192,70 @@ Item {
         }
     }
 
+    // A titled group of settings. The side index lists these by title.
+    component SettingsSection: Column {
+        id: section
+        property string title: ""
+        width: parent ? parent.width : 0
+        spacing: 16
+
+        Column {
+            width: parent.width
+            spacing: 8
+            Text {
+                text: section.title
+                font.family: Theme.fontFamily
+                font.pixelSize: 14
+                font.weight: Font.DemiBold
+                color: Theme.brightForeground
+                Accessible.role: Accessible.Heading
+                Accessible.name: text
+            }
+            Rectangle {
+                width: parent.width
+                height: 1
+                color: Qt.rgba(Theme.foreground.r, Theme.foreground.g, Theme.foreground.b, 0.12)
+            }
+        }
+    }
+
+    // A folder or album under the setting that lists it.
+    component ListedPath: Column {
+        id: listed
+        property string label: ""
+        property string path: ""
+        property bool available: true
+        width: parent ? parent.width : 0
+        spacing: 1
+        Text {
+            width: parent.width
+            visible: listed.label !== ""
+            text: listed.label
+            elide: Text.ElideRight
+            font.family: Theme.fontFamily
+            font.pixelSize: 12
+            font.weight: Font.DemiBold
+            color: Theme.foreground
+        }
+        Text {
+            width: parent.width
+            text: listed.path
+            elide: Text.ElideMiddle
+            font.family: Theme.fontFamily
+            font.pixelSize: 12
+            color: listed.available ? Theme.mutedText : Theme.red
+        }
+    }
+
     Rectangle {
+        id: card
+        objectName: "settingsCard"
         anchors.centerIn: parent
-        width: Math.min(520, root.width - 60)
-        height: Math.min(620, root.height - 60, column.implicitHeight + 44)
+        // Wider and taller on a big window, with a side index once there is
+        // room for one; a narrow window gets the sections one after another.
+        width: Math.min(root.width - (root.width < 700 ? 24 : 64), 940)
+        height: Math.min(root.height - (root.height < 600 ? 24 : 64), 880)
+        readonly property bool wide: width >= 720
         radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 4
         color: root.shade(Theme.background, 0.98)
         border.width: 1
@@ -172,18 +268,143 @@ Item {
             preventStealing: true
         }
 
+        Column {
+            id: header
+            x: 22
+            y: 18
+            width: parent.width - 44
+            spacing: 4
+
+            Text {
+                text: "Settings"
+                font.family: Theme.fontFamily
+                font.pixelSize: 16
+                font.weight: Font.DemiBold
+                color: Theme.brightForeground
+                Accessible.role: Accessible.Heading
+                Accessible.name: text
+            }
+            Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Omaroll reads the folders Omarchy already writes captures to. "
+                      + "Rename and deletion happen only when you request them."
+                font.family: Theme.fontFamily
+                font.pixelSize: 12
+                color: Theme.mutedText
+            }
+        }
+
+        Rectangle {
+            id: headerRule
+            anchors.top: header.bottom
+            anchors.topMargin: 14
+            width: parent.width
+            height: 1
+            color: root.shade(Theme.foreground, 0.12)
+        }
+
+        // The side index: one entry per section, the one in view marked.
+        Column {
+            id: sectionIndex
+            objectName: "settingsIndex"
+            visible: card.wide
+            anchors.top: headerRule.bottom
+            anchors.topMargin: 14
+            x: 14
+            width: 168
+            spacing: 2
+
+            Repeater {
+                model: root.sectionItems
+
+                Item {
+                    id: indexEntry
+                    required property var modelData
+                    required property int index
+                    readonly property bool current: root.currentSection === index
+                    objectName: "settingsIndex_" + index
+                    width: sectionIndex.width
+                    height: 30
+                    activeFocusOnTab: true
+                    Accessible.role: Accessible.Button
+                    Accessible.name: modelData.title
+                    Accessible.description: "Go to section"
+                    Accessible.onPressAction: root.showSection(index)
+                    Keys.onPressed: function (event) {
+                        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+                                || event.key === Qt.Key_Space) {
+                            root.showSection(index)
+                            event.accepted = true
+                        }
+                    }
+
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 6) : 3
+                        color: indexEntry.current ? root.shade(Theme.accent, 0.18)
+                               : indexHover.hovered ? root.shade(Theme.foreground, 0.08) : "transparent"
+                        border.width: indexEntry.activeFocus ? 2 : 0
+                        border.color: Theme.accent
+                    }
+                    Rectangle {
+                        visible: indexEntry.current
+                        x: 0
+                        width: 3
+                        height: parent.height - 12
+                        anchors.verticalCenter: parent.verticalCenter
+                        radius: 1
+                        color: Theme.accent
+                    }
+                    Text {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 12
+                        anchors.right: parent.right
+                        anchors.rightMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: indexEntry.modelData.title
+                        elide: Text.ElideRight
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 13
+                        font.weight: indexEntry.current ? Font.DemiBold : Font.Normal
+                        color: indexEntry.current ? Theme.brightForeground : Theme.foreground
+                    }
+                    HoverHandler {
+                        id: indexHover
+                        cursorShape: Qt.PointingHandCursor
+                    }
+                    TapHandler { onTapped: root.showSection(indexEntry.index) }
+                }
+            }
+        }
+
+        Rectangle {
+            visible: card.wide
+            anchors.top: headerRule.bottom
+            anchors.bottom: footerRule.top
+            x: sectionIndex.x + sectionIndex.width + 13
+            width: 1
+            color: root.shade(Theme.foreground, 0.12)
+        }
+
         Flickable {
             id: settingsFlickable
             objectName: "settingsScroll"
             onContentHeightChanged: if (root.visible) Qt.callLater(settingsFlickable.revealFocusedControl)
             onHeightChanged: if (root.visible) Qt.callLater(settingsFlickable.revealFocusedControl)
-            anchors.fill: parent
-            anchors.margins: 22
-            contentHeight: column.implicitHeight
+            anchors.top: headerRule.bottom
+            anchors.bottom: footerRule.top
+            anchors.left: parent.left
+            anchors.leftMargin: card.wide ? sectionIndex.x + sectionIndex.width + 28 : 22
+            anchors.right: parent.right
+            anchors.rightMargin: 10
+            contentHeight: column.implicitHeight + 36
             clip: true
             boundsBehavior: Flickable.StopAtBounds
+            onMovementStarted: root.requestedSection = -1
             ScrollBar.vertical: ScrollBar {
                 id: settingsScrollBar
+                onPressedChanged: if (pressed) root.requestedSection = -1
                 width: 8
                 policy: ScrollBar.AsNeeded
             }
@@ -193,12 +414,18 @@ Item {
                 let ancestor = focused
                 while (ancestor && ancestor !== column) ancestor = ancestor.parent
                 if (!focused || ancestor !== column) return
-                const top = focused.mapToItem(column, 0, 0).y
+                const top = focused.mapToItem(column, 0, 0).y + column.y
                 const bottom = top + focused.height
+                // Clear of the fades at either edge.
+                const inset = 24
                 const maximum = Math.max(0, settingsFlickable.contentHeight - settingsFlickable.height)
-                if (top < settingsFlickable.contentY) settingsFlickable.contentY = Math.max(0, top)
-                else if (bottom > settingsFlickable.contentY + settingsFlickable.height)
-                    settingsFlickable.contentY = Math.min(maximum, bottom - settingsFlickable.height)
+                if (top - inset < settingsFlickable.contentY) {
+                    settingsFlickable.contentY = Math.max(0, top - inset)
+                    root.requestedSection = -1
+                } else if (bottom + inset > settingsFlickable.contentY + settingsFlickable.height) {
+                    settingsFlickable.contentY = Math.min(maximum, bottom + inset - settingsFlickable.height)
+                    root.requestedSection = -1
+                }
             }
 
             Connections {
@@ -210,157 +437,561 @@ Item {
 
             Column {
                 id: column
-                width: parent.width - settingsScrollBar.width - 14
-                spacing: 14
+                y: 18
+                width: Math.min(settingsFlickable.width - settingsScrollBar.width - 18, 680)
+                spacing: 34
 
-            Text {
-                text: "Settings"
-                font.family: Theme.fontFamily
-                font.pixelSize: 15
-                font.weight: Font.DemiBold
-                color: Theme.brightForeground
-            }
-
-            Text {
-                width: parent.width
-                wrapMode: Text.WordWrap
-                text: "Omaroll reads the folders Omarchy already writes captures to. "
-                      + "Rename and deletion happen only when you request them."
-                font.family: Theme.fontFamily
-                font.pixelSize: 11
-                color: Theme.mutedText
-            }
-
-            Rectangle {
-                width: parent.width
-                height: 1
-                color: root.shade(Theme.foreground, 0.12)
-            }
-
-            Column {
-                width: parent.width
-                spacing: 8
-                Text {
-                    text: "About Omaroll"
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 14
-                    color: Theme.brightForeground
-                }
-                Text {
-                    text: "Omaroll " + Settings.appVersion + " · Qt " + Settings.qtVersion
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 12
-                    color: Theme.foreground
-                }
-                Flow {
-                    width: parent.width
-                    spacing: 8
-                    PillButton {
-                        objectName: "aboutChangelog"
-                        label: "Changelog"
-                        toolTip: "What changed in Omaroll " + Settings.appVersion
-                        property string url: Settings.releaseNotesUrl
-                        onClicked: Qt.openUrlExternally(url)
-                    }
-                    PillButton {
-                        objectName: "aboutHomepage"
-                        label: "Homepage"
-                        property string url: "https://btsouth.github.io/omaroll/"
-                        onClicked: Qt.openUrlExternally(url)
-                    }
-                    PillButton {
-                        objectName: "aboutReportIssue"
-                        label: "Report an issue"
-                        toolTip: "Copy diagnostics first, then paste them into the form"
-                        property string url: Settings.newIssueUrl
-                        onClicked: Qt.openUrlExternally(url)
-                    }
-                    PillButton {
-                        objectName: "copyDiagnostics"
-                        label: "Copy diagnostics"
-                        toolTip: "omaroll --diagnostics prints the same text"
-                        onClicked: { Settings.copyDiagnostics(Theme.themeName, root.Screen.devicePixelRatio); label = "Diagnostics copied" }
-                    }
-                }
-                Text {
-                    objectName: "aboutMissingToolsTitle"
-                    width: parent.width
-                    visible: root.missingTools.length > 0
-                    topPadding: 4
-                    text: "Not installed"
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 12
-                    color: Theme.foreground
-                }
-                Repeater {
-                    objectName: "aboutMissingTools"
-                    model: root.missingTools
-                    delegate: Row {
-                        required property var modelData
-                        width: parent ? parent.width : 0
-                        spacing: 10
-                        Text {
-                            width: Math.round(parent.width * 0.45)
-                            elide: Text.ElideRight
-                            text: modelData.feature
-                            font.family: Theme.fontFamily
-                            font.pixelSize: 12
-                            color: Theme.mutedText
-                        }
-                        TextEdit {
-                            width: parent.width - Math.round(parent.width * 0.45) - 10
-                            readOnly: true
-                            selectByMouse: true
-                            wrapMode: TextEdit.Wrap
-                            text: modelData.install
-                            font.family: Theme.fontFamily
-                            font.pixelSize: 12
-                            color: Theme.foreground
-                            selectionColor: Theme.accent
-                        }
-                    }
-                }
-            }
-
-            Rectangle {
-                width: parent.width
-                height: 1
-                color: root.shade(Theme.foreground, 0.12)
-            }
-
-            Row {
-                objectName: "settingsDefaultViewer"
-                width: parent.width
-                spacing: 12
+            SettingsSection {
+                id: librarySection
+                objectName: "settingsSection_library"
+                title: "Library"
 
                 Column {
-                    width: parent.width - defaultButtons.width - 12
-                    spacing: 2
+                    width: parent.width
+                    spacing: 8
 
-                    Text {
-                        text: "Default viewer"
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 12
-                        color: Theme.foreground
+                    SettingRow {
+                        title: "Automatic folders"
+                        detail: "Detected from Omarchy and your XDG folders. New media appears here "
+                                + "automatically; nothing is imported or copied."
                     }
-                    Text {
-                        objectName: "settingsDefaultViewerStatus"
-                        width: parent.width
-                        wrapMode: Text.WordWrap
-                        text: root.defaultsStatus()
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 10
-                        color: root.defaultsOk ? Theme.mutedText : Theme.red
+
+                    Repeater {
+                        model: Library.automaticFolders
+
+                        ListedPath {
+                            required property var modelData
+                            label: modelData.label
+                            path: modelData.path + (modelData.available ? "" : "  ·  Waiting for folder")
+                            available: modelData.available
+                        }
                     }
                 }
 
-                Row {
-                    id: defaultButtons
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: 6
+                Column {
+                    width: parent.width
+                    spacing: 8
+
+                    SettingRow {
+                        title: "Additional folders"
+                        detail: root.folderMessage !== "" ? root.folderMessage
+                                : (Settings.libraryFolders.length === 0
+                                   ? "Add another folder to this library."
+                                   : Settings.libraryFolders.length + " added to this library.")
+                        detailColor: root.folderMessage !== "" ? Theme.red : Theme.mutedText
+
+                        PillButton {
+                            id: addFolder
+                            anchors.verticalCenter: parent.verticalCenter
+                            label: "Add folder"
+                            onClicked: { root.pinSelectedFolder = false; folderDialog.open() }
+                        }
+                    }
+
+                    Repeater {
+                        model: Settings.libraryFolders
+
+                        Row {
+                            id: folderRow
+                            required property string modelData
+                            readonly property bool available: {
+                                void Library.automaticFolders
+                                return Library.folderAvailable(modelData)
+                            }
+                            width: parent ? parent.width : 0
+                            spacing: 10
+
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: parent.width - removeFolder.width - 10
+                                text: folderRow.modelData
+                                      + (folderRow.available ? "" : "  ·  Unavailable")
+                                elide: Text.ElideMiddle
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 12
+                                color: folderRow.available ? Theme.mutedText : Theme.red
+                            }
+                            PillButton {
+                                id: removeFolder
+                                label: "Remove"
+                                accessibleName: "Remove " + folderRow.modelData
+                                onClicked: {
+                                    if (Captures.folderFilter === folderRow.modelData) {
+                                        Captures.folderFilter = ""
+                                    }
+                                    Settings.removeLibraryFolder(folderRow.modelData)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                SettingRow {
+                    title: "Pinned folders"
+                    detail: "Pinned folders appear as shortcuts above the library."
+
+                    PillButton {
+                        id: pinFolder
+                        anchors.verticalCenter: parent.verticalCenter
+                        label: "Pin folder"
+                        onClicked: { root.pinSelectedFolder = true; folderDialog.open() }
+                    }
+                }
+
+                SettingRow {
+                    title: "Include Downloads"
+                    detail: "Media files in your Downloads folder, top level only."
+                    toggle: toggleDownloads
+
+                    SettingSwitch {
+                        id: toggleDownloads
+                        objectName: "scanDownloadsToggle"
+                        accessibleName: "Scan Downloads"
+                        anchors.verticalCenter: parent.verticalCenter
+                        checked: Settings.scanDownloads
+                        onToggled: Settings.scanDownloads = !Settings.scanDownloads
+                    }
+                }
+
+                SettingRow {
+                    title: "Folder depth"
+                    detail: "How far to look inside Pictures and Videos. Screenshots and "
+                            + "recordings are always read from the top level, where Omarchy "
+                            + "writes them."
+
+                    PillButton {
+                        id: depthButton
+                        objectName: "folderDepthButton"
+                        accessibleName: "Folder scan depth: " + label
+                        toolTip: "Click for the next depth, from 1 to 8"
+                        anchors.verticalCenter: parent.verticalCenter
+                        label: Settings.recursionDepth + " deep"
+                        onClicked: Settings.recursionDepth =
+                                   Settings.recursionDepth >= 8 ? 1 : Settings.recursionDepth + 1
+                    }
+                }
+
+                SettingRow {
+                    title: "Show hidden media"
+                    detail: "Hiding is a \"don't show me this again\" mark. It never touches "
+                            + "the file."
+                    toggle: hiddenButton
+
+                    SettingSwitch {
+                        id: hiddenButton
+                        objectName: "showHiddenToggle"
+                        accessibleName: "Hidden items"
+                        anchors.verticalCenter: parent.verticalCenter
+                        checked: Captures.showHidden
+                        onToggled: Captures.showHidden = !Captures.showHidden
+                    }
+                }
+
+                SettingRow {
+                    title: "Show filenames in grid"
+                    detail: "Keep file names visible on thumbnails."
+                    toggle: filenamesButton
+
+                    SettingSwitch {
+                        id: filenamesButton
+                        objectName: "gridFilenamesToggle"
+                        accessibleName: "Show filenames in grid"
+                        anchors.verticalCenter: parent.verticalCenter
+                        checked: Settings.showGridFilenames
+                        onToggled: Settings.showGridFilenames = !Settings.showGridFilenames
+                    }
+                }
+
+                SettingRow {
+                    title: "Group matching RAW and JPEG files"
+                    detail: "A camera's RAW and JPEG of the same shot show as one tile."
+                    toggle: pairingToggle
+
+                    SettingSwitch {
+                        id: pairingToggle
+                        accessibleName: "Pair RAW and JPEG"
+                        objectName: "pairRawJpegToggle"
+                        anchors.verticalCenter: parent.verticalCenter
+                        checked: Settings.pairRawJpeg
+                        onToggled: Settings.pairRawJpeg = !Settings.pairRawJpeg
+                    }
+                }
+
+                SettingRow {
+                    title: "Thumbnail cache"
+                    detail: "Disk space for fast library previews."
+
+                    PillButton {
+                        id: cacheButton
+                        objectName: "thumbnailCacheButton"
+                        accessibleName: "Thumbnail cache size: " + label
+                        toolTip: "Click for the next size, from 64 MB to 1 GB"
+                        anchors.verticalCenter: parent.verticalCenter
+                        label: root.cacheLabel(Settings.thumbnailCacheMb)
+                        onClicked: Settings.thumbnailCacheMb = root.nextValue(
+                                       [64, 128, 256, 512, 1024], Settings.thumbnailCacheMb)
+                    }
+                }
+
+                SettingRow {
+                    title: "Confirm permanent deletion"
+                    detail: "Shift+Delete skips Trash and cannot be undone. Off deletes immediately. "
+                            + "Regular Delete still uses Trash."
+                    toggle: permanentDeleteConfirmation
+
+                    SettingSwitch {
+                        id: permanentDeleteConfirmation
+                        objectName: "permanentDeleteConfirmation"
+                        accessibleName: "Confirm permanent deletion"
+                        anchors.verticalCenter: parent.verticalCenter
+                        checked: Settings.confirmPermanentDelete
+                        onToggled: Settings.confirmPermanentDelete = !Settings.confirmPermanentDelete
+                    }
+                }
+            }
+
+            SettingsSection {
+                id: viewerSection
+                objectName: "settingsSection_viewer"
+                title: "Viewer"
+
+                SettingRow {
+                    title: "Image default"
+                    detail: "What Space does on a photo or screenshot."
+
+                    PillButton {
+                        id: imageActionButton
+                        objectName: "imageDefaultButton"
+                        accessibleName: "Default picture action: " + label
+                        toolTip: "Click for the next action"
+                        anchors.verticalCenter: parent.verticalCenter
+                        label: root.actionLabel(Settings.imagePrimaryAction)
+                        onClicked: Settings.imagePrimaryAction = root.nextValue(
+                                       root.availableDefaults(["preview", "omaframe", "corrections", "matte", "view", "edit"]), Settings.imagePrimaryAction)
+                    }
+                }
+
+                SettingRow {
+                    title: "Enlarge small pictures to fit"
+                    detail: "Off shows a picture smaller than the window at its own size."
+                    toggle: enlargeButton
+
+                    SettingSwitch {
+                        id: enlargeButton
+                        objectName: "enlargeSmallPicturesButton"
+                        accessibleName: "Enlarge small pictures to fit"
+                        anchors.verticalCenter: parent.verticalCenter
+                        checked: Settings.enlargeSmallPictures
+                        onToggled: Settings.enlargeSmallPictures = !Settings.enlargeSmallPictures
+                    }
+                }
+
+                SettingRow {
+                    title: "Slideshow interval"
+                    detail: "How long each picture stays before the next."
+
+                    PillButton {
+                        id: slideshowIntervalButton
+                        objectName: "slideshowIntervalButton"
+                        accessibleName: "Slideshow interval: " + label
+                        toolTip: "Click for the next interval, from 2 to 20 seconds"
+                        anchors.verticalCenter: parent.verticalCenter
+                        label: Settings.slideshowIntervalSeconds + " s"
+                        onClicked: {
+                            const stops = [2, 3, 4, 5, 8, 12, 20]
+                            const next = (stops.indexOf(Settings.slideshowIntervalSeconds) + 1)
+                                         % stops.length
+                            Settings.slideshowIntervalSeconds = stops[next]
+                        }
+                    }
+                }
+
+                SettingRow {
+                    title: "Shuffle slideshow"
+                    detail: "Pick a random picture each time instead of the next in order."
+                    toggle: slideshowShuffleButton
+
+                    SettingSwitch {
+                        id: slideshowShuffleButton
+                        objectName: "slideshowShuffleToggle"
+                        accessibleName: "Shuffle slideshow"
+                        anchors.verticalCenter: parent.verticalCenter
+                        checked: Settings.slideshowShuffle
+                        onToggled: Settings.slideshowShuffle = !Settings.slideshowShuffle
+                    }
+                }
+            }
+
+            SettingsSection {
+                id: videoSection
+                objectName: "settingsSection_video"
+                title: "Video"
+
+                SettingRow {
+                    title: "Video default"
+                    detail: "What Space does on a video or recording."
+
+                    PillButton {
+                        id: videoActionButton
+                        objectName: "videoDefaultButton"
+                        accessibleName: "Default video action: " + label
+                        toolTip: "Click for the next action"
+                        anchors.verticalCenter: parent.verticalCenter
+                        label: root.actionLabel(Settings.videoPrimaryAction)
+                        onClicked: Settings.videoPrimaryAction = root.nextValue(
+                                       root.availableDefaults(["preview", "trim", "play"]), Settings.videoPrimaryAction)
+                    }
+                }
+
+                SettingRow {
+                    title: "Remember playback speed"
+                    detail: "Use the last chosen speed when opening a video in the quick viewer."
+                    toggle: rememberPlaybackSpeedButton
+
+                    SettingSwitch {
+                        id: rememberPlaybackSpeedButton
+                        objectName: "rememberPlaybackSpeedButton"
+                        accessibleName: "Remember playback speed"
+                        anchors.verticalCenter: parent.verticalCenter
+                        checked: Settings.rememberPlaybackSpeed
+                        onToggled: Settings.rememberPlaybackSpeed = !Settings.rememberPlaybackSpeed
+                    }
+                }
+
+                SettingRow {
+                    title: "Videos in slideshows"
+                    detail: "Play each video through before moving to the next item."
+                    toggle: slideshowVideosButton
+
+                    SettingSwitch {
+                        id: slideshowVideosButton
+                        objectName: "slideshowVideosToggle"
+                        accessibleName: "Include videos in slideshow"
+                        anchors.verticalCenter: parent.verticalCenter
+                        checked: Settings.slideshowVideos
+                        onToggled: Settings.slideshowVideos = !Settings.slideshowVideos
+                    }
+                }
+            }
+
+            SettingsSection {
+                id: searchSection
+                objectName: "settingsSection_search"
+                title: "Search and text"
+
+                SettingRow {
+                    title: "Picture text search"
+                    detail: root.textCacheMessage !== "" ? root.textCacheMessage
+                            : (TextIndex.available
+                               ? "Tesseract text stays in a private local cache."
+                               : "Tesseract is unavailable. Filename search still works.")
+
+                    PillButton {
+                        id: clearTextCacheButton
+                        accessibleName: "Clear image text cache"
+                        objectName: "clearTextCacheButton"
+                        anchors.verticalCenter: parent.verticalCenter
+                        label: "Clear cache"
+                        onClicked: {
+                            // PDF text is cached beside picture text and goes with it.
+                            const count = TextIndex.clearCache()
+                                          + (typeof DocumentText !== "undefined"
+                                             ? DocumentText.clearCache() : 0)
+                            root.textCacheMessage = count === 0 ? "The text cache is already empty."
+                                                               : "Cleared " + count
+                                                                 + (count === 1 ? " entry." : " entries.")
+                        }
+                    }
+                }
+
+                TextIndexSettings { width: parent.width }
+            }
+
+            SettingsSection {
+                id: albumsSection
+                objectName: "settingsSection_albums"
+                title: "Albums and backups"
+
+                Text {
+                    width: parent.width
+                    visible: Settings.organizationError !== ""
+                    text: Settings.organizationError
+                    wrapMode: Text.WordWrap
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 12
+                    color: Theme.red
+                }
+
+                SettingRow {
+                    visible: Settings.canRestoreOrganization
+                    title: root.confirmingBackupRestore ? "" : "Daily backup"
+                    detail: root.confirmingBackupRestore
+                            ? "This replaces the albums, tags and marks still readable here. They are kept in a backup first."
+                            : "Omaroll keeps a daily backup of your organization."
+                    detailColor: root.confirmingBackupRestore ? Theme.red : Theme.mutedText
+
+                    PillButton {
+                        id: restoreBackupButton
+                        objectName: "restoreBackupButton"
+                        visible: !root.confirmingBackupRestore
+                        anchors.verticalCenter: parent.verticalCenter
+                        label: "Restore last good backup"
+                        onClicked: root.confirmingBackupRestore = true
+                    }
+                    PillButton {
+                        id: restoreBackupConfirm
+                        objectName: "restoreBackupConfirm"
+                        visible: root.confirmingBackupRestore
+                        anchors.verticalCenter: parent.verticalCenter
+                        active: true
+                        label: "Restore backup"
+                        onClicked: {
+                            root.confirmingBackupRestore = false
+                            const result = Settings.restoreLastGoodBackup()
+                            root.backupRestoreOk = result.ok
+                            root.backupRestoreMessage = result.message
+                            if (result.ok) {
+                                Captures.setAlbumFilter("", [])
+                                Captures.setTagFilter("", [])
+                                Captures.clearSmartCollection()
+                            }
+                        }
+                    }
+                    PillButton {
+                        id: restoreBackupCancel
+                        objectName: "restoreBackupCancel"
+                        visible: root.confirmingBackupRestore
+                        anchors.verticalCenter: parent.verticalCenter
+                        label: "Cancel"
+                        onClicked: root.confirmingBackupRestore = false
+                    }
+                }
+
+                Text {
+                    objectName: "backupRestoreMessage"
+                    width: parent.width
+                    visible: root.backupRestoreMessage !== ""
+                    text: root.backupRestoreMessage
+                    wrapMode: Text.WordWrap
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 12
+                    color: root.backupRestoreOk ? Theme.mutedText : Theme.red
+                }
+
+                Column {
+                    width: parent.width
+                    spacing: 8
+
+                    SettingRow {
+                        title: "Albums"
+                        detail: Settings.albumNames.length === 0
+                                ? "Create named collections without moving files."
+                                : Settings.albumNames.length + (Settings.albumNames.length === 1
+                                  ? " album" : " albums")
+
+                        PillButton {
+                            id: newAlbumButton
+                            anchors.verticalCenter: parent.verticalCenter
+                            label: "New album"
+                            onClicked: root.createAlbumRequested()
+                        }
+                    }
+
+                    Repeater {
+                        model: Settings.albumNames
+
+                        Row {
+                            id: albumSettingsRow
+                            required property string modelData
+                            width: parent ? parent.width : 0
+                            spacing: 10
+
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: parent.width - deleteAlbumButton.width
+                                       - (forgetUnavailableButton.visible
+                                          ? forgetUnavailableButton.width + 10 : 0) - 10
+                                text: albumSettingsRow.modelData + "  ·  "
+                                      + Settings.albumPaths(albumSettingsRow.modelData).length + " of "
+                                      + Settings.albumItemCount(albumSettingsRow.modelData) + " available"
+                                elide: Text.ElideRight
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 12
+                                color: Theme.mutedText
+                            }
+                            PillButton {
+                                id: forgetUnavailableButton
+                                visible: Settings.unavailableAlbumItemCount(albumSettingsRow.modelData) > 0
+                                enabled: !Library.scanning
+                                label: "Forget unavailable"
+                                onClicked: Settings.removeUnavailableFromAlbum(albumSettingsRow.modelData)
+                            }
+                            PillButton {
+                                id: deleteAlbumButton
+                                label: "Delete"
+                                accessibleName: "Delete album " + albumSettingsRow.modelData
+                                onClicked: Settings.deleteAlbum(albumSettingsRow.modelData)
+                            }
+                        }
+                    }
+                }
+
+                SettingRow {
+                    title: "Back up and restore"
+                    detail: root.pendingRestorePath !== ""
+                            ? "Restore replaces the current organization. This cannot be undone."
+                            : (root.organizationMessage !== "" ? root.organizationMessage
+                               : "Save albums, tags, ratings, captions and saved views "
+                                 + "to a file, or restore them. Media files are untouched.")
+                    detailColor: (root.pendingRestorePath !== ""
+                                  || (root.organizationMessage !== "" && !root.organizationOk))
+                                 ? Theme.red : Theme.mutedText
+
+                    PillButton {
+                        id: backupButton
+                        visible: root.pendingRestorePath === ""
+                        anchors.verticalCenter: parent.verticalCenter
+                        label: "Back up"
+                        onClicked: backupDialog.open()
+                    }
+                    PillButton {
+                        id: restoreButton
+                        visible: root.pendingRestorePath === ""
+                        anchors.verticalCenter: parent.verticalCenter
+                        label: "Restore"
+                        onClicked: restoreDialog.open()
+                    }
+                    PillButton {
+                        visible: root.pendingRestorePath !== ""
+                        anchors.verticalCenter: parent.verticalCenter
+                        active: true
+                        label: "Replace organization"
+                        onClicked: root.applyPendingRestore()
+                    }
+                    PillButton {
+                        visible: root.pendingRestorePath !== ""
+                        anchors.verticalCenter: parent.verticalCenter
+                        label: "Cancel"
+                        onClicked: root.pendingRestorePath = ""
+                    }
+                }
+            }
+
+            SettingsSection {
+                id: integrationSection
+                objectName: "settingsSection_integration"
+                title: "Integration"
+
+                SettingRow {
+                    objectName: "settingsDefaultViewer"
+                    title: "Default viewer"
+                    detail: root.defaultsStatus()
+                    detailObjectName: "settingsDefaultViewerStatus"
+                    detailColor: root.defaultsOk ? Theme.mutedText : Theme.red
 
                     PillButton {
                         objectName: "settingsSetDefault"
+                        anchors.verticalCenter: parent.verticalCenter
                         visible: !(MimeDefaults.imagesDefault && MimeDefaults.videosDefault)
                         enabled: !MimeDefaults.busy
                         label: MimeDefaults.busy ? "Working…" : "Set as default"
@@ -370,6 +1001,7 @@ Item {
                     }
                     PillButton {
                         objectName: "settingsRestoreDefault"
+                        anchors.verticalCenter: parent.verticalCenter
                         visible: MimeDefaults.imagesDefault || MimeDefaults.videosDefault
                         enabled: !MimeDefaults.busy
                         label: "Restore previous apps"
@@ -377,970 +1009,186 @@ Item {
                         onClicked: MimeDefaults.applyAsync(true, "all")
                     }
                 }
-            }
 
-            Row {
-                objectName: "settingsWindowRules"
-                width: parent.width
-                spacing: 12
-                visible: root.windowRulesState !== "unsupported" || root.windowRulesMessage !== ""
+                SettingRow {
+                    objectName: "settingsWindowRules"
+                    visible: root.windowRulesState !== "unsupported" || root.windowRulesMessage !== ""
+                    title: "Hyprland window rules"
+                    detailObjectName: "settingsWindowRulesStatus"
+                    detail: root.windowRulesMessage !== "" ? root.windowRulesMessage
+                            : root.windowRulesState === "installed"
+                              ? "Omaroll's windows open at full opacity and the viewer floats."
+                              : "Omarchy dims every window a little. These rules keep pictures at full "
+                                + "opacity and float the viewer. Saved in ~/.config/hypr."
 
-                Column {
-                    width: parent.width - windowRulesButton.width - 12
-                    spacing: 2
-
-                    Text {
-                        text: "Hyprland window rules"
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 12
-                        color: Theme.foreground
-                    }
-                    Text {
-                        objectName: "settingsWindowRulesStatus"
-                        width: parent.width
-                        wrapMode: Text.WordWrap
-                        text: root.windowRulesMessage !== "" ? root.windowRulesMessage
-                              : root.windowRulesState === "installed"
-                                ? "Omaroll's windows open at full opacity and the viewer floats."
-                                : "Omarchy dims every window a little. These rules keep pictures at full "
-                                  + "opacity and float the viewer. Saved in ~/.config/hypr."
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 10
-                        color: Theme.mutedText
-                    }
-                }
-
-                PillButton {
-                    id: windowRulesButton
-                    objectName: "settingsWindowRulesButton"
-                    anchors.verticalCenter: parent.verticalCenter
-                    visible: root.windowRulesState !== "unsupported"
-                    label: root.windowRulesState === "installed" ? "Remove" : "Install"
-                    toolTip: root.windowRulesState === "installed"
-                             ? "Take Omaroll's rules out of your Hyprland config"
-                             : "Add Omaroll's rules to your Hyprland config"
-                    accessibleName: label + " Hyprland window rules"
-                    onClicked: {
-                        root.windowRulesMessage = root.windowRulesState === "installed"
-                                ? Settings.removeWindowRules() : Settings.installWindowRules()
-                        root.windowRulesState = Settings.windowRules
-                    }
-                }
-            }
-
-            Rectangle {
-                width: parent.width
-                height: 1
-                color: root.shade(Theme.foreground, 0.12)
-            }
-
-            Text {
-                width: parent.width
-                visible: Settings.organizationError !== ""
-                text: Settings.organizationError
-                wrapMode: Text.WordWrap
-                font.family: Theme.fontFamily
-                font.pixelSize: 12
-                color: Theme.red
-            }
-
-            Row {
-                width: parent.width
-                spacing: 12
-                visible: Settings.canRestoreOrganization
-
-                Text {
-                    width: parent.width - (root.confirmingBackupRestore
-                                           ? restoreBackupConfirm.width + restoreBackupCancel.width + 24
-                                           : restoreBackupButton.width + 12)
-                    anchors.verticalCenter: parent.verticalCenter
-                    wrapMode: Text.WordWrap
-                    text: root.confirmingBackupRestore
-                          ? "This replaces the albums, tags and marks still readable here. They are kept in a backup first."
-                          : "Omaroll keeps a daily backup of your organization."
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 10
-                    color: root.confirmingBackupRestore ? Theme.red : Theme.mutedText
-                }
-                PillButton {
-                    id: restoreBackupButton
-                    objectName: "restoreBackupButton"
-                    visible: !root.confirmingBackupRestore
-                    anchors.verticalCenter: parent.verticalCenter
-                    label: "Restore last good backup"
-                    onClicked: root.confirmingBackupRestore = true
-                }
-                PillButton {
-                    id: restoreBackupConfirm
-                    objectName: "restoreBackupConfirm"
-                    visible: root.confirmingBackupRestore
-                    anchors.verticalCenter: parent.verticalCenter
-                    active: true
-                    label: "Restore backup"
-                    onClicked: {
-                        root.confirmingBackupRestore = false
-                        const result = Settings.restoreLastGoodBackup()
-                        root.backupRestoreOk = result.ok
-                        root.backupRestoreMessage = result.message
-                        if (result.ok) {
-                            Captures.setAlbumFilter("", [])
-                            Captures.setTagFilter("", [])
-                            Captures.clearSmartCollection()
+                    PillButton {
+                        id: windowRulesButton
+                        objectName: "settingsWindowRulesButton"
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: root.windowRulesState !== "unsupported"
+                        label: root.windowRulesState === "installed" ? "Remove" : "Install"
+                        toolTip: root.windowRulesState === "installed"
+                                 ? "Take Omaroll's rules out of your Hyprland config"
+                                 : "Add Omaroll's rules to your Hyprland config"
+                        accessibleName: label + " Hyprland window rules"
+                        onClicked: {
+                            root.windowRulesMessage = root.windowRulesState === "installed"
+                                    ? Settings.removeWindowRules() : Settings.installWindowRules()
+                            root.windowRulesState = Settings.windowRules
                         }
                     }
                 }
-                PillButton {
-                    id: restoreBackupCancel
-                    objectName: "restoreBackupCancel"
-                    visible: root.confirmingBackupRestore
-                    anchors.verticalCenter: parent.verticalCenter
-                    label: "Cancel"
-                    onClicked: root.confirmingBackupRestore = false
-                }
             }
 
-            Text {
-                objectName: "backupRestoreMessage"
-                width: parent.width
-                visible: root.backupRestoreMessage !== ""
-                text: root.backupRestoreMessage
-                wrapMode: Text.WordWrap
-                font.family: Theme.fontFamily
-                font.pixelSize: 10
-                color: root.backupRestoreOk ? Theme.mutedText : Theme.red
-            }
+            SettingsSection {
+                id: aboutSection
+                objectName: "settingsSection_about"
+                title: "About"
 
-            Column {
-                width: parent.width
-                spacing: 7
-
-                Text {
-                    text: "Automatic folders"
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 12
-                    color: Theme.foreground
-                }
-                Text {
+                Column {
                     width: parent.width
-                    wrapMode: Text.WordWrap
-                    text: "Detected from Omarchy and your XDG folders. New media appears here "
-                          + "automatically; nothing is imported or copied."
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 10
-                    color: Theme.mutedText
-                }
-
-                Repeater {
-                    model: Library.automaticFolders
-
-                    Column {
-                        required property var modelData
-                        width: parent.width
-                        spacing: 1
-
-                        Text {
-                            width: parent.width
-                            text: modelData.label
-                            font.family: Theme.fontFamily
-                            font.pixelSize: 10
-                            font.weight: Font.DemiBold
-                            color: Theme.foreground
-                        }
-                        Text {
-                            width: parent.width
-                            text: modelData.path + (modelData.available ? "" : "  ·  Waiting for folder")
-                            elide: Text.ElideMiddle
-                            font.family: Theme.fontFamily
-                            font.pixelSize: 10
-                            color: modelData.available ? Theme.mutedText : Theme.red
-                        }
-                    }
-                }
-            }
-
-            Rectangle {
-                width: parent.width
-                height: 1
-                color: root.shade(Theme.foreground, 0.12)
-            }
-
-            // Downloads
-            Row {
-                width: parent.width
-                spacing: 12
-
-                Column {
-                    width: parent.width - toggleDownloads.width - 12
-                    spacing: 2
+                    spacing: 10
 
                     Text {
-                        text: "Include Downloads"
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 12
-                        color: Theme.foreground
-                    }
-                    Text {
-                        width: parent.width
-                        wrapMode: Text.WordWrap
-                        text: "Media files in your Downloads folder, top level only."
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 10
-                        color: Theme.mutedText
-                    }
-                }
-
-                PillButton {
-                    id: toggleDownloads
-                    accessibleName: "Scan Downloads"
-                    anchors.verticalCenter: parent.verticalCenter
-                    label: Settings.scanDownloads ? "On" : "Off"
-                    checkable: true
-                    active: Settings.scanDownloads
-                    onClicked: Settings.scanDownloads = !Settings.scanDownloads
-                }
-            }
-
-            // Recursion depth
-            Row {
-                width: parent.width
-                spacing: 12
-
-                Column {
-                    width: parent.width - depthButton.width - 12
-                    spacing: 2
-
-                    Text {
-                        text: "Folder depth"
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 12
-                        color: Theme.foreground
-                    }
-                    Text {
-                        width: parent.width
-                        wrapMode: Text.WordWrap
-                        text: "How far to look inside Pictures and Videos. Screenshots and "
-                              + "recordings are always read from the top level, where Omarchy "
-                              + "writes them."
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 10
-                        color: Theme.mutedText
-                    }
-                }
-
-                PillButton {
-                    id: depthButton
-                    accessibleName: "Folder scan depth: " + label
-                    anchors.verticalCenter: parent.verticalCenter
-                    label: Settings.recursionDepth + " deep"
-                    onClicked: Settings.recursionDepth =
-                               Settings.recursionDepth >= 8 ? 1 : Settings.recursionDepth + 1
-                }
-            }
-
-            // Hidden
-            Row {
-                width: parent.width
-                spacing: 12
-
-                Column {
-                    width: parent.width - hiddenButton.width - 12
-                    spacing: 2
-
-                    Text {
-                        text: "Show hidden media"
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 12
-                        color: Theme.foreground
-                    }
-                    Text {
-                        width: parent.width
-                        wrapMode: Text.WordWrap
-                        text: "Hiding is a \"don't show me this again\" mark. It never touches "
-                              + "the file."
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 10
-                        color: Theme.mutedText
-                    }
-                }
-
-                PillButton {
-                    id: hiddenButton
-                    accessibleName: "Hidden items"
-                    anchors.verticalCenter: parent.verticalCenter
-                    label: Captures.showHidden ? "Shown" : "Hidden"
-                    checkable: true
-                    active: Captures.showHidden
-                    onClicked: Captures.showHidden = !Captures.showHidden
-                }
-            }
-
-            Row {
-                width: parent.width
-                spacing: 12
-                Column {
-                    width: parent.width - filenamesButton.width - 12
-                    Text {
-                        text: "Show filenames in grid"
+                        objectName: "aboutVersion"
+                        text: "Omaroll " + Settings.appVersion + " · Qt " + Settings.qtVersion
                         font.family: Theme.fontFamily
                         font.pixelSize: 13
                         color: Theme.foreground
                     }
-                    Text {
+                    Flow {
                         width: parent.width
-                        text: "Keep file names visible on thumbnails."
-                        wrapMode: Text.Wrap
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 11
-                        color: Theme.mutedText
+                        spacing: 8
+                        PillButton {
+                            objectName: "aboutChangelog"
+                            label: "Changelog"
+                            toolTip: "What changed in Omaroll " + Settings.appVersion
+                            property string url: Settings.releaseNotesUrl
+                            onClicked: Qt.openUrlExternally(url)
+                        }
+                        PillButton {
+                            objectName: "aboutHomepage"
+                            label: "Homepage"
+                            property string url: "https://btsouth.github.io/omaroll/"
+                            onClicked: Qt.openUrlExternally(url)
+                        }
+                        PillButton {
+                            objectName: "aboutReportIssue"
+                            label: "Report an issue"
+                            toolTip: "Copy diagnostics first, then paste them into the form"
+                            property string url: Settings.newIssueUrl
+                            onClicked: Qt.openUrlExternally(url)
+                        }
+                        PillButton {
+                            objectName: "copyDiagnostics"
+                            label: "Copy diagnostics"
+                            toolTip: "omaroll --diagnostics prints the same text"
+                            onClicked: { Settings.copyDiagnostics(Theme.themeName, root.Screen.devicePixelRatio); label = "Diagnostics copied" }
+                        }
                     }
-                }
-                PillButton {
-                    id: filenamesButton
-                    objectName: "gridFilenamesToggle"
-                    label: Settings.showGridFilenames ? "On" : "Off"
-                    checkable: true
-                    active: Settings.showGridFilenames
-                    onClicked: Settings.showGridFilenames = !Settings.showGridFilenames
-                }
-            }
-
-            Row {
-                width: parent.width
-                spacing: 12
-
-                Column {
-                    width: parent.width - clearTextCacheButton.width - 12
-                    spacing: 2
-
                     Text {
-                        text: "Picture text search"
+                        objectName: "aboutMissingToolsTitle"
+                        width: parent.width
+                        visible: root.missingTools.length > 0
+                        topPadding: 6
+                        text: "Not installed"
                         font.family: Theme.fontFamily
-                        font.pixelSize: 12
+                        font.pixelSize: 13
                         color: Theme.foreground
                     }
-                    Text {
-                        width: parent.width
-                        wrapMode: Text.WordWrap
-                        text: root.textCacheMessage !== "" ? root.textCacheMessage
-                              : (TextIndex.available
-                                 ? "Tesseract text stays in a private local cache."
-                                 : "Tesseract is unavailable. Filename search still works.")
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 10
-                        color: Theme.mutedText
-                    }
-                }
-
-                PillButton {
-                    id: clearTextCacheButton
-                    accessibleName: "Clear image text cache"
-                    objectName: "clearTextCacheButton"
-                    anchors.verticalCenter: parent.verticalCenter
-                    label: "Clear cache"
-                    onClicked: {
-                        // PDF text is cached beside picture text and goes with it.
-                        const count = TextIndex.clearCache()
-                                      + (typeof DocumentText !== "undefined"
-                                         ? DocumentText.clearCache() : 0)
-                        root.textCacheMessage = count === 0 ? "The text cache is already empty."
-                                                           : "Cleared " + count
-                                                             + (count === 1 ? " entry." : " entries.")
-                    }
-                }
-            }
-
-            TextIndexSettings { width: parent.width }
-
-            Rectangle {
-                width: parent.width
-                height: 1
-                color: root.shade(Theme.foreground, 0.12)
-            }
-
-            Row {
-                width: parent.width
-                spacing: 12
-                Column {
-                    width: parent.width - permanentDeleteConfirmation.width - 12
-                    spacing: 2
-                    Text {
-                        text: "Confirm permanent deletion"
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 12
-                        color: Theme.foreground
-                    }
-                    Text {
-                        width: parent.width
-                        wrapMode: Text.WordWrap
-                        text: "Shift+Delete skips Trash and cannot be undone. Off deletes immediately. Regular Delete still uses Trash."
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 10
-                        color: Theme.mutedText
-                    }
-                }
-                PillButton {
-                    id: permanentDeleteConfirmation
-                    objectName: "permanentDeleteConfirmation"
-                    accessibleName: "Confirm permanent deletion"
-                    anchors.verticalCenter: parent.verticalCenter
-                    label: Settings.confirmPermanentDelete ? "On" : "Off"
-                    checkable: true
-                    active: Settings.confirmPermanentDelete
-                    onClicked: Settings.confirmPermanentDelete = !Settings.confirmPermanentDelete
-                }
-            }
-
-            Row {
-                width: parent.width
-                spacing: 12
-                Text {
-                    width: parent.width - enlargeButton.width - 12
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "Enlarge small pictures to fit"
-                    wrapMode: Text.WordWrap
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 12
-                    color: Theme.foreground
-                }
-                PillButton {
-                    id: enlargeButton
-                    objectName: "enlargeSmallPicturesButton"
-                    label: Settings.enlargeSmallPictures ? "On" : "Off"
-                    active: Settings.enlargeSmallPictures
-                    onClicked: Settings.enlargeSmallPictures = !Settings.enlargeSmallPictures
-                }
-            }
-
-            Row {
-                width: parent.width
-                spacing: 12
-
-                Column {
-                    width: parent.width - rememberPlaybackSpeedButton.width - 12
-                    spacing: 2
-
-                    Text {
-                        text: "Remember playback speed"
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 12
-                        color: Theme.foreground
-                    }
-                    Text {
-                        width: parent.width
-                        wrapMode: Text.WordWrap
-                        text: "Use the last chosen speed when opening a video in the quick viewer."
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 10
-                        color: Theme.mutedText
-                    }
-                }
-
-                PillButton {
-                    id: rememberPlaybackSpeedButton
-                    objectName: "rememberPlaybackSpeedButton"
-                    anchors.verticalCenter: parent.verticalCenter
-                    label: Settings.rememberPlaybackSpeed ? "On" : "Off"
-                    active: Settings.rememberPlaybackSpeed
-                    onClicked: Settings.rememberPlaybackSpeed = !Settings.rememberPlaybackSpeed
-                }
-            }
-
-            Row {
-                width: parent.width
-                spacing: 12
-
-                Column {
-                    width: parent.width - slideshowVideosButton.width - 12
-                    spacing: 2
-
-                    Text {
-                        text: "Videos in slideshows"
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 12
-                        color: Theme.foreground
-                    }
-                    Text {
-                        width: parent.width
-                        wrapMode: Text.WordWrap
-                        text: "Play each video through before moving to the next item."
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 10
-                        color: Theme.mutedText
-                    }
-                }
-
-                PillButton {
-                    id: slideshowVideosButton
-                    accessibleName: "Include videos in slideshow"
-                    anchors.verticalCenter: parent.verticalCenter
-                    label: Settings.slideshowVideos ? "On" : "Off"
-                    checkable: true
-                    active: Settings.slideshowVideos
-                    onClicked: Settings.slideshowVideos = !Settings.slideshowVideos
-                }
-            }
-
-            Row {
-                width: parent.width
-                spacing: 12
-
-                Column {
-                    width: parent.width - slideshowIntervalButton.width - 12
-                    spacing: 2
-
-                    Text {
-                        text: "Slideshow interval"
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 12
-                        color: Theme.foreground
-                    }
-                    Text {
-                        width: parent.width
-                        wrapMode: Text.WordWrap
-                        text: "How long each picture stays before the next."
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 10
-                        color: Theme.mutedText
-                    }
-                }
-
-                PillButton {
-                    id: slideshowIntervalButton
-                    accessibleName: "Slideshow interval: " + label
-                    anchors.verticalCenter: parent.verticalCenter
-                    label: Settings.slideshowIntervalSeconds + " s"
-                    onClicked: {
-                        const stops = [2, 3, 4, 5, 8, 12, 20]
-                        const next = (stops.indexOf(Settings.slideshowIntervalSeconds) + 1)
-                                     % stops.length
-                        Settings.slideshowIntervalSeconds = stops[next]
-                    }
-                }
-            }
-
-            Row {
-                width: parent.width
-                spacing: 12
-
-                Column {
-                    width: parent.width - slideshowShuffleButton.width - 12
-                    spacing: 2
-
-                    Text {
-                        text: "Shuffle slideshow"
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 12
-                        color: Theme.foreground
-                    }
-                    Text {
-                        width: parent.width
-                        wrapMode: Text.WordWrap
-                        text: "Pick a random picture each time instead of the next in order."
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 10
-                        color: Theme.mutedText
-                    }
-                }
-
-                PillButton {
-                    id: slideshowShuffleButton
-                    accessibleName: "Shuffle slideshow"
-                    anchors.verticalCenter: parent.verticalCenter
-                    label: Settings.slideshowShuffle ? "On" : "Off"
-                    checkable: true
-                    active: Settings.slideshowShuffle
-                    onClicked: Settings.slideshowShuffle = !Settings.slideshowShuffle
-                }
-            }
-
-            Row {
-                width: parent.width
-                spacing: 12
-
-                Column {
-                    width: parent.width - newAlbumButton.width - 12
-                    spacing: 2
-
-                    Text {
-                        text: "Albums"
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 12
-                        color: Theme.foreground
-                    }
-                    Text {
-                        width: parent.width
-                        wrapMode: Text.WordWrap
-                        text: Settings.albumNames.length === 0
-                              ? "Create named collections without moving files."
-                              : Settings.albumNames.length + (Settings.albumNames.length === 1
-                                ? " album" : " albums")
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 10
-                        color: Theme.mutedText
-                    }
-                }
-
-                PillButton {
-                    id: newAlbumButton
-                    anchors.verticalCenter: parent.verticalCenter
-                    label: "New album"
-                    onClicked: root.createAlbumRequested()
-                }
-            }
-
-            Repeater {
-                model: Settings.albumNames
-
-                Row {
-                    id: albumSettingsRow
-                    required property string modelData
-                    width: column.width
-                    spacing: 10
-
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: parent.width - deleteAlbumButton.width
-                               - (forgetUnavailableButton.visible
-                                  ? forgetUnavailableButton.width + 10 : 0) - 10
-                        text: albumSettingsRow.modelData + "  ·  "
-                              + Settings.albumPaths(albumSettingsRow.modelData).length + " of "
-                              + Settings.albumItemCount(albumSettingsRow.modelData) + " available"
-                        elide: Text.ElideRight
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 10
-                        color: Theme.mutedText
-                    }
-                    PillButton {
-                        id: forgetUnavailableButton
-                        visible: Settings.unavailableAlbumItemCount(albumSettingsRow.modelData) > 0
-                        enabled: !Library.scanning
-                        label: "Forget unavailable"
-                        onClicked: Settings.removeUnavailableFromAlbum(albumSettingsRow.modelData)
-                    }
-                    PillButton {
-                        id: deleteAlbumButton
-                        label: "Delete"
-                        onClicked: Settings.deleteAlbum(albumSettingsRow.modelData)
-                    }
-                }
-            }
-
-            Rectangle {
-                width: parent.width
-                height: 1
-                color: root.shade(Theme.foreground, 0.12)
-            }
-
-            Row {
-                width: parent.width
-                spacing: 12
-
-                Column {
-                    width: parent.width - imageActionButton.width - 12
-                    spacing: 2
-
-                    Text {
-                        text: "Image default"
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 12
-                        color: Theme.foreground
-                    }
-                    Text {
-                        width: parent.width
-                        wrapMode: Text.WordWrap
-                        text: "What Space does on a photo or screenshot."
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 10
-                        color: Theme.mutedText
-                    }
-                }
-
-                PillButton {
-                    id: imageActionButton
-                    accessibleName: "Default picture action: " + label
-                    anchors.verticalCenter: parent.verticalCenter
-                    label: root.actionLabel(Settings.imagePrimaryAction)
-                    onClicked: Settings.imagePrimaryAction = root.nextValue(
-                                   root.availableDefaults(["preview", "omaframe", "corrections", "matte", "view", "edit"]), Settings.imagePrimaryAction)
-                }
-            }
-
-            Row {
-                width: parent.width
-                spacing: 12
-
-                Column {
-                    width: parent.width - videoActionButton.width - 12
-                    spacing: 2
-
-                    Text {
-                        text: "Video default"
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 12
-                        color: Theme.foreground
-                    }
-                    Text {
-                        width: parent.width
-                        wrapMode: Text.WordWrap
-                        text: "What Space does on a video or recording."
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 10
-                        color: Theme.mutedText
-                    }
-                }
-
-                PillButton {
-                    id: videoActionButton
-                    accessibleName: "Default video action: " + label
-                    anchors.verticalCenter: parent.verticalCenter
-                    label: root.actionLabel(Settings.videoPrimaryAction)
-                    onClicked: Settings.videoPrimaryAction = root.nextValue(
-                                   root.availableDefaults(["preview", "trim", "play"]), Settings.videoPrimaryAction)
-                }
-            }
-
-            Row {
-                width: parent.width
-                spacing: 12
-
-                Column {
-                    width: parent.width - cacheButton.width - 12
-                    spacing: 2
-
-                    Text {
-                        text: "Thumbnail cache"
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 12
-                        color: Theme.foreground
-                    }
-                    Text {
-                        width: parent.width
-                        wrapMode: Text.WordWrap
-                        text: "Disk space for fast library previews."
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 10
-                        color: Theme.mutedText
-                    }
-                }
-
-                PillButton {
-                    id: cacheButton
-                    accessibleName: "Thumbnail cache size: " + label
-                    anchors.verticalCenter: parent.verticalCenter
-                    label: root.cacheLabel(Settings.thumbnailCacheMb)
-                    onClicked: Settings.thumbnailCacheMb = root.nextValue(
-                                   [64, 128, 256, 512, 1024], Settings.thumbnailCacheMb)
-                }
-            }
-
-            Rectangle {
-                width: parent.width
-                height: 1
-                color: root.shade(Theme.foreground, 0.12)
-            }
-
-            Row {
-                width: parent.width
-                spacing: 12
-
-                Column {
-                    width: parent.width - addFolder.width - 12
-                    spacing: 2
-
-                    Text {
-                        text: "Additional folders"
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 12
-                        color: Theme.foreground
-                    }
-                    Text {
-                        width: parent.width
-                        wrapMode: Text.WordWrap
-                        text: root.folderMessage !== "" ? root.folderMessage
-                              : (Settings.libraryFolders.length === 0
-                                 ? "Add another folder to this library."
-                                 : Settings.libraryFolders.length + " added to this library.")
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 10
-                        color: root.folderMessage !== "" ? Theme.red : Theme.mutedText
-                    }
-                }
-
-                PillButton {
-                    id: addFolder
-                    anchors.verticalCenter: parent.verticalCenter
-                    label: "Add folder"
-                    onClicked: { root.pinSelectedFolder = false; folderDialog.open() }
-                }
-            }
-
-            Row {
-                width: parent.width
-                spacing: 12
-                Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: parent.width - pinFolder.width - 12
-                    text: "Pinned folders appear as shortcuts above the library."
-                    wrapMode: Text.WordWrap
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 10
-                    color: Theme.mutedText
-                }
-                PillButton {
-                    id: pinFolder
-                    label: "Pin folder"
-                    onClicked: { root.pinSelectedFolder = true; folderDialog.open() }
-                }
-            }
-
-            Row {
-                width: parent.width
-                spacing: 12
-                Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: parent.width - pairingToggle.width - 12
-                    text: "Group matching RAW and JPEG files"
-                    wrapMode: Text.WordWrap
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 12
-                    color: Theme.foreground
-                }
-                PillButton {
-                    id: pairingToggle
-                    accessibleName: "Pair RAW and JPEG"
-                    objectName: "pairRawJpegToggle"
-                    label: Settings.pairRawJpeg ? "On" : "Off"
-                    checkable: true
-                    active: Settings.pairRawJpeg
-                    onClicked: Settings.pairRawJpeg = !Settings.pairRawJpeg
-                }
-            }
-
-            Repeater {
-                model: Settings.libraryFolders
-
-                Row {
-                    id: folderRow
-                    required property string modelData
-                    readonly property bool available: {
-                        void Library.automaticFolders
-                        return Library.folderAvailable(modelData)
-                    }
-                    width: column.width
-                    spacing: 10
-
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: parent.width - removeFolder.width - 10
-                        text: folderRow.modelData
-                              + (folderRow.available ? "" : "  ·  Unavailable")
-                        elide: Text.ElideMiddle
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 10
-                        color: folderRow.available ? Theme.mutedText : Theme.red
-                    }
-                    PillButton {
-                        id: removeFolder
-                        label: "Remove"
-                        onClicked: {
-                            if (Captures.folderFilter === folderRow.modelData) {
-                                Captures.folderFilter = ""
+                    Repeater {
+                        objectName: "aboutMissingTools"
+                        model: root.missingTools
+                        delegate: Row {
+                            required property var modelData
+                            width: parent ? parent.width : 0
+                            spacing: 10
+                            Text {
+                                width: Math.round(parent.width * 0.45)
+                                elide: Text.ElideRight
+                                text: modelData.feature
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 12
+                                color: Theme.mutedText
                             }
-                            Settings.removeLibraryFolder(folderRow.modelData)
+                            TextEdit {
+                                width: parent.width - Math.round(parent.width * 0.45) - 10
+                                readOnly: true
+                                selectByMouse: true
+                                wrapMode: TextEdit.Wrap
+                                text: modelData.install
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 12
+                                color: Theme.foreground
+                                selectionColor: Theme.accent
+                            }
                         }
                     }
                 }
             }
-
-            Rectangle {
-                width: parent.width
-                height: 1
-                color: root.shade(Theme.foreground, 0.12)
             }
+        }
 
-            Rectangle {
-                width: parent.width
-                height: 1
-                color: root.shade(Theme.foreground, 0.12)
+        // Fades where the list runs on past either edge, instead of a hard cut.
+        Rectangle {
+            objectName: "settingsTopFade"
+            anchors.top: settingsFlickable.top
+            anchors.left: settingsFlickable.left
+            anchors.right: settingsFlickable.right
+            anchors.rightMargin: settingsScrollBar.width + 4
+            height: 28
+            visible: settingsFlickable.contentY > 1
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: card.color }
+                GradientStop { position: 1.0; color: root.shade(card.color, 0) }
             }
+        }
+        Rectangle {
+            objectName: "settingsBottomFade"
+            anchors.bottom: settingsFlickable.bottom
+            anchors.left: settingsFlickable.left
+            anchors.right: settingsFlickable.right
+            anchors.rightMargin: settingsScrollBar.width + 4
+            height: 36
+            visible: settingsFlickable.contentY + settingsFlickable.height
+                     < settingsFlickable.contentHeight - 1
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: root.shade(card.color, 0) }
+                GradientStop { position: 1.0; color: card.color }
+            }
+        }
 
-            Row {
-                width: parent.width
-                spacing: 12
+        Rectangle {
+            id: footerRule
+            anchors.bottom: footer.top
+            anchors.bottomMargin: 12
+            width: parent.width
+            height: 1
+            color: root.shade(Theme.foreground, 0.12)
+        }
 
-                Column {
-                    width: parent.width - backupButton.width - restoreButton.width - 24
-                    spacing: 2
+        Row {
+            id: footer
+            anchors.right: parent.right
+            anchors.rightMargin: 22
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 14
+            spacing: 8
 
-                    Text {
-                        text: "Back up and restore"
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 12
-                        color: Theme.foreground
-                    }
-                    Text {
-                        width: parent.width
-                        wrapMode: Text.WordWrap
-                        text: root.pendingRestorePath !== ""
-                              ? "Restore replaces the current organization. This cannot be undone."
-                              : (root.organizationMessage !== "" ? root.organizationMessage
-                                 : "Save albums, tags, ratings, captions and saved views "
-                                   + "to a file, or restore them. Media files are untouched.")
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 10
-                        color: (root.pendingRestorePath !== ""
-                                || (root.organizationMessage !== "" && !root.organizationOk))
-                               ? Theme.red : Theme.mutedText
-                    }
-                }
-
-                PillButton {
-                    id: backupButton
-                    visible: root.pendingRestorePath === ""
-                    anchors.verticalCenter: parent.verticalCenter
-                    label: "Back up"
-                    onClicked: backupDialog.open()
-                }
-                PillButton {
-                    id: restoreButton
-                    visible: root.pendingRestorePath === ""
-                    anchors.verticalCenter: parent.verticalCenter
-                    label: "Restore"
-                    onClicked: restoreDialog.open()
-                }
-                PillButton {
-                    visible: root.pendingRestorePath !== ""
-                    anchors.verticalCenter: parent.verticalCenter
-                    active: true
-                    label: "Replace organization"
-                    onClicked: root.applyPendingRestore()
-                }
-                PillButton {
-                    visible: root.pendingRestorePath !== ""
-                    anchors.verticalCenter: parent.verticalCenter
-                    label: "Cancel"
-                    onClicked: root.pendingRestorePath = ""
+            PillButton {
+                objectName: "settingsRescan"
+                label: "Rescan now"
+                onClicked: {
+                    root.rescanRequested()
+                    root.close()
                 }
             }
 
-            Row {
-                anchors.right: parent.right
-                spacing: 8
-
-                PillButton {
-                    label: "Rescan now"
-                    onClicked: {
-                        root.rescanRequested()
-                        root.close()
-                    }
-                }
-
-                PillButton {
-                    label: "Done"
-                    active: true
-                    onClicked: root.close()
-                }
-            }
+            PillButton {
+                objectName: "settingsDone"
+                label: "Done"
+                active: true
+                onClicked: root.close()
             }
         }
     }
