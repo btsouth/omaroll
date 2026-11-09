@@ -87,9 +87,15 @@ for name in animated.gif still.webp; do
   "$omaroll" --serve-clipboard text/uri-list "$file" || fail "copying $name failed"
   gone "$last_pid" || fail "the previous helper is still running after copying $name"
   types=$(wl-paste --list-types)
-  [[ $types == $'text/uri-list\nimage/png' ]] || fail "offered types for $name: $types"
+  expected=$'text/uri-list\ntext/plain\ntext/plain;charset=utf-8\nTEXT\nSTRING\nUTF8_STRING\nimage/png'
+  [[ $types == "$expected" ]] || fail "offered types for $name: $types"
   [[ $(wl-paste --no-newline --type text/uri-list) == "file://$file"$'\r' ]] ||
     fail "uri for $name: $(wl-paste --type text/uri-list | od -c | head -3)"
+  # A terminal or a plain text field gets the same URI.
+  for type in 'text/plain;charset=utf-8' UTF8_STRING; do
+    [[ $(wl-paste --no-newline --type "$type") == "file://$file"$'\r' ]] ||
+      fail "$type for $name: $(wl-paste --type "$type" | od -c | head -3)"
+  done
   png_of "$name"
   last_pid=$(pgrep -f -- "--serve-clipboard text/uri-list $file\$" || true)
   [[ -n $last_pid ]] || fail "no helper for $name"

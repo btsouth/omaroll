@@ -24,6 +24,9 @@ namespace ClipboardServe {
 inline constexpr char kOption[] = "--serve-clipboard";
 // As the type: offer the file's URI rather than its bytes, plus the PNG.
 inline constexpr char kUriList[] = "text/uri-list";
+// Offered beside kUriList with the same URI, as wl-copy does for a text type.
+inline constexpr const char* kUriTextAliases[] = {"text/plain", "text/plain;charset=utf-8", "TEXT",
+                                                  "STRING", "UTF8_STRING"};
 // No Wayland connection, or a compositor without ext-data-control: the
 // caller falls back to wl-copy with the file's own type.
 inline constexpr int kUnavailable = 3;
@@ -39,7 +42,8 @@ inline constexpr qint64 kMaxPngPixels = 24'000'000;
 // or animated format Qt reads, except PNG itself and SVG.
 [[nodiscard]] bool mayOfferPng(const QString& sourceType);
 
-// The types offered, the served type first. PNG is added for a picture whose
+// The types offered, the served type first, then kUriTextAliases for a file
+// reference. PNG is added last for a picture whose
 // header says it decodes within Qt's allocation limit and has at most
 // maxPixels, unless the served type is already PNG.
 [[nodiscard]] QStringList offeredTypes(const QString& servedType, const QByteArray& bytes,

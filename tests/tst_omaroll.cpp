@@ -13051,6 +13051,7 @@ private slots:
     QVERIFY(ClipboardServe::mayOfferPng("image/gif"));
     QVERIFY(!ClipboardServe::mayOfferPng("image/png"));
     QVERIFY(!ClipboardServe::mayOfferPng("image/svg+xml"));
+    QVERIFY(!ClipboardServe::mayOfferPng("image/svg+xml-compressed"));
     QVERIFY(!ClipboardServe::mayOfferPng("video/mp4"));
     QVERIFY(!ClipboardServe::mayOfferPng("text/uri-list"));
     if (QImageReader::supportedMimeTypes().contains("image/webp"))
@@ -13060,11 +13061,15 @@ private slots:
     QFile gif(gifPath);
     QVERIFY(gif.open(QIODevice::ReadOnly));
     const QByteArray bytes = gif.readAll();
+    // The URI also pastes as text, as wl-copy offered it, into a terminal.
+    const QStringList uriTypes{"text/uri-list", "text/plain", "text/plain;charset=utf-8", "TEXT",
+                               "STRING", "UTF8_STRING"};
     QCOMPARE(ClipboardServe::offeredTypes(QString::fromLatin1(ClipboardServe::kUriList), bytes),
-             (QStringList{"text/uri-list", "image/png"}));
+             uriTypes + QStringList{"image/png"});
     QCOMPARE(ClipboardServe::offeredTypes("image/png", bytes), QStringList{"image/png"});
     QCOMPARE(ClipboardServe::offeredTypes(QString::fromLatin1(ClipboardServe::kUriList), "not a picture"),
-             QStringList{"text/uri-list"});
+             uriTypes);
+    QCOMPARE(ClipboardServe::offeredTypes("image/jpeg", "not a picture"), QStringList{"image/jpeg"});
     QImageReader reader(gifPath);
     const QImage first = reader.read();
     QVERIFY(!first.isNull());
@@ -13111,10 +13116,13 @@ private slots:
     launcher.setClipboardHelper(dir.filePath(QStringLiteral("helper")));
     QSignalSpy finished(&launcher, &ActionLauncher::submissionFinished);
     QSignalSpy failed(&launcher, &ActionLauncher::failed);
+    QSignalSpy reported(&launcher, &ActionLauncher::reported);
     QVERIFY(launcher.copyFile(path));
     QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 8000);
     QVERIFY(finished.first().at(1).toBool());
     QCOMPARE(failed.size(), 0);
+    QCOMPARE(reported.size(), 1);
+    QCOMPARE(reported.first().first().toString(), QStringLiteral("Copied as a file"));
     QFile args(helperArgs);
     QVERIFY(args.open(QIODevice::ReadOnly));
     QCOMPARE(args.readAll(),
@@ -13125,6 +13133,17 @@ private slots:
     QFile reference(copied);
     QVERIFY(reference.open(QIODevice::ReadOnly));
     QCOMPARE(reference.readAll(), ClipboardServe::uriList(path));
+
+    // Served by the helper itself: still said as a file copy.
+    QVERIFY(executable(QStringLiteral("helper"), "exit 0\n"));
+    finished.clear();
+    reported.clear();
+    QVERIFY(launcher.copyFile(path));
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 8000);
+    QCOMPARE(finished.first().at(0).toString(), QStringLiteral("omaroll"));
+    QVERIFY(finished.first().at(1).toBool());
+    QCOMPARE(reported.size(), 1);
+    QCOMPARE(reported.first().first().toString(), QStringLiteral("Copied as a file"));
   }
 
   void clipboardHelperFallsBackToWlCopyWithoutDataControl() {

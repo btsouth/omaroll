@@ -301,7 +301,9 @@ bool ActionLauncher::copyWithPng(const QString& path, const QString& mime) {
       return;
     }
     if (copied) {
-      emit reported(u"Copied to clipboard"_s);
+      // A file reference says so, as it did before the PNG came with it.
+      emit reported(mime == QLatin1StringView(ClipboardServe::kUriList) ? u"Copied as a file"_s
+                                                                          : u"Copied to clipboard"_s);
       emit submissionFinished(u"omaroll"_s, true, {});
       return;
     }

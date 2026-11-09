@@ -10,6 +10,7 @@
 - Copying a WebP, HEIC, AVIF, JPEG XL, GIF or other picture Qt reads offers a
   PNG beside the file reference, the first frame for an animation, so it pastes
   as a picture into chat apps and editors and shows up in clipboard history.
+  A terminal still gets the file's URI as text.
 - Diagnostics report VA-API: the installed drivers, or why there are none.
 - Searchable shortcut help in the viewer, library and preview, with grouped key caps.
 - About in Settings with version links and privacy-safe Copy diagnostics.

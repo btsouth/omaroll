@@ -165,8 +165,11 @@ void deliver(State& state, int fd, bool png,
 void send(void* data, ext_data_control_source_v1*, const char* mimeType, int32_t fd) {
   auto* state = static_cast<State*>(data);
   const QByteArray type(mimeType);
-  const bool png = type == "image/png" && state->offered.contains(u"image/png");
-  if (type != state->type && !png) {
+  // The PNG is made from the picture; every other offered type gets the
+  // served bytes (a file reference's text aliases get its URI).
+  const bool png = type == "image/png" && type != state->type &&
+                   state->offered.contains(u"image/png");
+  if (!png && !state->offered.contains(QString::fromLatin1(type))) {
     close(fd);
   } else if (!state->serving) {
     state->queued.emplace_back(fd, png);
@@ -239,9 +242,9 @@ QByteArray uriList(const QString& path) {
 }
 
 bool mayOfferPng(const QString& sourceType) {
-  // PNG is itself; an SVG has no size of its own to draw at.
+  // PNG is itself; an SVG, compressed or not, has no size of its own to draw at.
   if (!sourceType.startsWith(u"image/") || sourceType == u"image/png" ||
-      sourceType == u"image/svg+xml") {
+      sourceType.startsWith(u"image/svg+xml")) {
     return false;
   }
   static const QList<QByteArray> readable = QImageReader::supportedMimeTypes();
@@ -250,6 +253,12 @@ bool mayOfferPng(const QString& sourceType) {
 
 QStringList offeredTypes(const QString& servedType, const QByteArray& bytes, qint64 maxPixels) {
   if (servedType == u"image/png") return {servedType};
+  // A file reference also pastes as text, as wl-copy offered it: a terminal
+  // or a plain text field gets the URI.
+  QStringList served{servedType};
+  if (servedType == QLatin1StringView(kUriList)) {
+    for (const char* alias : kUriTextAliases) served << QString::fromLatin1(alias);
+  }
   QBuffer buffer;
   buffer.setData(bytes);
   buffer.open(QIODevice::ReadOnly);
@@ -261,9 +270,9 @@ QStringList offeredTypes(const QString& servedType, const QByteArray& bytes, qin
   // the picture goes on as itself only, as wl-copy put it before.
   if (!estimate.valid() || pixels <= 0 || pixels > maxPixels ||
       (limit > 0 && estimate.bytes > limit)) {
-    return {servedType};
+    return served;
   }
-  return {servedType, QStringLiteral("image/png")};
+  return served << QStringLiteral("image/png");
 }
 
 QByteArray encodePng(const QByteArray& source) {
@@ -331,6 +340,9 @@ int run(int argc, char** argv) {
       ext_data_control_manager_v1_create_data_source(state->manager);
   ext_data_control_source_v1_add_listener(source, &kSource, state.get());
   state->offered = offeredTypes(QString::fromUtf8(state->type), state->image);
+  // Kept only to make the PNG from: without one, up to the size cap of a
+  // file would otherwise sit here for as long as the copy is served.
+  if (!state->offered.contains(u"image/png")) state->image = QByteArray();
   for (const QString& type : std::as_const(state->offered)) {
     ext_data_control_source_v1_offer(source, type.toUtf8().constData());
   }

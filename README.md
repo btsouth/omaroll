@@ -275,7 +275,8 @@ Every viewer shortcut is listed in [Shortcuts](docs/shortcuts.md#viewer), and
   the image memory limit is offered as PNG too, so it can show up in
   Omarchy's clipboard history while apps that take JPEG still get the original
   bytes. A WebP, HEIC, AVIF, JPEG XL, GIF or other picture Qt reads goes on as
-  a file reference with a PNG beside it, the first frame for an animation. The
+  a file reference with a PNG beside it, the first frame for an animation, and
+  pastes as its URI in a terminal. The
   history waits two seconds for the PNG, so on a slow machine a
   large photo may still be missed. It needs a compositor with ext-data-control,
   which Omarchy's Hyprland has; elsewhere, and for larger photos, the copy is
