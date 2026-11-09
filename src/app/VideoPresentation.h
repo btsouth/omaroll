@@ -90,7 +90,11 @@ public:
   }
   // Call after changing the player's audio or subtitle track.
   Q_INVOKABLE void trackChanged() {
-    if (!m_player || m_player->playbackState() != QMediaPlayer::PlayingState) return;
+    // Audio-only media never delivers frames, so there is nothing to stall.
+    if (!m_player || !m_player->hasVideo()
+        || m_player->playbackState() != QMediaPlayer::PlayingState) {
+      return;
+    }
     m_stallChecks = kStallChecks;
     m_stallGrace = 0;
     m_stallResyncs = 0;
@@ -123,7 +127,10 @@ private:
     if (state != QMediaPlayer::PlayingState) m_stallTimer.stop();
     // Runs inside pause(), before callers seek elsewhere, so only a picture
     // that is already stale is sought again.
-    if (state != QMediaPlayer::PausedState || !m_player || !m_player->isSeekable()) return;
+    if (state != QMediaPlayer::PausedState || !m_player || !m_player->isSeekable()
+        || !m_player->hasVideo()) {
+      return;
+    }
     const auto status = m_player->mediaStatus();
     if (status == QMediaPlayer::NoMedia || status == QMediaPlayer::LoadingMedia
         || status == QMediaPlayer::InvalidMedia || status == QMediaPlayer::EndOfMedia) {
