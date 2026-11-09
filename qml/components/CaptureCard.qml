@@ -90,6 +90,7 @@ Item {
     // renderer that cannot run the effect, keep the plain image.
     readonly property bool roundedThumbnail: Theme.cornerRadius > 0
                                              && GraphicsInfo.api !== GraphicsInfo.Software
+                                             && GraphicsInfo.api !== GraphicsInfo.Unknown
     // Inside the frame's 1 px border.
     readonly property real innerRadius: Math.max(0, Theme.cornerRadius - 1)
 
