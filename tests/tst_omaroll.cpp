@@ -6890,7 +6890,7 @@ private slots:
     VideoPresentation presentation(&output);
     QVideoFrame frame(QVideoFrameFormat(QSize(160, 90), QVideoFrameFormat::Format_BGRA8888));
     presentation.videoSink()->setVideoFrame(frame);
-    QVERIFY(presentation.ready());
+    QTRY_VERIFY(presentation.ready());
     QVERIFY(output.videoFrame().isValid());
     presentation.videoSink()->setSubtitleText(QStringLiteral("One caption"));
     QCOMPARE(presentation.subtitleText(), QStringLiteral("One caption"));
@@ -6901,7 +6901,7 @@ private slots:
     QVERIFY(presentation.hasFrame());
     QVERIFY(output.videoFrame().isValid());
     presentation.videoSink()->setVideoFrame(frame);
-    QVERIFY(presentation.ready());
+    QTRY_VERIFY(presentation.ready());
   }
 
   void hdrTransferDetails_data() {
