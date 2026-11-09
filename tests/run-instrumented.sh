@@ -106,7 +106,9 @@ case "$mode" in
     rm -f "$build"/profiles/*.profraw
     test_status=0
     LLVM_PROFILE_FILE="$PWD/$build/profiles/%p-%m.profraw" ctest --test-dir "$build" --parallel 4 --output-on-failure || test_status=$?
-    llvm-profdata merge -sparse "$build"/profiles/*.profraw -o "$build/coverage.profdata"
+    # A test that kills a helper can catch it writing its profile, leaving a
+    # truncated file. Skip those with a warning rather than lose the report.
+    llvm-profdata merge -sparse --failure-mode=all "$build"/profiles/*.profraw -o "$build/coverage.profdata"
     objects=()
     for binary in "$build"/omaroll*tests "$build"/omaroll; do
       [[ -f $binary && -x $binary ]] && objects+=(-object "$binary")
