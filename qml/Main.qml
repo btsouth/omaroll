@@ -67,6 +67,7 @@ ApplicationWindow {
                                       || exportSheet.visible || renameSheet.visible
                                       || tailscaleSheet.visible || textReviewSheet.visible
                                       || editorChooser.visible || folderDropConfirm.visible
+                                      || launchRestore.visible
     readonly property bool anySheetOpen: modalOpen || detail.visible
     // A popup menu is up; the press that closes it must not also land under it.
     readonly property bool folderSidebarVisible: Settings.showFolderSidebar && width >= 760
@@ -2122,6 +2123,64 @@ ApplicationWindow {
             folderDropConfirm.pendingFiles = []
             if (files.length > 0) Actions.openFiles(files)
         }
+    }
+
+    // Damaged or clearly incomplete organization, found at launch. Asked once,
+    // after the first frame so the check never delays the window; Escape asks
+    // again next launch, and Settings keeps the restore button meanwhile.
+    property bool launchFramed: false
+    property bool launchRestoreAsked: false
+    Connections {
+        target: root
+        enabled: !root.launchFramed
+        function onFrameSwapped() {
+            root.launchFramed = true
+            // A damaged file with no backup to offer is still said, once.
+            if (Settings.launchWarning === "" && Settings.organizationError !== "")
+                root.say(Settings.organizationError)
+            Qt.callLater(root.offerLaunchRestore)
+        }
+    }
+    onVisibleChanged: if (visible) Qt.callLater(root.offerLaunchRestore)
+    function offerLaunchRestore() {
+        if (root.launchRestoreAsked || !root.launchFramed || !root.visible || Settings.launchWarning === "")
+            return
+        if (root.anySheetOpen) {
+            // Asked once the sheet in the way is closed.
+            launchRestoreRetry.start()
+            return
+        }
+        root.launchRestoreAsked = true
+        launchRestore.detail = Settings.launchWarning
+        launchRestore.open()
+    }
+    Timer {
+        id: launchRestoreRetry
+        interval: 1000
+        onTriggered: root.offerLaunchRestore()
+    }
+    Connections {
+        target: Settings
+        function onLaunchWarningChanged() { root.offerLaunchRestore() }
+    }
+
+    ConfirmSheet {
+        id: launchRestore
+        objectName: "launchRestore"
+        title: "Restore your organization?"
+        confirmLabel: "Restore backup"
+        cancelLabel: Settings.organizationError !== "" ? "Not now" : "Keep as is"
+        onAccepted: {
+            const result = Settings.restoreLastGoodBackup()
+            if (result.ok) {
+                Captures.setAlbumFilter("", [])
+                Captures.setTagFilter("", [])
+                Captures.clearSmartCollection()
+            }
+            root.say(result.message)
+        }
+        onCancelled: Settings.keepCurrentOrganization()
+        onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
     }
 
     DropArea {

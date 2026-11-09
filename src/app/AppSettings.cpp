@@ -97,6 +97,8 @@ constexpr auto kLegacyVideoPositions = "playback/positions";
 constexpr int kMaximumResumeEntries = 500;
 constexpr qint64 kMinimumResumeMs = 5000;
 constexpr auto kOrganizationFormat = "omaroll.organization";
+// Today's snapshot is taken again this long after the last organization change.
+constexpr int kSnapshotRefreshMs = 3 * 60 * 1000;
 constexpr qint64 kMaximumOrganizationBytes = 16 * 1024 * 1024;
 
 QString normalizedFolder(const QString& path, bool mustExist) {
@@ -271,6 +273,8 @@ AppSettings::AppSettings(QObject* parent)
                                   QStringLiteral("omaroll"), QStringLiteral("omaroll")),
       m_backupWriter(std::make_unique<BackupWriter>()) {
   const bool existingProfile = !m_settings.allKeys().isEmpty();
+  // Saves made while loading wait for the launch check below.
+  m_healthPending = m_settings.status() == QSettings::NoError;
   const QStringList favorites = m_settings.value(kFavorites).toStringList();
   m_favorites = QSet<QString>(favorites.begin(), favorites.end());
 
@@ -462,13 +466,29 @@ AppSettings::AppSettings(QObject* parent)
     m_settings.remove(kLegacyVideoPositions);
     m_settings.sync();
   }
-  // A fresh profile has nothing to keep; its first organization save takes the snapshot.
-  if (existingProfile) scheduleDailySnapshot();
+  m_snapshotRefresh.setSingleShot(true);
+  m_snapshotRefresh.setInterval(kSnapshotRefreshMs);
+  connect(&m_snapshotRefresh, &QTimer::timeout, this, [this] {
+    if (!m_snapshotDirty || snapshotsHeld()) return;
+    m_snapshotDirty = false;
+    scheduleDailySnapshot(true);
+  });
+  // A fresh profile has nothing to keep; its first organization save takes the
+  // snapshot. Either way the launch is checked against recent snapshots first.
+  if (settingsStatus() == QSettings::NoError) checkOrganizationHealth(existingProfile);
+  else if (canRestoreOrganization())
+    m_launchWarning = QStringLiteral("Your settings file is damaged, so albums, tags and marks may be missing and cannot be saved. Restore the last good backup now? What can still be read is kept in a backup first.");
   m_previousVisit = m_settings.value(kLastVisit).toString();
   setValue(kLastVisit, QDateTime::currentDateTime().toString(Qt::ISODate));
 }
 
-AppSettings::~AppSettings() = default; // The backup writer finishes its queue first.
+AppSettings::~AppSettings() {
+  // A clean exit takes the refresh still waiting; the backup writer then
+  // finishes its queue before it is destroyed.
+  m_snapshotRefresh.stop();
+  flushBackups();
+  if (m_snapshotDirty && !snapshotsHeld()) scheduleDailySnapshot(true);
+}
 
 void AppSettings::setShowHidden(bool value) {
   if (m_showHidden == value) {
@@ -1608,7 +1628,156 @@ AppSettings::OrganizationState AppSettings::organizationState() const {
           m_markIdentities};
 }
 
-void AppSettings::flushBackups() { m_backupWriter->flush(); }
+void AppSettings::flushBackups() {
+  m_backupWriter->flush();
+  applyOrganizationHealth();
+  // Applying it may have queued today's first snapshot.
+  m_backupWriter->flush();
+}
+
+struct AppSettings::HealthReport {
+  std::mutex mutex;
+  bool done = false;
+  bool applied = false;
+  QString snapshot;
+  QDate date;
+  int snapshotSize = 0;
+};
+
+namespace {
+// Albums and tags count once each and once per file in them, then every mark
+// and saved view: a rough size to compare a load with a snapshot.
+int snapshotSize(const QJsonObject& root) {
+  qsizetype size = 0;
+  for (const auto key : {QLatin1String("albums"), QLatin1String("tags")}) {
+    const QJsonObject collections = root.value(key).toObject();
+    for (auto it = collections.constBegin(); it != collections.constEnd(); ++it)
+      size += 1 + it.value().toArray().size();
+  }
+  size += root.value(QLatin1String("favorites")).toArray().size();
+  size += root.value(QLatin1String("hidden")).toArray().size();
+  size += root.value(QLatin1String("ratings")).toObject().size();
+  size += root.value(QLatin1String("captions")).toObject().size();
+  size += root.value(QLatin1String("smartCollections")).toObject().size();
+  return int(qMin<qsizetype>(size, std::numeric_limits<int>::max()));
+}
+
+// Empty, or under half of a snapshot that held at least three more items.
+bool looksIncomplete(int loaded, int snapshot) {
+  if (snapshot <= 0) return false;
+  return loaded == 0 || (qint64(loaded) * 2 < snapshot && snapshot - loaded >= 3);
+}
+} // namespace
+
+int AppSettings::organizationSize(const OrganizationState& state) {
+  qsizetype size = 0;
+  for (const auto* collections : {&state.albums, &state.tags})
+    for (const auto& entries : *collections) size += 1 + entries.size();
+  size += state.favorites.size() + state.hidden.size() + state.ratings.size() + state.captions.size() +
+          state.smartCollections.size();
+  return int(qMin<qsizetype>(size, std::numeric_limits<int>::max()));
+}
+
+void AppSettings::checkOrganizationHealth(bool existingProfile) {
+  m_healthPending = true;
+  m_snapshotAfterHealth = existingProfile;
+  m_health = std::make_shared<HealthReport>();
+  const QDate today = QDate::currentDate();
+  QPointer<AppSettings> self(this);
+  m_backupWriter->post([report = m_health, path = backupDirectory(), today, self] {
+    for (const QDate& day : {today, today.addDays(-1)}) {
+      QFile file(QDir(path).filePath(QStringLiteral("daily-%1.json").arg(day.toString(Qt::ISODate))));
+      if (file.size() > kMaximumOrganizationBytes || !file.open(QIODevice::ReadOnly)) continue;
+      const QJsonDocument document = QJsonDocument::fromJson(file.read(kMaximumOrganizationBytes));
+      const QJsonObject root = document.object();
+      if (root.value(QLatin1String("format")).toString() != QLatin1String(kOrganizationFormat)) continue;
+      std::lock_guard lock(report->mutex);
+      report->snapshot = file.fileName();
+      report->date = day;
+      report->snapshotSize = snapshotSize(root);
+      break;
+    }
+    {
+      std::lock_guard lock(report->mutex);
+      report->done = true;
+    }
+    // Dropped if the settings object has gone; its destructor applies it then.
+    QMetaObject::invokeMethod(self.data(), [self] { if (self) self->applyOrganizationHealth(); },
+                              Qt::QueuedConnection);
+  });
+}
+
+void AppSettings::applyOrganizationHealth() {
+  if (!m_health) return;
+  QString snapshot;
+  QDate date;
+  int size = 0;
+  {
+    std::lock_guard lock(m_health->mutex);
+    if (!m_health->done || m_health->applied) return;
+    m_health->applied = true;
+    snapshot = m_health->snapshot;
+    date = m_health->date;
+    size = m_health->snapshotSize;
+  }
+  m_healthPending = false;
+  const int loaded = organizationSize(organizationState());
+  // Changes made since the launch only add to what loaded; a load that still
+  // looks incomplete next to the snapshot is not snapshotted over it.
+  if (settingsStatus() == QSettings::NoError && looksIncomplete(loaded, size)) {
+    m_organizationSuspect = true;
+    m_suspectSnapshot = snapshot;
+    const QString day = date == QDate::currentDate() ? QStringLiteral("today's backup")
+                                                     : QStringLiteral("yesterday's backup");
+    m_launchWarning = QStringLiteral("Your albums, tags and marks look incomplete: %1 has %2 %3, and only %4 loaded. "
+                                     "Restore the backup? What is here now is kept in a backup first.")
+                          .arg(day)
+                          .arg(size)
+                          .arg(size == 1 ? QStringLiteral("item") : QStringLiteral("items"))
+                          .arg(loaded);
+    emit launchWarningChanged();
+    emit organizationErrorChanged(); // canRestoreOrganization changed.
+    return;
+  }
+  if (m_snapshotAfterHealth) scheduleDailySnapshot();
+  if (m_snapshotDirty) m_snapshotRefresh.start();
+}
+
+void AppSettings::noteOrganizationSaved() {
+  m_snapshotDirty = true;
+  if (snapshotsHeld()) {
+    m_snapshotAfterHealth = true;
+    return;
+  }
+  // Today's first snapshot is taken now; later changes refresh it once they settle.
+  if (m_snapshotDate != QDate::currentDate()) scheduleDailySnapshot();
+  m_snapshotRefresh.start();
+}
+
+void AppSettings::keepCurrentOrganization() {
+  const bool suspect = m_organizationSuspect;
+  if (suspect) {
+    flushBackups();
+    // The fuller snapshot stays available to Import and as the last fallback.
+    const QDir dir(backupDirectory());
+    const QString name = QStringLiteral("before-restore-%1.json")
+                             .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    if (QFile::copy(m_suspectSnapshot, dir.filePath(name))) {
+      QFile::setPermissions(dir.filePath(name), kOwnerOnly);
+      pruneBackups(dir, QStringLiteral("before-restore-*.json"), kBeforeRestoreBackups,
+                   QDateTime::currentDateTimeUtc(), name, modifiedStamp);
+    }
+    m_organizationSuspect = false;
+    m_suspectSnapshot.clear();
+    m_snapshotDirty = false;
+    scheduleDailySnapshot(true);
+  }
+  if (!m_launchWarning.isEmpty()) {
+    m_launchWarning.clear();
+    emit launchWarningChanged();
+  }
+  if (suspect) emit organizationErrorChanged();
+}
 
 void AppSettings::scheduleDailySnapshot(bool replace) {
   const QDate today = QDate::currentDate();
@@ -1653,7 +1822,7 @@ bool AppSettings::snapshotOrganization(const QDate& date, bool beforeRestore) {
 }
 
 bool AppSettings::canRestoreOrganization() const {
-  return settingsStatus() == QSettings::FormatError &&
+  return (settingsStatus() == QSettings::FormatError || m_organizationSuspect) &&
          !QDir(backupDirectory()).entryList({QStringLiteral("daily-*.json"),
                  QStringLiteral("weekly-*.json"), QStringLiteral("before-restore-*.json")}, QDir::Files).isEmpty();
 }
@@ -2124,9 +2293,18 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
     syncOrganization();
     return failed(error);
   }
-  if (!damagedIni.isEmpty()) emit organizationErrorChanged(); // canRestoreOrganization changed.
+  const bool wasSuspect = m_organizationSuspect;
+  m_organizationSuspect = false;
+  m_suspectSnapshot.clear();
+  if (!damagedIni.isEmpty() || wasSuspect) emit organizationErrorChanged(); // canRestoreOrganization changed.
+  if (!m_launchWarning.isEmpty()) {
+    m_launchWarning.clear();
+    emit launchWarningChanged();
+  }
   // Today's snapshot now holds the import, which the user chose; the state it
   // replaced is in the before-restore copy.
+  m_snapshotDirty = false;
+  m_snapshotRefresh.stop();
   scheduleDailySnapshot(true);
   clearMarksUndo();
   emit albumsChanged();
@@ -2389,8 +2567,8 @@ bool AppSettings::syncOrganization() {
     m_organizationError = error;
     emit organizationErrorChanged();
   }
-  // At most once a day, written on a worker. An import snapshots its own result.
-  if (error.isEmpty() && !m_restoring) scheduleDailySnapshot();
+  // Written on a worker. An import snapshots its own result.
+  if (error.isEmpty() && !m_restoring) noteOrganizationSaved();
   return error.isEmpty();
 }
 

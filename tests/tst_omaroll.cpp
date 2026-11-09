@@ -3515,6 +3515,168 @@ private slots:
     QCOMPARE(restarted.sortMode(), 3);
   }
 
+  static QByteArray readAllOf(const QString& path) {
+    QFile file(path);
+    return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+  }
+
+  static QString todaysSnapshot(const AppSettings& settings) {
+    return QDir(settings.backupDirectory())
+        .filePath(QStringLiteral("daily-%1.json").arg(QDate::currentDate().toString(Qt::ISODate)));
+  }
+
+  // Organization made after the day's first snapshot is in today's snapshot
+  // once it settles, and at a clean exit, so a restore brings it back.
+  void todaysSnapshotFollowsLaterChanges() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto reset = scratchProfile(dir);
+    const QString first = dir.filePath(QStringLiteral("first.jpg"));
+    const QString second = dir.filePath(QStringLiteral("second.jpg"));
+    writeSmallFile(first, "one");
+    writeSmallFile(second, "two");
+    {
+      AppSettings settings;
+      QVERIFY(settings.createAlbum(QStringLiteral("Morning")));
+      settings.flushBackups();
+      QVERIFY(readAllOf(todaysSnapshot(settings)).contains("Morning"));
+      settings.setBackupRefreshDelay(20);
+      settings.setFavorite({first}, true);
+      QTRY_VERIFY(readAllOf(todaysSnapshot(settings)).contains("first.jpg"));
+    }
+    {
+      // A later launch the same day; the change is taken at exit, before any
+      // refresh could run.
+      AppSettings settings;
+      settings.flushBackups();
+      QVERIFY(settings.launchWarning().isEmpty());
+      settings.setRating({second}, 4);
+    }
+    damage(settingsFile(), "[library]\nsortMode=3\n[truncated\n");
+    AppSettings settings;
+    QVERIFY(settings.canRestoreOrganization());
+    QVERIFY(!settings.launchWarning().isEmpty());
+    const auto result = settings.restoreLastGoodBackup();
+    QVERIFY2(result.value(QStringLiteral("ok")).toBool(), qPrintable(result.value(QStringLiteral("message")).toString()));
+    QVERIFY(settings.albumNames().contains(QStringLiteral("Morning")));
+    QVERIFY(settings.isFavorite(first));
+    QCOMPARE(settings.rating(second), 4);
+    QVERIFY(settings.launchWarning().isEmpty());
+  }
+
+  // A settings file that still parses but lost its organization is caught at
+  // launch against today's snapshot, which it cannot replace meanwhile.
+  void launchWarnsWhenOrganizationLoadsIncomplete() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto reset = scratchProfile(dir);
+    QStringList files;
+    for (int i = 0; i < 6; ++i) {
+      files.append(dir.filePath(QStringLiteral("p%1.jpg").arg(i)));
+      writeSmallFile(files.last(), QByteArray::number(i));
+    }
+    {
+      AppSettings settings;
+      settings.setFavorite(files, true);
+      QVERIFY(settings.createAlbum(QStringLiteral("Trip")));
+    }
+    const QString ini = settingsFile();
+    // Cut off before the organization keys, and wholly empty.
+    for (const QByteArray& cut : {QByteArray("[library]\nsortMode=3\n"), QByteArray()}) {
+      damage(ini, cut);
+      {
+        AppSettings settings;
+        settings.flushBackups();
+        QVERIFY2(settings.launchWarning().contains(QStringLiteral("only 0 loaded")),
+                 qPrintable(settings.launchWarning()));
+        QVERIFY(settings.canRestoreOrganization());
+        QVERIFY(settings.organizationError().isEmpty());
+        // Work done before answering is saved but not snapshotted over the backup.
+        const QByteArray snapshot = readAllOf(todaysSnapshot(settings));
+        settings.setFavorite({files.first()}, true);
+        settings.flushBackups();
+        QCOMPARE(readAllOf(todaysSnapshot(settings)), snapshot);
+      }
+      // Still incomplete next launch, so it asks again.
+      AppSettings settings;
+      settings.flushBackups();
+      QVERIFY(!settings.launchWarning().isEmpty());
+      const auto result = settings.restoreLastGoodBackup();
+      QVERIFY2(result.value(QStringLiteral("ok")).toBool(), qPrintable(result.value(QStringLiteral("message")).toString()));
+      for (const QString& file : files) QVERIFY(settings.isFavorite(file));
+      QVERIFY(settings.albumNames().contains(QStringLiteral("Trip")));
+      QVERIFY(settings.launchWarning().isEmpty());
+      QVERIFY(!settings.canRestoreOrganization());
+    }
+  }
+
+  // Keeping what loaded keeps the fuller snapshot as a before-restore copy and
+  // does not ask again.
+  void keepingIncompleteOrganizationKeepsTheSnapshotAndStopsAsking() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto reset = scratchProfile(dir);
+    QStringList files;
+    for (int i = 0; i < 6; ++i) {
+      files.append(dir.filePath(QStringLiteral("k%1.jpg").arg(i)));
+      writeSmallFile(files.last(), QByteArray::number(i));
+    }
+    {
+      AppSettings settings;
+      settings.setFavorite(files, true);
+    }
+    damage(settingsFile(), "[library]\nsortMode=3\n");
+    {
+      AppSettings settings;
+      settings.flushBackups();
+      QVERIFY(!settings.launchWarning().isEmpty());
+      QSignalSpy warning(&settings, &AppSettings::launchWarningChanged);
+      settings.keepCurrentOrganization();
+      QCOMPARE(warning.size(), 1);
+      QVERIFY(settings.launchWarning().isEmpty());
+      QVERIFY(!settings.canRestoreOrganization());
+      settings.flushBackups();
+      QVERIFY(!readAllOf(todaysSnapshot(settings)).contains("k0.jpg"));
+      bool kept = false;
+      const QDir backups(settings.backupDirectory());
+      for (const QString& name : backups.entryList({QStringLiteral("before-restore-*.json")}, QDir::Files))
+        kept = kept || readAllOf(backups.filePath(name)).contains("k5.jpg");
+      QVERIFY(kept);
+    }
+    AppSettings settings;
+    settings.flushBackups();
+    QVERIFY(settings.launchWarning().isEmpty());
+  }
+
+  // A new library, and one the user emptied on purpose, are not warned about.
+  void launchDoesNotWarnAboutARealEmptyLibrary() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto reset = scratchProfile(dir);
+    QStringList files;
+    for (int i = 0; i < 6; ++i) {
+      files.append(dir.filePath(QStringLiteral("e%1.jpg").arg(i)));
+      writeSmallFile(files.last(), QByteArray::number(i));
+    }
+    {
+      AppSettings settings;
+      settings.flushBackups();
+      QVERIFY(settings.launchWarning().isEmpty());
+      QVERIFY(!settings.canRestoreOrganization());
+      settings.setFavorite(files, true);
+    }
+    {
+      AppSettings settings;
+      settings.flushBackups();
+      QVERIFY(settings.launchWarning().isEmpty());
+      settings.setFavorite(files, false);
+    }
+    AppSettings settings;
+    settings.flushBackups();
+    QVERIFY(settings.launchWarning().isEmpty());
+    QVERIFY(!settings.canRestoreOrganization());
+  }
+
   // A morning snapshot, then a backup the user restores on purpose, then the
   // settings file is damaged. Recovery brings back the import, not the
   // morning's state or the before-restore copy of it.

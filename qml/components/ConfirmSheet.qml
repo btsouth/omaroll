@@ -11,8 +11,11 @@ Item {
     property string title: ""
     property string detail: ""
     property string confirmLabel: "Confirm"
+    property string cancelLabel: "Cancel"
 
     signal accepted()
+    // Only from the cancel button; Escape and the scrim just close.
+    signal cancelled()
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
@@ -124,8 +127,12 @@ Item {
                 spacing: 8
 
                 PillButton {
-                    label: "Cancel"
-                    onClicked: root.close()
+                    objectName: "confirmSheetCancel"
+                    label: root.cancelLabel
+                    onClicked: {
+                        root.close()
+                        root.cancelled()
+                    }
                 }
 
                 PillButton {
