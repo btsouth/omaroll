@@ -267,17 +267,21 @@ Item {
         // and theme without laying a slab across the picture. It is dark
         // enough under the text for white over a white picture.
         Rectangle {
+            id: captionScrim
             objectName: "captureCaptionScrim"
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            height: (root.ocrSnippet !== "" || root.caption !== "" ? 66 : 46)
-                    + (Settings.showGridFilenames ? 20 : 0)
+            // The text's own height, plus a short fade above the top line.
+            readonly property real textHeight: (root.ocrSnippet !== "" || root.caption !== "" ? 66 : 46)
+                                               + (Settings.showGridFilenames ? 20 : 0)
+            readonly property real fade: 14
+            height: textHeight + fade
             visible: root.thumbnailReady
             gradient: Gradient {
                 GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0) }
-                GradientStop { position: 0.4; color: Qt.rgba(0, 0, 0, 0.45) }
-                GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.70) }
+                GradientStop { position: captionScrim.fade / captionScrim.height; color: Qt.rgba(0, 0, 0, 0.62) }
+                GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.75) }
             }
         }
 

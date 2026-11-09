@@ -46,8 +46,15 @@ Flow {
         return prefix + "Until " + Qt.formatDate(isoToDate(to), "d MMM yyyy")
     }
 
+    // The header hides the search field in a narrow window with a
+    // selection; a typed query then shows here so the filter stays visible.
+    property bool showSearch: false
+    readonly property int facetCount: chips.length - (chips.length > 0 && chips[0].key === "search" ? 1 : 0)
+
     readonly property var chips: {
         const list = []
+        if (showSearch && Captures.searchText !== "")
+            list.push({key: "search", kind: "Search", label: Captures.searchText})
         if (Captures.smartCollectionFilter !== "")
             list.push({key: "view", kind: "Saved view", label: Captures.smartCollectionFilter})
         if (Captures.duplicatesOnly)
@@ -78,6 +85,7 @@ Flow {
     function clear(key) {
         // A saved view set everything it shows, search included.
         if (key === "view") Captures.clearFacets(true)
+        else if (key === "search") Captures.searchText = ""
         else if (key === "duplicates") Captures.duplicatesOnly = false
         else if (key === "similar") Captures.similarOnly = false
         else if (key === "folder") Captures.folderFilter = ""

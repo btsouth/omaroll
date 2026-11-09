@@ -241,6 +241,59 @@ private slots:
     QVERIFY(report.contains(QStringLiteral("ffmpeg: ")));
   }
 
+  void libraryHelpCapsStayInTheirColumn() {
+    const auto restoreSize = qScopeGuard([&] { m_window->resize(1280, 820); });
+    m_window->resize(1280, 820);
+    QObject* help = m_window->findChild<QObject*>(QStringLiteral("libraryShortcutHelp"));
+    QVERIFY(help);
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(help->property("visible").toBool());
+    const auto close = qScopeGuard([&] {
+      help->setProperty("filter", QString());
+      QTest::keyClick(m_window, Qt::Key_Escape);
+    });
+    auto* content = help->property("contentItem").value<QQuickItem*>();
+    QVERIFY(content);
+    auto row = [&](const QString& label) {
+      return find(content, [&](QQuickItem* candidate) {
+        return candidate->property("modelData").toMap().value(QStringLiteral("label")).toString() == label;
+      });
+    };
+    // "Ctrl++" is Ctrl and Plus, not Ctrl and two blank caps.
+    QQuickItem* larger = nullptr;
+    QTRY_VERIFY((larger = row(QStringLiteral("Larger tiles"))));
+    const QVariantList caps = larger->property("modelData").toMap().value(QStringLiteral("caps")).toList();
+    QCOMPARE(caps.size(), 2);
+    QCOMPARE(caps.at(0).toStringList(), (QStringList{QStringLiteral("Ctrl"), QStringLiteral("+")}));
+    QCOMPARE(caps.at(1).toStringList(), (QStringList{QStringLiteral("Ctrl"), QStringLiteral("=")}));
+    // Four alternatives wrap inside their column instead of running past it.
+    QQuickItem* far = row(QStringLiteral("Extend the selection to the first / last tile or a page"));
+    QVERIFY(far);
+    QQuickItem* keys = find(far, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("shortcutCaps");
+    });
+    QVERIFY(keys);
+    QTRY_VERIFY(keys->x() >= -0.5 && keys->x() + keys->width() <= far->width() + 0.5);
+    for (QQuickItem* alternative : keys->childItems()) {
+      if (alternative->width() > 0)
+        QVERIFY2(alternative->x() + alternative->width() <= keys->width() + 0.5, "a key cap runs past its column");
+    }
+    // The RAW rows moved to Actions in the library help.
+    const QVariantList groups = help->property("groups").value<QJSValue>().toVariant().toList();
+    int rawRows = 0;
+    for (const QVariant& group : groups) {
+      const QVariantMap map = group.toMap();
+      for (const QVariant& entry : map.value(QStringLiteral("rows")).toList()) {
+        const QString label = entry.toMap().value(QStringLiteral("label")).toString();
+        if (label == QStringLiteral("Develop RAW") || label == QStringLiteral("Choose RAW editor")) {
+          QCOMPARE(map.value(QStringLiteral("title")).toString(), QStringLiteral("Actions"));
+          ++rawRows;
+        }
+      }
+    }
+    QCOMPARE(rawRows, 2);
+  }
+
   void aboutLinksMissingToolsAndWindowRules() {
     // A scratch Hyprland config, so nothing reaches the real one.
     const QString hypr = m_scratch.filePath(QStringLiteral("hypr"));
@@ -2373,6 +2426,23 @@ private slots:
       if (width >= 1280) QVERIFY(searchRect.width() >= (selection ? 200 : 300));
     } else {
       QVERIFY2(selection && width < 941, "the search gives way only to a selection in a narrow window");
+      // A typed query stays in sight as a chip with its own clear, and the
+      // search key says why it cannot open the field.
+      const auto clearSearch = qScopeGuard([&] { m_library->setSearchText({}); });
+      m_library->setSearchText(QStringLiteral("zz-hidden-query"));
+      const auto chipShown = [this] {
+        return find(m_window->contentItem(), [](QQuickItem* candidate) {
+                 return candidate->objectName() == QStringLiteral("filterChip-search") && candidate->isVisible();
+               }) != nullptr;
+      };
+      QTRY_VERIFY(chipShown());
+      QTest::keyClick(m_window, Qt::Key_Slash);
+      QTRY_VERIFY(item("footerStatus")->property("text").toString().contains(QStringLiteral("to search")));
+      QQuickItem* clear = item("filterChipClear-search");
+      QVERIFY(clear);
+      QTest::mouseClick(m_window, Qt::LeftButton, {},
+                        clear->mapToScene(QPointF(clear->width() / 2, clear->height() / 2)).toPoint());
+      QTRY_VERIFY(m_library->searchText().isEmpty());
     }
     // Every header button sits on the row's centre line, inside the window,
     // and clear of the status and of each other.

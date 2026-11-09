@@ -126,8 +126,10 @@ QtObject {
             if (key === "+") return ["+"];
             const parts = key.endsWith("++") ? key.slice(0, -2).split("+").concat(["+"]) : key.split("+");
             const base = parts[parts.length - 1];
-            const named = glyphs[base] !== undefined ? glyphs[base] : base;
-            return parts.slice(0, -1).concat(named.split("+"));
+            // Only a glyph can stand for more than one key ("Shift+Tab");
+            // the base may itself be "+" (Ctrl++).
+            if (glyphs[base] === undefined) return parts;
+            return parts.slice(0, -1).concat(glyphs[base].split("+"));
         }
         const all = keys.map(split);
         // A modifier, or none, with all four arrows.

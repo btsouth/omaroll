@@ -69,7 +69,10 @@ Item {
     }
 
     function focusSearch() {
-        if (!searchBox.visible) return
+        if (!searchBox.visible) {
+            root.message("Widen the window or clear the selection to search")
+            return
+        }
         search.forceActiveFocus()
         search.selectAll()
     }
@@ -227,7 +230,7 @@ Item {
                                        - favouriteButton.implicitWidth - 6 - 12
                                        - sortButton.implicitWidth)
             // Several facets at once are listed as chips; the button counts them.
-            label: chips.chips.length > 1 ? "Browse · " + chips.chips.length + "  ▾"
+            label: chips.facetCount > 1 ? "Browse · " + chips.facetCount + "  ▾"
                    : root.width < 700 ? (Captures.duplicatesOnly ? "Dupes  ▾"
                                       : Captures.similarOnly ? "Similar  ▾" : "Browse  ▾")
                    : (Captures.duplicatesOnly ? "Duplicates  ▾"
@@ -427,6 +430,7 @@ Item {
         objectName: "activeFilterChips"
         parent: chipRow
         width: chipRow.width - (pinCurrentFolder.visible ? pinCurrentFolder.width + 8 : 0)
+        showSearch: !searchBox.visible
         visible: chips.chips.length > 0
     }
 

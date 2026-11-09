@@ -194,10 +194,10 @@ Popup {
                                         required property var modelData
                                         readonly property string text: modelData.keys
                                         // Keys that would crowd the label go under it.
-                                        readonly property bool stacked: caps.implicitWidth > width * 0.6
+                                        readonly property bool stacked: caps.naturalWidth > width * 0.6
                                         width: parent.width
-                                        height: stacked ? label.implicitHeight + 4 + caps.implicitHeight + 4
-                                                        : Math.max(label.implicitHeight, caps.implicitHeight) + 6
+                                        height: stacked ? label.implicitHeight + 4 + caps.height + 4
+                                                        : Math.max(label.implicitHeight, caps.height) + 6
                                         Accessible.role: Accessible.StaticText
                                         Accessible.name: modelData.label + ", " + modelData.keys
 
@@ -206,18 +206,33 @@ Popup {
                                             anchors.left: parent.left
                                             y: shortcutRow.stacked ? 2 : Math.round((shortcutRow.height - implicitHeight) / 2)
                                             width: shortcutRow.stacked ? parent.width
-                                                                       : parent.width - caps.implicitWidth - 14
+                                                                       : parent.width - caps.naturalWidth - 14
                                             text: shortcutRow.modelData.label
                                             wrapMode: Text.WordWrap
                                             color: Theme.foreground
                                             font.family: Theme.fontFamily
                                             font.pixelSize: 12
                                         }
-                                        Row {
+                                        // Under the label, many alternatives wrap
+                                        // within the column rather than run past it.
+                                        Flow {
                                             id: caps
+                                            objectName: "shortcutCaps"
+                                            // One line's width, from the alternatives
+                                            // themselves, so it never depends on the wrap.
+                                            readonly property real naturalWidth: {
+                                                let total = 0
+                                                for (let i = 0; i < children.length; ++i) {
+                                                    const child = children[i]
+                                                    if (child.width > 0)
+                                                        total += child.width + (total > 0 ? spacing : 0)
+                                                }
+                                                return total
+                                            }
                                             anchors.right: parent.right
+                                            width: shortcutRow.stacked ? parent.width : naturalWidth
                                             y: shortcutRow.stacked ? label.implicitHeight + 6
-                                                                   : Math.round((shortcutRow.height - implicitHeight) / 2)
+                                                                   : Math.round((shortcutRow.height - height) / 2)
                                             spacing: 6
                                             Repeater {
                                                 model: shortcutRow.modelData.caps
