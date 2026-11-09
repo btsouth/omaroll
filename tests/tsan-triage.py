@@ -318,14 +318,10 @@ def delivered_queued_call(frames):
 
 def building_queued_call(frames):
     """The posting thread allocating the queued call or moving our captures
-    into it, inside invokeMethod, with nothing else of ours on the way; or
-    allocating a block (a payload the call carries) and touching it no more,
-    since the latest access TSan kept is the allocation itself."""
+    into it, inside invokeMethod, with nothing else of ours on the way. A
+    payload the call carries is not this: mark it with tsan::handOver and
+    tsan::takeOver (src/app/TsanHandoff.h)."""
     functions = frame_functions(frames)
-    if not functions:
-        return False
-    if ALLOCATION.match(functions[0][0]):
-        return True
     for index, (function, _) in enumerate(functions):
         if CALL_BUILT.match(function):
             return all(INTERCEPTOR.match(name) or name.startswith("QtPrivate::QCallableObject<")
@@ -335,9 +331,9 @@ def building_queued_call(frames):
 
 def queued_call_handoff(stacks):
     """A functor queued from another thread with QMetaObject::invokeMethod
-    reads what the posting thread built for it: the call itself, the captures
-    moved into it, or a payload allocated before posting. Qt hands the call
-    over through its posted-event queue mutex inside libQt6Core."""
+    reads what the posting thread built for it: the call itself and the
+    captures moved into it. Qt hands the call over through its posted-event
+    queue mutex inside libQt6Core."""
     if len(stacks) != 2:
         return False
     return any(delivered_queued_call(receiver) and building_queued_call(poster)
@@ -363,53 +359,26 @@ def qt_lock_private(stacks):
     return False
 
 
-LOCATION = re.compile(r"^  Location is heap block .* allocated by [^\n]*:\n((?:\s*#\d+ .*\n?)+)", re.M)
+TASK_REPORT = re.compile(r"^(QFutureInterface<.*>::report\w*\(|QtConcurrent::RunFunctionTaskBase<.*>::run\(\))")
 
 
-def inside_qt_private(frames):
-    """An interceptor called straight from a libQt6Core function Qt does not
-    export. Those work on Qt's own state (QThreadPool's queue, a
-    QFutureInterface's result store, a thread's posted events), never on a
-    container of ours: those calls go through exported, named functions."""
-    functions = frame_functions(frames)
-    return len(functions) >= 2 and INTERCEPTOR.match(functions[0][0]) is not None and \
-        functions[0][1].startswith("omaroll") and functions[1][0] == "<null>" and \
-        functions[1][1].startswith("libQt6Core")
-
-
-def qt_private_memory(block, stacks):
-    """Both accesses are Qt working on its own private state, in a block Qt
-    allocated the same way (when TSan names it)."""
-    if len(stacks) != 2 or not all(inside_qt_private(frames) for frames in stacks):
-        return False
-    location = LOCATION.search(block)
-    return location is None or inside_qt_private(location.group(1).splitlines())
-
-
-SHARED_BUFFER = re.compile(r"^Q(ByteArray|String)::reallocData\(")
-
-
-def task_reads_its_copy(block, stacks):
-    """A QtConcurrent task reads a QByteArray or QString it was given, which Qt
-    filled on the starting thread before the task began. Implicit sharing
-    makes that buffer read-only once the task holds a copy: any later write
-    on the starting thread detaches into a new buffer. So the write can only
-    have come before the hand-over, which QThreadPool orders under its mutex."""
+def qt_task_reporting(stacks):
+    """A QtConcurrent task reporting its result or that it finished: Qt grows
+    or moves its own blocks there (the future's result store, the receiving
+    thread's posted events), from code libQt6Core does not export, called
+    straight by QFutureInterface or RunFunctionTaskBase::run. That pins the
+    block as Qt's; the other side must be Qt too, an interceptor called from
+    libQt6Core."""
     if len(stacks) != 2:
         return False
-    location = LOCATION.search(block)
-    if not location:
-        return False
-    made = frame_functions(location.group(1).splitlines())
-    if len(made) < 2 or not ALLOCATION.match(made[0][0]) or not SHARED_BUFFER.match(made[1][0]):
-        return False
-    kinds = [line.group(3).lower() for line in map(ACCESS.match, block.splitlines()) if line]
-    for (task, other), kind in zip((stacks, stacks[::-1]), kinds):
-        if kind != "read" or not any(TASK_RUN.search(frame) for frame in task):
+    for reporting, other in (stacks, stacks[::-1]):
+        functions, others = frame_functions(reporting), frame_functions(other)
+        if len(functions) < 3 or len(others) < 2:
             continue
-        functions = frame_functions(other)
-        if len(functions) >= 2 and INTERCEPTOR.match(functions[0][0]) and \
-                functions[1][1].startswith("libQt6Core"):
+        if INTERCEPTOR.match(functions[0][0]) and functions[0][1].startswith("omaroll") and \
+                functions[1][0] == "<null>" and functions[1][1].startswith("libQt6Core") and \
+                TASK_REPORT.match(functions[2][0]) and \
+                INTERCEPTOR.match(others[0][0]) and others[1][1].startswith("libQt6Core"):
             return True
     return False
 
@@ -426,8 +395,7 @@ def classify(block):
     if (task_start_handoff(stacks) or pool_bookkeeping(block, stacks, threads)
             or qt_internal(block, stacks) or qt_owned_memory(stacks)
             or qt_descriptor_reuse(block, stacks) or queued_call_handoff(stacks)
-            or qt_lock_private(stacks) or qt_private_memory(block, stacks)
-            or task_reads_its_copy(block, stacks)):
+            or qt_lock_private(stacks) or qt_task_reporting(stacks)):
         return "external"
     for frames in stacks:
         function, module = first_frame(frames)

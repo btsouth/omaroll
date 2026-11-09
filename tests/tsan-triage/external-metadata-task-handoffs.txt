@@ -1,10 +1,9 @@
 MediaMetadataIndex hands each probe's output to a QtConcurrent task. Seen on
 devbox for #171, three TSan runs of 4647b88:
-- Qt's own state on both sides, through functions libQt6Core does not export
-  (the result store and the pool's queue), with and without a named block;
-- the task moving its captures out, entered through a memcpy interceptor;
-- the task reading the QByteArray it was given, which Qt filled on the main
-  thread before the task started (implicit sharing keeps it read-only after).
+- the task reporting its result, and that it finished: Qt grows and moves its
+  own blocks (the posted events), from unexported libQt6Core code called
+  straight by QFutureInterface or RunFunctionTaskBase::run;
+- the task moving its captures out, entered through a memcpy interceptor.
 ==================
 WARNING: ThreadSanitizer: data race (pid=1449)
   Write of size 8 at 0x724000008110 by thread T5 (mutexes: write M0):
@@ -122,71 +121,6 @@ WARNING: ThreadSanitizer: data race (pid=793)
     #14 <null> <null> (libc.so.6+0x27780)
 
 SUMMARY: ThreadSanitizer: data race (/src/build/tsan/omaroll_tests+0xa8ee3) in __tsan_memcpy
-==================
-WARNING: ThreadSanitizer: data race (pid=793)
-  Read of size 3 at 0x729000020010 by thread T7:
-    #0 memcmp <null> (omaroll_tests+0xba0ee)
-    #1 <null> <null> (libQt6Core.so.6+0xdea6b)
-    #2 MediaMetadataIndex::parseImageBatch(QByteArray const&, QSet<int>*) /src/src/library/MediaMetadataIndex.cpp:304:29 (omaroll_tests+0x73a132)
-    #3 MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0::operator()() const /src/src/library/MediaMetadataIndex.cpp:575:24 (omaroll_tests+0x7434ad)
-    #4 MediaMetadataIndex::Parsed std::__invoke_impl<MediaMetadataIndex::Parsed, MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0&>(std::__invoke_other, MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0&) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/invoke.h:63:14 (omaroll_tests+0x7432c5)
-    #5 std::__invoke_result<MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0&>::type std::__invoke<MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0&>(MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0&) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/invoke.h:98:14 (omaroll_tests+0x743265)
-    #6 std::invoke_result<MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0&>::type std::invoke<MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0&>(MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0&) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/functional:126:14 (omaroll_tests+0x743205)
-    #7 QtConcurrent::StoredFunctionCall<MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0>::runFunctor()::'lambda'(MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0)::operator()(MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0) const /usr/include/qt6/QtConcurrent/qtconcurrentstoredfunctioncall.h:117:20 (omaroll_tests+0x74319d)
-    #8 MediaMetadataIndex::Parsed std::__invoke_impl<MediaMetadataIndex::Parsed, QtConcurrent::StoredFunctionCall<MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0>::runFunctor()::'lambda'(MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0) const&, MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0>(std::__invoke_other, QtConcurrent::StoredFunctionCall<MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0>::runFunctor()::'lambda'(MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0) const&, MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0&&) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/invoke.h:63:14 (omaroll_tests+0x7430e5)
-    #9 std::__invoke_result<QtConcurrent::StoredFunctionCall<MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0>::runFunctor()::'lambda'(MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0) const&, MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0>::type std::__invoke<QtConcurrent::StoredFunctionCall<MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0>::runFunctor()::'lambda'(MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0) const&, MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0>(QtConcurrent::StoredFunctionCall<MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0>::runFunctor()::'lambda'(MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0) const&, MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0&&) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/invoke.h:98:14 (omaroll_tests+0x743005)
-    #10 decltype(auto) std::__apply_impl<QtConcurrent::StoredFunctionCall<MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0>::runFunctor()::'lambda'(MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0) const&, std::tuple<MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0>, 0ul>(QtConcurrent::StoredFunctionCall<MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0>::runFunctor()::'lambda'(MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0) const&, std::tuple<MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0>&&, std::integer_sequence<unsigned long, 0ul>) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/tuple:2978:14 (omaroll_tests+0x742f99)
-    #11 decltype(auto) std::apply<QtConcurrent::StoredFunctionCall<MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0>::runFunctor()::'lambda'(MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0) const&, std::tuple<MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0>>(QtConcurrent::StoredFunctionCall<MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0>::runFunctor()::'lambda'(MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0) const&, std::tuple<MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0>&&) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/tuple:2993:14 (omaroll_tests+0x742f15)
-    #12 QtConcurrent::StoredFunctionCall<MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0>::runFunctor() /usr/include/qt6/QtConcurrent/qtconcurrentstoredfunctioncall.h:123:27 (omaroll_tests+0x742d7f)
-    #13 QtConcurrent::RunFunctionTaskBase<MediaMetadataIndex::Parsed>::run() /usr/include/qt6/QtConcurrent/qtconcurrentrunbase.h:84:13 (omaroll_tests+0x74bbb2)
-    #14 <null> <null> (libQt6Core.so.6+0x2c1904)
-
-  Previous write of size 8 at 0x729000020010 by main thread:
-    #0 memcpy <null> (omaroll_tests+0xa8ab3)
-    #1 QRingBuffer::read(char*, long long) <null> (libQt6Core.so.6+0x30fc2c)
-    #2 MediaMetadataIndex::startProbe()::$_2::operator()(int, QProcess::ExitStatus) const /src/src/library/MediaMetadataIndex.cpp:538:5 (omaroll_tests+0x745946)
-    #3 QtPrivate::FunctorCall<std::integer_sequence<unsigned long, 0ul, 1ul>, QtPrivate::List<int, QProcess::ExitStatus>, void, MediaMetadataIndex::startProbe()::$_2>::call(MediaMetadataIndex::startProbe()::$_2&, void**)::'lambda'()::operator()() const /usr/include/qt6/QtCore/qobjectdefs_impl.h:117:24 (omaroll_tests+0x745891)
-    #4 void QtPrivate::FunctorCallBase::call_internal<void, QtPrivate::FunctorCall<std::integer_sequence<unsigned long, 0ul, 1ul>, QtPrivate::List<int, QProcess::ExitStatus>, void, MediaMetadataIndex::startProbe()::$_2>::call(MediaMetadataIndex::startProbe()::$_2&, void**)::'lambda'()>(void**, QtPrivate::FunctorCall<std::integer_sequence<unsigned long, 0ul, 1ul>, QtPrivate::List<int, QProcess::ExitStatus>, void, MediaMetadataIndex::startProbe()::$_2>::call(MediaMetadataIndex::startProbe()::$_2&, void**)::'lambda'()&&) /usr/include/qt6/QtCore/qobjectdefs_impl.h:66:17 (omaroll_tests+0x745791)
-    #5 QtPrivate::FunctorCall<std::integer_sequence<unsigned long, 0ul, 1ul>, QtPrivate::List<int, QProcess::ExitStatus>, void, MediaMetadataIndex::startProbe()::$_2>::call(MediaMetadataIndex::startProbe()::$_2&, void**) /usr/include/qt6/QtCore/qobjectdefs_impl.h:116:13 (omaroll_tests+0x74570e)
-    #6 void QtPrivate::FunctorCallable<MediaMetadataIndex::startProbe()::$_2, int, QProcess::ExitStatus>::call<QtPrivate::List<int, QProcess::ExitStatus>, void>(MediaMetadataIndex::startProbe()::$_2&, void*, void**) /usr/include/qt6/QtCore/qobjectdefs_impl.h:338:13 (omaroll_tests+0x745641)
-    #7 QtPrivate::QCallableObject<MediaMetadataIndex::startProbe()::$_2, QtPrivate::List<int, QProcess::ExitStatus>, void>::impl(int, QtPrivate::QSlotObjectBase*, QObject*, void**, bool*) /usr/include/qt6/QtCore/qobjectdefs_impl.h:548:21 (omaroll_tests+0x745596)
-    #8 <null> <null> (libQt6Core.so.6+0x1f6cc7)
-    #9 OmarollTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /src/build/tsan/omaroll_tests_autogen/include/tst_omaroll.moc:1289:23 (omaroll_tests+0x137032)
-    #10 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
-    #11 <null> <null> (libc.so.6+0x27780)
-
-  Location is heap block of size 8192 at 0x729000020000 allocated by main thread:
-    #0 malloc <null> (omaroll_tests+0xab835)
-    #1 QByteArray::reallocData(long long, QArrayData::AllocationOption) <null> (libQt6Core.so.6+0x259c1c)
-    #2 MediaMetadataIndex::startProbe()::$_2::operator()(int, QProcess::ExitStatus) const /src/src/library/MediaMetadataIndex.cpp:538:5 (omaroll_tests+0x745946)
-    #3 QtPrivate::FunctorCall<std::integer_sequence<unsigned long, 0ul, 1ul>, QtPrivate::List<int, QProcess::ExitStatus>, void, MediaMetadataIndex::startProbe()::$_2>::call(MediaMetadataIndex::startProbe()::$_2&, void**)::'lambda'()::operator()() const /usr/include/qt6/QtCore/qobjectdefs_impl.h:117:24 (omaroll_tests+0x745891)
-    #4 void QtPrivate::FunctorCallBase::call_internal<void, QtPrivate::FunctorCall<std::integer_sequence<unsigned long, 0ul, 1ul>, QtPrivate::List<int, QProcess::ExitStatus>, void, MediaMetadataIndex::startProbe()::$_2>::call(MediaMetadataIndex::startProbe()::$_2&, void**)::'lambda'()>(void**, QtPrivate::FunctorCall<std::integer_sequence<unsigned long, 0ul, 1ul>, QtPrivate::List<int, QProcess::ExitStatus>, void, MediaMetadataIndex::startProbe()::$_2>::call(MediaMetadataIndex::startProbe()::$_2&, void**)::'lambda'()&&) /usr/include/qt6/QtCore/qobjectdefs_impl.h:66:17 (omaroll_tests+0x745791)
-    #5 QtPrivate::FunctorCall<std::integer_sequence<unsigned long, 0ul, 1ul>, QtPrivate::List<int, QProcess::ExitStatus>, void, MediaMetadataIndex::startProbe()::$_2>::call(MediaMetadataIndex::startProbe()::$_2&, void**) /usr/include/qt6/QtCore/qobjectdefs_impl.h:116:13 (omaroll_tests+0x74570e)
-    #6 void QtPrivate::FunctorCallable<MediaMetadataIndex::startProbe()::$_2, int, QProcess::ExitStatus>::call<QtPrivate::List<int, QProcess::ExitStatus>, void>(MediaMetadataIndex::startProbe()::$_2&, void*, void**) /usr/include/qt6/QtCore/qobjectdefs_impl.h:338:13 (omaroll_tests+0x745641)
-    #7 QtPrivate::QCallableObject<MediaMetadataIndex::startProbe()::$_2, QtPrivate::List<int, QProcess::ExitStatus>, void>::impl(int, QtPrivate::QSlotObjectBase*, QObject*, void**, bool*) /usr/include/qt6/QtCore/qobjectdefs_impl.h:548:21 (omaroll_tests+0x745596)
-    #8 <null> <null> (libQt6Core.so.6+0x1f6cc7)
-    #9 OmarollTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /src/build/tsan/omaroll_tests_autogen/include/tst_omaroll.moc:1289:23 (omaroll_tests+0x137032)
-    #10 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
-    #11 <null> <null> (libc.so.6+0x27780)
-
-  Thread T7 'Thread (pooled)' (tid=812, running) created by main thread at:
-    #0 pthread_create <null> (omaroll_tests+0xadc3e)
-    #1 QThread::start(QThread::Priority) <null> (libQt6Core.so.6+0x3765f4)
-    #2 QtConcurrent::NonPromiseTaskResolver<MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0>::run(std::tuple<MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0>&&, QtConcurrent::TaskStartParameters const&) /usr/include/qt6/QtConcurrent/qtconcurrentstoredfunctioncall.h:180:19 (omaroll_tests+0x7429d8)
-    #3 auto QtConcurrent::run<MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0>(QThreadPool*, MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool)::$_0&&) /usr/include/qt6/QtConcurrent/qtconcurrentrun.h:48:12 (omaroll_tests+0x740856)
-    #4 MediaMetadataIndex::processFinished(MediaMetadataIndex::Probe*, bool) /src/src/library/MediaMetadataIndex.cpp:565:26 (omaroll_tests+0x740202)
-    #5 MediaMetadataIndex::startProbe()::$_2::operator()(int, QProcess::ExitStatus) const /src/src/library/MediaMetadataIndex.cpp:538:5 (omaroll_tests+0x745946)
-    #6 QtPrivate::FunctorCall<std::integer_sequence<unsigned long, 0ul, 1ul>, QtPrivate::List<int, QProcess::ExitStatus>, void, MediaMetadataIndex::startProbe()::$_2>::call(MediaMetadataIndex::startProbe()::$_2&, void**)::'lambda'()::operator()() const /usr/include/qt6/QtCore/qobjectdefs_impl.h:117:24 (omaroll_tests+0x745891)
-    #7 void QtPrivate::FunctorCallBase::call_internal<void, QtPrivate::FunctorCall<std::integer_sequence<unsigned long, 0ul, 1ul>, QtPrivate::List<int, QProcess::ExitStatus>, void, MediaMetadataIndex::startProbe()::$_2>::call(MediaMetadataIndex::startProbe()::$_2&, void**)::'lambda'()>(void**, QtPrivate::FunctorCall<std::integer_sequence<unsigned long, 0ul, 1ul>, QtPrivate::List<int, QProcess::ExitStatus>, void, MediaMetadataIndex::startProbe()::$_2>::call(MediaMetadataIndex::startProbe()::$_2&, void**)::'lambda'()&&) /usr/include/qt6/QtCore/qobjectdefs_impl.h:66:17 (omaroll_tests+0x745791)
-    #8 QtPrivate::FunctorCall<std::integer_sequence<unsigned long, 0ul, 1ul>, QtPrivate::List<int, QProcess::ExitStatus>, void, MediaMetadataIndex::startProbe()::$_2>::call(MediaMetadataIndex::startProbe()::$_2&, void**) /usr/include/qt6/QtCore/qobjectdefs_impl.h:116:13 (omaroll_tests+0x74570e)
-    #9 void QtPrivate::FunctorCallable<MediaMetadataIndex::startProbe()::$_2, int, QProcess::ExitStatus>::call<QtPrivate::List<int, QProcess::ExitStatus>, void>(MediaMetadataIndex::startProbe()::$_2&, void*, void**) /usr/include/qt6/QtCore/qobjectdefs_impl.h:338:13 (omaroll_tests+0x745641)
-    #10 QtPrivate::QCallableObject<MediaMetadataIndex::startProbe()::$_2, QtPrivate::List<int, QProcess::ExitStatus>, void>::impl(int, QtPrivate::QSlotObjectBase*, QObject*, void**, bool*) /usr/include/qt6/QtCore/qobjectdefs_impl.h:548:21 (omaroll_tests+0x745596)
-    #11 <null> <null> (libQt6Core.so.6+0x1f6cc7)
-    #12 OmarollTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /src/build/tsan/omaroll_tests_autogen/include/tst_omaroll.moc:1289:23 (omaroll_tests+0x137032)
-    #13 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
-    #14 <null> <null> (libc.so.6+0x27780)
-
-SUMMARY: ThreadSanitizer: data race (/src/build/tsan/omaroll_tests+0xba0ee) in memcmp
 ==================
 WARNING: ThreadSanitizer: data race (pid=670)
   Write of size 8 at 0x724000003d10 by thread T4:

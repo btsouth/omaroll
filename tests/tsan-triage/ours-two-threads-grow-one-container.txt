@@ -1,0 +1,26 @@
+Two of our threads grow one container through Qt's unexported internals.
+Unnamed libQt6Core frames are not proof the block is Qt's own. (Found in
+review of #171.)
+==================
+WARNING: ThreadSanitizer: data race (pid=1)
+  Write of size 8 at 0x724000008110 by thread T5:
+    #0 realloc <null> (omaroll_tests+0xabe8e)
+    #1 <null> <null> (libQt6Core.so.6+0x2dce43)
+    #2 Log::add(QString const&) /src/src/Log.cpp:10:5 (omaroll_tests+0x1000)
+    #3 Worker::run() /src/src/Worker.cpp:30:5 (omaroll_tests+0x1100)
+
+  Previous write of size 8 at 0x724000008110 by main thread:
+    #0 memcpy <null> (omaroll_tests+0xa8983)
+    #1 <null> <null> (libQt6Core.so.6+0x2a1b2c)
+    #2 Log::add(QString const&) /src/src/Log.cpp:10:5 (omaroll_tests+0x1000)
+    #3 MainWindow::onClick() /src/src/MainWindow.cpp:50:5 (omaroll_tests+0x1200)
+
+  Location is heap block of size 256 at 0x724000008100 allocated by main thread:
+    #0 realloc <null> (omaroll_tests+0xabe8e)
+    #1 <null> <null> (libQt6Core.so.6+0x2dce43)
+    #2 Log::add(QString const&) /src/src/Log.cpp:10:5 (omaroll_tests+0x1000)
+
+  Thread T5 (tid=1503, running) created by main thread at:
+    #0 pthread_create <null> (omaroll_tests+0xadc3e)
+
+SUMMARY: ThreadSanitizer: data race

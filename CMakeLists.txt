@@ -34,6 +34,7 @@ add_library(omaroll_core STATIC
   src/app/VideoPlayback.h
   src/app/VideoWarmup.cpp
   src/app/VideoWarmup.h
+  src/app/TsanHandoff.h
   src/library/CaptureRecord.h
   src/library/CaptureRoles.h
   src/library/CaptureModel.cpp

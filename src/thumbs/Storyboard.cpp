@@ -1,5 +1,6 @@
 #include "thumbs/Storyboard.h"
 
+#include "app/TsanHandoff.h"
 #include "sources/FileVersion.h"
 
 #include <QBuffer>
@@ -565,7 +566,9 @@ struct StoryboardJob {
   // A sample tried to the end: its frame, or no jpeg when ffmpeg found
   // nothing there.
   void postSample(qint64 target, qint64 time, const QByteArray& jpeg) {
+    tsan::handOver(jpeg.constData());
     post([generation = generation, target, time, jpeg](Storyboard* owner_) {
+      tsan::takeOver(jpeg.constData());
       owner_->acceptSample(generation, target, time, jpeg);
     });
   }

@@ -1,5 +1,6 @@
 #include "library/MediaMetadataIndex.h"
 #include "app/StartupTrace.h"
+#include "app/TsanHandoff.h"
 
 #include "sources/CameraRaw.h"
 
@@ -562,7 +563,9 @@ void MediaMetadataIndex::processFinished(Probe* probe, bool successful) {
   }
   const bool video = probe->kind == Probe::Kind::Video;
   // Only the copy of the output crosses to the worker.
+  tsan::handOver(output.constData());
   probe->parse.setFuture(QtConcurrent::run(&m_pool, [output, video, successful] {
+    tsan::takeOver(output.constData());
     lowerThisThread();
     Parsed parsed;
     if (video) {
