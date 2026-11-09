@@ -2061,6 +2061,10 @@ private slots:
         return image.copy(QRectF(rect.topLeft() * image.devicePixelRatio(),
                                 rect.size() * image.devicePixelRatio()).toAlignedRect());
       };
+      // Caption controls also show a transient notice and a hover tooltip.
+      // Clear those independently changing overlays before comparing pixels.
+      QTest::mouseMove(m_window, QPoint(5, 5));
+      QVERIFY(QMetaObject::invokeMethod(m_window, "say", Q_ARG(QVariant, QString())));
       // Pause acknowledgement can precede the last queued frame on slower
       // decoders. Detach delivery and re-submit one immutable frame, so the
       // only pixels allowed to change in this comparison are captions.

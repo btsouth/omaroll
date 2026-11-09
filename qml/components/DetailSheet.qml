@@ -650,8 +650,8 @@ Item {
         }
         const choice = choices[subtitleChoice]
         if (choice.kind === "embedded") {
-            // The backend draws embedded tracks; clear the sidecar so the two
-            // overlays cannot both show.
+            // Embedded and sidecar cues share the themed overlay. Clear the
+            // sidecar selection before accepting embedded sink text.
             player.activeSubtitleTrack = choice.index
             externalSubtitle = ""
         } else if (choice.kind === "external") {
