@@ -1858,6 +1858,97 @@ private slots:
     QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
   }
 
+  // A reused grid delegate gets its new row's roles one at a time, in an order
+  // Qt does not fix. When the file's thumbnail version arrives before its
+  // mtime and Qt still caches that thumbnail, the load finishes in between.
+  // The mtime that follows does not change the URL and must not hide it.
+  void reusedCardKeepsACachedThumbnailWhateverTheRoleOrder() {
+    CaptureFilterModel cardCaptures;
+    QQmlApplicationEngine engine;
+    engine.addImportPath(QStringLiteral(OMAROLL_QML_IMPORT_PATH));
+    auto* provider = new HeldThumbnailProvider;
+    engine.addImageProvider(QStringLiteral("thumbs"), provider);
+    auto* context = engine.rootContext();
+    context->setContextProperty(QStringLiteral("Theme"), m_theme);
+    context->setContextProperty(QStringLiteral("Settings"), m_settings);
+    context->setContextProperty(QStringLiteral("Captures"), &cardCaptures);
+    context->setContextProperty(QStringLiteral("Library"), m_captures);
+    context->setContextProperty(QStringLiteral("MediaMetadata"), m_mediaMetadata);
+    QStringList warnings;
+    connect(&engine, &QQmlEngine::warnings, &engine, [&warnings](const QList<QQmlError>& errors) {
+      for (const auto& error : errors) warnings.append(error.toString());
+    });
+    engine.loadData(R"QML(
+      import QtQuick
+      import Omaroll
+      Window {
+        width: 320
+        height: 220
+        CaptureCard { objectName: "reusedCard"; anchors.fill: parent }
+      }
+    )QML");
+    QVERIFY2(!engine.rootObjects().isEmpty(), qPrintable(warnings.join('\n')));
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst());
+    QVERIFY(window);
+    const auto release = qScopeGuard([&] { provider->completeAll(); });
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    auto* card = window->findChild<QQuickItem*>(QStringLiteral("reusedCard"));
+    QVERIFY(card);
+    auto* snippet = window->findChild<QQuickItem*>(QStringLiteral("captureSnippetLabel"));
+    QVERIFY(snippet);
+    const auto assign = [&](int row, int version, double stamp, bool versionFirst) {
+      card->setProperty("path", QStringLiteral("/thumbnail-test/%1.png").arg(row));
+      if (versionFirst) card->setProperty("thumbnailVersion", QString::number(version));
+      card->setProperty("stamp", stamp);
+      if (!versionFirst) card->setProperty("thumbnailVersion", QString::number(version));
+    };
+    const auto presented = [&](int row, int version) {
+      return card->property("thumbnailPresented").toBool()
+             && card->property("thumbnailReady").toBool()
+             && card->property("readyPath").toString()
+                    == QStringLiteral("/thumbnail-test/%1.png").arg(row)
+             && card->property("readyIdentity").toString() == QString::number(version);
+    };
+
+    for (const bool versionFirst : {true, false}) {
+      const int base = versionFirst ? 1 : 101;
+      assign(base, 11, 100, versionFirst);
+      QTRY_COMPARE(provider->count(base, 11), 1);
+      provider->completeAll();
+      QTRY_VERIFY(presented(base, 11));
+      assign(base + 1, 22, 200, versionFirst);
+      QTRY_COMPARE(provider->count(base + 1, 22), 1);
+      QVERIFY(!card->property("thumbnailReady").toBool());
+      provider->completeAll();
+      QTRY_VERIFY(presented(base + 1, 22));
+      // Back to the first file, whose thumbnail Qt still has.
+      assign(base, 11, 100, versionFirst);
+      QTRY_VERIFY2(presented(base, 11),
+                   qPrintable(QStringLiteral("versionFirst %1 ready %2 status %3")
+                                  .arg(versionFirst)
+                                  .arg(card->property("thumbnailReady").toBool())
+                                  .arg(find(card, [](QQuickItem* candidate) {
+                                         return candidate->property("sourceSize").isValid();
+                                       })->property("status").toInt())));
+      QCOMPARE(provider->count(base, 11), 1);
+      provider->completeAll();
+    }
+
+    // The matched text shows while the thumbnail is still being made.
+    QVERIFY(!snippet->isVisible());
+    assign(3, 33, 300, true);
+    card->setProperty("ocrSnippet", QStringLiteral("ACME invoice 7781"));
+    QTRY_COMPARE(provider->count(3, 33), 1);
+    QVERIFY(!card->property("thumbnailReady").toBool());
+    QVERIFY(snippet->isVisible());
+    QCOMPARE(snippet->property("text").toString(), QStringLiteral("ACME invoice 7781"));
+    provider->completeAll();
+    QTRY_VERIFY(presented(3, 33));
+    QVERIFY(snippet->isVisible());
+    QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
+  }
+
   void imageViewerSupportsActualSizeFlipsDeepZoomAndAnimationPause() {
     int imageRow = -1;
     for (int row = 0; row < m_library->rowCount(); ++row) {
@@ -2644,6 +2735,55 @@ private slots:
     QTRY_COMPARE(m_library->rowCount(), all);
     QVERIFY(m_library->property("searchText").toString().isEmpty());
     QTRY_VERIFY(item("library")->hasActiveFocus());
+  }
+
+  // Text read after a search starts brings its rows back on recycled
+  // delegates. Each shows its thumbnail and the matched text, and the grid
+  // shows every thumbnail again once the search is cleared. Which order a
+  // recycled delegate receives its roles in is Qt's choice, so the card test
+  // above pins the order that used to leave tiles blank.
+  void textMatchesFoundMidSearchKeepTheirThumbnails() {
+    QQuickItem* grid = item("library");
+    const auto viewportReady = [grid] {
+      QVariant ready;
+      QMetaObject::invokeMethod(grid, "viewportReady", Q_RETURN_ARG(QVariant, ready));
+      return ready.toBool();
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(viewportReady(), 15000);
+    const int all = m_library->rowCount();
+    const QString matched = pathAt(1);
+    const QString other = pathAt(2);
+    const auto restore = qScopeGuard([&] {
+      m_library->setOcrText(matched, QString());
+      m_library->setOcrText(other, QString());
+      m_library->setSearchText(QString());
+    });
+    for (int round = 0; round < 3; ++round) {
+      m_library->setSearchText(QStringLiteral("zqxinvoice"));
+      QTRY_COMPARE(m_library->rowCount(), 0);
+      m_library->setOcrText(matched, QStringLiteral("ACME HARDWARE ZQXINVOICE 7781"));
+      QTRY_COMPARE(m_library->rowCount(), 1);
+      m_library->setOcrText(other, QStringLiteral("zqxinvoice paid"));
+      QTRY_COMPARE(m_library->rowCount(), 2);
+      QTRY_VERIFY(viewportReady());
+      for (const QString& path : {matched, other}) {
+        QQuickItem* card = cardFor(path);
+        QVERIFY(card);
+        QVERIFY(card->property("thumbnailReady").toBool());
+        auto* snippet = find(card, [](QQuickItem* candidate) {
+          return candidate->objectName() == QStringLiteral("captureSnippetLabel");
+        });
+        QVERIFY(snippet);
+        QVERIFY(snippet->isVisible());
+        QVERIFY(snippet->property("text").toString().contains(QStringLiteral("ZQXINVOICE"),
+                                                                 Qt::CaseInsensitive));
+      }
+      m_library->setSearchText(QString());
+      QTRY_COMPARE(m_library->rowCount(), all);
+      QTRY_VERIFY(viewportReady());
+      m_library->setOcrText(matched, QString());
+      m_library->setOcrText(other, QString());
+    }
   }
 
   void emptySearchResultsRecoverKeyboardNavigation() {

@@ -97,12 +97,22 @@ Item {
         onTriggered: root.scrubIndex = (root.scrubIndex + 1) % root.scrubStops.length
     }
 
+    // Ready only while the decoded image is this file at this identity. A
+    // reused delegate gets its new row's roles one at a time, in no fixed
+    // order, and a cached thumbnail can finish loading between two of them.
+    // Deriving the state from what is loaded, rather than clearing it on each
+    // role, means a later role that does not change the URL (the mtime, when
+    // a thumbnail version is set) cannot leave the tile on its placeholder.
+    function syncThumbnailReady() {
+        root.thumbnailReady = thumbnail.status === Image.Ready
+                              && root.readyPath === root.path
+                              && root.readyIdentity === root.thumbnailIdentity
+    }
     onPathChanged: {
         root.scrubIndex = 0
-        root.thumbnailReady = false
+        root.syncThumbnailReady()
     }
-    onStampChanged: root.thumbnailReady = false
-    onThumbnailIdentityChanged: root.thumbnailReady = false
+    onThumbnailIdentityChanged: root.syncThumbnailReady()
 
     // Drag out and it drops as the real file into anything on the desktop that
     // takes one: a Discord message, a Nautilus window, a browser upload. Copy
@@ -250,6 +260,7 @@ Item {
         }
 
         Text {
+            objectName: "captureSnippetLabel"
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: metadataRow.top
@@ -257,12 +268,14 @@ Item {
             anchors.rightMargin: 8
             anchors.bottomMargin: 2
             // A search match outranks the caption on the one line there is.
-            visible: (root.ocrSnippet !== "" || root.caption !== "") && root.thumbnailReady
+            // It shows before the thumbnail does: the text is why this tile
+            // matched, and a slow or failed decode must not hide it.
+            visible: root.ocrSnippet !== "" || root.caption !== ""
             text: root.ocrSnippet !== "" ? root.ocrSnippet : root.caption
             elide: Text.ElideRight
             font.family: Theme.fontFamily
             font.pixelSize: 10
-            color: "#ffffff"
+            color: root.thumbnailReady ? "#ffffff" : Theme.foreground
             opacity: 0.90
         }
 
