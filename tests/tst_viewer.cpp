@@ -2061,13 +2061,24 @@ private slots:
         return image.copy(QRectF(rect.topLeft() * image.devicePixelRatio(),
                                 rect.size() * image.devicePixelRatio()).toAlignedRect());
       };
-      QTest::qWait(150);
+      // Pause acknowledgement can precede the last queued frame on slower
+      // decoders. Detach delivery and re-submit one immutable frame, so the
+      // only pixels allowed to change in this comparison are captions.
+      auto* input = player->videoSink();
+      auto* originalOutput = player->videoOutput();
+      const QVideoFrame frozen = input->videoFrame();
+      const QString cue = input->subtitleText();
+      player->setVideoOutput(nullptr);
+      const auto restoreOutput = qScopeGuard([&] { player->setVideoOutput(originalOutput); });
+      input->setVideoFrame(frozen);
+      input->setSubtitleText(cue);
+      QTest::qWait(100);
       const QImage themed = capture();
       overlay->setVisible(false);
       QTest::qWait(100);
       const QImage embeddedOnly = capture();
       QVERIFY(themed != embeddedOnly); // The themed caption really drew pixels.
-      player->videoSink()->setSubtitleText({});
+      input->setSubtitleText({});
       QTest::qWait(100);
       QCOMPARE(capture(), embeddedOnly);
       overlay->setVisible(true);
