@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Keep library date order correct when camera dates arrive after scanning, and keep the newest section visible at startup or when already at the top.
+- Hide recycled date headers from assistive technology and add Ctrl+Up/Down to jump between day or month sections.
+
 ### Added
 
 - The empty library offers Omaroll's Hyprland window rules once, with Install

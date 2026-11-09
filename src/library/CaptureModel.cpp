@@ -396,62 +396,68 @@ void CaptureModel::applyMetadata(const QList<MetadataUpdate>& updates) {
     return;
   }
 
-  QList<int> changedRows;
-  bool dateChanged = false;
-  bool cameraChanged = false;
+  // Each update that still describes the file on disk, by row.
+  QList<std::pair<int, const MetadataUpdate*>> pending;
+  pending.reserve(updates.size());
   for (const MetadataUpdate& update : updates) {
     const int row = rowOf(update.path);
     if (row < 0) {
       continue;
     }
-    CaptureRecord& record = m_records[row];
+    const CaptureRecord& record = m_records.at(row);
     if (record.modified != update.modified || record.bytes != update.bytes ||
         record.device != update.device || record.inode != update.inode) {
       continue;
     }
     m_metadata.insert(record.path, update);
-    bool changed = false;
-    if (update.captured.isValid() && !record.hasProducerTimestamp &&
-        record.captured != update.captured) {
-      record.captured = update.captured;
-      dateChanged = true;
-      changed = true;
-    }
-    if (record.camera != update.camera || record.lens != update.lens) {
-      record.camera = update.camera;
-      record.lens = update.lens;
-      cameraChanged = true;
-      changed = true;
-    }
-    if (!changed) {
+    pending.append({row, &update});
+  }
+  std::sort(pending.begin(), pending.end(),
+            [](const auto& a, const auto& b) { return a.first < b.first; });
+
+  // Changed rows are applied and announced one run at a time. The proxy
+  // re-sorts a run by searching the rows around it, which only works while
+  // every other row still holds the date it was sorted by. Changing a whole
+  // batch first left the later runs' new dates in their old places, so the
+  // earlier runs landed out of order: copies sorted by the day they were
+  // made sat above "Yesterday" under their camera date.
+  const QList<int> dateRoles {CaptureRoles::CapturedRole, CaptureRoles::DayKeyRole,
+                              CaptureRoles::DayLabelRole, CaptureRoles::TimeLabelRole,
+                              CaptureRoles::DateLabelRole};
+  const QList<int> cameraRoles {CaptureRoles::CameraRole, CaptureRoles::LensRole};
+  int first = -1;
+  int last = -1;
+  bool runDate = false;
+  bool runCamera = false;
+  const auto announce = [&] {
+    if (first < 0) return;
+    QList<int> roles;
+    if (runDate) roles.append(dateRoles);
+    if (runCamera) roles.append(cameraRoles);
+    emit dataChanged(index(first), index(last), roles);
+    first = last = -1;
+    runDate = runCamera = false;
+  };
+  for (const auto& [row, update] : std::as_const(pending)) {
+    CaptureRecord& record = m_records[row];
+    const bool date = update->captured.isValid() && !record.hasProducerTimestamp &&
+                      record.captured != update->captured;
+    const bool camera = record.camera != update->camera || record.lens != update->lens;
+    if (!date && !camera) {
       continue;
     }
-    changedRows.append(row);
+    if (first >= 0 && row > last + 1) announce();
+    if (date) record.captured = update->captured;
+    if (camera) {
+      record.camera = update->camera;
+      record.lens = update->lens;
+    }
+    if (first < 0) first = row;
+    last = row;
+    runDate = runDate || date;
+    runCamera = runCamera || camera;
   }
-
-  if (!changedRows.isEmpty()) {
-    QList<int> roles;
-    if (dateChanged) {
-      roles.append({CaptureRoles::CapturedRole, CaptureRoles::DayKeyRole,
-                    CaptureRoles::DayLabelRole, CaptureRoles::TimeLabelRole,
-                    CaptureRoles::DateLabelRole});
-    }
-    if (cameraChanged) {
-      roles.append({CaptureRoles::CameraRole, CaptureRoles::LensRole});
-    }
-    std::sort(changedRows.begin(), changedRows.end());
-    int first = changedRows.first();
-    int last = first;
-    for (const int row : std::as_const(changedRows)) {
-      if (row <= last + 1) {
-        last = row;
-      } else {
-        emit dataChanged(index(first), index(last), roles);
-        first = last = row;
-      }
-    }
-    emit dataChanged(index(first), index(last), roles);
-  }
+  announce();
 }
 
 QString CaptureModel::dayLabelAt(int row) const {

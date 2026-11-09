@@ -1955,6 +1955,91 @@ private slots:
   // Shift+X and the mixed state of a day's control, Ctrl+wheel over the
   // sections, a band that scrolls, an anchor a search hides, and a capture
   // arriving while the view is scrolled.
+  void lateCameraDatesKeepTheNewestSectionVisible() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QStringList paths;
+    for (int i = 0; i < 40; ++i) {
+      const QString path = dir.filePath(QStringLiteral("copy-%1.jpg").arg(i));
+      QVERIFY(QFile::copy(m_oddPath, path));
+      paths.append(path);
+      m_disposablePaths.append(path);
+    }
+    auto* grid = item("library");
+    auto* view = item("reviewSets");
+    const auto cleanup = qScopeGuard([&] {
+      m_library->setFolderFilter({});
+      m_settings->setTileWidth(280);
+      dir.remove();
+      rescan();
+      QTRY_VERIFY(!m_captures->scanning());
+    });
+    m_captures->addExtraFiles(paths);
+    m_library->setFolderFilter(dir.path());
+    QTRY_COMPARE(m_library->count(), paths.size());
+    QTRY_VERIFY(!m_mediaMetadata->indexing());
+    QTRY_VERIFY(grid->property("layoutSettled").toBool());
+    QMetaObject::invokeMethod(grid, "scrollTo", Q_ARG(QVariant, 0));
+    grid->setProperty("currentPicked", false);
+    // The first displayed copy moves to an older camera date. Its exact
+    // copies arrive in separated source row ranges in the same batch.
+    QList<CaptureModel::MetadataUpdate> updates;
+    for (int i = 0; i < paths.size(); ++i) {
+      const CaptureRecord& record = m_captures->recordAt(m_captures->rowOf(paths.at(i)));
+      const QDateTime taken(QDate(2020, i < 20 ? 6 : 5, 28 - i % 20), QTime(12, 0));
+      updates.append({record.path, record.modified, record.bytes, taken,
+                      record.device, record.inode, {}, {}});
+    }
+    m_captures->applyMetadata(updates);
+    QTRY_VERIFY(grid->property("layoutSettled").toBool());
+    QTRY_VERIFY(view->property("exactTop").toReal() <= 1);
+    QTRY_COMPARE(grid->property("currentIndex").toInt(), 0);
+    // With an explicitly picked tile, keep that selection but still keep
+    // the viewport at the top during a second late-date reorder.
+    QMetaObject::invokeMethod(grid, "pointTo", Q_ARG(QVariant, 0));
+    const QString picked = pathAt(0);
+    const CaptureRecord record = m_captures->recordAt(m_captures->rowOf(picked));
+    m_captures->applyMetadata({{record.path, record.modified, record.bytes,
+        QDateTime(QDate(2018, 1, 1), QTime(12, 0)), record.device, record.inode, {}, {}}});
+    QTRY_COMPARE(pathAt(grid->property("currentIndex").toInt()), picked);
+    QTRY_VERIFY(view->property("exactTop").toReal() <= 1);
+
+    auto* rows = qobject_cast<SectionRows*>(m_library->sectionRows());
+    QVERIFY(rows);
+    const auto jumps = [&] {
+      const auto sections = rows->sections();
+      QVERIFY(sections.size() > 1);
+      grid->forceActiveFocus();
+      QTest::keyClick(m_window, Qt::Key_Home);
+      QTRY_COMPARE(grid->property("currentIndex").toInt(), 0);
+      QTest::keyClick(m_window, Qt::Key_Down, Qt::ControlModifier);
+      QTRY_COMPARE(grid->property("currentIndex").toInt(), sections.at(1).toMap().value("first").toInt());
+      QTest::keyClick(m_window, Qt::Key_Up, Qt::ControlModifier);
+      QTRY_COMPARE(grid->property("currentIndex").toInt(), 0);
+    };
+    jumps();
+    m_settings->setTileWidth(160);
+    QTRY_VERIFY(grid->property("layoutSettled").toBool());
+    QTRY_COMPARE(rows->sectionCount(), 3);
+    jumps();
+    // The accessibility tree contains only current month headings. Pooled
+    // day headers and their Select controls must disappear entirely.
+    auto* accessible = QAccessible::queryAccessibleInterface(view);
+    QVERIFY(accessible);
+    QStringList names;
+    std::function<void(QAccessibleInterface*)> walk = [&](QAccessibleInterface* node) {
+      if (!node) return;
+      if (node->role() == QAccessible::Heading) names.append(node->text(QAccessible::Name));
+      for (int i = 0; i < node->childCount(); ++i) walk(node->child(i));
+    };
+    walk(accessible);
+    QVERIFY(!names.isEmpty());
+    for (const QString& name : names) {
+      QVERIFY2(name.startsWith("May 2020") || name.startsWith("June 2020") ||
+               name.startsWith("January 2018"), qPrintable(name));
+    }
+  }
+
   void dateSectionsScrollKeysAndKeepTheirPlace() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

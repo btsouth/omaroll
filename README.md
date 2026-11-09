@@ -337,6 +337,8 @@ and put on your clipboard.
 
 ## Library shortcuts
 
+Use `Ctrl+↑` and `Ctrl+↓` to jump between day or month sections in date order.
+
 Every library and preview shortcut is listed in
 [Shortcuts](docs/shortcuts.md#library-and-preview), and `?` shows them in the
 library.
