@@ -2429,7 +2429,12 @@ private slots:
       // A typed query stays in sight as a chip with its own clear, and the
       // search key says why it cannot open the field.
       const auto clearSearch = qScopeGuard([&] { m_library->setSearchText({}); });
-      m_library->setSearchText(QStringLiteral("zz-hidden-query"));
+      // A query every selected tile matches, so the selection stays and the
+      // field stays hidden: the scratch folder they all sit in.
+      const QString everything = QDir(m_scratch.path()).dirName();
+      m_library->setSearchText(everything);
+      QTRY_COMPARE(grid->property("checkedCount").toInt(), 6);
+      QVERIFY(!search->isVisible());
       const auto chipShown = [this] {
         return find(m_window->contentItem(), [](QQuickItem* candidate) {
                  return candidate->objectName() == QStringLiteral("filterChip-search") && candidate->isVisible();
