@@ -53,7 +53,7 @@ ACCESS = re.compile(r"^  (Previous )?([Aa]tomic )?(Read|Write|read|write) of siz
 THREAD = re.compile(r"^  Thread (T\d+) '([^']*)'", re.M)
 INTERCEPTOR = re.compile(
     r"^(operator new|operator delete|malloc|calloc|realloc|free|strdup|"
-    r"memcpy|memmove|memset|pthread_\w+|__tsan\w*|QtTsan::\w+)\b")
+    r"memcpy|memmove|memset|memcmp|pthread_\w+|__tsan\w*|QtTsan::\w+)\b")
 FATAL = re.compile(r"ThreadSanitizer: CHECK failed|ThreadSanitizer: .*(out of memory|internal error)")
 
 
@@ -123,7 +123,9 @@ def handing_over(task):
             match = FRAME.match(earlier)
             header = source is not None and source.group(1).startswith("/usr/")
             copy = match is not None and COPY_CONSTRUCTOR.search(match.group(1))
-            if not header and not copy:
+            intercepted = match is not None and INTERCEPTOR.match(match.group(1)) and \
+                match.group(2).startswith("omaroll")
+            if not header and not copy and not intercepted:
                 return False
         return True
     return False
@@ -361,6 +363,57 @@ def qt_lock_private(stacks):
     return False
 
 
+LOCATION = re.compile(r"^  Location is heap block .* allocated by [^\n]*:\n((?:\s*#\d+ .*\n?)+)", re.M)
+
+
+def inside_qt_private(frames):
+    """An interceptor called straight from a libQt6Core function Qt does not
+    export. Those work on Qt's own state (QThreadPool's queue, a
+    QFutureInterface's result store, a thread's posted events), never on a
+    container of ours: those calls go through exported, named functions."""
+    functions = frame_functions(frames)
+    return len(functions) >= 2 and INTERCEPTOR.match(functions[0][0]) is not None and \
+        functions[0][1].startswith("omaroll") and functions[1][0] == "<null>" and \
+        functions[1][1].startswith("libQt6Core")
+
+
+def qt_private_memory(block, stacks):
+    """Both accesses are Qt working on its own private state, in a block Qt
+    allocated the same way (when TSan names it)."""
+    if len(stacks) != 2 or not all(inside_qt_private(frames) for frames in stacks):
+        return False
+    location = LOCATION.search(block)
+    return location is None or inside_qt_private(location.group(1).splitlines())
+
+
+SHARED_BUFFER = re.compile(r"^Q(ByteArray|String)::reallocData\(")
+
+
+def task_reads_its_copy(block, stacks):
+    """A QtConcurrent task reads a QByteArray or QString it was given, which Qt
+    filled on the starting thread before the task began. Implicit sharing
+    makes that buffer read-only once the task holds a copy: any later write
+    on the starting thread detaches into a new buffer. So the write can only
+    have come before the hand-over, which QThreadPool orders under its mutex."""
+    if len(stacks) != 2:
+        return False
+    location = LOCATION.search(block)
+    if not location:
+        return False
+    made = frame_functions(location.group(1).splitlines())
+    if len(made) < 2 or not ALLOCATION.match(made[0][0]) or not SHARED_BUFFER.match(made[1][0]):
+        return False
+    kinds = [line.group(3).lower() for line in map(ACCESS.match, block.splitlines()) if line]
+    for (task, other), kind in zip((stacks, stacks[::-1]), kinds):
+        if kind != "read" or not any(TASK_RUN.search(frame) for frame in task):
+            continue
+        functions = frame_functions(other)
+        if len(functions) >= 2 and INTERCEPTOR.match(functions[0][0]) and \
+                functions[1][1].startswith("libQt6Core"):
+            return True
+    return False
+
+
 def classify(block):
     if FATAL.search(block):
         return "fatal"
@@ -373,7 +426,8 @@ def classify(block):
     if (task_start_handoff(stacks) or pool_bookkeeping(block, stacks, threads)
             or qt_internal(block, stacks) or qt_owned_memory(stacks)
             or qt_descriptor_reuse(block, stacks) or queued_call_handoff(stacks)
-            or qt_lock_private(stacks)):
+            or qt_lock_private(stacks) or qt_private_memory(block, stacks)
+            or task_reads_its_copy(block, stacks)):
         return "external"
     for frames in stacks:
         function, module = first_frame(frames)
