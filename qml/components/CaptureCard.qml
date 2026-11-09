@@ -42,9 +42,9 @@ Item {
     readonly property bool thumbnailPresented: thumbnail.status === Image.Ready
                                                && thumbnail.visible
                                                && thumbnail.opacity >= 0.999
-    // What leaves when this tile is dragged out. The grid sets it to the whole
-    // selection when this tile is part of one.
-    property var dragPaths: [path]
+    // What leaves when this tile is dragged out: set as a drag starts, to
+    // this tile or, through dragStarting, to the selection it is part of.
+    property var dragPaths: []
     // Raised before the drag image is grabbed, so the badge below is in it.
     property bool dragging: false
 
@@ -73,6 +73,8 @@ Item {
     // Shift+click extends the selection from its anchor; Ctrl+click adds or
     // removes this tile alone.
     signal extendRequested()
+    // A drag is starting; the host may set dragPaths to the whole selection.
+    signal dragStarting()
     signal toggleRequested()
 
     function shade(base, amount) {
@@ -127,10 +129,6 @@ Item {
     Drag.dragType: Drag.Automatic
     Drag.supportedActions: Qt.CopyAction
     Drag.proposedAction: Qt.CopyAction
-    Drag.mimeData: ({
-        "text/uri-list": Library.uriList(root.dragPaths),
-        "text/plain": root.dragPaths.join("\n")
-    })
     Drag.onDragFinished: {
         root.dragging = false
         // The release that ended the drag went to the drop target, not to us,
@@ -158,6 +156,15 @@ Item {
             // offset so it does not jump under the cursor.
             root.Drag.hotSpot = Qt.point(dragOut.centroid.pressPosition.x,
                                          dragOut.centroid.pressPosition.y)
+            // What to drag is worked out now rather than kept bound on every
+            // tile: a large selection would otherwise be copied per tile on
+            // each change.
+            root.dragPaths = [root.path]
+            root.dragStarting()
+            root.Drag.mimeData = {
+                "text/uri-list": Library.uriList(root.dragPaths),
+                "text/plain": root.dragPaths.join("\n")
+            }
             root.dragging = true
             root.grabToImage(function (result) {
                 // The grab is asynchronous; a press-move-release quicker than

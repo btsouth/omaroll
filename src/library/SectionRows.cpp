@@ -5,6 +5,7 @@
 
 #include <QDateTime>
 #include <QLocale>
+#include <QSet>
 
 #include <algorithm>
 
@@ -210,6 +211,10 @@ void SectionRows::rebuildNow() {
   emit rebuilt();
 }
 
+SectionRows::RowKey SectionRows::keyOf(const Row& row) {
+  return {row.section.label, row.header ? -1 : row.first - row.section.first};
+}
+
 void SectionRows::apply(QList<Section> sections) {
   QList<Row> rows;
   for (qsizetype index = 0; index < sections.size(); ++index) {
@@ -220,53 +225,81 @@ void SectionRows::apply(QList<Section> sections) {
                    section});
     }
   }
-
-  // Report only what differs, so delegates on screen keep their place: the
-  // common prefix and suffix stay, the middle changes in place, and rows are
-  // inserted or removed only at its end.
-  const auto same = [&](qsizetype before, qsizetype after) {
-    return m_rows.at(before) == rows.at(after);
-  };
-  const qsizetype oldCount = m_rows.size();
-  const qsizetype newCount = rows.size();
-  qsizetype prefix = 0;
-  while (prefix < oldCount && prefix < newCount && same(prefix, prefix)) ++prefix;
-  qsizetype suffix = 0;
-  while (suffix < oldCount - prefix && suffix < newCount - prefix &&
-         same(oldCount - 1 - suffix, newCount - 1 - suffix)) {
-    ++suffix;
-  }
-  const qsizetype oldMiddle = oldCount - prefix - suffix;
-  const qsizetype newMiddle = newCount - prefix - suffix;
-  const qsizetype common = std::min(oldMiddle, newMiddle);
-
   m_sections = std::move(sections);
-  const auto changeCommon = [&] {
-    if (common > 0) {
-      emit dataChanged(index(static_cast<int>(prefix)),
-                       index(static_cast<int>(prefix + common - 1)));
-    }
+
+  // Walk both lists matching rows by key. A row only the old list has is
+  // removed where it sits, a row only the new list has is inserted there,
+  // and a matched row whose contents moved is changed in place. Keys found
+  // in both lists but in another order are removed and inserted again.
+  const QList<Row> old = m_rows;
+  const qsizetype oldCount = old.size();
+  const qsizetype newCount = rows.size();
+  QSet<RowKey> oldLeft;
+  QSet<RowKey> newLeft;
+  oldLeft.reserve(oldCount);
+  newLeft.reserve(newCount);
+  for (const Row& row : old) oldLeft.insert(keyOf(row));
+  for (const Row& row : rows) newLeft.insert(keyOf(row));
+
+  enum Step { Match, Remove, Insert };
+  qsizetype from = 0;
+  qsizetype to = 0;
+  const auto step = [&]() {
+    if (from >= oldCount) return Insert;
+    if (to >= newCount) return Remove;
+    const RowKey before = keyOf(old.at(from));
+    const RowKey after = keyOf(rows.at(to));
+    if (before == after) return Match;
+    if (!newLeft.contains(before) || oldLeft.contains(after)) return Remove;
+    return Insert;
   };
-  if (newMiddle < oldMiddle) {
-    // Drop the surplus first; the rows left keep their old reading until
-    // they are changed in place.
-    beginRemoveRows({}, static_cast<int>(prefix + common),
-                    static_cast<int>(prefix + oldMiddle - 1));
-    m_rows.remove(prefix + common, oldMiddle - common);
-    endRemoveRows();
-    m_rows = std::move(rows);
-    changeCommon();
-  } else if (newMiddle > oldMiddle) {
-    // Change the rows both lists have, then add the rest after them.
-    for (qsizetype row = prefix; row < prefix + common; ++row) m_rows[row] = rows.at(row);
-    changeCommon();
-    beginInsertRows({}, static_cast<int>(prefix + oldMiddle),
-                    static_cast<int>(prefix + newMiddle - 1));
-    m_rows = std::move(rows);
-    endInsertRows();
-  } else {
-    m_rows = std::move(rows);
-    changeCommon();
+  QList<qsizetype> changed;
+  while (from < oldCount || to < newCount) {
+    switch (step()) {
+    case Match: {
+      if (!(old.at(from) == rows.at(to))) changed.append(to);
+      const RowKey key = keyOf(old.at(from));
+      oldLeft.remove(key);
+      newLeft.remove(key);
+      ++from;
+      ++to;
+      break;
+    }
+    case Remove: {
+      // The rows before `to` already match the new list, so the old row
+      // sits at `to` in m_rows.
+      const qsizetype start = from;
+      while (from < oldCount && step() == Remove) oldLeft.remove(keyOf(old.at(from++)));
+      const auto first = static_cast<int>(to);
+      beginRemoveRows({}, first, first + static_cast<int>(from - start) - 1);
+      m_rows.remove(to, from - start);
+      endRemoveRows();
+      break;
+    }
+    case Insert: {
+      const qsizetype start = to;
+      while (to < newCount && step() == Insert) newLeft.remove(keyOf(rows.at(to++)));
+      beginInsertRows({}, static_cast<int>(start), static_cast<int>(to) - 1);
+      m_rows.insert(start, to - start, Row{});
+      for (qsizetype row = start; row < to; ++row) m_rows[row] = rows.at(row);
+      endInsertRows();
+      break;
+    }
+    }
+  }
+
+  m_rows = std::move(rows);
+  m_headersBefore.resize(m_rows.size() + 1);
+  m_headersBefore[0] = 0;
+  for (qsizetype row = 0; row < m_rows.size(); ++row) {
+    m_headersBefore[row + 1] = m_headersBefore.at(row) + (m_rows.at(row).header ? 1 : 0);
+  }
+  for (qsizetype at = 0; at < changed.size();) {
+    qsizetype end = at;
+    while (end + 1 < changed.size() && changed.at(end + 1) == changed.at(end) + 1) ++end;
+    emit dataChanged(index(static_cast<int>(changed.at(at))),
+                     index(static_cast<int>(changed.at(end))));
+    at = end + 1;
   }
 }
 
@@ -317,4 +350,42 @@ QVariantList SectionRows::sections() const {
                             {QStringLiteral("month"), section.month}});
   }
   return list;
+}
+
+int SectionRows::sectionFirstOf(int item) const {
+  if (item < 0 || m_sections.isEmpty()) return -1;
+  const auto after = std::upper_bound(
+      m_sections.cbegin(), m_sections.cend(), item,
+      [](int value, const Section& section) { return value < section.first; });
+  if (after == m_sections.cbegin()) return -1;
+  const Section& section = *(after - 1);
+  return item < section.first + section.count ? section.first : -1;
+}
+
+double SectionRows::rowY(int row, double headerHeight, double rowHeight) const {
+  // m_headersBefore follows m_rows once a rebuild has finished.
+  row = std::clamp(row, 0, static_cast<int>(m_headersBefore.size()) - 1);
+  const int headers = m_headersBefore.at(row);
+  return headers * headerHeight + (row - headers) * rowHeight;
+}
+
+int SectionRows::rowAtY(double y, double headerHeight, double rowHeight) const {
+  const auto rows = static_cast<int>(m_headersBefore.size()) - 1;
+  if (rows <= 0) return -1;
+  // The first row whose end lies below y.
+  int low = 0;
+  int high = rows - 1;
+  while (low < high) {
+    const int middle = low + (high - low) / 2;
+    if (rowY(middle + 1, headerHeight, rowHeight) <= y) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+  return low;
+}
+
+double SectionRows::totalHeight(double headerHeight, double rowHeight) const {
+  return rowY(static_cast<int>(m_headersBefore.size()) - 1, headerHeight, rowHeight);
 }

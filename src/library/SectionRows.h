@@ -6,6 +6,8 @@
 #include <QTimer>
 #include <QVariantMap>
 
+#include <utility>
+
 class CaptureFilterModel;
 
 // The library laid out as rows for a sectioned view: a header row per section,
@@ -18,9 +20,14 @@ class CaptureFilterModel;
 // each on average; while reviewing similar pictures, one per set. Other sorts
 // have no sections.
 //
-// Rows are rebuilt on the next event-loop turn after the library changes, and
-// only the rows that differ are reported, so a delegate on screen keeps its
-// place and a new capture does not reset the view.
+// Rows are rebuilt on the next event-loop turn after the library changes.
+// Rows are matched by section and place within it, so a capture added to or
+// removed from one section is reported as rows inserted or removed there, and
+// a delegate on screen keeps its place.
+//
+// Header and tile rows have different heights; the geometry functions give
+// each row's exact offset so the scrollbar and jumps can map a position to the
+// same row every time, rather than relying on the list's estimate.
 class SectionRows final : public QAbstractListModel {
   Q_OBJECT
   Q_PROPERTY(bool active READ active WRITE setActive NOTIFY activeChanged)
@@ -61,6 +68,10 @@ public:
     Section section;
     bool operator==(const Row&) const = default;
   };
+  // A row's identity across rebuilds: its section and its tile offset within
+  // it, -1 for the header.
+  using RowKey = std::pair<QString, int>;
+  [[nodiscard]] static RowKey keyOf(const Row& row);
 
   explicit SectionRows(CaptureFilterModel* source);
 
@@ -85,6 +96,13 @@ public:
   // Header, first and count of one list row, for geometry outside a delegate.
   Q_INVOKABLE QVariantMap rowAt(int row) const;
   Q_INVOKABLE QVariantList sections() const;
+  // First library row of the section holding item, or -1.
+  Q_INVOKABLE int sectionFirstOf(int item) const;
+  // Exact geometry with header rows headerHeight and tile rows rowHeight
+  // high: where a row starts, which row covers y, and the total height.
+  Q_INVOKABLE double rowY(int row, double headerHeight, double rowHeight) const;
+  Q_INVOKABLE int rowAtY(double y, double headerHeight, double rowHeight) const;
+  Q_INVOKABLE double totalHeight(double headerHeight, double rowHeight) const;
   // Rebuild now rather than on the next turn.
   Q_INVOKABLE void rebuildNow();
 
@@ -108,6 +126,8 @@ private:
   QTimer m_rebuild;
   QList<Section> m_sections;
   QList<Row> m_rows;
+  // Header rows before each row, and one past the end.
+  QList<int> m_headersBefore{0};
   bool m_active = false;
   bool m_compact = false;
   int m_columns = 1;

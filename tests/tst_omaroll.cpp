@@ -6577,6 +6577,159 @@ private slots:
   // Date sorts section the grid by the calendar day of the captured moment,
   // which is what the sort uses, or by month where days are thin; rows are
   // laid out per section and only changed rows are reported.
+  // Rows are matched by section and place, so a capture added to or taken
+  // from one day is a row inserted or removed in that day, and a new day is
+  // a header and row inserted where it sorts. Geometry is exact.
+  void sectionRowsChangeLocallyAndGiveExactOffsets() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    for (const char* name : {"OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR",
+                             "XDG_PICTURES_DIR", "XDG_VIDEOS_DIR"}) {
+      QVERIFY(qputenv(name, dir.path().toUtf8()));
+    }
+    QImage tiny(8, 8, QImage::Format_RGB32);
+    tiny.fill(Qt::darkMagenta);
+    const auto shot = [&](const QDate& date, int hour) {
+      const QString path = dir.filePath(
+          QStringLiteral("screenshot-%1_%2-00-00.png")
+              .arg(date.toString(Qt::ISODate))
+              .arg(hour, 2, 10, QLatin1Char('0')));
+      return tiny.save(path) ? path : QString();
+    };
+    const QDate may4(2019, 5, 4);
+    const QDate may3(2019, 5, 3);
+    const QDate may2(2019, 5, 2);
+    for (int hour : {12, 11, 10}) QVERIFY(!shot(may4, hour).isEmpty());
+    for (int hour : {12, 11}) QVERIFY(!shot(may3, hour).isEmpty());
+    for (int hour : {12, 11}) QVERIFY(!shot(may2, hour).isEmpty());
+
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QSignalSpy scanned(&model, &CaptureModel::countChanged);
+    QVERIFY(scanned.wait(5000));
+    QCOMPARE(model.rowCount(), 7);
+    CaptureFilterModel proxy;
+    proxy.setSourceModel(&model);
+    auto* rows = qobject_cast<SectionRows*>(proxy.sectionRows());
+    QVERIFY(rows);
+    QAbstractItemModelTester tester(rows, QAbstractItemModelTester::FailureReportingMode::QtTest);
+    rows->setColumns(2);
+    rows->setActive(true);
+    rows->rebuildNow();
+    // [4 May] 0-1 2 [3 May] 3-4 [2 May] 5-6
+    const auto shape = [&] {
+      QStringList result;
+      for (int row = 0; row < rows->rowCount(); ++row) {
+        const QVariantMap at = rows->rowAt(row);
+        result.append(at.value(QStringLiteral("header")).toBool()
+                          ? QStringLiteral("H")
+                          : QStringLiteral("%1+%2").arg(at.value(QStringLiteral("first")).toInt())
+                                .arg(at.value(QStringLiteral("count")).toInt()));
+      }
+      return result.join(QLatin1Char(' '));
+    };
+    QCOMPARE(shape(), QStringLiteral("H 0+2 2+1 H 3+2 H 5+2"));
+
+    // Exact offsets: headers 40 high, tile rows 100.
+    QCOMPARE(rows->rowY(0, 40, 100), 0.0);
+    QCOMPARE(rows->rowY(1, 40, 100), 40.0);
+    QCOMPARE(rows->rowY(3, 40, 100), 240.0);
+    QCOMPARE(rows->rowY(4, 40, 100), 280.0);
+    QCOMPARE(rows->totalHeight(40, 100), 3 * 40.0 + 4 * 100.0);
+    QCOMPARE(rows->rowAtY(0, 40, 100), 0);
+    QCOMPARE(rows->rowAtY(39.5, 40, 100), 0);
+    QCOMPARE(rows->rowAtY(40, 40, 100), 1);
+    QCOMPARE(rows->rowAtY(239, 40, 100), 2);
+    QCOMPARE(rows->rowAtY(240, 40, 100), 3);
+    QCOMPARE(rows->rowAtY(10000, 40, 100), 6);
+    for (int row = 0; row < rows->rowCount(); ++row) {
+      QCOMPARE(rows->rowAtY(rows->rowY(row, 40, 100) + 1, 40, 100), row);
+    }
+    QCOMPARE(rows->sectionFirstOf(0), 0);
+    QCOMPARE(rows->sectionFirstOf(2), 0);
+    QCOMPARE(rows->sectionFirstOf(4), 3);
+    QCOMPARE(rows->sectionFirstOf(6), 5);
+    QCOMPARE(rows->sectionFirstOf(7), -1);
+
+    QSignalSpy inserted(rows, &QAbstractItemModel::rowsInserted);
+    QSignalSpy removed(rows, &QAbstractItemModel::rowsRemoved);
+    QSignalSpy reset(rows, &QAbstractItemModel::modelReset);
+    const auto clearSpies = [&] {
+      inserted.clear();
+      removed.clear();
+    };
+    const auto range = [](const QSignalSpy& spy, int at) {
+      return std::pair{spy.at(at).at(1).toInt(), spy.at(at).at(2).toInt()};
+    };
+    const auto add = [&](const QDate& date, int hour) {
+      const QString path = shot(date, hour);
+      model.refresh();
+      const bool shown = QTest::qWaitFor([&] { return proxy.rowOf(path) >= 0; }, 5000);
+      rows->rebuildNow();
+      return shown ? path : QString();
+    };
+    const auto drop = [&](const QString& path) {
+      QVERIFY(QFile::remove(path));
+      model.refresh();
+      QTRY_VERIFY_WITH_TIMEOUT(proxy.rowOf(path) < 0, 5000);
+      rows->rebuildNow();
+    };
+
+    // A fourth capture on 4 May fills its last row: nothing is inserted or
+    // removed anywhere.
+    clearSpies();
+    const QString fourth = add(may4, 13);
+    QVERIFY(!fourth.isEmpty());
+    QCOMPARE(shape(), QStringLiteral("H 0+2 2+2 H 4+2 H 6+2"));
+    QVERIFY(inserted.isEmpty() && removed.isEmpty());
+    // A fifth adds one row at the end of 4 May, above the other days.
+    clearSpies();
+    const QString fifth = add(may4, 14);
+    QVERIFY(!fifth.isEmpty());
+    QCOMPARE(shape(), QStringLiteral("H 0+2 2+2 4+1 H 5+2 H 7+2"));
+    QCOMPARE(inserted.size(), 1);
+    QCOMPARE(range(inserted, 0), std::pair(3, 3));
+    QVERIFY(removed.isEmpty());
+    // Taking it away again removes that row and nothing else.
+    clearSpies();
+    drop(fifth);
+    QCOMPARE(shape(), QStringLiteral("H 0+2 2+2 H 4+2 H 6+2"));
+    QCOMPARE(removed.size(), 1);
+    QCOMPARE(range(removed, 0), std::pair(3, 3));
+    QVERIFY(inserted.isEmpty());
+
+    // A new newest day is a header and a row at the top.
+    clearSpies();
+    const QString may5 = add(QDate(2019, 5, 5), 9);
+    QVERIFY(!may5.isEmpty());
+    QCOMPARE(shape(), QStringLiteral("H 0+1 H 1+2 3+2 H 5+2 H 7+2"));
+    QCOMPARE(inserted.size(), 1);
+    QCOMPARE(range(inserted, 0), std::pair(0, 1));
+    QVERIFY(removed.isEmpty());
+    // An older day goes in after the last section's boundary.
+    clearSpies();
+    const QString older = add(QDate(2019, 5, 1), 9);
+    QVERIFY(!older.isEmpty());
+    QCOMPARE(shape(), QStringLiteral("H 0+1 H 1+2 3+2 H 5+2 H 7+2 H 9+1"));
+    QCOMPARE(inserted.size(), 1);
+    QCOMPARE(range(inserted, 0), std::pair(9, 10));
+    clearSpies();
+    drop(may5);
+    QCOMPARE(shape(), QStringLiteral("H 0+2 2+2 H 4+2 H 6+2 H 8+1"));
+    QCOMPARE(removed.size(), 1);
+    QCOMPARE(range(removed, 0), std::pair(0, 1));
+    QVERIFY(inserted.isEmpty());
+    // The only capture of a day taken away removes its header and row.
+    clearSpies();
+    drop(older);
+    QCOMPARE(shape(), QStringLiteral("H 0+2 2+2 H 4+2 H 6+2"));
+    QCOMPARE(range(removed, 0), std::pair(7, 8));
+    drop(fourth);
+    QCOMPARE(shape(), QStringLiteral("H 0+2 2+1 H 3+2 H 5+2"));
+    QVERIFY(reset.isEmpty());
+  }
+
   void dateSectionsFollowTheSortedDaysAndMonths() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

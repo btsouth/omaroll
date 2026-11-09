@@ -435,6 +435,7 @@ and put on your clipboard.
 | `Ctrl+C` with words picked | Copy them |
 | `X` · `Ctrl+A` | Select · Select all |
 | `Shift` + click · `Ctrl` + click | Select from the last picked tile · add or remove one tile |
+| `Shift+X` | Select the current tile's day or month, or clear it |
 | `Shift` + arrows · `Home` `End` · `Page Up` `Page Down` | Extend the selection from the last picked tile |
 | drag from empty space · `Ctrl` + drag | Select the tiles the band touches · add them to the selection |
 | `Page Up` `Page Down` on the grid | Move a page |

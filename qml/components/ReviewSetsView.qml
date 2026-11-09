@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls.Basic
+import Qt.labs.qmlmodels
 
 // The library in sections: a header naming each section and its size, then
 // its tiles in rows. A GridView has no sections, so the rows come from
@@ -12,12 +13,20 @@ FocusScope {
     // The CaptureGrid this view stands in for.
     property Item host: null
     property int columns: 1
+    // Tiles per row delegate. It only grows, so narrowing the window hides
+    // the tiles a row no longer needs rather than rebuilding every row.
+    property int poolColumns: 1
+    onColumnsChanged: root.poolColumns = Math.max(root.poolColumns, root.columns)
+    Component.onCompleted: root.poolColumns = Math.max(root.poolColumns, root.columns)
     property int cellWidth: 100
     property int cellHeight: 68
     property int cellSpacing: 12
     // Month sections where a day header would sit over a row or two.
     property bool compact: false
+    // Bumped once per event-loop turn after the library or the rows change,
+    // so tiles read their capture again.
     property int revision: 0
+    property bool revisionPending: false
     readonly property int headerHeight: 40
     readonly property var sections: Captures.sectionRows
     readonly property bool reviewMode: sections.mode === 2
@@ -30,7 +39,75 @@ FocusScope {
     property bool suppressReveal: false
     property bool revealPending: true
     property string topPath: ""
+    // The tile last made current, to tell a move from an index shift.
+    property string currentPath: ""
     property real topOffset: 0
+
+    // Exact geometry from the rows: the list's own contentHeight is an
+    // estimate while header and tile rows of different heights are unseen.
+    // Only similar sets have the summary. ListView deletes its old header
+    // item without saying so, so headerItem alone can outlive it.
+    readonly property real summaryHeight: root.reviewMode && list.headerItem ? list.headerItem.height : 0
+    readonly property real exactHeight: {
+        void root.revision
+        return root.summaryHeight + root.sections.totalHeight(root.headerHeight, root.cellHeight)
+    }
+    // The exact offset of the top of the viewport.
+    property real exactTop: 0
+    property bool scrolling: false
+
+    function bumpRevision() {
+        root.revisionPending = false
+        root.revision++
+    }
+    function scheduleRevision() {
+        if (root.revisionPending) return
+        root.revisionPending = true
+        Qt.callLater(root.bumpRevision)
+    }
+
+    function updateExactTop() {
+        const item = list.itemAt(20, list.contentY)
+        if (item && item.index >= 0) {
+            root.exactTop = root.summaryHeight
+                    + root.sections.rowY(item.index, root.headerHeight, root.cellHeight)
+                    + (list.contentY - item.y)
+        } else if (root.summaryHeight > 0 && list.headerItem
+                   && list.contentY < list.headerItem.y + list.headerItem.height) {
+            root.exactTop = Math.max(0, list.contentY - list.headerItem.y)
+        } else {
+            root.exactTop = Math.max(0, list.contentY - list.originY)
+        }
+    }
+
+    // The largest exact offset the viewport can start at.
+    function scrollExtent() { return Math.max(0, root.exactHeight - list.height) }
+
+    // Puts exact offset y at the top of the viewport. The same y shows the
+    // same row every time, wherever the list's estimate has drifted.
+    function scrollToExact(y) {
+        if (root.sections.rowCount() === 0) return
+        root.scrolling = true
+        const extent = root.scrollExtent()
+        y = Math.max(0, Math.min(y, extent))
+        // The end too goes by exact rows: positionViewAtEnd would trust the
+        // list's estimate of where the end is.
+        if (y < root.summaryHeight) {
+            list.positionViewAtBeginning()
+            list.contentY += y
+        } else {
+            const within = y - root.summaryHeight
+            const row = root.sections.rowAtY(within, root.headerHeight, root.cellHeight)
+            // Near the end the list stops short of putting the row at the
+            // top, by its own estimate; place it from the row's real spot.
+            list.positionViewAtIndex(row, ListView.Beginning)
+            const item = list.itemAtIndex(row)
+            const offset = within - root.sections.rowY(row, root.headerHeight, root.cellHeight)
+            list.contentY = (item ? item.y : list.contentY) + offset
+        }
+        root.scrolling = false
+        root.updateExactTop()
+    }
 
     Binding { target: root.sections; property: "active"; value: root.visible }
     Binding { target: root.sections; property: "columns"; value: root.columns }
@@ -162,12 +239,16 @@ FocusScope {
         target: Captures
         function onLayoutAboutToBeChanged() { root.rememberTop() }
         function onModelAboutToBeReset() { root.rememberTop() }
-        function onDataChanged() { root.revision++ }
+        function onDataChanged() { root.scheduleRevision() }
     }
     Connections {
         target: root.sections
         function onRebuilt() {
-            root.revision++
+            root.bumpRevision()
+            // A filter or rescan can take the current tile away without
+            // moving the index; start again from the tile there now.
+            if (root.host && Captures.rowOf(root.currentPath) < 0)
+                root.currentPath = Captures.pathAt(root.host.currentIndex)
             if (root.revealPending && root.visible) {
                 root.revealPending = false
                 root.topPath = ""
@@ -176,28 +257,40 @@ FocusScope {
                 root.restoreTop()
             }
             Qt.callLater(root.updateSticky)
+            Qt.callLater(root.updateExactTop)
         }
     }
     Connections {
         target: root.host
         function onCurrentIndexChanged() {
-            if (root.visible && !root.suppressReveal) root.revealCurrent()
+            // Rows inserted or removed before the current tile move its index
+            // to follow the tile; that is no reason to scroll to it. The grid
+            // applies such a move when it next lays out, so compare where the
+            // tile is now rather than what was at the old index.
+            const index = root.host.currentIndex
+            const followed = root.currentPath !== "" && Captures.rowOf(root.currentPath) === index
+            root.currentPath = Captures.pathAt(index)
+            if (followed) return
+            // A re-sort restores the current tile before the rows are rebuilt
+            // for it; restoreTop places the view once they are.
+            if (root.visible && !root.suppressReveal && !root.host.restoringLayout) root.revealCurrent()
         }
     }
 
     // Standalone, beside the list, as the grid's is.
     ScrollBar {
         id: scrollbar
+        objectName: "sectionsScrollBar"
         orientation: Qt.Vertical
         policy: list.contentHeight > list.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         width: 12
-        size: list.visibleArea.heightRatio
-        position: list.visibleArea.yPosition
+        size: list.height / Math.max(root.exactHeight, 1)
+        position: root.exactTop / Math.max(root.exactHeight, 1)
         onPositionChanged: {
-            if (pressed) list.contentY = list.originY + position * list.contentHeight
+            if (pressed && !root.scrolling) root.scrollToExact(position * root.exactHeight)
         }
     }
 
@@ -229,57 +322,32 @@ FocusScope {
         }
     }
 
-    ListView {
-        id: list
-        objectName: "reviewSetsList"
-        anchors.fill: parent
-        anchors.rightMargin: 12
-        focus: true
-        clip: true
-        boundsBehavior: Flickable.StopAtBounds
-        model: root.sections
-        // Rows of the same width keep their tiles when recycled, which is
-        // what keeps a long scroll as cheap as the flat grid's.
-        reuseItems: true
-        // As far ahead as the flat grid, so a scroll finds thumbnails ready.
-        cacheBuffer: root.cellHeight * 4
-        header: root.reviewMode ? reviewSummary : null
-        onContentYChanged: root.updateSticky()
-
-        delegate: Item {
+    Component {
+        id: headerDelegate
+        // A section header: its name and size, and Compare for a similar set
+        // or Select for a day or month.
+        Item {
             id: rowItem
             required property int index
-            required property bool header
             required property int first
-            required property int count
             required property string label
             required property string detail
             required property int sectionFirst
             required property int sectionCount
-            required property bool month
+            readonly property bool header: true
             width: list.width
-            height: header ? root.headerHeight : root.cellHeight
+            height: root.headerHeight
 
-            function presented() {
-                if (header) return true
-                for (let i = 0; i < tiles.count; ++i) {
-                    const tile = tiles.itemAt(i)
-                    if (!tile || !tile.presented) return false
-                }
-                return true
-            }
+            function presented() { return true }
 
-            // Section header.
             Item {
                 id: headerRow
-                objectName: rowItem.header ? "sectionHeader" : ""
-                visible: rowItem.header
+                objectName: "sectionHeader"
                 anchors.fill: parent
                 anchors.leftMargin: Math.round(root.cellSpacing / 2)
                 anchors.rightMargin: Math.round(root.cellSpacing / 2)
                 Accessible.role: Accessible.Heading
-                Accessible.name: rowItem.header ? rowItem.label + ", " + rowItem.detail : ""
-                Accessible.ignored: !rowItem.header
+                Accessible.name: rowItem.label + ", " + rowItem.detail
 
                 Rectangle {
                     anchors.left: parent.left
@@ -297,7 +365,7 @@ FocusScope {
                     width: Math.min(implicitWidth, parent.width
                                     - (root.reviewMode ? compareButton.width : selectControl.width) - 16)
                     elide: Text.ElideRight
-                    text: rowItem.header ? rowItem.label : ""
+                    text: rowItem.label
                     font.family: Theme.fontFamily
                     font.pixelSize: 13
                     font.weight: Font.DemiBold
@@ -311,7 +379,7 @@ FocusScope {
                     anchors.rightMargin: 8
                     anchors.verticalCenter: parent.verticalCenter
                     elide: Text.ElideRight
-                    text: rowItem.header ? rowItem.detail : ""
+                    text: rowItem.detail
                     font.family: Theme.fontFamily
                     font.pixelSize: 11
                     color: Theme.mutedText
@@ -321,23 +389,23 @@ FocusScope {
                     id: compareButton
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
-                    visible: rowItem.header && root.reviewMode
+                    visible: root.reviewMode
                     width: visible ? implicitWidth : 0
                     label: "Compare"
-                    accessibleName: "Compare " + (rowItem.label || "")
+                    accessibleName: "Compare " + rowItem.label
                     toolTip: "Compare this set side by side and keep one"
                     onClicked: root.host.compareRequested(
                                    root.setPaths(rowItem.sectionFirst, rowItem.sectionCount))
                 }
 
                 // Selects the whole day or month; deselects it once all of it
-                // is selected.
+                // is selected. Shift+X does the same for the current tile's.
                 Item {
                     id: selectControl
-                    objectName: rowItem.header && !root.reviewMode ? "sectionSelect" : ""
+                    objectName: root.reviewMode ? "" : "sectionSelect"
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
-                    visible: rowItem.header && !root.reviewMode
+                    visible: !root.reviewMode
                     width: visible ? selectBox.width + selectText.implicitWidth + 14 : 0
                     height: 26
                     // 0 none, 1 some, 2 all of the section is selected.
@@ -347,8 +415,10 @@ FocusScope {
                     }
                     Accessible.role: Accessible.CheckBox
                     Accessible.name: "Select " + rowItem.label + ", " + rowItem.detail
+                    Accessible.description: "Shift+X selects the current tile's section"
                     Accessible.checkable: true
                     Accessible.checked: selection === 2
+                    Accessible.checkStateMixed: selection === 1
                     Accessible.onPressAction: root.host.toggleSection(rowItem.sectionFirst, rowItem.sectionCount)
                     Accessible.onToggleAction: root.host.toggleSection(rowItem.sectionFirst, rowItem.sectionCount)
 
@@ -400,21 +470,49 @@ FocusScope {
                     }
                 }
             }
+        }
+    }
 
-            // A row of tiles from one section.
+    Component {
+        id: tileRowDelegate
+        // A row of tiles from one section. The repeater always holds a full
+        // row or more, so a recycled row only changes what its tiles show;
+        // tiles past the end of the row are hidden.
+        Item {
+            id: rowItem
+            required property int index
+            required property int first
+            required property int count
+            required property string label
+            readonly property bool header: false
+            width: list.width
+            height: root.cellHeight
+
+            function presented() {
+                for (let i = 0; i < rowItem.count; ++i) {
+                    const tile = tiles.itemAt(i)
+                    if (!tile || !tile.presented) return false
+                }
+                return true
+            }
+
             Row {
-                visible: !rowItem.header
                 Repeater {
                     id: tiles
-                    model: rowItem.header ? 0 : rowItem.count
+                    model: root.poolColumns
 
                     Item {
                         id: cell
                         required property int index
-                        readonly property int row: rowItem.first + index
-                        readonly property var tile: { void root.revision; return Captures.tileAt(cell.row) }
+                        readonly property bool used: index < rowItem.count
+                        readonly property int row: used ? rowItem.first + index : -1
+                        readonly property var tile: {
+                            void root.revision
+                            return cell.row >= 0 ? Captures.tileAt(cell.row) : ({})
+                        }
                         readonly property bool presented: card.thumbnailPresented
                         readonly property string path: tile.path || ""
+                        visible: used
                         width: root.cellWidth
                         height: root.cellHeight
 
@@ -443,9 +541,8 @@ FocusScope {
                             keyboardCurrent: selected && list.activeFocus
                             checked: !!root.host && root.host.isChecked(cell.path)
                             selectionMode: !!root.host && root.host.checkedCount > 0
-                            dragPaths: !!root.host && root.host.isChecked(cell.path)
-                                       ? root.host.checkedPaths() : [cell.path]
 
+                            onDragStarting: dragPaths = root.host.dragPathsFor(cell.path)
                             onActivated: {
                                 Captures.commitPendingSearch()
                                 root.host.activateTile(cell.path)
@@ -483,6 +580,39 @@ FocusScope {
                     }
                 }
             }
+        }
+    }
+
+    ListView {
+        id: list
+        objectName: "reviewSetsList"
+        anchors.fill: parent
+        anchors.rightMargin: 12
+        focus: true
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        model: root.sections
+        // Rows of the same width keep their tiles when recycled, which is
+        // what keeps a long scroll as cheap as the flat grid's.
+        reuseItems: true
+        // As far ahead as the flat grid, so a scroll finds thumbnails ready.
+        cacheBuffer: root.cellHeight * 4
+        header: root.reviewMode ? reviewSummary : null
+        onContentYChanged: {
+            root.updateSticky()
+            if (!root.scrolling) root.updateExactTop()
+        }
+        onHeightChanged: Qt.callLater(root.updateExactTop)
+        // The list moves its origin as it learns the real height of rows it
+        // had estimated, without moving contentY.
+        onOriginYChanged: Qt.callLater(root.updateExactTop)
+
+        // Headers and tile rows are separate delegates, so each kind is
+        // recycled as its own kind and a tile row keeps its tiles.
+        delegate: DelegateChooser {
+            role: "header"
+            DelegateChoice { roleValue: true; delegate: headerDelegate }
+            DelegateChoice { roleValue: false; delegate: tileRowDelegate }
         }
 
         // The grid's keys, moving through the sections' rows rather than the

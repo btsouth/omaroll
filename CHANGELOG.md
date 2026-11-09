@@ -28,7 +28,8 @@
 - Selection works like a file manager: Shift+click and Shift with the arrows,
   Home, End, Page Up or Page Down extend from the last picked tile, Ctrl+click
   adds or removes one, and dragging from empty space draws a band that selects
-  what it touches (Ctrl+drag adds). Page Up and Page Down move through the grid.
+  what it touches (Ctrl+drag adds). Page Up and Page Down move through the grid,
+  and Shift+X selects the current tile's day.
 - Similar pictures show one section per set, and a Match setting chooses
   Strict, Normal or Loose.
 - Compare shows each picture's dimensions, file size, date and folder, marks

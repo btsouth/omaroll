@@ -40,6 +40,16 @@ FocusScope {
     // was placed, so shrinking a range gives back exactly what it added.
     property string anchorPath: ""
     property var anchorBase: ({})
+    // The rows the last Shift range covered, so the next one only touches
+    // the rows that change.
+    property int rangeLow: -1
+    property int rangeHigh: -1
+    // Checked tiles per section, by the section's first row, for the section
+    // headers, valid for the selection named in `set`. Small changes update
+    // it; anything else leaves it for another selection, and a header counts
+    // its section again when it next asks. Mutated in place, never assigned,
+    // so header bindings do not re-run on it.
+    readonly property var sectionCounts: ({ set: null, counts: ({}) })
 
     signal chosen(int index)
     signal deleteRequested(string path)
@@ -76,14 +86,42 @@ FocusScope {
 
     function isChecked(path) { return checkedSet[path] === true }
 
-    function assignChecked(next) {
+    // What a drag from this tile carries: the whole selection when the tile
+    // is part of it. Asked only as a drag starts.
+    function dragPathsFor(path) { return isChecked(path) ? checkedPaths() : [path] }
+
+    // Replaces the selection. `changed` lists the paths that may differ
+    // from the current one, when the caller knows; then the count and the
+    // per-section counts are updated from those alone.
+    function assignChecked(next, changed) {
+        let count
+        if (changed === undefined || changed.length > 2000) {
+            count = Object.keys(next).length
+        } else {
+            count = checkedCount
+            const cache = sectionCounts
+            const tracked = root.sectioned && cache.set === checkedSet
+            for (const path of changed) {
+                const was = checkedSet[path] === true
+                const now = next[path] === true
+                if (was === now) continue
+                count += now ? 1 : -1
+                if (!tracked) continue
+                const first = sectionModel.sectionFirstOf(Captures.rowOf(path))
+                if (first >= 0 && cache.counts[first] !== undefined) cache.counts[first] += now ? 1 : -1
+            }
+            if (tracked) cache.set = next
+        }
+        // The set first: a header asking in between counts the new set.
         checkedSet = next
-        checkedCount = Object.keys(next).length
+        checkedCount = count
     }
 
     function setAnchor(path) {
         anchorPath = path
         anchorBase = checkedSet
+        rangeLow = -1
+        rangeHigh = -1
     }
 
     function toggleChecked(path) {
@@ -96,13 +134,15 @@ FocusScope {
         } else {
             next[path] = true
         }
-        assignChecked(next)
+        assignChecked(next, [path])
         setAnchor(path)
     }
 
     function clearChecked() {
         assignChecked({})
         anchorBase = ({})
+        rangeLow = -1
+        rangeHigh = -1
     }
 
     function checkAll() {
@@ -112,6 +152,8 @@ FocusScope {
         }
         assignChecked(next)
         anchorBase = checkedSet
+        rangeLow = -1
+        rangeHigh = -1
     }
 
     // The anchor's range to row, on top of what was selected before it.
@@ -121,21 +163,43 @@ FocusScope {
             from = row
             setAnchor(Captures.pathAt(row))
         }
-        const next = Object.assign({}, anchorBase)
         const low = Math.min(from, row)
         const high = Math.max(from, row)
+        // Only rows in one of the old and new ranges can change.
+        const changed = []
+        if (rangeLow < 0) {
+            for (let i = low; i <= high; ++i) changed.push(Captures.pathAt(i))
+        } else {
+            for (let i = Math.min(low, rangeLow); i <= Math.max(high, rangeHigh); ++i) {
+                const inOld = i >= rangeLow && i <= rangeHigh
+                const inNew = i >= low && i <= high
+                if (inOld !== inNew) changed.push(Captures.pathAt(i))
+            }
+        }
+        const next = Object.assign({}, anchorBase)
         for (let i = low; i <= high; ++i) next[Captures.pathAt(i)] = true
-        assignChecked(next)
+        assignChecked(next, changed)
+        rangeLow = low
+        rangeHigh = high
     }
 
     // 0 when none of the rows are selected, 1 for some, 2 for all.
     function sectionCheckState(first, count) {
         if (checkedCount === 0 || count <= 0) return 0
-        let checked = 0
-        for (let i = first; i < first + count; ++i) {
-            if (checkedSet[Captures.pathAt(i)] === true) ++checked
+        const cache = sectionCounts
+        if (cache.set !== checkedSet) {
+            cache.set = checkedSet
+            cache.counts = {}
         }
-        return checked === 0 ? 0 : (checked === count ? 2 : 1)
+        let checked = cache.counts[first]
+        if (checked === undefined) {
+            checked = 0
+            for (let i = first; i < first + count; ++i) {
+                if (checkedSet[Captures.pathAt(i)] === true) ++checked
+            }
+            cache.counts[first] = checked
+        }
+        return checked === 0 ? 0 : (checked >= count ? 2 : 1)
     }
 
     // A section header's control: select the section, or clear it once all
@@ -143,13 +207,23 @@ FocusScope {
     function toggleSection(first, count) {
         const all = sectionCheckState(first, count) === 2
         const next = Object.assign({}, checkedSet)
+        const changed = []
         for (let i = first; i < first + count; ++i) {
             const path = Captures.pathAt(i)
+            changed.push(path)
             if (all) delete next[path]
             else next[path] = true
         }
-        assignChecked(next)
+        assignChecked(next, changed)
         setAnchor(Captures.pathAt(first))
+    }
+
+    // Shift+X: the section holding the current tile.
+    function toggleCurrentSection() {
+        if (!root.sectioned || sectionModel.mode !== 1 || grid.currentIndex < 0) return
+        const section = sectionModel.sectionOfItem(grid.currentIndex)
+        if (section.first === undefined) return
+        toggleSection(section.first, section.count)
     }
 
     // The current tile follows the pointer without scrolling: a tile that
@@ -227,6 +301,9 @@ FocusScope {
             if (direction === "home") grid.positionViewAtBeginning()
             else if (direction === "end") grid.positionViewAtEnd()
             else grid.positionViewAtIndex(target, GridView.Contain)
+        } else {
+            // Also when the key leaves the current tile where it is.
+            reviewSets.revealCurrent()
         }
         if (extending) selectRange(target)
         else setAnchor(Captures.pathAt(target))
@@ -270,7 +347,8 @@ FocusScope {
             return
         case ShortcutCatalog.libraryKeys.X:
             if (current >= 0) {
-                root.toggleChecked(Captures.pathAt(current))
+                if (extending) root.toggleCurrentSection()
+                else root.toggleChecked(Captures.pathAt(current))
                 event.accepted = true
             }
             return
@@ -318,6 +396,20 @@ FocusScope {
     }
 
     function checkedPaths() { return Object.keys(checkedSet) }
+
+    // The scroll position in exact content pixels, whichever view shows. The
+    // sections' list only estimates where unseen rows sit, so jumps and the
+    // probe go through these rather than its contentY.
+    function scrollExtent() {
+        return root.sectioned ? reviewSets.scrollExtent() : Math.max(0, grid.contentHeight - grid.height)
+    }
+    function scrollPosition() {
+        return root.sectioned ? reviewSets.exactTop : grid.contentY - grid.originY
+    }
+    function scrollTo(y) {
+        if (root.sectioned) reviewSets.scrollToExact(y)
+        else grid.contentY = grid.originY + Math.max(0, Math.min(y, root.scrollExtent()))
+    }
 
     function rememberLayout() {
         restoringLayout = true
@@ -380,6 +472,10 @@ FocusScope {
         anchorBase = base
     }
     Connections {
+        target: root.sectionModel
+        function onRebuilt() { root.sectionCounts.set = null }
+    }
+    Connections {
         target: Captures
         function onCountChanged() { root.pruneChecked() }
         function onLayoutAboutToBeChanged() { root.rememberLayout() }
@@ -398,11 +494,13 @@ FocusScope {
     readonly property int available: Math.max(1, width - scrollbarWidth)
     readonly property int columns: Math.max(1, Math.floor(available / targetCellWidth))
     readonly property int cellWidth: Math.floor(available / columns)
+    // Behind the sections the flat grid has no viewport and so no tiles to
+    // misplace; it lays out afresh when it comes back. Reattaching its model
+    // then instead would drop the current tile for a moment, and a choice
+    // made in that moment, such as the copy to keep, would be lost.
     onCellWidthChanged: if (!root.sectioned) relayoutTimer.restart()
-    // Widths that changed while the sections were up still need the flat
-    // grid's rebuild when it comes back.
     onSectionedChanged: {
-        if (!root.sectioned) relayoutTimer.restart()
+        if (!root.sectioned) grid.forceLayout()
         Qt.callLater(root.updateDay)
     }
 
@@ -492,19 +590,6 @@ FocusScope {
                 easing.type: Easing.OutQuad
             }
         }
-        // Ctrl+wheel resizes the tiles; a plain wheel still scrolls, because
-        // the handler leaves anything without Ctrl to the Flickable.
-        WheelHandler {
-            target: null
-            acceptedModifiers: Qt.ControlModifier
-            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-            onWheel: function (event) {
-                const delta = event.angleDelta.y !== 0 ? event.angleDelta.y : event.pixelDelta.y
-                Settings.tileWidth += delta > 0 ? root.tileStep : -root.tileStep
-                event.accepted = true
-            }
-        }
-
         onContentYChanged: root.updateDay()
         onCountChanged: {
             // Removing the selected last row can leave GridView's index one
@@ -583,7 +668,7 @@ FocusScope {
                 checked: root.isChecked(cell.path)
                 selectionMode: root.checkedCount > 0
                 // Dragging a checked tile takes the whole selection with it.
-                dragPaths: root.isChecked(cell.path) ? root.checkedPaths() : [cell.path]
+                onDragStarting: dragPaths = root.dragPathsFor(cell.path)
 
                 onActivated: {
                     Captures.commitPendingSearch()
@@ -724,12 +809,28 @@ FocusScope {
         clip: true
         z: 5
         property bool dragging: false
+        // Ctrl+wheel resizes the tiles over either view; a plain wheel still
+        // scrolls, because the handler leaves anything without Ctrl to the
+        // view underneath.
+        WheelHandler {
+            objectName: "tileSizeWheel"
+            target: null
+            acceptedModifiers: Qt.ControlModifier
+            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+            onWheel: function (event) {
+                const delta = event.angleDelta.y !== 0 ? event.angleDelta.y : event.pixelDelta.y
+                if (delta === 0) return
+                Settings.tileWidth += delta > 0 ? root.tileStep : -root.tileStep
+                event.accepted = true
+            }
+        }
         property real startX: 0
         property real startY: 0
         property real startContentY: 0
         property var startInfo: null
         property var base: ({})
         property string lastKey: ""
+        property var lastRows: null
         readonly property real viewStartY: startContentY - root.activeFlickable().contentY
 
         onPressed: function (mouse) {
@@ -744,6 +845,7 @@ FocusScope {
             startInfo = root.activeView().pointInfo(mouse.x, mouse.y)
             base = (mouse.modifiers & Qt.ControlModifier) ? root.checkedSet : ({})
             lastKey = ""
+            lastRows = null
             dragging = false
             root.forceActiveFocus()
         }
@@ -763,8 +865,17 @@ FocusScope {
             if (key === lastKey) return
             lastKey = key
             const next = Object.assign({}, base)
-            for (const row of rows) next[Captures.pathAt(row)] = true
-            root.assignChecked(next)
+            const paths = rows.map(function (row) { return Captures.pathAt(row) })
+            for (const path of paths) next[path] = true
+            // After the first step only tiles entering or leaving the band
+            // change.
+            let changed = undefined
+            if (lastRows !== null) {
+                changed = paths.slice()
+                for (const row of lastRows) changed.push(Captures.pathAt(row))
+            }
+            lastRows = rows
+            root.assignChecked(next, changed)
         }
 
         function finish() {

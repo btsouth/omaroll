@@ -76,6 +76,7 @@ inline QVariantList rows() {
   {"context": "library", "id": "details", "keys": ["Return", "Enter"], "label": "Open details", "group": "Navigation", "flag": "", "tokens": ["Return", "Enter"]},
   {"context": "library", "id": "primary", "keys": ["Space"], "label": "Primary action", "group": "Navigation", "flag": "", "tokens": ["Space"]},
   {"context": "library", "id": "select", "keys": ["X"], "label": "Select tile", "group": "Organization", "flag": "", "tokens": ["X"]},
+  {"context": "library", "id": "select-section", "keys": ["Shift+X"], "label": "Select the day or month of the current tile", "group": "Organization", "flag": "", "tokens": ["X"]},
   {"context": "library", "id": "left", "keys": ["Left", "H"], "label": "Move left", "group": "Navigation", "flag": "", "tokens": ["Left", "H"]},
   {"context": "library", "id": "down", "keys": ["Down", "J"], "label": "Move down", "group": "Navigation", "flag": "", "tokens": ["Down", "J"]},
   {"context": "library", "id": "up", "keys": ["Up", "K"], "label": "Move up", "group": "Navigation", "flag": "", "tokens": ["Up", "K"]},
