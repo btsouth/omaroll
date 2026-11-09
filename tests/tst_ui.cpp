@@ -322,6 +322,10 @@ private slots:
     m_matte = new MatteComposer(this);
     m_imageEditor = new ImageEditor(this);
     m_textIndex = new OcrIndex(m_captures, this);
+    connect(m_textIndex, &OcrIndex::textReady, m_similarities, &SimilarityIndex::setText);
+    m_similarities->setStrictness(m_settings->similarStrictness());
+    connect(m_settings, &AppSettings::similarStrictnessChanged, m_similarities,
+            [this] { m_similarities->setStrictness(m_settings->similarStrictness()); });
     m_qr = new QrDetector(m_captures, this);
     m_subtitles = new SubtitleIndex(this);
     connect(m_actions, &ActionLauncher::outputPending, m_captures, &CaptureModel::holdPath);
@@ -4410,6 +4414,105 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_Z, Qt::ControlModifier);
     QTRY_VERIFY(QFileInfo::exists(copy));
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(copy) >= 0, 10000);
+  }
+
+  // Similar sets show as sections; Compare lists the facts for choosing a
+  // keeper and marks the largest; keeping one moves the rest to Trash as a
+  // single step that one Undo puts back.
+  void similarSetsShowAsSectionsAndKeepOneIsOneUndoStep() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QImage scene(960, 640, QImage::Format_RGB32);
+    {
+      QPainter painter(&scene);
+      QLinearGradient gradient(0, 0, scene.width(), scene.height());
+      gradient.setColorAt(0, QColor(30, 90, 160));
+      gradient.setColorAt(1, QColor(240, 170, 60));
+      painter.fillRect(scene.rect(), gradient);
+      painter.setBrush(QColor(250, 240, 220));
+      painter.setPen(Qt::NoPen);
+      painter.drawEllipse(QPoint(300, 260), 140, 140);
+      painter.drawEllipse(QPoint(700, 420), 90, 90);
+    }
+    const QString original = dir.filePath(QStringLiteral("keep-scene.png"));
+    const QString small = dir.filePath(QStringLiteral("keep-scene-small.png"));
+    const QString large = dir.filePath(QStringLiteral("keep-scene-large.jpg"));
+    QVERIFY(scene.save(original));
+    QVERIFY(scene.scaled(480, 320, Qt::IgnoreAspectRatio, Qt::SmoothTransformation).save(small));
+    QVERIFY(scene.scaled(1440, 960, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                .save(large, "JPG", 80));
+    for (const QString& path : {original, small, large}) m_disposablePaths.append(path);
+    m_captures->addExtraFiles({original, small, large});
+    const auto cleanup = qScopeGuard([&] {
+      invoke("dismissTopLayer");
+      item("compareSheet")->setProperty("paths", QStringList());
+      m_library->setSimilarOnly(false);
+      dir.remove();
+      m_captures->refresh();
+      QTRY_VERIFY_WITH_TIMEOUT(!m_captures->scanning(), 15000);
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(original) >= 0 && m_library->rowOf(small) >= 0 &&
+                                 m_library->rowOf(large) >= 0,
+                             10000);
+
+    m_library->setSimilarOnly(true);
+    QTRY_COMPARE_WITH_TIMEOUT(m_similarities->groupPaths(original),
+                              QStringList({large, small, original}), 15000);
+    QQuickItem* sections = item("reviewSets");
+    QTRY_VERIFY(sections->isVisible());
+    QVERIFY(!m_library->reviewSections().isEmpty());
+    const auto headers = [&] {
+      QStringList labels;
+      QVariant value = sections->property("rows");
+      if (value.metaType() == QMetaType::fromType<QJSValue>()) value = value.value<QJSValue>().toVariant();
+      const QVariantList rows = value.toList();
+      for (const QVariant& row : rows) {
+        const QVariantMap map = row.toMap();
+        if (map.value(QStringLiteral("header")).toBool()) {
+          labels.append(map.value(QStringLiteral("label")).toString() + QLatin1Char(':') +
+                        QString::number(map.value(QStringLiteral("count")).toInt()));
+        }
+      }
+      return labels;
+    };
+    // The test's set is one section of three among any the demo library has.
+    QTRY_VERIFY2(headers().filter(QRegularExpression(QStringLiteral("^Similar set \\d+:3$"))).size() >= 1,
+                 qPrintable(headers().join(u' ')));
+    QCOMPARE(item("library")->property("currentDayLabel").toString(), QString());
+
+    QQuickItem* compare = item("compareSheet");
+    QVERIFY(QMetaObject::invokeMethod(compare, "open",
+                                    Q_ARG(QVariant, QVariant(QStringList{original, small, large}))));
+    QTRY_VERIFY(compare->isVisible());
+    QCOMPARE(compare->property("largestPath").toString(), large);
+    const auto factLine = [&](const QString& path) {
+      QVariant line;
+      QMetaObject::invokeMethod(compare, "factLine", Q_RETURN_ARG(QVariant, line),
+                                Q_ARG(QVariant, path));
+      return line.toString();
+    };
+    QVERIFY2(factLine(large).startsWith(QStringLiteral("1440 × 960  ·  ")), qPrintable(factLine(large)));
+    QVERIFY2(factLine(small).startsWith(QStringLiteral("480 × 320  ·  ")), qPrintable(factLine(small)));
+    QCOMPARE(compare->property("facts").value<QJSValue>().property(small).property("folder").toString(),
+             dir.path());
+
+    QVERIFY(QMetaObject::invokeMethod(compare, "requestKeep", Q_ARG(QVariant, large)));
+    QQuickItem* confirm = item("compareKeepConfirm");
+    QTRY_VERIFY(confirm->isVisible());
+    QVERIFY(confirm->property("title").toString().contains(QStringLiteral("the other 2")));
+    // The prompt's targets were captured; files stay until it is accepted.
+    QVERIFY(QFileInfo::exists(original) && QFileInfo::exists(small));
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!confirm->isVisible());
+    QTRY_VERIFY(!compare->isVisible());
+    QTRY_VERIFY(!QFileInfo::exists(original) && !QFileInfo::exists(small));
+    QVERIFY(QFileInfo::exists(large));
+    QQuickItem* undo = item("footerUndoButton");
+    QTRY_VERIFY(undo->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Z, Qt::ControlModifier);
+    QTRY_VERIFY(QFileInfo::exists(original) && QFileInfo::exists(small));
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(original) >= 0 && m_library->rowOf(small) >= 0,
+                             10000);
   }
 
   void permanentDeleteUsesCapturedSelectionAndConfirmsInTheDetailViewer() {

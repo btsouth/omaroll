@@ -54,6 +54,8 @@ public:
   Q_INVOKABLE QVariantMap trashCaptured(const QVariantMap& target);
   Q_INVOKABLE QVariantMap renameCapturedFile(const QVariantMap& target, const QString& baseName);
   Q_INVOKABLE void moveDuplicateCopiesToTrash(const QVariantMap& keep, const QVariantList& copies);
+  // True while a captured target is still the same file it was when captured.
+  Q_INVOKABLE bool capturedStillMatches(const QVariantMap& target) const;
   // Explicit permanent deletion removes only this file or symlink, never a directory tree.
   Q_INVOKABLE bool deletePermanently(const QString& path);
   // Bind confirmation to the parent directory and entry, preserving a final symlink.

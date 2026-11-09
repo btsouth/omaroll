@@ -2,6 +2,7 @@
 
 #include "library/CaptureModel.h"
 #include "library/CaptureRoles.h"
+#include "library/HashCache.h"
 
 #include <QCryptographicHash>
 #include <QFile>
@@ -17,6 +18,9 @@ namespace {
 
 constexpr qint64 kHashChunkBytes = 1024LL * 1024;
 constexpr int kProgressBatchSize = 32;
+constexpr quint32 kCacheMagic = 0x4f444931; // ODI1
+constexpr quint16 kCacheVersion = 1;
+constexpr qint64 kMaximumCacheBytes = 16LL * 1024 * 1024;
 
 } // namespace
 
@@ -28,10 +32,12 @@ DuplicateIndex::DuplicateIndex(CaptureModel* model, QObject* parent)
 
   connect(&m_watcher, &QFutureWatcher<Result>::finished, this, [this] {
     const Result result = m_watcher.future().takeResult();
-    const bool current =
-        result.generation == m_generation && m_active && !m_restartQueued && !m_dirty;
+    const bool current = result.generation == m_generation && m_active && !m_restartQueued &&
+                         !m_dirty && result.complete;
     if (current) {
       m_cache = result.cache;
+      m_diskLoaded = true;
+      m_lastHashed = result.hashed;
       if (m_groups != result.groups) {
         m_groups = result.groups;
         emit groupsChanged();
@@ -64,6 +70,8 @@ DuplicateIndex::~DuplicateIndex() {
   requestStop();
   m_watcher.waitForFinished();
 }
+
+QString DuplicateIndex::cachePath() { return HashCache::path(QStringLiteral("duplicates.index")); }
 
 int DuplicateIndex::groupCount() const {
   QSet<QString> unique;
@@ -131,8 +139,10 @@ void DuplicateIndex::setActive(bool active) {
 
 void DuplicateIndex::refresh() {
   // An explicit recheck must read content again even if a caller preserved a
-  // file's size and timestamp while rewriting it.
+  // file's size and timestamp while rewriting it, so the disk cache is
+  // skipped too.
   m_cache.clear();
+  m_diskLoaded = true;
   markDirty();
 }
 
@@ -217,7 +227,6 @@ void DuplicateIndex::start() {
   ++m_generation;
 
   if (work.isEmpty()) {
-    m_cache.clear();
     if (!m_groups.isEmpty()) {
       m_groups.clear();
       emit groupsChanged();
@@ -231,14 +240,27 @@ void DuplicateIndex::start() {
   m_cancel = std::make_shared<std::atomic_bool>(false);
   const auto cancel = m_cancel;
   const auto cache = m_cache;
+  const bool loadDisk = !m_diskLoaded;
   const quint64 generation = m_generation;
   const QPointer<DuplicateIndex> guard(this);
   setProgress(0, work.size());
   setScanning(true);
 
-  m_watcher.setFuture(QtConcurrent::run([work, cache, cancel, generation, guard] {
+  m_watcher.setFuture(QtConcurrent::run([work, cache, loadDisk, cancel, generation, guard] {
     Result result;
     result.generation = generation;
+    result.cache = cache;
+    qsizetype loaded = 0;
+    if (loadDisk) {
+      const HashCache::Entries disk = HashCache::load(cachePath(), kCacheMagic, kCacheVersion,
+                                                      kMaximumCacheBytes, cancel.get());
+      loaded = disk.size();
+      for (auto it = disk.cbegin(); it != disk.cend(); ++it) {
+        if (!result.cache.contains(it.key()) && it->data.size() == 32) {
+          result.cache.insert(it.key(), {it->bytes, it->modified, it->data});
+        }
+      }
+    }
     QHash<QString, QList<QString>> contentGroups;
     int completed = 0;
 
@@ -248,17 +270,20 @@ void DuplicateIndex::start() {
       }
 
       QByteArray digest;
-      const auto cached = cache.constFind(candidate.path);
-      if (cached != cache.cend() && cached->bytes == candidate.bytes &&
+      const auto cached = result.cache.constFind(candidate.path);
+      if (cached != result.cache.cend() && cached->bytes == candidate.bytes &&
           cached->modified == candidate.modified) {
         digest = cached->digest;
       } else {
         digest = hashFile(candidate, cancel.get());
+        ++result.hashed;
       }
       if (cancel->load()) {
         return result;
       }
-      if (!digest.isEmpty()) {
+      if (digest.isEmpty()) {
+        result.cache.remove(candidate.path);
+      } else {
         result.cache.insert(candidate.path, {candidate.bytes, candidate.modified, digest});
         const QString key = QString::number(candidate.bytes) + QLatin1Char(':') +
                             QString::fromLatin1(digest.toHex());
@@ -286,6 +311,18 @@ void DuplicateIndex::start() {
         result.groups.insert(path, it.key());
       }
     }
+    if (result.hashed > 0 || (loadDisk && loaded != result.cache.size())) {
+      HashCache::Entries entries;
+      entries.reserve(result.cache.size());
+      for (auto it = result.cache.cbegin(); it != result.cache.cend(); ++it) {
+        entries.insert(it.key(), {it->bytes, it->modified, it->digest});
+      }
+      QList<QString> live;
+      live.reserve(work.size());
+      for (const Candidate& candidate : work) live.append(candidate.path);
+      HashCache::save(cachePath(), kCacheMagic, kCacheVersion, entries, live, kMaximumCacheBytes);
+    }
+    result.complete = true;
     return result;
   }));
 }

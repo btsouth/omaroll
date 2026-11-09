@@ -620,6 +620,10 @@ QVariantMap ActionLauncher::renameCapturedFile(const QVariantMap& target, const 
   return result;
 }
 
+bool ActionLauncher::capturedStillMatches(const QVariantMap& target) const {
+  return !target.value(u"path"_s).toString().isEmpty() && capturedFileMatches(target);
+}
+
 void ActionLauncher::moveDuplicateCopiesToTrash(const QVariantMap& keep, const QVariantList& copies) {
   // Re-read the bytes on a worker. Cached duplicate groups only nominate
   // candidates; they never authorize moving a file.

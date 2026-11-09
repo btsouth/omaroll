@@ -47,6 +47,9 @@ constexpr auto kRecursionDepth = "sources/recursionDepth";
 constexpr auto kLibraryFolders = "sources/libraryFolders";
 constexpr auto kPinnedFolders = "sources/pinnedFolders";
 constexpr auto kPairRawJpeg = "library/pairRawJpeg";
+constexpr auto kSimilarStrictness = "library/similarStrictness";
+constexpr auto kBackgroundTextIndex = "search/backgroundTextIndex";
+constexpr auto kTextIndexScreenshotsOnly = "search/textIndexScreenshotsOnly";
 constexpr auto kImagePrimaryAction = "actions/imagePrimary";
 constexpr auto kVideoPrimaryAction = "actions/videoPrimary";
 constexpr auto kThumbnailCacheMb = "cache/maximumMb";
@@ -252,6 +255,9 @@ AppSettings::AppSettings(QObject* parent)
     }
   }
   m_pairRawJpeg = m_settings.value(kPairRawJpeg, true).toBool();
+  m_similarStrictness = qBound(0, m_settings.value(kSimilarStrictness, 1).toInt(), 2);
+  m_backgroundTextIndex = m_settings.value(kBackgroundTextIndex, false).toBool();
+  m_textIndexScreenshotsOnly = m_settings.value(kTextIndexScreenshotsOnly, false).toBool();
   const QString imageAction =
       m_settings.value(kImagePrimaryAction, existingProfile ? QStringLiteral("matte")
                                                           : QStringLiteral("preview")).toString();
@@ -498,6 +504,34 @@ void AppSettings::setPairRawJpeg(bool value) {
   m_pairRawJpeg = value;
   setValue(kPairRawJpeg, value);
   emit pairRawJpegChanged();
+}
+
+void AppSettings::setSimilarStrictness(int value) {
+  value = qBound(0, value, 2);
+  if (m_similarStrictness == value) {
+    return;
+  }
+  m_similarStrictness = value;
+  setValue(kSimilarStrictness, value);
+  emit similarStrictnessChanged();
+}
+
+void AppSettings::setBackgroundTextIndex(bool value) {
+  if (m_backgroundTextIndex == value) {
+    return;
+  }
+  m_backgroundTextIndex = value;
+  setValue(kBackgroundTextIndex, value);
+  emit backgroundTextIndexChanged();
+}
+
+void AppSettings::setTextIndexScreenshotsOnly(bool value) {
+  if (m_textIndexScreenshotsOnly == value) {
+    return;
+  }
+  m_textIndexScreenshotsOnly = value;
+  setValue(kTextIndexScreenshotsOnly, value);
+  emit textIndexScreenshotsOnlyChanged();
 }
 
 void AppSettings::setImagePrimaryAction(const QString& action) {
