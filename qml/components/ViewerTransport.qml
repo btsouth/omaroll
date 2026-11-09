@@ -189,6 +189,7 @@ Rectangle {
             storyboard: previewFrames
             time: at / Math.max(1, scrub.width) * root.duration
             label: root.clock(time)
+            frameLabel: frameTime >= 0 ? root.clock(frameTime) : ""
             maximumFrameWidth: Math.min(192, root.width - 14)
         }
 

@@ -72,6 +72,15 @@ ApplicationWindow {
     readonly property bool videoUnplayable: Session.isVideo && root.videoError !== ""
         && !(!!root.presentation && root.presentation.ready && !!root.player
              && root.player.playbackState !== MediaPlayer.StoppedState)
+    // Something of this file is on the stage, which the header's dark scrim
+    // and light text are drawn for. Over an empty stage the header takes the
+    // theme's colours instead.
+    // A poster still loading counts, so the header doesn't flash on the way
+    // to a video.
+    readonly property bool stageShowsMedia: Session.isVideo
+        ? videoOutput.visible || (videoPoster.visible && (videoPoster.status === Image.Ready
+                                                          || videoPoster.status === Image.Loading))
+        : Session.path !== "" && !root.imageError
     readonly property string playbackError: Session.isVideo ? (root.videoUnplayable ? root.videoError : "")
         : root.imageError ? (Session.isAnimated ? "Could not display this animation"
                              : Session.pictureError !== "" ? Session.pictureError
@@ -119,7 +128,7 @@ ApplicationWindow {
                                            : root.viewRotation !== 0 ? "rotated" : "flipped"
     // Short enough for the menu's width.
     readonly property string viewCopyLabel: root.viewRotation !== 0 ? "Save rotated copy"
-                                                                     : "Save flipped copy"
+        : root.viewTransformed ? "Save flipped copy" : "Rotate or flip to save a copy"
     // What the view shows can be saved as a copy: a still the editor writes,
     // so not a camera raw or an animation, which would lose its frames.
     readonly property bool canSaveViewCopy: root.viewTransformed && !Session.isVideo
@@ -677,13 +686,15 @@ ApplicationWindow {
     onStillReadyChanged: root.armSlideshow()
 
     function playVideo() {
-        if (!root.player) return
+        // A file that failed stays stopped; mpv (P) may still play it.
+        if (!root.player || root.videoUnplayable) return
         if (root.resumeAvailable) root.resumeVideo()
         else root.player.play()
     }
 
     function togglePlayback() {
         if (Session.isVideo && root.player) {
+            if (root.videoUnplayable) return
             if (root.resumeAvailable) {
                 root.resumeVideo()
             } else if (root.playing) {
@@ -1643,7 +1654,8 @@ ApplicationWindow {
             id: videoPoster
             objectName: "viewerVideoPoster"
             anchors.fill: parent
-            visible: Session.isVideo && !(root.presentation && root.presentation.ready)
+            visible: Session.isVideo && !root.videoUnplayable
+                     && !(root.presentation && root.presentation.ready)
             fillMode: Image.PreserveAspectFit
             asynchronous: true
             smooth: true
@@ -1728,10 +1740,23 @@ ApplicationWindow {
                     // A clip the backend cannot decode says so rather than
                     // sitting behind a dead play button. A slideshow moves on.
                     onErrorOccurred: function (error, errorString) {
-                        root.videoError = errorString !== "" ? errorString
-                                                             : "Could not play this file"
+                        fail(errorString !== "" ? errorString : "Could not play this file")
+                    }
+                    function fail(message) {
+                        root.videoError = message
                         if (root.slideshowRunning) {
                             slideshowTimer.restart()
+                        }
+                    }
+                    // A file with no stream, or no frame while it plays,
+                    // raises no error, and its clock would run on as if
+                    // playing. It stops, so MPRIS says so too.
+                    property Connections presentationFailure: Connections {
+                        target: root.presentation
+                        function onFailureChanged() {
+                            if (root.presentation.failure === "") return
+                            mediaPlayer.stop()
+                            mediaPlayer.fail(root.presentation.failure)
                         }
                     }
                     onPositionChanged: {
@@ -1803,8 +1828,11 @@ ApplicationWindow {
         Item {
             id: videoOutput
             anchors.fill: parent
-            visible: Session.isVideo && root.presentation && root.presentation.hasFrame
-                     && (root.presentation.ready || videoPoster.status !== Image.Ready)
+            // The last file's frame is kept only while this file's poster
+            // loads, and never under an error: it is not this file's picture.
+            visible: Session.isVideo && !root.videoUnplayable && !!root.presentation
+                     && root.presentation.hasFrame
+                     && (root.presentation.ready || videoPoster.status === Image.Loading)
             readonly property QtObject videoSink: videoSurface.item ? videoSurface.item.videoSink : null
 
             Loader {
@@ -2035,7 +2063,9 @@ ApplicationWindow {
 
                     PillButton {
                         objectName: "viewerErrorPlay"
-                        visible: Session.isVideo && Registry.available("play")
+                        // Not for a file that is no video at all, or is gone.
+                        visible: Session.isVideo && Registry.available("play") && errorActions.present
+                                 && root.errorCause !== "not-video" && root.errorCause !== "empty"
                         label: "Open in mpv"
                         onClicked: Registry.run("play", Session.path)
                     }
@@ -2128,6 +2158,7 @@ ApplicationWindow {
             Rectangle {
                 objectName: "viewerHeaderScrim"
                 anchors.fill: parent
+                visible: root.stageShowsMedia
                 gradient: Gradient {
                     GradientStop { position: 0.0; color: Osd.scrimTop }
                     GradientStop { position: 0.55; color: Osd.scrimMiddle }
@@ -2162,7 +2193,7 @@ ApplicationWindow {
                     font.family: Theme.fontFamily
                     font.pixelSize: 13
                     font.weight: Font.DemiBold
-                    color: Osd.brightForeground
+                    color: root.stageShowsMedia ? Osd.brightForeground : Theme.brightForeground
                     Accessible.role: Accessible.StaticText
                     Accessible.name: text
                     Accessible.description: "Drag the name, or Ctrl+drag the picture, to copy the file into another app"
@@ -2190,7 +2221,7 @@ ApplicationWindow {
                     text: (Session.index + 1) + " / " + Session.count
                     font.family: Theme.fontFamily
                     font.pixelSize: 11
-                    color: Osd.foreground
+                    color: root.stageShowsMedia ? Osd.foreground : Theme.foreground
                 }
             }
 
@@ -2204,7 +2235,7 @@ ApplicationWindow {
 
                 IconButton {
                     objectName: "viewerInfoButton"
-                    osd: true
+                    osd: root.stageShowsMedia
                     icon: "info"
                     toolTip: root.infoOpen ? "Hide details" : "Details"
                     shortcut: root.viewerShortcuts.info
@@ -2213,7 +2244,7 @@ ApplicationWindow {
                 }
                 IconButton {
                     objectName: "viewerLibraryButton"
-                    osd: true
+                    osd: root.stageShowsMedia
                     icon: "grid"
                     toolTip: "Open in library"
                     shortcut: root.viewerShortcuts.library
@@ -2222,7 +2253,7 @@ ApplicationWindow {
                 IconButton {
                     id: moreButton
                     objectName: "viewerMoreButton"
-                    osd: true
+                    osd: root.stageShowsMedia
                     icon: "more"
                     toolTip: "More"
                     active: actionMenu.visible

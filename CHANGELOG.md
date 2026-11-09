@@ -176,6 +176,21 @@
 - An invalid `--start` time is shown as a desktop notice too, not only on stderr.
 - The clipboard helper reaps each paste writer as it finishes instead of
   leaving a zombie until the next paste.
+- A video that won't open no longer shows the previous video's last frame
+  under its error, and the dark band behind the file name is only drawn over a
+  picture, not over an empty stage. The same goes for the library preview.
+- A video file with no stream FFmpeg can read, or one that plays to its end,
+  or stalls for ten seconds, without a picture, now fails with the diagnosis
+  instead of pretending to play. The player stops, stays stopped when asked to
+  play, and MPRIS says Stopped. Video that starts late after its sound is
+  still waited for.
+- RGB video with a padding byte (`bgr0`, `rgb0`, FFV1's default for RGB)
+  played see-through, which looked white or washed out on the desktop.
+- The error for a text file named like a video reads "not an MPEG-4 video" and
+  no longer offers Open in mpv. The greyed save button says "Rotate or flip to
+  save a copy" instead of "Save flipped copy".
+- The seek-bar preview marks a keyframe from another second with its own time,
+  so the picture isn't taken for the hovered time.
 - Restoring the automatic backup no longer loses the day's organization. Today's
   backup is taken again a few minutes after the last change, within 15 minutes
   during steady editing, and when Omaroll quits, instead of only at the day's

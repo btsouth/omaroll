@@ -16,6 +16,7 @@
 #include "app/HeadlessAudio.h"
 #include "app/OpenRequest.h"
 #include "app/VideoPlayback.h"
+#include "app/VideoPresentation.h"
 #include "edit/ImageEditor.h"
 #include "edit/JpegTransform.h"
 #include "library/MediaInspector.h"
@@ -64,6 +65,7 @@
 #include <QMediaPlayer>
 #include <QPointingDevice>
 #include <QProcess>
+#include <QAbstractVideoBuffer>
 #include <QVideoFrame>
 #include <QVideoSink>
 #include <QQmlComponent>
@@ -80,6 +82,7 @@
 #include <QSemaphore>
 #include <QSettings>
 #include <QSignalSpy>
+#include <QtEndian>
 #include <QImage>
 #include <QStandardPaths>
 #include <QStyleHints>
@@ -116,6 +119,45 @@ static QString makeStoryboardVideo(const QString& path) {
              ? path
              : QString();
 }
+
+// A copy of an MP4 with its moov box overwritten: FFmpeg opens it and finds
+// no stream at all, and Qt's player raises no error for it.
+static bool writeStreamlessVideo(const QString& source, const QString& path) {
+  QFile in(source);
+  if (!in.open(QIODevice::ReadOnly)) return false;
+  QByteArray bytes = in.readAll();
+  const qsizetype at = bytes.indexOf("moov");
+  if (at < 4) return false;
+  const quint32 size = qFromBigEndian<quint32>(bytes.constData() + at - 4);
+  if (size < 8 || at - 4 + qsizetype(size) > bytes.size()) return false;
+  for (qsizetype i = at + 4; i < at - 4 + qsizetype(size); ++i) bytes[i] = '\x5a';
+  QFile out(path);
+  return out.open(QIODevice::WriteOnly) && out.write(bytes) == bytes.size();
+}
+
+// A video buffer that maps a fresh copy every time, as a backend may: what is
+// written through a mapping is lost.
+class CopyMappedBuffer final : public QAbstractVideoBuffer {
+public:
+  CopyMappedBuffer(const QVideoFrameFormat& format, QByteArray bytes, int stride)
+      : m_format(format), m_bytes(std::move(bytes)), m_stride(stride) {}
+  MapData map(QVideoFrame::MapMode) override {
+    m_mapped = QByteArray(m_bytes.constData(), m_bytes.size());
+    MapData data;
+    data.planeCount = 1;
+    data.bytesPerLine[0] = m_stride;
+    data.data[0] = reinterpret_cast<uchar*>(m_mapped.data());
+    data.dataSize[0] = int(m_mapped.size());
+    return data;
+  }
+  QVideoFrameFormat format() const override { return m_format; }
+
+private:
+  QVideoFrameFormat m_format;
+  QByteArray m_bytes;
+  QByteArray m_mapped;
+  int m_stride = 0;
+};
 
 class StartupPosterProvider final : public QQuickImageProvider {
 public:
@@ -1206,6 +1248,8 @@ private slots:
     }
     QVERIFY2(player, "The player waited for the poster to load");
     QCOMPARE(poster->property("status").toInt(), 2); // Image.Loading
+    // A poster on its way counts as media: the header keeps its scrim.
+    QVERIFY(root->property("stageShowsMedia").toBool());
     StartupPosterProvider::held().release();
     QTRY_COMPARE_WITH_TIMEOUT(poster->property("status").toInt(), 1, 5000);
     QTRY_COMPARE_WITH_TIMEOUT(player->playbackState(), QMediaPlayer::PlayingState, 5000);
@@ -1527,9 +1571,12 @@ private slots:
     QVERIFY(!prop("viewFlipHorizontal").toBool());
     QVERIFY(!prop("viewFlipVertical").toBool());
     QVERIFY(!menuIds(menu).contains(QStringLiteral("save-view-copy")));
-    // Kept in place on the bar, greyed until there is a turn or flip to save.
+    // Kept in place on the bar, greyed until there is a turn or flip to save,
+    // and named for what it waits on rather than a flip that is not there.
     QVERIFY(item(QStringLiteral("viewerSaveCopy"))->isVisible());
     QVERIFY(!item(QStringLiteral("viewerSaveCopy"))->isEnabled());
+    QCOMPARE(item(QStringLiteral("viewerSaveCopy"))->property("toolTip").toString(),
+             QStringLiteral("Rotate or flip to save a copy"));
     QCOMPARE(digest(first), before);
     QCOMPARE(QDir(folder).entryList(QDir::Files).size(), 2);
 
@@ -2557,6 +2604,7 @@ private slots:
     QCOMPARE(text.cause, QStringLiteral("not-video"));
     QVERIFY2(text.title == QStringLiteral("This file isn't a video"), qPrintable(text.title));
     QVERIFY2(text.detail.contains(QStringLiteral("text")), qPrintable(text.detail));
+    QVERIFY2(text.detail.endsWith(QStringLiteral("not an MPEG-4 video.")), qPrintable(text.detail));
     // A Windows Media file reads as an ASF container, application/vnd.ms-asf:
     // a damaged one is still a video.
     const QByteArray asfHeader = QByteArray::fromHex("3026b2758e66cf11a6d900aa0062ce6c") + QByteArray(512, '\0');
@@ -2588,6 +2636,11 @@ private slots:
     QVERIFY2(recovered.detail.contains(QStringLiteral("error while decoding")), qPrintable(recovered.detail));
     QCOMPARE(videoFailure(video, {}, fakeFfmpeg(QStringLiteral("short"), "[mov @ 0x55] Packet corrupt; End of file", 0)).cause,
              QStringLiteral("truncated"));
+    // Opened, with nothing in it to decode.
+    const auto streamless = videoFailure(video, QStringLiteral("No video or audio stream could be read"),
+        fakeFfmpeg(QStringLiteral("streamless"), "[out#0/null @ 0x55] Output file does not contain any stream", 234));
+    QCOMPARE(streamless.cause, QStringLiteral("damaged"));
+    QVERIFY2(streamless.detail.startsWith(QStringLiteral("No video can be found")), qPrintable(streamless.detail));
     // Without ffmpeg the player's words decide.
     QCOMPARE(videoFailure(video, QStringLiteral("No decoder for this codec"), none).cause,
              QStringLiteral("unsupported"));
@@ -2598,6 +2651,11 @@ private slots:
     QVERIFY2(real.cause == QStringLiteral("damaged") || real.cause == QStringLiteral("truncated"),
              qPrintable(real.cause + QStringLiteral(": ") + real.detail));
     QCOMPARE(videoFailure(video, {}).cause, QStringLiteral("unknown"));
+    const QString streamlessFile = dir.filePath(QStringLiteral("streamless.mp4"));
+    QVERIFY(writeStreamlessVideo(media(QStringLiteral("clip.mp4")), streamlessFile));
+    const auto realStreamless = videoFailure(streamlessFile, QStringLiteral("No video or audio stream could be read"));
+    QCOMPARE(realStreamless.cause, QStringLiteral("damaged"));
+    QVERIFY2(realStreamless.detail.startsWith(QStringLiteral("No video can be found")), qPrintable(realStreamless.detail));
   }
 
   // A video that will not open says why like a picture does, hides the seek
@@ -2677,6 +2735,255 @@ private slots:
     QTRY_VERIFY(prop("videoUnplayable").toBool());
     QVERIFY(item(QStringLiteral("viewerErrorState"))->isVisible());
     QVERIFY(!item(QStringLiteral("viewerTransport"))->isVisible());
+  }
+
+  // Stepping from a playing video to one that will not open shows the error
+  // over an empty stage: the last file's frame and the header's dark scrim
+  // go, and the header takes the theme's colours.
+  void aBrokenVideoAfterAPlayingOneShowsNoOldFrame() {
+    const QString folder = m_scratch.filePath(QStringLiteral("stale-frame"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString playing = folder + QStringLiteral("/a tracks.mkv");
+    QVERIFY(QFile::exists(playing) || QFile::copy(QFINDTESTDATA("fixtures/viewer/tracks.mkv"), playing));
+    const QString broken = folder + QStringLiteral("/b notvideo.mp4");
+    {
+      QFile file(broken);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("Just some notes, not a video.\n");
+    }
+    open({playing, broken});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QObject* presentation = m_window->property("presentation").value<QObject*>();
+    QVERIFY(presentation);
+    QTRY_VERIFY_WITH_TIMEOUT(presentation->property("ready").toBool(), 10000);
+    m_window->setProperty("chromePinned", true);
+    const auto unpin = qScopeGuard([this] { m_window->setProperty("chromePinned", false); });
+    QQuickItem* output = item(QStringLiteral("viewerVideoOutput"));
+    QQuickItem* scrim = item(QStringLiteral("viewerHeaderScrim"));
+    QTRY_VERIFY(output->isVisible());
+    QVERIFY(prop("stageShowsMedia").toBool());
+    QVERIFY(scrim->isVisible());
+    if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) QTRY_VERIFY_WITH_TIMEOUT(renderedVideoHasColor(), 5000);
+
+    QTest::keyClick(m_window, Qt::Key_PageDown);
+    QTRY_COMPARE(m_session->path(), broken);
+    QTRY_VERIFY_WITH_TIMEOUT(prop("videoUnplayable").toBool(), 15000);
+    QTRY_COMPARE(prop("errorCause").toString(), QStringLiteral("not-video"));
+    QVERIFY(item(QStringLiteral("viewerErrorState"))->isVisible());
+    // The decoder's last frame may still be held, but nothing shows it.
+    QVERIFY(!output->isVisible());
+    QVERIFY(!item(QStringLiteral("viewerVideoPoster"))->isVisible());
+    QVERIFY(!prop("stageShowsMedia").toBool());
+    QVERIFY(!scrim->isVisible());
+    QCOMPARE(item(QStringLiteral("viewerTitle"))->property("color").value<QColor>(), m_theme->brightForeground());
+    QVERIFY(!item(QStringLiteral("viewerMoreButton"))->property("osd").toBool());
+    // A text file is no video: mpv is not offered, and the copy reads well.
+    QVERIFY(!item(QStringLiteral("viewerErrorPlay"))->isVisible());
+    QVERIFY(item(QStringLiteral("viewerErrorOpenWith"))->isVisible()
+            || !m_registry->available(QStringLiteral("open-with")));
+    QVERIFY2(item(QStringLiteral("viewerErrorDetail"))->property("text").toString()
+                 .endsWith(QStringLiteral("not an MPEG-4 video.")),
+             qPrintable(item(QStringLiteral("viewerErrorDetail"))->property("text").toString()));
+    if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
+      QSignalSpy frames(m_window, &QQuickWindow::frameSwapped);
+      m_window->requestUpdate();
+      QTRY_VERIFY(frames.size() >= 1);
+      QVERIFY(!renderedVideoHasColor());
+    }
+
+    // Back to the playing file: its picture and the scrim return.
+    QTest::keyClick(m_window, Qt::Key_PageUp);
+    QTRY_COMPARE(m_session->path(), playing);
+    QTRY_VERIFY_WITH_TIMEOUT(output->isVisible(), 10000);
+    QTRY_VERIFY(scrim->isVisible());
+    player->pause();
+  }
+
+  // A file that opens with no stream at all raises no error from the player,
+  // whose clock would run on as if playing. It fails like any broken video,
+  // with the diagnosis, and the player stops, so MPRIS says Stopped.
+  void aVideoWithNoStreamsFailsAndStops() {
+    const QString folder = m_scratch.filePath(QStringLiteral("streamless"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString path = folder + QStringLiteral("/streamless.mp4");
+    QVERIFY(writeStreamlessVideo(media(QStringLiteral("clip.mp4")), path));
+    open({path});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY_WITH_TIMEOUT(prop("videoUnplayable").toBool(), 10000);
+    QCOMPARE(prop("videoError").toString(), QStringLiteral("No video or audio stream could be read"));
+    QCOMPARE(player->playbackState(), QMediaPlayer::StoppedState);
+    QTRY_VERIFY_WITH_TIMEOUT(prop("failureKnown").toBool(), 20000);
+    QCOMPARE(prop("errorCause").toString(), QStringLiteral("damaged"));
+    QVERIFY(item(QStringLiteral("viewerErrorState"))->isVisible());
+    QVERIFY(!item(QStringLiteral("viewerTransport"))->isVisible());
+    QVERIFY(item(QStringLiteral("viewerErrorPlay"))->isVisible() || !m_registry->available(QStringLiteral("play")));
+    // A tap or Space doesn't start its clock again under the error.
+    QVERIFY(QMetaObject::invokeMethod(m_window, "togglePlayback"));
+    QTest::qWait(300);
+    QCOMPARE(player->playbackState(), QMediaPlayer::StoppedState);
+    QDBusConnection client(QStringLiteral("omaroll-test-client"));
+    if (!client.isConnected()) QSKIP("dbus-daemon is not available");
+    QTRY_VERIFY(m_mpris->isPublished());
+    {
+      const QString remote = QStringLiteral("org.mpris.MediaPlayer2.Player");
+      QTRY_COMPARE(mprisProperty(remote, QStringLiteral("PlaybackStatus")).toString(), QStringLiteral("Stopped"));
+      // Nor does MPRIS Play.
+      mprisCall(remote, QStringLiteral("Play"));
+      QTRY_COMPARE(player->playbackState(), QMediaPlayer::StoppedState);
+      QTest::qWait(500);
+      QCOMPARE(player->playbackState(), QMediaPlayer::StoppedState);
+      QTRY_COMPARE(mprisProperty(remote, QStringLiteral("PlaybackStatus")).toString(), QStringLiteral("Stopped"));
+      QVERIFY(prop("videoUnplayable").toBool());
+    }
+  }
+
+  // The presentation's own watch, without a window. Time counts only while
+  // playing with the clock standing still, so audio that plays before late
+  // video, or a pause, never fails a file. Played to its end without a frame,
+  // or opened with no stream at all, it fails, and a failed file stays
+  // stopped when asked to play.
+  void presentationFailsWithoutAFirstFrame() {
+    FirstFrameWatch watch;
+    QCOMPARE(watch.update(0, true, 0), 0);
+    QCOMPARE(watch.update(300, true, 0), 300);      // Stuck.
+    QCOMPARE(watch.update(400, false, 0), 300);     // Paused: the time so far is kept...
+    QCOMPARE(watch.update(5000, false, 0), 300);    // ...and the pause adds none.
+    QCOMPARE(watch.update(5100, true, 0), 300);     // Resumed: counting starts again here.
+    QCOMPARE(watch.update(5300, true, 0), 500);
+    QCOMPARE(watch.update(5600, true, 250), 500);   // The clock moves: content is playing.
+    QCOMPARE(watch.update(9600, true, 4250), 500);
+    QCOMPARE(watch.update(9700, true, 4250), 600);  // Stuck again, added to before.
+    watch.reset();
+    QCOMPARE(watch.update(9800, true, 0), 0);
+
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty()) QSKIP("ffmpeg is not installed");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto encode = [&ffmpeg](const QStringList& arguments) {
+      QProcess encoder;
+      encoder.start(ffmpeg, QStringList{QStringLiteral("-hide_banner"), QStringLiteral("-loglevel"),
+                                        QStringLiteral("error"), QStringLiteral("-y")} + arguments);
+      return encoder.waitForFinished(30000) && encoder.exitStatus() == QProcess::NormalExit
+             && encoder.exitCode() == 0;
+    };
+    const QString clip = dir.filePath(QStringLiteral("clip.mkv"));
+    QVERIFY(encode({QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"), QStringLiteral("sine=d=4"),
+                    QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+                    QStringLiteral("testsrc2=s=64x64:r=10:d=4"), QStringLiteral("-c:v"), QStringLiteral("libx264"),
+                    QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"), QStringLiteral("-c:a"), QStringLiteral("aac"),
+                    clip}));
+
+    QVideoSink output;
+    VideoPresentation presentation(&output);
+    QSignalSpy failures(&presentation, &VideoPresentation::failureChanged);
+    QMediaPlayer player;
+    presentation.setPlayer(&player);
+    QVERIFY(presentation.setProperty("firstFrameTimeoutMs", 600));
+
+    // Frames that arrive end the watch.
+    player.setVideoOutput(presentation.videoSink());
+    player.setSource(QUrl::fromLocalFile(clip));
+    QTRY_VERIFY_WITH_TIMEOUT(player.mediaStatus() == QMediaPlayer::LoadedMedia, 5000);
+    QVERIFY(player.hasVideo() && player.hasAudio());
+    QTest::qWait(1000);
+    QVERIFY(presentation.failure().isEmpty()); // Not playing yet.
+    player.play();
+    QTRY_VERIFY_WITH_TIMEOUT(presentation.ready(), 5000);
+    QVERIFY(output.videoFrame().isValid());
+    player.stop();
+
+    // No frame reaches it while the clock runs, as with audio ahead of late
+    // video: well past the allowed time it still waits. Played to the end
+    // without a picture, it fails.
+    QVideoSink elsewhere;
+    player.setVideoOutput(&elsewhere);
+    presentation.reset();
+    player.setPosition(0);
+    player.play();
+    QTRY_VERIFY_WITH_TIMEOUT(player.position() >= 2000, 5000);
+    QVERIFY(elsewhere.videoFrame().isValid());
+    QVERIFY(presentation.failure().isEmpty());
+    QCOMPARE(failures.size(), 0);
+    QTRY_COMPARE_WITH_TIMEOUT(presentation.failure(), QStringLiteral("No picture came from this video"), 10000);
+    QCOMPARE(failures.size(), 1);
+    QVERIFY(!presentation.ready());
+    // Asked to play again, it stops again.
+    QTRY_COMPARE(player.playbackState(), QMediaPlayer::StoppedState);
+    player.play();
+    QTRY_COMPARE(player.playbackState(), QMediaPlayer::StoppedState);
+    QTest::qWait(300);
+    QCOMPARE(player.playbackState(), QMediaPlayer::StoppedState);
+    presentation.reset();
+    QVERIFY(presentation.failure().isEmpty());
+    QCOMPARE(failures.size(), 2);
+
+    const QString streamless = dir.filePath(QStringLiteral("streamless.mp4"));
+    QVERIFY(writeStreamlessVideo(media(QStringLiteral("clip.mp4")), streamless));
+    player.setSource(QUrl::fromLocalFile(streamless));
+    QTRY_COMPARE_WITH_TIMEOUT(presentation.failure(), QStringLiteral("No video or audio stream could be read"), 5000);
+  }
+
+  // Qt draws the padding byte of bgr0, rgb0, 0rgb and 0bgr frames as alpha.
+  // The copy sent to the screen keeps the colours and makes it opaque; real
+  // alpha and other formats pass through untouched.
+  void paddedRgbFramesAreDrawnOpaque_data() {
+    QTest::addColumn<int>("format");
+    QTest::addColumn<int>("padding");
+    QTest::newRow("xrgb") << int(QVideoFrameFormat::Format_XRGB8888) << 0;
+    QTest::newRow("xbgr") << int(QVideoFrameFormat::Format_XBGR8888) << 0;
+    QTest::newRow("rgbx") << int(QVideoFrameFormat::Format_RGBX8888) << 3;
+    QTest::newRow("bgrx") << int(QVideoFrameFormat::Format_BGRX8888) << 3;
+    QTest::newRow("bgra") << int(QVideoFrameFormat::Format_BGRA8888) << -1;
+    QTest::newRow("argb") << int(QVideoFrameFormat::Format_ARGB8888) << -1;
+  }
+
+  void paddedRgbFramesAreDrawnOpaque() {
+    QFETCH(int, format);
+    QFETCH(int, padding);
+    QVideoFrame frame(QVideoFrameFormat(QSize(5, 3), QVideoFrameFormat::PixelFormat(format)));
+    QVERIFY(frame.map(QVideoFrame::WriteOnly));
+    for (int y = 0; y < 3; ++y) {
+      uchar* row = frame.bits(0) + y * frame.bytesPerLine(0);
+      for (int x = 0; x < 5 * 4; ++x) row[x] = uchar(x % 4 == qMax(0, padding) ? 0 : 40 + x + y);
+    }
+    frame.unmap();
+    frame.setStartTime(1000);
+    frame.setEndTime(2000);
+    const QVideoFrame shown = VideoPresentation::opaqueFrame(frame);
+    QCOMPARE(shown.pixelFormat(), frame.pixelFormat());
+    QCOMPARE(shown.size(), frame.size());
+    QCOMPARE(shown.startTime(), 1000);
+    QCOMPARE(shown.endTime(), 2000);
+    QVideoFrame read(shown);
+    QVERIFY(read.map(QVideoFrame::ReadOnly));
+    for (int y = 0; y < 3; ++y) {
+      const uchar* row = read.bits(0) + y * read.bytesPerLine(0);
+      for (int x = 0; x < 5 * 4; ++x) {
+        const int wanted = padding >= 0 && x % 4 == padding ? 0xff
+                           : x % 4 == qMax(0, padding)     ? 0
+                                                           : 40 + x + y;
+        QCOMPARE(int(row[x]), wanted);
+      }
+    }
+    read.unmap();
+
+    if (padding < 0) return;
+    // A buffer whose mappings are copies gets a copy of its own instead.
+    QByteArray bytes(5 * 4 * 3, char(40));
+    for (int i = padding; i < bytes.size(); i += 4) bytes[i] = 0;
+    QVideoFrame copied(std::make_unique<CopyMappedBuffer>(
+        QVideoFrameFormat(QSize(5, 3), QVideoFrameFormat::PixelFormat(format)), bytes, 5 * 4));
+    const QVideoFrame opaque = VideoPresentation::opaqueFrame(copied);
+    QVideoFrame result(opaque);
+    QVERIFY(result.map(QVideoFrame::ReadOnly));
+    for (int i = 0; i < 5 * 4 * 3; ++i) {
+      const uchar byte = result.bits(0)[(i / 20) * result.bytesPerLine(0) + i % 20];
+      QCOMPARE(int(byte), i % 4 == padding ? 0xff : 40);
+    }
+    result.unmap();
   }
 
   // The error state names the cause, offers what still applies to the file
@@ -3480,6 +3787,26 @@ private slots:
     sources.removeDuplicates();
     QVERIFY(sources.size() >= 2);
 
+    // Frames are keyframes. One from another second says its own time in
+    // its corner; the label under it stays the time a click seeks to.
+    QQuickItem* frameTime = find(preview, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("seekPreviewFrameTime");
+    });
+    QVERIFY(frameTime);
+    bool sawElsewhere = false;
+    for (const qreal fraction : {0.05, 0.25, 0.42, 0.5, 0.75}) {
+      QTest::mouseMove(m_window, along(fraction));
+      const qreal at = preview->property("frameTime").toReal();
+      QVERIFY(at >= 0);
+      const int seconds = qRound(at / 1000);
+      const QString own = QStringLiteral("%1:%2").arg(seconds / 60).arg(seconds % 60, 2, 10, QLatin1Char('0'));
+      const bool elsewhere = own != time->property("text").toString();
+      QCOMPARE(frameTime->isVisible(), elsewhere);
+      QCOMPARE(preview->property("frameLabel").toString(), own);
+      sawElsewhere = sawElsewhere || elsewhere;
+    }
+    QVERIFY(sawElsewhere);
+
     QTest::mouseMove(m_window, along(0.5));
     QCOMPARE(time->property("text").toString(), QStringLiteral("0:06"));
     // The frame sits above the time, and the whole preview above the bar,
@@ -4033,28 +4360,41 @@ private slots:
   void lessCommonContainersPlay_data() {
     QTest::addColumn<QString>("name");
     QTest::addColumn<QStringList>("codec");
+    QTest::addColumn<QString>("pixelFormat");
     QTest::newRow("h264-mp4") << QStringLiteral("clip.mp4")
-                              << QStringList{QStringLiteral("libx264")};
+                              << QStringList{QStringLiteral("libx264")}
+                              << QStringLiteral("yuv420p");
     QTest::newRow("hevc-mp4") << QStringLiteral("clip-hevc.mp4")
                               << QStringList{QStringLiteral("libx265"), QStringLiteral("-threads"),
                                              QStringLiteral("1"), QStringLiteral("-x265-params"),
-                                             QStringLiteral("pools=1:frame-threads=1")};
+                                             QStringLiteral("pools=1:frame-threads=1")}
+                              << QStringLiteral("yuv420p");
     QTest::newRow("vp9-webm") << QStringLiteral("clip.webm")
-                              << QStringList{QStringLiteral("libvpx-vp9")};
+                              << QStringList{QStringLiteral("libvpx-vp9")}
+                              << QStringLiteral("yuv420p");
     QTest::newRow("mpeg4-avi") << QStringLiteral("clip.avi")
-                               << QStringList{QStringLiteral("mpeg4")};
+                               << QStringList{QStringLiteral("mpeg4")}
+                               << QStringLiteral("yuv420p");
     QTest::newRow("mpeg2-mts") << QStringLiteral("clip.mts")
-                              << QStringList{QStringLiteral("mpeg2video")};
-    QTest::newRow("asf") << QStringLiteral("clip.asf") << QStringList{QStringLiteral("wmv2")};
+                              << QStringList{QStringLiteral("mpeg2video")}
+                               << QStringLiteral("yuv420p");
+    QTest::newRow("asf") << QStringLiteral("clip.asf") << QStringList{QStringLiteral("wmv2")}
+                         << QStringLiteral("yuv420p");
     QTest::newRow("ogm") << QStringLiteral("clip.ogm")
                          << QStringList{QStringLiteral("libtheora"), QStringLiteral("-f"),
-                                        QStringLiteral("ogg")};
-    QTest::newRow("3g2") << QStringLiteral("clip.3g2") << QStringList{QStringLiteral("mpeg4")};
+                                        QStringLiteral("ogg")}
+                         << QStringLiteral("yuv420p");
+    QTest::newRow("3g2") << QStringLiteral("clip.3g2") << QStringList{QStringLiteral("mpeg4")}
+                         << QStringLiteral("yuv420p");
+    // RGB with a padding byte, as FFV1 stores RGB: it must not draw blank.
+    QTest::newRow("ffv1-bgr0") << QStringLiteral("clip-bgr0.mkv") << QStringList{QStringLiteral("ffv1")}
+                               << QStringLiteral("bgr0");
   }
 
   void lessCommonContainersPlay() {
     QFETCH(QString, name);
     QFETCH(QStringList, codec);
+    QFETCH(QString, pixelFormat);
     const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
     if (ffmpeg.isEmpty()) {
       QSKIP("ffmpeg is not installed");
@@ -4068,7 +4408,7 @@ private slots:
                                       QStringLiteral("-f"), QStringLiteral("lavfi"),
                                       QStringLiteral("-i"),
                                       QStringLiteral("color=c=red:s=176x144:d=2:r=10"),
-                                      QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"),
+                                      QStringLiteral("-pix_fmt"), pixelFormat,
                                       QStringLiteral("-c:v")} +
                               codec + QStringList{path});
     QVERIFY(encoder.waitForFinished(20000));
@@ -4083,8 +4423,23 @@ private slots:
     QCOMPARE(player->error(), QMediaPlayer::NoError);
     QVERIFY(player->hasVideo());
     QTRY_VERIFY_WITH_TIMEOUT(player->videoSink() && player->videoSink()->videoFrame().isValid(), 5000);
+    if (pixelFormat == u"bgr0") {
+      // What reaches the screen has its padding opaque.
+      auto* shown = item(QStringLiteral("viewerVideoOutput"))->property("videoSink").value<QVideoSink*>();
+      QVERIFY(shown);
+      // The last file's frame is held until this one's first arrives.
+      QTRY_COMPARE(shown->videoFrame().pixelFormat(), QVideoFrameFormat::Format_BGRX8888);
+      QVideoFrame frame = shown->videoFrame();
+      QVERIFY(frame.map(QVideoFrame::ReadOnly));
+      QCOMPARE(int(frame.bits(0)[3]), 0xff);
+      QVERIFY2(frame.bits(0)[2] > 200 && frame.bits(0)[0] < 60, "the padding is set, not the colour");
+      frame.unmap();
+    }
     if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
       QTRY_VERIFY_WITH_TIMEOUT(renderedVideoHasColor(), 5000);
+      // The window is transparent, so a padding byte drawn as alpha leaves
+      // the picture see-through: a compositor shows it washed out or white.
+      QVERIFY(renderedVideoIsOpaque());
     }
     player->pause();
   }
@@ -6011,6 +6366,26 @@ private:
 
   // Whether the frame drawn in the viewer's video area is mostly saturated
   // color, which the red and colorful fixtures are and a blank output is not.
+  bool renderedVideoIsOpaque() const {
+    QQuickItem* output = item(QStringLiteral("viewerVideoOutput"));
+    const QImage frame = m_window->grabWindow();
+    if (frame.isNull() || !frame.hasAlphaChannel()) return !frame.isNull();
+    const qreal scale = frame.devicePixelRatio();
+    const QRectF scene = output->mapRectToScene(output->property("contentRect").toRectF());
+    const QRect bounds = QRectF(scene.topLeft() * scale, scene.size() * scale)
+                             .toAlignedRect().adjusted(2, 2, -2, -2).intersected(frame.rect());
+    if (bounds.isEmpty()) return false;
+    for (int y = bounds.top(); y <= bounds.bottom(); y += 8) {
+      for (int x = bounds.left(); x <= bounds.right(); x += 8) {
+        if (qAlpha(frame.pixel(x, y)) < 250) {
+          qWarning("see-through video pixel at %d,%d: alpha %d", x, y, qAlpha(frame.pixel(x, y)));
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
   bool renderedVideoHasColor() const {
     QQuickItem* output = item(QStringLiteral("viewerVideoOutput"));
     const QImage frame = m_window->grabWindow();
