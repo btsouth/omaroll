@@ -701,29 +701,35 @@ int main(int argc, char* argv[]) {
     QMetaObject::invokeMethod(window, "say", Q_ARG(QVariant, request.note()));
   });
 
+  // Another launch, or files chosen in the empty library: the same request
+  // the first launch would have made.
+  const auto openRequest = [&](const QStringList& paths, bool library, qint64 start,
+                               const QStringList& skipped) {
+    OpenRequest opened = OpenRequest::fromPaths(paths);
+    if (!opened.error.isEmpty()) {
+      // Said in whichever window is in front; both have a status line.
+      QQuickWindow* shown = viewers.frontmost() ? viewers.frontmost()
+                            : libraryWindow   ? libraryWindow->window()
+                                              : nullptr;
+      if (shown) {
+        QMetaObject::invokeMethod(shown, "say", Q_ARG(QVariant, opened.error));
+      } else {
+        qWarning().noquote() << "omaroll:" << opened.error;
+      }
+      return;
+    }
+    opened.skipped.append(skipped);
+    QQuickWindow* receiver = opensInViewer(opened, library)
+        ? openViewer(opened.files, opened.entryPaths, start) : openLibrary(opened);
+    if (receiver && !opened.note().isEmpty())
+      QMetaObject::invokeMethod(receiver, "say", Q_ARG(QVariant, opened.note()));
+  };
   if (!rendering && !demo) {
-    QObject::connect(
-        &instance, &SingleInstance::activationRequested, &application,
-        [&](const QStringList& paths, bool library, qint64 start, const QStringList& skipped) {
-          OpenRequest opened = OpenRequest::fromPaths(paths);
-          if (!opened.error.isEmpty()) {
-            // Said in whichever window is in front; both have a status line.
-            QQuickWindow* shown = viewers.frontmost() ? viewers.frontmost()
-                                  : libraryWindow   ? libraryWindow->window()
-                                                    : nullptr;
-            if (shown) {
-              QMetaObject::invokeMethod(shown, "say", Q_ARG(QVariant, opened.error));
-            } else {
-              qWarning().noquote() << "omaroll:" << opened.error;
-            }
-            return;
-          }
-          opened.skipped.append(skipped);
-          QQuickWindow* receiver = opensInViewer(opened, library)
-              ? openViewer(opened.files, opened.entryPaths, start) : openLibrary(opened);
-          if (receiver && !opened.note().isEmpty())
-            QMetaObject::invokeMethod(receiver, "say", Q_ARG(QVariant, opened.note()));
-        });
+    QObject::connect(&instance, &SingleInstance::activationRequested, &application, openRequest);
+  }
+  if (!rendering) {
+    QObject::connect(&actions, &ActionLauncher::openRequested, &application,
+                     [&](const QStringList& paths) { openRequest(paths, false, -1, {}); });
   }
 
   if (rendering) {

@@ -1,8 +1,11 @@
 import QtQuick
+import QtQuick.Controls.Basic
 
 // The files beside this one, as a strip of thumbnails above the controls, so
 // the rest of the folder can be seen and reached without stepping through it.
-// The open file stays in the middle; a click opens another.
+// The open file stays in the middle; a click opens another. With keyboard
+// focus, Left and Right move a ring along the strip and Enter opens the file
+// under it.
 Rectangle {
     id: root
 
@@ -15,6 +18,10 @@ Rectangle {
     readonly property int spacing: 4
 
     signal chosen(int index)
+
+    // The tile under the keyboard ring, while the strip has focus.
+    property int focusIndex: -1
+    readonly property bool keyboardFocused: list.activeFocus
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
@@ -54,14 +61,68 @@ Rectangle {
         highlightMoveDuration: 160
         // A long folder builds only the tiles in view, plus a few either side.
         cacheBuffer: root.tileWidth * 4
+        activeFocusOnTab: true
+        keyNavigationEnabled: false
+        Accessible.role: Accessible.List
+        Accessible.name: "Files in this folder"
+        onActiveFocusChanged: {
+            if (activeFocus) {
+                root.focusIndex = root.currentIndex
+            } else {
+                root.focusIndex = -1
+            }
+        }
+        function moveRing(index) {
+            root.focusIndex = Math.max(0, Math.min(root.count - 1, index))
+            list.positionViewAtIndex(root.focusIndex, ListView.Contain)
+        }
+        Keys.onPressed: function (event) {
+            if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier)) return
+            switch (event.key) {
+            case Qt.Key_Left:
+            case Qt.Key_Right:
+                list.moveRing(root.focusIndex + (event.key === Qt.Key_Left ? -1 : 1))
+                break
+            case Qt.Key_Home:
+            case Qt.Key_End:
+                list.moveRing(event.key === Qt.Key_Home ? 0 : root.count - 1)
+                break
+            case Qt.Key_Return:
+            case Qt.Key_Enter:
+            case Qt.Key_Space:
+                if (root.focusIndex >= 0) root.chosen(root.focusIndex)
+                break
+            default:
+                return
+            }
+            event.accepted = true
+        }
 
         delegate: Item {
             id: tile
             required property int index
             readonly property bool current: tile.index === root.currentIndex
+            readonly property bool ringed: tile.index === root.focusIndex && root.keyboardFocused
+            readonly property string fileName: {
+                const revision = Session.sequenceRevision;
+                return Session.fileNameAt(tile.index);
+            }
+            readonly property bool video: {
+                const revision = Session.sequenceRevision;
+                return Session.isVideoAt(tile.index);
+            }
+            readonly property bool broken: picture.status === Image.Error
             objectName: "viewerFilmstripTile" + tile.index
             width: root.tileWidth
             height: root.tileHeight
+            Accessible.role: Accessible.ListItem
+            Accessible.name: tile.fileName + (tile.video ? ", video" : "")
+                             + (tile.broken ? ", cannot be shown" : "")
+            Accessible.selectable: true
+            Accessible.selected: tile.current
+            Accessible.focusable: true
+            Accessible.focused: tile.ringed
+            Accessible.onPressAction: root.chosen(tile.index)
 
             Rectangle {
                 anchors.fill: parent
@@ -83,16 +144,34 @@ Rectangle {
                     const revision = Session.sequenceRevision;
                     return Session.thumbnailUrl(tile.index, root.devicePixelRatio);
                 }
-                opacity: tile.current || tap.hovered ? 1 : 0.62
+                opacity: tile.current || tile.ringed || tap.hovered ? 1 : 0.62
                 Behavior on opacity { NumberAnimation { duration: 120 } }
+            }
+
+            // A file that cannot be shown is marked rather than left blank.
+            Column {
+                objectName: "viewerFilmstripBroken" + tile.index
+                anchors.centerIn: parent
+                visible: tile.broken
+                spacing: 1
+                Icon {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    name: "warning"
+                    size: 16
+                    color: Theme.red
+                }
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: "Can't show"
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 9
+                    color: Theme.mutedText
+                }
             }
 
             Text {
                 anchors.centerIn: parent
-                visible: {
-                    const revision = Session.sequenceRevision;
-                    return Session.isVideoAt(tile.index);
-                }
+                visible: tile.video && !tile.broken
                 text: "▶"
                 font.pixelSize: 13
                 color: "#ffffff"
@@ -134,6 +213,22 @@ Rectangle {
                 border.width: 2
                 border.color: Theme.accent
                 visible: tile.current
+            }
+            // The keyboard ring, outside the current file's border.
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: -2
+                radius: 4
+                color: "transparent"
+                border.width: 2
+                border.color: Theme.brightForeground
+                visible: tile.ringed
+            }
+
+            ToolTip {
+                visible: tile.fileName !== "" && (tap.hovered || tile.ringed)
+                text: tile.fileName
+                delay: tile.ringed ? 0 : 500
             }
 
             HoverHandler {

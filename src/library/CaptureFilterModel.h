@@ -55,6 +55,14 @@ class CaptureFilterModel final : public QSortFilterProxyModel {
   // How many rows the source holds regardless of the current filter, so the
   // UI can say "nothing matches" rather than "nothing exists".
   Q_PROPERTY(int sourceCount READ sourceCount NOTIFY countChanged)
+  // Why nothing is shown, so an empty grid can say "nothing matches" rather
+  // than "nothing here". Empty while rows are shown. "library": nothing has
+  // been found at all. "duplicates" and "similar": those review views found
+  // nothing. "search": the search alone hides everything. "filters": the
+  // search together with the kind, favourites, rating, camera and lens
+  // choices does. "scope": the folder, album, tag, date range or saved view
+  // holds nothing to show.
+  Q_PROPERTY(QString emptyReason READ emptyReason NOTIFY countChanged)
 
 public:
   enum SortMode {
@@ -189,6 +197,10 @@ public:
   Q_INVOKABLE QString adjacentPath(const QString& path, int direction) const;
 
   [[nodiscard]] int sourceCount() const;
+  [[nodiscard]] QString emptyReason() const;
+  // The search, kind, favourites, rating, camera and lens choices, cleared at
+  // once. The folder, album, tag, date range and saved view are kept.
+  Q_INVOKABLE void clearRefinements();
 
   [[nodiscard]] QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
   [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
@@ -224,7 +236,10 @@ private:
   void beginFilterUpdate();
   void endFilterUpdate();
   void rebuildPairing();
-  [[nodiscard]] bool matchesFilters(const CaptureRecord& record) const;
+  // What emptyReason() may leave out when asking whether anything matches.
+  enum Relax { RelaxNothing = 0, RelaxSearch = 1, RelaxRefinements = 2 };
+  [[nodiscard]] bool matchesFilters(const CaptureRecord& record, int relax = RelaxNothing) const;
+  [[nodiscard]] bool anyMatches(int relax) const;
   [[nodiscard]] bool rebuildFolderIndex();
   [[nodiscard]] bool rebuildDateIndex();
   [[nodiscard]] bool rebuildCameraIndex();

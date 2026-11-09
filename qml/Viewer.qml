@@ -65,6 +65,18 @@ ApplicationWindow {
                              : Session.pictureError !== "" ? Session.pictureError
                              : "Could not display this picture")
         : ""
+    // Why, once the session has read the file: a title naming the cause and
+    // a sentence about it. Until then the plain message above.
+    readonly property bool failureKnown: !Session.isVideo && Session.pictureFailure.title !== undefined
+    readonly property string errorTitle: root.failureKnown ? Session.pictureFailure.title
+                                                           : root.playbackError
+    readonly property string errorDetail: root.failureKnown ? Session.pictureFailure.detail : ""
+    readonly property string errorCause: root.failureKnown ? Session.pictureFailure.cause : ""
+    // Each failed file is looked at once, including a replacement at the
+    // same name.
+    readonly property string failedPicture: root.imageError && !Session.isVideo
+                                            ? Session.path + "\n" + Session.contentVersion : ""
+    onFailedPictureChanged: if (root.failedPicture !== "") Session.diagnosePicture()
 
     // A still is fitted until it is zoomed; viewScale is then the logical
     // size of one source pixel. Zero means "fit".
@@ -173,7 +185,35 @@ ApplicationWindow {
     readonly property bool imageReady: root.visible && !Session.isVideo && root.stillReady
                                        && root.sourceWidth > 0
 
+    // Keyboard focus is on one of the controls, reached with Tab, rather than
+    // on the picture. The controls stay up while it is there.
+    // Remembered while the window is inactive, when nothing has active focus,
+    // so the focused control is not hidden from under the keyboard.
+    property Item keyboardFocusItem: null
+    onActiveFocusItemChanged: if (root.activeFocusItem !== null) root.keyboardFocusItem = root.activeFocusItem
+    readonly property bool controlsFocused: root.keyboardFocusItem !== null
+                                            && root.keyboardFocusItem !== keys
+                                            && root.focusInside(root.keyboardFocusItem)
+    function focusInside(item) {
+        for (let at = item; at; at = at.parent) {
+            if (at === chrome || at === errorState || at === infoPanel) return true
+        }
+        return false
+    }
+    // Tab and Shift+Tab: through the visible controls in order, then back to
+    // the picture, where every shortcut works.
+    function moveFocus(forward) {
+        root.revealChrome()
+        const from = root.activeFocusItem !== null ? root.activeFocusItem : keys
+        let next = from.nextItemInFocusChain(forward)
+        for (let guard = 0; next && next !== keys && !root.focusInside(next) && guard < 64; ++guard) {
+            next = next.nextItemInFocusChain(forward)
+        }
+        (next ? next : keys).forceActiveFocus(Qt.TabFocusReason)
+    }
+
     readonly property bool chromeShown: root.chromePinned || root.pointerActive || root.infoOpen
+                                        || root.controlsFocused
                                         || shortcutHelp.visible
                                         || actionMenu.visible || confirm.visible || permanentConfirm.visible || editorChooser.visible
                                         || header.hovered || transport.hovered
@@ -412,7 +452,7 @@ ApplicationWindow {
     }
 
     function rotate(clockwise) {
-        if (Session.isVideo) {
+        if (Session.isVideo || root.imageError) {
             return
         }
         root.viewRotation = (root.viewRotation + (clockwise ? 90 : 270)) % 360
@@ -792,12 +832,14 @@ ApplicationWindow {
         entries.push({id: "copy-name", label: "Copy file name"})
         entries.push({separator: true})
         if (!video) {
-            entries.push({id: "fit", label: "Fit"})
-            entries.push({id: "fit-width", label: "Fit width"})
-            entries.push({id: "fill", label: "Fill window"})
-            entries.push({id: "actual", label: "Actual size"})
-            entries.push({id: "fit-shrink", label: "Fit without enlarging"})
-            entries.push({id: "rotate", label: "Rotate"})
+            // Nothing to fit or turn when the picture could not be shown.
+            const viewable = !root.imageError
+            entries.push({id: "fit", label: "Fit", available: viewable})
+            entries.push({id: "fit-width", label: "Fit width", available: viewable})
+            entries.push({id: "fill", label: "Fill window", available: viewable})
+            entries.push({id: "actual", label: "Actual size", available: viewable})
+            entries.push({id: "fit-shrink", label: "Fit without enlarging", available: viewable})
+            entries.push({id: "rotate", label: "Rotate", available: viewable})
         }
         if (Session.count > 1) {
             entries.push({id: "slideshow",
@@ -1550,12 +1592,17 @@ ApplicationWindow {
             }
         }
 
-        // A file that will not open says so in the middle of the window.
+        // A file that will not open says why in the middle of the window,
+        // with what can still be done with it.
         Item {
+            id: errorState
+            objectName: "viewerErrorState"
             anchors.centerIn: parent
-            width: errorColumn.implicitWidth
+            width: errorColumn.width
             height: errorColumn.implicitHeight
             visible: root.playbackError !== ""
+            // Tab reaches these buttons too; every other key is the viewer's.
+            Keys.forwardTo: [keys]
 
             // A press on the prompt stays here rather than also reaching the
             // tap layer underneath, where it would play or pause.
@@ -1566,20 +1613,79 @@ ApplicationWindow {
 
             Column {
                 id: errorColumn
-                spacing: 12
+                width: Math.min(440, stage.width - 48)
+                spacing: 10
 
-                Text {
+                Icon {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    text: root.playbackError
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 13
+                    visible: !Session.isVideo
+                    name: "warning"
+                    size: 30
                     color: Theme.red
                 }
-                PillButton {
+                Text {
+                    objectName: "viewerErrorTitle"
+                    width: parent.width
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+                    text: root.errorTitle
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Session.isVideo ? 13 : 15
+                    font.weight: Session.isVideo ? Font.Normal : Font.DemiBold
+                    color: Session.isVideo ? Theme.red : Theme.brightForeground
+                    Accessible.role: Accessible.StaticText
+                    Accessible.name: text
+                }
+                Text {
+                    objectName: "viewerErrorDetail"
+                    width: parent.width
+                    visible: text !== ""
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+                    text: root.errorDetail
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 12
+                    color: Theme.mutedText
+                    Accessible.role: Accessible.StaticText
+                    Accessible.name: text
+                }
+                Item { width: 1; height: 2 }
+                // Side by side where they fit, stacked in a narrow window.
+                Grid {
+                    id: errorActions
                     anchors.horizontalCenter: parent.horizontalCenter
-                    visible: Session.isVideo && Registry.available("play")
-                    label: "Open in mpv"
-                    onClicked: Registry.run("play", Session.path)
+                    columns: errorColumn.width >= 400 ? 4 : 1
+                    columnSpacing: 8
+                    rowSpacing: 8
+                    // Nothing is left to act on once the file has gone.
+                    readonly property bool present: root.errorCause !== "missing"
+
+                    PillButton {
+                        objectName: "viewerErrorPlay"
+                        visible: Session.isVideo && Registry.available("play")
+                        label: "Open in mpv"
+                        onClicked: Registry.run("play", Session.path)
+                    }
+                    PillButton {
+                        objectName: "viewerErrorOpenWith"
+                        visible: errorActions.present && Registry.available("open-with")
+                        label: "Open with…"
+                        shortcut: "Ctrl+O"
+                        onClicked: root.perform("open-with")
+                    }
+                    PillButton {
+                        objectName: "viewerErrorShowInFolder"
+                        visible: errorActions.present && Registry.available("files")
+                        label: "Show in folder"
+                        onClicked: root.perform("files")
+                    }
+                    PillButton {
+                        objectName: "viewerErrorTrash"
+                        visible: errorActions.present
+                        label: "Move to Trash"
+                        shortcut: "Del"
+                        onClicked: root.requestTrash()
+                    }
                 }
             }
         }
@@ -1622,8 +1728,11 @@ ApplicationWindow {
         id: chrome
         anchors.fill: parent
         opacity: root.chromeShown ? 1 : 0
-        visible: opacity > 0
+        // At once when asked, so Tab can land on a control in the same turn.
+        visible: opacity > 0 || root.chromeShown
         Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutQuad } }
+        // A focused control still hears the viewer's shortcuts.
+        Keys.forwardTo: [keys]
 
         // Header: the file and where it sits in the folder, then the three
         // ways out of the picture.
@@ -1769,6 +1878,7 @@ ApplicationWindow {
             anchors.bottom: parent.bottom
             anchors.bottomMargin: 16
             compact: parent.width < 460
+            viewControls: !root.imageError
             fitted: root.viewScale === 0 && root.fitMode === "fit"
             canStep: Session.count > 1
             slideshowRunning: root.slideshowRunning
@@ -1935,6 +2045,52 @@ ApplicationWindow {
         }
     }
 
+    // A picture that shows but is cut off says so while it is open, since
+    // the grey part looks like the picture itself.
+    Rectangle {
+        id: pictureWarning
+        objectName: "viewerPictureWarning"
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.top: parent.top
+        anchors.topMargin: 58 + (toast.visible ? toast.height + 8 : 0)
+        width: Math.min(warningText.implicitWidth + 46, parent.width - 48)
+        height: warningText.height + 12
+        radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, height / 2) : 3
+        color: root.shade(Theme.background, 0.90)
+        border.width: 1
+        border.color: root.shade(Theme.yellow, 0.5)
+        visible: !Session.isVideo && Session.pictureWarning !== "" && !root.imageError
+        Accessible.role: Accessible.AlertMessage
+        Accessible.name: "Cut off. " + Session.pictureWarning
+
+        Row {
+            anchors.left: parent.left
+            anchors.leftMargin: 12
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 8
+
+            Icon {
+                anchors.verticalCenter: parent.verticalCenter
+                name: "warning"
+                size: 14
+                color: Theme.yellow
+            }
+            Text {
+                id: warningText
+                anchors.verticalCenter: parent.verticalCenter
+                // Wrapped rather than cut short in a narrow window.
+                width: pictureWarning.width - 46
+                text: Session.pictureWarning
+                wrapMode: Text.WordWrap
+                maximumLineCount: 4
+                elide: Text.ElideRight
+                font.family: Theme.fontFamily
+                font.pixelSize: 12
+                color: Theme.foreground
+            }
+        }
+    }
+
     ViewerInfoPanel {
         id: infoPanel
         objectName: "viewerInfoPanel"
@@ -1965,6 +2121,7 @@ ApplicationWindow {
         favorite: root.favorite
         lines: MediaInfo.path === Session.path ? MediaInfo.lines : []
         loading: MediaInfo.path === Session.path && MediaInfo.loading
+        Keys.forwardTo: [keys]
         onRateRequested: function (stars) { root.rate(stars) }
         onFavoriteToggled: root.toggleFavorite()
         onFolderRequested: root.perform("files")
@@ -1998,6 +2155,19 @@ ApplicationWindow {
                 required property var modelData
                 readonly property bool separator: modelData.separator === true
                 objectName: separator ? "" : "viewerMenu_" + modelData.id
+                // The label is drawn below; this is what a screen reader
+                // says. Separators are not items at all to it.
+                text: separator ? "" : modelData.label
+                Accessible.name: separator ? "" : modelData.label
+                                 + (modelData.available === false && modelData.hint
+                                    ? ", needs " + modelData.hint : "")
+                Accessible.description: separator || !root.viewerShortcuts[modelData.id] ? ""
+                                        : "Shortcut " + root.viewerShortcuts[modelData.id]
+                // Controls marks every MenuItem accessible again when it sets
+                // the role, which undoes ignored; a separator role is what
+                // screen readers skip.
+                Accessible.role: separator ? Accessible.Separator : Accessible.MenuItem
+                Accessible.ignored: separator
                 enabled: !separator && modelData.available !== false
                 height: separator ? 9 : modelData.available === false && modelData.hint ? 46 : 30
                 opacity: enabled || separator ? 1 : 0.55
@@ -2131,6 +2301,11 @@ ApplicationWindow {
         id: keys
         objectName: "viewerKeys"
         focus: true
+        // The picture's place in the Tab order, after the last control.
+        activeFocusOnTab: true
         viewer: root
+        Accessible.role: Accessible.Graphic
+        Accessible.name: Session.fileName !== "" ? Session.fileName : "Omaroll"
+        Accessible.description: Session.count > 1 ? (Session.index + 1) + " of " + Session.count : ""
     }
 }

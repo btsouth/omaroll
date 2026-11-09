@@ -58,6 +58,8 @@ add_library(omaroll_core STATIC
   src/actions/ActionLauncher.h
   src/actions/TrashRestore.cpp
   src/actions/TrashRestore.h
+  src/actions/FileChooserRequest.cpp
+  src/actions/FileChooserRequest.h
   src/actions/OpenWithRequest.cpp
   src/actions/OpenWithRequest.h
   src/actions/ActionRegistry.cpp
@@ -110,6 +112,8 @@ add_library(omaroll_core STATIC
   src/viewer/HyprlandPlacement.h
   src/viewer/MprisService.cpp
   src/viewer/MprisService.h
+  src/viewer/PictureDiagnosis.cpp
+  src/viewer/PictureDiagnosis.h
   src/viewer/ViewerSession.cpp
   src/viewer/ViewerSession.h
   src/viewer/ViewerWindows.cpp
