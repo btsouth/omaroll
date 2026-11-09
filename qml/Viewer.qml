@@ -1399,6 +1399,7 @@ ApplicationWindow {
                             return
                         }
                         ++launchRetries
+                        transport.noteSeek()
                         position = launchTarget
                     }
                     onSeekableChanged: applyLaunchStart()
