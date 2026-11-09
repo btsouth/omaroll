@@ -6,6 +6,8 @@
 #include "app/VideoPresentation.h"
 #include <QVideoFrameFormat>
 #include "app/DemoLibrary.h"
+#include "app/Diagnostics.h"
+#include "app/HyprlandSetup.h"
 #include "app/HeadlessAudio.h"
 #include "app/VideoPlayback.h"
 #include "app/SingleInstance.h"
@@ -1059,6 +1061,11 @@ private slots:
     QVERIFY2(finished.first().at(0).toBool(), qPrintable(finished.first().at(2).toString()));
     QVERIFY2(finished.first().at(1).toString().startsWith("Omaroll now opens"),
              qPrintable(finished.first().at(1).toString()));
+    // Worded for the group asked for: pictures only.
+    QVERIFY2(finished.first().at(1).toString().contains("of picture"),
+             qPrintable(finished.first().at(1).toString()));
+    QVERIFY2(!finished.first().at(1).toString().contains("video"),
+             qPrintable(finished.first().at(1).toString()));
     QTRY_VERIFY_WITH_TIMEOUT(defaults.known() && !defaults.busy(), 10000);
     QVERIFY(defaults.imagesDefault());
 
@@ -1095,9 +1102,682 @@ private slots:
         "image/x-tga: removed your setting; it still opens with Omaroll "
         "(a system default, or no other app handles it)");
     QCOMPARE(MimeDefaults::summarize(true, unset, true),
-             QStringLiteral("Restored Loupe and mpv for 3 types."));
+             QStringLiteral("Restored Loupe and mpv for 3 types. 1 type still opens with Omaroll, "
+                            "from a system default or because no other app handles it."));
     QCOMPARE(MimeDefaults::summarize(true, QStringLiteral("image/png: kept other.desktop"), true),
              QStringLiteral("Nothing to restore. Omaroll was not the default."));
+    // A setting removed while Omaroll stays the default is not "nothing".
+    const QString stays = QStringLiteral(
+        "image/png: removed your setting; it still opens with Omaroll (a system default, or no "
+        "other app handles it)");
+    QCOMPARE(MimeDefaults::summarize(true, stays, true),
+             QStringLiteral("1 type still opens with Omaroll, from a system default or because no "
+                            "other app handles it."));
+    QCOMPARE(MimeDefaults::summarize(true, QStringLiteral("image/gif: restored imv.desktop\n") + stays +
+                                               QStringLiteral("\nimage/jpeg: removed your setting; "
+                                                              "it still opens with Omaroll (x)"),
+                                     true),
+             QStringLiteral("Restored imv for 1 type. 2 types still open with Omaroll, from a system "
+                            "default or because no other app handles them."));
+    // Worded for the group that was asked for.
+    const QString pdf = QStringLiteral(
+        "application/pdf: org.gnome.Papers.desktop -> io.github.tsouth89.omaroll.desktop");
+    QCOMPARE(MimeDefaults::summarize(false, pdf, true, QStringLiteral("pdf")),
+             QStringLiteral("Omaroll now opens 1 type of PDF, replacing Papers."));
+    QCOMPARE(MimeDefaults::summarize(false, QStringLiteral("application/pdf: already Omaroll"), true,
+                                     QStringLiteral("pdf")),
+             QStringLiteral("Omaroll already opens your PDFs."));
+    QCOMPARE(MimeDefaults::summarize(false, QStringLiteral("video/mp4: already Omaroll"), true,
+                                     QStringLiteral("videos")),
+             QStringLiteral("Omaroll already opens your videos."));
+  }
+
+  void diagnosticsNameVersionsGraphicsAndMissingTools() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const auto make = [&](const QString& relative, const QByteArray& contents = {}) {
+      const QString path = root.filePath(relative);
+      QDir().mkpath(QFileInfo(path).path());
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write(contents);
+    };
+    // pacman's local database: one directory per installed package.
+    for (const char* entry : {"omarchy-dev-4.0.0.r7620.gd9cc361-1", "hyprland-0.57.1-2",
+                              "hyprland-guiutils-0.2.2-6", "omarchy-keyring-20251027-1"}) {
+      QVERIFY(QDir().mkpath(root.filePath(QStringLiteral("local/") + QLatin1String(entry))));
+    }
+    // A sysfs drm tree: an adapter with its connectors, bound to amdgpu.
+    make(QStringLiteral("sys/devices/gpu0/vendor"), "0x1002\n");
+    make(QStringLiteral("sys/devices/gpu0/device"), "0x744c\n");
+    QVERIFY(QDir().mkpath(root.filePath(QStringLiteral("sys/drivers/amdgpu"))));
+    QVERIFY(QFile::link(root.filePath(QStringLiteral("sys/drivers/amdgpu")),
+                        root.filePath(QStringLiteral("sys/devices/gpu0/driver"))));
+    QVERIFY(QDir().mkpath(root.filePath(QStringLiteral("drm/card0"))));
+    QVERIFY(QDir().mkpath(root.filePath(QStringLiteral("drm/card0-DP-1"))));
+    QVERIFY(QFile::link(root.filePath(QStringLiteral("sys/devices/gpu0")),
+                        root.filePath(QStringLiteral("drm/card0/device"))));
+    make(QStringLiteral("module/amdgpu/version"), "6.1.2\n");
+    make(QStringLiteral("state/omarchy/current/theme.name"), "catppuccin-latte\n");
+
+    Diagnostics::Sources sources;
+    sources.pacmanLocal = root.filePath(QStringLiteral("local"));
+    sources.omarchyPath = QStringLiteral("/usr/share/omarchy");
+    sources.drm = root.filePath(QStringLiteral("drm"));
+    sources.modules = root.filePath(QStringLiteral("module"));
+    sources.stateHome = root.filePath(QStringLiteral("state"));
+    sources.configHome = root.filePath(QStringLiteral("config"));
+    const QStringList installed = {QStringLiteral("ffmpeg"), QStringLiteral("ffprobe"),
+                                   QStringLiteral("pdftoppm"), QStringLiteral("pdftotext"),
+                                   QStringLiteral("wl-copy"), QStringLiteral("rawtherapee")};
+    sources.hasProgram = [&](const QString& program) { return installed.contains(program); };
+
+    QCOMPARE(Diagnostics::packageVersion(sources.pacmanLocal, QStringLiteral("hyprland")),
+             QStringLiteral("0.57.1-2"));
+    QCOMPARE(Diagnostics::packageVersion(sources.pacmanLocal, QStringLiteral("omarchy")), QString());
+    QCOMPARE(Diagnostics::themeName(sources), QStringLiteral("Catppuccin Latte"));
+    {
+      // A leftover state name without a theme beside it loses to the config
+      // root the app reads its colours from.
+      QTemporaryDir split;
+      const auto put = [&](const QString& relative, const QByteArray& contents) {
+        QDir().mkpath(QFileInfo(split.filePath(relative)).path());
+        QFile file(split.filePath(relative));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(contents);
+      };
+      put(QStringLiteral("state/omarchy/current/theme.name"), "old-theme\n");
+      put(QStringLiteral("config/omarchy/current/theme.name"), "tokyo-night\n");
+      put(QStringLiteral("config/omarchy/current/theme/colors.toml"), "background = \"#000000\"\n");
+      Diagnostics::Sources moved = sources;
+      moved.stateHome = split.filePath(QStringLiteral("state"));
+      moved.configHome = split.filePath(QStringLiteral("config"));
+      QCOMPARE(Diagnostics::themeName(moved), QStringLiteral("Tokyo Night"));
+    }
+
+    const QString report = Diagnostics::report(sources, QStringLiteral("wayland"),
+                                               QStringLiteral("Catppuccin Latte"), 1.5);
+    const QStringList lines = report.split(u'\n');
+    QVERIFY2(lines.contains(QStringLiteral("Omarchy: 4.0.0.r7620.gd9cc361-1 (omarchy-dev)")), qPrintable(report));
+    QVERIFY2(lines.contains(QStringLiteral("Hyprland: 0.57.1-2")), qPrintable(report));
+    QVERIFY2(lines.contains(QStringLiteral("GPU: AMD (1002:744c), driver amdgpu 6.1.2")), qPrintable(report));
+    QCOMPARE(lines.filter(QStringLiteral("GPU: ")).size(), 1);
+    QVERIFY(lines.contains(QStringLiteral("Theme: Catppuccin Latte")));
+    QVERIFY(lines.contains(QStringLiteral("Scale factor: 1.5")));
+    QVERIFY(lines.contains(QStringLiteral("tesseract: missing")));
+    QVERIFY(lines.contains(QStringLiteral("ffmpeg: present")));
+    QVERIFY(!report.contains(root.path()));
+
+    // One row per package with what it enables; any RAW editor will do, and
+    // Omarchy's own helpers are not something to pacman -S.
+    QStringList packages;
+    for (const QVariant& row : Diagnostics::missing(sources)) {
+      const QVariantMap map = row.toMap();
+      packages << map.value(QStringLiteral("package")).toString();
+      QCOMPARE(map.value(QStringLiteral("install")).toString(),
+               QStringLiteral("sudo pacman -S ") + packages.last());
+      QVERIFY(!map.value(QStringLiteral("feature")).toString().isEmpty());
+    }
+    QVERIFY2(packages.contains(QStringLiteral("tesseract tesseract-data-eng")), qPrintable(packages.join(u',')));
+    QVERIFY(packages.contains(QStringLiteral("imagemagick")));
+    QVERIFY(packages.contains(QStringLiteral("libjpeg-turbo")));
+    QVERIFY(!packages.contains(QStringLiteral("ffmpeg")));
+    QVERIFY(!packages.contains(QStringLiteral("poppler")));
+    QVERIFY(!packages.contains(QStringLiteral("darktable")));
+    QVERIFY(!packages.contains(QStringLiteral("omarchy")));
+    QCOMPARE(packages.removeDuplicates(), 0);
+
+    // Tesseract without the language data Omaroll asks it for names the
+    // package that has it.
+    {
+      QTemporaryDir tessdata;
+      QFile german(tessdata.filePath(QStringLiteral("deu.traineddata")));
+      QVERIFY(german.open(QIODevice::WriteOnly));
+      german.close();
+      const QStringList withTesseract = installed + QStringList{QStringLiteral("tesseract")};
+      Diagnostics::Sources ocr = sources;
+      ocr.hasProgram = [&](const QString& program) { return withTesseract.contains(program); };
+      ocr.tessdata = {tessdata.path()};
+      ocr.ocrLanguages = QStringLiteral("eng+deu+../x");
+      const auto ocrPackages = [&] {
+        QStringList names;
+        for (const QVariant& row : Diagnostics::missing(ocr)) {
+          const QVariantMap map = row.toMap();
+          const QString package = map.value(QStringLiteral("package")).toString();
+          // The install command, so a mismatch shows up in the checks below.
+          names << (map.value(QStringLiteral("install")).toString() == u"sudo pacman -S " + package
+                        ? package
+                        : QStringLiteral("bad install: ") + package);
+        }
+        return names;
+      };
+      QStringList names = ocrPackages();
+      QVERIFY2(names.contains(QStringLiteral("tesseract-data-eng")), qPrintable(names.join(u',')));
+      QVERIFY(!names.contains(QStringLiteral("tesseract-data-deu")));
+      QVERIFY(!names.contains(QStringLiteral("tesseract tesseract-data-eng")));
+      QVERIFY(names.filter(QStringLiteral("..")).isEmpty());
+      QVERIFY(names.filter(QStringLiteral("bad install")).isEmpty());
+      QFile english(tessdata.filePath(QStringLiteral("eng.traineddata")));
+      QVERIFY(english.open(QIODevice::WriteOnly));
+      english.close();
+      names = ocrPackages();
+      QVERIFY(names.filter(QStringLiteral("tesseract")).isEmpty());
+    }
+
+    // Without tesseract, its install brings the configured languages.
+    {
+      QTemporaryDir tessdata;
+      Diagnostics::Sources ocr = sources;
+      ocr.tessdata = {tessdata.path()};
+      const auto tesseractRow = [&] {
+        for (const QVariant& row : Diagnostics::missing(ocr)) {
+          const QVariantMap map = row.toMap();
+          if (map.value(QStringLiteral("program")).toString() == u"tesseract") {
+            return map.value(QStringLiteral("install")).toString();
+          }
+        }
+        return QString();
+      };
+      ocr.ocrLanguages = QStringLiteral("deu");
+      QCOMPARE(tesseractRow(), QStringLiteral("sudo pacman -S tesseract tesseract-data-deu"));
+      ocr.ocrLanguages = QStringLiteral("eng+deu+../x");
+      QCOMPARE(tesseractRow(), QStringLiteral("sudo pacman -S tesseract tesseract-data-eng tesseract-data-deu"));
+    }
+
+    // TESSDATA_PREFIX set to the folder above the data: tesseract finds
+    // nothing there, so say how to fix the prefix instead of what to install.
+    {
+      QTemporaryDir prefix;
+      QVERIFY(QDir().mkpath(prefix.filePath(QStringLiteral("tessdata"))));
+      QFile english(prefix.filePath(QStringLiteral("tessdata/eng.traineddata")));
+      QVERIFY(english.open(QIODevice::WriteOnly));
+      english.close();
+      const QStringList withTesseract = installed + QStringList{QStringLiteral("tesseract")};
+      Diagnostics::Sources ocr = sources;
+      ocr.hasProgram = [&](const QString& program) { return withTesseract.contains(program); };
+      ocr.tessdata = {prefix.path()};
+      ocr.tessdataBelowPrefix = prefix.filePath(QStringLiteral("tessdata"));
+      QStringList installs;
+      for (const QVariant& row : Diagnostics::missing(ocr)) {
+        installs << row.toMap().value(QStringLiteral("install")).toString();
+      }
+      QVERIFY2(installs.filter(QStringLiteral("tesseract-data")).isEmpty(), qPrintable(installs.join(u',')));
+      QVERIFY2(installs.contains(QStringLiteral(
+                   "Set TESSDATA_PREFIX to its tessdata folder, which has the language data")),
+               qPrintable(installs.join(u',')));
+      QVERIFY(!installs.join(u',').contains(prefix.path()));
+      // With the prefix right, nothing is left to say.
+      ocr.tessdata = {ocr.tessdataBelowPrefix};
+      installs.clear();
+      for (const QVariant& row : Diagnostics::missing(ocr)) {
+        installs << row.toMap().value(QStringLiteral("install")).toString();
+      }
+      QVERIFY(installs.filter(QStringLiteral("TESSDATA_PREFIX")).isEmpty());
+    }
+
+    // Nothing to find: say so rather than guess.
+    Diagnostics::Sources empty;
+    empty.pacmanLocal = root.filePath(QStringLiteral("none"));
+    empty.omarchyPath = root.filePath(QStringLiteral("none"));
+    empty.drm = root.filePath(QStringLiteral("none"));
+    const QStringList bare =
+        Diagnostics::report(empty, QStringLiteral("none (command line)"), QString(), 0).split(u'\n');
+    QVERIFY(bare.contains(QStringLiteral("Omarchy: development checkout")));
+    QVERIFY(bare.contains(QStringLiteral("Hyprland: not installed")));
+    QVERIFY(bare.contains(QStringLiteral("GPU: not found")));
+    QVERIFY(bare.filter(QStringLiteral("Scale factor")).isEmpty());
+    QVERIFY(bare.contains(QStringLiteral("darktable: missing")));
+    empty.omarchyPath.clear();
+    QVERIFY(Diagnostics::missing(empty).size() > 10);
+    QCOMPARE(Diagnostics::themeName(empty), QStringLiteral("not found"));
+  }
+
+  void windowRulesInstallAndRemoveCleanly() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString hypr = root.filePath(QStringLiteral("hypr"));
+    QVERIFY(QDir().mkpath(hypr));
+    const QString config = hypr + QStringLiteral("/hyprland.lua");
+    const QString rules = hypr + QStringLiteral("/omaroll.lua");
+    const auto read = [](const QString& path) {
+      QFile file(path);
+      return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+    };
+    const auto write = [](const QString& path, const QByteArray& bytes) {
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+      file.write(bytes);
+    };
+
+    // No config, or one that isn't Omarchy's: nothing is written.
+    QCOMPARE(HyprlandSetup::rulesState(hypr), HyprlandSetup::RulesState::Unsupported);
+    QVERIFY(!HyprlandSetup::installRules(hypr).ok);
+    write(config, "monitor = ,preferred,auto,1\n");
+    QCOMPARE(HyprlandSetup::rulesState(hypr), HyprlandSetup::RulesState::Unsupported);
+    QVERIFY(!HyprlandSetup::installRules(hypr).ok);
+    QVERIFY(!QFile::exists(rules));
+    // Omarchy's import commented out loads none of its helpers.
+    write(config, "-- require(\"default.hypr.omarchy\")\n--[[ require(\"default.hypr.omarchy\") ]]\n");
+    QCOMPARE(HyprlandSetup::rulesState(hypr), HyprlandSetup::RulesState::Unsupported);
+    QVERIFY(!HyprlandSetup::installRules(hypr).ok);
+    QVERIFY(!QFile::exists(rules));
+
+    const QByteArray original = "dofile(\"bootstrap.lua\")\nrequire(\"default.hypr.omarchy\")\nrequire(\"hypr.bindings\")\n";
+    write(config, original);
+    QCOMPARE(HyprlandSetup::rulesState(hypr), HyprlandSetup::RulesState::NotInstalled);
+    const QByteArray bundled = HyprlandSetup::bundledRules();
+    QVERIFY(bundled.contains("-default-opacity"));
+
+    auto result = HyprlandSetup::installRules(hypr);
+    QVERIFY2(result.ok, qPrintable(result.message));
+    QCOMPARE(HyprlandSetup::rulesState(hypr), HyprlandSetup::RulesState::Installed);
+    QVERIFY(read(rules).startsWith("-- Installed by Omaroll."));
+    QVERIFY(read(rules).endsWith(bundled));
+    QVERIFY(read(config).startsWith(original));
+    QCOMPARE(read(config).count("require(\"hypr.omaroll\")"), 1);
+    // Optional, so a deleted rules file can't break the whole config, and
+    // without Omarchy's require_optional, which older Omarchy lacks.
+    QVERIFY(read(config).contains(
+        "if package.searchpath(\"hypr.omaroll\", package.path) then require(\"hypr.omaroll\") end"));
+    QVERIFY(!read(config).contains("require_optional"));
+
+    // Twice is once.
+    result = HyprlandSetup::installRules(hypr);
+    QVERIFY(result.ok);
+    QVERIFY(result.message.contains(QStringLiteral("already")));
+    QCOMPARE(read(config).count("require(\"hypr.omaroll\")"), 1);
+
+    // A deleted rules file shows as not installed, and installing writes it
+    // back without a second require.
+    QVERIFY(QFile::remove(rules));
+    QCOMPARE(HyprlandSetup::rulesState(hypr), HyprlandSetup::RulesState::NotInstalled);
+    result = HyprlandSetup::installRules(hypr);
+    QVERIFY(result.ok);
+    QVERIFY2(result.message.contains(QStringLiteral("restored")), qPrintable(result.message));
+    QVERIFY(read(rules).endsWith(bundled));
+    QCOMPARE(read(config).count("require(\"hypr.omaroll\")"), 1);
+    QCOMPARE(HyprlandSetup::rulesState(hypr), HyprlandSetup::RulesState::Installed);
+
+    // A config that can't be read stops removal before the rules file goes.
+    {
+      QTemporaryDir other;
+      QVERIFY(QDir().mkpath(other.filePath(QStringLiteral("hyprland.lua"))));
+      QVERIFY(QFile::copy(rules, other.filePath(QStringLiteral("omaroll.lua"))));
+      const auto blocked = HyprlandSetup::removeRules(other.path());
+      QVERIFY(!blocked.ok);
+      QVERIFY2(blocked.message.contains(QStringLiteral("Could not read")), qPrintable(blocked.message));
+      QVERIFY(QFile::exists(other.filePath(QStringLiteral("omaroll.lua"))));
+    }
+
+    result = HyprlandSetup::removeRules(hypr);
+    QVERIFY(result.ok);
+    QCOMPARE(read(config), original);
+    QVERIFY(!QFile::exists(rules));
+    QCOMPARE(HyprlandSetup::rulesState(hypr), HyprlandSetup::RulesState::NotInstalled);
+    QVERIFY(HyprlandSetup::removeRules(hypr).message.contains(QStringLiteral("not installed")));
+
+    // A copy made by hand, required the way the README used to say, is
+    // recognized; the user's own file is never replaced or deleted.
+    const QByteArray theirs = "-- my rules\no.window(\"x\", { opacity = \"1 1\" })\n";
+    write(rules, theirs);
+    write(config, original + "require(\"hypr.omaroll\")\n");
+    QCOMPARE(HyprlandSetup::rulesState(hypr), HyprlandSetup::RulesState::Installed);
+    result = HyprlandSetup::installRules(hypr);
+    QVERIFY(result.message.contains(QStringLiteral("kept")));
+    QCOMPARE(read(rules), theirs);
+    result = HyprlandSetup::removeRules(hypr);
+    QVERIFY(result.message.contains(QStringLiteral("kept")));
+    QCOMPARE(read(rules), theirs);
+    QCOMPARE(read(config), original);
+
+    // A symlinked config, as dotfile managers make, stays a symlink.
+    QVERIFY(QFile::remove(rules));
+    const QString target = root.filePath(QStringLiteral("dotfiles-hyprland.lua"));
+    QVERIFY(QFile::rename(config, target));
+    QVERIFY(QFile::link(target, config));
+    QVERIFY(HyprlandSetup::installRules(hypr).ok);
+    QVERIFY(QFileInfo(config).isSymLink());
+    QVERIFY(read(target).contains("hypr.omaroll"));
+    QVERIFY(HyprlandSetup::removeRules(hypr).ok);
+    QCOMPARE(read(target), original);
+  }
+
+  void windowRulesRestoreHyprlandLuaByteForByte() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString hypr = root.filePath(QStringLiteral("hypr"));
+    QVERIFY(QDir().mkpath(hypr));
+    const QString config = hypr + QStringLiteral("/hyprland.lua");
+    const QString rules = hypr + QStringLiteral("/omaroll.lua");
+    const auto read = [](const QString& path) {
+      QFile file(path);
+      return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+    };
+    const auto write = [](const QString& path, const QByteArray& bytes) {
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+      file.write(bytes);
+    };
+    const QByteArray omarchy = "require(\"default.hypr.omarchy\")";
+
+    // Install then remove gives back exactly the bytes that were there.
+    const QList<QPair<const char*, QByteArray>> cases = {
+        {"no trailing newline", omarchy},
+        {"not UTF-8", "-- caf\xe9\n" + omarchy + "\n"},
+        {"BOM", "\xEF\xBB\xBF" + omarchy + "\n"},
+        {"CRLF", omarchy + "\r\n-- mine\r\n"},
+        {"CRLF, no trailing newline", omarchy + "\r\n-- mine"},
+        {"trailing blank lines", omarchy + "\n\n\n"},
+        {"a mention in a comment", omarchy + "\nrequire(\"hypr.bindings\") -- see \"hypr.omaroll\"\n"},
+        {"a block-commented require",
+         omarchy + "\n--[[\nrequire(\"hypr.omaroll\")\n]]\n--[==[ require('hypr.omaroll') ]==]\n"},
+    };
+    for (const auto& [name, original] : cases) {
+      write(config, original);
+      QVERIFY2(HyprlandSetup::rulesState(hypr) == HyprlandSetup::RulesState::NotInstalled, name);
+      auto result = HyprlandSetup::installRules(hypr);
+      QVERIFY2(result.ok, qPrintable(QLatin1String(name) + u": " + result.message));
+      QVERIFY2(read(config).startsWith(original), name);
+      QVERIFY2(read(config).contains("then require(\"hypr.omaroll\") end"), name);
+      QVERIFY2(HyprlandSetup::rulesState(hypr) == HyprlandSetup::RulesState::Installed, name);
+      if (QByteArray(name).startsWith("CRLF")) {
+        QVERIFY2(!read(config).mid(original.size()).replace("\r\n", "").contains('\n'), name);
+      }
+      result = HyprlandSetup::removeRules(hypr);
+      QVERIFY2(result.ok, qPrintable(QLatin1String(name) + u": " + result.message));
+      QCOMPARE(read(config).toHex(), original.toHex());
+      QVERIFY2(!QFile::exists(rules), name);
+    }
+
+    // Lines written after an install that ended the last line stay on their
+    // own line.
+    write(config, omarchy);
+    QVERIFY(HyprlandSetup::installRules(hypr).ok);
+    write(config, read(config) + "require(\"hypr.later\")\n");
+    QVERIFY(HyprlandSetup::removeRules(hypr).ok);
+    QCOMPARE(read(config), omarchy + "\nrequire(\"hypr.later\")\n");
+
+    // A line that loads the rules among other things is the user's: install
+    // sees the rules as loaded, and removal reports the line instead of
+    // dropping hypr.mine with it. The rules file stays, since a plain require
+    // of a missing module would break the config; until it is there the
+    // rules count as not installed, and install only writes the file.
+    const QByteArray combined = omarchy + "\nrequire(\"hypr.omaroll\"); require(\"hypr.mine\")\n";
+    write(config, combined);
+    QCOMPARE(HyprlandSetup::rulesState(hypr), HyprlandSetup::RulesState::NotInstalled);
+    auto result = HyprlandSetup::installRules(hypr);
+    QVERIFY2(result.message.contains(QStringLiteral("restored")), qPrintable(result.message));
+    QCOMPARE(read(config), combined);
+    QVERIFY(QFile::exists(rules));
+    QCOMPARE(HyprlandSetup::rulesState(hypr), HyprlandSetup::RulesState::Installed);
+    result = HyprlandSetup::removeRules(hypr);
+    QVERIFY(result.ok);
+    QVERIFY2(result.message.contains(QStringLiteral("Line 2 ")), qPrintable(result.message));
+    QCOMPARE(read(config), combined);
+    QVERIFY(QFile::exists(rules));
+    QVERIFY(QFile::remove(rules));
+
+    // An editor save between Omaroll's read and write wins; nothing is
+    // overwritten and a rules file written just now goes again.
+    write(config, omarchy + "\n");
+    HyprlandSetup::beforeConfigWrite = [&] {
+      write(config, omarchy + "\n-- saved meanwhile\n");
+    };
+    result = HyprlandSetup::installRules(hypr);
+    HyprlandSetup::beforeConfigWrite = nullptr;
+    QVERIFY(!result.ok);
+    QVERIFY2(result.message.contains(QStringLiteral("changed")), qPrintable(result.message));
+    QCOMPARE(read(config), omarchy + "\n-- saved meanwhile\n");
+    QVERIFY(!QFile::exists(rules));
+    QVERIFY(HyprlandSetup::installRules(hypr).ok);
+    HyprlandSetup::beforeConfigWrite = [&] { write(config, read(config) + "-- again\n"); };
+    result = HyprlandSetup::removeRules(hypr);
+    HyprlandSetup::beforeConfigWrite = nullptr;
+    QVERIFY(!result.ok);
+    QVERIFY(read(config).endsWith("-- again\n"));
+    QVERIFY(QFile::exists(rules));
+    QVERIFY(HyprlandSetup::removeRules(hypr).ok);
+    QCOMPARE(read(config), omarchy + "\n-- saved meanwhile\n-- again\n");
+
+    // hyprland.lua that can't be replaced: install fails and leaves no
+    // omaroll.lua behind.
+    const QString locked = root.filePath(QStringLiteral("locked"));
+    QVERIFY(QDir().mkpath(locked));
+    const QString target = locked + QStringLiteral("/hyprland.lua");
+    write(target, omarchy + "\n");
+    QVERIFY(QFile::remove(config));
+    QVERIFY(QFile::link(target, config));
+    QVERIFY(QFile::setPermissions(locked, QFileDevice::ReadOwner | QFileDevice::ExeOwner));
+    const auto unlock = qScopeGuard([&] {
+      QFile::setPermissions(locked, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    });
+    if (QFile probe(locked + QStringLiteral("/probe")); probe.open(QIODevice::WriteOnly)) {
+      QSKIP("running with permission to write a read-only directory");
+    }
+    result = HyprlandSetup::installRules(hypr);
+    QVERIFY(!result.ok);
+    QVERIFY(!QFile::exists(rules));
+    QCOMPARE(read(target), omarchy + "\n");
+  }
+
+  void windowRulesKeepTheConfigValid() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString hypr = root.filePath(QStringLiteral("hypr"));
+    QVERIFY(QDir().mkpath(hypr));
+    const QString config = hypr + QStringLiteral("/hyprland.lua");
+    const QString rules = hypr + QStringLiteral("/omaroll.lua");
+    const auto read = [](const QString& path) {
+      QFile file(path);
+      return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+    };
+    const auto write = [](const QString& path, const QByteArray& bytes) {
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+      file.write(bytes);
+    };
+    QString lua = QStandardPaths::findExecutable(QStringLiteral("lua5.4"));
+    if (lua.isEmpty()) lua = QStandardPaths::findExecutable(QStringLiteral("lua"));
+    // Runs a chunk with $FILE and $DIR set; true when it ran without error.
+    const auto runLua = [&](const QByteArray& chunk, const QString& file) {
+      QProcess process;
+      QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+      environment.insert(QStringLiteral("FILE"), file);
+      environment.insert(QStringLiteral("DIR"), root.path());
+      process.setProcessEnvironment(environment);
+      process.start(lua, {QStringLiteral("-e"), QString::fromUtf8(chunk)});
+      return process.waitForFinished(10000) && process.exitStatus() == QProcess::NormalExit &&
+             process.exitCode() == 0;
+    };
+    const QByteArray omarchy = "require(\"default.hypr.omarchy\")\n";
+    const QByteArray require =
+        "if package.searchpath(\"hypr.omaroll\", package.path) then require(\"hypr.omaroll\") end";
+
+    // A config that ends in a return gets the require before it, since Lua
+    // allows nothing after one, and comes back byte for byte.
+    const QList<QPair<const char*, QByteArray>> returns = {
+        {"return true", omarchy + "-- the end\nreturn true\n"},
+        {"no trailing newline", omarchy + "return true"},
+        {"CRLF", "require(\"default.hypr.omarchy\")\r\nreturn true -- done\r\n\r\n"},
+        {"return in a function", omarchy + "local function f()\n  return 1\nend\nf()\n"},
+    };
+    for (const auto& [name, original] : returns) {
+      write(config, original);
+      auto result = HyprlandSetup::installRules(hypr);
+      QVERIFY2(result.ok, qPrintable(QLatin1String(name) + u": " + result.message));
+      const QByteArray installed = read(config);
+      QVERIFY2(installed.contains(require), name);
+      const qsizetype last = original.lastIndexOf("return true");
+      if (last >= 0) {
+        QVERIFY2(installed.indexOf(require) < installed.lastIndexOf("return true"), name);
+        QVERIFY2(installed.endsWith(original.mid(last)), name);
+      }
+      if (!lua.isEmpty()) QVERIFY2(runLua("assert(loadfile(os.getenv('FILE')))", config), name);
+      QVERIFY2(HyprlandSetup::removeRules(hypr).ok, name);
+      QCOMPARE(read(config).toHex(), original.toHex());
+      QVERIFY2(!QFile::exists(rules), name);
+    }
+
+    // A return Omaroll can't place a line around leaves everything alone.
+    for (const QByteArray& original : {omarchy + "return {\n  ok = true,\n}\n",
+                                       omarchy + "return\nend_of_config()\n"}) {
+      write(config, original);
+      const auto result = HyprlandSetup::installRules(hypr);
+      QVERIFY(!result.ok);
+      QVERIFY2(result.message.contains(QStringLiteral("return")), qPrintable(result.message));
+      QCOMPARE(read(config), original);
+      QVERIFY(!QFile::exists(rules));
+    }
+
+    // A require inside a long string loads nothing: install adds a real one,
+    // and removal leaves the string alone.
+    const QByteArray noted = omarchy + "local note = [==[\nrequire(\"hypr.omaroll\")\n]==]\n";
+    write(config, noted);
+    QCOMPARE(HyprlandSetup::rulesState(hypr), HyprlandSetup::RulesState::NotInstalled);
+    QVERIFY(HyprlandSetup::installRules(hypr).ok);
+    QVERIFY(read(config).contains(require));
+    QCOMPARE(HyprlandSetup::rulesState(hypr), HyprlandSetup::RulesState::Installed);
+    QVERIFY(HyprlandSetup::removeRules(hypr).ok);
+    QCOMPARE(read(config), noted);
+
+    // An omaroll.lua link to nothing is left as it is, with nothing written
+    // through it.
+    const QString missing = root.filePath(QStringLiteral("dotfiles-omaroll.lua"));
+    QVERIFY(QFile::link(missing, rules));
+    write(config, omarchy);
+    auto result = HyprlandSetup::installRules(hypr);
+    QVERIFY(!result.ok);
+    QVERIFY2(result.message.contains(QStringLiteral("link")), qPrintable(result.message));
+    QVERIFY(QFileInfo(rules).isSymLink());
+    QVERIFY(!QFileInfo::exists(missing));
+    QCOMPARE(read(config), omarchy);
+    QVERIFY(QFile::remove(rules));
+
+    // The written line loads the rules when they are there and skips them
+    // when they are not, with no Omarchy helper on the path.
+    if (lua.isEmpty()) QSKIP("no Lua interpreter to run the require with");
+    QVERIFY(HyprlandSetup::installRules(hypr).ok);
+    const QByteArray run = "package.path = os.getenv('DIR') .. '/?.lua'\n"
+                           "local count = 0\n"
+                           "o = { window = function() count = count + 1 end }\n" +
+                           require + "\nassert(count == tonumber(os.getenv('FILE')))\n";
+    QVERIFY(runLua(run, QStringLiteral("4")));
+    QVERIFY(QFile::remove(rules));
+    QVERIFY(runLua(run, QStringLiteral("0")));
+    // The check itself fails when the count is wrong.
+    QVERIFY(!runLua(run, QStringLiteral("1")));
+  }
+
+  void screenshotKeyComesFromTheBindings() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString hypr = root.filePath(QStringLiteral("hypr"));
+    const QString omarchy = root.filePath(QStringLiteral("omarchy"));
+    QVERIFY(QDir().mkpath(hypr));
+    QVERIFY(QDir().mkpath(omarchy + QStringLiteral("/default/hypr/bindings")));
+    // Nothing to read: the key Omarchy has always used.
+    QCOMPARE(HyprlandSetup::screenshotKey(hypr, omarchy), QStringLiteral("Print Screen"));
+    QFile defaults(omarchy + QStringLiteral("/default/hypr/bindings/utilities.lua"));
+    QVERIFY(defaults.open(QIODevice::WriteOnly));
+    defaults.write("o.bind(\"SUPER + CTRL + C\", \"Capture menu\", { menu = \"capture\" })\n"
+                   "o.bind(\"PRINT\", \"Screenshot\", \"omarchy-capture-screenshot\")\n"
+                   "o.bind(\"SUPER + CTRL + ALT + C\", \"Screenshot\", \"omarchy-capture-screenshot\")\n"
+                   "o.bind(\"SUPER + CTRL + PRINT\", \"OCR\", \"omarchy-capture-text\")\n");
+    defaults.close();
+    QCOMPARE(HyprlandSetup::screenshotKey(hypr, omarchy), QStringLiteral("Print Screen"));
+    // The user's own binding wins.
+    QFile mine(hypr + QStringLiteral("/bindings.lua"));
+    QVERIFY(mine.open(QIODevice::WriteOnly));
+    mine.write("-- o.bind(\"SUPER + X\", \"Old\", \"omarchy-capture-screenshot\")\n"
+               "o.bind(\"SUPER + SHIFT + s\", \"Screenshot\", \"omarchy-capture-screenshot region\")\n");
+    mine.close();
+    QCOMPARE(HyprlandSetup::screenshotKey(hypr, omarchy), QStringLiteral("Super + Shift + S"));
+
+    const auto put = [](const QString& path, const QByteArray& bytes) {
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+      file.write(bytes);
+    };
+    // Omarchy's own template binds with a nil description, and rebinds.
+    put(hypr + QStringLiteral("/bindings.lua"),
+        "o.bind(\"SUPER + SHIFT + S\", nil, \"omarchy-capture-screenshot\")\n");
+    QCOMPARE(HyprlandSetup::screenshotKey(hypr, omarchy), QStringLiteral("Super + Shift + S"));
+    put(hypr + QStringLiteral("/bindings.lua"),
+        "o.rebind(\"SUPER + P\", \"Screenshot\", \"omarchy-capture-screenshot\")\n");
+    QCOMPARE(HyprlandSetup::screenshotKey(hypr, omarchy), QStringLiteral("Super + P"));
+    // An unbound or rebound default falls to the next one, and a block
+    // comment binds nothing.
+    put(hypr + QStringLiteral("/bindings.lua"),
+        "--[[\no.bind(\"SUPER + X\", nil, \"omarchy-capture-screenshot\")\n]]\n"
+        "hl.unbind(\"PRINT\")\n");
+    QCOMPARE(HyprlandSetup::screenshotKey(hypr, omarchy), QStringLiteral("Super + Ctrl + Alt + C"));
+    put(hypr + QStringLiteral("/bindings.lua"),
+        "o.unbind(\"Print\")\no.rebind(\"SUPER + CTRL + ALT + C\", nil, \"other\")\n");
+    QCOMPARE(HyprlandSetup::screenshotKey(hypr, omarchy), QString());
+    // Lua's single quotes count the same.
+    put(hypr + QStringLiteral("/bindings.lua"),
+        "o.bind('SUPER + ALT + S', 'Screenshot', 'omarchy-capture-screenshot region')\n");
+    QCOMPARE(HyprlandSetup::screenshotKey(hypr, omarchy), QStringLiteral("Super + Alt + S"));
+    put(hypr + QStringLiteral("/bindings.lua"), "hl.unbind('PRINT')\n");
+    QCOMPARE(HyprlandSetup::screenshotKey(hypr, omarchy), QStringLiteral("Super + Ctrl + Alt + C"));
+    // With Omarchy's defaults off, only the user's bindings count.
+    put(hypr + QStringLiteral("/bindings.lua"), "");
+    put(hypr + QStringLiteral("/hyprland.lua"),
+        "-- omarchy_default_bindings = false\nrequire(\"default.hypr.omarchy\")\n");
+    QCOMPARE(HyprlandSetup::screenshotKey(hypr, omarchy), QStringLiteral("Print Screen"));
+    put(hypr + QStringLiteral("/hyprland.lua"),
+        "omarchy_default_bindings = false\nrequire(\"default.hypr.omarchy\")\n");
+    QCOMPARE(HyprlandSetup::screenshotKey(hypr, omarchy), QString());
+
+    // A later unbind or rebind of the user's own key drops it, in bindings.lua
+    // or in hyprland.lua, which loads bindings.lua after Omarchy's defaults.
+    put(hypr + QStringLiteral("/hyprland.lua"),
+        "require(\"default.hypr.omarchy\")\nrequire(\"hypr.bindings\")\n");
+    put(hypr + QStringLiteral("/bindings.lua"),
+        "o.bind(\"SUPER + SHIFT + S\", nil, \"omarchy-capture-screenshot\")\no.unbind(\"SUPER + SHIFT + S\")\n");
+    QCOMPARE(HyprlandSetup::screenshotKey(hypr, omarchy), QStringLiteral("Print Screen"));
+    put(hypr + QStringLiteral("/bindings.lua"),
+        "o.bind(\"SUPER + SHIFT + S\", nil, \"omarchy-capture-screenshot\")\n"
+        "o.bind(\"SUPER + P\", nil, \"omarchy-capture-screenshot\")\n"
+        "o.rebind(\"SUPER + SHIFT + S\", nil, \"other\")\n");
+    QCOMPARE(HyprlandSetup::screenshotKey(hypr, omarchy), QStringLiteral("Super + P"));
+    put(hypr + QStringLiteral("/hyprland.lua"),
+        "require(\"default.hypr.omarchy\")\nrequire(\"hypr.bindings\")\n"
+        "hl.unbind(\"SUPER + P\")\nhl.unbind(\"PRINT\")\n");
+    QCOMPARE(HyprlandSetup::screenshotKey(hypr, omarchy), QStringLiteral("Super + Ctrl + Alt + C"));
+  }
+
+  void demoLibraryHasSimilarSets() {
+    const DemoLibrary::Layout demo = DemoLibrary::build();
+    QVERIFY(demo.complete);
+    QStringList paths;
+    for (const QFileInfo& info : QDir(demo.pictures).entryInfoList({QStringLiteral("*.jpg")}, QDir::Files,
+                                                                  QDir::Name)) {
+      paths << info.filePath();
+    }
+    QVERIFY(paths.size() >= 18);
+    QList<SimilarityIndex::Signature> signatures;
+    for (const QString& path : std::as_const(paths)) {
+      signatures.append(SimilarityIndex::signatureOf(path));
+      QVERIFY2(signatures.last().valid, qPrintable(path));
+    }
+    QList<QStringList> sets;
+    for (const QList<int>& set : SimilarityIndex::group(signatures, {}, SimilarityIndex::Normal)) {
+      QStringList names;
+      for (int index : set) names << QFileInfo(paths[index]).fileName();
+      names.sort();
+      sets << names;
+    }
+    std::sort(sets.begin(), sets.end());
+    const QList<QStringList> expected = {
+        {QStringLiteral("coastal-wave-2.jpg"), QStringLiteral("coastal-wave-3.jpg"),
+         QStringLiteral("coastal-wave.jpg")},
+        {QStringLiteral("winter-cabin-small.jpg"), QStringLiteral("winter-cabin.jpg")},
+    };
+    QCOMPARE(sets, expected);
+    // The copy is smaller, so Compare has a largest to mark.
+    QCOMPARE(QImageReader(demo.pictures + QStringLiteral("/winter-cabin-small.jpg")).size(),
+             QSize(768, 512));
   }
 
   void explicitStartParsingAndFirstVideo() {

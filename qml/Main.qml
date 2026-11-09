@@ -731,9 +731,47 @@ ApplicationWindow {
         if (confirm.visible) root.pendingDuplicateKeep = keep
     }
 
+    // The compare render waits for the similar-picture scan, then opens the
+    // first set it found. Sets kept from before the scan may name files that
+    // have gone since.
+    property bool compareWhenSimilar: false
+    function openRenderCompare() {
+        if (!root.compareWhenSimilar || Similarities.scanning || Similarities.groupCount === 0
+                || library.count === 0) return
+        const set = Similarities.groupPaths(Captures.pathAt(0))
+        if (set.length < 2) return
+        root.compareWhenSimilar = false
+        compareSheet.open(set)
+    }
+    Connections {
+        target: Similarities
+        enabled: root.compareWhenSimilar
+        function onGroupsChanged() { Qt.callLater(root.openRenderCompare) }
+        function onScanningChanged() { Qt.callLater(root.openRenderCompare) }
+    }
+
+    // Asked by --render before it grabs: false while a view still waits on
+    // a scan or its pictures. Each ask tries the compare again, so one that
+    // came too early, with the grid between models, is not lost.
+    property bool renderingCompare: false
+    function renderReady() {
+        if (root.compareWhenSimilar) root.openRenderCompare()
+        if (root.compareWhenSimilar) return false
+        return !root.renderingCompare || compareSheet.imagesReady()
+    }
+
     // Called by --render so a screenshot can be taken of a specific view
     // without anyone having to drive the UI by hand.
     function openViewForRender(view) {
+        if (view === "compare") {
+            // A real similar set from the demo library, once the scan finds
+            // it. Asked for before the grid fills, it still waits.
+            root.renderingCompare = true
+            root.compareWhenSimilar = true
+            Captures.similarOnly = true
+            root.openRenderCompare()
+            return
+        }
         if (library.count === 0) {
             return
         }
@@ -776,14 +814,6 @@ ApplicationWindow {
             root.perform("matte", Captures.pathAt(0))
         } else if (view === "corrections") {
             root.perform("corrections", Captures.pathAt(0))
-        } else if (view === "compare") {
-            const stills = []
-            for (let row = 0; row < library.count && stills.length < 2; ++row) {
-                if (!Captures.isVideoAt(row) && !Captures.isDocumentAt(row)) {
-                    stills.push(Captures.pathAt(row))
-                }
-            }
-            compareSheet.open(stills)
         } else if (view === "export") {
             root.perform("export", Captures.pathAt(0))
         } else if (view === "rename") {
@@ -1448,7 +1478,10 @@ ApplicationWindow {
             return {
                 title: "No media yet",
                 detail: (Theme.omarchyAvailable
-                         ? "Take a screenshot with Super + Shift + S, or record from the Capture menu. "
+                         ? (Settings.screenshotKey !== ""
+                            ? "Take a screenshot with " + Settings.screenshotKey
+                              + ", or record from the Capture menu. "
+                            : "Take a screenshot or record from the Capture menu. ")
                          : "")
                         + "Anything in your Pictures and Videos folders shows up here, "
                         + "and so does any folder you add. Your files stay where they are; "

@@ -3,8 +3,8 @@
 -- paints its own chrome alpha from the active theme; compositor dimming would
 -- stack on top of that and wash out every thumbnail.
 --
--- Drop into ~/.config/hypr/ and require it, until the rule lands upstream in
--- default/hypr/apps/system.lua.
+-- `omaroll --install-window-rules` (or Settings) puts a copy in ~/.config/hypr/
+-- and requires it; `omaroll --remove-window-rules` takes both out again.
 o.window("^(io\\.github\\.tsouth89\\.omaroll)$", { tag = "-default-opacity" })
 o.window("^(io\\.github\\.tsouth89\\.omaroll)$", { opacity = "1 1" })
 

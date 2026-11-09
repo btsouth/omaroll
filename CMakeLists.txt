@@ -22,6 +22,10 @@ add_library(omaroll_core STATIC
   src/app/LaunchRequest.h
   src/app/MimeDefaults.cpp
   src/app/MimeDefaults.h
+  src/app/Diagnostics.cpp
+  src/app/Diagnostics.h
+  src/app/HyprlandSetup.cpp
+  src/app/HyprlandSetup.h
   src/app/OpenRequest.cpp
   src/app/OpenRequest.h
   src/app/HeadlessAudio.h
@@ -141,6 +145,13 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(omaroll_core PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+# The window rules Settings and --install-window-rules copy into
+# ~/.config/hypr, the same file installed under share/omaroll/hypr.
+qt_add_resources(omaroll_core "omaroll_hypr_rules"
+  PREFIX "/omaroll/hypr"
+  BASE "packaging/hypr"
+  FILES packaging/hypr/omaroll.lua)
+
 qt_add_resources(omaroll_core "omaroll_demo_media"
   PREFIX "/omaroll/demo"
   BASE "resources/demo"
@@ -252,16 +263,25 @@ install(FILES packaging/hypr/omaroll.lua
   DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/omaroll/hypr)
 install(FILES LICENSE
   DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/licenses/omaroll)
+install(FILES packaging/omaroll.1
+  DESTINATION ${CMAKE_INSTALL_MANDIR}/man1)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS README.md)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/README.md" OMAROLL_INSTALL_README)
-foreach(doc CONTRIBUTING.md tests/README.md docs/STATUS.md docs/ROADMAP.md RELEASING.md)
-  string(REPLACE "](${doc})"
-    "](https://github.com/btsouth/omaroll/blob/main/${doc})"
+# Links keep any #anchor, so match up to the file name only.
+foreach(doc CONTRIBUTING.md tests/README.md docs/STATUS.md docs/ROADMAP.md RELEASING.md
+    docs/shortcuts.md docs/actions.md docs/search.md
+    docs/performance/2026-11-09-playback-cost/README.md)
+  string(REPLACE "](${doc}"
+    "](https://github.com/btsouth/omaroll/blob/main/${doc}"
     OMAROLL_INSTALL_README "${OMAROLL_INSTALL_README}")
 endforeach()
-foreach(image docs/demo-poster.webp docs/library.png docs/detail.png docs/matte.png)
+foreach(image docs/demo-poster.webp docs/library.png docs/detail.png docs/matte.png
+    docs/viewer-dark.png docs/viewer-light.png docs/library-dark.png docs/library-light.png)
   string(REPLACE "](${image})"
     "](https://raw.githubusercontent.com/btsouth/omaroll/main/${image})"
+    OMAROLL_INSTALL_README "${OMAROLL_INSTALL_README}")
+  string(REPLACE "src=\"${image}\""
+    "src=\"https://raw.githubusercontent.com/btsouth/omaroll/main/${image}\""
     OMAROLL_INSTALL_README "${OMAROLL_INSTALL_README}")
 endforeach()
 string(REPLACE "src=\"resources/icons/omaroll.svg\""
@@ -297,6 +317,11 @@ if(BUILD_TESTING)
   add_test(NAME omaroll_version COMMAND omaroll --version)
   set_tests_properties(omaroll_version PROPERTIES
     PASS_REGULAR_EXPRESSION "omaroll ${PROJECT_VERSION}")
+  # --set-default, --diagnostics, the window rules commands and the man page,
+  # against scratch directories and a fake xdg-mime.
+  add_test(NAME omaroll_cli COMMAND bash ${CMAKE_SOURCE_DIR}/tests/check-cli.sh
+    $<TARGET_FILE:omaroll> ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR}
+    ${CMAKE_INSTALL_MANDIR} ${CMAKE_INSTALL_DATAROOTDIR})
   # The suite touches QImage and QGuiApplication paths, so it needs a platform
   # plugin; offscreen keeps it runnable in a headless checkout or CI.
   set(omaroll_test_environment

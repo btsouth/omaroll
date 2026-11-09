@@ -21,6 +21,16 @@ Item {
     property var pendingTrash: []
 
     readonly property int imageCount: paths.length
+
+    // Every picture has loaded; --render waits for this before it grabs.
+    function imagesReady() {
+        if (!root.visible || root.imageCount === 0 || imageRepeater.count !== root.imageCount) return false
+        for (let index = 0; index < imageRepeater.count; ++index) {
+            const cell = imageRepeater.itemAt(index)
+            if (!cell || !cell.loaded) return false
+        }
+        return true
+    }
     // Under each picture, so the picture's own centre sits this much higher
     // than its cell's.
     readonly property int factsHeight: 56
@@ -302,6 +312,7 @@ Item {
                         // large one from a copy the size of the screen, with
                         // its detail only once zoomed past that copy.
                         property var picture: ({})
+                        readonly property bool loaded: compareImage.status === Image.Ready
                         Component.onCompleted: Library.readPicture(cell.modelData)
                         Connections {
                             target: Library

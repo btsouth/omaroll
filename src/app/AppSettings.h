@@ -110,6 +110,29 @@ public:
   QString qtVersion() const { return QString::fromLatin1(qVersion()); }
   Q_INVOKABLE QString diagnostics(const QString &theme, qreal scale) const;
   Q_INVOKABLE void copyDiagnostics(const QString &theme, qreal scale) const;
+  // Optional programs that aren't installed, one per package, each with the
+  // feature it enables and its pacman command. Checked on each call.
+  Q_INVOKABLE QVariantList missingTools() const;
+  // This version's release notes, and where a new issue starts.
+  Q_PROPERTY(QString releaseNotesUrl READ releaseNotesUrl CONSTANT)
+  Q_PROPERTY(QString newIssueUrl READ newIssueUrl CONSTANT)
+  QString releaseNotesUrl() const {
+    return QStringLiteral("https://github.com/btsouth/omaroll/releases/tag/v") + appVersion();
+  }
+  QString newIssueUrl() const {
+    return QStringLiteral("https://github.com/btsouth/omaroll/issues/new/choose");
+  }
+  // The key Omarchy's bindings give its screenshot command.
+  Q_PROPERTY(QString screenshotKey READ screenshotKey CONSTANT)
+  QString screenshotKey() const;
+  // Omaroll's optional Hyprland window rules: "installed", "available" when
+  // they can be added, or "unsupported" without an Omarchy Lua config.
+  Q_PROPERTY(QString windowRules READ windowRules NOTIFY windowRulesChanged)
+  QString windowRules() const;
+  Q_INVOKABLE QString installWindowRules();
+  Q_INVOKABLE QString removeWindowRules();
+  // Where the rules go. Tests point this at a scratch directory.
+  void setHyprDirectory(const QString &directory);
   explicit AppSettings(QObject* parent = nullptr);
   // Waits for a snapshot still being written.
   ~AppSettings() override;
@@ -318,6 +341,7 @@ public:
   [[nodiscard]] QStringList markedPaths() const;
 
 signals:
+  void windowRulesChanged();
   void showHiddenChanged();
   void sortModeChanged();
   void kindFilterChanged();
@@ -362,6 +386,8 @@ signals:
   void organizationErrorChanged();
 
 private:
+  QString m_hyprDirectory;
+  mutable QString m_screenshotKey;
 #ifdef OMAROLL_TESTING
   friend class OmarollTest;
   static thread_local QStringList* s_fingerprintReadPaths;

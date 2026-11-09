@@ -74,6 +74,12 @@ public:
 signals:
   void themeChanged();
 
+public:
+  // ~/.local/state/omarchy/current when it holds a theme, else the one under
+  // ~/.config. Diagnostics names the theme from the same place.
+  [[nodiscard]] static QString currentRootFor(const QString &stateHome,
+                                              const QString &configHome);
+
 private:
   [[nodiscard]] QString sourceSignature() const;
   using Values = QHash<QString, QString>;

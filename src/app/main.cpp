@@ -4,6 +4,8 @@
 #include "actions/TailscalePeers.h"
 #include "app/AppSettings.h"
 #include "app/DemoLibrary.h"
+#include "app/Diagnostics.h"
+#include "app/HyprlandSetup.h"
 #include "app/HeadlessAudio.h"
 #include "app/OpenRequest.h"
 #include "app/PlaybackHeap.h"
@@ -164,7 +166,7 @@ Usage:
 Pictures and videos open in the viewer, which steps through the rest of their
 folder in name order. Multiple files open as a selection in the supplied
 order. A folder, a PDF, or no argument at all opens the library. Use -- before
-filenames that begin with a dash.
+filenames that begin with a dash. Press ? or F1 in any window for shortcuts.
 
 Options:
   --library              Open files in the library instead of the viewer. The
@@ -172,25 +174,39 @@ Options:
                          library if it is not already watched.
   --start <time>         Start the request's first video at seconds, mm:ss or
                          hh:mm:ss (fractions allowed). Overrides saved resume.
-  --set-default [group]  Use Omaroll for images, videos, pdf or all (images
-                         and videos, the default).
+  --set-default [group]  Use Omaroll for a group of file types: images,
+                         videos, pdf, or all (images and videos, the default).
+                         Add --verbose to list every type.
   --unset-default [group]
                          Put back the apps --set-default replaced, for the
                          same groups.
+  --install-window-rules Add Omaroll's Hyprland rules to ~/.config/hypr: full
+                         opacity for its windows and a floating viewer.
+  --remove-window-rules  Take those rules out again.
+  --diagnostics          Print the versions, graphics and optional tools that a
+                         bug report needs, and exit. No window opens.
   --demo                 Browse a deterministic fictional library instead of
                          your own files. Nothing personal appears on screen.
   --render <file.png>    Render the window to a PNG and exit. Draws offscreen,
-                         so no compositor can resize it or overlap it.
-  --render-view <view>   Which view to render: grid, detail, video, slideshow,
-                         matte, corrections, compare, export, rename, OCR,
-                         editors, pins, context-menu, selection-menu,
+                         so no compositor can resize it or overlap it. Fails
+                         without writing if the view never becomes ready.
+  --render-view <view>   Which view to render: grid, detail, document, video,
+                         slideshow, matte, corrections, compare, export,
+                         rename, ocr, editors, pins, context-menu, selection-menu,
                          duplicates, similar, browser, sidebar, settings, viewer,
                          viewer-video, viewer-info, viewer-menu, viewer-help or
                          grid-filenames.
   --render-size <WxH>    Window size, from 560x420 (viewer 320x240) to 7680x4320.
                          Default 1280x820.
   --version              Print the version and exit.
-  --help                 Show this message.)"
+  --help                 Show this message.
+
+Examples:
+  omaroll --set-default          Open pictures and videos with Omaroll
+  omaroll photo.jpg              View a picture and step through its folder
+  omaroll ~/Pictures             Browse a folder in the library
+  omaroll --start=1:23 clip.mp4  Play a video from 1 minute 23 seconds
+  omaroll --diagnostics          Details to paste into a bug report)"
                       << Qt::endl;
 }
 
@@ -413,6 +429,27 @@ int main(int argc, char* argv[]) {
       QTextStream(stdout) << "omaroll " << OMAROLL_VERSION << Qt::endl;
       return 0;
     }
+    // For someone whose window won't open: the same text as Copy diagnostics,
+    // without a display. The theme comes from Omarchy's files instead.
+    if (argument == "--diagnostics") {
+      const Diagnostics::Sources sources = Diagnostics::Sources::system();
+      QTextStream(stdout) << Diagnostics::report(sources, QStringLiteral("none (command line)"),
+                                                 Diagnostics::themeName(sources), 0)
+                          << Qt::endl;
+      return 0;
+    }
+    if (argument == "--install-window-rules" || argument == "--remove-window-rules") {
+      if (argc != 2) {
+        QTextStream(stderr) << "omaroll: " << argument << " takes no other arguments\n";
+        return 2;
+      }
+      const QString directory = HyprlandSetup::defaultDirectory();
+      const HyprlandSetup::Result result = argument == "--install-window-rules"
+                                               ? HyprlandSetup::installRules(directory)
+                                               : HyprlandSetup::removeRules(directory);
+      QTextStream(result.ok ? stdout : stderr) << result.message << Qt::endl;
+      return result.ok ? 0 : 2;
+    }
   }
 
   QStringList rawArguments;
@@ -425,12 +462,31 @@ int main(int argc, char* argv[]) {
       return 2;
     }
     const QString option = unset ? "--unset-default" : "--set-default";
+    // --verbose lists every type; without it, one line and the undo.
+    const bool verbose = rawArguments.contains(QStringLiteral("--verbose"));
+    if (verbose) rawArguments.removeAll(QStringLiteral("--verbose"));
     QString group = optionValue(rawArguments, option);
     if (group.isEmpty()) group = "all";
     const int expected = rawArguments.contains(option) && !optionValue(rawArguments, option).isEmpty() ? 3 : 2;
     if (rawArguments.size() != expected) { QTextStream(stderr) << "Default operation accepts only one group\n"; return 2; }
     MimeDefaults defaults;
-    QTextStream(stdout) << defaults.apply(unset, group) << Qt::endl;
+    const QString report = defaults.apply(unset, group);
+    QTextStream out(stdout);
+    if (verbose) out << report << Qt::endl;
+    out << MimeDefaults::summarize(unset, report, defaults.succeeded(), group) << Qt::endl;
+    // Any type that changed can be undone, even when another failed.
+    if (!unset && report.contains(QStringLiteral(" -> "))) {
+      out << "To undo: omaroll --unset-default" << (group == u"all" ? QString() : u' ' + group)
+          << Qt::endl;
+    }
+    if (!verbose && !defaults.succeeded()) {
+      // The failed types, so a partial failure can be acted on.
+      for (const QString& line : report.split(u'\n', Qt::SkipEmptyParts)) {
+        if (line.startsWith(u"Could not") || line.startsWith(u"No matching")) {
+          QTextStream(stderr) << line << Qt::endl;
+        }
+      }
+    }
     return defaults.succeeded() ? 0 : 2;
   }
 
@@ -585,6 +641,11 @@ int main(int argc, char* argv[]) {
 
   if (demo) {
     const DemoLibrary::Layout layout = DemoLibrary::build();
+    if (!layout.complete) {
+      qWarning().noquote() << "omaroll: the demo library could not be written in full";
+      // A render of a partial library would look right and show the wrong thing.
+      if (rendering) return 1;
+    }
     viewerRenderFiles = {renderView == QStringLiteral("viewer-video")
                              ? layout.videos + QStringLiteral("/ocean-surface.mp4")
                              : layout.pictures + QStringLiteral("/alpine-dawn.jpg")};
@@ -799,7 +860,7 @@ int main(int argc, char* argv[]) {
       }
     });
 
-    QTimer::singleShot(11000, &application, [window, renderPath] {
+    const auto grab = [window, renderPath] {
       const QImage frame = window->grabWindow();
       if (frame.isNull() || !frame.save(renderPath)) {
         qWarning().noquote() << "could not write" << renderPath;
@@ -808,7 +869,32 @@ int main(int argc, char* argv[]) {
       }
       QTextStream(stdout) << "wrote " << renderPath << Qt::endl;
       QCoreApplication::quit();
+    };
+    // Some views wait on a scan (Compare needs a similar set), so from the
+    // usual moment keep asking the window whether the view is up, for at most
+    // a minute, and give a late one a second to settle.
+    auto waited = std::make_shared<int>(0);
+    auto* poll = new QTimer(&application);
+    poll->setInterval(250);
+    QObject::connect(poll, &QTimer::timeout, &application, [window, grab, waited, poll] {
+      QVariant ready = true;
+      if (window->metaObject()->indexOfMethod("renderReady()") >= 0) {
+        QMetaObject::invokeMethod(window, "renderReady", Q_RETURN_ARG(QVariant, ready));
+      }
+      if (!ready.toBool() && *waited < 49000) {
+        *waited += 250;
+        return;
+      }
+      poll->stop();
+      if (!ready.toBool()) {
+        // A picture of the wrong view is worse than none.
+        qWarning().noquote() << "omaroll: the view never became ready; nothing was written";
+        QCoreApplication::exit(1);
+        return;
+      }
+      QTimer::singleShot(*waited > 0 ? 1000 : 0, QCoreApplication::instance(), grab);
     });
+    QTimer::singleShot(11000, &application, [poll] { poll->start(); });
   }
 
   return QGuiApplication::exec();
