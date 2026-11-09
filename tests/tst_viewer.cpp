@@ -27,6 +27,7 @@
 #include "thumbs/LargeImageProvider.h"
 #include "thumbs/RawImageProvider.h"
 #include "thumbs/Storyboard.h"
+#include "thumbs/ThumbnailCache.h"
 #include "thumbs/ThumbnailProvider.h"
 #include "viewer/HyprlandPlacement.h"
 #include "viewer/MprisService.h"
@@ -79,6 +80,7 @@
 #include <QSemaphore>
 #include <QSettings>
 #include <QSignalSpy>
+#include <QImage>
 #include <QStandardPaths>
 #include <QStyleHints>
 #include <QTemporaryDir>
@@ -3981,6 +3983,15 @@ private slots:
     QVERIFY(!metadata.value(QStringLiteral("xesam:title")).toString().isEmpty());
     const QDBusObjectPath track = metadata.value(QStringLiteral("mpris:trackid")).value<QDBusObjectPath>();
     QVERIFY(track.path().startsWith(QStringLiteral("/io/github/tsouth89/omaroll/track/")));
+    // Cover art is a poster frame kept in the thumbnail cache.
+    if (!QStandardPaths::findExecutable(QStringLiteral("ffmpegthumbnailer")).isEmpty()) {
+      QTRY_VERIFY_WITH_TIMEOUT(
+          m_mpris->metadata().contains(QStringLiteral("mpris:artUrl")), 15000);
+      const QUrl art(m_mpris->metadata().value(QStringLiteral("mpris:artUrl")).toString());
+      QVERIFY(art.isLocalFile());
+      QVERIFY(art.toLocalFile().startsWith(ThumbnailCache::cacheDirectory()));
+      QVERIFY(!QImage(art.toLocalFile()).isNull());
+    }
 
     PropertiesWatcher watcher;
     QVERIFY(client.connect(service, QStringLiteral("/org/mpris/MediaPlayer2"),

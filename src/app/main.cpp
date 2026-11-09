@@ -1,3 +1,4 @@
+#include "actions/ClipboardServe.h"
 #include "actions/ActionLauncher.h"
 #include "actions/ActionRegistry.h"
 #include "actions/ExternalEditors.h"
@@ -66,6 +67,7 @@
 #include <QDeadlineTimer>
 #include <QTimer>
 
+#include <cstring>
 #include <memory>
 
 namespace {
@@ -405,6 +407,10 @@ private:
 } // namespace
 
 int main(int argc, char* argv[]) {
+  // The clipboard helper the app starts for itself, before anything else.
+  if (argc > 1 && std::strcmp(argv[1], ClipboardServe::kOption) == 0) {
+    return ClipboardServe::run(argc, argv);
+  }
   // Decoded pictures go straight back to the system; playing video keeps its
   // frame buffers instead (app/PlaybackHeap.h).
   PlaybackHeap::usePictureDefaults();

@@ -8,6 +8,8 @@
 #include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
+#include <QPointer>
+#include <QProcess>
 #include <functional>
 #include <optional>
 
@@ -130,8 +132,14 @@ public:
 
   // One file on the clipboard as its own data, so it pastes as an image.
   // PNG/JPEG copying is asynchronous; true means accepted. Completion is
-  // reported only after the clipboard tool exits successfully.
+  // reported only after the clipboard tool exits successfully. On Wayland a
+  // JPEG is offered as PNG too (ClipboardServe), so it reaches clipboard
+  // history; without ext-data-control it goes through wl-copy as itself.
   Q_INVOKABLE bool copyFile(const QString& path);
+
+  // The program that runs `--serve-clipboard`: this one. Tests point it at
+  // the omaroll binary beside them.
+  void setClipboardHelper(const QString& program) { m_clipboardHelper = program; }
 
   // Several files on the clipboard at once, as text/uri-list, which is what a
   // paste into Nautilus or a browser upload expects. copyFile uses image data
@@ -175,11 +183,21 @@ private:
   bool copyText(const QString& text, bool sensitive, const QString& mimeType = {});
   bool startSubmission(const QString& program, const QStringList& arguments,
                        const QString& packageHint, const QString& confirmation,
-                       const QString& inputPath, int timeoutMs);
+                       const QString& inputPath, int timeoutMs,
+                       QPointer<QProcess>* track = nullptr);
+  bool copyWithPng(const QString& path, const QString& mime);
+  // Every clipboard write starts a new copy. A clipboard helper still
+  // running for an older one is stopped and never falls back to wl-copy.
+  void newCopy();
 
   void stopTracked();
   QSet<QProcess*> m_trackedProcesses;
   QSet<QString> m_pendingOutputs;
   QSet<QString> m_pendingOpenWith;
   QDBusConnection m_bus;
+  QString m_clipboardHelper;
+  quint64 m_copyGeneration = 0;
+  QPointer<QProcess> m_copyHelper;
+  // The wl-copy of the latest image copy, while it runs.
+  QPointer<QProcess> m_copyProcess;
 };

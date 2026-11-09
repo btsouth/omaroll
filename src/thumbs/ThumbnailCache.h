@@ -47,6 +47,12 @@ public:
 
   [[nodiscard]] static QString cacheDirectory();
 
+  // The file thumbnail() keeps on disk for the same arguments, once it has
+  // made one; empty before that, or when the file does not load. MPRIS
+  // points players at it as cover art.
+  [[nodiscard]] static QString cachedFile(const QString& path, const QSize& logicalSize,
+                                          qreal devicePixelRatio, int seekPercent = 20);
+
   // Cache ceiling. A thumbnail is always rebuildable, so bounding the directory
   // costs a little work later rather than losing anything.
   static constexpr qint64 kMaxCacheBytes = 256LL * 1024 * 1024;
@@ -60,6 +66,10 @@ private:
                                           int seekPercent, Cancellation cancelled);
   [[nodiscard]] static QImage renderVideo(const QString& path, const QSize& pixelSize,
                                           int seekPercent, Cancellation cancelled);
+  // A tile from before the current cache key, still valid for the file now.
+  [[nodiscard]] static QString legacyTile(const QString& path, const QString& renderPath,
+                                          const QSize& pixelSize, int seekPercent);
+  [[nodiscard]] static QSize pixelSizeFor(const QSize& logicalSize, qreal devicePixelRatio);
   [[nodiscard]] static QString cacheKey(const QString& path, const QString& renderPath,
                                         const QSize& pixelSize, int seekPercent);
 };

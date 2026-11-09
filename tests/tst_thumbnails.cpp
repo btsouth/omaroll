@@ -2,6 +2,8 @@
 #include "thumbs/ThumbnailProvider.h"
 
 #include <QColorSpace>
+#include <QCryptographicHash>
+#include <QFileInfo>
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -13,6 +15,8 @@
 #include <QTemporaryDir>
 #include <QThread>
 #include <QtTest>
+
+#include <sys/stat.h>
 
 #include <chrono>
 #include <future>
@@ -113,6 +117,82 @@ private slots:
       QVERIFY2(color.red() < 12 && qAbs(color.green() - 204) < 8 && color.blue() < 25,
                qPrintable(QStringLiteral("pass %1: %2").arg(pass).arg(color.name())));
     }
+    QCOMPARE(cacheFiles().size(), 1);
+  }
+
+  // MPRIS cover art points at the tile thumbnail() keeps, including a tile
+  // from before the current cache key that it still serves.
+  void cachedFileNamesTheTileThumbnailServes() {
+    const QString path = mediaPath(QStringLiteral("still.png"));
+    QImage image(160, 120, QImage::Format_RGB32);
+    image.fill(QColor(200, 120, 40));
+    QVERIFY(image.save(path));
+    QVERIFY(ThumbnailCache::cachedFile(path, QSize(48, 48), 1).isEmpty());
+
+    // An older tile, keyed without the ctime, written after the source.
+    const QFileInfo source(path);
+    const QString legacyIdentity = QStringLiteral("cover3|%1|%2|%3|%4x%5|t%6")
+        .arg(path).arg(source.size()).arg(source.lastModified().toMSecsSinceEpoch())
+        .arg(48).arg(48).arg(20);
+    const QString legacy = ThumbnailCache::cacheDirectory() + QLatin1Char('/') +
+        QString::fromLatin1(QCryptographicHash::hash(legacyIdentity.toUtf8(),
+                                                     QCryptographicHash::Md5).toHex()) +
+        QStringLiteral(".jpg");
+    QVERIFY(QDir().mkpath(ThumbnailCache::cacheDirectory()));
+    QImage tile(64, 48, QImage::Format_RGB32);
+    tile.fill(Qt::darkMagenta);
+    QVERIFY(tile.save(legacy, "JPG"));
+    QCOMPARE(ThumbnailCache::cachedFile(path, QSize(48, 48), 1), legacy);
+    QCOMPARE(ThumbnailCache::thumbnail(path, QSize(48, 48), 1).size(), tile.size());
+    QCOMPARE(cacheFiles().size(), 1);
+
+    // Once the source changes the old tile no longer counts, and the new
+    // one thumbnail() writes is named instead.
+    // Touched until its ctime is past the tile's mtime, which takes up to a
+    // second on file systems with whole-second timestamps.
+    const auto after = [](const QString& changed, const QString& tile) {
+      struct stat source {};
+      struct stat written {};
+      return ::stat(QFile::encodeName(changed).constData(), &source) == 0 &&
+             ::stat(QFile::encodeName(tile).constData(), &written) == 0 &&
+             (source.st_ctim.tv_sec > written.st_mtim.tv_sec ||
+              (source.st_ctim.tv_sec == written.st_mtim.tv_sec &&
+               source.st_ctim.tv_nsec > written.st_mtim.tv_nsec));
+    };
+    QElapsedTimer touching;
+    touching.start();
+    do {
+      QTest::qWait(10);
+      QVERIFY(QFile::setPermissions(path, QFile::permissions(path) | QFile::ReadGroup));
+      QVERIFY(QFile::setPermissions(path, QFile::permissions(path) & ~QFile::ReadGroup));
+    } while (!after(path, legacy) && touching.elapsed() < 3000);
+    QVERIFY(after(path, legacy));
+    QVERIFY(ThumbnailCache::cachedFile(path, QSize(48, 48), 1).isEmpty());
+    QVERIFY(!ThumbnailCache::thumbnail(path, QSize(48, 48), 1).isNull());
+    const QString current = ThumbnailCache::cachedFile(path, QSize(48, 48), 1);
+    QVERIFY(!current.isEmpty());
+    QVERIFY(current != legacy);
+    QVERIFY(QFileInfo::exists(current));
+  }
+
+  // A tile that no longer loads (cut off by a power loss, say) is replaced,
+  // so cachedFile() and MPRIS never hand out the damaged file.
+  void damagedTileIsReplaced() {
+    const QString path = mediaPath(QStringLiteral("damaged.png"));
+    QImage image(160, 120, QImage::Format_RGB32);
+    image.fill(QColor(20, 160, 90));
+    QVERIFY(image.save(path));
+    QVERIFY(!ThumbnailCache::thumbnail(path, QSize(48, 48), 1).isNull());
+    const QString tile = ThumbnailCache::cachedFile(path, QSize(48, 48), 1);
+    QVERIFY(!tile.isEmpty());
+    QFile file(tile);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    file.close();
+    QVERIFY(QImage(tile).isNull());
+    QVERIFY(ThumbnailCache::cachedFile(path, QSize(48, 48), 1).isEmpty());
+    QVERIFY(!ThumbnailCache::thumbnail(path, QSize(48, 48), 1).isNull());
+    QCOMPARE(ThumbnailCache::cachedFile(path, QSize(48, 48), 1), tile);
+    QVERIFY(!QImage(tile).isNull());
     QCOMPARE(cacheFiles().size(), 1);
   }
 

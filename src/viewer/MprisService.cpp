@@ -1,6 +1,7 @@
 #include "viewer/MprisService.h"
 
 #include "app/AppSettings.h"
+#include "thumbs/ThumbnailCache.h"
 
 #include <QCoreApplication>
 #include <QDBusAbstractAdaptor>
@@ -10,9 +11,13 @@
 #include <QMediaPlayer>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QThreadPool>
+#include <QUrl>
+#include <QtConcurrent>
 
 #include <algorithm>
 #include <cmath>
+#include <tuple>
 #include <utility>
 
 namespace {
@@ -23,6 +28,18 @@ const QString kPlayerInterface = QStringLiteral("org.mpris.MediaPlayer2.Player")
 const QString kServiceName = QStringLiteral("org.mpris.MediaPlayer2.omaroll");
 constexpr double kMinimumRate = 0.25;
 constexpr double kMaximumRate = 4.0;
+
+// Posters render one at a time on a thread of their own, so a slow video
+// never holds up the shared pool's picture work. Never freed, so exit does
+// not wait for a render.
+QThreadPool& posterPool() {
+  static QThreadPool* const pool = [] {
+    auto* created = new QThreadPool;
+    created->setMaxThreadCount(1);
+    return created;
+  }();
+  return *pool;
+}
 
 } // namespace
 
@@ -130,8 +147,53 @@ MprisService::MprisService(AppSettings* settings, std::optional<QDBusConnection>
 }
 
 MprisService::~MprisService() {
+  if (m_artCancel) m_artCancel->store(true);
   detach();
   unpublish();
+}
+
+void MprisService::findArt() {
+  m_art.clear();
+  // A job for an earlier video is called off: one still queued never starts,
+  // and one running stops at the thumbnail work's next checkpoint.
+  if (m_artCancel) m_artCancel->store(true);
+  m_artCancel.reset();
+  const QString file = m_player ? m_player->source().toLocalFile() : QString();
+  if (file.isEmpty()) return;
+  // A poster frame, made once on a worker by ffmpegthumbnailer and then kept
+  // in the thumbnail cache (or an older tile there, while it is still valid).
+  m_artTrack = m_track;
+  const quint64 track = m_track;
+  m_artCancel = std::make_shared<std::atomic_bool>(false);
+  QFuture<QString> poster = QtConcurrent::run(&posterPool(), [file, cancel = m_artCancel] {
+    if (cancel->load()) return QString();
+    // Through thumbnail() even when a file is there: it reads the tile
+    // back and makes it again if it is damaged, so a path is only handed out
+    // for a picture that loads.
+    // A second try covers the video changing on disk between the two calls,
+    // which moves its cache key. Without a change there is none: a cache
+    // that cannot be written would only render the video again.
+    const auto version = [&file] {
+      const QFileInfo info(file);
+      return std::tuple(info.size(), info.lastModified(), info.metadataChangeTime());
+    };
+    const QSize size(kArtSize, kArtSize);
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      const auto before = version();
+      if (ThumbnailCache::thumbnail(file, size, 1.0, 20, {cancel.get(), nullptr}).isNull() ||
+          cancel->load()) {
+        return QString();
+      }
+      if (QString art = ThumbnailCache::cachedFile(file, size, 1.0); !art.isEmpty()) return art;
+      if (version() == before) break;
+    }
+    return QString();
+  });
+  poster.then(this, [this, track](const QString& art) {
+    if (track != m_track || art.isEmpty()) return;
+    m_art = art;
+    changed(kPlayerInterface, {QStringLiteral("Metadata")});
+  });
 }
 
 void MprisService::track(QObject* object, QObject* controller) {
@@ -238,6 +300,7 @@ void MprisService::attach(QMediaPlayer* player) {
   m_sincePosition.start();
   m_seekRequested = false;
   m_stopped = false;
+  findArt();
   const auto status = [this] {
     if (m_player && m_player->playbackState() == QMediaPlayer::PlayingState) {
       m_stopped = false;
@@ -268,6 +331,7 @@ void MprisService::attach(QMediaPlayer* player) {
                 m_sincePosition.restart();
                 m_seekRequested = false;
                 m_stopped = false;
+                findArt();
                 changed(kPlayerInterface, {QStringLiteral("Metadata"),
                                            QStringLiteral("PlaybackStatus")});
               }),
@@ -411,6 +475,9 @@ QVariantMap MprisService::metadata() const {
   };
   if (m_player->duration() > 0) {
     data.insert(QStringLiteral("mpris:length"), qlonglong(m_player->duration()) * 1000);
+  }
+  if (m_artTrack == m_track && !m_art.isEmpty()) {
+    data.insert(QStringLiteral("mpris:artUrl"), QUrl::fromLocalFile(m_art).toString());
   }
   return data;
 }
