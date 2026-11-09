@@ -1,5 +1,6 @@
 #include "app/SingleInstance.h"
 
+#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDeadlineTimer>
 #include <QDebug>
@@ -190,11 +191,17 @@ SingleInstance::SingleInstance(const QString& serverName, QObject* parent)
         }
         accepted = true;
         // The launcher's token lets the window that takes the request come
-        // to the front. Qt's Wayland plugin uses it on the next
-        // requestActivate() and then clears it.
-        if (!token.isEmpty()) qputenv("XDG_ACTIVATION_TOKEN", token.toLatin1());
-        else qunsetenv("XDG_ACTIVATION_TOKEN");
+        // to the front: Qt's Wayland plugin reads it in requestActivate(),
+        // which the handlers call before they return. It is there only for
+        // that call, so a request that opened nothing, or a session without
+        // Wayland, can't hand it to a later child process. The environment is
+        // touched only from the GUI thread, where the windows are.
+        const bool guiThread = QCoreApplication::instance() &&
+                               QThread::currentThread() == QCoreApplication::instance()->thread();
+        if (guiThread && !token.isEmpty()) qputenv("XDG_ACTIVATION_TOKEN", token.toLatin1());
+        else if (guiThread) qunsetenv("XDG_ACTIVATION_TOKEN");
         emit activationRequested(paths, library, startMs, skipped);
+        if (guiThread) qunsetenv("XDG_ACTIVATION_TOKEN");
         socket->write(acknowledgement);
         socket->disconnectFromServer();
       };

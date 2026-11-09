@@ -626,7 +626,10 @@ private slots:
     // Preserve later safety/profile settings, while child apps receive the
     // original hardware overrides, including unset versus explicitly empty.
     playback.insert(QStringLiteral("PIPEWIRE_REMOTE"), QStringLiteral("omaroll-no-audio"));
+    // A launcher's activation token is never handed on.
+    playback.insert(QStringLiteral("XDG_ACTIVATION_TOKEN"), QStringLiteral("spent"));
     const auto external = policy.externalEnvironment(playback);
+    QVERIFY(!external.contains(QStringLiteral("XDG_ACTIVATION_TOKEN")));
     QCOMPARE(external.contains(decodeKey), decodeSet);
     QCOMPARE(external.contains(encodeKey), encodeSet);
     if (decodeSet) QCOMPARE(external.value(decodeKey), decode);
@@ -774,6 +777,8 @@ private slots:
     send(R"({"paths":[],"activationToken":"from-launcher"})" "\n");
     QTRY_COMPARE(seen.size(), 1);
     QCOMPARE(seen.last(), QStringLiteral("from-launcher"));
+    // Gone once the request is handled, whether or not a window used it.
+    QVERIFY(qEnvironmentVariableIsEmpty("XDG_ACTIVATION_TOKEN"));
     // A request without one leaves no stale token behind.
     send(R"({"paths":[]})" "\n");
     QTRY_COMPARE(seen.size(), 2);
