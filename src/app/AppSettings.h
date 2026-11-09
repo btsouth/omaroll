@@ -144,8 +144,12 @@ public:
                  windowRulesChanged)
   [[nodiscard]] bool windowRulesOfferDismissed() const;
   Q_INVOKABLE void dismissWindowRulesOffer();
-  // The settings key, for the command line, which reads it without AppSettings.
   static const char* const kWindowRulesOfferDismissedKey;
+  // The same for the command line, which runs without loading the profile.
+  // A damaged settings file is never written, as in the app, so it stays
+  // there for recovery; ending the offer then returns false.
+  [[nodiscard]] static bool windowRulesOfferDismissedOnDisk();
+  [[nodiscard]] static bool endWindowRulesOfferOnDisk();
   // Where the rules go. Tests point this at a scratch directory.
   void setHyprDirectory(const QString &directory);
   explicit AppSettings(QObject* parent = nullptr);

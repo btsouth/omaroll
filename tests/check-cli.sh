@@ -113,6 +113,14 @@ grep -qF 'install-window-rules' <<<"$out" && fail "offered rules that are instal
 out=$(set_images)
 grep -qF 'install-window-rules' <<<"$out" && fail "offered rules again after installing once: $out"
 rm "$settings"
+# A damaged settings file is left for the app's recovery, never rewritten.
+printf '[library]\nsortMode=3\n[truncated\n' > "$settings"
+cp "$settings" "$scratch/settings.damaged"
+"$omaroll" --install-window-rules >/dev/null 2>"$scratch/err" || fail "install failed with damaged settings"
+grep -q 'left as it is' "$scratch/err" || fail "damaged settings not reported: $(cat "$scratch/err")"
+cmp -s "$scratch/settings.damaged" "$settings" || fail "--install-window-rules rewrote damaged settings"
+"$omaroll" --remove-window-rules >/dev/null
+rm "$settings"
 
 # The man page covers every option in --help, and installs.
 man=$source/packaging/omaroll.1

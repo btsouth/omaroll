@@ -688,6 +688,31 @@ private slots:
       QCOMPARE(explicitPreferences.imagePrimaryAction(), QStringLiteral("edit"));
       QCOMPARE(explicitPreferences.videoPrimaryAction(), QStringLiteral("play"));
     }
+    // `--install-window-rules` before the first launch writes one key; the
+    // profile is still new.
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, profiles.filePath("rules-first"));
+    QVERIFY(AppSettings::endWindowRulesOfferOnDisk());
+    QVERIFY(AppSettings::windowRulesOfferDismissedOnDisk());
+    {
+      AppSettings rulesFirst;
+      QCOMPARE(rulesFirst.imagePrimaryAction(), QStringLiteral("preview"));
+      QCOMPARE(rulesFirst.videoPrimaryAction(), QStringLiteral("preview"));
+      QVERIFY(rulesFirst.windowRulesOfferDismissed());
+    }
+    // The command line leaves a damaged settings file alone, as the app does.
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, profiles.filePath("damaged"));
+    QVERIFY(QDir().mkpath(profiles.filePath("damaged/omaroll")));
+    const QString damagedIni = profiles.filePath("damaged/omaroll/omaroll.ini");
+    const QByteArray bad("[library]\nsortMode=3\n[truncated\n");
+    {
+      QFile damaged(damagedIni);
+      QVERIFY(damaged.open(QIODevice::WriteOnly));
+      QCOMPARE(damaged.write(bad), bad.size());
+    }
+    QVERIFY(!AppSettings::endWindowRulesOfferOnDisk());
+    QFile untouched(damagedIni);
+    QVERIFY(untouched.open(QIODevice::ReadOnly));
+    QCOMPARE(untouched.readAll(), bad);
   }
 
   void singleInstanceForwardsTheOpenedPath() {

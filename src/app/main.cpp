@@ -467,14 +467,14 @@ int main(int argc, char* argv[]) {
       const HyprlandSetup::Result result = argument == "--install-window-rules"
                                                ? HyprlandSetup::installRules(directory)
                                                : HyprlandSetup::removeRules(directory);
+      QTextStream(result.ok ? stdout : stderr) << result.message << Qt::endl;
       // Installed once, the library and --set-default stop offering them,
       // as when Settings installs them.
-      if (result.ok && argument == "--install-window-rules") {
-        QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("omaroll"),
-                  QStringLiteral("omaroll"))
-            .setValue(AppSettings::kWindowRulesOfferDismissedKey, true);
+      if (result.ok && argument == "--install-window-rules" &&
+          !AppSettings::endWindowRulesOfferOnDisk()) {
+        QTextStream(stderr) << "omaroll: the settings file could not be read or written, so it was "
+                               "left as it is; the library may offer the rules again\n";
       }
-      QTextStream(result.ok ? stdout : stderr) << result.message << Qt::endl;
       return result.ok ? 0 : 2;
     }
   }
@@ -512,10 +512,7 @@ int main(int argc, char* argv[]) {
     if (!unset && defaults.succeeded() &&
         HyprlandSetup::rulesState(HyprlandSetup::defaultDirectory()) ==
             HyprlandSetup::RulesState::NotInstalled &&
-        !QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("omaroll"),
-                   QStringLiteral("omaroll"))
-             .value(AppSettings::kWindowRulesOfferDismissedKey, false)
-             .toBool()) {
+        !AppSettings::windowRulesOfferDismissedOnDisk()) {
       out << "To float the viewer and keep it opaque: omaroll --install-window-rules" << Qt::endl;
     }
     if (!verbose && !defaults.succeeded()) {
