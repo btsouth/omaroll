@@ -65,6 +65,9 @@ private:
                                           int seekPercent, Cancellation cancelled);
   [[nodiscard]] static QImage renderVideo(const QString& path, const QSize& pixelSize,
                                           int seekPercent, Cancellation cancelled);
+  // A tile from before the current cache key, still valid for the file now.
+  [[nodiscard]] static QString legacyTile(const QString& path, const QString& renderPath,
+                                          const QSize& pixelSize, int seekPercent);
   [[nodiscard]] static QSize pixelSizeFor(const QSize& logicalSize, qreal devicePixelRatio);
   [[nodiscard]] static QString cacheKey(const QString& path, const QString& renderPath,
                                         const QSize& pixelSize, int seekPercent);

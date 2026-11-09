@@ -2,6 +2,8 @@
 #include "thumbs/ThumbnailProvider.h"
 
 #include <QColorSpace>
+#include <QCryptographicHash>
+#include <QFileInfo>
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -114,6 +116,45 @@ private slots:
                qPrintable(QStringLiteral("pass %1: %2").arg(pass).arg(color.name())));
     }
     QCOMPARE(cacheFiles().size(), 1);
+  }
+
+  // MPRIS cover art points at the tile thumbnail() keeps, including a tile
+  // from before the current cache key that it still serves.
+  void cachedFileNamesTheTileThumbnailServes() {
+    const QString path = mediaPath(QStringLiteral("still.png"));
+    QImage image(160, 120, QImage::Format_RGB32);
+    image.fill(QColor(200, 120, 40));
+    QVERIFY(image.save(path));
+    QVERIFY(ThumbnailCache::cachedFile(path, QSize(48, 48), 1).isEmpty());
+
+    // An older tile, keyed without the ctime, written after the source.
+    const QFileInfo source(path);
+    const QString legacyIdentity = QStringLiteral("cover3|%1|%2|%3|%4x%5|t%6")
+        .arg(path).arg(source.size()).arg(source.lastModified().toMSecsSinceEpoch())
+        .arg(48).arg(48).arg(20);
+    const QString legacy = ThumbnailCache::cacheDirectory() + QLatin1Char('/') +
+        QString::fromLatin1(QCryptographicHash::hash(legacyIdentity.toUtf8(),
+                                                     QCryptographicHash::Md5).toHex()) +
+        QStringLiteral(".jpg");
+    QVERIFY(QDir().mkpath(ThumbnailCache::cacheDirectory()));
+    QImage tile(64, 48, QImage::Format_RGB32);
+    tile.fill(Qt::darkMagenta);
+    QVERIFY(tile.save(legacy, "JPG"));
+    QCOMPARE(ThumbnailCache::cachedFile(path, QSize(48, 48), 1), legacy);
+    QCOMPARE(ThumbnailCache::thumbnail(path, QSize(48, 48), 1).size(), tile.size());
+    QCOMPARE(cacheFiles().size(), 1);
+
+    // Once the source changes the old tile no longer counts, and the new
+    // one thumbnail() writes is named instead.
+    QTest::qWait(20);
+    QVERIFY(QFile::setPermissions(path, QFile::permissions(path) | QFile::ReadGroup));
+    QVERIFY(QFile::setPermissions(path, QFile::permissions(path) & ~QFile::ReadGroup));
+    QVERIFY(ThumbnailCache::cachedFile(path, QSize(48, 48), 1).isEmpty());
+    QVERIFY(!ThumbnailCache::thumbnail(path, QSize(48, 48), 1).isNull());
+    const QString current = ThumbnailCache::cachedFile(path, QSize(48, 48), 1);
+    QVERIFY(!current.isEmpty());
+    QVERIFY(current != legacy);
+    QVERIFY(QFileInfo::exists(current));
   }
 
   void cancelledRequestDoesNotCacheOrSuppressRetry() {

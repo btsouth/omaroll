@@ -2,6 +2,7 @@
 #include <QDir>
 #include <QFile>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QSettings>
 #include <QStandardPaths>
@@ -44,6 +45,45 @@ QString readText(const QString &path) {
   QFile file(path);
   return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString();
 }
+const QString kFileExisted = QStringLiteral("file/existed");
+const QString kFileSection = QStringLiteral("file/section");
+const QString kFileNewline = QStringLiteral("file/newline");
+bool hasDefaultsSection(const QString &text) {
+  for (const auto &line : text.split(u'\n'))
+    if (line.trimmed() == u"[Default Applications]")
+      return true;
+  return false;
+}
+bool writeText(const QString &path, const QString &text) {
+  QSaveFile output(path);
+  const auto bytes = text.toUtf8();
+  return output.open(QIODevice::WriteOnly) && output.write(bytes) == bytes.size() &&
+         output.commit();
+}
+// Once no type is left to restore: what xdg-mime added around Omaroll's
+// lines goes too, and the record of the file before is dropped.
+bool restoreStructure(QSettings &state, const QString &userList) {
+  if (!state.contains(kFileExisted))
+    return true;
+  for (const auto &key : state.allKeys())
+    if (!key.startsWith(u"lines/") && !key.startsWith(u"file/"))
+      return true;
+  const bool existed = state.value(kFileExisted).toBool();
+  const bool section = state.value(kFileSection).toBool();
+  const bool newline = state.value(kFileNewline).toBool();
+  bool ok = true;
+  if (QFile::exists(userList)) {
+    const QString text = readText(userList);
+    const QString after = MimeDefaults::withoutAddedStructure(text, section, newline);
+    if (!existed && after.isEmpty())
+      ok = QFile::remove(userList);
+    else if (after != text)
+      ok = writeText(userList, after);
+  }
+  if (ok)
+    state.remove(QStringLiteral("file"));
+  return ok;
+}
 QString recordKey(const QString &type) { return QStringLiteral("lines/") + type; }
 QStringList handlersOf(const QString &line) {
   const auto at = line.indexOf(u'=');
@@ -75,12 +115,15 @@ QString MimeDefaults::withoutOmaroll(const QString &text, const QString &type,
       ++index;
       continue;
     }
-    const auto at = line.indexOf(u'=');
-    if (at < 0 || line.left(at).trimmed() != type) {
+    // A CRLF list: parse without the carriage return, and keep it.
+    const QString ending = line.endsWith(u'\r') ? QStringLiteral("\r") : QString();
+    const QString entry = line.chopped(ending.size());
+    const auto at = entry.indexOf(u'=');
+    if (at < 0 || entry.left(at).trimmed() != type) {
       ++index;
       continue;
     }
-    auto handlers = handlersOf(line);
+    auto handlers = handlersOf(entry);
     if (!handlers.contains(desktop)) {
       ++index;
       continue;
@@ -98,10 +141,25 @@ QString MimeDefaults::withoutOmaroll(const QString &text, const QString &type,
       lines.removeAt(index);
       continue;
     }
-    line = line.left(at + 1) + handlers.join(u';') + u';';
+    line = entry.left(at + 1) + handlers.join(u';') + u';' + ending;
     ++index;
   }
   return lines.join(u'\n');
+}
+QString MimeDefaults::withoutAddedStructure(const QString &text, bool hadSection,
+                                            bool endedWithNewline) {
+  QString result = text;
+  // xdg-mime appends a blank line and the header to a list without one.
+  // Only an empty section is taken out; anything the user put in it stays.
+  if (!hadSection) {
+    static const QRegularExpression appended(
+        QStringLiteral("\n\\[Default Applications\\]\n(\n*)\\z"));
+    result.replace(appended, QStringLiteral("\\1"));
+  }
+  // And it ends every line with a newline, the last one included.
+  if (!endedWithNewline && result.endsWith(u'\n'))
+    result.chop(1);
+  return result;
 }
 QStringList MimeDefaults::types(const QString &path, const QString &group) {
   if (!QStringList{"images", "videos", "pdf", "all"}.contains(group))
@@ -318,10 +376,18 @@ MimeDefaults::Result MimeDefaults::run(bool unset, const QString &group) {
       // The handler being replaced now, which may be newer than one recorded
       // by an earlier --set-default.
       state.setValue(type, previous);
-      // And the exact line it sat on, if the user's own list had one, so
-      // --unset-default can put the file back byte for byte.
-      const QString line = defaultLine(readText(userList), type);
-      if (handlersOf(line).value(0) == previous && !previous.isEmpty())
+      // How the user's list looked before Omaroll's first change, so that
+      // once every type is restored the file is back byte for byte.
+      const QString before = readText(userList);
+      if (!state.contains(kFileExisted)) {
+        state.setValue(kFileExisted, QFile::exists(userList));
+        state.setValue(kFileSection, hasDefaultsSection(before));
+        state.setValue(kFileNewline, before.isEmpty() || before.endsWith(u'\n'));
+      }
+      // And the exact line xdg-mime is about to overwrite, whichever of its
+      // apps answers now, so --unset-default puts it back as it was.
+      const QString line = defaultLine(before, type);
+      if (!line.isEmpty())
         state.setValue(recordKey(type), line);
       else
         state.remove(recordKey(type));
@@ -337,7 +403,7 @@ MimeDefaults::Result MimeDefaults::run(bool unset, const QString &group) {
     } else {
       const QString restore = state.value(type).toString();
       QString original = state.value(recordKey(type)).toString();
-      if (previous != desktop || handlersOf(original).value(0) != restore)
+      if (previous != desktop)
         original.clear();
       bool removed = true;
       // Only write user-owned configuration, never system defaults.
@@ -386,6 +452,8 @@ MimeDefaults::Result MimeDefaults::run(bool unset, const QString &group) {
                             : ": kept " + previous);
     }
   }
+  if (unset)
+    ok &= restoreStructure(state, userList);
   state.sync();
   return {report.join(u'\n'), ok && state.status() == QSettings::NoError};
 }

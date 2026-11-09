@@ -1,6 +1,7 @@
 #include "actions/ClipboardServe.h"
 
 #include "ext-data-control-v1-client-protocol.h"
+#include "sources/ImageBudget.h"
 
 #include <QBuffer>
 #include <QCoreApplication>
@@ -14,10 +15,14 @@
 #include <cerrno>
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <dirent.h>
 #include <fcntl.h>
 #include <memory>
+#include <sys/wait.h>
 #include <unistd.h>
+#include <vector>
 
 namespace ClipboardServe {
 namespace {
@@ -30,10 +35,49 @@ struct State {
   ext_data_control_manager_v1* manager = nullptr;
   QByteArray type;
   QByteArray bytes;
-  QByteArray png;
-  bool pngTried = false;
+  QStringList offered;
   bool cancelled = false;
+  // Paste writers still running, reaped as they finish.
+  std::vector<pid_t> writers;
 };
+
+// A paste is written by a child of its own, which makes the PNG first when
+// that is what was asked for, so neither a slow reader nor an encode ever
+// holds up the next request. A writer that has not finished by the deadline
+// is cut off, and past the cap a request is refused rather than piling up
+// processes (each PNG writer holds a decoded picture).
+constexpr std::size_t kMaxWriters = 4;
+constexpr unsigned kWriteSeconds = 60;
+
+// Descriptors the app let through to this process (not close-on-exec). Qt's
+// and Wayland's own are close-on-exec, and stay.
+void closeInherited(int keep) {
+  DIR* directory = opendir("/proc/self/fd");
+  if (!directory) return;
+  std::vector<int> inherited;
+  while (const dirent* entry = readdir(directory)) {
+    const int fd = std::atoi(entry->d_name);
+    if (fd <= STDERR_FILENO || fd == keep || fd == dirfd(directory)) continue;
+    const int flags = fcntl(fd, F_GETFD);
+    if (flags >= 0 && !(flags & FD_CLOEXEC)) inherited.push_back(fd);
+  }
+  closedir(directory);
+  for (const int fd : inherited) close(fd);
+}
+
+void reap(State& state) {
+  std::erase_if(state.writers, [](pid_t writer) {
+    return waitpid(writer, nullptr, WNOHANG) != 0;
+  });
+}
+
+// Unreaped writers keep their pids, so none of these can be someone else's.
+void stopWriters(State& state) {
+  reap(state);
+  for (const pid_t writer : state.writers) kill(writer, SIGTERM);
+  for (const pid_t writer : state.writers) waitpid(writer, nullptr, 0);
+  state.writers.clear();
+}
 
 void global(void* data, wl_registry* registry, uint32_t name, const char* interface,
             uint32_t version) {
@@ -50,11 +94,19 @@ void global(void* data, wl_registry* registry, uint32_t name, const char* interf
 void globalRemove(void*, wl_registry*, uint32_t) {}
 constexpr wl_registry_listener kRegistry{global, globalRemove};
 
-// Each paste is written by a short-lived child, so a reader that stalls
-// never stops this process from noticing that something else was copied.
-void deliver(const QByteArray& bytes, int fd) {
+void deliver(State& state, int fd, bool png) {
+  reap(state);
+  if (state.writers.size() >= kMaxWriters) {
+    close(fd);
+    return;
+  }
   const pid_t writer = fork();
   if (writer == 0) {
+    // This process never starts a thread of its own, so its children may
+    // use Qt freely.
+    std::signal(SIGTERM, SIG_DFL);
+    alarm(kWriteSeconds);
+    const QByteArray bytes = png ? encodePng(state.bytes) : state.bytes;
     const int flags = fcntl(fd, F_GETFL);
     if (flags >= 0) fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
     const char* data = bytes.constData();
@@ -68,8 +120,9 @@ void deliver(const QByteArray& bytes, int fd) {
       data += written;
       left -= written;
     }
-    _exit(0);
+    _exit(bytes.isEmpty() ? 1 : 0);
   }
+  if (writer > 0) state.writers.push_back(writer);
   close(fd);
 }
 
@@ -77,13 +130,9 @@ void send(void* data, ext_data_control_source_v1*, const char* mimeType, int32_t
   auto* state = static_cast<State*>(data);
   const QByteArray type(mimeType);
   if (type == state->type) {
-    deliver(state->bytes, fd);
-  } else if (type == "image/png") {
-    if (!state->pngTried) {
-      state->pngTried = true;
-      state->png = encodePng(state->bytes);
-    }
-    deliver(state->png, fd);
+    deliver(*state, fd, false);
+  } else if (type == "image/png" && state->offered.contains(u"image/png")) {
+    deliver(*state, fd, true);
   } else {
     close(fd);
   }
@@ -105,9 +154,24 @@ constexpr ext_data_control_device_v1_listener kDevice{dataOffer, selection, fini
 
 } // namespace
 
-QStringList offeredTypes(const QString& sourceType) {
-  if (sourceType == u"image/jpeg") return {sourceType, QStringLiteral("image/png")};
-  return {sourceType};
+bool mayOfferPng(const QString& sourceType) { return sourceType == u"image/jpeg"; }
+
+QStringList offeredTypes(const QString& sourceType, const QByteArray& bytes, qint64 maxPixels) {
+  if (!mayOfferPng(sourceType)) return {sourceType};
+  QBuffer buffer;
+  buffer.setData(bytes);
+  buffer.open(QIODevice::ReadOnly);
+  QImageReader reader(&buffer);
+  const ImageBudget::Estimate estimate = ImageBudget::estimate(reader);
+  const qint64 pixels = qint64(estimate.stored.width()) * estimate.stored.height();
+  const qint64 limit = ImageBudget::decodeLimitBytes();
+  // Too big to decode, or to encode inside clipboard history's two seconds:
+  // the picture goes on as itself only, as wl-copy put it before.
+  if (!estimate.valid() || pixels <= 0 || pixels > maxPixels ||
+      (limit > 0 && estimate.bytes > limit)) {
+    return {sourceType};
+  }
+  return {sourceType, QStringLiteral("image/png")};
 }
 
 QByteArray encodePng(const QByteArray& source) {
@@ -131,6 +195,11 @@ int run(int argc, char** argv) {
     std::fprintf(stderr, "usage: omaroll %s TYPE FILE\n", kOption);
     return 2;
   }
+  // Image plugins (JPEG) load through the application's library paths, and
+  // decodes get the same allocation limit as the app's. No threads start
+  // here, so the forks below stay safe.
+  QCoreApplication application(argc, argv);
+  ImageBudget::applyStartupLimit();
   auto state = std::make_unique<State>();
   state->type = argv[2];
   QFile file(QFile::decodeName(argv[3]));
@@ -140,6 +209,11 @@ int run(int argc, char** argv) {
   }
   if (file.size() > kMaxBytes) return kUnavailable;
   state->bytes = file.readAll();
+  // A short read would put a cut-off picture on the clipboard.
+  if (file.error() != QFileDevice::NoError || state->bytes.size() != file.size()) {
+    std::fprintf(stderr, "Could not read all of %s\n", argv[3]);
+    return 1;
+  }
   file.close();
 
   // wayland-client would otherwise try wayland-0 in any session at all.
@@ -161,17 +235,23 @@ int run(int argc, char** argv) {
   ext_data_control_source_v1* source =
       ext_data_control_manager_v1_create_data_source(state->manager);
   ext_data_control_source_v1_add_listener(source, &kSource, state.get());
-  for (const QString& type : offeredTypes(QString::fromUtf8(state->type))) {
+  state->offered = offeredTypes(QString::fromUtf8(state->type), state->bytes);
+  for (const QString& type : std::as_const(state->offered)) {
     ext_data_control_source_v1_offer(source, type.toUtf8().constData());
   }
   ext_data_control_device_v1* device =
       ext_data_control_manager_v1_get_data_device(state->manager, state->seat);
   ext_data_control_device_v1_add_listener(device, &kDevice, state.get());
   ext_data_control_device_v1_set_selection(device, source);
-  if (wl_display_roundtrip(display) < 0 || state->cancelled) {
+  if (wl_display_roundtrip(display) < 0) {
     std::fprintf(stderr, "The compositor did not take the selection\n");
     wl_display_disconnect(display);
     return 1;
+  }
+  if (state->cancelled) {
+    // Something else was copied in the meantime; that copy stands.
+    wl_display_disconnect(display);
+    return kSuperseded;
   }
 
   // The selection is ours. The caller waits for this process, so hand it
@@ -184,6 +264,9 @@ int run(int argc, char** argv) {
   }
   if (server > 0) _exit(0);
   setsid();
+  // Nothing of the app's stays open or busy: a folder on a USB stick it
+  // was started from can still be unmounted.
+  [[maybe_unused]] const int moved = chdir("/");
   const int null = open("/dev/null", O_RDWR);
   if (null >= 0) {
     dup2(null, STDIN_FILENO);
@@ -191,13 +274,11 @@ int run(int argc, char** argv) {
     dup2(null, STDERR_FILENO);
     if (null > STDERR_FILENO) close(null);
   }
+  closeInherited(wl_display_get_fd(display));
   std::signal(SIGPIPE, SIG_IGN);
-  // Writers are reaped as they exit.
-  std::signal(SIGCHLD, SIG_IGN);
-  // Image plugins (JPEG) load through the application's library paths.
-  QCoreApplication application(argc, argv);
   while (!state->cancelled && wl_display_dispatch(display) >= 0) {
   }
+  stopWriters(*state);
   wl_display_disconnect(display);
   _exit(0);
 }

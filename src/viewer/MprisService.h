@@ -8,6 +8,8 @@
 #include <QStringList>
 #include <QVariantMap>
 
+#include <atomic>
+#include <memory>
 #include <optional>
 
 class AppSettings;
@@ -90,6 +92,8 @@ private:
   // The poster frame's file, for the track it was found for.
   QString m_art;
   quint64 m_artTrack = 0;
+  // Set when a newer track or teardown makes the running poster job moot.
+  std::shared_ptr<std::atomic_bool> m_artCancel;
   qint64 m_lastPosition = 0;
   QElapsedTimer m_sincePosition;
   // Set by Seek and SetPosition, so even a short seek is announced.

@@ -243,9 +243,10 @@ bool ActionLauncher::copyFile(const QString& path) {
   if (mime != u"image/png"_s && mime != u"image/jpeg"_s) {
     return copyUris({path});
   }
+  newCopy();
 
   // A JPEG goes on as itself and as PNG, so the shell's history keeps it.
-  if (ClipboardServe::offeredTypes(mime).size() > 1 && !qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY")) {
+  if (ClipboardServe::mayOfferPng(mime) && !qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY")) {
     return copyWithPng(path, mime);
   }
 
@@ -256,8 +257,15 @@ bool ActionLauncher::copyFile(const QString& path) {
                          u"Copied to clipboard"_s, path, 5000);
 }
 
+void ActionLauncher::newCopy() {
+  ++m_copyGeneration;
+  if (m_copyHelper) m_copyHelper->kill();
+}
+
 bool ActionLauncher::copyWithPng(const QString& path, const QString& mime) {
   auto* process = new QProcess(this);
+  m_copyHelper = process;
+  const quint64 generation = m_copyGeneration;
   process->setProcessEnvironment(externalProcessEnvironment());
   process->setProgram(m_clipboardHelper.isEmpty() ? QCoreApplication::applicationFilePath()
                                                   : m_clipboardHelper);
@@ -267,11 +275,19 @@ bool ActionLauncher::copyWithPng(const QString& path, const QString& mime) {
   auto* timer = new QTimer(process);
   timer->setSingleShot(true);
   auto settled = std::make_shared<bool>(false);
-  const auto finish = [this, process, timer, settled, path, mime](bool copied) {
+  // copied, or the helper's exit code when it did not copy (-1: no exit).
+  const auto finish = [this, process, timer, settled, path, mime, generation](bool copied,
+                                                                              int code) {
     if (*settled) return;
     *settled = true;
     timer->stop();
     process->deleteLater();
+    // Something newer went on the clipboard meanwhile. A fallback now would
+    // put this older picture back over it.
+    if (generation != m_copyGeneration || code == ClipboardServe::kSuperseded) {
+      emit submissionFinished(u"omaroll"_s, false, u"A newer copy replaced this one"_s);
+      return;
+    }
     if (copied) {
       emit reported(u"Copied to clipboard"_s);
       emit submissionFinished(u"omaroll"_s, true, {});
@@ -284,10 +300,11 @@ bool ActionLauncher::copyWithPng(const QString& path, const QString& mime) {
   };
   connect(process, &QProcess::finished, this,
           [finish](int code, QProcess::ExitStatus status) {
-            finish(status == QProcess::NormalExit && code == 0);
+            const bool exited = status == QProcess::NormalExit;
+            finish(exited && code == 0, exited ? code : -1);
           });
   connect(process, &QProcess::errorOccurred, this, [finish](QProcess::ProcessError error) {
-    if (error == QProcess::FailedToStart) finish(false);
+    if (error == QProcess::FailedToStart) finish(false, -1);
   });
   connect(timer, &QTimer::timeout, process, [process] { process->kill(); });
   process->start();
@@ -489,10 +506,12 @@ void ActionLauncher::revealExisting(const QString& path) {
 }
 
 bool ActionLauncher::copyPlainText(const QString& text) {
+  newCopy();
   return ClipboardText::offer(text);
 }
 
 bool ActionLauncher::copyText(const QString& text, bool sensitive, const QString& mimeType) {
+  newCopy();
   // wl-copy rather than QClipboard: the house tools use it, it keeps the
   // selection alive after omaroll closes, and only it can flag a paste as
   // sensitive so the clipboard history leaves it out.

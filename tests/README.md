@@ -90,6 +90,15 @@ and results for:
 - Physical audio, track changes, long-file seeking and subtitle readability.
 - Unavailable external tools, disconnected source folders and failed actions.
 
+The clipboard helper has its own check, `omaroll_clipboard_helper`. It takes
+over the session clipboard, so it skips unless `OMAROLL_CLIPBOARD_TEST=1` is
+set, and runs in omabox (whose Hyprland has ext-data-control):
+
+```sh
+omabox run -- env OMAROLL_CLIPBOARD_TEST=1 \
+  bash tests/check-clipboard-helper.sh build/release/omaroll "$PWD"
+```
+
 Use the fixtures and a disposable folder for operations that modify files.
 Keep untested environments explicit in the release report.
 

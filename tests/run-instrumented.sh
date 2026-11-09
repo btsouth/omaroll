@@ -5,12 +5,13 @@ mode=${1:?fuzz, tsan or coverage}
 build=build/$mode
 case "$mode" in
   fuzz)
-    cmake -S . -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DOMAROLL_FUZZ=ON
+    cmake -S . -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DOMAROLL_FUZZ=ON
     cmake --build "$build" --parallel 4 --target fuzz_launch fuzz_ipc fuzz_matroska fuzz_pdf fuzz_image fuzz_raw fuzz_subtitles fuzz_organization
     bash tests/fuzz/run.sh "$build" "${2:-60}"
     ;;
   tsan)
-    cmake -S . -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ \
+    cmake -S . -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+      '-DCMAKE_C_FLAGS=-fsanitize=thread -fno-omit-frame-pointer' \
       '-DCMAKE_CXX_FLAGS=-fsanitize=thread -fno-omit-frame-pointer' -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread
     cmake --build "$build" --parallel 4 --target omaroll_tests
     # Some core tests launch the omaroll executable. Give them an uninstrumented
@@ -62,7 +63,8 @@ case "$mode" in
     exit $((test_status || triage_status))
     ;;
   coverage)
-    cmake -S . -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ \
+    cmake -S . -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+      '-DCMAKE_C_FLAGS=-fprofile-instr-generate -fcoverage-mapping' \
       '-DCMAKE_CXX_FLAGS=-fprofile-instr-generate -fcoverage-mapping' -DCMAKE_EXE_LINKER_FLAGS=-fprofile-instr-generate
     cmake --build "$build" --parallel 4
     mkdir -p "$build/profiles"

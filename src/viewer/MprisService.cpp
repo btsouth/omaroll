@@ -133,25 +133,35 @@ MprisService::MprisService(AppSettings* settings, std::optional<QDBusConnection>
 }
 
 MprisService::~MprisService() {
+  if (m_artCancel) m_artCancel->store(true);
   detach();
   unpublish();
 }
 
 void MprisService::findArt() {
   m_art.clear();
+  // A job for an earlier video is called off: one still queued never starts,
+  // and one running stops at the thumbnail work's next checkpoint.
+  if (m_artCancel) m_artCancel->store(true);
+  m_artCancel.reset();
   const QString file = m_player ? m_player->source().toLocalFile() : QString();
   if (file.isEmpty()) return;
-  // A poster frame from the thumbnail cache, made on a worker: often already
-  // there from the library, otherwise a moment's work for ffmpegthumbnailer.
+  // A poster frame, made once on a worker by ffmpegthumbnailer and then kept
+  // in the thumbnail cache (or an older tile there, while it is still valid).
   m_artTrack = m_track;
   const quint64 track = m_track;
-  QFuture<QString> poster = QtConcurrent::run([file] {
+  m_artCancel = std::make_shared<std::atomic_bool>(false);
+  QFuture<QString> poster = QtConcurrent::run([file, cancel = m_artCancel] {
+    if (cancel->load()) return QString();
+    // Through thumbnail() even when a file is there: it reads the tile
+    // back and makes it again if it is damaged, so a path is only handed out
+    // for a picture that loads.
     const QSize size(kArtSize, kArtSize);
-    QString cached = ThumbnailCache::cachedFile(file, size, 1.0);
-    if (cached.isEmpty() && !ThumbnailCache::thumbnail(file, size, 1.0).isNull()) {
-      cached = ThumbnailCache::cachedFile(file, size, 1.0);
+    if (ThumbnailCache::thumbnail(file, size, 1.0, 20, {cancel.get(), nullptr}).isNull() ||
+        cancel->load()) {
+      return QString();
     }
-    return cached;
+    return ThumbnailCache::cachedFile(file, size, 1.0);
   });
   poster.then(this, [this, track](const QString& art) {
     if (track != m_track || art.isEmpty()) return;

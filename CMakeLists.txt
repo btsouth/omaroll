@@ -344,6 +344,11 @@ if(BUILD_TESTING)
   add_test(NAME omaroll_cli COMMAND bash ${CMAKE_SOURCE_DIR}/tests/check-cli.sh
     $<TARGET_FILE:omaroll> ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR}
     ${CMAKE_INSTALL_MANDIR} ${CMAKE_INSTALL_DATAROOTDIR})
+  # The real clipboard helper needs a compositor with ext-data-control and
+  # takes over its clipboard, so it skips unless asked for (omabox).
+  add_test(NAME omaroll_clipboard_helper COMMAND bash ${CMAKE_SOURCE_DIR}/tests/check-clipboard-helper.sh
+    $<TARGET_FILE:omaroll> ${CMAKE_SOURCE_DIR})
+  set_tests_properties(omaroll_clipboard_helper PROPERTIES SKIP_RETURN_CODE 77)
   # The suite touches QImage and QGuiApplication paths, so it needs a platform
   # plugin; offscreen keeps it runnable in a headless checkout or CI.
   set(omaroll_test_environment

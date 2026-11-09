@@ -27,6 +27,11 @@ public:
   // default line naming only Omaroll becomes that line again instead.
   static QString withoutOmaroll(const QString &text, const QString &type,
                                 const QString &original = {});
+  // The text without what xdg-mime added around Omaroll's lines: the empty
+  // [Default Applications] it appended to a list without one, and the final
+  // newline of a list that ended without one.
+  static QString withoutAddedStructure(const QString &text, bool hadSection,
+                                       bool endedWithNewline);
   // Returns a printable report, including any failures. No UI is required.
   Q_INVOKABLE QString apply(bool unset = false,
                             const QString &group = QStringLiteral("all"));

@@ -8,6 +8,8 @@
 #include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
+#include <QPointer>
+#include <QProcess>
 #include <functional>
 #include <optional>
 
@@ -183,6 +185,9 @@ private:
                        const QString& packageHint, const QString& confirmation,
                        const QString& inputPath, int timeoutMs);
   bool copyWithPng(const QString& path, const QString& mime);
+  // Every clipboard write starts a new copy. A clipboard helper still
+  // running for an older one is stopped and never falls back to wl-copy.
+  void newCopy();
 
   void stopTracked();
   QSet<QProcess*> m_trackedProcesses;
@@ -190,4 +195,6 @@ private:
   QSet<QString> m_pendingOpenWith;
   QDBusConnection m_bus;
   QString m_clipboardHelper;
+  quint64 m_copyGeneration = 0;
+  QPointer<QProcess> m_copyHelper;
 };

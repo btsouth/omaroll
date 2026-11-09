@@ -137,14 +137,41 @@ QSize ThumbnailCache::pixelSizeFor(const QSize& logicalSize, qreal devicePixelRa
           static_cast<int>(std::ceil(logicalSize.height() * ratio))};
 }
 
+QString ThumbnailCache::legacyTile(const QString& path, const QString& renderPath,
+                                   const QSize& pixelSize, int seekPercent) {
+  // Older tiles have no ctime in their key. Reuse them only when the source
+  // has not changed since the tile was written, including preserved-mtime saves.
+  if (renderPath != path) return {};
+  const QFileInfo source(path);
+  const QString legacyIdentity = QStringLiteral("cover3|%1|%2|%3|%4x%5|t%6")
+      .arg(path).arg(source.size()).arg(source.lastModified().toMSecsSinceEpoch())
+      .arg(pixelSize.width()).arg(pixelSize.height()).arg(seekPercent);
+  const QString legacyPath = cacheDirectory() + QLatin1Char('/') + QString::fromLatin1(
+      QCryptographicHash::hash(legacyIdentity.toUtf8(), QCryptographicHash::Md5).toHex())
+      + QStringLiteral(".jpg");
+  struct stat tileInfo {};
+  struct stat info {};
+  if (::stat(QFile::encodeName(legacyPath).constData(), &tileInfo) != 0 ||
+      ::stat(QFile::encodeName(path).constData(), &info) != 0) {
+    return {};
+  }
+  const bool unchanged = info.st_ctim.tv_sec < tileInfo.st_mtim.tv_sec ||
+                         (info.st_ctim.tv_sec == tileInfo.st_mtim.tv_sec &&
+                          info.st_ctim.tv_nsec <= tileInfo.st_mtim.tv_nsec);
+  return unchanged ? legacyPath : QString();
+}
+
 QString ThumbnailCache::cachedFile(const QString& path, const QSize& logicalSize,
                                    qreal devicePixelRatio, int seekPercent) {
   const QSize pixelSize = pixelSizeFor(logicalSize, devicePixelRatio);
   if (path.isEmpty() || pixelSize.isEmpty()) return {};
+  const QString renderPath = ThumbnailSource::path(path);
   const QString file = cacheDirectory() + QLatin1Char('/') +
-                       cacheKey(path, ThumbnailSource::path(path), pixelSize, seekPercent) +
+                       cacheKey(path, renderPath, pixelSize, seekPercent) +
                        QStringLiteral(".jpg");
-  return QFileInfo::exists(file) ? file : QString();
+  if (QFileInfo::exists(file)) return file;
+  // thumbnail() also serves a still-valid tile from before the current key.
+  return legacyTile(path, renderPath, pixelSize, seekPercent);
 }
 
 QString ThumbnailCache::cacheKey(const QString& path, const QString& renderPath,
@@ -296,25 +323,8 @@ QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
   if (!cached.isNull()) {
     return cached;
   }
-  // Older tiles have no ctime in their key. Reuse them only when the source
-  // has not changed since the tile was written, including preserved-mtime saves.
-  const QFileInfo source(path);
-  const QString legacyIdentity = QStringLiteral("cover3|%1|%2|%3|%4x%5|t%6")
-      .arg(path).arg(source.size()).arg(source.lastModified().toMSecsSinceEpoch())
-      .arg(pixelSize.width()).arg(pixelSize.height()).arg(seekPercent);
-  const QString legacyPath = directory + QLatin1Char('/') + QString::fromLatin1(
-      QCryptographicHash::hash(legacyIdentity.toUtf8(), QCryptographicHash::Md5).toHex())
-      + QStringLiteral(".jpg");
-  struct stat tileInfo {};
-  const auto unchanged = [&tileInfo](const QString& file) {
-    struct stat info {};
-    if (::stat(QFile::encodeName(file).constData(), &info) != 0) return false;
-    return info.st_ctim.tv_sec < tileInfo.st_mtim.tv_sec ||
-           (info.st_ctim.tv_sec == tileInfo.st_mtim.tv_sec &&
-            info.st_ctim.tv_nsec <= tileInfo.st_mtim.tv_nsec);
-  };
-  if (renderPath == path && ::stat(QFile::encodeName(legacyPath).constData(), &tileInfo) == 0 &&
-      unchanged(path)) {
+  const QString legacyPath = legacyTile(path, renderPath, pixelSize, seekPercent);
+  if (!legacyPath.isEmpty()) {
     cached.load(legacyPath);
     if (!cached.isNull()) return isCancelled(cancelled) ? QImage{} : cached;
   }

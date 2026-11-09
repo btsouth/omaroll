@@ -51,9 +51,11 @@ replaced. Name the same group:
 undoes
 .BR "omaroll \-\-set\-default pdf" .
 Each line of
-.I ~/.config/mimeapps.list
-goes back as it was and the lines Omaroll added are removed, so the file is
-unchanged after any number of set and unset cycles.
+.I $XDG_CONFIG_HOME/mimeapps.list
+goes back as it was, and what Omaroll added is removed, including a section
+or file that was not there before, so the file is unchanged after any number
+of set and unset cycles. Omaroll is taken out of every list there, so an
+Added Associations entry naming it goes too.
 .TP
 .B \-\-install\-window\-rules
 Add Omaroll's Hyprland rules to
