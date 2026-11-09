@@ -15,7 +15,6 @@ import re
 import sys
 from pathlib import Path
 
-INSTRUMENTED = re.compile(r"\((omaroll[^+]*)\+0x[0-9a-f]+\)")
 MODULE = re.compile(r"\(([^()+]+)\+0x[0-9a-f]+\)\s*(\(BuildId: [0-9a-f]+\))?\s*$")
 ACCESS = re.compile(r"^  (Previous )?(atomic )?(Read|Write|read|write) of size|^  .* by (main thread|thread T\d+)")
 INTERCEPTOR = re.compile(
@@ -25,10 +24,13 @@ INTERCEPTOR = re.compile(
 
 def first_real_module(frames):
     for frame in frames:
-        if INTERCEPTOR.match(frame):
-            continue
         match = MODULE.search(frame)
-        return match.group(1) if match else None
+        module = match.group(1) if match else None
+        # TSan's interceptors live in the instrumented binary. A libc frame that
+        # happens to be called strdup or free is libc itself, not an interceptor.
+        if INTERCEPTOR.match(frame) and module and module.startswith("omaroll"):
+            continue
+        return module
     return None
 
 
