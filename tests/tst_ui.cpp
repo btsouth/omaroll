@@ -1704,6 +1704,17 @@ private slots:
           objectName: "recycledCard"; width: Settings.tileWidth; height: parent.height / 2
           visible: false; z: 100
         }
+        // Holds decoded tiles in Qt's pixmap cache, as the same source, size
+        // and fill mode share one entry there.
+        property var keptThumbnails: []
+        Repeater {
+          model: keptThumbnails
+          Image {
+            objectName: "keptThumbnail"
+            visible: false; asynchronous: true; fillMode: Image.PreserveAspectCrop
+            source: modelData.source; sourceSize: modelData.size
+          }
+        }
         function insertRowAbove() {
           for (let i = 0; i < 2; ++i) {
             captures.insert(i, { path: "/thumbnail-test/" + (2000 + i) + ".png", fileName: "",
@@ -1782,6 +1793,36 @@ private slots:
     for (int row : {0, 1, 2, 3}) QCOMPARE(provider->rows().count(row), 1);
     provider->completeAll();
     QTRY_VERIFY(viewportReady());
+    // Qt drops thumbnails nothing shows from its shared cache, a quarter of
+    // them every 30 seconds or the oldest once the main window's push it past
+    // its budget. Keep the first rows' while the grid scrolls away, so coming
+    // back checks the tiles rather than how long this test took.
+    {
+      QVariantList kept;
+      for (int row : {0, 1, 2, 3}) {
+        const QString path = QStringLiteral("/thumbnail-test/%1.png").arg(row);
+        QQuickItem* tile = find(view, [&path](QQuickItem* candidate) {
+          return candidate->property("thumbnailLayoutReady").isValid()
+                 && candidate->property("path").toString() == path;
+        });
+        QVERIFY(tile);
+        QQuickItem* image = find(tile, [](QQuickItem* candidate) {
+          return candidate->property("sourceSize").isValid();
+        });
+        QVERIFY(image);
+        kept.append(QVariantMap{{QStringLiteral("source"), image->property("source")},
+                                {QStringLiteral("size"), image->property("sourceSize")}});
+      }
+      window->setProperty("keptThumbnails", kept);
+      const auto keptReady = [&] {
+        const QList<QQuickItem*> children = window->contentItem()->childItems();
+        return std::count_if(children.cbegin(), children.cend(), [](QQuickItem* candidate) {
+          return candidate->objectName() == QStringLiteral("keptThumbnail")
+                 && candidate->property("status").toInt() == 1; // Image.Ready.
+        });
+      };
+      QTRY_COMPARE(keptReady(), 4);
+    }
     // Keep selection in the synthetic viewport: changing an offscreen current
     // index during insertion lets Qt scroll toward that unrelated selection.
     view->setProperty("currentIndex", 62);
