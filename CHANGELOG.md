@@ -2,8 +2,6 @@
 
 ## Unreleased
 
-- Keep automatic organization backups and restore the last good copy when settings are damaged.
-
 ### Added
 
 - Searchable shortcut help in the viewer, library and preview, with grouped key caps.
@@ -39,6 +37,10 @@
 - `Tab` and `Shift+Tab` move through the viewer's controls with a focus ring,
   and the viewer's shortcuts keep working on a focused control. Filmstrip
   tiles have names, tooltips and keyboard use.
+- Automatic backups of your albums, tags, ratings and other organization, kept
+  in `~/.local/share/omaroll/backups` (the last 7 days and 4 weeks, plus a
+  copy before every restore). If the settings file is damaged, Settings offers
+  Restore last good backup, which keeps the damaged file beside it.
 
 ### Fixed
 
@@ -74,6 +76,8 @@
 - Seeking to the exact start of a frame shows that frame, not the one before.
 - Moving to the next video keeps a picture on screen instead of flashing an
   empty stage.
+- A subtitle file with an absurdly large timestamp no longer overflows while
+  it's read; that cue is skipped.
 
 ## 1.18.0
 

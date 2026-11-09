@@ -315,43 +315,80 @@ includes raw results and the measurements still outstanding.
 
 ## Parser fuzzing, races and coverage
 
-Clang/LLVM builds are opt-in. In the disposable `omaroll-ci` container on
-**devbox**, install `clang llvm` and run (TSan needs Docker option
-`--security-opt seccomp=unconfined` to allow its ASLR setup):
+These builds need Clang and LLVM and are opt-in. Run them in a disposable Arch
+container: on devbox, `omaroll-ci-llvm` is `omaroll-ci` plus `clang llvm
+compiler-rt` (`/workspace/cache/omaroll-ci/Dockerfile.llvm`). TSan needs
+`--security-opt seccomp=unconfined` so it can turn off ASLR for its shadow
+memory.
 
 ```sh
-bash tests/run-instrumented.sh fuzz 60
-bash tests/run-instrumented.sh tsan
-bash tests/run-instrumented.sh coverage
+bash tests/run-instrumented.sh fuzz 60   # each fuzzer for 60 seconds
+bash tests/run-instrumented.sh tsan      # core suite under ThreadSanitizer
+bash tests/run-instrumented.sh coverage  # all suites, then llvm-cov
 ```
 
-The fuzz build requires `-DOMAROLL_FUZZ=ON` and Clang. Eight independent
-libFuzzer targets cover launch timestamps, IPC JSON validation, EBML VINTs and
-Matroska tracks, PDF bbox XML, image headers, camera RAW metadata, sidecar
-subtitles and organization imports. Each runs for 60 seconds with ASan/UBSan,
-a ten-second per-input timeout and a 64 KiB mutation limit. Seed corpora live
-in `tests/fuzz/corpus`; discovered inputs and logs go in
-`build/fuzz/fuzz-results`, never the checked-in seeds. Increase the second
-argument for longer campaigns. Reproduce a finding with the relevant
-`build/fuzz/fuzz_<parser> <artifact>` and add a regression test before fixing it.
-The organization driver uses a disposable profile and data directory.
+### Fuzzing
 
-Pull requests run all eight fuzzers, the offscreen core suite under TSan,
-and a separate LLVM coverage build. Coverage uploads an HTML report and prints
-a source summary, without a percentage gate. TSan aborts on its first finding;
-`tests/tsan.supp` is reserved for documented external-library races. LSan stays
-on in every suite; `tests/lsan.supp` lists only confirmed external allocations.
-The nightly workflow repeats the UI and viewer suites five times until failure
-on stable Arch, current Arch and ARM. Deliberate timing observations (for
-example proving slideshow cannot advance while confirmation is open), input
-pacing and double-click recognition still use timed waits; layout, media and
-render readiness use their actual states/signals where available.
+`-DOMAROLL_FUZZ=ON` (Clang only) builds one libFuzzer harness per parser we
+wrote, from `tests/fuzz/driver.cpp`, with ASan and UBSan:
 
-Organization snapshots use the existing versioned importer/exporter. They live
-under `$XDG_DATA_HOME/omaroll/backups` (normally `~/.local/share/omaroll/backups`):
-seven daily snapshots, four weekly snapshots and up to four pre-restore copies.
-A daily snapshot is never overwritten. A damaged INI is never snapshotted over
-a good copy; recovery preserves its original bytes as an adjacent `.damaged-*`
-file before replacing it. Organization format migrations must first take a
-forced snapshot, just as import does. This change adds no live INI keys and
-keeps organization backup version 1, readable by 1.18.
+| Harness | Parser |
+| --- | --- |
+| `fuzz_launch` | `LaunchRequest::parseStart` |
+| `fuzz_ipc` | single-instance JSON frame (`SingleInstance::parseFrame`) |
+| `fuzz_matroska` | EBML `readVint` and `hasMatroskaVideoTrack` |
+| `fuzz_pdf` | `pdftotext -bbox` output (`PdfSupport::parsePageWords`) |
+| `fuzz_image` | image headers and `ImageBudget` arithmetic |
+| `fuzz_raw` | `CameraRaw::readMetadata` (TIFF, ISO BMFF, Fujifilm) |
+| `fuzz_subtitles` | sidecar SRT and WebVTT parsing |
+| `fuzz_organization` | organization backup import, in a throwaway profile |
+
+`tests/fuzz/run.sh <build> <seconds>` runs each one from its seeds in
+`tests/fuzz/corpus/<harness>`, with a 10 second per-input timeout, a 2 GiB
+memory limit and 64 KiB inputs. New corpus entries, logs and crash files go to
+`<build>/fuzz-results`, never the checked-in seeds. Reproduce a crash with
+`build/fuzz/fuzz_<harness> <crash-file>`, add a regression test to the core
+suite, then fix it; check a minimised reproducer into the corpus too.
+
+Findings so far, each with a test in `tst_omaroll.cpp`: a Matroska element
+header could extend past its parent
+(`matroskaTrackHeadersCannotEscapeTheirParent`), and an SRT hour count near
+the 64-bit limit overflowed while converted to milliseconds
+(`subtitleTimestampsPastTheMillisecondRangeAreSkipped`).
+
+### Races, leaks and coverage
+
+TSan stops at its first report. `tests/tsan.supp` holds only races TSan
+cannot see the ordering of because Arch's Qt is not built with TSan, each with
+the reason. LeakSanitizer stays on in every suite; `tests/lsan.supp` lists
+only external process-lifetime allocations (the NVIDIA GL driver, FFmpeg's
+decoder setup). The coverage build uses `-fprofile-instr-generate
+-fcoverage-mapping`, prints an `llvm-cov report` summary to
+`build/coverage/summary.txt` and writes HTML to `build/coverage/html`. There is
+no coverage threshold yet.
+
+### CI
+
+Pull requests run all eight fuzzers for 60 seconds each, the TSan core suite
+and the coverage build, which uploads its HTML report. The nightly workflow
+runs the UI and viewer suites with `ctest --repeat until-fail:5` on Omarchy
+stable, current Arch and aarch64.
+
+The UI and viewer suites wait on states and signals (scan finished, layout
+polished, media loaded, a frame rendered) rather than fixed sleeps. Timed waits
+remain only where the test checks that nothing happens for a while (a
+slideshow that must not advance, a debounce that must not fire) or paces
+synthetic input, such as drags and double-clicks.
+
+### Organization backups
+
+Snapshots use the same versioned JSON as Export organization and live in
+`$XDG_DATA_HOME/omaroll/backups`, readable only by the owner. The first
+healthy start or organization save each day writes `daily-<date>.json`, which
+is never rewritten; the first one each week is also kept as
+`weekly-<monday>.json`. Seven daily and four weekly files are kept. Every
+import and every settings migration first writes a `before-restore-*.json`
+(four kept). A damaged settings file is never snapshotted. Restore last good
+backup imports the newest readable snapshot, keeps the damaged file as
+`omaroll.ini.damaged-<id>`, and carries over any settings that could still be
+read. The format stays at version 1, so 1.18 reads these files.

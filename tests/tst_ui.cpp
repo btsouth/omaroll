@@ -5688,8 +5688,13 @@ private slots:
                                 QStringLiteral("playbackSpeedButton")}) {
       QQuickItem* control = item(name);
       QVERIFY(control->isVisible());
-      const QRectF bounds = control->mapRectToScene(control->boundingRect());
-      QVERIFY2(bounds.left() >= 0 && bounds.right() <= m_window->width(), qPrintable(name));
+      // The transport row eases into its narrow arrangement after the layout
+      // pass, so wait for the control to come to rest inside the window.
+      const auto inside = [&] {
+        const QRectF bounds = control->mapRectToScene(control->boundingRect());
+        return bounds.left() >= 0 && bounds.right() <= m_window->width();
+      };
+      QTRY_VERIFY2(inside(), qPrintable(name));
     }
     // The inspector leaves much less room than the closed preview. Seeking
     // must still have a useful target rather than a negative-width hit area.
