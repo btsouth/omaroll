@@ -14,8 +14,10 @@ class CaptureModel;
 //
 // Files are first grouped by size, so ordinary libraries need little or no
 // content I/O. Only files whose size occurs more than once are hashed, on one
-// worker thread, in cancellable chunks. Results are a review filter: this
-// class never changes or removes media.
+// worker thread, in cancellable chunks. Digests are kept in ~/.cache/omaroll,
+// keyed by path, size and modification time, so a relaunch does not read the
+// same files again. Results are a review filter: this class never changes or
+// removes media.
 class DuplicateIndex final : public QObject {
   Q_OBJECT
   Q_PROPERTY(bool active READ active NOTIFY activeChanged)
@@ -44,6 +46,9 @@ public:
   Q_INVOKABLE void refresh();
   Q_INVOKABLE [[nodiscard]] QStringList groupPaths(const QString& path) const;
   Q_INVOKABLE [[nodiscard]] QStringList otherCopies(const QString& keepPath) const;
+  // Files read by the last finished scan rather than taken from a cache.
+  [[nodiscard]] int lastHashed() const { return m_lastHashed; }
+  [[nodiscard]] static QString cachePath();
 
 signals:
   void activeChanged();
@@ -69,6 +74,8 @@ private:
     quint64 generation = 0;
     QHash<QString, QString> groups;
     QHash<QString, CachedHash> cache;
+    int hashed = 0;
+    bool complete = false;
   };
 
   void markDirty();
@@ -90,6 +97,8 @@ private:
   bool m_scanning = false;
   bool m_dirty = true;
   bool m_restartQueued = false;
+  bool m_diskLoaded = false;
+  int m_lastHashed = 0;
   int m_completed = 0;
   int m_total = 0;
 };

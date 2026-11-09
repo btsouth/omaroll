@@ -38,6 +38,14 @@ class AppSettings final : public QObject {
   Q_PROPERTY(QStringList libraryFolders READ libraryFolders NOTIFY libraryFoldersChanged)
   Q_PROPERTY(QStringList pinnedFolders READ pinnedFolders NOTIFY pinnedFoldersChanged)
   Q_PROPERTY(bool pairRawJpeg READ pairRawJpeg WRITE setPairRawJpeg NOTIFY pairRawJpegChanged)
+  // Similar pictures: 0 strict, 1 normal, 2 loose.
+  Q_PROPERTY(int similarStrictness READ similarStrictness WRITE setSimilarStrictness NOTIFY
+                 similarStrictnessChanged)
+  // Opt-in: read text from pictures in the background after the library scan.
+  Q_PROPERTY(bool backgroundTextIndex READ backgroundTextIndex WRITE setBackgroundTextIndex
+                 NOTIFY backgroundTextIndexChanged)
+  Q_PROPERTY(bool textIndexScreenshotsOnly READ textIndexScreenshotsOnly WRITE
+                 setTextIndexScreenshotsOnly NOTIFY textIndexScreenshotsOnlyChanged)
   Q_PROPERTY(QString imagePrimaryAction READ imagePrimaryAction WRITE setImagePrimaryAction NOTIFY
                  imagePrimaryActionChanged)
   Q_PROPERTY(QString videoPrimaryAction READ videoPrimaryAction WRITE setVideoPrimaryAction NOTIFY
@@ -127,6 +135,12 @@ public:
 
   [[nodiscard]] bool pairRawJpeg() const { return m_pairRawJpeg; }
   void setPairRawJpeg(bool value);
+  [[nodiscard]] int similarStrictness() const { return m_similarStrictness; }
+  void setSimilarStrictness(int value);
+  [[nodiscard]] bool backgroundTextIndex() const { return m_backgroundTextIndex; }
+  void setBackgroundTextIndex(bool value);
+  [[nodiscard]] bool textIndexScreenshotsOnly() const { return m_textIndexScreenshotsOnly; }
+  void setTextIndexScreenshotsOnly(bool value);
 
   [[nodiscard]] QString imagePrimaryAction() const { return m_imagePrimaryAction; }
   void setImagePrimaryAction(const QString& action);
@@ -285,6 +299,9 @@ signals:
   void libraryFoldersChanged();
   void pinnedFoldersChanged();
   void pairRawJpegChanged();
+  void similarStrictnessChanged();
+  void backgroundTextIndexChanged();
+  void textIndexScreenshotsOnlyChanged();
   void imagePrimaryActionChanged();
   void videoPrimaryActionChanged();
   void thumbnailCacheMbChanged();
@@ -391,6 +408,9 @@ private:
   QStringList m_libraryFolders;
   QStringList m_pinnedFolders;
   bool m_pairRawJpeg = true;
+  int m_similarStrictness = 1;
+  bool m_backgroundTextIndex = false;
+  bool m_textIndexScreenshotsOnly = false;
   QString m_imagePrimaryAction = QStringLiteral("preview");
   QString m_videoPrimaryAction = QStringLiteral("preview");
   int m_thumbnailCacheMb = 256;

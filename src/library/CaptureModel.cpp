@@ -448,6 +448,14 @@ QUrl CaptureModel::fileUrl(const QString& path) const {
   return CameraRaw::isRawFile(path) ? CameraRaw::previewUrl(path) : QUrl::fromLocalFile(path);
 }
 
+QSize CaptureModel::pictureSize(const QString& path) const {
+  if (CameraRaw::isRawFile(path)) {
+    return CameraRaw::fullSize(path);
+  }
+  const ImageBudget::Estimate estimate = ImageBudget::estimate(path);
+  return estimate.oriented;
+}
+
 void CaptureModel::readPicture(const QString& path) {
   const QUrl source = fileUrl(path);
   // Screens are read here, on the GUI thread.

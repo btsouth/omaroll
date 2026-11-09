@@ -24,6 +24,8 @@ FocusScope {
     property string layoutAnchorPath: ""
     property real layoutAnchorOffset: 0
     property bool restoringLayout: false
+    // Similar pictures show one section per set instead of one flat grid.
+    readonly property bool sectioned: Captures.similarOnly
 
     signal chosen(int index)
     signal deleteRequested(string path)
@@ -34,10 +36,12 @@ FocusScope {
     // and Qt's shortcut matcher also offers plain Tab for that key, so two
     // shortcuts match, the press counts as ambiguous, and neither fires.
     signal sectionStepRequested(int step)
+    signal compareRequested(var paths)
 
     // Include every intersecting cell, including the partial bottom row.
     // Cached offscreen delegates do not count, nor does an empty library.
     function viewportReady() {
+        if (sectioned) return visible && reviewSets.viewportReady()
         if (!visible || !layoutReady || grid.count === 0 || grid.width <= 0 || grid.height <= 0)
             return false
         const firstRow = Math.max(0, Math.floor((grid.contentY - grid.originY) / grid.cellHeight))
@@ -195,6 +199,11 @@ FocusScope {
     }
 
     function updateDay() {
+        if (root.sectioned) {
+            // Each set has its own header there.
+            root.currentDayLabel = ""
+            return
+        }
         const index = grid.indexAt(grid.contentX + 4, grid.contentY + 4)
         if (index >= 0) {
             root.currentDayLabel = Captures.gridLabelAt(index)
@@ -215,7 +224,8 @@ FocusScope {
         keyNavigationWraps: true
         anchors.fill: parent
         anchors.rightMargin: root.scrollbarWidth
-        focus: true
+        focus: !root.sectioned
+        visible: !root.sectioned
         clip: true
 
         model: root.layoutReady ? root.model : null
@@ -443,8 +453,23 @@ FocusScope {
     // reparented into the Flickable, so it cannot be anchored beside the grid;
     // driving a sibling keeps the bar in its own column where it can never sit
     // on top of a thumbnail.
+    ReviewSetsView {
+        id: reviewSets
+        objectName: "reviewSets"
+        anchors.fill: parent
+        host: root
+        visible: root.sectioned
+        focus: root.sectioned
+        columns: root.columns
+        cellWidth: root.cellWidth
+        cellHeight: grid.cellHeight
+        cellSpacing: root.cellSpacing
+        onVisibleChanged: Qt.callLater(root.updateDay)
+    }
+
     ScrollBar {
         id: scrollbar
+        visible: !root.sectioned
         orientation: Qt.Vertical
         policy: grid.contentHeight > grid.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
 

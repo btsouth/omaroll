@@ -9,7 +9,16 @@
 #include <QFileInfo>
 #include <QSaveFile>
 #include <QStandardPaths>
+#include <QProcessEnvironment>
+#include <QThread>
 #include <QThreadPool>
+
+#include <algorithm>
+#include <utility>
+
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 
 namespace {
 
@@ -19,6 +28,16 @@ constexpr qint64 kMaximumCacheEntryBytes = 4LL * 1024 * 1024;
 constexpr qint64 kMaximumCacheBytes = 64LL * 1024 * 1024;
 constexpr int kOcrTimeoutMs = 30'000;
 constexpr int kSparseTextThreshold = 6;
+constexpr int kDefaultSettleMs = 8'000;
+constexpr int kPowerPollMs = 30'000;
+// Cached text is restored in batches, so a large warm cache does not hold the
+// event loop for one long turn.
+constexpr int kCacheHitsPerTurn = 64;
+
+QString readSmall(const QString& path) {
+  QFile file(path);
+  return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.read(64)).trimmed() : QString();
+}
 
 QString cacheHome() {
   const QString configured = qEnvironmentVariable("XDG_CACHE_HOME");
@@ -57,7 +76,8 @@ int usefulCharacterCount(const QString& text) {
 OcrIndex::OcrIndex(CaptureModel* model, QObject* parent)
     : QObject(parent), m_model(model),
       m_program(model ? QStandardPaths::findExecutable(QStringLiteral("tesseract")) : QString()),
-      m_languages(qEnvironmentVariable("OMARCHY_OCR_LANGS", QStringLiteral("eng"))) {
+      m_languages(qEnvironmentVariable("OMARCHY_OCR_LANGS", QStringLiteral("eng"))),
+      m_parallelLimit(std::clamp(QThread::idealThreadCount() / 2, 2, 4)) {
   QStringList languages;
   for (const QString& language : m_languages.split(QLatin1Char('+'), Qt::SkipEmptyParts)) {
     if (!language.trimmed().isEmpty()) languages.append(language.trimmed());
@@ -78,24 +98,32 @@ OcrIndex::OcrIndex(CaptureModel* model, QObject* parent)
   if (migration.open(QIODevice::ReadOnly)) {
     m_legacyLanguages = QString::fromUtf8(migration.read(4096));
   }
-  m_timeout.setSingleShot(true);
-  m_timeout.setInterval(kOcrTimeoutMs);
 
-  connect(&m_timeout, &QTimer::timeout, &m_process, &QProcess::kill);
-  connect(&m_process, &QProcess::finished, this, [this](int exitCode, QProcess::ExitStatus status) {
-    finishCurrent(status == QProcess::NormalExit && exitCode == 0);
-  });
-  connect(&m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
-    if (error == QProcess::FailedToStart) {
-      finishCurrent(false);
+  m_settleTimer.setSingleShot(true);
+  m_settleTimer.setInterval(kDefaultSettleMs);
+  connect(&m_settleTimer, &QTimer::timeout, this, [this] {
+    if (m_model && m_model->scanning()) {
+      return;
     }
+    m_settled = true;
+    updateBackgroundState();
+    if (backgroundRunning()) sync();
   });
+  m_powerTimer.setInterval(kPowerPollMs);
+  connect(&m_powerTimer, &QTimer::timeout, this, &OcrIndex::checkPower);
+  m_coverageTimer.setSingleShot(true);
+  m_coverageTimer.setInterval(250);
+  connect(&m_coverageTimer, &QTimer::timeout, this, &OcrIndex::updateCoverage);
 
   if (m_model) {
     connect(m_model, &CaptureModel::countChanged, this, [this] {
-      if (m_active) {
+      if (m_background && !m_model->scanning()) m_settleTimer.start();
+      if (m_active || backgroundRunning()) {
         sync();
       }
+    });
+    connect(m_model, &CaptureModel::scanningChanged, this, [this] {
+      if (m_background && !m_model->scanning()) m_settleTimer.start();
     });
     QThreadPool::globalInstance()->start([] { pruneCache(); });
   }
@@ -103,19 +131,27 @@ OcrIndex::OcrIndex(CaptureModel* model, QObject* parent)
 
 OcrIndex::~OcrIndex() {
   requestStop();
-  if (m_process.state() != QProcess::NotRunning) {
-    m_process.kill();
-    m_process.waitForFinished(1000);
+  for (const auto& worker : m_workers) {
+    if (worker->process.state() != QProcess::NotRunning) {
+      worker->process.kill();
+      worker->process.waitForFinished(1000);
+    }
   }
 }
 
 void OcrIndex::requestStop() {
   m_active = false;
+  m_background = false;
   m_queue.clear();
   m_reviewCandidate.reset();
-  m_timeout.stop();
-  disconnect(&m_process, nullptr, this, nullptr);
-  if (m_process.state() != QProcess::NotRunning) m_process.kill();
+  m_settleTimer.stop();
+  m_powerTimer.stop();
+  m_coverageTimer.stop();
+  for (const auto& worker : m_workers) {
+    worker->timeout.stop();
+    disconnect(&worker->process, nullptr, this, nullptr);
+    if (worker->process.state() != QProcess::NotRunning) worker->process.kill();
+  }
 }
 
 QString OcrIndex::cacheDirectory() { return cacheHome() + QStringLiteral("/omaroll/ocr"); }
@@ -126,13 +162,134 @@ void OcrIndex::setSearchText(const QString& text) {
     return;
   }
   m_active = active;
-  if (!m_active) {
+  if (!m_active && !backgroundRunning()) {
+    // The picture being read finishes; the search is no longer indexing.
     m_queue.clear();
     setIndexing(false);
     resetProgress(0);
     return;
   }
   sync();
+}
+
+void OcrIndex::setBackground(bool enabled) {
+  enabled = enabled && available();
+  if (m_background == enabled) {
+    return;
+  }
+  m_background = enabled;
+  emit backgroundChanged();
+  if (enabled) {
+    checkPower();
+    m_powerTimer.start();
+    if (m_model && !m_model->scanning()) m_settleTimer.start();
+  } else {
+    m_settleTimer.stop();
+    m_powerTimer.stop();
+    m_settled = false;
+  }
+  updateBackgroundState();
+  if (backgroundRunning() || m_active) {
+    sync();
+  } else {
+    // Off: running processes finish their picture; nothing new starts.
+    m_queue.clear();
+    setIndexing(false);
+    resetProgress(0);
+  }
+}
+
+void OcrIndex::setScreenshotsOnly(bool value) {
+  if (m_screenshotsOnly == value) {
+    return;
+  }
+  m_screenshotsOnly = value;
+  emit backgroundChanged();
+  if (m_active || backgroundRunning()) sync();
+  else scheduleCoverage();
+}
+
+QString OcrIndex::pauseReason() const {
+  if (!m_background) return {};
+  if (m_onBattery) return QStringLiteral("Paused on battery");
+  if (!m_settled) return QStringLiteral("Waiting for the library scan to finish");
+  return {};
+}
+
+bool OcrIndex::backgroundRunning() const { return m_background && m_settled && !m_onBattery; }
+
+int OcrIndex::running() const {
+  int count = 0;
+  for (const auto& worker : m_workers) {
+    if (worker->current) ++count;
+  }
+  return count;
+}
+
+void OcrIndex::setParallelLimit(int limit) {
+  m_parallelLimit = std::clamp(limit, 1, 8);
+  if (m_active || backgroundRunning()) processNext();
+}
+
+void OcrIndex::setSettleDelay(int milliseconds) { m_settleTimer.setInterval(qMax(0, milliseconds)); }
+
+void OcrIndex::setPowerSupplyDirectory(const QString& directory) {
+  m_powerDirectory = directory;
+  checkPower();
+}
+
+bool OcrIndex::onBattery(const QString& directory) {
+  const QDir supplies(directory);
+  bool battery = false;
+  bool discharging = false;
+  bool externalKnown = false;
+  bool externalOnline = false;
+  for (const QString& name : supplies.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+    const QString base = supplies.filePath(name) + QLatin1Char('/');
+    // Mice, keyboards, controllers and headsets report their own batteries
+    // with Device scope; they say nothing about how the computer is powered.
+    if (readSmall(base + QStringLiteral("scope")) == QLatin1String("Device")) continue;
+    const QString type = readSmall(base + QStringLiteral("type"));
+    if (type == QLatin1String("Battery")) {
+      battery = true;
+      discharging = discharging || readSmall(base + QStringLiteral("status")) ==
+                                       QLatin1String("Discharging");
+    } else if (type == QLatin1String("Mains") || type.startsWith(QLatin1String("USB"))) {
+      const QString online = readSmall(base + QStringLiteral("online"));
+      if (!online.isEmpty()) {
+        externalKnown = true;
+        externalOnline = externalOnline || online == QLatin1String("1");
+      }
+    }
+  }
+  // A computer without its own battery runs on mains, whatever its USB-C
+  // ports report. One with a battery is on it when nothing external is
+  // online and the battery drains or every external supply says offline.
+  if (!battery || externalOnline) return false;
+  return discharging || externalKnown;
+}
+
+void OcrIndex::checkPower() {
+  const bool battery = onBattery(m_powerDirectory);
+  if (battery == m_onBattery) return;
+  m_onBattery = battery;
+  updateBackgroundState();
+  if (backgroundRunning()) {
+    sync();
+  } else if (!m_active) {
+    m_queue.clear();
+    setIndexing(false);
+  }
+}
+
+void OcrIndex::updateBackgroundState() {
+  const bool runningNow = backgroundRunning();
+  const QString reason = pauseReason();
+  if (runningNow != m_wasRunning || reason != m_lastPauseReason) {
+    m_wasRunning = runningNow;
+    m_lastPauseReason = reason;
+    emit backgroundStateChanged();
+  }
 }
 
 void OcrIndex::recognize(const QString& path, bool refresh) {
@@ -164,19 +321,22 @@ void OcrIndex::recognize(const QString& path, bool refresh) {
   }
 
   const auto& record = m_model->recordAt(row);
-  const Candidate candidate {record.path, record.modified, record.bytes};
+  const Candidate candidate{record.path, record.modified, record.bytes,
+                            record.kind == CaptureRecord::Screenshot};
   m_reviewModified = candidate.modified;
   m_reviewBytes = candidate.bytes;
   if (refresh) {
+    const bool wasKnown = known(candidate);
     m_entries.remove(candidate.path);
-    m_failed.remove(failureKey(candidate));
+    m_failed.remove(candidate.path);
     QFile::remove(cachePath(candidate.path));
     emit textReady(candidate.path, {});
+    noteCoverage(candidate, wasKnown);
   } else {
-    const auto known = m_entries.constFind(candidate.path);
-    if (known != m_entries.cend() && known->modified == candidate.modified &&
-        known->bytes == candidate.bytes) {
-      publishReview(candidate, known->text);
+    const auto entry = m_entries.constFind(candidate.path);
+    if (entry != m_entries.cend() && entry->modified == candidate.modified &&
+        entry->bytes == candidate.bytes) {
+      publishReview(candidate, entry->text);
       return;
     }
     QString cached;
@@ -187,20 +347,36 @@ void OcrIndex::recognize(const QString& path, bool refresh) {
     }
   }
 
-  if (m_current && m_current->path == candidate.path && m_current->modified == candidate.modified &&
-      m_current->bytes == candidate.bytes) {
+  if (workerFor(candidate)) {
     return;
   }
   m_reviewCandidate = candidate;
-  if (m_current && m_process.state() != QProcess::NotRunning) {
-    interruptCurrent(!m_currentForReview && m_active);
+  if (!idleWorker()) {
+    // Every worker is busy: free one, preferring a review nobody waits for.
+    Worker* target = nullptr;
+    for (const auto& worker : m_workers) {
+      if (worker->current && worker->forReview && !worker->interrupt) target = worker.get();
+    }
+    if (!target) {
+      for (const auto& worker : m_workers) {
+        if (worker->current && !worker->interrupt) target = worker.get();
+      }
+    }
+    if (target) {
+      interrupt(target, !target->forReview && queueRunning());
+    }
     return;
   }
   processNext();
 }
 
 void OcrIndex::cancelReview() {
-  const bool cancelCurrent = m_currentForReview && m_current && m_current->path == m_reviewPath;
+  Worker* reviewWorker = nullptr;
+  for (const auto& worker : m_workers) {
+    if (worker->forReview && worker->current && worker->current->path == m_reviewPath) {
+      reviewWorker = worker.get();
+    }
+  }
   m_reviewCandidate.reset();
   if (m_reviewPath.isEmpty() && m_reviewText.isEmpty() && m_reviewError.isEmpty() && !m_reviewing) {
     return;
@@ -212,29 +388,29 @@ void OcrIndex::cancelReview() {
   m_reviewError.clear();
   m_reviewing = false;
   emit reviewChanged();
-  if (cancelCurrent) {
-    interruptCurrent(false);
+  if (reviewWorker) {
+    interrupt(reviewWorker, false);
   }
 }
 
 int OcrIndex::clearCache() {
   // Clearing is also an explicit stop. The next edit to an active query can
   // start a fresh index, but this click must not immediately recreate what it
-  // just removed.
+  // just removed. Background indexing resumes on the next library change.
   m_active = false;
+  m_settled = false;
   m_queue.clear();
-  m_timeout.stop();
-  m_current.reset();
-  m_sparseTextPass = false;
-  m_firstPassText.clear();
-  m_interruptCurrent = false;
-  m_requeueInterrupted = false;
   m_reviewCandidate.reset();
-  if (m_process.state() != QProcess::NotRunning) {
-    m_process.kill();
+  for (const auto& worker : m_workers) {
+    reset(worker.get());
+    if (worker->process.state() != QProcess::NotRunning) {
+      worker->process.kill();
+    }
   }
+  emit runningChanged();
   setIndexing(false);
   resetProgress(0);
+  updateBackgroundState();
 
   const int remembered = m_entries.size();
   for (auto it = m_entries.cbegin(); it != m_entries.cend(); ++it) {
@@ -243,6 +419,7 @@ int OcrIndex::clearCache() {
   m_entries.clear();
   m_failed.clear();
   cancelReview();
+  scheduleCoverage();
 
   int removed = 0;
   QDir directory(cacheDirectory());
@@ -252,17 +429,36 @@ int OcrIndex::clearCache() {
   return qMax(remembered, removed);
 }
 
+bool OcrIndex::known(const Candidate& candidate) const {
+  const auto entry = m_entries.constFind(candidate.path);
+  return (entry != m_entries.cend() && entry->modified == candidate.modified &&
+          entry->bytes == candidate.bytes) ||
+         failed(candidate);
+}
+
+bool OcrIndex::failed(const Candidate& candidate) const {
+  const auto found = m_failed.constFind(candidate.path);
+  return found != m_failed.cend() && found->modified == candidate.modified &&
+         found->bytes == candidate.bytes;
+}
+
 void OcrIndex::sync() {
-  if (!m_active || !m_model) {
+  if ((!m_active && !backgroundRunning()) || !m_model) {
     return;
   }
 
   QHash<QString, Candidate> live;
   live.reserve(m_model->rowCount());
+  QList<Candidate> stills;
+  stills.reserve(m_model->rowCount());
   for (int row = 0; row < m_model->rowCount(); ++row) {
     const auto& record = m_model->recordAt(row);
+    // Tesseract cannot read a camera raw.
     if (!record.isVideo() && !record.isDocument() && !record.isRaw()) {
-      live.insert(record.path, {record.path, record.modified, record.bytes});
+      const Candidate candidate{record.path, record.modified, record.bytes,
+                                record.kind == CaptureRecord::Screenshot};
+      live.insert(record.path, candidate);
+      stills.append(candidate);
     }
   }
 
@@ -282,91 +478,159 @@ void OcrIndex::sync() {
   // pictures. Each group remains newest-first in the model's scan order.
   QList<Candidate> screenshots;
   QList<Candidate> pictures;
-  screenshots.reserve(m_model->rowCount());
-  pictures.reserve(m_model->rowCount());
-  for (int row = 0; row < m_model->rowCount(); ++row) {
-    const auto& record = m_model->recordAt(row);
-    // Tesseract cannot read a camera raw.
-    if (record.isVideo() || record.isDocument() || record.isRaw()) {
+  for (const Candidate& candidate : std::as_const(stills)) {
+    if (known(candidate) || workerFor(candidate)) {
       continue;
     }
-    const Candidate candidate {record.path, record.modified, record.bytes};
-    const auto known = m_entries.constFind(candidate.path);
-    const bool alreadyRunning = m_current && m_current->path == candidate.path &&
-                                m_current->modified == candidate.modified &&
-                                m_current->bytes == candidate.bytes;
-    if ((known != m_entries.cend() && known->modified == candidate.modified &&
-         known->bytes == candidate.bytes) ||
-        alreadyRunning || m_failed.contains(failureKey(candidate))) {
-      continue;
-    }
-    (record.kind == CaptureRecord::Screenshot ? screenshots : pictures).append(candidate);
+    (candidate.screenshot ? screenshots : pictures).append(candidate);
   }
   m_queue = std::move(screenshots);
-  m_queue.append(std::move(pictures));
+  if (m_active || !m_screenshotsOnly) {
+    m_queue.append(std::move(pictures));
+  }
+  m_stills = std::move(stills);
+  m_stillRows.clear();
+  m_stillRows.reserve(m_stills.size());
+  for (qsizetype index = 0; index < m_stills.size(); ++index) {
+    m_stillRows.insert(m_stills[index].path, int(index));
+  }
 
-  resetProgress(m_queue.size() + (m_current && !m_currentForReview ? 1 : 0));
-  setIndexing(m_current.has_value() || !m_queue.isEmpty());
+  int busy = 0;
+  for (const auto& worker : m_workers) {
+    if (worker->current && !worker->forReview) ++busy;
+  }
+  resetProgress(m_queue.size() + busy);
+  setIndexing(busy > 0 || !m_queue.isEmpty());
+  scheduleCoverage();
   processNext();
 }
 
-void OcrIndex::processNext() {
-  if (m_process.state() != QProcess::NotRunning || m_current.has_value()) {
-    return;
-  }
-  if (!m_reviewCandidate && (!m_active || m_queue.isEmpty())) {
-    setIndexing(false);
-    return;
-  }
+bool OcrIndex::queueRunning() const { return m_active || backgroundRunning(); }
 
-  const bool forReview = m_reviewCandidate.has_value();
-  const Candidate candidate = forReview ? *m_reviewCandidate : m_queue.takeFirst();
-  if (forReview) {
-    m_reviewCandidate.reset();
-  }
-  if (!stillCurrent(candidate)) {
-    if (forReview && candidate.path == m_reviewPath) {
-      publishReview(candidate, {}, QStringLiteral("This image is no longer available"));
-    } else if (!forReview) {
-      advanceProgress();
-    }
-    QTimer::singleShot(0, this, &OcrIndex::processNext);
-    return;
-  }
-
-  QString cached;
-  if (readCache(candidate, &cached)) {
-    adopt(candidate, cached);
-    if (candidate.path == m_reviewPath) {
-      publishReview(candidate, cached);
-    }
-    if (!forReview) {
-      advanceProgress();
-    }
-    QTimer::singleShot(0, this, &OcrIndex::processNext);
-    return;
-  }
-
-  if (!forReview && m_failed.contains(failureKey(candidate))) {
-    advanceProgress();
-    QTimer::singleShot(0, this, &OcrIndex::processNext);
-    return;
-  }
-
-  m_current = candidate;
-  m_currentForReview = forReview;
-  m_sparseTextPass = false;
-  m_firstPassText.clear();
-  startCurrentProcess(false);
+int OcrIndex::workerLimit() const {
+  // Without background indexing a search keeps today's single process.
+  return m_background ? m_parallelLimit : 1;
 }
 
-void OcrIndex::startCurrentProcess(bool sparseText) {
-  if (!m_current) {
+OcrIndex::Worker* OcrIndex::idleWorker() {
+  for (const auto& worker : m_workers) {
+    if (!worker->current && worker->process.state() == QProcess::NotRunning) {
+      return worker.get();
+    }
+  }
+  if (int(m_workers.size()) >= std::max(workerLimit(), 1)) {
+    return nullptr;
+  }
+  auto worker = std::make_unique<Worker>();
+  Worker* raw = worker.get();
+  raw->timeout.setSingleShot(true);
+  raw->timeout.setInterval(kOcrTimeoutMs);
+  connect(&raw->timeout, &QTimer::timeout, &raw->process, &QProcess::kill);
+  connect(&raw->process, &QProcess::finished, this,
+          [this, raw](int exitCode, QProcess::ExitStatus status) {
+            finish(raw, status == QProcess::NormalExit && exitCode == 0);
+          });
+  connect(&raw->process, &QProcess::errorOccurred, this, [this, raw](QProcess::ProcessError error) {
+    if (error == QProcess::FailedToStart) {
+      finish(raw, false);
+    }
+  });
+  m_workers.push_back(std::move(worker));
+  return raw;
+}
+
+OcrIndex::Worker* OcrIndex::workerFor(const Candidate& candidate) const {
+  for (const auto& worker : m_workers) {
+    if (worker->current && worker->current->path == candidate.path &&
+        worker->current->modified == candidate.modified &&
+        worker->current->bytes == candidate.bytes) {
+      return worker.get();
+    }
+  }
+  return nullptr;
+}
+
+void OcrIndex::processNext() {
+  if (m_reviewCandidate) {
+    if (Worker* worker = idleWorker()) {
+      const Candidate candidate = *m_reviewCandidate;
+      m_reviewCandidate.reset();
+      if (!stillCurrent(candidate)) {
+        if (candidate.path == m_reviewPath) {
+          publishReview(candidate, {}, QStringLiteral("This image is no longer available"));
+        }
+      } else {
+        QString cached;
+        if (readCache(candidate, &cached)) {
+          adopt(candidate, cached);
+          if (candidate.path == m_reviewPath) publishReview(candidate, cached);
+        } else {
+          start(worker, candidate, true);
+        }
+      }
+    }
+  }
+
+  int cacheHits = 0;
+  while (queueRunning() && !m_queue.isEmpty()) {
+    int busy = 0;
+    for (const auto& worker : m_workers) {
+      if (worker->current) ++busy;
+    }
+    if (busy >= workerLimit()) break;
+    // Background work alone, set to screenshots, stops at the first picture.
+    if (!m_active && m_screenshotsOnly && !m_queue.first().screenshot) {
+      m_queue.clear();
+      break;
+    }
+    const Candidate candidate = m_queue.takeFirst();
+    if (!stillCurrent(candidate) || failed(candidate)) {
+      advanceProgress();
+      continue;
+    }
+    QString cached;
+    if (readCache(candidate, &cached)) {
+      adopt(candidate, cached);
+      advanceProgress();
+      if (++cacheHits >= kCacheHitsPerTurn) {
+        QTimer::singleShot(0, this, &OcrIndex::processNext);
+        return;
+      }
+      continue;
+    }
+    Worker* worker = idleWorker();
+    if (!worker) {
+      m_queue.prepend(candidate);
+      break;
+    }
+    start(worker, candidate, false);
+  }
+
+  if (running() == 0 && !m_reviewCandidate && (m_queue.isEmpty() || !queueRunning())) {
+    setIndexing(false);
+  }
+}
+
+void OcrIndex::start(Worker* worker, const Candidate& candidate, bool forReview) {
+  worker->current = candidate;
+  worker->forReview = forReview;
+  worker->sparseTextPass = false;
+  worker->interrupt = false;
+  worker->requeue = false;
+  worker->firstPassText.clear();
+  if (!forReview) setIndexing(true);
+  emit runningChanged();
+  startProcess(worker, false);
+}
+
+void OcrIndex::startProcess(Worker* worker, bool sparseText) {
+  if (!worker->current) {
     return;
   }
-  m_sparseTextPass = sparseText;
-  m_process.setProgram(m_program);
-  QStringList arguments = {m_current->path,         QStringLiteral("stdout"),
+  worker->sparseTextPass = sparseText;
+  QProcess& process = worker->process;
+  process.setProgram(m_program);
+  QStringList arguments = {worker->current->path, QStringLiteral("stdout"),
                            QStringLiteral("--oem"), QStringLiteral("1"),
                            QStringLiteral("-l"),    m_languages,
                            QStringLiteral("--dpi"), QStringLiteral("300")};
@@ -374,74 +638,94 @@ void OcrIndex::startCurrentProcess(bool sparseText) {
     arguments.append({QStringLiteral("--psm"), QStringLiteral("11")});
   }
   arguments.append({QStringLiteral("-c"), QStringLiteral("preserve_interword_spaces=1")});
-  m_process.setArguments(arguments);
-  m_process.setProcessChannelMode(QProcess::SeparateChannels);
-  m_process.start(QIODevice::ReadOnly);
-  m_timeout.start();
+  process.setArguments(arguments);
+  process.setProcessChannelMode(QProcess::SeparateChannels);
+  // Reading in the background runs at the lowest CPU and I/O priority, one
+  // thread per process; a review someone waits for does not.
+  const bool lowPriority = m_background && !worker->forReview;
+  QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+  if (lowPriority) environment.insert(QStringLiteral("OMP_THREAD_LIMIT"), QStringLiteral("1"));
+  process.setProcessEnvironment(environment);
+  process.setChildProcessModifier([lowPriority] {
+    if (lowPriority) {
+      (void)::setpriority(PRIO_PROCESS, 0, 19);
+      // IOPRIO_WHO_PROCESS, this process, IOPRIO_CLASS_IDLE.
+      (void)::syscall(SYS_ioprio_set, 1, 0, 3 << 13);
+    }
+  });
+  process.start(QIODevice::ReadOnly);
+  worker->timeout.start();
 }
 
-void OcrIndex::interruptCurrent(bool requeue) {
-  if (!m_current || m_process.state() == QProcess::NotRunning) {
+void OcrIndex::interrupt(Worker* worker, bool requeue) {
+  if (!worker->current || worker->process.state() == QProcess::NotRunning) {
     return;
   }
-  m_interruptCurrent = true;
-  m_requeueInterrupted = requeue;
-  m_timeout.stop();
-  m_process.kill();
+  worker->interrupt = true;
+  worker->requeue = requeue;
+  worker->timeout.stop();
+  worker->process.kill();
 }
 
-void OcrIndex::finishCurrent(bool successful) {
-  if (!m_current) {
-    if (m_active) {
+void OcrIndex::reset(Worker* worker) {
+  worker->timeout.stop();
+  worker->current.reset();
+  worker->forReview = false;
+  worker->sparseTextPass = false;
+  worker->interrupt = false;
+  worker->requeue = false;
+  worker->firstPassText.clear();
+}
+
+void OcrIndex::finish(Worker* worker, bool successful) {
+  if (!worker->current) {
+    if (queueRunning() || m_reviewCandidate) {
       QTimer::singleShot(0, this, &OcrIndex::processNext);
     }
     return;
   }
-  m_timeout.stop();
-  const Candidate candidate = *m_current;
-  const bool forReview = m_currentForReview;
-  const bool sparseTextPass = m_sparseTextPass;
-  if (m_interruptCurrent) {
-    const bool requeue = m_requeueInterrupted;
-    m_interruptCurrent = false;
-    m_requeueInterrupted = false;
-    m_current.reset();
-    m_currentForReview = false;
-    m_sparseTextPass = false;
-    m_firstPassText.clear();
-    m_process.readAllStandardOutput();
-    m_process.readAllStandardError();
-    if (requeue && m_active && stillCurrent(candidate)) {
+  worker->timeout.stop();
+  const Candidate candidate = *worker->current;
+  const bool forReview = worker->forReview;
+  const bool sparseTextPass = worker->sparseTextPass;
+  if (worker->interrupt) {
+    const bool requeue = worker->requeue;
+    reset(worker);
+    emit runningChanged();
+    worker->process.readAllStandardOutput();
+    worker->process.readAllStandardError();
+    if (requeue && queueRunning() && stillCurrent(candidate)) {
       m_queue.prepend(candidate);
     }
     QTimer::singleShot(0, this, &OcrIndex::processNext);
     return;
   }
-  const QString passText = successful ? layoutText(m_process.readAllStandardOutput()) : QString();
+  const QString passText =
+      successful ? layoutText(worker->process.readAllStandardOutput()) : QString();
 
   const bool reviewStillWanted = forReview && candidate.path == m_reviewPath &&
                                  candidate.modified == m_reviewModified &&
                                  candidate.bytes == m_reviewBytes;
   if (!sparseTextPass && successful && stillCurrent(candidate) && reviewStillWanted &&
       !m_reviewCandidate && usefulCharacterCount(passText) < kSparseTextThreshold) {
-    m_firstPassText = passText;
-    QTimer::singleShot(0, this, [this] {
-      if (m_current) {
-        startCurrentProcess(true);
+    worker->firstPassText = passText;
+    QTimer::singleShot(0, this, [this, worker] {
+      if (worker->current) {
+        startProcess(worker, true);
       }
     });
     return;
   }
 
-  m_current.reset();
-  m_currentForReview = false;
-  m_sparseTextPass = false;
+  const QString firstPassText = worker->firstPassText;
+  reset(worker);
+  emit runningChanged();
 
   const bool hasSuccessfulFirstPass = sparseTextPass && stillCurrent(candidate);
   if ((successful || hasSuccessfulFirstPass) && stillCurrent(candidate)) {
     const QString text =
-        sparseTextPass && usefulCharacterCount(m_firstPassText) >= usefulCharacterCount(passText)
-            ? m_firstPassText
+        sparseTextPass && usefulCharacterCount(firstPassText) >= usefulCharacterCount(passText)
+            ? firstPassText
             : passText;
     writeCache(candidate, text);
     adopt(candidate, text);
@@ -449,18 +733,19 @@ void OcrIndex::finishCurrent(bool successful) {
       publishReview(candidate, text);
     }
   } else {
-    m_failed.insert(failureKey(candidate));
+    const bool wasKnown = known(candidate);
+    m_failed.insert(candidate.path, {candidate.modified, candidate.bytes});
+    noteCoverage(candidate, wasKnown);
     if (candidate.path == m_reviewPath) {
       publishReview(candidate, {}, QStringLiteral("Could not extract text"));
     }
   }
-  m_firstPassText.clear();
   if (!forReview) {
     advanceProgress();
   }
 
-  if (!m_active && !m_reviewCandidate) {
-    setIndexing(false);
+  if (!queueRunning() && !m_reviewCandidate) {
+    if (running() == 0) setIndexing(false);
     return;
   }
   QTimer::singleShot(0, this, &OcrIndex::processNext);
@@ -490,6 +775,58 @@ void OcrIndex::advanceProgress() {
   }
   ++m_completed;
   emit progressChanged();
+}
+
+void OcrIndex::scheduleCoverage() {
+  m_coverageRecount = true;
+  if (!m_coverageTimer.isActive()) m_coverageTimer.start();
+}
+
+// One still read or forgotten: adjust the counts rather than recount them,
+// which on a large library would be a pass over every still per result.
+void OcrIndex::noteCoverage(const Candidate& candidate, bool wasKnown) {
+  const auto row = m_stillRows.constFind(candidate.path);
+  if (row == m_stillRows.cend()) return;
+  const Candidate& still = m_stills.at(row.value());
+  if (still.modified != candidate.modified || still.bytes != candidate.bytes) return;
+  const bool nowKnown = known(still);
+  if (nowKnown == wasKnown) return;
+  const int step = nowKnown ? 1 : -1;
+  m_unreadCount -= step;
+  if (!m_screenshotsOnly || still.screenshot) m_indexedCount += step;
+  // Signal at most a few times a second.
+  m_coverageSignal = true;
+  if (!m_coverageTimer.isActive()) m_coverageTimer.start();
+}
+
+void OcrIndex::updateCoverage() {
+  if (!m_coverageRecount) {
+    if (m_coverageSignal) {
+      m_coverageSignal = false;
+      emit coverageChanged();
+    }
+    return;
+  }
+  m_coverageRecount = false;
+  const bool pending = std::exchange(m_coverageSignal, false);
+  int indexed = 0;
+  int eligible = 0;
+  int unread = 0;
+  for (const Candidate& candidate : std::as_const(m_stills)) {
+    const bool read = known(candidate);
+    if (!read) ++unread;
+    if (!m_screenshotsOnly || candidate.screenshot) {
+      ++eligible;
+      if (read) ++indexed;
+    }
+  }
+  if (pending || indexed != m_indexedCount || eligible != m_eligibleCount ||
+      unread != m_unreadCount) {
+    m_indexedCount = indexed;
+    m_eligibleCount = eligible;
+    m_unreadCount = unread;
+    emit coverageChanged();
+  }
 }
 
 bool OcrIndex::stillCurrent(const Candidate& candidate) const {
@@ -612,8 +949,10 @@ void OcrIndex::pruneCache() {
 }
 
 void OcrIndex::adopt(const Candidate& candidate, const QString& text) {
+  const bool wasKnown = known(candidate);
   m_entries.insert(candidate.path, {candidate.modified, candidate.bytes, text});
   emit textReady(candidate.path, normalizedText(text));
+  noteCoverage(candidate, wasKnown);
 }
 
 void OcrIndex::publishReview(const Candidate& candidate, const QString& text,
@@ -626,9 +965,4 @@ void OcrIndex::publishReview(const Candidate& candidate, const QString& text,
   m_reviewError = error;
   m_reviewing = false;
   emit reviewChanged();
-}
-
-QString OcrIndex::failureKey(const Candidate& candidate) const {
-  return candidate.path + QChar::Null + QString::number(candidate.modified) + QLatin1Char(':') +
-         QString::number(candidate.bytes);
 }

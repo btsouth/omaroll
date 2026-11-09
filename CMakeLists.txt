@@ -37,6 +37,8 @@ add_library(omaroll_core STATIC
   src/library/FolderTreeModel.h
   src/library/DuplicateIndex.cpp
   src/library/DuplicateIndex.h
+  src/library/HashCache.cpp
+  src/library/HashCache.h
   src/library/MediaInspector.cpp
   src/library/MediaInspector.h
   src/library/SimilarityIndex.cpp
@@ -177,6 +179,10 @@ set(OMAROLL_QML_FILES
   qml/components/CorrectionSheet.qml
   qml/components/BatchCorrectionSheet.qml
   qml/components/CompareSheet.qml
+  qml/components/ReviewSetsView.qml
+  qml/components/SimilarStrictnessPicker.qml
+  qml/components/TextIndexSettings.qml
+  qml/components/TextSearchNotice.qml
   qml/components/SettingsSheet.qml
   qml/components/EditorChooser.qml
   qml/components/PinnedFolders.qml

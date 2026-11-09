@@ -35,6 +35,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <functional>
 #include <memory>
 
 using namespace Qt::StringLiterals;
@@ -620,41 +621,81 @@ QVariantMap ActionLauncher::renameCapturedFile(const QVariantMap& target, const 
   return result;
 }
 
+bool ActionLauncher::capturedStillMatches(const QVariantMap& target) const {
+  return !target.value(u"path"_s).toString().isEmpty() && capturedFileMatches(target);
+}
+
+bool ActionLauncher::sameCapturedEntry(const QVariantMap& left, const QVariantMap& right) {
+  // One directory entry, however it was reached: a bind mount or a symlinked
+  // folder gives the same entry another path, which a path or even a
+  // canonical path comparison does not see.
+  const auto value = [](const QVariantMap& map, QStringView key) {
+    return map.value(key.toString()).toString();
+  };
+  return !value(left, u"name").isEmpty() && value(left, u"name") == value(right, u"name") &&
+         !value(left, u"parentDevice").isEmpty() &&
+         value(left, u"parentDevice") == value(right, u"parentDevice") &&
+         value(left, u"parentInode") == value(right, u"parentInode");
+}
+
 void ActionLauncher::moveDuplicateCopiesToTrash(const QVariantMap& keep, const QVariantList& copies) {
   // Re-read the bytes on a worker. Cached duplicate groups only nominate
   // candidates; they never authorize moving a file.
-  QDir().mkpath(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation));
-  auto* watcher = new QFutureWatcher<QVariantMap>(this);
-  connect(watcher, &QFutureWatcher<QVariantMap>::finished, this, [this, watcher] {
-    const QVariantMap result = watcher->result();
-    watcher->deleteLater();
-    const int moved = result.value(u"moved"_s).toInt();
-    const QStringList skipped = result.value(u"skipped"_s).toStringList();
-    const QVariantList trashed = result.value(u"trashed"_s).toList();
+  trashOthers(keep, copies, true, [this](int moved, const QStringList& skipped,
+                                         const QVariantList& trashed) {
     if (!skipped.isEmpty()) emit failed(u"Skipped changed, unreadable or nonidentical copies:\n%1"_s
                                           .arg(skipped.join(QLatin1Char('\n'))));
     emit duplicateCleanupFinished(moved, skipped, trashed);
   });
-  watcher->setFuture(QtConcurrent::run([keep, copies] {
+}
+
+void ActionLauncher::keepOneMoveOthersToTrash(const QVariantMap& keep, const QVariantList& others) {
+  trashOthers(keep, others, false, [this](int moved, const QStringList& skipped,
+                                          const QVariantList& trashed) {
+    emit keepOneFinished(moved, skipped, trashed);
+  });
+}
+
+void ActionLauncher::trashOthers(
+    const QVariantMap& keep, const QVariantList& others, bool identicalOnly,
+    std::function<void(int, const QStringList&, const QVariantList&)> done) {
+  // Moving many files can take a while on a slow disk, so it runs on a
+  // worker and reports back once.
+  QDir().mkpath(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation));
+  auto* watcher = new QFutureWatcher<QVariantMap>(this);
+  connect(watcher, &QFutureWatcher<QVariantMap>::finished, this, [watcher, done] {
+    const QVariantMap result = watcher->result();
+    watcher->deleteLater();
+    done(result.value(u"moved"_s).toInt(), result.value(u"skipped"_s).toStringList(),
+         result.value(u"trashed"_s).toList());
+  });
+  watcher->setFuture(QtConcurrent::run([keep, others, identicalOnly] {
     int moved = 0;
     QStringList skipped;
     QVariantList trashed;
     const QString keepPath = keep.value(u"path"_s).toString();
-    for (const QVariant& value : copies) {
+    for (const QVariant& value : others) {
       const QVariantMap target = value.toMap();
       const QString path = target.value(u"path"_s).toString();
-      QFile kept(keepPath), copy(path);
-      bool identical = path != keepPath && capturedFileMatches(keep) && capturedFileMatches(target) &&
-          kept.open(QIODevice::ReadOnly) && copy.open(QIODevice::ReadOnly) && kept.size() == copy.size();
-      while (identical && !kept.atEnd()) {
-        const QByteArray first = kept.read(1024 * 1024);
-        const QByteArray second = copy.read(1024 * 1024);
-        identical = !first.isEmpty() && first == second &&
+      // Never the kept file itself, by any path, and only while both are
+      // still the files the prompt showed.
+      bool movable = path != keepPath && !sameCapturedEntry(keep, target) &&
+                     capturedFileMatches(keep) && capturedFileMatches(target);
+      if (movable && identicalOnly) {
+        QFile kept(keepPath), copy(path);
+        movable = kept.open(QIODevice::ReadOnly) && copy.open(QIODevice::ReadOnly) &&
+                  kept.size() == copy.size();
+        while (movable && !kept.atEnd()) {
+          const QByteArray first = kept.read(1024 * 1024);
+          const QByteArray second = copy.read(1024 * 1024);
+          movable = !first.isEmpty() && first == second &&
                     kept.error() == QFileDevice::NoError && copy.error() == QFileDevice::NoError;
+        }
+        // Check versions again after reading, immediately before the move.
+        movable = movable && copy.atEnd() && capturedFileMatches(keep) &&
+                  capturedFileMatches(target);
       }
-      // Check versions again after reading, immediately before the move.
-      identical = identical && copy.atEnd() && capturedFileMatches(keep) && capturedFileMatches(target);
-      QVariantMap record = identical ? TrashRestore::moveToTrash(path) : QVariantMap();
+      QVariantMap record = movable ? TrashRestore::moveToTrash(path) : QVariantMap();
       if (!record.isEmpty()) {
         ++moved;
         if (target.contains(u"viewedPath"_s)) record.insert(u"viewedPath"_s, target.value(u"viewedPath"_s));

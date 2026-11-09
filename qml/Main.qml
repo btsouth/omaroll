@@ -789,6 +789,8 @@ ApplicationWindow {
             root.perform("ocr", Captures.pathAt(0))
         } else if (view === "duplicates") {
             Captures.duplicatesOnly = true
+        } else if (view === "similar") {
+            Captures.similarOnly = true
         } else if (view === "sidebar") {
             Settings.showFolderSidebar = true
             const folder = Captures.pathAt(0).substring(0, Captures.pathAt(0).lastIndexOf("/"))
@@ -880,6 +882,11 @@ ApplicationWindow {
                                ? "Reading media details · " + MediaMetadata.completed
                                  + " of " + MediaMetadata.total
                                : "Reading media details…"
+                    }
+                    if (TextIndex.backgroundRunning && TextIndex.indexing
+                            && TextIndex.indexedCount < TextIndex.eligibleCount) {
+                        return "Text indexed " + TextIndex.indexedCount + " of "
+                               + TextIndex.eligibleCount
                     }
                     if (Captures.count === 0) {
                         return "Nothing to show"
@@ -1113,6 +1120,14 @@ ApplicationWindow {
         onVisibleChanged: if (!visible && activeFocus) library.forceActiveFocus()
     }
 
+    TextSearchNotice {
+        anchors.bottom: library.bottom
+        anchors.horizontalCenter: library.horizontalCenter
+        anchors.bottomMargin: 10
+        width: Math.min(implicitWidth, library.width - 24)
+        z: 2
+    }
+
     CaptureGrid {
         id: library
         objectName: "library"
@@ -1133,6 +1148,7 @@ ApplicationWindow {
             if (root.folderSidebarVisible) folderSidebar.focusTree()
             else filters.cycleSection(step)
         }
+        onCompareRequested: function (paths) { compareSheet.open(paths.filter(root.isComparableImage)) }
 
         model: Captures
         visible: Captures.count > 0
@@ -1687,6 +1703,11 @@ ApplicationWindow {
         id: compareSheet
         objectName: "compareSheet"
         onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
+        onFinished: function (message, undoId) {
+            root.sayUndoable(message, undoId)
+            library.clearChecked()
+            Library.refresh()
+        }
     }
 
     ExportSheet {

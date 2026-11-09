@@ -844,6 +844,50 @@ QString CaptureFilterModel::gridLabelAt(int row) const {
       .arg(m_duplicateOrdinals.size());
 }
 
+QVariantMap CaptureFilterModel::tileAt(int row) const {
+  QVariantMap tile;
+  const QModelIndex at = index(row, 0);
+  if (!at.isValid()) {
+    return tile;
+  }
+  const QHash<int, QByteArray> names = roleNames();
+  for (auto it = names.cbegin(); it != names.cend(); ++it) {
+    tile.insert(QString::fromUtf8(it.value()), data(at, it.key()));
+  }
+  return tile;
+}
+
+QVariantList CaptureFilterModel::reviewSections() const {
+  QVariantList sections;
+  if (!m_duplicatesOnly && !m_similarOnly) {
+    return sections;
+  }
+  const QHash<QString, QString>& groups = m_similarOnly ? m_similarGroups : m_duplicateGroups;
+  const QString noun = m_similarOnly ? QStringLiteral("Similar set") : QStringLiteral("Exact match");
+  QString current;
+  int first = 0;
+  const auto close = [&](int end) {
+    if (end > first) {
+      sections.append(QVariantMap{
+          {QStringLiteral("first"), first},
+          {QStringLiteral("count"), end - first},
+          {QStringLiteral("label"),
+           QStringLiteral("%1 %2").arg(noun).arg(sections.size() + 1)}});
+    }
+  };
+  const int rows = rowCount();
+  for (int row = 0; row < rows; ++row) {
+    const QString group = groups.value(pathAt(row));
+    if (row == 0 || group != current) {
+      close(row);
+      current = group;
+      first = row;
+    }
+  }
+  close(rows);
+  return sections;
+}
+
 QString CaptureFilterModel::timeLabelAt(int row) const {
   return data(index(row, 0), CaptureRoles::TimeLabelRole).toString();
 }

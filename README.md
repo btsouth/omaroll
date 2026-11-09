@@ -206,7 +206,8 @@ until the viewer closes; subtitle delay resets when the file changes.
   favourites, ratings and saved searches live in Omaroll's settings. Undo marks
   and moves to Trash with Ctrl+Z, and back up or restore your organization from Settings.
 - **Find words in pictures.** Search filenames immediately, then add local
-  Tesseract results as indexing progresses. Reuse or clear the private text cache.
+  Tesseract results as indexing progresses, or index the library in the
+  background. Reuse or clear the private text cache.
 - **Preview images, video and PDFs.** Zoom, pan, rotate and flip pictures, in
   their real colors when they carry a wide-gamut profile; play video with sound,
   seeking, frame stepping, speed, audio tracks and subtitles; search PDF
@@ -215,8 +216,9 @@ until the viewer closes; subtitle delay resets when the file changes.
   rotate, flip and resize one image or a selection. Save a copy or copy a region.
   Lossless JPEG turns use `jpegtran` when possible; other corrections save a
   recompressed copy.
-- **Review duplicates.** Compare exact copies or similar pictures side by side.
-  Choose a copy to keep and send the other exact duplicates to Trash after confirmation.
+- **Review duplicates.** Compare exact copies or similar pictures side by side,
+  with size, date and folder under each. Keep one and send the others to Trash
+  after confirmation, as one step Undo puts back.
 - **Share and hand off.** Drag actual files into another app, copy images or
   text, send with LocalSend or Taildrop, and open specialist tools for trimming,
   annotation, conversion and editing.
@@ -324,6 +326,37 @@ menu for other actions. Copy path and Copy file name copy plain text for the ope
 entry, preserving a symlink's name and path.
 
 ![The gallery preview with its inspector tucked away](docs/detail.png)
+
+## Search
+
+The search box matches filenames, captions and the text inside pictures. Text
+is read locally by Tesseract and kept in a private cache. By default it is
+read while a search is open, one picture at a time, screenshots first; the
+status line counts the pictures read, and a notice under the results says
+when some have not been read yet.
+
+**Index text in the background** in Settings reads the library once its scan
+has settled instead, two to four pictures at a time at the lowest CPU and disk
+priority, and pauses while the computer runs on battery. Its status reads
+"Text indexed N of M". **Screenshots only** limits it to screenshots; a search
+still reads other pictures as before.
+
+**Similar pictures** in Browse groups copies of a picture that were resized,
+recompressed or brightened, and close bursts. Each set is a section with its
+size and a Compare button. A candidate pair must match on a fine thumbnail,
+not just a small hash, and every picture in a set must match every other, so
+sets do not chain. Screenshots of text need a near-identical match, and when
+both pictures have recognized text, the text must agree. **Match** sets how
+close: Strict keeps only near-identical copies, Loose also finds recrops and
+heavier edits.
+
+Compare shows each picture's dimensions, file size, date and folder, and marks
+the largest. **Keep this** moves the others to Trash after a confirmation, as
+one step that Undo puts back. Exact and similar matches are only suggestions:
+nothing is removed without that confirmation.
+
+Duplicate and similarity hashes are kept in `~/.cache/omaroll`, keyed by path,
+size and modification time, so a relaunch does not read every file again.
 
 ## Mattes
 

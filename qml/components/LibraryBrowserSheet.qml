@@ -437,6 +437,10 @@ FocusScope {
                         }
                     }
 
+                    SimilarStrictnessPicker {
+                        visible: Captures.similarOnly
+                    }
+
                     Flow {
                         width: parent.width
                         spacing: 7
