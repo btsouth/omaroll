@@ -1,6 +1,6 @@
 #pragma once
-#include <QObject>
 #include <QHash>
+#include <QObject>
 #include <QStringList>
 #include <optional>
 
@@ -9,12 +9,19 @@ class LaunchRequest final : public QObject {
   Q_OBJECT
 public:
   using QObject::QObject;
-  static std::optional<qint64> parseStart(const QString& value);
-  void prepare(const QStringList& files, qint64 milliseconds);
-  Q_INVOKABLE qint64 pendingStart(const QString& path) const { return m_starts.value(path, -1); }
-  Q_INVOKABLE qint64 takeStart(const QString& path) { const auto result = m_starts.value(path, -1); m_starts.remove(path); return result; }
+  static std::optional<qint64> parseStart(const QString &value);
+  void prepare(const QStringList &files, qint64 milliseconds);
+  Q_INVOKABLE qint64 pendingStart(const QString &path) const {
+    return m_starts.value(path, -1);
+  }
+  Q_INVOKABLE qint64 takeStart(const QString &path) {
+    const auto result = m_starts.value(path, -1);
+    m_starts.remove(path);
+    return result;
+  }
 signals:
   void changed();
+
 private:
   QHash<QString, qint64> m_starts;
 };

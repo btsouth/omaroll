@@ -383,6 +383,9 @@ private slots:
     QTest::newRow("oversized-line") << (QByteArray(1024 * 1024 + 1, 'x') + '\n');
     QTest::newRow("invalid-json") << QByteArray("not json\n");
     QTest::newRow("invalid-path") << QByteArray("{\"paths\":[42]}\n");
+    QTest::newRow("invalid-start") << QByteArray("{\"paths\":[],\"startMs\":\"1\"}\n");
+    QTest::newRow("fractional-start") << QByteArray("{\"paths\":[],\"startMs\":1.5}\n");
+    QTest::newRow("invalid-skipped") << QByteArray("{\"paths\":[],\"skipped\":[42]}\n");
     QTest::newRow("invalid-library") << QByteArray("{\"paths\":[],\"library\":42}\n");
     QTest::newRow("trailing-frame") << QByteArray("{\"paths\":[]}\n{\"paths\":[]}\n");
     QTest::newRow("too-many-paths") << (QJsonDocument(QJsonObject{

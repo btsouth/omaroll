@@ -1257,7 +1257,8 @@ ApplicationWindow {
                         if (typeof LaunchRequest === "undefined" || LaunchRequest.pendingStart(Session.path) < 0) return false
                         root.resumePending = false
                         root.resumeAvailable = false
-                        if (seekable && duration > 0) {
+                        if (seekable && duration > 0 && (mediaStatus === MediaPlayer.LoadedMedia
+                                || mediaStatus === MediaPlayer.BufferingMedia || mediaStatus === MediaPlayer.BufferedMedia)) {
                             position = Math.min(duration, LaunchRequest.takeStart(Session.path))
                             play()
                         }
@@ -1265,7 +1266,7 @@ ApplicationWindow {
                     }
                     onSeekableChanged: applyLaunchStart()
                     onDurationChanged: applyLaunchStart()
-                    Connections {
+                    property Connections launchConnection: Connections {
                         target: typeof LaunchRequest !== "undefined" ? LaunchRequest : null
                         function onChanged() { mediaPlayer.applyLaunchStart() }
                     }

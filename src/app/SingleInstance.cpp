@@ -17,6 +17,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <cmath>
 
 namespace {
 constexpr qint64 maxFrameBytes = 1024 * 1024;
@@ -144,7 +145,7 @@ SingleInstance::SingleInstance(const QString& serverName, QObject* parent)
         }
         const auto start = object.value(QStringLiteral("startMs"));
         if (!start.isUndefined() && (!start.isDouble() || start.toDouble() < -1 ||
-            start.toDouble() > 9007199254740991.0)) { socket->abort(); return; }
+            start.toDouble() > 9007199254740991.0 || std::floor(start.toDouble()) != start.toDouble())) { socket->abort(); return; }
         QStringList skipped;
         const auto skippedValue = object.value(QStringLiteral("skipped"));
         if (!skippedValue.isUndefined()) {
@@ -167,7 +168,7 @@ SingleInstance::SingleInstance(const QString& serverName, QObject* parent)
 }
 
 SingleInstance::Result SingleInstance::claimOrNotify(const QStringList& paths, bool library, qint64 startMs, const QStringList& skipped) {
-  if (paths.size() > maxPaths) {
+  if (paths.size() > maxPaths || skipped.size() > maxPaths || startMs < -1 || startMs > 9007199254740991LL) {
     qWarning() << "omaroll: the open request exceeds the single-instance limit";
     return Result::Error;
   }

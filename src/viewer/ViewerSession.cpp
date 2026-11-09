@@ -492,6 +492,8 @@ QStringList ViewerSession::siblings(const QString& folder, const QString& keep,
     if (name.startsWith(QLatin1Char('.')) && !(keepHere && name == kept)) {
       continue;
     }
+    if (name != kept && !QFileInfo(name).suffix().isEmpty() &&
+        !CaptureScanner::isSupported(QFileInfo(name).suffix()) && !name.endsWith(u".svg.gz")) continue;
     const QString suffix = CaptureScanner::mediaSuffix(directory.filePath(name));
     if (CaptureScanner::isImage(suffix) || CaptureScanner::isVideo(suffix)) {
       names.append(name);

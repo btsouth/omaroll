@@ -409,8 +409,9 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots, const std::a
           continue;
         }
 
-        if (!explicitFile && !entry.suffix().isEmpty() && !isSupported(entry.suffix())) continue;
-        const QString suffix = mediaSuffix(entry.absoluteFilePath());
+        if (!explicitFile && !entry.suffix().isEmpty() && !isSupported(entry.suffix()) &&
+            !entry.fileName().endsWith(u".svg.gz", Qt::CaseInsensitive)) continue;
+        const QString suffix = mediaSuffix(entry.absoluteFilePath(), explicitFile);
         const bool image = isImage(suffix);
         const bool video = isVideo(suffix);
         const bool document = isDocument(suffix);

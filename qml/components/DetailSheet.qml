@@ -1494,22 +1494,23 @@ Item {
                         id: mediaPlayer
                         objectName: "videoPlayer"
                         property string resumeIdentity: ""
-                    function applyLaunchStart() {
-                        if (typeof LaunchRequest === "undefined" || LaunchRequest.pendingStart(root.path) < 0) return false
-                        root.resumePending = false
-                        root.resumeAvailable = false
-                        if (seekable && duration > 0) {
-                            position = Math.min(duration, LaunchRequest.takeStart(root.path))
-                            play()
+                        function applyLaunchStart() {
+                            if (typeof LaunchRequest === "undefined" || LaunchRequest.pendingStart(root.path) < 0) return false
+                            root.resumePending = false
+                            root.resumeAvailable = false
+                            if (seekable && duration > 0 && (mediaStatus === MediaPlayer.LoadedMedia
+                                    || mediaStatus === MediaPlayer.BufferingMedia || mediaStatus === MediaPlayer.BufferedMedia)) {
+                                position = Math.min(duration, LaunchRequest.takeStart(root.path))
+                                play()
+                            }
+                            return true
                         }
-                        return true
-                    }
-                    onSeekableChanged: applyLaunchStart()
-                    onDurationChanged: applyLaunchStart()
-                    Connections {
-                        target: typeof LaunchRequest !== "undefined" ? LaunchRequest : null
-                        function onChanged() { mediaPlayer.applyLaunchStart() }
-                    }
+                        onSeekableChanged: applyLaunchStart()
+                        onDurationChanged: applyLaunchStart()
+                        property Connections launchConnection: Connections {
+                            target: typeof LaunchRequest !== "undefined" ? LaunchRequest : null
+                            function onChanged() { mediaPlayer.applyLaunchStart() }
+                        }
                         source: root.videoSource
                         videoOutput: videoSurface.item
                         audioOutput: AudioOutput {

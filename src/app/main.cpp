@@ -8,9 +8,6 @@
 #include "app/OpenRequest.h"
 #include "app/LaunchRequest.h"
 #include "app/MimeDefaults.h"
-#include <QCoreApplication>
-#include <QProcess>
-#include <QStandardPaths>
 #include "app/SingleInstance.h"
 #include "app/StartupTrace.h"
 #include "app/VideoPlayback.h"
@@ -41,6 +38,9 @@
 #include "viewer/ViewerSession.h"
 #include "viewer/ViewerWindows.h"
 
+#include <QCoreApplication>
+#include <QProcess>
+#include <QStandardPaths>
 #include <QDir>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -513,7 +513,11 @@ int main(int argc, char* argv[]) {
   if (!request.error.isEmpty()) {
     qWarning().noquote() << "omaroll:" << request.error;
     const QString notify = QStandardPaths::findExecutable("notify-send");
-    if (!notify.isEmpty()) QProcess::execute(notify, {"--", "Omaroll", request.error});
+    if (!notify.isEmpty()) {
+      QProcess notification;
+      notification.start(notify, {"--", "Omaroll", request.error});
+      if (!notification.waitForFinished(2000)) { notification.kill(); notification.waitForFinished(); }
+    }
     return 2;
   }
   QStringList requestedPaths;
