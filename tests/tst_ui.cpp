@@ -71,6 +71,7 @@
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
+#include <QPointer>
 #include <QScopeGuard>
 #include <QSettings>
 #include <QSet>
@@ -2588,6 +2589,20 @@ private slots:
       });
     };
     const auto title = [this] { return item(QStringLiteral("libraryEmptyTitle"))->property("text").toString(); };
+    // A filter change arrives in several notifications, and each rebuilds the
+    // buttons; click one that is still there once they stop.
+    const auto clickAction = [this, &named](const QString& name) {
+      for (int attempt = 0; attempt < 40; ++attempt) {
+        QPointer<QQuickItem> target = named(name);
+        QTest::qWait(120);
+        if (target && target->isVisible() && centre(target).x() > 0
+            && centre(target).x() < m_window->width()) {
+          click(target);
+          return true;
+        }
+      }
+      return false;
+    };
     const QString folder = QFileInfo(pathAt(0)).absolutePath();
     QVERIFY(m_library->folderItemCount(folder) > 0);
     QCOMPARE(m_library->emptyReason(), QString());
@@ -2600,8 +2615,7 @@ private slots:
     QCOMPARE(m_library->emptyReason(), QStringLiteral("search"));
     QTRY_COMPARE(title(), QStringLiteral("Nothing matches \u201czzz_no_matching_photo_zz\u201d in this folder"));
     QVERIFY(!title().contains(QStringLiteral("No media")));
-    QTRY_VERIFY(named(QStringLiteral("emptyAction_clear-search")));
-    clickSettled(named(QStringLiteral("emptyAction_clear-search")));
+    QVERIFY(clickAction(QStringLiteral("emptyAction_clear-search")));
     QTRY_VERIFY(m_library->searchText().isEmpty());
     QTRY_VERIFY(m_library->count() > 0);
     QCOMPARE(m_library->folderFilter(), folder);
@@ -2616,19 +2630,37 @@ private slots:
     const QString detail = item(QStringLiteral("libraryEmptyDetail"))->property("text").toString();
     QVERIFY2(detail.contains(QStringLiteral("taken with No Such Camera")), qPrintable(detail));
     QVERIFY2(detail.contains(QStringLiteral("alpine")), qPrintable(detail));
-    QTRY_VERIFY(named(QStringLiteral("emptyAction_clear-filters")));
-    clickSettled(named(QStringLiteral("emptyAction_clear-filters")));
+    QVERIFY(clickAction(QStringLiteral("emptyAction_clear-filters")));
     QTRY_VERIFY(m_library->count() > 0);
     QVERIFY(m_library->cameraFilter().isEmpty());
     QVERIFY(m_library->searchText().isEmpty());
+
+    // A saved view's filters are the view: Clear filters leaves it, keeping
+    // its folder, and the words say so.
+    const auto leaveView = qScopeGuard([this] {
+      m_library->clearRefinements();
+      m_library->clearSmartCollection();
+      m_library->setFolderFilter(QString());
+    });
+    QVariantMap view = m_library->currentView();
+    view.insert(QStringLiteral("folder"), folder);
+    view.insert(QStringLiteral("camera"), QStringLiteral("No Such Camera"));
+    m_library->applyView(QStringLiteral("Old camera"), view, {});
+    QTRY_COMPARE(m_library->count(), 0);
+    QCOMPARE(m_library->emptyReason(), QStringLiteral("filters"));
+    QTRY_COMPARE(title(), QStringLiteral("Nothing matches this saved view's filters in this folder"));
+    QVERIFY(clickAction(QStringLiteral("emptyAction_clear-filters")));
+    QTRY_VERIFY(m_library->count() > 0);
+    QVERIFY(m_library->cameraFilter().isEmpty());
+    QVERIFY(m_library->smartCollectionFilter().isEmpty());
+    QCOMPARE(m_library->folderFilter(), folder);
 
     // An empty album is empty, whatever the search.
     m_library->setAlbumFilter(QStringLiteral("Nothing yet"), {});
     QTRY_COMPARE(m_library->count(), 0);
     QCOMPARE(m_library->emptyReason(), QStringLiteral("scope"));
     QTRY_COMPARE(title(), QStringLiteral("This album is empty"));
-    QTRY_VERIFY(named(QStringLiteral("emptyAction_show-all")));
-    clickSettled(named(QStringLiteral("emptyAction_show-all")));
+    QVERIFY(clickAction(QStringLiteral("emptyAction_show-all")));
     QTRY_VERIFY(m_library->count() > 0);
     QVERIFY(m_library->albumFilter().isEmpty());
     QTRY_VERIFY(!item(QStringLiteral("libraryEmptyState"))->isVisible());

@@ -199,7 +199,9 @@ public:
   [[nodiscard]] int sourceCount() const;
   [[nodiscard]] QString emptyReason() const;
   // The search, kind, favourites, rating, camera and lens choices, cleared at
-  // once. The folder, album, tag, date range and saved view are kept.
+  // once. The folder, album, tag and date range are kept. A saved view is
+  // left, as with any other change to its filters: what remains is no longer
+  // that view.
   Q_INVOKABLE void clearRefinements();
 
   [[nodiscard]] QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;

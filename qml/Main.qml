@@ -1402,12 +1402,14 @@ ApplicationWindow {
         kinds[filters.kindVideo] = "videos"
         kinds[filters.kindDownload] = "downloads"
         kinds[filters.kindDocument] = "PDFs"
-        const where = Captures.smartCollectionFilter !== "" ? " in this saved view"
-                      : Captures.albumFilter !== "" ? " in this album"
+        // Clear search and Clear filters leave a saved view, since its filters
+        // are what they clear, and keep the folder, album, tag or dates.
+        const scope = Captures.albumFilter !== "" ? " in this album"
                       : Captures.tagFilter !== "" ? " with this tag"
                       : Captures.folderFilter !== "" ? " in this folder"
                       : (Captures.dateFrom !== "" || Captures.modifiedAfter !== "")
                         ? " in these dates" : ""
+        const where = Captures.smartCollectionFilter !== "" ? " in this saved view" : scope
         if (reason === "library") {
             const actions = ["add-folder", "open-file"]
             if (!DemoMode) actions.push("demo")
@@ -1448,7 +1450,9 @@ ApplicationWindow {
             if (Captures.lensFilter !== "") parts.push("lens " + Captures.lensFilter)
             if (Captures.searchText.trim() !== "")
                 parts.push("matching \u201c" + Captures.searchText.trim() + "\u201d")
-            return { title: "Nothing matches these filters" + where,
+            return { title: Captures.smartCollectionFilter !== ""
+                            ? "Nothing matches this saved view's filters" + scope
+                            : "Nothing matches these filters" + scope,
                      detail: parts.length > 0 ? "Showing " + parts.join(", ") + "." : "",
                      actions: ["clear-filters"] }
         }
