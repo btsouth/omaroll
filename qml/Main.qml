@@ -898,7 +898,7 @@ ApplicationWindow {
                                  + " of " + Similarities.total
                                : "Finding similar pictures"
                     }
-                    if (TextIndex.indexing && Captures.searchText !== "") {
+                    if (TextIndex.indexing && Captures.appliedSearchText !== "") {
                         return TextIndex.total > 0
                                ? "Searching image text · " + TextIndex.completed
                                  + " of " + TextIndex.total
@@ -1500,7 +1500,7 @@ ApplicationWindow {
                      actions: ["show-all"] }
         }
         if (reason === "search") {
-            return { title: "Nothing matches \u201c" + Captures.searchText.trim() + "\u201d" + where,
+            return { title: "Nothing matches \u201c" + Captures.appliedSearchText.trim() + "\u201d" + where,
                      detail: "Search looks at file names, captions and text found in pictures.",
                      actions: ["clear-search"] }
         }
@@ -1512,8 +1512,8 @@ ApplicationWindow {
             if (Captures.minimumRating > 0) parts.push(Captures.minimumRating + " stars and up")
             if (Captures.cameraFilter !== "") parts.push("taken with " + Captures.cameraFilter)
             if (Captures.lensFilter !== "") parts.push("lens " + Captures.lensFilter)
-            if (Captures.searchText.trim() !== "")
-                parts.push("matching \u201c" + Captures.searchText.trim() + "\u201d")
+            if (Captures.appliedSearchText.trim() !== "")
+                parts.push("matching \u201c" + Captures.appliedSearchText.trim() + "\u201d")
             return { title: Captures.smartCollectionFilter !== ""
                             ? "Nothing matches this saved view's filters" + scope
                             : "Nothing matches these filters" + scope,

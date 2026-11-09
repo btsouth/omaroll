@@ -110,6 +110,8 @@
 
 ### Fixed
 
+- Typing a search while the library showed "Nothing matches" could apply the
+  half-typed search early and trip a binding loop on slower machines.
 - The empty library named Super + Shift + S for screenshots. It now names the
   key from your Hyprland bindings, Print Screen by default.
 - `--set-default` prints one line and the command that undoes it instead of a
