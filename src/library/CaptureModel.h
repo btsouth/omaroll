@@ -53,6 +53,8 @@ public:
 
   [[nodiscard]] bool empty() const { return m_records.isEmpty(); }
   [[nodiscard]] bool scanning() const { return m_scanning; }
+  // A refresh is waiting out its debounce.
+  [[nodiscard]] bool refreshPending() const { return m_refreshTimer.isActive(); }
   [[nodiscard]] QVariantList folderSources() const { return m_folderSources; }
   [[nodiscard]] QVariantList automaticFolders() const;
   Q_INVOKABLE [[nodiscard]] bool folderAvailable(const QString& path) const;

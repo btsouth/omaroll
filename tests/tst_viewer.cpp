@@ -4315,7 +4315,8 @@ private slots:
     QTRY_COMPARE(m_session->path(), bare);
     QTRY_VERIFY(prop("imageReady").toBool());
     QCOMPARE(prop("loadedSize").toSize(), QSize(24, 32));
-    QCOMPARE(prop("sourceWidth").toReal(), 48.0);
+    // As above, the raw's size comes from a probe that can finish after it shows.
+    QTRY_COMPARE(prop("sourceWidth").toReal(), 48.0);
     QTRY_COMPARE(detail->property("status").toInt(), 1);
     m_window->close();
     m_session->clear();

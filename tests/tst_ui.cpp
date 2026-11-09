@@ -753,9 +753,13 @@ private slots:
     const QPointF before = underPointer();
     const QPointF at = viewport->mapToScene(pointer);
     for (int delta : {120, -120}) {
+      const qreal zoom = detail->property("imageZoom").toDouble();
       QWheelEvent wheel(at, m_window->mapToGlobal(at.toPoint()), QPoint(), QPoint(0, delta),
                         Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
       QCoreApplication::sendEvent(m_window, &wheel);
+      // The wheel must zoom, and zooming must keep the pointer's spot fixed.
+      QTRY_VERIFY(delta > 0 ? detail->property("imageZoom").toDouble() > zoom
+                            : detail->property("imageZoom").toDouble() < zoom);
       QTRY_VERIFY(QLineF(before, underPointer()).length() < 0.001);
     }
   }
@@ -970,14 +974,15 @@ private slots:
     });
     waitForLayout(QSize(width, 420));
     QQuickItem* browse = item("libraryBrowseButton");
-    const QRectF browseBounds = browse->mapRectToScene(browse->boundingRect());
-    QVERIFY(browseBounds.right() <= width - 19);
-    if (width >= 700) QCOMPARE(browse->property("toolTip").toString(), album + QStringLiteral("  ▾"));
+    QTRY_VERIFY(browse->mapRectToScene(browse->boundingRect()).right() <= width - 19);
+    if (width >= 700) QTRY_COMPARE(browse->property("toolTip").toString(), album + QStringLiteral("  ▾"));
     QQuickItem* status = item("libraryStatus");
-    const QRectF statusBounds = status->mapRectToScene(status->boundingRect());
-    const QRectF settingsBounds = pill(m_window->contentItem(), QStringLiteral("Settings"))
-        ->mapRectToScene(pill(m_window->contentItem(), QStringLiteral("Settings"))->boundingRect());
-    QVERIFY(statusBounds.right() < settingsBounds.left());
+    const auto clearOfSettings = [&] {
+      QQuickItem* settings = pill(m_window->contentItem(), QStringLiteral("Settings"));
+      return settings && status->mapRectToScene(status->boundingRect()).right()
+                             < settings->mapRectToScene(settings->boundingRect()).left();
+    };
+    QTRY_VERIFY(clearOfSettings());
   }
 
   void matteControlsKeepTheSheetOpen() {
@@ -1376,6 +1381,33 @@ private slots:
         QTRY_VERIFY(!controls->property("wide").toBool());
       }
       waitForLayout(size);
+      // Rows can still be easing into place after the layout pass. Wait for a
+      // layout with no overlaps, then check it in detail for the message.
+      const auto overlaps = [&] {
+        QList<QQuickItem*> found;
+        find(controls, [&found](QQuickItem* candidate) {
+          if ((candidate->property("floating").isValid() ||
+               candidate->objectName() == QStringLiteral("correctionResult") ||
+               candidate->objectName() == QStringLiteral("straightenSlider") ||
+               candidate->objectName().startsWith(QStringLiteral("correctionWidth")) ||
+               candidate->objectName().startsWith(QStringLiteral("correctionHeight"))) &&
+              candidate->isVisible() && candidate->width() > 0) found.append(candidate);
+          return false;
+        });
+        const QRectF panel = controls->parentItem()->mapRectToScene(
+            QRectF(0, 0, controls->parentItem()->width(), controls->parentItem()->height()));
+        for (qsizetype i = 0; i < found.size(); ++i) {
+          const QRectF a = found[i]->mapRectToScene(QRectF(0, 0, found[i]->width(), found[i]->height()));
+          if (!panel.contains(a)) return true;
+          for (qsizetype j = i + 1; j < found.size(); ++j) {
+            const QRectF overlap = a.intersected(
+                found[j]->mapRectToScene(QRectF(0, 0, found[j]->width(), found[j]->height())));
+            if (overlap.width() >= 1 && overlap.height() >= 1) return true;
+          }
+        }
+        return false;
+      };
+      QTRY_VERIFY(!overlaps());
 
       QList<QQuickItem*> parts;
       find(controls, [&parts](QQuickItem* candidate) {
@@ -2845,6 +2877,13 @@ private slots:
     QCOMPARE(m_library->emptyReason(), QStringLiteral("search"));
     QTRY_COMPARE(title(), QStringLiteral("Nothing matches \u201czzz_no_matching_photo_zz\u201d in this folder"));
     QVERIFY(!title().contains(QStringLiteral("No media")));
+    // Behind a sheet the actions are off, so a sheet button over one cannot
+    // press it too (Restore last good backup sat over Set as default viewer).
+    QVERIFY(QMetaObject::invokeMethod(item("settingsSheet"), "open"));
+    QTRY_VERIFY(named(QStringLiteral("emptyAction_clear-search")) &&
+                !named(QStringLiteral("emptyAction_clear-search"))->isEnabled());
+    invoke("dismissTopLayer");
+    QTRY_VERIFY(named(QStringLiteral("emptyAction_clear-search"))->isEnabled());
     QVERIFY(clickAction(QStringLiteral("emptyAction_clear-search")));
     QTRY_VERIFY(m_library->searchText().isEmpty());
     QTRY_VERIFY(m_library->count() > 0);
@@ -3949,6 +3988,9 @@ private slots:
       rescan();
     });
     m_captures->addExtraFiles({first, second, child});
+    // The viewer opens once the scan has listed the file.
+    waitForScan();
+    QVERIFY(m_captures->rowOf(first) >= 0);
     QVERIFY(QMetaObject::invokeMethod(m_window, "openPath", Q_ARG(QVariant, first)));
     QQuickItem* detail = item("detail");
     QTRY_VERIFY(detail->isVisible());
@@ -5046,11 +5088,12 @@ private slots:
         scroller->setProperty("contentY", qMax(0.0, scroller->property("contentHeight").toDouble()
                                                    - scroller->height()));
         QQuickItem* button = item(buttonName);
-        QTRY_VERIFY(button->mapRectToItem(scroller, button->boundingRect()).bottom()
-                    <= scroller->height() + 1);
-        const QRectF rect = button->mapRectToItem(scroller, button->boundingRect());
-        QVERIFY2(rect.left() >= 0 && rect.right() <= scroller->width() + 1,
-                 qPrintable(QStringLiteral("%1 lies outside the chooser").arg(buttonName)));
+        const auto inside = [&] {
+          const QRectF rect = button->mapRectToItem(scroller, button->boundingRect());
+          return rect.bottom() <= scroller->height() + 1 && rect.left() >= 0 &&
+                 rect.right() <= scroller->width() + 1;
+        };
+        QTRY_VERIFY2(inside(), qPrintable(QStringLiteral("%1 lies outside the chooser").arg(buttonName)));
         click(button);
         QTRY_VERIFY(!chooser->property("visible").toBool());
       }
@@ -5524,8 +5567,12 @@ private slots:
     QVERIFY(player);
     QTRY_VERIFY(item("detail")->property("resumeAvailable").toBool());
     QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    // Offering to resume must not start playback, not even for a moment.
+    QSignalSpy resumeStates(player, &QMediaPlayer::playbackStateChanged);
     QTRY_VERIFY(player->mediaStatus() == QMediaPlayer::LoadedMedia ||
                 player->mediaStatus() == QMediaPlayer::BufferedMedia);
+    QTest::qWait(200); // Checks that nothing starts, so there is no event to wait for.
+    QVERIFY(!playedDuring(resumeStates));
     QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
     auto* mpris = qobject_cast<MprisService*>(
         m_engine->rootContext()->contextProperty(QStringLiteral("Mpris")).value<QObject*>());
@@ -5666,11 +5713,16 @@ private slots:
     QTRY_VERIFY(qAbs(player->position() - 5000) < 100);
     QTest::keyClick(m_window, Qt::Key_J);
     QTRY_COMPARE(player->position(), 0);
+    // Restoring the window must not resume a clip the user had paused.
+    QSignalSpy restoreStates(player, &QMediaPlayer::playbackStateChanged);
     m_window->showMinimized();
     QTRY_COMPARE(m_window->visibility(), QWindow::Minimized);
     m_window->showNormal();
+    QTRY_VERIFY(m_window->visibility() != QWindow::Minimized);
     QTRY_VERIFY(player->mediaStatus() == QMediaPlayer::LoadedMedia ||
                 player->mediaStatus() == QMediaPlayer::BufferedMedia);
+    QTest::qWait(200); // Checks that nothing starts, so there is no event to wait for.
+    QVERIFY(!playedDuring(restoreStates));
     QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
     QTest::keyClick(m_window, Qt::Key_Space);
     QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
@@ -6254,6 +6306,8 @@ private:
 
   // Waits until a resize has reached the window and the items it moved have
   // been laid out again, rather than sleeping through a guessed polish pass.
+  // It does not cover timers or animations that move items afterwards, so a
+  // geometry check that follows it uses QTRY.
   void waitForLayout(const QSize& size = QSize()) {
     if (size.isValid()) QTRY_COMPARE(m_window->size(), size);
     QVERIFY(QQuickTest::qWaitForPolish(m_window));
@@ -6265,11 +6319,24 @@ private:
   // A refresh during a scan is folded into a follow-up that starts after a
   // debounce, so the scan in flight can finish before the files changed here
   // are read. Wait that scan out first, then scan afresh.
+  // A refresh scheduled by the file watcher waits out its debounce first, and
+  // that pending one is folded into this scan.
   void rescan() {
     QVERIFY(QTest::qWaitFor([&] { return !m_captures->scanning(); }, 60000));
     m_captures->refresh();
     QVERIFY(m_captures->scanning());
-    QVERIFY(QTest::qWaitFor([&] { return !m_captures->scanning(); }, 60000));
+    waitForScan();
+  }
+
+  // Waits until no scan is running or waiting on its debounce.
+  void waitForScan() {
+    QVERIFY(QTest::qWaitFor([&] { return !m_captures->scanning() && !m_captures->refreshPending(); }, 60000));
+  }
+
+  static bool playedDuring(const QSignalSpy& states) {
+    return std::any_of(states.cbegin(), states.cend(), [](const QList<QVariant>& change) {
+      return change.at(0).value<QMediaPlayer::PlaybackState>() == QMediaPlayer::PlayingState;
+    });
   }
 
   void openDetail(int row) {
