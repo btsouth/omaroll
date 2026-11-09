@@ -34,6 +34,10 @@ class CaptureFilterModel final : public QSortFilterProxyModel {
   Q_PROPERTY(int kindFilter READ kindFilter WRITE setKindFilter NOTIFY kindFilterChanged)
   Q_PROPERTY(int sortMode READ sortMode WRITE setSortMode NOTIFY sortModeChanged)
   Q_PROPERTY(QString searchText READ searchText WRITE setSearchText NOTIFY searchTextChanged)
+  // The search the grid shows now. Unlike searchText, reading it never
+  // applies typing that is still waiting, so a binding that also reads the
+  // count cannot change the count while it is being evaluated.
+  Q_PROPERTY(QString appliedSearchText READ appliedSearchText NOTIFY searchTextChanged)
   Q_PROPERTY(
       bool favoritesOnly READ favoritesOnly WRITE setFavoritesOnly NOTIFY favoritesOnlyChanged)
   Q_PROPERTY(
@@ -99,6 +103,7 @@ public:
   void setSortMode(int mode);
 
   [[nodiscard]] QString searchText() { commitPendingSearch(); return m_searchText; }
+  [[nodiscard]] QString appliedSearchText() const { return m_searchText; }
   void setSearchText(const QString& text);
   Q_INVOKABLE void queueSearchText(const QString& text);
   Q_INVOKABLE void commitPendingSearch();

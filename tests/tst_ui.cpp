@@ -7150,6 +7150,28 @@ private slots:
     QVERIFY(!item("matteSheet")->property("retryCopy").toBool());
   }
 
+  void emptyStateReadsTheAppliedSearchOnly() {
+    // The empty state's text names the search. Reading it must not apply
+    // typing still waiting on the debounce: that changed the count while the
+    // empty state was being worked out, a binding loop on slow machines.
+    const QString match = QFileInfo(pathAt(0)).completeBaseName();
+    QVERIFY(!match.isEmpty());
+    const auto restore = qScopeGuard([&] { m_library->setSearchText({}); });
+    m_library->setSearchText(QStringLiteral("zz-nothing-matches-this"));
+    QQuickItem* empty = item("libraryEmptyState");
+    QTRY_VERIFY(empty->isVisible());
+    const qsizetype before = m_warnings.size();
+    m_library->queueSearchText(match);
+    // Anything that redraws the empty state while the typing waits.
+    QMetaObject::invokeMethod(m_mimeDefaults, "stateChanged");
+    QCoreApplication::processEvents();
+    const QStringList added = m_warnings.mid(before);
+    QVERIFY2(added.filter(QStringLiteral("Binding loop")).isEmpty(), qPrintable(added.join(QLatin1Char('\n'))));
+    // The typing still lands once the debounce runs.
+    QTRY_VERIFY(m_library->count() > 0);
+    QTRY_VERIFY(!empty->isVisible());
+  }
+
   void theWindowRaisedNoQmlWarnings() {
     QVERIFY2(m_warnings.isEmpty(), qPrintable(m_warnings.join(QLatin1Char('\n'))));
   }
