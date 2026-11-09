@@ -4857,6 +4857,9 @@ private slots:
       QVERIFY(!settings.createAlbum(QStringLiteral("Cannot overwrite")));
       settings.setFavorite({QStringLiteral("/new.bmp")}, true);
       QVERIFY(!settings.organizationError().isEmpty());
+      // A preference changes for this session but isn't written over it.
+      settings.setCaptionScale(150);
+      QCOMPARE(settings.captionScale(), 150);
     }
     QVERIFY(file.open(QIODevice::ReadOnly));
     QCOMPARE(file.readAll(), damaged);

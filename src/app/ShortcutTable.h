@@ -121,6 +121,7 @@ inline QVariantList rows() {
   {"context": "preview", "id": "speed", "keys": ["[", "]"], "label": "Playback speed", "group": "Playback", "flag": "", "tokens": ["BracketLeft", "BracketRight"]},
   {"context": "preview", "id": "normal", "keys": ["Backspace"], "label": "Normal speed", "group": "Playback", "flag": "", "tokens": ["Backspace"]},
   {"context": "preview", "id": "ends", "keys": ["Home", "End"], "label": "Start / end of video", "group": "Playback", "flag": "", "tokens": ["Home", "End"]},
+  {"context": "preview", "id": "subtitle-offset", "keys": ["Z", "X"], "label": "Subtitles earlier / later by 0.5 seconds", "group": "Playback", "flag": "", "tokens": ["Z", "X"]},
   {"context": "preview", "id": "help", "keys": ["?", "F1"], "label": "Help", "group": "Navigation", "flag": "", "tokens": ["Question", "F1"]},
   {"context": "preview", "id": "delete", "keys": ["Shift+Del"], "label": "Delete permanently", "group": "Organization", "flag": "", "tokens": ["Delete"]},
   {"context": "preview", "id": "develop", "keys": ["D", "O"], "label": "Develop RAW", "group": "Actions", "flag": "", "tokens": ["D", "O"]},

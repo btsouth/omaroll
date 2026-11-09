@@ -83,6 +83,7 @@ the viewer. The preview is the built-in viewer inside the library.
 | `M` · `↑` `↓` or `9` `0` in a video preview | Mute · volume down/up |
 | `[` `]` · `Backspace` in a video preview | Change speed · reset speed |
 | `Home` `End` in a video preview | Start · end |
+| `Z` `X` in a video preview | Subtitles 0.5 seconds earlier · later, as in the viewer |
 | `+` `-` · `0` · `1` · `R` in an image preview | Zoom · fit · toggle fit and actual size · rotate |
 | `Shift+H` `Shift+V` in an image preview | Flip horizontally · vertically |
 | `F11` in a preview | Enter · leave fullscreen |

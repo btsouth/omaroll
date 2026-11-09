@@ -4003,6 +4003,151 @@ private slots:
     QTRY_COMPARE_WITH_TIMEOUT(presentation->property("hdr").toString(), QStringLiteral("PQ"), 10000);
     QTRY_VERIFY(notice->isVisible());
     QVERIFY(item("detailHdrNoticeText")->property("text").toString().startsWith(QStringLiteral("HDR10 video")));
+    // In its own band under the picture: clear of the video, its lowest
+    // caption line and the transport, in both palettes.
+    const QString themeRoot = m_scratch.filePath(QStringLiteral("state/omarchy/current"));
+    const auto restoreTheme = qScopeGuard([&] {
+      QDir(themeRoot).removeRecursively();
+      m_theme->reload();
+    });
+    detail->setProperty("externalSubtitle", QFINDTESTDATA("fixtures/viewer/captions.srt"));
+    const auto clearCaption = qScopeGuard([detail] { detail->setProperty("externalSubtitle", QString()); });
+    for (const QString theme : {QStringLiteral("dark"), QStringLiteral("light")}) {
+      QDir(themeRoot).removeRecursively();
+      QVERIFY(QDir().mkpath(themeRoot + QStringLiteral("/theme")));
+      for (const QString name : {QStringLiteral("colors.toml"), QStringLiteral("shell.toml")}) {
+        const QString source = QFINDTESTDATA(QStringLiteral("fixtures/themes/%1/theme/%2").arg(theme, name));
+        if (!source.isEmpty()) QVERIFY(QFile::copy(source, themeRoot + QStringLiteral("/theme/") + name));
+      }
+      if (theme == u"light") {
+        QFile mode(themeRoot + QStringLiteral("/theme/light.mode"));
+        QVERIFY(mode.open(QIODevice::WriteOnly));
+      }
+      m_theme->reload();
+      QTRY_VERIFY(item("subtitleOverlay")->isVisible());
+      const QRectF band = notice->mapRectToScene(notice->boundingRect());
+      const QRectF video = item("videoOutput")->mapRectToScene(item("videoOutput")->boundingRect());
+      const QRectF caption = item("subtitleOverlay")->mapRectToScene(item("subtitleOverlay")->boundingRect());
+      QRectF controls = item("videoPlayButton")->mapRectToScene(item("videoPlayButton")->boundingRect());
+      if (QQuickItem* top = item("detailTopControls"); top->isVisible()) {
+        controls = controls.united(top->mapRectToScene(top->boundingRect()));
+      }
+      const QString where = QStringLiteral("%1: notice %2,%3 %4x%5 video bottom %6 caption bottom %7 controls top %8")
+                                .arg(theme).arg(band.x()).arg(band.y()).arg(band.width()).arg(band.height())
+                                .arg(video.bottom()).arg(caption.bottom()).arg(controls.top());
+      QVERIFY2(band.top() >= video.bottom() && band.top() >= caption.bottom(), qPrintable(where));
+      QVERIFY2(band.bottom() <= controls.top(), qPrintable(where));
+      if (!qEnvironmentVariableIsEmpty("OMAROLL_UI_GRABS")) {
+        m_window->grabWindow().save(qEnvironmentVariable("OMAROLL_UI_GRABS") + QStringLiteral("/hdr-preview-%1.png").arg(theme));
+      }
+    }
+    // It goes with the transport.
+    invoke("dismissTopLayer");
+    QTRY_VERIFY(!notice->isVisible());
+  }
+
+  // The preview takes Z and X too, for sidecars and embedded text tracks,
+  // with the viewer's words; a delay stays with its video.
+  void previewShiftsEmbeddedSubtitlesWithZAndX() {
+    if (QStandardPaths::findExecutable(QStringLiteral("ffmpeg")).isEmpty()) QSKIP("ffmpeg is not installed");
+    int videoRow = -1;
+    for (int row = 0; row < m_library->rowCount() && videoRow < 0; ++row) {
+      if (m_library->isVideoAt(row)) videoRow = row;
+    }
+    QVERIFY(videoRow >= 0);
+    QTemporaryDir folder;
+    QVERIFY(folder.isValid());
+    QStringList paths;
+    for (const char* name : {"a.mkv", "b.mkv", "pictures.mkv"}) {
+      paths.append(folder.filePath(QLatin1String(name)));
+      QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/viewer/tracks.mkv"), paths.last()));
+    }
+    const auto status = [this] { return item("footerStatus")->property("text").toString(); };
+    openDetail(videoRow);
+    QQuickItem* detail = item("detail");
+    // As Main.openDetail steps: the path changes, then open() resets.
+    const auto show = [&](const QString& path) {
+      detail->setProperty("path", QString());
+      detail->setProperty("path", path);
+      QVERIFY(QMetaObject::invokeMethod(detail, "open"));
+    };
+    show(paths[0]);
+    QMediaPlayer* player = m_window->findChild<QMediaPlayer*>(QStringLiteral("videoPlayer"));
+    QVERIFY(player);
+    QTRY_COMPARE_WITH_TIMEOUT(player->subtitleTracks().size(), 1, 10000);
+    QTest::keyClick(m_window, Qt::Key_X);
+    QCOMPARE(status(), QStringLiteral("Turn on subtitles first"));
+    QVERIFY(QMetaObject::invokeMethod(detail, "setSubtitleTrack", Q_ARG(QVariant, 0)));
+    QTRY_COMPARE(player->activeSubtitleTrack(), 0);
+    QTRY_VERIFY(item("subtitleOffsetControls")->isVisible());
+    QCOMPARE(item("subtitleLater")->property("shortcut").toString(), QStringLiteral("X"));
+    player->pause();
+    player->setPosition(6500);
+    QTest::keyClick(m_window, Qt::Key_X);
+    QTest::keyClick(m_window, Qt::Key_X);
+    QCOMPARE(detail->property("subtitleOffsetMs").toInt(), 1000);
+    QCOMPARE(status(), QStringLiteral("Preparing subtitles…"));
+    QTRY_VERIFY_WITH_TIMEOUT(!detail->property("embeddedSubtitleCopy").toString().isEmpty(), 15000);
+    QCOMPARE(status(), QStringLiteral("Subtitle delay +1.0 s"));
+    // A second later: the first cue is still up at 6.5 s.
+    QTRY_COMPARE(detail->property("subtitleOverlayText").toString(), QStringLiteral("Omaroll subtitle test"));
+    QTest::keyClick(m_window, Qt::Key_Z);
+    QCOMPARE(detail->property("subtitleOffsetMs").toInt(), 500);
+    QCOMPARE(status(), QStringLiteral("Subtitle delay +0.5 s"));
+    const QString copy = detail->property("embeddedSubtitleCopy").toString();
+
+    // The next video: no delay, no copy of it, and the last one's is gone.
+    show(paths[1]);
+    QCOMPARE(detail->property("subtitleOffsetMs").toInt(), 0);
+    QCOMPARE(detail->property("activeEmbeddedTrack").toInt(), -1);
+    QCOMPARE(detail->property("embeddedSubtitleCopy").toString(), QString());
+    QCOMPARE(m_subtitles->embeddedState(paths[0], 0), QString());
+    QVERIFY(!QFile::exists(copy));
+    QTest::qWait(300);
+    QCOMPARE(m_subtitles->embeddedState(paths[1], 0), QString());
+
+    // A picture-based track: ffmpeg refuses to write it as text.
+    QTemporaryDir bin;
+    QVERIFY(bin.isValid());
+    QFile fake(bin.filePath(QStringLiteral("ffmpeg")));
+    QVERIFY(fake.open(QIODevice::WriteOnly));
+    fake.write("#!/bin/sh\nexit 1\n");
+    fake.close();
+    QVERIFY(fake.setPermissions(fake.permissions() | QFileDevice::ExeOwner));
+    const QByteArray systemPath = qgetenv("PATH");
+    qputenv("PATH", bin.path().toUtf8() + ':' + systemPath);
+    const auto restorePath = qScopeGuard([systemPath] { qputenv("PATH", systemPath); });
+    show(paths[2]);
+    QTRY_COMPARE_WITH_TIMEOUT(player->subtitleTracks().size(), 1, 10000);
+    QVERIFY(QMetaObject::invokeMethod(detail, "setSubtitleTrack", Q_ARG(QVariant, 0)));
+    QTest::keyClick(m_window, Qt::Key_Z);
+    QTRY_COMPARE_WITH_TIMEOUT(status(), QStringLiteral("Subtitle delay works only for text subtitles"), 5000);
+    QCOMPARE(detail->property("subtitleOffsetMs").toInt(), 0);
+    invoke("dismissTopLayer");
+    QCOMPARE(m_subtitles->embeddedState(paths[2], 0), QString());
+  }
+
+  // Without mpv the handoff says so and the preview keeps playing.
+  void previewKeepsPlayingWhenMpvIsMissing() {
+    int videoRow = -1;
+    for (int row = 0; row < m_library->rowCount() && videoRow < 0; ++row) {
+      if (m_library->isVideoAt(row)) videoRow = row;
+    }
+    QVERIFY(videoRow >= 0);
+    openDetail(videoRow);
+    QQuickItem* detail = item("detail");
+    QTRY_COMPARE_WITH_TIMEOUT(detail->property("playbackState").toInt(),
+                              static_cast<int>(QMediaPlayer::PlayingState), 5000);
+    QTemporaryDir empty;
+    QVERIFY(empty.isValid());
+    const QByteArray systemPath = qgetenv("PATH");
+    qputenv("PATH", empty.path().toUtf8());
+    const auto restorePath = qScopeGuard([systemPath] { qputenv("PATH", systemPath); });
+    QMetaObject::invokeMethod(m_window, "perform", Q_ARG(QVariant, QStringLiteral("play")),
+                              Q_ARG(QVariant, detail->property("path")), Q_ARG(QVariant, true));
+    QTRY_VERIFY(item("footerStatus")->property("text").toString().contains(QStringLiteral("mpv")));
+    QTest::qWait(200);
+    QCOMPARE(detail->property("playbackState").toInt(), static_cast<int>(QMediaPlayer::PlayingState));
     invoke("dismissTopLayer");
   }
 

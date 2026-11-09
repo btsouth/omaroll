@@ -69,8 +69,8 @@ class VideoPresentation : public QQuickItem {
   Q_PROPERTY(QMediaPlayer* player READ player WRITE setPlayer NOTIFY playerChanged)
   // Why nothing can be shown, or empty. Cleared by reset().
   Q_PROPERTY(QString failure READ failure NOTIFY failureChanged)
-  // "PQ" or "HLG" for high dynamic range video, read off the first frame,
-  // which Qt draws without tone mapping; empty otherwise.
+  // "PQ" or "HLG" for high dynamic range video that Qt draws without tone
+  // mapping, read off the first frame; empty otherwise. See hdrUnmapped().
   Q_PROPERTY(QString hdr READ hdr NOTIFY hdrChanged)
   // Stalled play time allowed before a first frame; tests shorten it.
   Q_PROPERTY(int firstFrameTimeoutMs MEMBER m_firstFrameTimeoutMs)
@@ -114,7 +114,9 @@ public:
               m_frameEnd.store(frame.endTime(), std::memory_order_relaxed);
               m_frames.fetch_add(1, std::memory_order_release);
               if (!m_frameSeen.exchange(true)) {
-                m_transfer.store(int(frame.surfaceFormat().colorTransfer()), std::memory_order_relaxed);
+                const QVideoFrameFormat format = frame.surfaceFormat();
+                m_firstFrameHdr.store(hdrUnmapped(format.pixelFormat(), format.colorTransfer()),
+                                      std::memory_order_relaxed);
                 QMetaObject::invokeMethod(this, &VideoPresentation::markReady, Qt::QueuedConnection);
               }
             },
@@ -137,6 +139,16 @@ public:
   bool watchingStall() const { return m_stallTimer.isActive(); }
   int stallResyncs() const { return m_resyncCount; }
   QString hdr() const { return m_hdr; }
+  // Qt 6.12 tone-maps PQ and HLG only for P010 and P016 frames, which come
+  // from hardware decoders (its nv12_bt2020_pq and _hlg shaders). Others,
+  // such as software-decoded 10-bit 4:2:0, are drawn as is: 0 for none, 1
+  // for PQ, 2 for HLG.
+  static int hdrUnmapped(QVideoFrameFormat::PixelFormat format, QVideoFrameFormat::ColorTransfer transfer) {
+    if (format == QVideoFrameFormat::Format_P010 || format == QVideoFrameFormat::Format_P016) return 0;
+    if (transfer == QVideoFrameFormat::ColorTransfer_ST2084) return 1;
+    if (transfer == QVideoFrameFormat::ColorTransfer_STD_B67) return 2;
+    return 0;
+  }
   QMediaPlayer* player() const { return m_player; }
   void setPlayer(QMediaPlayer* player) {
     if (m_player == player) return;
@@ -284,11 +296,11 @@ private:
       PlaybackHeap::hold();
       m_heapHeld = true;
     }
-    switch (QVideoFrameFormat::ColorTransfer(m_transfer.load(std::memory_order_relaxed))) {
-    case QVideoFrameFormat::ColorTransfer_ST2084:
+    switch (m_firstFrameHdr.load(std::memory_order_relaxed)) {
+    case 1:
       setHdr(QStringLiteral("PQ"));
       break;
-    case QVideoFrameFormat::ColorTransfer_STD_B67:
+    case 2:
       setHdr(QStringLiteral("HLG"));
       break;
     default:
@@ -418,7 +430,7 @@ private:
   std::atomic<qint64> m_frameStart = -1;
   std::atomic<qint64> m_frameEnd = -1;
   std::atomic<quint64> m_frames = 0;
-  std::atomic_int m_transfer = 0;
+  std::atomic_int m_firstFrameHdr = 0;
   QVideoSink m_input;
   QPointer<QVideoSink> m_output;
   QPointer<QMediaPlayer> m_player;

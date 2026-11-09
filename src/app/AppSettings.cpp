@@ -869,7 +869,7 @@ void AppSettings::setCaptionScale(int percent) {
     return;
   }
   m_captionScale = percent;
-  m_settings.setValue(kCaptionScale, percent);
+  setValue(kCaptionScale, percent);
   emit captionScaleChanged();
 }
 
