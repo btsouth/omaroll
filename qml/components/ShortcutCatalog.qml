@@ -107,6 +107,45 @@ QtObject {
                 };
         return keys;
     }
+    // Key caps for help: one list per alternative, one cap per key, with
+    // the sets help would otherwise spell out key by key collapsed:
+    // "Shift+Left / Shift+Right / Shift+Up / Shift+Down" is Shift + Arrows.
+    function caps(keys, literal) {
+        if (literal)
+            return keys.map(function (key) { return [key]; });
+        if (keys.length === 6 && keys[0] === "Alt+0" && keys[5] === "Alt+5")
+            return [["Alt", "0–5"]];
+        if (keys.length === 8 && keys[0] === "1" && keys[7] === "8")
+            return [["1–8"]];
+        const glyphs = {
+            "Left": "←", "Right": "→", "Up": "↑", "Down": "↓",
+            "Return": "Enter", "Esc": "Esc", "Del": "Delete", "Backtab": "Shift+Tab",
+            "PgUp": "Page Up", "PgDown": "Page Down"
+        };
+        function split(key) {
+            if (key === "+") return ["+"];
+            const parts = key.endsWith("++") ? key.slice(0, -2).split("+").concat(["+"]) : key.split("+");
+            const base = parts[parts.length - 1];
+            const named = glyphs[base] !== undefined ? glyphs[base] : base;
+            return parts.slice(0, -1).concat(named.split("+"));
+        }
+        const all = keys.map(split);
+        // A modifier, or none, with all four arrows.
+        if (all.length === 4) {
+            const mods = all[0].slice(0, -1).join("+");
+            const bases = all.map(function (key) { return key[key.length - 1]; }).sort().join("");
+            const sameMods = all.every(function (key) { return key.slice(0, -1).join("+") === mods; });
+            if (sameMods && bases === ["←", "→", "↑", "↓"].sort().join(""))
+                return [all[0].slice(0, -1).concat(["Arrows"])];
+        }
+        const seen = [];
+        return all.filter(function (key) {
+            const text = key.join("+");
+            if (seen.indexOf(text) >= 0) return false;
+            seen.push(text);
+            return true;
+        });
+    }
     function groups(context, video, animated, audio, sidecar, filter) {
         let entries = rows.filter(function (row) {
             // The library help also teaches the search syntax.
@@ -116,6 +155,7 @@ QtObject {
         }).map(function (row) {
             return {
                 keys: display(row.keys),
+                caps: caps(row.keys, row.context === "search"),
                 label: row.label,
                 group: row.group
             };

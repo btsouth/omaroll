@@ -766,15 +766,18 @@ private slots:
     // The header is at the top, so the floating day pill has nothing to add.
     QCOMPARE(grid->property("currentDayLabel").toString(), QString());
 
-    // Tiles away from today show their short date before the time.
+    // Inside a day's section a tile shows only its time; the header has the
+    // day. Assistive technology still hears the date.
     QQuickItem* first = nullptr;
     QTRY_VERIFY((first = cardFor(added.first())) != nullptr);
     QQuickItem* when = find(first, [](QQuickItem* candidate) {
       return candidate->objectName() == QStringLiteral("captureWhenLabel");
     });
     QVERIFY(when);
-    QVERIFY2(when->property("text").toString().startsWith(
-                 locale.toString(QDate(2019, 5, 4), QStringLiteral("d MMM yyyy")) + QStringLiteral(" · ")),
+    QVERIFY2(!when->property("text").toString().contains(QStringLiteral(" · ")),
+             qPrintable(when->property("text").toString()));
+    QVERIFY2(!when->property("text").toString().contains(
+                 locale.toString(QDate(2019, 5, 4), QStringLiteral("d MMM"))),
              qPrintable(when->property("text").toString()));
     QVERIFY(when->width() <= first->width());
     QVERIFY(QAccessible::queryAccessibleInterface(first)->text(QAccessible::Name).contains(
@@ -1873,7 +1876,7 @@ private slots:
     for (int step = 1; step <= 6; ++step) QTest::mouseMove(m_window, from + (edge - from) * step / 6, 16);
     QTRY_VERIFY(item("rubberBandRect")->isVisible());
     const qreal startY = list->property("contentY").toReal();
-    QTRY_VERIFY_WITH_TIMEOUT(list->property("contentY").toReal() > startY + cellHeight, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(list->property("contentY").toReal() > startY + 4 * cellHeight, 5000);
     QTest::mouseRelease(m_window, Qt::LeftButton, Qt::NoModifier, edge, 16);
     QTRY_VERIFY(!item("rubberBandRect")->isVisible());
     // It selected tiles that were below the viewport when the drag began.
@@ -2319,6 +2322,136 @@ private slots:
                                       Q_ARG(QVariant, path)));
       QVERIFY(checked.toBool());
     }
+  }
+
+  void libraryHeaderKeepsOnePrimaryRow_data() {
+    QTest::addColumn<int>("width");
+    QTest::addColumn<bool>("selection");
+    // 941 is Omarchy's default half tile on a 1920 screen.
+    for (int width : {560, 941, 1280, 1920}) {
+      QTest::newRow(qPrintable(QStringLiteral("%1").arg(width))) << width << false;
+      QTest::newRow(qPrintable(QStringLiteral("%1 selected").arg(width))) << width << true;
+    }
+  }
+
+  void libraryHeaderKeepsOnePrimaryRow() {
+    QFETCH(int, width);
+    QFETCH(bool, selection);
+    const bool downloads = m_settings->scanDownloads();
+    m_settings->setScanDownloads(true);
+    QQuickItem* grid = item("library");
+    const auto restore = qScopeGuard([&] {
+      QMetaObject::invokeMethod(grid, "clearChecked");
+      m_settings->setScanDownloads(downloads);
+      m_window->resize(1280, 820);
+    });
+    m_window->resize(width, 760);
+    if (selection) {
+      for (int row = 0; row < 6; ++row)
+        QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, pathAt(row)));
+      QTRY_COMPARE(grid->property("checkedCount").toInt(), 6);
+    }
+    waitForLayout(QSize(width, 760));
+    QTRY_COMPARE(item("headerSearchSlot")->parentItem()->width(), qreal(width));
+    waitForLayout();
+
+    // The title, the status and its count, whole and clear of everything else.
+    QQuickItem* status = item("libraryStatus");
+    if (selection) QTRY_COMPARE(status->property("text").toString(), QStringLiteral("6 selected"));
+    QVERIFY2(status->width() + 1 >= status->property("implicitWidth").toReal(),
+             qPrintable(QStringLiteral("%1 < %2").arg(status->width()).arg(status->property("implicitWidth").toReal())));
+    const QRectF statusRect = status->mapRectToScene(status->boundingRect());
+    QQuickItem* slot = item("headerSearchSlot");
+    QQuickItem* search = item("librarySearchBox");
+    QQuickItem* actions = item("folderSidebarToggle")->parentItem();
+    QVERIFY(statusRect.right() < slot->mapToScene(QPointF()).x());
+    if (search->isVisible()) {
+      const QRectF searchRect = search->mapRectToScene(search->boundingRect());
+      QVERIFY(searchRect.width() >= 110);
+      QVERIFY(searchRect.left() > statusRect.right());
+      QVERIFY(searchRect.right() < actions->mapToScene(QPointF()).x());
+      if (width >= 1280) QVERIFY(searchRect.width() >= (selection ? 200 : 300));
+    } else {
+      QVERIFY2(selection && width < 941, "the search gives way only to a selection in a narrow window");
+    }
+    // Every header button sits on the row's centre line, inside the window,
+    // and clear of the status and of each other.
+    QQuickItem* header = actions->parentItem();
+    const qreal middle = header->mapToScene(QPointF(0, header->height() / 2)).y();
+    qreal previousRight = statusRect.right();
+    QList<QQuickItem*> buttons;
+    for (QQuickItem* child : actions->childItems())
+      if (child->isVisible() && child->width() > 0) buttons.append(child);
+    std::sort(buttons.begin(), buttons.end(), [](QQuickItem* a, QQuickItem* b) { return a->x() < b->x(); });
+    for (QQuickItem* button : std::as_const(buttons)) {
+      const QRectF rect = button->mapRectToScene(button->boundingRect());
+      QVERIFY2(qAbs(rect.center().y() - middle) <= 1.0,
+               qPrintable(button->property("label").toString() + QStringLiteral(" off centre")));
+      QVERIFY2(rect.left() >= previousRight, qPrintable(button->property("label").toString()));
+      QVERIFY2(rect.right() <= width - 19, qPrintable(button->property("label").toString()));
+      previousRight = rect.right();
+    }
+    // A selection keeps Actions, Trash and Clear; the rest only where they fit.
+    QCOMPARE(item("selectionActionsButton")->isVisible(), selection);
+    if (selection) {
+      QVERIFY(pill(m_window->contentItem(), QStringLiteral("Trash 6")));
+      QVERIFY(pill(m_window->contentItem(), QStringLiteral("Clear")));
+      if (width >= 1280) QVERIFY(pill(m_window->contentItem(), QStringLiteral("Organize")));
+      if (width >= 1920) QVERIFY(pill(m_window->contentItem(), QStringLiteral("Hide")));
+    }
+    // The gear is a line icon, never the colour emoji.
+    QQuickItem* settings = item("settingsButton");
+    QCOMPARE(settings->property("icon").toString(), QStringLiteral("settings"));
+    QCOMPARE(settings->property("accessibleName").toString(), QStringLiteral("Settings"));
+
+    // Kind: full names in a segmented control, or a menu when narrow.
+    QQuickItem* segments = item("kindSegments");
+    QQuickItem* kindMenu = item("kindMenuButton");
+    QVERIFY(segments->isVisible() != kindMenu->isVisible());
+    if (width >= 1280) QVERIFY(segments->isVisible());
+    const QStringList full{QStringLiteral("All"), QStringLiteral("Screenshots"), QStringLiteral("Recordings"),
+                           QStringLiteral("Pictures"), QStringLiteral("Videos"), QStringLiteral("Downloads"),
+                           QStringLiteral("PDFs")};
+    if (segments->isVisible()) {
+      QStringList labels;
+      find(segments, [&labels](QQuickItem* candidate) {
+        if (candidate->property("segment").toBool() && candidate->isVisible())
+          labels.append(candidate->property("label").toString());
+        return false;
+      });
+      QCOMPARE(labels, full);
+      QVERIFY(segments->mapRectToScene(segments->boundingRect()).right() <= width - 19);
+    } else {
+      QVERIFY(kindMenu->property("label").toString().startsWith(QStringLiteral("All")));
+    }
+    QQuickItem* browse = item("libraryBrowseButton");
+    QVERIFY(browse->mapRectToScene(browse->boundingRect()).right() <= width - 19);
+  }
+
+  void openFolderPinsFromTheChipRow() {
+    const QString folder = QFileInfo(pathAt(0)).absolutePath();
+    const auto restore = qScopeGuard([&] {
+      m_settings->unpinFolder(folder);
+      m_library->setFolderFilter({});
+      m_window->resize(1280, 820);
+    });
+    m_window->resize(941, 760);
+    m_library->setFolderFilter(folder);
+    waitForLayout(QSize(941, 760));
+    QQuickItem* pin = item("pinCurrentFolder");
+    QQuickItem* chips = item("activeFilterChips");
+    QTRY_VERIFY(pin->isVisible() && chips->isVisible());
+    // The pin button shares the folder chip's row instead of adding one.
+    const QRectF pinRect = pin->mapRectToScene(pin->boundingRect());
+    const QRectF chipRect = chips->mapRectToScene(chips->boundingRect());
+    QVERIFY(pinRect.top() < chipRect.bottom() && chipRect.top() < pinRect.bottom());
+    QVERIFY(pinRect.left() >= chipRect.right());
+    QCOMPARE(item("pinnedFolders")->isVisible(), false);
+    const qreal gridTop = item("library")->mapToScene(QPointF()).y();
+    QVERIFY2(gridTop < 58 + 40 + 40 + 20, qPrintable(QString::number(gridTop)));
+    click(pin);
+    QTRY_VERIFY(m_settings->isFolderPinned(folder));
+    QTRY_COMPARE(pin->property("label").toString(), QStringLiteral("Unpin folder"));
   }
 
   void longLibraryNamesAndStatusFitNarrowWindows_data() {
@@ -4640,6 +4773,15 @@ private slots:
       return false;
     });
     QVERIFY(!suggestionRows.isEmpty());
+    // The search sits in the header, so a short list ends above the grid.
+    // Lower the list over the tiles: the point is that a click on it stays
+    // on it, whatever lies underneath.
+    {
+      const qreal top = suggestionRows.first()->mapToScene(QPointF()).y();
+      const qreal target = grid->mapToScene(QPointF(0, 60)).y();
+      if (top < target) popup->setProperty("y", popup->property("y").toReal() + target - top);
+      QTRY_VERIFY(suggestionRows.first()->mapToScene(QPointF()).y() >= target - 1);
+    }
     std::sort(suggestionRows.begin(), suggestionRows.end(), [](QQuickItem* a, QQuickItem* b) {
       return a->mapToScene(QPointF()).y() > b->mapToScene(QPointF()).y();
     });

@@ -19,6 +19,11 @@ Item {
     // A toggle, on while |active|, as assistive technology is told.
     property bool checkable: false
     property bool raised: false
+    // Over a picture or video: dark in every theme (see Osd).
+    property bool osd: false
+    readonly property color textColour: root.osd ? Osd.foreground : Theme.foreground
+    readonly property color brightColour: root.osd ? Osd.brightForeground : Theme.brightForeground
+    readonly property color accentColour: root.osd ? Osd.accent : Theme.accent
     property real iconSize: 18
     readonly property bool hovered: mouse.containsMouse
     readonly property string resolvedToolTip: root.shortcut !== ""
@@ -53,12 +58,13 @@ Item {
     Rectangle {
         anchors.fill: parent
         radius: Math.min(height / 2, Theme.cornerRadius > 0 ? Theme.cornerRadius : 3)
-        color: root.active ? root.shade(Theme.accent, 0.30)
-               : root.raised ? root.shade(Theme.background, root.hovered ? 0.92 : 0.74)
-               : root.shade(Theme.foreground, root.hovered ? 0.12 : 0.0)
+        color: root.active ? root.shade(root.accentColour, root.osd ? 0.34 : 0.30)
+               : root.raised ? (root.osd ? root.shade(Osd.panel, root.hovered ? 0.96 : 0.84)
+                                         : root.shade(Theme.background, root.hovered ? 0.92 : 0.74))
+               : root.shade(root.textColour, root.hovered ? (root.osd ? 0.16 : 0.12) : 0.0)
         border.width: root.activeFocus ? 2 : root.raised ? 1 : 0
-        border.color: root.activeFocus ? Theme.accent
-                      : root.shade(Theme.foreground, root.hovered ? 0.28 : 0.14)
+        border.color: root.activeFocus ? root.accentColour
+                      : root.shade(root.textColour, root.hovered ? 0.28 : 0.14)
         Behavior on color { ColorAnimation { duration: 120; easing.type: Easing.OutQuad } }
     }
 
@@ -69,7 +75,7 @@ Item {
         font.family: Theme.fontFamily
         font.pixelSize: 12
         font.weight: Font.DemiBold
-        color: root.active || root.hovered ? Theme.brightForeground : Theme.foreground
+        color: root.active || root.hovered ? root.brightColour : root.textColour
     }
 
     Icon {
@@ -77,8 +83,7 @@ Item {
         visible: root.label === ""
         name: root.icon
         size: root.iconSize
-        color: root.active ? Theme.brightForeground
-               : root.hovered ? Theme.brightForeground : Theme.foreground
+        color: root.active || root.hovered ? root.brightColour : root.textColour
     }
 
     MouseArea {

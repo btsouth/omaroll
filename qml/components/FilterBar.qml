@@ -57,7 +57,7 @@ Item {
     // A menu is up. Main disables the surfaces under it: a modal popup stops
     // items from getting the press that closes it, but not the passive tap
     // handlers on the tiles, which would otherwise still fire.
-    readonly property bool menuOpen: sortMenu.visible
+    readonly property bool menuOpen: sortMenu.visible || kindMenu.visible
     property bool browserOpen: false
 
     // The user left the search field with Enter or Escape.
@@ -69,6 +69,7 @@ Item {
     }
 
     function focusSearch() {
+        if (!searchBox.visible) return
         search.forceActiveFocus()
         search.selectAll()
     }
@@ -112,13 +113,47 @@ Item {
         return parts.length > 0 ? parts[parts.length - 1] : path
     }
 
-    // On a half-screen tile the pills and the search cannot share a row, so
-    // the search and sort drop to a second line rather than overlap.
-    readonly property real kindButtonsWidth: sectionButtons.width + kinds.spacing
-    readonly property bool separateBrowse: root.width < Math.max(620, root.kindButtonsWidth + 140)
-    readonly property bool wrapped: root.width < kinds.width + 40 + 90 + sortButton.width + 60
-    readonly property int controlsHeight: wrapped ? 76 : 40
-    implicitHeight: controlsHeight + (chips.visible ? chips.implicitHeight + 7 : 0)
+    // The kinds in the order the number keys pick them. Downloads only
+    // while that folder is scanned.
+    readonly property var kindChoices: {
+        const list = [
+            {kind: kindAll, label: "All", key: 0},
+            {kind: kindScreenshot, label: "Screenshots", key: 1},
+            {kind: kindRecording, label: "Recordings", key: 2},
+            {kind: kindPicture, label: "Pictures", key: 3},
+            {kind: kindVideo, label: "Videos", key: 4}
+        ]
+        if (Settings.scanDownloads) list.push({kind: kindDownload, label: "Downloads", key: 5})
+        list.push({kind: kindDocument, label: "PDFs", key: 7})
+        return list
+    }
+    function kindLabel(kind) {
+        for (const choice of root.kindChoices)
+            if (choice.kind === kind) return choice.label
+        return "All"
+    }
+
+    // Where Main wants the search field: the header's primary row.
+    property Item searchSlot: null
+    readonly property alias searchField: searchBox
+    // The header shows the bar only once there is something to filter.
+    readonly property bool shown: Captures.sourceCount > 0 || chips.chips.length > 0
+                                  || Captures.kindFilter !== kindAll || Captures.favoritesOnly
+
+    signal message(string text)
+
+    // Kind as one segmented control with full names. When the row cannot
+    // hold it next to Browse and the sort, it folds into a menu button; the
+    // decision reads implicit widths only, so it cannot feed back on itself.
+    readonly property real fixedRowWidth: 40 + favouriteButton.implicitWidth + 12
+                                          + 110 + 12 + sortButton.implicitWidth + 12
+    readonly property bool kindsSegmented: root.width >= root.fixedRowWidth + kindSegments.implicitWidth
+    readonly property real kindControlWidth: root.kindsSegmented ? kindSegments.implicitWidth
+                                                                 : kindMenuButton.implicitWidth
+    readonly property int controlsHeight: 40
+    implicitHeight: !root.shown ? 0
+                    : controlsHeight + (chipRow.visible ? chipRow.height + 7 : 0)
+    visible: root.shown
 
     Row {
         id: kinds
@@ -128,78 +163,69 @@ Item {
         anchors.topMargin: 7
         spacing: 6
 
-        Row {
-            id: sectionButtons
-            spacing: kinds.spacing
+        Rectangle {
+            id: kindSegmentsFrame
+            objectName: "kindSegments"
+            visible: root.kindsSegmented
+            width: kindSegments.implicitWidth
+            height: 26
+            radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
+            color: root.shade(Theme.foreground, 0.04)
+            border.width: 1
+            border.color: root.shade(Theme.foreground, 0.12)
 
-            PillButton {
-                label: "All"
-                shortcut: root.sectionShortcut(0)
-                active: Captures.kindFilter === root.kindAll
-                onClicked: Captures.kindFilter = root.kindAll
-            }
-            PillButton {
-                label: root.width < 700 ? "Shots" : "Screenshots"
-                shortcut: root.sectionShortcut(1)
-                active: Captures.kindFilter === root.kindScreenshot
-                onClicked: Captures.kindFilter = root.kindScreenshot
-            }
-            PillButton {
-                label: root.width < 700 ? "Clips" : "Recordings"
-                shortcut: root.sectionShortcut(2)
-                active: Captures.kindFilter === root.kindRecording
-                onClicked: Captures.kindFilter = root.kindRecording
-            }
-            PillButton {
-                label: root.width < 700 ? "Photos" : "Pictures"
-                shortcut: root.sectionShortcut(3)
-                active: Captures.kindFilter === root.kindPicture
-                onClicked: Captures.kindFilter = root.kindPicture
-            }
-            PillButton {
-                label: "Videos"
-                shortcut: root.sectionShortcut(4)
-                active: Captures.kindFilter === root.kindVideo
-                onClicked: Captures.kindFilter = root.kindVideo
-            }
-            PillButton {
-                visible: Settings.scanDownloads
-                label: root.width < 700 ? "Down" : "Downloads"
-                shortcut: root.sectionShortcut(5)
-                active: Captures.kindFilter === root.kindDownload
-                onClicked: Captures.kindFilter = root.kindDownload
-            }
-            PillButton {
-                label: "PDFs"
-                shortcut: root.sectionShortcut(7)
-                active: Captures.kindFilter === root.kindDocument
-                onClicked: Captures.kindFilter = root.kindDocument
-            }
+            Row {
+                id: kindSegments
+                anchors.verticalCenter: parent.verticalCenter
 
-            Item { width: 6; height: 1 }
+                Repeater {
+                    model: root.kindChoices
 
-            // Orthogonal to the kind: favourites of whatever section is showing.
-            PillButton {
-                label: "★"
-                toolTip: "Favourites"
-                accessibleName: "Favourites"
-                checkable: true
-                shortcut: root.sectionShortcut(6)
-                active: Captures.favoritesOnly
-                onClicked: Captures.favoritesOnly = !Captures.favoritesOnly
+                    PillButton {
+                        required property var modelData
+                        segment: true
+                        label: modelData.label
+                        shortcut: root.sectionShortcut(modelData.key)
+                        checkable: true
+                        active: Captures.kindFilter === modelData.kind
+                        onClicked: Captures.kindFilter = modelData.kind
+                    }
+                }
             }
+        }
 
+        PillButton {
+            id: kindMenuButton
+            objectName: "kindMenuButton"
+            visible: !root.kindsSegmented
+            label: root.kindLabel(Captures.kindFilter) + "  ▾"
+            accessibleName: "Kind: " + root.kindLabel(Captures.kindFilter)
+            toolTip: "Show one kind of file"
+            active: Captures.kindFilter !== root.kindAll || kindMenu.visible
+            onClicked: kindMenu.visible ? kindMenu.close()
+                                        : kindMenu.popup(kindMenuButton, 0, kindMenuButton.height + 4)
+        }
+
+        // Orthogonal to the kind: favourites of whatever section is showing.
+        PillButton {
+            id: favouriteButton
+            icon: Captures.favoritesOnly ? "star-filled" : "star"
+            label: "Favourites"
+            toolTip: "Favourites"
+            accessibleName: "Favourites"
+            checkable: true
+            shortcut: root.sectionShortcut(6)
+            active: Captures.favoritesOnly
+            onClicked: Captures.favoritesOnly = !Captures.favoritesOnly
         }
 
         PillButton {
             id: libraryButton
             objectName: "libraryBrowseButton"
-            maximumWidth: root.separateBrowse ? 140
-                          : Math.max(80, root.width - 40 - root.kindButtonsWidth)
-            // Keep Browse reachable when the kind filters fill a narrow row.
-            parent: root.separateBrowse ? root : kinds
-            x: root.separateBrowse ? 20 : 0
-            y: root.separateBrowse ? 43 : 0
+            // Whatever the kind control and the sort leave.
+            maximumWidth: Math.max(80, root.width - 40 - root.kindControlWidth - 6
+                                       - favouriteButton.implicitWidth - 6 - 12
+                                       - sortButton.implicitWidth)
             // Several facets at once are listed as chips; the button counts them.
             label: chips.chips.length > 1 ? "Browse · " + chips.chips.length + "  ▾"
                    : root.width < 700 ? (Captures.duplicatesOnly ? "Dupes  ▾"
@@ -229,129 +255,169 @@ Item {
         }
     }
 
-    Row {
+    // Sort. A menu rather than five more pills, because the sort is changed
+    // far less often than the filter and does not deserve equal weight.
+    PillButton {
+        id: sortButton
         anchors.right: parent.right
         anchors.rightMargin: 20
         anchors.top: parent.top
-        anchors.topMargin: root.wrapped ? 43 : 7
-        spacing: 8
+        anchors.topMargin: 7
+        label: root.sortLabels[Captures.sortMode] + "  ▾"
+        active: sortMenu.visible
+        onClicked: sortMenu.visible ? sortMenu.close() : sortMenu.popup(sortButton, 0, sortButton.height + 4)
+    }
 
-        // Search. Gives up width before it runs into the kind pills.
-        Rectangle {
-            id: searchBox
+    // Search: the primary control, shown in the header's first row.
+    Rectangle {
+        id: searchBox
+        objectName: "librarySearchBox"
+        parent: root.searchSlot ? root.searchSlot : root
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        height: 30
+        // Gives way entirely rather than squeeze to a few letters.
+        visible: width >= 110
+        radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
+        color: root.shade(Theme.foreground, search.activeFocus ? 0.10 : 0.06)
+        border.width: 1
+        border.color: search.activeFocus
+                      ? root.shade(Theme.accent, 0.6)
+                      : root.shade(Theme.foreground, searchHover.hovered ? 0.22 : 0.14)
+
+        Behavior on color { ColorAnimation { duration: 140 } }
+        Behavior on border.color { ColorAnimation { duration: 140 } }
+
+        Icon {
+            id: searchIcon
+            anchors.left: parent.left
+            anchors.leftMargin: 9
             anchors.verticalCenter: parent.verticalCenter
-            width: root.wrapped ? Math.max(120, Math.min(260, root.width - sortButton.width - 60))
-                                : Math.max(120, Math.min(200, root.width - kinds.width - sortButton.width - 70))
-            height: 26
-            radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
-            color: root.shade(Theme.foreground, search.activeFocus ? 0.10 : 0.05)
-            border.width: 1
-            border.color: search.activeFocus
-                          ? root.shade(Theme.accent, 0.6)
-                          : root.shade(Theme.foreground, 0.12)
+            name: "search"
+            size: 14
+            color: search.activeFocus ? Theme.accent : Theme.mutedText
+        }
 
-            Behavior on color { ColorAnimation { duration: 140 } }
-            Behavior on border.color { ColorAnimation { duration: 140 } }
+        TextInput {
+            id: search
+            objectName: "libraryFilterSearch"
+            Accessible.role: Accessible.EditableText
+            Accessible.name: "Search the library"
+            Accessible.description: "Names, captions and text in pictures. Shortcut /"
+            Accessible.searchEdit: true
+            anchors.fill: parent
+            anchors.leftMargin: 30
+            anchors.rightMargin: 10
+            verticalAlignment: TextInput.AlignVCenter
+            clip: true
+            font.family: Theme.fontFamily
+            font.pixelSize: 13
+            color: Theme.foreground
+            selectionColor: root.shade(Theme.accent, 0.5)
+            selectedTextColor: Theme.brightForeground
 
-            TextInput {
-                id: search
-                objectName: "libraryFilterSearch"
-                Accessible.role: Accessible.EditableText
-                Accessible.name: "Search the library"
-                Accessible.description: "Names, captions and text in pictures. Shortcut /"
-                Accessible.searchEdit: true
-                anchors.fill: parent
-                anchors.leftMargin: 10
-                anchors.rightMargin: 10
-                verticalAlignment: TextInput.AlignVCenter
-                clip: true
-                font.family: Theme.fontFamily
-                font.pixelSize: 12
-                color: Theme.foreground
-                selectionColor: root.shade(Theme.accent, 0.5)
-                selectedTextColor: Theme.brightForeground
-
-                onTextChanged: {
-                    Captures.queueSearchText(text)
-                    root.refreshSuggestions()
-                }
-                onCursorPositionChanged: root.refreshSuggestions()
-                onActiveFocusChanged: {
-                    if (!activeFocus) {
-                        root.applySearch()
-                        suggestions.close()
-                    }
-                }
-                // Up and Down walk the suggestions; Enter or Tab takes one.
-                // Without a highlighted suggestion Enter still searches.
-                Keys.onDownPressed: function (event) {
-                    event.accepted = suggestions.visible
-                    if (event.accepted) suggestions.move(1)
-                }
-                Keys.onUpPressed: function (event) {
-                    event.accepted = suggestions.visible
-                    if (event.accepted) suggestions.move(-1)
-                }
-                Keys.onTabPressed: function (event) {
-                    event.accepted = suggestions.visible && suggestions.accept(true)
-                }
-                Keys.onEscapePressed: {
-                    if (suggestions.visible) {
-                        suggestions.close()
-                        return
-                    }
-                    text = ""
-                    root.done()
-                }
-                Keys.onReturnPressed: {
-                    if (suggestions.visible && suggestions.accept(false)) return
+            onTextChanged: {
+                Captures.queueSearchText(text)
+                root.refreshSuggestions()
+            }
+            onCursorPositionChanged: root.refreshSuggestions()
+            onActiveFocusChanged: {
+                if (!activeFocus) {
                     root.applySearch()
-                    root.done()
-                }
-                Keys.onEnterPressed: {
-                    if (suggestions.visible && suggestions.accept(false)) return
-                    root.applySearch()
-                    root.done()
+                    suggestions.close()
                 }
             }
-
-            HoverHandler { id: searchHover }
-            ThemedToolTip {
-                requested: searchHover.hovered && !search.activeFocus
-                text: "Search names, text, tags, albums, folders and cameras. "
-                      + "Narrow with tag:, album:, in:, camera:, lens:, type:, before: and after:, "
-                      + "\"quote a phrase\" or leave out a -word."
+            // Up and Down walk the suggestions; Enter or Tab takes one.
+            // Without a highlighted suggestion Enter still searches.
+            Keys.onDownPressed: function (event) {
+                event.accepted = suggestions.visible
+                if (event.accepted) suggestions.move(1)
             }
-
-            SearchSuggestions {
-                id: suggestions
-                objectName: "searchSuggestions"
-                width: Math.max(searchBox.width, 260)
-                x: searchBox.width - width
-                y: searchBox.height + 4
-                onAccepted: function (row) { root.acceptSuggestion(row) }
+            Keys.onUpPressed: function (event) {
+                event.accepted = suggestions.visible
+                if (event.accepted) suggestions.move(-1)
             }
-
-            Text {
-                anchors.verticalCenter: parent.verticalCenter
-                anchors.left: parent.left
-                anchors.leftMargin: 10
-                visible: search.text === "" && !search.activeFocus
-                text: TextIndex.available ? "Search names + text  /" : "Search  /"
-                font.family: Theme.fontFamily
-                font.pixelSize: 12
-                color: Theme.mutedText
+            Keys.onTabPressed: function (event) {
+                event.accepted = suggestions.visible && suggestions.accept(true)
+            }
+            Keys.onEscapePressed: {
+                if (suggestions.visible) {
+                    suggestions.close()
+                    return
+                }
+                text = ""
+                root.done()
+            }
+            Keys.onReturnPressed: {
+                if (suggestions.visible && suggestions.accept(false)) return
+                root.applySearch()
+                root.done()
+            }
+            Keys.onEnterPressed: {
+                if (suggestions.visible && suggestions.accept(false)) return
+                root.applySearch()
+                root.done()
             }
         }
 
-        // Sort. A menu rather than five more pills, because the sort is changed
-        // far less often than the filter and does not deserve equal weight.
-        PillButton {
-            id: sortButton
+        HoverHandler { id: searchHover; cursorShape: Qt.IBeamCursor }
+        ThemedToolTip {
+            requested: searchHover.hovered && !search.activeFocus
+            text: "Search names, text, tags, albums, folders and cameras. "
+                  + "Narrow with tag:, album:, in:, camera:, lens:, type:, before: and after:, "
+                  + "\"quote a phrase\" or leave out a -word."
+        }
+
+        SearchSuggestions {
+            id: suggestions
+            objectName: "searchSuggestions"
+            width: Math.max(searchBox.width, 260)
+            x: 0
+            y: searchBox.height + 4
+            onAccepted: function (row) { root.acceptSuggestion(row) }
+        }
+
+        Text {
             anchors.verticalCenter: parent.verticalCenter
-            label: root.sortLabels[Captures.sortMode] + "  ▾"
-            active: sortMenu.visible
-            onClicked: sortMenu.visible ? sortMenu.close() : sortMenu.popup(sortButton, 0, sortButton.height + 4)
+            anchors.left: parent.left
+            anchors.leftMargin: 30
+            anchors.right: parent.right
+            anchors.rightMargin: 10
+            elide: Text.ElideRight
+            visible: search.text === "" && !search.activeFocus
+            text: (TextIndex.available ? "Search names and text" : "Search") + "   /"
+            font.family: Theme.fontFamily
+            font.pixelSize: 13
+            color: Theme.mutedText
+        }
+    }
+
+    // The chips row: the active Browse facets, and pinning for an open folder,
+    // so a folder adds one row rather than two.
+    Item {
+        id: chipRow
+        x: 20
+        y: root.controlsHeight + 1
+        width: root.width - 40
+        height: Math.max(chips.implicitHeight, pinCurrentFolder.visible ? pinCurrentFolder.height : 0)
+        visible: chips.chips.length > 0 || pinCurrentFolder.visible
+
+        PillButton {
+            id: pinCurrentFolder
+            objectName: "pinCurrentFolder"
+            anchors.right: parent.right
+            anchors.top: parent.top
+            visible: Captures.folderFilter !== ""
+            readonly property bool pinned: {
+                void Settings.pinnedFolders
+                return Settings.isFolderPinned(Captures.folderFilter)
+            }
+            label: pinned ? "Unpin folder" : "Pin folder"
+            onClicked: {
+                if (pinned) Settings.unpinFolder(Captures.folderFilter)
+                else if (!Settings.pinFolderPath(Captures.folderFilter)) root.message("That folder is unavailable")
+            }
         }
     }
 
@@ -359,10 +425,68 @@ Item {
     ActiveFilterChips {
         id: chips
         objectName: "activeFilterChips"
-        x: 20
-        y: root.controlsHeight + 1
-        width: root.width - 40
+        parent: chipRow
+        width: chipRow.width - (pinCurrentFolder.visible ? pinCurrentFolder.width + 8 : 0)
         visible: chips.chips.length > 0
+    }
+
+    Menu {
+        id: kindMenu
+        objectName: "kindMenu"
+        modal: true
+        dim: false
+
+        background: Rectangle {
+            implicitWidth: 170
+            color: root.shade(Theme.background, 0.97)
+            border.width: 1
+            border.color: root.shade(Theme.foreground, 0.16)
+            radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
+        }
+
+        Repeater {
+            model: root.kindChoices
+
+            MenuItem {
+                id: kindRow
+                required property var modelData
+                readonly property bool current: Captures.kindFilter === modelData.kind
+
+                height: 30
+                text: modelData.label
+                Accessible.name: text
+                checkable: true
+                checked: current
+
+                contentItem: Item {
+                    Text {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 12
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: kindRow.modelData.label
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 12
+                        font.weight: kindRow.current ? Font.DemiBold : Font.Normal
+                        color: kindRow.current ? Theme.accent : Theme.foreground
+                    }
+                    Text {
+                        anchors.right: parent.right
+                        anchors.rightMargin: 12
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: root.sectionShortcut(kindRow.modelData.key)
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 11
+                        color: Theme.mutedText
+                    }
+                }
+
+                background: Rectangle {
+                    color: kindRow.hovered ? root.shade(Theme.foreground, 0.08) : "transparent"
+                }
+
+                onTriggered: Captures.kindFilter = kindRow.modelData.kind
+            }
+        }
     }
 
     Menu {

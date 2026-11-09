@@ -513,6 +513,7 @@ FocusScope {
             required property int index
             required property int first
             required property int count
+            required property bool month
             required property string label
             readonly property bool header: false
             width: list.width
@@ -561,6 +562,8 @@ FocusScope {
                             kindLabel: cell.tile.kindLabel || ""
                             timeLabel: cell.tile.timeLabel || ""
                             dateLabel: cell.tile.dateLabel || ""
+                            // A day's header already names the day.
+                            dateShown: !(root.sections.mode === 1 && !rowItem.month)
                             sizeLabel: cell.tile.sizeLabel || ""
                             isVideo: cell.tile.isVideo === true
                             isDocument: cell.tile.isDocument === true

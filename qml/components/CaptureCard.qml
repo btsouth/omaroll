@@ -13,6 +13,9 @@ Item {
     property string timeLabel: ""
     // "7 Nov" or "14 Sep 2025"; empty for today.
     property string dateLabel: ""
+    // Off inside a day's section, whose header already names the day; the
+    // date is still part of the tile's accessible name.
+    property bool dateShown: true
     property string sizeLabel: ""
     property bool isVideo: false
     property bool isDocument: false
@@ -260,17 +263,22 @@ Item {
             color: root.shade(Theme.background, 0.55)
         }
 
-        // A fixed dark strip keeps metadata readable over every image and theme.
-        // It is deliberately compact so the picture still owns almost the whole
-        // card.
+        // A short dark gradient keeps the metadata readable over every image
+        // and theme without laying a slab across the picture. It is dark
+        // enough under the text for white over a white picture.
         Rectangle {
+            objectName: "captureCaptionScrim"
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            height: (root.ocrSnippet !== "" || root.caption !== "" ? 52 : 30)
+            height: (root.ocrSnippet !== "" || root.caption !== "" ? 66 : 46)
                     + (Settings.showGridFilenames ? 20 : 0)
             visible: root.thumbnailReady
-            color: Qt.rgba(0, 0, 0, 0.72)
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0) }
+                GradientStop { position: 0.4; color: Qt.rgba(0, 0, 0, 0.45) }
+                GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.70) }
+            }
         }
 
         Text {
@@ -340,7 +348,8 @@ Item {
                 objectName: "captureWhenLabel"
                 width: Math.min(implicitWidth, metadataRow.room)
                 elide: Text.ElideRight
-                text: root.dateLabel !== "" ? root.dateLabel + " · " + root.timeLabel : root.timeLabel
+                text: root.dateShown && root.dateLabel !== "" ? root.dateLabel + " · " + root.timeLabel
+                                                               : root.timeLabel
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
                 font.weight: Font.DemiBold
