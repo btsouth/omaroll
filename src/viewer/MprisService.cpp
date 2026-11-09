@@ -156,12 +156,17 @@ void MprisService::findArt() {
     // Through thumbnail() even when a file is there: it reads the tile
     // back and makes it again if it is damaged, so a path is only handed out
     // for a picture that loads.
+    // A second try covers the video changing on disk between the two calls,
+    // which moves its cache key.
     const QSize size(kArtSize, kArtSize);
-    if (ThumbnailCache::thumbnail(file, size, 1.0, 20, {cancel.get(), nullptr}).isNull() ||
-        cancel->load()) {
-      return QString();
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      if (ThumbnailCache::thumbnail(file, size, 1.0, 20, {cancel.get(), nullptr}).isNull() ||
+          cancel->load()) {
+        return QString();
+      }
+      if (QString art = ThumbnailCache::cachedFile(file, size, 1.0); !art.isEmpty()) return art;
     }
-    return ThumbnailCache::cachedFile(file, size, 1.0);
+    return QString();
   });
   poster.then(this, [this, track](const QString& art) {
     if (track != m_track || art.isEmpty()) return;

@@ -254,12 +254,18 @@ bool ActionLauncher::copyFile(const QString& path) {
   // Its copy operation is exactly this invocation, so track wl-copy directly
   // to establish whether the selection was accepted.
   return startSubmission(u"wl-copy"_s, {u"--type"_s, mime}, u"wl-clipboard"_s,
-                         u"Copied to clipboard"_s, path, 5000);
+                         u"Copied to clipboard"_s, path, 5000, &m_copyProcess);
 }
 
 void ActionLauncher::newCopy() {
   ++m_copyGeneration;
-  if (m_copyHelper) m_copyHelper->kill();
+  // A copy still reading a big file must not land on top of this one.
+  for (QProcess* older : {m_copyHelper.data(), m_copyProcess.data()}) {
+    if (older && older->state() != QProcess::NotRunning) {
+      older->setProperty("superseded", true);
+      older->kill();
+    }
+  }
 }
 
 bool ActionLauncher::copyWithPng(const QString& path, const QString& mime) {
@@ -296,7 +302,7 @@ bool ActionLauncher::copyWithPng(const QString& path, const QString& mime) {
     // No ext-data-control here, or it failed: the file's own type through
     // wl-copy, as before, which reports its own outcome.
     startSubmission(u"wl-copy"_s, {u"--type"_s, mime}, u"wl-clipboard"_s,
-                    u"Copied to clipboard"_s, path, 5000);
+                    u"Copied to clipboard"_s, path, 5000, &m_copyProcess);
   };
   connect(process, &QProcess::finished, this,
           [finish](int code, QProcess::ExitStatus status) {
@@ -340,7 +346,8 @@ bool ActionLauncher::runSubmission(const QString& program, const QStringList& ar
 
 bool ActionLauncher::startSubmission(const QString& program, const QStringList& arguments,
                                      const QString& packageHint, const QString& confirmation,
-                                     const QString& inputPath, int timeoutMs) {
+                                     const QString& inputPath, int timeoutMs,
+                                     QPointer<QProcess>* track) {
   const QString executable = locate(program, packageHint);
   if (executable.isEmpty()) return false;
 
@@ -372,6 +379,11 @@ bool ActionLauncher::startSubmission(const QString& program, const QStringList& 
     state->settled = true;
     timer->stop();
     drain();
+    if (process->property("superseded").toBool()) {
+      process->deleteLater();
+      emit submissionFinished(program, false, u"A newer copy replaced this one"_s);
+      return;
+    }
     if (detail.isEmpty()) {
       const QString text = QString::fromUtf8(success ? state->output : state->error).trimmed();
       const QStringList lines = text.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
@@ -400,6 +412,7 @@ bool ActionLauncher::startSubmission(const QString& program, const QStringList& 
     state->timedOut = true;
     process->kill(); // finished owns the single terminal notification
   });
+  if (track) *track = process;
   process->start();
   timer->start(timeoutMs);
   return true;

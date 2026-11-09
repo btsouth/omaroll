@@ -183,7 +183,8 @@ private:
   bool copyText(const QString& text, bool sensitive, const QString& mimeType = {});
   bool startSubmission(const QString& program, const QStringList& arguments,
                        const QString& packageHint, const QString& confirmation,
-                       const QString& inputPath, int timeoutMs);
+                       const QString& inputPath, int timeoutMs,
+                       QPointer<QProcess>* track = nullptr);
   bool copyWithPng(const QString& path, const QString& mime);
   // Every clipboard write starts a new copy. A clipboard helper still
   // running for an older one is stopped and never falls back to wl-copy.
@@ -197,4 +198,6 @@ private:
   QString m_clipboardHelper;
   quint64 m_copyGeneration = 0;
   QPointer<QProcess> m_copyHelper;
+  // The wl-copy of the latest image copy, while it runs.
+  QPointer<QProcess> m_copyProcess;
 };

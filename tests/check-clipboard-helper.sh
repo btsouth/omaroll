@@ -9,8 +9,8 @@
 #   OMAROLL_CLIPBOARD_TEST=1 bash tests/check-clipboard-helper.sh <omaroll> <source dir>
 # Anywhere else it skips (exit 77).
 set -euo pipefail
-omaroll=${1:?omaroll binary}
-source=${2:?source dir}
+omaroll=$(realpath -- "${1:?omaroll binary}")
+source=$(realpath -- "${2:?source dir}")
 skip() { echo "SKIP: $*"; exit 77; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
 [[ ${OMAROLL_CLIPBOARD_TEST:-} == 1 ]] || skip "set OMAROLL_CLIPBOARD_TEST=1 in a throwaway desktop"

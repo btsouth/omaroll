@@ -52,10 +52,15 @@ undoes
 .BR "omaroll \-\-set\-default pdf" .
 Each line of
 .I $XDG_CONFIG_HOME/mimeapps.list
-goes back as it was, and what Omaroll added is removed, including a section
-or file that was not there before, so the file is unchanged after any number
-of set and unset cycles. Omaroll is taken out of every list there, so an
-Added Associations entry naming it goes too.
+(\fI~/.config/mimeapps.list\fR when
+.B XDG_CONFIG_HOME
+is unset) goes back as it was, and what Omaroll added is removed, including a
+section or file that was not there before, so the file is unchanged after any
+number of set and unset cycles. Two exceptions: Omaroll is taken out of every
+list there for the group's types, so an Added Associations entry naming it
+goes too, and an app chosen after
+.B \-\-set\-default
+stays.
 .TP
 .B \-\-install\-window\-rules
 Add Omaroll's Hyprland rules to
@@ -63,6 +68,8 @@ Add Omaroll's Hyprland rules to
 full opacity for its windows and a floating viewer. Needs Omarchy's Lua
 Hyprland config. Settings has the same choice. A second viewer opened on the
 same workspace tiles with the first on purpose, so the two are not stacked.
+Only one Omaroll's viewers are arranged this way; that is all of them unless a
+second Omaroll was started on its own.
 .TP
 .B \-\-remove\-window\-rules
 Take those rules out again, leaving

@@ -8,6 +8,8 @@
 #include <QStandardPaths>
 #include <QtConcurrent>
 
+#include <optional>
+
 namespace {
 const QString desktop = QStringLiteral("io.github.tsouth89.omaroll.desktop");
 bool xdgMime(const QStringList &args, QString *output = nullptr) {
@@ -25,25 +27,37 @@ bool xdgMime(const QStringList &args, QString *output = nullptr) {
 }
 // Rewrites one list file through MimeDefaults::withoutOmaroll.
 bool removeEntries(const QString &path, const QString &type,
-                   const QString &original = {}) {
+                   const QString &original = {}, bool *restored = nullptr) {
   QFile input(path);
   if (!input.exists())
     return true;
   if (!input.open(QIODevice::ReadOnly))
     return false;
-  const QString before = QString::fromUtf8(input.readAll());
+  const QByteArray bytes = input.readAll();
+  if (input.error() != QFileDevice::NoError || bytes.size() != input.size())
+    return false;
+  const QString before = QString::fromUtf8(bytes);
   input.close();
-  const QString after = MimeDefaults::withoutOmaroll(before, type, original);
+  const QString after = MimeDefaults::withoutOmaroll(before, type, original, restored);
   if (after == before)
     return true;
   QSaveFile output(path);
-  const auto bytes = after.toUtf8();
+  const auto written = after.toUtf8();
   return output.open(QIODevice::WriteOnly) &&
-         output.write(bytes) == bytes.size() && output.commit();
+         output.write(written) == written.size() && output.commit();
 }
-QString readText(const QString &path) {
+// A list that is not there reads as empty. One that is there but cannot be
+// read whole reads as nothing at all, so no decision is made from it.
+std::optional<QString> readText(const QString &path) {
   QFile file(path);
-  return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString();
+  if (!file.exists())
+    return QString();
+  if (!file.open(QIODevice::ReadOnly))
+    return std::nullopt;
+  const QByteArray bytes = file.readAll();
+  if (file.error() != QFileDevice::NoError || bytes.size() != file.size())
+    return std::nullopt;
+  return QString::fromUtf8(bytes);
 }
 const QString kFileExisted = QStringLiteral("file/existed");
 const QString kFileSection = QStringLiteral("file/section");
@@ -73,11 +87,14 @@ bool restoreStructure(QSettings &state, const QString &userList) {
   const bool newline = state.value(kFileNewline).toBool();
   bool ok = true;
   if (QFile::exists(userList)) {
-    const QString text = readText(userList);
-    const QString after = MimeDefaults::withoutAddedStructure(text, section, newline);
+    // Unreadable now: change nothing and keep the record for the next try.
+    const std::optional<QString> text = readText(userList);
+    if (!text)
+      return false;
+    const QString after = MimeDefaults::withoutAddedStructure(*text, section, newline);
     if (!existed && after.isEmpty())
       ok = QFile::remove(userList);
-    else if (after != text)
+    else if (after != *text)
       ok = writeText(userList, after);
   }
   if (ok)
@@ -104,10 +121,22 @@ QString MimeDefaults::defaultLine(const QString &text, const QString &type) {
   return {};
 }
 QString MimeDefaults::withoutOmaroll(const QString &text, const QString &type,
-                                     const QString &original) {
+                                     const QString &original, bool *restored) {
   auto lines = text.split(u'\n');
   bool inDefaults = false;
-  bool restored = false;
+  bool putBack = false;
+  // The saved line itself may list Omaroll behind another app; it comes
+  // back without it.
+  QString saved = original;
+  if (const QString savedEntry = original.chopped(original.endsWith(u'\r') ? 1 : 0);
+      handlersOf(savedEntry).contains(desktop)) {
+    auto handlers = handlersOf(savedEntry);
+    handlers.removeAll(desktop);
+    saved = handlers.isEmpty()
+                ? QString()
+                : savedEntry.left(savedEntry.indexOf(u'=') + 1) + handlers.join(u';') + u';' +
+                      (original.endsWith(u'\r') ? QStringLiteral("\r") : QString());
+  }
   for (qsizetype index = 0; index < lines.size();) {
     QString &line = lines[index];
     if (line.startsWith(u'[')) {
@@ -129,9 +158,9 @@ QString MimeDefaults::withoutOmaroll(const QString &text, const QString &type,
       continue;
     }
     // The line xdg-mime wrote over goes back exactly as it was.
-    if (inDefaults && !restored && !original.isEmpty() && handlers == QStringList{desktop}) {
-      line = original;
-      restored = true;
+    if (inDefaults && !putBack && !saved.isEmpty() && handlers == QStringList{desktop}) {
+      line = saved;
+      putBack = true;
       ++index;
       continue;
     }
@@ -144,6 +173,8 @@ QString MimeDefaults::withoutOmaroll(const QString &text, const QString &type,
     line = entry.left(at + 1) + handlers.join(u';') + u';' + ending;
     ++index;
   }
+  if (restored)
+    *restored = putBack;
   return lines.join(u'\n');
 }
 QString MimeDefaults::withoutAddedStructure(const QString &text, bool hadSection,
@@ -373,12 +404,19 @@ MimeDefaults::Result MimeDefaults::run(bool unset, const QString &group) {
         report << type + ": already Omaroll";
         continue;
       }
+      // A list that cannot be read is left alone: nothing could be put back.
+      const std::optional<QString> read = readText(userList);
+      if (!read) {
+        ok = false;
+        report << "Could not set " + type + " (could not read " + userList + ")";
+        continue;
+      }
+      const QString &before = *read;
       // The handler being replaced now, which may be newer than one recorded
       // by an earlier --set-default.
       state.setValue(type, previous);
       // How the user's list looked before Omaroll's first change, so that
       // once every type is restored the file is back byte for byte.
-      const QString before = readText(userList);
       if (!state.contains(kFileExisted)) {
         state.setValue(kFileExisted, QFile::exists(userList));
         state.setValue(kFileSection, hasDefaultsSection(before));
@@ -402,9 +440,9 @@ MimeDefaults::Result MimeDefaults::run(bool unset, const QString &group) {
                     " -> " + desktop;
     } else {
       const QString restore = state.value(type).toString();
-      QString original = state.value(recordKey(type)).toString();
-      if (previous != desktop)
-        original.clear();
+      // Put back whenever the line is still exactly the one xdg-mime wrote,
+      // even if another app answers now through a list that ranks higher.
+      const QString original = state.value(recordKey(type)).toString();
       bool removed = true;
       // Only write user-owned configuration, never system defaults.
       const QStringList dirs = {config,
@@ -414,17 +452,21 @@ MimeDefaults::Result MimeDefaults::run(bool unset, const QString &group) {
       const auto desktops = qEnvironmentVariable("XDG_CURRENT_DESKTOP")
                                 .toLower()
                                 .split(u':', Qt::SkipEmptyParts);
+      bool restoredLine = false;
       for (const auto &dir : dirs) {
         const QString list = dir + "/mimeapps.list";
-        removed &= removeEntries(list, type, list == userList ? original : QString());
+        removed &= removeEntries(list, type, list == userList ? original : QString(),
+                                 list == userList ? &restoredLine : nullptr);
         removed &= removeEntries(dir + "/defaults.list", type);
         for (const auto &name : desktops)
           removed &= removeEntries(dir + "/" + name + "-mimeapps.list", type);
       }
-      // Written only when the file does not already give that answer: a
-      // handler that came from a system default needs no line of its own.
+      // Written only when the user's own line did not come back and the
+      // files do not already give that answer: a handler that came from a
+      // system default needs no line of its own, and a restored list may
+      // rightly answer with an app ahead of the one recorded.
       QString restoredNow;
-      if (removed && previous == desktop && !restore.isEmpty() &&
+      if (removed && previous == desktop && !restore.isEmpty() && !restoredLine &&
           !(xdgMime({"query", "default", type}, &restoredNow) && restoredNow == restore))
         removed = xdgMime({"default", restore, type});
       // A system-wide default, or Omaroll being the only installed app for

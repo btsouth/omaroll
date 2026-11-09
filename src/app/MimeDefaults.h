@@ -24,9 +24,10 @@ public:
   static QString defaultLine(const QString &text, const QString &type);
   // The text without Omaroll as a handler for the type, in any group. Lines
   // left with no handler are deleted, not blanked. With original, the
-  // default line naming only Omaroll becomes that line again instead.
+  // default line naming only Omaroll becomes that line again instead (less
+  // Omaroll, if it names it too); restored says whether that happened.
   static QString withoutOmaroll(const QString &text, const QString &type,
-                                const QString &original = {});
+                                const QString &original = {}, bool *restored = nullptr);
   // The text without what xdg-mime added around Omaroll's lines: the empty
   // [Default Applications] it appended to a list without one, and the final
   // newline of a list that ended without one.

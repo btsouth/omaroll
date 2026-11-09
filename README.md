@@ -133,9 +133,11 @@ apps**, and says how many types changed and which apps were replaced.
 Restoring puts each line of `mimeapps.list` (in `$XDG_CONFIG_HOME`, usually
 `~/.config`) back as it was and removes what Omaroll added, including a
 `[Default Applications]` section or a whole file that was not there before, so
-setting and restoring any number of times leaves the file unchanged. The one
-exception: restoring takes Omaroll out of every list there, so an Added
-Associations entry for Omaroll that you wrote yourself goes too.
+setting and restoring any number of times leaves the file unchanged. Two
+exceptions: restoring takes Omaroll out of every list there for the types it
+restores (pictures and videos, or PDFs with `pdf`), so an Added Associations
+entry for Omaroll that you wrote yourself goes too; and an app you chose after
+`--set-default` stays your choice.
 
 To open a picture or video from a terminal:
 
@@ -260,12 +262,13 @@ Every viewer shortcut is listed in [Shortcuts](docs/shortcuts.md#viewer), and
   after confirmation, as one step Undo puts back.
 - **Share and hand off.** Drag actual files into another app, copy images or
   text, send with LocalSend or Taildrop, and open specialist tools for trimming,
-  annotation, conversion and editing. A copied JPEG of up to 24 megapixels is
-  offered as PNG too, so it shows up in Omarchy's clipboard history while apps
-  that take JPEG still get the original bytes. That needs a compositor with
-  ext-data-control, which Omarchy's Hyprland has; elsewhere, and for larger
-  photos, the copy is JPEG only and pastes as before, but the history skips
-  it.
+  annotation, conversion and editing. A copied JPEG of up to 24 megapixels that fits
+  the image memory limit is offered as PNG too, so it can show up in
+  Omarchy's clipboard history while apps that take JPEG still get the original
+  bytes. The history waits two seconds for the PNG, so on a slow machine a
+  large photo may still be missed. It needs a compositor with ext-data-control,
+  which Omarchy's Hyprland has; elsewhere, and for larger photos, the copy is
+  JPEG only and pastes as before, but the history skips it.
 - **Media keys and players.** A playing video answers media keys and the
   shell's player controls, with a poster frame as its cover art.
 - **Present and finish.** Run a fullscreen slideshow, choose a screenshot
@@ -380,7 +383,8 @@ reported and left for you to edit. A `~/.config/hypr/omaroll.lua` you wrote
 yourself is never replaced or removed.
 
 When a second viewer opens on the same workspace, Omaroll tiles it and the
-viewers already there, so your layout arranges them instead of stacking them in
+viewers already there (the viewers of the running Omaroll, which normally holds
+them all), so your layout arranges them instead of stacking them in
 the middle. They stay tiled as the others close; the next viewer opened on its
 own floats again. This is on purpose: a viewer that tiles beside another one
 does not mean the float rule failed.

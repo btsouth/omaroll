@@ -20,6 +20,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <memory>
+#include <utility>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
@@ -37,6 +38,11 @@ struct State {
   QByteArray bytes;
   QStringList offered;
   bool cancelled = false;
+  // Until the background copy takes over, paste requests wait here, so every
+  // writer is that copy's own child and it can stop them.
+  bool serving = false;
+  std::vector<std::pair<int, bool>> queued;
+  bool refusalLogged = false;
   // Paste writers still running, reaped as they finish.
   std::vector<pid_t> writers;
 };
@@ -97,6 +103,11 @@ constexpr wl_registry_listener kRegistry{global, globalRemove};
 void deliver(State& state, int fd, bool png) {
   reap(state);
   if (state.writers.size() >= kMaxWriters) {
+    if (!state.refusalLogged) {
+      state.refusalLogged = true;
+      qWarning("omaroll clipboard: %zu pastes are still being written; refusing more until one "
+               "finishes", kMaxWriters);
+    }
     close(fd);
     return;
   }
@@ -104,7 +115,9 @@ void deliver(State& state, int fd, bool png) {
   if (writer == 0) {
     // This process never starts a thread of its own, so its children may
     // use Qt freely.
+    // The deadline holds even if the app ignored these signals.
     std::signal(SIGTERM, SIG_DFL);
+    std::signal(SIGALRM, SIG_DFL);
     alarm(kWriteSeconds);
     const QByteArray bytes = png ? encodePng(state.bytes) : state.bytes;
     const int flags = fcntl(fd, F_GETFL);
@@ -129,13 +142,19 @@ void deliver(State& state, int fd, bool png) {
 void send(void* data, ext_data_control_source_v1*, const char* mimeType, int32_t fd) {
   auto* state = static_cast<State*>(data);
   const QByteArray type(mimeType);
-  if (type == state->type) {
-    deliver(*state, fd, false);
-  } else if (type == "image/png" && state->offered.contains(u"image/png")) {
-    deliver(*state, fd, true);
-  } else {
+  const bool png = type == "image/png" && state->offered.contains(u"image/png");
+  if (type != state->type && !png) {
     close(fd);
+  } else if (!state->serving) {
+    state->queued.emplace_back(fd, png);
+  } else {
+    deliver(*state, fd, png);
   }
+}
+
+void dropQueued(State& state) {
+  for (const auto& [fd, png] : state.queued) close(fd);
+  state.queued.clear();
 }
 void cancelled(void* data, ext_data_control_source_v1*) {
   static_cast<State*>(data)->cancelled = true;
@@ -245,11 +264,13 @@ int run(int argc, char** argv) {
   ext_data_control_device_v1_set_selection(device, source);
   if (wl_display_roundtrip(display) < 0) {
     std::fprintf(stderr, "The compositor did not take the selection\n");
+    dropQueued(*state);
     wl_display_disconnect(display);
     return 1;
   }
   if (state->cancelled) {
     // Something else was copied in the meantime; that copy stands.
+    dropQueued(*state);
     wl_display_disconnect(display);
     return kSuperseded;
   }
@@ -259,6 +280,7 @@ int run(int argc, char** argv) {
   std::fflush(nullptr);
   const pid_t server = fork();
   if (server < 0) {
+    dropQueued(*state);
     wl_display_disconnect(display);
     return 1;
   }
@@ -276,6 +298,9 @@ int run(int argc, char** argv) {
   }
   closeInherited(wl_display_get_fd(display));
   std::signal(SIGPIPE, SIG_IGN);
+  // Pastes asked for while the selection was being taken, now from here.
+  state->serving = true;
+  for (const auto& [fd, png] : std::exchange(state->queued, {})) deliver(*state, fd, png);
   while (!state->cancelled && wl_display_dispatch(display) >= 0) {
   }
   stopWriters(*state);

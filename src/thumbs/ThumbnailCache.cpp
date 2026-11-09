@@ -25,6 +25,7 @@
 #include <QThread>
 
 #include <cmath>
+#include <cstdio>
 
 namespace {
 
@@ -425,7 +426,10 @@ QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
     QFile::remove(staging);
     return {};
   }
-  if (!saved || !QFile::rename(staging, cachePath)) {
+  // rename(2), not QFile::rename: it replaces a damaged tile already there
+  // (one that loaded as nothing above) in one step.
+  if (!saved || ::rename(QFile::encodeName(staging).constData(),
+                         QFile::encodeName(cachePath).constData()) != 0) {
     QFile::remove(staging);
   }
 

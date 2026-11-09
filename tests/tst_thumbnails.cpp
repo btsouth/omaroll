@@ -157,6 +157,26 @@ private slots:
     QVERIFY(QFileInfo::exists(current));
   }
 
+  // A tile that no longer loads (cut off by a power loss, say) is replaced,
+  // so cachedFile() and MPRIS never hand out the damaged file.
+  void damagedTileIsReplaced() {
+    const QString path = mediaPath(QStringLiteral("damaged.png"));
+    QImage image(160, 120, QImage::Format_RGB32);
+    image.fill(QColor(20, 160, 90));
+    QVERIFY(image.save(path));
+    QVERIFY(!ThumbnailCache::thumbnail(path, QSize(48, 48), 1).isNull());
+    const QString tile = ThumbnailCache::cachedFile(path, QSize(48, 48), 1);
+    QVERIFY(!tile.isEmpty());
+    QFile file(tile);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    file.close();
+    QVERIFY(QImage(tile).isNull());
+    QVERIFY(!ThumbnailCache::thumbnail(path, QSize(48, 48), 1).isNull());
+    QCOMPARE(ThumbnailCache::cachedFile(path, QSize(48, 48), 1), tile);
+    QVERIFY(!QImage(tile).isNull());
+    QCOMPARE(cacheFiles().size(), 1);
+  }
+
   void cancelledRequestDoesNotCacheOrSuppressRetry() {
     const QString path = mediaPath(QStringLiteral("clip.mp4"));
     QVERIFY(writeFile(path, "fake video"));
