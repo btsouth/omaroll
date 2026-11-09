@@ -17,11 +17,23 @@
   <url type="bugtracker">https://github.com/btsouth/omaroll/issues</url>
   <description>
     <p>
-      Omaroll is a local-first image, video, and PDF viewer for Omarchy. A picture
-      or video opens in a clean viewer window with the usual controls and the
-      rest of its folder a keypress away. Opening Omaroll itself shows the media
-      library: photos, videos, documents, downloads, albums, tags, and custom
-      folders together.
+      Omaroll is a local-first image, video and PDF viewer for Omarchy. A picture
+      or video opens in a viewer window that fills with it, with controls that
+      appear when the pointer moves and the rest of its folder in a filmstrip.
+      Opening Omaroll on its own shows the library: photos, screenshots, videos,
+      PDFs, downloads and your own folders together, by day, source or folder.
+    </p>
+    <ul>
+      <li>Search names, text in pictures and PDFs, captions, tags, albums, folders and cameras</li>
+      <li>Albums, nested tags, captions, ratings and favourites, with automatic backups, without moving your files</li>
+      <li>Video with sound, seek-bar previews, frame stepping, audio tracks, subtitles and media keys</li>
+      <li>Crop, straighten, rotate, flip and resize as copies, leaving the original unchanged</li>
+      <li>Exact duplicates and similar pictures side by side, with Undo for anything sent to Trash</li>
+      <li>Copy, drag or send files, and hand off to Omarchy's tools for trimming, annotation and conversion</li>
+    </ul>
+    <p>
+      Omaroll follows your Omarchy theme, palette and font as they change. Your
+      files stay where they are, and the library is kept on your machine.
     </p>
   </description>
   <categories>
@@ -43,6 +55,19 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="1.19.0" date="2026-11-09">
+      <description>
+        <p>A redesigned library and viewer, sections by date, and clear help when something goes wrong.</p>
+        <ul>
+          <li>Date sections, file-manager selection, combined filters and search fields such as tag:, camera: and in:</li>
+          <li>Seek-bar previews, HDR details, Open in mpv at the current position and --start for videos</li>
+          <li>Undo for Trash, automatic backups of your organization and Save rotated copy in the viewer</li>
+          <li>Settings in sections, shortcut help on ? and F1, and Copy diagnostics in About</li>
+          <li>omaroll --set-default and --unset-default, Hyprland window rules and a man page</li>
+          <li>Faster first frames and grids, and about half the CPU for 4K playback</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.18.0" date="2026-10-15"/>
     <release version="1.17.0" date="2026-10-14"/>
     <release version="1.16.1" date="2026-10-14"/>

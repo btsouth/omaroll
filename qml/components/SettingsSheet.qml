@@ -1080,10 +1080,15 @@ Item {
                             onClicked: Qt.openUrlExternally(url)
                         }
                         PillButton {
+                            id: copyDiagnosticsButton
                             objectName: "copyDiagnostics"
                             label: "Copy diagnostics"
                             toolTip: "omaroll --diagnostics prints the same text"
-                            onClicked: { Settings.copyDiagnostics(Theme.themeName, root.Screen.devicePixelRatio); label = "Diagnostics copied" }
+                            onClicked: Settings.copyDiagnostics(Theme.themeName, root.Screen.devicePixelRatio)
+                            Connections {
+                                target: Settings
+                                function onDiagnosticsCopied() { copyDiagnosticsButton.label = "Diagnostics copied" }
+                            }
                         }
                     }
                     Text {

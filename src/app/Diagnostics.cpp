@@ -5,6 +5,9 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QImageReader>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QProcess>
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QSysInfo>
@@ -43,6 +46,19 @@ QString hexId(const QString& path) {
   return bounded(value, QStringLiteral("0-9a-f"), 4);
 }
 
+// pacman keeps one directory per installed package. None means there is no
+// database to ask (another distribution, or a container without it), so a
+// missing package says nothing about what is installed.
+bool hasPackageDatabase(const QString& pacmanLocal) {
+  return !QDir(pacmanLocal).entryList(QDir::Dirs | QDir::NoDotAndDotDot).isEmpty();
+}
+
+// `hyprctl -j <request>`, empty when Hyprland isn't running or doesn't answer.
+QJsonObject hyprctlJson(const Diagnostics::Sources& sources, const QString& request) {
+  if (!sources.hyprlandRunning || !sources.hyprctl) return {};
+  return QJsonDocument::fromJson(sources.hyprctl({QStringLiteral("-j"), request})).object();
+}
+
 } // namespace
 
 namespace Diagnostics {
@@ -68,6 +84,21 @@ Sources Sources::system() {
   if (const QString drivers = qEnvironmentVariable("LIBVA_DRIVERS_PATH"); !drivers.isEmpty()) {
     sources.vaDrivers = drivers.split(QLatin1Char(':'), Qt::SkipEmptyParts);
   }
+  sources.hyprlandRunning = !qEnvironmentVariableIsEmpty("HYPRLAND_INSTANCE_SIGNATURE");
+  sources.hyprctl = [](const QStringList& arguments) -> QByteArray {
+    const QString program = QStandardPaths::findExecutable(QStringLiteral("hyprctl"));
+    if (program.isEmpty()) return {};
+    QProcess process;
+    process.start(program, arguments, QIODevice::ReadOnly);
+    // A local socket round trip: a second means it isn't going to answer.
+    if (!process.waitForFinished(1000)) {
+      process.kill();
+      process.waitForFinished(200);
+      return {};
+    }
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) return {};
+    return process.readAllStandardOutput().left(64 * 1024);
+  };
   return sources;
 }
 
@@ -213,7 +244,8 @@ QString packageVersion(const QString& pacmanLocal, const QString& name) {
 
 QString omarchyVersion(const Sources& sources) {
   const QString path = sources.omarchyPath;
-  if (!path.isEmpty() && QDir::cleanPath(path) != u"/usr/share/omarchy") {
+  const QString installed = QDir::cleanPath(sources.omarchyInstalled);
+  if (!path.isEmpty() && QDir::cleanPath(path) != installed) {
     return QStringLiteral("development checkout");
   }
   // The edge channel installs omarchy-dev instead of omarchy.
@@ -221,9 +253,14 @@ QString omarchyVersion(const Sources& sources) {
     const QString version = packageVersion(sources.pacmanLocal, package);
     if (!version.isEmpty()) return version + QStringLiteral(" (") + package + QLatin1Char(')');
   }
-  const QString file =
-      readLine((path.isEmpty() ? QStringLiteral("/usr/share/omarchy") : path) + QStringLiteral("/version"), 60);
+  // The version file names the next release on every edge build, so without
+  // pacman to say which build it is, it is only a hint.
+  const QString file = readLine(installed + QStringLiteral("/version"), 60);
   const QString version = bounded(file, QStringLiteral("0-9A-Za-z.+_~-"), 60);
+  if (!hasPackageDatabase(sources.pacmanLocal)) {
+    return version.isEmpty() ? QStringLiteral("unknown")
+                             : QStringLiteral("unknown (version file says ") + version + QLatin1Char(')');
+  }
   return version.isEmpty() ? QStringLiteral("not found") : version;
 }
 
@@ -234,7 +271,28 @@ QString hyprlandVersion(const Sources& sources) {
       return package == u"hyprland" ? version : version + QStringLiteral(" (") + package + QLatin1Char(')');
     }
   }
+  // Built some other way, or no pacman database to read: ask Hyprland.
+  const QJsonObject answer = hyprctlJson(sources, QStringLiteral("version"));
+  QString version = answer.value(QStringLiteral("version")).toString();
+  if (version.isEmpty()) {
+    version = answer.value(QStringLiteral("tag")).toString();
+    if (version.startsWith(u'v')) version = version.mid(1);
+  }
+  version = bounded(version, QStringLiteral("0-9A-Za-z.+_~-"), 40);
+  if (!version.isEmpty()) return version + QStringLiteral(" (from hyprctl)");
+  if (sources.hyprlandRunning || !hasPackageDatabase(sources.pacmanLocal)) return QStringLiteral("unknown");
   return QStringLiteral("not installed");
+}
+
+QString hyprlandConfig(const Sources& sources) {
+  const QString provider =
+      bounded(hyprctlJson(sources, QStringLiteral("status")).value(QStringLiteral("configProvider")).toString(),
+              QStringLiteral("0-9A-Za-z_-"), 20);
+  if (provider.isEmpty()) return QStringLiteral("unknown");
+  // Only the file name: the path would carry the user's home directory.
+  if (provider == u"lua") return QStringLiteral("lua (hyprland.lua)");
+  if (provider == u"hyprlang") return QStringLiteral("hyprlang (hyprland.conf)");
+  return provider;
 }
 
 QStringList graphics(const Sources& sources) {
@@ -308,18 +366,17 @@ QString report(const Sources& sources, const QString& platform, const QString& t
                           : sessionType == "x11"   ? QStringLiteral("X11")
                           : sessionType == "tty"   ? QStringLiteral("console")
                                                    : QStringLiteral("unknown");
-  const bool hyprlandRunning = !qEnvironmentVariableIsEmpty("HYPRLAND_INSTANCE_SIGNATURE");
-
   QStringList lines = {
       QStringLiteral("Omaroll: ") + QStringLiteral(OMAROLL_VERSION),
       QStringLiteral("Qt: ") + QString::fromLatin1(qVersion()),
       QStringLiteral("Platform: ") + platform + QStringLiteral(" / ") + QSysInfo::kernelType() +
           QLatin1Char(' ') + bounded(QSysInfo::kernelVersion(), QStringLiteral("0-9A-Za-z.+_~-"), 60),
       QStringLiteral("Session: ") + session +
-          (hyprlandRunning ? QStringLiteral(", Hyprland running") : QString()),
+          (sources.hyprlandRunning ? QStringLiteral(", Hyprland running") : QString()),
       QStringLiteral("Omarchy: ") + omarchyVersion(sources),
       QStringLiteral("Hyprland: ") + hyprlandVersion(sources),
   };
+  if (sources.hyprlandRunning) lines << QStringLiteral("Hyprland config: ") + hyprlandConfig(sources);
   const QStringList adapters = graphics(sources);
   if (adapters.isEmpty()) {
     lines << QStringLiteral("GPU: not found");

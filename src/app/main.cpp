@@ -453,6 +453,8 @@ int main(int argc, char* argv[]) {
     // For someone whose window won't open: the same text as Copy diagnostics,
     // without a display. The theme comes from Omarchy's files instead.
     if (argument == "--diagnostics") {
+      // No display needed, but QProcess wants an application for hyprctl.
+      const QCoreApplication core(argc, argv);
       const Diagnostics::Sources sources = Diagnostics::Sources::system();
       QTextStream(stdout) << Diagnostics::report(sources, QStringLiteral("none (command line)"),
                                                  Diagnostics::themeName(sources), 0)
