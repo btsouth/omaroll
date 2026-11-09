@@ -106,7 +106,8 @@ Flow {
             required property var modelData
             objectName: "filterChip-" + modelData.key
             height: 24
-            width: Math.min(root.width, chipRow.implicitWidth + 4)
+            // 8 px each side of the row, so the clear button never touches the edge.
+            width: Math.min(root.width, chipRow.implicitWidth + 16)
             radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
             color: root.shade(Theme.accent, 0.14)
             border.width: 1
@@ -122,7 +123,7 @@ Flow {
                     anchors.verticalCenter: parent.verticalCenter
                     text: chip.modelData.kind
                     font.family: Theme.fontFamily
-                    font.pixelSize: 10
+                    font.pixelSize: 11
                     color: Theme.mutedText
                 }
                 Text {

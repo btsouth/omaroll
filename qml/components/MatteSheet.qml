@@ -247,7 +247,7 @@ Item {
                         anchors.bottomMargin: 4
                         text: chip.modelData
                         font.family: Theme.fontFamily
-                        font.pixelSize: 10
+                        font.pixelSize: 11
                         color: root.selected === chip.index ? Theme.accent : Theme.mutedText
                     }
 

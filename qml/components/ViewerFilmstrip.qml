@@ -164,7 +164,7 @@ Rectangle {
                     anchors.horizontalCenter: parent.horizontalCenter
                     text: "Can't show"
                     font.family: Theme.fontFamily
-                    font.pixelSize: 9
+                    font.pixelSize: 11
                     color: Osd.mutedText
                 }
             }
@@ -200,7 +200,7 @@ Rectangle {
                     id: rawBadgeText
                     anchors.centerIn: parent
                     text: rawBadge.label
-                    font.pixelSize: 9
+                    font.pixelSize: 11
                     font.bold: true
                     color: "#ffffff"
                 }

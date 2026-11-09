@@ -425,7 +425,7 @@ Item {
                                             anchors.centerIn: parent
                                             text: "Largest"
                                             font.family: Theme.fontFamily
-                                            font.pixelSize: 9
+                                            font.pixelSize: 11
                                             font.weight: Font.DemiBold
                                             color: Theme.background
                                         }
@@ -446,7 +446,7 @@ Item {
                                     elide: Text.ElideRight
                                     text: root.factLine(cell.modelData)
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: 10
+                                    font.pixelSize: 11
                                     color: Theme.foreground
                                 }
                                 Text {
@@ -455,7 +455,7 @@ Item {
                                     text: root.facts[cell.modelData] !== undefined
                                           ? root.facts[cell.modelData].folder : ""
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: 10
+                                    font.pixelSize: 11
                                     color: Theme.mutedText
                                 }
                             }
@@ -479,32 +479,31 @@ Item {
             }
         }
 
-        Row {
+        // The same dark icon bar as the viewer and the preview, with only
+        // the zoom group: every picture shares one zoom.
+        ViewerToolbar {
             id: controls
+            namePrefix: "compare"
             anchors.bottom: parent.bottom
-            anchors.left: parent.left
-            anchors.margins: 16
-            height: 34
-            spacing: 8
-
-            PillButton {
-                label: "Fit"
-                onClicked: root.reset()
-            }
-            PillButton {
-                label: "Zoom out"
-                onClicked: root.zoomBy(1 / 1.25)
-            }
-            PillButton {
-                label: "Zoom in"
-                onClicked: root.zoomBy(1.25)
-            }
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottomMargin: 12
+            width: implicitWidth
+            height: implicitHeight
+            stepControls: false
+            transformControls: false
+            trashControl: false
+            actualControl: false
+            fitted: root.zoom === 1 && root.panX === 0 && root.panY === 0
+            onZoomOut: root.zoomBy(1 / 1.25)
+            onZoomIn: root.zoomBy(1.25)
+            onToggleFit: root.reset()
         }
 
         PillButton {
-            anchors.bottom: parent.bottom
+            objectName: "compareDone"
+            anchors.verticalCenter: controls.verticalCenter
             anchors.right: parent.right
-            anchors.margins: 16
+            anchors.rightMargin: 16
             label: "Done"
             active: true
             onClicked: root.close()

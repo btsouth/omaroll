@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Effects
 
 // One capture. The thumbnail is drawn at full opacity on top of the translucent
 // chrome: dimming the pixels someone is trying to look at is a bug, not a style,
@@ -81,6 +82,16 @@ Item {
     // A drag is starting; the host may set dragPaths to the whole selection.
     signal dragStarting()
     signal toggleRequested()
+
+    // Rounded themes clip the picture to the tile's corners. Item.clip only
+    // cuts to the bounding box, so the thumbnail draws through a mask. The
+    // mask is a layer, rendered again only when the thumbnail itself changes,
+    // so scrolling costs nothing extra. Square themes, and the software
+    // renderer that cannot run the effect, keep the plain image.
+    readonly property bool roundedThumbnail: Theme.cornerRadius > 0
+                                             && GraphicsInfo.api !== GraphicsInfo.Software
+    // Inside the frame's 1 px border.
+    readonly property real innerRadius: Math.max(0, Theme.cornerRadius - 1)
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
@@ -230,6 +241,15 @@ Item {
             smooth: true
             mipmap: true
             opacity: root.thumbnailReady ? 1 : 0
+            layer.enabled: root.roundedThumbnail
+            layer.smooth: true
+            layer.effect: MultiEffect {
+                maskEnabled: true
+                maskSource: thumbnailMask
+                // A soft threshold antialiases the corner.
+                maskThresholdMin: 0.5
+                maskSpreadAtMin: 1.0
+            }
 
             onStatusChanged: {
                 if (status === Image.Ready) {
@@ -240,6 +260,16 @@ Item {
             }
 
             Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutQuad } }
+        }
+
+        Rectangle {
+            id: thumbnailMask
+            objectName: "captureThumbnailMask"
+            anchors.fill: thumbnail
+            visible: false
+            radius: root.innerRadius
+            layer.enabled: root.roundedThumbnail
+            layer.smooth: true
         }
 
         // Failed decodes stay distinct from a thumbnail still being made.
@@ -262,6 +292,7 @@ Item {
         Rectangle {
             anchors.fill: parent
             visible: root.hiddenMark
+            radius: frame.radius
             color: root.shade(Theme.background, 0.55)
         }
 
@@ -280,6 +311,10 @@ Item {
             readonly property real fade: 14
             height: textHeight + fade
             visible: root.thumbnailReady
+            // The bottom corners follow the tile's, so the gradient stays
+            // inside the picture in a rounded theme.
+            bottomLeftRadius: frame.radius
+            bottomRightRadius: frame.radius
             gradient: Gradient {
                 GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0) }
                 GradientStop { position: captionScrim.fade / captionScrim.height; color: Qt.rgba(0, 0, 0, 0.62) }
@@ -302,7 +337,7 @@ Item {
             text: root.ocrSnippet !== "" ? root.ocrSnippet : root.caption
             elide: Text.ElideRight
             font.family: Theme.fontFamily
-            font.pixelSize: 10
+            font.pixelSize: 11
             color: root.thumbnailReady ? "#ffffff" : Theme.foreground
             opacity: 0.90
         }
@@ -393,7 +428,7 @@ Item {
                 anchors.centerIn: parent
                 text: root.rawFormat
                 font.family: Theme.fontFamily
-                font.pixelSize: 10
+                font.pixelSize: 11
                 font.weight: Font.DemiBold
                 color: "#ffffff"
             }
@@ -414,7 +449,7 @@ Item {
                 anchors.centerIn: parent
                 text: (scrubTimer.running ? "◉ " : "▶ ") + root.kindLabel
                 font.family: Theme.fontFamily
-                font.pixelSize: 10
+                font.pixelSize: 11
                 color: "#ffffff"
             }
         }
@@ -443,9 +478,24 @@ Item {
             width: 18
             height: 18
             radius: 3
-            color: root.checked ? Theme.accent : Qt.rgba(0, 0, 0, 0.5)
-            border.width: 1
-            border.color: root.checked ? Theme.accent : Qt.rgba(1, 1, 1, 0.5)
+            // Unchecked is an outline, not a filled box: white with a dark
+            // halo reads as empty over a light picture and a dark one, in a
+            // light theme and a dark one.
+            color: root.checked ? Theme.accent : Qt.rgba(0, 0, 0, 0.12)
+            border.width: root.checked ? 1 : 1.5
+            border.color: root.checked ? Theme.accent : Qt.rgba(1, 1, 1, 0.95)
+
+            Rectangle {
+                objectName: "captureCheckboxHalo"
+                anchors.fill: parent
+                anchors.margins: -1.5
+                z: -1
+                visible: !root.checked
+                radius: parent.radius + 1.5
+                color: "transparent"
+                border.width: 1.5
+                border.color: Qt.rgba(0, 0, 0, 0.38)
+            }
 
             Text {
                 anchors.centerIn: parent

@@ -64,6 +64,18 @@ FocusScope {
     signal saveSmartCollectionRequested()
     signal renameCollectionRequested(string mode, string name)
 
+    // Each kind of choice under its own title, so the rows
+    // read as groups rather than one wall of pills.
+    component GroupTitle: Text {
+        width: parent ? parent.width : 0
+        font.family: Theme.fontFamily
+        font.pixelSize: 12
+        font.weight: Font.DemiBold
+        color: Theme.foreground
+        Accessible.role: Accessible.Heading
+        Accessible.name: text
+    }
+
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
     }
@@ -404,210 +416,278 @@ FocusScope {
                         color: Theme.mutedText
                     }
 
-                    Flow {
+                    Column {
+                        objectName: "browseGroupViews"
                         width: parent.width
-                        spacing: 8
+                        spacing: 6
 
-                        PillButton {
-                            label: "Whole library"
-                            active: Captures.folderFilter === "" && Captures.albumFilter === ""
-                                    && Captures.tagFilter === "" && Captures.dateFrom === ""
-                                    && Captures.dateTo === "" && Captures.modifiedAfter === ""
-                                    && Captures.cameraFilter === "" && Captures.lensFilter === ""
-                                    && Captures.minimumRating === 0
-                                    && Captures.smartCollectionFilter === ""
-                                    && !Captures.duplicatesOnly && !Captures.similarOnly
-                            onClicked: root.showAll()
-                        }
-                        PillButton {
-                            label: "Exact duplicates"
-                            active: Captures.duplicatesOnly
-                            onClicked: root.showDuplicates()
-                        }
-                        PillButton {
-                            label: "Similar pictures"
-                            active: Captures.similarOnly
-                            onClicked: root.showSimilar()
-                        }
-                        PillButton {
-                            objectName: "browseAddFolder"
-                            label: "+ Add folder"
-                            onClicked: root.addFolder()
-                        }
-                    }
+                        GroupTitle { text: "Views" }
 
-                    SimilarStrictnessPicker {
-                        visible: Captures.similarOnly
-                    }
+                        Flow {
+                            width: parent.width
+                            spacing: 7
 
-                    Flow {
-                        width: parent.width
-                        spacing: 7
-
-                        PillButton { label: "Today"; onClicked: root.showRecent(1, false) }
-                        PillButton { label: "This week"; onClicked: root.showRecent(7, false) }
-                        PillButton { label: "New since last visit"; onClicked: root.showSinceLastVisit() }
-                        PillButton { label: "Recently modified"; onClicked: root.showRecent(7, true) }
-                        PillButton {
-                            label: "Save current view"
-                            onClicked: {
-                                root.close()
-                                root.saveSmartCollectionRequested()
+                            PillButton {
+                                label: "Whole library"
+                                active: Captures.folderFilter === "" && Captures.albumFilter === ""
+                                        && Captures.tagFilter === "" && Captures.dateFrom === ""
+                                        && Captures.dateTo === "" && Captures.modifiedAfter === ""
+                                        && Captures.cameraFilter === "" && Captures.lensFilter === ""
+                                        && Captures.minimumRating === 0
+                                        && Captures.smartCollectionFilter === ""
+                                        && !Captures.duplicatesOnly && !Captures.similarOnly
+                                onClicked: root.showAll()
                             }
+                            PillButton {
+                                label: "Exact duplicates"
+                                active: Captures.duplicatesOnly
+                                onClicked: root.showDuplicates()
+                            }
+                            PillButton {
+                                label: "Similar pictures"
+                                active: Captures.similarOnly
+                                onClicked: root.showSimilar()
+                            }
+                            PillButton {
+                                label: "Save current view"
+                                onClicked: {
+                                    root.close()
+                                    root.saveSmartCollectionRequested()
+                                }
+                            }
+                        }
+
+                        SimilarStrictnessPicker {
+                            visible: Captures.similarOnly
+                        }
+                    }
+
+                    Column {
+                        objectName: "browseGroupRecent"
+                        width: parent.width
+                        spacing: 6
+
+                        GroupTitle { text: "Recent" }
+
+                        Flow {
+                            width: parent.width
+                            spacing: 7
+
+                            PillButton { label: "Today"; onClicked: root.showRecent(1, false) }
+                            PillButton { label: "This week"; onClicked: root.showRecent(7, false) }
+                            PillButton { label: "New since last visit"; onClicked: root.showSinceLastVisit() }
+                            PillButton { label: "Recently modified"; onClicked: root.showRecent(7, true) }
                         }
                     }
 
                     // A minimum rating narrows whatever else is chosen, the way the
-                    // kind pills do, so picking one leaves the sheet open. The row
+                    // kind pills do, so picking one leaves the sheet open. The group
                     // only appears once something has been rated.
-                    Flow {
+                    Column {
+                        objectName: "browseGroupRating"
                         width: parent.width
-                        spacing: 7
+                        spacing: 6
                         visible: Settings.ratedCount > 0 || Captures.minimumRating > 0
 
+                        GroupTitle { text: "Rated at least" }
+
+                        Flow {
+                            width: parent.width
+                            spacing: 7
+
+                            Repeater {
+                                model: 5
+
+                                PillButton {
+                                    required property int index
+                                    label: "★".repeat(index + 1)
+                                    accessibleName: (index + 1) + (index === 0 ? " star" : " stars")
+                                    active: Captures.minimumRating === index + 1
+                                    onClicked: Captures.minimumRating = active ? 0 : index + 1
+                                }
+                            }
+                        }
+                    }
+
+                    Column {
+                        objectName: "browseGroupSources"
+                        width: parent.width
+                        spacing: 6
+
+                        GroupTitle { text: "Sources" }
+
+                        Flow {
+                            width: parent.width
+                            spacing: 7
+
+                            Repeater {
+                                model: Library.automaticFolders
+
+                                PillButton {
+                                    required property var modelData
+                                    visible: modelData.available
+                                    label: modelData.label
+                                    active: Captures.folderFilter === modelData.path
+                                    onClicked: root.showFolder(modelData.path)
+                                }
+                            }
+
+                            Repeater {
+                                model: Settings.libraryFolders
+
+                                PillButton {
+                                    required property string modelData
+                                    label: root.nameForPath(modelData)
+                                    active: Captures.folderFilter === modelData
+                                    onClicked: root.showFolder(modelData)
+                                }
+                            }
+
+                            PillButton {
+                                objectName: "browseAddFolder"
+                                label: "+ Add folder"
+                                onClicked: root.addFolder()
+                            }
+                        }
+
                         Text {
-                            height: 26
-                            verticalAlignment: Text.AlignVCenter
-                            text: "Rated at least"
+                            width: parent.width
+                            visible: root.folderMessage !== ""
+                            text: root.folderMessage
+                            wrapMode: Text.WordWrap
                             font.family: Theme.fontFamily
                             font.pixelSize: 11
                             color: Theme.mutedText
                         }
+                    }
 
-                        Repeater {
-                            model: 5
+                    Column {
+                        objectName: "browseGroupFacets"
+                        width: parent.width
+                        spacing: 6
+
+                        GroupTitle { text: "Browse by" }
+
+                        // One segmented control, like the kinds in the library
+                        // header. The counts go first when the row is short of
+                        // room, so the names never clip.
+                        Item {
+                            id: facetHolder
+                            width: parent.width
+                            height: facetFrame.height
+                            readonly property var facets: [
+                                {section: 0, label: "Folders", count: Captures.folders.length, shown: true},
+                                {section: 1, label: "Albums", count: Settings.albumNames.length, shown: true},
+                                {section: 2, label: "Dates", count: Captures.dateBuckets.length, shown: true},
+                                {section: 3, label: "Tags", count: Settings.tagNames.length, shown: true},
+                                // Only a library with photos from a real camera
+                                // earns this; a screenshot library never sees it.
+                                {section: 5, label: "Cameras", count: Captures.cameras.length,
+                                 shown: root.hasCameras || root.section === 5},
+                                {section: 4, label: "Smart", count: Settings.smartCollectionNames.length, shown: true}
+                            ]
+                            // Measured with the counts, off screen, so the choice
+                            // cannot feed back on itself.
+                            readonly property bool countsShown: countedFacets.implicitWidth <= width
+
+                            Row {
+                                id: countedFacets
+                                visible: false
+                                Repeater {
+                                    model: facetHolder.facets
+                                    PillButton {
+                                        required property var modelData
+                                        visible: modelData.shown
+                                        segment: true
+                                        label: modelData.label
+                                        badge: modelData.count
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                id: facetFrame
+                                objectName: "browseFacetSegments"
+                                width: Math.min(parent.width, facetSegments.implicitWidth)
+                                height: 26
+                                radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
+                                color: root.shade(Theme.foreground, 0.04)
+                                border.width: 1
+                                border.color: root.shade(Theme.foreground, 0.12)
+
+                                Row {
+                                    id: facetSegments
+                                    anchors.verticalCenter: parent.verticalCenter
+
+                                    Repeater {
+                                        model: facetHolder.facets
+
+                                        PillButton {
+                                            required property var modelData
+                                            objectName: "browseFacet-" + modelData.section
+                                            visible: modelData.shown
+                                            segment: true
+                                            checkable: true
+                                            label: modelData.label
+                                            badge: facetHolder.countsShown ? modelData.count : -1
+                                            accessibleName: modelData.label + ", " + root.formatCount(modelData.count)
+                                            active: root.section === modelData.section
+                                            onClicked: {
+                                                root.section = modelData.section
+                                                folderSearch.forceActiveFocus()
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Flow {
+                            width: parent.width
+                            spacing: 7
+                            visible: newAlbum.visible || newTag.visible || saveView.visible
+                                     || renameChoice.visible || deleteChoice.visible
 
                             PillButton {
-                                required property int index
-                                label: "★".repeat(index + 1)
-                                active: Captures.minimumRating === index + 1
-                                onClicked: Captures.minimumRating = active ? 0 : index + 1
+                                id: newAlbum
+                                visible: root.section === 1
+                                label: "+ New album"
+                                onClicked: {
+                                    root.close()
+                                    root.createAlbumRequested()
+                                }
                             }
-                        }
-                    }
-
-                    Text {
-                        text: "SOURCES"
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 9
-                        color: Theme.mutedText
-                    }
-
-                    Flow {
-                        width: parent.width
-                        spacing: 7
-
-                        Repeater {
-                            model: Library.automaticFolders
-
                             PillButton {
-                                required property var modelData
-                                visible: modelData.available
-                                label: modelData.label
-                                active: Captures.folderFilter === modelData.path
-                                onClicked: root.showFolder(modelData.path)
+                                id: newTag
+                                visible: root.section === 3
+                                label: "+ New tag"
+                                onClicked: { root.close(); root.createTagRequested() }
                             }
-                        }
-
-                        Repeater {
-                            model: Settings.libraryFolders
-
                             PillButton {
-                                required property string modelData
-                                label: root.nameForPath(modelData)
-                                active: Captures.folderFilter === modelData
-                                onClicked: root.showFolder(modelData)
+                                id: saveView
+                                visible: root.section === 4
+                                label: "+ Save view"
+                                onClicked: { root.close(); root.saveSmartCollectionRequested() }
                             }
-                        }
-                    }
-
-                    Text {
-                        width: parent.width
-                        visible: root.folderMessage !== ""
-                        text: root.folderMessage
-                        wrapMode: Text.WordWrap
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 10
-                        color: Theme.mutedText
-                    }
-
-                    Flow {
-                        width: parent.width
-                        spacing: 8
-
-                        PillButton {
-                            label: "Folders  " + root.formatCount(Captures.folders.length)
-                            active: root.section === 0
-                            onClicked: {
-                                root.section = 0
-                                folderSearch.forceActiveFocus()
+                            PillButton {
+                                id: renameChoice
+                                visible: (root.section === 1 || root.section === 3) && choices.currentIndex >= 0
+                                label: "Rename selected"
+                                toolTip: root.section === 3
+                                         ? "Rename this tag and any tags nested under it."
+                                         : "Rename this album. Its membership is kept."
+                                onClicked: root.renameCurrentChoice()
                             }
-                        }
-                        PillButton {
-                            label: "Albums  " + root.formatCount(Settings.albumNames.length)
-                            active: root.section === 1
-                            onClicked: {
-                                root.section = 1
-                                folderSearch.forceActiveFocus()
+                            PillButton {
+                                id: deleteChoice
+                                visible: (root.section === 1 || root.section === 3 || root.section === 4)
+                                         && choices.currentIndex >= 0
+                                label: "Delete selected"
+                                toolTip: root.section === 3
+                                         ? "Remove this tag and any tags nested under it. Files are not deleted."
+                                         : "Remove this collection. Files are not deleted."
+                                onClicked: root.deleteCurrentChoice()
                             }
-                        }
-                        PillButton {
-                            label: "Dates  " + root.formatCount(Captures.dateBuckets.length)
-                            active: root.section === 2
-                            onClicked: { root.section = 2; folderSearch.forceActiveFocus() }
-                        }
-                        PillButton {
-                            label: "Tags  " + root.formatCount(Settings.tagNames.length)
-                            active: root.section === 3
-                            onClicked: { root.section = 3; folderSearch.forceActiveFocus() }
-                        }
-                        PillButton {
-                            // Only a library with photos from a real camera earns this
-                            // section; a screenshot library never sees it.
-                            visible: root.hasCameras || root.section === 5
-                            label: "Cameras  " + root.formatCount(Captures.cameras.length)
-                            active: root.section === 5
-                            onClicked: { root.section = 5; folderSearch.forceActiveFocus() }
-                        }
-                        PillButton {
-                            label: "Smart  " + root.formatCount(Settings.smartCollectionNames.length)
-                            active: root.section === 4
-                            onClicked: { root.section = 4; folderSearch.forceActiveFocus() }
-                        }
-                        PillButton {
-                            visible: root.section === 1
-                            label: "+ New album"
-                            onClicked: {
-                                root.close()
-                                root.createAlbumRequested()
-                            }
-                        }
-                        PillButton {
-                            visible: root.section === 3
-                            label: "+ New tag"
-                            onClicked: { root.close(); root.createTagRequested() }
-                        }
-                        PillButton {
-                            visible: root.section === 4
-                            label: "+ Save view"
-                            onClicked: { root.close(); root.saveSmartCollectionRequested() }
-                        }
-                        PillButton {
-                            visible: (root.section === 1 || root.section === 3) && choices.currentIndex >= 0
-                            label: "Rename selected"
-                            toolTip: root.section === 3
-                                     ? "Rename this tag and any tags nested under it."
-                                     : "Rename this album. Its membership is kept."
-                            onClicked: root.renameCurrentChoice()
-                        }
-                        PillButton {
-                            visible: (root.section === 1 || root.section === 3 || root.section === 4)
-                                     && choices.currentIndex >= 0
-                            label: "Delete selected"
-                            toolTip: root.section === 3
-                                     ? "Remove this tag and any tags nested under it. Files are not deleted."
-                                     : "Remove this collection. Files are not deleted."
-                            onClicked: root.deleteCurrentChoice()
                         }
                     }
 
@@ -779,7 +859,7 @@ FocusScope {
                                     + (choiceRow.itemCount === 1 ? " item" : " items")
                             elide: Text.ElideMiddle
                             font.family: Theme.fontFamily
-                            font.pixelSize: 9
+                            font.pixelSize: 11
                             color: Theme.mutedText
                         }
                     }

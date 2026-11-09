@@ -1957,7 +1957,7 @@ Item {
                         visible: pdfPageInput.text === ""
                         text: "Page #"
                         font.family: Theme.fontFamily
-                        font.pixelSize: 10
+                        font.pixelSize: 11
                         color: Theme.mutedText
                     }
                 }
@@ -2915,7 +2915,7 @@ Item {
                     height: 24
                     text: section
                     font.family: Theme.fontFamily
-                    font.pixelSize: 10
+                    font.pixelSize: 11
                     color: Theme.mutedText
                     verticalAlignment: Text.AlignVCenter
                 }
@@ -2988,7 +2988,7 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter
                         text: row.modelData.shortcut
                         font.family: Theme.fontFamily
-                        font.pixelSize: 10
+                        font.pixelSize: 11
                         color: Theme.mutedText
                     }
 

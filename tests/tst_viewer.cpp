@@ -861,6 +861,23 @@ private slots:
     QQuickItem* folder = item(QStringLiteral("viewerInfoFolder"));
     QTRY_VERIFY(folder->mapToScene(QPointF(0, folder->height())).y() <= m_window->height() - 16);
     QVERIFY(folder->mapToScene(QPointF()).y() >= panel->y() + 16);
+    // The location shows once: the folder line, not a path and then the
+    // folder again.
+    const QString where = m_session->folder();
+    QVERIFY(!where.isEmpty());
+    QCOMPARE(folder->property("text").toString(), QStringLiteral("In ") + where);
+    int mentions = 0;
+    const auto visit = [&](auto&& self, QQuickItem* parent) -> void {
+      for (QQuickItem* child : parent->childItems()) {
+        if (child->isVisible() && child->property("text").toString().contains(where)) ++mentions;
+        self(self, child);
+      }
+    };
+    visit(visit, panel);
+    QCOMPARE(mentions, 1);
+    // Dark over the picture in both palettes, like the toolbar.
+    const QColor panelColour = panel->property("color").value<QColor>();
+    QVERIFY2(panelColour.lightnessF() < 0.2, qPrintable(panelColour.name()));
   }
 
   void picturesReloadAfterSavesAndKeepTheirViewWhenSiblingsChange() {

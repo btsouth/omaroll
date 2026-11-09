@@ -506,7 +506,7 @@ FocusScope {
                             anchors.centerIn: parent
                             visible: selectControl.selection === 2
                             text: "✓"
-                            font.pixelSize: 10
+                            font.pixelSize: 11
                             font.weight: Font.Bold
                             color: Theme.background
                         }

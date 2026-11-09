@@ -209,7 +209,7 @@ Popup {
                                         ? "Not configured" : "Not available")
                                      : "Not installed")
                             font.family: Theme.fontFamily
-                            font.pixelSize: 10
+                            font.pixelSize: 11
                             color: Theme.mutedText
                         }
 
@@ -306,7 +306,7 @@ Popup {
                 text: "Use {path} where the file should go; without it, the path is appended."
                 wrapMode: Text.WordWrap
                 font.family: Theme.fontFamily
-                font.pixelSize: 10
+                font.pixelSize: 11
                 color: Theme.mutedText
             }
 

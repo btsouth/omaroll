@@ -398,17 +398,24 @@ private slots:
     QCOMPARE(caps.size(), 2);
     QCOMPARE(caps.at(0).toStringList(), (QStringList{QStringLiteral("Ctrl"), QStringLiteral("+")}));
     QCOMPARE(caps.at(1).toStringList(), (QStringList{QStringLiteral("Ctrl"), QStringLiteral("=")}));
-    // Four alternatives wrap inside their column instead of running past it.
-    QQuickItem* far = row(QStringLiteral("Extend the selection to the first / last tile or a page"));
-    QVERIFY(far);
-    QQuickItem* keys = find(far, [](QQuickItem* candidate) {
-      return candidate->objectName() == QStringLiteral("shortcutCaps");
-    });
-    QVERIFY(keys);
-    QTRY_VERIFY(keys->x() >= -0.5 && keys->x() + keys->width() <= far->width() + 0.5);
-    for (QQuickItem* alternative : keys->childItems()) {
-      if (alternative->width() > 0)
+    // Keys stay inside their column, and at 1280 px each row's caps sit on
+    // one line: no row's keys wrap onto a line that starts with "/".
+    for (const QString& label : {QStringLiteral("Extend to first / last tile"), QStringLiteral("Extend by a page"),
+                                 QStringLiteral("Extend the selection")}) {
+      QQuickItem* far = row(label);
+      QVERIFY2(far, qPrintable(label));
+      QQuickItem* keys = find(far, [](QQuickItem* candidate) {
+        return candidate->objectName() == QStringLiteral("shortcutCaps");
+      });
+      QVERIFY(keys);
+      QTRY_VERIFY(keys->x() >= -0.5 && keys->x() + keys->width() <= far->width() + 0.5);
+      qreal lineY = -1;
+      for (QQuickItem* alternative : keys->childItems()) {
+        if (alternative->width() <= 0) continue;
         QVERIFY2(alternative->x() + alternative->width() <= keys->width() + 0.5, "a key cap runs past its column");
+        if (lineY < 0) lineY = alternative->y();
+        QVERIFY2(qAbs(alternative->y() - lineY) < 0.5, qPrintable(label + QStringLiteral(": keys wrap")));
+      }
     }
     // The RAW rows moved to Actions in the library help.
     const QVariantList groups = help->property("groups").value<QJSValue>().toVariant().toList();
@@ -580,6 +587,32 @@ private slots:
     visit(visit, hints);
     QVERIFY(visible > 0);
     QVERIFY(visible < 8);
+  }
+
+  // The hints are about what applies now: the highlighted tile without a
+  // selection, the selection's own keys with one. Trim never shows for a
+  // selection of pictures.
+  void footerHintsFollowTheSelection() {
+    auto* hints = m_window->findChild<QQuickItem*>(QStringLiteral("footerHints"));
+    QQuickItem* grid = item("library");
+    QVERIFY(hints && grid);
+    const auto restore = qScopeGuard([&] { QMetaObject::invokeMethod(grid, "clearChecked"); });
+    QMetaObject::invokeMethod(grid, "clearChecked");
+    const auto shown = [&] { return hints->property("hints").value<QJSValue>().toVariant().toStringList(); };
+    QTRY_COMPARE(hints->property("selectedCount").toInt(), 0);
+    QVERIFY(shown().contains(QStringLiteral("Enter details")));
+    QVERIFY(!shown().join(' ').contains(QStringLiteral("trim")));
+    const QStringList paths = {m_library->pathAt(0), m_library->pathAt(1), m_library->pathAt(2)};
+    QVERIFY(QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, paths.at(0))));
+    QTRY_COMPARE(hints->property("selectedCount").toInt(), 1);
+    QVERIFY(shown().contains(QStringLiteral("Del trash")));
+    QVERIFY(shown().contains(QStringLiteral("Esc clear")));
+    QVERIFY(!shown().contains(QStringLiteral("Enter details")));
+    QVERIFY(QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, paths.at(1))));
+    QVERIFY(QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, paths.at(2))));
+    QTRY_COMPARE(hints->property("selectedCount").toInt(), 3);
+    QVERIFY(shown().contains(QStringLiteral("Ctrl+A all")));
+    QVERIFY(!shown().join(' ').contains(QStringLiteral("trim")));
   }
 
   void initTestCase() {
@@ -5624,6 +5657,14 @@ private slots:
     QTRY_VERIFY(chips->isVisible());
     QTRY_VERIFY(shown(QStringLiteral("filterChip-folder")));
     QTRY_VERIFY(shown(QStringLiteral("filterChip-date")));
+    // The clear button sits inside its chip with room to spare on the right.
+    for (const QString& key : {QStringLiteral("folder"), QStringLiteral("date")}) {
+      QQuickItem* chip = item(QStringLiteral("filterChip-") + key);
+      QQuickItem* clear = item(QStringLiteral("filterChipClear-") + key);
+      const qreal right = clear->mapToItem(chip, QPointF(clear->width(), 0)).x();
+      QVERIFY2(right <= chip->width() - 6, qPrintable(QStringLiteral("%1 chip: clear ends at %2 of %3")
+                                                         .arg(key).arg(right).arg(chip->width())));
+    }
     click(item("filterChipClear-date"));
     QTRY_VERIFY(m_library->dateFrom().isEmpty());
     QCOMPARE(m_library->folderFilter(), QDir::cleanPath(folder));

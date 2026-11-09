@@ -1022,12 +1022,16 @@ ApplicationWindow {
             anchors.verticalCenter: parent.verticalCenter
             spacing: 8
 
-            IconButton {
+            // Framed like Help and Settings beside it; filled while the
+            // sidebar shows.
+            PillButton {
                 id: folderToggle
                 objectName: "folderSidebarToggle"
                 anchors.verticalCenter: parent.verticalCenter
                 visible: header.foldersFit
                 label: "Folders"
+                accessibleName: "Folder sidebar"
+                checkable: true
                 enabled: !root.popupOpen
                 toolTip: "Toggle folder sidebar"
                 shortcut: "F9"
@@ -1878,6 +1882,7 @@ ApplicationWindow {
 
         FooterHints {
             objectName: "footerHints"
+            selectedCount: library.checkedCount
             anchors.left: parent.left
             anchors.leftMargin: 20
             anchors.right: helpHint.left
