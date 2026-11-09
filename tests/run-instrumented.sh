@@ -12,8 +12,12 @@ case "$mode" in
   tsan)
     cmake -S . -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ \
       '-DCMAKE_CXX_FLAGS=-fsanitize=thread -fno-omit-frame-pointer' -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread
-    # Some core tests launch the omaroll executable itself.
-    cmake --build "$build" --parallel 4 --target omaroll omaroll_tests
+    cmake --build "$build" --parallel 4 --target omaroll_tests
+    # Some core tests launch the omaroll executable. Give them an uninstrumented
+    # one: this job checks the core suite, not the whole GUI app under TSan.
+    cmake -S . -B build/tsan-app -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+    cmake --build build/tsan-app --parallel 4 --target omaroll
+    cp build/tsan-app/omaroll "$build/omaroll"
     # Arch's Qt is not built with TSan; tests/tsan.supp explains each
     # suppression. (ignore_noninstrumented_modules is not usable: it also hides
     # Qt's own thread joins, and TSan then aborts when a thread id is reused.)
