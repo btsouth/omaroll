@@ -706,16 +706,19 @@ private slots:
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, profiles.filePath("damaged"));
     QVERIFY(QDir().mkpath(profiles.filePath("damaged/omaroll")));
     const QString damagedIni = profiles.filePath("damaged/omaroll/omaroll.ini");
-    const QByteArray bad("[library]\nsortMode=3\n[truncated\n");
-    {
-      QFile damaged(damagedIni);
-      QVERIFY(damaged.open(QIODevice::WriteOnly));
-      QCOMPARE(damaged.write(bad), bad.size());
+    // The second is only found once Qt parses the later section.
+    for (const QByteArray& bad : {QByteArray("[library]\nsortMode=3\n[truncated\n"),
+                                  QByteArray("[library]\nsortMode=3\n[view]\nbroken line\n")}) {
+      {
+        QFile damaged(damagedIni);
+        QVERIFY(damaged.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        QCOMPARE(damaged.write(bad), bad.size());
+      }
+      QVERIFY(!AppSettings::endWindowRulesOfferOnDisk());
+      QFile untouched(damagedIni);
+      QVERIFY(untouched.open(QIODevice::ReadOnly));
+      QCOMPARE(untouched.readAll(), bad);
     }
-    QVERIFY(!AppSettings::endWindowRulesOfferOnDisk());
-    QFile untouched(damagedIni);
-    QVERIFY(untouched.open(QIODevice::ReadOnly));
-    QCOMPARE(untouched.readAll(), bad);
   }
 
   void singleInstanceForwardsTheOpenedPath() {

@@ -2998,6 +2998,9 @@ bool AppSettings::windowRulesOfferDismissedOnDisk() {
 bool AppSettings::endWindowRulesOfferOnDisk() {
   QSettings settings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("omaroll"),
                      QStringLiteral("omaroll"));
+  // Sections are parsed lazily; read them all, as the app does, so a format
+  // error anywhere is known before anything is written.
+  (void)settings.allKeys();
   if (settings.status() == QSettings::FormatError) return false;
   settings.setValue(kWindowRulesOfferDismissedKey, true);
   settings.sync();

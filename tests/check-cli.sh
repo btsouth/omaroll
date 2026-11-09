@@ -114,7 +114,8 @@ out=$(set_images)
 grep -qF 'install-window-rules' <<<"$out" && fail "offered rules again after installing once: $out"
 rm "$settings"
 # A damaged settings file is left for the app's recovery, never rewritten.
-printf '[library]\nsortMode=3\n[truncated\n' > "$settings"
+# The broken line is only found once Qt parses its section.
+printf '[library]\nsortMode=3\n[view]\nbroken line\n' > "$settings"
 cp "$settings" "$scratch/settings.damaged"
 "$omaroll" --install-window-rules >/dev/null 2>"$scratch/err" || fail "install failed with damaged settings"
 grep -q 'left as it is' "$scratch/err" || fail "damaged settings not reported: $(cat "$scratch/err")"
