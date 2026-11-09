@@ -390,6 +390,32 @@ private slots:
       m_settings->setHyprDirectory(QString());
     });
 
+    // The first-run library offers the window rules once: only there, only
+    // where Omarchy can take them, and never again after Not now.
+    {
+      QSettings state(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("omaroll"),
+                      QStringLiteral("omaroll"));
+      state.remove(AppSettings::kWindowRulesOfferDismissedKey);
+    }
+    const auto offers = [this](const QString& reason) {
+      QVariant shown;
+      const bool called = QMetaObject::invokeMethod(m_window, "offersWindowRules",
+                                                    Q_RETURN_ARG(QVariant, shown), Q_ARG(QVariant, reason));
+      return called && shown.toBool();
+    };
+    QCOMPARE(m_settings->windowRules(), QStringLiteral("available"));
+    QVERIFY(!m_settings->windowRulesOfferDismissed());
+    QCOMPARE(offers(QStringLiteral("library")), m_theme->omarchyAvailable());
+    QVERIFY(!offers(QStringLiteral("search")));
+    QVERIFY(!offers(QString()));
+    m_settings->dismissWindowRulesOffer();
+    QVERIFY(!offers(QStringLiteral("library")));
+    {
+      QSettings state(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("omaroll"),
+                      QStringLiteral("omaroll"));
+      state.remove(AppSettings::kWindowRulesOfferDismissedKey);
+    }
+
     // The first-run screen names the key the bindings give, never the old one.
     QCOMPARE(m_settings->screenshotKey(), QStringLiteral("Super + P"));
     QVariant state;

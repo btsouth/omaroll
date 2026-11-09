@@ -467,6 +467,13 @@ int main(int argc, char* argv[]) {
       const HyprlandSetup::Result result = argument == "--install-window-rules"
                                                ? HyprlandSetup::installRules(directory)
                                                : HyprlandSetup::removeRules(directory);
+      // Installed once, the library and --set-default stop offering them,
+      // as when Settings installs them.
+      if (result.ok && argument == "--install-window-rules") {
+        QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("omaroll"),
+                  QStringLiteral("omaroll"))
+            .setValue(AppSettings::kWindowRulesOfferDismissedKey, true);
+      }
       QTextStream(result.ok ? stdout : stderr) << result.message << Qt::endl;
       return result.ok ? 0 : 2;
     }

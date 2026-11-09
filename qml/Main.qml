@@ -82,6 +82,13 @@ ApplicationWindow {
         }
     }
 
+    // The first-run library offers the window rules until they are installed
+    // or turned down.
+    function offersWindowRules(reason) {
+        return reason === "library" && Theme.omarchyAvailable
+            && Settings.windowRules === "available" && !Settings.windowRulesOfferDismissed
+    }
+
     function say(message) {
         notice.text = message
         notice.undoId = 0
@@ -1761,8 +1768,7 @@ ApplicationWindow {
         Column {
             objectName: "windowRulesOffer"
             width: parent.width
-            visible: emptyState.reason === "library" && Theme.omarchyAvailable
-                     && Settings.windowRules === "available" && !Settings.windowRulesOfferDismissed
+            visible: root.offersWindowRules(emptyState.reason)
             topPadding: 8
             spacing: 6
             Text {
