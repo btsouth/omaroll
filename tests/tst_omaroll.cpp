@@ -4291,7 +4291,9 @@ private slots:
     file.close();
     SubtitleIndex subtitles;
     QCOMPARE(subtitles.cueCount(path), 0); // Loading never waits on parsing.
-    QTRY_COMPARE(subtitles.cueCount(path), 20001);
+    // A sanitizer build takes several seconds over 20,000 cues; wait for the
+    // parsed index rather than guessing how long that takes.
+    QVERIFY(QTest::qWaitFor([&] { return subtitles.cueCount(path) == 20001; }, 60000));
     QCOMPARE(subtitles.textAt(path, 40000000), QStringLiteral("Long overlap\nCue 20000"));
     QCOMPARE(subtitles.textAt(path, 2000), QStringLiteral("Long overlap\nCue 1"));
     QCOMPARE(subtitles.textAt(path, 40000501), QStringLiteral("Long overlap"));

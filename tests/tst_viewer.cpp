@@ -185,7 +185,9 @@ private slots:
         // The broken-file tests' pictures fail to decode on purpose.
         if (!warning.toString().contains(QStringLiteral("No thumbnail for "))
             && !warning.toString().contains(QStringLiteral("/broken/a notes.jpg"))
-            && !warning.toString().contains(QStringLiteral("/focus/b notes.jpg"))) {
+            && !warning.toString().contains(QStringLiteral("/focus/b notes.jpg"))
+            // Deleted on purpose while the viewer may still be prefetching it.
+            && !warning.toString().contains(QStringLiteral("/a removed sibling.png"))) {
           m_warnings.append(warning.toString());
         }
       }
@@ -666,7 +668,7 @@ private slots:
     QTRY_VERIFY(!prop("zooming").toBool());
     const qreal scale = prop("viewScale").toReal();
     const int rotation = prop("viewRotation").toInt();
-    const QString sibling = dir.filePath(QStringLiteral("a.png"));
+    const QString sibling = dir.filePath(QStringLiteral("a removed sibling.png"));
     QVERIFY(initial.save(sibling));
     QTRY_COMPARE_WITH_TIMEOUT(m_session->count(), 2, 5000);
     QCOMPARE(m_session->path(), path);
