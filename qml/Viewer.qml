@@ -230,7 +230,7 @@ ApplicationWindow {
         ? Subtitles.textAt(cues, Math.round(player.position) - root.subtitleOffsetMs)
         : (root.presentation ? root.presentation.subtitleText : "")
     }
-    // A picture-based track, no ffmpeg or a copy that took too long: the
+    // A picture-based track, no ffmpeg or a copy that stalled: the
     // track can't be shifted, so take the delay back and say why.
     readonly property string embeddedDelayProblem: {
         void Subtitles.revision
@@ -862,11 +862,9 @@ ApplicationWindow {
             return
         }
         if (root.externalSubtitle === "") {
-            // A copy that timed out is started again here, before the
-            // delay changes, so the bindings never read the old timeout.
-            if (Subtitles.embeddedState(root.embeddedSubtitlePath, root.activeEmbeddedTrack) === "slow") {
-                Subtitles.embedded(root.embeddedSubtitlePath, root.activeEmbeddedTrack)
-            }
+            // A copy that stalled is started again only here, on a key or
+            // button, before the delay changes, so bindings never see it.
+            Subtitles.retryEmbedded(root.embeddedSubtitlePath, root.activeEmbeddedTrack)
             const problem = Subtitles.embeddedProblem(root.embeddedSubtitlePath, root.activeEmbeddedTrack)
             if (problem !== "") {
                 root.say(problem)

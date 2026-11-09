@@ -59,19 +59,22 @@ public:
   Q_INVOKABLE [[nodiscard]] QString embedded(const QString& videoPath, int track);
   // For a track embedded() was asked for: "working", "ready", "failed" (a
   // picture-based track, which has no text to copy), "unavailable" (no
-  // ffmpeg) or "slow" (gave up after embeddedTimeoutMs; the next embedded()
-  // call tries again). Empty before.
+  // ffmpeg) or "slow" (ffmpeg read nothing for embeddedStallMs). Empty
+  // before. embedded() never starts a slow copy again; retryEmbedded() does.
   Q_INVOKABLE [[nodiscard]] QString embeddedState(const QString& videoPath, int track) const;
   // Why a delay can't be applied to that track, in words, or empty.
   Q_INVOKABLE [[nodiscard]] QString embeddedProblem(const QString& videoPath, int track) const;
+  // Starts a slow copy again. For an explicit request (Z, X), never a binding.
+  Q_INVOKABLE void retryEmbedded(const QString& videoPath, int track);
   // Stops a running copy for the video and deletes its copies. Call when
   // the video changes or closes.
   Q_INVOKABLE void releaseEmbedded(const QString& videoPath);
   // Stops every copy. Runs on aboutToQuit, so quitting never waits on one.
   void stopEmbedded();
-  // How long a copy may run; tests shorten it.
-  void setEmbeddedTimeoutMs(int milliseconds) { m_embeddedTimeoutMs = milliseconds; }
-  static constexpr int kEmbeddedTimeoutMs = 120000;
+  // How long ffmpeg may read nothing before a copy gives up; a long file
+  // that keeps reading has no limit. Tests shorten it.
+  void setEmbeddedStallMs(int milliseconds) { m_embeddedStallMs = milliseconds; }
+  static constexpr int kEmbeddedStallMs = 30000;
 
   ~SubtitleIndex() override;
 
@@ -100,6 +103,8 @@ private:
     QString path;
     QPointer<QProcess> process;
   };
+  void startEmbedded(const QString& key, const QString& videoPath, int track, const QString& version);
+  void dropEmbedded(QHash<QString, Extraction>::iterator found);
   void finishEmbedded(const QString& key, QProcess* process, const QString& state);
   void notifyLater();
   static QString embeddedKey(const QString& videoPath, int track) {
@@ -111,7 +116,7 @@ private:
   // Made on first use, removed when the app quits.
   std::unique_ptr<QTemporaryDir> m_extracted;
   int m_extractedCount = 0;
-  int m_embeddedTimeoutMs = kEmbeddedTimeoutMs;
+  int m_embeddedStallMs = kEmbeddedStallMs;
   QHash<QString, quint64> m_pending;
   QFileSystemWatcher m_watcher;
   quint64 m_generation = 0;

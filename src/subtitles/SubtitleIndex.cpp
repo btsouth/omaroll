@@ -3,6 +3,7 @@
 #include "sources/FileVersion.h"
 
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFutureWatcher>
 #include <QtConcurrentRun>
 #include <QFile>
@@ -10,6 +11,11 @@
 #include <QCoreApplication>
 #include <QProcess>
 #include <QTimer>
+
+#ifdef Q_OS_LINUX
+#include <csignal>
+#include <sys/prctl.h>
+#endif
 #include <QStandardPaths>
 #include <QRegularExpression>
 #include <QtNumeric>
@@ -350,7 +356,7 @@ QString SubtitleIndex::embeddedProblem(const QString& videoPath, int track) cons
   const QString state = embeddedState(videoPath, track);
   if (state == u"failed") return QStringLiteral("Subtitle delay works only for text subtitles");
   if (state == u"unavailable") return QStringLiteral("Subtitle delay for this track needs ffmpeg");
-  if (state == u"slow") return QStringLiteral("These subtitles took too long to prepare for a delay");
+  if (state == u"slow") return QStringLiteral("Copying these subtitles stalled. Try the delay again");
   return {};
 }
 
@@ -368,26 +374,63 @@ QString SubtitleIndex::embedded(const QString& videoPath, int track) {
   const QString version = FileVersion::key(videoPath);
   const auto found = m_extractions.find(key);
   if (found != m_extractions.end()) {
-    // A copy that ran out of time is tried again when asked again; a
-    // picture track or a missing ffmpeg would fail the same way.
-    if (found->version == version && found->state != u"slow") {
-      return found->state == u"ready" ? found->path : QString();
-    }
-    // The file changed under its copy, or it timed out: start again.
-    if (found->process) {
-      disconnect(found->process, nullptr, this, nullptr);
-      found->process->kill();
-      found->process->deleteLater();
-    }
-    if (!found->path.isEmpty()) QFile::remove(found->path);
-    m_extractions.erase(found);
+    // Never retried from here: bindings call this whenever revision moves,
+    // and a copy that stalled would start again on its own result.
+    if (found->version == version) return found->state == u"ready" ? found->path : QString();
+    dropEmbedded(found); // The file changed under its copy.
   }
+  startEmbedded(key, videoPath, track, version);
+  return {};
+}
+
+void SubtitleIndex::retryEmbedded(const QString& videoPath, int track) {
+  const QString key = embeddedKey(videoPath, track);
+  const auto found = m_extractions.find(key);
+  if (found == m_extractions.end() || found->state != u"slow") return;
+  dropEmbedded(found);
+  startEmbedded(key, videoPath, track, FileVersion::key(videoPath));
+  notifyLater();
+}
+
+void SubtitleIndex::dropEmbedded(QHash<QString, Extraction>::iterator found) {
+  if (QProcess* process = found->process.data()) {
+    disconnect(process, nullptr, this, nullptr);
+    process->kill();
+    process->waitForFinished(1000);
+    delete process;
+  }
+  if (!found->path.isEmpty()) {
+    QFile::remove(found->path + QStringLiteral(".part"));
+    QFile::remove(found->path);
+    m_cache.remove(found->path);
+    m_pending.remove(found->path);
+    m_watcher.removePath(found->path);
+  }
+  m_extractions.erase(found);
+}
+
+namespace {
+// Bytes the process has read so far, or -1 when it can't be told.
+qint64 bytesRead(qint64 pid) {
+  if (pid <= 0) return -1;
+  QFile io(QStringLiteral("/proc/%1/io").arg(pid));
+  if (!io.open(QIODevice::ReadOnly)) return -1;
+  // Read to the end: a /proc file reports no size, so atEnd() is true at once.
+  const QList<QByteArray> lines = io.readAll().split('\n');
+  for (const QByteArray& line : lines) {
+    if (line.startsWith("rchar:")) return line.mid(6).trimmed().toLongLong();
+  }
+  return -1;
+}
+} // namespace
+
+void SubtitleIndex::startEmbedded(const QString& key, const QString& videoPath, int track, const QString& version) {
   const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
   if (!m_extracted) m_extracted = std::make_unique<QTemporaryDir>();
   if (ffmpeg.isEmpty() || !m_extracted->isValid()) {
     m_extractions.insert(key, {videoPath, version, QStringLiteral("unavailable"), {}, {}});
     notifyLater();
-    return {};
+    return;
   }
   const QString output = m_extracted->filePath(QStringLiteral("%1.srt").arg(++m_extractedCount));
   // Run without a worker thread: the process is the work, and it can be
@@ -395,6 +438,11 @@ QString SubtitleIndex::embedded(const QString& videoPath, int track) {
   auto* process = new QProcess(this);
   process->setStandardOutputFile(QProcess::nullDevice());
   process->setStandardErrorFile(QProcess::nullDevice());
+#ifdef Q_OS_LINUX
+  // If Omaroll dies without killing it, ffmpeg goes too rather than read
+  // to the end of the file.
+  process->setChildProcessModifier([] { ::prctl(PR_SET_PDEATHSIG, SIGTERM); });
+#endif
   // Text tracks only: a picture-based one (PGS, VobSub) has no text to
   // write, and ffmpeg refuses.
   process->setProgram(ffmpeg);
@@ -404,9 +452,21 @@ QString SubtitleIndex::embedded(const QString& videoPath, int track) {
                          QStringLiteral("srt"), QStringLiteral("-f"), QStringLiteral("srt"),
                          output + QStringLiteral(".part")});
   m_extractions.insert(key, {videoPath, version, QStringLiteral("working"), output, process});
-  auto* limit = new QTimer(process);
-  limit->setSingleShot(true);
-  connect(limit, &QTimer::timeout, this, [this, key, process] { finishEmbedded(key, process, QStringLiteral("slow")); });
+  // No cap on a long file: only a copy that stops reading gives up.
+  auto* watch = new QTimer(process);
+  watch->setInterval(std::clamp(m_embeddedStallMs / 4, 25, 1000));
+  auto stalled = std::make_shared<QElapsedTimer>();
+  auto lastRead = std::make_shared<qint64>(-2);
+  stalled->start();
+  connect(watch, &QTimer::timeout, this, [this, key, process, stalled, lastRead] {
+    const qint64 read = bytesRead(process->processId());
+    if (read < 0 || read != *lastRead) {
+      *lastRead = read;
+      stalled->restart();
+      return;
+    }
+    if (stalled->elapsed() >= m_embeddedStallMs) finishEmbedded(key, process, QStringLiteral("slow"));
+  });
   connect(process, &QProcess::finished, this, [this, key, process](int code, QProcess::ExitStatus status) {
     const QString partial = m_extractions.value(key).path + QStringLiteral(".part");
     const bool written = status == QProcess::NormalExit && code == 0 && QFileInfo(partial).isFile();
@@ -420,8 +480,7 @@ QString SubtitleIndex::embedded(const QString& videoPath, int track) {
     if (error == QProcess::FailedToStart && guard) finishEmbedded(key, guard, QStringLiteral("unavailable"));
   }, Qt::QueuedConnection);
   process->start();
-  limit->start(m_embeddedTimeoutMs);
-  return {};
+  watch->start();
 }
 
 void SubtitleIndex::finishEmbedded(const QString& key, QProcess* process, const QString& state) {
@@ -453,20 +512,9 @@ void SubtitleIndex::releaseEmbedded(const QString& videoPath) {
       ++it;
       continue;
     }
-    if (QProcess* process = it->process.data()) {
-      disconnect(process, nullptr, this, nullptr);
-      process->kill();
-      process->waitForFinished(1000);
-      delete process;
-    }
-    if (!it->path.isEmpty()) {
-      QFile::remove(it->path + QStringLiteral(".part"));
-      QFile::remove(it->path);
-      m_cache.remove(it->path);
-      m_pending.remove(it->path);
-      m_watcher.removePath(it->path);
-    }
-    it = m_extractions.erase(it);
+    // Erases and invalidates it: start over from the beginning.
+    dropEmbedded(it);
+    it = m_extractions.begin();
     released = true;
   }
   if (released) notifyLater();

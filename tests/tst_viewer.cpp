@@ -4649,6 +4649,31 @@ private slots:
     return script.fileName();
   }
 
+  // One that never finishes. It records each start and its pid, and with a
+  // "reading" file beside it keeps reading that file rather than sit idle.
+  // Only subtitle copies; the app's other ffmpeg runs (posters, frames) go
+  // to the real one, or fail when there is none.
+  static QString hangingFfmpeg(const QTemporaryDir& bin) {
+    const QByteArray dir = bin.path().toUtf8();
+    const QByteArray real = QFile::encodeName(QStandardPaths::findExecutable(QStringLiteral("ffmpeg")));
+    return fakeFfmpeg(bin, "case \"$*\" in *' 0:s:'*) ;; *) " + (real.isEmpty() ? QByteArray("exit 1") : "exec \"" + real + "\" \"$@\"")
+                           + " ;; esac\n"
+                           "echo $$ > \"" + dir + "/pid\"\necho start >> \"" + dir + "/starts\"\n"
+                           "if [ -f \"" + dir + "/reading\" ]; then\n"
+                           "  exec sh -c 'while :; do read -r x < \"$0\"; sleep 0.05; done' \"" + dir + "/reading\"\n"
+                           "fi\nexec sleep 60");
+  }
+
+  static int startsOf(const QTemporaryDir& bin) {
+    QFile file(bin.filePath(QStringLiteral("starts")));
+    return file.open(QIODevice::ReadOnly) ? int(file.readAll().count('\n')) : 0;
+  }
+
+  static bool hangingFfmpegRuns(const QTemporaryDir& bin) {
+    const qint64 pid = readPid(bin.filePath(QStringLiteral("pid")));
+    return pid > 0 && QFileInfo::exists(QStringLiteral("/proc/%1").arg(pid));
+  }
+
   static qint64 readPid(const QString& path) {
     QFile file(path);
     return file.open(QIODevice::ReadOnly) ? file.readAll().trimmed().toLongLong() : 0;
@@ -4661,7 +4686,7 @@ private slots:
     QTemporaryDir bin;
     QVERIFY(bin.isValid());
     const QString pidFile = bin.filePath(QStringLiteral("pid"));
-    QVERIFY(!fakeFfmpeg(bin, "echo $$ > \"" + pidFile.toUtf8() + "\"\nexec sleep 60").isEmpty());
+    QVERIFY(!hangingFfmpeg(bin).isEmpty());
     const QByteArray systemPath = qgetenv("PATH");
     qputenv("PATH", bin.path().toUtf8() + ':' + systemPath);
     const auto restorePath = qScopeGuard([systemPath] { qputenv("PATH", systemPath); });
@@ -4695,22 +4720,40 @@ private slots:
       index.stopEmbedded();
       QVERIFY2(timer.elapsed() < 1500, qPrintable(QString::number(timer.elapsed())));
       QVERIFY(!running(pid));
-      // Too slow: not a picture track, so not "failed".
-      index.setEmbeddedTimeoutMs(300);
+      // Stalled: not a picture track, so not "failed".
+      index.setEmbeddedStallMs(300);
       pid = startCopy(index);
       QVERIFY(running(pid));
       QTRY_COMPARE_WITH_TIMEOUT(index.embeddedState(tracks, 0), QStringLiteral("slow"), 5000);
       QVERIFY(!running(pid));
       QCOMPARE(index.embeddedProblem(tracks, 0),
-               QStringLiteral("These subtitles took too long to prepare for a delay"));
-      // Asked again, it tries again.
+               QStringLiteral("Copying these subtitles stalled. Try the delay again"));
+      // Asking again, as a binding does, doesn't start it again.
       QFile::remove(pidFile);
       QVERIFY(index.embedded(tracks, 0).isEmpty());
+      QCOMPARE(index.embeddedState(tracks, 0), QStringLiteral("slow"));
+      QTest::qWait(300);
+      QCOMPARE(readPid(pidFile), qint64(0));
+      // Retrying does.
+      index.retryEmbedded(tracks, 0);
       QCOMPARE(index.embeddedState(tracks, 0), QStringLiteral("working"));
       QTRY_VERIFY(running(readPid(pidFile)));
       QTRY_COMPARE_WITH_TIMEOUT(index.embeddedState(tracks, 0), QStringLiteral("slow"), 5000);
       index.releaseEmbedded(tracks);
-      index.setEmbeddedTimeoutMs(SubtitleIndex::kEmbeddedTimeoutMs);
+      // A copy that keeps reading has no time limit, however long it runs.
+      QFile reading(bin.filePath(QStringLiteral("reading")));
+      QVERIFY(reading.open(QIODevice::WriteOnly));
+      reading.write("line\n");
+      reading.close();
+      pid = startCopy(index);
+      QVERIFY(running(pid));
+      QTest::qWait(1500);
+      QCOMPARE(index.embeddedState(tracks, 0), QStringLiteral("working"));
+      QVERIFY(running(pid));
+      index.releaseEmbedded(tracks);
+      QVERIFY(!running(pid));
+      QVERIFY(QFile::remove(reading.fileName()));
+      index.setEmbeddedStallMs(SubtitleIndex::kEmbeddedStallMs);
       // Destroyed with one running.
       pid = startCopy(index);
       QVERIFY(running(pid));
@@ -4756,6 +4799,53 @@ private slots:
     m_window->setProperty("status", QString());
     QTest::keyClick(m_window, Qt::Key_X);
     QCOMPARE(prop("status").toString(), QStringLiteral("Subtitle delay works only for text subtitles"));
+    QCOMPARE(prop("subtitleOffsetMs").toInt(), 0);
+  }
+
+  // A copy that stalls takes the delay back once, says so and stays
+  // stopped: only Z or X starts it again, and then just one.
+  void aStalledSubtitleCopyWaitsForZOrX() {
+    QTemporaryDir bin;
+    QVERIFY(bin.isValid());
+    QVERIFY(!hangingFfmpeg(bin).isEmpty());
+    const QString folder = m_scratch.filePath(QStringLiteral("stalled-subtitles"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString path = folder + QStringLiteral("/stalled.mkv");
+    QVERIFY(QFile::exists(path) || QFile::copy(QFINDTESTDATA("fixtures/viewer/tracks.mkv"), path));
+    const QByteArray systemPath = qgetenv("PATH");
+    qputenv("PATH", bin.path().toUtf8() + ':' + systemPath);
+    m_subtitles->setEmbeddedStallMs(300);
+    const auto restore = qScopeGuard([this, systemPath] {
+      qputenv("PATH", systemPath);
+      m_subtitles->setEmbeddedStallMs(SubtitleIndex::kEmbeddedStallMs);
+    });
+    open({path});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY_WITH_TIMEOUT(player->playbackState() == QMediaPlayer::PlayingState, 5000);
+    QTRY_COMPARE(player->subtitleTracks().size(), 1);
+    QTest::keyClick(m_window, Qt::Key_C);
+    QTRY_COMPARE(player->activeSubtitleTrack(), 0);
+    player->pause();
+    QTest::keyClick(m_window, Qt::Key_X);
+    QCOMPARE(prop("status").toString(), QStringLiteral("Preparing subtitles…"));
+    QTRY_COMPARE(startsOf(bin), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(prop("status").toString(),
+                              QStringLiteral("Copying these subtitles stalled. Try the delay again"), 5000);
+    QCOMPARE(prop("subtitleOffsetMs").toInt(), 0);
+    QVERIFY(!hangingFfmpegRuns(bin));
+    // Several stall periods later, still one start and nothing running.
+    QTest::qWait(1200);
+    QCOMPARE(startsOf(bin), 1);
+    QVERIFY(!hangingFfmpegRuns(bin));
+    QCOMPARE(prop("subtitleOffsetMs").toInt(), 0);
+    QTest::keyClick(m_window, Qt::Key_X);
+    QCOMPARE(prop("status").toString(), QStringLiteral("Preparing subtitles…"));
+    QTRY_COMPARE(startsOf(bin), 2);
+    QTRY_COMPARE_WITH_TIMEOUT(prop("status").toString(),
+                              QStringLiteral("Copying these subtitles stalled. Try the delay again"), 5000);
+    QTest::qWait(600);
+    QCOMPARE(startsOf(bin), 2);
     QCOMPARE(prop("subtitleOffsetMs").toInt(), 0);
   }
 

@@ -4127,6 +4127,87 @@ private slots:
     QCOMPARE(m_subtitles->embeddedState(paths[2], 0), QString());
   }
 
+  // A stalled copy in the preview: the delay goes back once, nothing starts
+  // again by itself, and Z, X or the Sub + button starts exactly one more.
+  void previewWaitsForZOrXAfterAStalledCopy() {
+    int videoRow = -1;
+    for (int row = 0; row < m_library->rowCount() && videoRow < 0; ++row) {
+      if (m_library->isVideoAt(row)) videoRow = row;
+    }
+    QVERIFY(videoRow >= 0);
+    QTemporaryDir bin;
+    QVERIFY(bin.isValid());
+    const QByteArray dir = bin.path().toUtf8();
+    QFile fake(bin.filePath(QStringLiteral("ffmpeg")));
+    QVERIFY(fake.open(QIODevice::WriteOnly));
+    // Only subtitle copies hang; the app's other ffmpeg runs use the real one.
+    const QByteArray real = QFile::encodeName(QStandardPaths::findExecutable(QStringLiteral("ffmpeg")));
+    fake.write("#!/bin/sh\ncase \"$*\" in *' 0:s:'*) ;; *) "
+               + (real.isEmpty() ? QByteArray("exit 1") : "exec \"" + real + "\" \"$@\"") + " ;; esac\n"
+               "echo $$ > \"" + dir + "/pid\"\necho start >> \"" + dir + "/starts\"\nexec sleep 60\n");
+    fake.close();
+    QVERIFY(fake.setPermissions(fake.permissions() | QFileDevice::ExeOwner));
+    const auto starts = [&bin] {
+      QFile file(bin.filePath(QStringLiteral("starts")));
+      return file.open(QIODevice::ReadOnly) ? int(file.readAll().count('\n')) : 0;
+    };
+    const auto running = [&bin] {
+      QFile file(bin.filePath(QStringLiteral("pid")));
+      const qint64 pid = file.open(QIODevice::ReadOnly) ? file.readAll().trimmed().toLongLong() : 0;
+      return pid > 0 && QFileInfo::exists(QStringLiteral("/proc/%1").arg(pid));
+    };
+    QTemporaryDir folder;
+    QVERIFY(folder.isValid());
+    const QString path = folder.filePath(QStringLiteral("stalled.mkv"));
+    QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/viewer/tracks.mkv"), path));
+    const QByteArray systemPath = qgetenv("PATH");
+    qputenv("PATH", bin.path().toUtf8() + ':' + systemPath);
+    m_subtitles->setEmbeddedStallMs(300);
+    const auto restore = qScopeGuard([this, systemPath] {
+      qputenv("PATH", systemPath);
+      m_subtitles->setEmbeddedStallMs(SubtitleIndex::kEmbeddedStallMs);
+      invoke("dismissTopLayer");
+    });
+    const auto status = [this] { return item("footerStatus")->property("text").toString(); };
+    const QString stalled = QStringLiteral("Copying these subtitles stalled. Try the delay again");
+
+    openDetail(videoRow);
+    QQuickItem* detail = item("detail");
+    detail->setProperty("path", QString());
+    detail->setProperty("path", path);
+    QVERIFY(QMetaObject::invokeMethod(detail, "open"));
+    QMediaPlayer* player = m_window->findChild<QMediaPlayer*>(QStringLiteral("videoPlayer"));
+    QVERIFY(player);
+    QTRY_COMPARE_WITH_TIMEOUT(player->subtitleTracks().size(), 1, 10000);
+    QVERIFY(QMetaObject::invokeMethod(detail, "setSubtitleTrack", Q_ARG(QVariant, 0)));
+    player->pause();
+    QTest::keyClick(m_window, Qt::Key_X);
+    QCOMPARE(status(), QStringLiteral("Preparing subtitles…"));
+    QTRY_COMPARE(starts(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(status(), stalled, 5000);
+    QCOMPARE(detail->property("subtitleOffsetMs").toInt(), 0);
+    QVERIFY(!running());
+    QTest::qWait(1200);
+    QCOMPARE(starts(), 1);
+    QVERIFY(!running());
+    QCOMPARE(detail->property("subtitleOffsetMs").toInt(), 0);
+    QTest::keyClick(m_window, Qt::Key_Z);
+    QCOMPARE(status(), QStringLiteral("Preparing subtitles…"));
+    QTRY_COMPARE(starts(), 2);
+    QTRY_COMPARE_WITH_TIMEOUT(status(), stalled, 5000);
+    QTest::qWait(600);
+    QCOMPARE(starts(), 2);
+    QCOMPARE(detail->property("subtitleOffsetMs").toInt(), 0);
+    // The Sub + button retries too.
+    QTRY_VERIFY(item("subtitleLater")->isVisible());
+    click(item("subtitleLater"));
+    QTRY_COMPARE(starts(), 3);
+    QTRY_COMPARE_WITH_TIMEOUT(status(), stalled, 5000);
+    QTest::qWait(600);
+    QCOMPARE(starts(), 3);
+    QCOMPARE(detail->property("subtitleOffsetMs").toInt(), 0);
+  }
+
   // Without mpv the handoff says so and the preview keeps playing.
   void previewKeepsPlayingWhenMpvIsMissing() {
     int videoRow = -1;
