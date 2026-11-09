@@ -8956,6 +8956,88 @@ private slots:
     QVERIFY(reset.isEmpty());
   }
 
+  void lateCaptureDatesKeepTheDateSortTrue() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    for (const char* name : {"OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR",
+                             "XDG_PICTURES_DIR", "XDG_VIDEOS_DIR"}) {
+      QVERIFY(qputenv(name, dir.path().toUtf8()));
+    }
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QTRY_VERIFY(!model.scanning());
+
+    // Files copied off a card today: each sorts by its copy time until its
+    // camera date is read. The first two are exact copies made last, at the
+    // top; the camera dates of every third file below arrive in the same
+    // batch, as they do from the cache at launch.
+    const QDateTime now = QDateTime::currentDateTime();
+    QList<CaptureRecord> records;
+    for (int row = 0; row < 60; ++row) {
+      CaptureRecord record;
+      record.path = dir.filePath(QStringLiteral("photo-%1.jpg").arg(row, 2, 10, QLatin1Char('0')));
+      record.fileName = QFileInfo(record.path).fileName();
+      record.kind = CaptureRecord::Picture;
+      record.captured = now.addSecs(-60 * row);
+      record.modified = record.captured.toMSecsSinceEpoch();
+      record.bytes = 1000 + row;
+      record.device = 1;
+      record.inode = 100 + row;
+      records.append(record);
+    }
+    model.setRecordsForTesting(records);
+    CaptureFilterModel proxy;
+    proxy.setSourceModel(&model);
+    QAbstractItemModelTester tester(&proxy, QAbstractItemModelTester::FailureReportingMode::QtTest);
+    proxy.setSortMode(CaptureFilterModel::NewestFirst);
+    QCOMPARE(proxy.rowCount(), 60);
+
+    QList<CaptureModel::MetadataUpdate> updates;
+    QHash<QString, QDateTime> taken;
+    const auto date = [&](int row, const QDateTime& when) {
+      const CaptureRecord& record = records.at(row);
+      updates.append({record.path, record.modified, record.bytes, when, record.device,
+                      record.inode, QStringLiteral("Canon EOS R6"), {}});
+      taken.insert(record.path, when);
+    };
+    date(0, QDateTime(QDate(2025, 10, 9), QTime(12, 0)));
+    date(1, QDateTime(QDate(2025, 10, 1), QTime(9, 0)));
+    for (int row = 10; row < 60; row += 3) {
+      date(row, QDateTime(QDate(2025, 10, 1 + row % 28), QTime(8 + row % 10, 0)));
+    }
+    model.applyMetadata(updates);
+
+    const auto sorted = [&](CaptureFilterModel::SortMode mode) {
+      for (int row = 0; row < proxy.rowCount(); ++row) {
+        const QDateTime here = proxy.data(proxy.index(row, 0), CaptureRoles::CapturedRole).toDateTime();
+        const QString path = proxy.pathAt(row);
+        if (taken.contains(path) && here != taken.value(path)) return false;
+        if (row == 0) continue;
+        const QDateTime above =
+            proxy.data(proxy.index(row - 1, 0), CaptureRoles::CapturedRole).toDateTime();
+        if (mode == CaptureFilterModel::NewestFirst ? above < here : above > here) {
+          qWarning() << "out of order at" << row << above << here;
+          return false;
+        }
+      }
+      return true;
+    };
+    // The order the tiles and sections show, with no re-sort by hand.
+    QVERIFY(sorted(CaptureFilterModel::NewestFirst));
+    QCOMPARE(proxy.rowOf(records.at(2).path), 0);
+    // The same holds in the other direction, and when the dates go back.
+    proxy.setSortMode(CaptureFilterModel::OldestFirst);
+    QVERIFY(sorted(CaptureFilterModel::OldestFirst));
+    updates.clear();
+    taken.clear();
+    for (int row = 0; row < 60; row += 2) date(row, records.at(row).captured.addDays(-400));
+    model.applyMetadata(updates);
+    QVERIFY(sorted(CaptureFilterModel::OldestFirst));
+    proxy.setSortMode(CaptureFilterModel::NewestFirst);
+    QVERIFY(sorted(CaptureFilterModel::NewestFirst));
+  }
+
   void dateSectionsFollowTheSortedDaysAndMonths() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
