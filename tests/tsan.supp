@@ -1,41 +1,13 @@
-# Add only confirmed external-library races, with the finding documented here.
-# Arch's uninstrumented Qt 6.12 posts QFutureCallOutEvents on pooled threads
-# and deletes them in QCoreApplication::removePostedEvents during watcher
-# teardown. The event-queue mutex lives in Qt, so TSan misses that ordering.
-# Match only this event reclamation frame, not QtConcurrent worker frames.
-race:QCoreApplication::removePostedEvents
+# ThreadSanitizer suppressions for the core suite. Reports whose accesses all
+# start inside uninstrumented Qt or glibc are sorted out by tests/tsan-triage.py
+# instead; list here only reports that reach instrumented code, each with the
+# reason it is not ours.
+
 # Arch's Qt is not built with TSan, so the atomic reference count that orders
 # a QFuture's final release is invisible to it. Whichever side drops the last
 # reference frees the shared state (result store, wait condition) after the
-# worker is done with it; TSan sees only the unordered accesses. Seen when a
-# ViewerSession is destroyed right after its listing finished. Every report
-# runs through the QFuture destructor, so match that frame only.
+# worker is done with it. Seen when a ViewerSession is destroyed right after
+# its listing finished: QResultStore's header code, compiled into our binary,
+# clears the map the worker filled under Qt's mutex. Every such report runs
+# through the QFuture destructor, so match that frame only.
 race:::~QFuture()
-# Qt's internal allocations (thread pool bookkeeping, container growth inside
-# libQt6Core) are guarded by Qt's own mutexes, which the uninstrumented library
-# never reports. Seen as a malloc in one pool thread and a realloc in another,
-# with no Omaroll frame in either access. Omaroll never calls realloc itself;
-# its own container accesses are instrumented and reported where they happen.
-# TSan matches the interceptor's internal name (___interceptor_realloc), so
-# anchor only the end; every C++ frame ends in its parameter list instead.
-race:realloc$
-# glibc caches strings such as the time zone name with strdup and frees the old
-# copy later, under its own internal lock (Qt calls tzset() while converting
-# file times on worker threads). Seen as a strdup on a pool thread and a free
-# inside libc on the main thread. Omaroll never calls strdup.
-race:strdup$
-# Qt D-Bus runs its own QDBusConnection thread. libQt6DBus allocates events on
-# the calling thread and Qt deletes them on that thread after delivery, through
-# the uninstrumented event queue. No Omaroll code runs on the D-Bus thread, so
-# match any report with a libQt6DBus frame.
-race:libQt6DBus.so
-# A queued invokeMethod allocates its call event inside Qt on the posting
-# thread, and Qt deletes it on the receiving thread after delivery, through
-# the uninstrumented event queue. Match the allocating Qt frame, never
-# sendPostedEvents, which every queued slot runs under.
-race:QMetaObject::invokeMethodImpl
-# Qt destroys a QFuture's QWaitCondition after the pool thread that waited on
-# it was woken; the wake and the destroy are ordered by Qt's internal mutex,
-# which TSan cannot see. Omaroll itself uses std::condition_variable, so this
-# matches only Qt's own wait conditions.
-race:QWaitCondition::~QWaitCondition
