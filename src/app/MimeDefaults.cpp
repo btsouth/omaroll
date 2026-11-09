@@ -132,12 +132,15 @@ QString MimeDefaults::apply(bool unset, const QString &group) {
       }
       if (removed && previous == desktop && !restore.isEmpty())
         removed = run({"default", restore, type});
-      // A system-wide default can still name Omaroll after the user's
-      // entries are gone; say so rather than report a change that didn't happen.
+      // A system-wide default, or Omaroll being the only installed app for
+      // the type, can still open it with Omaroll; say so instead of claiming
+      // it was removed.
       QString now;
-      if (removed && run({"query", "default", type}, &now) && now == desktop) {
-        ok = false;
-        report << type + ": still Omaroll (set outside your own configuration)";
+      if (removed && restore.isEmpty() && run({"query", "default", type}, &now) &&
+          now == desktop) {
+        state.remove(type);
+        report << type + ": removed your setting; it still opens with Omaroll "
+                         "(a system default, or no other app handles it)";
         continue;
       }
       if (!removed) {

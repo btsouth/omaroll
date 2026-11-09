@@ -702,6 +702,19 @@ private slots:
     const QString restored = defaults.apply(true, "images");
     QVERIFY2(defaults.succeeded(), qPrintable(restored));
     QVERIFY(restored.contains("image/png: restored other.desktop"));
+    // A handler chosen after an earlier --set-default is the one put back.
+    defaults.apply(false, "images");
+    QVERIFY(defaults.succeeded());
+    QFile third(dir.filePath("data/applications/third.desktop"));
+    QVERIFY(third.open(QIODevice::WriteOnly));
+    third.write("[Desktop Entry]\nType=Application\nName=Third\nExec=/usr/bin/true %f\nMimeType=image/png;\n");
+    third.close();
+    QVERIFY(writeDefaults("[Default Applications]\nimage/png=third.desktop;\napplication/pdf=other.desktop;\ninode/directory=other.desktop;\n"));
+    defaults.apply(false, "images");
+    QVERIFY(defaults.succeeded());
+    const QString newer = defaults.apply(true, "images");
+    QVERIFY2(newer.contains("image/png: restored third.desktop"), qPrintable(newer));
+    QVERIFY(writeDefaults("[Default Applications]\nimage/png=other.desktop;\napplication/pdf=other.desktop;\ninode/directory=other.desktop;\n"));
     QFile config(dir.filePath("config/mimeapps.list"));
     QVERIFY(config.open(QIODevice::ReadOnly));
     auto contents = config.readAll(); config.close();
