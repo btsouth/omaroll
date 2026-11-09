@@ -20,6 +20,20 @@ public:
   explicit MimeDefaults(QObject* parent = nullptr);
   ~MimeDefaults() override;
   static QStringList types(const QString &desktopFile, const QString &group);
+  // mimeapps.list text: the [Default Applications] line for a type, or empty.
+  static QString defaultLine(const QString &text, const QString &type);
+  // The text without Omaroll as a handler for the type, in any group but
+  // [Removed Associations]. Lines left with no handler are deleted, not
+  // blanked. With original, the default line naming only Omaroll becomes that
+  // line again instead (less Omaroll, if it names it too); restored says
+  // whether that line is in place now, put back here or by an earlier call.
+  static QString withoutOmaroll(const QString &text, const QString &type,
+                                const QString &original = {}, bool *restored = nullptr);
+  // The text without what xdg-mime added around Omaroll's lines: the empty
+  // [Default Applications] it appended to a list without one, and the final
+  // newline of a list that ended without one.
+  static QString withoutAddedStructure(const QString &text, bool hadSection,
+                                       bool endedWithNewline);
   // Returns a printable report, including any failures. No UI is required.
   Q_INVOKABLE QString apply(bool unset = false,
                             const QString &group = QStringLiteral("all"));

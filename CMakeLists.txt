@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(Omaroll VERSION 1.18.0 LANGUAGES CXX)
+project(Omaroll VERSION 1.18.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -11,7 +11,28 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(Qt6 6.8 REQUIRED COMPONENTS Concurrent Core DBus Gui Multimedia Qml Quick QuickControls2 Test)
 qt_standard_project_setup(REQUIRES 6.8)
 
+# The clipboard helper speaks ext-data-control directly (ClipboardServe).
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(WAYLAND_CLIENT REQUIRED IMPORTED_TARGET wayland-client)
+find_program(WAYLAND_SCANNER wayland-scanner REQUIRED)
+set(OMAROLL_PROTOCOL_DIR "${CMAKE_CURRENT_BINARY_DIR}/protocols")
+file(MAKE_DIRECTORY "${OMAROLL_PROTOCOL_DIR}")
+set(OMAROLL_DATA_CONTROL_XML "${CMAKE_CURRENT_SOURCE_DIR}/protocols/ext-data-control-v1.xml")
+add_custom_command(
+  OUTPUT "${OMAROLL_PROTOCOL_DIR}/ext-data-control-v1-client-protocol.h"
+         "${OMAROLL_PROTOCOL_DIR}/ext-data-control-v1-protocol.c"
+  COMMAND "${WAYLAND_SCANNER}" client-header "${OMAROLL_DATA_CONTROL_XML}"
+          "${OMAROLL_PROTOCOL_DIR}/ext-data-control-v1-client-protocol.h"
+  COMMAND "${WAYLAND_SCANNER}" private-code "${OMAROLL_DATA_CONTROL_XML}"
+          "${OMAROLL_PROTOCOL_DIR}/ext-data-control-v1-protocol.c"
+  DEPENDS "${OMAROLL_DATA_CONTROL_XML}"
+  VERBATIM)
+
 add_library(omaroll_core STATIC
+  src/actions/ClipboardServe.cpp
+  src/actions/ClipboardServe.h
+  "${OMAROLL_PROTOCOL_DIR}/ext-data-control-v1-client-protocol.h"
+  "${OMAROLL_PROTOCOL_DIR}/ext-data-control-v1-protocol.c"
   src/app/AppSettings.cpp
   src/app/AppSettings.h
   src/app/DemoLibrary.cpp
@@ -143,8 +164,9 @@ add_library(omaroll_core STATIC
 )
 
 target_include_directories(omaroll_core PUBLIC src)
+target_include_directories(omaroll_core PRIVATE "${OMAROLL_PROTOCOL_DIR}")
 target_link_libraries(omaroll_core PUBLIC Qt6::Concurrent Qt6::Core Qt6::DBus Qt6::Gui Qt6::Multimedia
-  Qt6::Qml Qt6::Quick)
+  Qt6::Qml Qt6::Quick PRIVATE PkgConfig::WAYLAND_CLIENT)
 target_compile_definitions(omaroll_core PUBLIC OMAROLL_VERSION="${PROJECT_VERSION}")
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(omaroll_core PRIVATE -Wall -Wextra -Wpedantic)
@@ -333,6 +355,11 @@ if(BUILD_TESTING)
   add_test(NAME omaroll_cli COMMAND bash ${CMAKE_SOURCE_DIR}/tests/check-cli.sh
     $<TARGET_FILE:omaroll> ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR}
     ${CMAKE_INSTALL_MANDIR} ${CMAKE_INSTALL_DATAROOTDIR})
+  # The real clipboard helper needs a compositor with ext-data-control and
+  # takes over its clipboard, so it skips unless asked for (omabox).
+  add_test(NAME omaroll_clipboard_helper COMMAND bash ${CMAKE_SOURCE_DIR}/tests/check-clipboard-helper.sh
+    $<TARGET_FILE:omaroll> ${CMAKE_SOURCE_DIR})
+  set_tests_properties(omaroll_clipboard_helper PROPERTIES SKIP_RETURN_CODE 77)
   # The suite touches QImage and QGuiApplication paths, so it needs a platform
   # plugin; offscreen keeps it runnable in a headless checkout or CI.
   set(omaroll_test_environment

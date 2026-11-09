@@ -26,7 +26,7 @@ and **About** in Settings lists every missing tool with its `pacman` command.
 | PDF | Open document *(default)* | `sushi` |
 | Any | Open in Omaroll · Albums and tags | native |
 | Any | Rename in place | native, extension preserved |
-| Any | Copy image or file | `wl-copy`: PNG/JPEG pixels, otherwise file URIs |
+| Any | Copy image or file | PNG pixels; a JPEG as itself and, up to 24 MP where the compositor has ext-data-control, as PNG so it reaches clipboard history (otherwise JPEG only, which the history skips); other formats as file URIs (`wl-copy`) |
 | Any | Send with LocalSend | `omarchy-menu-share` |
 | Any | Send to a machine | `omarchy-tailscale-send`, after picking the machine |
 | Any | Show in file manager | select the file in the configured folder handler when supported, or open its folder through `xdg-open` |

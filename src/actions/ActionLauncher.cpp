@@ -1,4 +1,5 @@
 #include "actions/ActionLauncher.h"
+#include "actions/ClipboardServe.h"
 #include "actions/FileDrag.h"
 #include "actions/TrashRestore.h"
 #include "edit/ClipboardText.h"
@@ -242,12 +243,79 @@ bool ActionLauncher::copyFile(const QString& path) {
   if (mime != u"image/png"_s && mime != u"image/jpeg"_s) {
     return copyUris({path});
   }
+  newCopy();
+
+  // A JPEG goes on as itself and as PNG, so the shell's history keeps it.
+  if (ClipboardServe::mayOfferPng(mime) && !qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY")) {
+    return copyWithPng(path, mime);
+  }
 
   // The house helper's --copy-only branch can exit zero after wl-copy fails.
   // Its copy operation is exactly this invocation, so track wl-copy directly
   // to establish whether the selection was accepted.
   return startSubmission(u"wl-copy"_s, {u"--type"_s, mime}, u"wl-clipboard"_s,
-                         u"Copied to clipboard"_s, path, 5000);
+                         u"Copied to clipboard"_s, path, 5000, &m_copyProcess);
+}
+
+void ActionLauncher::newCopy() {
+  ++m_copyGeneration;
+  // A copy still reading a big file must not land on top of this one.
+  for (QProcess* older : {m_copyHelper.data(), m_copyProcess.data()}) {
+    if (older && older->state() != QProcess::NotRunning) {
+      older->setProperty("superseded", true);
+      older->kill();
+    }
+  }
+}
+
+bool ActionLauncher::copyWithPng(const QString& path, const QString& mime) {
+  auto* process = new QProcess(this);
+  m_copyHelper = process;
+  const quint64 generation = m_copyGeneration;
+  process->setProcessEnvironment(externalProcessEnvironment());
+  process->setProgram(m_clipboardHelper.isEmpty() ? QCoreApplication::applicationFilePath()
+                                                  : m_clipboardHelper);
+  process->setArguments({QString::fromLatin1(ClipboardServe::kOption), mime, path});
+  process->setStandardInputFile(QProcess::nullDevice());
+  process->setStandardOutputFile(QProcess::nullDevice());
+  auto* timer = new QTimer(process);
+  timer->setSingleShot(true);
+  auto settled = std::make_shared<bool>(false);
+  // copied, or the helper's exit code when it did not copy (-1: no exit).
+  const auto finish = [this, process, timer, settled, path, mime, generation](bool copied,
+                                                                              int code) {
+    if (*settled) return;
+    *settled = true;
+    timer->stop();
+    process->deleteLater();
+    // Something newer went on the clipboard meanwhile. A fallback now would
+    // put this older picture back over it.
+    if (generation != m_copyGeneration || code == ClipboardServe::kSuperseded) {
+      emit submissionFinished(u"omaroll"_s, false, u"A newer copy replaced this one"_s);
+      return;
+    }
+    if (copied) {
+      emit reported(u"Copied to clipboard"_s);
+      emit submissionFinished(u"omaroll"_s, true, {});
+      return;
+    }
+    // No ext-data-control here, or it failed: the file's own type through
+    // wl-copy, as before, which reports its own outcome.
+    startSubmission(u"wl-copy"_s, {u"--type"_s, mime}, u"wl-clipboard"_s,
+                    u"Copied to clipboard"_s, path, 5000, &m_copyProcess);
+  };
+  connect(process, &QProcess::finished, this,
+          [finish](int code, QProcess::ExitStatus status) {
+            const bool exited = status == QProcess::NormalExit;
+            finish(exited && code == 0, exited ? code : -1);
+          });
+  connect(process, &QProcess::errorOccurred, this, [finish](QProcess::ProcessError error) {
+    if (error == QProcess::FailedToStart) finish(false, -1);
+  });
+  connect(timer, &QTimer::timeout, process, [process] { process->kill(); });
+  process->start();
+  timer->start(3000);
+  return true;
 }
 
 bool ActionLauncher::runDetached(const QString& program, const QStringList& arguments,
@@ -278,7 +346,8 @@ bool ActionLauncher::runSubmission(const QString& program, const QStringList& ar
 
 bool ActionLauncher::startSubmission(const QString& program, const QStringList& arguments,
                                      const QString& packageHint, const QString& confirmation,
-                                     const QString& inputPath, int timeoutMs) {
+                                     const QString& inputPath, int timeoutMs,
+                                     QPointer<QProcess>* track) {
   const QString executable = locate(program, packageHint);
   if (executable.isEmpty()) return false;
 
@@ -310,6 +379,11 @@ bool ActionLauncher::startSubmission(const QString& program, const QStringList& 
     state->settled = true;
     timer->stop();
     drain();
+    if (process->property("superseded").toBool()) {
+      process->deleteLater();
+      emit submissionFinished(program, false, u"A newer copy replaced this one"_s);
+      return;
+    }
     if (detail.isEmpty()) {
       const QString text = QString::fromUtf8(success ? state->output : state->error).trimmed();
       const QStringList lines = text.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
@@ -338,6 +412,7 @@ bool ActionLauncher::startSubmission(const QString& program, const QStringList& 
     state->timedOut = true;
     process->kill(); // finished owns the single terminal notification
   });
+  if (track) *track = process;
   process->start();
   timer->start(timeoutMs);
   return true;
@@ -444,10 +519,12 @@ void ActionLauncher::revealExisting(const QString& path) {
 }
 
 bool ActionLauncher::copyPlainText(const QString& text) {
+  newCopy();
   return ClipboardText::offer(text);
 }
 
 bool ActionLauncher::copyText(const QString& text, bool sensitive, const QString& mimeType) {
+  newCopy();
   // wl-copy rather than QClipboard: the house tools use it, it keeps the
   // selection alive after omaroll closes, and only it can flag a paste as
   // sensitive so the clipboard history leaves it out.

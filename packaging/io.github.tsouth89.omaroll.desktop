@@ -11,3 +11,8 @@ MimeType=image/png;image/jpeg;image/webp;image/gif;image/bmp;image/avif;image/he
 Keywords=media;photo;video;pdf;document;screenshot;recording;capture;gallery;library;album;tag;
 StartupNotify=true
 StartupWMClass=io.github.tsouth89.omaroll
+Actions=open-library;
+
+[Desktop Action open-library]
+Name=Open Library
+Exec=omaroll --library

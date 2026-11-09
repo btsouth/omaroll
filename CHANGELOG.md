@@ -99,6 +99,13 @@
   and, above it, the nearest of up to 100 sampled keyframes, and the preview
   follows a drag. Keyframes are decoded once in the background at low priority
   and cached, so a video opened again has previews at once.
+- A copied JPEG of up to 24 megapixels is offered as PNG as well as itself,
+  so it appears in Omarchy's clipboard history. The PNG is made only when
+  something asks for it, outside the app. Larger photos, and compositors
+  without ext-data-control, get JPEG only, which the history skips.
+- A playing video shows a poster frame as its cover art in the shell's player
+  controls and other MPRIS clients.
+- **Open Library** on Omaroll's launcher entry.
 
 ### Changed
 
@@ -163,6 +170,12 @@
 - A video that won't open says why, like a picture: no decoder for its codec,
   cut off, damaged or not a video, with Open in mpv, Open with, Show in folder
   and Trash. The seek bar hides and the arrow keys step to the next file.
+- `--unset-default` puts `mimeapps.list` back exactly as it was before
+  `--set-default`, including a section or file xdg-mime had to create and a
+  missing final newline. Repeated cycles used to leave blank lines behind and
+  move restored lines to the end of the section. Omaroll is still taken out
+  of the lists there, Added Associations included; Removed Associations
+  entries stay.
 - Typing a search while the library showed "Nothing matches" could apply the
   half-typed search early and trip a binding loop on slower machines.
 - The empty library named Super + Shift + S for screenshots. It now names the

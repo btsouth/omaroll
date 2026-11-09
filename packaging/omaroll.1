@@ -50,12 +50,32 @@ replaced. Name the same group:
 .B omaroll \-\-unset\-default pdf
 undoes
 .BR "omaroll \-\-set\-default pdf" .
+Each line of
+.I $XDG_CONFIG_HOME/mimeapps.list
+(\fI~/.config/mimeapps.list\fR when
+.B XDG_CONFIG_HOME
+is unset or empty) goes back as it was, and what Omaroll added is removed,
+including a section or file that was not there before, so the file is
+unchanged after any number of set and unset cycles. The exceptions: Omaroll is
+taken out of that file for the group's types wherever it is named, so an
+Added Associations entry naming it goes too (Removed Associations entries
+stay); it is also taken out of the desktop's own list beside it, such as
+.IR hyprland\-mimeapps.list ,
+and of the lists in
+.I $XDG_DATA_HOME/applications
+(\fI~/.local/share/applications\fR), and nothing in those is put back; and an
+app chosen after
+.B \-\-set\-default
+stays.
 .TP
 .B \-\-install\-window\-rules
 Add Omaroll's Hyprland rules to
 .IR ~/.config/hypr :
 full opacity for its windows and a floating viewer. Needs Omarchy's Lua
-Hyprland config. Settings has the same choice.
+Hyprland config. Settings has the same choice. A second viewer opened on the
+same workspace tiles with the first on purpose, so the two are not stacked.
+Each Omaroll does this for its own viewers. Normally one Omaroll holds them
+all; a second one started on its own arranges its viewers separately.
 .TP
 .B \-\-remove\-window\-rules
 Take those rules out again, leaving
@@ -145,7 +165,8 @@ when
 is unset.
 .TP
 .I $XDG_CACHE_HOME/omaroll
-Thumbnails and the text, date and similarity caches;
+Thumbnails, the cover art a playing video shows in player controls, and the
+text, date and similarity caches;
 .I ~/.cache/omaroll
 when
 .B XDG_CACHE_HOME

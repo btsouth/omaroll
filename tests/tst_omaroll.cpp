@@ -1,5 +1,6 @@
 #include "actions/ActionLauncher.h"
 #include "actions/ActionRegistry.h"
+#include "actions/ClipboardServe.h"
 #include "actions/TailscalePeers.h"
 #include "actions/TrashRestore.h"
 #include "app/AppSettings.h"
@@ -59,6 +60,7 @@
 #include <QCryptographicHash>
 #include <QDataStream>
 #include <QImageIOHandler>
+#include <QElapsedTimer>
 #include <QImageReader>
 #include <QImageWriter>
 #include <QPainter>
@@ -1109,6 +1111,411 @@ private slots:
     defaults.refresh();
     QTRY_VERIFY_WITH_TIMEOUT(!defaults.busy(), 10000);
     QVERIFY(!defaults.imagesDefault());
+  }
+
+  void mimeDefaultsTextEditsDeleteRatherThanBlank() {
+    const QString desktop = QStringLiteral("io.github.tsouth89.omaroll.desktop");
+    const QString text = QStringLiteral(
+        "# mine\n[Default Applications]\nimage/png=%1\nimage/gif=%1;imv.desktop;\n\n"
+        "[Added Associations]\nimage/png=%1;other.desktop;\nimage/jpeg=%1;\n").arg(desktop);
+    QCOMPARE(MimeDefaults::defaultLine(text, "image/png"), "image/png=" + desktop);
+    QCOMPARE(MimeDefaults::defaultLine(text, "image/jpeg"), QString());
+    QCOMPARE(MimeDefaults::withoutOmaroll(text, "image/png"),
+             QStringLiteral("# mine\n[Default Applications]\nimage/gif=%1;imv.desktop;\n\n"
+                            "[Added Associations]\nimage/png=other.desktop;\nimage/jpeg=%1;\n")
+                 .arg(desktop));
+    // The replaced line comes back exactly, punctuation and all.
+    QCOMPARE(MimeDefaults::withoutOmaroll(text, "image/png", "image/png=imv.desktop;"),
+             QStringLiteral("# mine\n[Default Applications]\nimage/png=imv.desktop;\n"
+                            "image/gif=%1;imv.desktop;\n\n"
+                            "[Added Associations]\nimage/png=other.desktop;\nimage/jpeg=%1;\n")
+                 .arg(desktop));
+    QCOMPARE(MimeDefaults::withoutOmaroll(text, "image/gif"),
+             QStringLiteral("# mine\n[Default Applications]\nimage/png=%1\nimage/gif=imv.desktop;\n\n"
+                            "[Added Associations]\nimage/png=%1;other.desktop;\nimage/jpeg=%1;\n")
+                 .arg(desktop));
+    QCOMPARE(MimeDefaults::withoutOmaroll(text, "video/mp4"), text);
+    // A saved line that lists Omaroll behind another app comes back without it.
+    bool restored = false;
+    QCOMPARE(MimeDefaults::withoutOmaroll(text, "image/png",
+                                          "image/png=imv.desktop;" + desktop + ";", &restored),
+             QStringLiteral("# mine\n[Default Applications]\nimage/png=imv.desktop;\n"
+                            "image/gif=%1;imv.desktop;\n\n"
+                            "[Added Associations]\nimage/png=other.desktop;\nimage/jpeg=%1;\n")
+                 .arg(desktop));
+    QVERIFY(restored);
+    MimeDefaults::withoutOmaroll(text, "image/gif", "image/gif=imv.desktop;", &restored);
+    QVERIFY(!restored);
+    // A line an earlier unset already put back counts as restored.
+    const QString back = MimeDefaults::withoutOmaroll(text, "image/png", "image/png=imv.desktop;");
+    QCOMPARE(MimeDefaults::withoutOmaroll(back, "image/png", "image/png=imv.desktop;", &restored),
+             back);
+    QVERIFY(restored);
+    // The user's exclusions stay: they keep Omaroll out of lists below.
+    const QString removed = QStringLiteral(
+        "[Removed Associations]\nimage/png=%1;\n[Added Associations]\nimage/png=%1;\n").arg(desktop);
+    QCOMPARE(MimeDefaults::withoutOmaroll(removed, "image/png"),
+             QStringLiteral("[Removed Associations]\nimage/png=%1;\n[Added Associations]\n").arg(desktop));
+    // CRLF lists: Omaroll is found without a trailing semicolon, and the
+    // lines that stay keep their carriage returns.
+    const QString crlf = QStringLiteral(
+        "[Default Applications]\r\nimage/png=%1\r\nimage/gif=%1;imv.desktop;\r\n").arg(desktop);
+    QCOMPARE(MimeDefaults::withoutOmaroll(crlf, "image/png"),
+             QStringLiteral("[Default Applications]\r\nimage/gif=%1;imv.desktop;\r\n").arg(desktop));
+    QCOMPARE(MimeDefaults::withoutOmaroll(crlf, "image/gif"),
+             QStringLiteral("[Default Applications]\r\nimage/png=%1\r\nimage/gif=imv.desktop;\r\n")
+                 .arg(desktop));
+  }
+
+  void mimeDefaultsCyclesLeaveTheFileAsItWas() {
+    QTemporaryDir dir;
+    const auto oldConfig = qgetenv("XDG_CONFIG_HOME");
+    const auto oldData = qgetenv("XDG_DATA_HOME");
+    const auto oldDesktop = qgetenv("XDG_CURRENT_DESKTOP");
+    const auto oldPath = qgetenv("PATH");
+    const auto cleanup = qScopeGuard([&] {
+      for (const auto& pair : QList<QPair<const char*, QByteArray>>{
+             {"XDG_CONFIG_HOME", oldConfig}, {"XDG_DATA_HOME", oldData}, {"XDG_CURRENT_DESKTOP", oldDesktop}, {"PATH", oldPath}})
+        pair.second.isNull() ? qunsetenv(pair.first) : qputenv(pair.first, pair.second);
+    });
+    qputenv("XDG_CONFIG_HOME", dir.filePath("config").toUtf8());
+    qputenv("XDG_DATA_HOME", dir.filePath("data").toUtf8());
+    qputenv("XDG_CURRENT_DESKTOP", "");
+    // xdg-utils 1.2.1 skips a default whose Exec is not on PATH.
+    qputenv("PATH", QCoreApplication::applicationDirPath().toUtf8() + ":" + oldPath);
+    QVERIFY(QDir().mkpath(dir.filePath("data/applications")));
+    QVERIFY(QDir().mkpath(dir.filePath("config")));
+    QVERIFY(QFile::copy(QFINDTESTDATA("../packaging/io.github.tsouth89.omaroll.desktop"),
+                        dir.filePath("data/applications/io.github.tsouth89.omaroll.desktop")));
+    for (const auto& [name, types] : QList<QPair<QString, QByteArray>>{
+           {"imv", "image/png;image/jpeg;"}, {"mpv", "video/mp4;video/webm;video/x-matroska;"}}) {
+      QFile app(dir.filePath("data/applications/" + name + ".desktop"));
+      QVERIFY(app.open(QIODevice::WriteOnly));
+      app.write("[Desktop Entry]\nType=Application\nName=" + name.toUtf8() +
+                "\nExec=/usr/bin/true %f\nMimeType=" + types + "\n");
+    }
+    // Comments, blank lines, other groups, a trailing semicolon on one line
+    // and not another, and types the user has no line for at all.
+    const QByteArray original =
+        "# my defaults\n[Default Applications]\ntext/plain=nvim.desktop\n"
+        "video/mp4=mpv.desktop;\nimage/png=imv.desktop\n\nvideo/webm=mpv.desktop\n\n"
+        "[Added Associations]\nvideo/mp4=mpv.desktop;\n";
+    QFile list(dir.filePath("config/mimeapps.list"));
+    QVERIFY(list.open(QIODevice::WriteOnly));
+    QCOMPARE(list.write(original), original.size());
+    list.close();
+    // Videos alone: xdg-mime takes about a second per type here.
+    MimeDefaults defaults;
+    for (int cycle = 1; cycle <= 3; ++cycle) {
+      const QString set = defaults.apply(false, "videos");
+      QVERIFY2(defaults.succeeded(), qPrintable(set));
+      QVERIFY2(set.contains("video/mp4: mpv.desktop -> io.github.tsouth89.omaroll.desktop"),
+               qPrintable(set));
+      const QString unset = defaults.apply(true, "videos");
+      QVERIFY2(defaults.succeeded(), qPrintable(unset));
+      QVERIFY2(unset.contains("video/mp4: restored mpv.desktop"), qPrintable(unset));
+      QVERIFY2(unset.contains("video/webm: restored mpv.desktop"), qPrintable(unset));
+      QVERIFY(list.open(QIODevice::ReadOnly));
+      const QByteArray after = list.readAll();
+      list.close();
+      QVERIFY2(after == original, qPrintable(QStringLiteral("cycle %1:\n%2")
+                                                 .arg(cycle).arg(QString::fromUtf8(after))));
+    }
+  }
+
+  void mimeDefaultsUndoWhatXdgMimeAddedAroundOmaroll() {
+    // A list without the section: xdg-mime appended a blank line and the header.
+    QCOMPARE(MimeDefaults::withoutAddedStructure(
+                 "[Added Associations]\na=b;\n\n[Default Applications]\n", false, true),
+             QStringLiteral("[Added Associations]\na=b;\n"));
+    QCOMPARE(MimeDefaults::withoutAddedStructure("a=b\n\n[Default Applications]\n\n", false, true),
+             QStringLiteral("a=b\n\n"));
+    QCOMPARE(MimeDefaults::withoutAddedStructure("\n[Default Applications]\n", false, true),
+             QString());
+    // A section that holds something else now stays.
+    QCOMPARE(MimeDefaults::withoutAddedStructure("\n[Default Applications]\nx=y\n", false, true),
+             QStringLiteral("\n[Default Applications]\nx=y\n"));
+    // One that was there before is never taken out.
+    QCOMPARE(MimeDefaults::withoutAddedStructure("\n[Default Applications]\n", true, true),
+             QStringLiteral("\n[Default Applications]\n"));
+    // And the final newline goes from a list that ended without one.
+    QCOMPARE(MimeDefaults::withoutAddedStructure("[Default Applications]\nx=y;\n", true, false),
+             QStringLiteral("[Default Applications]\nx=y;"));
+  }
+
+  // Each starting state of the user's list, three set and unset cycles each,
+  // ends byte for byte where it began (or absent, if it was absent).
+  void mimeDefaultsCyclesRestoreEveryStartingFile_data() {
+    QTest::addColumn<bool>("exists");
+    QTest::addColumn<QByteArray>("original");
+    QTest::newRow("no file") << false << QByteArray();
+    QTest::newRow("empty file") << true << QByteArray();
+    QTest::newRow("no defaults section")
+        << true << QByteArray("# mine\n[Added Associations]\ntext/plain=nvim.desktop;\n");
+    // The first app listed is gone and a later one answers. The whole line
+    // comes back, not just the app that answered.
+    QTest::newRow("no final newline")
+        << true << QByteArray("[Default Applications]\napplication/pdf=gone.desktop;evince.desktop;");
+  }
+
+  void mimeDefaultsCyclesRestoreEveryStartingFile() {
+    QFETCH(bool, exists);
+    QFETCH(QByteArray, original);
+    QTemporaryDir dir;
+    const auto oldConfig = qgetenv("XDG_CONFIG_HOME");
+    const auto oldData = qgetenv("XDG_DATA_HOME");
+    const auto oldDesktop = qgetenv("XDG_CURRENT_DESKTOP");
+    const auto oldPath = qgetenv("PATH");
+    const auto cleanup = qScopeGuard([&] {
+      for (const auto& pair : QList<QPair<const char*, QByteArray>>{
+             {"XDG_CONFIG_HOME", oldConfig}, {"XDG_DATA_HOME", oldData}, {"XDG_CURRENT_DESKTOP", oldDesktop}, {"PATH", oldPath}})
+        pair.second.isNull() ? qunsetenv(pair.first) : qputenv(pair.first, pair.second);
+    });
+    qputenv("XDG_CONFIG_HOME", dir.filePath("config").toUtf8());
+    qputenv("XDG_DATA_HOME", dir.filePath("data").toUtf8());
+    qputenv("XDG_CURRENT_DESKTOP", "");
+    qputenv("PATH", QCoreApplication::applicationDirPath().toUtf8() + ":" + oldPath);
+    QVERIFY(QDir().mkpath(dir.filePath("data/applications")));
+    QVERIFY(QDir().mkpath(dir.filePath("config")));
+    QVERIFY(QFile::copy(QFINDTESTDATA("../packaging/io.github.tsouth89.omaroll.desktop"),
+                        dir.filePath("data/applications/io.github.tsouth89.omaroll.desktop")));
+    // xdg-utils 1.2.1 picks among desktop files in name order when no list
+    // says: evince before io.github.tsouth89.omaroll.
+    QFile evince(dir.filePath("data/applications/evince.desktop"));
+    QVERIFY(evince.open(QIODevice::WriteOnly));
+    evince.write("[Desktop Entry]\nType=Application\nName=Evince\nExec=/usr/bin/true %f\n"
+                "MimeType=application/pdf;\n");
+    evince.close();
+    QFile list(dir.filePath("config/mimeapps.list"));
+    if (exists) {
+      QVERIFY(list.open(QIODevice::WriteOnly));
+      QCOMPARE(list.write(original), original.size());
+      list.close();
+    }
+    MimeDefaults defaults;
+    for (int cycle = 1; cycle <= 3; ++cycle) {
+      const QString set = defaults.apply(false, "pdf");
+      QVERIFY2(defaults.succeeded(), qPrintable(set));
+      QVERIFY2(set.contains("-> io.github.tsouth89.omaroll.desktop"), qPrintable(set));
+      const QString unset = defaults.apply(true, "pdf");
+      QVERIFY2(defaults.succeeded(), qPrintable(unset));
+      QCOMPARE(list.exists(), exists);
+      if (!exists) continue;
+      QVERIFY(list.open(QIODevice::ReadOnly));
+      const QByteArray after = list.readAll();
+      list.close();
+      QVERIFY2(after == original, qPrintable(QStringLiteral("cycle %1:\n%2")
+                                                 .arg(cycle).arg(QString::fromUtf8(after))));
+    }
+  }
+
+  // Another app chosen after --set-default through a list that ranks higher
+  // (here hyprland-mimeapps.list) still gets the user's own line back.
+  void mimeDefaultsRestoreTheLineWhenAnotherListNowAnswers() {
+    QTemporaryDir dir;
+    const auto oldConfig = qgetenv("XDG_CONFIG_HOME");
+    const auto oldData = qgetenv("XDG_DATA_HOME");
+    const auto oldDesktop = qgetenv("XDG_CURRENT_DESKTOP");
+    const auto oldPath = qgetenv("PATH");
+    const auto cleanup = qScopeGuard([&] {
+      for (const auto& pair : QList<QPair<const char*, QByteArray>>{
+             {"XDG_CONFIG_HOME", oldConfig}, {"XDG_DATA_HOME", oldData}, {"XDG_CURRENT_DESKTOP", oldDesktop}, {"PATH", oldPath}})
+        pair.second.isNull() ? qunsetenv(pair.first) : qputenv(pair.first, pair.second);
+    });
+    qputenv("XDG_CONFIG_HOME", dir.filePath("config").toUtf8());
+    qputenv("XDG_DATA_HOME", dir.filePath("data").toUtf8());
+    qputenv("XDG_CURRENT_DESKTOP", "Hyprland");
+    qputenv("PATH", QCoreApplication::applicationDirPath().toUtf8() + ":" + oldPath);
+    QVERIFY(QDir().mkpath(dir.filePath("data/applications")));
+    QVERIFY(QDir().mkpath(dir.filePath("config")));
+    QVERIFY(QFile::copy(QFINDTESTDATA("../packaging/io.github.tsouth89.omaroll.desktop"),
+                        dir.filePath("data/applications/io.github.tsouth89.omaroll.desktop")));
+    for (const QString name : {QStringLiteral("evince"), QStringLiteral("other")}) {
+      QFile app(dir.filePath("data/applications/" + name + ".desktop"));
+      QVERIFY(app.open(QIODevice::WriteOnly));
+      app.write("[Desktop Entry]\nType=Application\nName=" + name.toUtf8() +
+                "\nExec=/usr/bin/true %f\nMimeType=application/pdf;\n");
+    }
+    const QByteArray original = "[Default Applications]\napplication/pdf=gone.desktop;evince.desktop;\n";
+    QFile list(dir.filePath("config/mimeapps.list"));
+    QVERIFY(list.open(QIODevice::WriteOnly));
+    QCOMPARE(list.write(original), original.size());
+    list.close();
+    MimeDefaults defaults;
+    const QString set = defaults.apply(false, "pdf");
+    QVERIFY2(set.contains("application/pdf: evince.desktop -> io.github.tsouth89.omaroll.desktop"),
+             qPrintable(set));
+    QFile chosen(dir.filePath("config/hyprland-mimeapps.list"));
+    QVERIFY(chosen.open(QIODevice::WriteOnly));
+    chosen.write("[Default Applications]\napplication/pdf=other.desktop;\n");
+    chosen.close();
+    const QString unset = defaults.apply(true, "pdf");
+    QVERIFY2(defaults.succeeded(), qPrintable(unset));
+    QVERIFY2(unset.contains("application/pdf: kept other.desktop"), qPrintable(unset));
+    QVERIFY(list.open(QIODevice::ReadOnly));
+    QCOMPARE(list.readAll(), original);
+    list.close();
+    QVERIFY(chosen.remove());
+
+    // The app the user listed first is installed after --set-default: the
+    // restored line answers with it, and is not rewritten to the app that
+    // answered before.
+    QVERIFY(defaults.apply(false, "pdf").contains("-> io.github.tsouth89.omaroll.desktop"));
+    QFile gone(dir.filePath("data/applications/gone.desktop"));
+    QVERIFY(gone.open(QIODevice::WriteOnly));
+    gone.write("[Desktop Entry]\nType=Application\nName=Gone\nExec=/usr/bin/true %f\n"
+               "MimeType=application/pdf;\n");
+    gone.close();
+    const QString back = defaults.apply(true, "pdf");
+    QVERIFY2(defaults.succeeded(), qPrintable(back));
+    QVERIFY(list.open(QIODevice::ReadOnly));
+    QCOMPARE(list.readAll(), original);
+    list.close();
+
+    // A list that cannot be read is left alone, and the restore can be tried
+    // again once it can. (Root reads it anyway, so that part needs a user.)
+    QVERIFY(defaults.apply(false, "pdf").contains("-> io.github.tsouth89.omaroll.desktop"));
+    QVERIFY(list.open(QIODevice::ReadOnly));
+    const QByteArray whileSet = list.readAll();
+    list.close();
+    QFile::Permissions permissions = list.permissions();
+    QVERIFY(list.setPermissions(QFileDevice::Permissions()));
+    if (!list.open(QIODevice::ReadOnly)) {
+      const QString refused = defaults.apply(true, "pdf");
+      QVERIFY2(!defaults.succeeded(), qPrintable(refused));
+      QVERIFY(list.setPermissions(permissions));
+      QVERIFY(list.open(QIODevice::ReadOnly));
+      QCOMPARE(list.readAll(), whileSet);
+      list.close();
+    } else {
+      list.close();
+      QVERIFY(list.setPermissions(permissions));
+    }
+    const QString retried = defaults.apply(true, "pdf");
+    QVERIFY2(defaults.succeeded(), qPrintable(retried));
+    QVERIFY(list.open(QIODevice::ReadOnly));
+    QCOMPARE(list.readAll(), original);
+  }
+
+  // A second --set-default, made while another app answers through a list
+  // that ranks higher, must not save Omaroll's own line over the user's line
+  // saved by the first, or --unset-default would delete that line for good.
+  void mimeDefaultsKeepTheSavedLineAcrossARepeatedSet() {
+    QTemporaryDir dir;
+    const auto oldConfig = qgetenv("XDG_CONFIG_HOME");
+    const auto oldData = qgetenv("XDG_DATA_HOME");
+    const auto oldDesktop = qgetenv("XDG_CURRENT_DESKTOP");
+    const auto oldPath = qgetenv("PATH");
+    const auto cleanup = qScopeGuard([&] {
+      for (const auto& pair : QList<QPair<const char*, QByteArray>>{
+             {"XDG_CONFIG_HOME", oldConfig}, {"XDG_DATA_HOME", oldData}, {"XDG_CURRENT_DESKTOP", oldDesktop}, {"PATH", oldPath}})
+        pair.second.isNull() ? qunsetenv(pair.first) : qputenv(pair.first, pair.second);
+    });
+    qputenv("XDG_CONFIG_HOME", dir.filePath("config").toUtf8());
+    qputenv("XDG_DATA_HOME", dir.filePath("data").toUtf8());
+    qputenv("XDG_CURRENT_DESKTOP", "Hyprland");
+    qputenv("PATH", QCoreApplication::applicationDirPath().toUtf8() + ":" + oldPath);
+    QVERIFY(QDir().mkpath(dir.filePath("data/applications")));
+    QVERIFY(QDir().mkpath(dir.filePath("config")));
+    QVERIFY(QFile::copy(QFINDTESTDATA("../packaging/io.github.tsouth89.omaroll.desktop"),
+                        dir.filePath("data/applications/io.github.tsouth89.omaroll.desktop")));
+    for (const QString name : {QStringLiteral("evince"), QStringLiteral("other")}) {
+      QFile app(dir.filePath("data/applications/" + name + ".desktop"));
+      QVERIFY(app.open(QIODevice::WriteOnly));
+      app.write("[Desktop Entry]\nType=Application\nName=" + name.toUtf8() +
+                "\nExec=/usr/bin/true %f\nMimeType=application/pdf;\n");
+    }
+    const QByteArray original = "[Default Applications]\napplication/pdf=evince.desktop;\n";
+    QFile list(dir.filePath("config/mimeapps.list"));
+    QVERIFY(list.open(QIODevice::WriteOnly));
+    QCOMPARE(list.write(original), original.size());
+    list.close();
+    MimeDefaults defaults;
+    const QString first = defaults.apply(false, "pdf");
+    QVERIFY2(first.contains("application/pdf: evince.desktop -> io.github.tsouth89.omaroll.desktop"),
+             qPrintable(first));
+    QFile chosen(dir.filePath("config/hyprland-mimeapps.list"));
+    QVERIFY(chosen.open(QIODevice::WriteOnly));
+    chosen.write("[Default Applications]\napplication/pdf=other.desktop;\n");
+    chosen.close();
+    const QString second = defaults.apply(false, "pdf");
+    QVERIFY2(second.contains("application/pdf: other.desktop -> io.github.tsouth89.omaroll.desktop"),
+             qPrintable(second));
+    const QString unset = defaults.apply(true, "pdf");
+    QVERIFY2(defaults.succeeded(), qPrintable(unset));
+    QVERIFY(list.open(QIODevice::ReadOnly));
+    QCOMPARE(list.readAll(), original);
+  }
+
+  // An unset that put the user's line back but failed on another list is
+  // tried again. The retry must leave that line as it is, even when the app
+  // it now answers with is not the one recorded, and not write the recorded
+  // app over it.
+  void mimeDefaultsRetryKeepsTheLineAlreadyRestored() {
+    QTemporaryDir dir;
+    const auto oldConfig = qgetenv("XDG_CONFIG_HOME");
+    const auto oldData = qgetenv("XDG_DATA_HOME");
+    const auto oldDesktop = qgetenv("XDG_CURRENT_DESKTOP");
+    const auto oldPath = qgetenv("PATH");
+    const auto cleanup = qScopeGuard([&] {
+      for (const auto& pair : QList<QPair<const char*, QByteArray>>{
+             {"XDG_CONFIG_HOME", oldConfig}, {"XDG_DATA_HOME", oldData}, {"XDG_CURRENT_DESKTOP", oldDesktop}, {"PATH", oldPath}})
+        pair.second.isNull() ? qunsetenv(pair.first) : qputenv(pair.first, pair.second);
+    });
+    qputenv("XDG_CONFIG_HOME", dir.filePath("config").toUtf8());
+    qputenv("XDG_DATA_HOME", dir.filePath("data").toUtf8());
+    qputenv("XDG_CURRENT_DESKTOP", "Hyprland");
+    qputenv("PATH", QCoreApplication::applicationDirPath().toUtf8() + ":" + oldPath);
+    QVERIFY(QDir().mkpath(dir.filePath("data/applications")));
+    QVERIFY(QDir().mkpath(dir.filePath("config")));
+    const QString desktop = QStringLiteral("io.github.tsouth89.omaroll.desktop");
+    QVERIFY(QFile::copy(QFINDTESTDATA("../packaging/io.github.tsouth89.omaroll.desktop"),
+                        dir.filePath("data/applications/" + desktop)));
+    const auto install = [&](const QString& name) {
+      QFile app(dir.filePath("data/applications/" + name + ".desktop"));
+      QVERIFY(app.open(QIODevice::WriteOnly));
+      app.write("[Desktop Entry]\nType=Application\nName=" + name.toUtf8() +
+                "\nExec=/usr/bin/true %f\nMimeType=application/pdf;\n");
+    };
+    install(QStringLiteral("evince"));
+    const QByteArray original = "[Default Applications]\napplication/pdf=gone.desktop;evince.desktop;\n";
+    QFile list(dir.filePath("config/mimeapps.list"));
+    QVERIFY(list.open(QIODevice::WriteOnly));
+    QCOMPARE(list.write(original), original.size());
+    list.close();
+    MimeDefaults defaults;
+    const QString set = defaults.apply(false, "pdf");
+    QVERIFY2(set.contains("application/pdf: evince.desktop -> " + desktop), qPrintable(set));
+
+    // A desktop list also names Omaroll, and cannot be read for now.
+    QFile other(dir.filePath("config/hyprland-mimeapps.list"));
+    QVERIFY(other.open(QIODevice::WriteOnly));
+    other.write("[Default Applications]\napplication/pdf=" + desktop.toUtf8() + ";\n");
+    other.close();
+    const QFile::Permissions permissions = other.permissions();
+    QVERIFY(other.setPermissions(QFileDevice::Permissions()));
+    if (other.open(QIODevice::ReadOnly)) {
+      other.close();
+      QVERIFY(other.setPermissions(permissions));
+      QSKIP("Unreadable files can be read here (root)");
+    }
+    const QString partial = defaults.apply(true, "pdf");
+    QVERIFY2(!defaults.succeeded(), qPrintable(partial));
+    QVERIFY(list.open(QIODevice::ReadOnly));
+    QCOMPARE(list.readAll(), original);
+    list.close();
+
+    // The user's first app is installed meanwhile, so the restored line now
+    // answers ahead of the recorded evince.
+    install(QStringLiteral("gone"));
+    QVERIFY(other.setPermissions(permissions));
+    const QString retried = defaults.apply(true, "pdf");
+    QVERIFY2(defaults.succeeded(), qPrintable(retried));
+    QVERIFY(list.open(QIODevice::ReadOnly));
+    QCOMPARE(list.readAll(), original);
+    list.close();
+    QVERIFY(other.open(QIODevice::ReadOnly));
+    QCOMPARE(other.readAll(), QByteArray("[Default Applications]\n"));
   }
 
   void defaultViewerChangesAreSummarized() {
@@ -12270,6 +12677,233 @@ private slots:
     QStringList expected{a, b};
     actual.sort(); expected.sort();
     QCOMPARE(actual, expected);
+  }
+
+  // A JPEG goes on the clipboard as itself and as PNG, so Omarchy's history,
+  // which keeps only image/png, records it.
+  void jpegCopiesOfferPngBesideTheirOwnBytes() {
+    const auto jpegOf = [](const QSize& size) {
+      QImage image(size, QImage::Format_Grayscale8);
+      image.fill(90);
+      QByteArray bytes;
+      QBuffer buffer(&bytes);
+      buffer.open(QIODevice::WriteOnly);
+      image.save(&buffer, "JPG", 50);
+      return bytes;
+    };
+    const QByteArray small = jpegOf(QSize(16, 12));
+    QVERIFY(ClipboardServe::mayOfferPng("image/jpeg"));
+    QVERIFY(!ClipboardServe::mayOfferPng("image/png"));
+    QCOMPARE(ClipboardServe::offeredTypes("image/jpeg", small),
+             (QStringList{"image/jpeg", "image/png"}));
+    QCOMPARE(ClipboardServe::offeredTypes("image/png", small), QStringList{"image/png"});
+    // Too many pixels to encode inside clipboard history's two seconds: the
+    // picture goes on as itself only, never with an empty PNG.
+    const QByteArray large = jpegOf(QSize(6000, 4001));
+    QVERIFY(qint64(6000) * 4001 > ClipboardServe::kMaxPngPixels);
+    QCOMPARE(ClipboardServe::offeredTypes("image/jpeg", large), QStringList{"image/jpeg"});
+    QCOMPARE(ClipboardServe::offeredTypes("image/jpeg", small, 100), QStringList{"image/jpeg"});
+    // Nor past Qt's allocation limit, which would make the decode fail.
+    const int limit = QImageReader::allocationLimit();
+    const auto restoreLimit = qScopeGuard([limit] { QImageReader::setAllocationLimit(limit); });
+    QImageReader::setAllocationLimit(1);
+    QCOMPARE(ClipboardServe::offeredTypes("image/jpeg", jpegOf(QSize(2000, 2000))),
+             QStringList{"image/jpeg"});
+    QCOMPARE(ClipboardServe::offeredTypes("image/jpeg", "not a picture"), QStringList{"image/jpeg"});
+
+    // Encoded upright: EXIF orientation 6 turns a 40x20 landscape on its side.
+    QImage landscape(40, 20, QImage::Format_RGB32);
+    landscape.fill(Qt::darkGreen);
+    QByteArray jpeg;
+    QBuffer buffer(&jpeg);
+    QVERIFY(buffer.open(QIODevice::WriteOnly));
+    QVERIFY(landscape.save(&buffer, "JPG"));
+    const QByteArray exif = QByteArray::fromHex(
+        "ffe10022" "457869660000" "4d4d002a00000008" "0001" "011200030000000100060000" "00000000");
+    const QByteArray rotated = jpeg.left(2) + exif + jpeg.mid(2);
+    const QByteArray png = ClipboardServe::encodePng(rotated);
+    QVERIFY(png.startsWith("\x89PNG"));
+    const QImage decoded = QImage::fromData(png, "PNG");
+    QCOMPARE(decoded.size(), QSize(20, 40));
+    QVERIFY(ClipboardServe::encodePng("not a picture").isEmpty());
+  }
+
+  void clipboardHelperFallsBackToWlCopyWithoutDataControl() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString helper = QCoreApplication::applicationDirPath() + QStringLiteral("/omaroll");
+    const QString path = dir.filePath(QStringLiteral("photo # ü.jpg"));
+    QImage image(16, 12, QImage::Format_RGB32);
+    image.fill(Qt::darkBlue);
+    QVERIFY(image.save(path, "JPG"));
+
+    // Without a Wayland display the helper says so, without a platform plugin.
+    QProcess direct;
+    auto environment = QProcessEnvironment::systemEnvironment();
+    environment.remove(QStringLiteral("WAYLAND_DISPLAY"));
+    environment.remove(QStringLiteral("WAYLAND_SOCKET"));
+    environment.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("no-such-platform"));
+    direct.setProcessEnvironment(environment);
+    direct.start(helper, {QString::fromLatin1(ClipboardServe::kOption), "image/jpeg", path});
+    QVERIFY(direct.waitForFinished(5000));
+    QCOMPARE(direct.exitCode(), ClipboardServe::kUnavailable);
+    direct.start(helper, {QString::fromLatin1(ClipboardServe::kOption), "image/jpeg",
+                          dir.filePath("missing.jpg")});
+    QVERIFY(direct.waitForFinished(5000));
+    QCOMPARE(direct.exitCode(), 1);
+    direct.start(helper, {QString::fromLatin1(ClipboardServe::kOption)});
+    QVERIFY(direct.waitForFinished(5000));
+    QCOMPARE(direct.exitCode(), 2);
+
+    // A display without ext-data-control (here, none at all) leaves the copy
+    // to wl-copy with the file's own type.
+    QFile tool(dir.filePath(QStringLiteral("wl-copy")));
+    QVERIFY(tool.open(QIODevice::WriteOnly));
+    tool.write("#!/bin/sh\n/bin/cat > '");
+    tool.write(path.toUtf8());
+    tool.write(".copied'\nprintf '%s\\n' \"$@\" > '");
+    tool.write(path.toUtf8());
+    tool.write(".args'\nexit 0\n");
+    tool.close();
+    QVERIFY(tool.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                QFileDevice::ExeOwner));
+    const QByteArray previousPath = qgetenv("PATH");
+    const QByteArray previousDisplay = qgetenv("WAYLAND_DISPLAY");
+    const QByteArray previousSocket = qgetenv("WAYLAND_SOCKET");
+    const auto restore = qScopeGuard([&] {
+      qputenv("PATH", previousPath);
+      previousDisplay.isNull() ? qunsetenv("WAYLAND_DISPLAY")
+                               : qputenv("WAYLAND_DISPLAY", previousDisplay);
+      if (!previousSocket.isNull()) qputenv("WAYLAND_SOCKET", previousSocket);
+    });
+    QVERIFY(qputenv("PATH", dir.path().toUtf8()));
+    // Never a real compositor: the helper must not touch a live clipboard.
+    QVERIFY(qputenv("WAYLAND_DISPLAY", dir.filePath("no-such-display").toUtf8()));
+    qunsetenv("WAYLAND_SOCKET");
+    ActionLauncher launcher;
+    launcher.setClipboardHelper(helper);
+    QSignalSpy finished(&launcher, &ActionLauncher::submissionFinished);
+    QSignalSpy reported(&launcher, &ActionLauncher::reported);
+    QSignalSpy failed(&launcher, &ActionLauncher::failed);
+    QVERIFY(launcher.copyFile(path));
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 8000);
+    QVERIFY2(finished.first().at(1).toBool(), qPrintable(finished.first().at(2).toString()));
+    QCOMPARE(finished.first().at(0).toString(), QStringLiteral("wl-copy"));
+    QCOMPARE(reported.size(), 1);
+    QCOMPARE(failed.size(), 0);
+    QFile arguments(path + QStringLiteral(".args"));
+    QVERIFY(arguments.open(QIODevice::ReadOnly));
+    QCOMPARE(arguments.readAll(), QByteArray("--type\nimage/jpeg\n"));
+    QFile copied(path + QStringLiteral(".copied"));
+    QVERIFY(copied.open(QIODevice::ReadOnly));
+    QFile original(path);
+    QVERIFY(original.open(QIODevice::ReadOnly));
+    QCOMPARE(copied.readAll(), original.readAll());
+  }
+
+  // A copy that finishes late never replaces a newer one: a newer copy stops
+  // the older helper or wl-copy at once, and nothing falls back to wl-copy.
+  void olderCopyNeverOverwritesANewerOne() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto executable = [&](const QString& name, const QByteArray& body) {
+      QFile file(dir.filePath(name));
+      if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+      file.write("#!/bin/sh\n" + body);
+      file.close();
+      return file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                 QFileDevice::ExeOwner);
+    };
+    const QString log = dir.filePath(QStringLiteral("wl-copy.log"));
+    const QString older = dir.filePath(QStringLiteral("older.jpg"));
+    const QString olderPng = dir.filePath(QStringLiteral("older.png"));
+    const QString newer = dir.filePath(QStringLiteral("newer.png"));
+    QImage noise(64, 64, QImage::Format_RGB32);
+    for (int y = 0; y < noise.height(); ++y)
+      for (int x = 0; x < noise.width(); ++x) noise.setPixel(x, y, qRgb(x * 4, y * 4, (x * y) % 256));
+    QVERIFY(noise.save(older, "JPG"));
+    QVERIFY(noise.save(olderPng, "PNG"));
+    QVERIFY(QImage(8, 8, QImage::Format_RGB32).save(newer, "PNG"));
+    // wl-copy is slow for the older PNG only, as for a big file on slow storage,
+    // and records what it put on the clipboard once it gets there.
+    QVERIFY(executable(QStringLiteral("wl-copy"),
+                       "copy=$(mktemp)\n/bin/cat > \"$copy\"\n"
+                       "if cmp -s \"$copy\" '" + olderPng.toUtf8() + "'; then /bin/sleep 1; fi\n"
+                       "printf '%s %s\\n' \"$2\" \"$(wc -c < \"$copy\")\" >> '" + log.toUtf8() + "'\n"
+                       "rm -f \"$copy\"\n"));
+    // The helper takes a second and then fails, unless it is stopped first.
+    const QString survived = dir.filePath(QStringLiteral("helper-survived"));
+    QVERIFY(executable(QStringLiteral("slow-helper"),
+                       "/bin/sleep 1\n: > '" + survived.toUtf8() + "'\nexit 1\n"));
+    const QByteArray previousPath = qgetenv("PATH");
+    const QByteArray previousDisplay = qgetenv("WAYLAND_DISPLAY");
+    const QByteArray previousSocket = qgetenv("WAYLAND_SOCKET");
+    const auto restore = qScopeGuard([&] {
+      qputenv("PATH", previousPath);
+      previousDisplay.isNull() ? qunsetenv("WAYLAND_DISPLAY")
+                               : qputenv("WAYLAND_DISPLAY", previousDisplay);
+      if (!previousSocket.isNull()) qputenv("WAYLAND_SOCKET", previousSocket);
+    });
+    QVERIFY(qputenv("PATH", dir.path().toUtf8() + ":/usr/bin:/bin"));
+    // Never a real compositor: the helper must not touch a live clipboard.
+    QVERIFY(qputenv("WAYLAND_DISPLAY", dir.filePath("no-such-display").toUtf8()));
+    qunsetenv("WAYLAND_SOCKET");
+    const auto logged = [&] {
+      QFile file(log);
+      return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+    };
+    const QByteArray newerLine = "image/png " + QByteArray::number(QFileInfo(newer).size()) + "\n";
+
+    ActionLauncher launcher;
+    launcher.setClipboardHelper(dir.filePath(QStringLiteral("slow-helper")));
+    QSignalSpy finished(&launcher, &ActionLauncher::submissionFinished);
+    QSignalSpy failed(&launcher, &ActionLauncher::failed);
+
+    // An older JPEG still in its helper.
+    QVERIFY(launcher.copyFile(older));
+    QElapsedTimer timer;
+    timer.start();
+    QVERIFY(launcher.copyFile(newer));
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 2, 5000);
+    const auto helperResult = std::find_if(finished.cbegin(), finished.cend(), [](const auto& args) {
+      return args.at(0).toString() == QStringLiteral("omaroll");
+    });
+    QVERIFY(helperResult != finished.cend());
+    QVERIFY(!helperResult->at(1).toBool());
+    // Stopped, not left to finish its second: it never got to its marker.
+    QVERIFY2(timer.elapsed() < 900, qPrintable(QString::number(timer.elapsed())));
+    QTest::qWait(1300);
+    QVERIFY(!QFileInfo::exists(survived));
+    QCOMPARE(finished.size(), 2);
+    QCOMPARE(failed.size(), 0);
+    QCOMPARE(logged(), newerLine);
+
+    // An older PNG still in a slow wl-copy is stopped the same way.
+    finished.clear();
+    QFile::remove(log);
+    QVERIFY(launcher.copyFile(olderPng));
+    QTest::qWait(200);
+    QVERIFY(launcher.copyFile(newer));
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 2, 5000);
+    for (const auto& result : std::as_const(finished)) QCOMPARE(result.at(0).toString(), QStringLiteral("wl-copy"));
+    QCOMPARE(std::count_if(finished.cbegin(), finished.cend(),
+                           [](const auto& args) { return !args.at(1).toBool(); }), 1);
+    QTest::qWait(1300);
+    QCOMPARE(failed.size(), 0);
+    QCOMPARE(logged(), newerLine);
+
+    // Another app took the clipboard while the helper set up (exit 4): that
+    // copy stands, with no fallback and no error.
+    QVERIFY(executable(QStringLiteral("slow-helper"), "exit 4\n"));
+    finished.clear();
+    QFile::remove(log);
+    QVERIFY(launcher.copyFile(older));
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 5000);
+    QCOMPARE(finished.first().at(0).toString(), QStringLiteral("omaroll"));
+    QVERIFY(!finished.first().at(1).toBool());
+    QTest::qWait(300);
+    QCOMPARE(failed.size(), 0);
+    QCOMPARE(logged(), QByteArray());
   }
 
   void imageCopyTimeoutDoesNotConfirmSuccess() {

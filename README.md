@@ -130,6 +130,17 @@ types could not be changed; add `--verbose` to list every type.
 manager.
 Settings has the same choice as **Set as default** and **Restore previous
 apps**, and says how many types changed and which apps were replaced.
+Restoring puts each line of `mimeapps.list` (in `$XDG_CONFIG_HOME`, or
+`~/.config` when that is unset or empty) back as it was and removes what
+Omaroll added, including a `[Default Applications]` section or a whole file
+that was not there before, so setting and restoring any number of times leaves
+the file unchanged. The exceptions: restoring takes Omaroll out of that file
+for the types it restores (pictures and videos, or PDFs with `pdf`), so an
+Added Associations entry for Omaroll that you wrote yourself goes too, while
+Removed Associations entries stay. It does the same in the desktop's own list
+beside it, such as `hyprland-mimeapps.list`, and in the lists in
+`~/.local/share/applications`, without putting anything back there. And an
+app you chose after `--set-default` stays your choice.
 
 To open a picture or video from a terminal:
 
@@ -174,6 +185,9 @@ is playing. Folders, PDFs and a plain `omaroll` open the library, and so does
 omaroll ~/Pictures
 omaroll --library photo.jpg
 ```
+
+The launcher also offers **Open Library** on Omaroll's entry, which runs
+`omaroll --library`.
 
 Images and videos without a filename extension are recognized from their file
 headers. Their names stay unchanged; unrelated files are ignored.
@@ -251,7 +265,15 @@ Every viewer shortcut is listed in [Shortcuts](docs/shortcuts.md#viewer), and
   after confirmation, as one step Undo puts back.
 - **Share and hand off.** Drag actual files into another app, copy images or
   text, send with LocalSend or Taildrop, and open specialist tools for trimming,
-  annotation, conversion and editing.
+  annotation, conversion and editing. A copied JPEG of up to 24 megapixels that fits
+  the image memory limit is offered as PNG too, so it can show up in
+  Omarchy's clipboard history while apps that take JPEG still get the original
+  bytes. The history waits two seconds for the PNG, so on a slow machine a
+  large photo may still be missed. It needs a compositor with ext-data-control,
+  which Omarchy's Hyprland has; elsewhere, and for larger photos, the copy is
+  JPEG only and pastes as before, but the history skips it.
+- **Media keys and players.** A playing video answers media keys and the
+  shell's player controls, with a poster frame as its cover art.
 - **Present and finish.** Run a fullscreen slideshow, choose a screenshot
   background for sharing, and follow your Omarchy palette and font as they change.
 
@@ -369,9 +391,11 @@ reported and left for you to edit. A `~/.config/hypr/omaroll.lua` you wrote
 yourself is never replaced or removed.
 
 When a second viewer opens on the same workspace, Omaroll tiles it and the
-viewers already there, so your layout arranges them instead of stacking them in
+viewers already there (each Omaroll tiles its own viewers; normally one Omaroll
+holds them all), so your layout arranges them instead of stacking them in
 the middle. They stay tiled as the others close; the next viewer opened on its
-own floats again.
+own floats again. This is on purpose: a viewer that tiles beside another one
+does not mean the float rule failed.
 A viewer opened this way maps under the library's title, "Omaroll", for a
 moment before taking its own, so rules you have keyed on that exact title also
 apply to it.
@@ -448,7 +472,7 @@ On Arch, install the build and runtime dependencies:
 sudo pacman -S --needed git base-devel cmake ninja pkgconf bubblewrap \
   qt6-base qt6-declarative qt6-multimedia qt6-imageformats qt6-svg qt6-wayland \
   kimageformats libavif libheif libraw hicolor-icon-theme xdg-desktop-portal \
-  ffmpeg ffmpegthumbnailer poppler wl-clipboard xdg-utils
+  ffmpeg ffmpegthumbnailer poppler wayland wl-clipboard xdg-utils
 ```
 
 ```bash
