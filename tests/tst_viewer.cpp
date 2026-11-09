@@ -179,9 +179,10 @@ private slots:
       for (const QQmlError& warning : warnings) {
         // The sandbox may have no thumbnailer for the video poster; the
         // player's own frame is what the tests look at.
-        // The broken-file test's picture fails to decode on purpose.
+        // The broken-file tests' pictures fail to decode on purpose.
         if (!warning.toString().contains(QStringLiteral("No thumbnail for "))
-            && !warning.toString().contains(QStringLiteral("/broken/a notes.jpg"))) {
+            && !warning.toString().contains(QStringLiteral("/broken/a notes.jpg"))
+            && !warning.toString().contains(QStringLiteral("/focus/b notes.jpg"))) {
           m_warnings.append(warning.toString());
         }
       }
@@ -1400,6 +1401,99 @@ private slots:
     QVERIFY(prop("infoOpen").toBool());
     QTest::keyClick(m_window, Qt::Key_Escape);
     QVERIFY(!prop("infoOpen").toBool());
+  }
+
+  // A focused control that is switched off or hidden hands the keyboard back
+  // to the picture: shortcuts keep working, and Space or Enter cannot press a
+  // control nobody can see.
+  void hiddenOrDisabledControlsHandTheKeyboardBack() {
+    const QString folder = m_scratch.filePath(QStringLiteral("focus"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString fine = folder + QStringLiteral("/a fine.jpg");
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), fine));
+    const QString notes = folder + QStringLiteral("/b notes.jpg");
+    {
+      QFile file(notes);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("These are notes, saved with the wrong name.\n");
+    }
+    const QString other = folder + QStringLiteral("/c other.jpg");
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), other));
+    const QString picture = media(QStringLiteral("Shot 1.jpg"));
+    const QString clip = media(QStringLiteral("clip.mp4"));
+    QQuickItem* keys = item(QStringLiteral("viewerKeys"));
+    QQuickItem* confirm = item(QStringLiteral("viewerConfirm"));
+    // Within the filmstrip, focus sits on the current tile.
+    const auto focusOn = [this](const QString& name) {
+      QQuickItem* target = item(name);
+      for (int step = 0; step < 60; ++step) {
+        QTest::keyClick(m_window, Qt::Key_Tab);
+        if (target->hasActiveFocus()) return true;
+      }
+      return false;
+    };
+
+    // Switched off: Rotate right is focused when the next file can't be shown.
+    open({fine, notes});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QVERIFY(focusOn(QStringLiteral("viewerRotateRight")));
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QCOMPARE(m_session->path(), notes);
+    QTRY_VERIFY(prop("imageError").toBool());
+    QVERIFY(!item(QStringLiteral("viewerRotateRight"))->isEnabled());
+    QTRY_VERIFY(keys->hasActiveFocus());
+    QVERIFY(!prop("controlsFocused").toBool());
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QCOMPARE(m_session->path(), fine);
+
+    // Hidden with the error: its Trash button is focused when the next
+    // picture is fine. Space must not ask to trash the good file.
+    open({notes, other});
+    QTRY_VERIFY(prop("imageError").toBool());
+    QVERIFY(focusOn(QStringLiteral("viewerErrorTrash")));
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QCOMPARE(m_session->path(), other);
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QVERIFY(!item(QStringLiteral("viewerErrorTrash"))->isVisible());
+    QTRY_VERIFY(keys->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTest::qWait(50);
+    QVERIFY(!confirm->isVisible());
+
+    // Hidden with the details: I closes the panel with Favourite focused.
+    QTest::keyClick(m_window, Qt::Key_I);
+    QTRY_VERIFY(prop("infoOpen").toBool());
+    QVERIFY(focusOn(QStringLiteral("viewerInfoFavourite")));
+    QTest::keyClick(m_window, Qt::Key_I);
+    QVERIFY(!prop("infoOpen").toBool());
+    QTRY_VERIFY(keys->hasActiveFocus());
+    QVERIFY(!prop("controlsFocused").toBool());
+
+    // Hidden with the filmstrip when a slideshow starts.
+    m_settings->setViewerFilmstrip(true);
+    const auto restore = qScopeGuard([this] { m_settings->setViewerFilmstrip(false); });
+    open({fine, other});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QTRY_VERIFY(item(QStringLiteral("viewerFilmstrip"))->isVisible());
+    QVERIFY(focusOn(QStringLiteral("viewerFilmstripList")));
+    QTest::keyClick(m_window, Qt::Key_F5);
+    QVERIFY(prop("slideshowRunning").toBool());
+    QVERIFY(!item(QStringLiteral("viewerFilmstrip"))->isVisible());
+    QTRY_VERIFY(keys->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QVERIFY(!prop("slideshowRunning").toBool());
+
+    // Hidden with the toolbar: Enter on Next opens a video, and Space then
+    // plays or pauses rather than pressing the hidden Next again.
+    open({picture, clip});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QVERIFY(focusOn(QStringLiteral("viewerToolbarNext")));
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QCOMPARE(m_session->path(), clip);
+    QVERIFY(!item(QStringLiteral("viewerToolbarNext"))->isVisible());
+    QTRY_VERIFY(keys->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QCOMPARE(m_session->path(), clip);
   }
 
   // Pictures that cannot be shown, named by cause.

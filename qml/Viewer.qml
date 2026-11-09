@@ -190,7 +190,10 @@ ApplicationWindow {
     // Remembered while the window is inactive, when nothing has active focus,
     // so the focused control is not hidden from under the keyboard.
     property Item keyboardFocusItem: null
-    onActiveFocusItemChanged: if (root.activeFocusItem !== null) root.keyboardFocusItem = root.activeFocusItem
+    onActiveFocusItemChanged: {
+        if (root.activeFocusItem !== null) root.keyboardFocusItem = root.activeFocusItem
+        Qt.callLater(root.reclaimFocus)
+    }
     readonly property bool controlsFocused: root.keyboardFocusItem !== null
                                             && root.keyboardFocusItem !== keys
                                             && root.focusInside(root.keyboardFocusItem)
@@ -210,6 +213,25 @@ ApplicationWindow {
             next = next.nextItemInFocusChain(forward)
         }
         (next ? next : keys).forceActiveFocus(Qt.TabFocusReason)
+    }
+    // A focused control that is hidden or switched off would keep Space and
+    // Enter, or leave the keyboard on the window itself where no key works.
+    // The picture takes it back. Popups keep their own focus.
+    function reclaimFocus() {
+        if (!root.visible || !root.active) return
+        const at = root.activeFocusItem
+        if (at === keys) return
+        let lost = at === null || !at.visible || !at.enabled
+        for (let up = keys.parent; up && !lost; up = up.parent) {
+            if (up === at) lost = true
+        }
+        if (lost) keys.forceActiveFocus()
+    }
+    Connections {
+        target: root.activeFocusItem
+        ignoreUnknownSignals: true
+        function onVisibleChanged() { Qt.callLater(root.reclaimFocus) }
+        function onEnabledChanged() { Qt.callLater(root.reclaimFocus) }
     }
 
     readonly property bool chromeShown: root.chromePinned || root.pointerActive || root.infoOpen
