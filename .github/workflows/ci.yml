@@ -247,7 +247,7 @@ jobs:
         run: >-
           pacman -Syu --noconfirm --needed base-devel clang llvm compiler-rt cmake ninja
           ffmpeg ffmpegthumbnailer git imagemagick kimageformats libavif libheif libraw
-          imath openexr poppler qt6-base qt6-declarative qt6-imageformats qt6-multimedia
+          imath openexr poppler python qt6-base qt6-declarative qt6-imageformats qt6-multimedia
           qt6-svg qt6-wayland xdg-utils mesa
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Run instrumented checks
@@ -260,6 +260,7 @@ jobs:
           path: |
             build/fuzz/fuzz-results
             build/tsan/Testing/Temporary/LastTest.log
+            build/tsan/tsan-report.*
             build/coverage/html
             build/coverage/summary.txt
           if-no-files-found: ignore

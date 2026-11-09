@@ -419,9 +419,12 @@ private slots:
     m_window->resize(1280, 820);
     m_window->show();
     QVERIFY(QTest::qWaitForWindowExposed(m_window));
-    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowCount() >= 3, 15000);
+    // The first scan must finish before any test picks a row by position:
+    // rows still arriving would reorder under a key press.
+    QVERIFY(QTest::qWaitFor([&] { return !m_captures->scanning() && m_library->rowCount() >= 3; }, 60000));
     // Let the grid lay its tiles out before anything is clicked.
-    QTRY_VERIFY_WITH_TIMEOUT(cardFor(pathAt(1)) != nullptr, 5000);
+    QTRY_VERIFY(cardFor(pathAt(1)) != nullptr);
+    QTRY_VERIFY(item("library")->property("layoutReady").toBool());
     QVERIFY(!m_window->findChild<QMediaPlayer*>(QStringLiteral("videoPlayer")));
     QVERIFY(!m_window->findChild<QObject*>(QStringLiteral("videoOutput")));
   }

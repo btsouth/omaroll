@@ -53,6 +53,10 @@ case "$mode" in
     done
     llvm-cov report "${objects[@]}" -instr-profile="$build/coverage.profdata" -ignore-filename-regex='(tests/|_autogen/|/usr/|(^|/)build/)' | tee "$build/summary.txt"
     llvm-cov show "${objects[@]}" -instr-profile="$build/coverage.profdata" -ignore-filename-regex='(tests/|_autogen/|/usr/|(^|/)build/)' -format=html -output-dir="$build/html"
+    if [[ -n ${GITHUB_STEP_SUMMARY:-} ]]; then
+      { echo '### Coverage (no threshold)'; echo; echo '```'
+        head -n 2 "$build/summary.txt"; grep '^TOTAL' "$build/summary.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+    fi
     # Coverage is a report, not a gate: the build-and-test jobs gate the
     # suites, and timing-sensitive tests are slower under instrumentation.
     if ((test_status != 0)); then
