@@ -6,6 +6,8 @@
 #include <QJsonObject>
 #include <QMediaPlayer>
 #include <QPointer>
+#include <QMutex>
+#include <QSet>
 #include <QQuickWindow>
 #include <QVariant>
 #include <QVideoFrame>
@@ -21,8 +23,16 @@ public:
   StartupTrace() : m_enabled(qEnvironmentVariableIntValue("OMAROLL_STARTUP_TRACE") == 1) {
     if (m_enabled) {
       m_clock.start();
+      const StartupTrace* none = nullptr;
+      s_active.compare_exchange_strong(none, this);
     }
   }
+  ~StartupTrace() {
+    const StartupTrace* self = this;
+    s_active.compare_exchange_strong(self, nullptr);
+  }
+  StartupTrace(const StartupTrace& other) : m_enabled(other.m_enabled), m_clock(other.m_clock) {}
+  StartupTrace& operator=(const StartupTrace&) = delete;
 
   void mark(const char* stage) const {
     if (m_enabled) {
@@ -31,6 +41,22 @@ public:
       qInfo().noquote() << "OMAROLL_STARTUP"
                        << QJsonDocument(event).toJson(QJsonDocument::Compact);
     }
+  }
+
+  // A stage marked from outside main(), against the trace main() started,
+  // once: the first time it is reached. Safe from any thread; nothing happens
+  // when tracing is off.
+  static void note(const char* stage) {
+    const StartupTrace* active = s_active.load();
+    if (!active) return;
+    static QMutex mutex;
+    static QSet<QByteArray> reported;
+    {
+      const QMutexLocker lock(&mutex);
+      if (reported.contains(stage)) return;
+      reported.insert(stage);
+    }
+    active->mark(stage);
   }
 
   void watch(QQuickWindow* window) const {
@@ -65,10 +91,20 @@ public:
             }
           };
           QObject::connect(state->sink.data(), &QVideoSink::videoFrameChanged, window, decoded);
+          // When the window thread learns the file is open; decoding
+          // starts from here.
+          QObject::connect(player, &QMediaPlayer::mediaStatusChanged, window,
+                           [](QMediaPlayer::MediaStatus status) {
+            if (status == QMediaPlayer::LoadedMedia) note("media_loaded");
+          });
+          if (player->mediaStatus() == QMediaPlayer::LoadedMedia) note("media_loaded");
           decoded(state->sink->videoFrame());
         }
       }
     });
+    QObject::connect(window, &QQuickWindow::sceneGraphInitialized, window, [trace = *this] {
+      trace.mark("scenegraph");
+    }, Qt::DirectConnection);
     QObject::connect(window, &QQuickWindow::beforeSynchronizing, window, [state] {
       state->synchronized = state->ready.load();
     }, Qt::DirectConnection);
@@ -77,7 +113,8 @@ public:
       for (const auto& [bit, name] : {std::pair{1, "first_frame"},
                                      std::pair{2, "image_frame"},
                                      std::pair{4, "grid_frame"},
-                                     std::pair{8, "poster_frame"}}) {
+                                     std::pair{8, "poster_frame"},
+                                     std::pair{16, "video_frame"}}) {
         if ((frame & bit) && !(state->reported & bit)) {
           trace.mark(name);
           state->reported |= bit;
@@ -89,4 +126,5 @@ public:
 private:
   bool m_enabled;
   QElapsedTimer m_clock;
+  static inline std::atomic<const StartupTrace*> s_active = nullptr;
 };

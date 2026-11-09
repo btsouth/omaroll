@@ -111,15 +111,27 @@ jobs:
         run: ctest --test-dir build/release --parallel 4 --output-on-failure --output-junit test-results.xml
       - name: Test rendered media with Mesa OpenGL
         run: xvfb-run -a bash tests/run-opengl.sh build/release
-      - name: Check startup readiness (informational timings)
-        run: xvfb-run -a python3 tests/benchmark_startup.py build/release/omaroll --runs 1 > build/release/startup.json
+      # Software rendering and decoding, so these are several times a
+      # desktop's numbers (docs/performance/README.md). The budgets catch a
+      # stage that starts waiting on something, not a few milliseconds.
+      - name: Check startup budgets
+        run: >-
+          xvfb-run -a python3 tests/benchmark_startup.py build/release/omaroll --runs 3
+          --budget single-image:qml=1500 --budget single-image:image_frame=3000
+          --budget single-video:qml=2000 --budget single-video:video_frame=8000
+          --budget library:qml=3000 --budget library:grid_frame=9000
+          ${{ matrix.check == 'aarch64' && '--budget-scale 3' || '' }}
+          > build/release/startup.json
       # Runners have no GPU, so this plays a 4K clip with software decoding
       # and rendering. The hardware-decoding path is checked with --gpu in a
-      # disposable desktop; see tests/README.md.
+      # disposable desktop; see tests/README.md. Software frames are not
+      # copied the way hardware ones are, so the fault budget only catches a
+      # frame mapped every time (about 90,000 faults a second here);
+      # omaroll_tests holds Qt-sized copies to the heap.
       - name: Check 4K playback CPU budget
         run: >-
           xvfb-run -a python3 tests/benchmark_playback.py build/release/omaroll --runs 3
-          ${{ matrix.check != 'aarch64' && '--max-cpu 350' || '' }}
+          ${{ matrix.check != 'aarch64' && '--max-cpu 350 --max-faults 60000' || '' }}
           > build/release/playback.json
       - name: Save rendered views
         if: always()

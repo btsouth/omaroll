@@ -1,4 +1,5 @@
 #include "library/MediaMetadataIndex.h"
+#include "app/StartupTrace.h"
 
 #include "sources/CameraRaw.h"
 
@@ -677,6 +678,7 @@ void MediaMetadataIndex::setIndexing(bool value) {
     return;
   }
   m_indexing = value;
+  StartupTrace::note(value ? "index_start" : "index_done");
   if (m_model) m_model->setMetadataIndexing(value);
   emit indexingChanged();
 }

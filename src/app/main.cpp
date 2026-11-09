@@ -15,6 +15,7 @@
 #include "app/SingleInstance.h"
 #include "app/StartupTrace.h"
 #include "app/VideoPlayback.h"
+#include "app/VideoWarmup.h"
 #include "library/CaptureFilterModel.h"
 #include "library/FolderTreeModel.h"
 #include "library/CaptureModel.h"
@@ -639,6 +640,13 @@ int main(int argc, char* argv[]) {
     const auto result = instance.claimOrNotify(requestedPaths, preferLibrary, startMs, request.skipped);
     if (result == SingleInstance::Result::Forwarded) return 0;
     if (result == SingleInstance::Result::Error) return 1;
+  }
+  startup.mark("instance");
+  // A video opened from outside: load the backend and start the GPU driver
+  // while the window loads (app/VideoWarmup.h).
+  if (!rendering && opensInViewer(request, preferLibrary) &&
+      !LaunchRequest::firstVideo(request.files).isEmpty()) {
+    VideoWarmup::start();
   }
 
   // The viewer renders open a demo file the way a file manager would.

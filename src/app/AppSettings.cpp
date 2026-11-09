@@ -1,4 +1,5 @@
 #include "app/AppSettings.h"
+#include "app/StartupTrace.h"
 #include "actions/TrashRestore.h"
 #include "app/Diagnostics.h"
 #include "app/HyprlandSetup.h"
@@ -798,6 +799,7 @@ void AppSettings::setVideoVolume(qreal value) {
 }
 
 void AppSettings::prepareVideoPlayback() const {
+  StartupTrace::note("player");
   configureVideoPlayback();
 }
 
