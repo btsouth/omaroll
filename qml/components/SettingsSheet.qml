@@ -14,6 +14,9 @@ Item {
     property bool pinSelectedFolder: false
     property string textCacheMessage: ""
     property string organizationMessage: ""
+    // What the last default-viewer change did, in a sentence.
+    property string defaultsMessage: ""
+    property bool defaultsOk: true
     property bool organizationOk: false
     // Set once a backup file has been chosen; the restore runs only after the
     // user confirms, since it replaces the current organization.
@@ -70,11 +73,31 @@ Item {
         organizationMessage = ""
         organizationOk = false
         pendingRestorePath = ""
+        defaultsMessage = ""
+        MimeDefaults.refresh()
         visible = true
         forceActiveFocus()
     }
 
     function close() { visible = false }
+
+    function defaultsStatus() {
+        if (root.defaultsMessage !== "") return root.defaultsMessage
+        if (!MimeDefaults.known) return "Checking which app opens pictures and videos…"
+        if (MimeDefaults.imagesDefault && MimeDefaults.videosDefault)
+            return "Pictures and videos open with Omaroll from the file manager."
+        if (MimeDefaults.imagesDefault) return "Pictures open with Omaroll. Videos open with another app."
+        if (MimeDefaults.videosDefault) return "Videos open with Omaroll. Pictures open with another app."
+        return "Pictures and videos open with other apps. Folders are never changed."
+    }
+
+    Connections {
+        target: MimeDefaults
+        function onFinished(ok, summary) {
+            root.defaultsOk = ok
+            root.defaultsMessage = summary
+        }
+    }
 
     visible: false
     anchors.fill: parent
@@ -226,6 +249,69 @@ Item {
                         onClicked: { Settings.copyDiagnostics(Theme.themeName, root.Screen.devicePixelRatio); label = "Diagnostics copied" }
                     }
                 }
+            }
+
+            Rectangle {
+                width: parent.width
+                height: 1
+                color: root.shade(Theme.foreground, 0.12)
+            }
+
+            Row {
+                objectName: "settingsDefaultViewer"
+                width: parent.width
+                spacing: 12
+
+                Column {
+                    width: parent.width - defaultButtons.width - 12
+                    spacing: 2
+
+                    Text {
+                        text: "Default viewer"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 12
+                        color: Theme.foreground
+                    }
+                    Text {
+                        objectName: "settingsDefaultViewerStatus"
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        text: root.defaultsStatus()
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 10
+                        color: root.defaultsOk ? Theme.mutedText : Theme.red
+                    }
+                }
+
+                Row {
+                    id: defaultButtons
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 6
+
+                    PillButton {
+                        objectName: "settingsSetDefault"
+                        visible: !(MimeDefaults.imagesDefault && MimeDefaults.videosDefault)
+                        enabled: !MimeDefaults.busy
+                        label: MimeDefaults.busy ? "Working…" : "Set as default"
+                        toolTip: "Open pictures and videos with Omaroll from the file manager"
+                        accessibleName: "Set as default for pictures and videos"
+                        onClicked: MimeDefaults.applyAsync(false, "all")
+                    }
+                    PillButton {
+                        objectName: "settingsRestoreDefault"
+                        visible: MimeDefaults.imagesDefault || MimeDefaults.videosDefault
+                        enabled: !MimeDefaults.busy
+                        label: "Restore previous apps"
+                        toolTip: "Put back the apps that opened them before"
+                        onClicked: MimeDefaults.applyAsync(true, "all")
+                    }
+                }
+            }
+
+            Rectangle {
+                width: parent.width
+                height: 1
+                color: root.shade(Theme.foreground, 0.12)
             }
 
             Text {

@@ -233,6 +233,10 @@ Item {
             TextInput {
                 id: search
                 objectName: "libraryFilterSearch"
+                Accessible.role: Accessible.EditableText
+                Accessible.name: "Search the library"
+                Accessible.description: "Names, captions and text in pictures. Shortcut /"
+                Accessible.searchEdit: true
                 anchors.fill: parent
                 anchors.leftMargin: 10
                 anchors.rightMargin: 10

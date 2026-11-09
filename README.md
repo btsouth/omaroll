@@ -89,6 +89,8 @@ omaroll --set-default
 
 `omaroll --set-default pdf` does the same for PDFs, and `omaroll --unset-default`
 puts back the apps it replaced. Folders keep opening in your file manager.
+Settings has the same choice as **Set as default** and **Restore previous
+apps**, and says how many types changed and which apps were replaced.
 
 To open a picture or video from a terminal:
 
@@ -119,6 +121,18 @@ omaroll --library photo.jpg
 
 Images and videos without a filename extension are recognized from their file
 headers. Their names stay unchanged; unrelated files are ignored.
+
+A picture that can't be shown says why: not a picture at all, a format no
+installed plugin reads, a damaged or cut-off file, or one too large for the
+memory limit. Open with, Show in folder and Move to Trash stay available, and
+the zoom and rotate controls are off. A JPEG or PNG that ends early, as an
+unfinished download does, shows with a "cut off" note, since the missing part
+otherwise looks like grey picture. In the filmstrip such files are marked.
+
+`Tab` and `Shift+Tab` move through the viewer's controls with a focus ring,
+then back to the picture; `Esc` returns to the picture. The viewer's shortcuts
+keep working while a control has focus. In the filmstrip, the arrows move the
+ring and `Enter` opens the file under it.
 
 To start a video in the viewer at a given time, use `--start` with seconds,
 mm:ss or hh:mm:ss. It applies to the first video you open and takes precedence
@@ -496,6 +510,15 @@ own floats again.
 A viewer opened this way maps under the library's title, "Omaroll", for a
 moment before taking its own, so rules you have keyed on that exact title also
 apply to it.
+
+## First run
+
+With nothing in Pictures or Videos yet, the library offers **Add folder**,
+**Open file** (the desktop's file chooser), **Try the demo library** and, when
+Omaroll isn't already the default for pictures, **Set as default viewer**. Files
+stay where they are; Omaroll never moves or copies them. A search or filter
+that matches nothing says so and offers **Clear search** or **Clear filters**,
+rather than calling the folder empty.
 
 ## Try it without your own files
 

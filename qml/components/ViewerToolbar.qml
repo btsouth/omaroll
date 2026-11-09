@@ -11,6 +11,8 @@ Rectangle {
     property bool slideshowRunning: false
     // On a narrow window the zoom group gives way; the wheel and keys still zoom.
     property bool compact: false
+    // Off while the picture could not be shown: nothing to zoom or turn.
+    property bool viewControls: true
     readonly property bool hovered: hover.hovered
 
     signal zoomOut()
@@ -62,6 +64,7 @@ Rectangle {
 
         IconButton {
             objectName: "viewerZoomOut"
+            enabled: root.viewControls
             visible: !root.compact
             icon: "zoom-out"
             toolTip: "Zoom out"
@@ -70,6 +73,7 @@ Rectangle {
         }
         IconButton {
             objectName: "viewerFitToggle"
+            enabled: root.viewControls
             visible: !root.compact
             label: root.fitted ? "1:1" : "Fit"
             toolTip: root.fitted ? "Actual size" : "Fit to window"
@@ -78,6 +82,7 @@ Rectangle {
         }
         IconButton {
             objectName: "viewerZoomIn"
+            enabled: root.viewControls
             visible: !root.compact
             icon: "zoom-in"
             toolTip: "Zoom in"
@@ -115,6 +120,7 @@ Rectangle {
 
         IconButton {
             objectName: "viewerRotateLeft"
+            enabled: root.viewControls
             icon: "rotate-left"
             toolTip: "Rotate left"
             shortcut: ShortcutCatalog.sequence("quick", "rotate")[1]
@@ -122,6 +128,7 @@ Rectangle {
         }
         IconButton {
             objectName: "viewerRotateRight"
+            enabled: root.viewControls
             icon: "rotate-right"
             toolTip: "Rotate right"
             shortcut: ShortcutCatalog.sequence("quick", "rotate")[0]

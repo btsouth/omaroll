@@ -26,9 +26,12 @@
 #include "thumbs/ThumbnailProvider.h"
 #include "viewer/HyprlandPlacement.h"
 #include "viewer/MprisService.h"
+#include "viewer/PictureDiagnosis.h"
 #include "viewer/ViewerSession.h"
 #include "viewer/ViewerWindows.h"
 
+#include <QAccessible>
+#include <QBuffer>
 #include <QAudioDevice>
 #include <QClipboard>
 #include <QColorSpace>
@@ -176,7 +179,10 @@ private slots:
       for (const QQmlError& warning : warnings) {
         // The sandbox may have no thumbnailer for the video poster; the
         // player's own frame is what the tests look at.
-        if (!warning.toString().contains(QStringLiteral("No thumbnail for "))) {
+        // The broken-file tests' pictures fail to decode on purpose.
+        if (!warning.toString().contains(QStringLiteral("No thumbnail for "))
+            && !warning.toString().contains(QStringLiteral("/broken/a notes.jpg"))
+            && !warning.toString().contains(QStringLiteral("/focus/b notes.jpg"))) {
           m_warnings.append(warning.toString());
         }
       }
@@ -1309,28 +1315,71 @@ private slots:
     QCOMPARE(m_session->path(), selection.at(0));
   }
 
-  void tabKeepsViewerPlaybackAndNavigationKeys_data() {
+  void tabWalksTheControlsAndShortcutsKeepWorking_data() {
     QTest::addColumn<bool>("video");
     QTest::newRow("picture") << false;
     QTest::newRow("video") << true;
   }
 
-  void tabKeepsViewerPlaybackAndNavigationKeys() {
+  // Tab and Shift+Tab reach every visible control, with the controls held
+  // up and a focus ring on the one focused, then return to the picture.
+  // Viewer shortcuts work wherever focus is.
+  void tabWalksTheControlsAndShortcutsKeepWorking() {
     QFETCH(bool, video);
     const QString picture = media(QStringLiteral("Shot 1.jpg"));
     const QString clip = media(QStringLiteral("clip.mp4"));
     open(video ? QStringList{clip, picture} : QStringList{picture, clip});
-    QTest::keyClick(m_window, Qt::Key_I);
-    QVERIFY(prop("infoOpen").toBool());
-    QTest::keyClick(m_window, Qt::Key_Tab);
-    QVERIFY(item(QStringLiteral("viewerKeys"))->hasActiveFocus());
+    if (!video) QTRY_VERIFY(prop("imageReady").toBool());
+    QQuickItem* keys = item(QStringLiteral("viewerKeys"));
+    const auto focused = [this] {
+      QQuickItem* at = m_window->activeFocusItem();
+      return at ? at->objectName() : QString();
+    };
+
+    QStringList order;
+    for (int step = 0; step < 60; ++step) {
+      QTest::keyClick(m_window, Qt::Key_Tab);
+      if (keys->hasActiveFocus()) break;
+      order.append(focused());
+      QVERIFY2(prop("controlsFocused").toBool(), qPrintable(focused()));
+      QVERIFY(prop("chromeShown").toBool());
+      QVERIFY(m_window->activeFocusItem()->isVisible());
+    }
+    QVERIFY2(keys->hasActiveFocus(), qPrintable(order.join(u',')));
+    QVERIFY2(order.size() >= 3, qPrintable(order.join(u',')));
+    QCOMPARE(order.first(), QStringLiteral("viewerInfoButton"));
+    const QStringList expected = video
+        ? QStringList{QStringLiteral("viewerInfoButton"), QStringLiteral("viewerLibraryButton"),
+                      QStringLiteral("viewerMoreButton")}
+        : QStringList{QStringLiteral("viewerInfoButton"), QStringLiteral("viewerLibraryButton"),
+                      QStringLiteral("viewerMoreButton"), QStringLiteral("viewerZoomOut"),
+                      QStringLiteral("viewerFitToggle"), QStringLiteral("viewerZoomIn"),
+                      QStringLiteral("viewerToolbarPrevious"), QStringLiteral("viewerSlideshowButton"),
+                      QStringLiteral("viewerToolbarNext"), QStringLiteral("viewerRotateLeft"),
+                      QStringLiteral("viewerRotateRight"), QStringLiteral("viewerTrashButton")};
+    int at = -1;
+    for (const QString& name : expected) {
+      const int found = int(order.indexOf(name));
+      QVERIFY2(found > at, qPrintable(name + u" in " + order.join(u',')));
+      at = found;
+    }
+
+    // Shift+Tab goes the other way, from the picture to the last control.
     QTest::keyClick(m_window, Qt::Key_Backtab, Qt::ShiftModifier);
-    QVERIFY(item(QStringLiteral("viewerKeys"))->hasActiveFocus());
+    QCOMPARE(focused(), order.last());
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QVERIFY(keys->hasActiveFocus());
+
+    // On a control, the viewer's keys still step, seek and play.
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QCOMPARE(focused(), QStringLiteral("viewerInfoButton"));
+    QQuickItem* button = m_window->activeFocusItem();
+    QVERIFY(button->property("activeFocus").toBool());
     if (video) {
       QMediaPlayer* player = nullptr;
       QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
       QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
-      QTest::keyClick(m_window, Qt::Key_Space);
+      QTest::keyClick(m_window, Qt::Key_K);
       QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
       QTest::keyClick(m_window, Qt::Key_Right);
       QTRY_VERIFY(player->position() > 0);
@@ -1338,7 +1387,308 @@ private slots:
     } else {
       QTest::keyClick(m_window, Qt::Key_Right);
       QCOMPARE(m_session->path(), clip);
+      QTest::keyClick(m_window, Qt::Key_PageUp);
+      QCOMPARE(m_session->path(), picture);
     }
+    QCOMPARE(m_window->activeFocusItem(), button);
+    // Enter on a control presses it; Escape hands the keyboard back to the
+    // picture without closing the viewer.
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(prop("infoOpen").toBool());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QVERIFY(keys->hasActiveFocus());
+    QVERIFY(m_window->isVisible());
+    QVERIFY(prop("infoOpen").toBool());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QVERIFY(!prop("infoOpen").toBool());
+  }
+
+  // A focused control that is switched off or hidden hands the keyboard back
+  // to the picture: shortcuts keep working, and Space or Enter cannot press a
+  // control nobody can see.
+  void hiddenOrDisabledControlsHandTheKeyboardBack() {
+    const QString folder = m_scratch.filePath(QStringLiteral("focus"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString fine = folder + QStringLiteral("/a fine.jpg");
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), fine));
+    const QString notes = folder + QStringLiteral("/b notes.jpg");
+    {
+      QFile file(notes);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("These are notes, saved with the wrong name.\n");
+    }
+    const QString other = folder + QStringLiteral("/c other.jpg");
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), other));
+    const QString picture = media(QStringLiteral("Shot 1.jpg"));
+    const QString clip = media(QStringLiteral("clip.mp4"));
+    QQuickItem* keys = item(QStringLiteral("viewerKeys"));
+    QQuickItem* confirm = item(QStringLiteral("viewerConfirm"));
+    // Within the filmstrip, focus sits on the current tile.
+    const auto focusOn = [this](const QString& name) {
+      QQuickItem* target = item(name);
+      for (int step = 0; step < 60; ++step) {
+        QTest::keyClick(m_window, Qt::Key_Tab);
+        if (target->hasActiveFocus()) return true;
+      }
+      return false;
+    };
+
+    // Switched off: Rotate right is focused when the next file can't be shown.
+    open({fine, notes});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QVERIFY(focusOn(QStringLiteral("viewerRotateRight")));
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QCOMPARE(m_session->path(), notes);
+    QTRY_VERIFY(prop("imageError").toBool());
+    QVERIFY(!item(QStringLiteral("viewerRotateRight"))->isEnabled());
+    QTRY_VERIFY(keys->hasActiveFocus());
+    QVERIFY(!prop("controlsFocused").toBool());
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QCOMPARE(m_session->path(), fine);
+
+    // Hidden with the error: its Trash button is focused when the next
+    // picture is fine. Space must not ask to trash the good file.
+    open({notes, other});
+    QTRY_VERIFY(prop("imageError").toBool());
+    QVERIFY(focusOn(QStringLiteral("viewerErrorTrash")));
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QCOMPARE(m_session->path(), other);
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QVERIFY(!item(QStringLiteral("viewerErrorTrash"))->isVisible());
+    QTRY_VERIFY(keys->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTest::qWait(50);
+    QVERIFY(!confirm->isVisible());
+
+    // Hidden with the details: I closes the panel with Favourite focused.
+    QTest::keyClick(m_window, Qt::Key_I);
+    QTRY_VERIFY(prop("infoOpen").toBool());
+    QVERIFY(focusOn(QStringLiteral("viewerInfoFavourite")));
+    QTest::keyClick(m_window, Qt::Key_I);
+    QVERIFY(!prop("infoOpen").toBool());
+    QTRY_VERIFY(keys->hasActiveFocus());
+    QVERIFY(!prop("controlsFocused").toBool());
+
+    // Hidden with the filmstrip when a slideshow starts.
+    m_settings->setViewerFilmstrip(true);
+    const auto restore = qScopeGuard([this] { m_settings->setViewerFilmstrip(false); });
+    open({fine, other});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QTRY_VERIFY(item(QStringLiteral("viewerFilmstrip"))->isVisible());
+    QVERIFY(focusOn(QStringLiteral("viewerFilmstripList")));
+    QTest::keyClick(m_window, Qt::Key_F5);
+    QVERIFY(prop("slideshowRunning").toBool());
+    QVERIFY(!item(QStringLiteral("viewerFilmstrip"))->isVisible());
+    QTRY_VERIFY(keys->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QVERIFY(!prop("slideshowRunning").toBool());
+
+    // Hidden with the toolbar: Enter on Next opens a video, and Space then
+    // plays or pauses rather than pressing the hidden Next again.
+    open({picture, clip});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QVERIFY(focusOn(QStringLiteral("viewerToolbarNext")));
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QCOMPARE(m_session->path(), clip);
+    QVERIFY(!item(QStringLiteral("viewerToolbarNext"))->isVisible());
+    QTRY_VERIFY(keys->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QCOMPARE(m_session->path(), clip);
+  }
+
+  // Pictures that cannot be shown, named by cause.
+  void pictureDiagnosisNamesTheCause() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto write = [&dir](const QString& name, const QByteArray& bytes) {
+      QFile file(dir.filePath(name));
+      if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size()) return QString();
+      return file.fileName();
+    };
+    QFile good(media(QStringLiteral("Shot 1.jpg")));
+    QVERIFY(good.open(QIODevice::ReadOnly));
+    const QByteArray jpeg = good.readAll();
+    QImage square(64, 48, QImage::Format_RGB32);
+    square.fill(Qt::darkCyan);
+    QByteArray png;
+    {
+      QBuffer buffer(&png);
+      QVERIFY(buffer.open(QIODevice::WriteOnly));
+      QVERIFY(square.save(&buffer, "PNG"));
+    }
+
+    using PictureDiagnosis::failure;
+    using PictureDiagnosis::truncation;
+    QCOMPARE(failure(dir.filePath(QStringLiteral("gone.jpg"))).cause, QStringLiteral("missing"));
+    QCOMPARE(failure(write(QStringLiteral("empty.png"), {})).cause, QStringLiteral("empty"));
+    const auto text = failure(write(QStringLiteral("notes.jpg"), "Just some notes, not a photo.\n"));
+    QCOMPARE(text.cause, QStringLiteral("not-picture"));
+    QVERIFY2(text.detail.contains(QStringLiteral("text")), qPrintable(text.detail));
+    QVERIFY2(text.detail.contains(QStringLiteral("JPEG")), qPrintable(text.detail));
+    // A DjVu page: a picture, but in a format no installed plugin reads.
+    const auto djvu = failure(write(QStringLiteral("page.png"),
+                                    QByteArray("AT&TFORM\0\0\0\x20" "DJVUINFO", 20) + QByteArray(40, '\0')));
+    QCOMPARE(djvu.cause, QStringLiteral("unsupported"));
+    // A JPEG whose segments give way to noise.
+    QByteArray garbled = QByteArray::fromHex("ffd8ffe000104a46494600010100000100010000");
+    garbled += QByteArray(64, '\x12');
+    const auto damaged = failure(write(QStringLiteral("damaged.jpg"), garbled));
+    QCOMPARE(damaged.cause, QStringLiteral("damaged"));
+    QVERIFY(truncation(dir.filePath(QStringLiteral("damaged.jpg"))).isEmpty());
+    // Over the memory limit, said with the numbers.
+    const QString big = dir.filePath(QStringLiteral("big.png"));
+    QImage wide(3000, 2000, QImage::Format_RGB32);
+    wide.fill(Qt::gray);
+    QVERIFY(wide.save(big));
+    QImageReader::setAllocationLimit(10);
+    const auto large = failure(big);
+    QImageReader::setAllocationLimit(256);
+    QCOMPARE(large.cause, QStringLiteral("too-large"));
+    QVERIFY2(large.detail.contains(QStringLiteral("MiB")), qPrintable(large.detail));
+
+    // Cut short, a JPEG or PNG says so; whole files, and a motion photo's
+    // trailing video, do not.
+    QVERIFY(truncation(write(QStringLiteral("whole.jpg"), jpeg)).isEmpty());
+    QVERIFY(truncation(write(QStringLiteral("motion.jpg"), jpeg + QByteArray(4096, '\x42'))).isEmpty());
+    QVERIFY(!truncation(write(QStringLiteral("cut.jpg"), jpeg.left(jpeg.size() * 6 / 10))).isEmpty());
+    QVERIFY(truncation(write(QStringLiteral("whole.png"), png)).isEmpty());
+    QVERIFY(!truncation(write(QStringLiteral("cut.png"), png.left(png.size() - 20))).isEmpty());
+    QVERIFY(truncation(write(QStringLiteral("other.gif"), QByteArray("GIF89a") + QByteArray(30, '\0'))).isEmpty());
+  }
+
+  // The error state names the cause, offers what still applies to the file
+  // and turns off the view controls that do not.
+  void aPictureThatCannotBeShownSaysWhyAndKeepsItsActions() {
+    const QString folder = m_scratch.filePath(QStringLiteral("broken"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString notes = folder + QStringLiteral("/a notes.jpg");
+    QFile file(notes);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("These are notes, saved with the wrong name.\n");
+    file.close();
+    const QString fine = folder + QStringLiteral("/b fine.jpg");
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), fine));
+    m_settings->setViewerFilmstrip(true);
+    const auto restore = qScopeGuard([this] { m_settings->setViewerFilmstrip(false); });
+    open({notes});
+    QTRY_VERIFY(prop("imageError").toBool());
+    QTRY_COMPARE(prop("errorCause").toString(), QStringLiteral("not-picture"));
+    QTRY_COMPARE(item(QStringLiteral("viewerErrorTitle"))->property("text").toString(),
+                 QStringLiteral("This file isn't a picture"));
+    QVERIFY(item(QStringLiteral("viewerErrorDetail"))->property("text").toString()
+                .contains(QStringLiteral("text")));
+    QVERIFY(item(QStringLiteral("viewerErrorState"))->isVisible());
+    QVERIFY(item(QStringLiteral("viewerErrorTrash"))->isVisible());
+    QVERIFY(item(QStringLiteral("viewerErrorShowInFolder"))->isVisible()
+            || !m_registry->available(QStringLiteral("files")));
+    for (const auto& name : {QStringLiteral("viewerZoomIn"), QStringLiteral("viewerZoomOut"),
+                             QStringLiteral("viewerFitToggle"), QStringLiteral("viewerRotateLeft"),
+                             QStringLiteral("viewerRotateRight")}) {
+      QVERIFY2(!item(name)->isEnabled(), qPrintable(name));
+    }
+    QVERIFY(item(QStringLiteral("viewerTrashButton"))->isEnabled());
+    QTest::keyClick(m_window, Qt::Key_R);
+    QCOMPARE(prop("viewRotation").toInt(), 0);
+    // The broken file's filmstrip tile is marked, not blank, and named.
+    QQuickItem* broken = nullptr;
+    QTRY_VERIFY((broken = find(m_window->contentItem(), [](QQuickItem* candidate) {
+                   return candidate->objectName() == QStringLiteral("viewerFilmstripBroken0")
+                          && candidate->isVisible();
+                 })));
+    QQuickItem* tile = item(QStringLiteral("viewerFilmstripTile0"));
+    QVERIFY(QAccessible::queryAccessibleInterface(tile)->text(QAccessible::Name)
+                .startsWith(QStringLiteral("a notes.jpg")));
+    QVERIFY(QAccessible::queryAccessibleInterface(tile)->state().selected);
+    // Tab reaches the error's actions; Delete still asks to trash it.
+    bool reached = false;
+    for (int step = 0; step < 30 && !reached; ++step) {
+      QTest::keyClick(m_window, Qt::Key_Tab);
+      reached = m_window->activeFocusItem()
+                && m_window->activeFocusItem()->objectName() == QStringLiteral("viewerErrorTrash");
+      QVERIFY(m_window->activeFocusItem()->objectName() != QStringLiteral("viewerZoomIn"));
+    }
+    QVERIFY(reached);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QVERIFY(item(QStringLiteral("viewerKeys"))->hasActiveFocus());
+
+    // The next picture is fine, and the controls come back.
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QVERIFY(!item(QStringLiteral("viewerErrorState"))->isVisible());
+    QVERIFY(item(QStringLiteral("viewerZoomIn"))->isEnabled());
+    QVERIFY(item(QStringLiteral("viewerFilmstripBroken0"))->isVisible());
+  }
+
+  // A JPEG cut short decodes with a grey band; the viewer says it is cut off.
+  void aCutOffPictureSaysSo() {
+    const QString folder = m_scratch.filePath(QStringLiteral("cut"));
+    QVERIFY(QDir().mkpath(folder));
+    QFile good(media(QStringLiteral("Shot 1.jpg")));
+    QVERIFY(good.open(QIODevice::ReadOnly));
+    const QByteArray bytes = good.readAll();
+    const QString cut = folder + QStringLiteral("/cut.jpg");
+    QFile output(cut);
+    QVERIFY(output.open(QIODevice::WriteOnly));
+    output.write(bytes.left(bytes.size() / 2));
+    output.close();
+    const QString whole = folder + QStringLiteral("/whole.jpg");
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), whole));
+    open({cut});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QTRY_VERIFY(!m_session->pictureWarning().isEmpty());
+    QTRY_VERIFY(item(QStringLiteral("viewerPictureWarning"))->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTRY_COMPARE(m_session->path(), whole);
+    QTRY_VERIFY(!item(QStringLiteral("viewerPictureWarning"))->isVisible());
+  }
+
+  // Menu rows carry their names; separators are not rows at all.
+  void viewerMenuItemsHaveAccessibleNames() {
+    open({media(QStringLiteral("Shot 1.jpg"))});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("viewerMenu"));
+    QVERIFY(menu);
+    QMetaObject::invokeMethod(m_window, "showActionMenu");
+    QTRY_VERIFY(menu->property("visible").toBool());
+    // Menu rows live in the window's overlay, beside the content.
+    QQuickItem* top = m_window->contentItem();
+    QQuickItem* rotate = nullptr;
+    QTRY_VERIFY((rotate = find(top, [](QQuickItem* candidate) {
+                   return candidate->objectName() == QStringLiteral("viewerMenu_rotate");
+                 })));
+    QAccessibleInterface* row = QAccessible::queryAccessibleInterface(rotate);
+    QVERIFY(row);
+    QCOMPARE(row->text(QAccessible::Name), QStringLiteral("Rotate"));
+    QCOMPARE(row->text(QAccessible::Description), QStringLiteral("Shortcut R"));
+    // Every row the menu exposes has a name, and the separators are left
+    // out of it altogether.
+    QList<QQuickItem*> entries;
+    find(top, [&entries](QQuickItem* candidate) {
+      if (candidate->inherits("QQuickMenuItem")) entries.append(candidate);
+      return false;
+    });
+    int separators = 0;
+    for (QQuickItem* entry : entries) separators += entry->property("separator").toBool() ? 1 : 0;
+    QVERIFY(separators > 0);
+    QAccessibleInterface* list = row->parent();
+    QVERIFY(list);
+    int rows = 0;
+    for (int i = 0; i < list->childCount(); ++i) {
+      QAccessibleInterface* child = list->child(i);
+      if (child && child->role() == QAccessible::Separator) continue;
+      if (!child || child->role() != QAccessible::MenuItem) continue;
+      ++rows;
+      QVERIFY2(!child->text(QAccessible::Name).isEmpty(), qPrintable(QString::number(i)));
+    }
+    // A row scrolled out of the menu may be left out; none is unnamed.
+    QVERIFY2(rows >= int(entries.size()) - separators - 2, qPrintable(QString::number(rows)));
+    for (QQuickItem* entry : entries) {
+      if (!entry->property("separator").toBool()) continue;
+      QAccessibleInterface* face = QAccessible::queryAccessibleInterface(entry);
+      QVERIFY(!face || face->role() == QAccessible::Separator);
+    }
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!menu->property("visible").toBool());
   }
 
   void controlsFadeAndReturnWithThePointer() {

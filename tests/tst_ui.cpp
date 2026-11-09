@@ -16,6 +16,7 @@
 #include "app/AppSettings.h"
 #include "app/DemoLibrary.h"
 #include "app/HeadlessAudio.h"
+#include "app/MimeDefaults.h"
 #include "app/VideoPlayback.h"
 #include "library/CaptureFilterModel.h"
 #include "library/FolderTreeModel.h"
@@ -51,6 +52,7 @@
 #include <QMediaDevices>
 #include <QClipboard>
 #include <QDir>
+#include <QJSValue>
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -70,6 +72,7 @@
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
+#include <QPointer>
 #include <QScopeGuard>
 #include <QSettings>
 #include <QSet>
@@ -283,6 +286,13 @@ private slots:
     wlCopy.close();
     QVERIFY(wlCopy.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
                                   QFileDevice::ExeOwner));
+    // The empty library asks which app opens pictures; another one does.
+    QFile xdgMime(toolBin + QStringLiteral("/xdg-mime"));
+    QVERIFY(xdgMime.open(QIODevice::WriteOnly));
+    xdgMime.write("#!/bin/sh\n[ \"$1\" = query ] && echo other.desktop\nexit 0\n");
+    xdgMime.close();
+    QVERIFY(xdgMime.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                   QFileDevice::ExeOwner));
     QVERIFY(qputenv("OMAROLL_UI_CLIPBOARD_LOG",
                     m_scratch.filePath(QStringLiteral("clipboard.log")).toUtf8()));
     QVERIFY(qputenv("PATH", toolBin.toUtf8() + ':' + qgetenv("PATH")));
@@ -379,6 +389,8 @@ private slots:
     context->setContextProperty(QStringLiteral("Library"), m_captures);
     context->setContextProperty(QStringLiteral("Actions"), m_actions);
     context->setContextProperty(QStringLiteral("Settings"), m_settings);
+    m_mimeDefaults = new MimeDefaults(this);
+    context->setContextProperty(QStringLiteral("MimeDefaults"), m_mimeDefaults);
     context->setContextProperty(QStringLiteral("Registry"), m_registry);
     context->setContextProperty(QStringLiteral("Editors"), new ExternalEditors(m_actions, m_engine));
     context->setContextProperty(QStringLiteral("Matte"), m_matte);
@@ -2648,6 +2660,112 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_Return);
     QTRY_VERIFY(item("detail")->isVisible());
     QCOMPARE(item("detail")->property("path").toString(), expected);
+  }
+
+  // A search or filter that matches nothing says so and offers the way
+  // back, rather than calling a populated folder empty.
+  void emptyStatesSayWhyNothingIsShownAndOfferTheWayOut() {
+    const auto named = [this](const QString& name) {
+      return find(m_window->contentItem(), [&name](QQuickItem* candidate) {
+        return candidate->objectName() == name && candidate->isVisible();
+      });
+    };
+    const auto title = [this] { return item(QStringLiteral("libraryEmptyTitle"))->property("text").toString(); };
+    // A filter change arrives in several notifications, and each rebuilds the
+    // buttons; click one that is still there once they stop.
+    const auto clickAction = [this, &named](const QString& name) {
+      for (int attempt = 0; attempt < 40; ++attempt) {
+        QPointer<QQuickItem> target = named(name);
+        QTest::qWait(120);
+        if (target && target->isVisible() && centre(target).x() > 0
+            && centre(target).x() < m_window->width()) {
+          click(target);
+          return true;
+        }
+      }
+      return false;
+    };
+    const QString folder = QFileInfo(pathAt(0)).absolutePath();
+    QVERIFY(m_library->folderItemCount(folder) > 0);
+    QCOMPARE(m_library->emptyReason(), QString());
+
+    // The baseline repro: a populated folder and a search for nothing.
+    m_library->setFolderFilter(folder);
+    m_library->setSearchText(QStringLiteral("zzz_no_matching_photo_zz"));
+    QTRY_COMPARE(m_library->count(), 0);
+    QTRY_VERIFY(item(QStringLiteral("libraryEmptyState"))->isVisible());
+    QCOMPARE(m_library->emptyReason(), QStringLiteral("search"));
+    QTRY_COMPARE(title(), QStringLiteral("Nothing matches \u201czzz_no_matching_photo_zz\u201d in this folder"));
+    QVERIFY(!title().contains(QStringLiteral("No media")));
+    QVERIFY(clickAction(QStringLiteral("emptyAction_clear-search")));
+    QTRY_VERIFY(m_library->searchText().isEmpty());
+    QTRY_VERIFY(m_library->count() > 0);
+    QCOMPARE(m_library->folderFilter(), folder);
+    m_library->setFolderFilter(QString());
+
+    // Filters, and a search on top of them, clear together.
+    m_library->setCameraFilter(QStringLiteral("No Such Camera"));
+    m_library->setSearchText(QStringLiteral("alpine"));
+    QTRY_COMPARE(m_library->count(), 0);
+    QCOMPARE(m_library->emptyReason(), QStringLiteral("filters"));
+    QTRY_COMPARE(title(), QStringLiteral("Nothing matches these filters"));
+    const QString detail = item(QStringLiteral("libraryEmptyDetail"))->property("text").toString();
+    QVERIFY2(detail.contains(QStringLiteral("taken with No Such Camera")), qPrintable(detail));
+    QVERIFY2(detail.contains(QStringLiteral("alpine")), qPrintable(detail));
+    QVERIFY(clickAction(QStringLiteral("emptyAction_clear-filters")));
+    QTRY_VERIFY(m_library->count() > 0);
+    QVERIFY(m_library->cameraFilter().isEmpty());
+    QVERIFY(m_library->searchText().isEmpty());
+
+    // A saved view's filters are the view: Clear filters leaves it, keeping
+    // its folder, and the words say so.
+    const auto leaveView = qScopeGuard([this] {
+      m_library->clearRefinements();
+      m_library->clearSmartCollection();
+      m_library->setFolderFilter(QString());
+    });
+    QVariantMap view = m_library->currentView();
+    view.insert(QStringLiteral("folder"), folder);
+    view.insert(QStringLiteral("camera"), QStringLiteral("No Such Camera"));
+    m_library->applyView(QStringLiteral("Old camera"), view, {});
+    QTRY_COMPARE(m_library->count(), 0);
+    QCOMPARE(m_library->emptyReason(), QStringLiteral("filters"));
+    QTRY_COMPARE(title(), QStringLiteral("Nothing matches this saved view's filters in this folder"));
+    QVERIFY(clickAction(QStringLiteral("emptyAction_clear-filters")));
+    QTRY_VERIFY(m_library->count() > 0);
+    QVERIFY(m_library->cameraFilter().isEmpty());
+    QVERIFY(m_library->smartCollectionFilter().isEmpty());
+    QCOMPARE(m_library->folderFilter(), folder);
+
+    // An empty album is empty, whatever the search.
+    m_library->setAlbumFilter(QStringLiteral("Nothing yet"), {});
+    QTRY_COMPARE(m_library->count(), 0);
+    QCOMPARE(m_library->emptyReason(), QStringLiteral("scope"));
+    QTRY_COMPARE(title(), QStringLiteral("This album is empty"));
+    QVERIFY(clickAction(QStringLiteral("emptyAction_show-all")));
+    QTRY_VERIFY(m_library->count() > 0);
+    QVERIFY(m_library->albumFilter().isEmpty());
+    QTRY_VERIFY(!item(QStringLiteral("libraryEmptyState"))->isVisible());
+
+    // Nothing found at all: the first run.
+    CaptureFilterModel nothing;
+    QCOMPARE(nothing.emptyReason(), QStringLiteral("library"));
+    m_mimeDefaults->refresh();
+    QTRY_VERIFY(m_mimeDefaults->known());
+    QVERIFY(!m_mimeDefaults->imagesDefault());
+    QVariant state;
+    QVERIFY(QMetaObject::invokeMethod(m_window, "emptyState", Q_RETURN_ARG(QVariant, state),
+                                      Q_ARG(QVariant, QStringLiteral("library"))));
+    if (state.metaType() == QMetaType::fromType<QJSValue>()) state = state.value<QJSValue>().toVariant();
+    const QVariantMap first = state.toMap();
+    QCOMPARE(first.value(QStringLiteral("title")).toString(), QStringLiteral("No media yet"));
+    QVERIFY(first.value(QStringLiteral("detail")).toString().contains(QStringLiteral("stay where they are")));
+    const QStringList actions = first.value(QStringLiteral("actions")).toStringList();
+    QVERIFY2(actions.contains(QStringLiteral("add-folder")), qPrintable(actions.join(u',')));
+    QVERIFY(actions.contains(QStringLiteral("open-file")));
+    QVERIFY(actions.contains(QStringLiteral("set-default")));
+    // A demo window does not offer the demo.
+    QVERIFY(!actions.contains(QStringLiteral("demo")));
   }
 
   void externalOpenKeepsTheSearchFieldInSync() {
@@ -6185,6 +6303,7 @@ private:
   AppSettings* m_settings = nullptr;
   CaptureModel* m_captures = nullptr;
   CaptureFilterModel* m_library = nullptr;
+  MimeDefaults* m_mimeDefaults = nullptr;
   FolderTreeModel* m_folderTree = nullptr;
   ActionLauncher* m_actions = nullptr;
   ActionRegistry* m_registry = nullptr;

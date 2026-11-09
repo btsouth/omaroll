@@ -43,13 +43,16 @@ Item {
             handled = false
         } else {
             switch (event.key) {
-            // Tab would walk focus into the details card and leave the
-            // viewer's keys behind.
+            // Through the controls and back to the picture. The controls
+            // hand every key they do not use back here, so shortcuts keep
+            // working wherever focus is.
             case ShortcutCatalog.quickKeys.Tab:
             case ShortcutCatalog.quickKeys.Backtab:
+                viewer.moveFocus(event.key === ShortcutCatalog.quickKeys.Tab)
                 break
             case ShortcutCatalog.quickKeys.Escape:
-                if (viewer.slideshowRunning) viewer.setSlideshow(false)
+                if (viewer.controlsFocused) forceActiveFocus(Qt.OtherFocusReason)
+                else if (viewer.slideshowRunning) viewer.setSlideshow(false)
                 else if (viewer.fullScreen) viewer.setFullScreen(false)
                 else if (viewer.infoOpen) viewer.infoOpen = false
                 else viewer.close()

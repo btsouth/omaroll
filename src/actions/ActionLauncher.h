@@ -40,6 +40,13 @@ public:
   bool showInFolder(const QString& path);
   // Always show the desktop's compatible-application chooser, without changing MIME defaults.
   bool openWith(const QString& path);
+  // The desktop's file chooser, for pictures, videos and PDFs outside the
+  // library. What is chosen arrives as openRequested(), and opens the way
+  // it would from the file manager. Cancelling says nothing.
+  Q_INVOKABLE bool chooseFilesToOpen();
+  // The demo library, in a window of its own: another Omaroll, run with
+  // --demo, which never touches this one's settings or folders.
+  Q_INVOKABLE bool openDemo();
 
   // True when a program is on PATH. QML uses this to grey out an action rather
   // than failing after the click.
@@ -140,6 +147,8 @@ signals:
   // viewer opens on it; a footer flash alone reads as nothing happening.
   void outputAlreadyDone(const QString& path);
   void pendingOutputsChanged();
+  // Files chosen with chooseFilesToOpen().
+  void openRequested(const QStringList& paths);
   void submissionFinished(const QString& program, bool success, const QString& detail);
   // trashed holds one undo record per moved copy, as trashCaptured returns.
   void duplicateCleanupFinished(int moved, const QStringList& skipped, const QVariantList& trashed);

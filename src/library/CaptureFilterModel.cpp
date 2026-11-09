@@ -1140,7 +1140,7 @@ bool CaptureFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex& sour
   return !m_groupedOutPaths.contains(record.path) && matchesFilters(record);
 }
 
-bool CaptureFilterModel::matchesFilters(const CaptureRecord& record) const {
+bool CaptureFilterModel::matchesFilters(const CaptureRecord& record, int relax) const {
   if (!m_showHidden && record.hidden) {
     return false;
   }
@@ -1150,10 +1150,11 @@ bool CaptureFilterModel::matchesFilters(const CaptureRecord& record) const {
   if (m_similarOnly && !m_similarGroups.contains(record.path)) {
     return false;
   }
-  if (m_favoritesOnly && !record.favorite) {
+  const bool refine = (relax & RelaxRefinements) == 0;
+  if (refine && m_favoritesOnly && !record.favorite) {
     return false;
   }
-  if (m_minimumRating > 0 && record.rating < m_minimumRating) {
+  if (refine && m_minimumRating > 0 && record.rating < m_minimumRating) {
     return false;
   }
   if (!m_albumFilter.isEmpty() && !m_albumPaths.contains(record.path)) {
@@ -1162,10 +1163,10 @@ bool CaptureFilterModel::matchesFilters(const CaptureRecord& record) const {
   if (!m_tagFilter.isEmpty() && !m_tagPaths.contains(record.path)) {
     return false;
   }
-  if (!m_cameraFilter.isEmpty() && record.camera != m_cameraFilter) {
+  if (refine && !m_cameraFilter.isEmpty() && record.camera != m_cameraFilter) {
     return false;
   }
-  if (!m_lensFilter.isEmpty() && record.lens != m_lensFilter) {
+  if (refine && !m_lensFilter.isEmpty() && record.lens != m_lensFilter) {
     return false;
   }
   if (m_modifiedAfterMs > 0 && record.modified <= m_modifiedAfterMs) {
@@ -1188,7 +1189,7 @@ bool CaptureFilterModel::matchesFilters(const CaptureRecord& record) const {
       return false;
     }
   }
-  if (m_kindFilter != kAllKinds) {
+  if (refine && m_kindFilter != kAllKinds) {
     if (m_kindFilter == CaptureRecord::Document) {
       if (!record.isDocument()) {
         return false;
@@ -1197,7 +1198,7 @@ bool CaptureFilterModel::matchesFilters(const CaptureRecord& record) const {
       return false;
     }
   }
-  if (!m_searchTerms.isEmpty()) {
+  if ((relax & RelaxSearch) == 0 && !m_searchTerms.isEmpty()) {
     const QString name = record.fileName.toCaseFolded();
     const QString text = m_ocrFolded.value(record.path);
     const QString caption = record.caption.toCaseFolded();
@@ -1208,6 +1209,36 @@ bool CaptureFilterModel::matchesFilters(const CaptureRecord& record) const {
     }
   }
   return true;
+}
+
+bool CaptureFilterModel::anyMatches(int relax) const {
+  if (!sourceModel()) return false;
+  for (int row = 0; row < sourceModel()->rowCount(); ++row) {
+    if (matchesFilters(sourceRecord(row), relax)) return true;
+  }
+  return false;
+}
+
+QString CaptureFilterModel::emptyReason() const {
+  if (rowCount() > 0) return {};
+  if (sourceCount() == 0) return QStringLiteral("library");
+  if (m_duplicatesOnly) return QStringLiteral("duplicates");
+  if (m_similarOnly) return QStringLiteral("similar");
+  // Read only while the grid is empty, so walking the library is rare.
+  if (!m_searchTerms.isEmpty() && anyMatches(RelaxSearch)) return QStringLiteral("search");
+  const bool refined = m_kindFilter != kAllKinds || m_favoritesOnly || m_minimumRating > 0 ||
+                       !m_cameraFilter.isEmpty() || !m_lensFilter.isEmpty();
+  if (refined && anyMatches(RelaxSearch | RelaxRefinements)) return QStringLiteral("filters");
+  return QStringLiteral("scope");
+}
+
+void CaptureFilterModel::clearRefinements() {
+  setSearchText(QString());
+  setKindFilter(kAllKinds);
+  setFavoritesOnly(false);
+  setMinimumRating(0);
+  setCameraFilter(QString());
+  setLensFilter(QString());
 }
 
 bool CaptureFilterModel::lessThan(const QModelIndex& left, const QModelIndex& right) const {

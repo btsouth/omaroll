@@ -1,5 +1,6 @@
 #include "actions/ActionLauncher.h"
 #include "actions/ActionRegistry.h"
+#include "actions/FileChooserRequest.h"
 #include "actions/OpenWithRequest.h"
 
 #include <QDBusContext>
@@ -69,6 +70,45 @@ public slots:
         + options.value(QStringLiteral("handle_token")).toString();
     // Deliberately emit before the method reply to cover the subscription race.
     if (answerImmediately) respond();
+    return QDBusObjectPath(handle);
+  }
+};
+
+class FakeFileChooser : public QObject, protected QDBusContext {
+  Q_OBJECT
+  Q_CLASSINFO("D-Bus Interface", "org.freedesktop.portal.FileChooser")
+public:
+  explicit FakeFileChooser(QDBusConnection bus) : bus(std::move(bus)) {}
+  uint result = 0;
+  QStringList uris;
+  // How long the portal takes to show the chooser, as on a cold start.
+  int replyDelay = 0;
+  int calls = 0;
+  QString title;
+  QVariantMap options;
+  QDBusConnection bus;
+public slots:
+  QDBusObjectPath OpenFile(const QString&, const QString& requestedTitle, const QVariantMap& requested) {
+    ++calls;
+    title = requestedTitle;
+    options = requested;
+    QString sender = message().service().mid(1);
+    sender.replace(QLatin1Char('.'), QLatin1Char('_'));
+    const QString handle = QStringLiteral("/org/freedesktop/portal/desktop/request/") + sender +
+                           QLatin1Char('/') + requested.value(QStringLiteral("handle_token")).toString();
+    auto signal = QDBusMessage::createSignal(handle, QStringLiteral("org.freedesktop.portal.Request"),
+                                            QStringLiteral("Response"));
+    signal.setArguments({result, QVariantMap{{QStringLiteral("uris"), uris}}});
+    if (replyDelay > 0) {
+      setDelayedReply(true);
+      const QDBusMessage reply = message().createReply(QVariant::fromValue(QDBusObjectPath(handle)));
+      QTimer::singleShot(replyDelay, this, [this, signal, reply] {
+        bus.send(signal);
+        bus.send(reply);
+      });
+      return {};
+    }
+    bus.send(signal);
     return QDBusObjectPath(handle);
   }
 };
@@ -176,6 +216,69 @@ private slots:
     QTRY_VERIFY(QFileInfo::exists(scratch.filePath(QStringLiteral("folder.log"))));
     QVERIFY(unrelated.items.isEmpty());
   }
+  // Open file in the empty library: the portal's chooser, and what was
+  // chosen handed on to be opened. Cancelling opens nothing.
+  void fileChooserHandsOnTheChosenFiles() {
+    FakeFileChooser chooser(serviceBus());
+    chooser.uris = {QUrl::fromLocalFile(filePath).toString(), QStringLiteral("https://example.com/remote.png")};
+    QVERIFY(serviceBus().registerService(QStringLiteral("org.freedesktop.portal.Desktop")));
+    QVERIFY(serviceBus().registerObject(QStringLiteral("/org/freedesktop/portal/desktop"), &chooser,
+                                       QDBusConnection::ExportAllSlots));
+    ActionLauncher launcher(nullptr, clientBus());
+    QSignalSpy opened(&launcher, &ActionLauncher::openRequested);
+    QSignalSpy errors(&launcher, &ActionLauncher::failed);
+    QVERIFY(launcher.chooseFilesToOpen());
+    QTRY_COMPARE(opened.size(), 1);
+    QCOMPARE(opened.first().first().toStringList(), QStringList{filePath});
+    QCOMPARE(chooser.calls, 1);
+    QCOMPARE(chooser.title, QStringLiteral("Open in Omaroll"));
+    QVERIFY(chooser.options.value(QStringLiteral("multiple")).toBool());
+    QVERIFY(chooser.options.contains(QStringLiteral("filters")));
+    QTRY_COMPARE(launcher.findChildren<FileChooserRequest*>().size(), 0);
+
+    chooser.result = 1;
+    QVERIFY(launcher.chooseFilesToOpen());
+    QTRY_COMPARE(chooser.calls, 2);
+    QTRY_COMPARE(launcher.findChildren<FileChooserRequest*>().size(), 0);
+    QCOMPARE(opened.size(), 1);
+    QVERIFY(errors.isEmpty());
+
+    // Nothing on this computer was chosen: that is said, not dropped.
+    chooser.result = 0;
+    chooser.uris = {QStringLiteral("https://example.com/remote.png")};
+    QVERIFY(launcher.chooseFilesToOpen());
+    QTRY_COMPARE(errors.size(), 1);
+    QVERIFY2(errors.first().first().toString().contains(QStringLiteral("this computer")),
+             qPrintable(errors.first().first().toString()));
+    QTRY_COMPARE(launcher.findChildren<FileChooserRequest*>().size(), 0);
+    QCOMPARE(opened.size(), 1);
+  }
+
+  // A portal that takes a while to start still delivers the choice.
+  void fileChooserWaitsForASlowPortal() {
+    FakeFileChooser chooser(serviceBus());
+    chooser.uris = {QUrl::fromLocalFile(filePath).toString()};
+    chooser.replyDelay = 6000;
+    QVERIFY(serviceBus().registerService(QStringLiteral("org.freedesktop.portal.Desktop")));
+    QVERIFY(serviceBus().registerObject(QStringLiteral("/org/freedesktop/portal/desktop"), &chooser,
+                                       QDBusConnection::ExportAllSlots));
+    ActionLauncher launcher(nullptr, clientBus());
+    QSignalSpy opened(&launcher, &ActionLauncher::openRequested);
+    QSignalSpy errors(&launcher, &ActionLauncher::failed);
+    QVERIFY(launcher.chooseFilesToOpen());
+    QTRY_COMPARE_WITH_TIMEOUT(opened.size(), 1, 10000);
+    QCOMPARE(opened.first().first().toStringList(), QStringList{filePath});
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.isEmpty() ? QString() : errors.first().first().toString()));
+  }
+
+  void fileChooserWithoutAPortalSaysSo() {
+    ActionLauncher launcher(nullptr, QDBusConnection(QStringLiteral("no-such-bus")));
+    QSignalSpy errors(&launcher, &ActionLauncher::failed);
+    QVERIFY(!launcher.chooseFilesToOpen());
+    QCOMPARE(errors.size(), 1);
+    QVERIFY(errors.first().first().toString().contains(QStringLiteral("file chooser")));
+  }
+
   void chooserAlwaysAsksAndReceivesTheCapturedFile() {
     FakeChooser chooser(serviceBus());
     QVERIFY(serviceBus().registerService(QStringLiteral("org.freedesktop.portal.Desktop")));

@@ -26,6 +26,17 @@
   Strict, Normal or Loose.
 - Compare shows each picture's dimensions, file size, date and folder, marks
   the largest, and can keep one and move the others to Trash as one Undo step.
+- The empty library offers Add folder, Open file, Try the demo library and,
+  when Omaroll isn't the default for pictures, Set as default viewer.
+- **Set as default** and **Restore previous apps** in Settings, saying what
+  changed.
+- A picture that can't be shown names the cause (not a picture, unsupported
+  format, damaged, cut off, too large) and offers Open with, Show in folder and
+  Move to Trash. A JPEG or PNG that ends early gets a "cut off" note, and broken
+  files are marked in the filmstrip.
+- `Tab` and `Shift+Tab` move through the viewer's controls with a focus ring,
+  and the viewer's shortcuts keep working on a focused control. Filmstrip
+  tiles have names, tooltips and keyboard use.
 
 ### Fixed
 
@@ -35,6 +46,11 @@
   holds pictures that all match each other.
 - Duplicate and similarity hashes are cached on disk, so relaunching no longer
   reads every file again.
+- A search or filter that matches nothing in a populated folder now says
+  "Nothing matches" with Clear search or Clear filters, instead of "No media
+  in this folder".
+- Screen readers get names for the viewer's menu items and the library search
+  field, and skip menu separators.
 - Opening several files where one isn't supported now opens the rest and names
   the skipped files, instead of opening nothing.
 - Files with less common extensions for supported types, such as `.jfif`,

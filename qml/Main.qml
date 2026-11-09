@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Dialogs
 import Omaroll
 
 ApplicationWindow {
@@ -1415,78 +1416,240 @@ ApplicationWindow {
         root.openDetail(row)
     }
 
-    // Empty state. Two different empties: nothing exists, or nothing matches
-    // the current filter. Telling them apart is the difference between useful
-    // and useless.
+    // Empty state. Nothing found yet, nothing matching the search or the
+    // filters, and an empty folder or album are different problems with
+    // different ways out, so each says which it is and offers that way out.
+    readonly property bool libraryEmpty: Captures.sourceCount === 0 && !Library.scanning
+
+    // The empty state's words and buttons for an emptyReason from Captures.
+    // Kept apart from the layout so the branching can be checked directly.
+    function emptyState(reason) {
+        const kinds = {}
+        kinds[filters.kindScreenshot] = "screenshots"
+        kinds[filters.kindRecording] = "recordings"
+        kinds[filters.kindPicture] = "pictures"
+        kinds[filters.kindVideo] = "videos"
+        kinds[filters.kindDownload] = "downloads"
+        kinds[filters.kindDocument] = "PDFs"
+        // Clear search and Clear filters leave a saved view, since its filters
+        // are what they clear, and keep the folder, album, tag or dates.
+        const scope = Captures.albumFilter !== "" ? " in this album"
+                      : Captures.tagFilter !== "" ? " with this tag"
+                      : Captures.folderFilter !== "" ? " in this folder"
+                      : (Captures.dateFrom !== "" || Captures.modifiedAfter !== "")
+                        ? " in these dates" : ""
+        const where = Captures.smartCollectionFilter !== "" ? " in this saved view" : scope
+        if (reason === "library") {
+            const actions = ["add-folder", "open-file"]
+            if (!DemoMode) actions.push("demo")
+            if (MimeDefaults.known && !MimeDefaults.imagesDefault) actions.push("set-default")
+            return {
+                title: "No media yet",
+                detail: (Theme.omarchyAvailable
+                         ? "Take a screenshot with Super + Shift + S, or record from the Capture menu. "
+                         : "")
+                        + "Anything in your Pictures and Videos folders shows up here, "
+                        + "and so does any folder you add. Your files stay where they are; "
+                        + "Omaroll never moves or copies them.",
+                actions: actions
+            }
+        }
+        if (reason === "duplicates") {
+            return { title: "No exact duplicates",
+                     detail: "Files are compared by content. Nothing is removed automatically.",
+                     actions: ["show-all"] }
+        }
+        if (reason === "similar") {
+            return { title: "No similar pictures",
+                     detail: "Pictures are compared visually. Review every suggestion before removing anything.",
+                     actions: ["show-all"] }
+        }
+        if (reason === "search") {
+            return { title: "Nothing matches \u201c" + Captures.searchText.trim() + "\u201d" + where,
+                     detail: "Search looks at file names, captions and text found in pictures.",
+                     actions: ["clear-search"] }
+        }
+        if (reason === "filters") {
+            const parts = []
+            if (Captures.kindFilter !== filters.kindAll && kinds[Captures.kindFilter])
+                parts.push("only " + kinds[Captures.kindFilter])
+            if (Captures.favoritesOnly) parts.push("favourites")
+            if (Captures.minimumRating > 0) parts.push(Captures.minimumRating + " stars and up")
+            if (Captures.cameraFilter !== "") parts.push("taken with " + Captures.cameraFilter)
+            if (Captures.lensFilter !== "") parts.push("lens " + Captures.lensFilter)
+            if (Captures.searchText.trim() !== "")
+                parts.push("matching \u201c" + Captures.searchText.trim() + "\u201d")
+            return { title: Captures.smartCollectionFilter !== ""
+                            ? "Nothing matches this saved view's filters" + scope
+                            : "Nothing matches these filters" + scope,
+                     detail: parts.length > 0 ? "Showing " + parts.join(", ") + "." : "",
+                     actions: ["clear-filters"] }
+        }
+        // The folder, album, tag, dates or saved view itself has nothing.
+        if (Captures.smartCollectionFilter !== "")
+            return { title: "No items match this saved view",
+                     detail: "Choose another view from Browse.", actions: ["show-all"] }
+        if (Captures.tagFilter !== "")
+            return { title: "This tag has no available items",
+                     detail: "Choose another view from Browse.", actions: ["show-all"] }
+        if (Captures.albumFilter !== "")
+            return { title: "This album is empty",
+                     detail: "Choose Whole library from Browse, select files, then use Organize. "
+                             + "Unavailable files remain remembered.",
+                     actions: ["show-all"] }
+        if (Captures.folderFilter !== "")
+            return { title: "No media in this folder",
+                     detail: "The folder may be empty, unavailable, or contain no supported media.",
+                     actions: ["show-all"] }
+        if (Captures.dateFrom !== "" || Captures.modifiedAfter !== "")
+            return { title: "No media in this date range",
+                     detail: "Choose other dates from Browse.", actions: ["show-all"] }
+        return { title: "Nothing to show",
+                 detail: Captures.showHidden ? ""
+                         : "Hidden items stay out of the library until Show hidden media is on in Settings.",
+                 actions: [] }
+    }
+
+    function emptyAction(id) {
+        switch (id) {
+        case "clear-search":
+            Captures.searchText = ""
+            break
+        case "clear-filters":
+            Captures.clearRefinements()
+            break
+        case "show-all":
+            root.showAllMedia()
+            break
+        case "add-folder":
+            emptyFolderDialog.open()
+            break
+        case "open-file":
+            Actions.chooseFilesToOpen()
+            break
+        case "demo":
+            Actions.openDemo()
+            break
+        case "set-default":
+            MimeDefaults.applyAsync(false, "all")
+            break
+        }
+        if (id.indexOf("clear") === 0 || id === "show-all") library.forceActiveFocus()
+    }
+
     Column {
+        id: emptyState
+        objectName: "libraryEmptyState"
         anchors.centerIn: library
-        width: Math.min(420, library.width - 40)
+        width: Math.min(440, library.width - 40)
         spacing: 10
         visible: Captures.count === 0 && !Library.scanning && !TextIndex.indexing
                  && !(Captures.duplicatesOnly && Duplicates.scanning)
                  && !(Captures.similarOnly && Similarities.scanning)
-
-        readonly property bool filtered: Captures.sourceCount > 0
-        readonly property bool folderScoped: Captures.folderFilter !== ""
-        readonly property bool albumScoped: Captures.albumFilter !== ""
-        readonly property bool tagScoped: Captures.tagFilter !== ""
-        readonly property bool dateScoped: Captures.dateFrom !== ""
-                                           || Captures.modifiedAfter !== ""
-        readonly property bool smartScoped: Captures.smartCollectionFilter !== ""
-        readonly property int scopedItems: albumScoped
-                                           ? Settings.albumPaths(Captures.albumFilter).length
-                                           : folderScoped
-                                             ? Captures.folderItemCount(Captures.folderFilter) : 0
-        readonly property bool scopeFilteredOut: (albumScoped || folderScoped)
-                                                 && scopedItems > 0
+        readonly property string reason: visible ? Captures.emptyReason : ""
+        readonly property var content: {
+            void MimeDefaults.known
+            void MimeDefaults.imagesDefault
+            return root.emptyState(reason)
+        }
+        onVisibleChanged: {
+            if (visible && Captures.emptyReason === "library" && !MimeDefaults.known)
+                MimeDefaults.refresh()
+        }
 
         Text {
+            objectName: "libraryEmptyTitle"
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
-            text: Captures.duplicatesOnly ? "No exact duplicates"
-                  : Captures.similarOnly ? "No similar pictures"
-                  : parent.smartScoped ? "No items match this saved view"
-                  : parent.tagScoped ? "This tag has no available items"
-                  : parent.dateScoped ? "No media in this date range"
-                  : parent.albumScoped
-                    ? (parent.scopeFilteredOut ? "Nothing matches in this album"
-                                                : "This album is empty")
-                  : parent.folderScoped
-                    ? (parent.scopeFilteredOut ? "Nothing matches in this folder"
-                                                : "No media in this folder")
-                  : (parent.filtered ? "Nothing matches" : "No media yet")
+            wrapMode: Text.WordWrap
+            text: emptyState.content.title
             font.family: Theme.fontFamily
             font.pixelSize: 16
             font.weight: Font.DemiBold
             color: Theme.brightForeground
+            Accessible.role: Accessible.Heading
+            Accessible.name: text
         }
 
         Text {
+            objectName: "libraryEmptyDetail"
             width: parent.width
+            visible: text !== ""
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
-            text: Captures.duplicatesOnly
-                  ? "Files are compared by content. Nothing is removed automatically."
-                  : Captures.similarOnly
-                  ? "Pictures are compared visually. Review every suggestion before removing anything."
-                  : parent.scopeFilteredOut
-                  ? "Try a different media type, turn off Favourites, or clear the search."
-                  : parent.albumScoped
-                  ? "Choose Whole library from Browse, select files, then use Organize. "
-                    + "Unavailable files remain remembered."
-                  : parent.tagScoped || parent.dateScoped || parent.smartScoped
-                  ? "Choose another view from Browse or clear a filter."
-                  : parent.folderScoped
-                  ? "The folder may be empty, unavailable, or contain no supported media."
-                  : parent.filtered
-                  ? "Try a different filter, or clear the search."
-                  : (Theme.omarchyAvailable
-                     ? "Take a screenshot with Super + Shift + S, or record from the Capture menu. "
-                     : "")
-                    + "Anything that lands in your Pictures and Videos folders shows up here."
+            text: emptyState.content.detail
             font.family: Theme.fontFamily
             font.pixelSize: 13
             color: Theme.mutedText
+            Accessible.role: Accessible.StaticText
+            Accessible.name: text
+        }
+
+        Item { width: 1; height: 4; visible: emptyActions.count > 0 }
+
+        // Side by side where they fit, two by two, or one above the other, in
+        // a narrow window.
+        Grid {
+            anchors.horizontalCenter: parent.horizontalCenter
+            readonly property real rowWidth: {
+                let total = Math.max(0, emptyActions.count - 1) * columnSpacing
+                for (let i = 0; i < emptyActions.count; ++i) {
+                    const button = emptyActions.itemAt(i)
+                    if (button) total += button.implicitWidth
+                }
+                return total
+            }
+            readonly property real pairWidth: {
+                let widest = 0
+                for (let i = 0; i + 1 < emptyActions.count; i += 2) {
+                    const a = emptyActions.itemAt(i)
+                    const b = emptyActions.itemAt(i + 1)
+                    if (a && b) widest = Math.max(widest, a.implicitWidth + b.implicitWidth + columnSpacing)
+                }
+                return widest
+            }
+            columns: rowWidth <= library.width - 40 ? Math.max(1, emptyActions.count)
+                     : pairWidth <= library.width - 40 ? 2 : 1
+            columnSpacing: 8
+            rowSpacing: 8
+
+            Repeater {
+                id: emptyActions
+                model: emptyState.content.actions
+                PillButton {
+                    required property string modelData
+                    required property int index
+                    objectName: "emptyAction_" + modelData
+                    enabled: modelData !== "set-default" || !MimeDefaults.busy
+                    active: index === 0
+                    label: ({ "clear-search": "Clear search", "clear-filters": "Clear filters",
+                              "show-all": "Show the whole library", "add-folder": "Add folder",
+                              "open-file": "Open file", "demo": "Try the demo library",
+                              "set-default": MimeDefaults.busy ? "Setting as default…"
+                                                               : "Set as default viewer" })[modelData]
+                    toolTip: ({ "set-default": "Open pictures and videos with Omaroll from the file manager",
+                                "demo": "A fictional library in a new window" })[modelData] || ""
+                    onClicked: root.emptyAction(modelData)
+                }
+            }
+        }
+    }
+
+    Connections {
+        target: MimeDefaults
+        function onFinished(ok, summary) {
+            // Settings shows its own result beside the button.
+            if (!settingsSheet.visible) root.say(summary)
+        }
+    }
+
+    FolderDialog {
+        id: emptyFolderDialog
+        title: "Add a folder to Omaroll"
+        onAccepted: {
+            root.say(Settings.addLibraryFolder(selectedFolder)
+                     ? "Folder added. Omaroll is scanning it now."
+                     : "That folder is already added, unavailable, or is your home folder")
         }
     }
 
@@ -1544,7 +1707,7 @@ ApplicationWindow {
             anchors.rightMargin: 16
             anchors.verticalCenter: parent.verticalCenter
             height: 16
-            visible: notice.text === "" && Actions.pendingOutputs.length === 0
+            visible: notice.text === "" && Actions.pendingOutputs.length === 0 && !root.libraryEmpty
         }
 
         // Undo for the result on the left, such as a move to Trash.

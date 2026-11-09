@@ -5,10 +5,11 @@
 #include <QSaveFile>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QtConcurrent>
 
 namespace {
 const QString desktop = QStringLiteral("io.github.tsouth89.omaroll.desktop");
-bool run(const QStringList &args, QString *output = nullptr) {
+bool xdgMime(const QStringList &args, QString *output = nullptr) {
   QProcess process;
   process.start(QStringLiteral("xdg-mime"), args);
   if (!process.waitForFinished(5000)) {
@@ -74,15 +75,152 @@ QStringList MimeDefaults::types(const QString &path, const QString &group) {
   result.removeDuplicates();
   return result;
 }
+MimeDefaults::MimeDefaults(QObject *parent) : QObject(parent) {
+  connect(&m_change, &QFutureWatcher<Result>::finished, this, [this] {
+    const Result result = m_change.result();
+    m_applying = false;
+    m_succeeded = result.ok;
+    emit finished(result.ok, summarize(m_unset, result.report, result.ok),
+                  result.report);
+    refresh();
+  });
+  connect(&m_check, &QFutureWatcher<State>::finished, this, [this] {
+    const State state = m_check.result();
+    m_checking = false;
+    // Asked again while this ran: what it read may be from before a change.
+    if (m_recheck) {
+      m_recheck = false;
+      refresh();
+      return;
+    }
+    m_known = true;
+    m_imagesDefault = state.images;
+    m_videosDefault = state.videos;
+    emit stateChanged();
+  });
+}
+
+// Workers only run xdg-mime and touch files, never this object.
+MimeDefaults::~MimeDefaults() {
+  m_change.waitForFinished();
+  m_check.waitForFinished();
+}
+
 QString MimeDefaults::apply(bool unset, const QString &group) {
-  m_succeeded = false;
+  const Result result = run(unset, group);
+  m_succeeded = result.ok;
+  return result.report;
+}
+
+void MimeDefaults::applyAsync(bool unset, const QString &group) {
+  if (m_applying) return;
+  m_applying = true;
+  m_unset = unset;
+  emit stateChanged();
+  m_change.setFuture(QtConcurrent::run([unset, group] { return run(unset, group); }));
+}
+
+void MimeDefaults::refresh() {
+  if (m_checking) {
+    m_recheck = true;
+    return;
+  }
+  m_checking = true;
+  emit stateChanged();
+  m_check.setFuture(QtConcurrent::run([] { return query(); }));
+}
+
+MimeDefaults::State MimeDefaults::query() {
+  State state;
+  QString handler;
+  state.images = xdgMime({"query", "default", "image/jpeg"}, &handler) && handler == desktop;
+  state.videos = xdgMime({"query", "default", "video/mp4"}, &handler) && handler == desktop;
+  return state;
+}
+
+QString MimeDefaults::summarize(bool unset, const QString &report, bool ok) {
+  int changed = 0;
+  int failed = 0;
+  int unchanged = 0;
+  QStringList apps;
+  const auto name = [](QString handler) {
+    handler = handler.trimmed();
+    if (handler.endsWith(u".desktop")) handler.chop(8);
+    // org.gnome.Loupe reads better as Loupe.
+    const auto dot = handler.lastIndexOf(u'.');
+    return dot >= 0 && dot + 1 < handler.size() ? handler.mid(dot + 1) : handler;
+  };
+  for (const auto &line : report.split(u'\n', Qt::SkipEmptyParts)) {
+    if (line.startsWith(u"Could not") || line.startsWith(u"No matching")) {
+      ++failed;
+      continue;
+    }
+    const auto colon = line.indexOf(u": ");
+    if (colon < 0) continue;
+    const QString outcome = line.mid(colon + 2);
+    if (!unset && outcome.contains(u" -> ")) {
+      ++changed;
+      const QString previous = outcome.left(outcome.indexOf(u" -> "));
+      if (previous != u"(none)" && !apps.contains(name(previous)))
+        apps << name(previous);
+    } else if (unset && outcome.startsWith(u"restored ")) {
+      ++changed;
+      const QString restored = name(outcome.mid(9));
+      if (!apps.contains(restored)) apps << restored;
+    } else if (unset && outcome == u"removed Omaroll") {
+      ++changed;
+    } else {
+      ++unchanged;
+    }
+  }
+  const auto list = [](QStringList names) {
+    if (names.size() > 3) {
+      const int more = int(names.size()) - 3;
+      names = names.mid(0, 3);
+      names << QStringLiteral("%1 more").arg(more);
+    }
+    if (names.size() < 2) return names.join(QString());
+    const QString last = names.takeLast();
+    return names.join(QStringLiteral(", ")) + QStringLiteral(" and ") + last;
+  };
+  const auto types = [](int count) {
+    return count == 1 ? QStringLiteral("1 type") : QStringLiteral("%1 types").arg(count);
+  };
+  QString summary;
+  if (!unset) {
+    if (changed == 0 && failed == 0)
+      summary = QStringLiteral("Omaroll already opens your pictures and videos.");
+    else if (changed > 0)
+      summary = QStringLiteral("Omaroll now opens %1 of picture and video%2.")
+                    .arg(types(changed),
+                         apps.isEmpty() ? QString()
+                                        : QStringLiteral(", replacing ") + list(apps));
+  } else {
+    if (changed == 0 && failed == 0)
+      summary = QStringLiteral("Nothing to restore. Omaroll was not the default.");
+    else if (changed > 0)
+      summary = apps.isEmpty()
+                    ? QStringLiteral("Omaroll is no longer the default for %1.").arg(types(changed))
+                    : QStringLiteral("Restored %1 for %2.").arg(list(apps), types(changed));
+  }
+  if (failed > 0) {
+    const QString failure = QStringLiteral("%1 could not be changed.").arg(types(failed));
+    summary = summary.isEmpty() ? failure : summary + u' ' + failure;
+  }
+  if (summary.isEmpty())
+    summary = ok ? QStringLiteral("Done.") : QStringLiteral("Could not change the defaults.");
+  return summary;
+}
+
+MimeDefaults::Result MimeDefaults::run(bool unset, const QString &group) {
   const QString path =
       QStandardPaths::locate(QStandardPaths::GenericDataLocation,
                              QStringLiteral("applications/") + desktop);
   const auto selected = types(path, group);
   if (selected.isEmpty())
-    return QStringLiteral("No matching installed desktop types (group: %1)")
-        .arg(group);
+    return {QStringLiteral("No matching installed desktop types (group: %1)")
+                .arg(group),
+            false};
   const QString config =
       QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
   QSettings state(config + QStringLiteral("/Omaroll/mime-defaults.ini"),
@@ -91,7 +229,7 @@ QString MimeDefaults::apply(bool unset, const QString &group) {
   bool ok = true;
   for (const auto &type : selected) {
     QString previous;
-    if (!run({"query", "default", type}, &previous)) {
+    if (!xdgMime({"query", "default", type}, &previous)) {
       ok = false;
       report << "Could not query " + type;
       continue;
@@ -106,7 +244,7 @@ QString MimeDefaults::apply(bool unset, const QString &group) {
       state.setValue(type, previous);
       state.sync();
       if (state.status() != QSettings::NoError ||
-          !run({"default", desktop, type})) {
+          !xdgMime({"default", desktop, type})) {
         ok = false;
         report << "Could not set " + type;
         continue;
@@ -131,12 +269,12 @@ QString MimeDefaults::apply(bool unset, const QString &group) {
           removed &= removeEntries(dir + "/" + name + "-mimeapps.list", {type});
       }
       if (removed && previous == desktop && !restore.isEmpty())
-        removed = run({"default", restore, type});
+        removed = xdgMime({"default", restore, type});
       // A system-wide default, or Omaroll being the only installed app for
       // the type, can still open it with Omaroll; say so instead of claiming
       // it was removed.
       QString now;
-      if (removed && restore.isEmpty() && run({"query", "default", type}, &now) &&
+      if (removed && restore.isEmpty() && xdgMime({"query", "default", type}, &now) &&
           now == desktop) {
         state.remove(type);
         report << type + ": removed your setting; it still opens with Omaroll "
@@ -156,6 +294,5 @@ QString MimeDefaults::apply(bool unset, const QString &group) {
     }
   }
   state.sync();
-  m_succeeded = ok && state.status() == QSettings::NoError;
-  return report.join(u'\n');
+  return {report.join(u'\n'), ok && state.status() == QSettings::NoError};
 }

@@ -11,6 +11,7 @@
 #include <QStringList>
 #include <QTimer>
 #include <QUrl>
+#include <QVariantMap>
 
 #include <array>
 
@@ -44,6 +45,11 @@ class ViewerSession final : public QObject {
   Q_PROPERTY(bool areas READ areas NOTIFY pictureChanged)
   Q_PROPERTY(QString pictureNote READ pictureNote NOTIFY pictureChanged)
   Q_PROPERTY(QString pictureError READ pictureError NOTIFY pictureChanged)
+  // A still that shows but is cut off, said beside it. Read on a worker.
+  Q_PROPERTY(QString pictureWarning READ pictureWarning NOTIFY pictureCheckChanged)
+  // Why a still could not be shown, once diagnosePicture() has looked:
+  // {cause, title, detail} from PictureDiagnosis, or empty.
+  Q_PROPERTY(QVariantMap pictureFailure READ pictureFailure NOTIFY pictureCheckChanged)
   Q_PROPERTY(QString contentVersion READ contentVersion NOTIFY currentChanged)
   Q_PROPERTY(QString thumbnailVersion READ thumbnailVersion NOTIFY currentChanged)
   Q_PROPERTY(QString fileName READ fileName NOTIFY currentChanged)
@@ -87,6 +93,10 @@ public:
     return m_pictureKnown && !m_plan.areas ? m_plan.note : QString();
   }
   [[nodiscard]] QString pictureError() const { return m_pictureKnown ? m_plan.error : QString(); }
+  [[nodiscard]] QString pictureWarning() const { return m_pictureWarning; }
+  [[nodiscard]] QVariantMap pictureFailure() const { return m_pictureFailure; }
+  // The viewer could not show the current still: find out why, on a worker.
+  Q_INVOKABLE void diagnosePicture();
   [[nodiscard]] QString contentVersion() const { return m_contentVersion; }
   [[nodiscard]] QString thumbnailVersion() const { return m_thumbnailVersion; }
   [[nodiscard]] QString fileName() const;
@@ -178,6 +188,7 @@ public:
 signals:
   void currentChanged();
   void pictureChanged();
+  void pictureCheckChanged();
   void deletionPathChanged();
   void rawSizeChanged();
   void sequenceChanged();
@@ -217,6 +228,7 @@ private:
   [[nodiscard]] bool isPlainStill() const;
   void refreshPicture();
   void startPictureProbe();
+  void startPictureCheck();
 
   struct PreloadCandidate {
     QString path;
@@ -298,4 +310,18 @@ private:
   ImageBudget::Plan m_plan;
   int m_reducedEdge = 0;
   QHash<QString, PictureResult> m_neighbourPictures;
+  // The current still's cut-off check and, when it fails to show, the
+  // diagnosis. Results for another file or version are dropped.
+  struct CheckResult {
+    QString path;
+    QString version;
+    QString warning;
+    QVariantMap failure;
+  };
+  QFutureWatcher<CheckResult> m_warningCheck;
+  QFutureWatcher<CheckResult> m_failureCheck;
+  QString m_checkedPath;
+  QString m_checkedVersion;
+  QString m_pictureWarning;
+  QVariantMap m_pictureFailure;
 };

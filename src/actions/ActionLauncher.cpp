@@ -1,6 +1,7 @@
 #include "actions/ActionLauncher.h"
 #include "actions/TrashRestore.h"
 #include "edit/ClipboardText.h"
+#include "actions/FileChooserRequest.h"
 #include "actions/OpenWithRequest.h"
 #include "app/VideoPlayback.h"
 #include "edit/ClipboardText.h"
@@ -161,6 +162,24 @@ bool ActionLauncher::openWith(const QString& path) {
   });
   m_pendingOpenWith.insert(path);
   return request->start(path);
+}
+
+bool ActionLauncher::chooseFilesToOpen() {
+  // One chooser at a time; a second click while it is up does nothing.
+  if (findChild<FileChooserRequest*>()) return true;
+  auto* request = new FileChooserRequest(m_bus, this);
+  connect(request, &FileChooserRequest::failed, this, &ActionLauncher::failed);
+  connect(request, &FileChooserRequest::chosen, this, [this](const QStringList& paths) {
+    if (!paths.isEmpty()) emit openRequested(paths);
+  });
+  connect(request, &FileChooserRequest::finished, request, &QObject::deleteLater);
+  return request->start(u"Open in Omaroll"_s,
+                        {u"image/*"_s, u"video/*"_s, u"application/pdf"_s});
+}
+
+bool ActionLauncher::openDemo() {
+  return runDetached(QCoreApplication::applicationFilePath(), {u"--demo"_s}, {},
+                     u"Opening the demo library in a new window"_s);
 }
 
 QString ActionLauncher::mimeTypeFor(const QString& path) {

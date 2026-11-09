@@ -4,6 +4,7 @@
 #include "sources/CaptureScanner.h"
 #include "sources/FileVersion.h"
 #include "sources/ThumbnailSource.h"
+#include "viewer/PictureDiagnosis.h"
 
 #include <QCollator>
 #include <QDateTime>
@@ -95,6 +96,21 @@ ViewerSession::ViewerSession(QObject* parent) : QObject(parent) {
     applyPicture(result);
     emit pictureChanged();
   });
+  const auto applyCheck = [this](const CheckResult& result, bool failure) {
+    if (result.path != path() || result.version != m_contentVersion) return;
+    if (failure) {
+      if (m_pictureFailure == result.failure) return;
+      m_pictureFailure = result.failure;
+    } else {
+      if (m_pictureWarning == result.warning) return;
+      m_pictureWarning = result.warning;
+    }
+    emit pictureCheckChanged();
+  };
+  connect(&m_warningCheck, &QFutureWatcher<CheckResult>::finished, this,
+          [this, applyCheck] { applyCheck(m_warningCheck.result(), false); });
+  connect(&m_failureCheck, &QFutureWatcher<CheckResult>::finished, this,
+          [this, applyCheck] { applyCheck(m_failureCheck.result(), true); });
   connect(&m_rawSizeProbe, &QFutureWatcher<RawSizeResult>::finished, this, [this] {
     m_rawSizeProbeRunning = false;
     const RawSizeResult result = m_rawSizeProbe.result();
@@ -156,6 +172,37 @@ void ViewerSession::refreshPicture() {
     return;
   }
   startPictureProbe();
+}
+
+// Only JPEG and PNG say where they end; a cut-off one still decodes.
+void ViewerSession::startPictureCheck() {
+  if (m_checkedPath == path() && m_checkedVersion == m_contentVersion) return;
+  m_checkedPath = path();
+  m_checkedVersion = m_contentVersion;
+  const bool cleared = !m_pictureWarning.isEmpty() || !m_pictureFailure.isEmpty();
+  m_pictureWarning.clear();
+  m_pictureFailure.clear();
+  if (cleared) emit pictureCheckChanged();
+  if (m_checkedPath.isEmpty() || isVideo() || isRaw() ||
+      !(m_mediaSuffix == u"jpg" || m_mediaSuffix == u"jpeg" || m_mediaSuffix == u"jpe" ||
+        m_mediaSuffix == u"jfif" || m_mediaSuffix == u"png")) {
+    return;
+  }
+  const QString file = m_checkedPath;
+  const QString version = m_checkedVersion;
+  m_warningCheck.setFuture(QtConcurrent::run([file, version] {
+    return CheckResult{file, version, PictureDiagnosis::truncation(file), {}};
+  }));
+}
+
+void ViewerSession::diagnosePicture() {
+  if (path().isEmpty() || isVideo()) return;
+  const QString file = path();
+  const QString version = m_contentVersion;
+  if (!m_pictureFailure.isEmpty() && m_checkedPath == file && m_checkedVersion == version) return;
+  m_failureCheck.setFuture(QtConcurrent::run([file, version] {
+    return CheckResult{file, version, {}, PictureDiagnosis::failure(file).toMap()};
+  }));
 }
 
 void ViewerSession::startPictureProbe() {
@@ -744,6 +791,7 @@ void ViewerSession::refreshDetails() {
   watchCurrentFile();
   m_mediaSuffix = CaptureScanner::mediaSuffix(path());
   refreshPicture();
+  startPictureCheck();
   const QFileInfo info(path());
   // Another file, or this one replaced: its raw size is read again.
   if (m_rawSizePath != path() || m_rawSizeVersion != m_contentVersion || !isRaw()) {

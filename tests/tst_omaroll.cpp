@@ -834,6 +834,55 @@ private slots:
     QVERIFY(all.contains("image/png"));
     QVERIFY(all.contains("video/mp4"));
     QVERIFY(MimeDefaults::types(dir.filePath("data/applications/") + desktop, "bad").isEmpty());
+
+    // Settings and the empty library make the same change on a worker, and
+    // say what changed.
+    QSignalSpy finished(&defaults, &MimeDefaults::finished);
+    defaults.applyAsync(false, "images");
+    QVERIFY(defaults.busy());
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 30000);
+    QVERIFY2(finished.first().at(0).toBool(), qPrintable(finished.first().at(2).toString()));
+    QVERIFY2(finished.first().at(1).toString().startsWith("Omaroll now opens"),
+             qPrintable(finished.first().at(1).toString()));
+    QTRY_VERIFY_WITH_TIMEOUT(defaults.known() && !defaults.busy(), 10000);
+    QVERIFY(defaults.imagesDefault());
+
+    // A check asked for while one runs is not lost: the running one read the
+    // state from before the change, and a second one follows it.
+    defaults.refresh();
+    QThreadPool::globalInstance()->waitForDone();
+    QVERIFY(other.open(QIODevice::WriteOnly));
+    other.write("[Desktop Entry]\nType=Application\nName=Other\nExec=/usr/bin/true %f\nMimeType=image/png;image/jpeg;\n");
+    other.close();
+    QVERIFY(writeDefaults("[Default Applications]\nimage/jpeg=other.desktop;\n"));
+    defaults.refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(!defaults.busy(), 10000);
+    QVERIFY(!defaults.imagesDefault());
+  }
+
+  void defaultViewerChangesAreSummarized() {
+    const QString set = QStringLiteral(
+        "image/png: other.desktop -> io.github.tsouth89.omaroll.desktop\n"
+        "image/jpeg: imv.desktop -> io.github.tsouth89.omaroll.desktop\n"
+        "video/mp4: mpv.desktop -> io.github.tsouth89.omaroll.desktop\n"
+        "image/gif: (none) -> io.github.tsouth89.omaroll.desktop\n"
+        "image/webp: already Omaroll");
+    QCOMPARE(MimeDefaults::summarize(false, set, true),
+             QStringLiteral("Omaroll now opens 4 types of picture and video, replacing other, imv and mpv."));
+    QCOMPARE(MimeDefaults::summarize(false, QStringLiteral("image/png: already Omaroll"), true),
+             QStringLiteral("Omaroll already opens your pictures and videos."));
+    QCOMPARE(MimeDefaults::summarize(false, set + QStringLiteral("\nCould not set image/bmp"), false),
+             QStringLiteral("Omaroll now opens 4 types of picture and video, replacing other, imv and mpv. "
+                            "1 type could not be changed."));
+    const QString unset = QStringLiteral(
+        "image/png: restored org.gnome.Loupe.desktop\nvideo/mp4: restored mpv.desktop\n"
+        "image/gif: removed Omaroll\nimage/bmp: kept other.desktop\n"
+        "image/x-tga: removed your setting; it still opens with Omaroll "
+        "(a system default, or no other app handles it)");
+    QCOMPARE(MimeDefaults::summarize(true, unset, true),
+             QStringLiteral("Restored Loupe and mpv for 3 types."));
+    QCOMPARE(MimeDefaults::summarize(true, QStringLiteral("image/png: kept other.desktop"), true),
+             QStringLiteral("Nothing to restore. Omaroll was not the default."));
   }
 
   void explicitStartParsingAndFirstVideo() {
