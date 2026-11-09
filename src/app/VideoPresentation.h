@@ -1,20 +1,21 @@
 #pragma once
 
-#include <QObject>
+#include <QQuickItem>
 #include <QPointer>
 #include <QVideoSink>
 #include <QVideoFrame>
 
 // Keep captions out of Qt Quick's video node. Only frames reach that sink;
 // Omaroll's themed Text owns both embedded and sidecar captions.
-class VideoPresentation : public QObject {
+class VideoPresentation : public QQuickItem {
   Q_OBJECT
   Q_PROPERTY(QVideoSink* videoSink READ videoSink CONSTANT)
   Q_PROPERTY(QString subtitleText READ subtitleText NOTIFY subtitleTextChanged)
   Q_PROPERTY(bool ready READ ready NOTIFY readyChanged)
   Q_PROPERTY(bool hasFrame READ hasFrame NOTIFY readyChanged)
 public:
-  explicit VideoPresentation(QVideoSink* output) : QObject(output), m_output(output) {
+  explicit VideoPresentation(QVideoSink* output, QQuickItem* surface = nullptr)
+      : QQuickItem(surface), m_output(output) {
     connect(&m_input, &QVideoSink::subtitleTextChanged, this,
             &VideoPresentation::subtitleTextChanged);
     connect(&m_input, &QVideoSink::videoFrameChanged, this, [this](const QVideoFrame& frame) {

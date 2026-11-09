@@ -26,7 +26,7 @@ ApplicationWindow {
     // leaves it tiled, then takes its own; see HyprlandPlacement.
     title: Session.fileName !== "" && !root.mapTiled ? Session.fileName + " · Omaroll" : "Omaroll"
     readonly property var presentation: videoSurface.item
-        ? Settings.videoPresentation(videoSurface.item.videoSink) : null
+        ? Settings.videoPresentation(videoSurface.item) : null
     property bool mapTiled: false
     // With several viewers open, messages that belong to no viewer in
     // particular appear only in the one used last.

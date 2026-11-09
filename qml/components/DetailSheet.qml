@@ -12,7 +12,7 @@ Item {
     id: root
 
     readonly property var presentation: videoSurface.item
-        ? Settings.videoPresentation(videoSurface.item.videoSink) : null
+        ? Settings.videoPresentation(videoSurface.item) : null
     property string path: ""
     readonly property bool captionEditing: captionField.activeFocus
     property bool canCompare: false

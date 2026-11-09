@@ -2262,9 +2262,10 @@ void AppSettings::reconcileMarks(const QList<CaptureRecord>& records) {
   emit marksChanged();
 }
 
-QObject* AppSettings::videoPresentation(QObject* sink) const {
-  auto* output = qobject_cast<QVideoSink*>(sink);
-  return output ? new VideoPresentation(output) : nullptr;
+QObject* AppSettings::videoPresentation(QObject* object) const {
+  auto* surface = qobject_cast<QQuickItem*>(object);
+  auto* output = surface ? surface->property("videoSink").value<QVideoSink*>() : nullptr;
+  return output ? new VideoPresentation(output, surface) : nullptr;
 }
 
 qint64 AppSettings::videoSeekTarget(double milliseconds, double frameRate) const {
