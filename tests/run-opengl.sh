@@ -13,9 +13,11 @@ export OMAROLL_REQUIRE_OPENGL=1
 export QT_AUDIO_BACKEND=pulseaudio PULSE_SERVER=unix:/nonexistent PIPEWIRE_REMOTE=omaroll-no-audio
 
 # Separate processes with their own scratch profiles, so they can overlap.
-timeout 180 "$build_dir/omaroll_ui_tests" &
+# The limits only catch a hang. The emulated aarch64 runner already needs
+# about 100 s for the viewer suite under ctest, and more with software GL.
+timeout 360 "$build_dir/omaroll_ui_tests" &
 ui_tests=$!
-timeout 120 "$build_dir/omaroll_viewer_tests" &
+timeout 360 "$build_dir/omaroll_viewer_tests" &
 viewer_tests=$!
 suites_failed=0
 wait "$ui_tests" || suites_failed=1
