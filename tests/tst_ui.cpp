@@ -5170,6 +5170,7 @@ private slots:
       QTest::qWait(100);
       QCOMPARE(capture(), embeddedOnly);
       overlay->setVisible(true);
+      player->play();
     }
     player->setPosition(7000);
     QTRY_VERIFY(player->videoSink()->subtitleText().contains(QStringLiteral("Second subtitle")));
