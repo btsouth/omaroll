@@ -2,6 +2,8 @@
 
 #include "library/CaptureModel.h"
 #include "pdf/PdfSupport.h"
+#include "search/OcrIndex.h"
+#include "sources/FileVersion.h"
 
 #include <QCryptographicHash>
 #include <QDataStream>
@@ -20,13 +22,49 @@
 namespace {
 
 constexpr quint32 kCacheMagic = 0x50445431; // PDT1
-// 2: the text as compressed UTF-8. Version 1 entries are pruned.
-constexpr quint16 kCacheVersion = 2;
+// 2: the text as compressed UTF-8. 3: keyed by size, mtime and ctime rather
+// than size and mtime alone. Older entries are pruned.
+constexpr quint16 kCacheVersion = 3;
 constexpr qint64 kMaximumCacheBytes = 64LL * 1024 * 1024;
+constexpr int kPowerPollMs = 30'000;
 
 QString cacheHome() {
   const QString configured = qEnvironmentVariable("XDG_CACHE_HOME");
   return configured.isEmpty() ? QDir::homePath() + QStringLiteral("/.cache") : configured;
+}
+
+struct CacheEntry {
+  bool valid = false;
+  QString path;
+  QString key;
+  QByteArray compressed;
+};
+
+// The header and, when |withText|, the compressed text of one cache file.
+CacheEntry readEntry(const QString& file, qint64 limit, bool withText) {
+  CacheEntry entry;
+  QFile input(file);
+  if (!input.open(QIODevice::ReadOnly) || input.size() > limit) return entry;
+  QDataStream stream(&input);
+  stream.setVersion(QDataStream::Qt_6_0);
+  quint32 magic = 0;
+  quint16 version = 0;
+  stream >> magic >> version;
+  if (stream.status() != QDataStream::Ok || magic != kCacheMagic || version != kCacheVersion) {
+    return entry;
+  }
+  stream >> entry.path >> entry.key;
+  if (withText) stream >> entry.compressed;
+  entry.valid = stream.status() == QDataStream::Ok;
+  return entry;
+}
+
+// The text of a valid entry, or a null string when it does not decompress.
+QString entryText(const CacheEntry& entry, qsizetype limit) {
+  if (entry.compressed.isEmpty()) return QString(QLatin1String(""));
+  const QByteArray text = qUncompress(entry.compressed);
+  if (text.isEmpty()) return {};
+  return QString::fromUtf8(text).left(limit);
 }
 
 } // namespace
@@ -37,6 +75,8 @@ DocumentTextIndex::DocumentTextIndex(CaptureModel* model, QObject* parent)
   m_syncTimer.setInterval(400);
   connect(&m_syncTimer, &QTimer::timeout, this, &DocumentTextIndex::sync);
   connect(&m_watcher, &QFutureWatcher<Result>::finished, this, &DocumentTextIndex::finished);
+  m_powerTimer.setInterval(kPowerPollMs);
+  connect(&m_powerTimer, &QTimer::timeout, this, &DocumentTextIndex::checkPower);
   if (m_model) {
     connect(m_model, &CaptureModel::countChanged, this, [this] {
       if (wanted()) m_syncTimer.start();
@@ -60,6 +100,7 @@ void DocumentTextIndex::requestStop() {
   m_cancel->store(true);
   m_queue.clear();
   m_syncTimer.stop();
+  m_powerTimer.stop();
 }
 
 QString DocumentTextIndex::cacheDirectory() {
@@ -72,7 +113,22 @@ QString DocumentTextIndex::cachePath(const QString& path) {
 }
 
 bool DocumentTextIndex::wanted() const {
-  return !m_stopped && m_model && (m_searching || (m_background && !m_model->scanning()));
+  // A search reads on any power; background indexing waits for mains.
+  return !m_stopped && m_model &&
+         (m_searching || (m_background && !m_onBattery && !m_model->scanning()));
+}
+
+void DocumentTextIndex::setPowerSupplyDirectory(const QString& directory) {
+  m_powerDirectory = directory;
+  checkPower();
+}
+
+void DocumentTextIndex::checkPower() {
+  const bool battery = OcrIndex::onBattery(m_powerDirectory);
+  if (battery == m_onBattery) return;
+  m_onBattery = battery;
+  if (wanted()) sync();
+  else m_queue.clear();
 }
 
 void DocumentTextIndex::setSearchText(const QString& text) {
@@ -90,6 +146,12 @@ void DocumentTextIndex::setSearchText(const QString& text) {
 void DocumentTextIndex::setBackground(bool enabled) {
   if (enabled == m_background) return;
   m_background = enabled;
+  if (enabled && !m_stopped) {
+    checkPower();
+    m_powerTimer.start();
+  } else {
+    m_powerTimer.stop();
+  }
   if (wanted()) sync();
   else m_queue.clear();
 }
@@ -97,8 +159,7 @@ void DocumentTextIndex::setBackground(bool enabled) {
 bool DocumentTextIndex::known(const Candidate& candidate) const {
   const auto same = [&candidate](const QHash<QString, Candidate>& map) {
     const auto found = map.constFind(candidate.path);
-    return found != map.cend() && found->modified == candidate.modified &&
-           found->bytes == candidate.bytes;
+    return found != map.cend() && found->sameVersion(candidate);
   };
   return same(m_known) || same(m_failed);
 }
@@ -109,7 +170,7 @@ bool DocumentTextIndex::current(const Candidate& candidate) const {
   if (row < 0) return false;
   const CaptureRecord& record = m_model->recordAt(row);
   return record.isDocument() && record.modified == candidate.modified &&
-         record.bytes == candidate.bytes;
+         record.bytes == candidate.bytes && record.thumbnailVersion == candidate.version;
 }
 
 void DocumentTextIndex::sync() {
@@ -119,15 +180,16 @@ void DocumentTextIndex::sync() {
   for (int row = 0; row < m_model->rowCount(); ++row) {
     const CaptureRecord& record = m_model->recordAt(row);
     if (!record.isDocument()) continue;
-    const Candidate candidate{record.path, record.modified, record.bytes};
+    const Candidate candidate{record.path, record.modified, record.bytes,
+                              record.thumbnailVersion};
     live.insert(record.path, candidate);
     documents.append(candidate);
   }
   // Forget documents that left the library or changed since they were read.
   for (auto it = m_known.begin(); it != m_known.end();) {
     const auto found = live.constFind(it.key());
-    if (found == live.cend() || found->modified != it->modified || found->bytes != it->bytes) {
-      emit textReady(it.key(), {});
+    if (found == live.cend() || !found->sameVersion(*it)) {
+      emit textReady(it.key(), {}, false);
       it = m_known.erase(it);
     } else {
       ++it;
@@ -136,7 +198,7 @@ void DocumentTextIndex::sync() {
   // A failed document that changed gets another try.
   m_failed.removeIf([&live](const QHash<QString, Candidate>::iterator it) {
     const auto found = live.constFind(it.key());
-    return found == live.cend() || found->modified != it->modified || found->bytes != it->bytes;
+    return found == live.cend() || !found->sameVersion(it.value());
   });
   if (!wanted()) return;
   // The model holds the newest scan results first.
@@ -178,7 +240,9 @@ void DocumentTextIndex::finished() {
     QFile::remove(cachePath(result.candidate.path));
   } else if (result.read && current(result.candidate)) {
     m_known.insert(result.candidate.path, result.candidate);
-    if (!result.text.isEmpty()) emit textReady(result.candidate.path, result.text);
+    if (!result.text.isEmpty()) {
+      emit textReady(result.candidate.path, result.text, result.persisted);
+    }
   } else if (!result.read && !m_stopped && current(result.candidate)) {
     m_failed.insert(result.candidate.path, result.candidate);
   }
@@ -195,27 +259,19 @@ DocumentTextIndex::Result DocumentTextIndex::extract(const Candidate& candidate,
                                                      int timeoutMs,
                                                      const std::atomic_bool& cancel) {
   Result result{candidate, {}, false};
+  // Taken before reading, so a change while the tool runs is caught next
+  // time rather than cached as current.
+  const QString key = FileVersion::diskKey(candidate.path);
+  if (key.isEmpty()) return result;
   {
-    QFile file(cachePath);
-    if (file.open(QIODevice::ReadOnly) && file.size() <= kTextLimit * 4) {
-      QDataStream stream(&file);
-      stream.setVersion(QDataStream::Qt_6_0);
-      quint32 magic = 0;
-      quint16 version = 0;
-      QString path;
-      qint64 modified = 0;
-      qint64 bytes = 0;
-      QByteArray compressed;
-      stream >> magic >> version >> path >> modified >> bytes >> compressed;
-      if (stream.status() == QDataStream::Ok && magic == kCacheMagic &&
-          version == kCacheVersion && path == candidate.path &&
-          modified == candidate.modified && bytes == candidate.bytes) {
-        const QByteArray text = compressed.isEmpty() ? QByteArray() : qUncompress(compressed);
-        if (compressed.isEmpty() || !text.isEmpty()) {
-          result.text = QString::fromUtf8(text).left(kTextLimit);
-          result.read = true;
-          return result;
-        }
+    const CacheEntry entry = readEntry(cachePath, kTextLimit * 4, true);
+    if (entry.valid && entry.path == candidate.path && entry.key == key) {
+      const QString text = entryText(entry, kTextLimit);
+      if (!text.isNull()) {
+        result.text = text;
+        result.read = true;
+        result.persisted = true;
+        return result;
       }
     }
   }
@@ -267,22 +323,36 @@ DocumentTextIndex::Result DocumentTextIndex::extract(const Candidate& candidate,
       QDataStream stream(&file);
       stream.setVersion(QDataStream::Qt_6_0);
       const QByteArray text = result.text.toUtf8();
-      stream << kCacheMagic << kCacheVersion << candidate.path << candidate.modified
-             << candidate.bytes << (text.isEmpty() ? QByteArray() : qCompress(text));
+      stream << kCacheMagic << kCacheVersion << candidate.path << key
+             << (text.isEmpty() ? QByteArray() : qCompress(text));
       if (stream.status() == QDataStream::Ok && file.commit()) {
         QFile::setPermissions(cachePath, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+        result.persisted = true;
       }
     }
   }
   return result;
 }
 
+QString DocumentTextIndex::cachedText(const QString& path) {
+  const CacheEntry entry = readEntry(cachePath(path), kTextLimit * 4, true);
+  if (!entry.valid || entry.path != path || entry.key != FileVersion::diskKey(path)) return {};
+  return entryText(entry, kTextLimit);
+}
+
+void DocumentTextIndex::reread(const QString& path) {
+  if (m_known.remove(path) == 0) return;
+  if (wanted()) m_syncTimer.start();
+}
+
 int DocumentTextIndex::clearCache() {
+  // A sync already scheduled would start reading again into the new cache.
+  m_syncTimer.stop();
   m_queue.clear();
   ++m_generation;
   const int remembered = m_known.size();
-  for (auto it = m_known.cbegin(); it != m_known.cend(); ++it) emit textReady(it.key(), {});
-  if (m_running && !m_known.contains(m_current.path)) emit textReady(m_current.path, {});
+  for (auto it = m_known.cbegin(); it != m_known.cend(); ++it) emit textReady(it.key(), {}, false);
+  if (m_running && !m_known.contains(m_current.path)) emit textReady(m_current.path, {}, false);
   m_known.clear();
   m_failed.clear();
   int removed = 0;
@@ -299,23 +369,10 @@ void DocumentTextIndex::pruneCache() {
       directory.entryInfoList({QStringLiteral("*.txt")}, QDir::Files, QDir::Time);
   qint64 retained = 0;
   for (const QFileInfo& info : files) {
-    bool keep = false;
-    QFile file(info.filePath());
-    if (info.size() <= kTextLimit * 4 && file.open(QIODevice::ReadOnly)) {
-      QDataStream stream(&file);
-      stream.setVersion(QDataStream::Qt_6_0);
-      quint32 magic = 0;
-      quint16 version = 0;
-      QString path;
-      qint64 modified = 0;
-      qint64 bytes = 0;
-      stream >> magic >> version >> path >> modified >> bytes;
-      const QFileInfo source(path);
-      keep = stream.status() == QDataStream::Ok && magic == kCacheMagic &&
-             version == kCacheVersion && source.isFile() && source.size() == bytes &&
-             source.lastModified().toMSecsSinceEpoch() == modified &&
-             retained + info.size() <= kMaximumCacheBytes;
-    }
+    const CacheEntry entry = readEntry(info.filePath(), kTextLimit * 4, false);
+    const bool keep = entry.valid && !entry.path.isEmpty() &&
+                      entry.key == FileVersion::diskKey(entry.path) &&
+                      retained + info.size() <= kMaximumCacheBytes;
     if (keep) retained += info.size();
     else QFile::remove(info.filePath());
   }

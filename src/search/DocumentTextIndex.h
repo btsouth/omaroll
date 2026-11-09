@@ -18,9 +18,14 @@ class CaptureModel;
 // to look for, or background text indexing is on and the library has
 // settled. Documents are read one at a time on a worker thread, newest
 // first, with the first pages and a bounded amount of text kept. Results are
-// cached under ~/.cache/omaroll/pdftext as compressed UTF-8, keyed by path,
-// size and mtime, so a document is read once per version. A document that
-// times out is not tried again this session until it changes.
+// cached under ~/.cache/omaroll/pdftext as compressed UTF-8, keyed by path and
+// by size, mtime and ctime, so a document is read once per version, and a
+// replacement that keeps the size and mtime is still read again. A document
+// that times out is not tried again this session until it changes. Background
+// indexing pauses on battery, as picture text does; a search still reads.
+//
+// The cache also backs search: text the library keeps on disk rather than in
+// memory is read back from here (cachedText()).
 class DocumentTextIndex final : public QObject {
   Q_OBJECT
   Q_PROPERTY(bool indexing READ indexing NOTIFY indexingChanged)
@@ -46,9 +51,21 @@ public:
   void setTimeoutMs(int milliseconds) { m_timeoutMs = milliseconds; }
 
   [[nodiscard]] static QString cacheDirectory();
+  // A document's cached text, or a null string when the cache has none for
+  // the file as it is now. Safe on any thread.
+  [[nodiscard]] static QString cachedText(const QString& path);
+  // Reads a document again, for text that went missing from the cache.
+  void reread(const QString& path);
+
+  // Where power supplies are read, for tests, and reading them now.
+  void setPowerSupplyDirectory(const QString& directory);
+  void checkPower();
+  [[nodiscard]] bool onBattery() const { return m_onBattery; }
 
 signals:
-  void textReady(const QString& path, const QString& text);
+  // |persisted| says the text is in the cache, so cachedText() can give it
+  // back later.
+  void textReady(const QString& path, const QString& text, bool persisted);
   void indexingChanged();
 
 private:
@@ -56,11 +73,17 @@ private:
     QString path;
     qint64 modified = 0;
     qint64 bytes = 0;
+    // The scanner's full file identity, ctime and inode included.
+    QString version;
+    [[nodiscard]] bool sameVersion(const Candidate& other) const {
+      return modified == other.modified && bytes == other.bytes && version == other.version;
+    }
   };
   struct Result {
     Candidate candidate;
     QString text;
     bool read = false;
+    bool persisted = false;
     quint64 generation = 0;
   };
 
@@ -85,6 +108,9 @@ private:
   QList<Candidate> m_queue;
   QFutureWatcher<Result> m_watcher;
   QTimer m_syncTimer;
+  QTimer m_powerTimer;
+  QString m_powerDirectory = QStringLiteral("/sys/class/power_supply");
+  bool m_onBattery = false;
   // Set on teardown so a document being read stops at once.
   std::shared_ptr<std::atomic_bool> m_cancel = std::make_shared<std::atomic_bool>(false);
   // The document being read, and which cache it belongs to. Clearing the

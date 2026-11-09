@@ -259,10 +259,19 @@ QString FoldedText::snippet(const QByteArray& needle, int before, int after) con
   const QString text = prefix + window +
                        QString::fromUtf8(original.constData() + rawEnd, suffixEnd - rawEnd);
 
+  // Each end on a character, never between the halves of a surrogate pair:
+  // the match's last character whole, and the context widened rather than cut.
+  const auto splitsPair = [&text](qsizetype at) {
+    return at > 0 && at < text.size() && text.at(at).isLowSurrogate() &&
+           text.at(at - 1).isHighSurrogate();
+  };
   const qsizetype match = prefix.size() + sources.at(local);
-  const qsizetype matchEnd = prefix.size() + sources.at(local + term.size() - 1) + 1;
-  const qsizetype start = std::max<qsizetype>(0, match - before);
-  const qsizetype end = std::min<qsizetype>(text.size(), matchEnd + after);
+  qsizetype matchEnd = prefix.size() + sources.at(local + term.size() - 1) + 1;
+  if (splitsPair(matchEnd)) ++matchEnd;
+  qsizetype start = std::max<qsizetype>(0, match - before);
+  if (splitsPair(start)) --start;
+  qsizetype end = std::min<qsizetype>(text.size(), matchEnd + after);
+  if (splitsPair(end)) ++end;
   QString snippet = text.mid(start, end - start).simplified();
   if (start > 0 || prefixStart > 0) snippet.prepend(QChar(0x2026));
   if (end < text.size() || suffixEnd < original.size()) snippet.append(QChar(0x2026));
@@ -319,13 +328,9 @@ SearchQuery SearchQuery::parse(const QString& text) {
   const qsizetype size = text.size();
   qsizetype at = 0;
   const auto readQuoted = [&](qsizetype* position) {
-    // *position is just past the opening quote. An unclosed quote runs to
-    // the end, which is what someone still typing means.
-    const qsizetype close = text.indexOf(QLatin1Char('"'), *position);
-    const qsizetype end = close < 0 ? size : close;
-    const QString value = text.mid(*position, end - *position);
-    *position = close < 0 ? size : close + 1;
-    return value;
+    // An unclosed quote runs to the end, which is what someone still typing
+    // means.
+    return SearchQuery::readQuoted(text, *position, position);
   };
   const auto addText = [&](const QString& raw, bool negated, bool phrase) {
     const QString value = SearchText::fold(raw.simplified());
@@ -408,8 +413,12 @@ SearchQuery SearchQuery::parse(const QString& text) {
       // Folders are matched as written from home ("~/Pictures/2024"), so a
       // full path under home is rewritten the same way.
       if (field == Folder) {
-        const QString home = SearchText::fold(QDir::homePath()) + QLatin1Char('/');
-        if (term.value.startsWith(home)) term.value = QStringLiteral("~/") + term.value.mid(home.size());
+        const QString home = SearchText::fold(QDir::homePath());
+        if (term.value == home || term.value == home + QLatin1Char('/')) {
+          term.value = QStringLiteral("~");
+        } else if (term.value.startsWith(home + QLatin1Char('/'))) {
+          term.value = QStringLiteral("~/") + term.value.mid(home.size() + 1);
+        }
       }
     }
     query.terms.append(term);
@@ -450,12 +459,49 @@ QString SearchQuery::fromPlainWords(const QString& words) {
   for (QString word : words.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts)) {
     if (word.startsWith(QLatin1Char('-')) || word.contains(QLatin1Char(':')) ||
         word.contains(QLatin1Char('"'))) {
-      // A quote cannot be quoted; the rest of the word still matches.
-      word.remove(QLatin1Char('"'));
-      if (word.isEmpty()) continue;
-      word = QLatin1Char('"') + word + QLatin1Char('"');
+      // Quoted, quotes and all, so the word is searched for as written.
+      word = QLatin1Char('"') +
+             word.replace(QLatin1Char('\\'), QStringLiteral("\\\\"))
+                 .replace(QLatin1Char('"'), QStringLiteral("\\\"")) +
+             QLatin1Char('"');
     }
     parts.append(word);
   }
   return parts.join(QLatin1Char(' '));
+}
+
+QString SearchQuery::quote(const QString& value) {
+  if (!value.contains(QLatin1Char(' ')) && !value.contains(QLatin1Char('\t')) &&
+      !value.contains(QLatin1Char('"'))) {
+    return value;
+  }
+  QString escaped = value;
+  escaped.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+  escaped.replace(QLatin1Char('"'), QStringLiteral("\\\""));
+  return QLatin1Char('"') + escaped + QLatin1Char('"');
+}
+
+QString SearchQuery::readQuoted(const QString& text, qsizetype from, qsizetype* next,
+                                bool* closed) {
+  QString value;
+  qsizetype at = from;
+  if (closed) *closed = false;
+  while (at < text.size()) {
+    const QChar character = text.at(at);
+    if (character == QLatin1Char('\\') && at + 1 < text.size() &&
+        (text.at(at + 1) == QLatin1Char('"') || text.at(at + 1) == QLatin1Char('\\'))) {
+      value.append(text.at(at + 1));
+      at += 2;
+      continue;
+    }
+    if (character == QLatin1Char('"')) {
+      if (closed) *closed = true;
+      ++at;
+      break;
+    }
+    value.append(character);
+    ++at;
+  }
+  if (next) *next = at;
+  return value;
 }

@@ -173,20 +173,38 @@ Flow {
 
     // With two or more, one more control clears them together.
     Text {
+        id: clearAllButton
         objectName: "filterChipsClearAll"
         visible: root.chips.length >= 2
         height: 24
         verticalAlignment: Text.AlignVCenter
         leftPadding: 4
+        rightPadding: 4
         text: "Clear all"
         font.family: Theme.fontFamily
         font.pixelSize: 11
-        font.underline: clearAllHover.hovered
+        font.underline: clearAllHover.hovered || activeFocus
         color: Theme.accent
+        activeFocusOnTab: true
         Accessible.role: Accessible.Button
         Accessible.name: "Clear all filters"
         Accessible.onPressAction: root.clearAll()
+        Keys.onReturnPressed: root.clearAll()
+        Keys.onEnterPressed: root.clearAll()
+        Keys.onSpacePressed: root.clearAll()
         HoverHandler { id: clearAllHover; cursorShape: Qt.PointingHandCursor }
         TapHandler { onTapped: root.clearAll() }
+
+        Rectangle {
+            objectName: "filterChipsClearAllFocus"
+            anchors.fill: parent
+            anchors.topMargin: 2
+            anchors.bottomMargin: 2
+            visible: clearAllButton.activeFocus
+            color: "transparent"
+            radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 3) : 2
+            border.width: 1
+            border.color: Theme.accent
+        }
     }
 }

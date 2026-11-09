@@ -755,8 +755,9 @@ void CaptureModel::adoptResults(ScanResult result) {
 void CaptureModel::setRecordsForTesting(QList<CaptureRecord> records) {
   beginResetModel();
   m_records = std::move(records);
-  endResetModel();
+  // Before the reset ends, so its observers find rows by path in the new list.
   rebuildRowIndex();
+  endResetModel();
   emit countChanged();
 }
 #endif

@@ -44,7 +44,8 @@
   the damaged file beside it and saves whatever organization it still held.
 - Search also matches tags, album names, folders, cameras, lenses and PDF
   text, and ignores accents, so "cafe" finds "café" and "lodz" finds "Łódź". PDF text is read in the
-  background from the first 50 pages and cached.
+  background from the first 50 pages and cached, pausing on battery, and most
+  of a large PDF library's text waits in that cache rather than in memory.
 - Search fields: `tag:`, `album:`, `in:`, `camera:`, `lens:`, `type:`,
   `before:` and `after:`, plus quoted phrases and `-word` to leave matches out.
   Typing a field suggests values from the library, and the help sheet lists

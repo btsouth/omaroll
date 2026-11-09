@@ -2,6 +2,7 @@
 
 #include <QDate>
 #include <QCollator>
+#include <QFutureWatcher>
 #include <QHash>
 #include <QSet>
 #include <QSortFilterProxyModel>
@@ -12,6 +13,10 @@
 
 #include "search/SearchQuery.h"
 
+#include <atomic>
+#include <functional>
+#include <list>
+#include <memory>
 #include <vector>
 
 class AppSettings;
@@ -84,6 +89,7 @@ public:
   static constexpr int kAllKinds = -1;
 
   explicit CaptureFilterModel(QObject* parent = nullptr);
+  ~CaptureFilterModel() override;
   void setSourceModel(QAbstractItemModel* sourceModel) override;
 
   [[nodiscard]] int kindFilter() const { return m_kindFilter; }
@@ -202,8 +208,36 @@ public:
   Q_INVOKABLE QVariantList reviewSections() const;
 
   // Text found by the local OCR index. Updates are coalesced because a warm
-  // cache can deliver many entries in one event-loop turn.
+  // cache can deliver many entries in one event-loop turn. Pictures use this
+  // text and documents use their own, so neither producer's updates touch
+  // the other's.
   void setOcrText(const QString& path, const QString& text);
+
+  // Text of PDFs. A library of long documents could hold gigabytes of it, so
+  // at most documentTextBudget() bytes stay in memory, least recently used
+  // out first. Text that leaves memory stays searchable: once a loader is
+  // set, it is read back from the disk cache off the GUI thread and matched
+  // against the search there. |persisted| text is in that cache; other text
+  // stays in memory. Without a loader nothing leaves memory.
+  void setDocumentText(const QString& path, const QString& text, bool persisted = true);
+  // Reads one document's text from disk, or returns a null string when it is
+  // gone. Called on worker threads.
+  using TextLoader = std::function<QString(const QString& path)>;
+  void setDocumentTextLoader(TextLoader loader);
+  static constexpr qsizetype kDocumentTextBudget = 64 * 1024 * 1024;
+  [[nodiscard]] qsizetype documentTextBudget() const { return m_documentTextBudget; }
+  void setDocumentTextBudget(qsizetype bytes);
+  // Bytes of document text in memory, and how many documents are there or
+  // only on disk.
+  [[nodiscard]] qsizetype documentTextBytes() const { return m_documentTextBytes; }
+  [[nodiscard]] int residentDocumentCount() const {
+    return static_cast<int>(m_documentText.size());
+  }
+  [[nodiscard]] int storedDocumentCount() const {
+    return static_cast<int>(m_storedDocuments.size());
+  }
+  // Whether documents on disk are still being matched against the search.
+  [[nodiscard]] bool matchingStoredText() const;
 
   // The proxy row showing this path, or -1 when it is filtered out or unknown.
   Q_INVOKABLE int rowOf(const QString& path) const;
@@ -251,6 +285,9 @@ signals:
   void similarOnlyChanged();
   void pairRawJpegChanged();
   void countChanged();
+  // A document's text left memory but the disk cache no longer has it; its
+  // producer should read it again.
+  void documentTextLost(const QString& path);
 
 protected:
   [[nodiscard]] bool filterAcceptsRow(int sourceRow,
@@ -276,9 +313,32 @@ private:
     QString captionKey;
     QString tags;
     QString albums;
+    bool document = false;
     quint64 text = 0;
-    // Folded picture or PDF text as UTF-8, or empty.
+    // Folded picture or in-memory PDF text as UTF-8, or empty.
     QByteArray ocr;
+  };
+  struct ResidentText {
+    SearchText::FoldedText text;
+    qsizetype bytes = 0;
+    bool persisted = true;
+    std::list<QString>::iterator use;
+  };
+  // What a document kept on disk holds for the current search.
+  struct StoredMatch {
+    // Bit i: the i-th text term of the query is in the document's text.
+    quint64 terms = 0;
+    QString snippet;
+  };
+  struct StoredJob {
+    QString path;
+    QString fileName;
+    quint64 serial = 0;
+  };
+  struct StoredScan {
+    quint64 generation = 0;
+    QHash<QString, std::pair<quint64, StoredMatch>> matches;
+    QList<std::pair<QString, quint64>> lost;
   };
 
   void beginFilterUpdate();
@@ -309,6 +369,18 @@ private:
   [[nodiscard]] const CaptureRecord& sourceRecord(int sourceRow) const;
   [[nodiscard]] bool recordLessThan(const CaptureRecord& first, const CaptureRecord& second) const;
   [[nodiscard]] QString ocrSnippet(const CaptureRecord& record) const;
+  [[nodiscard]] const SearchText::FoldedText* textFor(const CaptureRecord& record) const;
+  // Whether a document kept on disk holds the text term at |ordinal|.
+  [[nodiscard]] bool storedTextHas(const QString& path, int ordinal) const;
+  void dropDocumentText(const QString& path);
+  void trimDocumentText();
+  void releaseKeyText(const QString& path);
+  void resetStoredMatches();
+  void startStoredScan();
+  void storedScanFinished();
+  static StoredScan scanStored(const QList<StoredJob>& jobs, const QList<QByteArray>& terms,
+                               const QStringList& snippetTerms, const TextLoader& loader,
+                               quint64 generation, const std::atomic_bool& cancel);
 
   int m_kindFilter = kAllKinds;
   int m_sortMode = NewestFirst;
@@ -363,6 +435,27 @@ private:
   QHash<QString, QString> m_similarGroups;
   QHash<QString, int> m_duplicateOrdinals;
   QHash<QString, SearchText::FoldedText> m_text;
+  // Document text in memory, and its use order, least recent first.
+  QHash<QString, ResidentText> m_documentText;
+  mutable std::list<QString> m_documentUse;
+  qsizetype m_documentTextBytes = 0;
+  qsizetype m_documentTextBudget = kDocumentTextBudget;
+  TextLoader m_documentTextLoader;
+  // Documents whose text is only on disk, each with a serial that changes
+  // when its text does, so a scan of older text is not taken as current.
+  QHash<QString, quint64> m_storedDocuments;
+  quint64 m_storedSerial = 0;
+  // The text terms the stored matches answer, the documents not matched
+  // against them yet, and those that hold at least one.
+  QList<QByteArray> m_storedTerms;
+  QStringList m_storedSnippetTerms;
+  QSet<QString> m_storedPending;
+  QHash<QString, StoredMatch> m_storedMatches;
+  QFutureWatcher<StoredScan> m_storedWatcher;
+  std::shared_ptr<std::atomic_bool> m_storedCancel = std::make_shared<std::atomic_bool>(false);
+  quint64 m_storedGeneration = 0;
+  bool m_storedScanning = false;
+  QTimer m_storedScanTimer;
   QTimer m_folderIndexTimer;
   bool m_metadataIndexesDirty = false;
   QTimer m_duplicateOrderTimer;

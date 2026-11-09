@@ -362,7 +362,8 @@ Every word must match. Fields narrow the search:
 A field value matches the start of a word, so `camera:fuji` finds
 "FUJIFILM X-T4" and `tag:japan` finds "Travel/Japan". `before:` is earlier
 than the whole period and `after:` later, so `after:2023 before:2025` is 2024.
-Anything else with a colon is searched as plain text. Typing a field offers
+Anything else with a colon is searched as plain text. Inside quotes, `\"` is a
+quote and `\\` a backslash, so `album:"Road \"Trip\""` names that album. Typing a field offers
 the library's tags, albums, folders, cameras, kinds and years; Up and Down pick
 one and Enter or Tab takes it. **?** lists the syntax too.
 
@@ -374,17 +375,21 @@ lens and rating chips. Duplicate and similar reviews are not saved. Deleting an
 album or tag deletes the saved views that open it. Omaroll 1.18 and older open
 such a view with only its plain words and without its album.
 
-Picture text is read locally by Tesseract and kept in a private cache. PDF
-text comes from `pdftotext`, the first 50 pages of each document, read in the
-background one document at a time and cached the same way. A document that
-takes longer than 20 seconds is skipped until it changes. By default it is
-read while a search is open, one picture at a time, screenshots first; the
-status line counts the pictures read, and a notice under the results says
-when some have not been read yet.
+Picture text is read locally by Tesseract and kept in a private cache. By
+default it is read while a search is open, one picture at a time, screenshots
+first; the status line counts the pictures read, and a notice under the results
+says when some have not been read yet.
+
+PDF text comes from `pdftotext`, the first 50 pages of each document, read one
+document at a time while a search is open or in the background, and cached the
+same way. A document that takes longer than 20 seconds is skipped until it
+changes. A library of long PDFs keeps most of their text in that cache rather
+than in memory, and searches it there.
 
 **Index text in the background** in Settings reads the library once its scan
 has settled instead, two to four pictures at a time at the lowest CPU and disk
-priority, and pauses while the computer runs on battery. Its status reads
+priority, and pauses while the computer runs on battery. PDFs are read in the
+background too, one at a time, with the same pause. Its status reads
 "Text indexed N of M". **Screenshots only** limits it to screenshots; a search
 still reads other pictures as before.
 

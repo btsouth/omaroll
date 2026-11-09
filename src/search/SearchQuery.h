@@ -94,6 +94,14 @@ struct SearchQuery {
   // same: every word is literal text, so "-draft" and "type:video" are
   // searched for as written.
   [[nodiscard]] static QString fromPlainWords(const QString& words);
+  // A value as a token writes it: in quotes when it has a space or a quote,
+  // with \" for a quote and \\ for a backslash inside them.
+  [[nodiscard]] static QString quote(const QString& value);
+  // Reads a quoted value from |text| at |from|, just past its opening quote,
+  // up to the closing quote or the end. Sets |next| past what was read and
+  // |closed| when the closing quote was there.
+  [[nodiscard]] static QString readQuoted(const QString& text, qsizetype from, qsizetype* next,
+                                          bool* closed = nullptr);
 
   // Field names, as typed. The first of each group is the canonical one.
   [[nodiscard]] static QStringList fieldNames();

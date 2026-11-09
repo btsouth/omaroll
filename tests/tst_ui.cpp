@@ -2937,17 +2937,23 @@ private slots:
     const int all = m_library->rowCount();
     const QString matched = pathAt(1);
     const QString other = pathAt(2);
+    // Pictures take text from the picture index and PDFs from their own;
+    // either may sit in these rows.
+    const auto setText = [this](const QString& path, const QString& text) {
+      m_library->setOcrText(path, text);
+      m_library->setDocumentText(path, text);
+    };
     const auto restore = qScopeGuard([&] {
-      m_library->setOcrText(matched, QString());
-      m_library->setOcrText(other, QString());
+      setText(matched, QString());
+      setText(other, QString());
       m_library->setSearchText(QString());
     });
     for (int round = 0; round < 3; ++round) {
       m_library->setSearchText(QStringLiteral("zqxinvoice"));
       QTRY_COMPARE(m_library->rowCount(), 0);
-      m_library->setOcrText(matched, QStringLiteral("ACME HARDWARE ZQXINVOICE 7781"));
+      setText(matched, QStringLiteral("ACME HARDWARE ZQXINVOICE 7781"));
       QTRY_COMPARE(m_library->rowCount(), 1);
-      m_library->setOcrText(other, QStringLiteral("zqxinvoice paid"));
+      setText(other, QStringLiteral("zqxinvoice paid"));
       QTRY_COMPARE(m_library->rowCount(), 2);
       QTRY_VERIFY(viewportReady());
       for (const QString& path : {matched, other}) {
@@ -2965,8 +2971,8 @@ private slots:
       m_library->setSearchText(QString());
       QTRY_COMPARE(m_library->rowCount(), all);
       QTRY_VERIFY(viewportReady());
-      m_library->setOcrText(matched, QString());
-      m_library->setOcrText(other, QString());
+      setText(matched, QString());
+      setText(other, QString());
     }
   }
 
@@ -3087,6 +3093,86 @@ private slots:
     QTRY_VERIFY(m_library->smartCollectionFilter().isEmpty());
     QVERIFY(m_library->searchText().isEmpty());
     QVERIFY(m_library->folderFilter().isEmpty());
+  }
+
+  // Clear all is reached with Tab after the chips and taken with Space or
+  // Return, with a visible focus ring.
+  void clearAllFiltersFromTheKeyboard() {
+    const auto restore = qScopeGuard([&] { m_library->clearFacets(true); });
+    const QString folder = QFileInfo(pathAt(0)).absolutePath();
+    const auto narrow = [&] {
+      m_library->setFolderFilter(folder);
+      m_library->setDateRange(QStringLiteral("2000-01-01"), QStringLiteral("2099-12-31"));
+    };
+    narrow();
+    QQuickItem* clearAll = item("filterChipsClearAll");
+    QTRY_VERIFY(clearAll->isVisible());
+    QVERIFY(clearAll->activeFocusOnTab());
+    QQuickItem* lastChip = item("filterChipClear-date");
+    lastChip->forceActiveFocus(Qt::TabFocusReason);
+    QTRY_VERIFY(lastChip->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QTRY_VERIFY(clearAll->hasActiveFocus());
+    QVERIFY(item("filterChipsClearAllFocus")->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTRY_VERIFY(m_library->folderFilter().isEmpty());
+    QVERIFY(m_library->dateFrom().isEmpty());
+
+    narrow();
+    QTRY_VERIFY(clearAll->isVisible());
+    clearAll->forceActiveFocus(Qt::TabFocusReason);
+    QTRY_VERIFY(clearAll->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(m_library->folderFilter().isEmpty());
+    QVERIFY(m_library->dateFrom().isEmpty());
+  }
+
+  // A suggestion over a tile takes the click alone: the tile is not
+  // selected and the search field keeps the keyboard.
+  void suggestionClicksDoNotReachTiles() {
+    auto* search = item("libraryFilterSearch");
+    auto* popup = m_window->findChild<QObject*>(QStringLiteral("searchSuggestions"));
+    QVERIFY(popup);
+    QQuickItem* grid = item("library");
+    const auto restore = qScopeGuard([&] {
+      search->setProperty("text", QString());
+      m_library->setSearchText(QString());
+    });
+    QTest::keyClick(m_window, Qt::Key_Slash);
+    QTRY_VERIFY(search->hasActiveFocus());
+    typeText(QStringLiteral("type:"));
+    QTRY_VERIFY(popup->property("visible").toBool());
+    // The lowest row, which lies over the grid.
+    QQuickItem* lowest = nullptr;
+    find(m_window->contentItem(), [&lowest](QQuickItem* candidate) {
+      if (candidate->objectName() == QStringLiteral("searchSuggestionRow") &&
+          candidate->isVisible() &&
+          (!lowest || candidate->mapToScene(QPointF()).y() > lowest->mapToScene(QPointF()).y())) {
+        lowest = candidate;
+      }
+      return false;
+    });
+    QVERIFY(lowest);
+    QTRY_VERIFY(lowest->width() > 0);
+    const QPoint at = centre(lowest);
+    QQuickItem* tile = find(grid, [&at](QQuickItem* candidate) {
+      return candidate->isVisible() && candidate->property("selectionMode").isValid() &&
+             !candidate->property("path").toString().isEmpty() &&
+             candidate->contains(candidate->mapFromScene(QPointF(at)));
+    });
+    QVERIFY2(tile, "no tile under the suggestion");
+    const QString tilePath = tile->property("path").toString();
+    QVERIFY(grid->property("selectedPath").toString() != tilePath);
+    const QVariantList rows = popup->property("rows").toList();
+    const int index = lowest->parentItem()->property("index").toInt();
+    const QString insert = rows.at(index).toMap().value(QStringLiteral("insert")).toString();
+
+    QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, at);
+    QTRY_COMPARE(search->property("text").toString(), insert + QLatin1Char(' '));
+    // Past the double-click interval, where a tile would have been chosen.
+    QTest::qWait(QGuiApplication::styleHints()->mouseDoubleClickInterval() + 50);
+    QVERIFY(search->hasActiveFocus());
+    QVERIFY(grid->property("selectedPath").toString() != tilePath);
   }
 
   void emptySearchResultsRecoverKeyboardNavigation() {

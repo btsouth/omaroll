@@ -237,8 +237,14 @@ public:
     });
     QObject::connect(&m_textIndex, &OcrIndex::textReady, &m_library,
                      &CaptureFilterModel::setOcrText);
+    // PDF text has a store of its own, so a file that changes between picture
+    // and PDF keeps each producer's text apart. Most of it can wait in the
+    // disk cache rather than memory.
     QObject::connect(&m_documentText, &DocumentTextIndex::textReady, &m_library,
-                     &CaptureFilterModel::setOcrText);
+                     &CaptureFilterModel::setDocumentText);
+    m_library.setDocumentTextLoader(&DocumentTextIndex::cachedText);
+    QObject::connect(&m_library, &CaptureFilterModel::documentTextLost, &m_documentText,
+                     &DocumentTextIndex::reread);
     QObject::connect(&m_library, &CaptureFilterModel::duplicatesOnlyChanged, &m_duplicates,
                      [this] { m_duplicates.setActive(m_library.duplicatesOnly()); });
     QObject::connect(&m_duplicates, &DuplicateIndex::groupsChanged, &m_library,

@@ -98,8 +98,15 @@ Popup {
                 color: Theme.mutedText
             }
             HoverHandler { id: rowHover }
-            TapHandler {
-                onTapped: {
+            // A MouseArea accepts the press, so it never reaches a tile
+            // under the list. It takes no focus, so the search field keeps
+            // the keyboard.
+            MouseArea {
+                objectName: "searchSuggestionRow"
+                anchors.fill: parent
+                acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+                onClicked: function (mouse) {
+                    if (mouse.button !== Qt.LeftButton) return
                     root.highlighted = row.index
                     root.accept(false)
                 }

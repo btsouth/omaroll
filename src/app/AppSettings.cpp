@@ -947,11 +947,15 @@ int AppSettings::deleteAlbum(const QString& name) {
   }
   const int views = removeViewsNaming(QStringLiteral("album"),
                                       [&name](const QString& album) { return album == name; });
+  // One sync for both, so a saved view never outlives its album on disk.
+  m_deferOrganizationSync = true;
   persistAlbums();
   if (views > 0) {
     persistSmartCollections();
     emit smartCollectionsChanged();
   }
+  m_deferOrganizationSync = false;
+  syncOrganization();
   emit albumsChanged();
   return views;
 }
@@ -987,11 +991,14 @@ bool AppSettings::renameAlbum(const QString& oldName, const QString& newName) {
       viewsChanged = true;
     }
   }
+  m_deferOrganizationSync = true;
   persistAlbums();
   if (viewsChanged) {
     persistSmartCollections();
     emit smartCollectionsChanged();
   }
+  m_deferOrganizationSync = false;
+  syncOrganization();
   emit albumsChanged();
   return m_organizationError.isEmpty();
 }

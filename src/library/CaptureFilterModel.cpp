@@ -11,6 +11,7 @@
 #include <QRegularExpression>
 #include <QSet>
 #include <QVariantMap>
+#include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
 #include <utility>
@@ -72,6 +73,12 @@ CaptureFilterModel::CaptureFilterModel(QObject* parent) : QSortFilterProxyModel(
 
   m_releaseKeysTimer.setSingleShot(true);
   m_releaseKeysTimer.setInterval(60'000);
+  m_storedScanTimer.setSingleShot(true);
+  m_storedScanTimer.setInterval(30);
+  connect(&m_storedScanTimer, &QTimer::timeout, this, &CaptureFilterModel::startStoredScan);
+  connect(&m_storedWatcher, &QFutureWatcher<StoredScan>::finished, this,
+          &CaptureFilterModel::storedScanFinished);
+
   connect(&m_releaseKeysTimer, &QTimer::timeout, this, [this] {
     std::vector<SearchKeys>().swap(m_searchKeys);
     m_folderKeys.clear();
@@ -87,6 +94,13 @@ CaptureFilterModel::CaptureFilterModel(QObject* parent) : QSortFilterProxyModel(
     }
     emit countChanged();
   });
+}
+
+CaptureFilterModel::~CaptureFilterModel() {
+  // The scan holds copies of everything it reads; waiting only keeps it from
+  // outliving the loader's owner.
+  m_storedCancel->store(true);
+  m_storedWatcher.waitForFinished();
 }
 
 void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
@@ -444,11 +458,16 @@ void CaptureFilterModel::setAlbumFilter(const QString& name, const QStringList& 
   if (m_albumFilter == name && m_albumPaths == next) {
     return;
   }
+  // Files joining or leaving the album keep a saved view open on it; only
+  // another album leaves the view.
+  const bool changedName = m_albumFilter != name;
   beginFilterUpdate();
   m_albumFilter = name;
   m_albumPaths = next;
   endFilterUpdate();
-  clearSmartCollection();
+  if (changedName) {
+    clearSmartCollection();
+  }
   emit albumFilterChanged();
   emit countChanged();
 }
@@ -1031,8 +1050,7 @@ void CaptureFilterModel::setOcrText(const QString& path, const QString& text) {
     }
   } else {
     // Kept as UTF-8, the original for snippets and the folded form for
-    // matching: a long PDF costs about twice its length rather than four
-    // times, and matching scans half the bytes.
+    // matching: matching scans half the bytes UTF-16 would.
     const auto found = m_text.constFind(path);
     if (found != m_text.cend() && found->original == text.toUtf8()) {
       return;
@@ -1043,6 +1061,236 @@ void CaptureFilterModel::setOcrText(const QString& path, const QString& text) {
   if (m_query.hasText()) {
     m_ocrFilterTimer.start();
   }
+}
+
+void CaptureFilterModel::setDocumentText(const QString& path, const QString& text,
+                                         bool persisted) {
+  if (path.isEmpty()) {
+    return;
+  }
+  if (text.isEmpty()) {
+    if (!m_documentText.contains(path) && !m_storedDocuments.contains(path)) {
+      return;
+    }
+    dropDocumentText(path);
+  } else {
+    const auto found = m_documentText.find(path);
+    if (found != m_documentText.end() && found->text.original == text.toUtf8()) {
+      found->persisted = found->persisted || persisted;
+      return;
+    }
+    dropDocumentText(path);
+    ResidentText entry;
+    entry.text = SearchText::FoldedText::make(text);
+    entry.bytes = entry.text.bytes() +
+                  entry.text.marks.size() * qsizetype(sizeof(std::pair<qsizetype, qsizetype>));
+    entry.persisted = persisted;
+    entry.use = m_documentUse.insert(m_documentUse.end(), path);
+    m_documentTextBytes += entry.bytes;
+    m_documentText.insert(path, std::move(entry));
+    trimDocumentText();
+  }
+  ++m_textVersion;
+  if (m_query.hasText()) {
+    m_ocrFilterTimer.start();
+  }
+}
+
+void CaptureFilterModel::setDocumentTextLoader(TextLoader loader) {
+  m_documentTextLoader = std::move(loader);
+  trimDocumentText();
+}
+
+void CaptureFilterModel::setDocumentTextBudget(qsizetype bytes) {
+  m_documentTextBudget = std::max<qsizetype>(0, bytes);
+  trimDocumentText();
+}
+
+bool CaptureFilterModel::matchingStoredText() const {
+  return m_storedScanning || !m_storedPending.isEmpty() || m_storedScanTimer.isActive();
+}
+
+void CaptureFilterModel::dropDocumentText(const QString& path) {
+  const auto found = m_documentText.find(path);
+  if (found != m_documentText.end()) {
+    m_documentTextBytes -= found->bytes;
+    m_documentUse.erase(found->use);
+    m_documentText.erase(found);
+  }
+  if (m_storedDocuments.remove(path) > 0) {
+    m_storedPending.remove(path);
+    m_storedMatches.remove(path);
+  }
+  releaseKeyText(path);
+}
+
+// Least recently shown first. Text that is not in the disk cache stays, so
+// nothing becomes unsearchable.
+void CaptureFilterModel::trimDocumentText() {
+  if (!m_documentTextLoader) {
+    return;
+  }
+  for (auto it = m_documentUse.begin();
+       it != m_documentUse.end() && m_documentTextBytes > m_documentTextBudget;) {
+    const QString path = *it;
+    ++it;
+    const auto found = m_documentText.find(path);
+    if (found == m_documentText.end() || !found->persisted) {
+      continue;
+    }
+    m_documentTextBytes -= found->bytes;
+    m_documentUse.erase(found->use);
+    m_documentText.erase(found);
+    m_storedDocuments.insert(path, ++m_storedSerial);
+    releaseKeyText(path);
+    if (!m_storedTerms.isEmpty()) {
+      m_storedPending.insert(path);
+      m_storedScanTimer.start();
+    }
+  }
+}
+
+// The folded copy a row's search keys share would keep dropped text alive
+// until the next filter pass.
+void CaptureFilterModel::releaseKeyText(const QString& path) {
+  const auto* source = qobject_cast<const CaptureModel*>(sourceModel());
+  if (!source) {
+    return;
+  }
+  const int row = source->rowOf(path);
+  if (row >= 0 && row < static_cast<int>(m_searchKeys.size()) && m_searchKeys[row].path == path) {
+    m_searchKeys[row].ocr = QByteArray();
+    m_searchKeys[row].text = 0;
+  }
+}
+
+// Called whenever the query changes; the stored matches answer the text
+// terms, so only a change to those starts the documents on disk over.
+void CaptureFilterModel::resetStoredMatches() {
+  QList<QByteArray> terms;
+  for (const SearchQuery::Term& term : std::as_const(m_query.terms)) {
+    if (term.field == SearchQuery::Text) terms.append(term.utf8);
+  }
+  if (terms == m_storedTerms) {
+    return;
+  }
+  m_storedTerms = std::move(terms);
+  m_storedSnippetTerms = m_searchTerms;
+  m_storedMatches.clear();
+  m_storedPending.clear();
+  ++m_storedGeneration;
+  // A scan for the old words stops at its next document.
+  m_storedCancel->store(true);
+  m_storedCancel = std::make_shared<std::atomic_bool>(false);
+  if (m_storedTerms.isEmpty()) {
+    m_storedScanTimer.stop();
+    return;
+  }
+  for (auto it = m_storedDocuments.cbegin(); it != m_storedDocuments.cend(); ++it) {
+    m_storedPending.insert(it.key());
+  }
+  if (!m_storedPending.isEmpty()) {
+    m_storedScanTimer.start();
+  }
+}
+
+void CaptureFilterModel::startStoredScan() {
+  if (m_storedScanning || m_storedPending.isEmpty() || m_storedTerms.isEmpty() ||
+      !m_documentTextLoader) {
+    return;
+  }
+  const auto* source = qobject_cast<const CaptureModel*>(sourceModel());
+  QList<StoredJob> jobs;
+  jobs.reserve(m_storedPending.size());
+  for (const QString& path : std::as_const(m_storedPending)) {
+    const int row = source ? source->rowOf(path) : -1;
+    const QString name = row >= 0 ? source->recordAt(row).fileName : QFileInfo(path).fileName();
+    jobs.append({path, name, m_storedDocuments.value(path)});
+  }
+  m_storedPending.clear();
+  m_storedScanning = true;
+  m_storedWatcher.setFuture(QtConcurrent::run(
+      [jobs = std::move(jobs), terms = m_storedTerms, snippets = m_storedSnippetTerms,
+       loader = m_documentTextLoader, generation = m_storedGeneration, cancel = m_storedCancel] {
+        return scanStored(jobs, terms, snippets, loader, generation, *cancel);
+      }));
+}
+
+CaptureFilterModel::StoredScan CaptureFilterModel::scanStored(
+    const QList<StoredJob>& jobs, const QList<QByteArray>& terms, const QStringList& snippetTerms,
+    const TextLoader& loader, quint64 generation, const std::atomic_bool& cancel) {
+  StoredScan scan;
+  scan.generation = generation;
+  for (const StoredJob& job : jobs) {
+    if (cancel.load()) break;
+    const QString text = loader(job.path);
+    if (text.isNull()) {
+      scan.lost.append({job.path, job.serial});
+      continue;
+    }
+    // Folded the same way as text kept in memory, so both match alike. Most
+    // documents do not match, so the snippet's offsets are built only for
+    // those that do.
+    const QByteArray folded = SearchText::fold(text).toUtf8();
+    StoredMatch match;
+    for (int index = 0; index < terms.size() && index < 64; ++index) {
+      if (folded.contains(terms.at(index))) match.terms |= quint64(1) << index;
+    }
+    if (match.terms == 0) continue;
+    const SearchText::FoldedText kept = SearchText::FoldedText::make(text);
+    const QString name = SearchText::fold(job.fileName);
+    for (const QString& term : snippetTerms) {
+      if (name.contains(term)) continue;
+      match.snippet = kept.snippet(term.toUtf8(), 44, 56);
+      if (!match.snippet.isEmpty()) break;
+    }
+    scan.matches.insert(job.path, {job.serial, match});
+  }
+  return scan;
+}
+
+void CaptureFilterModel::storedScanFinished() {
+  m_storedScanning = false;
+  const StoredScan scan = m_storedWatcher.result();
+  if (scan.generation == m_storedGeneration) {
+    bool matched = false;
+    for (auto it = scan.matches.cbegin(); it != scan.matches.cend(); ++it) {
+      const auto stored = m_storedDocuments.constFind(it.key());
+      if (stored == m_storedDocuments.cend() || stored.value() != it->first) continue;
+      m_storedMatches.insert(it.key(), it->second);
+      matched = true;
+    }
+    for (const auto& [path, serial] : scan.lost) {
+      const auto stored = m_storedDocuments.find(path);
+      if (stored == m_storedDocuments.end() || stored.value() != serial) continue;
+      m_storedDocuments.erase(stored);
+      m_storedPending.remove(path);
+      emit documentTextLost(path);
+    }
+    if (matched && m_query.hasText()) {
+      m_ocrFilterTimer.start();
+    }
+  }
+  startStoredScan();
+}
+
+bool CaptureFilterModel::storedTextHas(const QString& path, int ordinal) const {
+  if (ordinal >= 64 || m_storedMatches.isEmpty()) {
+    return false;
+  }
+  const auto found = m_storedMatches.constFind(path);
+  return found != m_storedMatches.cend() && ((found->terms >> ordinal) & 1) != 0;
+}
+
+const SearchText::FoldedText* CaptureFilterModel::textFor(const CaptureRecord& record) const {
+  // A path that changes between picture and PDF keeps only its own
+  // producer's text.
+  if (record.isDocument()) {
+    const auto found = m_documentText.constFind(record.path);
+    return found == m_documentText.cend() ? nullptr : &found->text;
+  }
+  const auto found = m_text.constFind(record.path);
+  return found == m_text.cend() ? nullptr : &found.value();
 }
 
 int CaptureFilterModel::rowOf(const QString& path) const {
@@ -1101,9 +1349,16 @@ QString CaptureFilterModel::ocrSnippet(const CaptureRecord& record) const {
   if (m_searchTerms.isEmpty()) {
     return {};
   }
-  const auto found = m_text.constFind(record.path);
-  if (found == m_text.cend()) {
-    return {};
+  const SearchText::FoldedText* text = textFor(record);
+  if (!text) {
+    if (!record.isDocument()) return {};
+    const auto stored = m_storedMatches.constFind(record.path);
+    return stored == m_storedMatches.cend() ? QString() : stored->snippet;
+  }
+  if (record.isDocument()) {
+    // Shown documents stay in memory longest.
+    const auto found = m_documentText.constFind(record.path);
+    m_documentUse.splice(m_documentUse.end(), m_documentUse, found->use);
   }
   // Read for every visible tile after each keystroke, so the match is found
   // in the folded text already kept and only the piece around it is folded
@@ -1111,7 +1366,7 @@ QString CaptureFilterModel::ocrSnippet(const CaptureRecord& record) const {
   const QString name = SearchText::fold(record.fileName);
   for (const QString& term : m_searchTerms) {
     if (name.contains(term)) continue;
-    const QString snippet = found->snippet(term.toUtf8(), 44, 56);
+    const QString snippet = text->snippet(term.toUtf8(), 44, 56);
     if (!snippet.isEmpty()) return snippet;
   }
   return {};
@@ -1373,6 +1628,7 @@ void CaptureFilterModel::applySearchText(const QString& text) {
   m_searchText = text;
   m_query = SearchQuery::parse(text);
   m_searchTerms = m_query.textValues();
+  resetStoredMatches();
   // Folded keys cost memory in a large library, so they go a while after the
   // search is cleared; searching again soon after reuses them.
   if (m_query.isEmpty()) m_releaseKeysTimer.start();
@@ -1483,8 +1739,9 @@ const CaptureFilterModel::SearchKeys& CaptureFilterModel::searchKeys(
   };
   if (!same(keys.path, record.path) || !same(keys.fileName, record.fileName) ||
       !same(keys.camera, record.camera) || !same(keys.lens, record.lens) ||
-      !same(keys.caption, record.caption)) {
+      !same(keys.caption, record.caption) || keys.document != record.isDocument()) {
     keys.path = record.path;
+    keys.document = record.isDocument();
     keys.fileName = record.fileName;
     keys.camera = record.camera;
     keys.lens = record.lens;
@@ -1497,6 +1754,9 @@ const CaptureFilterModel::SearchKeys& CaptureFilterModel::searchKeys(
     keys.lensKey = SearchText::fold(record.lens);
     keys.captionKey = SearchText::fold(record.caption);
     keys.organization = 0;
+    // Rows move when a scan inserts or removes files, so text looked up for
+    // the file that was here before is not this one's.
+    keys.text = 0;
   }
   if (keys.organization != m_organizationVersion) {
     keys.tags = m_tagText.value(record.path);
@@ -1506,8 +1766,8 @@ const CaptureFilterModel::SearchKeys& CaptureFilterModel::searchKeys(
   // Text arrives a picture at a time; rows look it up again only after some
   // arrived, not on every keystroke.
   if (keys.text != m_textVersion) {
-    const auto found = m_text.constFind(record.path);
-    keys.ocr = found == m_text.cend() ? QByteArray() : found->folded;
+    const SearchText::FoldedText* text = textFor(record);
+    keys.ocr = text ? text->folded : QByteArray();
     keys.text = m_textVersion;
   }
   return keys;
@@ -1515,6 +1775,7 @@ const CaptureFilterModel::SearchKeys& CaptureFilterModel::searchKeys(
 
 bool CaptureFilterModel::matchesSearch(int sourceRow, const CaptureRecord& record) const {
   const SearchKeys& keys = searchKeys(sourceRow, record);
+  int textOrdinal = 0;
   for (const SearchQuery::Term& term : m_query.terms) {
     bool hit = false;
     switch (term.field) {
@@ -1525,7 +1786,9 @@ bool CaptureFilterModel::matchesSearch(int sourceRow, const CaptureRecord& recor
             SearchText::containsWordStart(keys.folderWords, term.value) ||
             keys.captionKey.contains(term.value) || keys.tags.contains(term.value) ||
             keys.albums.contains(term.value) || keys.cameraKey.contains(term.value) ||
-            keys.lensKey.contains(term.value) || keys.ocr.contains(term.utf8);
+            keys.lensKey.contains(term.value) || keys.ocr.contains(term.utf8) ||
+            (keys.document && storedTextHas(record.path, textOrdinal));
+      ++textOrdinal;
       break;
     case SearchQuery::Tag:
       hit = SearchText::containsWordStart(keys.tags, term.value);
@@ -1573,12 +1836,6 @@ bool CaptureFilterModel::matchesSearch(int sourceRow, const CaptureRecord& recor
 
 namespace {
 
-QString quotedValue(const QString& value) {
-  return value.contains(QLatin1Char(' ')) || value.contains(QLatin1Char('\t'))
-             ? QStringLiteral("\"%1\"").arg(value)
-             : value;
-}
-
 QString homeRelative(const QString& path) {
   static const QString home = QDir::homePath();
   if (path == home) return QStringLiteral("~");
@@ -1595,15 +1852,18 @@ QVariantList CaptureFilterModel::searchSuggestions(const QString& text, int curs
   cursor = qBound(0, cursor, static_cast<int>(text.size()));
   // The token under the cursor: back to the last space outside quotes, and
   // forward to the next one, so accepting mid-word replaces the whole word.
+  // Inside quotes, \" and \\ are escapes and do not end the value.
   bool quoted = false;
   int start = 0;
   for (int index = 0; index < cursor; ++index) {
-    if (text.at(index) == QLatin1Char('"')) quoted = !quoted;
+    if (quoted && text.at(index) == QLatin1Char('\\') && index + 1 < cursor) ++index;
+    else if (text.at(index) == QLatin1Char('"')) quoted = !quoted;
     else if (text.at(index).isSpace() && !quoted) start = index + 1;
   }
   int end = cursor;
   while (end < text.size() && !(text.at(end).isSpace() && !quoted)) {
-    if (text.at(end) == QLatin1Char('"')) quoted = !quoted;
+    if (quoted && text.at(end) == QLatin1Char('\\') && end + 1 < text.size()) ++end;
+    else if (text.at(end) == QLatin1Char('"')) quoted = !quoted;
     ++end;
   }
   QString token = text.mid(start, cursor - start);
@@ -1636,7 +1896,11 @@ QVariantList CaptureFilterModel::searchSuggestions(const QString& text, int curs
   const int field = SearchQuery::fieldFor(fieldName);
   if (field < 0) return rows;
   QString partial = token.mid(colon + 1);
-  if (partial.startsWith(QLatin1Char('"'))) partial.remove(0, 1);
+  // An opening quote may still wait for its closing one, which accepting a
+  // value adds.
+  const bool opened = partial.startsWith(QLatin1Char('"'));
+  bool closed = false;
+  if (opened) partial = SearchQuery::readQuoted(partial, 1, nullptr, &closed);
   const QString needle = SearchText::fold(partial.simplified());
 
   struct Candidate {
@@ -1708,8 +1972,9 @@ QVariantList CaptureFilterModel::searchSuggestions(const QString& text, int curs
   QList<Candidate> inner;
   for (const Candidate& candidate : std::as_const(candidates)) {
     const QString folded = SearchText::fold(candidate.value);
-    // Nothing to offer for a value that is already typed in full.
-    if (folded == needle && !partial.startsWith(QLatin1Char('"'))) continue;
+    // Nothing to offer for a value that is already typed in full, unless
+    // its quote is still open.
+    if (folded == needle && (!opened || closed)) continue;
     if (folded.startsWith(needle)) leading.append(candidate);
     else if (SearchText::containsWordStart(folded, needle)) inner.append(candidate);
   }
@@ -1720,7 +1985,7 @@ QVariantList CaptureFilterModel::searchSuggestions(const QString& text, int curs
         {QStringLiteral("label"), candidate.label},
         {QStringLiteral("detail"), candidate.detail},
         {QStringLiteral("insert"),
-         prefix + fieldName + QLatin1Char(':') + quotedValue(candidate.value)},
+         prefix + fieldName + QLatin1Char(':') + SearchQuery::quote(candidate.value)},
         {QStringLiteral("start"), start},
         {QStringLiteral("end"), end},
         {QStringLiteral("complete"), true}});
