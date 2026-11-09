@@ -639,22 +639,29 @@ Item {
         if (choice.kind === "embedded") {
             // Embedded and sidecar cues share the themed overlay. Clear the
             // sidecar selection before accepting embedded sink text.
-            player.activeSubtitleTrack = choice.index
+            setSubtitleTrack(choice.index)
             externalSubtitle = ""
         } else if (choice.kind === "external") {
-            player.activeSubtitleTrack = -1
+            setSubtitleTrack(-1)
             externalSubtitle = choice.path
         } else {
-            player.activeSubtitleTrack = -1
+            setSubtitleTrack(-1)
             externalSubtitle = ""
         }
         statusRequested(choice.kind === "off" ? "Subtitles off" : "Subtitles: " + choice.label)
+    }
+
+    function setSubtitleTrack(index) {
+        if (player.activeSubtitleTrack === index) return
+        player.activeSubtitleTrack = index
+        if (presentation) presentation.trackChanged()
     }
 
     function cycleAudioTrack() {
         const count = player.audioTracks.length
         if (count > 1) {
             player.activeAudioTrack = (player.activeAudioTrack + 1) % count
+            if (presentation) presentation.trackChanged()
         }
     }
 
@@ -1491,6 +1498,14 @@ Item {
                         property string resumeIdentity: ""
                         source: root.videoSource
                         videoOutput: root.presentation
+                        // Keeps the picture at the position after an early
+                        // pause or a track change.
+                        property Binding presentationPlayer: Binding {
+                            target: root.presentation
+                            property: "player"
+                            value: mediaPlayer
+                            when: root.presentation !== null
+                        }
                         audioOutput: AudioOutput {
                             volume: Settings.videoVolume
                             muted: Settings.videoMuted || !root.audible

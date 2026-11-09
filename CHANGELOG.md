@@ -41,6 +41,10 @@
 ### Fixed
 
 - `Ctrl+Q` quits again from the viewer and the library.
+- Switching subtitles or the audio track just after a video opens no longer
+  freezes the picture while the clock keeps running.
+- Pausing just after opening a video at a `--start` time, or straight after a
+  seek, shows the frame at that time instead of the thumbnail or the old frame.
 - Similar pictures no longer puts different screenshots of text, or different
   text documents, in one set. Each pair is checked on a finer thumbnail, text
   screenshots need a near-identical match and agreeing text, and a set only

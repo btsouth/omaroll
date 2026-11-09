@@ -126,7 +126,7 @@ jobs:
       - name: Validate metadata
         run: |
           desktop-file-validate packaging/io.github.tsouth89.omaroll.desktop
-          appstreamcli validate packaging/io.github.tsouth89.omaroll.metainfo.xml
+          appstreamcli validate --no-net packaging/io.github.tsouth89.omaroll.metainfo.xml
       - name: Verify staged install
         run: |
           DESTDIR="$PWD/stage" cmake --install build/release
@@ -137,7 +137,7 @@ jobs:
           test -f stage/usr/local/share/licenses/omaroll/LICENSE
           test -f stage/usr/local/share/doc/omaroll/README.md
           desktop-file-validate stage/usr/local/share/applications/io.github.tsouth89.omaroll.desktop
-          appstreamcli validate stage/usr/local/share/metainfo/io.github.tsouth89.omaroll.metainfo.xml
+          appstreamcli validate --no-net stage/usr/local/share/metainfo/io.github.tsouth89.omaroll.metainfo.xml
       - name: Compiler cache statistics
         if: always()
         run: ccache --show-stats

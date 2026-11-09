@@ -539,6 +539,7 @@ ApplicationWindow {
         const maximum = duration > 0 ? duration - 1 : Math.max(0, milliseconds)
         root.resumeAvailable = false
         root.resumePending = false
+        root.player.launchTarget = -1
         root.player.position = Math.max(0, Math.min(maximum, roundBoundary
             ? Settings.videoSeekTarget(milliseconds, root.player.metaData.value(MediaMetaData.VideoFrameRate))
             : Math.round(milliseconds)))
@@ -606,6 +607,7 @@ ApplicationWindow {
         if (!Session.isVideo || !root.hasAudioChoices) return
         const index = (root.player.activeAudioTrack + 1) % root.player.audioTracks.length
         root.player.activeAudioTrack = index
+        if (root.presentation) root.presentation.trackChanged()
         let label = "Track " + (index + 1)
         try {
             const track = root.player.audioTracks[index]
@@ -659,7 +661,10 @@ ApplicationWindow {
         }
         root.subtitleChoice = (root.subtitleChoice + 1) % choices.length
         const choice = choices[root.subtitleChoice]
-        root.player.activeSubtitleTrack = choice.kind === "embedded" ? choice.index : -1
+        const subtitleTrack = choice.kind === "embedded" ? choice.index : -1
+        const trackChanged = root.player.activeSubtitleTrack !== subtitleTrack
+        root.player.activeSubtitleTrack = subtitleTrack
+        if (trackChanged && root.presentation) root.presentation.trackChanged()
         root.externalSubtitle = choice.kind === "external" ? choice.path : ""
         root.say(choice.kind === "off" ? "Subtitles off" : "Subtitles: " + choice.label)
     }
@@ -1367,16 +1372,31 @@ ApplicationWindow {
                     id: mediaPlayer
                     objectName: "viewerPlayer"
                     property string resumeIdentity: ""
+                    // A --start time stays wanted until playback is seen at
+                    // or past it, so a seek the backend loses is sent again.
+                    property real launchTarget: -1
+                    property int launchRetries: 0
                     function applyLaunchStart() {
                         if (Session.pendingStartPosition(Session.path) < 0) return false
                         root.resumePending = false
                         root.resumeAvailable = false
                         if (seekable && duration > 0 && (mediaStatus === MediaPlayer.LoadedMedia
                                 || mediaStatus === MediaPlayer.BufferingMedia || mediaStatus === MediaPlayer.BufferedMedia)) {
-                            position = Math.min(duration, Session.takeStartPosition(Session.path))
+                            launchTarget = Math.min(duration, Session.takeStartPosition(Session.path))
+                            launchRetries = 0
+                            position = launchTarget
                             play()
                         }
                         return true
+                    }
+                    function confirmLaunchStart() {
+                        if (launchTarget < 0 || playbackState !== MediaPlayer.PlayingState) return
+                        if (position >= launchTarget - 500 || launchRetries >= 2) {
+                            launchTarget = -1
+                            return
+                        }
+                        ++launchRetries
+                        position = launchTarget
                     }
                     onSeekableChanged: applyLaunchStart()
                     onDurationChanged: applyLaunchStart()
@@ -1386,12 +1406,21 @@ ApplicationWindow {
                     }
                     source: root.videoSource
                     videoOutput: root.presentation
+                    // Lets the presentation keep the picture at the position
+                    // after an early pause or a track change.
+                    property Binding presentationPlayer: Binding {
+                        target: root.presentation
+                        property: "player"
+                        value: mediaPlayer
+                        when: root.presentation !== null
+                    }
                     audioOutput: AudioOutput {
                         volume: Settings.videoVolume
                         muted: Settings.videoMuted || !root.audible
                     }
                     onSourceChanged: {
                         if (root.presentation) root.presentation.reset()
+                        launchTarget = -1
                         root.videoError = ""
                         if (source.toString() !== "") {
                             playbackRate = Settings.rememberPlaybackSpeed ? Settings.videoPlaybackRate : 1
@@ -1412,6 +1441,7 @@ ApplicationWindow {
                         }
                     }
                     onPositionChanged: {
+                        confirmLaunchStart()
                         if (root.videoPausedForRender && mediaPlayer.position >= 1000
                                 && mediaPlayer.playbackState === MediaPlayer.PlayingState) {
                             mediaPlayer.pause()
