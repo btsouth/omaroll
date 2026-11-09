@@ -33,6 +33,7 @@
 #include "sources/ImageBudget.h"
 #include "thumbs/LargeImageProvider.h"
 #include "thumbs/RawImageProvider.h"
+#include "thumbs/Storyboard.h"
 #include "thumbs/ThumbnailCache.h"
 #include "thumbs/ThumbnailProvider.h"
 #include "viewer/MprisService.h"
@@ -628,6 +629,7 @@ int main(int argc, char* argv[]) {
   engine.addImageProvider(QLatin1String(PdfProvider::kProviderId), pdfProvider);
   engine.addImageProvider(QLatin1String(RawImageProvider::kProviderId), rawProvider);
   engine.addImageProvider(QLatin1String(LargeImageProvider::kProviderId), largeProvider);
+  Storyboard::install(engine);
   // Every window shares these. Each window's own services live in its context.
   engine.rootContext()->setContextProperty(QStringLiteral("Theme"), &theme);
   engine.rootContext()->setContextProperty(QStringLiteral("Actions"), &actions);
@@ -655,6 +657,7 @@ int main(int argc, char* argv[]) {
                      pdfProvider->shutdown();
                      rawProvider->shutdown();
                      largeProvider->shutdown();
+                     Storyboard::shutdown();
                      // Saves on the pool still use their editors, so a slow one is
                      // reported and then finished rather than cut off.
                      if (!QThreadPool::globalInstance()->waitForDone(QDeadlineTimer(1500))) {

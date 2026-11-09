@@ -42,6 +42,10 @@
   copy before every restore). If the settings file is damaged, Settings offers
   Restore last good backup. It asks first, says which day it restored, keeps
   the damaged file beside it and saves whatever organization it still held.
+- Hovering the seek bar in the viewer and the library preview shows the time
+  and, above it, the nearest of up to 100 sampled keyframes, and the preview
+  follows a drag. Keyframes are decoded once in the background at low priority
+  and cached, so a video opened again has previews at once.
 
 ### Fixed
 
