@@ -161,22 +161,45 @@ Rectangle {
 
             Item { width: 1; height: 4 }
 
+            // One line each, shortened in the middle so the file name and
+            // the top of the tree both stay; the whole path is in the tip,
+            // and Copy path below copies it.
             Text {
+                objectName: "viewerInfoPath"
                 width: parent.width
                 text: "Path: " + root.filePath
-                wrapMode: Text.WrapAnywhere
+                elide: Text.ElideMiddle
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
                 color: Theme.mutedText
+                Accessible.role: Accessible.StaticText
+                Accessible.name: "Path: " + root.filePath
+
+                HoverHandler { id: pathHover }
+                ThemedToolTip {
+                    requested: pathHover.hovered && parent.truncated
+                    text: root.filePath
+                    delay: 500
+                }
             }
             Text {
+                objectName: "viewerInfoTarget"
                 width: parent.width
                 visible: root.resolvedPath !== ""
                 text: "Target: " + root.resolvedPath
-                wrapMode: Text.WrapAnywhere
+                elide: Text.ElideMiddle
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
                 color: Theme.mutedText
+                Accessible.role: Accessible.StaticText
+                Accessible.name: "Target: " + root.resolvedPath
+
+                HoverHandler { id: targetHover }
+                ThemedToolTip {
+                    requested: targetHover.hovered && parent.truncated
+                    text: root.resolvedPath
+                    delay: 500
+                }
             }
             // Where the file lives. A click shows it in the file manager.
             Text {

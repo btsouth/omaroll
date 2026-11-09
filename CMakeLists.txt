@@ -214,6 +214,8 @@ set(OMAROLL_QML_FILES
   qml/components/SearchSuggestions.qml
   qml/components/SimilarStrictnessPicker.qml
   qml/components/TextIndexSettings.qml
+  qml/components/SettingRow.qml
+  qml/components/SettingSwitch.qml
   qml/components/TextSearchNotice.qml
   qml/components/SettingsSheet.qml
   qml/components/EditorChooser.qml
@@ -235,6 +237,8 @@ set(OMAROLL_QML_FILES
   qml/components/FooterHints.qml
   qml/components/ViewerFilmstrip.qml
   qml/components/ViewerToolbar.qml
+  qml/components/ViewerMenu.qml
+  qml/components/ViewerMenuItem.qml
   qml/components/DropHighlight.qml
   qml/components/ViewerTransport.qml
   qml/components/SeekPreview.qml
