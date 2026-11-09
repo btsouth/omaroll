@@ -1264,8 +1264,9 @@ private slots:
     const QString path = dir.filePath("truncated-container");
     QFile file(path);
     QVERIFY(file.open(QIODevice::WriteOnly));
-    // Empty EBML header followed by the libFuzzer parent-boundary reproducer.
-    const QByteArray bytes = QByteArray::fromHex("1a45dfa380") + QByteArray::fromBase64(
+    // An EBML header with the matroska DocType, so the sniffer walks into the
+    // segment, followed by the libFuzzer parent-boundary reproducer.
+    const QByteArray bytes = QByteArray::fromHex("1a45dfa38b4282886d6174726f736b61") + QByteArray::fromBase64(
         "e6OAGFOAZ4sWVK5rIACGrhYa34CEg1SKEhJF36OAGFOAZ4sWVK5rIACGrhYagICEg1SKEhpF36OAGFOAZ4sWVK5rhq6Dg4ODg4ODgzaDg4OBgwODgQ==");
     QCOMPARE(file.write(bytes), bytes.size());
     file.close();
