@@ -91,24 +91,28 @@ cmp -s "$scratch/hyprland.before" "$HOME/.config/hypr/hyprland.lua" || fail "hyp
 
 # --set-default offers the rules while they would help, and not once the offer
 # was turned down in the library, or after they were installed, even if they
-# were removed again.
+# were removed again. Each check is a real change, not an "already" no-op.
 offer='To float the viewer and keep it opaque: omaroll --install-window-rules'
+set_images() { "$omaroll" --unset-default images >/dev/null; "$omaroll" --set-default images; }
+settings=$XDG_CONFIG_HOME/omaroll/omaroll.ini
 # The install above ended the offer; start again from a fresh profile.
-rm -f "$XDG_CONFIG_HOME/omaroll/omaroll.conf"
-out=$("$omaroll" --set-default images)
+rm -f "$settings"
+out=$(set_images)
+grep -q 'now opens' <<<"$out" || fail "--set-default images changed nothing: $out"
 grep -qxF "$offer" <<<"$out" || fail "--set-default did not offer the window rules: $out"
 mkdir -p "$XDG_CONFIG_HOME/omaroll"
-printf '[hyprland]\nwindowRulesOfferDismissed=true\n' > "$XDG_CONFIG_HOME/omaroll/omaroll.conf"
-out=$("$omaroll" --set-default images)
+printf '[hyprland]\nwindowRulesOfferDismissed=true\n' > "$settings"
+out=$(set_images)
 grep -qF 'install-window-rules' <<<"$out" && fail "offered rules after Not now: $out"
-rm "$XDG_CONFIG_HOME/omaroll/omaroll.conf"
+rm "$settings"
 "$omaroll" --install-window-rules >/dev/null
-out=$("$omaroll" --set-default images)
+grep -q '^windowRulesOfferDismissed=true' "$settings" || fail "installing did not end the offer"
+out=$(set_images)
 grep -qF 'install-window-rules' <<<"$out" && fail "offered rules that are installed: $out"
 "$omaroll" --remove-window-rules >/dev/null
-out=$("$omaroll" --set-default images)
+out=$(set_images)
 grep -qF 'install-window-rules' <<<"$out" && fail "offered rules again after installing once: $out"
-rm "$XDG_CONFIG_HOME/omaroll/omaroll.conf"
+rm "$settings"
 
 # The man page covers every option in --help, and installs.
 man=$source/packaging/omaroll.1
