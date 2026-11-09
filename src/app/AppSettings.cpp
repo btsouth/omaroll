@@ -2290,6 +2290,12 @@ QString AppSettings::diagnostics(const QString &theme, qreal scale) const {
   QString safeTheme = theme;
   safeTheme.remove(QRegularExpression(QStringLiteral("[^a-zA-Z0-9 _().-]")));
   safeTheme = safeTheme.left(80);
+  const QByteArray requestedBackend = qgetenv("QT_MEDIA_BACKEND");
+  const QString backend =
+      requestedBackend == "gstreamer" ? QStringLiteral("GStreamer")
+      : requestedBackend.isEmpty() || requestedBackend == "ffmpeg"
+          ? QStringLiteral("FFmpeg")
+          : QStringLiteral("custom Qt backend");
   QStringList lines = {
       QStringLiteral("Omaroll: ") + appVersion(),
       QStringLiteral("Qt: ") + qtVersion(),
@@ -2297,9 +2303,9 @@ QString AppSettings::diagnostics(const QString &theme, qreal scale) const {
           QStringLiteral(" / ") + QSysInfo::kernelType(),
       QStringLiteral("Theme: ") + safeTheme,
       QStringLiteral("Scale factor: ") + QString::number(scale),
-      QStringLiteral(
-          "Video decoding backend: Qt Multimedia FFmpeg (hardware preferred, "
-          "software fallback; actual decoder depends on media)")};
+      QStringLiteral("Video decoding backend: Qt Multimedia ") + backend +
+          QStringLiteral(
+              " (actual hardware/software decoder depends on media)")};
   const QStringList tools = {QStringLiteral("tesseract"),
                              QStringLiteral("mpv"),
                              QStringLiteral("ffmpeg"),
@@ -2308,8 +2314,16 @@ QString AppSettings::diagnostics(const QString &theme, qreal scale) const {
                              QStringLiteral("omarchy-menu-share"),
                              QStringLiteral("omarchy-theme-bg-set"),
                              QStringLiteral("satty"),
+                             QStringLiteral("tensaku"),
+                             QStringLiteral("omaframe"),
+                             QStringLiteral("omacut"),
+                             QStringLiteral("magick"),
+                             QStringLiteral("wl-copy"),
                              QStringLiteral("gimp"),
-                             QStringLiteral("krita"), QStringLiteral("ART"), QStringLiteral("digikam"), QStringLiteral("omarchy-tailscale-send"),
+                             QStringLiteral("krita"),
+                             QStringLiteral("ART"),
+                             QStringLiteral("digikam"),
+                             QStringLiteral("omarchy-tailscale-send"),
                              QStringLiteral("darktable"),
                              QStringLiteral("rawtherapee")};
   for (const auto &tool : tools)
