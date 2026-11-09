@@ -13,11 +13,25 @@ FocusScope {
     // The CaptureGrid this view stands in for.
     property Item host: null
     property int columns: 1
-    // Tiles per row delegate. It only grows, so narrowing the window hides
-    // the tiles a row no longer needs rather than rebuilding every row.
+    // Tiles per row delegate. It grows at once and shrinks only once a
+    // resize has settled, so dragging a window edge hides the tiles a row
+    // no longer needs rather than rebuilding every row at each step, and
+    // after zooming to small tiles rows do not keep a pile of hidden ones.
     property int poolColumns: 1
-    onColumnsChanged: root.poolColumns = Math.max(root.poolColumns, root.columns)
+    onColumnsChanged: {
+        // The tile at the top stays there through the new rows.
+        root.rememberTop()
+        if (root.columns > root.poolColumns) root.poolColumns = root.columns
+        else poolTrim.restart()
+    }
+    onCompactChanged: root.rememberTop()
     Component.onCompleted: root.poolColumns = Math.max(root.poolColumns, root.columns)
+    Timer {
+        id: poolTrim
+        objectName: "tilePoolTrim"
+        interval: 600
+        onTriggered: root.poolColumns = root.columns
+    }
     property int cellWidth: 100
     property int cellHeight: 68
     property int cellSpacing: 12
@@ -411,6 +425,7 @@ FocusScope {
                     // 0 none, 1 some, 2 all of the section is selected.
                     readonly property int selection: {
                         void root.host.checkedSet
+                        void root.host.sectionCountsRevision
                         return visible ? root.host.sectionCheckState(rowItem.sectionFirst, rowItem.sectionCount) : 0
                     }
                     Accessible.role: Accessible.CheckBox

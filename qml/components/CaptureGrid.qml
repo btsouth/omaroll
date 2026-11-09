@@ -44,12 +44,23 @@ FocusScope {
     // the rows that change.
     property int rangeLow: -1
     property int rangeHigh: -1
+    // Rows moved since the last range (a re-sort, a rescan, a capture added
+    // or removed), so its row numbers no longer name the same tiles and the
+    // next range counts the selection again in full.
+    property bool rangeStale: false
     // Checked tiles per section, by the section's first row, for the section
     // headers, valid for the selection named in `set`. Small changes update
     // it; anything else leaves it for another selection, and a header counts
     // its section again when it next asks. Mutated in place, never assigned,
     // so header bindings do not re-run on it.
     readonly property var sectionCounts: ({ set: null, counts: ({}) })
+    // Set from a change to Captures' rows until the sections are rebuilt for
+    // it. In between, a section's first row may name another section's tiles,
+    // so counts are worked out but not kept.
+    property bool sectionCountsDirty: false
+    // Bumped after each rebuild, so headers ask for their state again even
+    // when their own row did not change.
+    property int sectionCountsRevision: 0
 
     signal chosen(int index)
     signal deleteRequested(string path)
@@ -120,8 +131,13 @@ FocusScope {
     function setAnchor(path) {
         anchorPath = path
         anchorBase = checkedSet
+        resetRange()
+    }
+
+    function resetRange() {
         rangeLow = -1
         rangeHigh = -1
+        rangeStale = false
     }
 
     function toggleChecked(path) {
@@ -141,8 +157,7 @@ FocusScope {
     function clearChecked() {
         assignChecked({})
         anchorBase = ({})
-        rangeLow = -1
-        rangeHigh = -1
+        resetRange()
     }
 
     function checkAll() {
@@ -152,8 +167,7 @@ FocusScope {
         }
         assignChecked(next)
         anchorBase = checkedSet
-        rangeLow = -1
-        rangeHigh = -1
+        resetRange()
     }
 
     // The anchor's range to row, on top of what was selected before it.
@@ -178,9 +192,11 @@ FocusScope {
         }
         const next = Object.assign({}, anchorBase)
         for (let i = low; i <= high; ++i) next[Captures.pathAt(i)] = true
-        assignChecked(next, changed)
+        // After rows moved, the old range's rows hold other tiles: count all.
+        assignChecked(next, rangeStale ? undefined : changed)
         rangeLow = low
         rangeHigh = high
+        rangeStale = false
     }
 
     // 0 when none of the rows are selected, 1 for some, 2 for all.
@@ -197,7 +213,7 @@ FocusScope {
             for (let i = first; i < first + count; ++i) {
                 if (checkedSet[Captures.pathAt(i)] === true) ++checked
             }
-            cache.counts[first] = checked
+            if (!root.sectionCountsDirty) cache.counts[first] = checked
         }
         return checked === 0 ? 0 : (checked >= count ? 2 : 1)
     }
@@ -471,17 +487,32 @@ FocusScope {
         }
         anchorBase = base
     }
+    // Rows of Captures moved: row numbers kept for the selection no longer
+    // name the same tiles.
+    function rowsShifted() {
+        rangeStale = true
+        band.rowsShifted()
+        sectionCounts.set = null
+        sectionCountsDirty = true
+    }
     Connections {
         target: root.sectionModel
-        function onRebuilt() { root.sectionCounts.set = null }
+        function onRebuilt() {
+            root.sectionCounts.set = null
+            root.sectionCountsDirty = false
+            root.sectionCountsRevision++
+        }
     }
     Connections {
         target: Captures
         function onCountChanged() { root.pruneChecked() }
         function onLayoutAboutToBeChanged() { root.rememberLayout() }
-        function onLayoutChanged() { root.restoreLayout() }
+        function onLayoutChanged() { root.rowsShifted(); root.restoreLayout() }
         function onModelAboutToBeReset() { root.rememberLayout() }
-        function onModelReset() { root.restoreLayout() }
+        function onModelReset() { root.rowsShifted(); root.restoreLayout() }
+        function onRowsInserted() { root.rowsShifted() }
+        function onRowsRemoved() { root.rowsShifted() }
+        function onRowsMoved() { root.rowsShifted() }
     }
 
     // Cells stay near a target width and flex to fill the row exactly, so there
@@ -830,7 +861,9 @@ FocusScope {
         property var startInfo: null
         property var base: ({})
         property string lastKey: ""
-        property var lastRows: null
+        // Paths the band covered at its last step: rows can move under a
+        // band, paths cannot.
+        property var lastPaths: null
         readonly property real viewStartY: startContentY - root.activeFlickable().contentY
 
         onPressed: function (mouse) {
@@ -845,7 +878,7 @@ FocusScope {
             startInfo = root.activeView().pointInfo(mouse.x, mouse.y)
             base = (mouse.modifiers & Qt.ControlModifier) ? root.checkedSet : ({})
             lastKey = ""
-            lastRows = null
+            lastPaths = null
             dragging = false
             root.forceActiveFocus()
         }
@@ -870,21 +903,31 @@ FocusScope {
             // After the first step only tiles entering or leaving the band
             // change.
             let changed = undefined
-            if (lastRows !== null) {
-                changed = paths.slice()
-                for (const row of lastRows) changed.push(Captures.pathAt(row))
-            }
-            lastRows = rows
+            if (lastPaths !== null) changed = paths.concat(lastPaths)
+            lastPaths = paths
             root.assignChecked(next, changed)
         }
 
+        // Rows moved mid-drag: the next step counts in full, and the base
+        // loses what left the library, as the selection did.
+        function rowsShifted() {
+            if (startInfo === null) return
+            lastKey = ""
+            lastPaths = null
+            const kept = {}
+            for (const path of Object.keys(base)) {
+                if (Captures.rowOf(path) >= 0) kept[path] = true
+            }
+            base = kept
+        }
+
         function finish() {
-            if (dragging && lastKey !== "") {
-                const rows = lastKey.split(",").map(Number)
+            if (dragging && lastPaths !== null && lastPaths.length > 0) {
                 // The tile nearest where the band started anchors a Shift+click.
                 const downward = mouseY >= viewStartY
-                root.anchorPath = Captures.pathAt(downward ? rows[0] : rows[rows.length - 1])
+                root.anchorPath = downward ? lastPaths[0] : lastPaths[lastPaths.length - 1]
                 root.anchorBase = root.checkedSet
+                root.resetRange()
             }
             dragging = false
             startInfo = null

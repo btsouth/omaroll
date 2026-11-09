@@ -710,6 +710,8 @@ private slots:
     QTRY_COMPARE(grid->property("currentIndex").toInt(), m_library->rowOf(added.at(2)));
     clickCard(6, Qt::ShiftModifier);
     QTRY_COMPARE(checkedPaths(), expected({2, 3, 4, 5, 6}));
+    QString why;
+    QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
     // Shift+click again moves the far end rather than adding a second range.
     clickCard(3, Qt::ShiftModifier);
     QTRY_COMPARE(checkedPaths(), expected({2, 3}));
@@ -720,6 +722,7 @@ private slots:
     QTRY_COMPARE(checkedPaths(), expected({3, 7}));
     clickCard(0, Qt::ShiftModifier);
     QTRY_COMPARE(checkedPaths(), expected({0, 1, 2, 3, 7}));
+    QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
     QTest::keyClick(m_window, Qt::Key_Escape);
     QTRY_COMPARE(grid->property("checkedCount").toInt(), 0);
 
@@ -740,6 +743,7 @@ private slots:
     QTRY_COMPARE(checkedPaths(), expected({4, 5, 6, 7}));
     QTest::keyClick(m_window, Qt::Key_Home, Qt::ShiftModifier);
     QTRY_COMPARE(checkedPaths(), expected({0, 1, 2, 3, 4}));
+    QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
     // X still toggles the current tile, and a plain move just moves.
     QTest::keyClick(m_window, Qt::Key_X);
     QTRY_COMPARE(checkedPaths(), expected({1, 2, 3, 4}));
@@ -780,6 +784,7 @@ private slots:
     clickCard(7, Qt::ControlModifier);
     drag(Qt::ControlModifier);
     QTRY_COMPARE(checkedPaths(), expected({1, 2, 7}));
+    QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
     // The keyboard carries on after a band.
     QTRY_VERIFY(grid->hasActiveFocus() || item("reviewSetsList")->hasActiveFocus());
     const int before = grid->property("currentIndex").toInt();
@@ -806,6 +811,7 @@ private slots:
     QTRY_COMPARE(checkedPaths(), expected({0, 1, 2, 3}));
     QTest::keyClick(m_window, Qt::Key_Left, Qt::ShiftModifier);
     QTRY_COMPARE(checkedPaths(), expected({0, 1, 2, 3, 4}));
+    QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
     QTest::keyClick(m_window, Qt::Key_Escape);
     QTRY_COMPARE(grid->property("checkedCount").toInt(), 0);
     m_library->setSortMode(CaptureFilterModel::NewestFirst);
@@ -823,6 +829,7 @@ private slots:
     QTRY_COMPARE(headers().keys().size(), 2);
     // The sets' summary row leaves with them, out of the exact offsets too.
     QTRY_COMPARE(item("reviewSets")->property("summaryHeight").toReal(), 0.0);
+    QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
 
     // A narrow window keeps the date and time inside the tile.
     m_window->resize(560, 600);
@@ -860,6 +867,330 @@ private slots:
       QTest::qWait(300);
       QCOMPARE(list->property("contentY").toReal(), before);
     }
+  }
+
+  // Rows move under a selection: a re-sort, a capture arriving at the top,
+  // a rescan that removes one, and a capture arriving mid-band. The count
+  // the window shows before Trash must match the files it would act on, and
+  // each day's Select control must describe its own day afterwards.
+  void selectionCountsFollowResortsAndRescans() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QImage picture(40, 30, QImage::Format_RGB32);
+    picture.fill(QColor(70, 140, 90));
+    QStringList added;
+    // Newest first: 0..4 on 4 May 2019 (14:00 down to 10:00), 5..7 on 3 May.
+    for (const auto& [date, hours] : {std::pair{QDate(2019, 5, 4), QList<int>{14, 13, 12, 11, 10}},
+                                      std::pair{QDate(2019, 5, 3), QList<int>{12, 11, 10}}}) {
+      for (int hour : hours) {
+        const QString path = dir.filePath(QStringLiteral("screenshot-%1_%2-00-00.png")
+                                              .arg(date.toString(Qt::ISODate))
+                                              .arg(hour, 2, 10, QLatin1Char('0')));
+        QVERIFY(picture.save(path));
+        added.append(path);
+      }
+    }
+    for (const QString& path : added) m_disposablePaths.append(path);
+    m_captures->addExtraFiles(added);
+    auto* grid = item("library");
+    auto* rows = qobject_cast<SectionRows*>(m_library->sectionRows());
+    QVERIFY(rows);
+    const auto cleanup = qScopeGuard([&] {
+      QTest::mouseMove(m_window, QPoint(5, 5));
+      invoke("dismissTopLayer");
+      QMetaObject::invokeMethod(grid, "clearChecked");
+      m_library->setSortMode(CaptureFilterModel::NewestFirst);
+      m_library->setFolderFilter({});
+      m_window->resize(1280, 820);
+      waitForLayout(QSize(1280, 820));
+      dir.remove();
+      rescan();
+      QTRY_VERIFY(!m_captures->scanning());
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(std::all_of(added.cbegin(), added.cend(), [&](const QString& path) {
+      return m_library->rowOf(path) >= 0;
+    }), 10000);
+    m_library->setFolderFilter(dir.path());
+    QTRY_COMPARE(m_library->count(), 8);
+    QTRY_VERIFY(item("reviewSets")->isVisible());
+    QTRY_COMPARE(rows->sectionCount(), 2);
+    QTest::qWait(100);
+
+    const QLocale locale = QLocale::system();
+    const QString may4 = locale.toString(QDate(2019, 5, 4), QStringLiteral("d MMMM yyyy"));
+    const QString may3 = locale.toString(QDate(2019, 5, 3), QStringLiteral("d MMMM yyyy"));
+    const auto checkedPaths = [&] {
+      QVariant paths;
+      QMetaObject::invokeMethod(grid, "checkedPaths", Q_RETURN_ARG(QVariant, paths));
+      QStringList list = paths.value<QJSValue>().toVariant().toStringList();
+      list.sort();
+      return list;
+    };
+    const auto expected = [&](QList<int> indexes) {
+      QStringList list;
+      for (int index : indexes) list.append(added.at(index));
+      list.sort();
+      return list;
+    };
+    const auto clickCard = [&](int index, Qt::KeyboardModifiers modifiers) {
+      QQuickItem* card = nullptr;
+      QTRY_VERIFY((card = cardFor(added.at(index))) != nullptr);
+      QTest::mouseClick(m_window, Qt::LeftButton, modifiers, centre(card));
+      QTest::qWait(30);
+    };
+    // The Select control's state for a day: 0 none, 1 mixed, 2 all, -1 when
+    // its header is not on screen.
+    const auto dayState = [&](const QString& label) {
+      QQuickItem* control = nullptr;
+      find(item("reviewSetsList"), [&](QQuickItem* candidate) {
+        if (candidate->objectName() == QStringLiteral("sectionHeader") && candidate->isVisible() &&
+            candidate->parentItem()->property("label").toString() == label &&
+            shownByItsView(candidate)) {
+          control = find(candidate, [](QQuickItem* inner) {
+            return inner->objectName() == QStringLiteral("sectionSelect");
+          });
+        }
+        return false;
+      });
+      if (!control) return -1;
+      QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(control);
+      const int selection = control->property("selection").toInt();
+      // What a screen reader hears agrees with what is drawn.
+      if (!accessible || accessible->state().checked != (selection == 2) ||
+          accessible->state().checkStateMixed != (selection == 1)) {
+        return -2;
+      }
+      return selection;
+    };
+    QString why;
+
+    // A Shift range, then a re-sort: Oldest first puts 3 May on top.
+    clickCard(0, Qt::NoModifier);
+    clickCard(4, Qt::ShiftModifier);
+    QTRY_COMPARE(checkedPaths(), expected({0, 1, 2, 3, 4}));
+    QTRY_COMPARE(dayState(may4), 2);
+    QTRY_COMPARE(dayState(may3), 0);
+    m_library->setSortMode(CaptureFilterModel::OldestFirst);
+    QTRY_COMPARE(m_library->rowOf(added.at(7)), 0);
+    QTRY_COMPARE(rows->sectionOfItem(0).value(QStringLiteral("label")).toString(), may3);
+    // Each header describes its own day after the move, not the day that
+    // used to start at its first row.
+    QTRY_COMPARE(dayState(may3), 0);
+    QTRY_COMPARE(dayState(may4), 2);
+    QTest::qWait(100);
+    QCOMPARE(dayState(may3), 0);
+    QCOMPARE(dayState(may4), 2);
+    QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
+    // Shift+click again: the range runs from the anchor (0, now row 7) to 2.
+    clickCard(2, Qt::ShiftModifier);
+    QTRY_COMPARE(checkedPaths(), expected({0, 1, 2}));
+    QCOMPARE(grid->property("checkedCount").toInt(), 3);
+    QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
+    QTRY_COMPARE(dayState(may4), 1);
+    QTRY_COMPARE(dayState(may3), 0);
+    // And back, with the day half selected.
+    m_library->setSortMode(CaptureFilterModel::NewestFirst);
+    QTRY_COMPARE(m_library->rowOf(added.at(0)), 0);
+    QTRY_COMPARE(rows->sectionOfItem(0).value(QStringLiteral("label")).toString(), may4);
+    QTest::qWait(100);
+    QCOMPARE(dayState(may4), 1);
+    QCOMPARE(dayState(may3), 0);
+    clickCard(5, Qt::ShiftModifier);
+    QTRY_COMPARE(checkedPaths(), expected({0, 1, 2, 3, 4, 5}));
+    QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_COMPARE(grid->property("checkedCount").toInt(), 0);
+
+    // A range on 3 May, then a capture arriving at the very top.
+    clickCard(5, Qt::NoModifier);
+    clickCard(7, Qt::ShiftModifier);
+    QTRY_COMPARE(checkedPaths(), expected({5, 6, 7}));
+    const QString arriving = dir.filePath(QStringLiteral("screenshot-2019-05-04_15-00-00.png"));
+    QVERIFY(picture.save(arriving));
+    m_disposablePaths.append(arriving);
+    m_captures->addExtraFiles({arriving});
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(arriving) == 0, 10000);
+    QTRY_COMPARE(rows->sectionOfItem(0).value(QStringLiteral("count")).toInt(), 6);
+    QTest::qWait(100);
+    QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
+    QTRY_COMPARE(dayState(may3), 2);
+    QTRY_COMPARE(dayState(may4), 0);
+    clickCard(6, Qt::ShiftModifier);
+    QTRY_COMPARE(checkedPaths(), expected({5, 6}));
+    QCOMPARE(grid->property("checkedCount").toInt(), 2);
+    QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
+    QTRY_COMPARE(dayState(may3), 1);
+
+    // A rescan that takes the new capture away again.
+    QVERIFY(QFile::remove(arriving));
+    rescan();
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(arriving) < 0 && !m_captures->scanning(), 15000);
+    QTRY_COMPARE(m_library->count(), 8);
+    QTest::qWait(100);
+    QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
+    clickCard(7, Qt::ShiftModifier);
+    QTRY_COMPARE(checkedPaths(), expected({5, 6, 7}));
+    QCOMPARE(grid->property("checkedCount").toInt(), 3);
+    QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
+    QTRY_COMPARE(dayState(may3), 2);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_COMPARE(grid->property("checkedCount").toInt(), 0);
+
+    // A band held while a capture arrives above it: the count stays true
+    // as the band goes on.
+    QMetaObject::invokeMethod(item("reviewSetsList"), "positionViewAtBeginning");
+    QTest::qWait(100);
+    QQuickItem* zero = nullptr;
+    QQuickItem* two = nullptr;
+    QTRY_VERIFY((zero = cardFor(added.at(0))) != nullptr && (two = cardFor(added.at(2))) != nullptr);
+    const QPoint from = zero->mapToScene(QPointF(zero->width() + 3, zero->height() / 2)).toPoint();
+    const QPoint to = centre(two) + QPoint(0, 20);
+    QTest::mousePress(m_window, Qt::LeftButton, Qt::NoModifier, from);
+    for (int step = 1; step <= 4; ++step) QTest::mouseMove(m_window, from + (to - from) * step / 6, 16);
+    QTRY_VERIFY(item("rubberBandRect")->isVisible());
+    QTRY_VERIFY(grid->property("checkedCount").toInt() > 0);
+    const QString early = dir.filePath(QStringLiteral("screenshot-2019-05-04_16-00-00.png"));
+    QVERIFY(picture.save(early));
+    m_disposablePaths.append(early);
+    m_captures->addExtraFiles({early});
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(early) == 0, 10000);
+    QTest::qWait(100);
+    QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
+    for (int step = 5; step <= 6; ++step) QTest::mouseMove(m_window, from + (to - from) * step / 6, 16);
+    QTest::mouseMove(m_window, to + QPoint(4, 0), 16);
+    QTest::qWait(50);
+    QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
+    QTest::mouseRelease(m_window, Qt::LeftButton, Qt::NoModifier, to + QPoint(4, 0), 16);
+    QTRY_VERIFY(!item("rubberBandRect")->isVisible());
+    QVERIFY(grid->property("checkedCount").toInt() > 0);
+    QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
+    // A Shift+click after the band counts from its anchor.
+    clickCard(7, Qt::ShiftModifier);
+    QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
+    QVERIFY(checkedPaths().contains(added.at(7)));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_COMPARE(grid->property("checkedCount").toInt(), 0);
+    QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
+  }
+
+  // Narrowing the window leaves rows holding more tile slots than they
+  // show until the pool is trimmed, and short rows always do. A hidden slot
+  // takes no input, says nothing to a screen reader and asks for no image.
+  void narrowingLeavesHiddenTilesInert() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QImage picture(40, 30, QImage::Format_RGB32);
+    picture.fill(QColor(120, 60, 150));
+    QStringList added;
+    // Nine on one day and one on the next, so full and short rows occur.
+    for (const auto& [date, count] : {std::pair{QDate(2019, 6, 2), 9}, std::pair{QDate(2019, 6, 1), 1}}) {
+      for (int hour = 20; hour > 20 - count; --hour) {
+        const QString path = dir.filePath(QStringLiteral("screenshot-%1_%2-00-00.png")
+                                              .arg(date.toString(Qt::ISODate))
+                                              .arg(hour, 2, 10, QLatin1Char('0')));
+        QVERIFY(picture.save(path));
+        added.append(path);
+      }
+    }
+    for (const QString& path : added) m_disposablePaths.append(path);
+    m_captures->addExtraFiles(added);
+    auto* grid = item("library");
+    QQuickItem* view = item("reviewSets");
+    const auto cleanup = qScopeGuard([&] {
+      QTest::mouseMove(m_window, QPoint(5, 5));
+      QMetaObject::invokeMethod(grid, "clearChecked");
+      m_library->setFolderFilter({});
+      m_window->resize(1280, 820);
+      waitForLayout(QSize(1280, 820));
+      dir.remove();
+      rescan();
+      QTRY_VERIFY(!m_captures->scanning());
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(std::all_of(added.cbegin(), added.cend(), [&](const QString& path) {
+      return m_library->rowOf(path) >= 0;
+    }), 10000);
+    m_library->setFolderFilter(dir.path());
+    QTRY_COMPARE(m_library->count(), added.size());
+    QTRY_VERIFY(view->isVisible());
+    m_window->resize(1280, 820);
+    waitForLayout(QSize(1280, 820));
+    const int wide = grid->property("columns").toInt();
+    QTRY_COMPARE(view->property("poolColumns").toInt(), wide);
+    m_window->resize(620, 820);
+    QTRY_VERIFY(grid->property("columns").toInt() < wide);
+    const int narrow = grid->property("columns").toInt();
+    QTest::qWait(100);
+    // Until the pool is trimmed every row keeps the wide count of slots.
+    QCOMPARE(view->property("poolColumns").toInt(), wide);
+
+    const auto checkHidden = [&](const char* stage) {
+      QList<QQuickItem*> cells;
+      find(item("reviewSetsList"), [&cells](QQuickItem* candidate) {
+        if (candidate->property("used").isValid() && candidate->property("row").isValid() &&
+            candidate->parentItem() && candidate->parentItem()->parentItem() &&
+            shownByItsView(candidate))
+          cells.append(candidate);
+        return false;
+      });
+      int hidden = 0;
+      int shown = 0;
+      for (QQuickItem* cell : std::as_const(cells)) {
+        auto* card = find(cell, [](QQuickItem* candidate) {
+          return candidate->property("dragPaths").isValid();
+        });
+        QVERIFY2(card, stage);
+        if (cell->property("used").toBool()) {
+          ++shown;
+          continue;
+        }
+        ++hidden;
+        QVERIFY2(!cell->isVisible() && !card->isVisible(), stage);
+        QVERIFY2(card->property("path").toString().isEmpty(), stage);
+        // No thumbnail request: every image in the slot has no source.
+        find(card, [stage](QQuickItem* candidate) {
+          if (candidate->property("sourceSize").isValid() && candidate->property("source").isValid()) {
+            const QString source = candidate->property("source").toUrl().toString();
+            if (!source.isEmpty()) qWarning() << stage << "hidden slot requests" << source;
+            QTest::qVerify(source.isEmpty(), "source.isEmpty()", stage, __FILE__, __LINE__);
+          }
+          return false;
+        });
+        QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(card);
+        QVERIFY2(!accessible || accessible->state().invisible, stage);
+        // Not among what the row offers a screen reader either.
+        QAccessibleInterface* rowAccessible =
+            QAccessible::queryAccessibleInterface(cell->parentItem()->parentItem());
+        if (rowAccessible) {
+          for (int i = 0; i < rowAccessible->childCount(); ++i) {
+            QAccessibleInterface* child = rowAccessible->child(i);
+            QVERIFY2(!child || child->object() != card, stage);
+          }
+        }
+      }
+      QVERIFY2(shown > 0 && hidden > 0, qPrintable(QStringLiteral("%1: %2 shown, %3 hidden")
+                                                        .arg(QLatin1String(stage)).arg(shown).arg(hidden)));
+    };
+    checkHidden("before trim");
+    if (QTest::currentTestFailed()) return;
+
+    // A click where a hidden slot would be, past the end of a short row,
+    // picks nothing.
+    QMetaObject::invokeMethod(grid, "clearChecked");
+    const int before = grid->property("currentIndex").toInt();
+    QQuickItem* lastCard = nullptr;
+    QTRY_VERIFY((lastCard = cardFor(added.last())) != nullptr);
+    const QPoint past = lastCard->mapToScene(QPointF(lastCard->width() * 1.5 + 12, lastCard->height() / 2)).toPoint();
+    QVERIFY(past.x() < m_window->width() - 20);
+    QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, past);
+    QTest::qWait(QGuiApplication::styleHints()->mouseDoubleClickInterval() + 50);
+    QCOMPARE(grid->property("currentIndex").toInt(), before);
+    QCOMPARE(grid->property("checkedCount").toInt(), 0);
+    QVERIFY(!item("detail")->isVisible());
+
+    // Once the resize settles the rows hold only what fits.
+    QTRY_COMPARE(view->property("poolColumns").toInt(), narrow);
+    QTest::qWait(100);
+    checkHidden("after trim");
   }
 
   // A longer dated library: exact jumps and the scrollbar, the page keys,
@@ -1050,6 +1381,8 @@ private slots:
     const int extended = grid->property("currentIndex").toInt();
     QVERIFY(extended > back);
     QTRY_COMPARE(grid->property("checkedCount").toInt(), extended - back + 1);
+    QString why;
+    QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
     QTest::keyClick(m_window, Qt::Key_Escape);
     QTRY_COMPARE(grid->property("checkedCount").toInt(), 0);
     QTest::keyClick(m_window, Qt::Key_Home);
@@ -1086,12 +1419,14 @@ private slots:
     QTRY_COMPARE(grid->property("currentIndex").toInt(), 2);
     QTest::keyClick(m_window, Qt::Key_End, Qt::ShiftModifier);
     QTRY_COMPARE(grid->property("checkedCount").toInt(), added.size() - 2);
+    QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
     QMetaObject::invokeMethod(list, "positionViewAtBeginning");
     QTRY_VERIFY(selectFor(0) && QAccessible::queryAccessibleInterface(selectFor(0))->state().checkStateMixed);
     QTRY_VERIFY(selectFor(dayFirst.at(1))
                 && QAccessible::queryAccessibleInterface(selectFor(dayFirst.at(1)))->state().checked);
     QTest::keyClick(m_window, Qt::Key_Home, Qt::ShiftModifier);
     QTRY_COMPARE(grid->property("checkedCount").toInt(), 3);
+    QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
     QMetaObject::invokeMethod(list, "positionViewAtBeginning");
     QTRY_VERIFY(selectFor(dayFirst.at(1))
                 && !QAccessible::queryAccessibleInterface(selectFor(dayFirst.at(1)))->state().checked
@@ -1161,6 +1496,7 @@ private slots:
       lowest = std::max(lowest, rows->rowY(rows->rowOfItem(m_library->rowOf(path)), 40, cellHeight));
     }
     QVERIFY2(lowest > list->height(), qPrintable(QString::number(lowest)));
+    QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
     QTest::keyClick(m_window, Qt::Key_Escape);
     QTRY_COMPARE(grid->property("checkedCount").toInt(), 0);
 
@@ -1190,7 +1526,7 @@ private slots:
     wheelOver(list, 3);
     wheelOver(list, 3);
     QTRY_VERIFY(list->property("contentY").toReal() > beforeWheel);
-    QCOMPARE(m_settings->tileWidth(), tileWidth);
+    QCOMPARE(m_settings->tileWidth(), tileWidth);    QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
   }
 
   void gridCardsAndMenusExposeNamesAndSelection() {
@@ -2629,7 +2965,15 @@ private slots:
   // applies in one go, as a layout change, so every visible delegate is
   // reused for another row. The selected file, the scroll anchor and every
   // visible thumbnail come back, each tile showing its own file.
+  void largeSearchChangesKeepTheGridPlaceAndThumbnails_data() {
+    QTest::addColumn<bool>("sectioned");
+    QTest::newRow("date sections") << true;
+    // Unrated, the rating sort keeps newest first in one flat grid.
+    QTest::newRow("flat grid") << false;
+  }
+
   void largeSearchChangesKeepTheGridPlaceAndThumbnails() {
+    QFETCH(bool, sectioned);
     CaptureModel captures(m_settings);
     QTRY_VERIFY_WITH_TIMEOUT(!captures.scanning(), 15000);
     constexpr int kRows = 6000;
@@ -2649,6 +2993,7 @@ private slots:
     captures.setRecordsForTesting(records);
     CaptureFilterModel library;
     library.setSourceModel(&captures);
+    if (!sectioned) library.setSortMode(CaptureFilterModel::RatingFirst);
     QCOMPARE(library.rowCount(), kRows);
     QCOMPARE(library.pathAt(10), records.at(10).path);
 
@@ -2683,10 +3028,13 @@ private slots:
     QVERIFY(QTest::qWaitForWindowExposed(window));
     auto* grid = window->findChild<QQuickItem*>(QStringLiteral("largeGrid"));
     QVERIFY(grid);
-    auto* view = find(grid, [](QQuickItem* candidate) {
-      return candidate->property("cellHeight").isValid();
+    // The flat GridView, or the sections' ListView of header and tile rows.
+    auto* view = find(grid, [sectioned](QQuickItem* candidate) {
+      return sectioned ? candidate->objectName() == QStringLiteral("reviewSetsList")
+                       : candidate->objectName() == QStringLiteral("flatGrid");
     });
     QVERIFY(view);
+    QTRY_VERIFY(view->isVisible());
     QTRY_COMPARE(grid->width(), qreal(window->width()));
     auto* relayout = window->findChild<QObject*>(QStringLiteral("gridRelayoutTimer"));
     QVERIFY(relayout);
@@ -2700,7 +3048,36 @@ private slots:
       QMetaObject::invokeMethod(grid, "viewportReady", Q_RETURN_ARG(QVariant, ready));
       return ready.toBool();
     };
+    // The list rows on screen, top to bottom.
+    const auto shownRows = [&] {
+      QList<QQuickItem*> rows;
+      const qreal top = view->property("contentY").toReal();
+      for (qreal y = top + 1; y < top + view->height();) {
+        QQuickItem* row = nullptr;
+        QMetaObject::invokeMethod(view, "itemAt", Q_RETURN_ARG(QQuickItem*, row),
+                                  Q_ARG(qreal, 20), Q_ARG(qreal, y));
+        if (!row) break;
+        rows.append(row);
+        y = row->y() + row->height() + 1;
+      }
+      return rows;
+    };
+    // The tiles of the top tile row.
+    const auto topRowPaths = [&] {
+      QStringList paths;
+      for (QQuickItem* row : shownRows()) {
+        if (row->property("header").toBool()) continue;
+        const int first = row->property("first").toInt();
+        for (int i = 0; i < row->property("count").toInt(); ++i) paths.append(library.pathAt(first + i));
+        break;
+      }
+      return paths;
+    };
     const auto topLeftPath = [&] {
+      if (sectioned) {
+        const QStringList paths = topRowPaths();
+        return paths.isEmpty() ? QString() : paths.first();
+      }
       int index = -1;
       QMetaObject::invokeMethod(view, "indexAt", Q_RETURN_ARG(int, index),
                                 Q_ARG(qreal, view->property("contentX").toReal() + 4),
@@ -2710,6 +3087,35 @@ private slots:
     // Every visible cell holds its own row's file, and its thumbnail is of
     // that file.
     const auto cellsMatchRows = [&] {
+      if (sectioned) {
+        int shown = 0;
+        for (QQuickItem* row : shownRows()) {
+          if (row->property("header").toBool()) continue;
+          const int first = row->property("first").toInt();
+          const int count = row->property("count").toInt();
+          QList<QQuickItem*> cells;
+          find(row, [&cells](QQuickItem* candidate) {
+            if (candidate->property("used").isValid() && candidate->property("row").isValid())
+              cells.append(candidate);
+            return false;
+          });
+          int used = 0;
+          for (QQuickItem* cell : cells) {
+            if (!cell->property("used").toBool()) continue;
+            const int index = cell->property("row").toInt();
+            if (index < first || index >= first + count) return false;
+            if (cell->property("path").toString() != library.pathAt(index)) return false;
+            auto* card = find(cell, [](QQuickItem* candidate) {
+              return candidate->property("readyPath").isValid();
+            });
+            if (!card || card->property("readyPath").toString() != library.pathAt(index)) return false;
+            ++used;
+          }
+          if (used != count) return false;
+          shown += used;
+        }
+        return shown > 0;
+      }
       const qreal cellHeight = view->property("cellHeight").toReal();
       const qreal top = view->property("contentY").toReal() - view->property("originY").toReal();
       const int first = std::max(0, int(top / cellHeight)) * columns;
@@ -2730,11 +3136,12 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(settled(), 10000);
 
     // Deep in the library, with a tile selected.
-    const qreal cellHeight = view->property("cellHeight").toReal();
-    view->setProperty("contentY", cellHeight * 700);
+    const qreal cellHeight = grid->property("cellWidth").toReal() * 0.68;
+    QMetaObject::invokeMethod(grid, "scrollTo", Q_ARG(QVariant, std::round(cellHeight) * 700));
     QTRY_VERIFY_WITH_TIMEOUT(settled(), 10000);
     const QString anchor = topLeftPath();
-    QCOMPARE(anchor, library.pathAt(700 * columns));
+    if (!sectioned) QCOMPARE(anchor, library.pathAt(700 * columns));
+    QVERIFY(!anchor.isEmpty());
     // An odd row, which only stays because it is the selected one.
     const int selectedRow = 701 * columns + ((701 * columns) % 2 == 0 ? 1 : 2);
     const QString selected = library.pathAt(selectedRow);
@@ -2760,7 +3167,10 @@ private slots:
       QVERIFY2(layouts.size() >= 1 && removed.isEmpty(), qPrintable(query));
       QTRY_COMPARE(grid->property("currentIndex").toInt(), library.rowOf(selected));
       QCOMPARE(grid->property("selectedPath").toString(), selected);
-      QTRY_COMPARE(topLeftPath(), anchor);
+      // Sections lay their rows out per day, so with rows gone the anchor
+      // can sit further along its row; the row holding it stays on top.
+      if (sectioned) QTRY_VERIFY2(topRowPaths().contains(anchor), qPrintable(topRowPaths().join(' ')));
+      else QTRY_COMPARE(topLeftPath(), anchor);
       QTRY_VERIFY_WITH_TIMEOUT(settled(), 10000);
       QTRY_VERIFY(cellsMatchRows());
     }
@@ -3781,25 +4191,41 @@ private slots:
     QTRY_VERIFY(search->hasActiveFocus());
     typeText(QStringLiteral("type:"));
     QTRY_VERIFY(popup->property("visible").toBool());
-    // The lowest row, which lies over the grid.
-    QQuickItem* lowest = nullptr;
-    find(m_window->contentItem(), [&lowest](QQuickItem* candidate) {
-      if (candidate->objectName() == QStringLiteral("searchSuggestionRow") &&
-          candidate->isVisible() &&
-          (!lowest || candidate->mapToScene(QPointF()).y() > lowest->mapToScene(QPointF()).y())) {
-        lowest = candidate;
-      }
+    // A point on a suggestion row with a tile right under it. Date sorts
+    // show headers and short rows, so the middle of the lowest suggestion can
+    // sit over a header or the empty end of a row; look along each row,
+    // lowest first, for a spot over a tile the view shows.
+    QList<QQuickItem*> suggestionRows;
+    find(m_window->contentItem(), [&suggestionRows](QQuickItem* candidate) {
+      if (candidate->objectName() == QStringLiteral("searchSuggestionRow") && candidate->isVisible())
+        suggestionRows.append(candidate);
       return false;
     });
-    QVERIFY(lowest);
-    QTRY_VERIFY(lowest->width() > 0);
-    const QPoint at = centre(lowest);
-    QQuickItem* tile = find(grid, [&at](QQuickItem* candidate) {
-      return candidate->isVisible() && candidate->property("selectionMode").isValid() &&
-             !candidate->property("path").toString().isEmpty() &&
-             candidate->contains(candidate->mapFromScene(QPointF(at)));
+    QVERIFY(!suggestionRows.isEmpty());
+    std::sort(suggestionRows.begin(), suggestionRows.end(), [](QQuickItem* a, QQuickItem* b) {
+      return a->mapToScene(QPointF()).y() > b->mapToScene(QPointF()).y();
     });
-    QVERIFY2(tile, "no tile under the suggestion");
+    QTRY_VERIFY(suggestionRows.first()->width() > 0);
+    QQuickItem* lowest = nullptr;
+    QQuickItem* tile = nullptr;
+    QPoint at;
+    for (QQuickItem* row : std::as_const(suggestionRows)) {
+      for (qreal x = 8; x < row->width() - 8 && !tile; x += 8) {
+        const QPoint point = row->mapToScene(QPointF(x, row->height() / 2)).toPoint();
+        tile = find(grid, [&point](QQuickItem* candidate) {
+          return candidate->isVisible() && candidate->property("selectionMode").isValid() &&
+                 !candidate->property("path").toString().isEmpty() &&
+                 candidate->contains(candidate->mapFromScene(QPointF(point))) &&
+                 shownByItsView(candidate);
+        });
+        if (tile) at = point;
+      }
+      if (tile) {
+        lowest = row;
+        break;
+      }
+    }
+    QVERIFY2(tile, "no tile under any suggestion");
     const QString tilePath = tile->property("path").toString();
     QVERIFY(grid->property("selectedPath").toString() != tilePath);
     const QVariantList rows = popup->property("rows").toList();
@@ -7727,6 +8153,25 @@ private:
               candidate->property("toolTip").toString() == label) &&
              candidate->isVisible() && candidate->width() > 0;
     });
+  }
+
+  // The selection's count matches the files it holds, all of them shown.
+  bool selectionConsistent(QQuickItem* grid, QString* why) const {
+    QVariant paths;
+    QMetaObject::invokeMethod(grid, "checkedPaths", Q_RETURN_ARG(QVariant, paths));
+    const QStringList list = paths.value<QJSValue>().toVariant().toStringList();
+    const int count = grid->property("checkedCount").toInt();
+    if (count != list.size()) {
+      *why = QStringLiteral("checkedCount %1 but %2 checked paths").arg(count).arg(list.size());
+      return false;
+    }
+    for (const QString& path : list) {
+      if (m_library->rowOf(path) < 0) {
+        *why = QStringLiteral("%1 is checked but not shown").arg(path);
+        return false;
+      }
+    }
+    return true;
   }
 
   QQuickItem* cardFor(const QString& path) const {
