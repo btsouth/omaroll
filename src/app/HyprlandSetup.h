@@ -11,8 +11,8 @@
 namespace HyprlandSetup {
 
 enum class RulesState {
-  Installed,     // hyprland.lua loads hypr/omaroll.lua
-  NotInstalled,  // an Omarchy Lua config without it
+  Installed,     // hyprland.lua loads hypr/omaroll.lua, and it is there
+  NotInstalled,  // an Omarchy Lua config without it, or the file has gone
   Unsupported,   // no Omarchy Lua config to add it to
 };
 
@@ -33,7 +33,8 @@ RulesState rulesState(const QString& hyprDirectory);
 Result installRules(const QString& hyprDirectory);
 // Takes back out exactly what install added, so hyprland.lua comes back byte
 // for byte, plus any line that is nothing but a require of hypr.omaroll. Other
-// lines that load the rules are reported, not edited, and keep the file.
+// lines that load the rules are reported, not edited, and keep the file. An
+// unreadable hyprland.lua stops it before anything changes.
 Result removeRules(const QString& hyprDirectory);
 
 // "Print Screen", or whatever key the Hyprland bindings give Omarchy's

@@ -15,9 +15,13 @@ Press
 .B ?
 or
 .B F1
-in any window for the shortcuts that apply there.
+in the library or the viewer, with no sheet or menu open, for the shortcuts
+that apply there.
 Omaroll never moves, copies or changes your files unless you ask it to rename
-them, move them to Trash or save a corrected copy.
+them, move them to Trash or save a corrected copy. The exception is
+.BR Shift+Delete ,
+which deletes permanently. It asks first, unless that confirmation is turned
+off in Settings.
 .SH OPTIONS
 .TP
 .B \-\-library
@@ -42,7 +46,10 @@ to list every type.
 .BR \-\-unset\-default " [" \fIgroup\fR ]
 Put back the apps
 .B \-\-set\-default
-replaced, for the same groups.
+replaced. Name the same group:
+.B omaroll \-\-unset\-default pdf
+undoes
+.BR "omaroll \-\-set\-default pdf" .
 .TP
 .B \-\-install\-window\-rules
 Add Omaroll's Hyprland rules to
@@ -67,7 +74,8 @@ personal appears on screen.
 .TP
 .BI \-\-render " file.png"
 Render the window to a PNG and exit. Draws offscreen, so no compositor can
-resize it or overlap it.
+resize it or overlap it. Fails without writing if the view never becomes
+ready.
 .TP
 .BI \-\-render\-view " view"
 Which view to render: grid, detail, document, video, slideshow, matte,
@@ -129,17 +137,27 @@ Tesseract languages for text in pictures, joined with +. Default eng.
 The most memory, in megabytes, one picture may use.
 .SH FILES
 .TP
+.I $XDG_CONFIG_HOME/omaroll
+Settings, albums, tags, favourites and saved views;
 .I ~/.config/omaroll
-Settings, albums, tags, favourites and saved views.
+when
+.B XDG_CONFIG_HOME
+is unset.
 .TP
+.I $XDG_CACHE_HOME/omaroll
+Thumbnails and the text, date and similarity caches;
 .I ~/.cache/omaroll
-Thumbnails and the text, date and similarity caches. Safe to delete.
+when
+.B XDG_CACHE_HOME
+is unset. Safe to delete.
 .TP
 .I /usr/share/omaroll/hypr/omaroll.lua
 The Hyprland window rules that
 .B \-\-install\-window\-rules
 copies into
-.IR ~/.config/hypr .
+.IR ~/.config/hypr ,
+as the Arch package installs them. A source build puts them under its own
+prefix, /usr/local/share by default.
 .SH BUGS
 Report problems at https://github.com/btsouth/omaroll/issues with the output of
 .BR "omaroll \-\-diagnostics" .

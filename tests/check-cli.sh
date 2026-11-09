@@ -33,7 +33,10 @@ if [ "$1" = query ]; then
   esac
   exit 0
 fi
-[ "$1" = default ] && echo "$3" >> "$XDG_CONFIG_HOME/set.log"
+if [ "$1" = default ]; then
+  [ "$3" = "${FAIL_TYPE:-}" ] && exit 1
+  echo "$3" >> "$XDG_CONFIG_HOME/set.log"
+fi
 exit 0
 EOF
 chmod +x "$scratch/bin/xdg-mime"
@@ -55,6 +58,13 @@ grep -qx 'To undo: omaroll --unset-default' <<<"$out" || fail "no undo line with
 out=$("$omaroll" --set-default pdf)
 grep -qx 'Omaroll now opens 1 type of PDF, replacing Papers.' <<<"$out" || fail "pdf summary: $out"
 grep -qx 'To undo: omaroll --unset-default pdf' <<<"$out" || fail "pdf undo line: $out"
+
+# One type failing still prints the undo for the ones that changed.
+if out=$(FAIL_TYPE=image/png "$omaroll" --set-default images 2>"$scratch/err"); then
+  fail "--set-default succeeded with a failed type"
+fi
+grep -qx 'To undo: omaroll --unset-default images' <<<"$out" || fail "no undo after partial failure: $out"
+grep -qx 'Could not set image/png' "$scratch/err" || fail "failed type not reported: $(cat "$scratch/err")"
 
 # --diagnostics: no display needed, and the facts a bug report asks for.
 out=$(QT_QPA_PLATFORM=no-such-platform WAYLAND_DISPLAY= DISPLAY= "$omaroll" --diagnostics)

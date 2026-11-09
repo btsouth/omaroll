@@ -39,7 +39,8 @@ Everything works locally, without accounts or telemetry.
 
 3. Double-click a picture or video in your file manager, or run
    `omaroll photo.jpg`. Run `omaroll` on its own for the library.
-4. Press `?` or `F1` in any window for its shortcuts.
+4. Press `?` or `F1` in the library or the viewer for its shortcuts. Close any
+   open sheet or menu first.
 5. Optional: Omarchy dims every window a little. To keep pictures at full
    opacity and float the viewer, add Omaroll's Hyprland rules.
    `omaroll --remove-window-rules` takes them out, and Settings has the same
@@ -121,10 +122,12 @@ To make Omaroll the default for pictures and videos, run:
 omaroll --set-default
 ```
 
-It prints how many types changed and the command that undoes it; add
-`--verbose` to list every type. `omaroll --set-default pdf` does the same for
-PDFs, and `omaroll --unset-default` puts back the apps it replaced. Folders
-keep opening in your file manager.
+It prints how many types changed and the command that undoes it, even if some
+types could not be changed; add `--verbose` to list every type.
+`omaroll --unset-default` puts back the apps it replaced.
+`omaroll --set-default pdf` does the same for PDFs, and
+`omaroll --unset-default pdf` undoes that. Folders keep opening in your file
+manager.
 Settings has the same choice as **Set as default** and **Restore previous
 apps**, and says how many types changed and which apps were replaced.
 
@@ -307,12 +310,13 @@ number of megabytes to choose the limit yourself. JPEG always opens, at a
 reduced size if necessary; other formats have to fit the limit to open.
 
 Videos: MP4, M4V, F4V, MKV, WebM, MOV, AVI, DivX, MPEG, VOB, WMV, ASF, FLV,
-Ogg video, OGM, 3GP, 3G2 and MTS/M2TS. Playback uses Qt's FFmpeg backend,
-decoding in hardware where the driver allows (CUDA on NVIDIA, otherwise
-VA-API) and in software otherwise. Qt copies each decoded frame back to main
-memory, so 4K video costs more CPU than in mpv; see
-[playback cost](docs/performance/2026-11-09-playback-cost/README.md). An
-optional action can still hand the file to mpv.
+Ogg video, OGM, 3GP, 3G2 and MTS/M2TS. Playback uses Qt's FFmpeg backend by
+default, decoding in hardware where the driver allows (CUDA on NVIDIA,
+otherwise VA-API) and in software otherwise. With FFmpeg, Qt copies each
+decoded frame back to main memory, so 4K video costs more CPU than in mpv; see
+[playback cost](docs/performance/2026-11-09-playback-cost/README.md).
+`QT_MEDIA_BACKEND=gstreamer` picks Qt's GStreamer backend instead, which those
+notes don't cover. An optional action can still hand the file to mpv.
 
 Documents: PDF. Thumbnails, previews, and page counts use Poppler locally.
 
@@ -400,7 +404,8 @@ cannot spoil the shot. `man omaroll` lists every option with examples.
   by path, size and modification time, bounded at 64MB and pruned
   least-recently-used. A changed file gets new previews; the old version's stay
   until they're pruned.
-  Settings and organization live in `~/.config/omaroll`. Deleting that directory
+  Settings and organization live in `~/.config/omaroll` (`$XDG_CONFIG_HOME/omaroll`
+  if that is set). Deleting that directory
   also removes albums, tags, favorites and saved views. Back it up first if you
   want to keep them. The thumbnail cache can be deleted and regenerated.
 

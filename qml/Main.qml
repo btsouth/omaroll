@@ -746,8 +746,10 @@ ApplicationWindow {
     }
 
     // Asked by --render before it grabs: false while a view still waits on
-    // a scan.
+    // a scan. Each ask tries the compare again, so one that came too early,
+    // with the grid between models, is not lost.
     function renderReady() {
+        if (root.compareWhenSimilar) root.openRenderCompare()
         return !root.compareWhenSimilar
     }
 

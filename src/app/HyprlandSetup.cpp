@@ -2,6 +2,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QSet>
@@ -234,7 +235,11 @@ RulesState rulesState(const QString& hyprDirectory) {
   bool ok = false;
   const QByteArray config = readAll(configPath(hyprDirectory), &ok);
   if (!ok || !omarchyConfig(config)) return RulesState::Unsupported;
-  return loadingLines(config).isEmpty() ? RulesState::NotInstalled : RulesState::Installed;
+  // A require whose rules file has gone loads nothing; installing again
+  // writes the file without a second require.
+  return loadingLines(config).isEmpty() || !QFile::exists(rulesPath(hyprDirectory))
+             ? RulesState::NotInstalled
+             : RulesState::Installed;
 }
 
 Result installRules(const QString& hyprDirectory) {
@@ -278,9 +283,11 @@ Result installRules(const QString& hyprDirectory) {
                          : QStringLiteral("Could not add the rules to ~/.config/hypr/hyprland.lua.")};
     }
   }
-  QString message = already ? QStringLiteral("Window rules are already installed.")
-                            : QStringLiteral("Window rules installed. New Omaroll windows open at "
-                                             "full opacity and the viewer floats.");
+  QString message = !already ? QStringLiteral("Window rules installed. New Omaroll windows open at "
+                                              "full opacity and the viewer floats.")
+                    : existed ? QStringLiteral("Window rules are already installed.")
+                              : QStringLiteral("Window rules restored: ~/.config/hypr/omaroll.lua "
+                                               "was missing.");
   if (keptTheirs) message += QStringLiteral(" Your own ~/.config/hypr/omaroll.lua was kept.");
   return {true, message};
 }
@@ -288,6 +295,11 @@ Result installRules(const QString& hyprDirectory) {
 Result removeRules(const QString& hyprDirectory) {
   bool ok = false;
   const QByteArray config = readAll(configPath(hyprDirectory), &ok);
+  // An unreadable config may still load the rules; deleting them then would
+  // break it.
+  if (!ok && QFileInfo::exists(configPath(hyprDirectory))) {
+    return {false, QStringLiteral("Could not read ~/.config/hypr/hyprland.lua, so nothing was removed.")};
+  }
   bool changed = false;
   QList<int> remaining;
   if (ok) {
@@ -338,13 +350,13 @@ Result removeRules(const QString& hyprDirectory) {
 
 QString screenshotKey(const QString& hyprDirectory, const QString& omarchyPath) {
   // o.bind or o.rebind of Omarchy's screenshot command, with a description or
-  // nil.
+  // nil, in either kind of quotes.
   static const QRegularExpression bind(QStringLiteral(
-      R"re(^\s*o\.(?:re)?bind\(\s*"([^"]+)"\s*,\s*(?:"[^"]*"|nil)\s*,\s*"omarchy-capture-screenshot(?:\s[^"]*)?"\s*[,)])re"));
+      R"re(^\s*o\.(?:re)?bind\(\s*(["'])(.+?)\1\s*,\s*(?:"[^"]*"|'[^']*'|nil)\s*,\s*(["'])omarchy-capture-screenshot(?:\s[^"']*)?\3\s*[,)])re"));
   // Anything that drops a default chord: an unbind, or a rebind to something
   // else.
   static const QRegularExpression unbind(
-      QStringLiteral(R"re(^\s*(?:(?:hl|o)\.unbind|o\.rebind)\(\s*"([^"]+)")re"));
+      QStringLiteral(R"re(^\s*(?:(?:hl|o)\.unbind|o\.rebind)\(\s*(["'])(.+?)\1)re"));
   static const QRegularExpression noDefaults(
       QStringLiteral(R"re(^\s*(?:_G\.)?omarchy_default_bindings\s*=\s*false\b)re"));
 
@@ -352,10 +364,10 @@ QString screenshotKey(const QString& hyprDirectory, const QString& omarchyPath) 
   QSet<QString> dropped;
   for (const QString& line : codeLinesOf(hyprDirectory + QStringLiteral("/bindings.lua"))) {
     if (const auto match = bind.match(line); match.hasMatch()) {
-      const QString keys = chord(match.captured(1));
+      const QString keys = chord(match.captured(2));
       if (!keys.isEmpty()) return keys;
     }
-    if (const auto match = unbind.match(line); match.hasMatch()) dropped << chord(match.captured(1));
+    if (const auto match = unbind.match(line); match.hasMatch()) dropped << chord(match.captured(2));
   }
   for (const QString& line : codeLinesOf(configPath(hyprDirectory))) {
     if (noDefaults.match(line).hasMatch()) return {};
@@ -366,7 +378,7 @@ QString screenshotKey(const QString& hyprDirectory, const QString& omarchyPath) 
   for (const QString& line : codeLinesOf(defaults)) {
     const auto match = bind.match(line);
     if (!match.hasMatch()) continue;
-    const QString keys = chord(match.captured(1));
+    const QString keys = chord(match.captured(2));
     if (!keys.isEmpty() && !dropped.contains(keys)) return keys;
   }
   return {};

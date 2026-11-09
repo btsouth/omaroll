@@ -51,6 +51,14 @@ Sources Sources::system() {
   sources.hasProgram = [](const QString& program) {
     return !QStandardPaths::findExecutable(program).isEmpty();
   };
+  // TESSDATA_PREFIX replaces tesseract's own directory. Some set it to the
+  // directory above tessdata, so look in both.
+  if (const QString prefix = qEnvironmentVariable("TESSDATA_PREFIX"); !prefix.isEmpty()) {
+    sources.tessdata = {prefix, prefix + QStringLiteral("/tessdata")};
+  }
+  if (const QString languages = qEnvironmentVariable("OMARCHY_OCR_LANGS"); !languages.isEmpty()) {
+    sources.ocrLanguages = languages;
+  }
   return sources;
 }
 
@@ -119,6 +127,27 @@ QVariantList missing(const Sources& sources) {
                         {QStringLiteral("feature"), tool.feature},
                         {QStringLiteral("package"), tool.package},
                         {QStringLiteral("install"), QStringLiteral("sudo pacman -S ") + tool.package}};
+  }
+  // Tesseract installs with any one language, which need not be the one
+  // asked for, and then finds no text at all.
+  if (present.contains(QStringLiteral("tesseract"))) {
+    static const QRegularExpression code(QStringLiteral("^[A-Za-z0-9_]{1,32}$"));
+    for (const QString& entry : sources.ocrLanguages.split(QLatin1Char('+'), Qt::SkipEmptyParts)) {
+      const QString language = entry.trimmed();
+      if (!code.match(language).hasMatch()) continue;
+      bool found = false;
+      for (const QString& directory : sources.tessdata) {
+        found |= QFileInfo::exists(directory + QLatin1Char('/') + language + QStringLiteral(".traineddata"));
+      }
+      const QString package = QStringLiteral("tesseract-data-") + language.toLower();
+      if (found || packages.contains(package)) continue;
+      packages << package;
+      rows << QVariantMap{{QStringLiteral("program"), QStringLiteral("tesseract")},
+                          {QStringLiteral("feature"),
+                           QStringLiteral("Text in pictures, language %1").arg(language)},
+                          {QStringLiteral("package"), package},
+                          {QStringLiteral("install"), QStringLiteral("sudo pacman -S ") + package}};
+    }
   }
   return rows;
 }

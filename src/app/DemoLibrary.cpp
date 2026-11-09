@@ -98,17 +98,18 @@ Layout build() {
 
   for (int index = 0; index < names.size(); ++index) {
     const QString& name = names.at(index);
-    copyMedia(QStringLiteral(":/omaroll/demo/%1.jpg").arg(name),
-              layout.pictures + QLatin1Char('/') + name + QStringLiteral(".jpg"),
-              base.addSecs(-(index * 11 + 2) * 3600));
+    layout.complete &= copyMedia(QStringLiteral(":/omaroll/demo/%1.jpg").arg(name),
+                                 layout.pictures + QLatin1Char('/') + name + QStringLiteral(".jpg"),
+                                 base.addSecs(-(index * 11 + 2) * 3600));
   }
 
   // A resized, recompressed copy of the cabin, as a picture sent through a
   // chat app comes back.
   const QImage cabin(QStringLiteral(":/omaroll/demo/winter-cabin.jpg"));
-  saveDerived(cabin.scaled(cabin.size() / 2, Qt::IgnoreAspectRatio, Qt::SmoothTransformation),
-              layout.pictures + QStringLiteral("/winter-cabin-small.jpg"), 70,
-              base.addSecs(-(names.indexOf(QStringLiteral("winter-cabin")) * 11 + 2) * 3600 - 60));
+  layout.complete &=
+      saveDerived(cabin.scaled(cabin.size() / 2, Qt::IgnoreAspectRatio, Qt::SmoothTransformation),
+                  layout.pictures + QStringLiteral("/winter-cabin-small.jpg"), 70,
+                  base.addSecs(-(names.indexOf(QStringLiteral("winter-cabin")) * 11 + 2) * 3600 - 60));
 
   // A short burst of the wave: the camera drifts a little between frames.
   const QImage wave(QStringLiteral(":/omaroll/demo/coastal-wave.jpg"));
@@ -118,9 +119,10 @@ Layout build() {
     const int dx = wave.width() * (frame - 1) * 15 / 1000;
     const int dy = wave.height() * (frame - 1) * 8 / 1000;
     const QRect window(dx, dy, wave.width() * 96 / 100, wave.height() * 96 / 100);
-    saveDerived(wave.copy(window).scaled(wave.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation),
-                layout.pictures + QStringLiteral("/coastal-wave-%1.jpg").arg(frame), 88,
-                waveStamp.addSecs(-(frame - 1)));
+    layout.complete &=
+        saveDerived(wave.copy(window).scaled(wave.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation),
+                    layout.pictures + QStringLiteral("/coastal-wave-%1.jpg").arg(frame), 88,
+                    waveStamp.addSecs(-(frame - 1)));
   }
 
   const QStringList videoNames = {QStringLiteral("clouds-over-canyon"),
@@ -128,18 +130,18 @@ Layout build() {
                                   QStringLiteral("rain-window")};
   for (int index = 0; index < videoNames.size(); ++index) {
     const QString& name = videoNames.at(index);
-    copyMedia(QStringLiteral(":/omaroll/demo/%1.mp4").arg(name),
-              layout.videos + QLatin1Char('/') + name + QStringLiteral(".mp4"),
-              base.addSecs(-(index * 17 + 8) * 3600));
+    layout.complete &= copyMedia(QStringLiteral(":/omaroll/demo/%1.mp4").arg(name),
+                                 layout.videos + QLatin1Char('/') + name + QStringLiteral(".mp4"),
+                                 base.addSecs(-(index * 17 + 8) * 3600));
   }
 
   // One document, so the PDF surfaces are rendered and reviewed like the rest of
   // the window: the page list, the find row and the page controls. It sits in
   // the last day with the other demo media, but not at the top of the grid: the
   // first tile stays a picture. The name is deliberately not one a test builds.
-  copyMedia(QStringLiteral(":/omaroll/demo/quiet-horizons-guide.pdf"),
-            layout.pictures + QStringLiteral("/quiet-horizons-guide.pdf"),
-            base.addSecs(-3 * 3600));
+  layout.complete &= copyMedia(QStringLiteral(":/omaroll/demo/quiet-horizons-guide.pdf"),
+                               layout.pictures + QStringLiteral("/quiet-horizons-guide.pdf"),
+                               base.addSecs(-3 * 3600));
 
   return layout;
 }

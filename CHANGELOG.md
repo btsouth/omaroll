@@ -37,8 +37,9 @@
 - `omaroll --diagnostics` prints the same report as Copy diagnostics without
   opening a window. Both now include the Omarchy and Hyprland versions and the
   graphics card and driver.
-- About in Settings lists missing optional tools with the feature each one
-  enables and its `pacman -S` command. Changelog opens this version's release
+- About in Settings lists missing optional tools, and OCR language data
+  tesseract lacks, with the feature each one enables and its `pacman -S`
+  command. Changelog opens this version's release
   notes, and Report an issue opens the new issue form.
 - `omaroll --install-window-rules` adds Omaroll's Hyprland rules (full opacity
   and a floating viewer) to `~/.config/hypr`, and `--remove-window-rules` takes

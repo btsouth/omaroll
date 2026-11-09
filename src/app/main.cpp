@@ -187,7 +187,8 @@ Options:
   --demo                 Browse a deterministic fictional library instead of
                          your own files. Nothing personal appears on screen.
   --render <file.png>    Render the window to a PNG and exit. Draws offscreen,
-                         so no compositor can resize it or overlap it.
+                         so no compositor can resize it or overlap it. Fails
+                         without writing if the view never becomes ready.
   --render-view <view>   Which view to render: grid, detail, document, video,
                          slideshow, matte, corrections, compare, export,
                          rename, ocr, editors, pins, context-menu, selection-menu,
@@ -454,7 +455,8 @@ int main(int argc, char* argv[]) {
     QTextStream out(stdout);
     if (verbose) out << report << Qt::endl;
     out << MimeDefaults::summarize(unset, report, defaults.succeeded(), group) << Qt::endl;
-    if (!unset && defaults.succeeded()) {
+    // Any type that changed can be undone, even when another failed.
+    if (!unset && report.contains(QStringLiteral(" -> "))) {
       out << "To undo: omaroll --unset-default" << (group == u"all" ? QString() : u' ' + group)
           << Qt::endl;
     }
@@ -620,6 +622,11 @@ int main(int argc, char* argv[]) {
 
   if (demo) {
     const DemoLibrary::Layout layout = DemoLibrary::build();
+    if (!layout.complete) {
+      qWarning().noquote() << "omaroll: the demo library could not be written in full";
+      // A render of a partial library would look right and show the wrong thing.
+      if (rendering) return 1;
+    }
     viewerRenderFiles = {renderView == QStringLiteral("viewer-video")
                              ? layout.videos + QStringLiteral("/ocean-surface.mp4")
                              : layout.pictures + QStringLiteral("/alpine-dawn.jpg")};
@@ -853,7 +860,12 @@ int main(int argc, char* argv[]) {
         return;
       }
       poll->stop();
-      if (!ready.toBool()) qWarning().noquote() << "omaroll: the view was not ready; rendering anyway";
+      if (!ready.toBool()) {
+        // A picture of the wrong view is worse than none.
+        qWarning().noquote() << "omaroll: the view never became ready; nothing was written";
+        QCoreApplication::exit(1);
+        return;
+      }
       QTimer::singleShot(*waited > 0 ? 1000 : 0, QCoreApplication::instance(), grab);
     });
     QTimer::singleShot(11000, &application, [poll] { poll->start(); });

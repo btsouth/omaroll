@@ -80,7 +80,7 @@ MimeDefaults::MimeDefaults(QObject *parent) : QObject(parent) {
     const Result result = m_change.result();
     m_applying = false;
     m_succeeded = result.ok;
-    emit finished(result.ok, summarize(m_unset, result.report, result.ok),
+    emit finished(result.ok, summarize(m_unset, result.report, result.ok, m_group),
                   result.report);
     refresh();
   });
@@ -116,6 +116,7 @@ void MimeDefaults::applyAsync(bool unset, const QString &group) {
   if (m_applying) return;
   m_applying = true;
   m_unset = unset;
+  m_group = group;
   emit stateChanged();
   m_change.setFuture(QtConcurrent::run([unset, group] { return run(unset, group); }));
 }

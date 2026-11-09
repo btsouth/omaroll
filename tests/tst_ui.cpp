@@ -305,8 +305,8 @@ private slots:
              QStringLiteral("https://github.com/btsouth/omaroll/issues/new/choose"));
 
     // Missing tools, each with its package; the suite's fake tesseract counts.
+    // The build machine may have every tool, so the list can be empty.
     const QVariantList missing = m_settings->missingTools();
-    QVERIFY(!missing.isEmpty());
     for (const QVariant& row : missing) {
       const QVariantMap map = row.toMap();
       QVERIFY(map.value(QStringLiteral("install")).toString().startsWith(QStringLiteral("sudo pacman -S ")));
@@ -315,7 +315,18 @@ private slots:
     auto* tools = m_window->findChild<QObject*>(QStringLiteral("aboutMissingTools"));
     QVERIFY(tools);
     QCOMPARE(tools->property("count").toInt(), int(missing.size()));
+    QCOMPARE(child("aboutMissingToolsTitle")->isVisible(), !missing.isEmpty());
+    // Both ways, whatever this machine has: a row and its title, then none.
+    const QVariantList one = {QVariantMap{{QStringLiteral("program"), QStringLiteral("zbarimg")},
+                                          {QStringLiteral("feature"), QStringLiteral("Copy QR codes")},
+                                          {QStringLiteral("package"), QStringLiteral("zbar")},
+                                          {QStringLiteral("install"), QStringLiteral("sudo pacman -S zbar")}}};
+    QVERIFY(settings->setProperty("missingTools", one));
+    QTRY_COMPARE(tools->property("count").toInt(), 1);
     QVERIFY(child("aboutMissingToolsTitle")->isVisible());
+    QVERIFY(settings->setProperty("missingTools", QVariantList()));
+    QTRY_COMPARE(tools->property("count").toInt(), 0);
+    QVERIFY(!child("aboutMissingToolsTitle")->isVisible());
 
     // Install, then Remove, from Settings.
     QQuickItem* rules = child("settingsWindowRules");

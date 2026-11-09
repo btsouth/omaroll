@@ -64,6 +64,7 @@ private:
   bool m_checking = false;
   bool m_recheck = false;
   bool m_unset = false;
+  QString m_group;
   QFutureWatcher<Result> m_change;
   QFutureWatcher<State> m_check;
 };
