@@ -2123,6 +2123,7 @@ private slots:
     QTRY_VERIFY(player->hasVideo());
     player->pause();
     QVERIFY(QMetaObject::invokeMethod(m_window, "seekTo", Q_ARG(QVariant, 2000)));
+    QTRY_COMPARE(player->position(), 2001); // Seek inside frame 60, never its preceding boundary.
     QTRY_VERIFY_WITH_TIMEOUT(player->videoSink()->videoFrame().startTime() >= 2000000, 5000);
     QVERIFY(player->videoSink()->videoFrame().startTime() < 2034000);
   }
