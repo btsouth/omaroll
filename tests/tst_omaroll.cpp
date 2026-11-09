@@ -1098,6 +1098,11 @@ private slots:
     QCOMPARE(HyprlandSetup::rulesState(hypr), HyprlandSetup::RulesState::Unsupported);
     QVERIFY(!HyprlandSetup::installRules(hypr).ok);
     QVERIFY(!QFile::exists(rules));
+    // Omarchy's import commented out loads none of its helpers.
+    write(config, "-- require(\"default.hypr.omarchy\")\n--[[ require(\"default.hypr.omarchy\") ]]\n");
+    QCOMPARE(HyprlandSetup::rulesState(hypr), HyprlandSetup::RulesState::Unsupported);
+    QVERIFY(!HyprlandSetup::installRules(hypr).ok);
+    QVERIFY(!QFile::exists(rules));
 
     const QByteArray original = "dofile(\"bootstrap.lua\")\nrequire(\"default.hypr.omarchy\")\nrequire(\"hypr.bindings\")\n";
     write(config, original);
