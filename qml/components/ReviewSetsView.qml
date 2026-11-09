@@ -487,9 +487,9 @@ FocusScope {
                     HoverHandler { id: selectHover }
                     TapHandler {
                         onTapped: {
-                            const label = rowItem.label
+                            const paths = root.host.sectionPaths(rowItem.label)
                             Captures.commitPendingSearch()
-                            root.host.toggleSection(label)
+                            root.host.toggleSectionPaths(paths)
                         }
                     }
                 }

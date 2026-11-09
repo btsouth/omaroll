@@ -230,30 +230,36 @@ FocusScope {
         return checked === 0 ? 0 : (checked >= count ? 2 : 1)
     }
 
-    // A section header's control: select the section, or clear it once all
-    // of it is selected. The section is named by its label and looked up
-    // once the rows are up to date: a search just committed or a capture
-    // just arrived changes Captures at once but the sections a turn later,
-    // and the header's own first row and count would then cover another
-    // day's files.
-    function toggleSection(label) {
+    // The files of the section with this label. A capture that just arrived
+    // changes Captures at once but the sections a turn later, when a
+    // header's own first row and count would cover another day's files, so
+    // the sections are brought up to date first.
+    function sectionPaths(label) {
         if (sectionModel.rebuildPending()) sectionModel.rebuildNow()
         const section = sectionModel.sectionNamed(label)
-        if (section.first === undefined) return
-        const first = section.first
-        const count = section.count
-        const all = sectionCheckState(first, count) === 2
+        const paths = []
+        if (section.first === undefined) return paths
+        for (let i = section.first; i < section.first + section.count; ++i) paths.push(Captures.pathAt(i))
+        return paths
+    }
+
+    // A section header's control: select the section, or clear it once all
+    // of it is selected. Taken by paths, read before a waiting search
+    // applies, and only those still shown count: the search can move rows
+    // and fold days into months.
+    function toggleSectionPaths(paths) {
+        const shown = paths.filter(function (path) { return Captures.rowOf(path) >= 0 })
+        if (shown.length === 0) return
+        const all = shown.every(function (path) { return checkedSet[path] === true })
         const next = Object.assign({}, checkedSet)
-        const changed = []
-        for (let i = first; i < first + count; ++i) {
-            const path = Captures.pathAt(i)
-            changed.push(path)
+        for (const path of shown) {
             if (all) delete next[path]
             else next[path] = true
         }
-        assignChecked(next, changed)
-        setAnchor(Captures.pathAt(first))
+        assignChecked(next, shown)
+        setAnchor(shown[0])
     }
+    function toggleSection(label) { toggleSectionPaths(sectionPaths(label)) }
 
     // Shift+X: the section holding the current tile.
     function toggleCurrentSection() {
