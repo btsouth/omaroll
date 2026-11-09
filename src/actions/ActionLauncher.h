@@ -5,6 +5,7 @@
 #include <QSet>
 #include <QString>
 #include <QStringList>
+#include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
 #include <functional>
@@ -44,6 +45,15 @@ public:
   // library. What is chosen arrives as openRequested(), and opens the way
   // it would from the file manager. Cancelling says nothing.
   Q_INVOKABLE bool chooseFilesToOpen();
+  // Files opened the way a launch from the file manager would open them, as
+  // `omaroll FILE...` does. They arrive as openRequested().
+  Q_INVOKABLE void openFiles(const QStringList& paths);
+  // What a file drag carries: the same for library tiles and the viewer.
+  Q_INVOKABLE QVariantMap fileDragData(const QStringList& paths) const;
+  // Dropped URLs as {files, folders, folderUrls, skipped, note}, skipped
+  // naming what is not a local file or folder and note saying so briefly.
+  // Folders are canonical, as the library stores them.
+  Q_INVOKABLE QVariantMap sortDrop(const QList<QUrl>& urls) const;
   // The demo library, in a window of its own: another Omaroll, run with
   // --demo, which never touches this one's settings or folders.
   Q_INVOKABLE bool openDemo();
@@ -147,7 +157,7 @@ signals:
   // viewer opens on it; a footer flash alone reads as nothing happening.
   void outputAlreadyDone(const QString& path);
   void pendingOutputsChanged();
-  // Files chosen with chooseFilesToOpen().
+  // Files chosen with chooseFilesToOpen(), or passed to openFiles().
   void openRequested(const QStringList& paths);
   void submissionFinished(const QString& program, bool success, const QString& detail);
   // trashed holds one undo record per moved copy, as trashCaptured returns.

@@ -6,18 +6,35 @@
 #include <QFileInfo>
 #include <QSet>
 
+QString OpenRequest::skippedNote(const QStringList& names) {
+  if (names.isEmpty()) return {};
+  constexpr int kNamed = 5;
+  if (names.size() <= kNamed + 1) return QStringLiteral("Skipped: %1").arg(names.join(QStringLiteral(", ")));
+  return QStringLiteral("Skipped: %1 and %2 more")
+      .arg(names.first(kNamed).join(QStringLiteral(", ")))
+      .arg(names.size() - kNamed);
+}
+
 OpenRequest OpenRequest::fromPaths(const QStringList& paths) {
+  QList<QFileInfo> infos;
+  infos.reserve(paths.size());
+  for (const QString& path : paths) infos.append(QFileInfo(path));
+  return fromInfos(infos);
+}
+
+OpenRequest OpenRequest::fromInfos(const QList<QFileInfo>& infos) {
   OpenRequest result;
   QSet<QString> seen;
   QStringList failures;
-  for (const QString& path : paths) {
-    const QFileInfo info(path);
+  const qsizetype count = infos.size();
+  for (const QFileInfo& info : infos) {
+    const QString path = info.filePath();
     if (!info.exists()) {
       result.error = QStringLiteral("file or folder does not exist: %1").arg(path);
     } else if (!info.isReadable()) {
       result.error = QStringLiteral("cannot read: %1").arg(path);
     } else if (info.isDir()) {
-      if (paths.size() != 1) {
+      if (count != 1) {
         result.error = QStringLiteral("open one folder or a selection of files");
       } else {
         result.folder = info.canonicalFilePath();
@@ -38,7 +55,7 @@ OpenRequest OpenRequest::fromPaths(const QStringList& paths) {
     }
     if (!result.error.isEmpty()) {
       // A protected folder remains an error; skip other invalid selection entries.
-      if (info.isDir() && paths.size() == 1) {
+      if (info.isDir() && count == 1) {
         result.files.clear();
         result.entryPaths.clear();
         result.folder.clear();

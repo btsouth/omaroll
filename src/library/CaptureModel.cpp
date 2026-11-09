@@ -1,5 +1,7 @@
 #include "library/CaptureModel.h"
 
+#include "actions/FileDrag.h"
+
 #include "app/AppSettings.h"
 #include "library/CaptureRoles.h"
 #include "sources/CameraRaw.h"
@@ -513,11 +515,7 @@ void CaptureModel::readRawSize(const QString& path, const QUrl& source) {
 }
 
 QString CaptureModel::uriList(const QStringList& paths) const {
-  QString list;
-  for (const QString& path : paths) {
-    list += QUrl::fromLocalFile(path).toString(QUrl::FullyEncoded) + QStringLiteral("\r\n");
-  }
-  return list;
+  return FileDrag::uriList(paths);
 }
 
 void CaptureModel::refresh() {

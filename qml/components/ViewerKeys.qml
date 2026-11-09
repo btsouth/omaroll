@@ -29,6 +29,8 @@ Item {
         } else if (control && event.key === ShortcutCatalog.quickKeys.C) {
             if (shift) viewer.copyPath(false)
             else viewer.perform("copy")
+        } else if (control && !shift && event.key === ShortcutCatalog.quickKeys.S) {
+            if (!event.isAutoRepeat) viewer.saveViewCopy()
         } else if (control && event.key === ShortcutCatalog.quickKeys.O) {
             viewer.perform("open-with")
         } else if (control && event.key === ShortcutCatalog.quickKeys.W) {
@@ -176,7 +178,12 @@ Item {
                 }
                 break
             case ShortcutCatalog.quickKeys.V:
-                viewer.toggleFavorite()
+                if (shift && !video) viewer.flip(false)
+                else viewer.toggleFavorite()
+                break
+            case ShortcutCatalog.quickKeys.H:
+                if (shift && !video) viewer.flip(true)
+                else handled = false
                 break
             case ShortcutCatalog.quickKeys.Y:
                 viewer.perform("copy")

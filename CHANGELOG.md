@@ -56,6 +56,20 @@
   the search and the album too. Older versions open those views with their
   plain words only. Deleting an album or tag also deletes the saved views that
   open it.
+- Flip horizontally and vertically in the viewer (`Shift+H`, `Shift+V`, the
+  toolbar and the menu), view only like rotate, and reset on the next file.
+- Save rotated copy in the viewer (`Ctrl+S`) once the view is turned or
+  flipped: a copy beside the original that opens next to it. JPEGs are turned
+  losslessly with jpegtran where the size allows; otherwise the notice says the
+  copy was re-encoded. A copy keeps the original's permissions.
+- Corrected JPEG copies keep their EXIF, XMP and IPTC metadata, with the
+  orientation tag set to upright, instead of dropping it. A phone photo with an
+  orientation tag is now turned losslessly too.
+- Drag the shown file out of the viewer by its name or with `Ctrl`+drag; a
+  plain drag still pans.
+- Drop files on the viewer to open them there, or on the library to open them
+  in the viewer. Folders dropped on the library are offered as library folders;
+  folders dropped on the viewer open in the library.
 - Hovering the seek bar in the viewer and the library preview shows the time
   and, above it, the nearest of up to 100 sampled keyframes, and the preview
   follows a drag. Keyframes are decoded once in the background at low priority
