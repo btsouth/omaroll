@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Start the first opened video at a requested time with `--start`, including in a running instance.
+- Set and restore image, video and PDF defaults with `--set-default` and `--unset-default`.
+- Open supported files from mixed selections, show skipped names, and recognize explicitly opened media with unknown extensions.
+- Accept advertised MIME aliases and install the EXR codec dependencies.
+
 ## 1.18.0
 
 Step through video a frame at a time, and zoom into very large JPEGs in the

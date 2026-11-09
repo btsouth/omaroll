@@ -25,7 +25,7 @@ OpenRequest OpenRequest::fromPaths(const QStringList& paths) {
           result.error = QStringLiteral("choose a media folder, not your home or filesystem root");
         }
       }
-    } else if (!info.isFile() || !CaptureScanner::isSupported(CaptureScanner::mediaSuffix(path))) {
+    } else if (!info.isFile() || !CaptureScanner::isSupported(CaptureScanner::mediaSuffix(path, true))) {
       result.error = QStringLiteral("unsupported media file: %1").arg(path);
     } else {
       const QString canonical = info.canonicalFilePath();
@@ -36,11 +36,20 @@ OpenRequest OpenRequest::fromPaths(const QStringList& paths) {
       }
     }
     if (!result.error.isEmpty()) {
-      result.files.clear();
-      result.entryPaths.clear();
-      result.folder.clear();
-      break;
+      // Invalid folder combinations remain errors; individual files can be skipped.
+      if (info.isDir()) {
+        result.files.clear();
+        result.entryPaths.clear();
+        result.folder.clear();
+        if (!result.skipped.isEmpty() && result.files.isEmpty() && result.folder.isEmpty())
+    result.error = QStringLiteral("unsupported or unreadable media: %1").arg(result.skipped.join(QStringLiteral(", ")));
+  return result;
+      }
+      result.skipped.append(path);
+      result.error.clear();
     }
   }
+  if (!result.skipped.isEmpty() && result.files.isEmpty() && result.folder.isEmpty())
+    result.error = QStringLiteral("unsupported or unreadable media: %1").arg(result.skipped.join(QStringLiteral(", ")));
   return result;
 }

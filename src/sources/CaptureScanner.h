@@ -47,5 +47,5 @@ public:
 
   // Existing extensions stay authoritative. Without one, inspect at most
   // 16 KiB of a regular file and accept only recognized image/video types.
-  [[nodiscard]] static QString mediaSuffix(const QString& path);
+  [[nodiscard]] static QString mediaSuffix(const QString& path, bool explicitOpen = false);
 };

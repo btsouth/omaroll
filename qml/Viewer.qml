@@ -1253,6 +1253,22 @@ ApplicationWindow {
                     id: mediaPlayer
                     objectName: "viewerPlayer"
                     property string resumeIdentity: ""
+                    function applyLaunchStart() {
+                        if (typeof LaunchRequest === "undefined" || LaunchRequest.pendingStart(Session.path) < 0) return false
+                        root.resumePending = false
+                        root.resumeAvailable = false
+                        if (seekable && duration > 0) {
+                            position = Math.min(duration, LaunchRequest.takeStart(Session.path))
+                            play()
+                        }
+                        return true
+                    }
+                    onSeekableChanged: applyLaunchStart()
+                    onDurationChanged: applyLaunchStart()
+                    Connections {
+                        target: typeof LaunchRequest !== "undefined" ? LaunchRequest : null
+                        function onChanged() { mediaPlayer.applyLaunchStart() }
+                    }
                     source: root.videoSource
                     videoOutput: videoSurface.item
                     audioOutput: AudioOutput {
@@ -1298,8 +1314,9 @@ ApplicationWindow {
                         }
                     }
                     onMediaStatusChanged: {
+                        const explicitStart = applyLaunchStart()
                         if (mediaStatus === MediaPlayer.LoadedMedia && root.resumePending
-                                && !root.slideshowRunning) {
+                                && !root.slideshowRunning && !explicitStart) {
                             root.resumePending = false
                             const saved = Settings.videoPosition(Session.path)
                             if (saved >= 5000 && (duration <= 0 || saved < duration - 3000)) {

@@ -18,6 +18,10 @@ add_library(omaroll_core STATIC
   src/app/DemoLibrary.h
   src/app/SingleInstance.cpp
   src/app/SingleInstance.h
+  src/app/LaunchRequest.cpp
+  src/app/LaunchRequest.h
+  src/app/MimeDefaults.cpp
+  src/app/MimeDefaults.h
   src/app/OpenRequest.cpp
   src/app/OpenRequest.h
   src/app/HeadlessAudio.h

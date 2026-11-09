@@ -7,6 +7,8 @@
 #include "app/VideoPlayback.h"
 #include "app/SingleInstance.h"
 #include "app/OpenRequest.h"
+#include "app/LaunchRequest.h"
+#include "app/MimeDefaults.h"
 #include <QLocalSocket>
 #include <QMimeDatabase>
 #include <QJsonArray>
@@ -632,6 +634,39 @@ private slots:
     QCOMPARE(valid.get(), SingleInstance::Result::Forwarded);
   }
 
+  void explicitStartParsingAndFirstVideo() {
+    for (const auto& pair : QList<QPair<QString, qint64>>{{"0", 0}, {"83.5", 83500},
+             {"01:23.5", 83500}, {"1:02:03", 3723000}}) {
+      const auto parsed = LaunchRequest::parseStart(pair.first);
+      QVERIFY(parsed.has_value());
+      QCOMPARE(*parsed, pair.second);
+    }
+    for (const auto& value : QStringList{"", "-1", "nan", "1:60", "1:2:3:4", "1e99", "99999999999999999999"})
+      QVERIFY(!LaunchRequest::parseStart(value));
+    LaunchRequest request;
+    request.prepare({"/a.png", "/b.mp4", "/c.mkv"}, 0);
+    QCOMPARE(request.pendingStart("/a.png"), -1);
+    QCOMPARE(request.pendingStart("/c.mkv"), -1);
+    QCOMPARE(request.takeStart("/b.mp4"), 0);
+    QCOMPARE(request.pendingStart("/b.mp4"), -1);
+  }
+
+  void singleInstanceForwardsStartAndSkippedNames() {
+    const QString server = "omaroll-start-" + QString::number(QCoreApplication::applicationPid());
+    SingleInstance first(server);
+    QCOMPARE(first.claimOrNotify(), SingleInstance::Result::Primary);
+    QSignalSpy activation(&first, &SingleInstance::activationRequested);
+    auto sent = std::async(std::launch::async, [server] {
+      SingleInstance sender(server);
+      return sender.claimOrNotify({"/clip.mp4"}, false, 83500, {"/skip # 雪.txt"});
+    });
+    QTRY_VERIFY(sent.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready);
+    QCOMPARE(sent.get(), SingleInstance::Result::Forwarded);
+    QTRY_COMPARE(activation.size(), 1);
+    QCOMPARE(activation.first().at(2).toLongLong(), 83500);
+    QCOMPARE(activation.first().at(3).toStringList(), QStringList{"/skip # 雪.txt"});
+  }
+
   void openRequestValidatesAndPreservesSelection() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -651,14 +686,17 @@ private slots:
     const OpenRequest folder = OpenRequest::fromPaths({dir.path()});
     QVERIFY(folder.error.isEmpty());
     QCOMPARE(folder.folder, dir.path());
-    for (const QStringList& paths : {QStringList{first, dir.filePath("missing.png")},
-                                     QStringList{first, dir.path()},
+    for (const QStringList& paths : {QStringList{first, dir.path()},
                                      QStringList{QDir::homePath()}}) {
       const OpenRequest rejected = OpenRequest::fromPaths(paths);
       QVERIFY(!rejected.error.isEmpty());
       QVERIFY(rejected.files.isEmpty());
       QVERIFY(rejected.folder.isEmpty());
     }
+    const auto mixed = OpenRequest::fromPaths({first, dir.filePath("missing.png")});
+    QCOMPARE(mixed.files, QStringList{first});
+    QVERIFY(mixed.error.isEmpty());
+    QVERIFY(mixed.note().contains("missing.png"));
     // Explicit files do not pull in neighbors and may include dotfiles.
     const auto records = CaptureScanner::scan({{second, 1}, {first, 1}, {alias, 1}});
     QCOMPARE(records.size(), 2);
@@ -800,10 +838,15 @@ private slots:
                                   QStringLiteral("3g2"), QStringLiteral("VOB")}) {
       QVERIFY2(CaptureScanner::isVideo(suffix), qPrintable(suffix));
     }
-    // Shared with TypeScript and audio, so they stay unclaimed.
-    for (const QString& suffix : {QStringLiteral("ts"), QStringLiteral("ogg"),
-                                  QStringLiteral("ogx"), QStringLiteral("mp2")}) {
-      QVERIFY2(!CaptureScanner::isSupported(suffix), qPrintable(suffix));
+    for (const auto& name : claimed) {
+      if (name == u"inode/directory") continue;
+      for (const auto& glob : mimes.mimeTypeForName(name).globPatterns()) {
+        QString sample = glob;
+        sample.replace("*", "sample");
+        sample.replace("[0-9]", "1");
+        QVERIFY2(CaptureScanner::isSupported(CaptureScanner::mediaSuffix(sample)),
+                 qPrintable(name + " " + glob));
+      }
     }
   }
 
@@ -917,8 +960,8 @@ private slots:
     }
     const QString disguised = dir.filePath(QStringLiteral("image.txt"));
     QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/viewer/transparent.png"), disguised));
-    QVERIFY(!OpenRequest::fromPaths({disguised}).error.isEmpty());
-    QVERIFY(!ViewerSession::canOpen({disguised}));
+    QVERIFY(OpenRequest::fromPaths({disguised}).error.isEmpty());
+    QVERIFY(ViewerSession::canOpen({disguised}));
     QVERIFY(CaptureScanner::scan({{dir.path(), 1}}).isEmpty());
     QVERIFY(CaptureScanner::mediaSuffix(dir.path()).isEmpty());
     QVERIFY(CaptureScanner::mediaSuffix(dir.filePath("missing")).isEmpty());

@@ -77,6 +77,16 @@ gh attestation verify omaroll-1.18.0-1-x86_64.pkg.tar.zst --repo btsouth/omaroll
 
 ## Open files
 
+Run `omaroll --set-default` to use Omaroll for images and videos. Use
+`--set-default pdf` for PDFs, or `--unset-default` to restore replaced handlers.
+Folders keep their file-manager handler.
+
+Start the first video at a position with `omaroll --start=01:23 clip.mp4`
+(or `--start 83.5`). Seconds, mm:ss and hh:mm:ss accept fractional seconds;
+this takes precedence over saved resume. Images ignore it. An older running
+Omaroll instance ignores the start position until restarted.
+Mixed selections open supported files and name skipped files in the window.
+
 Set Omaroll as the default for pictures and videos, or open one from a
 terminal:
 

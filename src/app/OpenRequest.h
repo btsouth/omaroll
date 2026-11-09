@@ -10,6 +10,8 @@ struct OpenRequest {
   QHash<QString, QString> entryPaths;
   QString folder;
   QString error;
+  QStringList skipped;
+  QString note() const { return skipped.isEmpty() ? QString() : QStringLiteral("Skipped: %1").arg(skipped.join(QStringLiteral(", "))); }
 
   static OpenRequest fromPaths(const QStringList& paths);
 };

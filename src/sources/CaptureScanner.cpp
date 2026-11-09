@@ -21,6 +21,8 @@
 namespace {
 
 const QStringList kImageSuffixes = {
+    "jfif", "jpe", "dib", "hif", "jpg2", "j2c", "jpc", "avifs",
+    "icb", "tpic", "vda", "vst",
     QStringLiteral("png"),  QStringLiteral("jpg"),  QStringLiteral("jpeg"), QStringLiteral("webp"),
     QStringLiteral("gif"),  QStringLiteral("bmp"),  QStringLiteral("avif"), QStringLiteral("heic"),
     QStringLiteral("heif"), QStringLiteral("tiff"), QStringLiteral("tif"),  QStringLiteral("svg"),
@@ -30,6 +32,8 @@ const QStringList kImageSuffixes = {
 };
 
 const QStringList kVideoSuffixes = {
+    "ts", "ogg", "mp2", "lrv", "lrf", "3ga", "3gp2", "3gpp2", "moov", "qtvr",
+    "cpi", "clpi", "mpl", "mpls", "bdm", "bdmv", "vdr", "avf",
     QStringLiteral("mp4"), QStringLiteral("mkv"),  QStringLiteral("webm"), QStringLiteral("mov"),
     QStringLiteral("avi"), QStringLiteral("m4v"),  QStringLiteral("mpg"),  QStringLiteral("mpeg"),
     QStringLiteral("wmv"), QStringLiteral("flv"),  QStringLiteral("ogv"),  QStringLiteral("3gp"),
@@ -270,14 +274,18 @@ QString sniffedSuffix(const QString& path) {
 
 } // namespace
 
-QString CaptureScanner::mediaSuffix(const QString& path) {
+QString CaptureScanner::mediaSuffix(const QString& path, bool explicitOpen) {
   if (path.isEmpty()) {
     return {};
   }
   const QFileInfo info(path);
-  const QString suffix = info.suffix().toLower();
-  if (!suffix.isEmpty()) {
-    return suffix;
+  const QString suffix = path.endsWith(u".svg.gz", Qt::CaseInsensitive) ? QStringLiteral("svgz") : info.suffix().toLower();
+  static QMutex explicitMutex;
+  static QSet<QString> explicitPaths;
+  {
+    const QMutexLocker lock(&explicitMutex);
+    if (explicitOpen && !isSupported(suffix)) explicitPaths.insert(path);
+    if (!suffix.isEmpty() && (isSupported(suffix) || !explicitPaths.contains(path))) return suffix;
   }
   if (!info.isFile() || !info.isReadable() || info.size() == 0) {
     return {};
@@ -398,6 +406,7 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots, const std::a
           continue;
         }
 
+        if (!explicitFile && !entry.suffix().isEmpty() && !isSupported(entry.suffix())) continue;
         const QString suffix = mediaSuffix(entry.absoluteFilePath());
         const bool image = isImage(suffix);
         const bool video = isVideo(suffix);
