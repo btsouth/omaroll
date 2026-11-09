@@ -220,13 +220,31 @@ def library_module(frames):
 FREE = re.compile(r"^(operator delete|free)\b")
 
 
+POSTED_EVENT_FREERS = ("QCoreApplicationPrivate::sendPostedEvents(",
+                       "QCoreApplication::removePostedEvents(")
+
+
+def posted_by_a_task(made):
+    """The callout event a QtConcurrent task posts: from reportResultsReady,
+    or from libQt6Core called straight by RunFunctionTaskBase::run(), which
+    only calls Qt there to report that it finished."""
+    allocator = made[1]
+    if allocator[0].startswith("QFutureInterfaceBase::reportResultsReady("):
+        return True
+    return allocator[0] == "<null>" and allocator[1].startswith("libQt6Core") and \
+        len(made) > 2 and made[2][0].startswith("QtConcurrent::RunFunctionTaskBase<") and \
+        made[2][0].endswith(">::run()")
+
+
 def qt_owned_memory(stacks):
     """Memory Qt allocates and frees itself on two threads, under a mutex in
     libQt6Core that TSan cannot see. Each side is an allocator interceptor
     called straight from Qt (or from libc called by Qt), and the side that
     frees has nothing of ours past that call:
-    - a posted event: allocated where a task reports its result
-      (QFutureInterfaceBase), deleted by QCoreApplicationPrivate::sendPostedEvents;
+    - a posted event: allocated where a task reports its result or that it
+      finished (QFutureInterfaceBase), deleted once delivered by
+      QCoreApplicationPrivate::sendPostedEvents or, undelivered, by
+      QCoreApplication::removePostedEvents;
     - QThreadPool's queue and the runnables QtGui makes for its own threaded
       image work, freed by a pooled thread inside libQt6Core;
     - Qt Core's own calls into libc (strdup and free while handling the local
@@ -241,8 +259,7 @@ def qt_owned_memory(stacks):
         if not FREE.match(freed[0][0]) or not ALLOCATION.match(made[0][0]):
             continue
         freer, allocator = freed[1], made[1]
-        if freer[0].startswith("QCoreApplicationPrivate::sendPostedEvents(") and \
-                allocator[0].startswith("QFutureInterfaceBase::reportResultsReady("):
+        if freer[0].startswith(POSTED_EVENT_FREERS) and posted_by_a_task(made):
             return True
         # Not any allocation in libQt6Core: a QString of ours is allocated
         # there too, and its last reference dropped on a pooled thread is ours.
