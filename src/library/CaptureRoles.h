@@ -31,6 +31,9 @@ enum Role {
   // Added by CaptureFilterModel while a search result needs OCR context.
   OcrSnippetRole,
   ThumbnailVersionRole,
+  // "7 Nov" or "14 Sep 2025" on a tile; empty for today, where the time says
+  // enough. CaptureModel::CompanionPathRole takes the value before it.
+  DateLabelRole = ThumbnailVersionRole + 2,
 };
 
 } // namespace CaptureRoles

@@ -73,6 +73,10 @@ def parser():
                          help="new or empty directory to populate")
     command.add_argument("--files", type=int, default=1000, metavar="N",
                          help="library entries to create (default: 1000; range: 100..50000)")
+    command.add_argument("--dated", action="store_true",
+                         help="name entries as timestamped screenshots spread over about "
+                              "three years, so date-sorted views have many day and month "
+                              "sections (hardlinks share one mtime, so names carry the date)")
     return command
 
 
@@ -270,19 +274,42 @@ def make_seeds(magick, seeds_directory, photos, copies):
     return seeds
 
 
-def populate_library(library, seeds, file_count):
+def dated_prefixes(file_count):
+    """Deterministic capture moments, newest first: busy days, quiet days and
+    sparse months, so both day and month sections occur."""
+    import datetime
+    busy = (1, 3, 8, 2, 20, 5, 1, 12, 40, 4)
+    day = datetime.datetime(2026, 11, 1, 18, 0, 0)
+    prefixes = []
+    index = 0
+    while len(prefixes) < file_count:
+        # Every third month is sparse: one item every fourth day.
+        sparse = (day.year * 12 + day.month) % 3 == 0
+        count = 0 if sparse and index % 4 else (1 if sparse else busy[index % len(busy)])
+        for item in range(min(count, file_count - len(prefixes))):
+            moment = day - datetime.timedelta(minutes=7 * item)
+            prefixes.append(moment.strftime("screenshot-%Y-%m-%d_%H-%M-%S-"))
+        day -= datetime.timedelta(days=1)
+        index += 1
+    return prefixes
+
+
+def populate_library(library, seeds, file_count, dated=False):
     step = next(candidate for candidate in (7, 11, 17, 13, 5, 3, 2, 1)
                 if math.gcd(candidate, len(seeds)) == 1)
     order = [(index * step) % len(seeds) for index in range(len(seeds))]
     media_counts = Counter()
     extension_counts = Counter()
     logical_bytes = 0
+    prefixes = dated_prefixes(file_count) if dated else None
 
     for index in range(file_count):
         seed_index = order[index % len(order)]
         seed = seeds[seed_index]
         name = (f"media-{index + 1}-seed-{seed_index + 1:02d}-"
                 f"{seed['slug']}{seed['suffix']}")
+        if prefixes:
+            name = prefixes[index] + name
         source = library.parent / seed["path"]
         destination = library / name
         try:
@@ -300,7 +327,7 @@ def populate_library(library, seeds, file_count):
 
 
 def write_manifest(path, files, seeds, media_counts, extension_counts,
-                   logical_bytes):
+                   logical_bytes, dated=False):
     seed_bytes = sum(seed["bytes"] for seed in seeds)
     manifest = {
         "schema_version": 1,
@@ -317,6 +344,7 @@ def write_manifest(path, files, seeds, media_counts, extension_counts,
             "flat": True,
             "files": files,
             "hardlinked": True,
+            "dated_names": dated,
             "logical_bytes": logical_bytes,
             "unique_seed_bytes": seed_bytes,
         },
@@ -372,7 +400,7 @@ def main(argv=None):
 
     seeds = make_seeds(magick, seeds_directory, photos, copies)
     media_counts, extension_counts, logical_bytes = populate_library(
-        library, seeds, args.files
+        library, seeds, args.files, args.dated
     )
     write_manifest(
         output / "manifest.json",
@@ -381,6 +409,7 @@ def main(argv=None):
         media_counts,
         extension_counts,
         logical_bytes,
+        args.dated,
     )
     print(
         f"created {args.files} hardlinked library files and {len(seeds)} seeds\n"

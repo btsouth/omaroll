@@ -21,6 +21,7 @@
 
 class AppSettings;
 struct CaptureRecord;
+class SectionRows;
 
 // Sorting, kind filtering and search over the library.
 //
@@ -34,6 +35,10 @@ class CaptureFilterModel final : public QSortFilterProxyModel {
   Q_PROPERTY(int kindFilter READ kindFilter WRITE setKindFilter NOTIFY kindFilterChanged)
   Q_PROPERTY(int sortMode READ sortMode WRITE setSortMode NOTIFY sortModeChanged)
   Q_PROPERTY(QString searchText READ searchText WRITE setSearchText NOTIFY searchTextChanged)
+  // The search the grid shows now. Unlike searchText, reading it never
+  // applies typing that is still waiting, so a binding that also reads the
+  // count cannot change the count while it is being evaluated.
+  Q_PROPERTY(QString appliedSearchText READ appliedSearchText NOTIFY searchTextChanged)
   Q_PROPERTY(
       bool favoritesOnly READ favoritesOnly WRITE setFavoritesOnly NOTIFY favoritesOnlyChanged)
   Q_PROPERTY(
@@ -73,6 +78,8 @@ class CaptureFilterModel final : public QSortFilterProxyModel {
   // choices does. "scope": the folder, album, tag, date range or saved view
   // holds nothing to show.
   Q_PROPERTY(QString emptyReason READ emptyReason NOTIFY countChanged)
+  // Header and tile rows for the sectioned grid (date sorts, similar sets).
+  Q_PROPERTY(QObject* sectionRows READ sectionRows CONSTANT)
 
 public:
   enum SortMode {
@@ -99,6 +106,7 @@ public:
   void setSortMode(int mode);
 
   [[nodiscard]] QString searchText() { commitPendingSearch(); return m_searchText; }
+  [[nodiscard]] QString appliedSearchText() const { return m_searchText; }
   void setSearchText(const QString& text);
   Q_INVOKABLE void queueSearchText(const QString& text);
   Q_INVOKABLE void commitPendingSearch();
@@ -206,6 +214,7 @@ public:
   // While a review filter is on, its sets in view order: each a map of
   // first (row), count and label ("Similar set 2"). Empty otherwise.
   Q_INVOKABLE QVariantList reviewSections() const;
+  [[nodiscard]] QObject* sectionRows();
 
   // Text found by the local OCR index. Updates are coalesced because a warm
   // cache can deliver many entries in one event-loop turn. Pictures use this
@@ -462,4 +471,5 @@ private:
   QTimer m_ocrFilterTimer;
   QTimer m_releaseKeysTimer;
   QList<QMetaObject::Connection> m_sourceConnections;
+  SectionRows* m_sectionRows = nullptr;
 };

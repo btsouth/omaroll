@@ -235,7 +235,10 @@ Every viewer shortcut is listed in [Shortcuts](docs/shortcuts.md#viewer), and
 ## Features
 
 - **Browse your media.** See files by day, source or folder; filter by kind,
-  date, camera or lens, combine those filters, and resize the grid. Original photo and video dates are
+  date, camera or lens, combine those filters, and resize the grid. Date sorts put a header over each
+  day, or over each month where days hold less than half a row or tiles are at
+  the two smallest sizes, with the count and a Select control for that day.
+  Tiles from other days show their date. Original photo and video dates are
   used when available. Add folders without importing or copying their files.
 - **Organize without changing originals.** Albums, nested tags, captions,
   favourites, ratings and saved searches live in Omaroll's settings. Undo marks

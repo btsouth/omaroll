@@ -22,6 +22,14 @@
   picture text is read two to four at a time at low priority, only on mains
   power, with a screenshots-only option and a "Text indexed N of M" status.
   Search results say when some pictures' text has not been read yet.
+- Date sorts show a header for each day, or each month where days are thin or
+  tiles are small, with its count and a Select control. Tiles that aren't from
+  today show their date beside the time.
+- Selection works like a file manager: Shift+click and Shift with the arrows,
+  Home, End, Page Up or Page Down extend from the last picked tile, Ctrl+click
+  adds or removes one, and dragging from empty space draws a band that selects
+  what it touches (Ctrl+drag adds). Page Up and Page Down move through the grid,
+  and Shift+X selects the current tile's day.
 - Similar pictures show one section per set, and a Match setting chooses
   Strict, Normal or Loose.
 - Compare shows each picture's dimensions, file size, date and folder, marks
@@ -114,6 +122,8 @@
   missing final newline. Repeated cycles used to leave blank lines behind and
   move restored lines to the end of the section. Omaroll is still taken out
   of every list there, Added Associations included.
+- Typing a search while the library showed "Nothing matches" could apply the
+  half-typed search early and trip a binding loop on slower machines.
 - The empty library named Super + Shift + S for screenshots. It now names the
   key from your Hyprland bindings, Print Screen by default.
 - `--set-default` prints one line and the command that undoes it instead of a

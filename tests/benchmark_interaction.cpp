@@ -372,6 +372,29 @@ int main(int argc, char** argv) {
   std::function<void()> galleryNext, viewerNext;
   int galleryStep = 0, viewerStep = 0;
   double maximumContentY = 0;
+  // The gallery's exact scroll position. The sections' ListView estimates
+  // where unseen rows sit, so its contentY maps to different rows from one
+  // visit to the next; the grid's scroll functions give exact offsets for
+  // both views. Older builds without them fall back to the view's contentY.
+  auto hasScrollApi = [&] {
+    return grid && grid->metaObject()->indexOfMethod("scrollTo(QVariant)") >= 0;
+  };
+  auto scrollPosition = [&]() -> double {
+    if (!hasScrollApi()) return viewport->property("contentY").toDouble();
+    QVariant value;
+    QMetaObject::invokeMethod(grid, "scrollPosition", Q_RETURN_ARG(QVariant, value));
+    return value.toDouble();
+  };
+  auto scrollTo = [&](double y) {
+    if (!hasScrollApi()) { viewport->setProperty("contentY", y); return; }
+    QMetaObject::invokeMethod(grid, "scrollTo", Q_ARG(QVariant, y));
+  };
+  auto scrollExtent = [&]() -> double {
+    if (!hasScrollApi()) return viewport->property("contentHeight").toDouble() - viewport->height();
+    QVariant value;
+    QMetaObject::invokeMethod(grid, "scrollExtent", Q_RETURN_ARG(QVariant, value));
+    return value.toDouble();
+  };
   QMetaObject::Connection frameConnection;
   bool freshVideo = false;
   auto matchesVideo = [&](const QString& expected, const QVideoFrame& frame) {
@@ -464,14 +487,14 @@ int main(int argc, char** argv) {
     const int page = step < steps ? step + 1 : steps * 2 - step - 1;
     const double target = page == steps ? maximumContentY : maximumContentY * page / steps;
     run.measure(u"gallery_jump"_s, step < steps ? u"cold_cache_outward"_s : u"cached_return"_s, [&] {
-      const double before = viewport->property("contentY").toDouble();
-      viewport->setProperty("contentY", target); QMetaObject::invokeMethod(viewport, "forceLayout");
-      run.sample[u"content_y"_s] = viewport->property("contentY").toDouble();
-      run.sample[u"jump_displacement_px"_s] = viewport->property("contentY").toDouble() - before;
+      const double before = scrollPosition();
+      scrollTo(target); QMetaObject::invokeMethod(viewport, "forceLayout");
+      run.sample[u"content_y"_s] = scrollPosition();
+      run.sample[u"jump_displacement_px"_s] = scrollPosition() - before;
     }, [&, target] {
       QVariant ready;
       QMetaObject::invokeMethod(grid, "viewportReady", Q_RETURN_ARG(QVariant, ready));
-      return !captures->scanning() && std::abs(viewport->property("contentY").toDouble() - target) < 1 && ready.toBool();
+      return !captures->scanning() && std::abs(scrollPosition() - target) < 1 && ready.toBool();
     }, galleryNext);
   };
   QTimer::singleShot(0, &run, [&] {
@@ -509,17 +532,22 @@ int main(int argc, char** argv) {
       gallery = create("Main", context, galleryRoot); run.window = gallery;
       if (gallery) {
         grid = findItem(gallery->contentItem(), [](auto* item) { return item->objectName() == u"library"; });
-        if (grid) viewport = findItem(grid, [](auto* item) { return item->property("contentY").isValid() && item->property("cellHeight").isValid(); });
-        if (!viewport) run.fatal = u"Could not find gallery GridView"_s;
+        if (!grid) run.fatal = u"Could not find the gallery"_s;
       }
     }, [&] {
       QVariant ready;
+      // The flat GridView for name and size sorts, the sections' ListView
+      // for date sorts: whichever shows once the library has rows.
+      if (grid && !viewport) viewport = findItem(grid, [](auto* item) {
+        return item->property("contentY").isValid() && item->isVisible() && item->height() > 0
+               && (item->property("cellHeight").isValid() || item->objectName() == u"reviewSetsList");
+      });
       if (!grid || !viewport) return false;
       QMetaObject::invokeMethod(grid, "viewportReady", Q_RETURN_ARG(QVariant, ready));
       return !captures->scanning() && ready.toBool();
     }, [&] {
       const double pageHeight = viewport->height();
-      maximumContentY = viewport->property("contentHeight").toDouble() - pageHeight;
+      maximumContentY = scrollExtent();
       result[u"gallery_maximum_content_y"_s] = maximumContentY;
       if (maximumContentY < steps * pageHeight || pageHeight <= 0) {
         run.failed = true; run.fatal = u"Fixture needs at least steps+1 gallery viewports"_s; QCoreApplication::quit();
@@ -596,7 +624,7 @@ int main(int argc, char** argv) {
           const int number = ++*dispatched;
           const double target = number == burstJumps ? maximumContentY
               : maximumContentY * ((number * 7) % 13) / 13;
-          viewport->setProperty("contentY", target);
+          scrollTo(target);
           QMetaObject::invokeMethod(viewport, "forceLayout");
           if (number == burstJumps) burst->stop();
         };
@@ -610,7 +638,7 @@ int main(int argc, char** argv) {
           QVariant ready;
           QMetaObject::invokeMethod(grid, "viewportReady", Q_RETURN_ARG(QVariant, ready));
           return !captures->scanning()
-              && std::abs(viewport->property("contentY").toDouble() - maximumContentY) < 1 && ready.toBool();
+              && std::abs(scrollPosition() - maximumContentY) < 1 && ready.toBool();
         }, [&, burst] { burst->deleteLater(); galleryNext(); });
       }
     });
