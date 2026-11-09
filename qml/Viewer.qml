@@ -1159,8 +1159,20 @@ ApplicationWindow {
                + pad(Math.floor((value % 60000) / 1000), 2) + "s" + pad(value % 1000, 3)
     }
 
+    // Asked by --render before it grabs. A video render waits for the frame
+    // it holds, a second in, rather than the poster; one that never decodes
+    // times out and writes nothing.
+    property string renderView: ""
+    function renderReady() {
+        if (root.renderView !== "viewer-video") return true
+        const player = root.player
+        return root.videoError === "" && !!player && !!root.presentation && root.presentation.ready
+               && player.position >= 1000 && player.playbackState !== MediaPlayer.PlayingState
+    }
+
     // Renders hold a known state so the screenshot is the same every time.
     function openViewForRender(view) {
+        root.renderView = view
         root.chromePinned = true
         if (view === "viewer-video") {
             // Back to the start, then held on a frame a second in.

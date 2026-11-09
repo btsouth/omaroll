@@ -1,0 +1,165 @@
+.TH OMAROLL 1 "" "Omaroll" "User Commands"
+.SH NAME
+omaroll \- photo, video and PDF viewer and library for Omarchy
+.SH SYNOPSIS
+.B omaroll
+[\fIoptions\fR] [\fIfile\fR ... | \fIfolder\fR]
+.SH DESCRIPTION
+Pictures and videos open in the viewer, which steps through the rest of their
+folder in name order. Multiple files open as a selection in the supplied order.
+A folder, a PDF, or no argument at all opens the library. Use
+.B \-\-
+before filenames that begin with a dash.
+.PP
+Press
+.B ?
+or
+.B F1
+in the library or the viewer, with no sheet or menu open, for the shortcuts
+that apply there.
+Omaroll never moves, copies or changes your files unless you ask it to rename
+them, move them to Trash or save a corrected copy. The exception is
+.BR Shift+Delete ,
+which deletes permanently. It asks first, unless that confirmation is turned
+off in Settings.
+.SH OPTIONS
+.TP
+.B \-\-library
+Open files in the library instead of the viewer. The file is selected and its
+folder is added to the library if it is not already watched.
+.TP
+.BI \-\-start " time"
+Start the request's first video at seconds, mm:ss or hh:mm:ss (fractions
+allowed). Overrides the saved resume position.
+.TP
+.BR \-\-set\-default " [" \fIgroup\fR ]
+Use Omaroll for a group of file types:
+.BR images ,
+.BR videos ,
+.BR pdf ,
+or
+.B all
+(images and videos, the default). Prints what changed and how to undo it. Add
+.B \-\-verbose
+to list every type.
+.TP
+.BR \-\-unset\-default " [" \fIgroup\fR ]
+Put back the apps
+.B \-\-set\-default
+replaced. Name the same group:
+.B omaroll \-\-unset\-default pdf
+undoes
+.BR "omaroll \-\-set\-default pdf" .
+.TP
+.B \-\-install\-window\-rules
+Add Omaroll's Hyprland rules to
+.IR ~/.config/hypr :
+full opacity for its windows and a floating viewer. Needs Omarchy's Lua
+Hyprland config. Settings has the same choice.
+.TP
+.B \-\-remove\-window\-rules
+Take those rules out again, leaving
+.I hyprland.lua
+as it was before. A line that only requires hypr.omaroll goes too; any other
+line that loads the rules is reported and left for you to edit. A rules file
+you wrote yourself is kept.
+.TP
+.B \-\-diagnostics
+Print the versions, graphics and optional tools that a bug report needs, and
+exit. No window opens. This is the same text as Copy diagnostics in Settings.
+.TP
+.B \-\-demo
+Browse a deterministic fictional library instead of your own files. Nothing
+personal appears on screen.
+.TP
+.BI \-\-render " file.png"
+Render the window to a PNG and exit. Draws offscreen, so no compositor can
+resize it or overlap it. Fails without writing if the view never becomes
+ready.
+.TP
+.BI \-\-render\-view " view"
+Which view to render: grid, detail, document, video, slideshow, matte,
+corrections, compare, export, rename, ocr, editors, pins, context-menu,
+selection-menu, duplicates, similar, browser, sidebar, settings, viewer,
+viewer-video, viewer-info, viewer-menu, viewer-help or grid-filenames.
+.TP
+.BI \-\-render\-size " WxH"
+Window size, from 560x420 (viewer 320x240) to 7680x4320. Default 1280x820.
+.TP
+.B \-\-version
+Print the version and exit.
+.TP
+.BR \-\-help ", " \-h
+Show a summary of the options.
+.SH EXAMPLES
+Open pictures and videos with Omaroll from the file manager, then undo it:
+.PP
+.RS
+.nf
+omaroll \-\-set\-default
+omaroll \-\-unset\-default
+.fi
+.RE
+.PP
+View a picture and step through its folder, or browse a folder:
+.PP
+.RS
+.nf
+omaroll photo.jpg
+omaroll ~/Pictures
+.fi
+.RE
+.PP
+Play a video from 1 minute 23 seconds:
+.PP
+.RS
+.nf
+omaroll \-\-start=1:23 clip.mp4
+.fi
+.RE
+.PP
+Render the demo library's similar pictures to a PNG:
+.PP
+.RS
+.nf
+omaroll \-\-render similar.png \-\-render\-view similar
+.fi
+.RE
+.SH ENVIRONMENT
+.TP
+.B OMARCHY_SCREENSHOT_EDITOR
+The annotation editor. Tensaku when unset.
+.TP
+.B OMARCHY_OCR_LANGS
+Tesseract languages for text in pictures, joined with +. Default eng.
+.TP
+.B QT_IMAGEIO_MAXALLOC
+The most memory, in megabytes, one picture may use.
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/omaroll
+Settings, albums, tags, favourites and saved views;
+.I ~/.config/omaroll
+when
+.B XDG_CONFIG_HOME
+is unset.
+.TP
+.I $XDG_CACHE_HOME/omaroll
+Thumbnails and the text, date and similarity caches;
+.I ~/.cache/omaroll
+when
+.B XDG_CACHE_HOME
+is unset. Safe to delete.
+.TP
+.I /usr/share/omaroll/hypr/omaroll.lua
+The Hyprland window rules that
+.B \-\-install\-window\-rules
+copies into
+.IR ~/.config/hypr ,
+as the Arch package installs them. A source build puts them under its own
+prefix, /usr/local/share by default.
+.SH BUGS
+Report problems at https://github.com/btsouth/omaroll/issues with the output of
+.BR "omaroll \-\-diagnostics" .
+.SH SEE ALSO
+https://btsouth.github.io/omaroll/

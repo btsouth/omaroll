@@ -30,12 +30,16 @@
   </categories>
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/btsouth/omaroll/main/docs/library.png</image>
-      <caption>Browse photos and videos together in a local library</caption>
+      <image>https://raw.githubusercontent.com/btsouth/omaroll/main/docs/viewer-dark.png</image>
+      <caption>Open a picture in a quick viewer that follows your theme</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/btsouth/omaroll/main/docs/library-light.png</image>
+      <caption>Browse photos, videos and PDFs together in a local library</caption>
     </screenshot>
     <screenshot>
       <image>https://raw.githubusercontent.com/btsouth/omaroll/main/docs/detail.png</image>
-      <caption>View media with navigation and file actions</caption>
+      <caption>Preview media with navigation and file actions</caption>
     </screenshot>
   </screenshots>
   <releases>

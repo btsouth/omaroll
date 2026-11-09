@@ -31,8 +31,9 @@ public:
   // Asks again whether Omaroll is the default, on a worker.
   Q_INVOKABLE void refresh();
   // One sentence for a report from apply(): how many types changed, and
-  // which apps were replaced or put back.
-  static QString summarize(bool unset, const QString &report, bool ok);
+  // which apps were replaced or put back, worded for the group.
+  static QString summarize(bool unset, const QString &report, bool ok,
+                           const QString &group = QStringLiteral("all"));
 
   bool known() const { return m_known; }
   bool imagesDefault() const { return m_imagesDefault; }
@@ -63,6 +64,7 @@ private:
   bool m_checking = false;
   bool m_recheck = false;
   bool m_unset = false;
+  QString m_group;
   QFutureWatcher<Result> m_change;
   QFutureWatcher<State> m_check;
 };

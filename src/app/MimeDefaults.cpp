@@ -80,7 +80,7 @@ MimeDefaults::MimeDefaults(QObject *parent) : QObject(parent) {
     const Result result = m_change.result();
     m_applying = false;
     m_succeeded = result.ok;
-    emit finished(result.ok, summarize(m_unset, result.report, result.ok),
+    emit finished(result.ok, summarize(m_unset, result.report, result.ok, m_group),
                   result.report);
     refresh();
   });
@@ -116,6 +116,7 @@ void MimeDefaults::applyAsync(bool unset, const QString &group) {
   if (m_applying) return;
   m_applying = true;
   m_unset = unset;
+  m_group = group;
   emit stateChanged();
   m_change.setFuture(QtConcurrent::run([unset, group] { return run(unset, group); }));
 }
@@ -138,10 +139,14 @@ MimeDefaults::State MimeDefaults::query() {
   return state;
 }
 
-QString MimeDefaults::summarize(bool unset, const QString &report, bool ok) {
+QString MimeDefaults::summarize(bool unset, const QString &report, bool ok,
+                                const QString &group) {
   int changed = 0;
   int failed = 0;
   int unchanged = 0;
+  // Types whose setting was removed but still open with Omaroll, from a system
+  // default or no other app.
+  int still = 0;
   QStringList apps;
   const auto name = [](QString handler) {
     handler = handler.trimmed();
@@ -169,6 +174,8 @@ QString MimeDefaults::summarize(bool unset, const QString &report, bool ok) {
       if (!apps.contains(restored)) apps << restored;
     } else if (unset && outcome == u"removed Omaroll") {
       ++changed;
+    } else if (unset && outcome.contains(u"still opens with Omaroll")) {
+      ++still;
     } else {
       ++unchanged;
     }
@@ -186,22 +193,38 @@ QString MimeDefaults::summarize(bool unset, const QString &report, bool ok) {
   const auto types = [](int count) {
     return count == 1 ? QStringLiteral("1 type") : QStringLiteral("%1 types").arg(count);
   };
+  const QString kind = group == u"images" ? QStringLiteral("picture")
+                       : group == u"videos" ? QStringLiteral("video")
+                       : group == u"pdf"    ? QStringLiteral("PDF")
+                                            : QStringLiteral("picture and video");
+  const QString plural = group == u"images" ? QStringLiteral("pictures")
+                         : group == u"videos" ? QStringLiteral("videos")
+                         : group == u"pdf"    ? QStringLiteral("PDFs")
+                                              : QStringLiteral("pictures and videos");
   QString summary;
   if (!unset) {
     if (changed == 0 && failed == 0)
-      summary = QStringLiteral("Omaroll already opens your pictures and videos.");
+      summary = QStringLiteral("Omaroll already opens your %1.").arg(plural);
     else if (changed > 0)
-      summary = QStringLiteral("Omaroll now opens %1 of picture and video%2.")
-                    .arg(types(changed),
+      summary = QStringLiteral("Omaroll now opens %1 of %2%3.")
+                    .arg(types(changed), kind,
                          apps.isEmpty() ? QString()
                                         : QStringLiteral(", replacing ") + list(apps));
   } else {
-    if (changed == 0 && failed == 0)
+    if (changed == 0 && failed == 0 && still == 0)
       summary = QStringLiteral("Nothing to restore. Omaroll was not the default.");
     else if (changed > 0)
       summary = apps.isEmpty()
                     ? QStringLiteral("Omaroll is no longer the default for %1.").arg(types(changed))
                     : QStringLiteral("Restored %1 for %2.").arg(list(apps), types(changed));
+  }
+  if (still > 0) {
+    const QString remains =
+        QStringLiteral("%1 still %2 with Omaroll, from a system default or because no other app "
+                       "handles %3.")
+            .arg(types(still), still == 1 ? QStringLiteral("opens") : QStringLiteral("open"),
+                 still == 1 ? QStringLiteral("it") : QStringLiteral("them"));
+    summary = summary.isEmpty() ? remains : summary + u' ' + remains;
   }
   if (failed > 0) {
     const QString failure = QStringLiteral("%1 could not be changed.").arg(types(failed));

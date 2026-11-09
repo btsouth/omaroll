@@ -194,12 +194,17 @@ void OmarchyTheme::reload() {
 }
 
 QString OmarchyTheme::currentRoot() const {
-  const QString stateRoot = m_stateHome + QStringLiteral("/omarchy/current");
+  return currentRootFor(m_stateHome, m_configHome);
+}
+
+QString OmarchyTheme::currentRootFor(const QString &stateHome,
+                                     const QString &configHome) {
+  const QString stateRoot = stateHome + QStringLiteral("/omarchy/current");
   if (QFileInfo::exists(stateRoot + QStringLiteral("/theme/colors.toml"))) {
     return stateRoot;
   }
 
-  const QString configRoot = m_configHome + QStringLiteral("/omarchy/current");
+  const QString configRoot = configHome + QStringLiteral("/omarchy/current");
   if (QFileInfo::exists(configRoot + QStringLiteral("/theme/colors.toml"))) {
     return configRoot;
   }

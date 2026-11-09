@@ -17,6 +17,11 @@ Item {
     // What the last default-viewer change did, in a sentence.
     property string defaultsMessage: ""
     property bool defaultsOk: true
+    // What the last window-rules change did, and the state it left.
+    property string windowRulesMessage: ""
+    property string windowRulesState: "unsupported"
+    // Optional programs that aren't installed, read each time Settings opens.
+    property var missingTools: []
     property bool organizationOk: false
     // Set once a backup file has been chosen; the restore runs only after the
     // user confirms, since it replaces the current organization.
@@ -81,6 +86,9 @@ Item {
         confirmingBackupRestore = false
         backupRestoreMessage = ""
         defaultsMessage = ""
+        windowRulesMessage = ""
+        windowRulesState = Settings.windowRules
+        missingTools = Settings.missingTools()
         MimeDefaults.refresh()
         visible = true
         forceActiveFocus()
@@ -247,13 +255,69 @@ Item {
                 Flow {
                     width: parent.width
                     spacing: 8
-                    PillButton { label: "Changelog"; onClicked: Qt.openUrlExternally("https://github.com/btsouth/omaroll/blob/main/CHANGELOG.md") }
-                    PillButton { label: "Homepage"; onClicked: Qt.openUrlExternally("https://btsouth.github.io/omaroll/") }
-                    PillButton { label: "Report an issue"; onClicked: Qt.openUrlExternally("https://github.com/btsouth/omaroll/issues") }
+                    PillButton {
+                        objectName: "aboutChangelog"
+                        label: "Changelog"
+                        toolTip: "What changed in Omaroll " + Settings.appVersion
+                        property string url: Settings.releaseNotesUrl
+                        onClicked: Qt.openUrlExternally(url)
+                    }
+                    PillButton {
+                        objectName: "aboutHomepage"
+                        label: "Homepage"
+                        property string url: "https://btsouth.github.io/omaroll/"
+                        onClicked: Qt.openUrlExternally(url)
+                    }
+                    PillButton {
+                        objectName: "aboutReportIssue"
+                        label: "Report an issue"
+                        toolTip: "Copy diagnostics first, then paste them into the form"
+                        property string url: Settings.newIssueUrl
+                        onClicked: Qt.openUrlExternally(url)
+                    }
                     PillButton {
                         objectName: "copyDiagnostics"
                         label: "Copy diagnostics"
+                        toolTip: "omaroll --diagnostics prints the same text"
                         onClicked: { Settings.copyDiagnostics(Theme.themeName, root.Screen.devicePixelRatio); label = "Diagnostics copied" }
+                    }
+                }
+                Text {
+                    objectName: "aboutMissingToolsTitle"
+                    width: parent.width
+                    visible: root.missingTools.length > 0
+                    topPadding: 4
+                    text: "Not installed"
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 12
+                    color: Theme.foreground
+                }
+                Repeater {
+                    objectName: "aboutMissingTools"
+                    model: root.missingTools
+                    delegate: Row {
+                        required property var modelData
+                        width: parent ? parent.width : 0
+                        spacing: 10
+                        Text {
+                            width: Math.round(parent.width * 0.45)
+                            elide: Text.ElideRight
+                            text: modelData.feature
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 12
+                            color: Theme.mutedText
+                        }
+                        TextEdit {
+                            width: parent.width - Math.round(parent.width * 0.45) - 10
+                            readOnly: true
+                            selectByMouse: true
+                            wrapMode: TextEdit.Wrap
+                            text: modelData.install
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 12
+                            color: Theme.foreground
+                            selectionColor: Theme.accent
+                        }
                     }
                 }
             }
@@ -311,6 +375,55 @@ Item {
                         label: "Restore previous apps"
                         toolTip: "Put back the apps that opened them before"
                         onClicked: MimeDefaults.applyAsync(true, "all")
+                    }
+                }
+            }
+
+            Row {
+                objectName: "settingsWindowRules"
+                width: parent.width
+                spacing: 12
+                visible: root.windowRulesState !== "unsupported" || root.windowRulesMessage !== ""
+
+                Column {
+                    width: parent.width - windowRulesButton.width - 12
+                    spacing: 2
+
+                    Text {
+                        text: "Hyprland window rules"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 12
+                        color: Theme.foreground
+                    }
+                    Text {
+                        objectName: "settingsWindowRulesStatus"
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        text: root.windowRulesMessage !== "" ? root.windowRulesMessage
+                              : root.windowRulesState === "installed"
+                                ? "Omaroll's windows open at full opacity and the viewer floats."
+                                : "Omarchy dims every window a little. These rules keep pictures at full "
+                                  + "opacity and float the viewer. Saved in ~/.config/hypr."
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 10
+                        color: Theme.mutedText
+                    }
+                }
+
+                PillButton {
+                    id: windowRulesButton
+                    objectName: "settingsWindowRulesButton"
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: root.windowRulesState !== "unsupported"
+                    label: root.windowRulesState === "installed" ? "Remove" : "Install"
+                    toolTip: root.windowRulesState === "installed"
+                             ? "Take Omaroll's rules out of your Hyprland config"
+                             : "Add Omaroll's rules to your Hyprland config"
+                    accessibleName: label + " Hyprland window rules"
+                    onClicked: {
+                        root.windowRulesMessage = root.windowRulesState === "installed"
+                                ? Settings.removeWindowRules() : Settings.installWindowRules()
+                        root.windowRulesState = Settings.windowRules
                     }
                 }
             }
