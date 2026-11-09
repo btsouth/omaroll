@@ -21,7 +21,9 @@ case "$mode" in
       '-DCMAKE_CXX_FLAGS=-fprofile-instr-generate -fcoverage-mapping' -DCMAKE_EXE_LINKER_FLAGS=-fprofile-instr-generate
     cmake --build "$build" --parallel 4
     mkdir -p "$build/profiles"
-    LLVM_PROFILE_FILE="$PWD/$build/profiles/%p-%m.profraw" ctest --test-dir "$build" --parallel 4 --output-on-failure
+    rm -f "$build"/profiles/*.profraw
+    test_status=0
+    LLVM_PROFILE_FILE="$PWD/$build/profiles/%p-%m.profraw" ctest --test-dir "$build" --parallel 4 --output-on-failure || test_status=$?
     llvm-profdata merge -sparse "$build"/profiles/*.profraw -o "$build/coverage.profdata"
     objects=()
     for binary in "$build"/omaroll*tests "$build"/omaroll; do
@@ -29,6 +31,7 @@ case "$mode" in
     done
     llvm-cov report "${objects[@]}" -instr-profile="$build/coverage.profdata" -ignore-filename-regex='(tests/|_autogen/|/usr/)' | tee "$build/summary.txt"
     llvm-cov show "${objects[@]}" -instr-profile="$build/coverage.profdata" -ignore-filename-regex='(tests/|_autogen/|/usr/)' -format=html -output-dir="$build/html"
+    exit "$test_status"
     ;;
   *) exit 2 ;;
 esac
