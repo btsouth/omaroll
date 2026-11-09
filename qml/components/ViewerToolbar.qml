@@ -2,11 +2,47 @@ import QtQuick
 
 // The common picture controls, in the order Windows Photo Viewer taught
 // everyone: zoom, then previous, slideshow and next, then rotate and flip, then
-// delete. Everything less common lives in the viewer's menu.
+// delete. Everything less common lives in the viewer's menu. The library's
+// preview uses the same bar, with full screen in place of delete.
 Rectangle {
     id: root
 
+    // Object names start with this, so two bars in one window stay apart.
+    property string namePrefix: "viewer"
+    property bool trashControl: true
+    property bool fullScreenControl: false
+    property bool fullScreen: false
+    // Off for a document: the toggle only fits it again.
+    property bool actualControl: true
+    // The key beside each button's name, from the window's own shortcut rows.
+    property var hints: ({
+        "zoom-out": ShortcutCatalog.quickHints["zoom-out"],
+        "zoom-in": ShortcutCatalog.quickHints["zoom-in"],
+        "actual": ShortcutCatalog.quickHints.actual,
+        "fit": ShortcutCatalog.quickHints.fit,
+        "previous": ShortcutCatalog.sequence("quick", "previous")[0],
+        "next": ShortcutCatalog.sequence("quick", "previous")[1],
+        "slideshow": ShortcutCatalog.quickHints.slideshow,
+        "rotate-left": ShortcutCatalog.sequence("quick", "rotate")[1],
+        "rotate-right": ShortcutCatalog.sequence("quick", "rotate")[0],
+        "flip-horizontal": ShortcutCatalog.quickHints["flip-horizontal"],
+        "flip-vertical": ShortcutCatalog.quickHints["flip-vertical"],
+        "save-view-copy": ShortcutCatalog.quickHints["save-view-copy"],
+        "fullscreen": ShortcutCatalog.quickHints.fullscreen,
+        "trash": ShortcutCatalog.sequence("quick", "trash")[0]
+    })
+    function hint(id) { return root.hints[id] || "" }
+
     property bool fitted: true
+    // The toggle offers actual size (1:1) when true, otherwise Fit. A window
+    // that knows more than "fitted or not" decides it.
+    property bool offerActual: root.fitted && root.actualControl
+    // The zoom level beside the zoom buttons, such as "57%"; empty shows none.
+    property string zoomText: ""
+    // Save's place is kept while a copy could be saved after a turn or flip,
+    // so the bar never moves as the button comes and goes; it is greyed until
+    // there is something to save.
+    property bool saveSlotReserved: false
     property bool canStep: false
     property bool slideshowRunning: false
     // On a narrow window the zoom group gives way; the wheel and keys still zoom.
@@ -34,6 +70,13 @@ Rectangle {
     signal flipVertical()
     signal saveCopy()
     signal trash()
+    signal toggleFullScreen()
+
+    // Where no place is reserved, Save's place still stays while the pointer
+    // is on the bar after the button goes, so nothing moves under it.
+    property bool holdSaveSlot: false
+    onCanSaveCopyChanged: if (!canSaveCopy && hover.hovered) holdSaveSlot = true
+    onHoveredChanged: if (!hovered) holdSaveSlot = false
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
@@ -74,87 +117,102 @@ Rectangle {
         spacing: 2
 
         IconButton {
-            objectName: "viewerZoomOut"
+            objectName: root.namePrefix + "ZoomOut"
             osd: true
             enabled: root.viewControls
             visible: !root.compact
             icon: "zoom-out"
             toolTip: "Zoom out"
-            shortcut: ShortcutCatalog.quickHints["zoom-out"]
+            shortcut: root.hint("zoom-out")
             onClicked: root.zoomOut()
         }
         IconButton {
-            objectName: "viewerFitToggle"
+            objectName: root.namePrefix + "FitToggle"
             osd: true
             enabled: root.viewControls
             visible: !root.compact
-            label: root.fitted ? "1:1" : "Fit"
-            toolTip: root.fitted ? "Actual size" : "Fit to window"
-            shortcut: root.fitted ? ShortcutCatalog.quickHints.actual : ShortcutCatalog.quickHints.fit
+            label: root.offerActual ? "1:1" : "Fit"
+            active: !root.offerActual && root.fitted
+            toolTip: root.offerActual ? "Actual size" : "Fit to window"
+            shortcut: root.hint(root.offerActual ? "actual" : "fit")
             onClicked: root.toggleFit()
         }
         IconButton {
-            objectName: "viewerZoomIn"
+            objectName: root.namePrefix + "ZoomIn"
             osd: true
             enabled: root.viewControls
             visible: !root.compact
             icon: "zoom-in"
             toolTip: "Zoom in"
-            shortcut: ShortcutCatalog.quickHints["zoom-in"]
+            shortcut: root.hint("zoom-in")
             onClicked: root.zoomIn()
+        }
+        Text {
+            objectName: root.namePrefix + "ZoomLevel"
+            visible: !root.compact && root.zoomText !== ""
+            // A fixed width, so the bar does not shift as the number changes.
+            width: 44
+            anchors.verticalCenter: parent.verticalCenter
+            horizontalAlignment: Text.AlignHCenter
+            text: root.zoomText
+            font.family: Theme.fontFamily
+            font.pixelSize: 12
+            color: Theme.mutedText
+            Accessible.role: Accessible.StaticText
+            Accessible.name: "Zoom " + root.zoomText
         }
         Divider { visible: !root.compact }
 
         IconButton {
-            objectName: "viewerToolbarPrevious"
+            objectName: root.namePrefix + "ToolbarPrevious"
             osd: true
             enabled: root.canStep
             icon: "chevron-left"
             toolTip: "Previous"
-            shortcut: ShortcutCatalog.sequence("quick", "previous")[0]
+            shortcut: root.hint("previous")
             onClicked: root.previous()
         }
         IconButton {
-            objectName: "viewerSlideshowButton"
+            objectName: root.namePrefix + "SlideshowButton"
             osd: true
             enabled: root.canStep
             icon: root.slideshowRunning ? "pause" : "play"
             active: root.slideshowRunning
             toolTip: root.slideshowRunning ? "Stop slideshow" : "Slideshow"
-            shortcut: ShortcutCatalog.quickHints.slideshow
+            shortcut: root.hint("slideshow")
             onClicked: root.slideshow()
         }
         IconButton {
-            objectName: "viewerToolbarNext"
+            objectName: root.namePrefix + "ToolbarNext"
             osd: true
             enabled: root.canStep
             icon: "chevron-right"
             toolTip: "Next"
-            shortcut: ShortcutCatalog.sequence("quick", "previous")[1]
+            shortcut: root.hint("next")
             onClicked: root.next()
         }
         Divider {}
 
         IconButton {
-            objectName: "viewerRotateLeft"
+            objectName: root.namePrefix + "RotateLeft"
             osd: true
             enabled: root.viewControls
             icon: "rotate-left"
             toolTip: "Rotate left"
-            shortcut: ShortcutCatalog.sequence("quick", "rotate")[1]
+            shortcut: root.hint("rotate-left")
             onClicked: root.rotateLeft()
         }
         IconButton {
-            objectName: "viewerRotateRight"
+            objectName: root.namePrefix + "RotateRight"
             osd: true
             enabled: root.viewControls
             icon: "rotate-right"
             toolTip: "Rotate right"
-            shortcut: ShortcutCatalog.sequence("quick", "rotate")[0]
+            shortcut: root.hint("rotate-right")
             onClicked: root.rotateRight()
         }
         IconButton {
-            objectName: "viewerFlipHorizontal"
+            objectName: root.namePrefix + "FlipHorizontal"
             osd: true
             enabled: root.viewControls
             visible: root.flipControls
@@ -162,11 +220,11 @@ Rectangle {
             checkable: true
             active: root.flippedHorizontally
             toolTip: "Flip horizontally"
-            shortcut: ShortcutCatalog.quickHints["flip-horizontal"]
+            shortcut: root.hint("flip-horizontal")
             onClicked: root.flipHorizontal()
         }
         IconButton {
-            objectName: "viewerFlipVertical"
+            objectName: root.namePrefix + "FlipVertical"
             osd: true
             enabled: root.viewControls
             visible: root.flipControls
@@ -174,26 +232,46 @@ Rectangle {
             checkable: true
             active: root.flippedVertically
             toolTip: "Flip vertically"
-            shortcut: ShortcutCatalog.quickHints["flip-vertical"]
+            shortcut: root.hint("flip-vertical")
             onClicked: root.flipVertical()
         }
-        IconButton {
-            objectName: "viewerSaveCopy"
-            osd: true
-            visible: root.canSaveCopy
-            icon: "save"
-            toolTip: root.saveCopyLabel
-            shortcut: ShortcutCatalog.quickHints["save-view-copy"]
-            onClicked: root.saveCopy()
+        Item {
+            id: saveSlot
+            objectName: root.namePrefix + "SaveCopySlot"
+            visible: root.canSaveCopy || root.saveSlotReserved || root.holdSaveSlot
+            width: saveButton.implicitWidth
+            height: saveButton.implicitHeight
+
+            IconButton {
+                id: saveButton
+                objectName: root.namePrefix + "SaveCopy"
+                osd: true
+                anchors.fill: parent
+                enabled: root.canSaveCopy
+                icon: "save"
+                toolTip: root.saveCopyLabel
+                shortcut: root.hint("save-view-copy")
+                onClicked: root.saveCopy()
+            }
         }
-        Divider {}
+        Divider { visible: root.trashControl || root.fullScreenControl }
 
         IconButton {
-            objectName: "viewerTrashButton"
+            objectName: root.namePrefix + "FullScreenButton"
             osd: true
+            visible: root.fullScreenControl
+            icon: root.fullScreen ? "fullscreen-exit" : "fullscreen"
+            toolTip: root.fullScreen ? "Exit full screen" : "Full screen"
+            shortcut: root.hint("fullscreen")
+            onClicked: root.toggleFullScreen()
+        }
+        IconButton {
+            objectName: root.namePrefix + "TrashButton"
+            osd: true
+            visible: root.trashControl
             icon: "trash"
             toolTip: "Move to Trash"
-            shortcut: ShortcutCatalog.sequence("quick", "trash")[0]
+            shortcut: root.hint("trash")
             onClicked: root.trash()
         }
     }

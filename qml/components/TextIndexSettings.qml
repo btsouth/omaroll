@@ -6,7 +6,7 @@ import QtQuick
 // mains power when the computer can tell.
 Column {
     id: root
-    spacing: 8
+    spacing: 16
     visible: TextIndex.available
 
     readonly property string status: {
@@ -19,70 +19,37 @@ Column {
                + (Settings.textIndexScreenshotsOnly ? " screenshots" : " pictures")
     }
 
-    Row {
-        width: parent.width
-        spacing: 12
+    SettingRow {
+        title: "Index text in the background"
+        detail: root.status !== "" ? root.status
+                : "Off: text is read while you search. On: read once the library is "
+                  + "scanned, at low priority and only on mains power."
+        detailObjectName: "textIndexStatus"
+        toggle: backgroundToggle
 
-        Column {
-            width: parent.width - backgroundToggle.width - 12
-            spacing: 2
-
-            Text {
-                width: parent.width
-                text: "Index text in the background"
-                wrapMode: Text.WordWrap
-                font.family: Theme.fontFamily
-                font.pixelSize: 12
-                color: Theme.foreground
-            }
-            Text {
-                objectName: "textIndexStatus"
-                width: parent.width
-                wrapMode: Text.WordWrap
-                text: root.status !== "" ? root.status
-                      : "Off: text is read while you search. On: read once the library is "
-                        + "scanned, at low priority and only on mains power."
-                font.family: Theme.fontFamily
-                font.pixelSize: 10
-                color: Theme.mutedText
-            }
-        }
-
-        PillButton {
+        SettingSwitch {
             id: backgroundToggle
             objectName: "backgroundTextIndexToggle"
             anchors.verticalCenter: parent.verticalCenter
             accessibleName: "Index text in the background"
-            label: Settings.backgroundTextIndex ? "On" : "Off"
-            checkable: true
-            active: Settings.backgroundTextIndex
-            onClicked: Settings.backgroundTextIndex = !Settings.backgroundTextIndex
+            checked: Settings.backgroundTextIndex
+            onToggled: Settings.backgroundTextIndex = !Settings.backgroundTextIndex
         }
     }
 
-    Row {
-        width: parent.width
-        spacing: 12
+    SettingRow {
         visible: Settings.backgroundTextIndex
+        title: "Screenshots only"
+        detail: "Photos are still read while you search."
+        toggle: screenshotsToggle
 
-        Text {
-            anchors.verticalCenter: parent.verticalCenter
-            width: parent.width - screenshotsToggle.width - 12
-            text: "Screenshots only"
-            wrapMode: Text.WordWrap
-            font.family: Theme.fontFamily
-            font.pixelSize: 12
-            color: Theme.foreground
-        }
-        PillButton {
+        SettingSwitch {
             id: screenshotsToggle
             objectName: "textIndexScreenshotsOnlyToggle"
             anchors.verticalCenter: parent.verticalCenter
             accessibleName: "Index screenshots only"
-            label: Settings.textIndexScreenshotsOnly ? "On" : "Off"
-            checkable: true
-            active: Settings.textIndexScreenshotsOnly
-            onClicked: Settings.textIndexScreenshotsOnly = !Settings.textIndexScreenshotsOnly
+            checked: Settings.textIndexScreenshotsOnly
+            onToggled: Settings.textIndexScreenshotsOnly = !Settings.textIndexScreenshotsOnly
         }
     }
 }

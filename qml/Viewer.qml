@@ -978,77 +978,142 @@ ApplicationWindow {
     // every player, rather than the library's Open containing folder.
     readonly property var viewerShortcuts: ShortcutCatalog.quickHints
 
-    // Handed-off actions, in the order the menu offers them. Only what is
-    // installed and suits the medium is shown.
+    // Handed-off actions the menu offers. Only what is installed and suits the
+    // medium is shown.
     readonly property var stillActions: ["develop", "choose-editor", "copy", "open-with", "omaframe", "annotate", "edit", "background", "send", "print", "files"]
     readonly property var videoActions: ["frame", "trim", "copy", "open-with", "play", "send", "files"]
+    // Where each goes, in order; "|" is a separator between kinds of thing.
+    readonly property var shareOrder: ["copy", "copy-path", "copy-name", "|", "open-with", "play", "files",
+                                       "|", "send", "print", "background"]
+    readonly property var editOrder: ["develop", "choose-editor", "edit", "annotate", "omaframe", "|",
+                                      "trim", "frame", "save-view-copy"]
 
-    function menuEntries() {
+    // Rows in |order| that exist in |byId|, with separators only between
+    // runs that both have something.
+    function orderedRows(order, byId) {
+        const result = []
+        let pending = false
+        for (const id of order) {
+            if (id === "|") {
+                pending = result.length > 0
+                continue
+            }
+            if (!byId[id]) continue
+            if (pending) result.push({separator: true})
+            pending = false
+            result.push(byId[id])
+        }
+        return result
+    }
+
+    // The menu, as a short top level with View, Share and Edit submenus.
+    function menuModel() {
         void root.marksVersion
         const video = Session.isVideo
-        const entries = [{id: "library", label: "Open in library"}, {separator: true}]
-        if (Session.companionPath !== "") {
-            entries.push({id: "companion", label: Session.isRaw ? "View JPEG companion" : "View RAW companion"})
-        }
+        const byId = {}
         const wanted = video ? root.videoActions : root.stillActions
-        const rows = Registry.actionsForKind(video, false, Session.path)
-        let group = ""
-        for (const row of rows) {
-            const id = row.id
-            if (wanted.indexOf(id) < 0) continue
-            if (group !== "" && row.group !== group) entries.push({separator: true})
-            group = row.group
+        for (const row of Registry.actionsForKind(video, false, Session.path)) {
+            if (wanted.indexOf(row.id) < 0) continue
             let label = row.label
-            if (id === "copy" && video) label = "Copy file"
-            if (id === "play") label = "Open in mpv"
-            entries.push({id: id, label: label, available: row.available, hint: row.hint})
+            if (row.id === "copy" && video) label = "Copy file"
+            if (row.id === "play") label = "Open in mpv"
+            byId[row.id] = {id: row.id, label: label, available: row.available, hint: row.hint}
         }
-        entries.push({separator: true})
+        byId["copy-path"] = {id: "copy-path", label: "Copy path"}
+        byId["copy-name"] = {id: "copy-name", label: "Copy file name"}
+
+        const view = []
         if (video) {
-            entries.push({id: "video-loop", label: "Loop video: " + (root.loopVideo ? "On" : "Off")})
+            view.push({id: "video-loop", label: "Loop video: " + (root.loopVideo ? "On" : "Off")})
             if (root.hasAudioChoices) {
-                entries.push({id: "audio-track", label: "Cycle audio track"})
+                view.push({id: "audio-track", label: "Cycle audio track"})
             }
             if (root.externalSubtitle !== "") {
-                entries.push({id: "subtitles-earlier", label: "Subtitles earlier"})
-                entries.push({id: "subtitles-later", label: "Subtitles later"})
+                view.push({id: "subtitles-earlier", label: "Subtitles earlier"})
+                view.push({id: "subtitles-later", label: "Subtitles later"})
             }
-        }
-        entries.push({id: "copy-path", label: "Copy path"})
-        entries.push({id: "copy-name", label: "Copy file name"})
-        entries.push({separator: true})
-        if (!video) {
+        } else {
             // Nothing to fit or turn when the picture could not be shown.
             const viewable = !root.imageError
-            entries.push({id: "fit", label: "Fit", available: viewable})
-            entries.push({id: "fit-width", label: "Fit width", available: viewable})
-            entries.push({id: "fill", label: "Fill window", available: viewable})
-            entries.push({id: "actual", label: "Actual size", available: viewable})
-            entries.push({id: "fit-shrink", label: "Fit without enlarging", available: viewable})
-            entries.push({id: "rotate", label: "Rotate", available: viewable})
-            entries.push({id: "flip-horizontal", label: "Flip horizontally", available: viewable})
-            entries.push({id: "flip-vertical", label: "Flip vertically", available: viewable})
+            view.push({id: "fit", label: "Fit", available: viewable})
+            view.push({id: "fit-width", label: "Fit width", available: viewable})
+            view.push({id: "fill", label: "Fill window", available: viewable})
+            view.push({id: "actual", label: "Actual size", available: viewable})
+            view.push({id: "fit-shrink", label: "Fit without enlarging", available: viewable})
+            view.push({separator: true})
+            view.push({id: "rotate", label: "Rotate", available: viewable})
+            view.push({id: "flip-horizontal", label: "Flip horizontally", available: viewable})
+            view.push({id: "flip-vertical", label: "Flip vertically", available: viewable})
             if (root.canSaveViewCopy) {
-                entries.push({id: "save-view-copy", label: root.viewCopyLabel,
-                              available: !root.savingViewCopy})
+                byId["save-view-copy"] = {id: "save-view-copy", label: root.viewCopyLabel,
+                                          available: !root.savingViewCopy}
             }
         }
         if (Session.count > 1) {
-            entries.push({id: "slideshow",
-                          label: root.slideshowRunning ? "Stop slideshow" : "Slideshow"})
+            if (view.length > 0) view.push({separator: true})
+            view.push({id: "filmstrip",
+                       label: Settings.viewerFilmstrip ? "Hide filmstrip" : "Show filmstrip"})
         }
+        const share = root.orderedRows(root.shareOrder, byId)
+        const edit = root.orderedRows(root.editOrder, byId)
+
+        const top = [{id: "library", label: "Open in library"}]
+        if (Session.companionPath !== "") {
+            top.push({id: "companion", label: Session.isRaw ? "View JPEG companion" : "View RAW companion"})
+        }
+        top.push({separator: true})
+        if (view.length > 0) top.push({submenu: "view", label: "View"})
+        if (share.length > 0) top.push({submenu: "share", label: "Share"})
+        if (edit.length > 0) top.push({submenu: "edit", label: "Edit"})
+        top.push({separator: true})
         if (Session.count > 1) {
-            entries.push({id: "filmstrip",
-                          label: Settings.viewerFilmstrip ? "Hide filmstrip" : "Show filmstrip"})
+            top.push({id: "slideshow",
+                      label: root.slideshowRunning ? "Stop slideshow" : "Slideshow"})
         }
-        entries.push({id: "fullscreen", label: root.fullScreen ? "Exit full screen" : "Full screen"})
-        entries.push({id: "info", label: root.infoOpen ? "Hide details" : "Details"})
-        entries.push({id: "help", label: "Keyboard shortcuts"})
-        entries.push({separator: true})
-        entries.push({id: "favorite",
-                      label: root.favorite ? "Remove from favourites" : "Add to favourites"})
-        entries.push({id: "trash", label: "Move to Trash"})
-        return entries
+        top.push({id: "fullscreen", label: root.fullScreen ? "Exit full screen" : "Full screen"})
+        top.push({id: "info", label: root.infoOpen ? "Hide details" : "Details"})
+        top.push({id: "help", label: "Keyboard shortcuts"})
+        top.push({separator: true})
+        top.push({id: "favorite",
+                  label: root.favorite ? "Remove from favourites" : "Add to favourites"})
+        top.push({id: "trash", label: "Move to Trash"})
+        return {top: top, view: view, share: share, edit: edit}
+    }
+
+    readonly property var menuGroups: root.menuModel()
+
+    // Every action the menu holds, at any level, in order.
+    function menuEntries() {
+        const groups = root.menuGroups
+        const all = []
+        for (const row of groups.top) {
+            if (row.submenu) {
+                for (const inner of groups[row.submenu]) all.push(Object.assign({group: row.submenu}, inner))
+            } else {
+                all.push(row)
+            }
+        }
+        return all
+    }
+
+    // The top level is put together by hand: the submenus are Menus of their
+    // own, which a Repeater cannot place among its rows.
+    property string builtMenuRows: ""
+    function rebuildActionMenu() {
+        // The rows are recomputed on many changes that leave them the same.
+        const signature = JSON.stringify(actionMenu.rows)
+        if (signature === root.builtMenuRows) return
+        root.builtMenuRows = signature
+        const submenus = {view: viewMenu, share: shareMenu, edit: editMenu}
+        while (actionMenu.count > 0) {
+            const item = actionMenu.itemAt(0)
+            if (item && item.subMenu) actionMenu.takeMenu(0)
+            else actionMenu.removeItem(item)
+        }
+        for (const row of actionMenu.rows) {
+            if (row.submenu) actionMenu.addMenu(submenus[row.submenu])
+            else actionMenu.addItem(topMenuRow.createObject(actionMenu.contentItem, {row: row}))
+        }
     }
 
     function performMenuAction(id) {
@@ -2213,6 +2278,10 @@ ApplicationWindow {
             flippedHorizontally: root.viewFlipHorizontal
             flippedVertically: root.viewFlipVertical
             canSaveCopy: root.canSaveViewCopy && !root.savingViewCopy
+            // A still the editor can write: Save may appear after a turn or
+            // flip, so its place is kept from the start.
+            saveSlotReserved: !Session.isVideo && !Session.isRaw && !Session.isAnimated
+                              && !root.imageError && Session.path !== ""
             saveCopyLabel: root.viewCopyLabel
             onFlipHorizontal: root.flip(true)
             onFlipVertical: root.flip(false)
@@ -2494,125 +2563,76 @@ ApplicationWindow {
         onCopyNameRequested: root.copyPath(true)
     }
 
-    Menu {
+    Component {
+        id: topMenuRow
+        ViewerMenuItem {
+            onTriggered: if (row.id) root.performMenuAction(row.id)
+        }
+    }
+
+    ViewerMenu {
         id: actionMenu
         objectName: "viewerMenu"
+        hostWindow: root
         // Modal, undimmed: the press that closes the menu is consumed here
         // rather than also landing on the picture under it.
         modal: true
         dim: false
+        rows: root.menuGroups.top
         readonly property var entries: root.menuEntries()
+        onRowsChanged: root.rebuildActionMenu()
+        Component.onCompleted: root.rebuildActionMenu()
         onClosed: if (!shortcutHelp.visible) keys.forceActiveFocus()
-        // Sized from the rows themselves. The stock list measures its own
-        // contentHeight, which changes with the height a tall menu is held to
-        // and loops; the rows' heights are known (see the delegate below).
-        readonly property real entriesHeight: {
-            let total = 0
-            for (const entry of entries) {
-                total += entry.separator === true ? 9
-                         : entry.available === false && entry.hint ? 46 : 30
-            }
-            return total
-        }
-        contentItem: ListView {
-            implicitHeight: actionMenu.entriesHeight
-            model: actionMenu.contentModel
-            interactive: Window.window
-                         ? implicitHeight + actionMenu.topPadding + actionMenu.bottomPadding > actionMenu.height
-                         : false
-            clip: true
-            currentIndex: actionMenu.currentIndex
-            ScrollIndicator.vertical: ScrollIndicator {}
-        }
+        // The row that opens a submenu.
+        delegate: ViewerMenuItem {}
+    }
 
-        background: Rectangle {
-            implicitWidth: 232
-            color: root.shade(Theme.background, 0.97)
-            border.width: 1
-            border.color: root.shade(Theme.foreground, 0.16)
-            radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
-        }
-
+    // The submenus. Each fits the window on its own and scrolls like the top.
+    ViewerMenu {
+        id: viewMenu
+        objectName: "viewerSubmenu_view"
+        groupId: "view"
+        title: "View"
+        hostWindow: root
+        rows: root.menuGroups.view
         Repeater {
-            model: actionMenu.entries
-
-            MenuItem {
-                id: entry
+            model: viewMenu.rows
+            ViewerMenuItem {
                 required property var modelData
-                readonly property bool separator: modelData.separator === true
-                objectName: separator ? "" : "viewerMenu_" + modelData.id
-                // The label is drawn below; this is what a screen reader
-                // says. Separators are not items at all to it.
-                text: separator ? "" : modelData.label
-                Accessible.name: separator ? "" : modelData.label
-                                 + (modelData.available === false && modelData.hint
-                                    ? ", needs " + modelData.hint : "")
-                Accessible.description: separator || !root.viewerShortcuts[modelData.id] ? ""
-                                        : "Shortcut " + root.viewerShortcuts[modelData.id]
-                // Controls marks every MenuItem accessible again when it sets
-                // the role, which undoes ignored; a separator role is what
-                // screen readers skip.
-                Accessible.role: separator ? Accessible.Separator : Accessible.MenuItem
-                Accessible.ignored: separator
-                enabled: !separator && modelData.available !== false
-                height: separator ? 9 : modelData.available === false && modelData.hint ? 46 : 30
-                opacity: enabled || separator ? 1 : 0.55
-                contentItem: Item {
-                    Rectangle {
-                        visible: entry.separator
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: parent.width
-                        height: 1
-                        color: root.shade(Theme.foreground, 0.12)
-                    }
-                    Text {
-                        visible: !entry.separator
-                        anchors.left: parent.left
-                        anchors.leftMargin: 12
-                        anchors.right: shortcutText.left
-                        anchors.rightMargin: 8
-                        anchors.verticalCenter: parent.verticalCenter
-                        anchors.verticalCenterOffset: entry.modelData.available === false && entry.modelData.hint ? -7 : 0
-                        text: entry.separator ? "" : entry.modelData.label
-                        elide: Text.ElideRight
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 12
-                        color: entry.modelData.id === "trash" ? Theme.red
-                               : entry.highlighted ? Theme.brightForeground : Theme.foreground
-                    }
-                    Text {
-                        visible: !entry.separator && entry.modelData.available === false && !!entry.modelData.hint
-                        anchors.left: parent.left
-                        anchors.leftMargin: 12
-                        anchors.right: parent.right
-                        anchors.rightMargin: 12
-                        anchors.bottom: parent.bottom
-                        anchors.bottomMargin: 5
-                        text: "Needs " + (entry.modelData.hint || "")
-                        elide: Text.ElideRight
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 10
-                        color: Theme.mutedText
-                    }
-                    Text {
-                        id: shortcutText
-                        visible: !entry.separator
-                        anchors.right: parent.right
-                        anchors.rightMargin: 12
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: entry.separator ? ""
-                              : (root.viewerShortcuts[entry.modelData.id] || "")
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 10
-                        color: Theme.mutedText
-                    }
-                }
-                background: Rectangle {
-                    color: entry.highlighted && !entry.separator
-                           ? root.shade(Theme.foreground, 0.09) : "transparent"
-                    radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 3) : 0
-                }
-                onTriggered: root.performMenuAction(entry.modelData.id)
+                row: modelData
+                onTriggered: root.performMenuAction(modelData.id)
+            }
+        }
+    }
+    ViewerMenu {
+        id: shareMenu
+        objectName: "viewerSubmenu_share"
+        groupId: "share"
+        title: "Share"
+        hostWindow: root
+        rows: root.menuGroups.share
+        Repeater {
+            model: shareMenu.rows
+            ViewerMenuItem {
+                required property var modelData
+                row: modelData
+                onTriggered: root.performMenuAction(modelData.id)
+            }
+        }
+    }
+    ViewerMenu {
+        id: editMenu
+        objectName: "viewerSubmenu_edit"
+        groupId: "edit"
+        title: "Edit"
+        hostWindow: root
+        rows: root.menuGroups.edit
+        Repeater {
+            model: editMenu.rows
+            ViewerMenuItem {
+                required property var modelData
+                row: modelData
+                onTriggered: root.performMenuAction(modelData.id)
             }
         }
     }

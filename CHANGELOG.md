@@ -101,6 +101,21 @@
 
 ### Changed
 
+- Settings is grouped into titled sections (Library, Viewer, Video, Search
+  and text, Albums and backups, Integration, About) with a side index on wide
+  windows, real switches for on/off choices and larger supporting text. The
+  sheet grows with a big window and fades where the list continues.
+- The viewer menu has View, Share and Edit submenus. Every menu stays inside
+  the window, scrolls with the wheel and follows the arrow keys when it is
+  taller than a short window.
+- The library preview uses the viewer's icon toolbar, with rotate left and
+  right and its zoom level, instead of text buttons. Its 1:1 button becomes
+  Fit once zoomed, and Fit, like `0`, also undoes turns and flips. The
+  resize grip sits inside the corner.
+- Long paths in the viewer's details are shortened in the middle, with the
+  whole path in a tooltip.
+- Save copy keeps its place on the viewer toolbar, greyed until the picture
+  is turned or flipped, so no button moves as it comes and goes.
 - Controls over pictures and videos stay dark in every theme, like mpv's: the
   viewer's top scrim, toolbar, video bar, filmstrip, seek preview and notices,
   and the preview's video bar. Only the accent follows the theme, lifted until
