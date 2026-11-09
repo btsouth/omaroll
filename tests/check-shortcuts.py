@@ -11,6 +11,10 @@ names = {'+': 'Plus', '=': 'Equal', '-': 'Minus', '_': 'Underscore', ',': 'Comma
 for context, file, implicit in [('quick', 'ViewerKeys.qml', {'2', '3', '4'}), ('library', 'CaptureGrid.qml', set())]:
     handler = (root / 'qml/components' / file).read_text()
     assert not re.search(r"Qt\.Key_", handler), "Shortcut key defined outside the table"
+    if context == 'library':
+        # The sectioned view hands its keys to the grid's handler.
+        sections = (root / 'qml/components/ReviewSetsView.qml').read_text()
+        assert not re.search(r"Qt\.Key_", sections), "Shortcut key defined outside the table"
     actual = set(re.findall(rf'ShortcutCatalog\.{context}Keys\.(\w+)', handler))
     actual.update(re.findall(rf'ShortcutCatalog\.{context}Keys\["(\d+)"\]', handler))
     documented = set()
@@ -35,7 +39,8 @@ for context, file, implicit in [('quick', 'ViewerKeys.qml', {'2', '3', '4'}), ('
         ids.update(re.findall(r'ShortcutTable::hint\(QStringLiteral\("library"\), QStringLiteral\("([^"]+)"\)\)', registry))
         table_ids = {r['id'] for r in rows if r['context'] == 'library'}
         assert ids <= table_ids, ids - table_ids
-        grid_ids = {'details', 'primary', 'select', 'left', 'right', 'up', 'down', 'ends', 'section-next', 'section-prev'}
+        grid_ids = {'details', 'primary', 'select', 'left', 'right', 'up', 'down', 'ends', 'section-next', 'section-prev',
+                    'pages', 'extend', 'extend-far', 'extend-click', 'toggle-click', 'band', 'select-section'}
         assert table_ids <= ids | grid_ids, table_ids - ids - grid_ids
     else:
         assert actual <= documented, actual - documented

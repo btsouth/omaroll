@@ -107,6 +107,11 @@ the viewer. The preview is the built-in viewer inside the library.
 | `Select text` in a PDF, then drag | Pick the words under the pointer |
 | `Ctrl+C` with words picked | Copy them |
 | `X` · `Ctrl+A` | Select · Select all |
+| `Shift` + click · `Ctrl` + click | Select from the last picked tile · add or remove one tile |
+| `Shift+X` | Select the current tile's day or month, or clear it |
+| `Shift` + arrows · `Home` `End` · `Page Up` `Page Down` | Extend the selection from the last picked tile |
+| drag from empty space · `Ctrl` + drag | Select the tiles the band touches · add them to the selection |
+| `Page Up` `Page Down` on the grid | Move a page |
 | with a selection | `V` `Ctrl+H` `Y` `S` `Del` act on every checked file |
 | `Ctrl` + wheel · `Ctrl` `+` `-` `0` | Bigger or smaller tiles · reset |
 | drag | Drop the file, or the whole selection, into another app |

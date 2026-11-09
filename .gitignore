@@ -5,3 +5,4 @@ compile_commands.json
 
 # Source- and compiler-validated CI build cache
 .ccache/
+__pycache__/
