@@ -2589,18 +2589,46 @@ private slots:
     QVERIFY(item("previewFlipHorizontal")->property("active").toBool());
     click(item("previewFlipVertical"));
     QTRY_VERIFY(detail->property("imageFlipVertical").toBool());
+    // The toggle follows the view: fitted offers 1:1; at actual size or any
+    // other zoom it offers Fit, which also undoes turns and flips, as 0 does.
     QMetaObject::invokeMethod(detail, "resetImageView");
-    // 1:1 shows the picture at its own size, and the same button fits it again.
     QQuickItem* fit = item("previewFitToggle");
-    const bool startsActual = qAbs(detail->property("displayedImageScale").toDouble() - 1.0) < 0.01;
-    if (!startsActual) {
+    QQuickItem* level = item("previewZoomLevel");
+    QVERIFY(level->isVisible());
+    const auto percent = [&] {
+      return QStringLiteral("%1%").arg(qRound(detail->property("displayedImageScale").toDouble() * 100));
+    };
+    QTRY_COMPARE(level->property("text").toString(), percent());
+    const bool fitIsActual = qAbs(detail->property("displayedImageScale").toDouble() - 1.0) < 0.01;
+    if (!fitIsActual) {
       QCOMPARE(fit->property("label").toString(), QStringLiteral("1:1"));
+      QCOMPARE(fit->property("shortcut").toString(), QStringLiteral("1"));
       click(fit);
       QTRY_VERIFY(qAbs(detail->property("displayedImageScale").toDouble() - 1.0) < 0.01);
+      QTRY_COMPARE(level->property("text").toString(), QStringLiteral("100%"));
       QTRY_COMPARE(fit->property("label").toString(), QStringLiteral("Fit"));
       click(fit);
       QTRY_COMPARE(detail->property("imageZoom").toDouble(), 1.0);
+      QTRY_COMPARE(fit->property("label").toString(), QStringLiteral("1:1"));
+    } else {
+      QCOMPARE(fit->property("label").toString(), QStringLiteral("Fit"));
+      QVERIFY(fit->property("active").toBool());
     }
+    // Zoomed past fit, the way back is Fit, not actual size.
+    click(item("previewZoomIn"));
+    QTRY_COMPARE(detail->property("imageZoom").toDouble(), 1.25);
+    QTRY_COMPARE(level->property("text").toString(), percent());
+    QCOMPARE(fit->property("label").toString(), QStringLiteral("Fit"));
+    QCOMPARE(fit->property("shortcut").toString(), QStringLiteral("0"));
+    QVERIFY(!fit->property("active").toBool());
+    click(item("previewRotateRight"));
+    click(item("previewFlipVertical"));
+    QTRY_VERIFY(detail->property("imageFlipVertical").toBool());
+    click(fit);
+    QTRY_COMPARE(detail->property("imageZoom").toDouble(), 1.0);
+    QCOMPARE(detail->property("imageRotation").toInt(), 0);
+    QVERIFY(!detail->property("imageFlipHorizontal").toBool());
+    QVERIFY(!detail->property("imageFlipVertical").toBool());
     click(item("previewFullScreenButton"));
     QTRY_VERIFY(detail->property("fullScreen").toBool());
     QCOMPARE(item("previewFullScreenButton")->property("icon").toString(), QStringLiteral("fullscreen-exit"));

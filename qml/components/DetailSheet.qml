@@ -2003,8 +2003,14 @@ Item {
                 trashControl: false
                 fullScreenControl: true
                 fullScreen: root.fullScreen
-                fitted: root.isDocument ? root.imageZoom === 1
-                                        : Math.abs(root.displayedImageScale - 1) >= 0.01
+                // Three states: fitted (offer 1:1), at actual size or zoomed
+                // anywhere else (offer Fit, which, like 0, also undoes turns
+                // and flips). A picture whose fit already is its own size has
+                // nothing to toggle to but Fit.
+                fitted: root.imageZoom === 1
+                offerActual: !root.isDocument && root.imageZoom === 1
+                             && Math.abs(root.displayedImageScale - 1) >= 0.01
+                zoomText: Math.round(root.displayedImageScale * 100) + "%"
                 canStep: root.canNavigate
                 slideshowRunning: root.slideshowRunning
                 flippedHorizontally: root.imageFlipHorizontal
@@ -2024,7 +2030,7 @@ Item {
                 })
                 onZoomOut: root.adjustImageZoom(1 / 1.25)
                 onZoomIn: root.adjustImageZoom(1.25)
-                onToggleFit: root.isDocument ? root.resetImageView() : root.toggleActualImageSize()
+                onToggleFit: offerActual ? root.showActualImageSize() : root.resetImageView()
                 onPrevious: root.requestNavigation(-1)
                 onNext: root.requestNavigation(1)
                 onSlideshow: root.setSlideshow(!root.slideshowRunning)

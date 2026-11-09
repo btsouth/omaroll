@@ -2239,6 +2239,10 @@ ApplicationWindow {
             flippedHorizontally: root.viewFlipHorizontal
             flippedVertically: root.viewFlipVertical
             canSaveCopy: root.canSaveViewCopy && !root.savingViewCopy
+            // A still the editor can write: Save may appear after a turn or
+            // flip, so its place is kept from the start.
+            saveSlotReserved: !Session.isVideo && !Session.isRaw && !Session.isAnimated
+                              && !root.imageError && Session.path !== ""
             saveCopyLabel: root.viewCopyLabel
             onFlipHorizontal: root.flip(true)
             onFlipVertical: root.flip(false)

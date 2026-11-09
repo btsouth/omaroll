@@ -1329,6 +1329,7 @@ private slots:
       QVERIFY(!vertical->state().checked);
     }
     QVERIFY(item(QStringLiteral("viewerSaveCopy"))->isVisible());
+    QVERIFY(item(QStringLiteral("viewerSaveCopy"))->isEnabled());
 
     // The left of the screen, blue, goes to the top.
     QTest::keyClick(m_window, Qt::Key_R);
@@ -1378,7 +1379,9 @@ private slots:
     QVERIFY(!prop("viewFlipHorizontal").toBool());
     QVERIFY(!prop("viewFlipVertical").toBool());
     QVERIFY(!menuIds(menu).contains(QStringLiteral("save-view-copy")));
-    QVERIFY(!item(QStringLiteral("viewerSaveCopy"))->isVisible());
+    // Kept in place on the bar, greyed until there is a turn or flip to save.
+    QVERIFY(item(QStringLiteral("viewerSaveCopy"))->isVisible());
+    QVERIFY(!item(QStringLiteral("viewerSaveCopy"))->isEnabled());
     QCOMPARE(digest(first), before);
     QCOMPARE(QDir(folder).entryList(QDir::Files).size(), 2);
 
@@ -1393,9 +1396,9 @@ private slots:
     player->pause();
   }
 
-  // Save copy leaves the toolbar while the copy is written and after; with
-  // the pointer still on the bar its place stays, so the next button is not
-  // pulled under the pointer. Off the bar, the gap closes.
+  // Save comes up after a turn or flip and goes while the copy is written
+  // and after. Its place on a still's toolbar is kept throughout, so no
+  // button moves under the pointer either way, on the bar or off it.
   void toolbarKeepsItsPlaceAfterSaveCopy() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -1408,26 +1411,50 @@ private slots:
     QTRY_VERIFY(prop("imageReady").toBool());
     m_window->setProperty("chromePinned", true);
     const auto unpin = qScopeGuard([&] { m_window->setProperty("chromePinned", false); });
-    QTest::keyClick(m_window, Qt::Key_H, Qt::ShiftModifier);
     QQuickItem* save = item(QStringLiteral("viewerSaveCopy"));
     QQuickItem* slot = item(QStringLiteral("viewerSaveCopySlot"));
     QQuickItem* trash = item(QStringLiteral("viewerTrashButton"));
-    QTRY_VERIFY(save->isVisible());
+    QQuickItem* flip = item(QStringLiteral("viewerFlipHorizontal"));
+    QQuickItem* rotate = item(QStringLiteral("viewerRotateRight"));
+    // Nothing to save yet: the place is there, greyed.
+    QTRY_VERIFY(slot->isVisible());
+    QVERIFY(save->isVisible() && !save->isEnabled());
     QTest::qWait(30);
     const qreal trashX = trash->mapToScene(QPointF()).x();
-    const QPoint onSave = save->mapToScene(QPointF(save->width() / 2, save->height() / 2)).toPoint();
-    QTest::mouseMove(m_window, onSave);
+    const qreal flipX = flip->mapToScene(QPointF()).x();
+    const auto centre = [](QQuickItem* target) {
+      return target->mapToScene(QPointF(target->width() / 2, target->height() / 2)).toPoint();
+    };
+
+    // Appearing: flip from the bar, and the button under the pointer stays.
+    QTest::mouseMove(m_window, centre(flip));
     QTRY_VERIFY(item(QStringLiteral("viewerToolbar"))->property("hovered").toBool());
+    QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, centre(flip));
+    QTRY_VERIFY(save->isEnabled());
+    QTest::qWait(30);
+    QCOMPARE(flip->mapToScene(QPointF()).x(), flipX);
+    QCOMPARE(trash->mapToScene(QPointF()).x(), trashX);
+    // A turn on top changes nothing on the bar.
+    QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, centre(rotate));
+    QTRY_VERIFY(prop("viewRotation").toInt() != 0);
+    QVERIFY(save->isEnabled());
+    QCOMPARE(trash->mapToScene(QPointF()).x(), trashX);
+
+    // Going: save, while the copy is written and once it is open.
+    const QPoint onSave = centre(save);
+    QTest::mouseMove(m_window, onSave);
     QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, onSave);
     QTRY_VERIFY_WITH_TIMEOUT(m_session->path() != source, 15000);
-    QTRY_VERIFY(!save->isVisible());
+    QTRY_VERIFY(!save->isEnabled());
     QVERIFY(slot->isVisible());
     QTest::qWait(30);
     QCOMPARE(trash->mapToScene(QPointF()).x(), trashX);
-    // The pointer leaves the bar: Save's place goes.
+    // Off the bar the place stays too: the copy is a still that can be turned.
     QTest::mouseMove(m_window, QPoint(m_window->width() / 2, 40));
-    QTRY_VERIFY(!slot->isVisible());
-    QTRY_VERIFY(trash->mapToScene(QPointF()).x() != trashX);
+    QTRY_VERIFY(!item(QStringLiteral("viewerToolbar"))->property("hovered").toBool());
+    QTest::qWait(30);
+    QVERIFY(slot->isVisible());
+    QCOMPARE(trash->mapToScene(QPointF()).x(), trashX);
   }
 
   void savesWhatTheViewShowsAsACopy_data() {
@@ -1471,7 +1498,7 @@ private slots:
     QTRY_COMPARE(prop("status").toString(), QStringLiteral("Rotate or flip the picture first"));
     QTest::keyClick(m_window, Qt::Key_R);
     if (flip) QTest::keyClick(m_window, Qt::Key_H, Qt::ShiftModifier);
-    QTRY_VERIFY(item(QStringLiteral("viewerSaveCopy"))->isVisible());
+    QTRY_VERIFY(item(QStringLiteral("viewerSaveCopy"))->isEnabled());
     if (jpeg) QTest::keyClick(m_window, Qt::Key_S, Qt::ControlModifier);
     else click(item(QStringLiteral("viewerSaveCopy")));
 

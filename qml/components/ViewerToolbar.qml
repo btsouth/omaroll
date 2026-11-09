@@ -34,6 +34,15 @@ Rectangle {
     function hint(id) { return root.hints[id] || "" }
 
     property bool fitted: true
+    // The toggle offers actual size (1:1) when true, otherwise Fit. A window
+    // that knows more than "fitted or not" decides it.
+    property bool offerActual: root.fitted && root.actualControl
+    // The zoom level beside the zoom buttons, such as "57%"; empty shows none.
+    property string zoomText: ""
+    // Save's place is kept while a copy could be saved after a turn or flip,
+    // so the bar never moves as the button comes and goes; it is greyed until
+    // there is something to save.
+    property bool saveSlotReserved: false
     property bool canStep: false
     property bool slideshowRunning: false
     // On a narrow window the zoom group gives way; the wheel and keys still zoom.
@@ -63,10 +72,8 @@ Rectangle {
     signal trash()
     signal toggleFullScreen()
 
-    // Once Save is up and the pointer is on the bar, its place stays when it
-    // goes (as it does on a click, while the copy is written and after), so
-    // the buttons beside it never move under the pointer. Off the bar, the
-    // gap closes.
+    // Where no place is reserved, Save's place still stays while the pointer
+    // is on the bar after the button goes, so nothing moves under it.
     property bool holdSaveSlot: false
     onCanSaveCopyChanged: if (!canSaveCopy && hover.hovered) holdSaveSlot = true
     onHoveredChanged: if (!hovered) holdSaveSlot = false
@@ -121,10 +128,10 @@ Rectangle {
             objectName: root.namePrefix + "FitToggle"
             enabled: root.viewControls
             visible: !root.compact
-            label: root.fitted && root.actualControl ? "1:1" : "Fit"
-            active: !root.actualControl && root.fitted
-            toolTip: root.fitted && root.actualControl ? "Actual size" : "Fit to window"
-            shortcut: root.hint(root.fitted && root.actualControl ? "actual" : "fit")
+            label: root.offerActual ? "1:1" : "Fit"
+            active: !root.offerActual && root.fitted
+            toolTip: root.offerActual ? "Actual size" : "Fit to window"
+            shortcut: root.hint(root.offerActual ? "actual" : "fit")
             onClicked: root.toggleFit()
         }
         IconButton {
@@ -135,6 +142,20 @@ Rectangle {
             toolTip: "Zoom in"
             shortcut: root.hint("zoom-in")
             onClicked: root.zoomIn()
+        }
+        Text {
+            objectName: root.namePrefix + "ZoomLevel"
+            visible: !root.compact && root.zoomText !== ""
+            // A fixed width, so the bar does not shift as the number changes.
+            width: 44
+            anchors.verticalCenter: parent.verticalCenter
+            horizontalAlignment: Text.AlignHCenter
+            text: root.zoomText
+            font.family: Theme.fontFamily
+            font.pixelSize: 12
+            color: Theme.mutedText
+            Accessible.role: Accessible.StaticText
+            Accessible.name: "Zoom " + root.zoomText
         }
         Divider { visible: !root.compact }
 
@@ -206,7 +227,7 @@ Rectangle {
         Item {
             id: saveSlot
             objectName: root.namePrefix + "SaveCopySlot"
-            visible: root.canSaveCopy || root.holdSaveSlot
+            visible: root.canSaveCopy || root.saveSlotReserved || root.holdSaveSlot
             width: saveButton.implicitWidth
             height: saveButton.implicitHeight
 
@@ -214,7 +235,7 @@ Rectangle {
                 id: saveButton
                 objectName: root.namePrefix + "SaveCopy"
                 anchors.fill: parent
-                visible: root.canSaveCopy
+                enabled: root.canSaveCopy
                 icon: "save"
                 toolTip: root.saveCopyLabel
                 shortcut: root.hint("save-view-copy")
