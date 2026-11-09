@@ -48,7 +48,9 @@ POOL_THREAD = "Thread (pooled)"
 # libQt6Core. QtTest's watchdog waits on a condition variable on the main
 # thread's stack, and that stack is reused after the watchdog is gone.
 KNOWN_QT_THREADS = ["QtTest Watchdog"]
-FRAME = re.compile(r"^\s*#\d+ (.*?) (?:<null>|\S+:\d+(?::\d+)?) \(([^()+]+)\+0x[0-9a-f]+\)")
+# "#3 function location (module+0xoffset)", where the location is <null>, a
+# file, or file:line[:column], and the module may contain "+" (libstdc++).
+FRAME = re.compile(r"^\s*#\d+ (.*) (\S+) \(([^()]+)\+0x[0-9a-f]+\)(?: \(BuildId: [0-9a-f]+\))?\s*$")
 ACCESS = re.compile(r"^  (Previous )?([Aa]tomic )?(Read|Write|read|write) of size .* by (main thread|thread (T\d+))")
 THREAD = re.compile(r"^  Thread (T\d+) '([^']*)'", re.M)
 INTERCEPTOR = re.compile(
@@ -62,8 +64,10 @@ def first_frame(frames):
     for frame in frames:
         match = FRAME.match(frame)
         if not match:
+            if re.match(r"^\s*#\d+ ", frame):
+                return "<unparsed>", "omaroll-unparsed"
             continue
-        function, module = match.groups()
+        function, module = match.group(1), match.group(3)
         # The interceptors live in the instrumented binary. A libc frame that
         # happens to be called strdup or free is libc itself.
         if INTERCEPTOR.match(function) and module.startswith("omaroll"):
@@ -89,11 +93,15 @@ def access_stacks(block):
 
 
 def frame_functions(frames):
+    """(function, module) for each frame. A frame line this cannot read counts
+    as ours, so no rule mistakes a stack for Qt's because a frame was lost."""
     out = []
     for frame in frames:
         match = FRAME.match(frame)
         if match:
-            out.append(match.groups())
+            out.append((match.group(1), match.group(3)))
+        elif re.match(r"^\s*#\d+ ", frame):
+            out.append(("<unparsed>", "omaroll-unparsed"))
     return out
 
 
@@ -124,7 +132,7 @@ def handing_over(task):
             header = source is not None and source.group(1).startswith("/usr/")
             copy = match is not None and COPY_CONSTRUCTOR.search(match.group(1))
             intercepted = match is not None and INTERCEPTOR.match(match.group(1)) and \
-                match.group(2).startswith("omaroll")
+                match.group(3).startswith("omaroll")
             if not header and not copy and not intercepted:
                 return False
         return True
@@ -139,8 +147,14 @@ def task_start_handoff(stacks):
             continue
         if any(TASK_START.search(frame) for frame in other):
             return True
+        # Or Qt allocating an implicitly shared block (a QString, QByteArray
+        # or container) that a capture shares. Once the stored call shares
+        # it, a write on the other thread detaches into a new block, so this
+        # block cannot change after the task started. Our own allocations
+        # do not pass: they need evidence they were made before the start.
         frames = frame_functions(other)
-        if frames and ALLOCATION.match(frames[0][0]):
+        if len(frames) >= 2 and ALLOCATION.match(frames[0][0]) and frames[0][1].startswith("omaroll") \
+                and frames[1][1].startswith("libQt6Core"):
             return True
     return False
 

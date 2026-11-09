@@ -1,0 +1,27 @@
+A frame the triage cannot read (here one without a module) counts as ours, so
+a stack never looks Qt-only because a frame of ours was dropped. Built from
+the QThreadPool runnable fixture. (CodeRabbit on #171.)
+==================
+WARNING: ThreadSanitizer: data race (pid=2898)
+  Write of size 8 at 0x727400002800 by thread T3:
+    #0 operator delete(void*, unsigned long) <null> (omaroll_tests+0x133aff)
+    #1 Library::touch() src/library/Library.cpp
+
+  Previous write of size 8 at 0x727400002800 by main thread:
+    #0 operator new(unsigned long) <null> (omaroll_tests+0x132f68)
+    #1 QThreadPoolPrivate::enqueueTask(QRunnable*, int) <null> (libQt6Core.so.6+0x2c03c2)
+    #2 (anonymous namespace)::photoScene(unsigned int) /__w/omaroll/omaroll/tests/tst_omaroll.cpp:427:13 (omaroll_tests+0x13d3a8)
+    #3 OmarollTest::similarPicturesMatchCopiesButNotDifferentTextScreenshots() /__w/omaroll/omaroll/tests/tst_omaroll.cpp:8478:27 (omaroll_tests+0x2b0a84)
+    #4 OmarollTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /__w/omaroll/omaroll/build/tsan/omaroll_tests_autogen/include/tst_omaroll.moc:1265:23 (omaroll_tests+0x135df0)
+    #5 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #6 <null> <null> (libc.so.6+0x27780)
+
+  Thread T3 'Thread (pooled)' (tid=2902, running) created by main thread at:
+    #0 pthread_create <null> (omaroll_tests+0xacbbe)
+    #1 QThread::start(QThread::Priority) <null> (libQt6Core.so.6+0x3765f4)
+    #2 OmarollTest::similarPicturesMatchCopiesButNotDifferentTextScreenshots() /__w/omaroll/omaroll/tests/tst_omaroll.cpp:8478:27 (omaroll_tests+0x2b0a84)
+    #3 OmarollTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /__w/omaroll/omaroll/build/tsan/omaroll_tests_autogen/include/tst_omaroll.moc:1265:23 (omaroll_tests+0x135df0)
+    #4 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #5 <null> <null> (libc.so.6+0x27780)
+
+SUMMARY: ThreadSanitizer: data race (/__w/omaroll/omaroll/build/tsan/omaroll_tests+0x133aff) in operator delete(void*, unsigned long)
