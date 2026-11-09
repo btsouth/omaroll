@@ -1231,7 +1231,9 @@ private slots:
       const int next = (i + 1) % paths.size();
       QCOMPARE(viewer.neighbourIsVideo(1), next >= 4);
       QCOMPARE(viewer.neighbourIsAnimated(1), next == 2 || next == 3);
-      QTRY_VERIFY_WITH_TIMEOUT(model.rowOf(paths.at(i)) >= 0, 5000);
+      // Wait for the scan to finish rather than guessing how long a sanitizer
+      // build takes to read these files.
+      QVERIFY(QTest::qWaitFor([&] { return !model.scanning() && model.rowOf(paths.at(i)) >= 0; }, 60000));
       const auto& record = model.recordAt(model.rowOf(paths.at(i)));
       QCOMPARE(record.fileName, QFileInfo(paths.at(i)).fileName());
       QCOMPARE(record.isVideo(), video);

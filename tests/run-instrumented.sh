@@ -12,7 +12,8 @@ case "$mode" in
   tsan)
     cmake -S . -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ \
       '-DCMAKE_CXX_FLAGS=-fsanitize=thread -fno-omit-frame-pointer' -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread
-    cmake --build "$build" --parallel 4 --target omaroll_tests
+    # Some core tests launch the omaroll executable itself.
+    cmake --build "$build" --parallel 4 --target omaroll omaroll_tests
     # Arch's Qt is not built with TSan. ignore_noninstrumented_modules drops
     # reports raised by malloc/memcpy-style interceptors called from inside
     # uninstrumented libraries (Qt's own containers and thread pool), whose
