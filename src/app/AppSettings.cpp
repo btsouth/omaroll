@@ -12,6 +12,8 @@
 #include <QCoreApplication>
 #include <QGuiApplication>
 #include <QClipboard>
+#include <QFutureWatcher>
+#include <QtConcurrent>
 #include <QStandardPaths>
 #include <QSysInfo>
 #include <QRegularExpression>
@@ -3026,6 +3028,17 @@ void AppSettings::setHyprDirectory(const QString &directory) {
   emit windowRulesChanged();
 }
 
-void AppSettings::copyDiagnostics(const QString &theme, qreal scale) const {
-  QGuiApplication::clipboard()->setText(diagnostics(theme, scale));
+void AppSettings::copyDiagnostics(const QString &theme, qreal scale) {
+  if (m_copyingDiagnostics) return;
+  m_copyingDiagnostics = true;
+  auto *watcher = new QFutureWatcher<QString>(this);
+  connect(watcher, &QFutureWatcher<QString>::finished, this, [this, watcher] {
+    QGuiApplication::clipboard()->setText(watcher->result());
+    watcher->deleteLater();
+    m_copyingDiagnostics = false;
+    emit diagnosticsCopied();
+  });
+  watcher->setFuture(QtConcurrent::run([platform = QGuiApplication::platformName(), theme, scale] {
+    return Diagnostics::report(Diagnostics::Sources::system(), platform, theme, scale);
+  }));
 }

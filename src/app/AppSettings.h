@@ -116,7 +116,10 @@ public:
   QString appVersion() const { return QStringLiteral(OMAROLL_VERSION); }
   QString qtVersion() const { return QString::fromLatin1(qVersion()); }
   Q_INVOKABLE QString diagnostics(const QString &theme, qreal scale) const;
-  Q_INVOKABLE void copyDiagnostics(const QString &theme, qreal scale) const;
+  // Builds the report on a worker thread, since it may wait on hyprctl, then
+  // copies it and emits diagnosticsCopied. A click while one is being built
+  // is ignored.
+  Q_INVOKABLE void copyDiagnostics(const QString &theme, qreal scale);
   // Optional programs that aren't installed, one per package, each with the
   // feature it enables and its pacman command. Checked on each call.
   Q_INVOKABLE QVariantList missingTools() const;
@@ -376,6 +379,7 @@ public:
 
 signals:
   void windowRulesChanged();
+  void diagnosticsCopied();
   void showHiddenChanged();
   void sortModeChanged();
   void kindFilterChanged();
@@ -423,6 +427,7 @@ signals:
 private:
   QString m_hyprDirectory;
   mutable QString m_screenshotKey;
+  bool m_copyingDiagnostics = false;
 #ifdef OMAROLL_TESTING
   friend class OmarollTest;
   static thread_local QStringList* s_fingerprintReadPaths;

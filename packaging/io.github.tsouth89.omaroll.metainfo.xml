@@ -60,7 +60,7 @@
         <p>A redesigned library and viewer, sections by date, and clear help when something goes wrong.</p>
         <ul>
           <li>Date sections, file-manager selection, combined filters and search fields such as tag:, camera: and in:</li>
-          <li>Seek-bar previews, HDR details, Open in mpv at the current position and --start for videos</li>
+          <li>Seek-bar previews, Open in mpv at the current position and --start for videos</li>
           <li>Undo for Trash, automatic backups of your organization and Save rotated copy in the viewer</li>
           <li>Settings in sections, shortcut help on ? and F1, and Copy diagnostics in About</li>
           <li>omaroll --set-default and --unset-default, Hyprland window rules and a man page</li>

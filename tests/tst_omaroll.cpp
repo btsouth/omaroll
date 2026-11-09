@@ -2037,6 +2037,24 @@ private slots:
     timer.start();
     QCOMPARE(Diagnostics::hyprlandVersion(sources), QStringLiteral("unknown"));
     QVERIFY2(timer.elapsed() < 4000, qPrintable(QString::number(timer.elapsed())));
+    {
+      // Copy diagnostics in Settings: the window keeps running while a hung
+      // hyprctl is waited out, and a second click meanwhile is ignored.
+      AppSettings settings;
+      QSignalSpy copied(&settings, &AppSettings::diagnosticsCopied);
+      QGuiApplication::clipboard()->setText(QStringLiteral("before"));
+      timer.restart();
+      settings.copyDiagnostics(QStringLiteral("Catppuccin Latte"), 1);
+      settings.copyDiagnostics(QStringLiteral("Catppuccin Latte"), 1);
+      QVERIFY2(timer.elapsed() < 250, qPrintable(QString::number(timer.elapsed())));
+      QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("before"));
+      QVERIFY(copied.wait(5000));
+      const QString text = QGuiApplication::clipboard()->text();
+      QVERIFY2(text.contains(QStringLiteral("\nHyprland config: unknown\n")), qPrintable(text));
+      QVERIFY(text.contains(QStringLiteral("\nTheme: Catppuccin Latte\n")));
+      QTest::qWait(100);
+      QCOMPARE(copied.size(), 1);
+    }
 
     // A pacman package wins, and hyprctl is not asked for the version.
     QVERIFY(QDir().mkpath(root.filePath(QStringLiteral("local/hyprland-0.57.1-2"))));

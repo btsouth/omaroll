@@ -5,7 +5,9 @@ and [project status](docs/STATUS.md). Announce a release after its approved tag
 has built successfully and the public artifacts have been verified.
 
 1. Update the version in `CMakeLists.txt`, AppStream metadata, the changelog,
-   README package command, and public feature descriptions.
+   README package command, and public feature descriptions. The newest
+   `<release>` in the AppStream metadata (1.19.0 is dated 2026-11-09 ahead of
+   time) gets the actual release day, and its summary must match what ships.
 2. Run a clean Release build, tests through `tests/run-isolated.sh`, metadata
    validation, and a staged install. See [validation](tests/README.md).
 3. Run the sanitizer build and render every deterministic view inside the local
