@@ -18,3 +18,8 @@ race:QtPrivate::ResultStoreBase::clear
 # TSan matches the interceptor's internal name (___interceptor_realloc), so
 # anchor only the end; every C++ frame ends in its parameter list instead.
 race:realloc$
+# glibc caches strings such as the time zone name with strdup and frees the old
+# copy later, under its own internal lock (Qt calls tzset() while converting
+# file times on worker threads). Seen as a strdup on a pool thread and a free
+# inside libc on the main thread. Omaroll never calls strdup.
+race:strdup$
