@@ -4173,9 +4173,22 @@ private slots:
       }
       if (frozen >= 8 || changes < 10) {
         ++failures;
+        // Still a failure; say whether the recovery seeks ran and whether the
+        // picture came back later, which tells a slow recovery from none.
+        QObject* presentation = viewer.window->property("presentation").value<QObject*>();
+        const int resyncs = presentation ? presentation->property("stallResyncs").toInt() : -1;
+        const bool watching = presentation && presentation->property("watchingStall").toBool();
+        const qint64 stuck = player->videoSink()->videoFrame().startTime();
+        QElapsedTimer after;
+        after.start();
+        while (after.elapsed() < 3000 && player->videoSink()->videoFrame().startTime() == stuck) QTest::qWait(50);
+        const bool resumed = player->videoSink()->videoFrame().startTime() != stuck;
         qWarning().noquote() << "track change" << attempt << track << "frame" << lastFrame / 1000
                              << "position" << player->position() << "changes" << changes
-                             << "frozen" << frozen << "state" << player->playbackState();
+                             << "frozen" << frozen << "state" << player->playbackState()
+                             << "resyncs" << resyncs << "watching" << watching
+                             << (resumed ? QStringLiteral("resumed after %1 ms more").arg(after.elapsed())
+                                         : QStringLiteral("still frozen 3 s later"));
       }
       viewer.window->close();
     }

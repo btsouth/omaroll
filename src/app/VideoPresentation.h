@@ -74,6 +74,10 @@ class VideoPresentation : public QQuickItem {
   Q_PROPERTY(QString hdr READ hdr NOTIFY hdrChanged)
   // Stalled play time allowed before a first frame; tests shorten it.
   Q_PROPERTY(int firstFrameTimeoutMs MEMBER m_firstFrameTimeoutMs)
+  // For diagnosis: whether a track change is being watched for a stall, and
+  // how many in-place seeks it has made since the last reset().
+  Q_PROPERTY(bool watchingStall READ watchingStall)
+  Q_PROPERTY(int stallResyncs READ stallResyncs)
 public:
   // How far a paused picture may be from the reported position before it is
   // treated as stale. Generous: audio and video positions differ a little.
@@ -130,6 +134,8 @@ public:
   bool ready() const { return m_ready; }
   bool hasFrame() const { return m_hasFrame; }
   QString failure() const { return m_failure; }
+  bool watchingStall() const { return m_stallTimer.isActive(); }
+  int stallResyncs() const { return m_resyncCount; }
   QString hdr() const { return m_hdr; }
   QMediaPlayer* player() const { return m_player; }
   void setPlayer(QMediaPlayer* player) {
@@ -154,6 +160,7 @@ public:
     m_stallTimer.stop();
     m_openTimer.stop();
     m_firstFrame.reset();
+    m_resyncCount = 0;
     m_noStreams.invalidate();
     m_input.setSubtitleText({});
     releaseHeap();
@@ -337,6 +344,7 @@ private:
       return;
     }
     ++m_stallResyncs;
+    ++m_resyncCount;
     m_stallProgress = now;
     m_stallLimit = kResyncGraceMs;
     m_stallUntil = std::max(m_stallUntil, now + kResyncGraceMs + kStallMs * 2);
@@ -427,6 +435,7 @@ private:
   qint64 m_stallProgress = 0;
   qint64 m_stallLimit = 0;
   int m_stallResyncs = 0;
+  int m_resyncCount = 0;
   quint64 m_stallFrames = 0;
   bool m_ready = false;
   bool m_hasFrame = false;
