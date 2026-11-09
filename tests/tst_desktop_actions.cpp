@@ -81,6 +81,8 @@ public:
   explicit FakeFileChooser(QDBusConnection bus) : bus(std::move(bus)) {}
   uint result = 0;
   QStringList uris;
+  // How long the portal takes to show the chooser, as on a cold start.
+  int replyDelay = 0;
   int calls = 0;
   QString title;
   QVariantMap options;
@@ -97,6 +99,15 @@ public slots:
     auto signal = QDBusMessage::createSignal(handle, QStringLiteral("org.freedesktop.portal.Request"),
                                             QStringLiteral("Response"));
     signal.setArguments({result, QVariantMap{{QStringLiteral("uris"), uris}}});
+    if (replyDelay > 0) {
+      setDelayedReply(true);
+      const QDBusMessage reply = message().createReply(QVariant::fromValue(QDBusObjectPath(handle)));
+      QTimer::singleShot(replyDelay, this, [this, signal, reply] {
+        bus.send(signal);
+        bus.send(reply);
+      });
+      return {};
+    }
     bus.send(signal);
     return QDBusObjectPath(handle);
   }
@@ -231,6 +242,33 @@ private slots:
     QTRY_COMPARE(launcher.findChildren<FileChooserRequest*>().size(), 0);
     QCOMPARE(opened.size(), 1);
     QVERIFY(errors.isEmpty());
+
+    // Nothing on this computer was chosen: that is said, not dropped.
+    chooser.result = 0;
+    chooser.uris = {QStringLiteral("https://example.com/remote.png")};
+    QVERIFY(launcher.chooseFilesToOpen());
+    QTRY_COMPARE(errors.size(), 1);
+    QVERIFY2(errors.first().first().toString().contains(QStringLiteral("this computer")),
+             qPrintable(errors.first().first().toString()));
+    QTRY_COMPARE(launcher.findChildren<FileChooserRequest*>().size(), 0);
+    QCOMPARE(opened.size(), 1);
+  }
+
+  // A portal that takes a while to start still delivers the choice.
+  void fileChooserWaitsForASlowPortal() {
+    FakeFileChooser chooser(serviceBus());
+    chooser.uris = {QUrl::fromLocalFile(filePath).toString()};
+    chooser.replyDelay = 6000;
+    QVERIFY(serviceBus().registerService(QStringLiteral("org.freedesktop.portal.Desktop")));
+    QVERIFY(serviceBus().registerObject(QStringLiteral("/org/freedesktop/portal/desktop"), &chooser,
+                                       QDBusConnection::ExportAllSlots));
+    ActionLauncher launcher(nullptr, clientBus());
+    QSignalSpy opened(&launcher, &ActionLauncher::openRequested);
+    QSignalSpy errors(&launcher, &ActionLauncher::failed);
+    QVERIFY(launcher.chooseFilesToOpen());
+    QTRY_COMPARE_WITH_TIMEOUT(opened.size(), 1, 10000);
+    QCOMPARE(opened.first().first().toStringList(), QStringList{filePath});
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.isEmpty() ? QString() : errors.first().first().toString()));
   }
 
   void fileChooserWithoutAPortalSaysSo() {

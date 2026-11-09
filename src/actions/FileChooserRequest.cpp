@@ -115,7 +115,9 @@ bool FileChooserRequest::start(const QString& title, const QStringList& mimeType
       service, u"/org/freedesktop/portal/desktop"_s, u"org.freedesktop.portal.FileChooser"_s,
       u"OpenFile"_s);
   message.setArguments({QString(), title, options});
-  auto* watcher = new QDBusPendingCallWatcher(m_bus.asyncCall(message, 5000), this);
+  // The call returns once the chooser is up, which can take a while when
+  // the portal and its backend have to start first.
+  auto* watcher = new QDBusPendingCallWatcher(m_bus.asyncCall(message, 30000), this);
   connect(watcher, &QDBusPendingCallWatcher::finished, this,
           [this](QDBusPendingCallWatcher* completed) {
     const QDBusPendingReply<QDBusObjectPath> reply = *completed;
@@ -141,9 +143,16 @@ void FileChooserRequest::response(uint result, const QVariantMap& results) {
   }
   QStringList paths;
   if (result == 0) {
-    for (const QString& uri : results.value(u"uris"_s).toStringList()) {
+    const QStringList uris = results.value(u"uris"_s).toStringList();
+    for (const QString& uri : uris) {
       const QUrl url(uri);
       if (url.isLocalFile()) paths.append(url.toLocalFile());
+    }
+    // Only files on this computer open; say so rather than doing nothing.
+    if (paths.isEmpty() && !uris.isEmpty()) {
+      finish(uris.size() == 1 ? u"Only files on this computer can be opened"_s
+                              : u"None of those are files on this computer"_s);
+      return;
     }
   }
   m_finished = true;
