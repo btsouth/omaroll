@@ -18,7 +18,7 @@ inline QVariantList rows() {
   {"context": "quick", "id": "filmstrip", "keys": ["B"], "label": "Show / hide filmstrip", "group": "Navigation", "flag": "", "tokens": ["B"]},
   {"context": "quick", "id": "slideshow", "keys": ["F5"], "label": "Start / stop slideshow", "group": "Navigation", "flag": "", "tokens": ["F5"]},
   {"context": "quick", "id": "escape", "keys": ["Esc"], "label": "Stop slideshow, leave full screen, close details or viewer", "group": "Navigation", "flag": "", "tokens": ["Escape"]},
-  {"context": "quick", "id": "focus", "keys": ["Tab", "Backtab"], "label": "Keep viewer keyboard focus", "group": "Navigation", "flag": "", "tokens": ["Tab", "Backtab"]},
+  {"context": "quick", "id": "focus", "keys": ["Tab", "Backtab"], "label": "Move through the viewer controls", "group": "Navigation", "flag": "", "tokens": ["Tab", "Backtab"]},
   {"context": "quick", "id": "zoom-in", "keys": ["+", "="], "label": "Zoom in", "group": "Zoom", "flag": "", "tokens": ["Plus", "Equal"]},
   {"context": "quick", "id": "zoom-out", "keys": ["-", "_"], "label": "Zoom out", "group": "Zoom", "flag": "", "tokens": ["Minus", "Underscore"]},
   {"context": "quick", "id": "fit", "keys": ["0"], "label": "Fit", "group": "Zoom", "flag": "still", "tokens": ["0"]},

@@ -48,7 +48,7 @@ Item {
             // working wherever focus is.
             case ShortcutCatalog.quickKeys.Tab:
             case ShortcutCatalog.quickKeys.Backtab:
-                viewer.moveFocus(event.key === Qt.Key_Tab)
+                viewer.moveFocus(event.key === ShortcutCatalog.quickKeys.Tab)
                 break
             case ShortcutCatalog.quickKeys.Escape:
                 if (viewer.controlsFocused) forceActiveFocus(Qt.OtherFocusReason)
