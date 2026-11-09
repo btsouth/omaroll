@@ -109,11 +109,13 @@
   the window, scrolls with the wheel and follows the arrow keys when it is
   taller than a short window.
 - The library preview uses the viewer's icon toolbar, with rotate left and
-  right, instead of text buttons. Its resize grip sits inside the corner.
+  right and its zoom level, instead of text buttons. Its 1:1 button becomes
+  Fit once zoomed, and Fit, like `0`, also undoes turns and flips. The
+  resize grip sits inside the corner.
 - Long paths in the viewer's details are shortened in the middle, with the
   whole path in a tooltip.
-- Saving a rotated copy keeps the toolbar's buttons where they were while the
-  pointer is on it.
+- Save copy keeps its place on the viewer toolbar, greyed until the picture
+  is turned or flipped, so no button moves as it comes and goes.
 - Reading dates and cameras for a new library no longer slows the window.
   Two to four probes run at once at low priority, their output is parsed off
   the window thread, and "Reading media details" updates about once a second.
