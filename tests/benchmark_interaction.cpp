@@ -26,6 +26,7 @@
 #include "subtitles/SubtitleIndex.h"
 #include "theme/OmarchyTheme.h"
 #include "thumbs/LargeImageProvider.h"
+#include "thumbs/Storyboard.h"
 #include "thumbs/ThumbnailProvider.h"
 #include "viewer/MprisService.h"
 #include "viewer/ViewerSession.h"
@@ -323,6 +324,7 @@ int main(int argc, char** argv) {
   engine.addImageProvider(EditProvider::kProviderId, edits);
   engine.addImageProvider(PdfProvider::kProviderId, pdfs);
   engine.addImageProvider(LargeImageProvider::kProviderId, large);
+  Storyboard::install(engine);
   OmarchyTheme theme(profile.filePath(u"state"_s), profile.filePath(u"config"_s));
   AppSettings settings; ActionLauncher actions; ActionRegistry registry(&actions);
   auto* shared = engine.rootContext();

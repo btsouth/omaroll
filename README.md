@@ -105,6 +105,12 @@ this describes the file, not a guarantee of HDR display output. Open in mpv
 continues at the current playback position. When changing videos, a poster or
 the previous picture stays visible until the new clip's first decoded frame.
 
+Hovering the seek bar, in the viewer or the library preview, shows the frame at
+that time above it. Once a video is playing, Omaroll has ffmpeg decode up to 100
+keyframes in the background, at low priority and at most two at a time, and
+waits while you seek. They're cached, so a video opened again has previews at
+once. Clips under five seconds and audio-only files show the time alone.
+
 A picture or video opens in the viewer: the media fills the window, a small
 picture included, and the name, the controls and the menu appear when the
 pointer moves. Rotating turns the view only; a rotated copy is saved from the
@@ -224,7 +230,7 @@ until the viewer closes; subtitle delay resets when the file changes.
   background. Reuse or clear the private text cache.
 - **Preview images, video and PDFs.** Zoom, pan, rotate and flip pictures, in
   their real colors when they carry a wide-gamut profile; play video with sound,
-  seeking, frame stepping, speed, audio tracks and subtitles; search PDF
+  seek-bar previews, frame stepping, speed, audio tracks and subtitles; search PDF
   text, select words to copy, and switch between continuous scrolling and fit page.
 - **Make corrections as copies.** Crop with aspect presets, straighten,
   rotate, flip and resize one image or a selection. Save a copy or copy a region.
@@ -556,7 +562,9 @@ graph rather than the screen, so an overlapping window cannot spoil the shot.
 - **Cache and state.** Thumbnails in `~/.cache/omaroll/thumbs`, bounded at 256MB
   by default, configurable from 64MB to 1GB, and pruned least-recently-used.
   Embedded media dates use a small identity-checked index in the same cache
-  root, so unchanged files are not inspected again on every launch.
+  root, so unchanged files are not inspected again on every launch. Seek-bar
+  previews are in `~/.cache/omaroll/storyboards`, keyed by path, size and
+  modification time, bounded at 64MB and pruned least-recently-used.
   Settings and organization live in `~/.config/omaroll`. Deleting that directory
   also removes albums, tags, favorites and saved views. Back it up first if you
   want to keep them. The thumbnail cache can be deleted and regenerated.

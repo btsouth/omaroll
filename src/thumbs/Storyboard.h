@@ -1,0 +1,173 @@
+#pragma once
+
+#include <QByteArray>
+#include <QList>
+#include <QObject>
+#include <QSize>
+#include <QString>
+#include <QTimer>
+
+#include <memory>
+#include <optional>
+
+class QQmlEngine;
+
+// Seek-bar previews. A storyboard is a bounded set of keyframes from one video,
+// decoded once in the background and kept on disk, so hovering the seek bar
+// shows the frame nearest the pointer without asking the player, or any
+// decoder, for anything.
+namespace StoryboardPlan {
+
+// A shorter clip scrubs fine on its live frame, and a handful of previews
+// would say less than the time already does.
+inline constexpr qint64 kMinimumDurationMs = 5000;
+inline constexpr int kMaximumFrames = 100;
+inline constexpr qint64 kMinimumIntervalMs = 2000;
+// The logical box a preview fits in. A 16:9 frame fills it.
+inline constexpr int kBoxWidth = 192;
+inline constexpr int kBoxHeight = 108;
+
+// Where to sample: the middle of each of up to kMaximumFrames equal slots,
+// each at least kMinimumIntervalMs long. Empty when the clip is too short.
+[[nodiscard]] QList<qint64> sampleTimes(qint64 durationMs);
+// The frame box in device pixels. Two sizes only, 1x and 2x, so a fractional
+// scale shares a cache entry with its neighbours instead of re-extracting.
+[[nodiscard]] QSize pixelBox(qreal devicePixelRatio);
+// Coarse to fine: the first few frames already span the whole clip, so a
+// partial storyboard is useful while the rest is still being decoded.
+[[nodiscard]] QList<int> extractionOrder(int count);
+// Index of the time closest to `at`, or -1 for an empty list.
+[[nodiscard]] int nearest(const QList<qint64>& sortedTimes, qint64 at);
+
+} // namespace StoryboardPlan
+
+// Frames as decoded JPEG bytes, ordered by their real timestamps. Two samples
+// that land on the same keyframe are one frame.
+struct StoryboardFrames {
+  QSize frameSize;
+  QList<qint64> times;
+  QList<QByteArray> jpegs;
+
+  bool insert(qint64 time, const QByteArray& jpeg);
+  [[nodiscard]] bool isEmpty() const { return times.isEmpty(); }
+};
+
+namespace StoryboardCache {
+
+// A full storyboard is about half a megabyte at 2x, so this keeps more than
+// a hundred videos. Always rebuildable, like the thumbnail cache.
+inline constexpr qint64 kMaximumBytes = 64LL * 1024 * 1024;
+
+[[nodiscard]] QString directory();
+// Keyed by path, size, mtime and ctime, and the frame box. Empty when the
+// file cannot be read.
+[[nodiscard]] QString key(const QString& path, const QSize& pixelBox);
+// A hit counts as a use for eviction.
+[[nodiscard]] std::optional<StoryboardFrames> load(const QString& key);
+bool save(const QString& key, const StoryboardFrames& frames);
+// Least recently used first.
+void prune(qint64 maximumBytes = kMaximumBytes);
+
+} // namespace StoryboardCache
+
+struct StoryboardJob;
+
+// One video's storyboard, for QML. Extraction waits until `active` (the first
+// frame is on screen), holds while `paused` (the user is seeking), and stops
+// when the source changes or the object goes away. Frames are served by the
+// "storyboard" image provider at the URLs frameUrl() gives.
+class Storyboard : public QObject {
+  Q_OBJECT
+  Q_PROPERTY(QString source READ source WRITE setSource NOTIFY sourceChanged)
+  Q_PROPERTY(qreal duration READ duration WRITE setDuration NOTIFY durationChanged)
+  Q_PROPERTY(qreal devicePixelRatio READ devicePixelRatio WRITE setDevicePixelRatio
+                 NOTIFY devicePixelRatioChanged)
+  Q_PROPERTY(bool active READ active WRITE setActive NOTIFY activeChanged)
+  Q_PROPERTY(bool paused READ paused WRITE setPaused NOTIFY pausedChanged)
+  Q_PROPERTY(int frameCount READ frameCount NOTIFY framesChanged)
+  Q_PROPERTY(qreal aspectRatio READ aspectRatio NOTIFY framesChanged)
+  Q_PROPERTY(bool complete READ complete NOTIFY stateChanged)
+  Q_PROPERTY(bool failed READ failed NOTIFY stateChanged)
+  Q_PROPERTY(bool running READ running NOTIFY stateChanged)
+  Q_PROPERTY(bool fromCache READ fromCache NOTIFY stateChanged)
+
+public:
+  static constexpr const char* kProviderId = "storyboard";
+  // How long the conditions to start must hold. Rapid flipping through a
+  // folder never starts a decoder, and the player has settled on the new
+  // file's duration by then.
+  static constexpr int kStartDelayMs = 300;
+  // Decoder processes per storyboard, and one storyboard extracts at a time.
+  static constexpr int kParallelProcesses = 2;
+
+  explicit Storyboard(QObject* parent = nullptr);
+  ~Storyboard() override;
+
+  // Registers the QML type and adds the image provider to this engine.
+  static void install(QQmlEngine& engine);
+  // Stops every extraction and waits for the workers. For application exit.
+  static void shutdown();
+
+  // Process counters, for tests and measurements.
+  [[nodiscard]] static int runningProcesses();
+  [[nodiscard]] static int launchedProcesses();
+
+  [[nodiscard]] QString source() const { return m_source; }
+  void setSource(const QString& source);
+  [[nodiscard]] qreal duration() const { return m_duration; }
+  void setDuration(qreal duration);
+  [[nodiscard]] qreal devicePixelRatio() const { return m_devicePixelRatio; }
+  void setDevicePixelRatio(qreal ratio);
+  [[nodiscard]] bool active() const { return m_active; }
+  void setActive(bool active);
+  [[nodiscard]] bool paused() const { return m_paused; }
+  void setPaused(bool paused);
+
+  [[nodiscard]] int frameCount() const { return int(m_frames.times.size()); }
+  [[nodiscard]] qreal aspectRatio() const;
+  [[nodiscard]] bool complete() const { return m_complete; }
+  [[nodiscard]] bool failed() const { return m_failed; }
+  [[nodiscard]] bool running() const { return bool(m_job); }
+  [[nodiscard]] bool fromCache() const { return m_fromCache; }
+
+  Q_INVOKABLE int frameAt(qreal milliseconds) const;
+  Q_INVOKABLE qreal frameTime(int index) const;
+  Q_INVOKABLE QString frameUrl(int index) const;
+
+signals:
+  void sourceChanged();
+  void durationChanged();
+  void devicePixelRatioChanged();
+  void activeChanged();
+  void pausedChanged();
+  void framesChanged();
+  void stateChanged();
+
+private:
+  friend struct StoryboardJob;
+  void reconsider();
+  void start();
+  void cancel();
+  void clear();
+  void publish();
+  void acceptFrame(quint64 generation, qint64 time, const QByteArray& jpeg);
+  void acceptAll(quint64 serial, const StoryboardFrames& frames);
+  void finish(quint64 serial, bool succeeded);
+
+  QString m_source;
+  qreal m_duration = 0;
+  qreal m_devicePixelRatio = 1;
+  bool m_active = false;
+  bool m_paused = false;
+
+  QString m_identity;
+  QString m_token;
+  quint64 m_instance = 0;
+  quint64 m_generation = 0;
+  StoryboardFrames m_frames;
+  bool m_complete = false;
+  bool m_failed = false;
+  bool m_fromCache = false;
+  std::shared_ptr<StoryboardJob> m_job;
+  QTimer m_startTimer;
+};

@@ -22,6 +22,11 @@ private, identity-checked cache at
 `$XDG_CACHE_HOME/omaroll/media-dates.index`, bounded at 16 MB. This changes only
 library ordering. It does not write to, move, or copy media.
 
+Playing a video at least five seconds long asks the locally installed ffmpeg
+for up to 100 small keyframes, used as seek-bar previews. They are stored under
+`$XDG_CACHE_HOME/omaroll/storyboards`, replaced when the file changes, and
+bounded at 64 MB.
+
 Exact-duplicate review runs only when you choose it under Browse. Omaroll
 hashes same-size candidates locally on a worker thread and keeps those hashes
 in memory for the current session. It sends nothing away and removes nothing.

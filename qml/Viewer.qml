@@ -1985,6 +1985,9 @@ ApplicationWindow {
             anchors.bottomMargin: 16
             width: Math.min(880, parent.width - 32)
             player: root.player
+            source: Session.isVideo ? Session.path : ""
+            frameShown: !!root.presentation && root.presentation.ready
+            devicePixelRatio: root.dpr
             fullScreen: root.fullScreen
             hasCaptions: (root.player && root.player.subtitleTracks.length > 0)
                          || root.subtitleFiles.length > 0

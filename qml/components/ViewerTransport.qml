@@ -1,5 +1,6 @@
 import QtQuick
 import QtMultimedia
+import Omaroll.Media
 
 // The viewer's compact video controls: play, time, scrub, and sound, with
 // captions and speed only when they mean something. Everything else a player
@@ -12,7 +13,13 @@ Rectangle {
     property bool hasCaptions: false
     property bool captionsOn: false
     property string captionsLabel: ""
+    // The file playing, and whether its first frame is on screen: seek
+    // previews are decoded only after that, so they never delay playback.
+    property string source: ""
+    property bool frameShown: false
+    property real devicePixelRatio: 1
     readonly property bool scrubbing: scrubMouse.pressed
+    readonly property alias storyboard: previewFrames
     readonly property bool hovered: hover.hovered
 
     signal fullScreenToggled()
@@ -155,28 +162,21 @@ Rectangle {
             Behavior on opacity { NumberAnimation { duration: 100 } }
         }
 
-        // The time under the pointer, so a seek lands where it was aimed.
-        Rectangle {
-            visible: scrubMouse.containsMouse && root.duration > 0
+        // The frame and time under the pointer, so a seek lands where it
+        // was aimed. It follows a drag too; the video itself seeks as before.
+        SeekPreview {
+            id: seekPreview
+            objectName: "viewerSeekPreview"
+            visible: (scrubMouse.containsMouse || scrubMouse.pressed) && root.duration > 0
             readonly property real at: Math.max(0, Math.min(scrub.width, scrubMouse.mouseX))
-            x: Math.max(-elapsed.width, Math.min(scrub.width - width + total.width,
-                                                  at - width / 2))
+            // Centred on the pointer, kept inside the bar's own edges.
+            x: Math.max(-scrub.x + 4, Math.min(root.width - scrub.x - width - 4, at - width / 2))
             y: -height - 10
-            width: hoverTime.implicitWidth + 12
-            height: hoverTime.implicitHeight + 6
-            radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 4) : 3
-            color: root.shade(Theme.background, 0.94)
-            border.width: 1
-            border.color: root.shade(Theme.foreground, 0.16)
-
-            Text {
-                id: hoverTime
-                anchors.centerIn: parent
-                text: root.clock(parent.at / Math.max(1, scrub.width) * root.duration)
-                font.family: Theme.fontFamily
-                font.pixelSize: 11
-                color: Theme.brightForeground
-            }
+            z: 2
+            storyboard: previewFrames
+            time: at / Math.max(1, scrub.width) * root.duration
+            label: root.clock(time)
+            maximumFrameWidth: Math.min(192, root.width - 14)
         }
 
         MouseArea {
@@ -187,7 +187,26 @@ Rectangle {
             cursorShape: Qt.PointingHandCursor
             onPressed: function (mouse) { scrub.seekTo(mouse.x) }
             onPositionChanged: function (mouse) { if (pressed) scrub.seekTo(mouse.x) }
+            onReleased: seekSettle.restart()
         }
+    }
+
+    // Keyframes for the seek preview, decoded in the background once the
+    // video is showing and held while the user seeks.
+    Storyboard {
+        id: previewFrames
+        source: root.source
+        duration: root.duration
+        devicePixelRatio: root.devicePixelRatio
+        objectName: "viewerStoryboard"
+        active: root.visible && !!root.Window.window && root.Window.window.visible && root.frameShown
+                && !!root.player && root.player.hasVideo === true
+        paused: scrubMouse.pressed || seekSettle.running
+    }
+
+    Timer {
+        id: seekSettle
+        interval: 1000
     }
 
     Text {

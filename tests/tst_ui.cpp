@@ -41,6 +41,7 @@
 #include "sources/ImageBudget.h"
 #include "thumbs/LargeImageProvider.h"
 #include "thumbs/RawImageProvider.h"
+#include "thumbs/Storyboard.h"
 #include "thumbs/ThumbnailProvider.h"
 #include "viewer/MprisService.h"
 
@@ -89,6 +90,23 @@
 #include <algorithm>
 #include <atomic>
 #include <memory>
+
+// Twelve seconds of moving pattern with a keyframe every two seconds, so a
+// storyboard has several distinct frames. The checked-in fixture has one.
+static QString makeStoryboardVideo(const QString& path) {
+  const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+  if (ffmpeg.isEmpty()) return {};
+  QProcess make;
+  make.start(ffmpeg, {QStringLiteral("-nostdin"), QStringLiteral("-loglevel"), QStringLiteral("error"),
+                      QStringLiteral("-y"), QStringLiteral("-f"), QStringLiteral("lavfi"),
+                      QStringLiteral("-i"), QStringLiteral("testsrc2=size=320x180:rate=12:duration=12"),
+                      QStringLiteral("-c:v"), QStringLiteral("mpeg4"), QStringLiteral("-q:v"),
+                      QStringLiteral("5"), QStringLiteral("-g"), QStringLiteral("24"), path});
+  return make.waitForFinished(30000) && make.exitStatus() == QProcess::NormalExit &&
+                 make.exitCode() == 0
+             ? path
+             : QString();
+}
 
 // Hold real QML Image requests open to check sizing, cache reuse and retained
 // pixels without depending on decoder speed or filesystem caches.
@@ -382,6 +400,7 @@ private slots:
     m_engine->addImageProvider(QLatin1String(EditProvider::kProviderId), m_edits);
     m_engine->addImageProvider(QLatin1String(PdfProvider::kProviderId), m_pdfs);
     m_engine->addImageProvider(QLatin1String(RawImageProvider::kProviderId), m_raws);
+    Storyboard::install(*m_engine);
 
     QQmlContext* context = m_engine->rootContext();
     context->setContextProperty(QStringLiteral("Theme"), m_theme);
@@ -5547,6 +5566,61 @@ private slots:
     QTRY_VERIFY(!detail->property("isVideo").toBool());
     QTRY_VERIFY(detail->property("imageReady").toBool());
     QVERIFY(detail->isVisible());
+  }
+
+  void previewSeekBarShowsStoryboardFrames() {
+    if (QStandardPaths::findExecutable(QStringLiteral("ffmpeg")).isEmpty()) {
+      QSKIP("ffmpeg is not installed");
+    }
+    const QString path = QFileInfo(m_oddPath).dir().filePath(QStringLiteral("storyboard.mkv"));
+    QVERIFY(!makeStoryboardVideo(path).isEmpty());
+    const auto cleanup = qScopeGuard([&] {
+      m_window->resize(1280, 820);
+      invoke("dismissTopLayer");
+      QFile::remove(path);
+      rescan();
+    });
+    rescan();
+    QTRY_VERIFY(m_library->rowOf(path) >= 0);
+    openDetail(m_library->rowOf(path));
+    auto* player = m_window->findChild<QMediaPlayer*>(QStringLiteral("videoPlayer"));
+    QVERIFY(player);
+    QTRY_VERIFY(player->duration() > 0);
+    auto* storyboard = m_window->findChild<Storyboard*>(QStringLiteral("videoStoryboard"));
+    QVERIFY(storyboard);
+    QTRY_VERIFY_WITH_TIMEOUT(storyboard->complete(), 30000);
+    QVERIFY(storyboard->frameCount() >= 2);
+    player->pause();
+
+    QQuickItem* seek = item("videoSeek");
+    QQuickItem* preview = item("videoSeekPreview");
+    QVERIFY(!preview->isVisible());
+    QQuickItem* frame = item("seekPreviewFrame");
+    QQuickItem* time = item("seekPreviewTime");
+    const auto along = [seek](qreal fraction) {
+      return seek->mapToScene(QPointF(seek->width() * fraction, seek->height() / 2)).toPoint();
+    };
+    QTest::mouseMove(m_window, along(0.5));
+    QTRY_VERIFY(preview->isVisible());
+    QTRY_COMPARE(frame->property("status").toInt(), 1); // Image.Ready
+    QCOMPARE(time->property("text").toString(), QStringLiteral("0:06"));
+    const QRectF frameBounds = frame->mapRectToScene(frame->boundingRect());
+    const QRectF timeBounds = time->mapRectToScene(time->boundingRect());
+    QVERIFY(frameBounds.bottom() <= timeBounds.top());
+    QVERIFY(preview->mapRectToScene(preview->boundingRect()).bottom() < seek->mapToScene(QPointF()).y());
+    const QString middle = frame->property("source").toString();
+    QTest::mouseMove(m_window, along(0.95));
+    QTRY_VERIFY(frame->property("source").toString() != middle);
+
+    // In a narrow window the preview stays inside it.
+    m_window->resize(560, 420);
+    QTRY_VERIFY(seek->isVisible() && seek->width() > 0
+                && seek->mapToScene(QPointF(seek->width(), 0)).x() <= m_window->width());
+    QTest::mouseMove(m_window, along(0.99));
+    QTRY_VERIFY(preview->isVisible());
+    const QRectF narrow = preview->mapRectToScene(preview->boundingRect());
+    QVERIFY(narrow.left() >= 0 && narrow.right() <= m_window->width());
+    QVERIFY(narrow.top() >= 0);
   }
 
   void videoTracksSeekingAndMinimizeRestore() {
