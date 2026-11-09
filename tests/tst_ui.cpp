@@ -44,6 +44,7 @@
 #include "viewer/MprisService.h"
 
 #include <QAccessible>
+#include <QJSValue>
 #include <QAudioBuffer>
 #include <QAudioBufferOutput>
 #include <QAudioDevice>
@@ -176,6 +177,49 @@ class UiTest : public QObject {
   Q_OBJECT
 
 private slots:
+  void helpFiltersByContextAndDiagnosticsArePrivate() {
+    QObject* help = m_window->findChild<QObject*>(QStringLiteral("libraryShortcutHelp"));
+    QVERIFY(help);
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(help->property("visible").toBool());
+    QCOMPARE(help->property("context").toString(), QStringLiteral("library"));
+    help->setProperty("filter", QStringLiteral("zz-no-match-zz"));
+    QCoreApplication::processEvents();
+    const auto groups = help->property("groups").value<QJSValue>();
+    QCOMPARE(groups.property(QStringLiteral("length")).toInt(), 0);
+    help->setProperty("filter", QStringLiteral("search"));
+    QCoreApplication::processEvents();
+    QVERIFY(help->property("groups").value<QJSValue>().property(QStringLiteral("length")).toInt() > 0);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!help->property("visible").toBool());
+    const QString report = m_settings->diagnostics(QDir::homePath() + QStringLiteral("/theme"), 1.5);
+    QVERIFY(!report.contains(QDir::homePath()));
+    QVERIFY(report.contains(QStringLiteral("Qt: ")));
+    QVERIFY(report.contains(QStringLiteral("Scale factor: 1.5")));
+    QVERIFY(report.contains(QStringLiteral("ffmpeg: ")));
+  }
+
+  void footerDropsWholeHintsAtNarrowWidth() {
+    m_window->resize(560, 700);
+    QCoreApplication::processEvents();
+    auto* hints = m_window->findChild<QQuickItem*>(QStringLiteral("footerHints"));
+    QVERIFY(hints);
+    int visible = 0;
+    const auto visit = [&](auto&& self, QQuickItem* parent) -> void {
+      for (auto* child : parent->childItems()) {
+        if (child->isVisible() && child->property("text").isValid()) {
+          ++visible;
+          QCOMPARE(child->property("elide").toInt(), 3); // Text.ElideNone
+          QVERIFY(child->mapToItem(hints, QPointF(child->width(), 0)).x() <= hints->width() + 1);
+        }
+        self(self, child);
+      }
+    };
+    visit(visit, hints);
+    QVERIFY(visible > 0);
+    QVERIFY(visible < 8);
+  }
+
   void initTestCase() {
     QVERIFY(m_scratch.isValid());
     QQuickStyle::setStyle(QStringLiteral("Basic"));

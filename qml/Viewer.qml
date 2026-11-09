@@ -9,6 +9,7 @@ import Omaroll
 // workbench belong to the library, one key away.
 ApplicationWindow {
     id: root
+    readonly property bool tooltipsBlocked: root.blockingActionOpen
     property bool keyboardNavigation: false
     TapHandler { acceptedButtons: Qt.AllButtons; onPressedChanged: if (pressed) root.keyboardNavigation = false }
 

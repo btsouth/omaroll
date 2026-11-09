@@ -5,22 +5,8 @@ ToolTip {
     id: tip
     property bool requested: false
     property Item owner: parent
-    readonly property bool blocked: {
-        const overlay = Overlay.overlay
-        if (!overlay) return false
-        for (let i = 0; i < overlay.children.length; ++i) {
-            const child = overlay.children[i]
-            if (!child.visible || child === tip.contentItem || child === tip.background
-                    || child.width <= 0 || child.height <= 0) continue
-            // Popup surfaces reparent their content into the overlay. A tip
-            // belongs above that surface only when its owner is inside it.
-            let ancestor = tip.owner
-            let inside = false
-            while (ancestor) { if (ancestor === child) inside = true; ancestor = ancestor.parent }
-            if (!inside && child.z >= 0) return true
-        }
-        return false
-    }
+    readonly property bool blocked: owner && owner.Window.window
+        && owner.Window.window.tooltipsBlocked === true
     visible: requested && !blocked && owner && owner.visible && owner.enabled
     delay: 600
     timeout: 5000

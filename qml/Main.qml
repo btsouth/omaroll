@@ -4,6 +4,7 @@ import Omaroll
 
 ApplicationWindow {
     id: root
+    readonly property bool tooltipsBlocked: root.anySheetOpen || root.popupOpen
     property bool keyboardNavigation: false
     TapHandler { acceptedButtons: Qt.AllButtons; onPressedChanged: if (pressed) root.keyboardNavigation = false }
 
@@ -1514,6 +1515,7 @@ ApplicationWindow {
         }
 
         FooterHints {
+            objectName: "footerHints"
             anchors.left: parent.left
             anchors.leftMargin: 20
             anchors.right: themeLabel.left

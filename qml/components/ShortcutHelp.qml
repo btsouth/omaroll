@@ -10,6 +10,18 @@ Popup {
     property string context: "quick"
     property string filter: ""
     readonly property var groups: ShortcutCatalog.groups(context, video, animated, audioChoices, sidecarSubtitles, filter)
+    function columnsForWidth(width) {
+        const count = width >= 1000 ? 3 : width >= 680 ? 2 : 1
+        let columns = [], sizes = []
+        for (let i = 0; i < count; ++i) { columns.push([]); sizes.push(0) }
+        const ordered = groups.slice().sort(function(a, b) { return b.rows.length - a.rows.length })
+        for (const group of ordered) {
+            const index = sizes.indexOf(Math.min.apply(null, sizes))
+            columns[index].push(group)
+            sizes[index] += group.rows.length + 2
+        }
+        return columns
+    }
     parent: Overlay.overlay
     width: Math.min(1320, parent.width - 24)
     height: Math.min(900, parent.height - 24)
@@ -17,7 +29,7 @@ Popup {
     y: (parent.height - height) / 2
     modal: true
     focus: true
-    onOpened: contentItem.forceActiveFocus()
+    onOpened: { search.text = ""; contentItem.forceActiveFocus() }
     padding: 16
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     background: Rectangle {
@@ -83,15 +95,21 @@ Popup {
             clip: true
             contentWidth: availableWidth
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-            Flow {
+            Row {
                 width: scroll.availableWidth
                 spacing: 20
                 readonly property int columns: width >= 1000 ? 3 : width >= 680 ? 2 : 1
                 Repeater {
-                    model: root.groups
+                    model: root.columnsForWidth(scroll.availableWidth)
                     Column {
                         required property var modelData
                         width: (scroll.availableWidth - 20 * (parent.columns - 1)) / parent.columns
+                        spacing: 16
+                        Repeater {
+                            model: parent.modelData
+                            Column {
+                        required property var modelData
+                        width: parent.width
                         spacing: 8
                         Text {
                             text: parent.modelData.title
@@ -132,6 +150,8 @@ Popup {
                                     font.family: Theme.fontFamily
                                     font.pixelSize: 12
                                 }
+                            }
+                        }
                             }
                         }
                     }
