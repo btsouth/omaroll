@@ -65,6 +65,7 @@
 #include <QMediaPlayer>
 #include <QPointingDevice>
 #include <QProcess>
+#include <QAbstractVideoBuffer>
 #include <QVideoFrame>
 #include <QVideoSink>
 #include <QQmlComponent>
@@ -133,6 +134,30 @@ static bool writeStreamlessVideo(const QString& source, const QString& path) {
   QFile out(path);
   return out.open(QIODevice::WriteOnly) && out.write(bytes) == bytes.size();
 }
+
+// A video buffer that maps a fresh copy every time, as a backend may: what is
+// written through a mapping is lost.
+class CopyMappedBuffer final : public QAbstractVideoBuffer {
+public:
+  CopyMappedBuffer(const QVideoFrameFormat& format, QByteArray bytes, int stride)
+      : m_format(format), m_bytes(std::move(bytes)), m_stride(stride) {}
+  MapData map(QVideoFrame::MapMode) override {
+    m_mapped = QByteArray(m_bytes.constData(), m_bytes.size());
+    MapData data;
+    data.planeCount = 1;
+    data.bytesPerLine[0] = m_stride;
+    data.data[0] = reinterpret_cast<uchar*>(m_mapped.data());
+    data.dataSize[0] = int(m_mapped.size());
+    return data;
+  }
+  QVideoFrameFormat format() const override { return m_format; }
+
+private:
+  QVideoFrameFormat m_format;
+  QByteArray m_bytes;
+  QByteArray m_mapped;
+  int m_stride = 0;
+};
 
 class StartupPosterProvider final : public QQuickImageProvider {
 public:
@@ -1223,6 +1248,8 @@ private slots:
     }
     QVERIFY2(player, "The player waited for the poster to load");
     QCOMPARE(poster->property("status").toInt(), 2); // Image.Loading
+    // A poster on its way counts as media: the header keeps its scrim.
+    QVERIFY(root->property("stageShowsMedia").toBool());
     StartupPosterProvider::held().release();
     QTRY_COMPARE_WITH_TIMEOUT(poster->property("status").toInt(), 1, 5000);
     QTRY_COMPARE_WITH_TIMEOUT(player->playbackState(), QMediaPlayer::PlayingState, 5000);
@@ -2792,55 +2819,109 @@ private slots:
     QVERIFY(item(QStringLiteral("viewerErrorState"))->isVisible());
     QVERIFY(!item(QStringLiteral("viewerTransport"))->isVisible());
     QVERIFY(item(QStringLiteral("viewerErrorPlay"))->isVisible() || !m_registry->available(QStringLiteral("play")));
+    // A tap or Space doesn't start its clock again under the error.
+    QVERIFY(QMetaObject::invokeMethod(m_window, "togglePlayback"));
+    QTest::qWait(300);
+    QCOMPARE(player->playbackState(), QMediaPlayer::StoppedState);
     QDBusConnection client(QStringLiteral("omaroll-test-client"));
-    if (client.isConnected() && m_mpris->isPublished()) {
-      QTRY_COMPARE(mprisProperty(QStringLiteral("org.mpris.MediaPlayer2.Player"),
-                                 QStringLiteral("PlaybackStatus")).toString(),
-                   QStringLiteral("Stopped"));
+    if (!client.isConnected()) QSKIP("dbus-daemon is not available");
+    QTRY_VERIFY(m_mpris->isPublished());
+    {
+      const QString remote = QStringLiteral("org.mpris.MediaPlayer2.Player");
+      QTRY_COMPARE(mprisProperty(remote, QStringLiteral("PlaybackStatus")).toString(), QStringLiteral("Stopped"));
+      // Nor does MPRIS Play.
+      mprisCall(remote, QStringLiteral("Play"));
+      QTRY_COMPARE(player->playbackState(), QMediaPlayer::StoppedState);
+      QTest::qWait(500);
+      QCOMPARE(player->playbackState(), QMediaPlayer::StoppedState);
+      QTRY_COMPARE(mprisProperty(remote, QStringLiteral("PlaybackStatus")).toString(), QStringLiteral("Stopped"));
+      QVERIFY(prop("videoUnplayable").toBool());
     }
   }
 
-  // The presentation's own watch, without a window: a player whose frames
-  // never reach it fails after the play time allowed, a paused one does not
-  // count, and a file without streams fails at once.
+  // The presentation's own watch, without a window. Time counts only while
+  // playing with the clock standing still, so audio that plays before late
+  // video, or a pause, never fails a file. Played to its end without a frame,
+  // or opened with no stream at all, it fails, and a failed file stays
+  // stopped when asked to play.
   void presentationFailsWithoutAFirstFrame() {
+    FirstFrameWatch watch;
+    QCOMPARE(watch.update(0, true, 0), 0);
+    QCOMPARE(watch.update(300, true, 0), 300);      // Stuck.
+    QCOMPARE(watch.update(400, false, 0), 300);     // Paused: the time so far is kept...
+    QCOMPARE(watch.update(5000, false, 0), 300);    // ...and the pause adds none.
+    QCOMPARE(watch.update(5100, true, 0), 300);     // Resumed: counting starts again here.
+    QCOMPARE(watch.update(5300, true, 0), 500);
+    QCOMPARE(watch.update(5600, true, 250), 500);   // The clock moves: content is playing.
+    QCOMPARE(watch.update(9600, true, 4250), 500);
+    QCOMPARE(watch.update(9700, true, 4250), 600);  // Stuck again, added to before.
+    watch.reset();
+    QCOMPARE(watch.update(9800, true, 0), 0);
+
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty()) QSKIP("ffmpeg is not installed");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto encode = [&ffmpeg](const QStringList& arguments) {
+      QProcess encoder;
+      encoder.start(ffmpeg, QStringList{QStringLiteral("-hide_banner"), QStringLiteral("-loglevel"),
+                                        QStringLiteral("error"), QStringLiteral("-y")} + arguments);
+      return encoder.waitForFinished(30000) && encoder.exitStatus() == QProcess::NormalExit
+             && encoder.exitCode() == 0;
+    };
+    const QString clip = dir.filePath(QStringLiteral("clip.mkv"));
+    QVERIFY(encode({QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"), QStringLiteral("sine=d=4"),
+                    QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+                    QStringLiteral("testsrc2=s=64x64:r=10:d=4"), QStringLiteral("-c:v"), QStringLiteral("libx264"),
+                    QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"), QStringLiteral("-c:a"), QStringLiteral("aac"),
+                    clip}));
+
     QVideoSink output;
     VideoPresentation presentation(&output);
     QSignalSpy failures(&presentation, &VideoPresentation::failureChanged);
     QMediaPlayer player;
-    QVideoSink elsewhere;
-    player.setVideoOutput(&elsewhere);
     presentation.setPlayer(&player);
     QVERIFY(presentation.setProperty("firstFrameTimeoutMs", 600));
-    player.setSource(QUrl::fromLocalFile(media(QStringLiteral("clip.mp4"))));
+
+    // Frames that arrive end the watch.
+    player.setVideoOutput(presentation.videoSink());
+    player.setSource(QUrl::fromLocalFile(clip));
     QTRY_VERIFY_WITH_TIMEOUT(player.mediaStatus() == QMediaPlayer::LoadedMedia, 5000);
-    QVERIFY(player.hasVideo());
+    QVERIFY(player.hasVideo() && player.hasAudio());
     QTest::qWait(1000);
     QVERIFY(presentation.failure().isEmpty()); // Not playing yet.
     player.play();
-    QTRY_VERIFY_WITH_TIMEOUT(elsewhere.videoFrame().isValid(), 5000);
-    QTRY_COMPARE_WITH_TIMEOUT(presentation.failure(), QStringLiteral("No picture came from this video"), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(presentation.ready(), 5000);
+    QVERIFY(output.videoFrame().isValid());
+    player.stop();
+
+    // No frame reaches it while the clock runs, as with audio ahead of late
+    // video: well past the allowed time it still waits. Played to the end
+    // without a picture, it fails.
+    QVideoSink elsewhere;
+    player.setVideoOutput(&elsewhere);
+    presentation.reset();
+    player.setPosition(0);
+    player.play();
+    QTRY_VERIFY_WITH_TIMEOUT(player.position() >= 2000, 5000);
+    QVERIFY(elsewhere.videoFrame().isValid());
+    QVERIFY(presentation.failure().isEmpty());
+    QCOMPARE(failures.size(), 0);
+    QTRY_COMPARE_WITH_TIMEOUT(presentation.failure(), QStringLiteral("No picture came from this video"), 10000);
     QCOMPARE(failures.size(), 1);
     QVERIFY(!presentation.ready());
-    player.stop();
+    // Asked to play again, it stops again.
+    QTRY_COMPARE(player.playbackState(), QMediaPlayer::StoppedState);
+    player.play();
+    QTRY_COMPARE(player.playbackState(), QMediaPlayer::StoppedState);
+    QTest::qWait(300);
+    QCOMPARE(player.playbackState(), QMediaPlayer::StoppedState);
     presentation.reset();
     QVERIFY(presentation.failure().isEmpty());
     QCOMPARE(failures.size(), 2);
 
-    // Frames that do arrive end the watch.
-    player.setVideoOutput(presentation.videoSink());
-    player.play();
-    QTRY_VERIFY_WITH_TIMEOUT(presentation.ready(), 5000);
-    QTest::qWait(1000);
-    QVERIFY(presentation.failure().isEmpty());
-    QVERIFY(output.videoFrame().isValid());
-    player.stop();
-
-    QTemporaryDir dir;
-    QVERIFY(dir.isValid());
     const QString streamless = dir.filePath(QStringLiteral("streamless.mp4"));
     QVERIFY(writeStreamlessVideo(media(QStringLiteral("clip.mp4")), streamless));
-    presentation.reset();
     player.setSource(QUrl::fromLocalFile(streamless));
     QTRY_COMPARE_WITH_TIMEOUT(presentation.failure(), QStringLiteral("No video or audio stream could be read"), 5000);
   }
@@ -2888,6 +2969,21 @@ private slots:
       }
     }
     read.unmap();
+
+    if (padding < 0) return;
+    // A buffer whose mappings are copies gets a copy of its own instead.
+    QByteArray bytes(5 * 4 * 3, char(40));
+    for (int i = padding; i < bytes.size(); i += 4) bytes[i] = 0;
+    QVideoFrame copied(std::make_unique<CopyMappedBuffer>(
+        QVideoFrameFormat(QSize(5, 3), QVideoFrameFormat::PixelFormat(format)), bytes, 5 * 4));
+    const QVideoFrame opaque = VideoPresentation::opaqueFrame(copied);
+    QVideoFrame result(opaque);
+    QVERIFY(result.map(QVideoFrame::ReadOnly));
+    for (int i = 0; i < 5 * 4 * 3; ++i) {
+      const uchar byte = result.bits(0)[(i / 20) * result.bytesPerLine(0) + i % 20];
+      QCOMPARE(int(byte), i % 4 == padding ? 0xff : 40);
+    }
+    result.unmap();
   }
 
   // The error state names the cause, offers what still applies to the file

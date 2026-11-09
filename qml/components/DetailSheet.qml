@@ -484,12 +484,14 @@ Item {
     }
 
     function playVideo() {
-        if (!root.player) return
+        // A file that failed stays stopped; mpv (P) may still play it.
+        if (!root.player || root.videoFailed) return
         if (root.resumeAvailable) root.resumeVideo()
         else root.player.play()
     }
 
     function toggleVideoPlayback() {
+        if (root.videoFailed) return
         if (player.playbackState === MediaPlayer.PlayingState) {
             player.pause()
         } else {

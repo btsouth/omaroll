@@ -75,8 +75,11 @@ ApplicationWindow {
     // Something of this file is on the stage, which the header's dark scrim
     // and light text are drawn for. Over an empty stage the header takes the
     // theme's colours instead.
+    // A poster still loading counts, so the header doesn't flash on the way
+    // to a video.
     readonly property bool stageShowsMedia: Session.isVideo
-        ? videoOutput.visible || (videoPoster.visible && videoPoster.status === Image.Ready)
+        ? videoOutput.visible || (videoPoster.visible && (videoPoster.status === Image.Ready
+                                                          || videoPoster.status === Image.Loading))
         : Session.path !== "" && !root.imageError
     readonly property string playbackError: Session.isVideo ? (root.videoUnplayable ? root.videoError : "")
         : root.imageError ? (Session.isAnimated ? "Could not display this animation"
@@ -683,13 +686,15 @@ ApplicationWindow {
     onStillReadyChanged: root.armSlideshow()
 
     function playVideo() {
-        if (!root.player) return
+        // A file that failed stays stopped; mpv (P) may still play it.
+        if (!root.player || root.videoUnplayable) return
         if (root.resumeAvailable) root.resumeVideo()
         else root.player.play()
     }
 
     function togglePlayback() {
         if (Session.isVideo && root.player) {
+            if (root.videoUnplayable) return
             if (root.resumeAvailable) {
                 root.resumeVideo()
             } else if (root.playing) {

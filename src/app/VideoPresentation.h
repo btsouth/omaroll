@@ -28,8 +28,38 @@
 //   a single new frame, so it times from the last frame, not a fixed window.
 //
 // And it says when a file gives nothing to show: loaded with no audio or
-// video stream, or playing for a while without a first frame. Qt reports no
-// error for either and its clock runs on, so it would look like playback.
+// video stream, or played to its end, or stuck, without a first frame. Qt
+// reports no error for these and its clock runs on, so it would look like
+// playback. A failed file is not played again until the next reset().
+
+// How long a file has played without a first frame while its clock stood
+// still. A clock that moves is content playing, such as audio before video
+// that starts late, so that time does not count; neither does time paused.
+class FirstFrameWatch {
+public:
+  void reset() {
+    m_stalledMs = 0;
+    m_lastTick = -1;
+    m_lastPosition = -1;
+  }
+  // The stalled time so far, given the time now, whether the player is
+  // playing and its position.
+  qint64 update(qint64 now, bool playing, qint64 position) {
+    if (!playing) {
+      m_lastTick = -1;
+      return m_stalledMs;
+    }
+    if (m_lastTick >= 0 && position <= m_lastPosition) m_stalledMs += now - m_lastTick;
+    m_lastTick = now;
+    m_lastPosition = position;
+    return m_stalledMs;
+  }
+private:
+  qint64 m_stalledMs = 0;
+  qint64 m_lastTick = -1;
+  qint64 m_lastPosition = -1;
+};
+
 class VideoPresentation : public QQuickItem {
   Q_OBJECT
   Q_PROPERTY(QVideoSink* videoSink READ videoSink CONSTANT)
@@ -39,7 +69,7 @@ class VideoPresentation : public QQuickItem {
   Q_PROPERTY(QMediaPlayer* player READ player WRITE setPlayer NOTIFY playerChanged)
   // Why nothing can be shown, or empty. Cleared by reset().
   Q_PROPERTY(QString failure READ failure NOTIFY failureChanged)
-  // Play time allowed before a first frame; tests shorten it.
+  // Stalled play time allowed before a first frame; tests shorten it.
   Q_PROPERTY(int firstFrameTimeoutMs MEMBER m_firstFrameTimeoutMs)
 public:
   // How far a paused picture may be from the reported position before it is
@@ -54,7 +84,8 @@ public:
   static constexpr int kResyncGraceMs = 1200;
   static constexpr int kStallResyncs = 2;
   // Generous: a first frame normally takes well under a second, even for 4K
-  // decoded in software or under a sanitizer.
+  // decoded in software or under a sanitizer, and this counts only time the
+  // clock stood still.
   static constexpr int kFirstFrameMs = 10000;
   static constexpr int kOpenPollMs = 250;
 
@@ -116,7 +147,7 @@ public:
     m_ready = false;
     m_stallTimer.stop();
     m_openTimer.stop();
-    m_playedWithoutFrame = 0;
+    m_firstFrame.reset();
     m_noStreams.invalidate();
     m_input.setSubtitleText({});
     releaseHeap();
@@ -152,8 +183,8 @@ public:
   }
   // Qt's shaders read the padding byte of RGB with one (FFmpeg's bgr0, rgb0,
   // 0rgb and 0bgr, as FFV1 stores RGB) as alpha, so a zero there draws the
-  // picture blank or white. Such a frame is copied with the padding opaque;
-  // any other frame is returned as it is.
+  // picture blank or white. Such a frame gets its padding set opaque, in
+  // place or in a copy; any other frame is returned as it is.
   static QVideoFrame opaqueFrame(const QVideoFrame& frame) {
     int padding = -1;
     switch (frame.pixelFormat()) {
@@ -168,6 +199,37 @@ public:
     default:
       return frame;
     }
+    const qsizetype width = qsizetype(frame.width()) * 4;
+    // Whole pixels at a time, which the compiler vectorises; rows of 32-bit
+    // pixels start 4-byte aligned.
+#if Q_BYTE_ORDER == Q_LITTLE_ENDIAN
+    const quint32 opaque = 0xffu << (8 * padding);
+#else
+    const quint32 opaque = 0xffu << (8 * (3 - padding));
+#endif
+    const auto fill = [opaque](uchar* row, qsizetype pixels) {
+      auto* pixel = reinterpret_cast<quint32*>(row);
+      for (qsizetype x = 0; x < pixels; ++x) pixel[x] |= opaque;
+    };
+    // In place where the frame's own buffer can be written, as an FFmpeg
+    // software frame's can: no allocation and no copy. A backend that maps
+    // a copy would lose the change, so it is read back.
+    {
+      QVideoFrame target(frame);
+      if (target.map(QVideoFrame::ReadWrite)) {
+        for (int y = 0; y < target.height(); ++y) {
+          fill(target.bits(0) + qsizetype(y) * target.bytesPerLine(0), frame.width());
+        }
+        target.unmap();
+        QVideoFrame check(frame);
+        if (check.map(QVideoFrame::ReadOnly)) {
+          const qsizetype last = qsizetype(check.height() - 1) * check.bytesPerLine(0) + width - 4 + padding;
+          const bool written = check.bits(0)[padding] == 0xff && check.bits(0)[last] == 0xff;
+          check.unmap();
+          if (written) return frame;
+        }
+      }
+    }
     QVideoFrame source(frame);
     if (!source.map(QVideoFrame::ReadOnly)) return frame;
     QVideoFrame copy(frame.surfaceFormat());
@@ -181,7 +243,7 @@ public:
       const uchar* from = source.bits(0) + qsizetype(y) * source.bytesPerLine(0);
       uchar* to = copy.bits(0) + qsizetype(y) * copy.bytesPerLine(0);
       std::memcpy(to, from, size_t(bytes));
-      for (qsizetype x = padding; x < bytes; x += 4) to[x] = 0xff;
+      fill(to, bytes / 4);
     }
     source.unmap();
     copy.unmap();
@@ -215,6 +277,12 @@ private:
   }
   void playbackStateChanged(QMediaPlayer::PlaybackState state) {
     if (state != QMediaPlayer::PlayingState) m_stallTimer.stop();
+    // A failed file stays stopped: a tap, a key or MPRIS Play would run its
+    // clock again under the error.
+    if (state == QMediaPlayer::PlayingState && !m_failure.isEmpty() && m_player) {
+      QMetaObject::invokeMethod(m_player.data(), &QMediaPlayer::stop, Qt::QueuedConnection);
+      return;
+    }
     checkOpen();
     // Runs inside pause(), before callers seek elsewhere, so only a picture
     // that is already stale is sought again.
@@ -263,8 +331,7 @@ private:
     m_failure = reason;
     emit failureChanged();
   }
-  // Watches a newly opened file until its first frame. Only time spent
-  // playing counts, so a file held paused at a saved spot is not failed.
+  // Watches a newly opened file until its first frame.
   void checkOpen() {
     if (!m_player || m_frameSeen || !m_failure.isEmpty()) {
       m_openTimer.stop();
@@ -287,21 +354,19 @@ private:
     }
     m_noStreams.invalidate();
     // Audio alone plays without frames.
-    if (!playing || (m_player->hasAudio() && !m_player->hasVideo())) {
-      if (m_openTimer.isActive()) {
-        m_playedWithoutFrame += m_openClock.elapsed();
-        m_openTimer.stop();
-      }
-      return;
-    }
-    if (!m_openTimer.isActive()) {
-      m_openClock.start();
-      m_openTimer.start();
-      return;
-    }
-    if (m_playedWithoutFrame + m_openClock.elapsed() >= m_firstFrameTimeoutMs) {
+    const bool watched = m_player->hasVideo() || !m_player->hasAudio();
+    if (watched && status == QMediaPlayer::EndOfMedia) {
       fail(QStringLiteral("No picture came from this video"));
+      return;
     }
+    if (!m_openClock.isValid()) m_openClock.start();
+    const qint64 stalled = m_firstFrame.update(m_openClock.elapsed(), playing && watched, m_player->position());
+    if (!playing || !watched) {
+      m_openTimer.stop();
+      return;
+    }
+    if (!m_openTimer.isActive()) m_openTimer.start();
+    if (stalled >= m_firstFrameTimeoutMs) fail(QStringLiteral("No picture came from this video"));
   }
   // Slow video may go longer than kStallMs between frames.
   qint64 stallMs() const {
@@ -331,7 +396,7 @@ private:
   QTimer m_openTimer;
   QElapsedTimer m_openClock;
   QElapsedTimer m_noStreams;
-  qint64 m_playedWithoutFrame = 0;
+  FirstFrameWatch m_firstFrame;
   int m_firstFrameTimeoutMs = kFirstFrameMs;
   QString m_failure;
   qint64 m_stallUntil = 0;

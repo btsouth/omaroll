@@ -205,7 +205,7 @@ unfinished download does, shows with a "cut off" note, since the missing part
 otherwise looks like grey picture. In the filmstrip such files are marked.
 A video that won't play says why the same way, with Open in mpv too unless
 it isn't a video at all. That includes a file with no stream FFmpeg can read
-and one that plays for ten seconds without a picture.
+and one that plays to its end, or stalls, without a picture.
 
 Drag the file name in the viewer's header, or `Ctrl`+drag the picture, to drop
 the file itself into a file manager, browser or chat; a plain drag still pans.
