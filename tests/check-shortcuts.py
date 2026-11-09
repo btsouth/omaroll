@@ -8,7 +8,8 @@ root = pathlib.Path(__file__).resolve().parent.parent
 source = (root / 'src/app/ShortcutTable.h').read_text()
 rows = json.loads(source.split('R"shortcuts(', 1)[1].split(')shortcuts"', 1)[0])
 names = {'+': 'Plus', '=': 'Equal', '-': 'Minus', '_': 'Underscore', ',': 'Comma', '.': 'Period', '[': 'BracketLeft', ']': 'BracketRight', '?': 'Question', 'Esc': 'Escape', 'Del': 'Delete', 'PgUp': 'PageUp', 'PgDown': 'PageDown'}
-for context, file, implicit in [('quick', 'ViewerKeys.qml', {'2', '3', '4'}), ('library', 'CaptureGrid.qml', set())]:    handler = (root / 'qml/components' / file).read_text()
+for context, file, implicit in [('quick', 'ViewerKeys.qml', {'2', '3', '4'}), ('library', 'CaptureGrid.qml', set())]:
+    handler = (root / 'qml/components' / file).read_text()
     assert not re.search(r"Qt\.Key_", handler), "Shortcut key defined outside the table"
     actual = set(re.findall(rf'ShortcutCatalog\.{context}Keys\.(\w+)', handler))
     actual.update(re.findall(rf'ShortcutCatalog\.{context}Keys\["(\d+)"\]', handler))
