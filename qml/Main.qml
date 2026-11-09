@@ -854,17 +854,67 @@ ApplicationWindow {
         height: 58
         enabled: !root.anySheetOpen && !albumActionMenu.visible
 
+        // What the title and status want: the status at its natural width,
+        // up to a cap, so the selection count is never cut short. In a narrow
+        // window with a selection the app's name gives way to the count.
+        readonly property real statusNeed: Math.min(statusText.implicitWidth, 280)
+        readonly property real requiredWidth: {
+            let width = settingsButton.implicitWidth + headerActions.spacing
+            if (library.checkedCount > 0) {
+                for (const button of [selectionActions, bulkTrash, bulkClear])
+                    width += button.implicitWidth + headerActions.spacing
+            }
+            return width
+        }
+        readonly property bool appTitleShown: library.checkedCount === 0
+            || header.width - 20 - (appTitle.implicitWidth + 25 + statusNeed) - 16 - 20
+               - requiredWidth >= 0
+        readonly property real titleNeed: (appTitleShown ? appTitle.implicitWidth + 25 : 0) + statusNeed
+
+        // The selection's actions, in the order they give way. Each shows only
+        // while it fits beside the title, a usable search field and the fixed
+        // buttons, measured rather than guessed from the window width; the
+        // rest stay in Actions and on their keys.
+        // Room left of the buttons that always show, after the title and a
+        // search field; without a selection the search keeps a usable width.
+        readonly property real spare: header.width - 20 - header.titleNeed - 16 - 16 - 20
+                                      - header.requiredWidth - 140
+        // On a narrow window Help, then the folder toggle, give way before
+        // the title or the selection count would be cut; F1 and F9 stay.
+        readonly property bool foldersFit: spare >= folderToggle.implicitWidth + headerActions.spacing
+        readonly property bool helpFits: spare >= folderToggle.implicitWidth + helpButton.implicitWidth
+                                                  + 2 * headerActions.spacing
+        readonly property var bulkShown: {
+            if (library.checkedCount === 0) return []
+            const optional = [albumActionButton, bulkSend, bulkCopy, bulkFavourite, bulkHide,
+                              bulkExport, bulkTailscale]
+            // The search keeps 200 before any optional action takes room.
+            let room = header.spare - 60
+            if (header.foldersFit) room -= folderToggle.implicitWidth + headerActions.spacing
+            if (header.helpFits) room -= helpButton.implicitWidth + headerActions.spacing
+            const shown = []
+            for (const button of optional) {
+                const need = button.implicitWidth + headerActions.spacing
+                const fits = button.offered && need <= room
+                if (fits) room -= need
+                else if (button.offered) room = -1
+                shown.push(fits)
+            }
+            return shown
+        }
+
         Row {
             id: headerTitle
             anchors.left: parent.left
             anchors.leftMargin: 20
             anchors.verticalCenter: parent.verticalCenter
-            width: Math.max(0, header.width - headerActions.width - 52)
+            width: Math.max(0, Math.min(header.titleNeed, header.width - headerActions.width - 52))
             spacing: 12
 
             Text {
                 anchors.verticalCenter: parent.verticalCenter
                 id: appTitle
+                visible: header.appTitleShown
                 text: "Omaroll"
                 font.family: Theme.fontFamily
                 font.pixelSize: 17
@@ -875,15 +925,17 @@ ApplicationWindow {
 
             Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
+                visible: header.appTitleShown
                 width: 1
                 height: 16
                 color: root.shade(Theme.foreground, 0.18)
             }
 
             Text {
+                id: statusText
                 anchors.verticalCenter: parent.verticalCenter
                 objectName: "libraryStatus"
-                width: Math.max(0, headerTitle.width - appTitle.width - 25)
+                width: Math.max(0, headerTitle.width - (header.appTitleShown ? appTitle.width + 25 : 0))
                 elide: Text.ElideRight
                 text: {
                     if (Duplicates.scanning && Captures.duplicatesOnly) {
@@ -940,6 +992,18 @@ ApplicationWindow {
             }
         }
 
+        // The search field, the primary control, between the title and the
+        // buttons. FilterBar owns it and draws it here.
+        Item {
+            id: searchSlot
+            objectName: "headerSearchSlot"
+            anchors.left: headerTitle.right
+            anchors.leftMargin: 16
+            anchors.verticalCenter: parent.verticalCenter
+            width: Math.max(0, Math.min(440, headerActions.x - 16 - x))
+            height: 30
+        }
+
         Row {
             id: headerActions
             anchors.right: parent.right
@@ -948,8 +1012,10 @@ ApplicationWindow {
             spacing: 8
 
             IconButton {
+                id: folderToggle
                 objectName: "folderSidebarToggle"
                 anchors.verticalCenter: parent.verticalCenter
+                visible: header.foldersFit
                 label: "Folders"
                 enabled: !root.popupOpen
                 toolTip: "Toggle folder sidebar"
@@ -958,7 +1024,9 @@ ApplicationWindow {
                 onClicked: Settings.showFolderSidebar = !Settings.showFolderSidebar
             }
             PillButton {
+                id: selectionActions
                 objectName: "selectionActionsButton"
+                anchors.verticalCenter: parent.verticalCenter
                 visible: library.checkedCount > 0
                 label: "Actions"
                 onClicked: {
@@ -969,31 +1037,36 @@ ApplicationWindow {
             // Bulk actions appear only while a selection exists, so the resting
             // header stays quiet. Each acts on every checked file at once.
             PillButton {
+                id: bulkSend
+                readonly property bool offered: true
                 anchors.verticalCenter: parent.verticalCenter
-                visible: library.checkedCount > 0 && root.width >= 700
+                visible: header.bulkShown[1] === true
                 label: "Send"
                 shortcut: Registry.shortcutFor("send")
                 onClicked: Registry.runBatch("send", library.checkedPaths())
             }
             PillButton {
+                id: bulkExport
+                readonly property bool offered: Registry.available("export") && !root.checkedHasDocuments()
                 anchors.verticalCenter: parent.verticalCenter
-                visible: library.checkedCount > 0 && root.width >= 1050
-                         && Registry.available("export") && !root.checkedHasDocuments()
+                visible: header.bulkShown[5] === true
                 label: "Export"
                 shortcut: Registry.shortcutFor("export")
                 onClicked: root.openExport(library.checkedPaths())
             }
             PillButton {
+                id: bulkTailscale
+                readonly property bool offered: Registry.available("tailscale")
                 anchors.verticalCenter: parent.verticalCenter
-                visible: library.checkedCount > 0 && root.width >= 900
-                         && Registry.available("tailscale")
+                visible: header.bulkShown[6] === true
                 label: "Tailscale"
                 onClicked: tailscaleSheet.open(library.checkedPaths())
             }
             PillButton {
                 id: albumActionButton
+                readonly property bool offered: true
                 anchors.verticalCenter: parent.verticalCenter
-                visible: library.checkedCount > 0 && root.width >= 700
+                visible: header.bulkShown[0] === true
                 label: "Organize"
                 onClicked: {
                     albumActionMenu.targetPaths = library.checkedPaths().slice()
@@ -1001,32 +1074,37 @@ ApplicationWindow {
                     else albumActionMenu.popup(albumActionButton, 0, albumActionButton.height + 4)
                 }
             }
-            // The three secondary ones give way on a narrow window rather
-            // than run into the title; every one is still reachable by key.
             PillButton {
+                id: bulkCopy
+                readonly property bool offered: true
                 anchors.verticalCenter: parent.verticalCenter
-                visible: library.checkedCount > 0 && root.width >= 900
+                visible: header.bulkShown[2] === true
                 label: "Copy"
                 shortcut: Registry.shortcutFor("copy")
                 onClicked: Actions.copyUris(library.checkedPaths())
             }
             PillButton {
+                id: bulkFavourite
+                readonly property bool offered: true
                 anchors.verticalCenter: parent.verticalCenter
-                visible: library.checkedCount > 0 && root.width >= 900
+                visible: header.bulkShown[3] === true
                 label: root.allChecked(function (p) { return Settings.isFavorite(p) })
                        ? "Unfavourite" : "Favourite"
                 shortcut: Registry.shortcutFor("favorite")
                 onClicked: root.markChecked("favorite")
             }
             PillButton {
+                id: bulkHide
+                readonly property bool offered: true
                 anchors.verticalCenter: parent.verticalCenter
-                visible: library.checkedCount > 0 && root.width >= 900
+                visible: header.bulkShown[4] === true
                 label: root.allChecked(function (p) { return Settings.isHidden(p) })
                        ? "Unhide" : "Hide"
                 shortcut: Registry.shortcutFor("hide")
                 onClicked: root.markChecked("hide")
             }
             PillButton {
+                id: bulkTrash
                 anchors.verticalCenter: parent.verticalCenter
                 visible: library.checkedCount > 0
                 label: "Trash " + library.checkedCount
@@ -1034,6 +1112,7 @@ ApplicationWindow {
                 onClicked: root.requestDeleteBatch(library.checkedPaths())
             }
             PillButton {
+                id: bulkClear
                 anchors.verticalCenter: parent.verticalCenter
                 visible: library.checkedCount > 0
                 label: "Clear"
@@ -1053,22 +1132,31 @@ ApplicationWindow {
 
             DayHeader {
                 anchors.verticalCenter: parent.verticalCenter
-                visible: shown
+                // Only where it fits beside a usable search field.
+                visible: shown && header.width - 20 - header.titleNeed - 16 - 200 - 16 - 20
+                                  - folderToggle.implicitWidth - helpButton.implicitWidth
+                                  - settingsButton.implicitWidth - 3 * headerActions.spacing
+                                  >= implicitWidth + headerActions.spacing
                 maximumWidth: Math.max(80, root.width * 0.24)
                 label: library.currentDayLabel
                 shown: Captures.count > 0 && library.checkedCount === 0
             }
 
             PillButton {
+                id: helpButton
                 anchors.verticalCenter: parent.verticalCenter
+                visible: header.helpFits
                 label: "Help"
                 shortcut: ShortcutCatalog.display(ShortcutCatalog.sequence("library", "help"))
                 onClicked: root.showShortcutHelp()
             }
 
             PillButton {
+                id: settingsButton
+                objectName: "settingsButton"
                 anchors.verticalCenter: parent.verticalCenter
-                label: "⚙"
+                icon: "settings"
+                label: "Settings"
                 accessibleName: "Settings"
                 toolTip: "Settings"
                 onClicked: settingsSheet.open()
@@ -1084,6 +1172,8 @@ ApplicationWindow {
         anchors.right: parent.right
         enabled: !root.anySheetOpen && !albumActionMenu.visible
         browserOpen: libraryBrowser.visible
+        searchSlot: searchSlot
+        onMessage: function (text) { root.say(text) }
         // Leaving the search field must land focus back on the grid, or the
         // arrow keys go nowhere until a tile is clicked.
         onDone: library.forceActiveFocus()
@@ -1096,34 +1186,17 @@ ApplicationWindow {
         anchors.left: parent.left
         anchors.right: parent.right
         visible: !root.folderSidebarVisible
-        height: visible && (pins.hasPins || Captures.folderFilter !== "") ? 42 : 0
+        height: visible && pins.hasPins ? 42 : 0
         enabled: !root.anySheetOpen
 
         PinnedFolders {
             id: pins
             objectName: "pinnedFolders"
             anchors.left: parent.left
-            anchors.right: pinCurrentFolder.left
-            anchors.rightMargin: 8
-            height: parent.height
-            onChosen: function(path) { root.openFolder(path) }
-        }
-        PillButton {
-            id: pinCurrentFolder
             anchors.right: parent.right
             anchors.rightMargin: 12
-            anchors.verticalCenter: parent.verticalCenter
-            visible: Captures.folderFilter !== ""
-            width: visible ? implicitWidth : 0
-            readonly property bool pinned: {
-                void Settings.pinnedFolders
-                return Settings.isFolderPinned(Captures.folderFilter)
-            }
-            label: pinned ? "Unpin folder" : "Pin folder"
-            onClicked: {
-                if (pinned) Settings.unpinFolder(Captures.folderFilter)
-                else if (!Settings.pinFolderPath(Captures.folderFilter)) root.say("That folder is unavailable")
-            }
+            height: parent.height
+            onChosen: function(path) { root.openFolder(path) }
         }
     }
 

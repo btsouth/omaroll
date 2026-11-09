@@ -2176,6 +2176,19 @@ Item {
                                                              + Math.ceil(Math.max(widestEarlier.advanceWidth,
                                                                                   widestLater.advanceWidth))
 
+                // Dark behind the controls in every theme, as in the viewer.
+                Rectangle {
+                    objectName: "previewTransportPanel"
+                    anchors.fill: parent
+                    anchors.leftMargin: -6
+                    anchors.rightMargin: -6
+                    z: -1
+                    radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, height / 2) : 4
+                    color: Osd.panel
+                    border.width: 1
+                    border.color: Osd.border
+                }
+
                 function clock(ms) {
                     const total = Math.max(0, Math.round(ms / 1000))
                     const minutes = Math.floor(total / 60)
@@ -2185,6 +2198,7 @@ Item {
 
                 IconButton {
                     id: playButton
+                    osd: true
                     objectName: "videoPlayButton"
                     anchors.left: parent.left
                     anchors.verticalCenter: parent.verticalCenter
@@ -2217,7 +2231,7 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter
                         height: scrubHover.hovered || scrubDrag.active ? 6 : 4
                         radius: height / 2
-                        color: root.shade(Theme.foreground, 0.18)
+                        color: Osd.track
                         Behavior on height { NumberAnimation { duration: 100 } }
 
                         Rectangle {
@@ -2226,7 +2240,7 @@ Item {
                             anchors.bottom: parent.bottom
                             width: parent.width * scrub.fraction
                             radius: parent.radius
-                            color: Theme.accent
+                            color: Osd.accent
                         }
                     }
 
@@ -2252,6 +2266,7 @@ Item {
                     // too; the video itself seeks as before.
                     SeekPreview {
                         objectName: "videoSeekPreview"
+                        osd: true
                         visible: (scrubHover.hovered || scrubDrag.active) && !!player && player.duration > 0
                         readonly property real at: Math.max(0, Math.min(scrub.width, scrubDrag.active
                             ? scrubDrag.centroid.position.x : scrubHover.point.position.x))
@@ -2301,7 +2316,7 @@ Item {
                     text: transport.clock(root.playbackPosition) + " / " + transport.clock(player ? player.duration : 0)
                     font.family: Theme.fontFamily
                     font.pixelSize: 11
-                    color: Theme.mutedText
+                    color: Osd.mutedText
                 }
 
                 // A timing nudge for sidecar subtitles only, which omaroll draws.
@@ -2332,7 +2347,7 @@ Item {
                               + (root.subtitleOffsetMs / 1000).toFixed(1) + "s"
                         font.family: Theme.fontFamily
                         font.pixelSize: 11
-                        color: Theme.mutedText
+                        color: Osd.mutedText
 
                         TextMetrics {
                             id: widestEarlier
@@ -2349,6 +2364,7 @@ Item {
                         id: subtitleEarlier
                         objectName: "subtitleEarlier"
                         label: "Sub −"
+                        osd: true
                         toolTip: "Show subtitles earlier"
                         onClicked: root.subtitleOffsetMs = Math.max(-10000, root.subtitleOffsetMs - 500)
                     }
@@ -2356,6 +2372,7 @@ Item {
                         id: subtitleLater
                         objectName: "subtitleLater"
                         label: "Sub +"
+                        osd: true
                         toolTip: "Show subtitles later"
                         onClicked: root.subtitleOffsetMs = Math.min(10000, root.subtitleOffsetMs + 500)
                     }
@@ -2385,6 +2402,7 @@ Item {
                     // otherwise, which keeps the chain closed.
                     IconButton {
                         id: audioButton
+                        osd: true
                         objectName: "audioTrackButton"
                         visible: width > 0
                         width: player && player.audioTracks.length > 1 && transport.width >= 520
@@ -2398,6 +2416,7 @@ Item {
                     }
                     IconButton {
                         id: subtitleButton
+                        osd: true
                         objectName: "subtitleButton"
                         visible: width > 0
                         width: root.hasSubtitleChoices && transport.width >= 440
@@ -2416,6 +2435,7 @@ Item {
                     }
                     IconButton {
                         id: speedButton
+                        osd: true
                         anchors.left: subtitleButton.right
                         anchors.leftMargin: mediaControls.subtitleGap
                         anchors.verticalCenter: parent.verticalCenter
@@ -2429,6 +2449,7 @@ Item {
                     }
                     IconButton {
                         id: soundButton
+                        osd: true
                         anchors.left: speedButton.right
                         anchors.leftMargin: 6
                         anchors.verticalCenter: parent.verticalCenter
@@ -2454,11 +2475,9 @@ Item {
                 width: Math.min(statusText.implicitWidth + 28, stage.width - 32)
                 height: statusText.implicitHeight + 14
                 radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 4
-                color: Qt.rgba(Theme.darkerBackground.r, Theme.darkerBackground.g,
-                               Theme.darkerBackground.b, 0.86)
+                color: Osd.panelSolid
                 border.width: 1
-                border.color: Qt.rgba(Theme.foreground.r, Theme.foreground.g,
-                                      Theme.foreground.b, 0.18)
+                border.color: Osd.border
                 opacity: root.visible && root.status !== "" ? 1 : 0
                 visible: opacity > 0
                 Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutQuad } }
@@ -2471,7 +2490,7 @@ Item {
                     text: root.status
                     font.family: Theme.fontFamily
                     font.pixelSize: 12
-                    color: Theme.accent
+                    color: Osd.accent
                 }
             }
 
