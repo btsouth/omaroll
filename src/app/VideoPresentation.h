@@ -107,7 +107,8 @@ public:
       return;
     }
     m_stallClock.start();
-    m_stallUntil = kStallWatchMs;
+    // Slow video needs room for its longer limit and one recovery seek.
+    m_stallUntil = std::max<qint64>(kStallWatchMs, stallMs() + kResyncGraceMs + kStallMs);
     m_stallProgress = 0;
     m_stallLimit = 0;
     m_stallResyncs = 0;

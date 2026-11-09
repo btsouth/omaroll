@@ -3309,6 +3309,11 @@ private slots:
               switched = QMetaObject::invokeMethod(viewer.window, cycle);
             },
             Qt::QueuedConnection);
+        // The waits above may already have let it autoplay; then no new
+        // PlayingState arrives, so switch now, still right at the start.
+        if (player->playbackState() == QMediaPlayer::PlayingState) {
+          switched = QMetaObject::invokeMethod(viewer.window, cycle);
+        }
       }
       QTRY_VERIFY_WITH_TIMEOUT(player->mediaStatus() != QMediaPlayer::LoadingMedia
                                    && player->mediaStatus() != QMediaPlayer::NoMedia, 10000);
