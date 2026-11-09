@@ -738,7 +738,10 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     label: "Clear cache"
                     onClicked: {
+                        // PDF text is cached beside picture text and goes with it.
                         const count = TextIndex.clearCache()
+                                      + (typeof DocumentText !== "undefined"
+                                         ? DocumentText.clearCache() : 0)
                         root.textCacheMessage = count === 0 ? "The text cache is already empty."
                                                            : "Cleared " + count
                                                              + (count === 1 ? " entry." : " entries.")

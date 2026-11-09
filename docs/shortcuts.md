@@ -111,7 +111,7 @@ the viewer. The preview is the built-in viewer inside the library.
 | `Ctrl` + wheel · `Ctrl` `+` `-` `0` | Bigger or smaller tiles · reset |
 | drag | Drop the file, or the whole selection, into another app |
 | `Del` | Move to Trash, with confirm; Undo in the footer or `Ctrl+Z` puts it back |
-| `/` · `R` | Search filenames and picture text · Rescan |
+| `/` · `R` | Search names, text, tags and folders · Rescan |
 | `Esc` | Leave a PDF text selection, clear the tile selection, then close |
 
 The same letters work inside the preview. A folder handed to `omaroll` opens as

@@ -1,7 +1,10 @@
 #pragma once
 
+#include <functional>
+
 #include <QDate>
 #include <QByteArray>
+#include <QHash>
 #include "app/ShortcutTable.h"
 #include <QList>
 #include <QMap>
@@ -229,7 +232,9 @@ public:
   Q_INVOKABLE [[nodiscard]] int albumItemCount(const QString& name) const;
   Q_INVOKABLE [[nodiscard]] int unavailableAlbumItemCount(const QString& name) const;
   Q_INVOKABLE bool createAlbum(const QString& name);
-  Q_INVOKABLE void deleteAlbum(const QString& name);
+  // Saved views that open the album or tag go with it: they would show
+  // nothing. Returns how many views were removed.
+  Q_INVOKABLE int deleteAlbum(const QString& name);
   // Moves an album's membership to a new name. False when the target already
   // exists or the name is unusable; membership is never lost on failure.
   Q_INVOKABLE bool renameAlbum(const QString& oldName, const QString& newName);
@@ -243,9 +248,13 @@ public:
   [[nodiscard]] QStringList tagNames() const;
   Q_INVOKABLE [[nodiscard]] QStringList tagPaths(const QString& name) const;
   Q_INVOKABLE [[nodiscard]] QStringList tagsForPath(const QString& path) const;
+  // Every available file's directly assigned tags or albums, for search. One
+  // pass over the collections rather than one per file.
+  [[nodiscard]] QHash<QString, QStringList> tagsByPath() const;
+  [[nodiscard]] QHash<QString, QStringList> albumsByPath() const;
   Q_INVOKABLE [[nodiscard]] int tagItemCount(const QString& name) const;
   Q_INVOKABLE bool createTag(const QString& name);
-  Q_INVOKABLE void deleteTag(const QString& name);
+  Q_INVOKABLE int deleteTag(const QString& name);
   // Renames a tag and every tag nested under it, so "Travel/Japan" becomes
   // "Trips/Japan" when "Travel" becomes "Trips". False on a name clash; the
   // existing tree is left untouched.
@@ -397,6 +406,8 @@ private:
   void persistAlbums();
   void persistTags();
   void persistSmartCollections();
+  // Removes the saved views whose |key| ("album" or "tag") matches.
+  int removeViewsNaming(const QString& key, const std::function<bool(const QString&)>& matches);
   void persistMarkIdentities();
   // Snapshots the marks (and their identities) before a destructive change, so
   // undo can put them back exactly.

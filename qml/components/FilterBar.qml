@@ -77,6 +77,25 @@ Item {
         Captures.searchText = search.text
     }
 
+    // Token values (tag:, in:, camera: and the rest) for the word at the
+    // cursor, while the field has the keyboard.
+    function refreshSuggestions() {
+        const rows = search.activeFocus
+                     ? Captures.searchSuggestions(search.text, search.cursorPosition) : []
+        suggestions.rows = rows
+        if (rows.length > 0) suggestions.open()
+        else suggestions.close()
+    }
+
+    function acceptSuggestion(row) {
+        const before = search.text.substring(0, row.start)
+        const after = search.text.substring(row.end)
+        const insert = row.insert + (row.complete && !after.startsWith(" ") ? " " : "")
+        search.text = before + insert + after
+        search.cursorPosition = before.length + insert.length
+        if (row.complete) root.applySearch()
+    }
+
     // Saved views and Open With can change the query outside this field.
     Component.onCompleted: search.text = Captures.searchText
     Connections {
@@ -98,7 +117,8 @@ Item {
     readonly property real kindButtonsWidth: sectionButtons.width + kinds.spacing
     readonly property bool separateBrowse: root.width < Math.max(620, root.kindButtonsWidth + 140)
     readonly property bool wrapped: root.width < kinds.width + 40 + 90 + sortButton.width + 60
-    implicitHeight: wrapped ? 76 : 40
+    readonly property int controlsHeight: wrapped ? 76 : 40
+    implicitHeight: controlsHeight + (chips.visible ? chips.implicitHeight + 7 : 0)
 
     Row {
         id: kinds
@@ -180,7 +200,9 @@ Item {
             parent: root.separateBrowse ? root : kinds
             x: root.separateBrowse ? 20 : 0
             y: root.separateBrowse ? 43 : 0
-            label: root.width < 700 ? (Captures.duplicatesOnly ? "Dupes  ▾"
+            // Several facets at once are listed as chips; the button counts them.
+            label: chips.chips.length > 1 ? "Browse · " + chips.chips.length + "  ▾"
+                   : root.width < 700 ? (Captures.duplicatesOnly ? "Dupes  ▾"
                                       : Captures.similarOnly ? "Similar  ▾" : "Browse  ▾")
                    : (Captures.duplicatesOnly ? "Duplicates  ▾"
                       : Captures.similarOnly ? "Similar pictures  ▾"
@@ -216,6 +238,7 @@ Item {
 
         // Search. Gives up width before it runs into the kind pills.
         Rectangle {
+            id: searchBox
             anchors.verticalCenter: parent.verticalCenter
             width: root.wrapped ? Math.max(120, Math.min(260, root.width - sortButton.width - 60))
                                 : Math.max(120, Math.min(200, root.width - kinds.width - sortButton.width - 70))
@@ -248,14 +271,65 @@ Item {
                 selectionColor: root.shade(Theme.accent, 0.5)
                 selectedTextColor: Theme.brightForeground
 
-                onTextChanged: Captures.queueSearchText(text)
-                onActiveFocusChanged: if (!activeFocus) root.applySearch()
+                onTextChanged: {
+                    Captures.queueSearchText(text)
+                    root.refreshSuggestions()
+                }
+                onCursorPositionChanged: root.refreshSuggestions()
+                onActiveFocusChanged: {
+                    if (!activeFocus) {
+                        root.applySearch()
+                        suggestions.close()
+                    }
+                }
+                // Up and Down walk the suggestions; Enter or Tab takes one.
+                // Without a highlighted suggestion Enter still searches.
+                Keys.onDownPressed: function (event) {
+                    event.accepted = suggestions.visible
+                    if (event.accepted) suggestions.move(1)
+                }
+                Keys.onUpPressed: function (event) {
+                    event.accepted = suggestions.visible
+                    if (event.accepted) suggestions.move(-1)
+                }
+                Keys.onTabPressed: function (event) {
+                    event.accepted = suggestions.visible && suggestions.accept(true)
+                }
                 Keys.onEscapePressed: {
+                    if (suggestions.visible) {
+                        suggestions.close()
+                        return
+                    }
                     text = ""
                     root.done()
                 }
-                Keys.onReturnPressed: { root.applySearch(); root.done() }
-                Keys.onEnterPressed: { root.applySearch(); root.done() }
+                Keys.onReturnPressed: {
+                    if (suggestions.visible && suggestions.accept(false)) return
+                    root.applySearch()
+                    root.done()
+                }
+                Keys.onEnterPressed: {
+                    if (suggestions.visible && suggestions.accept(false)) return
+                    root.applySearch()
+                    root.done()
+                }
+            }
+
+            HoverHandler { id: searchHover }
+            ThemedToolTip {
+                requested: searchHover.hovered && !search.activeFocus
+                text: "Search names, text, tags, albums, folders and cameras. "
+                      + "Narrow with tag:, album:, in:, camera:, lens:, type:, before: and after:, "
+                      + "\"quote a phrase\" or leave out a -word."
+            }
+
+            SearchSuggestions {
+                id: suggestions
+                objectName: "searchSuggestions"
+                width: Math.max(searchBox.width, 260)
+                x: searchBox.width - width
+                y: searchBox.height + 4
+                onAccepted: function (row) { root.acceptSuggestion(row) }
             }
 
             Text {
@@ -279,6 +353,16 @@ Item {
             active: sortMenu.visible
             onClicked: sortMenu.visible ? sortMenu.close() : sortMenu.popup(sortButton, 0, sortButton.height + 4)
         }
+    }
+
+    // The active Browse facets, each with its own clear control.
+    ActiveFilterChips {
+        id: chips
+        objectName: "activeFilterChips"
+        x: 20
+        y: root.controlsHeight + 1
+        width: root.width - 40
+        visible: chips.chips.length > 0
     }
 
     Menu {

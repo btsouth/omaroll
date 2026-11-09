@@ -52,6 +52,9 @@ public:
   [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
 
   [[nodiscard]] bool empty() const { return m_records.isEmpty(); }
+  // Where favourites, ratings, captions, albums and tags live. Null in a
+  // model made without settings.
+  [[nodiscard]] AppSettings* settings() const { return m_settings; }
   [[nodiscard]] bool scanning() const { return m_scanning; }
   // A refresh is waiting out its debounce.
   [[nodiscard]] bool refreshPending() const { return m_refreshTimer.isActive(); }
@@ -134,6 +137,12 @@ public:
   // terminated as RFC 2483 asks, which is what Nautilus, browsers and Electron
   // apps parse on drop.
   Q_INVOKABLE QString uriList(const QStringList& paths) const;
+
+#ifdef OMAROLL_TESTING
+  // Replaces the library without a scan, for search and filter tests that
+  // need tens of thousands of rows.
+  void setRecordsForTesting(QList<CaptureRecord> records);
+#endif
 
 signals:
   void metadataIndexingChanged();

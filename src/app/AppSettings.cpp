@@ -943,12 +943,31 @@ bool AppSettings::createAlbum(const QString& name) {
   return m_organizationError.isEmpty();
 }
 
-void AppSettings::deleteAlbum(const QString& name) {
+int AppSettings::deleteAlbum(const QString& name) {
   if (m_albums.remove(name) == 0) {
-    return;
+    return 0;
   }
+  const int views = removeViewsNaming(QStringLiteral("album"),
+                                      [&name](const QString& album) { return album == name; });
+  // One sync for both, so a saved view never outlives its album on disk.
+  m_deferOrganizationSync = true;
   persistAlbums();
+  if (views > 0) {
+    persistSmartCollections();
+    emit smartCollectionsChanged();
+  }
+  m_deferOrganizationSync = false;
+  syncOrganization();
   emit albumsChanged();
+  return views;
+}
+
+int AppSettings::removeViewsNaming(const QString& key,
+                                   const std::function<bool(const QString&)>& matches) {
+  return static_cast<int>(m_smartCollections.removeIf([&](QMap<QString, QVariantMap>::iterator view) {
+    const QString value = view.value().value(key).toString();
+    return !value.isEmpty() && matches(value);
+  }));
 }
 
 bool AppSettings::renameAlbum(const QString& oldName, const QString& newName) {
@@ -966,7 +985,22 @@ bool AppSettings::renameAlbum(const QString& oldName, const QString& newName) {
   // Membership moves with the name; nothing is re-resolved, so a rename cannot
   // lose an entry the way a delete-and-recreate would.
   m_albums.insert(target, m_albums.take(oldName));
+  // Saved views name their album too.
+  bool viewsChanged = false;
+  for (auto view = m_smartCollections.begin(); view != m_smartCollections.end(); ++view) {
+    if (view.value().value(QStringLiteral("album")).toString() == oldName) {
+      view.value().insert(QStringLiteral("album"), target);
+      viewsChanged = true;
+    }
+  }
+  m_deferOrganizationSync = true;
   persistAlbums();
+  if (viewsChanged) {
+    persistSmartCollections();
+    emit smartCollectionsChanged();
+  }
+  m_deferOrganizationSync = false;
+  syncOrganization();
   emit albumsChanged();
   return m_organizationError.isEmpty();
 }
@@ -1088,6 +1122,26 @@ QStringList AppSettings::tagsForPath(const QString& path) const {
   return tags;
 }
 
+QHash<QString, QStringList> AppSettings::tagsByPath() const {
+  QHash<QString, QStringList> byPath;
+  for (auto it = m_tags.cbegin(); it != m_tags.cend(); ++it) {
+    for (const AlbumEntry& entry : it.value()) {
+      if (entry.resolved) byPath[entry.path].append(it.key());
+    }
+  }
+  return byPath;
+}
+
+QHash<QString, QStringList> AppSettings::albumsByPath() const {
+  QHash<QString, QStringList> byPath;
+  for (auto it = m_albums.cbegin(); it != m_albums.cend(); ++it) {
+    for (const AlbumEntry& entry : it.value()) {
+      if (entry.resolved) byPath[entry.path].append(it.key());
+    }
+  }
+  return byPath;
+}
+
 int AppSettings::tagItemCount(const QString& name) const {
   return static_cast<int>(tagPaths(name).size());
 }
@@ -1123,7 +1177,7 @@ bool AppSettings::createTag(const QString& name) {
   return m_organizationError.isEmpty();
 }
 
-void AppSettings::deleteTag(const QString& name) {
+int AppSettings::deleteTag(const QString& name) {
   int removed = m_tags.remove(name);
   for (const QString& existing : m_tags.keys()) {
     if (tagIsUnder(existing, name)) {
@@ -1131,10 +1185,21 @@ void AppSettings::deleteTag(const QString& name) {
     }
   }
   if (removed == 0) {
-    return;
+    return 0;
   }
+  const int views = removeViewsNaming(QStringLiteral("tag"), [&name](const QString& tag) {
+    return tag == name || tagIsUnder(tag, name);
+  });
+  m_deferOrganizationSync = true;
   persistTags();
+  if (views > 0) {
+    persistSmartCollections();
+    emit smartCollectionsChanged();
+  }
+  m_deferOrganizationSync = false;
+  syncOrganization();
   emit tagsChanged();
+  return views;
 }
 
 bool AppSettings::renameTag(const QString& oldName, const QString& newName) {

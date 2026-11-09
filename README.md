@@ -226,14 +226,15 @@ Every viewer shortcut is listed in [Shortcuts](docs/shortcuts.md#viewer), and
 ## Features
 
 - **Browse your media.** See files by day, source or folder; filter by kind,
-  date, camera or lens, and resize the grid. Original photo and video dates are
+  date, camera or lens, combine those filters, and resize the grid. Original photo and video dates are
   used when available. Add folders without importing or copying their files.
 - **Organize without changing originals.** Albums, nested tags, captions,
   favourites, ratings and saved searches live in Omaroll's settings. Undo marks
   and moves to Trash with Ctrl+Z, and back up or restore your organization from Settings.
-- **Find words in pictures.** Search filenames immediately, then add local
-  Tesseract results as indexing progresses, or index the library in the
-  background. Reuse or clear the private text cache.
+- **Find words in pictures and PDFs.** One search box covers names, picture
+  and PDF text, captions, tags, albums, folders and cameras, ignoring accents.
+  Narrow it with `tag:`, `in:`, `camera:`, `type:` or `before:`, quote a
+  phrase or leave out a `-word`. Reuse or clear the private text cache.
 - **Preview images, video and PDFs.** Zoom, pan, rotate and flip pictures, in
   their real colors when they carry a wide-gamut profile; play video with sound,
   seek-bar previews, frame stepping, speed, audio tracks and subtitles; search PDF
@@ -269,12 +270,14 @@ RAW editors, RAW and JPEG pairs, pinned folders and the preview.
 
 ## Search
 
-The search box matches filenames, captions and the text inside pictures, read
-locally by Tesseract. **Similar pictures** in Browse groups resized,
+The search box matches filenames, captions, tags, albums, folders, cameras
+and the text inside pictures and PDFs, ignoring accents, with fields such as
+`tag:`, `in:` and `before:`. Picture text is read locally by Tesseract.
+**Similar pictures** in Browse groups resized,
 recompressed or brightened copies and close bursts, and Compare puts a set side
 by side so you can keep one. Nothing is removed without a confirmation.
-[Search and similar pictures](docs/search.md) explains indexing, match levels
-and the caches.
+[Search and similar pictures](docs/search.md) explains the search fields, indexing,
+match levels and the caches.
 
 ## Mattes
 

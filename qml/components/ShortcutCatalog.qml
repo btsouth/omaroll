@@ -109,7 +109,10 @@ QtObject {
     }
     function groups(context, video, animated, audio, sidecar, filter) {
         let entries = rows.filter(function (row) {
-            return row.context === context && (row.flag === "" || (row.flag === "still" && !video) || (row.flag === "video" && video) || (row.flag === "motion" && (video || animated)) || (row.flag === "audio" && audio) || (row.flag === "sidecar" && sidecar));
+            // The library help also teaches the search syntax.
+            const inContext = row.context === context
+                              || (context === "library" && row.context === "search");
+            return inContext && (row.flag === "" || (row.flag === "still" && !video) || (row.flag === "video" && video) || (row.flag === "motion" && (video || animated)) || (row.flag === "audio" && audio) || (row.flag === "sidecar" && sidecar));
         }).map(function (row) {
             return {
                 keys: display(row.keys),
