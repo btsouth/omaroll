@@ -90,7 +90,7 @@ ThumbnailProvider::ThumbnailProvider() {
   // unbounded number of ffmpegthumbnailer processes. Leave a core for the GUI
   // thread and the render thread. A first look at a big folder makes every
   // visible tile at once: eight rather than four took the first 10,000-file
-  // grid on a fresh cache from about 1.07 s to 0.90 s on a 28-thread machine.
+  // grid on a fresh cache from about 1.03 s to 0.87 s on a 28-thread machine.
   m_pool.setMaxThreadCount(workerCount());
 }
 
