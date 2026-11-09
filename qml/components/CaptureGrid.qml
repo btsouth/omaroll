@@ -49,10 +49,13 @@ FocusScope {
     // next range counts the selection again in full.
     property bool rangeStale: false
     // Checked tiles per section, by the section's first row, for the section
-    // headers, valid for the selection named in `set`. Small changes update
-    // it; anything else leaves it for another selection, and a header counts
-    // its section again when it next asks. Mutated in place, never assigned,
-    // so header bindings do not re-run on it.
+    // headers, valid for the selection named in `set`. Each entry keeps the
+    // section's length too: a recycled header waiting in the view's pool can
+    // still ask about its old section, which may start at the same row and
+    // be longer or shorter. Small changes update it; anything else leaves it
+    // for another selection, and a header counts its section again when it
+    // next asks. Mutated in place, never assigned, so header bindings do not
+    // re-run on it.
     readonly property var sectionCounts: ({ set: null, counts: ({}) })
     // Set from a change to Captures' rows until the sections are rebuilt for
     // it. In between, a section's first row may name another section's tiles,
@@ -119,7 +122,8 @@ FocusScope {
                 count += now ? 1 : -1
                 if (!tracked) continue
                 const first = sectionModel.sectionFirstOf(Captures.rowOf(path))
-                if (first >= 0 && cache.counts[first] !== undefined) cache.counts[first] += now ? 1 : -1
+                const entry = first >= 0 ? cache.counts[first] : undefined
+                if (entry !== undefined) entry.checked += now ? 1 : -1
             }
             if (tracked) cache.set = next
         }
@@ -207,13 +211,16 @@ FocusScope {
             cache.set = checkedSet
             cache.counts = {}
         }
-        let checked = cache.counts[first]
-        if (checked === undefined) {
+        const entry = cache.counts[first]
+        let checked
+        if (entry !== undefined && entry.count === count) {
+            checked = entry.checked
+        } else {
             checked = 0
             for (let i = first; i < first + count; ++i) {
                 if (checkedSet[Captures.pathAt(i)] === true) ++checked
             }
-            if (!root.sectionCountsDirty) cache.counts[first] = checked
+            if (!root.sectionCountsDirty) cache.counts[first] = { count: count, checked: checked }
         }
         return checked === 0 ? 0 : (checked >= count ? 2 : 1)
     }
