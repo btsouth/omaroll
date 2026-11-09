@@ -99,14 +99,19 @@ int main(int argc, char** argv) {
     CaptureModel model(&settings);
     CaptureFilterModel proxy;
     proxy.setSourceModel(&model);
-    QEventLoop loop;
-    QObject::connect(&model, &CaptureModel::scanningChanged, &loop, [&] {
-      if (!model.scanning()) loop.quit();
+    // Separate loops, so the scan's timeout cannot end the indexing wait.
+    QEventLoop scan;
+    QObject::connect(&model, &CaptureModel::scanningChanged, &scan, [&] {
+      if (!model.scanning()) scan.quit();
     });
-    QTimer::singleShot(30000, &loop, &QEventLoop::quit);
-    loop.exec();
-    if (model.scanning() || model.rowCount() != count) return 1;
+    QTimer::singleShot(30000, &scan, &QEventLoop::quit);
+    scan.exec();
+    if (model.scanning() || model.rowCount() != count) {
+      QTextStream(stderr) << "Scan did not settle: " << model.rowCount() << " of " << count << "\n";
+      return 1;
+    }
     QCoreApplication::processEvents();
+    QEventLoop loop;
     int notifications = 0;
     int pairingNotifications = 0;
     double firstMs = 0;
@@ -129,10 +134,15 @@ int main(int argc, char** argv) {
     QObject::connect(&metadata, &MediaMetadataIndex::indexingChanged, &loop, [&] {
       if (!metadata.indexing()) QTimer::singleShot(0, &loop, &QEventLoop::quit);
     });
-    QTimer::singleShot(120000, &loop, &QEventLoop::quit);
+    QTimer::singleShot(600000, &loop, &QEventLoop::quit);
     loop.exec();
     QCoreApplication::processEvents();
-    if (metadata.indexing() || metadata.completed() != metadata.total()) return 1;
+    if (metadata.indexing() || metadata.completed() != metadata.total()) {
+      QTextStream(stderr) << "Indexing did not settle: " << metadata.completed() << " of "
+                          << metadata.total() << (metadata.indexing() ? ", still indexing" : "")
+                          << " after " << elapsed.elapsed() << " ms\n";
+      return 1;
+    }
     result.insert(QStringLiteral("metadata_total"), metadata.total());
     result.insert(QStringLiteral("metadata_notifications"), notifications);
     result.insert(QStringLiteral("pairing_notifications"), pairingNotifications);

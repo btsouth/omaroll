@@ -27,6 +27,9 @@ inline QVariantList rows() {
   {"context": "quick", "id": "fill", "keys": ["Shift+W"], "label": "Fill / fit window", "group": "Zoom", "flag": "still", "tokens": ["W"]},
   {"context": "quick", "id": "pan", "keys": ["Shift+Left", "Shift+Right", "Shift+Up", "Shift+Down"], "label": "Pan picture", "group": "Zoom", "flag": "still", "tokens": ["Left", "Right", "Up", "Down"]},
   {"context": "quick", "id": "rotate", "keys": ["R", "Shift+R"], "label": "Rotate right / left", "group": "Zoom", "flag": "", "tokens": ["R", "R"]},
+  {"context": "quick", "id": "flip-horizontal", "keys": ["Shift+H"], "label": "Flip horizontally", "group": "Zoom", "flag": "still", "tokens": ["H"]},
+  {"context": "quick", "id": "flip-vertical", "keys": ["Shift+V"], "label": "Flip vertically", "group": "Zoom", "flag": "still", "tokens": ["V"]},
+  {"context": "quick", "id": "save-view-copy", "keys": ["Ctrl+S"], "label": "Save a rotated or flipped copy", "group": "Zoom", "flag": "still", "tokens": ["S"]},
   {"context": "quick", "id": "playback", "keys": ["Space", "K"], "label": "Play / pause video or animation", "group": "Playback", "flag": "motion", "tokens": ["Space", "K"]},
   {"context": "quick", "id": "seek", "keys": ["Left", "Right"], "label": "Seek five seconds", "group": "Playback", "flag": "video", "tokens": ["Left", "Right"]},
   {"context": "quick", "id": "seek-ten", "keys": ["J", "L"], "label": "Seek ten seconds", "group": "Playback", "flag": "video", "tokens": ["J", "L"]},
@@ -162,7 +165,12 @@ inline QVariantList rows() {
   {"context": "preview", "id": "trash", "keys": ["Del"], "label": "Move to Trash", "group": "Actions", "flag": "", "tokens": ["Delete"]},
   {"context": "preview", "id": "undo", "keys": ["Ctrl+Z"], "label": "Undo", "group": "Organization", "flag": "", "tokens": ["Z"]},
   {"context": "preview", "id": "rating", "keys": ["Alt+0", "Alt+1", "Alt+2", "Alt+3", "Alt+4", "Alt+5"], "label": "Clear / set rating", "group": "Organization", "flag": "", "tokens": ["0", "1", "2", "3", "4", "5"]},
-  {"context": "preview", "id": "quit", "keys": ["Ctrl+Q"], "label": "Quit", "group": "Window", "flag": "", "tokens": ["Q"]}
+  {"context": "preview", "id": "quit", "keys": ["Ctrl+Q"], "label": "Quit", "group": "Window", "flag": "", "tokens": ["Q"]},
+  {"context": "search", "id": "words", "keys": ["cafe", "\"exact phrase\""], "label": "Names, text, captions, tags, albums, folders and cameras", "group": "Search syntax", "flag": "", "tokens": ["", ""]},
+  {"context": "search", "id": "collections", "keys": ["tag:travel", "album:trip", "in:pictures/2024"], "label": "Tag, album or folder", "group": "Search syntax", "flag": "", "tokens": ["", "", ""]},
+  {"context": "search", "id": "camera", "keys": ["camera:fuji", "lens:35mm", "type:video"], "label": "Camera, lens or kind of file", "group": "Search syntax", "flag": "", "tokens": ["", "", ""]},
+  {"context": "search", "id": "dates", "keys": ["after:2023", "before:2024-06"], "label": "Later or earlier than a year, month or day", "group": "Search syntax", "flag": "", "tokens": ["", ""]},
+  {"context": "search", "id": "exclude", "keys": ["-draft", "-tag:work"], "label": "Leave out matches", "group": "Search syntax", "flag": "", "tokens": ["", ""]}
 ]
 )shortcuts")
                                .array()

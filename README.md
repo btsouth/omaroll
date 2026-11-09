@@ -105,10 +105,27 @@ this describes the file, not a guarantee of HDR display output. Open in mpv
 continues at the current playback position. When changing videos, a poster or
 the previous picture stays visible until the new clip's first decoded frame.
 
+Hovering the seek bar, in the viewer or the library preview, shows the time
+under the pointer and, above it, the nearest of up to 100 sampled keyframes, so
+the picture can be a few seconds from that time on a long video. Once a video is
+playing, Omaroll has ffmpeg decode those keyframes in the background, at low
+priority and at most two at a time, and waits while you seek. Only the focused,
+unminimized window decodes; what's done so far is kept when you switch away.
+They're cached, so a video opened again has previews at once. Clips under five
+seconds and audio-only files show the time alone.
+
 A picture or video opens in the viewer: the media fills the window, a small
 picture included, and the name, the controls and the menu appear when the
-pointer moves. Rotating turns the view only; a rotated copy is saved from the
-library. Pictures and videos in the folder are listed by filename; press `B`
+pointer moves. Rotating and flipping turn the view only. Once the view is
+turned or flipped, **Save rotated copy** (`Ctrl+S`, or the save button in the
+toolbar) writes `name-edited.ext` beside the original, with the original's
+permissions, and opens it; the original is never changed. A JPEG is turned
+losslessly with `jpegtran` when its size allows, with an EXIF orientation tag
+folded into the same turn, and keeps its EXIF (date taken, camera, place)
+marked upright. The notice says when the copy had to be re-encoded, when it is
+saved in another format (a GIF is saved as PNG) and when metadata could not be
+kept. A lossless WebP stays lossless.
+Pictures and videos in the folder are listed by filename; press `B`
 for a filmstrip of them above the controls, and click one to open it. Use the arrows
 to step through pictures, or Page Up and Page Down to change files while a video
 is playing. Folders, PDFs and a plain `omaroll` open the library, and so does
@@ -128,6 +145,12 @@ memory limit. Open with, Show in folder and Move to Trash stay available, and
 the zoom and rotate controls are off. A JPEG or PNG that ends early, as an
 unfinished download does, shows with a "cut off" note, since the missing part
 otherwise looks like grey picture. In the filmstrip such files are marked.
+
+Drag the file name in the viewer's header, or `Ctrl`+drag the picture, to drop
+the file itself into a file manager, browser or chat; a plain drag still pans.
+Drop pictures or videos on a viewer to open them there, with skipped files
+named. Drop files on the library to open them in the viewer, or folders to add
+them to the library after a confirmation.
 
 `Tab` and `Shift+Tab` move through the viewer's controls with a focus ring,
 then back to the picture; `Esc` returns to the picture. The viewer's shortcuts
@@ -175,6 +198,9 @@ process, so a favourite or rating set in one shows in the others.
 | `Shift` + arrows | Pan a picture zoomed beyond fit |
 | `0` · `1` or double click | Fit · toggle fit and actual size |
 | `R` · `Shift+R` | Rotate right · left, the view only, never the file |
+| `Shift+H` · `Shift+V` | Flip horizontally · vertically, the view only |
+| `Ctrl+S` | Save a rotated or flipped copy beside the original |
+| `Ctrl` + drag · drag the name | Drag the file into another app |
 | `Space` · `K` | Play · pause a video or animation |
 | click a video | Play · pause |
 | `J` `L` · `↑` `↓` · `M` | Seek ten seconds · volume · mute |
@@ -214,7 +240,7 @@ until the viewer closes; subtitle delay resets when the file changes.
 ## Features
 
 - **Browse your media.** See files by day, source or folder; filter by kind,
-  date, camera or lens, and resize the grid. Date sorts put a header over each
+  date, camera or lens, combine those filters, and resize the grid. Date sorts put a header over each
   day, or over each month where days hold less than half a row or tiles are at
   the two smallest sizes, with the count and a Select control for that day.
   Tiles from other days show their date. Original photo and video dates are
@@ -222,12 +248,13 @@ until the viewer closes; subtitle delay resets when the file changes.
 - **Organize without changing originals.** Albums, nested tags, captions,
   favourites, ratings and saved searches live in Omaroll's settings. Undo marks
   and moves to Trash with Ctrl+Z, and back up or restore your organization from Settings.
-- **Find words in pictures.** Search filenames immediately, then add local
-  Tesseract results as indexing progresses, or index the library in the
-  background. Reuse or clear the private text cache.
+- **Find words in pictures and PDFs.** One search box covers names, picture
+  and PDF text, captions, tags, albums, folders and cameras, ignoring accents.
+  Narrow it with `tag:`, `in:`, `camera:`, `type:` or `before:`, quote a
+  phrase or leave out a `-word`. Reuse or clear the private text cache.
 - **Preview images, video and PDFs.** Zoom, pan, rotate and flip pictures, in
   their real colors when they carry a wide-gamut profile; play video with sound,
-  seeking, frame stepping, speed, audio tracks and subtitles; search PDF
+  seek-bar previews, frame stepping, speed, audio tracks and subtitles; search PDF
   text, select words to copy, and switch between continuous scrolling and fit page.
 - **Make corrections as copies.** Crop with aspect presets, straighten,
   rotate, flip and resize one image or a selection. Save a copy or copy a region.
@@ -346,15 +373,52 @@ entry, preserving a symlink's name and path.
 
 ## Search
 
-The search box matches filenames, captions and the text inside pictures. Text
-is read locally by Tesseract and kept in a private cache. By default it is
-read while a search is open, one picture at a time, screenshots first; the
-status line counts the pictures read, and a notice under the results says
-when some have not been read yet.
+The search box matches filenames, captions, tags, album names, folder names
+below the library's folders, camera and lens, the text inside pictures and the text of PDFs. Case and
+accents are ignored, so `cafe` finds `café-paris.jpg` and `CAFÉ` finds "cafe".
+Every word must match. Fields narrow the search:
+
+| Type | To find |
+|---|---|
+| `tag:travel` · `album:iceland` | Tagged, or in an album. A tag also matches its nested tags |
+| `in:pictures/2024` · `in:~/Pictures` | In a folder, written from home or in full |
+| `camera:fuji` · `lens:35mm` | Taken with a camera or lens |
+| `type:video` (or `kind:`) | `screenshot`, `recording`, `photo`, `video`, `download`, `pdf`, `raw`, `animated` |
+| `before:2024` · `after:2023-06` · `after:2024-06-01` | Earlier or later than a year, month or day |
+| `"exact phrase"` · `tag:"road trip"` | Words side by side |
+| `-draft` · `-tag:work` · `-"old copy"` | Leave those out |
+
+A field value matches the start of a word, so `camera:fuji` finds
+"FUJIFILM X-T4" and `tag:japan` finds "Travel/Japan". `before:` is earlier
+than the whole period and `after:` later, so `after:2023 before:2025` is 2024.
+Anything else with a colon is searched as plain text. Inside quotes, `\"` is a
+quote and `\\` a backslash, so `album:"Road \"Trip\""` names that album. Typing a field offers
+the library's tags, albums, folders, cameras, kinds and years; Up and Down pick
+one and Enter or Tab takes it. **?** lists the syntax too.
+
+Choices in **Browse** combine: a folder, an album, a tag, a date, a camera or
+lens and a minimum rating narrow together. Each shows as a chip under the
+filter bar with its own clear button. **Save current view** keeps the search,
+tokens included, the kind and sort, and the folder, album, tag, date, camera,
+lens and rating chips. Duplicate and similar reviews are not saved. Deleting an
+album or tag deletes the saved views that open it. Omaroll 1.18 and older open
+such a view with only its plain words and without its album.
+
+Picture text is read locally by Tesseract and kept in a private cache. By
+default it is read while a search is open, one picture at a time, screenshots
+first; the status line counts the pictures read, and a notice under the results
+says when some have not been read yet.
+
+PDF text comes from `pdftotext`, the first 50 pages of each document, read one
+document at a time while a search is open or in the background, and cached the
+same way. A document that takes longer than 20 seconds is skipped until it
+changes. A library of long PDFs keeps most of their text in that cache rather
+than in memory, and searches it there.
 
 **Index text in the background** in Settings reads the library once its scan
 has settled instead, two to four pictures at a time at the lowest CPU and disk
-priority, and pauses while the computer runs on battery. Its status reads
+priority, and pauses while the computer runs on battery. PDFs are read in the
+background too, one at a time, with the same pause. Its status reads
 "Text indexed N of M". **Screenshots only** limits it to screenshots; a search
 still reads other pictures as before.
 
@@ -443,7 +507,7 @@ and put on your clipboard.
 | `Ctrl` + wheel · `Ctrl` `+` `-` `0` | Bigger or smaller tiles · reset |
 | drag | Drop the file, or the whole selection, into another app |
 | `Del` | Move to Trash, with confirm; Undo in the footer or `Ctrl+Z` puts it back |
-| `/` · `R` | Search filenames and picture text · Rescan |
+| `/` · `R` | Search names, text, tags and folders · Rescan |
 | `Esc` | Leave a PDF text selection, clear the tile selection, then close |
 
 </details>
@@ -556,10 +620,19 @@ graph rather than the screen, so an overlapping window cannot spoil the shot.
 - **High DPI.** Thumbnails are generated at `devicePixelRatio` and the cache is
   keyed on the rendered pixel size, so a 1.25x or 1.5x monitor gets crisp tiles
   rather than upscaled ones.
+- **Playback cost.** A 4K60 video plays with hardware decoding at about 22%
+  of a core for H.264 and 41% for 10-bit HEVC on an NVIDIA RTX 4070 SUPER,
+  in line with a plain Qt player; mpv uses 6 to 8% there because it keeps
+  frames on the graphics card. See
+  [the measurements](docs/performance/2026-11-09-playback-cost/README.md).
 - **Cache and state.** Thumbnails in `~/.cache/omaroll/thumbs`, bounded at 256MB
   by default, configurable from 64MB to 1GB, and pruned least-recently-used.
   Embedded media dates use a small identity-checked index in the same cache
-  root, so unchanged files are not inspected again on every launch.
+  root, so unchanged files are not inspected again on every launch. Seek-bar
+  previews are in `~/.cache/omaroll/storyboards`, readable only by you, keyed
+  by path, size and modification time, bounded at 64MB and pruned
+  least-recently-used. A changed file gets new previews; the old version's stay
+  until they're pruned.
   Settings and organization live in `~/.config/omaroll`. Deleting that directory
   also removes albums, tags, favorites and saved views. Back it up first if you
   want to keep them. The thumbnail cache can be deleted and regenerated.

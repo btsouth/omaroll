@@ -25,6 +25,7 @@ add_library(omaroll_core STATIC
   src/app/OpenRequest.cpp
   src/app/OpenRequest.h
   src/app/HeadlessAudio.h
+  src/app/PlaybackHeap.h
   src/app/VideoPresentation.h
   src/app/VideoPlayback.h
   src/library/CaptureRecord.h
@@ -61,6 +62,7 @@ add_library(omaroll_core STATIC
   src/sources/ImageBudget.h
   src/actions/ActionLauncher.cpp
   src/actions/ActionLauncher.h
+  src/actions/FileDrag.h
   src/actions/TrashRestore.cpp
   src/actions/TrashRestore.h
   src/actions/FileChooserRequest.cpp
@@ -77,6 +79,8 @@ add_library(omaroll_core STATIC
   src/edit/ImageEditor.h
   src/edit/CopyOutput.cpp
   src/edit/CopyOutput.h
+  src/edit/JpegExif.cpp
+  src/edit/JpegExif.h
   src/edit/JpegTransform.cpp
   src/edit/JpegTransform.h
   src/edit/ClipboardImage.cpp
@@ -97,16 +101,22 @@ add_library(omaroll_core STATIC
   src/pdf/PdfProvider.h
   src/pdf/PdfSupport.cpp
   src/pdf/PdfSupport.h
+  src/search/DocumentTextIndex.cpp
+  src/search/DocumentTextIndex.h
   src/search/OcrIndex.cpp
   src/search/OcrIndex.h
   src/search/QrDetector.cpp
   src/search/QrDetector.h
+  src/search/SearchQuery.cpp
+  src/search/SearchQuery.h
   src/subtitles/SubtitleIndex.cpp
   src/subtitles/SubtitleIndex.h
   src/thumbs/LargeImageProvider.cpp
   src/thumbs/LargeImageProvider.h
   src/thumbs/RawImageProvider.cpp
   src/thumbs/RawImageProvider.h
+  src/thumbs/Storyboard.cpp
+  src/thumbs/Storyboard.h
   src/thumbs/ThumbnailCache.cpp
   src/thumbs/ThumbnailCache.h
   src/thumbs/ThumbnailProvider.cpp
@@ -174,9 +184,11 @@ set(OMAROLL_QML_FILES
   qml/components/CaptureGrid.qml
   qml/components/DayHeader.qml
   qml/components/Chrome.qml
+  qml/components/ActiveFilterChips.qml
   qml/components/FilterBar.qml
   qml/components/LibraryBrowserSheet.qml
   qml/components/PictureArea.qml
+  qml/components/LoadingState.qml
   qml/components/PillButton.qml
   qml/components/ConfirmSheet.qml
   qml/components/DetailSheet.qml
@@ -186,6 +198,7 @@ set(OMAROLL_QML_FILES
   qml/components/BatchCorrectionSheet.qml
   qml/components/CompareSheet.qml
   qml/components/ReviewSetsView.qml
+  qml/components/SearchSuggestions.qml
   qml/components/SimilarStrictnessPicker.qml
   qml/components/TextIndexSettings.qml
   qml/components/TextSearchNotice.qml
@@ -209,7 +222,9 @@ set(OMAROLL_QML_FILES
   qml/components/FooterHints.qml
   qml/components/ViewerFilmstrip.qml
   qml/components/ViewerToolbar.qml
+  qml/components/DropHighlight.qml
   qml/components/ViewerTransport.qml
+  qml/components/SeekPreview.qml
 )
 
 set_source_files_properties(qml/components/ShortcutCatalog.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
@@ -271,10 +286,13 @@ if(BUILD_TESTING)
   find_package(Python3 COMPONENTS Interpreter)
   if(Python3_Interpreter_FOUND)
     add_test(NAME omaroll_shortcut_coverage COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/check-shortcuts.py)
+    add_test(NAME omaroll_tsan_triage COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/tsan-triage.py --self-test)
   endif()
   target_compile_definitions(omaroll_core PUBLIC OMAROLL_TESTING)
   add_executable(omaroll_benchmark_library EXCLUDE_FROM_ALL tests/benchmark_library.cpp)
   target_link_libraries(omaroll_benchmark_library PRIVATE omaroll_core)
+  add_executable(omaroll_benchmark_storyboard EXCLUDE_FROM_ALL tests/benchmark_storyboard.cpp)
+  target_link_libraries(omaroll_benchmark_storyboard PRIVATE omaroll_core)
   qt_add_executable(omaroll_tests tests/tst_omaroll.cpp)
   target_link_libraries(omaroll_tests PRIVATE omaroll_core Qt6::Test)
   add_test(NAME omaroll_tests COMMAND omaroll_tests)
@@ -293,6 +311,12 @@ if(BUILD_TESTING)
   qt_add_executable(omaroll_companion_tests tests/tst_companions.cpp)
   target_link_libraries(omaroll_companion_tests PRIVATE omaroll_core Qt6::Test)
   add_test(NAME omaroll_companion_tests COMMAND omaroll_companion_tests)
+  qt_add_executable(omaroll_search_tests tests/tst_search.cpp)
+  target_link_libraries(omaroll_search_tests PRIVATE omaroll_core Qt6::Test)
+  add_test(NAME omaroll_search_tests COMMAND omaroll_search_tests)
+  # Times a 50k-item search, so it runs alone rather than beside the UI suites.
+  set_tests_properties(omaroll_search_tests PROPERTIES RUN_SERIAL TRUE
+    ENVIRONMENT "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
   qt_add_executable(omaroll_editor_tests tests/tst_editors.cpp)
   target_link_libraries(omaroll_editor_tests PRIVATE omaroll_core Qt6::Test)
   add_test(NAME omaroll_editor_tests COMMAND omaroll_editor_tests)
@@ -306,20 +330,24 @@ if(BUILD_TESTING)
   set_tests_properties(omaroll_large_image_tests PROPERTIES ENVIRONMENT
     "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
 
+  qt_add_executable(omaroll_storyboard_tests tests/tst_storyboard.cpp)
+  target_link_libraries(omaroll_storyboard_tests PRIVATE omaroll_core Qt6::Test)
+  add_test(NAME omaroll_storyboard_tests COMMAND omaroll_storyboard_tests)
+  set_tests_properties(omaroll_storyboard_tests PROPERTIES ENVIRONMENT
+    "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
+
   qt_add_executable(omaroll_thumbnail_tests tests/tst_thumbnails.cpp)
   target_link_libraries(omaroll_thumbnail_tests PRIVATE omaroll_core Qt6::Test)
   add_test(NAME omaroll_thumbnail_tests COMMAND omaroll_thumbnail_tests)
   set_tests_properties(omaroll_thumbnail_tests PROPERTIES ENVIRONMENT
     "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
 
-  # Hostile files reach the decoders and the helpers. Qt Multimedia starts the
-  # FFmpeg and D-Bus stacks, so leak detection is noisy here for the same
-  # reason as the UI suites; ASan and UBSan still run.
+  # Hostile files reach the decoders and helpers, including leak detection.
   qt_add_executable(omaroll_hostile_media_tests tests/tst_hostile_media.cpp)
   target_link_libraries(omaroll_hostile_media_tests PRIVATE omaroll_core Qt6::Multimedia Qt6::Test)
   add_test(NAME omaroll_hostile_media_tests COMMAND omaroll_hostile_media_tests)
   set_tests_properties(omaroll_hostile_media_tests PROPERTIES ENVIRONMENT
-    "${omaroll_test_environment};ASAN_OPTIONS=detect_leaks=0")
+    "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
 
   # The UI suite loads the real Main.qml and drives it with synthetic input.
   # The module's files are compiled into the omaroll executable, so a second
@@ -346,15 +374,16 @@ if(BUILD_TESTING)
     OMAROLL_QML_IMPORT_PATH="${CMAKE_BINARY_DIR}/uitest-imports")
 
   qt_add_executable(omaroll_ui_tests tests/tst_ui.cpp)
-  target_link_libraries(omaroll_ui_tests PRIVATE omaroll_core Qt6::Multimedia Qt6::QuickControls2 Qt6::Test)
+  # Layout readiness (qWaitForPolish) comes from Qt Quick Test, part of the
+  # same Qt Declarative package.
+  find_package(Qt6 6.8 REQUIRED COMPONENTS QuickTest)
+  target_link_libraries(omaroll_ui_tests PRIVATE omaroll_core Qt6::Multimedia Qt6::QuickControls2 Qt6::QuickTest Qt6::Test)
   target_compile_definitions(omaroll_ui_tests PRIVATE
     OMAROLL_QML_IMPORT_PATH="${CMAKE_BINARY_DIR}/uitest-imports")
   add_test(NAME omaroll_ui_tests COMMAND omaroll_ui_tests)
-  # Qt Multimedia initializes the system FFmpeg, VAAPI/CUDA and D-Bus stacks,
-  # whose process-lifetime allocations make LeakSanitizer noisy. The core suite
-  # retains leak detection; this real-window suite still runs ASan and UBSan.
+  # Suppress only documented external process-lifetime allocations.
   set_tests_properties(omaroll_ui_tests PROPERTIES ENVIRONMENT
-    "${omaroll_test_environment};ASAN_OPTIONS=detect_leaks=0")
+    "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
 
   # The quick viewer in its own process, so its window never competes with
   # the library's for focus.
@@ -364,5 +393,25 @@ if(BUILD_TESTING)
     OMAROLL_QML_IMPORT_PATH="${CMAKE_BINARY_DIR}/uitest-imports")
   add_test(NAME omaroll_viewer_tests COMMAND omaroll_viewer_tests)
   set_tests_properties(omaroll_viewer_tests PROPERTIES ENVIRONMENT
-    "${omaroll_test_environment};ASAN_OPTIONS=detect_leaks=0")
+    "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
+endif()
+
+option(OMAROLL_FUZZ "Build libFuzzer parser harnesses (Clang only)" OFF)
+if(OMAROLL_FUZZ)
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR "OMAROLL_FUZZ requires Clang")
+  endif()
+  target_compile_definitions(omaroll_core PRIVATE OMAROLL_FUZZ)
+  target_compile_options(omaroll_core PRIVATE -fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+  target_link_options(omaroll_core INTERFACE -fsanitize=fuzzer-no-link,address,undefined)
+  set(fuzz_kinds launch ipc matroska pdf image raw subtitles organization)
+  set(kind 0)
+  foreach(parser IN LISTS fuzz_kinds)
+    math(EXPR kind "${kind} + 1")
+    add_executable(fuzz_${parser} tests/fuzz/driver.cpp)
+    target_compile_definitions(fuzz_${parser} PRIVATE FUZZ_KIND=${kind} OMAROLL_FUZZ)
+    target_compile_options(fuzz_${parser} PRIVATE -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all)
+    target_link_options(fuzz_${parser} PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_link_libraries(fuzz_${parser} PRIVATE omaroll_core)
+  endforeach()
 endif()

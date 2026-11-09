@@ -52,7 +52,12 @@ public:
   [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
 
   [[nodiscard]] bool empty() const { return m_records.isEmpty(); }
+  // Where favourites, ratings, captions, albums and tags live. Null in a
+  // model made without settings.
+  [[nodiscard]] AppSettings* settings() const { return m_settings; }
   [[nodiscard]] bool scanning() const { return m_scanning; }
+  // A refresh is waiting out its debounce.
+  [[nodiscard]] bool refreshPending() const { return m_refreshTimer.isActive(); }
   [[nodiscard]] QVariantList folderSources() const { return m_folderSources; }
   [[nodiscard]] QVariantList automaticFolders() const;
   Q_INVOKABLE [[nodiscard]] bool folderAvailable(const QString& path) const;
@@ -133,6 +138,12 @@ public:
   // apps parse on drop.
   Q_INVOKABLE QString uriList(const QStringList& paths) const;
 
+#ifdef OMAROLL_TESTING
+  // Replaces the library without a scan, for search and filter tests that
+  // need tens of thousands of rows.
+  void setRecordsForTesting(QList<CaptureRecord> records);
+#endif
+
 signals:
   void metadataIndexingChanged();
   void rawSizeRead(const QString& path, const QUrl& source, QSize size);
@@ -153,6 +164,7 @@ private:
 
   [[nodiscard]] QList<CaptureScanner::Root> roots() const;
   void rewatch(const QStringList& scannedDirectories = {});
+  void startScan();
   void scheduleRefresh();
   void scheduleMidnight();
   void applyMarks();
@@ -186,4 +198,6 @@ private:
   // A scan requested while one is already running, so the newest state is not
   // lost to a rescan that started a moment too early.
   bool m_rescanQueued = false;
+  // The last scan came back empty and its follow-up started at once.
+  bool m_followedUpEmpty = false;
 };

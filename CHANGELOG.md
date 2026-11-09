@@ -45,12 +45,65 @@
 - `Tab` and `Shift+Tab` move through the viewer's controls with a focus ring,
   and the viewer's shortcuts keep working on a focused control. Filmstrip
   tiles have names, tooltips and keyboard use.
+- Automatic backups of your albums, tags, ratings and other organization, kept
+  in `~/.local/share/omaroll/backups` (the last 7 days and 4 weeks, plus a
+  copy before every restore). If the settings file is damaged, Settings offers
+  Restore last good backup. It asks first, says which day it restored, keeps
+  the damaged file beside it and saves whatever organization it still held.
+- Search also matches tags, album names, folders, cameras, lenses and PDF
+  text, and ignores accents, so "cafe" finds "café" and "lodz" finds "Łódź".
+  PDF text is read in the background from the first 50 pages and cached,
+  pausing on battery, and most of a large PDF library's text waits in that
+  cache rather than in memory.
+- Search fields: `tag:`, `album:`, `in:`, `camera:`, `lens:`, `type:`,
+  `before:` and `after:`, plus quoted phrases and `-word` to leave matches out.
+  Typing a field suggests values from the library, and the help sheet lists
+  the syntax.
+- Browse choices combine, so a folder, date and camera narrow together. Each
+  active one shows as a chip with its own clear button, and saved views keep
+  the search and the album too. Older versions open those views with their
+  plain words only. Deleting an album or tag also deletes the saved views that
+  open it.
+- Flip horizontally and vertically in the viewer (`Shift+H`, `Shift+V`, the
+  toolbar and the menu), view only like rotate, and reset on the next file.
+- Save rotated copy in the viewer (`Ctrl+S`) once the view is turned or
+  flipped: a copy beside the original that opens next to it. JPEGs are turned
+  losslessly with jpegtran where the size allows; otherwise the notice says the
+  copy was re-encoded. A copy keeps the original's permissions.
+- Corrected JPEG copies keep their EXIF, XMP and IPTC metadata, with the
+  orientation tag set to upright, instead of dropping it. A phone photo with an
+  orientation tag is now turned losslessly too.
+- Drag the shown file out of the viewer by its name or with `Ctrl`+drag; a
+  plain drag still pans.
+- Drop files on the viewer to open them there, or on the library to open them
+  in the viewer. Folders dropped on the library are offered as library folders;
+  folders dropped on the viewer open in the library.
+- Hovering the seek bar in the viewer and the library preview shows the time
+  and, above it, the nearest of up to 100 sampled keyframes, and the preview
+  follows a drag. Keyframes are decoded once in the background at low priority
+  and cached, so a video opened again has previews at once.
+
+### Changed
+
+- Reading dates and cameras for a new library no longer slows the window.
+  Two to four probes run at once at low priority, their output is parsed off
+  the window thread, and "Reading media details" updates about once a second.
+  A first index of 50,000 files takes about a minute instead of four, and
+  scrolling stays smooth while it runs. A probe for files that left the
+  library stops at once.
 
 ### Fixed
 
+- 4K video playback uses about half the CPU it did with hardware decoding:
+  41% instead of 74% of a core for 10-bit HEVC at 60 fps, and 22% instead of
+  37% for H.264. Frame buffers were mapped and unmapped on every frame.
+- Opening a folder no longer flashes "No media yet" before its files appear.
+  The library says it is looking until the scan answers.
 - `Ctrl+Q` quits again from the viewer and the library.
 - Switching subtitles or the audio track just after a video opens no longer
-  freezes the picture while the clock keeps running.
+  freezes the picture while the clock keeps running. A switch the moment it
+  starts playing, which could stall picture and clock for about a second,
+  now recovers within half a second.
 - Pausing just after opening a video at a `--start` time, or straight after a
   seek, shows the frame at that time instead of the thumbnail or the old frame.
 - Similar pictures no longer puts different screenshots of text, or different
@@ -77,6 +130,8 @@
 - Seeking to the exact start of a frame shows that frame, not the one before.
 - Moving to the next video keeps a picture on screen instead of flashing an
   empty stage.
+- A subtitle file with an absurdly large timestamp no longer overflows while
+  it's read; that cue is skipped.
 
 ## 1.18.0
 

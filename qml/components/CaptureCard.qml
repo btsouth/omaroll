@@ -161,6 +161,7 @@ Item {
             // each change.
             root.dragPaths = [root.path]
             root.dragStarting()
+            // The same data the quick viewer's drag carries (FileDrag in C++).
             root.Drag.mimeData = {
                 "text/uri-list": Library.uriList(root.dragPaths),
                 "text/plain": root.dragPaths.join("\n")

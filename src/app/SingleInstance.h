@@ -19,6 +19,10 @@ public:
   [[nodiscard]] Result claimOrNotify(const QStringList& paths = {}, bool library = false, qint64 startMs = -1,
                                      const QStringList& skipped = {});
 
+  // Shared bounded JSON validator, independent of socket delivery.
+  static bool parseFrame(const QByteArray& frame, QStringList& paths, bool& library,
+                         qint64& startMs, QStringList& skipped);
+
 signals:
   void activationRequested(const QStringList& paths, bool library, qint64 startMs, const QStringList& skipped);
 

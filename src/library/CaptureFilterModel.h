@@ -2,6 +2,7 @@
 
 #include <QDate>
 #include <QCollator>
+#include <QFutureWatcher>
 #include <QHash>
 #include <QSet>
 #include <QSortFilterProxyModel>
@@ -10,6 +11,15 @@
 #include <QVariantList>
 #include <QVariantMap>
 
+#include "search/SearchQuery.h"
+
+#include <atomic>
+#include <functional>
+#include <list>
+#include <memory>
+#include <vector>
+
+class AppSettings;
 struct CaptureRecord;
 class SectionRows;
 
@@ -82,6 +92,7 @@ public:
   static constexpr int kAllKinds = -1;
 
   explicit CaptureFilterModel(QObject* parent = nullptr);
+  ~CaptureFilterModel() override;
   void setSourceModel(QAbstractItemModel* sourceModel) override;
 
   [[nodiscard]] int kindFilter() const { return m_kindFilter; }
@@ -94,6 +105,15 @@ public:
   void setSearchText(const QString& text);
   Q_INVOKABLE void queueSearchText(const QString& text);
   Q_INVOKABLE void commitPendingSearch();
+  // The plain words and phrases of the committed search, without field
+  // tokens. Text indexing only starts for these.
+  [[nodiscard]] QString textSearch() const;
+  // Values to offer for the token under the cursor: tag:, album:, in:,
+  // camera:, lens:, type:, before: and after:, or a field name for a word
+  // that starts one. Rows are {label, detail, insert, start, end, complete};
+  // replacing [start, end) with insert (plus a space when complete) accepts one.
+  Q_INVOKABLE [[nodiscard]] QVariantList searchSuggestions(const QString& text,
+                                                           int cursor) const;
 
   [[nodiscard]] bool favoritesOnly() const { return m_favoritesOnly; }
   void setFavoritesOnly(bool value);
@@ -192,8 +212,36 @@ public:
   [[nodiscard]] QObject* sectionRows();
 
   // Text found by the local OCR index. Updates are coalesced because a warm
-  // cache can deliver many entries in one event-loop turn.
+  // cache can deliver many entries in one event-loop turn. Pictures use this
+  // text and documents use their own, so neither producer's updates touch
+  // the other's.
   void setOcrText(const QString& path, const QString& text);
+
+  // Text of PDFs. A library of long documents could hold gigabytes of it, so
+  // at most documentTextBudget() bytes stay in memory, least recently used
+  // out first. Text that leaves memory stays searchable: once a loader is
+  // set, it is read back from the disk cache off the GUI thread and matched
+  // against the search there. |persisted| text is in that cache; other text
+  // stays in memory. Without a loader nothing leaves memory.
+  void setDocumentText(const QString& path, const QString& text, bool persisted = true);
+  // Reads one document's text from disk, or returns a null string when it is
+  // gone. Called on worker threads.
+  using TextLoader = std::function<QString(const QString& path)>;
+  void setDocumentTextLoader(TextLoader loader);
+  static constexpr qsizetype kDocumentTextBudget = 64 * 1024 * 1024;
+  [[nodiscard]] qsizetype documentTextBudget() const { return m_documentTextBudget; }
+  void setDocumentTextBudget(qsizetype bytes);
+  // Bytes of document text in memory, and how many documents are there or
+  // only on disk.
+  [[nodiscard]] qsizetype documentTextBytes() const { return m_documentTextBytes; }
+  [[nodiscard]] int residentDocumentCount() const {
+    return static_cast<int>(m_documentText.size());
+  }
+  [[nodiscard]] int storedDocumentCount() const {
+    return static_cast<int>(m_storedDocuments.size());
+  }
+  // Whether documents on disk are still being matched against the search.
+  [[nodiscard]] bool matchingStoredText() const;
 
   // The proxy row showing this path, or -1 when it is filtered out or unknown.
   Q_INVOKABLE int rowOf(const QString& path) const;
@@ -213,6 +261,9 @@ public:
   // left, as with any other change to its filters: what remains is no longer
   // that view.
   Q_INVOKABLE void clearRefinements();
+  // Every Browse facet and review filter, and the search too when asked, in
+  // one filter pass. Kind, favourites and sort are kept. Leaves a saved view.
+  Q_INVOKABLE void clearFacets(bool includeSearch = false);
 
   [[nodiscard]] QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
   [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
@@ -238,6 +289,9 @@ signals:
   void similarOnlyChanged();
   void pairRawJpegChanged();
   void countChanged();
+  // A document's text left memory but the disk cache no longer has it; its
+  // producer should read it again.
+  void documentTextLost(const QString& path);
 
 protected:
   [[nodiscard]] bool filterAcceptsRow(int sourceRow,
@@ -245,13 +299,73 @@ protected:
   [[nodiscard]] bool lessThan(const QModelIndex& left, const QModelIndex& right) const override;
 
 private:
+  // Folded search fields of one source row. The raw strings are kept so a
+  // row can be checked against its record by pointer: implicitly shared text
+  // that has not been replaced is the same text.
+  struct SearchKeys {
+    QString path;
+    QString fileName;
+    QString camera;
+    QString lens;
+    QString caption;
+    quint64 organization = 0;
+    QString name;
+    QString folder;
+    QString folderWords;
+    QString cameraKey;
+    QString lensKey;
+    QString captionKey;
+    QString tags;
+    QString albums;
+    bool document = false;
+    quint64 text = 0;
+    // Folded picture or in-memory PDF text as UTF-8, or empty.
+    QByteArray ocr;
+  };
+  struct ResidentText {
+    SearchText::FoldedText text;
+    qsizetype bytes = 0;
+    bool persisted = true;
+    std::list<QString>::iterator use;
+  };
+  // What a document kept on disk holds for the current search.
+  struct StoredMatch {
+    // Bit i: the i-th text term of the query is in the document's text.
+    quint64 terms = 0;
+    QString snippet;
+  };
+  struct StoredJob {
+    QString path;
+    QString fileName;
+    quint64 serial = 0;
+  };
+  struct StoredScan {
+    quint64 generation = 0;
+    QHash<QString, std::pair<quint64, StoredMatch>> matches;
+    QList<std::pair<QString, quint64>> lost;
+  };
+
   void beginFilterUpdate();
   void endFilterUpdate();
   void rebuildPairing();
+  [[nodiscard]] bool manyRowsChange();
+  void applySearchText(const QString& text);
+  void reloadOrganization();
   // What emptyReason() may leave out when asking whether anything matches.
   enum Relax { RelaxNothing = 0, RelaxSearch = 1, RelaxRefinements = 2 };
-  [[nodiscard]] bool matchesFilters(const CaptureRecord& record, int relax = RelaxNothing) const;
+  [[nodiscard]] bool matchesFilters(int sourceRow, const CaptureRecord& record,
+                                    int relax = RelaxNothing) const;
   [[nodiscard]] bool anyMatches(int relax) const;
+  [[nodiscard]] bool matchesSearch(int sourceRow, const CaptureRecord& record) const;
+  [[nodiscard]] const SearchKeys& searchKeys(int sourceRow, const CaptureRecord& record) const;
+  struct FolderKeys {
+    // Folded, from home: what in: matches.
+    QString path;
+    // Folded, below the library root: what plain words match.
+    QString words;
+  };
+  [[nodiscard]] const FolderKeys& folderKeys(const QString& path) const;
+  void reloadLibraryRoots();
   [[nodiscard]] bool rebuildFolderIndex();
   [[nodiscard]] bool rebuildDateIndex();
   [[nodiscard]] bool rebuildCameraIndex();
@@ -259,6 +373,18 @@ private:
   [[nodiscard]] const CaptureRecord& sourceRecord(int sourceRow) const;
   [[nodiscard]] bool recordLessThan(const CaptureRecord& first, const CaptureRecord& second) const;
   [[nodiscard]] QString ocrSnippet(const CaptureRecord& record) const;
+  [[nodiscard]] const SearchText::FoldedText* textFor(const CaptureRecord& record) const;
+  // Whether a document kept on disk holds the text term at |ordinal|.
+  [[nodiscard]] bool storedTextHas(const QString& path, int ordinal) const;
+  void dropDocumentText(const QString& path);
+  void trimDocumentText();
+  void releaseKeyText(const QString& path);
+  void resetStoredMatches();
+  void startStoredScan();
+  void storedScanFinished();
+  static StoredScan scanStored(const QList<StoredJob>& jobs, const QList<QByteArray>& terms,
+                               const QStringList& snippetTerms, const TextLoader& loader,
+                               quint64 generation, const std::atomic_bool& cancel);
 
   int m_kindFilter = kAllKinds;
   int m_sortMode = NewestFirst;
@@ -267,6 +393,20 @@ private:
   QString m_pendingSearchText;
   QTimer m_searchTimer;
   QStringList m_searchTerms;
+  SearchQuery m_query;
+  mutable std::vector<SearchKeys> m_searchKeys;
+  mutable QHash<QString, FolderKeys> m_folderKeys;
+  QStringList m_libraryRoots;
+  AppSettings* m_settings = nullptr;
+  // Folded tag and album names per path, one per line.
+  QHash<QString, QString> m_tagText;
+  QHash<QString, QString> m_albumText;
+  quint64 m_organizationVersion = 1;
+  quint64 m_textVersion = 1;
+  // While a filter change is applied, each row's verdict from the pass that
+  // sized the change, so Qt's own pass does not filter every row again.
+  std::vector<char> m_accepted;
+  bool m_acceptedValid = false;
   QString m_folderFilter;
   QStringList m_folders;
   QHash<QString, int> m_folderItemCounts;
@@ -298,12 +438,33 @@ private:
   QHash<QString, QString> m_duplicateGroups;
   QHash<QString, QString> m_similarGroups;
   QHash<QString, int> m_duplicateOrdinals;
-  QHash<QString, QString> m_ocrText;
-  QHash<QString, QString> m_ocrFolded;
+  QHash<QString, SearchText::FoldedText> m_text;
+  // Document text in memory, and its use order, least recent first.
+  QHash<QString, ResidentText> m_documentText;
+  mutable std::list<QString> m_documentUse;
+  qsizetype m_documentTextBytes = 0;
+  qsizetype m_documentTextBudget = kDocumentTextBudget;
+  TextLoader m_documentTextLoader;
+  // Documents whose text is only on disk, each with a serial that changes
+  // when its text does, so a scan of older text is not taken as current.
+  QHash<QString, quint64> m_storedDocuments;
+  quint64 m_storedSerial = 0;
+  // The text terms the stored matches answer, the documents not matched
+  // against them yet, and those that hold at least one.
+  QList<QByteArray> m_storedTerms;
+  QStringList m_storedSnippetTerms;
+  QSet<QString> m_storedPending;
+  QHash<QString, StoredMatch> m_storedMatches;
+  QFutureWatcher<StoredScan> m_storedWatcher;
+  std::shared_ptr<std::atomic_bool> m_storedCancel = std::make_shared<std::atomic_bool>(false);
+  quint64 m_storedGeneration = 0;
+  bool m_storedScanning = false;
+  QTimer m_storedScanTimer;
   QTimer m_folderIndexTimer;
   bool m_metadataIndexesDirty = false;
   QTimer m_duplicateOrderTimer;
   QTimer m_ocrFilterTimer;
+  QTimer m_releaseKeysTimer;
   QList<QMetaObject::Connection> m_sourceConnections;
   SectionRows* m_sectionRows = nullptr;
 };

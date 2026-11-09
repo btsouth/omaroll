@@ -21,11 +21,23 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLocale>
 #include <QSaveFile>
+#include <QScopeGuard>
+#include <QStandardPaths>
+#include <QTimeZone>
+#include <QUuid>
 #include <QVariantMap>
 
 #include <algorithm>
+#include <condition_variable>
+#include <cstdio>
+#include <deque>
+#include <functional>
+#include <mutex>
+#include <thread>
 #include <limits>
+#include <memory>
 #include <cmath>
 
 #include <sys/stat.h>
@@ -206,9 +218,56 @@ bool AppSettings::relocationAvailable(const AlbumEntry& entry) {
   return entry.device == 0 || entry.device == status.st_dev;
 }
 
+// Writes snapshot files one after another on its own thread, which ends when
+// there is nothing left to write. Standard primitives, so ThreadSanitizer can
+// follow every handoff, and each job owns all of its data.
+class BackupWriter {
+public:
+  ~BackupWriter() {
+    std::unique_lock lock(m_mutex);
+    m_idle.wait(lock, [this] { return !m_running; });
+    if (m_thread.joinable()) m_thread.join();
+  }
+  void post(std::function<void()> job) {
+    std::lock_guard lock(m_mutex);
+    m_jobs.push_back(std::move(job));
+    if (m_running) return;
+    // The last thread has already let go of the lock for good.
+    if (m_thread.joinable()) m_thread.join();
+    m_running = true;
+    m_thread = std::thread([this] { run(); });
+  }
+  void flush() {
+    std::unique_lock lock(m_mutex);
+    m_idle.wait(lock, [this] { return !m_running; });
+  }
+
+private:
+  void run() {
+    std::unique_lock lock(m_mutex);
+    while (!m_jobs.empty()) {
+      std::function<void()> job = std::move(m_jobs.front());
+      m_jobs.pop_front();
+      lock.unlock();
+      job();
+      job = nullptr;
+      lock.lock();
+    }
+    m_running = false;
+    m_idle.notify_all();
+  }
+
+  std::mutex m_mutex;
+  std::condition_variable m_idle;
+  std::deque<std::function<void()>> m_jobs;
+  bool m_running = false;
+  std::thread m_thread;
+};
+
 AppSettings::AppSettings(QObject* parent)
     : QObject(parent), m_settings(QSettings::IniFormat, QSettings::UserScope,
-                                  QStringLiteral("omaroll"), QStringLiteral("omaroll")) {
+                                  QStringLiteral("omaroll"), QStringLiteral("omaroll")),
+      m_backupWriter(std::make_unique<BackupWriter>()) {
   const bool existingProfile = !m_settings.allKeys().isEmpty();
   const QStringList favorites = m_settings.value(kFavorites).toStringList();
   m_favorites = QSet<QString>(favorites.begin(), favorites.end());
@@ -293,38 +352,6 @@ AppSettings::AppSettings(QObject* parent)
   m_rememberPlaybackSpeed = m_settings.value(kRememberPlaybackSpeed, false).toBool();
   const qreal savedRate = m_settings.value(kVideoPlaybackRate, 1.0).toDouble();
   m_videoPlaybackRate = std::isfinite(savedRate) ? qBound(0.25, savedRate, 4.0) : 1.0;
-  m_videoRecency = m_settings.value(kVideoPositionRecency).toStringList();
-  QVariantMap storedPositions = m_settings.value(kVideoPositions).toMap();
-  if (m_settings.status() != QSettings::FormatError &&
-      storedPositions.isEmpty() && m_settings.contains(kLegacyVideoPositions)) {
-    m_videoRecency.clear();
-    const QVariantMap legacy = m_settings.value(kLegacyVideoPositions).toMap();
-    // The old map loads in key order too. Preserve that order while changing
-    // identities, rather than sorting by the new device/inode keys.
-    for (auto it = legacy.cbegin(); it != legacy.cend(); ++it) {
-      const QString key = FileVersion::key(it.key());
-      const qint64 position = it.value().toLongLong();
-      if (!key.isEmpty() && QFileInfo(it.key()).isFile() && position >= kMinimumResumeMs &&
-          !storedPositions.contains(key) && m_videoRecency.size() < kMaximumResumeEntries) {
-        storedPositions.insert(key, position);
-        m_videoRecency.append(key);
-      }
-    }
-    setValue(kVideoPositions, storedPositions);
-    setValue(kVideoPositionRecency, m_videoRecency);
-  }
-  for (auto it = storedPositions.cbegin(); it != storedPositions.cend(); ++it) {
-    const qint64 position = it.value().toLongLong();
-    if (!it.key().isEmpty() && position >= kMinimumResumeMs) {
-      m_videoPositions.insert(it.key(), position);
-      if (!m_videoRecency.contains(it.key())) m_videoRecency.append(it.key());
-    }
-  }
-  m_videoRecency.removeIf([this](const QString& key) { return !m_videoPositions.contains(key); });
-  if (m_settings.status() != QSettings::FormatError && m_settings.contains(kLegacyVideoPositions)) {
-    m_settings.remove(kLegacyVideoPositions);
-    m_settings.sync();
-  }
   const QVariantMap storedAlbums = m_settings.value(kAlbums).toMap();
   const auto restoreCollections = [](const QVariantMap& storedCollections,
                                          QMap<QString, QList<AlbumEntry>>& target,
@@ -395,9 +422,51 @@ AppSettings::AppSettings(QObject* parent)
     m_markIdentities.insert(it.key(), entry);
   }
 
+  m_videoRecency = m_settings.value(kVideoPositionRecency).toStringList();
+  QVariantMap storedPositions = m_settings.value(kVideoPositions).toMap();
+  // Path-keyed resume positions move to file identities. The migration drops
+  // entries for files that are missing or unmounted right now, so the raw
+  // settings file is copied into the backups folder first. Without that copy
+  // the legacy key stays for a later start; it is removed only once migrated.
+  bool migrated = false;
+  if (settingsStatus() != QSettings::FormatError && m_settings.contains(kLegacyVideoPositions) &&
+      backupLegacySettings()) {
+    if (storedPositions.isEmpty()) m_videoRecency.clear();
+    const QVariantMap legacy = m_settings.value(kLegacyVideoPositions).toMap();
+    // The old map loads in key order too. Preserve that order while changing
+    // identities, rather than sorting by the new device/inode keys.
+    for (auto it = legacy.cbegin(); it != legacy.cend(); ++it) {
+      const QString key = FileVersion::key(it.key());
+      const qint64 position = it.value().toLongLong();
+      if (!key.isEmpty() && QFileInfo(it.key()).isFile() && position >= kMinimumResumeMs &&
+          !storedPositions.contains(key) && m_videoRecency.size() < kMaximumResumeEntries) {
+        storedPositions.insert(key, position);
+        m_videoRecency.append(key);
+      }
+    }
+    setValue(kVideoPositions, storedPositions);
+    setValue(kVideoPositionRecency, m_videoRecency);
+    migrated = true;
+  }
+  for (auto it = storedPositions.cbegin(); it != storedPositions.cend(); ++it) {
+    const qint64 position = it.value().toLongLong();
+    if (!it.key().isEmpty() && position >= kMinimumResumeMs) {
+      m_videoPositions.insert(it.key(), position);
+      if (!m_videoRecency.contains(it.key())) m_videoRecency.append(it.key());
+    }
+  }
+  m_videoRecency.removeIf([this](const QString& key) { return !m_videoPositions.contains(key); });
+  if (migrated) {
+    m_settings.remove(kLegacyVideoPositions);
+    m_settings.sync();
+  }
+  // A fresh profile has nothing to keep; its first organization save takes the snapshot.
+  if (existingProfile) scheduleDailySnapshot();
   m_previousVisit = m_settings.value(kLastVisit).toString();
   setValue(kLastVisit, QDateTime::currentDateTime().toString(Qt::ISODate));
 }
+
+AppSettings::~AppSettings() = default; // The backup writer finishes its queue first.
 
 void AppSettings::setShowHidden(bool value) {
   if (m_showHidden == value) {
@@ -872,12 +941,31 @@ bool AppSettings::createAlbum(const QString& name) {
   return m_organizationError.isEmpty();
 }
 
-void AppSettings::deleteAlbum(const QString& name) {
+int AppSettings::deleteAlbum(const QString& name) {
   if (m_albums.remove(name) == 0) {
-    return;
+    return 0;
   }
+  const int views = removeViewsNaming(QStringLiteral("album"),
+                                      [&name](const QString& album) { return album == name; });
+  // One sync for both, so a saved view never outlives its album on disk.
+  m_deferOrganizationSync = true;
   persistAlbums();
+  if (views > 0) {
+    persistSmartCollections();
+    emit smartCollectionsChanged();
+  }
+  m_deferOrganizationSync = false;
+  syncOrganization();
   emit albumsChanged();
+  return views;
+}
+
+int AppSettings::removeViewsNaming(const QString& key,
+                                   const std::function<bool(const QString&)>& matches) {
+  return static_cast<int>(m_smartCollections.removeIf([&](QMap<QString, QVariantMap>::iterator view) {
+    const QString value = view.value().value(key).toString();
+    return !value.isEmpty() && matches(value);
+  }));
 }
 
 bool AppSettings::renameAlbum(const QString& oldName, const QString& newName) {
@@ -895,7 +983,22 @@ bool AppSettings::renameAlbum(const QString& oldName, const QString& newName) {
   // Membership moves with the name; nothing is re-resolved, so a rename cannot
   // lose an entry the way a delete-and-recreate would.
   m_albums.insert(target, m_albums.take(oldName));
+  // Saved views name their album too.
+  bool viewsChanged = false;
+  for (auto view = m_smartCollections.begin(); view != m_smartCollections.end(); ++view) {
+    if (view.value().value(QStringLiteral("album")).toString() == oldName) {
+      view.value().insert(QStringLiteral("album"), target);
+      viewsChanged = true;
+    }
+  }
+  m_deferOrganizationSync = true;
   persistAlbums();
+  if (viewsChanged) {
+    persistSmartCollections();
+    emit smartCollectionsChanged();
+  }
+  m_deferOrganizationSync = false;
+  syncOrganization();
   emit albumsChanged();
   return m_organizationError.isEmpty();
 }
@@ -1017,6 +1120,26 @@ QStringList AppSettings::tagsForPath(const QString& path) const {
   return tags;
 }
 
+QHash<QString, QStringList> AppSettings::tagsByPath() const {
+  QHash<QString, QStringList> byPath;
+  for (auto it = m_tags.cbegin(); it != m_tags.cend(); ++it) {
+    for (const AlbumEntry& entry : it.value()) {
+      if (entry.resolved) byPath[entry.path].append(it.key());
+    }
+  }
+  return byPath;
+}
+
+QHash<QString, QStringList> AppSettings::albumsByPath() const {
+  QHash<QString, QStringList> byPath;
+  for (auto it = m_albums.cbegin(); it != m_albums.cend(); ++it) {
+    for (const AlbumEntry& entry : it.value()) {
+      if (entry.resolved) byPath[entry.path].append(it.key());
+    }
+  }
+  return byPath;
+}
+
 int AppSettings::tagItemCount(const QString& name) const {
   return static_cast<int>(tagPaths(name).size());
 }
@@ -1052,7 +1175,7 @@ bool AppSettings::createTag(const QString& name) {
   return m_organizationError.isEmpty();
 }
 
-void AppSettings::deleteTag(const QString& name) {
+int AppSettings::deleteTag(const QString& name) {
   int removed = m_tags.remove(name);
   for (const QString& existing : m_tags.keys()) {
     if (tagIsUnder(existing, name)) {
@@ -1060,10 +1183,21 @@ void AppSettings::deleteTag(const QString& name) {
     }
   }
   if (removed == 0) {
-    return;
+    return 0;
   }
+  const int views = removeViewsNaming(QStringLiteral("tag"), [&name](const QString& tag) {
+    return tag == name || tagIsUnder(tag, name);
+  });
+  m_deferOrganizationSync = true;
   persistTags();
+  if (views > 0) {
+    persistSmartCollections();
+    emit smartCollectionsChanged();
+  }
+  m_deferOrganizationSync = false;
+  syncOrganization();
   emit tagsChanged();
+  return views;
 }
 
 bool AppSettings::renameTag(const QString& oldName, const QString& newName) {
@@ -1373,12 +1507,203 @@ void AppSettings::reconcileTags(const QList<CaptureRecord>& records) {
   }
 }
 
-QVariantMap AppSettings::exportOrganization(const QString& path) const {
-  if (path.isEmpty()) {
-    return {{QStringLiteral("ok"), false},
-            {QStringLiteral("message"), QStringLiteral("Choose a file to write the backup to")}};
-  }
+namespace {
+constexpr int kDailyBackups = 7;
+constexpr int kWeeklyBackups = 4;
+constexpr int kBeforeRestoreBackups = 4;
+constexpr auto kOwnerOnly = QFileDevice::ReadOwner | QFileDevice::WriteOwner;
 
+// Snapshots list the paths of organized files, so keep them private.
+bool prepareBackupDirectory(const QString& path) {
+  if (!QDir().mkpath(path)) return false;
+  QFile::setPermissions(path, kOwnerOnly | QFileDevice::ExeOwner);
+  return true;
+}
+
+bool writeBackupFile(const QString& path, const QByteArray& payload) {
+  QSaveFile file(path);
+  if (!file.open(QIODevice::WriteOnly) || file.write(payload) != payload.size() || !file.commit())
+    return false;
+  QFile::setPermissions(path, kOwnerOnly);
+  return true;
+}
+
+// daily-2026-11-08.json and weekly-2026-11-02.json carry their date.
+QDate backupDate(const QString& name) {
+  return QDate::fromString(name.mid(name.indexOf(QLatin1Char('-')) + 1, 10), Qt::ISODate);
+}
+
+// Times are UTC: local time takes glibc's time zone lock on the backup thread.
+QDateTime dayStart(const QDate& date) { return QDateTime(date, QTime(0, 0), QTimeZone::UTC); }
+
+QDateTime datedStamp(const QDir&, const QString& name) {
+  const QDate date = backupDate(name);
+  return date.isValid() ? dayStart(date) : QDateTime();
+}
+
+QDateTime modifiedStamp(const QDir& dir, const QString& name) {
+  return QFileInfo(dir.filePath(name)).lastModified(QTimeZone::UTC);
+}
+
+// Newest first. A stamp after `now` comes from a clock that ran ahead; such
+// files sort as the oldest, so they cannot push out a current snapshot.
+QStringList newestFirst(const QDir& dir, const QString& pattern, const QDateTime& now,
+                        const std::function<QDateTime(const QDir&, const QString&)>& stamp) {
+  struct Entry {
+    QString name;
+    QDateTime at;
+    bool current;
+  };
+  QList<Entry> entries;
+  for (const QString& name : dir.entryList({pattern}, QDir::Files)) {
+    const QDateTime at = stamp(dir, name);
+    entries.append({name, at, at.isValid() && at <= now});
+  }
+  std::stable_sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) {
+    if (a.current != b.current) return a.current;
+    return a.at > b.at;
+  });
+  QStringList names;
+  for (const Entry& entry : std::as_const(entries)) names.append(entry.name);
+  return names;
+}
+
+// Keeps the file just written and the newest others, up to `keep` in all.
+void pruneBackups(QDir dir, const QString& pattern, int keep, const QDateTime& now,
+                  const QString& written,
+                  const std::function<QDateTime(const QDir&, const QString&)>& stamp) {
+  QStringList names = newestFirst(dir, pattern, now, stamp);
+  if (names.removeAll(written) > 0) --keep;
+  for (qsizetype i = qMax(0, keep); i < names.size(); ++i) dir.remove(names.at(i));
+}
+
+// Today's daily snapshot, and this week's from the first daily of the week.
+bool writeScheduledBackups(const QString& path, const QDate& date, const QByteArray& payload,
+                           bool replace) {
+  if (!date.isValid() || !prepareBackupDirectory(path)) return false;
+  const QDir dir(path);
+  const QString daily = QStringLiteral("daily-%1.json").arg(date.toString(Qt::ISODate));
+  if ((replace || !dir.exists(daily)) && !writeBackupFile(dir.filePath(daily), payload)) return false;
+  const QDate monday = date.addDays(1 - date.dayOfWeek());
+  const QString weekly = QStringLiteral("weekly-%1.json").arg(monday.toString(Qt::ISODate));
+  if (!dir.exists(weekly)) {
+    if (!QFile::copy(dir.filePath(daily), dir.filePath(weekly))) return false;
+    QFile::setPermissions(dir.filePath(weekly), kOwnerOnly);
+  }
+  pruneBackups(dir, QStringLiteral("daily-*.json"), kDailyBackups, dayStart(date), daily, datedStamp);
+  pruneBackups(dir, QStringLiteral("weekly-*.json"), kWeeklyBackups, dayStart(monday), weekly, datedStamp);
+  return true;
+}
+} // namespace
+
+QString AppSettings::backupDirectory() const {
+  return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)
+         + QStringLiteral("/omaroll/backups");
+}
+
+AppSettings::OrganizationState AppSettings::organizationState() const {
+  return {m_albums, m_tags, m_smartCollections, m_favorites, m_hidden, m_ratings, m_captions,
+          m_markIdentities};
+}
+
+void AppSettings::flushBackups() { m_backupWriter->flush(); }
+
+void AppSettings::scheduleDailySnapshot(bool replace) {
+  const QDate today = QDate::currentDate();
+  if (settingsStatus() != QSettings::NoError || (!replace && m_snapshotDate == today)) return;
+  // Retried on the next start if the write fails, not on every save.
+  m_snapshotDate = today;
+  // Encoding is quick; the directory work and the synced writes are not.
+  m_backupWriter->post([path = backupDirectory(), today, payload = encodeOrganization(organizationState()), replace] {
+    writeScheduledBackups(path, today, payload, replace);
+  });
+}
+
+bool AppSettings::saveBeforeRestore(const OrganizationState& state) {
+  flushBackups();
+  const QString path = backupDirectory();
+  if (!prepareBackupDirectory(path)) return false;
+  const QString name = QStringLiteral("before-restore-%1.json")
+                           .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+  const QDir dir(path);
+  if (!writeBackupFile(dir.filePath(name), encodeOrganization(state))) return false;
+  pruneBackups(dir, QStringLiteral("before-restore-*.json"), kBeforeRestoreBackups,
+               QDateTime::currentDateTimeUtc(), name, modifiedStamp);
+  return true;
+}
+
+bool AppSettings::backupLegacySettings() {
+  flushBackups();
+  const QString path = backupDirectory();
+  if (!prepareBackupDirectory(path)) return false;
+  const QString copy = QDir(path).filePath(QStringLiteral("settings-before-resume-migration-%1.ini")
+                                               .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+  if (!QFile::copy(m_settings.fileName(), copy)) return false;
+  QFile::setPermissions(copy, kOwnerOnly);
+  return true;
+}
+
+bool AppSettings::snapshotOrganization(const QDate& date, bool beforeRestore) {
+  flushBackups();
+  if (settingsStatus() != QSettings::NoError) return false;
+  if (beforeRestore) return saveBeforeRestore(organizationState());
+  return writeScheduledBackups(backupDirectory(), date, encodeOrganization(organizationState()), false);
+}
+
+bool AppSettings::canRestoreOrganization() const {
+  return settingsStatus() == QSettings::FormatError &&
+         !QDir(backupDirectory()).entryList({QStringLiteral("daily-*.json"),
+                 QStringLiteral("weekly-*.json"), QStringLiteral("before-restore-*.json")}, QDir::Files).isEmpty();
+}
+
+QVariantMap AppSettings::restoreLastGoodBackup() {
+  flushBackups();
+  const QDir dir(backupDirectory());
+  // Newest date first, and a day's own snapshot before its week's copy. Dates
+  // after today come from a clock that ran ahead and go last.
+  const QDate today = QDate::currentDate();
+  struct Candidate {
+    QString name;
+    QDate date;
+    bool daily;
+    bool current;
+  };
+  QList<Candidate> candidates;
+  for (const QString& name : dir.entryList({QStringLiteral("daily-*.json"), QStringLiteral("weekly-*.json")}, QDir::Files)) {
+    const QDate date = backupDate(name);
+    candidates.append({name, date, name.startsWith(QLatin1String("daily-")), date.isValid() && date <= today});
+  }
+  std::stable_sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
+    if (a.current != b.current) return a.current;
+    if (a.date != b.date) return a.date > b.date;
+    return a.daily && !b.daily;
+  });
+  QStringList scheduled;
+  for (const Candidate& candidate : std::as_const(candidates)) scheduled.append(candidate.name);
+  const QStringList fallback = newestFirst(dir, QStringLiteral("before-restore-*.json"),
+                                           QDateTime::currentDateTimeUtc(), modifiedStamp);
+  for (const QString& name : scheduled + fallback) {
+    QVariantMap result = importOrganization(dir.filePath(name));
+    // An older snapshot cannot help when the restore itself could not be saved.
+    if (result.value(QStringLiteral("saveFailed")).toBool()) return result;
+    if (!result.value(QStringLiteral("ok")).toBool()) continue;
+    // A daily snapshot is named for its day. A weekly copy is named for its
+    // Monday, so its own export time says when it was taken.
+    const QDateTime taken = QDateTime::fromString(result.value(QStringLiteral("exportedAt")).toString(), Qt::ISODate);
+    const QDate day = name.startsWith(QLatin1String("daily-")) || !taken.isValid()
+        ? backupDate(name) : taken.toLocalTime().date();
+    if (day.isValid()) {
+      result.insert(QStringLiteral("backupDate"), day);
+      result.insert(QStringLiteral("message"), result.value(QStringLiteral("message")).toString()
+                        + QStringLiteral(" from the backup of ")
+                        + QLocale().toString(day, QStringLiteral("d MMMM yyyy")));
+    }
+    return result;
+  }
+  return {{QStringLiteral("ok"), false}, {QStringLiteral("message"), QStringLiteral("No readable organization backup was found")}};
+}
+
+QByteArray AppSettings::encodeOrganization(const OrganizationState& state) {
   const auto encodeIdentity = [](const AlbumEntry& entry) {
     QJsonObject row;
     row.insert(QStringLiteral("bytes"), entry.bytes);
@@ -1407,10 +1732,10 @@ QVariantMap AppSettings::exportOrganization(const QString& path) const {
   root.insert(QStringLiteral("format"), QString::fromLatin1(kOrganizationFormat));
   root.insert(QStringLiteral("version"), kOrganizationVersion);
   root.insert(QStringLiteral("exportedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
-  root.insert(QStringLiteral("albums"), encodeEntries(m_albums));
-  root.insert(QStringLiteral("tags"), encodeEntries(m_tags));
+  root.insert(QStringLiteral("albums"), encodeEntries(state.albums));
+  root.insert(QStringLiteral("tags"), encodeEntries(state.tags));
 
-  QStringList favorites(m_favorites.cbegin(), m_favorites.cend());
+  QStringList favorites(state.favorites.cbegin(), state.favorites.cend());
   favorites.sort();
   QJsonArray favoriteArray;
   for (const QString& value : std::as_const(favorites)) {
@@ -1418,7 +1743,7 @@ QVariantMap AppSettings::exportOrganization(const QString& path) const {
   }
   root.insert(QStringLiteral("favorites"), favoriteArray);
 
-  QStringList hidden(m_hidden.cbegin(), m_hidden.cend());
+  QStringList hidden(state.hidden.cbegin(), state.hidden.cend());
   hidden.sort();
   QJsonArray hiddenArray;
   for (const QString& value : std::as_const(hidden)) {
@@ -1427,38 +1752,49 @@ QVariantMap AppSettings::exportOrganization(const QString& path) const {
   root.insert(QStringLiteral("hidden"), hiddenArray);
 
   QJsonObject ratings;
-  for (auto it = m_ratings.cbegin(); it != m_ratings.cend(); ++it) {
+  for (auto it = state.ratings.cbegin(); it != state.ratings.cend(); ++it) {
     ratings.insert(it.key(), it.value());
   }
   root.insert(QStringLiteral("ratings"), ratings);
 
   QJsonObject captions;
-  for (auto it = m_captions.cbegin(); it != m_captions.cend(); ++it) {
+  for (auto it = state.captions.cbegin(); it != state.captions.cend(); ++it) {
     captions.insert(it.key(), it.value());
   }
   root.insert(QStringLiteral("captions"), captions);
 
   QJsonObject markIdentities;
-  for (auto it = m_markIdentities.cbegin(); it != m_markIdentities.cend(); ++it) {
-    if (pathHasMark(it.key()) && it.value().bytes >= 0) {
+  for (auto it = state.markIdentities.cbegin(); it != state.markIdentities.cend(); ++it) {
+    const QString& path = it.key();
+    const bool marked = state.favorites.contains(path) || state.hidden.contains(path) ||
+                        state.ratings.contains(path) || state.captions.contains(path);
+    if (marked && it.value().bytes >= 0) {
       markIdentities.insert(it.key(), encodeIdentity(it.value()));
     }
   }
   root.insert(QStringLiteral("markIdentities"), markIdentities);
 
   QVariantMap smart;
-  for (auto it = m_smartCollections.cbegin(); it != m_smartCollections.cend(); ++it) {
+  for (auto it = state.smartCollections.cbegin(); it != state.smartCollections.cend(); ++it) {
     smart.insert(it.key(), it.value());
   }
   root.insert(QStringLiteral("smartCollections"), QJsonObject::fromVariantMap(smart));
 
+  return QJsonDocument(root).toJson(QJsonDocument::Indented);
+}
+
+QVariantMap AppSettings::exportOrganization(const QString& path) const {
+  if (path.isEmpty()) {
+    return {{QStringLiteral("ok"), false},
+            {QStringLiteral("message"), QStringLiteral("Choose a file to write the backup to")}};
+  }
+  const QByteArray payload = encodeOrganization(organizationState());
   QSaveFile file(path);
   if (!file.open(QIODevice::WriteOnly)) {
     return {{QStringLiteral("ok"), false},
             {QStringLiteral("message"),
              QStringLiteral("Could not write %1").arg(QFileInfo(path).fileName())}};
   }
-  const QByteArray payload = QJsonDocument(root).toJson(QJsonDocument::Indented);
   if (file.write(payload) != payload.size() || !file.commit()) {
     return {{QStringLiteral("ok"), false},
             {QStringLiteral("message"),
@@ -1504,6 +1840,7 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
             {QStringLiteral("message"), QStringLiteral("That is not a valid backup file")}};
   }
   const QJsonObject root = document.object();
+  const QString exportedAt = root.value(QStringLiteral("exportedAt")).toString();
   if (root.value(QStringLiteral("format")).toString() != QLatin1String(kOrganizationFormat)) {
     return {{QStringLiteral("ok"), false},
             {QStringLiteral("message"), QStringLiteral("That is not an Omaroll backup")}};
@@ -1692,6 +2029,50 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
   resolvePresent(albums);
   resolvePresent(tags);
 
+  // The backup was valid; saving it failed.
+  const auto failed = [](const QString& message) -> QVariantMap {
+    return {{QStringLiteral("ok"), false}, {QStringLiteral("message"), message},
+            {QStringLiteral("saveFailed"), true}};
+  };
+  // QSettings' format error is sticky, so a damaged file is repaired by
+  // rebuilding it: the new file is written beside it and replaces it only once
+  // it is complete, so a full disk leaves the damaged file as it was.
+  const QString damagedIni = settingsStatus() == QSettings::FormatError ? m_settings.fileName() : QString();
+  const auto reopen = [this, &damagedIni](const QString& path) {
+    std::destroy_at(&m_settings);
+    std::construct_at(&m_settings, path, QSettings::IniFormat);
+    m_damaged = path == damagedIni;
+  };
+  if (!damagedIni.isEmpty()) {
+    const QString uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    if (!QFile::copy(damagedIni, damagedIni + QStringLiteral(".damaged-") + uuid))
+      return failed(QStringLiteral("Could not preserve damaged settings"));
+  }
+  // Keep the organization being replaced, including whatever could still be
+  // read from a damaged file.
+  if (!saveBeforeRestore(organizationState()))
+    return failed(QStringLiteral("Could not save a backup before restoring"));
+  if (!damagedIni.isEmpty()) {
+    // Keep whatever preferences and folders could still be read; the
+    // organization keys are replaced by the import below.
+    QVariantMap readable;
+    for (const QString& key : m_settings.allKeys()) readable.insert(key, m_settings.value(key));
+    reopen(damagedIni + QStringLiteral(".restore-") + QUuid::createUuid().toString(QUuid::WithoutBraces));
+    for (auto it = readable.cbegin(); it != readable.cend(); ++it) m_settings.setValue(it.key(), it.value());
+  }
+  // Replaces the damaged file with the complete rebuilt one, in one rename.
+  const auto commitRepair = [&]() {
+    if (damagedIni.isEmpty()) return true;
+    const QString rebuilt = m_settings.fileName();
+    std::destroy_at(&m_settings);
+    const bool replaced = std::rename(QFile::encodeName(rebuilt).constData(),
+                                      QFile::encodeName(damagedIni).constData()) == 0;
+    if (!replaced) QFile::remove(rebuilt);
+    std::construct_at(&m_settings, damagedIni, QSettings::IniFormat);
+    m_damaged = !replaced;
+    return replaced;
+  };
+
   const auto oldAlbums = m_albums;
   const auto oldTags = m_tags;
   const auto oldViews = m_smartCollections;
@@ -1705,13 +2086,24 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
   m_captions = std::move(captions);
   m_markIdentities = std::move(markIdentities);
 
+  m_restoring = true;
+  const auto restoring = qScopeGuard([this] { m_restoring = false; });
   m_deferOrganizationSync = true;
   persistAlbums();
   persistTags();
   persistSmartCollections();
   persistMarks();
   m_deferOrganizationSync = false;
-  if (!syncOrganization()) {
+  const bool saved = syncOrganization();
+  if (!saved || !commitRepair()) {
+    // A rebuilt file that did not take its place is discarded; the damaged
+    // one stays, still in place, for the next try.
+    if (!damagedIni.isEmpty() && m_settings.fileName() != damagedIni) {
+      const QString rebuilt = m_settings.fileName();
+      reopen(damagedIni);
+      QFile::remove(rebuilt);
+    }
+    const QString error = saved ? QStringLiteral("Could not replace the damaged settings file") : m_organizationError;
     m_albums = oldAlbums;
     m_tags = oldTags;
     m_smartCollections = oldViews;
@@ -1728,8 +2120,12 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
     persistMarks();
     m_deferOrganizationSync = false;
     syncOrganization();
-    return {{QStringLiteral("ok"), false}, {QStringLiteral("message"), m_organizationError}};
+    return failed(error);
   }
+  if (!damagedIni.isEmpty()) emit organizationErrorChanged(); // canRestoreOrganization changed.
+  // Today's snapshot now holds the import, which the user chose; the state it
+  // replaced is in the before-restore copy.
+  scheduleDailySnapshot(true);
   clearMarksUndo();
   emit albumsChanged();
   emit tagsChanged();
@@ -1750,6 +2146,7 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
   result.insert(QStringLiteral("albums"), m_albums.size());
   result.insert(QStringLiteral("tags"), m_tags.size());
   result.insert(QStringLiteral("marks"), marks);
+  result.insert(QStringLiteral("exportedAt"), exportedAt);
   return result;
 }
 
@@ -1972,7 +2369,7 @@ void AppSettings::persistMarkIdentities() {
 void AppSettings::setValue(const char* key, const QVariant& value) {
   // A damaged ini must remain available for recovery, not be overwritten
   // with whichever subset QSettings managed to read.
-  if (m_settings.status() == QSettings::FormatError) {
+  if (settingsStatus() == QSettings::FormatError) {
     syncOrganization();
     return;
   }
@@ -1982,14 +2379,16 @@ void AppSettings::setValue(const char* key, const QVariant& value) {
 bool AppSettings::syncOrganization() {
   if (m_deferOrganizationSync) return true;
   m_settings.sync();
-  const QString error = m_settings.status() == QSettings::NoError ? QString()
-      : m_settings.status() == QSettings::FormatError
-          ? QStringLiteral("Your settings file is damaged. Keep a copy and repair it before saving organization.")
+  const QString error = settingsStatus() == QSettings::NoError ? QString()
+      : settingsStatus() == QSettings::FormatError
+          ? QStringLiteral("Your settings file is damaged. Restore the last good backup in Settings, or keep a copy and repair it before saving organization.")
           : QStringLiteral("Could not save organization. Check that your settings folder is writable and has free space.");
   if (m_organizationError != error) {
     m_organizationError = error;
     emit organizationErrorChanged();
   }
+  // At most once a day, written on a worker. An import snapshots its own result.
+  if (error.isEmpty() && !m_restoring) scheduleDailySnapshot();
   return error.isEmpty();
 }
 

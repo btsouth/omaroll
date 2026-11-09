@@ -1,5 +1,7 @@
 #include "library/CaptureModel.h"
 
+#include "actions/FileDrag.h"
+
 #include "app/AppSettings.h"
 #include "library/CaptureRoles.h"
 #include "sources/CameraRaw.h"
@@ -527,11 +529,7 @@ void CaptureModel::readRawSize(const QString& path, const QUrl& source) {
 }
 
 QString CaptureModel::uriList(const QStringList& paths) const {
-  QString list;
-  for (const QString& path : paths) {
-    list += QUrl::fromLocalFile(path).toString(QUrl::FullyEncoded) + QStringLiteral("\r\n");
-  }
-  return list;
+  return FileDrag::uriList(paths);
 }
 
 void CaptureModel::refresh() {
@@ -543,8 +541,14 @@ void CaptureModel::refresh() {
   }
 
   m_scanning = true;
+  // This scan reads the current files, so a debounced refresh still waiting
+  // would only repeat it.
+  m_refreshTimer.stop();
   emit scanningChanged();
+  startScan();
+}
 
+void CaptureModel::startScan() {
   const QList<CaptureScanner::Root> scanRoots = roots();
   const std::shared_ptr<std::atomic_bool> cancel = m_cancel;
 
@@ -748,8 +752,18 @@ void CaptureModel::adoptResults(ScanResult result) {
 
   rebuildRowIndex();
 
-  m_scanning = false;
-  emit scanningChanged();
+  // An empty answer to a scan that was already superseded, such as the usual
+  // folders before a folder passed on the command line, does not mean the
+  // library is empty. Stay scanning and start the follow-up now, so the
+  // window never flashes its empty state first. Only once in a row: a watched
+  // folder that keeps changing without media goes back to the debounce.
+  const bool followUpNow = m_rescanQueued && m_records.isEmpty() && !m_cancel->load()
+                           && !m_followedUpEmpty;
+  m_followedUpEmpty = followUpNow;
+  if (!followUpNow) {
+    m_scanning = false;
+    emit scanningChanged();
+  }
   emit countChanged();
   emit automaticFoldersChanged();
 
@@ -758,9 +772,24 @@ void CaptureModel::adoptResults(ScanResult result) {
 
   if (m_rescanQueued) {
     m_rescanQueued = false;
-    scheduleRefresh();
+    if (followUpNow) {
+      startScan();
+    } else {
+      scheduleRefresh();
+    }
   }
 }
+
+#ifdef OMAROLL_TESTING
+void CaptureModel::setRecordsForTesting(QList<CaptureRecord> records) {
+  beginResetModel();
+  m_records = std::move(records);
+  // Before the reset ends, so its observers find rows by path in the new list.
+  rebuildRowIndex();
+  endResetModel();
+  emit countChanged();
+}
+#endif
 
 void CaptureModel::rebuildRowIndex() {
   m_rowsByPath.clear();

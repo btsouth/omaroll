@@ -1,0 +1,78 @@
+name: Nightly UI repetition
+
+on:
+  schedule:
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    timeout-minutes: 30
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    env:
+      # Compiler output is validated against source/dependencies and compiler
+      # content by ccache; package builds stay clean and all tests still run.
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_MAXSIZE: 500M
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+    strategy:
+      fail-fast: false
+      matrix:
+        # x86_64 releases build on Omarchy stable; current Arch catches newer
+        # Qt early. Omarchy has no aarch64 stable mirror, so ARM builds against
+        # current Arch Linux ARM.
+        include:
+          - check: omarchy-stable
+            packages: omarchy-stable
+            runner: ubuntu-latest
+            container: archlinux:latest
+          - check: arch
+            packages: arch
+            runner: ubuntu-latest
+            container: archlinux:latest
+          - check: aarch64
+            packages: arch
+            runner: ubuntu-24.04-arm
+            # The pacman download sandbox does not work in this container.
+            pacman_flags: --disable-sandbox
+            container: menci/archlinuxarm:base-devel@sha256:5dda87d4b360dff28fe5ce27a20041949aa770a785c52daf82fc9956b2534c39
+    name: build-and-test (${{ matrix.check }})
+    steps:
+      - name: Use Omarchy stable packages
+        if: matrix.packages == 'omarchy-stable'
+        run: echo 'Server = https://stable-mirror.omarchy.org/$repo/os/$arch' > /etc/pacman.d/mirrorlist
+      - name: Install dependencies
+        run: >-
+          pacman -Syyuu ${{ matrix.pacman_flags }} --noconfirm --needed
+          appstream base-devel ccache cmake desktop-file-utils ffmpeg ffmpegthumbnailer
+          git imagemagick imath openexr kimageformats libavif libheif libraw ninja pkgconf poppler python qt6-base
+          qt6-declarative qt6-imageformats qt6-multimedia qt6-svg qt6-wayland
+          wl-clipboard xdg-desktop-portal xdg-utils mesa xorg-server-xvfb xorg-xauth
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Restore compiler outputs
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ccache-v1-${{ matrix.check }}-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: ccache-v1-${{ matrix.check }}-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Configure
+        run: cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/release --target all omaroll_benchmark_library
+      - name: Check the build runs on Omarchy stable
+        if: matrix.packages == 'omarchy-stable'
+        run: bash packaging/arch/check-omarchy-stable.sh build/release/omaroll
+      - name: Repeat UI and viewer suites
+        run: ctest --test-dir build/release -R 'omaroll_(ui|viewer)_tests' --repeat until-fail:5 --output-on-failure

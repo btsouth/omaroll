@@ -30,7 +30,9 @@
 #include "edit/ImageEditor.h"
 #include "edit/ClipboardImage.h"
 #include "edit/ClipboardText.h"
+#include "actions/FileDrag.h"
 #include "edit/CopyOutput.h"
+#include "edit/JpegExif.h"
 #include "edit/JpegTransform.h"
 #include "matte/HueExtractor.h"
 #include "matte/MatteComposer.h"
@@ -55,6 +57,7 @@
 #include <QDataStream>
 #include <QImageIOHandler>
 #include <QImageReader>
+#include <QImageWriter>
 #include <QPainter>
 #include <QPdfWriter>
 #include <QProcess>
@@ -73,12 +76,15 @@
 
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <functional>
 #include <array>
 #include <atomic>
 #include <bit>
@@ -88,6 +94,8 @@
 #include <future>
 #include <memory>
 #include <thread>
+
+using namespace Qt::StringLiterals;
 
 namespace {
 
@@ -130,6 +138,126 @@ QByteArray withExifOrientation(const QByteArray& jpeg, quint16 orientation) {
   app1.append(payload);
   app1.append(tiff);
   return jpeg.left(2) + app1 + jpeg.mid(2);
+}
+
+
+// Offsets inside cameraExif()'s TIFF block, from the start of "Exif\0\0".
+constexpr int kExifOrientation = 6 + 30;
+constexpr int kExifNextIfd = 6 + 46;
+constexpr int kExifMake = 6 + 50;
+constexpr int kExifPixelX = 6 + 84;
+constexpr int kExifPixelY = 6 + 96;
+constexpr int kExifDate = 6 + 104;
+
+// A JPEG with EXIF as a phone writes it: camera, orientation, the date taken
+// and pixel size in the EXIF IFD, and an embedded preview's IFD1. Laid out
+// by hand, little endian, at the offsets above.
+QByteArray withCameraExif(const QByteArray& jpeg, quint16 orientation, const QSize& pixels) {
+  QByteArray t;
+  const auto u16 = [&t](quint32 v) { t.append(char(v & 0xFF)); t.append(char((v >> 8) & 0xFF)); };
+  const auto u32 = [&u16](quint32 v) { u16(v & 0xFFFF); u16(v >> 16); };
+  t.append("II", 2); u16(42); u32(8);
+  u16(3);                                                   // IFD0 at 8
+  u16(0x010F); u16(2); u32(11); u32(50);                    // Make
+  u16(0x0112); u16(3); u32(1); u16(orientation); u16(0);    // Orientation
+  u16(0x8769); u16(4); u32(1); u32(62);                     // EXIF IFD
+  u32(124);                                                 // IFD1
+  t.append("OmarollCam\0\0", 12);                           // at 50
+  u16(3);                                                   // EXIF IFD at 62
+  u16(0x9003); u16(2); u32(20); u32(104);                   // DateTimeOriginal
+  u16(0xA002); u16(4); u32(1); u32(quint32(pixels.width()));
+  u16(0xA003); u16(4); u32(1); u32(quint32(pixels.height()));
+  u32(0);
+  t.append("2026:11:08 12:34:56\0", 20);                    // at 104
+  u16(1); u16(0x0103); u16(3); u32(1); u16(6); u16(0); u32(0); // IFD1 at 124
+  const QByteArray payload = QByteArray("Exif\0\0", 6) + t;
+  const quint16 length = quint16(payload.size() + 2);
+  QByteArray app1;
+  app1.append(char(0xFF)); app1.append(char(0xE1));
+  app1.append(char(length >> 8)); app1.append(char(length & 0xFF));
+  return jpeg.left(2) + app1 + payload + jpeg.mid(2);
+}
+
+quint32 exifLittle(const QByteArray& jpeg, int offset, int bytes) {
+  const qsizetype base = jpeg.indexOf(QByteArray("Exif\0\0", 6));
+  if (base < 0 || base + offset + bytes > jpeg.size()) return 0xFFFFFFFF;
+  quint32 value = 0;
+  for (int i = bytes - 1; i >= 0; --i) value = (value << 8) | quint8(jpeg.at(base + offset + i));
+  return value;
+}
+
+QByteArray readBytes(const QString& path) {
+  QFile file(path);
+  return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+}
+
+// A grey picture no turn or flip maps onto itself: a gradient on the left,
+// bands on the right.
+QImage asymmetricGrey(const QSize& size) {
+  QImage image(size, QImage::Format_Grayscale8);
+  for (int y = 0; y < size.height(); ++y)
+    for (int x = 0; x < size.width(); ++x)
+      image.setPixel(x, y, x < size.width() / 2 ? (x * 4 + y) % 256 : 255 - (y * 5) % 256);
+  return image;
+}
+
+QImage readUpright(const QString& path) {
+  QImageReader reader(path);
+  reader.setAutoTransform(true);
+  return reader.read().convertToFormat(QImage::Format_Grayscale8);
+}
+
+int greyDifference(const QImage& a, const QImage& b) {
+  if (a.size() != b.size()) return 999;
+  const QImage left = a.convertToFormat(QImage::Format_Grayscale8);
+  const QImage right = b.convertToFormat(QImage::Format_Grayscale8);
+  int worst = 0;
+  for (int y = 0; y < left.height(); ++y)
+    for (int x = 0; x < left.width(); ++x)
+      worst = std::max(worst, qAbs(qGray(left.pixel(x, y)) - qGray(right.pixel(x, y))));
+  return worst;
+}
+
+struct ViewCopy {
+  QString output;
+  QString note;
+  QString error;
+};
+
+ViewCopy saveViewCopyAndWait(const QString& path, int turns, bool flipH, bool flipV,
+                             const QString& entry = {}) {
+  ImageEditor editor;
+  QSignalSpy saved(&editor, &ImageEditor::viewCopySaved);
+  QSignalSpy failed(&editor, &ImageEditor::failed);
+  editor.saveViewCopy(path, turns, flipH, flipV, 7, entry);
+  if (!QTest::qWaitFor([&] { return saved.size() + failed.size() > 0; }, 20000)) return {{}, {}, "timeout"};
+  if (!failed.isEmpty()) return {{}, {}, failed.first().first().toString()};
+  return {saved.first().at(0).toString(), saved.first().at(1).toString(), {}};
+}
+
+// A stand-in for jpegtran on PATH, for the time it is in scope.
+struct FakeJpegtran {
+  QTemporaryDir dir;
+  QByteArray previousPath = qgetenv("PATH");
+  explicit FakeJpegtran(const QByteArray& body) {
+    QFile helper(dir.filePath(QStringLiteral("jpegtran")));
+    if (helper.open(QIODevice::WriteOnly)) {
+      helper.write("#!/bin/sh\n" + body);
+      helper.close();
+      helper.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    }
+    qputenv("PATH", dir.path().toUtf8() + ':' + previousPath);
+  }
+  ~FakeJpegtran() { qputenv("PATH", previousPath); }
+};
+
+quint32 pngCrc(const QByteArray& data) {
+  quint32 crc = 0xFFFFFFFF;
+  for (const char byte : data) {
+    crc ^= quint8(byte);
+    for (int k = 0; k < 8; ++k) crc = (crc >> 1) ^ (0xEDB88320 & (0 - (crc & 1)));
+  }
+  return ~crc;
 }
 
 // One TIFF entry for cameraTiff(): ASCII text, or unsigned integers, or a
@@ -328,6 +456,87 @@ void writeSmallFile(const QString& path, const QByteArray& content) {
   if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) file.write(content);
 }
 
+// PNGs in a scratch library, a fake ImageMagick first on PATH and a private
+// metadata cache. The environment is restored when it goes away.
+class MetadataSandbox {
+public:
+  // The script's body runs after `records`, a shell function that prints a
+  // dated record for every file it was given.
+  explicit MetadataSandbox(const QByteArray& body) {
+    for (const char* name : kNames) m_saved.append(qgetenv(name));
+    QDir().mkpath(bin());
+    QDir().mkpath(media());
+    QFile magick(bin() + QStringLiteral("/magick"));
+    if (magick.open(QIODevice::WriteOnly)) {
+      magick.write("#!/bin/sh\n"
+                   "records() {\n"
+                   "  index=0\n"
+                   "  while [ \"$#\" -gt 0 ]; do\n"
+                   "    if [ \"$1\" = -format ] && [ \"$#\" -ge 3 ]; then\n"
+                   "      printf '\\036OMAROLL_DATE:%s\\n2020:05:06 07:08:09\\n\\n' \"$index\"\n"
+                   "      index=$((index + 1))\n"
+                   "      shift 3\n"
+                   "    else\n"
+                   "      shift\n"
+                   "    fi\n"
+                   "  done\n"
+                   "}\n" +
+                   body);
+      magick.close();
+      magick.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                            QFileDevice::ExeOwner);
+    }
+    qputenv("PATH", (bin() + QStringLiteral(":/usr/bin:/bin")).toUtf8());
+    qputenv("XDG_CACHE_HOME", m_dir.filePath(QStringLiteral("cache")).toUtf8());
+    qputenv("OMAROLL_METADATA_LOG", file(QStringLiteral("probe.log")).toUtf8());
+    for (const char* name : {"XDG_PICTURES_DIR", "XDG_VIDEOS_DIR", "XDG_DOWNLOAD_DIR",
+                             "OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR"}) {
+      qputenv(name, media().toUtf8());
+    }
+  }
+  ~MetadataSandbox() {
+    for (int index = 0; index < static_cast<int>(std::size(kNames)); ++index) {
+      const QByteArray& value = m_saved.at(index);
+      value.isNull() ? qunsetenv(kNames[index]) : qputenv(kNames[index], value);
+    }
+  }
+  [[nodiscard]] bool valid() const { return m_dir.isValid(); }
+  [[nodiscard]] QString bin() const { return m_dir.filePath(QStringLiteral("bin")); }
+  [[nodiscard]] QString media() const { return m_dir.filePath(QStringLiteral("media")); }
+  [[nodiscard]] QString file(const QString& name) const { return m_dir.filePath(name); }
+  [[nodiscard]] QByteArray log() const {
+    QFile log(file(QStringLiteral("probe.log")));
+    return log.open(QIODevice::ReadOnly) ? log.readAll() : QByteArray();
+  }
+  QStringList addImages(int count, const QString& folder = {}) {
+    static const QByteArray png = [] {
+      QImage image(4, 4, QImage::Format_RGB32);
+      image.fill(Qt::white);
+      QByteArray bytes;
+      QBuffer buffer(&bytes);
+      buffer.open(QIODevice::WriteOnly);
+      image.save(&buffer, "PNG");
+      return bytes;
+    }();
+    const QString directory = folder.isEmpty() ? media() : media() + QLatin1Char('/') + folder;
+    QStringList paths;
+    for (int index = 0; index < count; ++index) {
+      const QString path =
+          directory + QStringLiteral("/photo %1.png").arg(index, 4, 10, QLatin1Char('0'));
+      writeSmallFile(path, png);
+      paths.append(path);
+    }
+    return paths;
+  }
+
+private:
+  static constexpr const char* kNames[] = {
+      "PATH", "XDG_CACHE_HOME", "OMAROLL_METADATA_LOG", "XDG_PICTURES_DIR", "XDG_VIDEOS_DIR",
+      "XDG_DOWNLOAD_DIR", "OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR"};
+  QTemporaryDir m_dir;
+  QList<QByteArray> m_saved;
+};
+
 } // namespace
 
 class OmarollTest : public QObject {
@@ -398,6 +607,12 @@ private slots:
   // them at a scratch tree so a test run cannot touch a real library's marks.
   void initTestCase() {
     QVERIFY(m_scratch.isValid());
+#if defined(__SANITIZE_THREAD__) || (defined(__has_feature) && __has_feature(thread_sanitizer))
+    // TSan's thread registry aborts (a CHECK in ThreadRegistry::CreateThread)
+    // when the global pool retires a thread and a new one reuses its id. Keep
+    // pool threads alive under TSan; the work they run is unchanged.
+    QThreadPool::globalInstance()->setExpiryTimeout(-1);
+#endif
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        m_scratch.filePath(QStringLiteral("config")));
     QVERIFY(qputenv("XDG_CACHE_HOME", m_scratch.filePath(QStringLiteral("cache")).toUtf8()));
@@ -1233,7 +1448,9 @@ private slots:
       const int next = (i + 1) % paths.size();
       QCOMPARE(viewer.neighbourIsVideo(1), next >= 4);
       QCOMPARE(viewer.neighbourIsAnimated(1), next == 2 || next == 3);
-      QTRY_VERIFY_WITH_TIMEOUT(model.rowOf(paths.at(i)) >= 0, 5000);
+      // Wait for the scan to finish rather than guessing how long a sanitizer
+      // build takes to read these files.
+      QVERIFY(QTest::qWaitFor([&] { return !model.scanning() && model.rowOf(paths.at(i)) >= 0; }, 60000));
       const auto& record = model.recordAt(model.rowOf(paths.at(i)));
       QCOMPARE(record.fileName, QFileInfo(paths.at(i)).fileName());
       QCOMPARE(record.isVideo(), video);
@@ -1251,6 +1468,20 @@ private slots:
     // Edited copies keep the detected format rather than falling back to PNG.
     QCOMPARE(ImageEditor::outputPathFor(paths.at(1)), paths.at(1) + QStringLiteral("-edited.jpg"));
     QCOMPARE(ImageEditor::outputPathFor(paths.at(0)), paths.at(0) + QStringLiteral("-edited.png"));
+  }
+
+  void matroskaTrackHeadersCannotEscapeTheirParent() {
+    QTemporaryDir dir;
+    const QString path = dir.filePath("truncated-container");
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    // An EBML header with the matroska DocType, so the sniffer walks into the
+    // segment, followed by the libFuzzer parent-boundary reproducer.
+    const QByteArray bytes = QByteArray::fromHex("1a45dfa38b4282886d6174726f736b61") + QByteArray::fromBase64(
+        "e6OAGFOAZ4sWVK5rIACGrhYa34CEg1SKEhJF36OAGFOAZ4sWVK5rIACGrhYagICEg1SKEhpF36OAGFOAZ4sWVK5rhq6Dg4ODg4ODgzaDg4OBgwODgQ==");
+    QCOMPARE(file.write(bytes), bytes.size());
+    file.close();
+    QVERIFY(CaptureScanner::mediaSuffix(path, true).isEmpty());
   }
 
   // A minimal Matroska header: one track of the given type and codec, in a
@@ -2516,6 +2747,277 @@ private slots:
     QVERIFY(!settings.organizationError().isEmpty());
   }
 
+  void automaticOrganizationSnapshotsRotateAndRecover() {
+    QTemporaryDir dir;
+    const auto oldData = qgetenv("XDG_DATA_HOME");
+    qputenv("XDG_DATA_HOME", dir.filePath("data").toUtf8());
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, dir.filePath("config"));
+    const auto reset = qScopeGuard([&] {
+      qputenv("XDG_DATA_HOME", oldData);
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, m_scratch.filePath("config"));
+    });
+    QString ini, backups;
+    {
+      AppSettings settings;
+      QVERIFY(settings.createAlbum("Remember me"));
+      QSettings stored(QSettings::IniFormat, QSettings::UserScope, "omaroll", "omaroll");
+      ini = stored.fileName();
+      backups = settings.backupDirectory();
+      QDir backupDir(backups);
+      settings.flushBackups();
+      for (const auto& name : backupDir.entryList(QDir::Files)) QVERIFY(backupDir.remove(name));
+      const QDate today = QDate::currentDate();
+      for (int day = 40; day >= 0; --day) QVERIFY(settings.snapshotOrganization(today.addDays(-day)));
+      QCOMPARE(backupDir.entryList({"daily-*.json"}, QDir::Files).size(), 7);
+      QCOMPARE(backupDir.entryList({"weekly-*.json"}, QDir::Files).size(), 4);
+      const QString latest = backupDir.filePath("daily-" + today.toString(Qt::ISODate) + ".json");
+      QFile snapshot(latest);
+      QVERIFY(snapshot.open(QIODevice::ReadOnly));
+      const auto bytes = snapshot.readAll();
+      snapshot.close();
+      QVERIFY(settings.createAlbum("Later change"));
+      QVERIFY(settings.snapshotOrganization());
+      QVERIFY(snapshot.open(QIODevice::ReadOnly));
+      QCOMPARE(snapshot.readAll(), bytes); // Daily snapshot is immutable.
+      snapshot.close();
+      // Snapshots hold file paths, so only the owner can read them.
+      const auto permissions = QFileInfo(latest).permissions();
+      QVERIFY(!(permissions & (QFileDevice::ReadGroup | QFileDevice::ReadOther)));
+      QVERIFY(!(QFileInfo(backups).permissions() & (QFileDevice::ReadOther | QFileDevice::ExeOther)));
+      QVERIFY(settings.importOrganization(latest).value("ok").toBool());
+      QCOMPARE(settings.albumNames(), QStringList{"Remember me"});
+      QCOMPARE(backupDir.entryList({"before-restore-*.json"}, QDir::Files).size(), 1);
+      // Every retained snapshot is readable by the current importer, and the
+      // pre-restore copies stay bounded.
+      for (const QString& name : backupDir.entryList({"daily-*.json", "weekly-*.json"}, QDir::Files)) {
+        const auto result = settings.importOrganization(backupDir.filePath(name));
+        QVERIFY2(result.value("ok").toBool(), qPrintable(name + ": " + result.value("message").toString()));
+      }
+      QCOMPARE(backupDir.entryList({"before-restore-*.json"}, QDir::Files).size(), 4);
+      QCOMPARE(settings.albumNames(), QStringList{"Remember me"});
+    }
+    // Unreadable newest snapshots must fall back without mutating settings.
+    // This week's copy is dated Monday, which can be today.
+    const QDate today = QDate::currentDate();
+    for (const QString& name : {"daily-" + today.toString(Qt::ISODate) + ".json",
+                                "weekly-" + today.addDays(1 - today.dayOfWeek()).toString(Qt::ISODate) + ".json"}) {
+      QFile broken(QDir(backups).filePath(name));
+      QVERIFY(broken.open(QIODevice::WriteOnly));
+      QVERIFY(broken.write("{broken") > 0);
+    }
+    QFile damaged(ini);
+    QVERIFY(damaged.open(QIODevice::WriteOnly));
+    const QByteArray bad("[library]\nsortMode=3\n[truncated\n");
+    QCOMPARE(damaged.write(bad), bad.size());
+    damaged.close();
+    {
+      AppSettings settings;
+      QVERIFY(settings.canRestoreOrganization());
+      QVERIFY(!settings.organizationError().isEmpty());
+      QCOMPARE(settings.sortMode(), 3);
+      const auto restored = settings.restoreLastGoodBackup();
+      QVERIFY(restored.value("ok").toBool());
+      // Yesterday's snapshot, since today's could not be read.
+      QCOMPARE(restored.value("backupDate").toDate(), today.addDays(-1));
+      QVERIFY(settings.albumNames().contains("Remember me"));
+      QVERIFY(settings.organizationError().isEmpty());
+      QVERIFY(!settings.canRestoreOrganization());
+      QVERIFY(settings.createTag("After recovery"));
+    }
+    QDir config(QFileInfo(ini).absolutePath());
+    const auto preserved = config.entryList({"*.damaged-*"}, QDir::Files);
+    QCOMPARE(preserved.size(), 1);
+    QFile original(config.filePath(preserved.first()));
+    QVERIFY(original.open(QIODevice::ReadOnly));
+    QCOMPARE(original.readAll(), bad);
+    AppSettings restarted;
+    QVERIFY(restarted.albumNames().contains("Remember me"));
+    QVERIFY(restarted.tagNames().contains("After recovery"));
+    // Preferences that were still readable in the damaged file survive recovery.
+    QCOMPARE(restarted.sortMode(), 3);
+  }
+
+  // A morning snapshot, then a backup the user restores on purpose, then the
+  // settings file is damaged. Recovery brings back the import, not the
+  // morning's state or the before-restore copy of it.
+  void restoringABackupKeepsAnImportTheUserChose() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto reset = scratchProfile(dir);
+    {
+      AppSettings settings;
+      QVERIFY(settings.createAlbum(QStringLiteral("Before import")));
+      QVERIFY(settings.snapshotOrganization());
+      QVERIFY(settings.createAlbum(QStringLiteral("Chosen")));
+      const QString chosen = dir.filePath(QStringLiteral("chosen.json"));
+      QVERIFY(settings.exportOrganization(chosen).value(QStringLiteral("ok")).toBool());
+      settings.deleteAlbum(QStringLiteral("Chosen"));
+      QCOMPARE(settings.albumNames(), QStringList{QStringLiteral("Before import")});
+      QVERIFY(settings.importOrganization(chosen).value(QStringLiteral("ok")).toBool());
+      QVERIFY(settings.albumNames().contains(QStringLiteral("Chosen")));
+    }
+    damage(settingsFile(), "[library]\nsortMode=3\n[truncated\n");
+    AppSettings settings;
+    QVERIFY(settings.canRestoreOrganization());
+    const auto result = settings.restoreLastGoodBackup();
+    QVERIFY2(result.value(QStringLiteral("ok")).toBool(), qPrintable(result.value(QStringLiteral("message")).toString()));
+    QVERIFY(settings.albumNames().contains(QStringLiteral("Chosen")));
+    const QString day = QLocale().toString(QDate::currentDate(), QStringLiteral("d MMMM yyyy"));
+    QVERIFY2(result.value(QStringLiteral("message")).toString().endsWith(QStringLiteral(" from the backup of ") + day),
+             qPrintable(result.value(QStringLiteral("message")).toString()));
+
+    // With no daily or weekly snapshot left, the newest before-restore copy is
+    // the only option, and it is used.
+    QDir backups(settings.backupDirectory());
+    settings.flushBackups();
+    for (const QString& name : backups.entryList({QStringLiteral("daily-*.json"), QStringLiteral("weekly-*.json")}, QDir::Files))
+      QVERIFY(backups.remove(name));
+    QVERIFY(settings.createAlbum(QStringLiteral("Later")));
+    QVERIFY(settings.importOrganization(dir.filePath(QStringLiteral("chosen.json"))).value(QStringLiteral("ok")).toBool());
+    settings.flushBackups();
+    for (const QString& name : backups.entryList({QStringLiteral("daily-*.json"), QStringLiteral("weekly-*.json")}, QDir::Files))
+      QVERIFY(backups.remove(name));
+    QVERIFY(settings.restoreLastGoodBackup().value(QStringLiteral("ok")).toBool());
+    QVERIFY(settings.albumNames().contains(QStringLiteral("Later")));
+  }
+
+  // Snapshots written while the clock ran ahead must not push out today's,
+  // and they are the first to go as real days pass.
+  void organizationSnapshotsFromAClockThatRanAheadAgeOutFirst() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto reset = scratchProfile(dir);
+    AppSettings settings;
+    QVERIFY(settings.createAlbum(QStringLiteral("Kept")));
+    settings.flushBackups();
+    QDir backups(settings.backupDirectory());
+    for (const QString& name : backups.entryList(QDir::Files)) QVERIFY(backups.remove(name));
+    const QDate today = QDate::currentDate();
+    for (int day = 1; day <= 8; ++day) QVERIFY(settings.snapshotOrganization(today.addDays(400 + 7 * day)));
+    QVERIFY(settings.snapshotOrganization(today));
+    const QString daily = QStringLiteral("daily-%1.json").arg(today.toString(Qt::ISODate));
+    const QString weekly = QStringLiteral("weekly-%1.json").arg(today.addDays(1 - today.dayOfWeek()).toString(Qt::ISODate));
+    QVERIFY(backups.exists(daily));
+    QVERIFY(backups.exists(weekly));
+    for (int day = 1; day < 7; ++day) QVERIFY(settings.snapshotOrganization(today.addDays(day)));
+    QStringList expected;
+    for (int day = 0; day < 7; ++day) expected.append(QStringLiteral("daily-%1.json").arg(today.addDays(day).toString(Qt::ISODate)));
+    QCOMPARE(backups.entryList({QStringLiteral("daily-*.json")}, QDir::Files, QDir::Name), expected);
+    QVERIFY(backups.exists(weekly));
+  }
+
+  // The migration drops entries for files that are missing right now, so it
+  // runs only once the settings file it reads has been copied, and the legacy
+  // map stays until then.
+  void resumeMigrationWaitsForACopyOfTheLegacySettings() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto reset = scratchProfile(dir);
+    const QString first = dir.filePath(QStringLiteral("a.mp4"));
+    const QString second = dir.filePath(QStringLiteral("b.mp4"));
+    for (const QString& path : {first, second}) writeSmallFile(path, "video");
+    {
+      QSettings stored(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("omaroll"), QStringLiteral("omaroll"));
+      stored.setValue(QStringLiteral("playback/positions"), QVariantMap{{first, 12000}});
+    }
+    // No backups folder can be made under a regular file.
+    const QString blocked = dir.filePath(QStringLiteral("blocked"));
+    writeSmallFile(blocked, "not a folder");
+    qputenv("XDG_DATA_HOME", blocked.toUtf8());
+    {
+      AppSettings settings;
+      QCOMPARE(settings.videoPosition(first), 0);
+      settings.setVideoPosition(second, 34000);
+    }
+    {
+      QSettings stored(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("omaroll"), QStringLiteral("omaroll"));
+      QVERIFY(stored.contains(QStringLiteral("playback/positions")));
+    }
+    qputenv("XDG_DATA_HOME", dir.filePath(QStringLiteral("data")).toUtf8());
+    {
+      AppSettings settings;
+      QCOMPARE(settings.videoPosition(first), 12000);
+      QCOMPARE(settings.videoPosition(second), 34000);
+      const QDir backups(settings.backupDirectory());
+      QCOMPARE(backups.entryList({QStringLiteral("settings-before-resume-migration-*.ini")}, QDir::Files).size(), 1);
+    }
+    QSettings stored(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("omaroll"), QStringLiteral("omaroll"));
+    QVERIFY(!stored.contains(QStringLiteral("playback/positions")));
+    QCOMPARE(stored.value(QStringLiteral("playback/positionRecencyV2")).toStringList(),
+             QStringList({FileVersion::key(second), FileVersion::key(first)}));
+  }
+
+  // Repairing a damaged file first keeps the organization it still held, and
+  // a disk that fills up mid-repair leaves the damaged file in place.
+  void repairingDamagedSettingsKeepsWhatWasReadableAndSurvivesAFullDisk() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto reset = scratchProfile(dir);
+    const QString ini = settingsFile();
+    // Room for the damaged copy and the before-restore backup of what it
+    // still holds, not for the rebuilt settings file with every album.
+    constexpr rlim_t limit = 4096;
+    {
+      AppSettings settings;
+      for (int i = 0; i < 200; ++i)
+        QVERIFY(settings.createAlbum(QStringLiteral("Album %1 with a name long enough to take room").arg(i)));
+      // Today's snapshot was taken at the first save; take it again with every album.
+      settings.flushBackups();
+      QDir backups(settings.backupDirectory());
+      for (const QString& name : backups.entryList(QDir::Files)) QVERIFY(backups.remove(name));
+      QVERIFY(settings.snapshotOrganization());
+    }
+    QVERIFY(QFileInfo(ini).size() > qint64(limit));
+    const QByteArray bad("[library]\nfavorites=/remember.bmp\n[truncated\n");
+    damage(ini, bad);
+    AppSettings settings;
+    QVERIFY(settings.canRestoreOrganization());
+    QVERIFY(settings.isFavorite(QStringLiteral("/remember.bmp")));
+    QDir backups(settings.backupDirectory());
+    const QStringList before = backups.entryList({QStringLiteral("before-restore-*.json")}, QDir::Files);
+    {
+      const auto oldHandler = signal(SIGXFSZ, SIG_IGN);
+      rlimit old{};
+      QCOMPARE(getrlimit(RLIMIT_FSIZE, &old), 0);
+      rlimit small = old;
+      small.rlim_cur = limit;
+      QCOMPARE(setrlimit(RLIMIT_FSIZE, &small), 0);
+      const auto lift = qScopeGuard([&] {
+        setrlimit(RLIMIT_FSIZE, &old);
+        signal(SIGXFSZ, oldHandler);
+      });
+      const auto result = settings.restoreLastGoodBackup();
+      QVERIFY(!result.value(QStringLiteral("ok")).toBool());
+      QVERIFY(result.value(QStringLiteral("saveFailed")).toBool());
+    }
+    {
+      QFile file(ini);
+      QVERIFY(file.open(QIODevice::ReadOnly));
+      QCOMPARE(file.readAll(), bad);
+    }
+    QVERIFY(settings.canRestoreOrganization());
+    QVERIFY(settings.isFavorite(QStringLiteral("/remember.bmp")));
+    QVERIFY(QDir(QFileInfo(ini).absolutePath()).entryList({QStringLiteral("*.restore-*")}, QDir::Files).isEmpty());
+
+    const auto result = settings.restoreLastGoodBackup();
+    QVERIFY2(result.value(QStringLiteral("ok")).toBool(), qPrintable(result.value(QStringLiteral("message")).toString()));
+    QCOMPARE(settings.albumNames().size(), 200);
+    QVERIFY(!settings.canRestoreOrganization());
+    // The favourite that was still readable went into a before-restore copy.
+    bool kept = false;
+    for (const QString& name : backups.entryList({QStringLiteral("before-restore-*.json")}, QDir::Files)) {
+      if (before.contains(name)) continue;
+      QFile file(backups.filePath(name));
+      QVERIFY(file.open(QIODevice::ReadOnly));
+      kept = kept || file.readAll().contains("/remember.bmp");
+    }
+    QVERIFY(kept);
+    QVERIFY(QDir(QFileInfo(ini).absolutePath()).entryList({QStringLiteral("*.restore-*")}, QDir::Files).isEmpty());
+    AppSettings restarted;
+    QCOMPARE(restarted.albumNames().size(), 200);
+    QVERIFY(restarted.organizationError().isEmpty());
+  }
+
   void damagedSettingsArePreservedWhenOrganizationCannotSave() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -2893,7 +3395,10 @@ private slots:
     QVERIFY(dir.isValid());
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        dir.filePath(QStringLiteral("profile")));
-    const auto restoreProfile = qScopeGuard([this] {
+    const QByteArray oldData = qgetenv("XDG_DATA_HOME");
+    qputenv("XDG_DATA_HOME", dir.filePath(QStringLiteral("data")).toUtf8());
+    const auto restoreProfile = qScopeGuard([this, oldData] {
+      qputenv("XDG_DATA_HOME", oldData);
       QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                          m_scratch.filePath(QStringLiteral("config")));
     });
@@ -2914,6 +3419,14 @@ private slots:
       QCOMPARE(settings.videoPosition(first), 12000);
       QCOMPARE(settings.videoPosition(second), 34000);
       settings.setVideoPosition(second, 45000);
+      // The migration drops entries for missing files, so the settings file
+      // it read was copied first, legacy map included.
+      const QDir backups(settings.backupDirectory());
+      const QStringList copies = backups.entryList(
+          {QStringLiteral("settings-before-resume-migration-*.ini")}, QDir::Files);
+      QCOMPARE(copies.size(), 1);
+      QSettings copy(backups.filePath(copies.first()), QSettings::IniFormat);
+      QCOMPARE(copy.value(QStringLiteral("playback/positions")).toMap().size(), 3);
     }
     stored.sync();
     QVERIFY(!stored.contains(QStringLiteral("playback/positions")));
@@ -4184,7 +4697,9 @@ private slots:
     file.close();
     SubtitleIndex subtitles;
     QCOMPARE(subtitles.cueCount(path), 0); // Loading never waits on parsing.
-    QTRY_COMPARE(subtitles.cueCount(path), 20001);
+    // A sanitizer build takes several seconds over 20,000 cues; wait for the
+    // parsed index rather than guessing how long that takes.
+    QVERIFY(QTest::qWaitFor([&] { return subtitles.cueCount(path) == 20001; }, 60000));
     QCOMPARE(subtitles.textAt(path, 40000000), QStringLiteral("Long overlap\nCue 20000"));
     QCOMPARE(subtitles.textAt(path, 2000), QStringLiteral("Long overlap\nCue 1"));
     QCOMPARE(subtitles.textAt(path, 40000501), QStringLiteral("Long overlap"));
@@ -4250,6 +4765,31 @@ private slots:
     QCOMPARE(subtitles.textAt(vtt, 2500), QString());
   }
 
+  // Fuzzer finding: an hour count near the qint64 limit overflowed while it
+  // was converted to milliseconds (UBSan signed-integer-overflow).
+  void subtitleTimestampsPastTheMillisecondRangeAreSkipped() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString video = dir.filePath(QStringLiteral("clip.mp4"));
+    {
+      QFile file(video);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+    }
+    const QString srt = dir.filePath(QStringLiteral("clip.srt"));
+    {
+      QFile file(srt);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("1\n9223372036854775807:00:00,000 --> 9223372036854775807:00:01,000\nOverflow\n\n"
+                 "2\n00:00:00:2562047788015:00,000 --> 00:00:01,000\nToo many fields\n\n"
+                 "3\n2562047788016:00:00,000 --> 2562047788016:00:01,000\nPast milliseconds\n\n"
+                 "4\n00:00:01,000 --> 00:00:02,000\nKept\n\n");
+    }
+    SubtitleIndex subtitles;
+    QVERIFY(subtitles.files(video).contains(srt));
+    QTRY_COMPARE(subtitles.cueCount(srt), 1);
+    QCOMPARE(subtitles.textAt(srt, 1500), QStringLiteral("Kept"));
+  }
+
   void externalSubtitlesIgnoreUnrelatedSidecars() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -4297,12 +4837,12 @@ private slots:
     QTRY_COMPARE(inspector.pageCount(), 1);
     inspector.find(QStringLiteral("alpha"));
     inspector.find(QStringLiteral("beta")); // reuse in-flight extraction, answer latest query
-    QTRY_COMPARE(inspector.matches(), QVariantList({2}));
+    QTRY_COMPARE(inspector.matches(), QVariantList{QVariant(2)});
     inspector.find(QStringLiteral("alpha"));
-    QTRY_COMPARE(inspector.matches(), QVariantList({1}));
+    QTRY_COMPARE(inspector.matches(), QVariantList{QVariant(1)});
     inspector.clearSearch();
     inspector.find(QStringLiteral("beta"));
-    QTRY_COMPARE(inspector.matches(), QVariantList({2}));
+    QTRY_COMPARE(inspector.matches(), QVariantList{QVariant(2)});
     QFile calls(log);
     QVERIFY(calls.open(QIODevice::ReadOnly));
     QCOMPARE(calls.readAll().count("call"), 1);
@@ -7997,6 +8537,255 @@ private slots:
     }
   }
 
+  void exifDateFastPathMatchesTheGeneralParser() {
+    // Shapes ImageMagick reports, malformed and missing values, and local
+    // times next to zone transitions, in zones with an hour, half an hour and
+    // no daylight saving. The direct reader must agree with the general one.
+    QStringList values = {
+        QString(), QStringLiteral("undefined"), QStringLiteral("garbage"),
+        QStringLiteral("2020:05:06 07:08:09"), QStringLiteral("2020-05-06 07:08:09"),
+        QStringLiteral("2020:05:06 07:08:09.123"), QStringLiteral("2020-05-06 07:08:09.123"),
+        QStringLiteral("2020:05:06 07:08:09.5"), QStringLiteral("2020:05:06 07:08:09.123456"),
+        QStringLiteral("2020:05:06 07:08:09+02:00"), QStringLiteral("  2020:05:06 07:08:09  "),
+        QStringLiteral("2020:05:06 07:08:09\r"), QStringLiteral("0000:00:00 00:00:00"),
+        QStringLiteral("    :  :     :  :  "), QStringLiteral("2020:02:30 10:00:00"),
+        QStringLiteral("2020:13:01 10:00:00"), QStringLiteral("2020:05:06 24:00:00"),
+        QStringLiteral("2020:05:06 7:08:09"), QStringLiteral("2020:5:6 07:08:09"),
+        QStringLiteral("2020-05-06T07:08:09"), QStringLiteral("1999:12:31 23:59:60"),
+        QStringLiteral("2020:05:06 07:08:0x"), QStringLiteral("２０２０:05:06 07:08:09"),
+        QStringLiteral("2020:05-06 07:08:09"), QStringLiteral("1601:01:01 00:00:00"),
+        QStringLiteral("9999:12:31 23:59:59")};
+    for (const QDate day : {QDate(2026, 3, 8), QDate(2026, 11, 1), QDate(2026, 3, 29),
+                            QDate(2026, 10, 25), QDate(2026, 4, 5), QDate(2026, 10, 4)}) {
+      for (int minutes = 0; minutes < 4 * 60; minutes += 15) {
+        const QString stamp = day.toString(QStringLiteral("yyyy:MM:dd ")) +
+                              QTime(0, 0).addSecs(minutes * 60).toString(QStringLiteral("HH:mm:ss"));
+        values << stamp << stamp + QStringLiteral(".250") << QString(stamp).replace(4, 1, u'-').replace(7, 1, u'-');
+      }
+    }
+
+    const QByteArray previousZone = qgetenv("TZ");
+    const auto restore = qScopeGuard([&] {
+      previousZone.isNull() ? qunsetenv("TZ") : qputenv("TZ", previousZone);
+      tzset();
+    });
+    for (const char* zone : {"UTC", "America/New_York", "Europe/London", "Australia/Lord_Howe",
+                             "Asia/Kolkata"}) {
+      qputenv("TZ", zone);
+      tzset();
+      for (const QString& value : std::as_const(values)) {
+        const QDateTime fast = MediaMetadataIndex::parseExifDate(value);
+        const QDateTime general = MediaMetadataIndex::parseExifDateGeneral(value);
+        const QString context = QStringLiteral("%1 in %2").arg(value, QLatin1String(zone));
+        QVERIFY2(fast.isValid() == general.isValid(), qPrintable(context));
+        if (!general.isValid()) continue;
+        QVERIFY2(fast == general, qPrintable(context));
+        QVERIFY2(fast.date() == general.date() && fast.time() == general.time(), qPrintable(context));
+        QVERIFY2(fast.timeSpec() == general.timeSpec(), qPrintable(context));
+        QVERIFY2(fast.offsetFromUtc() == general.offsetFromUtc(), qPrintable(context));
+      }
+
+      // Whole records, as identify prints them: the original date wins, the
+      // digitized date fills in, and an empty or broken record has none.
+      QCOMPARE(MediaMetadataIndex::parseImageDate("2020:05:06 07:08:09\n2019:01:02 03:04:05\n"),
+               MediaMetadataIndex::parseExifDateGeneral(QStringLiteral("2020:05:06 07:08:09")));
+      QCOMPARE(MediaMetadataIndex::parseImageDate("0000:00:00 00:00:00\n2019:01:02 03:04:05\n"),
+               MediaMetadataIndex::parseExifDateGeneral(QStringLiteral("2019:01:02 03:04:05")));
+      QVERIFY(!MediaMetadataIndex::parseImageDate("\n\n").isValid());
+      QVERIFY(!MediaMetadataIndex::parseImageDate("not a date\nundefined\n").isValid());
+      // Videos keep UTC stamps as the same instant, shown in local time.
+      const QDateTime video = MediaMetadataIndex::parseVideoDate(
+          R"({"format":{"tags":{"creation_time":"2026-11-01T05:30:00.000000Z"}}})");
+      QCOMPARE(video, QDateTime(QDate(2026, 11, 1), QTime(5, 30), QTimeZone::UTC).toLocalTime());
+      QCOMPARE(video.timeSpec(), Qt::LocalTime);
+    }
+  }
+
+  void metadataProbesRunInParallelAtLowPriorityWithinTheBound() {
+    // Each probe marks itself running, notes how many are, and its niceness.
+    MetadataSandbox sandbox(
+        "slots=\"$OMAROLL_METADATA_LOG.slots\"\n"
+        "mkdir -p \"$slots\"\n"
+        "mkdir \"$slots/$$\"\n"
+        "running=$(ls \"$slots\" | wc -l)\n"
+        "nice=$(cut -d' ' -f19 /proc/$$/stat)\n"
+        "io=$(ionice -p $$ 2>/dev/null | tr -d ' ')\n"
+        "printf 'probe %s %s %s\\n' \"$running\" \"$nice\" \"${io:-none}\" >> \"$OMAROLL_METADATA_LOG\"\n"
+        "/bin/sleep 0.6\n"
+        "records \"$@\"\n"
+        "rmdir \"$slots/$$\"\n");
+    QVERIFY(sandbox.valid());
+    const int batches = 7;
+    const QStringList paths = sandbox.addImages(32 * batches);
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QTRY_COMPARE_WITH_TIMEOUT(model.rowCount(), paths.size(), 5000);
+
+    QElapsedTimer elapsed;
+    elapsed.start();
+    MediaMetadataIndex dates(&model);
+    QTRY_VERIFY_WITH_TIMEOUT(dates.indexing(), 2000);
+    QTRY_VERIFY_WITH_TIMEOUT(!dates.indexing(), 20000);
+    QCOMPARE(dates.completed(), paths.size());
+    for (const QString& path : paths) {
+      QCOMPARE(model.recordAt(model.rowOf(path)).captured, QDateTime(QDate(2020, 5, 6), QTime(7, 8, 9)));
+    }
+
+    const QList<QByteArray> probes = sandbox.log().split('\n');
+    int started = 0;
+    int widest = 0;
+    for (const QByteArray& line : probes) {
+      const QList<QByteArray> fields = line.split(' ');
+      if (fields.size() != 4 || fields.first() != "probe") continue;
+      ++started;
+      widest = std::max(widest, fields.at(1).toInt());
+      QVERIFY2(fields.at(2).toInt() >= 10, line.constData());
+      // Best effort, lowest level, wherever ionice is installed.
+      if (fields.at(3) != "none") QVERIFY2(fields.at(3) == "best-effort:prio7", line.constData());
+    }
+    // The index's own pool threads, which parse the output, run at nice 10 too.
+    // They stay alive for a while after the work ends.
+    int lowered = 0;
+    for (const QString& task : QDir(QStringLiteral("/proc/self/task")).entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+      QFile stat(QStringLiteral("/proc/self/task/%1/stat").arg(task));
+      if (!stat.open(QIODevice::ReadOnly)) continue;
+      const QByteArray line = stat.readAll();
+      // Fields after the parenthesised name; nice is field 19 overall.
+      const QList<QByteArray> rest = line.mid(line.lastIndexOf(')') + 2).split(' ');
+      if (rest.size() > 16 && rest.at(16).toInt() == 10) ++lowered;
+    }
+    QVERIFY2(lowered >= 1, "no metadata worker thread at nice 10");
+    QCOMPARE(started, batches);
+    const int bound = MediaMetadataIndex::maximumParallelProbes();
+    QVERIFY(bound >= 2 && bound <= 4);
+    QVERIFY2(widest >= 2 && widest <= bound, qPrintable(QString::number(widest)));
+    // Serial probes would take at least batches * 0.6 s.
+    qInfo() << "PERF parallel metadata ms" << elapsed.elapsed() << "widest" << widest;
+  }
+
+  void metadataProbesStopWhenTheirFilesLeaveAndOnQuit() {
+    // A probe that never answers on its own; it records its pid first.
+    MetadataSandbox sandbox("printf '%s\\n' \"$$\" >> \"$OMAROLL_METADATA_LOG\"\n"
+                            "exec /bin/sleep 30\n");
+    QVERIFY(sandbox.valid());
+    QStringList paths = sandbox.addImages(3, QStringLiteral("trip"));
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    const auto pids = [&sandbox] {
+      QList<qint64> found;
+      for (const QByteArray& line : sandbox.log().split('\n')) {
+        if (!line.isEmpty()) found.append(line.toLongLong());
+      }
+      return found;
+    };
+    const auto running = [](qint64 pid) {
+      return QFileInfo::exists(QStringLiteral("/proc/%1").arg(pid));
+    };
+
+    {
+      CaptureModel model(&settings);
+      QTRY_COMPARE_WITH_TIMEOUT(model.rowCount(), paths.size(), 5000);
+      MediaMetadataIndex dates(&model);
+      QTRY_COMPARE_WITH_TIMEOUT(pids().size(), 1, 5000);
+      const qint64 first = pids().first();
+      QVERIFY(running(first));
+
+      // The folder goes away: its probe stops instead of running out its
+      // timeout, and indexing ends.
+      QVERIFY(QDir(sandbox.media() + QStringLiteral("/trip")).removeRecursively());
+      model.refresh();
+      QTRY_COMPARE_WITH_TIMEOUT(model.rowCount(), 0, 5000);
+      QTRY_VERIFY_WITH_TIMEOUT(!dates.indexing(), 3000);
+      QTRY_VERIFY_WITH_TIMEOUT(!running(first), 3000);
+      QCOMPARE(pids().size(), 1);
+
+      // New files are still read afterwards.
+      paths = sandbox.addImages(2, QStringLiteral("later"));
+      model.refresh();
+      QTRY_COMPARE_WITH_TIMEOUT(pids().size(), 2, 5000);
+      QVERIFY(dates.indexing());
+
+      // Quitting stops a running probe at once.
+      const qint64 second = pids().last();
+      QVERIFY(running(second));
+      QElapsedTimer quitting;
+      quitting.start();
+      dates.requestStop();
+      QTRY_VERIFY_WITH_TIMEOUT(!running(second), 2000);
+      QVERIFY(quitting.elapsed() < 2000);
+    }
+    QCOMPARE(pids().size(), 2);
+  }
+
+  void metadataProgressIsThrottledAndUpdatesAreBatched() {
+    MetadataSandbox sandbox("/bin/sleep 0.15\nrecords \"$@\"\n");
+    QVERIFY(sandbox.valid());
+    const QStringList paths = sandbox.addImages(32 * 24);
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QTRY_COMPARE_WITH_TIMEOUT(model.rowCount(), paths.size(), 5000);
+    QSignalSpy changes(&model, &QAbstractItemModel::dataChanged);
+
+    QElapsedTimer elapsed;
+    elapsed.start();
+    MediaMetadataIndex dates(&model);
+    QSignalSpy progress(&dates, &MediaMetadataIndex::progressChanged);
+    QList<int> published;
+    connect(&dates, &MediaMetadataIndex::progressChanged, this,
+            [&] { published.append(dates.completed()); });
+    QTRY_VERIFY_WITH_TIMEOUT(dates.indexing(), 2000);
+    QTRY_VERIFY_WITH_TIMEOUT(!dates.indexing(), 30000);
+    const qint64 took = elapsed.elapsed();
+    QCOMPARE(dates.completed(), paths.size());
+    // The count shown is the final one, and it changed about once a second
+    // rather than once per finished batch.
+    QVERIFY(!published.isEmpty());
+    QCOMPARE(published.last(), paths.size());
+    const qsizetype allowed = 3 + took / MediaMetadataIndex::kProgressIntervalMs;
+    QVERIFY2(progress.size() <= allowed && progress.size() < 24,
+             qPrintable(QStringLiteral("%1 updates in %2 ms").arg(progress.size()).arg(took)));
+
+    // Rows reach the model in a few spans, not one notification per row.
+    QSet<int> rows;
+    for (const auto& change : std::as_const(changes)) {
+      for (int row = change.at(0).value<QModelIndex>().row();
+           row <= change.at(1).value<QModelIndex>().row(); ++row) {
+        rows.insert(row);
+      }
+    }
+    QCOMPARE(rows.size(), paths.size());
+    QVERIFY2(changes.size() <= 24, qPrintable(QString::number(changes.size())));
+    qInfo() << "PERF throttled progress" << progress.size() << "spans" << changes.size() << "ms"
+            << took;
+  }
+
+  void supersededEmptyScanDoesNotReportAnEmptyLibrary() {
+    // The usual folders are empty; the files are in a folder passed when the
+    // library opens, which supersedes the scan already under way.
+    MetadataSandbox sandbox("records \"$@\"\n");
+    QVERIFY(sandbox.valid());
+    QTemporaryDir opened;
+    QVERIFY(opened.isValid());
+    QImage image(4, 4, QImage::Format_RGB32);
+    image.fill(Qt::red);
+    QVERIFY(image.save(opened.filePath(QStringLiteral("a.png")), "PNG"));
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QVERIFY(model.scanning());
+    QList<int> settledCounts;
+    connect(&model, &CaptureModel::scanningChanged, this, [&] {
+      if (!model.scanning()) settledCounts.append(model.rowCount());
+    });
+    model.setExtraRoot(opened.path());
+    QTRY_COMPARE_WITH_TIMEOUT(model.rowCount(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!model.scanning(), 5000);
+    // Scanning ends once, with the folder's file already in place.
+    QCOMPARE(settledCounts, QList<int> {1});
+  }
+
   void mpvHandoffIncludesPosition() {
     QTemporaryDir dir;
     const QByteArray previousPath = qgetenv("PATH");
@@ -8035,6 +8824,52 @@ private slots:
     QVERIFY(output.videoFrame().isValid());
     presentation.videoSink()->setVideoFrame(frame);
     QTRY_VERIFY(presentation.ready());
+  }
+
+  // Qt copies each hardware-decoded frame into a new buffer. Mapping and
+  // faulting in every one of them doubled the render thread's cost at 4K.
+  void videoPresentationKeepsFrameBuffersInTheHeap() {
+    // Whether a 4K 10-bit (P010) frame buffer is mapped rather than taken
+    // from the heap. Only glibc's own allocator reports this.
+    const auto frameBufferIsMapped = [] {
+#if defined(__GLIBC__) && !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__)
+      constexpr size_t frameBytes = size_t(3840) * 2160 * 3;
+      for (int frame = 0; frame < 3; ++frame) {
+        const size_t before = mallinfo2().hblkhd;
+        void* volatile block = malloc(frameBytes);
+        const size_t during = mallinfo2().hblkhd;
+        free(block);
+        if (during >= before + frameBytes) return true;
+      }
+#endif
+      return false;
+    };
+    PlaybackHeap::usePictureDefaults();
+    QCOMPARE(PlaybackHeap::mmapThreshold(), PlaybackHeap::pictureMmapThreshold);
+    QVideoSink output;
+    QVideoFrame frame(QVideoFrameFormat(QSize(160, 90), QVideoFrameFormat::Format_BGRA8888));
+    {
+      VideoPresentation presentation(&output);
+      presentation.videoSink()->setVideoFrame(frame);
+      QTRY_VERIFY(presentation.ready());
+      QCOMPARE(PlaybackHeap::holders(), 1);
+      QCOMPARE(PlaybackHeap::mmapThreshold(), PlaybackHeap::videoMmapThreshold);
+      QVERIFY(!frameBufferIsMapped());
+      presentation.reset();
+      QCOMPARE(PlaybackHeap::holders(), 0);
+      QCOMPARE(PlaybackHeap::mmapThreshold(), PlaybackHeap::pictureMmapThreshold);
+      presentation.videoSink()->setVideoFrame({}); // a source change clears the input
+      presentation.videoSink()->setVideoFrame(frame);
+      QTRY_VERIFY(presentation.ready());
+      VideoPresentation preview(&output);
+      preview.videoSink()->setVideoFrame(frame);
+      QTRY_VERIFY(preview.ready());
+      QCOMPARE(PlaybackHeap::holders(), 2);
+    }
+    QCOMPARE(PlaybackHeap::holders(), 0);
+    QCOMPARE(PlaybackHeap::mmapThreshold(), PlaybackHeap::pictureMmapThreshold);
+    PlaybackHeap::release(); // unbalanced releases are ignored
+    QCOMPARE(PlaybackHeap::holders(), 0);
   }
 
   void hdrTransferDetails_data() {
@@ -10872,7 +11707,9 @@ private slots:
       CopyOutput output(destination);
       QVERIFY(output.device());
       QVERIFY(output.encoderPath().startsWith(QStringLiteral("/proc/")));
-      QCOMPARE(JpegTransform::apply(source, output.encoderPath(), 1, false, false), success);
+      QCOMPARE(JpegTransform::apply(source, output.encoderPath(), 1, false, false) ==
+                   JpegTransform::Result::Done,
+               success);
       if (success) QCOMPARE(output.publish(), dir.filePath(QStringLiteral("photo-edited-2.jpg")));
     }
     QFile collision(destination);
@@ -10880,6 +11717,300 @@ private slots:
     QCOMPARE(collision.readAll(), QByteArray("collision"));
     QCOMPARE(QFileInfo::exists(dir.filePath(QStringLiteral("photo-edited-2.jpg"))), success);
     QCOMPARE(QDir(dir.path()).entryList({QStringLiteral(".omaroll-copy-*")}, QDir::Dirs | QDir::Hidden).size(), 0);
+  }
+
+  // The reviewer's check: every turn and flip the viewer can save, written
+  // by jpegtran, is the picture apply() makes and the screen shows.
+  void viewCopyMatchesApplyForEveryTurnAndFlip() {
+    if (!JpegTransform::available()) QSKIP("jpegtran is not installed");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(QStringLiteral("grid.jpg"));
+    QVERIFY(asymmetricGrey(QSize(64, 48)).save(source, "JPEG", 100));
+    const QImage decoded = readUpright(source);
+    int checked = 0;
+    for (int turns = 0; turns < 4; ++turns) {
+      for (const bool h : {false, true}) {
+        for (const bool v : {false, true}) {
+          if ((turns == 0 && !h && !v) || (turns == 2 && h && v)) continue;
+          const QString label = QStringLiteral("turns %1 h %2 v %3").arg(turns).arg(h).arg(v);
+          const ViewCopy copy = saveViewCopyAndWait(source, turns, h, v);
+          QVERIFY2(copy.error.isEmpty(), qPrintable(label + u": "_s + copy.error));
+          QVERIFY2(copy.note.isEmpty(), qPrintable(label + u": "_s + copy.note));
+          ImageEditor::Transform transform;
+          transform.quarterTurns = turns;
+          transform.flipHorizontal = h;
+          transform.flipVertical = v;
+          const int difference = greyDifference(readUpright(copy.output), ImageEditor::apply(decoded, transform));
+          QVERIFY2(difference <= 3, qPrintable(label + u": "_s + QString::number(difference)));
+          QVERIFY(QFile::remove(copy.output));
+          ++checked;
+        }
+      }
+    }
+    QCOMPARE(checked, 14);
+  }
+
+  // A phone photo's orientation tag is folded into the one lossless turn:
+  // the copy looks as the view did, says upright, and keeps the camera, the
+  // date taken and the rest of its EXIF.
+  void viewCopyFoldsTheOrientationTagInAndKeepsExif() {
+    if (!JpegTransform::available()) QSKIP("jpegtran is not installed");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QByteArray plain;
+    {
+      QBuffer buffer(&plain);
+      QVERIFY(buffer.open(QIODevice::WriteOnly));
+      QVERIFY(asymmetricGrey(QSize(64, 48)).save(&buffer, "JPEG", 100));
+    }
+    for (int orientation = 1; orientation <= 8; ++orientation) {
+      const QString source = dir.filePath(QStringLiteral("tagged-%1.jpg").arg(orientation));
+      {
+        QFile file(source);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(withCameraExif(plain, quint16(orientation), QSize(64, 48)));
+      }
+      const QImage upright = readUpright(source);
+      for (int turns = 0; turns < 4; ++turns) {
+        for (const bool h : {false, true}) {
+          if (turns == 0 && !h) continue;
+          const QString label = QStringLiteral("orientation %1 turns %2 h %3").arg(orientation).arg(turns).arg(h);
+          const ViewCopy copy = saveViewCopyAndWait(source, turns, h, false);
+          QVERIFY2(copy.error.isEmpty(), qPrintable(label + u": "_s + copy.error));
+          QVERIFY2(copy.note.isEmpty(), qPrintable(label + u": "_s + copy.note));
+          QCOMPARE(QImageReader(copy.output).transformation(), QImageIOHandler::TransformationNone);
+          ImageEditor::Transform transform;
+          transform.quarterTurns = turns;
+          transform.flipHorizontal = h;
+          const QImage expected = ImageEditor::apply(upright, transform);
+          const QImage saved = readUpright(copy.output);
+          const int difference = greyDifference(saved, expected);
+          QVERIFY2(difference <= 3, qPrintable(label + u": "_s + QString::number(difference)));
+          const QByteArray bytes = readBytes(copy.output);
+          QCOMPARE(exifLittle(bytes, kExifOrientation, 2), 1u);
+          QCOMPARE(bytes.mid(bytes.indexOf(QByteArray("Exif\0\0", 6)) + kExifMake, 10), QByteArray("OmarollCam"));
+          QCOMPARE(bytes.mid(bytes.indexOf(QByteArray("Exif\0\0", 6)) + kExifDate, 19),
+                   QByteArray("2026:11:08 12:34:56"));
+          QCOMPARE(exifLittle(bytes, kExifPixelX, 4), quint32(saved.width()));
+          QCOMPARE(exifLittle(bytes, kExifPixelY, 4), quint32(saved.height()));
+          // The embedded preview still shows the old orientation; unlinked.
+          QCOMPARE(exifLittle(bytes, kExifNextIfd, 4), 0u);
+          QVERIFY(QFile::remove(copy.output));
+        }
+      }
+    }
+  }
+
+  // A size jpegtran cannot turn losslessly is re-encoded, and still keeps
+  // the EXIF, marked upright, with the reason in the note.
+  void reencodedViewCopyKeepsExif() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QByteArray plain;
+    {
+      QBuffer buffer(&plain);
+      QVERIFY(buffer.open(QIODevice::WriteOnly));
+      QVERIFY(asymmetricGrey(QSize(70, 50)).save(&buffer, "JPEG", 100));
+    }
+    const QString source = dir.filePath(QStringLiteral("partial.jpg"));
+    {
+      QFile file(source);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write(withCameraExif(plain, 6, QSize(70, 50)));
+    }
+    const ViewCopy copy = saveViewCopyAndWait(source, 1, false, false);
+    QVERIFY2(copy.error.isEmpty(), qPrintable(copy.error));
+    QVERIFY2(copy.note.startsWith(u"Re-encoded"_s), qPrintable(copy.note));
+    QCOMPARE(QImageReader(copy.output).transformation(), QImageIOHandler::TransformationNone);
+    ImageEditor::Transform transform;
+    transform.quarterTurns = 1;
+    const QImage saved = readUpright(copy.output);
+    QCOMPARE(saved.size(), QSize(70, 50));
+    const int difference = greyDifference(saved, ImageEditor::apply(readUpright(source), transform));
+    QVERIFY2(difference <= 24, qPrintable(QString::number(difference)));
+    const QByteArray bytes = readBytes(copy.output);
+    QCOMPARE(exifLittle(bytes, kExifOrientation, 2), 1u);
+    QCOMPARE(bytes.mid(bytes.indexOf(QByteArray("Exif\0\0", 6)) + kExifDate, 19),
+             QByteArray("2026:11:08 12:34:56"));
+    QCOMPARE(exifLittle(bytes, kExifPixelX, 4), 70u);
+    QCOMPARE(exifLittle(bytes, kExifPixelY, 4), 50u);
+  }
+
+  // Only a -perfect refusal is blamed on the size; a damaged file or a
+  // jpegtran that fails otherwise says so.
+  void viewCopyNoteSaysWhyJpegtranFailed_data() {
+    QTest::addColumn<QByteArray>("script");
+    QTest::addColumn<QString>("note");
+    QTest::newRow("not-perfect") << QByteArray("echo 'jpegtran: transformation is not perfect' >&2\nexit 1\n")
+                                 << u"Re-encoded, since its size cannot be turned losslessly"_s;
+    QTest::newRow("damaged") << QByteArray("echo 'Premature end of JPEG file' >&2\nexit 2\n")
+                             << u"Re-encoded, since jpegtran could not turn it"_s;
+    QTest::newRow("other-failure") << QByteArray("echo 'out of memory' >&2\nexit 1\n")
+                                   << u"Re-encoded, since jpegtran could not turn it"_s;
+  }
+
+  void viewCopyNoteSaysWhyJpegtranFailed() {
+    QFETCH(QByteArray, script);
+    QFETCH(QString, note);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(QStringLiteral("photo.jpg"));
+    QVERIFY(asymmetricGrey(QSize(64, 48)).save(source, "JPEG", 95));
+    const FakeJpegtran fake(script);
+    const ViewCopy copy = saveViewCopyAndWait(source, 1, false, false);
+    QVERIFY2(copy.error.isEmpty(), qPrintable(copy.error));
+    QCOMPARE(copy.note, note);
+    QCOMPARE(readUpright(copy.output).size(), QSize(48, 64));
+  }
+
+  // A private picture's copy is just as private, whichever way it is written.
+  void viewCopyKeepsThePrivateMode_data() {
+    QTest::addColumn<QString>("name");
+    QTest::addColumn<int>("mode");
+    QTest::newRow("png-0600") << u"private.png"_s << 0600;
+    QTest::newRow("jpeg-0600") << u"private.jpg"_s << 0600;
+    QTest::newRow("jpeg-0400") << u"readonly.jpg"_s << 0400;
+  }
+
+  void viewCopyKeepsThePrivateMode() {
+    QFETCH(QString, name);
+    QFETCH(int, mode);
+    if (name.endsWith(u".jpg"_s) && !JpegTransform::available()) QSKIP("jpegtran is not installed");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(name);
+    QVERIFY(asymmetricGrey(QSize(64, 48)).save(source, nullptr, 95));
+    QCOMPARE(::chmod(QFile::encodeName(source).constData(), mode_t(mode)), 0);
+    const mode_t mask = ::umask(0);
+    ::umask(mask);
+    const ViewCopy copy = saveViewCopyAndWait(source, 1, false, false);
+    QVERIFY2(copy.error.isEmpty(), qPrintable(copy.error));
+    QVERIFY2(copy.note.isEmpty(), qPrintable(copy.note));
+    struct stat info {};
+    QCOMPARE(::stat(QFile::encodeName(copy.output).constData(), &info), 0);
+    QCOMPARE(int(info.st_mode & 0777), int(mode & ~mask & 0666));
+  }
+
+  // A lossless WebP stays lossless, pixel for pixel.
+  void viewCopyOfALosslessWebpStaysLossless() {
+    if (!QImageWriter::supportedImageFormats().contains("webp")) QSKIP("no WebP writer");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(QStringLiteral("lossless.webp"));
+    QImage picture(60, 40, QImage::Format_RGB32);
+    for (int y = 0; y < 40; ++y)
+      for (int x = 0; x < 60; ++x) picture.setPixel(x, y, qRgb(x * 4, y * 6, (x * y) % 256));
+    {
+      QImageWriter writer(source, "webp");
+      writer.setQuality(100);
+      QVERIFY(writer.write(picture));
+    }
+    QCOMPARE(readBytes(source).mid(12, 4), QByteArray("VP8L"));
+    const ViewCopy copy = saveViewCopyAndWait(source, 1, false, false);
+    QVERIFY2(copy.error.isEmpty(), qPrintable(copy.error));
+    QVERIFY(copy.output.endsWith(u"-edited.webp"_s));
+    QCOMPARE(readBytes(copy.output).mid(12, 4), QByteArray("VP8L"));
+    ImageEditor::Transform transform;
+    transform.quarterTurns = 1;
+    QCOMPARE(QImage(copy.output).convertToFormat(QImage::Format_RGB32),
+             ImageEditor::apply(QImage(source).convertToFormat(QImage::Format_RGB32), transform));
+  }
+
+  // A format Qt cannot write is saved as PNG, and the note says so.
+  void viewCopyNotesAChangedFormat() {
+    if (QImageWriter::supportedImageFormats().contains("gif")) QSKIP("this Qt writes GIF");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(QStringLiteral("still.gif"));
+    {
+      QFile file(source);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write(QByteArray::fromBase64("R0lGODdhAgABAIEAAP8AAAAA/wAAAAAAACwAAAAAAgABAAAIBQABBAgIADs="));
+    }
+    QVERIFY2(!QImage(source).isNull(), "the GIF fixture does not decode");
+    const ViewCopy copy = saveViewCopyAndWait(source, 1, false, false);
+    QVERIFY2(copy.error.isEmpty(), qPrintable(copy.error));
+    QVERIFY2(copy.output.endsWith(u"still-edited.png"_s), qPrintable(copy.output));
+    QCOMPARE(copy.note, u"Saved as PNG, since GIF files cannot be written here"_s);
+  }
+
+  // EXIF that a format's encoder cannot write is said to be left out.
+  void viewCopyNotesMetadataItCannotKeep() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(QStringLiteral("tagged.png"));
+    QByteArray png;
+    {
+      QBuffer buffer(&png);
+      QVERIFY(buffer.open(QIODevice::WriteOnly));
+      QVERIFY(asymmetricGrey(QSize(20, 10)).save(&buffer, "PNG"));
+    }
+    const QByteArray body = QByteArray("eXIf") + QByteArray("MM\0\x2A\0\0\0\x08\0\0\0\0\0\0", 14);
+    QByteArray chunk;
+    const quint32 length = quint32(body.size() - 4);
+    const quint32 crc = pngCrc(body);
+    for (int i = 3; i >= 0; --i) chunk.append(char((length >> (8 * i)) & 0xFF));
+    chunk.append(body);
+    for (int i = 3; i >= 0; --i) chunk.append(char((crc >> (8 * i)) & 0xFF));
+    {
+      QFile file(source);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write(png.left(33) + chunk + png.mid(33)); // after IHDR
+    }
+    QVERIFY(!QImage(source).isNull());
+    const ViewCopy copy = saveViewCopyAndWait(source, 1, false, false);
+    QVERIFY2(copy.error.isEmpty(), qPrintable(copy.error));
+    QCOMPARE(copy.note, u"Its EXIF metadata was not copied"_s);
+    QCOMPARE(saveViewCopyAndWait(dir.filePath(QStringLiteral("tagged-edited.png")), 1, false, false).note,
+             QString());
+  }
+
+  // Damaged EXIF is left alone: every truncation and a wild offset read
+  // nothing outside the segment.
+  void jpegExifToleratesDamagedSegments() {
+    QByteArray plain;
+    {
+      QBuffer buffer(&plain);
+      QVERIFY(buffer.open(QIODevice::WriteOnly));
+      QVERIFY(asymmetricGrey(QSize(16, 16)).save(&buffer, "JPEG"));
+    }
+    const QByteArray tagged = withCameraExif(plain, 6, QSize(16, 16));
+    for (qsizetype length = 0; length <= tagged.size(); ++length) {
+      QByteArray cut = tagged.left(length);
+      JpegExif::normalize(cut, QSize(16, 16));
+      (void)JpegExif::metadataSegments(cut);
+      (void)JpegExif::withSegments(cut, QByteArray("\xFF\xFE\x00\x04hi", 6));
+    }
+    QByteArray wild = tagged;
+    const qsizetype base = wild.indexOf(QByteArray("Exif\0\0", 6)) + 6;
+    for (int i = 0; i < 4; ++i) wild[base + 4 + i] = char(0xF0);       // IFD0 offset
+    QVERIFY(JpegExif::normalize(wild, QSize(16, 16)));
+    QByteArray wildExif = tagged;
+    for (int i = 0; i < 4; ++i) wildExif[base + 8 + 2 + 24 + 8 + i] = char(0xFE); // EXIF IFD offset
+    QVERIFY(JpegExif::normalize(wildExif, QSize(16, 16)));
+    QCOMPARE(exifLittle(wildExif, kExifOrientation, 2), 1u);
+    QByteArray none = plain;
+    QVERIFY(!JpegExif::normalize(none, QSize(16, 16)));
+    QCOMPARE(none, plain);
+  }
+
+  // Dropped folders are the folders the library stores; many skipped names
+  // are counted rather than listed.
+  void droppedFoldersAreCanonicalAndSkippedNamesCapped() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString real = QFileInfo(dir.path()).canonicalFilePath() + u"/real"_s;
+    const QString link = QFileInfo(dir.path()).canonicalFilePath() + u"/link"_s;
+    QVERIFY(QDir().mkpath(real));
+    QVERIFY(QFile::link(real, link));
+    const FileDrag::Sorted sorted = FileDrag::sort({QUrl::fromLocalFile(link)});
+    QCOMPARE(sorted.folders, QStringList{real});
+    QCOMPARE(FileDrag::skippedNote({u"a"_s, u"b"_s}), u"Skipped: a, b"_s);
+    QCOMPARE(FileDrag::skippedNote({u"1"_s, u"2"_s, u"3"_s, u"4"_s, u"5"_s, u"6"_s}),
+             u"Skipped: 1, 2, 3, 4, 5, 6"_s);
+    QCOMPARE(FileDrag::skippedNote({u"1"_s, u"2"_s, u"3"_s, u"4"_s, u"5"_s, u"6"_s, u"7"_s}),
+             u"Skipped: 1, 2, 3, 4, 5 and 2 more"_s);
   }
 
   void correctionsSaveAsCopyKeepsTheOriginal() {
@@ -11274,6 +12405,29 @@ private slots:
   }
 
 private:
+  // Points settings and backups at a scratch profile for one test.
+  [[nodiscard]] QScopeGuard<std::function<void()>> scratchProfile(const QTemporaryDir& dir) {
+    const QByteArray oldData = qgetenv("XDG_DATA_HOME");
+    qputenv("XDG_DATA_HOME", dir.filePath(QStringLiteral("data")).toUtf8());
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, dir.filePath(QStringLiteral("config")));
+    return QScopeGuard<std::function<void()>>([this, oldData] {
+      qputenv("XDG_DATA_HOME", oldData);
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                         m_scratch.filePath(QStringLiteral("config")));
+    });
+  }
+
+  static QString settingsFile() {
+    return QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("omaroll"),
+                     QStringLiteral("omaroll")).fileName();
+  }
+
+  static void damage(const QString& ini, const QByteArray& bytes) {
+    QFile file(ini);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    QCOMPARE(file.write(bytes), bytes.size());
+  }
+
   QTemporaryDir m_scratch;
 
   // A page laid out in code, in page points: two lines of two words each.
