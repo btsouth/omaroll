@@ -53,7 +53,22 @@ h1 em { color: var(--cream); font-style: normal; }
 .installation h2 { color: var(--cream); font-size: clamp(24px, 4vw, 36px); }
 .installation p { max-width: 800px; color: var(--muted); font-family: Inter, system-ui, sans-serif; line-height: 1.7; }
 .installation pre { padding: 20px; overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); line-height: 1.7; }
-.installation .actions { justify-content: flex-start; }
+.installation .actions { justify-content: flex-start; flex-wrap: wrap; }
+.steps { margin: 0; padding-left: 22px; max-width: 860px; color: var(--cream); }
+.steps li { padding-left: 6px; margin-bottom: 18px; }
+.steps li p { margin: 0 0 10px; }
+.steps pre { margin: 0 0 10px; }
+.installation p code, kbd { font-family: ui-monospace, "Cascadia Code", "JetBrains Mono", monospace; font-size: .9em; color: var(--cream); white-space: nowrap; }
+kbd { padding: 1px 6px; border: 1px solid var(--line); border-radius: 4px; }
+
+.quick { max-width: 560px; margin: 30px auto 0; text-align: left; }
+.quick pre { margin: 0; padding: 18px 22px; overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--cream); line-height: 1.7; font-size: 14px; }
+.quick .note { color: var(--muted); }
+
+.screens { padding-bottom: 100px; text-align: center; }
+.screens h2 { margin: 22px 0 0; color: var(--cream); font-size: clamp(30px, 4vw, 48px); line-height: 1.08; letter-spacing: -.05em; }
+.screen-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px; margin-top: 45px; }
+.screen-grid .app-window { margin: 0; transform: none; }
 
 .principles { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .principles article { padding: 55px 40px; border-right: 1px solid var(--line); }
@@ -94,6 +109,7 @@ footer { display: flex; justify-content: space-between; padding-block: 48px; col
   .principles article, .principles article:first-child { padding: 38px 0; border-right: 0; border-bottom: 1px solid var(--line); }
   .sources { grid-template-columns: 1fr; gap: 45px; padding-block: 90px; }
   .more-list { grid-template-columns: 1fr; }
+  .screen-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 520px) {
@@ -104,6 +120,7 @@ footer { display: flex; justify-content: space-between; padding-block: 48px; col
   h1 { font-size: 42px; }
   .lede { font-size: 16px; }
   .actions { flex-direction: column; }
+  .quick pre { font-size: 12px; }
   .app-window { margin-top: 60px; }
   .source-list { grid-template-columns: repeat(2, 1fr); }
   .source-list span:nth-child(3n) { border-right: 1px solid var(--line); }

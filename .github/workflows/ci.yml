@@ -145,6 +145,7 @@ jobs:
           test -f stage/usr/local/share/icons/hicolor/scalable/apps/io.github.tsouth89.omaroll.svg
           test -f stage/usr/local/share/licenses/omaroll/LICENSE
           test -f stage/usr/local/share/doc/omaroll/README.md
+          test -f stage/usr/local/share/man/man1/omaroll.1
           desktop-file-validate stage/usr/local/share/applications/io.github.tsouth89.omaroll.desktop
           appstreamcli validate --no-net stage/usr/local/share/metainfo/io.github.tsouth89.omaroll.metainfo.xml
       - name: Compiler cache statistics

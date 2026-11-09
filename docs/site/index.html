@@ -24,8 +24,10 @@
         <span>OMAROLL</span>
       </a>
       <nav aria-label="Main navigation">
+        <a href="#install">Quick start</a>
+        <a href="#screens">Screens</a>
         <a href="#features">Features</a>
-        <a href="#install">Install</a>
+        <a href="https://github.com/btsouth/omaroll/blob/main/CHANGELOG.md">Changelog</a>
         <a class="nav-cta" href="https://github.com/btsouth/omaroll">GitHub</a>
       </nav>
     </header>
@@ -36,9 +38,16 @@
         <h1>Your photos,<br><em>as good-looking as your desktop.</em></h1>
         <p class="lede">Double-click a picture or video and it opens in a viewer that follows your Omarchy theme, with the rest of the folder an arrow key away. Press Enter for the library, where your PDFs, screenshots and recordings are too.</p>
         <p class="lede">Free and open source, for x86_64 and ARM64 on Omarchy and Arch Linux.</p>
+        <div class="quick" aria-label="Quick start">
+          <pre tabindex="0"><code><span class="note"># install (Omarchy edge channel)</span>
+sudo pacman -S omaroll
+<span class="note"># open pictures and videos with Omaroll</span>
+omaroll --set-default</code></pre>
+        </div>
         <div class="actions">
-          <a class="button primary" href="#install">Install Omaroll</a>
-          <a class="button secondary" href="https://github.com/btsouth/omaroll#features">See every feature</a>
+          <a class="button primary" href="#install">Quick start</a>
+          <a class="button secondary" href="https://github.com/btsouth/omaroll/releases/latest">Latest release</a>
+          <a class="button secondary" href="https://github.com/btsouth/omaroll/blob/main/CHANGELOG.md">What's new</a>
         </div>
 
         <figure class="app-window">
@@ -51,13 +60,52 @@
       </section>
 
       <section class="installation wrap" id="install" aria-labelledby="install-title">
-        <h2 id="install-title">Install from the signed repository</h2>
-        <p>One command adds the repository and installs Omaroll:</p>
-        <pre tabindex="0" aria-label="Installation command"><code>curl -fsSL https://pkgs.btso.dev/install.sh | bash -s -- omaroll</code></pre>
-        <p>Updates then arrive with your normal system update (<code>omarchy update</code> on Omarchy, <code>sudo pacman -Syu</code> on plain Arch). On Omarchy's edge channel, Omaroll is also in the official repository: <code>sudo pacman -S omaroll</code>. Set Omaroll as the default for pictures and videos, or run <code>omaroll photo.jpg</code> from a terminal.</p>
+        <h2 id="install-title">Quick start</h2>
+        <ol class="steps">
+          <li>
+            <p>Install Omaroll. On Omarchy's edge channel it is in the official repository: <code>sudo pacman -S omaroll</code>. On other channels and plain Arch Linux, one command adds the signed repository and installs it:</p>
+            <pre tabindex="0" aria-label="Installation command"><code>curl -fsSL https://pkgs.btso.dev/install.sh | bash -s -- omaroll</code></pre>
+            <p>Updates then arrive with your normal system update (<code>omarchy update</code> on Omarchy, <code>sudo pacman -Syu</code> on plain Arch).</p>
+          </li>
+          <li>
+            <p>Make it the default for pictures and videos. It prints what changed, and <code>omaroll --unset-default</code> puts the previous apps back.</p>
+            <pre tabindex="0"><code>omaroll --set-default</code></pre>
+          </li>
+          <li><p>Double-click a picture or video, or run <code>omaroll photo.jpg</code>. Run <code>omaroll</code> on its own for the library.</p></li>
+          <li><p>Press <kbd>?</kbd> or <kbd>F1</kbd> in any window for its shortcuts.</p></li>
+          <li>
+            <p>Optional: keep pictures at full opacity and float the viewer with Omaroll's Hyprland rules. <code>omaroll --remove-window-rules</code> takes them out, and Settings has the same switch.</p>
+            <pre tabindex="0"><code>omaroll --install-window-rules</code></pre>
+          </li>
+        </ol>
         <div class="actions">
-          <a class="button secondary" href="https://pkgs.btso.dev/">About the signed repository</a>
+          <a class="button secondary" href="https://github.com/btsouth/omaroll/releases/latest">Latest release</a>
+          <a class="button secondary" href="https://github.com/btsouth/omaroll/blob/main/CHANGELOG.md">Changelog</a>
           <a class="button secondary" href="https://github.com/btsouth/omaroll#install-or-update">Other install options</a>
+          <a class="button secondary" href="https://pkgs.btso.dev/">About the signed repository</a>
+        </div>
+      </section>
+
+      <section class="screens wrap" id="screens" aria-labelledby="screens-title">
+        <div class="eyebrow"><span></span> Follows your theme</div>
+        <h2 id="screens-title">The quick viewer and the library,<br>dark and light.</h2>
+        <div class="screen-grid">
+          <figure class="app-window">
+            <img src="docs/viewer-dark.png" width="1024" height="656" loading="lazy" alt="The quick viewer showing a mountain lake in the Tokyo Night theme">
+            <figcaption>Quick viewer, Tokyo Night</figcaption>
+          </figure>
+          <figure class="app-window">
+            <img src="docs/library-dark.png" width="1024" height="656" loading="lazy" alt="The library grid in the Tokyo Night theme">
+            <figcaption>Library, Tokyo Night</figcaption>
+          </figure>
+          <figure class="app-window">
+            <img src="docs/viewer-light.png" width="1024" height="656" loading="lazy" alt="The quick viewer showing a mountain lake in the Catppuccin Latte theme">
+            <figcaption>Quick viewer, Catppuccin Latte</figcaption>
+          </figure>
+          <figure class="app-window">
+            <img src="docs/library-light.png" width="1024" height="656" loading="lazy" alt="The library grid in the Catppuccin Latte theme">
+            <figcaption>Library, Catppuccin Latte</figcaption>
+          </figure>
         </div>
       </section>
 

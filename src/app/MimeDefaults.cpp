@@ -138,7 +138,8 @@ MimeDefaults::State MimeDefaults::query() {
   return state;
 }
 
-QString MimeDefaults::summarize(bool unset, const QString &report, bool ok) {
+QString MimeDefaults::summarize(bool unset, const QString &report, bool ok,
+                                const QString &group) {
   int changed = 0;
   int failed = 0;
   int unchanged = 0;
@@ -186,13 +187,21 @@ QString MimeDefaults::summarize(bool unset, const QString &report, bool ok) {
   const auto types = [](int count) {
     return count == 1 ? QStringLiteral("1 type") : QStringLiteral("%1 types").arg(count);
   };
+  const QString kind = group == u"images" ? QStringLiteral("picture")
+                       : group == u"videos" ? QStringLiteral("video")
+                       : group == u"pdf"    ? QStringLiteral("PDF")
+                                            : QStringLiteral("picture and video");
+  const QString plural = group == u"images" ? QStringLiteral("pictures")
+                         : group == u"videos" ? QStringLiteral("videos")
+                         : group == u"pdf"    ? QStringLiteral("PDFs")
+                                              : QStringLiteral("pictures and videos");
   QString summary;
   if (!unset) {
     if (changed == 0 && failed == 0)
-      summary = QStringLiteral("Omaroll already opens your pictures and videos.");
+      summary = QStringLiteral("Omaroll already opens your %1.").arg(plural);
     else if (changed > 0)
-      summary = QStringLiteral("Omaroll now opens %1 of picture and video%2.")
-                    .arg(types(changed),
+      summary = QStringLiteral("Omaroll now opens %1 of %2%3.")
+                    .arg(types(changed), kind,
                          apps.isEmpty() ? QString()
                                         : QStringLiteral(", replacing ") + list(apps));
   } else {

@@ -237,6 +237,78 @@ private slots:
     QVERIFY(report.contains(QStringLiteral("ffmpeg: ")));
   }
 
+  void aboutLinksMissingToolsAndWindowRules() {
+    // A scratch Hyprland config, so nothing reaches the real one.
+    const QString hypr = m_scratch.filePath(QStringLiteral("hypr"));
+    QVERIFY(QDir().mkpath(hypr));
+    const QByteArray original = "require(\"default.hypr.omarchy\")\n";
+    {
+      QFile config(hypr + QStringLiteral("/hyprland.lua"));
+      QVERIFY(config.open(QIODevice::WriteOnly));
+      config.write(original);
+      QFile bindings(hypr + QStringLiteral("/bindings.lua"));
+      QVERIFY(bindings.open(QIODevice::WriteOnly));
+      bindings.write("o.bind(\"SUPER + P\", \"Screenshot\", \"omarchy-capture-screenshot\")\n");
+    }
+    m_settings->setHyprDirectory(hypr);
+    QQuickItem* settings = item("settingsSheet");
+    const auto restore = qScopeGuard([&] {
+      QMetaObject::invokeMethod(settings, "close");
+      m_settings->setHyprDirectory(QString());
+    });
+
+    // The first-run screen names the key the bindings give, never the old one.
+    QCOMPARE(m_settings->screenshotKey(), QStringLiteral("Super + P"));
+    QVariant state;
+    QVERIFY(QMetaObject::invokeMethod(m_window, "emptyState", Q_RETURN_ARG(QVariant, state),
+                                      Q_ARG(QVariant, QStringLiteral("library"))));
+    if (state.metaType() == QMetaType::fromType<QJSValue>()) state = state.value<QJSValue>().toVariant();
+    const QString detail = state.toMap().value(QStringLiteral("detail")).toString();
+    QVERIFY2(!detail.contains(QStringLiteral("Super + Shift + S")), qPrintable(detail));
+    QCOMPARE(detail.contains(QStringLiteral("Take a screenshot with Super + P")), m_theme->omarchyAvailable());
+
+    QVERIFY(QMetaObject::invokeMethod(settings, "open"));
+    QTRY_VERIFY(settings->isVisible());
+    const auto child = [&](const char* name) {
+      return find(settings, [name](QQuickItem* candidate) {
+        return candidate->objectName() == QLatin1String(name);
+      });
+    };
+    QCOMPARE(child("aboutChangelog")->property("url").toString(),
+             QStringLiteral("https://github.com/btsouth/omaroll/releases/tag/v" OMAROLL_VERSION));
+    QCOMPARE(child("aboutReportIssue")->property("url").toString(),
+             QStringLiteral("https://github.com/btsouth/omaroll/issues/new/choose"));
+
+    // Missing tools, each with its package; the suite's fake tesseract counts.
+    const QVariantList missing = m_settings->missingTools();
+    QVERIFY(!missing.isEmpty());
+    for (const QVariant& row : missing) {
+      const QVariantMap map = row.toMap();
+      QVERIFY(map.value(QStringLiteral("install")).toString().startsWith(QStringLiteral("sudo pacman -S ")));
+      QVERIFY(map.value(QStringLiteral("package")).toString() != QStringLiteral("tesseract tesseract-data-eng"));
+    }
+    auto* tools = m_window->findChild<QObject*>(QStringLiteral("aboutMissingTools"));
+    QVERIFY(tools);
+    QCOMPARE(tools->property("count").toInt(), int(missing.size()));
+    QVERIFY(child("aboutMissingToolsTitle")->isVisible());
+
+    // Install, then Remove, from Settings.
+    QQuickItem* rules = child("settingsWindowRules");
+    QQuickItem* button = child("settingsWindowRulesButton");
+    QVERIFY(rules->isVisible());
+    QCOMPARE(button->property("label").toString(), QStringLiteral("Install"));
+    QVERIFY(QMetaObject::invokeMethod(button, "clicked"));
+    QTRY_COMPARE(button->property("label").toString(), QStringLiteral("Remove"));
+    QVERIFY(QFile::exists(hypr + QStringLiteral("/omaroll.lua")));
+    QVERIFY(child("settingsWindowRulesStatus")->property("text").toString().contains(QStringLiteral("installed")));
+    QVERIFY(QMetaObject::invokeMethod(button, "clicked"));
+    QTRY_COMPARE(button->property("label").toString(), QStringLiteral("Install"));
+    QVERIFY(!QFile::exists(hypr + QStringLiteral("/omaroll.lua")));
+    QFile config(hypr + QStringLiteral("/hyprland.lua"));
+    QVERIFY(config.open(QIODevice::ReadOnly));
+    QCOMPARE(config.readAll(), original);
+  }
+
   void footerDropsWholeHintsAtNarrowWidth() {
     const auto restoreSize = qScopeGuard([&] { m_window->resize(1280, 820); });
     m_window->resize(560, 700);
@@ -317,6 +389,7 @@ private slots:
     QVERIFY(qputenv("PATH", toolBin.toUtf8() + ':' + qgetenv("PATH")));
     // A name with every character that trips URL parsing. Newest by mtime,
     // so it sits at the top of the grid.
+    m_demoPictures = layout.pictures;
     m_oddPath = layout.pictures + QStringLiteral("/odd %20 name #1 (copy)?.jpg");
     QVERIFY(QFile::copy(layout.pictures + QStringLiteral("/alpine-dawn.jpg"), m_oddPath));
     m_pdfPath = layout.pictures + QStringLiteral("/omaroll-guide.pdf");
@@ -4845,6 +4918,39 @@ private slots:
                              10000);
   }
 
+  void demoRendersShowRealSimilarSets() {
+    const auto cleanup = qScopeGuard([&] {
+      invoke("dismissTopLayer");
+      item("compareSheet")->setProperty("paths", QStringList());
+      m_library->setSimilarOnly(false);
+    });
+    // What --render-view compare opens: a set the similar scan found.
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openViewForRender", Q_ARG(QVariant, QStringLiteral("compare"))));
+    QTRY_VERIFY_WITH_TIMEOUT(item("compareSheet")->isVisible(), 20000);
+    QVariant pathsValue = item("compareSheet")->property("paths");
+    if (pathsValue.metaType() == QMetaType::fromType<QJSValue>()) pathsValue = pathsValue.value<QJSValue>().toVariant();
+    const QStringList shown = pathsValue.toStringList();
+    QVERIFY2(shown.size() >= 2, qPrintable(shown.join(u' ')));
+    QStringList sorted = shown;
+    sorted.sort();
+    QCOMPARE(m_similarities->groupPaths(shown.first()), sorted);
+    // And --render-view similar has the demo's resized copy and its burst.
+    QVERIFY(m_library->similarOnly());
+    const auto setOf = [&](const QString& name) {
+      QStringList names;
+      for (const QString& path : m_similarities->groupPaths(m_demoPictures + QLatin1Char('/') + name))
+        names << QFileInfo(path).fileName();
+      return names;
+    };
+    QTRY_COMPARE_WITH_TIMEOUT(setOf(QStringLiteral("winter-cabin.jpg")),
+                              QStringList({QStringLiteral("winter-cabin-small.jpg"),
+                                           QStringLiteral("winter-cabin.jpg")}),
+                              20000);
+    QCOMPARE(setOf(QStringLiteral("coastal-wave.jpg")),
+             QStringList({QStringLiteral("coastal-wave-2.jpg"), QStringLiteral("coastal-wave-3.jpg"),
+                          QStringLiteral("coastal-wave.jpg")}));
+  }
+
   void permanentDeleteUsesCapturedSelectionAndConfirmsInTheDetailViewer() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -6681,6 +6787,7 @@ private:
   RawImageProvider* m_raws = nullptr;
   LargeImageProvider* m_large = nullptr;
   QString m_oddPath;
+  QString m_demoPictures;
   QString m_pdfPath;
 };
 

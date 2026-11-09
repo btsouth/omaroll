@@ -34,6 +34,21 @@
   format, damaged, cut off, too large) and offers Open with, Show in folder and
   Move to Trash. A JPEG or PNG that ends early gets a "cut off" note, and broken
   files are marked in the filmstrip.
+- `omaroll --diagnostics` prints the same report as Copy diagnostics without
+  opening a window. Both now include the Omarchy and Hyprland versions and the
+  graphics card and driver.
+- About in Settings lists missing optional tools with the feature each one
+  enables and its `pacman -S` command. Changelog opens this version's release
+  notes, and Report an issue opens the new issue form.
+- `omaroll --install-window-rules` adds Omaroll's Hyprland rules (full opacity
+  and a floating viewer) to `~/.config/hypr`, and `--remove-window-rules` takes
+  them out. Settings has the same switch.
+- A man page, `man omaroll`, with examples.
+- The demo library has a resized copy and a short burst, so Similar pictures,
+  Compare and their renders show real sets.
+- A quick start at the top of the README and the homepage, with current light
+  and dark screenshots of the quick viewer and the library. The full shortcut,
+  action and search references moved to `docs/`.
 - `Tab` and `Shift+Tab` move through the viewer's controls with a focus ring,
   and the viewer's shortcuts keep working on a focused control. Filmstrip
   tiles have names, tooltips and keyboard use.
@@ -49,6 +64,10 @@
 
 ### Fixed
 
+- The empty library named Super + Shift + S for screenshots. It now names the
+  key from your Hyprland bindings, Print Screen by default.
+- `--set-default` prints one line and the command that undoes it instead of a
+  line per type; `--verbose` still lists them.
 - 4K video playback uses about half the CPU it did with hardware decoding:
   41% instead of 74% of a core for 10-bit HEVC at 60 fps, and 22% instead of
   37% for H.264. Frame buffers were mapped and unmapped on every frame.

@@ -729,6 +729,22 @@ ApplicationWindow {
         if (confirm.visible) root.pendingDuplicateKeep = keep
     }
 
+    // The compare render waits for the similar-picture scan, then opens the
+    // first set it found.
+    property bool compareWhenSimilar: false
+    function openRenderCompare() {
+        if (!root.compareWhenSimilar || Similarities.groupCount === 0 || library.count === 0) return
+        const set = Similarities.groupPaths(Captures.pathAt(0))
+        if (set.length < 2) return
+        root.compareWhenSimilar = false
+        compareSheet.open(set)
+    }
+    Connections {
+        target: Similarities
+        enabled: root.compareWhenSimilar
+        function onGroupsChanged() { Qt.callLater(root.openRenderCompare) }
+    }
+
     // Called by --render so a screenshot can be taken of a specific view
     // without anyone having to drive the UI by hand.
     function openViewForRender(view) {
@@ -775,13 +791,10 @@ ApplicationWindow {
         } else if (view === "corrections") {
             root.perform("corrections", Captures.pathAt(0))
         } else if (view === "compare") {
-            const stills = []
-            for (let row = 0; row < library.count && stills.length < 2; ++row) {
-                if (!Captures.isVideoAt(row) && !Captures.isDocumentAt(row)) {
-                    stills.push(Captures.pathAt(row))
-                }
-            }
-            compareSheet.open(stills)
+            // A real similar set from the demo library, once the scan finds it.
+            root.compareWhenSimilar = true
+            Captures.similarOnly = true
+            root.openRenderCompare()
         } else if (view === "export") {
             root.perform("export", Captures.pathAt(0))
         } else if (view === "rename") {
@@ -1446,7 +1459,8 @@ ApplicationWindow {
             return {
                 title: "No media yet",
                 detail: (Theme.omarchyAvailable
-                         ? "Take a screenshot with Super + Shift + S, or record from the Capture menu. "
+                         ? "Take a screenshot with " + Settings.screenshotKey
+                           + ", or record from the Capture menu. "
                          : "")
                         + "Anything in your Pictures and Videos folders shows up here, "
                         + "and so does any folder you add. Your files stay where they are; "

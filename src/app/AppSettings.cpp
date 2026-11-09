@@ -1,5 +1,7 @@
 #include "app/AppSettings.h"
 #include "actions/TrashRestore.h"
+#include "app/Diagnostics.h"
+#include "app/HyprlandSetup.h"
 #include "app/VideoPlayback.h"
 #include "app/VideoPresentation.h"
 #include "sources/FileVersion.h"
@@ -2651,54 +2653,51 @@ qint64 AppSettings::videoSeekTarget(double milliseconds, double frameRate) const
 }
 
 QString AppSettings::diagnostics(const QString &theme, qreal scale) const {
-  // Only bounded identifiers and presence flags leave the app. Never include
-  // executable paths, environment values, media names or operating-system user
-  // data.
-  QString safeTheme = theme;
-  safeTheme.remove(QRegularExpression(QStringLiteral("[^a-zA-Z0-9 _().-]")));
-  safeTheme = safeTheme.left(80);
-  const QByteArray requestedBackend = qgetenv("QT_MEDIA_BACKEND");
-  const QString backend =
-      requestedBackend == "gstreamer" ? QStringLiteral("GStreamer")
-      : requestedBackend.isEmpty() || requestedBackend == "ffmpeg"
-          ? QStringLiteral("FFmpeg")
-          : QStringLiteral("custom Qt backend");
-  QStringList lines = {
-      QStringLiteral("Omaroll: ") + appVersion(),
-      QStringLiteral("Qt: ") + qtVersion(),
-      QStringLiteral("Platform: ") + QGuiApplication::platformName() +
-          QStringLiteral(" / ") + QSysInfo::kernelType(),
-      QStringLiteral("Theme: ") + safeTheme,
-      QStringLiteral("Scale factor: ") + QString::number(scale),
-      QStringLiteral("Video decoding backend: Qt Multimedia ") + backend +
-          QStringLiteral(
-              " (actual hardware/software decoder depends on media)")};
-  const QStringList tools = {QStringLiteral("tesseract"),
-                             QStringLiteral("mpv"),
-                             QStringLiteral("ffmpeg"),
-                             QStringLiteral("ffprobe"),
-                             QStringLiteral("omarchy-transcode"),
-                             QStringLiteral("omarchy-menu-share"),
-                             QStringLiteral("omarchy-theme-bg-set"),
-                             QStringLiteral("satty"),
-                             QStringLiteral("tensaku"),
-                             QStringLiteral("omaframe"),
-                             QStringLiteral("omacut"),
-                             QStringLiteral("magick"),
-                             QStringLiteral("wl-copy"),
-                             QStringLiteral("gimp"),
-                             QStringLiteral("krita"),
-                             QStringLiteral("ART"),
-                             QStringLiteral("digikam"),
-                             QStringLiteral("omarchy-tailscale-send"),
-                             QStringLiteral("darktable"),
-                             QStringLiteral("rawtherapee")};
-  for (const auto &tool : tools)
-    lines << tool + QStringLiteral(": ") +
-                 (QStandardPaths::findExecutable(tool).isEmpty()
-                      ? QStringLiteral("missing")
-                      : QStringLiteral("present"));
-  return lines.join(QLatin1Char('\n'));
+  return Diagnostics::report(Diagnostics::Sources::system(), QGuiApplication::platformName(), theme,
+                             scale);
+}
+
+QVariantList AppSettings::missingTools() const {
+  return Diagnostics::missing(Diagnostics::Sources::system());
+}
+
+QString AppSettings::screenshotKey() const {
+  if (m_screenshotKey.isEmpty()) {
+    m_screenshotKey = HyprlandSetup::screenshotKey(
+        m_hyprDirectory.isEmpty() ? HyprlandSetup::defaultDirectory() : m_hyprDirectory,
+        qEnvironmentVariable("OMARCHY_PATH"));
+  }
+  return m_screenshotKey;
+}
+
+QString AppSettings::windowRules() const {
+  switch (HyprlandSetup::rulesState(m_hyprDirectory.isEmpty() ? HyprlandSetup::defaultDirectory()
+                                                              : m_hyprDirectory)) {
+  case HyprlandSetup::RulesState::Installed: return QStringLiteral("installed");
+  case HyprlandSetup::RulesState::NotInstalled: return QStringLiteral("available");
+  case HyprlandSetup::RulesState::Unsupported: break;
+  }
+  return QStringLiteral("unsupported");
+}
+
+QString AppSettings::installWindowRules() {
+  const auto result = HyprlandSetup::installRules(
+      m_hyprDirectory.isEmpty() ? HyprlandSetup::defaultDirectory() : m_hyprDirectory);
+  emit windowRulesChanged();
+  return result.message;
+}
+
+QString AppSettings::removeWindowRules() {
+  const auto result = HyprlandSetup::removeRules(
+      m_hyprDirectory.isEmpty() ? HyprlandSetup::defaultDirectory() : m_hyprDirectory);
+  emit windowRulesChanged();
+  return result.message;
+}
+
+void AppSettings::setHyprDirectory(const QString &directory) {
+  m_hyprDirectory = directory;
+  m_screenshotKey.clear();
+  emit windowRulesChanged();
 }
 
 void AppSettings::copyDiagnostics(const QString &theme, qreal scale) const {
