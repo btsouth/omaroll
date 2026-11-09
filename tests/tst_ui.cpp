@@ -2226,6 +2226,8 @@ private slots:
     const QString first = pathAt(0), second = pathAt(1), third = pathAt(2);
     QVERIFY(QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, first)));
     QVERIFY(QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, second)));
+    // The grid may still be recreating delegates after the previous test.
+    QTRY_VERIFY(cardFor(second) != nullptr && grid->property("layoutReady").toBool());
     click(cardFor(second), Qt::RightButton);
     QTRY_VERIFY(menu->property("visible").toBool());
     QVERIFY(!item("detail")->isVisible());
