@@ -10,6 +10,9 @@ ToolTip {
         focusSuppressed = true
     Connections {
         target: tip.owner
+        function onEnabledChanged() {
+            if (!tip.owner.enabled) tip.focusSuppressed = true;
+        }
         function onActiveFocusChanged() {
             if (tip.owner.activeFocus)
                 tip.focusSuppressed = false;

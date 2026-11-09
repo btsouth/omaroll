@@ -4,7 +4,7 @@ import Omaroll
 
 ApplicationWindow {
     id: root
-    readonly property bool tooltipsBlocked: root.anySheetOpen || root.popupOpen
+    readonly property bool tooltipsBlocked: root.popupOpen
     property bool keyboardNavigation: false
     TapHandler { acceptedButtons: Qt.AllButtons; onPressedChanged: if (pressed) root.keyboardNavigation = false }
 
