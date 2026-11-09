@@ -9,12 +9,15 @@
 
 #include "actions/ActionLauncher.h"
 #include "actions/ActionRegistry.h"
+#include "actions/FileDrag.h"
 #include "actions/ExternalEditors.h"
 #include "app/AppSettings.h"
 #include "app/DemoLibrary.h"
 #include "app/HeadlessAudio.h"
 #include "app/OpenRequest.h"
 #include "app/VideoPlayback.h"
+#include "edit/ImageEditor.h"
+#include "edit/JpegTransform.h"
 #include "library/MediaInspector.h"
 #include "sources/FileVersion.h"
 #include "sources/ImageBudget.h"
@@ -35,6 +38,8 @@
 #include <QBuffer>
 #include <QAudioDevice>
 #include <QClipboard>
+#include <QCryptographicHash>
+#include <QMimeData>
 #include <QColorSpace>
 #include <QPainter>
 #include <QDBusArgument>
@@ -88,6 +93,8 @@
 #include <signal.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+using namespace Qt::StringLiterals;
 
 // Twelve seconds of moving pattern with a keyframe every two seconds, so a
 // storyboard has several distinct frames. The checked-in fixture has one.
@@ -230,6 +237,8 @@ private slots:
     shared->setContextProperty(QStringLiteral("Editors"), new ExternalEditors(m_actions, m_engine));
     shared->setContextProperty(QStringLiteral("DemoMode"), true);
     shared->setContextProperty(QStringLiteral("Mpris"), m_mpris);
+    // One editor for every viewer, as main.cpp shares it.
+    shared->setContextProperty(QStringLiteral("ImageEdit"), new ImageEditor(this));
     // The same split main.cpp makes: the viewer's own services in its context.
     m_context = new QQmlContext(shared, this);
     m_context->setContextProperty(QStringLiteral("Session"), m_session);
@@ -1265,6 +1274,570 @@ private slots:
     player->pause();
   }
 
+  // Flips, like the turn, change only the view: the file is untouched, a
+  // clockwise turn under a mirror still turns the screen clockwise, both
+  // mirrors are a half turn, and the next file starts plain.
+  void flipsTheViewAndStartsTheNextFilePlain() {
+    const QString folder = m_scratch.filePath(QStringLiteral("flip"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString first = folder + QStringLiteral("/a.png");
+    QImage picture(400, 200, QImage::Format_RGB32);
+    picture.fill(Qt::red);
+    {
+      QPainter painter(&picture);
+      painter.fillRect(200, 0, 200, 200, Qt::blue);
+    }
+    QVERIFY(picture.save(first));
+    QVERIFY(QFile::copy(media(QStringLiteral("shot 2.jpg")), folder + QStringLiteral("/b.jpg")));
+    const QByteArray before = digest(first);
+    open({first});
+    QTRY_COMPARE(m_session->count(), 2);
+    QTRY_VERIFY(prop("imageReady").toBool());
+    m_window->setProperty("chromePinned", true);
+
+    // Red or blue, sampled a quarter of the way along the shown picture.
+    const auto colourAt = [this](qreal fx, qreal fy) {
+      QTest::qWait(60);
+      const QImage frame = m_window->grabWindow();
+      const QRectF shown = item(QStringLiteral("viewerFrame"))
+                               ->mapRectToScene(QRectF(0, 0, prop("displayWidth").toReal(),
+                                                       prop("displayHeight").toReal()));
+      const QPointF at(shown.left() + shown.width() * fx, shown.top() + shown.height() * fy);
+      const QColor pixel = frame.pixelColor((at * frame.devicePixelRatio()).toPoint());
+      // Relative, since the picture may still be fading in.
+      return pixel.red() > 60 && pixel.red() > pixel.blue() * 2 ? QStringLiteral("red")
+             : pixel.blue() > 60 && pixel.blue() > pixel.red() * 2 ? QStringLiteral("blue")
+                                                                     : pixel.name();
+    };
+    QTRY_COMPARE(colourAt(0.25, 0.5), QStringLiteral("red"));
+
+    QTest::keyClick(m_window, Qt::Key_H, Qt::ShiftModifier);
+    QVERIFY(prop("viewFlipHorizontal").toBool());
+    QVERIFY(prop("viewTransformed").toBool());
+    QTRY_COMPARE(colourAt(0.25, 0.5), QStringLiteral("blue"));
+    QVERIFY(item(QStringLiteral("viewerFlipHorizontal"))->property("active").toBool());
+    // The flip buttons are toggles to assistive technology too.
+    {
+      QAccessibleInterface* horizontal =
+          QAccessible::queryAccessibleInterface(item(QStringLiteral("viewerFlipHorizontal")));
+      QAccessibleInterface* vertical =
+          QAccessible::queryAccessibleInterface(item(QStringLiteral("viewerFlipVertical")));
+      QVERIFY(horizontal && vertical);
+      QVERIFY(horizontal->state().checkable);
+      QVERIFY(horizontal->state().checked);
+      QVERIFY(vertical->state().checkable);
+      QVERIFY(!vertical->state().checked);
+    }
+    QVERIFY(item(QStringLiteral("viewerSaveCopy"))->isVisible());
+
+    // The left of the screen, blue, goes to the top.
+    QTest::keyClick(m_window, Qt::Key_R);
+    QCOMPARE(prop("viewRotation").toInt(), 270);
+    QTRY_COMPARE(colourAt(0.5, 0.25), QStringLiteral("blue"));
+    QTRY_COMPARE(colourAt(0.5, 0.75), QStringLiteral("red"));
+
+    QTest::keyClick(m_window, Qt::Key_V, Qt::ShiftModifier);
+    QVERIFY(!prop("viewFlipHorizontal").toBool());
+    QVERIFY(!prop("viewFlipVertical").toBool());
+    QCOMPARE(prop("viewRotation").toInt(), 90);
+    QTRY_COMPARE(colourAt(0.5, 0.25), QStringLiteral("red"));
+    // Shift+V flips; plain V is still the favourite.
+    QVERIFY(!m_settings->isFavorite(first));
+
+    click(item(QStringLiteral("viewerFlipVertical")));
+    QVERIFY(prop("viewFlipVertical").toBool());
+    QTRY_COMPARE(colourAt(0.5, 0.25), QStringLiteral("blue"));
+
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("viewerMenu"));
+    QStringList ids = menuIds(menu);
+    for (const QString& id : {QStringLiteral("flip-horizontal"), QStringLiteral("flip-vertical"),
+                              QStringLiteral("save-view-copy")})
+      QVERIFY2(ids.contains(id), qPrintable(id));
+    for (const QVariant& entry : menu->property("entries").toList()) {
+      if (entry.toMap().value(QStringLiteral("id")) == QStringLiteral("save-view-copy"))
+        QCOMPARE(entry.toMap().value(QStringLiteral("label")).toString(),
+                 QStringLiteral("Save rotated copy"));
+    }
+
+    // The new keys are in the help sheet.
+    QObject* help = m_window->findChild<QObject*>(QStringLiteral("viewerShortcutHelp"));
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(help->property("visible").toBool());
+    auto* content = help->property("contentItem").value<QQuickItem*>();
+    for (const QString& key : {QStringLiteral("Shift+H"), QStringLiteral("Shift+V"),
+                               QStringLiteral("Ctrl+S")}) {
+      QVERIFY2(find(content, [&key](QQuickItem* child) {
+                 return child->property("text").toString() == key;
+               }), qPrintable(key));
+    }
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!help->property("visible").toBool());
+
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QCOMPARE(prop("viewRotation").toInt(), 0);
+    QVERIFY(!prop("viewFlipHorizontal").toBool());
+    QVERIFY(!prop("viewFlipVertical").toBool());
+    QVERIFY(!menuIds(menu).contains(QStringLiteral("save-view-copy")));
+    QVERIFY(!item(QStringLiteral("viewerSaveCopy"))->isVisible());
+    QCOMPARE(digest(first), before);
+    QCOMPARE(QDir(folder).entryList(QDir::Files).size(), 2);
+
+    // Nothing to mirror in a video; H there is not a flip.
+    m_window->setProperty("chromePinned", false);
+    open({media(QStringLiteral("clip.mp4"))});
+    QTest::keyClick(m_window, Qt::Key_H, Qt::ShiftModifier);
+    QVERIFY(!prop("viewFlipHorizontal").toBool());
+    QVERIFY(!menuIds(menu).contains(QStringLiteral("flip-horizontal")));
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    player->pause();
+  }
+
+  void savesWhatTheViewShowsAsACopy_data() {
+    QTest::addColumn<QString>("name");
+    QTest::addColumn<QSize>("size");
+    QTest::addColumn<bool>("flip");
+    // A quarter turn needs whole JPEG blocks to be lossless; a transpose
+    // (turned and flipped) never does.
+    QTest::newRow("jpeg-lossless") << QStringLiteral("aligned.jpg") << QSize(240, 160) << false;
+    QTest::newRow("jpeg-partial-blocks") << QStringLiteral("partial.jpg") << QSize(250, 170) << false;
+    QTest::newRow("jpeg-flipped") << QStringLiteral("flipped.jpg") << QSize(250, 170) << true;
+    QTest::newRow("png") << QStringLiteral("plain.png") << QSize(250, 170) << true;
+  }
+
+  // Turned and flipped, then saved: a copy beside the original, which is not
+  // touched, opens next to it. A JPEG is turned by jpegtran without
+  // re-encoding when its size allows, and otherwise says it was re-encoded.
+  void savesWhatTheViewShowsAsACopy() {
+    QFETCH(QString, name);
+    QFETCH(QSize, size);
+    QFETCH(bool, flip);
+    const bool jpeg = name.endsWith(QLatin1String(".jpg"));
+    if (jpeg && !JpegTransform::available()) QSKIP("jpegtran is not installed");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString folder = QFileInfo(dir.path()).canonicalFilePath();
+    const QString source = folder + QLatin1Char('/') + name;
+    QImage picture(size, QImage::Format_RGB32);
+    for (int y = 0; y < size.height(); ++y)
+      for (int x = 0; x < size.width(); ++x)
+        picture.setPixelColor(x, y, QColor(x * 255 / size.width(), y * 255 / size.height(), 90));
+    QVERIFY(picture.save(source, nullptr, 95));
+    const QByteArray before = digest(source);
+    const QDateTime modified = QFileInfo(source).lastModified();
+    const QImage decoded = QImage(source).convertToFormat(QImage::Format_RGB32);
+
+    open({source});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    m_window->setProperty("chromePinned", true);
+    QTest::keyClick(m_window, Qt::Key_S, Qt::ControlModifier);
+    QTRY_COMPARE(prop("status").toString(), QStringLiteral("Rotate or flip the picture first"));
+    QTest::keyClick(m_window, Qt::Key_R);
+    if (flip) QTest::keyClick(m_window, Qt::Key_H, Qt::ShiftModifier);
+    QTRY_VERIFY(item(QStringLiteral("viewerSaveCopy"))->isVisible());
+    if (jpeg) QTest::keyClick(m_window, Qt::Key_S, Qt::ControlModifier);
+    else click(item(QStringLiteral("viewerSaveCopy")));
+
+    QTRY_VERIFY_WITH_TIMEOUT(m_session->path() != source, 15000);
+    const QString copy = m_session->path();
+    QCOMPARE(QFileInfo(copy).absolutePath(), folder);
+    QVERIFY2(QFileInfo(copy).fileName().contains(QLatin1String("-edited")), qPrintable(copy));
+    QCOMPARE(QFileInfo(copy).suffix(), QFileInfo(source).suffix());
+    // The original, byte for byte and untouched; the copy is next to it.
+    QCOMPARE(digest(source), before);
+    QCOMPARE(QFileInfo(source).lastModified(), modified);
+    QTRY_COMPARE(m_session->count(), 2);
+    QCOMPARE(qAbs(m_session->sequence().indexOf(copy) - m_session->sequence().indexOf(source)), 1);
+    const QString status = prop("status").toString();
+    QVERIFY2(status.startsWith(flip ? QStringLiteral("Saved a rotated and flipped copy beside the original")
+                                    : QStringLiteral("Saved a rotated copy beside the original")),
+             qPrintable(status));
+    // The copy is shown as it is, upright.
+    QCOMPARE(prop("viewRotation").toInt(), 0);
+    QVERIFY(!prop("viewFlipHorizontal").toBool());
+    QVERIFY(!prop("viewTransformed").toBool());
+
+    const QImage saved = QImage(copy).convertToFormat(QImage::Format_RGB32);
+    QCOMPARE(saved.size(), size.transposed());
+    // A quarter turn clockwise, then mirrored across the screen: a transpose.
+    const QImage turned = decoded.transformed(QTransform().rotate(90), Qt::FastTransformation);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 9, 0)
+    const QImage expected = flip ? turned.flipped(Qt::Horizontal) : turned;
+#else
+    const QImage expected = flip ? turned.mirrored(true, false) : turned;
+#endif
+    if (jpeg && name != QLatin1String("partial.jpg")) {
+      QVERIFY2(!status.contains(QLatin1String("Re-encoded")), qPrintable(status));
+      // Exactly what jpegtran writes for the same transform.
+      const QString reference = dir.filePath(QStringLiteral("reference.jpg"));
+      QProcess jpegtran;
+      QStringList transform = flip ? QStringList{QStringLiteral("-transpose")}
+                                   : QStringList{QStringLiteral("-rotate"), QStringLiteral("90")};
+      jpegtran.start(QStandardPaths::findExecutable(QStringLiteral("jpegtran")),
+                     transform + QStringList{QStringLiteral("-perfect"),
+                      QStringLiteral("-copy"), QStringLiteral("all"), QStringLiteral("-outfile"),
+                      reference, source});
+      QVERIFY(jpegtran.waitForFinished(15000));
+      QCOMPARE(jpegtran.exitCode(), 0);
+      QCOMPARE(saved, QImage(reference).convertToFormat(QImage::Format_RGB32));
+    } else if (jpeg) {
+      QVERIFY2(status.contains(QLatin1String("Re-encoded, since its size cannot be turned losslessly")),
+               qPrintable(status));
+    } else {
+      QVERIFY2(!status.contains(QLatin1String("Re-encoded")), qPrintable(status));
+      QCOMPARE(saved, expected);
+    }
+    if (jpeg) {
+      int worst = 0;
+      for (int y = 0; y < saved.height(); y += 7)
+        for (int x = 0; x < saved.width(); x += 7) {
+          const QColor a = saved.pixelColor(x, y);
+          const QColor b = expected.pixelColor(x, y);
+          worst = std::max({worst, qAbs(a.red() - b.red()), qAbs(a.green() - b.green()),
+                            qAbs(a.blue() - b.blue())});
+        }
+      QVERIFY2(worst <= 24, qPrintable(QString::number(worst)));
+    }
+    m_window->setProperty("chromePinned", false);
+  }
+
+  // What the copy holds is what the screen showed, for every way of getting
+  // there: a vertical flip, a half turn, a left turn, and turns after flips.
+  // It lands next to its original in a folder of more than two files.
+  void savedCopyMatchesTheView_data() {
+    QTest::addColumn<QStringList>("keys");
+    QTest::newRow("vertical") << QStringList{u"Shift+V"_s};
+    QTest::newRow("half-turn") << QStringList{u"R"_s, u"R"_s};
+    QTest::newRow("left-turn") << QStringList{u"Shift+R"_s};
+    QTest::newRow("flip-then-turn") << QStringList{u"Shift+H"_s, u"R"_s};
+    QTest::newRow("turn-then-flip") << QStringList{u"R"_s, u"Shift+V"_s};
+    QTest::newRow("both-flips") << QStringList{u"Shift+H"_s, u"Shift+V"_s};
+    QTest::newRow("flip-then-turn-left") << QStringList{u"Shift+V"_s, u"Shift+R"_s};
+  }
+
+  static QImage mirror(const QImage& image, bool horizontal) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 9, 0)
+    return image.flipped(horizontal ? Qt::Horizontal : Qt::Vertical);
+#else
+    return image.mirrored(horizontal, !horizontal);
+#endif
+  }
+
+  void savedCopyMatchesTheView() {
+    QFETCH(QStringList, keys);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString folder = QFileInfo(dir.path()).canonicalFilePath();
+    QImage picture(120, 80, QImage::Format_RGB32);
+    picture.fill(Qt::red);
+    {
+      QPainter painter(&picture);
+      painter.fillRect(60, 0, 60, 40, Qt::blue);
+      painter.fillRect(0, 40, 60, 40, Qt::green);
+      painter.fillRect(90, 60, 30, 20, Qt::yellow);
+    }
+    for (const QString& name : {u"a.png"_s, u"b.png"_s, u"c.png"_s})
+      QVERIFY(picture.save(folder + u'/' + name));
+    const QString source = folder + u"/b.png"_s;
+    open({source});
+    QTRY_COMPARE(m_session->count(), 3);
+    QTRY_VERIFY(prop("imageReady").toBool());
+
+    // The screen's own moves, one at a time.
+    QImage expected = picture;
+    for (const QString& key : keys) {
+      if (key == u"R"_s) {
+        QTest::keyClick(m_window, Qt::Key_R);
+        expected = expected.transformed(QTransform().rotate(90), Qt::FastTransformation);
+      } else if (key == u"Shift+R"_s) {
+        QTest::keyClick(m_window, Qt::Key_R, Qt::ShiftModifier);
+        expected = expected.transformed(QTransform().rotate(270), Qt::FastTransformation);
+      } else if (key == u"Shift+H"_s) {
+        QTest::keyClick(m_window, Qt::Key_H, Qt::ShiftModifier);
+        expected = mirror(expected, true);
+      } else {
+        QTest::keyClick(m_window, Qt::Key_V, Qt::ShiftModifier);
+        expected = mirror(expected, false);
+      }
+    }
+    QTest::keyClick(m_window, Qt::Key_S, Qt::ControlModifier);
+    QTRY_VERIFY_WITH_TIMEOUT(m_session->path() != source, 15000);
+    const QString copy = m_session->path();
+    QCOMPARE(QFileInfo(copy).fileName(), u"b-edited.png"_s);
+    QVERIFY2(prop("status").toString().endsWith(u" copy beside the original"_s),
+             qPrintable(prop("status").toString()));
+    QCOMPARE(QImage(copy).convertToFormat(QImage::Format_RGB32), expected.convertToFormat(QImage::Format_RGB32));
+    QTRY_COMPARE(m_session->count(), 4);
+    QCOMPARE(qAbs(m_session->sequence().indexOf(copy) - m_session->sequence().indexOf(source)), 1);
+  }
+
+  // Stepping on while a copy is saved: the window stays where it went, and
+  // the copy joins next to its own original, not the file now shown.
+  void savedCopyStaysBesideItsSourceAfterStepping_data() {
+    QTest::addColumn<bool>("selection");
+    QTest::newRow("folder") << false;
+    QTest::newRow("selection") << true;
+  }
+
+  void savedCopyStaysBesideItsSourceAfterStepping() {
+    QFETCH(bool, selection);
+    QTemporaryDir bin;
+    QVERIFY(bin.isValid());
+    {
+      QFile helper(bin.filePath(QStringLiteral("jpegtran")));
+      QVERIFY(helper.open(QIODevice::WriteOnly));
+      helper.write("#!/bin/sh\nsleep 1\nwhile test \"$1\" != -outfile; do shift; done\ncp \"$3\" \"$2\"\n");
+      helper.close();
+      QVERIFY(helper.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    }
+    const QByteArray previousPath = qgetenv("PATH");
+    const auto restorePath = qScopeGuard([&] { qputenv("PATH", previousPath); });
+    QVERIFY(qputenv("PATH", bin.path().toUtf8() + ':' + previousPath));
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString folder = QFileInfo(dir.path()).canonicalFilePath();
+    QStringList paths;
+    for (const QString& name : {u"a.jpg"_s, u"b.jpg"_s, u"c.jpg"_s}) {
+      paths.append(folder + u'/' + name);
+      QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), paths.last()));
+    }
+    if (selection) {
+      open(paths);
+      QVERIFY(m_session->jump(1));
+    } else {
+      open({paths.at(1)});
+      QTRY_COMPARE(m_session->count(), 3);
+    }
+    QCOMPARE(m_session->path(), paths.at(1));
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QTest::keyClick(m_window, Qt::Key_R);
+    QTest::keyClick(m_window, Qt::Key_S, Qt::ControlModifier);
+    QVERIFY(prop("savingViewCopy").toBool());
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QCOMPARE(m_session->path(), paths.at(2));
+    QTRY_VERIFY_WITH_TIMEOUT(!prop("savingViewCopy").toBool(), 15000);
+    const QString copy = folder + u"/b-edited.jpg"_s;
+    QVERIFY(QFileInfo::exists(copy));
+    QTRY_COMPARE(prop("status").toString(), u"Saved a rotated copy of b.jpg beside it"_s);
+    QCOMPARE(m_session->path(), paths.at(2));
+    QTRY_COMPARE(m_session->count(), 4);
+    if (selection) {
+      QCOMPARE(m_session->sequence(), (QStringList{paths.at(0), paths.at(1), copy, paths.at(2)}));
+    } else {
+      QCOMPARE(qAbs(m_session->sequence().indexOf(copy) - m_session->sequence().indexOf(paths.at(1))), 1);
+    }
+    QTest::qWait(300);
+    QCOMPARE(m_session->path(), paths.at(2));
+  }
+
+  // A link's copy is saved where the link is, the folder being browsed, and
+  // shown there; opened on its own, the notice says where the copy went.
+  void savedCopyOfALinkGoesBesideTheLink() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString root = QFileInfo(dir.path()).canonicalFilePath();
+    const QString browsed = root + u"/browsed"_s;
+    const QString store = root + u"/store"_s;
+    QVERIFY(QDir().mkpath(browsed));
+    QVERIFY(QDir().mkpath(store));
+    QImage picture(64, 48, QImage::Format_RGB32);
+    picture.fill(Qt::darkCyan);
+    QVERIFY(picture.save(browsed + u"/a.png"_s));
+    const QString target = store + u"/target.png"_s;
+    QVERIFY(picture.save(target));
+    const QString link = browsed + u"/linked.png"_s;
+    QVERIFY(QFile::link(target, link));
+
+    open({browsed + u"/a.png"_s});
+    QTRY_COMPARE(m_session->count(), 2);
+    QVERIFY(m_session->jump(int(m_session->sequence().indexOf(target))));
+    QCOMPARE(m_session->deletionPath(), link);
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QTest::keyClick(m_window, Qt::Key_R);
+    QTest::keyClick(m_window, Qt::Key_S, Qt::ControlModifier);
+    const QString copy = browsed + u"/linked-edited.png"_s;
+    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(copy), 15000);
+    QTRY_COMPARE(m_session->path(), copy);
+    QCOMPARE(prop("status").toString(), u"Saved a rotated copy beside the original"_s);
+    QVERIFY(!QFileInfo::exists(store + u"/target-edited.png"_s));
+
+    // Opened by the link from the file manager: the window shows the store.
+    const OpenRequest request = OpenRequest::fromPaths({link});
+    open(request.files);
+    m_session->setDeletionPaths(request.entryPaths);
+    QCOMPARE(m_session->path(), target);
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QTest::keyClick(m_window, Qt::Key_R);
+    QTest::keyClick(m_window, Qt::Key_S, Qt::ControlModifier);
+    const QString second = browsed + u"/linked-edited-2.png"_s;
+    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(second), 15000);
+    QTRY_COMPARE(prop("status").toString(), u"Saved a rotated copy to "_s + second);
+    QCOMPARE(m_session->path(), target);
+    QVERIFY(!QFileInfo::exists(store + u"/target-edited.png"_s));
+  }
+
+  // A taken name gets a number; a folder that cannot be written says so and
+  // leaves the window on the original.
+  void savedCopyTakesAFreeNameOrSaysWhy() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString folder = QFileInfo(dir.path()).canonicalFilePath();
+    QImage picture(64, 48, QImage::Format_RGB32);
+    picture.fill(Qt::darkGreen);
+    const QString source = folder + u"/p.png"_s;
+    QVERIFY(picture.save(source));
+    QVERIFY(picture.save(folder + u"/p-edited.png"_s));
+    open({source});
+    QTRY_COMPARE(m_session->count(), 2);
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QTest::keyClick(m_window, Qt::Key_V, Qt::ShiftModifier);
+    QTest::keyClick(m_window, Qt::Key_S, Qt::ControlModifier);
+    QTRY_COMPARE_WITH_TIMEOUT(m_session->path(), folder + u"/p-edited-2.png"_s, 15000);
+    QCOMPARE(prop("status").toString(), u"Saved a flipped copy beside the original"_s);
+
+    if (::geteuid() == 0) QSKIP("root writes into read-only folders");
+    open({source});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QVERIFY(QFile::setPermissions(folder, QFileDevice::ReadOwner | QFileDevice::ExeOwner));
+    const auto writable = qScopeGuard([&] {
+      QFile::setPermissions(folder, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    });
+    const QStringList before = QDir(folder).entryList(QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot);
+    QTest::keyClick(m_window, Qt::Key_R);
+    QTest::keyClick(m_window, Qt::Key_S, Qt::ControlModifier);
+    QTRY_COMPARE_WITH_TIMEOUT(prop("status").toString(),
+                              u"Could not safely save a copy beside p.png; check its folder"_s, 15000);
+    QCOMPARE(m_session->path(), source);
+    QCOMPARE(QDir(folder).entryList(QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot), before);
+  }
+
+  // A menu taller than the room below the pointer scrolls, and sizing it
+  // never loops: at the pointer near the top and the bottom of the window,
+  // and in a short window.
+  void viewerMenuFitsWhereverItOpens() {
+    QTest::failOnWarning(QRegularExpression(u"[Bb]inding loop"_s));
+    open({media(QStringLiteral("Shot 1.jpg"))});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("viewerMenu"));
+    const auto popUpAt = [&](const QPoint& at) {
+      m_warnings.clear();
+      QTest::mouseClick(m_window, Qt::RightButton, Qt::NoModifier, at);
+      QTRY_VERIFY(menu->property("visible").toBool());
+      QTest::qWait(100);
+      QVERIFY(menu->property("height").toReal() <= m_window->height());
+      for (const QString& warning : std::as_const(m_warnings))
+        QVERIFY2(!warning.contains(u"inding loop"_s), qPrintable(warning));
+      QTest::keyClick(m_window, Qt::Key_Escape);
+      QTRY_VERIFY(!menu->property("visible").toBool());
+    };
+    popUpAt(QPoint(150, 120));
+    popUpAt(QPoint(150, m_window->height() - 80));
+    m_window->resize(640, 260);
+    QTRY_COMPARE(m_window->height(), 260);
+    popUpAt(QPoint(320, 130));
+    QMetaObject::invokeMethod(m_window, "showActionMenu");
+    QTRY_VERIFY(menu->property("visible").toBool());
+    auto* list = menu->property("contentItem").value<QQuickItem*>();
+    QVERIFY(list);
+    // Taller than the window: it scrolls.
+    QVERIFY(list->property("interactive").toBool());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!menu->property("visible").toBool());
+  }
+
+  // The file goes out as the same text/uri-list and text/plain a library
+  // tile carries, from a Ctrl+drag on the picture or a drag on its name.
+  void dragOutCarriesWhatALibraryTileCarries() {
+    const QString path = media(QStringLiteral("Shot 1.jpg"));
+    open({path});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    const QVariantMap data = prop("dragMimeData").toMap();
+    QCOMPARE(data, m_actions->fileDragData({path}));
+    QCOMPARE(data.value(QStringLiteral("text/uri-list")).toString(), FileDrag::uriList({path}));
+    QCOMPARE(data.value(QStringLiteral("text/uri-list")).toString(),
+             QUrl::fromLocalFile(path).toString(QUrl::FullyEncoded) + QStringLiteral("\r\n"));
+    QCOMPARE(data.value(QStringLiteral("text/plain")).toString(), path);
+    QObject* stage = m_window->findChild<QObject*>(QStringLiteral("viewerStageFileDrag"));
+    QVERIFY(stage);
+    QCOMPARE(stage->property("acceptedModifiers").toInt(), int(Qt::ControlModifier));
+    QVERIFY(m_window->findChild<QObject*>(QStringLiteral("viewerTitleFileDrag")));
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QCOMPARE(prop("dragMimeData").toMap().value(QStringLiteral("text/plain")).toString(),
+             m_session->path());
+  }
+
+  void droppedFilesOpenInThisViewer() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString folder = QFileInfo(dir.path()).canonicalFilePath();
+    const QString a = folder + QStringLiteral("/a.jpg");
+    const QString b = folder + QStringLiteral("/b.jpg");
+    const QString text = folder + QStringLiteral("/notes.txt");
+    const QString pdf = folder + QStringLiteral("/guide.pdf");
+    const QString inner = folder + QStringLiteral("/inner");
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), a));
+    QVERIFY(QFile::copy(media(QStringLiteral("shot 2.jpg")), b));
+    QVERIFY(QFile::copy(media(QStringLiteral("readme.txt")), text));
+    QVERIFY(QFile::copy(media(QStringLiteral("notes.pdf")), pdf));
+    QVERIFY(QDir().mkpath(inner));
+    QSignalSpy handedOff(m_actions, &ActionLauncher::openRequested);
+    open({media(QStringLiteral("Shot 1.jpg"))});
+    QTRY_VERIFY(prop("imageReady").toBool());
+
+    // While it is over the window, the window says what a drop will do.
+    QVERIFY(dropOn(m_window, {QUrl::fromLocalFile(a)}, [this] {
+      QVERIFY(item(QStringLiteral("viewerDropHighlight"))->property("shown").toBool());
+    }));
+    QTRY_COMPARE(m_session->path(), a);
+    QTRY_VERIFY(!item(QStringLiteral("viewerDropHighlight"))->property("shown").toBool());
+    QTRY_COMPARE(m_session->count(), 2);
+    QVERIFY(!m_session->selection());
+
+    // Mixed: the picture opens and the skipped file is named.
+    QVERIFY(dropOn(m_window, {QUrl::fromLocalFile(b), QUrl::fromLocalFile(text)}));
+    QTRY_COMPARE(m_session->path(), b);
+    QVERIFY2(prop("status").toString().contains(QLatin1String("Skipped:"))
+                 && prop("status").toString().contains(QLatin1String("notes.txt")),
+             qPrintable(prop("status").toString()));
+
+    // Two pictures are a selection, as two files from the file manager are.
+    QVERIFY(dropOn(m_window, {QUrl::fromLocalFile(a), QUrl::fromLocalFile(b)}));
+    QTRY_VERIFY(m_session->selection());
+    QCOMPARE(m_session->sequence(), (QStringList{a, b}));
+    QCOMPARE(handedOff.size(), 0);
+
+    // A folder or a document goes to the library, as from the command line.
+    QVERIFY(dropOn(m_window, {QUrl::fromLocalFile(inner)}));
+    QTRY_COMPARE(handedOff.size(), 1);
+    QCOMPARE(handedOff.last().first().toStringList(), QStringList{inner});
+    QVERIFY(dropOn(m_window, {QUrl::fromLocalFile(pdf)}));
+    QTRY_COMPARE(handedOff.size(), 2);
+    QCOMPARE(handedOff.last().first().toStringList(), QStringList{pdf});
+    QCOMPARE(m_session->sequence(), (QStringList{a, b}));
+
+    // Nothing local: said, and the window keeps what it shows.
+    QVERIFY(dropOn(m_window, {QUrl(QStringLiteral("https://example.com/cat.jpg"))}));
+    QTRY_COMPARE(prop("status").toString(), QStringLiteral("Skipped: cat.jpg"));
+    QCOMPARE(m_session->sequence(), (QStringList{a, b}));
+    QCOMPARE(handedOff.size(), 2);
+
+    // A picture and a folder: the picture opens here, the folder in the
+    // library, on its own as `omaroll FOLDER` would.
+    QVERIFY(dropOn(m_window, {QUrl::fromLocalFile(a), QUrl::fromLocalFile(inner)}));
+    QTRY_COMPARE(handedOff.size(), 3);
+    QCOMPARE(handedOff.last().first().toStringList(), QStringList{inner});
+    QTRY_COMPARE(m_session->path(), a);
+    QVERIFY(!m_session->selection());
+    // Two folders are two library launches, not an error.
+    const QString other = folder + QStringLiteral("/other");
+    QVERIFY(QDir().mkpath(other));
+    QVERIFY(dropOn(m_window, {QUrl::fromLocalFile(inner), QUrl::fromLocalFile(other)}));
+    QTRY_COMPARE(handedOff.size(), 5);
+    QCOMPARE(handedOff.at(3).first().toStringList(), QStringList{inner});
+    QCOMPARE(handedOff.at(4).first().toStringList(), QStringList{other});
+    QCOMPARE(m_session->path(), a);
+  }
+
   void stepsThroughTheFolderInNameOrder() {
     open({media(QStringLiteral("shot 2.jpg"))});
     // The folder is read off the GUI thread; the opened file shows first.
@@ -1891,6 +2464,8 @@ private slots:
     QTRY_VERIFY(!still->property("moving").toBool());
     const qreal moved = still->property("contentY").toReal() - top;
     QVERIFY2(moved > (from.y() - to.y()) * 0.6, qPrintable(QString::number(moved)));
+    // A plain drag pans; only Ctrl+drag takes the file out.
+    QVERIFY(!prop("draggingOut").toBool());
     // A release after a drag is not a tap: still zoomed, nothing toggled.
     QVERIFY(prop("viewScale").toReal() > 0);
 
@@ -4825,6 +5400,29 @@ private:
   }
 
   QString media(const QString& name) const { return m_folder + QLatin1Char('/') + name; }
+
+  static QByteArray digest(const QString& path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) return {};
+    return QCryptographicHash::hash(file.readAll(), QCryptographicHash::Sha256);
+  }
+
+  // Files dragged in from another app: enter, move, then drop at the middle.
+  static bool dropOn(QQuickWindow* window, const QList<QUrl>& urls,
+                     const std::function<void()>& whileOver = {}) {
+    QMimeData data;
+    data.setUrls(urls);
+    const QPoint at(window->width() / 2, window->height() / 2);
+    QDragEnterEvent enter(at, Qt::CopyAction, &data, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(window, &enter);
+    QDragMoveEvent move(at, Qt::CopyAction, &data, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(window, &move);
+    if (whileOver) whileOver();
+    QDropEvent drop(QPointF(at), Qt::CopyAction, &data, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(window, &drop);
+    return drop.isAccepted();
+  }
+
 
   // Whether the frame drawn in the viewer's video area is mostly saturated
   // color, which the red and colorful fixtures are and a blank output is not.

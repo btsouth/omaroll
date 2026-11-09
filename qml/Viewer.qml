@@ -89,6 +89,32 @@ ApplicationWindow {
     property string fitMode: "fit"
     property real viewScale: 0
     property int viewRotation: 0
+    // Mirrored for viewing, across the screen after the turn, so Shift+H
+    // always swaps left and right as shown. At most one is on: both at once
+    // are a half turn, kept as one. Reset with the turn on the next file.
+    property bool viewFlipHorizontal: false
+    property bool viewFlipVertical: false
+    readonly property bool viewTransformed: root.viewRotation !== 0 || root.viewFlipHorizontal
+                                            || root.viewFlipVertical
+    readonly property string viewCopyKind: root.viewRotation !== 0
+                                           && (root.viewFlipHorizontal || root.viewFlipVertical)
+                                           ? "rotated and flipped"
+                                           : root.viewRotation !== 0 ? "rotated" : "flipped"
+    // Short enough for the menu's width.
+    readonly property string viewCopyLabel: root.viewRotation !== 0 ? "Save rotated copy"
+                                                                     : "Save flipped copy"
+    // What the view shows can be saved as a copy: a still the editor writes,
+    // so not a camera raw or an animation, which would lose its frames.
+    readonly property bool canSaveViewCopy: root.viewTransformed && !Session.isVideo
+                                            && !Session.isRaw && !Session.isAnimated
+                                            && !root.imageError && Session.path !== ""
+    property int viewCopyJob: 0
+    property int viewCopySerial: -1
+    // The file the copy is of, which the window may have stepped away from
+    // by the time it is saved.
+    property string viewCopySource: ""
+    property string viewCopyDescription: ""
+    readonly property bool savingViewCopy: root.viewCopyJob > 0
     // Read straight off the loaded image, so a picture that arrives from the
     // cache in the same turn as the file change can never be sized as the
     // previous one.
@@ -319,6 +345,8 @@ ApplicationWindow {
         root.fitMode = root.fitMode === "fill" ? "fill" : "fit"
         root.viewScale = 0
         root.viewRotation = 0
+        root.viewFlipHorizontal = false
+        root.viewFlipVertical = false
         still.contentX = 0
         still.contentY = 0
         root.keepFillCentred()
@@ -483,9 +511,130 @@ ApplicationWindow {
         if (Session.isVideo || root.imageError) {
             return
         }
-        root.viewRotation = (root.viewRotation + (clockwise ? 90 : 270)) % 360
+        // Under one mirror the picture turns the other way, so a clockwise
+        // press still turns what is on screen clockwise.
+        const mirrored = root.viewFlipHorizontal !== root.viewFlipVertical
+        root.viewRotation = (root.viewRotation + (clockwise !== mirrored ? 90 : 270)) % 360
         zoomAnimation.stop()
         root.viewScale = 0
+    }
+
+    // Mirror the view, keeping the same part of a zoomed picture on screen.
+    function flip(horizontal) {
+        if (Session.isVideo || root.imageError) {
+            return
+        }
+        still.cancelFlick()
+        if (horizontal) {
+            root.viewFlipHorizontal = !root.viewFlipHorizontal
+            still.contentX = Math.max(0, still.contentWidth - still.width - still.contentX)
+        } else {
+            root.viewFlipVertical = !root.viewFlipVertical
+            still.contentY = Math.max(0, still.contentHeight - still.height - still.contentY)
+        }
+        if (root.viewFlipHorizontal && root.viewFlipVertical) {
+            root.viewFlipHorizontal = false
+            root.viewFlipVertical = false
+            root.viewRotation = (root.viewRotation + 180) % 360
+        }
+    }
+
+    // A copy of what the view shows, beside the original, which stays as it
+    // is. The copy then opens here, next to it.
+    function saveViewCopy() {
+        if (root.savingViewCopy) return
+        if (!root.canSaveViewCopy) {
+            if (!Session.isVideo && !root.viewTransformed) root.say("Rotate or flip the picture first")
+            else if (Session.isRaw) root.say("Camera raws are not corrected here")
+            else if (Session.isAnimated) root.say("Animations are not saved turned here")
+            return
+        }
+        root.viewCopySerial = Session.openSerial()
+        root.viewCopySource = Session.path
+        root.viewCopyDescription = root.viewCopyKind
+        root.viewCopyJob = ImageEdit.nextJobId()
+        // A link's copy goes beside the link, in the folder being browsed.
+        ImageEdit.saveViewCopy(Session.path, root.viewRotation / 90, root.viewFlipHorizontal,
+                               root.viewFlipVertical, root.viewCopyJob, Session.deletionPath)
+    }
+
+    function fileNameOf(path) {
+        return path.substring(path.lastIndexOf("/") + 1)
+    }
+
+    Connections {
+        target: ImageEdit
+        function onViewCopySaved(outputPath, note, jobId) {
+            if (jobId !== root.viewCopyJob) return
+            root.viewCopyJob = 0
+            const shown = Session.showSaved(outputPath, root.viewCopySource, root.viewCopySerial)
+            const saved = "Saved a " + root.viewCopyDescription + " copy"
+            root.say((shown === "shown" ? saved + " beside the original"
+                      : shown === "listed" ? saved + " of " + root.fileNameOf(root.viewCopySource)
+                                             + " beside it"
+                      : saved + " to " + outputPath)
+                     + (note !== "" ? ". " + note : ""))
+            if (note !== "") {
+                statusTimer.interval = 5000
+                statusTimer.restart()
+            }
+        }
+        function onFailed(message, jobId) {
+            if (jobId !== root.viewCopyJob) return
+            root.viewCopyJob = 0
+            root.say(message)
+        }
+    }
+
+    // The file on screen, dragged into another app as the file itself: the
+    // same data a library tile carries. Ctrl+drag on the picture or a plain
+    // drag on the title starts it, so a plain drag still pans.
+    readonly property var dragMimeData: Session.path !== "" ? Actions.fileDragData([Session.path]) : ({})
+    property bool draggingOut: false
+    function startFileDrag(handler) {
+        if (Session.path === "" || root.draggingOut) return
+        root.draggingOut = true
+        const source = Session.isVideo ? videoOutput : frame
+        const edge = 160
+        const wide = source.width >= source.height
+        const size = wide ? Qt.size(edge, Math.max(1, Math.round(edge * source.height / Math.max(1, source.width))))
+                          : Qt.size(Math.max(1, Math.round(edge * source.width / Math.max(1, source.height))), edge)
+        const begin = function (url) {
+            // The grab is asynchronous; a release before it lands is no drag.
+            if (!handler.active) {
+                root.draggingOut = false
+                return
+            }
+            if (url !== undefined) fileDrag.Drag.imageSource = url
+            fileDrag.Drag.hotSpot = Qt.point(size.width / 2, size.height / 2)
+            fileDrag.Drag.active = true
+        }
+        if (!source.visible || source.width < 1 || source.height < 1
+                || !source.grabToImage(function (result) { begin(result.url) }, size)) {
+            begin(undefined)
+        }
+    }
+    function finishFileDrag() {
+        root.draggingOut = false
+        // The release that ended the drag went to the drop target, so the
+        // handlers would otherwise stay active and miss the next drag.
+        for (const handler of [stageFileDrag, titleFileDrag]) {
+            handler.enabled = false
+            handler.enabled = true
+        }
+    }
+
+    // Files dropped here open here, as from the file manager, with a note
+    // naming any skipped; each folder, and a document, goes to the library.
+    function openDropped(urls) {
+        const result = Session.openDropped(urls)
+        if (result.error !== undefined) {
+            root.say(result.error)
+            return
+        }
+        if (result.handOff === true) Actions.openFiles(result.paths)
+        for (const folder of result.folders) Actions.openFiles([folder])
+        if (result.note !== "") root.say(result.note)
     }
 
     function step(direction) {
@@ -874,6 +1023,12 @@ ApplicationWindow {
             entries.push({id: "actual", label: "Actual size", available: viewable})
             entries.push({id: "fit-shrink", label: "Fit without enlarging", available: viewable})
             entries.push({id: "rotate", label: "Rotate", available: viewable})
+            entries.push({id: "flip-horizontal", label: "Flip horizontally", available: viewable})
+            entries.push({id: "flip-vertical", label: "Flip vertically", available: viewable})
+            if (root.canSaveViewCopy) {
+                entries.push({id: "save-view-copy", label: root.viewCopyLabel,
+                              available: !root.savingViewCopy})
+            }
         }
         if (Session.count > 1) {
             entries.push({id: "slideshow",
@@ -946,6 +1101,13 @@ ApplicationWindow {
             return
         case "rotate":
             root.rotate(true)
+            return
+        case "flip-horizontal":
+        case "flip-vertical":
+            root.flip(id === "flip-horizontal")
+            return
+        case "save-view-copy":
+            root.saveViewCopy()
             return
         case "slideshow":
             root.setSlideshow(!root.slideshowRunning)
@@ -1210,6 +1372,13 @@ ApplicationWindow {
                 height: root.displayHeight
                 x: (still.contentWidth - width) / 2
                 y: (still.contentHeight - height) / 2
+                // Across the screen, after the picture inside has turned.
+                transform: Scale {
+                    origin.x: frame.width / 2
+                    origin.y: frame.height / 2
+                    xScale: root.viewFlipHorizontal ? -1 : 1
+                    yScale: root.viewFlipVertical ? -1 : 1
+                }
 
                 // The picture's own area is solid, so a transparent PNG shows
                 // the theme's surface rather than the desktop through it.
@@ -1312,7 +1481,7 @@ ApplicationWindow {
                     fullSize: Qt.size(root.sourceWidth, root.sourceHeight)
                     path: Session.path
                     urlFor: (rect, size) => Session.areaUrl(rect, size)
-                    viewState: [root.viewRotation]
+                    viewState: [root.viewRotation, root.viewFlipHorizontal, root.viewFlipVertical]
                     smooth: parent.smooth
                 }
             }
@@ -1644,6 +1813,21 @@ ApplicationWindow {
                 }
             }
 
+            // Ctrl+drag takes the file itself into another app. Taken over
+            // from the pan, which a plain drag keeps.
+            DragHandler {
+                id: stageFileDrag
+                objectName: "viewerStageFileDrag"
+                target: null
+                acceptedButtons: Qt.LeftButton
+                acceptedModifiers: Qt.ControlModifier
+                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                grabPermissions: PointerHandler.CanTakeOverFromItems
+                                 | PointerHandler.CanTakeOverFromHandlersOfDifferentType
+                                 | PointerHandler.ApprovesTakeOverByHandlersOfSameType
+                onActiveChanged: if (active) root.startFileDrag(stageFileDrag)
+            }
+
             // Mouse side buttons use the viewer's existing file order. Keep
             // their scope here so normal clicks, menus and video controls can
             // still take their own input above this layer.
@@ -1850,6 +2034,23 @@ ApplicationWindow {
                     font.pixelSize: 13
                     font.weight: Font.DemiBold
                     color: Theme.brightForeground
+                    Accessible.role: Accessible.StaticText
+                    Accessible.name: text
+                    Accessible.description: "Drag the name, or Ctrl+drag the picture, to copy the file into another app"
+
+                    // The name is a handle for the file: drag it into a file
+                    // manager, a browser or a chat.
+                    HoverHandler {
+                        cursorShape: titleFileDrag.active ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+                    }
+                    DragHandler {
+                        id: titleFileDrag
+                        objectName: "viewerTitleFileDrag"
+                        target: null
+                        acceptedButtons: Qt.LeftButton
+                        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                        onActiveChanged: if (active) root.startFileDrag(titleFileDrag)
+                    }
                 }
 
                 Text {
@@ -1957,6 +2158,14 @@ ApplicationWindow {
             onSlideshow: root.setSlideshow(!root.slideshowRunning)
             onRotateLeft: root.rotate(false)
             onRotateRight: root.rotate(true)
+            flipControls: parent.width >= 600
+            flippedHorizontally: root.viewFlipHorizontal
+            flippedVertically: root.viewFlipVertical
+            canSaveCopy: root.canSaveViewCopy && !root.savingViewCopy
+            saveCopyLabel: root.viewCopyLabel
+            onFlipHorizontal: root.flip(true)
+            onFlipVertical: root.flip(false)
+            onSaveCopy: root.saveViewCopy()
             onTrash: root.requestTrash()
         }
 
@@ -2162,6 +2371,40 @@ ApplicationWindow {
         }
     }
 
+    // Carries the outgoing drag; startFileDrag() sets its picture.
+    Item {
+        id: fileDrag
+        objectName: "viewerFileDrag"
+        Drag.dragType: Drag.Automatic
+        Drag.supportedActions: Qt.CopyAction
+        Drag.proposedAction: Qt.CopyAction
+        Drag.mimeData: root.dragMimeData
+        Drag.onDragFinished: root.finishFileDrag()
+    }
+
+    DropArea {
+        id: dropTarget
+        objectName: "viewerDropArea"
+        anchors.fill: parent
+        keys: ["text/uri-list"]
+        enabled: !root.blockingActionOpen
+        // The file this window is dragging out is not dropped back on it.
+        onEntered: function (drag) {
+            if (root.draggingOut || !drag.hasUrls) drag.accepted = false
+            else drag.accept(Qt.CopyAction)
+        }
+        onDropped: function (drop) {
+            if (root.draggingOut || !drop.hasUrls) return
+            drop.accept(Qt.CopyAction)
+            root.openDropped(drop.urls)
+        }
+    }
+    DropHighlight {
+        objectName: "viewerDropHighlight"
+        shown: dropTarget.containsDrag && !root.draggingOut
+        label: "Drop to open here"
+    }
+
     ViewerInfoPanel {
         id: infoPanel
         objectName: "viewerInfoPanel"
@@ -2209,6 +2452,27 @@ ApplicationWindow {
         dim: false
         readonly property var entries: root.menuEntries()
         onClosed: if (!shortcutHelp.visible) keys.forceActiveFocus()
+        // Sized from the rows themselves. The stock list measures its own
+        // contentHeight, which changes with the height a tall menu is held to
+        // and loops; the rows' heights are known (see the delegate below).
+        readonly property real entriesHeight: {
+            let total = 0
+            for (const entry of entries) {
+                total += entry.separator === true ? 9
+                         : entry.available === false && entry.hint ? 46 : 30
+            }
+            return total
+        }
+        contentItem: ListView {
+            implicitHeight: actionMenu.entriesHeight
+            model: actionMenu.contentModel
+            interactive: Window.window
+                         ? implicitHeight + actionMenu.topPadding + actionMenu.bottomPadding > actionMenu.height
+                         : false
+            clip: true
+            currentIndex: actionMenu.currentIndex
+            ScrollIndicator.vertical: ScrollIndicator {}
+        }
 
         background: Rectangle {
             implicitWidth: 232

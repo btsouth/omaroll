@@ -63,6 +63,14 @@ QString CopyOutput::encoderPath() const {
                         : QString();
 }
 
+void CopyOutput::matchPermissions(const QString& source) {
+  struct stat original {}, own {};
+  if (!m_file.isOpen() || ::stat(QFile::encodeName(source).constData(), &original) != 0 ||
+      ::fstat(m_file.handle(), &own) != 0) return;
+  // Never wider than either: the umask still applies, and no set-id bits.
+  ::fchmod(m_file.handle(), own.st_mode & original.st_mode & 0777);
+}
+
 QString CopyOutput::publish() {
   if (!m_file.isOpen() || !m_file.flush() || m_file.size() <= 0 || ::fsync(m_file.handle()) != 0) return {};
   struct stat directory {}, current {}, owned {}, temporary {};

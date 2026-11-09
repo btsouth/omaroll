@@ -1,5 +1,8 @@
 #include "viewer/ViewerSession.h"
 
+#include "actions/FileDrag.h"
+#include "app/OpenRequest.h"
+
 #include "sources/CameraRaw.h"
 #include "sources/CaptureScanner.h"
 #include "sources/FileVersion.h"
@@ -521,6 +524,76 @@ bool ViewerSession::restore(const QString& path, const QString& entry, int index
   // The listing puts it back in name order with its companion, if any.
   startListing();
   return true;
+}
+
+QVariantMap ViewerSession::openDropped(const QList<QUrl>& urls) {
+  const FileDrag::Sorted sorted = FileDrag::sort(urls);
+  if (sorted.files.isEmpty() && sorted.folders.isEmpty()) {
+    return {{QStringLiteral("error"), sorted.skipped.isEmpty()
+                                          ? QStringLiteral("Nothing there to open")
+                                          : FileDrag::skippedNote(sorted.skipped)}};
+  }
+  // Each folder opens the library on its own, as `omaroll FOLDER` does; the
+  // files beside them still open here.
+  QVariantList folders;
+  for (const QString& folder : sorted.folders) folders.append(folder);
+  QVariantMap result{{QStringLiteral("folders"), folders}};
+  QStringList skipped = sorted.skipped;
+  if (!sorted.files.isEmpty()) {
+    OpenRequest request = OpenRequest::fromInfos(sorted.fileInfos);
+    skipped = request.skipped + skipped;
+    if (request.files.isEmpty()) {
+      if (folders.isEmpty()) {
+        return {{QStringLiteral("error"), request.error.isEmpty() ? request.note() : request.error}};
+      }
+    } else if (!canOpen(request.files)) {
+      // A document among them: the library has the document controls.
+      result.insert(QStringLiteral("handOff"), true);
+      result.insert(QStringLiteral("paths"), sorted.files);
+      skipped = sorted.skipped;
+    } else {
+      open(request.files);
+      setDeletionPaths(request.entryPaths);
+      result.insert(QStringLiteral("opened"), true);
+    }
+  }
+  result.insert(QStringLiteral("note"), OpenRequest::skippedNote(skipped));
+  return result;
+}
+
+QString ViewerSession::showSaved(const QString& path, const QString& source, int serial) {
+  if (serial != m_openSerial || m_paths.isEmpty()) return {};
+  const QString canonical = QFileInfo(path).canonicalFilePath();
+  if (canonical.isEmpty()) return {};
+  // Still on the original: the copy is shown. Moved on: it is only listed,
+  // and the file on screen stays.
+  const QString current = this->path();
+  const bool show = current == source;
+  // The folder watcher may have listed it already.
+  const int listed = int(m_paths.indexOf(canonical));
+  if (listed >= 0) {
+    if (show) jump(listed);
+    return show ? QStringLiteral("shown") : QStringLiteral("listed");
+  }
+  if (m_selection) {
+    const int from = int(m_paths.indexOf(source));
+    QStringList paths = m_paths;
+    const int at = from >= 0 ? from + 1 : int(paths.size());
+    paths.insert(at, canonical);
+    setSequence(paths, show ? at : int(paths.indexOf(current)));
+    watchSelectionFolders();
+    return show ? QStringLiteral("shown") : QStringLiteral("listed");
+  }
+  // A copy beside a link is in the link's folder, which may not be this one.
+  if (QFileInfo(canonical).absolutePath() != m_folder) return {};
+  // Before the folder's listing lands, the opened file is the whole folder.
+  if (m_folderPaths.isEmpty()) m_folderPaths = m_paths;
+  const int from = int(m_folderPaths.indexOf(source));
+  m_folderPaths.insert(from >= 0 ? from + 1 : int(m_folderPaths.size()), canonical);
+  rebuildFolderSequence(show ? canonical : current);
+  // The listing puts it back in name order with its companion, if any.
+  startListing();
+  return show ? QStringLiteral("shown") : QStringLiteral("listed");
 }
 
 void ViewerSession::refreshSelection(const QString& preferred) {

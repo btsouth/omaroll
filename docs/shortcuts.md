@@ -23,6 +23,9 @@ The viewer opens when you double-click a picture or video, or run
 | `Shift` + arrows | Pan a picture zoomed beyond fit |
 | `0` · `1` or double click | Fit · toggle fit and actual size |
 | `R` · `Shift+R` | Rotate right · left, the view only, never the file |
+| `Shift+H` · `Shift+V` | Flip horizontally · vertically, the view only |
+| `Ctrl+S` | Save a rotated or flipped copy beside the original |
+| `Ctrl` + drag · drag the name | Drag the file into another app |
 | `Space` · `K` | Play · pause a video or animation |
 | click a video | Play · pause |
 | `J` `L` · `↑` `↓` · `M` | Seek ten seconds · volume · mute |

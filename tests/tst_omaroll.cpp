@@ -31,7 +31,9 @@
 #include "edit/ImageEditor.h"
 #include "edit/ClipboardImage.h"
 #include "edit/ClipboardText.h"
+#include "actions/FileDrag.h"
 #include "edit/CopyOutput.h"
+#include "edit/JpegExif.h"
 #include "edit/JpegTransform.h"
 #include "matte/HueExtractor.h"
 #include "matte/MatteComposer.h"
@@ -56,6 +58,7 @@
 #include <QDataStream>
 #include <QImageIOHandler>
 #include <QImageReader>
+#include <QImageWriter>
 #include <QPainter>
 #include <QPdfWriter>
 #include <QProcess>
@@ -90,6 +93,8 @@
 #include <future>
 #include <memory>
 #include <thread>
+
+using namespace Qt::StringLiterals;
 
 namespace {
 
@@ -132,6 +137,126 @@ QByteArray withExifOrientation(const QByteArray& jpeg, quint16 orientation) {
   app1.append(payload);
   app1.append(tiff);
   return jpeg.left(2) + app1 + jpeg.mid(2);
+}
+
+
+// Offsets inside cameraExif()'s TIFF block, from the start of "Exif\0\0".
+constexpr int kExifOrientation = 6 + 30;
+constexpr int kExifNextIfd = 6 + 46;
+constexpr int kExifMake = 6 + 50;
+constexpr int kExifPixelX = 6 + 84;
+constexpr int kExifPixelY = 6 + 96;
+constexpr int kExifDate = 6 + 104;
+
+// A JPEG with EXIF as a phone writes it: camera, orientation, the date taken
+// and pixel size in the EXIF IFD, and an embedded preview's IFD1. Laid out
+// by hand, little endian, at the offsets above.
+QByteArray withCameraExif(const QByteArray& jpeg, quint16 orientation, const QSize& pixels) {
+  QByteArray t;
+  const auto u16 = [&t](quint32 v) { t.append(char(v & 0xFF)); t.append(char((v >> 8) & 0xFF)); };
+  const auto u32 = [&u16](quint32 v) { u16(v & 0xFFFF); u16(v >> 16); };
+  t.append("II", 2); u16(42); u32(8);
+  u16(3);                                                   // IFD0 at 8
+  u16(0x010F); u16(2); u32(11); u32(50);                    // Make
+  u16(0x0112); u16(3); u32(1); u16(orientation); u16(0);    // Orientation
+  u16(0x8769); u16(4); u32(1); u32(62);                     // EXIF IFD
+  u32(124);                                                 // IFD1
+  t.append("OmarollCam\0\0", 12);                           // at 50
+  u16(3);                                                   // EXIF IFD at 62
+  u16(0x9003); u16(2); u32(20); u32(104);                   // DateTimeOriginal
+  u16(0xA002); u16(4); u32(1); u32(quint32(pixels.width()));
+  u16(0xA003); u16(4); u32(1); u32(quint32(pixels.height()));
+  u32(0);
+  t.append("2026:11:08 12:34:56\0", 20);                    // at 104
+  u16(1); u16(0x0103); u16(3); u32(1); u16(6); u16(0); u32(0); // IFD1 at 124
+  const QByteArray payload = QByteArray("Exif\0\0", 6) + t;
+  const quint16 length = quint16(payload.size() + 2);
+  QByteArray app1;
+  app1.append(char(0xFF)); app1.append(char(0xE1));
+  app1.append(char(length >> 8)); app1.append(char(length & 0xFF));
+  return jpeg.left(2) + app1 + payload + jpeg.mid(2);
+}
+
+quint32 exifLittle(const QByteArray& jpeg, int offset, int bytes) {
+  const qsizetype base = jpeg.indexOf(QByteArray("Exif\0\0", 6));
+  if (base < 0 || base + offset + bytes > jpeg.size()) return 0xFFFFFFFF;
+  quint32 value = 0;
+  for (int i = bytes - 1; i >= 0; --i) value = (value << 8) | quint8(jpeg.at(base + offset + i));
+  return value;
+}
+
+QByteArray readBytes(const QString& path) {
+  QFile file(path);
+  return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+}
+
+// A grey picture no turn or flip maps onto itself: a gradient on the left,
+// bands on the right.
+QImage asymmetricGrey(const QSize& size) {
+  QImage image(size, QImage::Format_Grayscale8);
+  for (int y = 0; y < size.height(); ++y)
+    for (int x = 0; x < size.width(); ++x)
+      image.setPixel(x, y, x < size.width() / 2 ? (x * 4 + y) % 256 : 255 - (y * 5) % 256);
+  return image;
+}
+
+QImage readUpright(const QString& path) {
+  QImageReader reader(path);
+  reader.setAutoTransform(true);
+  return reader.read().convertToFormat(QImage::Format_Grayscale8);
+}
+
+int greyDifference(const QImage& a, const QImage& b) {
+  if (a.size() != b.size()) return 999;
+  const QImage left = a.convertToFormat(QImage::Format_Grayscale8);
+  const QImage right = b.convertToFormat(QImage::Format_Grayscale8);
+  int worst = 0;
+  for (int y = 0; y < left.height(); ++y)
+    for (int x = 0; x < left.width(); ++x)
+      worst = std::max(worst, qAbs(qGray(left.pixel(x, y)) - qGray(right.pixel(x, y))));
+  return worst;
+}
+
+struct ViewCopy {
+  QString output;
+  QString note;
+  QString error;
+};
+
+ViewCopy saveViewCopyAndWait(const QString& path, int turns, bool flipH, bool flipV,
+                             const QString& entry = {}) {
+  ImageEditor editor;
+  QSignalSpy saved(&editor, &ImageEditor::viewCopySaved);
+  QSignalSpy failed(&editor, &ImageEditor::failed);
+  editor.saveViewCopy(path, turns, flipH, flipV, 7, entry);
+  if (!QTest::qWaitFor([&] { return saved.size() + failed.size() > 0; }, 20000)) return {{}, {}, "timeout"};
+  if (!failed.isEmpty()) return {{}, {}, failed.first().first().toString()};
+  return {saved.first().at(0).toString(), saved.first().at(1).toString(), {}};
+}
+
+// A stand-in for jpegtran on PATH, for the time it is in scope.
+struct FakeJpegtran {
+  QTemporaryDir dir;
+  QByteArray previousPath = qgetenv("PATH");
+  explicit FakeJpegtran(const QByteArray& body) {
+    QFile helper(dir.filePath(QStringLiteral("jpegtran")));
+    if (helper.open(QIODevice::WriteOnly)) {
+      helper.write("#!/bin/sh\n" + body);
+      helper.close();
+      helper.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    }
+    qputenv("PATH", dir.path().toUtf8() + ':' + previousPath);
+  }
+  ~FakeJpegtran() { qputenv("PATH", previousPath); }
+};
+
+quint32 pngCrc(const QByteArray& data) {
+  quint32 crc = 0xFFFFFFFF;
+  for (const char byte : data) {
+    crc ^= quint8(byte);
+    for (int k = 0; k < 8; ++k) crc = (crc >> 1) ^ (0xEDB88320 & (0 - (crc & 1)));
+  }
+  return ~crc;
 }
 
 // One TIFF entry for cameraTiff(): ASCII text, or unsigned integers, or a
@@ -11389,7 +11514,9 @@ private slots:
       CopyOutput output(destination);
       QVERIFY(output.device());
       QVERIFY(output.encoderPath().startsWith(QStringLiteral("/proc/")));
-      QCOMPARE(JpegTransform::apply(source, output.encoderPath(), 1, false, false), success);
+      QCOMPARE(JpegTransform::apply(source, output.encoderPath(), 1, false, false) ==
+                   JpegTransform::Result::Done,
+               success);
       if (success) QCOMPARE(output.publish(), dir.filePath(QStringLiteral("photo-edited-2.jpg")));
     }
     QFile collision(destination);
@@ -11397,6 +11524,300 @@ private slots:
     QCOMPARE(collision.readAll(), QByteArray("collision"));
     QCOMPARE(QFileInfo::exists(dir.filePath(QStringLiteral("photo-edited-2.jpg"))), success);
     QCOMPARE(QDir(dir.path()).entryList({QStringLiteral(".omaroll-copy-*")}, QDir::Dirs | QDir::Hidden).size(), 0);
+  }
+
+  // The reviewer's check: every turn and flip the viewer can save, written
+  // by jpegtran, is the picture apply() makes and the screen shows.
+  void viewCopyMatchesApplyForEveryTurnAndFlip() {
+    if (!JpegTransform::available()) QSKIP("jpegtran is not installed");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(QStringLiteral("grid.jpg"));
+    QVERIFY(asymmetricGrey(QSize(64, 48)).save(source, "JPEG", 100));
+    const QImage decoded = readUpright(source);
+    int checked = 0;
+    for (int turns = 0; turns < 4; ++turns) {
+      for (const bool h : {false, true}) {
+        for (const bool v : {false, true}) {
+          if ((turns == 0 && !h && !v) || (turns == 2 && h && v)) continue;
+          const QString label = QStringLiteral("turns %1 h %2 v %3").arg(turns).arg(h).arg(v);
+          const ViewCopy copy = saveViewCopyAndWait(source, turns, h, v);
+          QVERIFY2(copy.error.isEmpty(), qPrintable(label + u": "_s + copy.error));
+          QVERIFY2(copy.note.isEmpty(), qPrintable(label + u": "_s + copy.note));
+          ImageEditor::Transform transform;
+          transform.quarterTurns = turns;
+          transform.flipHorizontal = h;
+          transform.flipVertical = v;
+          const int difference = greyDifference(readUpright(copy.output), ImageEditor::apply(decoded, transform));
+          QVERIFY2(difference <= 3, qPrintable(label + u": "_s + QString::number(difference)));
+          QVERIFY(QFile::remove(copy.output));
+          ++checked;
+        }
+      }
+    }
+    QCOMPARE(checked, 14);
+  }
+
+  // A phone photo's orientation tag is folded into the one lossless turn:
+  // the copy looks as the view did, says upright, and keeps the camera, the
+  // date taken and the rest of its EXIF.
+  void viewCopyFoldsTheOrientationTagInAndKeepsExif() {
+    if (!JpegTransform::available()) QSKIP("jpegtran is not installed");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QByteArray plain;
+    {
+      QBuffer buffer(&plain);
+      QVERIFY(buffer.open(QIODevice::WriteOnly));
+      QVERIFY(asymmetricGrey(QSize(64, 48)).save(&buffer, "JPEG", 100));
+    }
+    for (int orientation = 1; orientation <= 8; ++orientation) {
+      const QString source = dir.filePath(QStringLiteral("tagged-%1.jpg").arg(orientation));
+      {
+        QFile file(source);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(withCameraExif(plain, quint16(orientation), QSize(64, 48)));
+      }
+      const QImage upright = readUpright(source);
+      for (int turns = 0; turns < 4; ++turns) {
+        for (const bool h : {false, true}) {
+          if (turns == 0 && !h) continue;
+          const QString label = QStringLiteral("orientation %1 turns %2 h %3").arg(orientation).arg(turns).arg(h);
+          const ViewCopy copy = saveViewCopyAndWait(source, turns, h, false);
+          QVERIFY2(copy.error.isEmpty(), qPrintable(label + u": "_s + copy.error));
+          QVERIFY2(copy.note.isEmpty(), qPrintable(label + u": "_s + copy.note));
+          QCOMPARE(QImageReader(copy.output).transformation(), QImageIOHandler::TransformationNone);
+          ImageEditor::Transform transform;
+          transform.quarterTurns = turns;
+          transform.flipHorizontal = h;
+          const QImage expected = ImageEditor::apply(upright, transform);
+          const QImage saved = readUpright(copy.output);
+          const int difference = greyDifference(saved, expected);
+          QVERIFY2(difference <= 3, qPrintable(label + u": "_s + QString::number(difference)));
+          const QByteArray bytes = readBytes(copy.output);
+          QCOMPARE(exifLittle(bytes, kExifOrientation, 2), 1u);
+          QCOMPARE(bytes.mid(bytes.indexOf(QByteArray("Exif\0\0", 6)) + kExifMake, 10), QByteArray("OmarollCam"));
+          QCOMPARE(bytes.mid(bytes.indexOf(QByteArray("Exif\0\0", 6)) + kExifDate, 19),
+                   QByteArray("2026:11:08 12:34:56"));
+          QCOMPARE(exifLittle(bytes, kExifPixelX, 4), quint32(saved.width()));
+          QCOMPARE(exifLittle(bytes, kExifPixelY, 4), quint32(saved.height()));
+          // The embedded preview still shows the old orientation; unlinked.
+          QCOMPARE(exifLittle(bytes, kExifNextIfd, 4), 0u);
+          QVERIFY(QFile::remove(copy.output));
+        }
+      }
+    }
+  }
+
+  // A size jpegtran cannot turn losslessly is re-encoded, and still keeps
+  // the EXIF, marked upright, with the reason in the note.
+  void reencodedViewCopyKeepsExif() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QByteArray plain;
+    {
+      QBuffer buffer(&plain);
+      QVERIFY(buffer.open(QIODevice::WriteOnly));
+      QVERIFY(asymmetricGrey(QSize(70, 50)).save(&buffer, "JPEG", 100));
+    }
+    const QString source = dir.filePath(QStringLiteral("partial.jpg"));
+    {
+      QFile file(source);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write(withCameraExif(plain, 6, QSize(70, 50)));
+    }
+    const ViewCopy copy = saveViewCopyAndWait(source, 1, false, false);
+    QVERIFY2(copy.error.isEmpty(), qPrintable(copy.error));
+    QVERIFY2(copy.note.startsWith(u"Re-encoded"_s), qPrintable(copy.note));
+    QCOMPARE(QImageReader(copy.output).transformation(), QImageIOHandler::TransformationNone);
+    ImageEditor::Transform transform;
+    transform.quarterTurns = 1;
+    const QImage saved = readUpright(copy.output);
+    QCOMPARE(saved.size(), QSize(70, 50));
+    const int difference = greyDifference(saved, ImageEditor::apply(readUpright(source), transform));
+    QVERIFY2(difference <= 24, qPrintable(QString::number(difference)));
+    const QByteArray bytes = readBytes(copy.output);
+    QCOMPARE(exifLittle(bytes, kExifOrientation, 2), 1u);
+    QCOMPARE(bytes.mid(bytes.indexOf(QByteArray("Exif\0\0", 6)) + kExifDate, 19),
+             QByteArray("2026:11:08 12:34:56"));
+    QCOMPARE(exifLittle(bytes, kExifPixelX, 4), 70u);
+    QCOMPARE(exifLittle(bytes, kExifPixelY, 4), 50u);
+  }
+
+  // Only a -perfect refusal is blamed on the size; a damaged file or a
+  // jpegtran that fails otherwise says so.
+  void viewCopyNoteSaysWhyJpegtranFailed_data() {
+    QTest::addColumn<QByteArray>("script");
+    QTest::addColumn<QString>("note");
+    QTest::newRow("not-perfect") << QByteArray("echo 'jpegtran: transformation is not perfect' >&2\nexit 1\n")
+                                 << u"Re-encoded, since its size cannot be turned losslessly"_s;
+    QTest::newRow("damaged") << QByteArray("echo 'Premature end of JPEG file' >&2\nexit 2\n")
+                             << u"Re-encoded, since jpegtran could not turn it"_s;
+    QTest::newRow("other-failure") << QByteArray("echo 'out of memory' >&2\nexit 1\n")
+                                   << u"Re-encoded, since jpegtran could not turn it"_s;
+  }
+
+  void viewCopyNoteSaysWhyJpegtranFailed() {
+    QFETCH(QByteArray, script);
+    QFETCH(QString, note);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(QStringLiteral("photo.jpg"));
+    QVERIFY(asymmetricGrey(QSize(64, 48)).save(source, "JPEG", 95));
+    const FakeJpegtran fake(script);
+    const ViewCopy copy = saveViewCopyAndWait(source, 1, false, false);
+    QVERIFY2(copy.error.isEmpty(), qPrintable(copy.error));
+    QCOMPARE(copy.note, note);
+    QCOMPARE(readUpright(copy.output).size(), QSize(48, 64));
+  }
+
+  // A private picture's copy is just as private, whichever way it is written.
+  void viewCopyKeepsThePrivateMode_data() {
+    QTest::addColumn<QString>("name");
+    QTest::addColumn<int>("mode");
+    QTest::newRow("png-0600") << u"private.png"_s << 0600;
+    QTest::newRow("jpeg-0600") << u"private.jpg"_s << 0600;
+    QTest::newRow("jpeg-0400") << u"readonly.jpg"_s << 0400;
+  }
+
+  void viewCopyKeepsThePrivateMode() {
+    QFETCH(QString, name);
+    QFETCH(int, mode);
+    if (name.endsWith(u".jpg"_s) && !JpegTransform::available()) QSKIP("jpegtran is not installed");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(name);
+    QVERIFY(asymmetricGrey(QSize(64, 48)).save(source, nullptr, 95));
+    QCOMPARE(::chmod(QFile::encodeName(source).constData(), mode_t(mode)), 0);
+    const mode_t mask = ::umask(0);
+    ::umask(mask);
+    const ViewCopy copy = saveViewCopyAndWait(source, 1, false, false);
+    QVERIFY2(copy.error.isEmpty(), qPrintable(copy.error));
+    QVERIFY2(copy.note.isEmpty(), qPrintable(copy.note));
+    struct stat info {};
+    QCOMPARE(::stat(QFile::encodeName(copy.output).constData(), &info), 0);
+    QCOMPARE(int(info.st_mode & 0777), int(mode & ~mask & 0666));
+  }
+
+  // A lossless WebP stays lossless, pixel for pixel.
+  void viewCopyOfALosslessWebpStaysLossless() {
+    if (!QImageWriter::supportedImageFormats().contains("webp")) QSKIP("no WebP writer");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(QStringLiteral("lossless.webp"));
+    QImage picture(60, 40, QImage::Format_RGB32);
+    for (int y = 0; y < 40; ++y)
+      for (int x = 0; x < 60; ++x) picture.setPixel(x, y, qRgb(x * 4, y * 6, (x * y) % 256));
+    {
+      QImageWriter writer(source, "webp");
+      writer.setQuality(100);
+      QVERIFY(writer.write(picture));
+    }
+    QCOMPARE(readBytes(source).mid(12, 4), QByteArray("VP8L"));
+    const ViewCopy copy = saveViewCopyAndWait(source, 1, false, false);
+    QVERIFY2(copy.error.isEmpty(), qPrintable(copy.error));
+    QVERIFY(copy.output.endsWith(u"-edited.webp"_s));
+    QCOMPARE(readBytes(copy.output).mid(12, 4), QByteArray("VP8L"));
+    ImageEditor::Transform transform;
+    transform.quarterTurns = 1;
+    QCOMPARE(QImage(copy.output).convertToFormat(QImage::Format_RGB32),
+             ImageEditor::apply(QImage(source).convertToFormat(QImage::Format_RGB32), transform));
+  }
+
+  // A format Qt cannot write is saved as PNG, and the note says so.
+  void viewCopyNotesAChangedFormat() {
+    if (QImageWriter::supportedImageFormats().contains("gif")) QSKIP("this Qt writes GIF");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(QStringLiteral("still.gif"));
+    {
+      QFile file(source);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write(QByteArray::fromBase64("R0lGODdhAgABAIEAAP8AAAAA/wAAAAAAACwAAAAAAgABAAAIBQABBAgIADs="));
+    }
+    QVERIFY2(!QImage(source).isNull(), "the GIF fixture does not decode");
+    const ViewCopy copy = saveViewCopyAndWait(source, 1, false, false);
+    QVERIFY2(copy.error.isEmpty(), qPrintable(copy.error));
+    QVERIFY2(copy.output.endsWith(u"still-edited.png"_s), qPrintable(copy.output));
+    QCOMPARE(copy.note, u"Saved as PNG, since GIF files cannot be written here"_s);
+  }
+
+  // EXIF that a format's encoder cannot write is said to be left out.
+  void viewCopyNotesMetadataItCannotKeep() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(QStringLiteral("tagged.png"));
+    QByteArray png;
+    {
+      QBuffer buffer(&png);
+      QVERIFY(buffer.open(QIODevice::WriteOnly));
+      QVERIFY(asymmetricGrey(QSize(20, 10)).save(&buffer, "PNG"));
+    }
+    const QByteArray body = QByteArray("eXIf") + QByteArray("MM\0\x2A\0\0\0\x08\0\0\0\0\0\0", 14);
+    QByteArray chunk;
+    const quint32 length = quint32(body.size() - 4);
+    const quint32 crc = pngCrc(body);
+    for (int i = 3; i >= 0; --i) chunk.append(char((length >> (8 * i)) & 0xFF));
+    chunk.append(body);
+    for (int i = 3; i >= 0; --i) chunk.append(char((crc >> (8 * i)) & 0xFF));
+    {
+      QFile file(source);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write(png.left(33) + chunk + png.mid(33)); // after IHDR
+    }
+    QVERIFY(!QImage(source).isNull());
+    const ViewCopy copy = saveViewCopyAndWait(source, 1, false, false);
+    QVERIFY2(copy.error.isEmpty(), qPrintable(copy.error));
+    QCOMPARE(copy.note, u"Its EXIF metadata was not copied"_s);
+    QCOMPARE(saveViewCopyAndWait(dir.filePath(QStringLiteral("tagged-edited.png")), 1, false, false).note,
+             QString());
+  }
+
+  // Damaged EXIF is left alone: every truncation and a wild offset read
+  // nothing outside the segment.
+  void jpegExifToleratesDamagedSegments() {
+    QByteArray plain;
+    {
+      QBuffer buffer(&plain);
+      QVERIFY(buffer.open(QIODevice::WriteOnly));
+      QVERIFY(asymmetricGrey(QSize(16, 16)).save(&buffer, "JPEG"));
+    }
+    const QByteArray tagged = withCameraExif(plain, 6, QSize(16, 16));
+    for (qsizetype length = 0; length <= tagged.size(); ++length) {
+      QByteArray cut = tagged.left(length);
+      JpegExif::normalize(cut, QSize(16, 16));
+      (void)JpegExif::metadataSegments(cut);
+      (void)JpegExif::withSegments(cut, QByteArray("\xFF\xFE\x00\x04hi", 6));
+    }
+    QByteArray wild = tagged;
+    const qsizetype base = wild.indexOf(QByteArray("Exif\0\0", 6)) + 6;
+    for (int i = 0; i < 4; ++i) wild[base + 4 + i] = char(0xF0);       // IFD0 offset
+    QVERIFY(JpegExif::normalize(wild, QSize(16, 16)));
+    QByteArray wildExif = tagged;
+    for (int i = 0; i < 4; ++i) wildExif[base + 8 + 2 + 24 + 8 + i] = char(0xFE); // EXIF IFD offset
+    QVERIFY(JpegExif::normalize(wildExif, QSize(16, 16)));
+    QCOMPARE(exifLittle(wildExif, kExifOrientation, 2), 1u);
+    QByteArray none = plain;
+    QVERIFY(!JpegExif::normalize(none, QSize(16, 16)));
+    QCOMPARE(none, plain);
+  }
+
+  // Dropped folders are the folders the library stores; many skipped names
+  // are counted rather than listed.
+  void droppedFoldersAreCanonicalAndSkippedNamesCapped() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString real = QFileInfo(dir.path()).canonicalFilePath() + u"/real"_s;
+    const QString link = QFileInfo(dir.path()).canonicalFilePath() + u"/link"_s;
+    QVERIFY(QDir().mkpath(real));
+    QVERIFY(QFile::link(real, link));
+    const FileDrag::Sorted sorted = FileDrag::sort({QUrl::fromLocalFile(link)});
+    QCOMPARE(sorted.folders, QStringList{real});
+    QCOMPARE(FileDrag::skippedNote({u"a"_s, u"b"_s}), u"Skipped: a, b"_s);
+    QCOMPARE(FileDrag::skippedNote({u"1"_s, u"2"_s, u"3"_s, u"4"_s, u"5"_s, u"6"_s}),
+             u"Skipped: 1, 2, 3, 4, 5, 6"_s);
+    QCOMPARE(FileDrag::skippedNote({u"1"_s, u"2"_s, u"3"_s, u"4"_s, u"5"_s, u"6"_s, u"7"_s}),
+             u"Skipped: 1, 2, 3, 4, 5 and 2 more"_s);
   }
 
   void correctionsSaveAsCopyKeepsTheOriginal() {
