@@ -298,6 +298,50 @@ def pool_bookkeeping(block, stacks, threads):
     return all(only_qt_pool_frames(frames) for frames in stacks + [location.group(2).splitlines()])
 
 
+QUEUED_CALL = re.compile(r"^QtPrivate::QCallableObject<.*>::impl\(")
+CALL_BUILT = re.compile(r"^bool QMetaObject::invokeMethodCallableHelper<")
+# A lambda's captures moved or copied into the queued call: "...'lambda'(...)::('lambda'(...)&&)".
+LAMBDA_MOVE = re.compile(r"'lambda'.*::\('lambda'.*(?:&&| const&)\)$")
+
+
+def delivered_queued_call(frames):
+    """Running a functor queued with QMetaObject::invokeMethod, which Qt
+    delivers through QObject::event on the receiver's thread."""
+    functions = frame_functions(frames)
+    for index, (function, module) in enumerate(functions):
+        if function.startswith("QObject::event(") and module.startswith("libQt6Core"):
+            return any(QUEUED_CALL.match(name) for name, _ in functions[:index])
+    return False
+
+
+def building_queued_call(frames):
+    """The posting thread allocating the queued call or moving our captures
+    into it, inside invokeMethod, with nothing else of ours on the way; or
+    allocating a block (a payload the call carries) and touching it no more,
+    since the latest access TSan kept is the allocation itself."""
+    functions = frame_functions(frames)
+    if not functions:
+        return False
+    if ALLOCATION.match(functions[0][0]):
+        return True
+    for index, (function, _) in enumerate(functions):
+        if CALL_BUILT.match(function):
+            return all(INTERCEPTOR.match(name) or name.startswith("QtPrivate::QCallableObject<")
+                       or LAMBDA_MOVE.search(name) for name, _ in functions[:index])
+    return False
+
+
+def queued_call_handoff(stacks):
+    """A functor queued from another thread with QMetaObject::invokeMethod
+    reads what the posting thread built for it: the call itself, the captures
+    moved into it, or a payload allocated before posting. Qt hands the call
+    over through its posted-event queue mutex inside libQt6Core."""
+    if len(stacks) != 2:
+        return False
+    return any(delivered_queued_call(receiver) and building_queued_call(poster)
+               for receiver, poster in (stacks, stacks[::-1]))
+
+
 def classify(block):
     if FATAL.search(block):
         return "fatal"
@@ -309,7 +353,7 @@ def classify(block):
         return "external"
     if (task_start_handoff(stacks) or pool_bookkeeping(block, stacks, threads)
             or qt_internal(block, stacks) or qt_owned_memory(stacks)
-            or qt_descriptor_reuse(block, stacks)):
+            or qt_descriptor_reuse(block, stacks) or queued_call_handoff(stacks)):
         return "external"
     for frames in stacks:
         function, module = first_frame(frames)
