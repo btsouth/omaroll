@@ -13,6 +13,8 @@ Rectangle {
     // The window's room for it, in logical pixels.
     property real maximumFrameWidth: 192
     property real maximumFrameHeight: 108
+    // Over the video: dark in every theme (see Osd).
+    property bool osd: false
 
     readonly property int frameIndex: root.storyboard && root.storyboard.frameCount > 0
                                       ? root.storyboard.frameAt(root.time) : -1
@@ -26,9 +28,11 @@ Rectangle {
     width: Math.max(timeText.implicitWidth + 12, root.showsFrame ? root.frameWidth + 2 * root.padding : 0)
     height: (root.showsFrame ? root.frameHeight + root.padding : 0) + timeText.implicitHeight + 6
     radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, root.showsFrame ? 8 : 4) : 3
-    color: Qt.rgba(Theme.background.r, Theme.background.g, Theme.background.b, 0.94)
+    color: root.osd ? Osd.panelSolid
+                    : Qt.rgba(Theme.background.r, Theme.background.g, Theme.background.b, 0.94)
     border.width: 1
-    border.color: Qt.rgba(Theme.foreground.r, Theme.foreground.g, Theme.foreground.b, 0.16)
+    border.color: root.osd ? Osd.border
+                           : Qt.rgba(Theme.foreground.r, Theme.foreground.g, Theme.foreground.b, 0.16)
 
     Image {
         id: frame
@@ -56,6 +60,6 @@ Rectangle {
         text: root.label
         font.family: Theme.fontFamily
         font.pixelSize: 11
-        color: Theme.brightForeground
+        color: root.osd ? Osd.brightForeground : Theme.brightForeground
     }
 }

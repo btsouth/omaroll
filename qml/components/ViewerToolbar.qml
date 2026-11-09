@@ -42,9 +42,10 @@ Rectangle {
     implicitWidth: row.implicitWidth + 12
     implicitHeight: 46
     radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, height / 2) : 4
-    color: root.shade(Theme.background, 0.84)
+    // Dark over the picture in every theme; see Osd.
+    color: Osd.panel
     border.width: 1
-    border.color: root.shade(Theme.foreground, 0.12)
+    border.color: Osd.border
 
     HoverHandler { id: hover }
 
@@ -63,7 +64,7 @@ Rectangle {
             width: 1
             height: parent.height
             // Inline components cannot see this file's ids, so no root.shade.
-            color: Qt.rgba(Theme.foreground.r, Theme.foreground.g, Theme.foreground.b, 0.14)
+            color: Osd.divider
         }
     }
 
@@ -74,6 +75,7 @@ Rectangle {
 
         IconButton {
             objectName: "viewerZoomOut"
+            osd: true
             enabled: root.viewControls
             visible: !root.compact
             icon: "zoom-out"
@@ -83,6 +85,7 @@ Rectangle {
         }
         IconButton {
             objectName: "viewerFitToggle"
+            osd: true
             enabled: root.viewControls
             visible: !root.compact
             label: root.fitted ? "1:1" : "Fit"
@@ -92,6 +95,7 @@ Rectangle {
         }
         IconButton {
             objectName: "viewerZoomIn"
+            osd: true
             enabled: root.viewControls
             visible: !root.compact
             icon: "zoom-in"
@@ -103,6 +107,7 @@ Rectangle {
 
         IconButton {
             objectName: "viewerToolbarPrevious"
+            osd: true
             enabled: root.canStep
             icon: "chevron-left"
             toolTip: "Previous"
@@ -111,6 +116,7 @@ Rectangle {
         }
         IconButton {
             objectName: "viewerSlideshowButton"
+            osd: true
             enabled: root.canStep
             icon: root.slideshowRunning ? "pause" : "play"
             active: root.slideshowRunning
@@ -120,6 +126,7 @@ Rectangle {
         }
         IconButton {
             objectName: "viewerToolbarNext"
+            osd: true
             enabled: root.canStep
             icon: "chevron-right"
             toolTip: "Next"
@@ -130,6 +137,7 @@ Rectangle {
 
         IconButton {
             objectName: "viewerRotateLeft"
+            osd: true
             enabled: root.viewControls
             icon: "rotate-left"
             toolTip: "Rotate left"
@@ -138,6 +146,7 @@ Rectangle {
         }
         IconButton {
             objectName: "viewerRotateRight"
+            osd: true
             enabled: root.viewControls
             icon: "rotate-right"
             toolTip: "Rotate right"
@@ -146,6 +155,7 @@ Rectangle {
         }
         IconButton {
             objectName: "viewerFlipHorizontal"
+            osd: true
             enabled: root.viewControls
             visible: root.flipControls
             icon: "flip-horizontal"
@@ -157,6 +167,7 @@ Rectangle {
         }
         IconButton {
             objectName: "viewerFlipVertical"
+            osd: true
             enabled: root.viewControls
             visible: root.flipControls
             icon: "flip-vertical"
@@ -168,6 +179,7 @@ Rectangle {
         }
         IconButton {
             objectName: "viewerSaveCopy"
+            osd: true
             visible: root.canSaveCopy
             icon: "save"
             toolTip: root.saveCopyLabel
@@ -178,6 +190,7 @@ Rectangle {
 
         IconButton {
             objectName: "viewerTrashButton"
+            osd: true
             icon: "trash"
             toolTip: "Move to Trash"
             shortcut: ShortcutCatalog.sequence("quick", "trash")[0]

@@ -76,9 +76,10 @@ Rectangle {
 
     implicitHeight: 46 + (stacked ? 38 : 0)
     radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, height / 2) : 4
-    color: root.shade(Theme.background, 0.84)
+    // Dark over the video in every theme, with only the accent from it.
+    color: Osd.panel
     border.width: 1
-    border.color: root.shade(Theme.foreground, 0.12)
+    border.color: Osd.border
 
     HoverHandler { id: hover }
 
@@ -91,6 +92,7 @@ Rectangle {
 
     IconButton {
         id: playButton
+        osd: true
         objectName: "viewerPlayButton"
         anchors.left: parent.left
         anchors.leftMargin: 6
@@ -105,6 +107,7 @@ Rectangle {
 
     Text {
         id: elapsed
+        objectName: "viewerElapsed"
         anchors.left: playButton.right
         anchors.leftMargin: 8
         anchors.verticalCenter: parent.verticalCenter
@@ -112,7 +115,7 @@ Rectangle {
         text: root.clock(root.position)
         font.family: Theme.fontFamily
         font.pixelSize: 11
-        color: Theme.foreground
+        color: Osd.foreground
     }
 
     Item {
@@ -138,21 +141,23 @@ Rectangle {
 
         Rectangle {
             id: track
+            objectName: "viewerSeekTrack"
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             height: scrub.lifted ? 5 : 3
             radius: height / 2
-            color: root.shade(Theme.foreground, 0.20)
+            color: Osd.track
             Behavior on height { NumberAnimation { duration: 100 } }
 
             Rectangle {
                 anchors.left: parent.left
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
+                objectName: "viewerSeekFill"
                 width: parent.width * scrub.fraction
                 radius: parent.radius
-                color: Theme.accent
+                color: Osd.accent
             }
         }
 
@@ -162,9 +167,9 @@ Rectangle {
             radius: 6
             x: scrub.width * scrub.fraction - width / 2
             anchors.verticalCenter: parent.verticalCenter
-            color: Theme.brightForeground
+            color: Osd.brightForeground
             border.width: 2
-            border.color: Theme.accent
+            border.color: Osd.accent
             opacity: scrub.lifted ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: 100 } }
         }
@@ -173,6 +178,7 @@ Rectangle {
         // was aimed. It follows a drag too; the video itself seeks as before.
         SeekPreview {
             id: seekPreview
+            osd: true
             objectName: "viewerSeekPreview"
             visible: (scrubMouse.containsMouse || scrubMouse.pressed) && root.duration > 0
             readonly property real at: Math.max(0, Math.min(scrub.width, scrubMouse.mouseX))
@@ -224,6 +230,7 @@ Rectangle {
 
     Text {
         id: total
+        objectName: "viewerDuration"
         visible: root.seekBudget - implicitWidth >= root.minimumSeekWidth
         width: visible ? implicitWidth : 0
         anchors.right: root.stacked ? parent.right : extras.left
@@ -233,7 +240,7 @@ Rectangle {
         text: root.clock(root.duration)
         font.family: Theme.fontFamily
         font.pixelSize: 11
-        color: Theme.mutedText
+        color: Osd.mutedText
     }
 
     Row {
@@ -246,6 +253,7 @@ Rectangle {
 
         IconButton {
             id: captionsButton
+            osd: true
             objectName: "viewerCaptionsButton"
             visible: root.hasCaptions
             anchors.verticalCenter: parent.verticalCenter
@@ -265,7 +273,7 @@ Rectangle {
             width: speedLabel.implicitWidth + 16
             height: 30
             radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, height / 2) : 3
-            color: speedMouse.containsMouse ? root.shade(Theme.foreground, 0.12) : "transparent"
+            color: speedMouse.containsMouse ? Osd.hover : "transparent"
 
             Text {
                 id: speedLabel
@@ -274,7 +282,7 @@ Rectangle {
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
                 font.weight: Math.abs(root.rate - 1) > 0.01 ? Font.DemiBold : Font.Normal
-                color: Math.abs(root.rate - 1) > 0.01 ? Theme.accent : Theme.foreground
+                color: Math.abs(root.rate - 1) > 0.01 ? Osd.accent : Osd.foreground
             }
             MouseArea {
                 id: speedMouse
@@ -287,6 +295,7 @@ Rectangle {
 
         IconButton {
             id: soundButton
+            osd: true
             objectName: "viewerSoundButton"
             anchors.verticalCenter: parent.verticalCenter
             icon: Settings.videoMuted || Settings.videoVolume === 0 ? "volume-muted" : "volume"
@@ -319,13 +328,13 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 height: 3
                 radius: 1.5
-                color: root.shade(Theme.foreground, 0.20)
+                color: Osd.track
 
                 Rectangle {
                     width: parent.width * parent.parent.level
                     height: parent.height
                     radius: parent.radius
-                    color: Theme.foreground
+                    color: Osd.foreground
                 }
             }
             MouseArea {
@@ -339,6 +348,7 @@ Rectangle {
 
         IconButton {
             id: fullScreenButton
+            osd: true
             objectName: "viewerTransportFullScreen"
             anchors.verticalCenter: parent.verticalCenter
             icon: root.fullScreen ? "fullscreen-exit" : "fullscreen"

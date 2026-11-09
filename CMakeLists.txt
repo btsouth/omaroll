@@ -238,9 +238,11 @@ set(OMAROLL_QML_FILES
   qml/components/DropHighlight.qml
   qml/components/ViewerTransport.qml
   qml/components/SeekPreview.qml
+  qml/components/Osd.qml
 )
 
-set_source_files_properties(qml/components/ShortcutCatalog.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+set_source_files_properties(qml/components/ShortcutCatalog.qml qml/components/Osd.qml
+  PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 qt_add_qml_module(omaroll
   URI Omaroll
@@ -386,7 +388,7 @@ if(BUILD_TESTING)
   foreach(qml_file IN LISTS OMAROLL_QML_FILES)
     get_filename_component(qml_name ${qml_file} NAME_WE)
     file(CREATE_LINK ${CMAKE_SOURCE_DIR}/${qml_file} ${uitest_module}/${qml_name}.qml SYMBOLIC)
-    if(qml_name STREQUAL "ShortcutCatalog")
+    if(qml_name STREQUAL "ShortcutCatalog" OR qml_name STREQUAL "Osd")
       string(APPEND uitest_qmldir "singleton ")
     endif()
     string(APPEND uitest_qmldir "${qml_name} 1.0 ${qml_name}.qml\n")
