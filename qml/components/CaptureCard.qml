@@ -11,6 +11,8 @@ Item {
     property string fileName: ""
     property string kindLabel: ""
     property string timeLabel: ""
+    // "7 Nov" or "14 Sep 2025"; empty for today.
+    property string dateLabel: ""
     property string sizeLabel: ""
     property bool isVideo: false
     property bool isDocument: false
@@ -47,7 +49,7 @@ Item {
     property bool dragging: false
 
     Accessible.role: Accessible.ListItem
-    Accessible.name: [fileName, kindLabel, timeLabel].filter(function(value) { return value !== "" }).join(", ")
+    Accessible.name: [fileName, kindLabel, dateLabel, timeLabel].filter(function(value) { return value !== "" }).join(", ")
     Accessible.description: thumbnailFailed ? "Preview unavailable" : ""
     Accessible.selected: selected
     Accessible.selectable: true
@@ -68,6 +70,10 @@ Item {
     signal chosen()
     signal contextRequested(real x, real y)
     signal toggleChecked()
+    // Shift+click extends the selection from its anchor; Ctrl+click adds or
+    // removes this tile alone.
+    signal extendRequested()
+    signal toggleRequested()
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
@@ -298,6 +304,7 @@ Item {
         // Stars sit at the right end of the strip, so they read with the
         // time and size rather than competing with the picture.
         Text {
+            id: stars
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             anchors.margins: 8
@@ -307,18 +314,25 @@ Item {
             color: root.thumbnailReady ? Theme.yellow : Theme.foreground
         }
 
-        Row {
+        // The date leads when the tile is not from today. On a narrow tile the
+        // size gives way first, then the date and time elide.
+        Item {
             id: metadataRow
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             anchors.margins: 8
-            spacing: 8
+            height: whenText.implicitHeight
+            readonly property real room: Math.max(0, width - (stars.visible ? stars.implicitWidth + 8 : 0))
 
             // White over the scrim once the picture is up; theme text over the
             // bare frame before that, or on a light theme it would vanish.
             Text {
-                text: root.timeLabel
+                id: whenText
+                objectName: "captureWhenLabel"
+                width: Math.min(implicitWidth, metadataRow.room)
+                elide: Text.ElideRight
+                text: root.dateLabel !== "" ? root.dateLabel + " · " + root.timeLabel : root.timeLabel
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
                 font.weight: Font.DemiBold
@@ -327,6 +341,9 @@ Item {
             }
 
             Text {
+                objectName: "captureSizeLabel"
+                x: whenText.width + 8
+                visible: whenText.implicitWidth + 8 + implicitWidth <= metadataRow.room
                 text: root.sizeLabel
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
@@ -454,6 +471,7 @@ Item {
 
         TapHandler {
             acceptedButtons: Qt.LeftButton
+            acceptedModifiers: Qt.NoModifier
             onSingleTapped: function (eventPoint) {
                 const checkboxPoint = checkBox.mapFromItem(frame, eventPoint.position)
                 if (root.selectionMode || checkBox.contains(checkboxPoint)) {
@@ -465,6 +483,16 @@ Item {
             onDoubleTapped: root.chosen()
             // Touch has no hover, so no checkbox; a long press selects instead.
             onLongPressed: root.toggleChecked()
+        }
+        TapHandler {
+            acceptedButtons: Qt.LeftButton
+            acceptedModifiers: Qt.ShiftModifier
+            onSingleTapped: root.extendRequested()
+        }
+        TapHandler {
+            acceptedButtons: Qt.LeftButton
+            acceptedModifiers: Qt.ControlModifier
+            onSingleTapped: root.toggleRequested()
         }
 
         // Right click goes straight to the actions, which is what a right

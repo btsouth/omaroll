@@ -26,6 +26,7 @@
 #include "library/MediaMetadataIndex.h"
 #include "library/MediaInspector.h"
 #include "library/SimilarityIndex.h"
+#include "library/SectionRows.h"
 #include "edit/ImageEditor.h"
 #include "edit/ClipboardImage.h"
 #include "edit/ClipboardText.h"
@@ -59,6 +60,7 @@
 #include <QProcess>
 #include <QScopeGuard>
 #include <QRandomGenerator>
+#include <ctime>
 #include <QSaveFile>
 #include <QSignalSpy>
 #include <QSemaphore>
@@ -6570,6 +6572,215 @@ private slots:
     QTRY_COMPARE_WITH_TIMEOUT(proxy.count(), 0, 5000);
     QVERIFY(QFileInfo::exists(dir.filePath(QStringLiteral("first.png"))));
     QVERIFY(QFileInfo::exists(dir.filePath(QStringLiteral("copy.png"))));
+  }
+
+  // Date sorts section the grid by the calendar day of the captured moment,
+  // which is what the sort uses, or by month where days are thin; rows are
+  // laid out per section and only changed rows are reported.
+  void dateSectionsFollowTheSortedDaysAndMonths() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    for (const char* name : {"OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR",
+                             "XDG_PICTURES_DIR", "XDG_VIDEOS_DIR"}) {
+      QVERIFY(qputenv(name, dir.path().toUtf8()));
+    }
+    QImage tiny(8, 8, QImage::Format_RGB32);
+    tiny.fill(Qt::darkCyan);
+    const QDate today = QDate::currentDate();
+    const QDate yesterday = today.addDays(-1);
+    const auto shot = [&](const QDate& date, int hour) {
+      const QString path = dir.filePath(
+          QStringLiteral("screenshot-%1_%2-00-00.png")
+              .arg(date.toString(Qt::ISODate))
+              .arg(hour, 2, 10, QLatin1Char('0')));
+      return tiny.save(path) ? path : QString();
+    };
+    // This month: four today and two yesterday. September 2025: three on
+    // the 14th, one on the 2nd. August 2025: one on each of two days.
+    for (int hour : {9, 10, 11, 12}) QVERIFY(!shot(today, hour).isEmpty());
+    for (int hour : {8, 9}) QVERIFY(!shot(yesterday, hour).isEmpty());
+    for (int hour : {8, 9, 10}) QVERIFY(!shot(QDate(2025, 9, 14), hour).isEmpty());
+    QVERIFY(!shot(QDate(2025, 9, 2), 12).isEmpty());
+    QVERIFY(!shot(QDate(2025, 8, 3), 12).isEmpty());
+    QVERIFY(!shot(QDate(2025, 8, 17), 12).isEmpty());
+
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QSignalSpy scanned(&model, &CaptureModel::countChanged);
+    QVERIFY(scanned.wait(5000));
+    QCOMPARE(model.rowCount(), 12);
+    CaptureFilterModel proxy;
+    proxy.setSourceModel(&model);
+    auto* rows = qobject_cast<SectionRows*>(proxy.sectionRows());
+    QVERIFY(rows);
+    QAbstractItemModelTester tester(rows, QAbstractItemModelTester::FailureReportingMode::QtTest);
+    QCOMPARE(rows->mode(), int(SectionRows::DateSections));
+    rows->setColumns(4);
+    rows->setActive(true);
+    rows->rebuildNow();
+
+    const QLocale locale = QLocale::system();
+    // The day label's own wording: this year's days by weekday.
+    const auto day = [&](const QDate& date) {
+      return locale.toString(date, date.year() == today.year() ? QStringLiteral("dddd, d MMMM")
+                                                               : QStringLiteral("d MMMM yyyy"));
+    };
+    const auto labels = [&] {
+      QStringList result;
+      for (const SectionRows::Section& section : rows->computeSections()) {
+        result.append(QStringLiteral("%1:%2:%3").arg(section.label).arg(section.first).arg(section.count));
+      }
+      return result;
+    };
+    // Days hold at least half a row on average this month and in September;
+    // August's two single days collapse into one month section.
+    const QString thisMonth = today.month() == yesterday.month() ? QString() : QStringLiteral("split");
+    if (thisMonth.isEmpty()) {
+      QCOMPARE(labels(), QStringList({QStringLiteral("Today:0:4"), QStringLiteral("Yesterday:4:2"),
+                                      day(QDate(2025, 9, 14)) + QStringLiteral(":6:3"),
+                                      day(QDate(2025, 9, 2)) + QStringLiteral(":9:1"),
+                                      locale.toString(QDate(2025, 8, 1), QStringLiteral("MMMM yyyy")) +
+                                          QStringLiteral(":10:2")}));
+      // A header row, then the section's tiles in rows of four.
+      QCOMPARE(rows->rowCount(), 10);
+      QCOMPARE(rows->rowOfItem(0), 1);
+      QCOMPARE(rows->rowOfItem(3), 1);
+      QCOMPARE(rows->rowOfItem(4), 3);
+      QCOMPARE(rows->rowOfItem(11), 9);
+      QCOMPARE(rows->rowOfItem(12), -1);
+      QCOMPARE(rows->sectionOfItem(5).value(QStringLiteral("first")).toInt(), 4);
+      QCOMPARE(rows->sectionOfItem(5).value(QStringLiteral("headerRow")).toInt(), 2);
+      QCOMPARE(rows->data(rows->index(2), SectionRows::DetailRole).toString(), QStringLiteral("2 items"));
+      QCOMPARE(rows->data(rows->index(6), SectionRows::DetailRole).toString(), QStringLiteral("1 item"));
+      QVERIFY(rows->data(rows->index(8), SectionRows::MonthRole).toBool());
+    }
+
+    // Narrow columns change the rows but not the sections.
+    rows->setColumns(2);
+    rows->rebuildNow();
+    QCOMPARE(rows->rowAt(1).value(QStringLiteral("count")).toInt(), 2);
+    QCOMPARE(rows->rowAt(2).value(QStringLiteral("first")).toInt(), 2);
+    rows->setColumns(4);
+    rows->rebuildNow();
+
+    // Compact tiles group every month.
+    rows->setCompact(true);
+    rows->rebuildNow();
+    QCOMPARE(rows->sectionCount(), today.month() == yesterday.month() ? 3 : 4);
+    QCOMPARE(rows->computeSections().last().label,
+             locale.toString(QDate(2025, 8, 1), QStringLiteral("MMMM yyyy")));
+    rows->setCompact(false);
+    rows->rebuildNow();
+
+    // Oldest first runs the same sections the other way.
+    proxy.setSortMode(CaptureFilterModel::OldestFirst);
+    rows->rebuildNow();
+    QCOMPARE(rows->computeSections().first().label,
+             locale.toString(QDate(2025, 8, 1), QStringLiteral("MMMM yyyy")));
+    QCOMPARE(rows->computeSections().last().label, QStringLiteral("Today"));
+
+    // Name, size and rating sorts are one flat grid.
+    for (const int sort : {int(CaptureFilterModel::NameAscending), int(CaptureFilterModel::LargestFirst),
+                           int(CaptureFilterModel::RatingFirst)}) {
+      proxy.setSortMode(sort);
+      QCOMPARE(rows->mode(), int(SectionRows::NoSections));
+      rows->rebuildNow();
+      QCOMPARE(rows->rowCount(), 0);
+    }
+    proxy.setSortMode(CaptureFilterModel::NewestFirst);
+    rows->rebuildNow();
+
+    // A search narrows the sections to what it shows.
+    proxy.setSearchText(QStringLiteral("2025-09-14"));
+    rows->rebuildNow();
+    QCOMPARE(labels(), QStringList({day(QDate(2025, 9, 14)) + QStringLiteral(":0:3")}));
+    proxy.setSearchText({});
+    rows->rebuildNow();
+    QCOMPARE(rows->sectionCount(), 5);
+
+    // A rebuild with nothing new reports nothing.
+    QSignalSpy inserted(rows, &QAbstractItemModel::rowsInserted);
+    QSignalSpy removed(rows, &QAbstractItemModel::rowsRemoved);
+    QSignalSpy changed(rows, &QAbstractItemModel::dataChanged);
+    rows->rebuildNow();
+    QVERIFY(inserted.isEmpty() && removed.isEmpty() && changed.isEmpty());
+
+    // An embedded original date moves a photo to its day: EXIF holds the
+    // camera's wall clock, so 23:30 on 14 September stays on that day.
+    QImage photo(8, 8, QImage::Format_RGB32);
+    photo.fill(Qt::darkRed);
+    const QString camera = dir.filePath(QStringLiteral("camera.png"));
+    QVERIFY(photo.save(camera));
+    model.refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(model.rowOf(camera) >= 0, 5000);
+    const CaptureRecord& record = model.recordAt(model.rowOf(camera));
+    const QDateTime original = MediaMetadataIndex::parseImageDate("2025:09:14 23:30:00\n");
+    model.applyMetadata({{camera, record.modified, record.bytes, original, record.device, record.inode}});
+    QTRY_COMPARE_WITH_TIMEOUT(proxy.rowOf(camera), 6, 2000);
+    rows->rebuildNow();
+    QCOMPARE(rows->sectionOfItem(6).value(QStringLiteral("label")).toString(), day(QDate(2025, 9, 14)));
+    QCOMPARE(rows->sectionOfItem(6).value(QStringLiteral("count")).toInt(), 4);
+    QCOMPARE(proxy.data(proxy.index(6, 0), CaptureRoles::DateLabelRole).toString(),
+             locale.toString(QDate(2025, 9, 14), QStringLiteral("d MMM yyyy")));
+    QVERIFY(proxy.data(proxy.index(0, 0), CaptureRoles::DateLabelRole).toString().isEmpty());
+
+    // A video's zoned creation time lands on the local day it was taken:
+    // 23:30 UTC on 1 March is still 1 March in New York and already 2 March
+    // in Tokyo, and the section follows the sort either way.
+    const QByteArray hadZone = qgetenv("TZ");
+    const bool zoneWasSet = qEnvironmentVariableIsSet("TZ");
+    const auto restoreZone = qScopeGuard([&] {
+      if (zoneWasSet) qputenv("TZ", hadZone);
+      else qunsetenv("TZ");
+      tzset();
+    });
+    const QString clip = dir.filePath(QStringLiteral("clip.png"));
+    QVERIFY(photo.save(clip));
+    const QString still = dir.filePath(QStringLiteral("still.png"));
+    QVERIFY(photo.save(still));
+    model.refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(model.rowOf(clip) >= 0 && model.rowOf(still) >= 0, 5000);
+    const QByteArray zoned = R"({"format":{"tags":{"creation_time":"2026-03-01T23:30:00Z"}}})";
+    // Two columns keep two single March days as day sections.
+    rows->setColumns(2);
+    for (const auto& [zone, expected] : {std::pair{"America/New_York", QDate(2026, 3, 1)},
+                                         std::pair{"Asia/Tokyo", QDate(2026, 3, 2)}}) {
+      qputenv("TZ", zone);
+      tzset();
+      const QDateTime taken = MediaMetadataIndex::parseVideoDate(zoned);
+      QCOMPARE(taken.date(), expected);
+      const CaptureRecord& clipRecord = model.recordAt(model.rowOf(clip));
+      model.applyMetadata({{clip, clipRecord.modified, clipRecord.bytes, taken, clipRecord.device,
+                            clipRecord.inode}});
+      const CaptureRecord& stillRecord = model.recordAt(model.rowOf(still));
+      model.applyMetadata({{still, stillRecord.modified, stillRecord.bytes,
+                            MediaMetadataIndex::parseImageDate("2026:03:01 12:00:00\n"),
+                            stillRecord.device, stillRecord.inode}});
+      QTRY_VERIFY_WITH_TIMEOUT(model.recordAt(model.rowOf(clip)).captured == taken, 2000);
+      rows->rebuildNow();
+      const int clipRow = proxy.rowOf(clip);
+      const int stillRow = proxy.rowOf(still);
+      QVERIFY(clipRow >= 0 && stillRow >= 0);
+      QCOMPARE(rows->sectionOfItem(clipRow).value(QStringLiteral("label")).toString(), day(expected));
+      QCOMPARE(rows->sectionOfItem(stillRow).value(QStringLiteral("label")).toString(),
+               day(QDate(2026, 3, 1)));
+      const bool together = expected == QDate(2026, 3, 1);
+      QCOMPARE(rows->sectionOfItem(clipRow).value(QStringLiteral("first")) ==
+                   rows->sectionOfItem(stillRow).value(QStringLiteral("first")),
+               together);
+      // Newest first, the later moment comes first in either zone.
+      QVERIFY(clipRow < stillRow);
+    }
+
+    // Similar pictures replace the dates with their sets.
+    proxy.setSimilarOnly(true);
+    QCOMPARE(rows->mode(), int(SectionRows::ReviewSections));
+    proxy.setSimilarOnly(false);
+    QCOMPARE(rows->mode(), int(SectionRows::DateSections));
+    rows->setActive(false);
+    rows->rebuildNow();
+    QCOMPARE(rows->rowCount(), 0);
   }
 
   void visuallySimilarPicturesAreSuggestedWithoutGroupingDifferentColour() {

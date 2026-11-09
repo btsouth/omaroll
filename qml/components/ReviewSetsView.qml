@@ -1,11 +1,11 @@
 import QtQuick
 import QtQuick.Controls.Basic
 
-// Similar pictures, one section per set: a header naming the set and its size,
-// then its tiles in rows. A GridView has no sections, and the review filter
-// keeps each set's rows together, so the sections are laid out here from the
-// proxy's set boundaries while selection, marks and actions stay with the
-// grid that hosts this view.
+// The library in sections: a header naming each section and its size, then
+// its tiles in rows. A GridView has no sections, so the rows come from
+// Captures.sectionRows, which lays the proxy's rows out per day, month or
+// similar set; selection, marks, keys and actions stay with the grid that
+// hosts this view.
 FocusScope {
     id: root
 
@@ -15,39 +15,26 @@ FocusScope {
     property int cellWidth: 100
     property int cellHeight: 68
     property int cellSpacing: 12
-    property var rows: []
+    // Month sections where a day header would sit over a row or two.
+    property bool compact: false
     property int revision: 0
-    readonly property int setCount: {
-        let count = 0
-        for (const row of rows) if (row.header) count++
-        return count
-    }
+    readonly property int headerHeight: 40
+    readonly property var sections: Captures.sectionRows
+    readonly property bool reviewMode: sections.mode === 2
+    readonly property int setCount: sections.sectionCount
+    readonly property alias listView: list
+    // The section label of the top row while its header is scrolled away;
+    // the window's floating day pill shows it.
+    property string stickyLabel: ""
+    // Pointer selection must not scroll the tile out from under the pointer.
+    property bool suppressReveal: false
+    property bool revealPending: true
+    property string topPath: ""
+    property real topOffset: 0
 
-    function rebuild() {
-        const sections = root.visible ? Captures.reviewSections() : []
-        const next = []
-        for (const section of sections) {
-            next.push({header: true, first: section.first, count: section.count,
-                       label: section.label})
-            for (let offset = 0; offset < section.count; offset += root.columns) {
-                next.push({header: false, first: section.first + offset,
-                           count: Math.min(root.columns, section.count - offset)})
-            }
-        }
-        rows = next
-        root.revision++
-        Qt.callLater(root.revealCurrent)
-    }
-
-    function scheduleRebuild() { rebuildTimer.restart() }
-
-    function listRowOf(index) {
-        for (let i = 0; i < rows.length; ++i) {
-            const row = rows[i]
-            if (!row.header && index >= row.first && index < row.first + row.count) return i
-        }
-        return -1
-    }
+    Binding { target: root.sections; property: "active"; value: root.visible }
+    Binding { target: root.sections; property: "columns"; value: root.columns }
+    Binding { target: root.sections; property: "compact"; value: root.compact }
 
     function setPaths(first, count) {
         const paths = []
@@ -57,43 +44,73 @@ FocusScope {
 
     function revealCurrent() {
         if (!root.host || root.host.currentIndex < 0) return
-        const row = root.listRowOf(root.host.currentIndex)
+        const row = root.sections.rowOfItem(root.host.currentIndex)
         if (row < 0) return
-        // The first row of a set brings its header into view with it.
-        const before = row > 0 && rows[row - 1].header ? row - 1 : row
+        // The first row of a section brings its header into view with it.
+        const before = row > 0 && root.sections.rowAt(row - 1).header ? row - 1 : row
         list.positionViewAtIndex(before, ListView.Contain)
         list.positionViewAtIndex(row, ListView.Contain)
     }
 
-    function select(index) {
-        if (!root.host || index < 0 || index >= Captures.count) return
-        root.host.selectedPath = Captures.pathAt(index)
-        root.host.currentIndex = index
-        root.revealCurrent()
+    // Where a key moves the current tile. Left and Right run through the
+    // library in order; Up, Down and the page keys keep the column through
+    // the tile rows, across section headers.
+    function targetIndex(current, direction, wrap) {
+        const count = Captures.count
+        if (count === 0) return -1
+        if (current < 0) return 0
+        switch (direction) {
+        case "left": return current > 0 ? current - 1 : (wrap ? count - 1 : 0)
+        case "right": return current < count - 1 ? current + 1 : (wrap ? 0 : count - 1)
+        case "up": return root.vertical(current, -1, 1)
+        case "down": return root.vertical(current, 1, 1)
+        case "pageUp": return root.vertical(current, -1, root.rowsPerPage())
+        case "pageDown": return root.vertical(current, 1, root.rowsPerPage())
+        case "home": return 0
+        case "end": return count - 1
+        }
+        return current
     }
 
-    function moveVertically(step) {
-        const current = root.host ? root.host.currentIndex : -1
-        const row = root.listRowOf(current)
-        if (row < 0) {
-            root.select(0)
-            return
+    function rowsPerPage() { return Math.max(1, Math.floor(list.height / root.cellHeight)) }
+
+    function vertical(current, step, rows) {
+        const start = root.sections.rowOfItem(current)
+        if (start < 0) return current
+        const column = current - root.sections.rowAt(start).first
+        let landed = -1
+        let moved = 0
+        for (let i = start + step; i >= 0 && i < root.sections.rowCount(); i += step) {
+            if (root.sections.rowAt(i).header) continue
+            landed = i
+            if (++moved === rows) break
         }
-        const column = current - rows[row].first
-        for (let i = row + step; i >= 0 && i < rows.length; i += step) {
-            if (!rows[i].header) {
-                root.select(rows[i].first + Math.min(column, rows[i].count - 1))
-                return
-            }
-        }
+        if (landed < 0) return current
+        const row = root.sections.rowAt(landed)
+        return row.first + Math.min(column, row.count - 1)
     }
+
+    // A point in this view, for the rubber band: the list row under it and
+    // how far into that row. Rows above the first answer row 0 at -1.
+    function pointInfo(x, y) {
+        const total = root.sections.rowCount()
+        if (total === 0) return {row: 0, offset: 0, header: false, past: true}
+        const cy = list.contentY + Math.max(0, Math.min(y, list.height - 1))
+        const item = list.itemAt(Math.max(0, Math.min(x, list.width - 1)), cy)
+        if (item) return {row: item.index, offset: cy - item.y, header: item.header, past: false}
+        const last = list.itemAtIndex(total - 1)
+        if (last && cy >= last.y + last.height) return {row: total, offset: 0, header: false, past: true}
+        return {row: 0, offset: -1, header: true, past: false}
+    }
+    function rowInfo(row) { return root.sections.rowAt(row) }
+    function rowTotal() { return root.sections.rowCount() }
 
     // Every tile on screen has its thumbnail, as the grid reports for renders.
     function viewportReady() {
-        if (!visible || rows.length === 0 || list.height <= 0) return false
+        if (!visible || root.sections.rowCount() === 0 || list.height <= 0) return false
         const first = Math.max(0, list.indexAt(4, list.contentY + 4))
         let last = list.indexAt(4, list.contentY + list.height - 4)
-        if (last < 0) last = rows.length - 1
+        if (last < 0) last = root.sections.rowCount() - 1
         for (let i = first; i <= last; ++i) {
             const item = list.itemAtIndex(i)
             if (!item) return false
@@ -102,27 +119,70 @@ FocusScope {
         return true
     }
 
-    Timer {
-        id: rebuildTimer
-        interval: 0
-        onTriggered: root.rebuild()
+    function updateSticky() {
+        const item = list.itemAt(20, list.contentY + 1)
+        root.stickyLabel = !root.reviewMode && item && !item.header ? item.label : ""
     }
 
-    onVisibleChanged: scheduleRebuild()
-    onColumnsChanged: scheduleRebuild()
-    Component.onCompleted: scheduleRebuild()
+    // A sort or a reshuffle keeps the tile that was at the top in view, as
+    // the flat grid does.
+    function rememberTop() {
+        if (!root.visible || list.contentY <= list.originY + 1) {
+            root.topPath = ""
+            return
+        }
+        const item = list.itemAt(20, list.contentY + 1)
+        root.topPath = item ? Captures.pathAt(item.first) : ""
+        root.topOffset = item ? list.contentY - item.y : 0
+    }
+
+    function restoreTop() {
+        if (root.topPath === "") return
+        const row = Captures.rowOf(root.topPath)
+        root.topPath = ""
+        if (row < 0) return
+        let listRow = root.sections.rowOfItem(row)
+        if (listRow > 0 && root.sections.rowAt(listRow - 1).header
+                && root.sections.rowAt(listRow).first === row) {
+            listRow -= 1
+        }
+        if (listRow < 0) return
+        list.positionViewAtIndex(listRow, ListView.Beginning)
+        list.contentY += Math.min(root.topOffset, root.sections.rowAt(listRow).header
+                                                  ? root.headerHeight : root.cellHeight)
+    }
+
+    onVisibleChanged: {
+        root.revealPending = true
+        if (visible) root.sections.rebuildNow()
+    }
+    onReviewModeChanged: root.revealPending = true
 
     Connections {
         target: Captures
-        function onCountChanged() { root.scheduleRebuild() }
-        function onLayoutChanged() { root.scheduleRebuild() }
-        function onModelReset() { root.scheduleRebuild() }
-        function onRowsMoved() { root.scheduleRebuild() }
+        function onLayoutAboutToBeChanged() { root.rememberTop() }
+        function onModelAboutToBeReset() { root.rememberTop() }
         function onDataChanged() { root.revision++ }
     }
     Connections {
+        target: root.sections
+        function onRebuilt() {
+            root.revision++
+            if (root.revealPending && root.visible) {
+                root.revealPending = false
+                root.topPath = ""
+                Qt.callLater(root.revealCurrent)
+            } else {
+                root.restoreTop()
+            }
+            Qt.callLater(root.updateSticky)
+        }
+    }
+    Connections {
         target: root.host
-        function onCurrentIndexChanged() { if (root.visible) root.revealCurrent() }
+        function onCurrentIndexChanged() {
+            if (root.visible && !root.suppressReveal) root.revealCurrent()
+        }
     }
 
     // Standalone, beside the list, as the grid's is.
@@ -141,19 +201,9 @@ FocusScope {
         }
     }
 
-    ListView {
-        id: list
-        objectName: "reviewSetsList"
-        anchors.fill: parent
-        anchors.rightMargin: 12
-        focus: true
-        clip: true
-        boundsBehavior: Flickable.StopAtBounds
-        model: root.rows
-        reuseItems: false
-        cacheBuffer: root.cellHeight * 3
-
-        header: Item {
+    Component {
+        id: reviewSummary
+        Item {
             width: list.width
             height: 44
 
@@ -177,16 +227,41 @@ FocusScope {
                 anchors.verticalCenter: parent.verticalCenter
             }
         }
+    }
+
+    ListView {
+        id: list
+        objectName: "reviewSetsList"
+        anchors.fill: parent
+        anchors.rightMargin: 12
+        focus: true
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        model: root.sections
+        // Rows of the same width keep their tiles when recycled, which is
+        // what keeps a long scroll as cheap as the flat grid's.
+        reuseItems: true
+        // As far ahead as the flat grid, so a scroll finds thumbnails ready.
+        cacheBuffer: root.cellHeight * 4
+        header: root.reviewMode ? reviewSummary : null
+        onContentYChanged: root.updateSticky()
 
         delegate: Item {
             id: rowItem
             required property int index
-            required property var modelData
+            required property bool header
+            required property int first
+            required property int count
+            required property string label
+            required property string detail
+            required property int sectionFirst
+            required property int sectionCount
+            required property bool month
             width: list.width
-            height: modelData.header ? 40 : root.cellHeight
+            height: header ? root.headerHeight : root.cellHeight
 
             function presented() {
-                if (modelData.header) return true
+                if (header) return true
                 for (let i = 0; i < tiles.count; ++i) {
                     const tile = tiles.itemAt(i)
                     if (!tile || !tile.presented) return false
@@ -194,12 +269,17 @@ FocusScope {
                 return true
             }
 
-            // Set header.
+            // Section header.
             Item {
-                visible: rowItem.modelData.header
+                id: headerRow
+                objectName: rowItem.header ? "sectionHeader" : ""
+                visible: rowItem.header
                 anchors.fill: parent
                 anchors.leftMargin: Math.round(root.cellSpacing / 2)
                 anchors.rightMargin: Math.round(root.cellSpacing / 2)
+                Accessible.role: Accessible.Heading
+                Accessible.name: rowItem.header ? rowItem.label + ", " + rowItem.detail : ""
+                Accessible.ignored: !rowItem.header
 
                 Rectangle {
                     anchors.left: parent.left
@@ -211,52 +291,127 @@ FocusScope {
                 }
                 Text {
                     id: setTitle
-                    objectName: "reviewSetHeader"
+                    objectName: root.reviewMode ? "reviewSetHeader" : "dateSectionTitle"
                     anchors.left: parent.left
                     anchors.verticalCenter: parent.verticalCenter
-                    text: rowItem.modelData.header ? rowItem.modelData.label : ""
+                    width: Math.min(implicitWidth, parent.width
+                                    - (root.reviewMode ? compareButton.width : selectControl.width) - 16)
+                    elide: Text.ElideRight
+                    text: rowItem.header ? rowItem.label : ""
                     font.family: Theme.fontFamily
                     font.pixelSize: 13
                     font.weight: Font.DemiBold
                     color: Theme.brightForeground
+                    Accessible.ignored: true
                 }
                 Text {
                     anchors.left: setTitle.right
                     anchors.leftMargin: 8
-                    anchors.right: compareButton.left
+                    anchors.right: root.reviewMode ? compareButton.left : selectControl.left
                     anchors.rightMargin: 8
                     anchors.verticalCenter: parent.verticalCenter
                     elide: Text.ElideRight
-                    text: rowItem.modelData.header
-                          ? rowItem.modelData.count + " pictures" : ""
+                    text: rowItem.header ? rowItem.detail : ""
                     font.family: Theme.fontFamily
                     font.pixelSize: 11
                     color: Theme.mutedText
+                    Accessible.ignored: true
                 }
                 PillButton {
                     id: compareButton
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
-                    visible: rowItem.modelData.header
+                    visible: rowItem.header && root.reviewMode
+                    width: visible ? implicitWidth : 0
                     label: "Compare"
-                    accessibleName: "Compare " + (rowItem.modelData.label || "")
+                    accessibleName: "Compare " + (rowItem.label || "")
                     toolTip: "Compare this set side by side and keep one"
                     onClicked: root.host.compareRequested(
-                                   root.setPaths(rowItem.modelData.first, rowItem.modelData.count))
+                                   root.setPaths(rowItem.sectionFirst, rowItem.sectionCount))
+                }
+
+                // Selects the whole day or month; deselects it once all of it
+                // is selected.
+                Item {
+                    id: selectControl
+                    objectName: rowItem.header && !root.reviewMode ? "sectionSelect" : ""
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: rowItem.header && !root.reviewMode
+                    width: visible ? selectBox.width + selectText.implicitWidth + 14 : 0
+                    height: 26
+                    // 0 none, 1 some, 2 all of the section is selected.
+                    readonly property int selection: {
+                        void root.host.checkedSet
+                        return visible ? root.host.sectionCheckState(rowItem.sectionFirst, rowItem.sectionCount) : 0
+                    }
+                    Accessible.role: Accessible.CheckBox
+                    Accessible.name: "Select " + rowItem.label + ", " + rowItem.detail
+                    Accessible.checkable: true
+                    Accessible.checked: selection === 2
+                    Accessible.onPressAction: root.host.toggleSection(rowItem.sectionFirst, rowItem.sectionCount)
+                    Accessible.onToggleAction: root.host.toggleSection(rowItem.sectionFirst, rowItem.sectionCount)
+
+                    Rectangle {
+                        id: selectBox
+                        anchors.left: parent.left
+                        anchors.leftMargin: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 16
+                        height: 16
+                        radius: 3
+                        color: selectControl.selection === 2 ? Theme.accent : "transparent"
+                        border.width: 1
+                        border.color: selectControl.selection > 0 || selectHover.hovered
+                                      ? Theme.accent
+                                      : Qt.rgba(Theme.foreground.r, Theme.foreground.g, Theme.foreground.b, 0.42)
+                        Text {
+                            anchors.centerIn: parent
+                            visible: selectControl.selection === 2
+                            text: "✓"
+                            font.pixelSize: 10
+                            font.weight: Font.Bold
+                            color: Theme.background
+                        }
+                        Rectangle {
+                            anchors.centerIn: parent
+                            visible: selectControl.selection === 1
+                            width: 8
+                            height: 2
+                            color: Theme.accent
+                        }
+                    }
+                    Text {
+                        id: selectText
+                        anchors.left: selectBox.right
+                        anchors.leftMargin: 6
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "Select"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 11
+                        color: selectHover.hovered || selectControl.selection === 2 ? Theme.accent : Theme.mutedText
+                    }
+                    HoverHandler { id: selectHover }
+                    TapHandler {
+                        onTapped: {
+                            Captures.commitPendingSearch()
+                            root.host.toggleSection(rowItem.sectionFirst, rowItem.sectionCount)
+                        }
+                    }
                 }
             }
 
-            // A row of tiles from one set.
+            // A row of tiles from one section.
             Row {
-                visible: !rowItem.modelData.header
+                visible: !rowItem.header
                 Repeater {
                     id: tiles
-                    model: rowItem.modelData.header ? 0 : rowItem.modelData.count
+                    model: rowItem.header ? 0 : rowItem.count
 
                     Item {
                         id: cell
                         required property int index
-                        readonly property int row: rowItem.modelData.first + index
+                        readonly property int row: rowItem.first + index
                         readonly property var tile: { void root.revision; return Captures.tileAt(cell.row) }
                         readonly property bool presented: card.thumbnailPresented
                         readonly property string path: tile.path || ""
@@ -272,6 +427,7 @@ FocusScope {
                             fileName: cell.tile.fileName || ""
                             kindLabel: cell.tile.kindLabel || ""
                             timeLabel: cell.tile.timeLabel || ""
+                            dateLabel: cell.tile.dateLabel || ""
                             sizeLabel: cell.tile.sizeLabel || ""
                             isVideo: cell.tile.isVideo === true
                             isDocument: cell.tile.isDocument === true
@@ -292,26 +448,36 @@ FocusScope {
 
                             onActivated: {
                                 Captures.commitPendingSearch()
-                                root.select(Captures.rowOf(cell.path))
+                                root.host.activateTile(cell.path)
                                 list.forceActiveFocus()
                             }
                             onChosen: {
                                 Captures.commitPendingSearch()
                                 const row = Captures.rowOf(cell.path)
                                 if (row < 0) return
-                                root.select(row)
+                                root.host.pointTo(row)
                                 root.host.detailRequested(row)
                             }
                             onContextRequested: function (x, y) {
                                 Captures.commitPendingSearch()
                                 const row = Captures.rowOf(cell.path)
                                 if (row < 0) return
-                                root.select(row)
+                                root.host.pointTo(row)
                                 root.host.contextRequested(row, x, y)
                             }
                             onToggleChecked: {
                                 Captures.commitPendingSearch()
                                 if (Captures.rowOf(cell.path) >= 0) root.host.toggleChecked(cell.path)
+                            }
+                            onExtendRequested: {
+                                Captures.commitPendingSearch()
+                                root.host.pointerExtend(cell.path)
+                                list.forceActiveFocus()
+                            }
+                            onToggleRequested: {
+                                Captures.commitPendingSearch()
+                                root.host.pointerToggle(cell.path)
+                                list.forceActiveFocus()
                             }
                         }
                     }
@@ -319,71 +485,8 @@ FocusScope {
             }
         }
 
-        // The grid's keys, moving through the sets' rows rather than the
+        // The grid's keys, moving through the sections' rows rather than the
         // grid's cells.
-        Keys.onPressed: function (event) {
-            Captures.commitPendingSearch()
-            const current = root.host.currentIndex
-            switch (event.key) {
-            case Qt.Key_Return:
-            case Qt.Key_Enter:
-                if (current >= 0) root.host.detailRequested(current)
-                event.accepted = current >= 0
-                break
-            case Qt.Key_Space:
-                if (current >= 0) root.host.chosen(current)
-                event.accepted = current >= 0
-                break
-            case Qt.Key_Delete:
-                if (event.modifiers & Qt.ShiftModifier) {
-                    event.accepted = true
-                    break
-                }
-                if (current >= 0) root.host.deleteRequested(Captures.pathAt(current))
-                event.accepted = current >= 0
-                break
-            case Qt.Key_X:
-                if (current >= 0) root.host.toggleChecked(Captures.pathAt(current))
-                event.accepted = current >= 0
-                break
-            case Qt.Key_Left:
-            case Qt.Key_H:
-                root.select(current <= 0 ? Captures.count - 1 : current - 1)
-                event.accepted = true
-                break
-            case Qt.Key_Right:
-            case Qt.Key_L:
-                root.select(current >= Captures.count - 1 ? 0 : current + 1)
-                event.accepted = true
-                break
-            case Qt.Key_Up:
-            case Qt.Key_K:
-                root.moveVertically(-1)
-                event.accepted = true
-                break
-            case Qt.Key_Down:
-            case Qt.Key_J:
-                root.moveVertically(1)
-                event.accepted = true
-                break
-            case Qt.Key_Tab:
-                root.host.sectionStepRequested(event.modifiers & Qt.ShiftModifier ? -1 : 1)
-                event.accepted = true
-                break
-            case Qt.Key_Backtab:
-                root.host.sectionStepRequested(-1)
-                event.accepted = true
-                break
-            case Qt.Key_Home:
-                root.select(0)
-                list.positionViewAtBeginning()
-                event.accepted = true
-                break
-            case Qt.Key_End:
-                root.select(Captures.count - 1)
-                event.accepted = true
-                break
-            }
-        }
+        Keys.onPressed: function (event) { root.host.handleKey(event) }
     }
 }

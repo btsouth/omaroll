@@ -214,7 +214,10 @@ until the viewer closes; subtitle delay resets when the file changes.
 ## Features
 
 - **Browse your media.** See files by day, source or folder; filter by kind,
-  date, camera or lens, and resize the grid. Original photo and video dates are
+  date, camera or lens, and resize the grid. Date sorts put a header over each
+  day, or over each month where days hold less than half a row or tiles are at
+  the two smallest sizes, with the count and a Select control for that day.
+  Tiles from other days show their date. Original photo and video dates are
   used when available. Add folders without importing or copying their files.
 - **Organize without changing originals.** Albums, nested tags, captions,
   favourites, ratings and saved searches live in Omaroll's settings. Undo marks
@@ -431,6 +434,10 @@ and put on your clipboard.
 | `Select text` in a PDF, then drag | Pick the words under the pointer |
 | `Ctrl+C` with words picked | Copy them |
 | `X` · `Ctrl+A` | Select · Select all |
+| `Shift` + click · `Ctrl` + click | Select from the last picked tile · add or remove one tile |
+| `Shift` + arrows · `Home` `End` · `Page Up` `Page Down` | Extend the selection from the last picked tile |
+| drag from empty space · `Ctrl` + drag | Select the tiles the band touches · add them to the selection |
+| `Page Up` `Page Down` on the grid | Move a page |
 | with a selection | `V` `Ctrl+H` `Y` `S` `Del` act on every checked file |
 | `Ctrl` + wheel · `Ctrl` `+` `-` `0` | Bigger or smaller tiles · reset |
 | drag | Drop the file, or the whole selection, into another app |

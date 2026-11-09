@@ -11,6 +11,7 @@
 #include <QVariantMap>
 
 struct CaptureRecord;
+class SectionRows;
 
 // Sorting, kind filtering and search over the library.
 //
@@ -63,6 +64,8 @@ class CaptureFilterModel final : public QSortFilterProxyModel {
   // choices does. "scope": the folder, album, tag, date range or saved view
   // holds nothing to show.
   Q_PROPERTY(QString emptyReason READ emptyReason NOTIFY countChanged)
+  // Header and tile rows for the sectioned grid (date sorts, similar sets).
+  Q_PROPERTY(QObject* sectionRows READ sectionRows CONSTANT)
 
 public:
   enum SortMode {
@@ -186,6 +189,7 @@ public:
   // While a review filter is on, its sets in view order: each a map of
   // first (row), count and label ("Similar set 2"). Empty otherwise.
   Q_INVOKABLE QVariantList reviewSections() const;
+  [[nodiscard]] QObject* sectionRows();
 
   // Text found by the local OCR index. Updates are coalesced because a warm
   // cache can deliver many entries in one event-loop turn.
@@ -301,4 +305,5 @@ private:
   QTimer m_duplicateOrderTimer;
   QTimer m_ocrFilterTimer;
   QList<QMetaObject::Connection> m_sourceConnections;
+  SectionRows* m_sectionRows = nullptr;
 };
