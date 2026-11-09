@@ -91,6 +91,8 @@ QtObject {
         for (const row of rows)
             if (row.context === "quick")
                 hints[row.id] = display(row.keys);
+        hints["subtitles-earlier"] = sequence("quick", "subtitle-offset")[0];
+        hints["subtitles-later"] = sequence("quick", "subtitle-offset")[1];
         return hints;
     }
     readonly property var previewKeys: {

@@ -218,7 +218,7 @@ Item {
                     width: parent.width
                     spacing: 8
                     PillButton { label: "Changelog"; onClicked: Qt.openUrlExternally("https://github.com/btsouth/omaroll/blob/main/CHANGELOG.md") }
-                    PillButton { label: "Homepage"; onClicked: Qt.openUrlExternally("https://github.com/btsouth/omaroll") }
+                    PillButton { label: "Homepage"; onClicked: Qt.openUrlExternally("https://btsouth.github.io/omaroll/") }
                     PillButton { label: "Report an issue"; onClicked: Qt.openUrlExternally("https://github.com/btsouth/omaroll/issues") }
                     PillButton {
                         objectName: "copyDiagnostics"
