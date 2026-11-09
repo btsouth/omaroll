@@ -286,7 +286,7 @@ private slots:
       QVERIFY2(!text.contains(QStringLiteral("screenshot with")), qPrintable(text));
       QCOMPARE(text.contains(QStringLiteral("Take a screenshot or record from the Capture menu.")),
                m_theme->omarchyAvailable());
-      config.open(QIODevice::WriteOnly | QIODevice::Truncate);
+      QVERIFY(config.open(QIODevice::WriteOnly | QIODevice::Truncate));
       config.write(original);
       config.close();
       m_settings->setHyprDirectory(hypr);
