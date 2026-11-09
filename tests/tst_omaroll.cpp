@@ -3380,12 +3380,8 @@ private slots:
   void organizationRestoreRollsBackFailedPersistence() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
-    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
-                       dir.filePath(QStringLiteral("profile")));
-    const auto restoreProfile = qScopeGuard([this] {
-      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
-                         m_scratch.filePath(QStringLiteral("config")));
-    });
+    // Its own backups too, so other tests' snapshots cannot make this launch look incomplete.
+    const auto restoreProfile = scratchProfile(dir);
     AppSettings settings;
     settings.setFavorite({QStringLiteral("/old.bmp")}, true);
     QVERIFY(settings.createAlbum(QStringLiteral("Old")));

@@ -35,6 +35,7 @@
 #include <limits>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <vector>
 
 // ---------------------------------------------------------------------------
@@ -279,6 +280,25 @@ std::optional<StoryboardFrames> StoryboardCache::load(const QString& key) {
   ::utimensat(AT_FDCWD, QFile::encodeName(path).constData(), nullptr, 0);
   return frames;
 }
+
+#ifdef OMAROLL_FUZZ
+void StoryboardCache::fuzzLoad(const QByteArray& bytes) {
+  static const QString fuzzKey = QStringLiteral("fuzz");
+  if (!QDir().mkpath(directory())) std::abort();
+  QFile file(entryPath(fuzzKey));
+  if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate) || file.write(bytes) != bytes.size())
+    std::abort();
+  file.close();
+  const std::optional<StoryboardFrames> frames = load(fuzzKey);
+  if (!frames) return;
+  // A loaded entry is what the viewer trusts: sorted, bounded and paired.
+  if (frames->times.size() != frames->jpegs.size() || frames->times.isEmpty() ||
+      !std::is_sorted(frames->times.cbegin(), frames->times.cend()) ||
+      !std::is_sorted(frames->sampled.cbegin(), frames->sampled.cend()))
+    std::abort();
+  if (StoryboardPlan::nearest(frames->times, frames->times.constLast() / 2) < 0) std::abort();
+}
+#endif
 
 bool StoryboardCache::save(const QString& key, const StoryboardFrames& frames) {
   if (key.isEmpty() || frames.isEmpty() || !frames.frameSize.isValid()) {

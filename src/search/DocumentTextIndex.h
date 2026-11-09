@@ -54,6 +54,10 @@ public:
   // A document's cached text, or a null string when the cache has none for
   // the file as it is now. Safe on any thread.
   [[nodiscard]] static QString cachedText(const QString& path);
+#ifdef OMAROLL_FUZZ
+  // Reads |file| as a cache entry, with and without its text.
+  static void fuzzReadCache(const QString& file);
+#endif
   // Reads a document again, for text that went missing from the cache.
   void reread(const QString& path);
 

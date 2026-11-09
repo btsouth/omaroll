@@ -1,5 +1,7 @@
 #include "search/DocumentTextIndex.h"
 
+#include <cstdlib>
+
 #include "library/CaptureModel.h"
 #include "pdf/PdfSupport.h"
 #include "search/OcrIndex.h"
@@ -339,6 +341,14 @@ QString DocumentTextIndex::cachedText(const QString& path) {
   if (!entry.valid || entry.path != path || entry.key != FileVersion::diskKey(path)) return {};
   return entryText(entry, kTextLimit);
 }
+
+#ifdef OMAROLL_FUZZ
+void DocumentTextIndex::fuzzReadCache(const QString& file) {
+  const CacheEntry entry = readEntry(file, kTextLimit * 4, true);
+  if (entry.valid && entryText(entry, kTextLimit).size() > kTextLimit) std::abort();
+  (void)readEntry(file, kTextLimit * 4, false);
+}
+#endif
 
 void DocumentTextIndex::reread(const QString& path) {
   if (m_known.remove(path) == 0) return;
