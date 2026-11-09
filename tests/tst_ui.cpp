@@ -178,11 +178,19 @@ class UiTest : public QObject {
 
 private slots:
   void helpFiltersByContextAndDiagnosticsArePrivate() {
+    m_window->resize(1920, 1080);
     QObject* help = m_window->findChild<QObject*>(QStringLiteral("libraryShortcutHelp"));
     QVERIFY(help);
     QTest::keyClick(m_window, Qt::Key_F1);
     QTRY_VERIFY(help->property("visible").toBool());
     QCOMPARE(help->property("context").toString(), QStringLiteral("library"));
+    auto* content = help->property("contentItem").value<QQuickItem*>();
+    QVERIFY(content);
+    auto* scroll = content->findChild<QQuickItem*>(QStringLiteral("viewerShortcutScroll"));
+    QVERIFY(scroll);
+    auto* flick = scroll->property("contentItem").value<QQuickItem*>();
+    QVERIFY(flick);
+    QTRY_VERIFY(flick->property("contentHeight").toReal() <= flick->height());
     help->setProperty("filter", QStringLiteral("zz-no-match-zz"));
     QCoreApplication::processEvents();
     const auto groups = help->property("groups").value<QJSValue>();
@@ -190,6 +198,13 @@ private slots:
     help->setProperty("filter", QStringLiteral("search"));
     QCoreApplication::processEvents();
     QVERIFY(help->property("groups").value<QJSValue>().property(QStringLiteral("length")).toInt() > 0);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!help->property("visible").toBool());
+    openDetail(0);
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(help->property("visible").toBool());
+    QCOMPARE(help->property("context").toString(), QStringLiteral("preview"));
+    QTRY_VERIFY(flick->property("contentHeight").toReal() <= flick->height());
     QTest::keyClick(m_window, Qt::Key_Escape);
     QTRY_VERIFY(!help->property("visible").toBool());
     const QString report = m_settings->diagnostics(QDir::homePath() + QStringLiteral("/theme"), 1.5);

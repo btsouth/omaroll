@@ -6,15 +6,18 @@ ToolTip {
     property bool requested: false
     property bool keyboardRequested: false
     property bool focusSuppressed: false
-    onBlockedChanged: if (blocked) focusSuppressed = true
+    onBlockedChanged: if (blocked)
+        focusSuppressed = true
     Connections {
         target: tip.owner
-        function onActiveFocusChanged() { if (tip.owner.activeFocus) tip.focusSuppressed = false }
+        function onActiveFocusChanged() {
+            if (tip.owner.activeFocus)
+                tip.focusSuppressed = false;
+        }
     }
     property Item owner: parent
-    readonly property bool blocked: owner && owner.Window.window
-        && owner.Window.window.tooltipsBlocked === true
-    visible: (requested || (keyboardRequested && !focusSuppressed)) && !blocked && owner && owner.visible && owner.enabled
+    readonly property bool blocked: owner && owner.Window.window && owner.Window.window.tooltipsBlocked === true
+    visible: text !== "" && (requested || (keyboardRequested && !focusSuppressed)) && !blocked && owner && owner.visible && owner.enabled
     delay: 600
     timeout: 5000
     font.family: Theme.fontFamily
@@ -34,8 +37,9 @@ ToolTip {
     }
     onAboutToShow: {
         if (ShortcutCatalog.activeTip && ShortcutCatalog.activeTip !== tip)
-            ShortcutCatalog.activeTip.close()
-        ShortcutCatalog.activeTip = tip
+            ShortcutCatalog.activeTip.close();
+        ShortcutCatalog.activeTip = tip;
     }
-    onClosed: if (ShortcutCatalog.activeTip === tip) ShortcutCatalog.activeTip = null
+    onClosed: if (ShortcutCatalog.activeTip === tip)
+        ShortcutCatalog.activeTip = null
 }

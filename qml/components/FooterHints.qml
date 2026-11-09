@@ -1,4 +1,5 @@
 import QtQuick
+
 Item {
     id: root
     property var hints: ["Enter details", "Space act", "M background", "T trim", "V favourite", "Del trash", "/ search", "F9 folders"]
@@ -15,9 +16,10 @@ Item {
                 color: Theme.mutedText
                 text: modelData
                 visible: {
-                    let used = implicitWidth
-                    for (let i = 0; i < index; ++i) used += row.children[i].implicitWidth + 16
-                    return used <= root.width
+                    let used = implicitWidth;
+                    for (let i = 0; i < index; ++i)
+                        used += row.children[i].implicitWidth + 16;
+                    return used <= root.width;
                 }
             }
         }

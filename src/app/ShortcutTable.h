@@ -1,8 +1,8 @@
 #pragma once
 #include <QJsonArray>
 #include <QJsonDocument>
-#include <QVariantList>
 #include <QStringList>
+#include <QVariantList>
 
 // The only shortcut definitions. Context-specific handlers, help and toolbar
 // hints consume these rows. Tokens keep existing handler identities stable
@@ -154,15 +154,18 @@ inline QVariantList rows() {
   {"context": "library", "id": "trash", "keys": ["Del"], "label": "Move to Trash", "group": "Organization", "flag": "", "tokens": ["Delete"]},
   {"context": "preview", "id": "trash", "keys": ["Del"], "label": "Move to Trash", "group": "Actions", "flag": "", "tokens": ["Delete"]}
 ]
-)shortcuts").array().toVariantList();
+)shortcuts")
+                               .array()
+                               .toVariantList();
   return data;
 }
-inline QString hint(const QString& context, const QString& id) {
-  for (const auto& value : rows()) {
+inline QString hint(const QString &context, const QString &id) {
+  for (const auto &value : rows()) {
     const auto row = value.toMap();
-    if (row.value(QStringLiteral("context")) == context && row.value(QStringLiteral("id")) == id)
+    if (row.value(QStringLiteral("context")) == context &&
+        row.value(QStringLiteral("id")) == id)
       return row.value(QStringLiteral("keys")).toStringList().value(0);
   }
   return {};
 }
-}
+} // namespace ShortcutTable
