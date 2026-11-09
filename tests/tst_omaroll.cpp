@@ -934,16 +934,74 @@ private slots:
                                   QStringLiteral("3g2"), QStringLiteral("VOB")}) {
       QVERIFY2(CaptureScanner::isVideo(suffix), qPrintable(suffix));
     }
+    // Ambiguous suffixes open only after their content is checked, and
+    // Blu-ray index and playlist files share video/mp2t's globs without
+    // holding any video.
+    const QStringList sniffedOnly = {"ts", "ogg", "mp2", "3ga"};
+    const QStringList notMedia = {"bdm", "bdmv", "clpi", "cpi", "mpl", "mpls", "qtvr"};
     for (const auto& name : claimed) {
       if (name == u"inode/directory") continue;
       for (const auto& glob : mimes.mimeTypeForName(name).globPatterns()) {
         QString sample = glob;
         sample.replace("*", "sample");
         sample.replace("[0-9]", "1");
+        const QString suffix = QFileInfo(sample).suffix().toLower();
+        if (sniffedOnly.contains(suffix) || notMedia.contains(suffix)) {
+          QVERIFY2(!CaptureScanner::isSupported(suffix), qPrintable(name + " " + glob));
+          continue;
+        }
         QVERIFY2(CaptureScanner::isSupported(CaptureScanner::mediaSuffix(sample)),
                  qPrintable(name + " " + glob));
       }
     }
+  }
+
+  void ambiguousSuffixesOpenByContentOnlyWhenChosen() {
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty()) {
+      QSKIP("ffmpeg is not installed");
+    }
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto encode = [&](const QStringList& arguments) {
+      QProcess encoder;
+      encoder.start(ffmpeg, QStringList{QStringLiteral("-hide_banner"), QStringLiteral("-loglevel"),
+                                        QStringLiteral("error"), QStringLiteral("-f"),
+                                        QStringLiteral("lavfi")} + arguments);
+      return encoder.waitForFinished(10000) && encoder.exitStatus() == QProcess::NormalExit &&
+             encoder.exitCode() == 0;
+    };
+    const QString stream = dir.filePath(QStringLiteral("recording.ts"));
+    QVERIFY(encode({QStringLiteral("-i"), QStringLiteral("color=c=blue:s=64x36:d=0.5:r=10"),
+                    QStringLiteral("-c:v"), QStringLiteral("mpeg2video"), QStringLiteral("-f"),
+                    QStringLiteral("mpegts"), stream}));
+    const QString song = dir.filePath(QStringLiteral("song.ogg"));
+    const bool haveSong = encode({QStringLiteral("-i"), QStringLiteral("sine=d=0.5"),
+                                  QStringLiteral("-c:a"), QStringLiteral("libopus"), song});
+    QFile script(dir.filePath(QStringLiteral("app.ts")));
+    QVERIFY(script.open(QIODevice::WriteOnly));
+    script.write("export const answer: number = 42;\n");
+    script.close();
+
+    // Library scans and folder steps never list them by suffix.
+    for (const QString& name : {QStringLiteral("recording.ts"), QStringLiteral("app.ts"),
+                                QStringLiteral("song.ogg")}) {
+      QVERIFY2(!CaptureScanner::isSupported(CaptureScanner::mediaSuffix(dir.filePath(name))),
+               qPrintable(name));
+    }
+    const auto records = CaptureScanner::scan({{dir.path(), 1}});
+    QVERIFY(records.isEmpty());
+
+    // Chosen explicitly, a real transport stream opens as video; the rest don't.
+    QVERIFY(CaptureScanner::isVideo(CaptureScanner::mediaSuffix(stream, true)));
+    QVERIFY(CaptureScanner::isVideo(CaptureScanner::mediaSuffix(stream)));
+    QVERIFY(!CaptureScanner::isSupported(CaptureScanner::mediaSuffix(script.fileName(), true)));
+    if (haveSong) {
+      QVERIFY(!CaptureScanner::isSupported(CaptureScanner::mediaSuffix(song, true)));
+    }
+    const OpenRequest request = OpenRequest::fromPaths({stream, script.fileName()});
+    QCOMPARE(request.files, QStringList{QFileInfo(stream).canonicalFilePath()});
+    QCOMPARE(request.skipped, QStringList{script.fileName()});
   }
 
   void extensionlessMediaOpensNavigatesAndAppearsInTheLibrary() {

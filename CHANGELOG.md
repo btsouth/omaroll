@@ -2,10 +2,20 @@
 
 ## Unreleased
 
-- Start the first opened video at a requested time with `--start`, including in a running instance.
-- Set and restore image, video and PDF defaults with `--set-default` and `--unset-default`.
-- Open supported files from mixed selections, show skipped names, and recognize explicitly opened media with unknown extensions.
-- Accept advertised MIME aliases and install the EXR codec dependencies.
+### Added
+
+- `omaroll --set-default` makes Omaroll the default for pictures and videos,
+  and `--unset-default` puts back the apps it replaced. Add `pdf` for PDFs.
+- `--start` opens a video at a given time, so a file manager's preview can
+  hand over its position.
+
+### Fixed
+
+- Opening several files where one isn't supported now opens the rest and names
+  the skipped files, instead of opening nothing.
+- Files with less common extensions for supported types, such as `.jfif`,
+  open, and a `.ts` or `.ogg` file you open is checked for video by its content.
+- The package now installs the EXR, JPEG XL and JPEG 2000 libraries it needs.
 
 ## 1.18.0
 

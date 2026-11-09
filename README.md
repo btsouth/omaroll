@@ -77,18 +77,16 @@ gh attestation verify omaroll-1.18.0-1-x86_64.pkg.tar.zst --repo btsouth/omaroll
 
 ## Open files
 
-Run `omaroll --set-default` to use Omaroll for images and videos. Use
-`--set-default pdf` for PDFs, or `--unset-default` to restore replaced handlers.
-Folders keep their file-manager handler.
+To make Omaroll the default for pictures and videos, run:
 
-Start the first video at a position with `omaroll --start=01:23 clip.mp4`
-(or `--start 83.5`). Seconds, mm:ss and hh:mm:ss accept fractional seconds;
-this takes precedence over saved resume. Images ignore it. An older running
-Omaroll instance ignores the start position until restarted.
-Mixed selections open supported files and name skipped files in the window.
+```bash
+omaroll --set-default
+```
 
-Set Omaroll as the default for pictures and videos, or open one from a
-terminal:
+`omaroll --set-default pdf` does the same for PDFs, and `omaroll --unset-default`
+puts back the apps it replaced. Folders keep opening in your file manager.
+
+To open a picture or video from a terminal:
 
 ```bash
 omaroll photo.jpg
@@ -111,6 +109,15 @@ omaroll --library photo.jpg
 
 Images and videos without a filename extension are recognized from their file
 headers. Their names stay unchanged; unrelated files are ignored.
+
+To start a video at a given time, use `--start` with seconds, mm:ss or
+hh:mm:ss, which also takes precedence over the saved position:
+
+```bash
+omaroll --start=1:23 clip.mp4
+```
+
+File managers can pass the same option to hand over a preview's position.
 
 Several files can be opened together, in the order given:
 

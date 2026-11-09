@@ -32,8 +32,7 @@ const QStringList kImageSuffixes = {
 };
 
 const QStringList kVideoSuffixes = {
-    "ts", "ogg", "mp2", "lrv", "lrf", "3ga", "3gp2", "3gpp2", "moov", "qtvr",
-    "cpi", "clpi", "mpl", "mpls", "bdm", "bdmv", "vdr", "avf",
+    "lrv", "lrf", "3gp2", "3gpp2", "moov", "vdr", "avf",
     QStringLiteral("mp4"), QStringLiteral("mkv"),  QStringLiteral("webm"), QStringLiteral("mov"),
     QStringLiteral("avi"), QStringLiteral("m4v"),  QStringLiteral("mpg"),  QStringLiteral("mpeg"),
     QStringLiteral("wmv"), QStringLiteral("flv"),  QStringLiteral("ogv"),  QStringLiteral("3gp"),
@@ -280,15 +279,23 @@ QString CaptureScanner::mediaSuffix(const QString& path, bool explicitOpen) {
   }
   const QFileInfo info(path);
   const QString suffix = path.endsWith(u".svg.gz", Qt::CaseInsensitive) ? QStringLiteral("svgz") : info.suffix().toLower();
-  static QMutex explicitMutex;
-  static QSet<QString> explicitPaths;
-  {
+  if (!suffix.isEmpty() && isSupported(suffix)) {
+    return suffix;
+  }
+  // Extensions such as .ts (TypeScript or MPEG-TS) and .ogg (usually audio)
+  // are ambiguous, so they are never listed by suffix. A file the user opened
+  // explicitly is judged by its content instead, and later lookups of that
+  // same path (viewer steps, metadata) keep that answer.
+  if (!suffix.isEmpty()) {
+    static QMutex explicitMutex;
+    static QSet<QString> explicitPaths;
     const QMutexLocker lock(&explicitMutex);
-    if (explicitOpen && !isSupported(suffix)) {
+    if (explicitOpen) {
       explicitPaths.insert(path);
       explicitPaths.insert(info.canonicalFilePath());
+    } else if (!explicitPaths.contains(path)) {
+      return suffix;
     }
-    if (!suffix.isEmpty() && (isSupported(suffix) || !explicitPaths.contains(path))) return suffix;
   }
   if (!info.isFile() || !info.isReadable() || info.size() == 0) {
     return {};
