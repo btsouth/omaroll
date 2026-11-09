@@ -5202,9 +5202,9 @@ private slots:
     QVERIFY(hasKey(QStringLiteral("Shift+A")));
     QVERIFY(!hasKey(QStringLiteral("Z / X")));
     QTest::keyClick(m_window, Qt::Key_Escape);
-    QTest::keyClick(m_window, Qt::Key_C); // Embedded subtitles.
+    QTest::keyClick(m_window, Qt::Key_C); // Embedded subtitles, which a delay shifts too.
     QTest::keyClick(m_window, Qt::Key_F1);
-    QVERIFY(!hasKey(QStringLiteral("Z / X")));
+    QTRY_VERIFY(hasKey(QStringLiteral("Z / X")));
     QTest::keyClick(m_window, Qt::Key_Escape);
     QTest::keyClick(m_window, Qt::Key_C); // Sidecar subtitles.
     QTRY_VERIFY(!prop("externalSubtitle").toString().isEmpty());
