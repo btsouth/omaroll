@@ -127,18 +127,17 @@ Ending pngEnding(Bytes& bytes) {
   return Ending::CutOff;
 }
 
-// "Plain text document" reads as "a plain text document"; "JPEG image"
-// keeps its capitals. A leading abbreviation that is spelled out goes by how
-// its first letter sounds: "an MPEG-4 video", "an SVG image", "a USB drive";
-// one read as a word does not: "a HEIF image".
+// "Plain text document" reads as "a plain text document"; "JPEG image" and
+// "PlayStation graphics" keep their capitals. A leading abbreviation that is
+// spelled out goes by how its first letter sounds: "an MPEG-4 video", "an SVG
+// image", "a USB drive"; one read as a word does not: "a HEIF image".
 QString article(QString noun) {
   if (noun.isEmpty()) return noun;
-  // "PNG image" and "PlayStation graphics" keep their capitals.
-  const QString word = noun.section(QLatin1Char(' '), 0, 0);
-  if (word.size() > 1 && word.mid(1) == word.mid(1).toLower()) noun[0] = noun.at(0).toLower();
+  const QString lead = noun.section(QLatin1Char(' '), 0, 0);
+  if (lead.size() > 1 && lead.mid(1) == lead.mid(1).toLower()) noun[0] = noun.at(0).toLower();
   const QChar first = noun.at(0).toLower();
   bool vowel = QStringLiteral("aeiou").contains(first);
-  const QString word = noun.section(QLatin1Char(' '), 0, 0).section(QLatin1Char('-'), 0, 0);
+  const QString word = lead.section(QLatin1Char('-'), 0, 0);
   if (word.size() > 1 && word.at(0).isUpper() && word.at(1).isUpper()) {
     const bool spelled = !QStringLiteral("AEIOU").contains(word.at(1)) && word != u"FLAC";
     if (first == u'u') vowel = false;

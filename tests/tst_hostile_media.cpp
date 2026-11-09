@@ -545,6 +545,9 @@ private slots:
         QVERIFY2(finding.detail.contains(kind) && finding.detail.contains(u"PNG") ==
                                                       QByteArray(name).endsWith(".png"),
                  qPrintable(finding.detail));
+        // Its capitals kept, with the article for how it sounds.
+        QVERIFY2(finding.detail.startsWith(QStringLiteral("Its contents look like a ") + kind),
+                 qPrintable(finding.detail));
       } else {
         QVERIFY(!finding.cause.isEmpty());
       }
