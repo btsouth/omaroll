@@ -7,7 +7,6 @@
 - Searchable shortcut help in the viewer, library and preview, with grouped key caps.
 - About in Settings with version links and privacy-safe Copy diagnostics.
 - Themed tooltips and library footer hints that fit whole labels.
-
 - `omaroll --set-default` makes Omaroll the default for pictures and videos,
   and `--unset-default` puts back the apps it replaced. Add `pdf` for PDFs.
 - `--start` opens a video at a given time, so a file manager's preview can

@@ -4474,6 +4474,17 @@ private slots:
     QVERIFY(picture.save(second));
     m_captures->addExtraFiles({first, second});
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(second) >= 0, 10000);
+    // Let the tile's thumbnail load before the file becomes a directory, or
+    // its late request logs a warning the final check would count.
+    const auto thumbnailSettled = [&] {
+      QQuickItem* card = cardFor(second);
+      if (!card) return true; // not on screen, so never requested
+      QQuickItem* thumbnail = find(card, [](QQuickItem* candidate) {
+        return candidate->property("source").toUrl().toString().startsWith(QStringLiteral("image://thumbs/"));
+      });
+      return !thumbnail || thumbnail->property("status").toInt() != 2; // Image.Loading
+    };
+    QTRY_VERIFY(thumbnailSettled());
     QVERIFY(QMetaObject::invokeMethod(m_window, "requestPermanentDelete",
                                      Q_ARG(QVariant, QVariant(QStringList{first, second}))));
     QTRY_VERIFY(item("permanentConfirm")->isVisible());
