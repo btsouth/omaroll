@@ -5235,10 +5235,16 @@ private slots:
     const auto cleanup = qScopeGuard([&] {
       invoke("dismissTopLayer");
       item("compareSheet")->setProperty("paths", QStringList());
-      m_library->setSimilarOnly(false);
       dir.remove();
       m_captures->refresh();
       QTRY_VERIFY_WITH_TIMEOUT(!m_captures->scanning(), 15000);
+      // With the view still on, the similar index drops the deleted set, so
+      // a later test that turns it on doesn't start from it.
+      QTRY_VERIFY_WITH_TIMEOUT(!m_similarities->scanning() && m_similarities->groupPaths(original).isEmpty() &&
+                                   m_similarities->groupPaths(small).isEmpty() &&
+                                   m_similarities->groupPaths(large).isEmpty(),
+                               15000);
+      m_library->setSimilarOnly(false);
     });
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(original) >= 0 && m_library->rowOf(small) >= 0 &&
                                  m_library->rowOf(large) >= 0,
