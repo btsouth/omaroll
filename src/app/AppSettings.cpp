@@ -1,6 +1,3 @@
-#include <QUuid>
-#include <memory>
-#include <QStandardPaths>
 #include "app/AppSettings.h"
 #include "actions/TrashRestore.h"
 #include "app/VideoPlayback.h"
@@ -25,10 +22,13 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <QStandardPaths>
+#include <QUuid>
 #include <QVariantMap>
 
 #include <algorithm>
 #include <limits>
+#include <memory>
 #include <cmath>
 
 #include <sys/stat.h>
