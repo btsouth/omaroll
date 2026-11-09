@@ -37,8 +37,13 @@ for parser in "${parsers[@]}"; do
   rm -rf "$new"
   mkdir -p "$new"
   cp "$seeds"/* "$new/"
-  "$build/fuzz_$parser" -merge=1 "${options[@]}" "$new" "${dirs[@]}" \
-    2>>"$build/fuzz-results/$parser.log" || true
+  if ! "$build/fuzz_$parser" -merge=1 "${options[@]}" "$new" "${dirs[@]}" \
+    2>"$build/fuzz-results/$parser-merge.log"; then
+    status=1
+    echo "fuzz_$parser: merging new inputs failed; last lines of its log:" >&2
+    tail -n 20 "$build/fuzz-results/$parser-merge.log" >&2
+    continue
+  fi
   for seed in "$seeds"/*; do rm -f "$new/$(basename "$seed")"; done
   echo "fuzz_$parser: $(find "$new" -type f | wc -l) new interesting input(s)"
 done

@@ -1273,6 +1273,21 @@ private slots:
     QVERIFY(DocumentTextIndex::cachedText(pdf).isNull());
     writeEntry(0x9cf3cc2b);
     QVERIFY(DocumentTextIndex::cachedText(pdf).isNull());
+    // A size header within the cap on text that inflates past it is a miss too.
+    {
+      const QByteArray big(DocumentTextIndex::kTextLimit * 4 + 1, 'a');
+      QByteArray compressed = qCompress(big);
+      compressed[0] = 0;
+      compressed[1] = 0;
+      compressed[2] = 0;
+      compressed[3] = 16;
+      QFile file(entryPath);
+      QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+      QDataStream out(&file);
+      out.setVersion(QDataStream::Qt_6_0);
+      out << quint32(0x50445431) << quint16(3) << pdf << FileVersion::diskKey(pdf) << compressed;
+    }
+    QVERIFY(DocumentTextIndex::cachedText(pdf).isNull());
   }
 
   void documentTextStaysBoundedAndSearchable() {

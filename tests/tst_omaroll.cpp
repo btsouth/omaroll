@@ -1812,6 +1812,16 @@ private slots:
     QVERIFY2(refused.message.contains(QStringLiteral("never closed")), qPrintable(refused.message));
     QCOMPARE(read(config), open);
     QVERIFY(!QFile::exists(rules));
+    // A string continued with \z may hold "--[[" without opening a comment.
+    const QByteArray continued = "dofile(\"bootstrap.lua\")\nrequire(\"default.hypr.omarchy\")\n"
+                                 "local note = \"keep \\z\n   --[[ this ]] is text\"\n";
+    write(config, continued);
+    auto zEscape = HyprlandSetup::installRules(hypr);
+    QVERIFY2(zEscape.ok, qPrintable(zEscape.message));
+    QCOMPARE(HyprlandSetup::rulesState(hypr), HyprlandSetup::RulesState::Installed);
+    QVERIFY(HyprlandSetup::removeRules(hypr).ok);
+    QCOMPARE(read(config), continued);
+    QFile::remove(rules);
 
     const QByteArray original = "dofile(\"bootstrap.lua\")\nrequire(\"default.hypr.omarchy\")\nrequire(\"hypr.bindings\")\n";
     write(config, original);
@@ -4036,6 +4046,45 @@ private slots:
 
   // A settings file that still parses but lost its organization is caught at
   // launch against today's snapshot, which it cannot replace meanwhile.
+  // A header-only snapshot for today does not hide yesterday's good one: the
+  // launch check skips what an import would refuse and keeps looking back.
+  void launchCheckSkipsSnapshotsThatDoNotRestore() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto reset = scratchProfile(dir);
+    QStringList files;
+    for (int i = 0; i < 6; ++i) {
+      files.append(dir.filePath(QStringLiteral("h%1.jpg").arg(i)));
+      writeSmallFile(files.last(), QByteArray::number(i));
+    }
+    QString backups;
+    {
+      AppSettings settings;
+      settings.setFavorite(files, true);
+      settings.flushBackups();
+      backups = settings.backupDirectory();
+    }
+    const QDate today = QDate::currentDate();
+    const QDir folder(backups);
+    const QString todays = folder.filePath(QStringLiteral("daily-%1.json").arg(today.toString(Qt::ISODate)));
+    const QString yesterdays =
+        folder.filePath(QStringLiteral("daily-%1.json").arg(today.addDays(-1).toString(Qt::ISODate)));
+    QFile::remove(yesterdays);
+    QVERIFY(QFile::rename(todays, yesterdays));
+    {
+      QFile header(todays);
+      QVERIFY(header.open(QIODevice::WriteOnly));
+      header.write(R"({"format": "omaroll.organization", "version": 1})");
+    }
+    damage(settingsFile(), "[library]\nsortMode=3\n");
+    AppSettings settings;
+    settings.flushBackups();
+    QVERIFY2(settings.launchWarning().contains(QStringLiteral("only 0 loaded")), qPrintable(settings.launchWarning()));
+    const auto result = settings.restoreLastGoodBackup();
+    QVERIFY2(result.value(QStringLiteral("ok")).toBool(), qPrintable(result.value(QStringLiteral("message")).toString()));
+    for (const QString& file : files) QVERIFY(settings.isFavorite(file));
+  }
+
   void launchWarnsWhenOrganizationLoadsIncomplete() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

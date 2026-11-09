@@ -473,6 +473,21 @@ private:
   void applyOrganizationHealth();
   [[nodiscard]] bool snapshotsHeld() const { return m_healthPending || m_organizationSuspect; }
   [[nodiscard]] static int organizationSize(const OrganizationState& state);
+  // A backup file's contents, checked the way an import checks them. Pure,
+  // so the launch check can run it on the backup thread.
+  struct DecodedOrganization {
+    QString exportedAt;
+    QMap<QString, QList<AlbumEntry>> albums;
+    QMap<QString, QList<AlbumEntry>> tags;
+    QSet<QString> favorites;
+    QSet<QString> hidden;
+    QHash<QString, int> ratings;
+    QHash<QString, QString> captions;
+    QMap<QString, QVariantMap> smartCollections;
+    QHash<QString, AlbumEntry> markIdentities;
+  };
+  // Empty when |payload| decodes; otherwise {ok: false, message}.
+  [[nodiscard]] static QVariantMap decodeOrganization(const QByteArray& payload, DecodedOrganization& out);
   // Writes a before-restore copy now. Returns false if it could not be saved.
   bool saveBeforeRestore(const OrganizationState& state);
   // Copies the raw settings file before the resume-position migration.

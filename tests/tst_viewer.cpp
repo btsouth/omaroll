@@ -2581,6 +2581,13 @@ private slots:
                                     fakeFfmpeg(QStringLiteral("fine"), "", 0));
     QCOMPARE(other.cause, QStringLiteral("unknown"));
     QVERIFY2(other.detail.contains(QStringLiteral("Could not open file")), qPrintable(other.detail));
+    // FFmpeg can recover a frame and exit cleanly while saying what was wrong.
+    const auto recovered = videoFailure(video, QStringLiteral("Could not open file"),
+        fakeFfmpeg(QStringLiteral("recovered"), "[h264 @ 0x55] error while decoding MB 3 7, bytestream -5", 0));
+    QCOMPARE(recovered.cause, QStringLiteral("damaged"));
+    QVERIFY2(recovered.detail.contains(QStringLiteral("error while decoding")), qPrintable(recovered.detail));
+    QCOMPARE(videoFailure(video, {}, fakeFfmpeg(QStringLiteral("short"), "[mov @ 0x55] Packet corrupt; End of file", 0)).cause,
+             QStringLiteral("truncated"));
     // Without ffmpeg the player's words decide.
     QCOMPARE(videoFailure(video, QStringLiteral("No decoder for this codec"), none).cause,
              QStringLiteral("unsupported"));
@@ -2617,10 +2624,55 @@ private slots:
     QVERIFY(item(QStringLiteral("viewerErrorState"))->isVisible());
     QVERIFY(item(QStringLiteral("viewerErrorTrash"))->isVisible());
     QVERIFY(!item(QStringLiteral("viewerTransport"))->isVisible());
+    // P still hands it to mpv, which the error offers.
+    {
+      QTemporaryDir bin;
+      QVERIFY(bin.isValid());
+      const QString log = bin.filePath(QStringLiteral("mpv.log"));
+      QFile mpv(bin.filePath(QStringLiteral("mpv")));
+      QVERIFY(mpv.open(QIODevice::WriteOnly));
+      mpv.write("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"" + log.toUtf8() + "\"\n");
+      mpv.close();
+      QVERIFY(mpv.setPermissions(mpv.permissions() | QFileDevice::ExeOwner));
+      const QByteArray path = qgetenv("PATH");
+      qputenv("PATH", bin.path().toUtf8() + ':' + path);
+      const auto restorePath = qScopeGuard([path] { qputenv("PATH", path); });
+      QTest::keyClick(m_window, Qt::Key_P);
+      QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(log), 5000);
+      QFile args(log);
+      QTRY_VERIFY(args.open(QIODevice::ReadOnly) && args.readAll().contains(broken.toUtf8()));
+    }
     QTest::keyClick(m_window, Qt::Key_Right);
     QTRY_COMPARE(m_session->path(), fine);
     QTRY_VERIFY(prop("imageReady").toBool());
     QVERIFY(!item(QStringLiteral("viewerErrorState"))->isVisible());
+  }
+
+  // An error while frames still arrive, as when only the audio track fails,
+  // is said as a notice; the seek bar and the seeking keys stay.
+  void aVideoErrorWhileFramesArriveKeepsTheControls() {
+    open({media(QStringLiteral("clip.mp4"))});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY_WITH_TIMEOUT(player->playbackState() == QMediaPlayer::PlayingState, 5000);
+    QObject* presentation = m_window->property("presentation").value<QObject*>();
+    QVERIFY(presentation);
+    QTRY_VERIFY_WITH_TIMEOUT(presentation->property("ready").toBool(), 10000);
+    player->pause();
+    QVERIFY(m_window->setProperty("videoError", QStringLiteral("Audio decoder failed")));
+    QVERIFY(!prop("videoUnplayable").toBool());
+    QVERIFY(!item(QStringLiteral("viewerErrorState"))->isVisible());
+    QVERIFY(item(QStringLiteral("viewerTransport"))->isVisible());
+    QTRY_COMPARE(prop("status").toString(), QStringLiteral("Audio decoder failed"));
+    const qint64 before = player->position();
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTRY_VERIFY(player->position() >= before + 4000);
+    QCOMPARE(m_session->path(), media(QStringLiteral("clip.mp4")));
+    // Once playback stops, nothing is left to watch and the error takes over.
+    player->stop();
+    QTRY_VERIFY(prop("videoUnplayable").toBool());
+    QVERIFY(item(QStringLiteral("viewerErrorState"))->isVisible());
+    QVERIFY(!item(QStringLiteral("viewerTransport"))->isVisible());
   }
 
   // The error state names the cause, offers what still applies to the file

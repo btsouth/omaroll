@@ -66,7 +66,13 @@ ApplicationWindow {
     readonly property bool imageError: Session.pictureError !== ""
                                        || (stillLoader.item !== null
                                            && stillLoader.item.status === Image.Error)
-    readonly property string playbackError: Session.isVideo ? root.videoError
+    // A video error leaves nothing to watch only when no frame is presenting:
+    // the file did not open, or playback stopped. An audio track that fails
+    // while pictures still arrive keeps the controls and is said as a notice.
+    readonly property bool videoUnplayable: Session.isVideo && root.videoError !== ""
+        && !(!!root.presentation && root.presentation.ready && !!root.player
+             && root.player.playbackState !== MediaPlayer.StoppedState)
+    readonly property string playbackError: Session.isVideo ? (root.videoUnplayable ? root.videoError : "")
         : root.imageError ? (Session.isAnimated ? "Could not display this animation"
                              : Session.pictureError !== "" ? Session.pictureError
                              : "Could not display this picture")
@@ -74,7 +80,7 @@ ApplicationWindow {
     // Why, once the session has read the file: a title naming the cause and
     // a sentence about it. Until then the plain message above.
     readonly property bool failureKnown: Session.pictureFailure.title !== undefined
-                                         && (!Session.isVideo || root.videoError !== "")
+                                         && (!Session.isVideo || root.videoUnplayable)
     readonly property string errorTitle: root.failureKnown ? Session.pictureFailure.title
                                                            : root.playbackError
     readonly property string errorDetail: root.failureKnown ? Session.pictureFailure.detail : ""
@@ -85,7 +91,15 @@ ApplicationWindow {
                                             ? Session.path + "\n" + Session.contentVersion : ""
     onFailedPictureChanged: if (root.failedPicture !== "") Session.diagnosePicture()
     // A video the player could not open is looked at the same way.
-    onVideoErrorChanged: if (root.videoError !== "" && Session.isVideo) Session.diagnoseVideo(root.videoError)
+    onVideoErrorChanged: {
+        if (root.videoError === "" || !Session.isVideo) return
+        Session.diagnoseVideo(root.videoError)
+        Qt.callLater(root.noteRecoverableVideoError)
+    }
+    function noteRecoverableVideoError() {
+        if (root.videoError !== "" && !root.videoUnplayable && root.visible && root.frontmost)
+            root.say(root.videoError)
+    }
 
     // A still is fitted until it is zoomed; viewScale is then the logical
     // size of one source pixel. Zero means "fit".
@@ -2317,7 +2331,7 @@ ApplicationWindow {
             id: transport
             objectName: "viewerTransport"
             // Nothing to seek in a video that did not open.
-            visible: Session.isVideo && !root.slideshowRunning && root.videoError === ""
+            visible: Session.isVideo && !root.slideshowRunning && !root.videoUnplayable
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottom: parent.bottom
             anchors.bottomMargin: 16

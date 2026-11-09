@@ -109,7 +109,8 @@ jobs:
       - name: Fuzz each parser for five minutes
         run: bash tests/run-instrumented.sh fuzz 300 "$PWD/fuzz-corpus"
       - name: Save the grown corpus
-        if: always()
+        # Not when the run stopped before the corpus folder was made.
+        if: always() && hashFiles('fuzz-corpus/**') != ''
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: fuzz-corpus

@@ -315,16 +315,24 @@ Finding videoFailure(const QString& path, const QString& playerError, const QStr
                 : QStringLiteral("No installed decoder plays its %1 video. An FFmpeg build with %1 "
                                  "support, or another app, can play it.").arg(codec)};
   }
-  if (probe.exitStatus() == QProcess::NormalExit && probe.exitCode() == 0) {
-    return {QStringLiteral("unknown"), QStringLiteral("Could not play this video"),
-            QStringLiteral("FFmpeg reads it, but playback failed%1. Open in mpv may still play it.")
-                .arg(reported.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(reported))};
-  }
+  // A cut-off or damaged file is named as such even when ffmpeg recovered a
+  // frame and exited cleanly; only a clean read with nothing wrong is left
+  // to the player's own words.
   if (errors.contains(u"moov atom not found") || errors.contains(u"End of file") ||
       errors.contains(u"partial file", Qt::CaseInsensitive) || errors.contains(u"Truncat", Qt::CaseInsensitive)) {
     return {QStringLiteral("truncated"), QStringLiteral("This video is cut off"),
             QStringLiteral("The file ends early, so it can't be played. A download or copy may "
                            "not have finished.")};
+  }
+  static const QRegularExpression damage(
+      QStringLiteral("Invalid data found|error while decoding|corrupt|Invalid NAL|concealing|"
+                     "missing picture|non-existing PPS|decode_slice_header error"),
+      QRegularExpression::CaseInsensitiveOption);
+  const bool clean = probe.exitStatus() == QProcess::NormalExit && probe.exitCode() == 0;
+  if (clean && !damage.match(errors).hasMatch()) {
+    return {QStringLiteral("unknown"), QStringLiteral("Could not play this video"),
+            QStringLiteral("FFmpeg reads it, but playback failed%1. Open in mpv may still play it.")
+                .arg(reported.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(reported))};
   }
   return damaged(reason.isEmpty() ? reported : reason);
 }

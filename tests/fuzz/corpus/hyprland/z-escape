@@ -1,0 +1,6 @@
+dofile("bootstrap.lua")
+require("default.hypr.omarchy")
+local note = "keep \z
+   --[[ this ]] is text"
+local crlf = "a\
+b --[["

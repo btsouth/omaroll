@@ -106,7 +106,18 @@ QByteArray code(const QByteArray& text) {
     } else if (c == '"' || c == '\'') {
       qsizetype at = index + 1;
       while (at < text.size() && text.at(at) != c && text.at(at) != '\n') {
-        at += text.at(at) == '\\' ? 2 : 1;
+        if (text.at(at) != '\\') {
+          ++at;
+        } else if (at + 1 < text.size() && text.at(at + 1) == 'z') {
+          // \z skips the whitespace after it, line breaks included, and the
+          // string goes on.
+          at += 2;
+          while (at < text.size() && std::isspace(static_cast<unsigned char>(text.at(at)))) ++at;
+        } else if (at + 2 < text.size() && text.at(at + 1) == '\r' && text.at(at + 2) == '\n') {
+          at += 3; // An escaped CRLF line break.
+        } else {
+          at += 2;
+        }
       }
       index = at + 1;
     } else if (const int level = longBracket(text, index); level >= 0) {

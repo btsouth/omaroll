@@ -1648,23 +1648,6 @@ struct AppSettings::HealthReport {
 };
 
 namespace {
-// Albums and tags count once each and once per file in them, then every mark
-// and saved view: a rough size to compare a load with a snapshot.
-int snapshotSize(const QJsonObject& root) {
-  qsizetype size = 0;
-  for (const auto key : {QLatin1String("albums"), QLatin1String("tags")}) {
-    const QJsonObject collections = root.value(key).toObject();
-    for (auto it = collections.constBegin(); it != collections.constEnd(); ++it)
-      size += 1 + it.value().toArray().size();
-  }
-  size += root.value(QLatin1String("favorites")).toArray().size();
-  size += root.value(QLatin1String("hidden")).toArray().size();
-  size += root.value(QLatin1String("ratings")).toObject().size();
-  size += root.value(QLatin1String("captions")).toObject().size();
-  size += root.value(QLatin1String("smartCollections")).toObject().size();
-  return int(qMin<qsizetype>(size, std::numeric_limits<int>::max()));
-}
-
 // Empty, or under half of a snapshot that held at least three more items.
 bool looksIncomplete(int loaded, int snapshot) {
   if (snapshot <= 0) return false;
@@ -1672,6 +1655,8 @@ bool looksIncomplete(int loaded, int snapshot) {
 }
 } // namespace
 
+// Albums and tags count once each and once per file in them, then every mark
+// and saved view: a rough size to compare a load with a snapshot.
 int AppSettings::organizationSize(const OrganizationState& state) {
   qsizetype size = 0;
   for (const auto* collections : {&state.albums, &state.tags})
@@ -1696,13 +1681,17 @@ void AppSettings::checkOrganizationHealth(bool existingProfile) {
       const QDate day = today.addDays(-back);
       QFile file(QDir(path).filePath(QStringLiteral("daily-%1.json").arg(day.toString(Qt::ISODate))));
       if (file.size() > kMaximumOrganizationBytes || !file.open(QIODevice::ReadOnly)) continue;
-      const QJsonDocument document = QJsonDocument::fromJson(file.read(kMaximumOrganizationBytes));
-      const QJsonObject root = document.object();
-      if (root.value(QLatin1String("format")).toString() != QLatin1String(kOrganizationFormat)) continue;
+      // Checked as an import checks it: a header-only, cut or unreadable
+      // snapshot is passed over for an older one that restores.
+      DecodedOrganization decoded;
+      if (!decodeOrganization(file.read(kMaximumOrganizationBytes + 1), decoded).isEmpty()) continue;
+      const int size = organizationSize({decoded.albums, decoded.tags, decoded.smartCollections,
+                                         decoded.favorites, decoded.hidden, decoded.ratings,
+                                         decoded.captions, decoded.markIdentities});
       std::lock_guard lock(report->mutex);
       report->snapshot = file.fileName();
       report->date = day;
-      report->snapshotSize = snapshotSize(root);
+      report->snapshotSize = size;
       break;
     }
     std::lock_guard lock(report->mutex);
@@ -2010,21 +1999,11 @@ QVariantMap AppSettings::exportOrganization(const QString& path) const {
   return result;
 }
 
-QVariantMap AppSettings::importOrganization(const QString& path) {
-  QFile file(path);
-  if (!file.open(QIODevice::ReadOnly)) {
-    return {{QStringLiteral("ok"), false},
-            {QStringLiteral("message"),
-             QStringLiteral("Could not open %1").arg(QFileInfo(path).fileName())}};
-  }
+QVariantMap AppSettings::decodeOrganization(const QByteArray& payload, DecodedOrganization& out) {
   const auto invalidBackup = []() -> QVariantMap {
     return {{QStringLiteral("ok"), false},
             {QStringLiteral("message"), QStringLiteral("This backup contains invalid organization")}};
   };
-  if (file.size() > kMaximumOrganizationBytes) return invalidBackup();
-  const QByteArray payload = file.read(kMaximumOrganizationBytes + 1);
-  if (payload.size() > kMaximumOrganizationBytes || file.error() != QFile::NoError)
-    return invalidBackup();
   QJsonParseError parseError;
   const QJsonDocument document = QJsonDocument::fromJson(payload, &parseError);
   if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
@@ -2204,6 +2183,38 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
       markIdentities.insert(entry.path, entry);
     }
   }
+
+  out = {exportedAt, std::move(albums), std::move(tags), std::move(favorites), std::move(hidden),
+         std::move(ratings), std::move(captions), std::move(smartCollections), std::move(markIdentities)};
+  return {};
+}
+
+QVariantMap AppSettings::importOrganization(const QString& path) {
+  QFile file(path);
+  if (!file.open(QIODevice::ReadOnly)) {
+    return {{QStringLiteral("ok"), false},
+            {QStringLiteral("message"),
+             QStringLiteral("Could not open %1").arg(QFileInfo(path).fileName())}};
+  }
+  const auto invalidBackup = []() -> QVariantMap {
+    return {{QStringLiteral("ok"), false},
+            {QStringLiteral("message"), QStringLiteral("This backup contains invalid organization")}};
+  };
+  if (file.size() > kMaximumOrganizationBytes) return invalidBackup();
+  const QByteArray payload = file.read(kMaximumOrganizationBytes + 1);
+  if (payload.size() > kMaximumOrganizationBytes || file.error() != QFile::NoError)
+    return invalidBackup();
+  DecodedOrganization decoded;
+  if (const QVariantMap error = decodeOrganization(payload, decoded); !error.isEmpty()) return error;
+  const QString exportedAt = decoded.exportedAt;
+  auto albums = std::move(decoded.albums);
+  auto tags = std::move(decoded.tags);
+  auto favorites = std::move(decoded.favorites);
+  auto hidden = std::move(decoded.hidden);
+  auto ratings = std::move(decoded.ratings);
+  auto captions = std::move(decoded.captions);
+  auto smartCollections = std::move(decoded.smartCollections);
+  auto markIdentities = std::move(decoded.markIdentities);
 
   // An entry whose file is present right now shows up immediately; the next
   // scan repairs anything that moved. The stored identity is kept so a move

@@ -73,7 +73,8 @@ QString entryText(const CacheEntry& entry, qsizetype limit) {
     return {};
   }
   const QByteArray text = qUncompress(entry.compressed);
-  if (text.isEmpty()) return {};
+  // More than any saved text can be, whatever the header said: not ours.
+  if (text.isEmpty() || text.size() > qsizetype(quint64(limit) * 4)) return {};
   return QString::fromUtf8(text).left(limit);
 }
 
