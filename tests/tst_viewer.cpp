@@ -1333,6 +1333,18 @@ private slots:
     const QString clip = media(QStringLiteral("clip.mp4"));
     open(video ? QStringList{clip, picture} : QStringList{picture, clip});
     if (!video) QTRY_VERIFY(prop("imageReady").toBool());
+    if (video) {
+      // The transport lays out its controls once the clip is loaded; a slow
+      // runner could otherwise walk a shorter row than Shift+Tab finds later.
+      QMediaPlayer* player = nullptr;
+      QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+      QTRY_VERIFY_WITH_TIMEOUT(player->mediaStatus() == QMediaPlayer::LoadedMedia
+                                   || player->mediaStatus() == QMediaPlayer::BufferingMedia
+                                   || player->mediaStatus() == QMediaPlayer::BufferedMedia
+                                   || player->mediaStatus() == QMediaPlayer::EndOfMedia,
+                               30000);
+      QTRY_VERIFY(player->duration() > 0);
+    }
     QQuickItem* keys = item(QStringLiteral("viewerKeys"));
     const auto focused = [this] {
       QQuickItem* at = m_window->activeFocusItem();
