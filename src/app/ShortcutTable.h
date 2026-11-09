@@ -152,7 +152,10 @@ inline QVariantList rows() {
   {"context": "library", "id": "hide", "keys": ["Ctrl+H"], "label": "Hide", "group": "Organization", "flag": "", "tokens": ["H"]},
   {"context": "preview", "id": "hide", "keys": ["Ctrl+H"], "label": "Hide", "group": "Actions", "flag": "", "tokens": ["H"]},
   {"context": "library", "id": "trash", "keys": ["Del"], "label": "Move to Trash", "group": "Organization", "flag": "", "tokens": ["Delete"]},
-  {"context": "preview", "id": "trash", "keys": ["Del"], "label": "Move to Trash", "group": "Actions", "flag": "", "tokens": ["Delete"]}
+  {"context": "preview", "id": "trash", "keys": ["Del"], "label": "Move to Trash", "group": "Actions", "flag": "", "tokens": ["Delete"]},
+  {"context": "preview", "id": "undo", "keys": ["Ctrl+Z"], "label": "Undo", "group": "Organization", "flag": "", "tokens": ["Z"]},
+  {"context": "preview", "id": "rating", "keys": ["Alt+0", "Alt+1", "Alt+2", "Alt+3", "Alt+4", "Alt+5"], "label": "Clear / set rating", "group": "Organization", "flag": "", "tokens": ["0", "1", "2", "3", "4", "5"]},
+  {"context": "preview", "id": "quit", "keys": ["Ctrl+Q"], "label": "Quit", "group": "Window", "flag": "", "tokens": ["Q"]}
 ]
 )shortcuts")
                                .array()

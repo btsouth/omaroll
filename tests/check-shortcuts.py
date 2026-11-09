@@ -40,4 +40,6 @@ for context, file, implicit in [('quick', 'ViewerKeys.qml', {'2', '3', '4'}), ('
     else:
         assert actual <= documented, actual - documented
         assert documented <= actual | implicit, documented - actual - implicit
+preview_ids = {row['id'] for row in rows if row['context'] == 'preview'}
+assert {'undo', 'rating', 'quit', 'help', 'escape'} <= preview_ids
 print('Shortcut coverage passed (quick viewer and library, including reverse coverage)')
