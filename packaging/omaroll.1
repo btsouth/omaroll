@@ -50,12 +50,17 @@ replaced. Name the same group:
 .B omaroll \-\-unset\-default pdf
 undoes
 .BR "omaroll \-\-set\-default pdf" .
+Each line of
+.I ~/.config/mimeapps.list
+goes back as it was and the lines Omaroll added are removed, so the file is
+unchanged after any number of set and unset cycles.
 .TP
 .B \-\-install\-window\-rules
 Add Omaroll's Hyprland rules to
 .IR ~/.config/hypr :
 full opacity for its windows and a floating viewer. Needs Omarchy's Lua
-Hyprland config. Settings has the same choice.
+Hyprland config. Settings has the same choice. A second viewer opened on the
+same workspace tiles with the first on purpose, so the two are not stacked.
 .TP
 .B \-\-remove\-window\-rules
 Take those rules out again, leaving
@@ -145,7 +150,8 @@ when
 is unset.
 .TP
 .I $XDG_CACHE_HOME/omaroll
-Thumbnails and the text, date and similarity caches;
+Thumbnails, the cover art a playing video shows in player controls, and the
+text, date and similarity caches;
 .I ~/.cache/omaroll
 when
 .B XDG_CACHE_HOME

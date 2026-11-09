@@ -1,6 +1,7 @@
 #include "viewer/MprisService.h"
 
 #include "app/AppSettings.h"
+#include "thumbs/ThumbnailCache.h"
 
 #include <QCoreApplication>
 #include <QDBusAbstractAdaptor>
@@ -10,6 +11,8 @@
 #include <QMediaPlayer>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QUrl>
+#include <QtConcurrent>
 
 #include <algorithm>
 #include <cmath>
@@ -134,6 +137,29 @@ MprisService::~MprisService() {
   unpublish();
 }
 
+void MprisService::findArt() {
+  m_art.clear();
+  const QString file = m_player ? m_player->source().toLocalFile() : QString();
+  if (file.isEmpty()) return;
+  // A poster frame from the thumbnail cache, made on a worker: often already
+  // there from the library, otherwise a moment's work for ffmpegthumbnailer.
+  m_artTrack = m_track;
+  const quint64 track = m_track;
+  QFuture<QString> poster = QtConcurrent::run([file] {
+    const QSize size(kArtSize, kArtSize);
+    QString cached = ThumbnailCache::cachedFile(file, size, 1.0);
+    if (cached.isEmpty() && !ThumbnailCache::thumbnail(file, size, 1.0).isNull()) {
+      cached = ThumbnailCache::cachedFile(file, size, 1.0);
+    }
+    return cached;
+  });
+  poster.then(this, [this, track](const QString& art) {
+    if (track != m_track || art.isEmpty()) return;
+    m_art = art;
+    changed(kPlayerInterface, {QStringLiteral("Metadata")});
+  });
+}
+
 void MprisService::track(QObject* object, QObject* controller) {
   auto* player = qobject_cast<QMediaPlayer*>(object);
   if (!player || player->source().isEmpty()) {
@@ -238,6 +264,7 @@ void MprisService::attach(QMediaPlayer* player) {
   m_sincePosition.start();
   m_seekRequested = false;
   m_stopped = false;
+  findArt();
   const auto status = [this] {
     if (m_player && m_player->playbackState() == QMediaPlayer::PlayingState) {
       m_stopped = false;
@@ -268,6 +295,7 @@ void MprisService::attach(QMediaPlayer* player) {
                 m_sincePosition.restart();
                 m_seekRequested = false;
                 m_stopped = false;
+                findArt();
                 changed(kPlayerInterface, {QStringLiteral("Metadata"),
                                            QStringLiteral("PlaybackStatus")});
               }),
@@ -411,6 +439,9 @@ QVariantMap MprisService::metadata() const {
   };
   if (m_player->duration() > 0) {
     data.insert(QStringLiteral("mpris:length"), qlonglong(m_player->duration()) * 1000);
+  }
+  if (m_artTrack == m_track && !m_art.isEmpty()) {
+    data.insert(QStringLiteral("mpris:artUrl"), QUrl::fromLocalFile(m_art).toString());
   }
   return data;
 }

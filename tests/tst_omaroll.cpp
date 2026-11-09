@@ -1,5 +1,6 @@
 #include "actions/ActionLauncher.h"
 #include "actions/ActionRegistry.h"
+#include "actions/ClipboardServe.h"
 #include "actions/TailscalePeers.h"
 #include "actions/TrashRestore.h"
 #include "app/AppSettings.h"
@@ -1080,6 +1081,86 @@ private slots:
     defaults.refresh();
     QTRY_VERIFY_WITH_TIMEOUT(!defaults.busy(), 10000);
     QVERIFY(!defaults.imagesDefault());
+  }
+
+  void mimeDefaultsTextEditsDeleteRatherThanBlank() {
+    const QString desktop = QStringLiteral("io.github.tsouth89.omaroll.desktop");
+    const QString text = QStringLiteral(
+        "# mine\n[Default Applications]\nimage/png=%1\nimage/gif=%1;imv.desktop;\n\n"
+        "[Added Associations]\nimage/png=%1;other.desktop;\nimage/jpeg=%1;\n").arg(desktop);
+    QCOMPARE(MimeDefaults::defaultLine(text, "image/png"), "image/png=" + desktop);
+    QCOMPARE(MimeDefaults::defaultLine(text, "image/jpeg"), QString());
+    QCOMPARE(MimeDefaults::withoutOmaroll(text, "image/png"),
+             QStringLiteral("# mine\n[Default Applications]\nimage/gif=%1;imv.desktop;\n\n"
+                            "[Added Associations]\nimage/png=other.desktop;\nimage/jpeg=%1;\n")
+                 .arg(desktop));
+    // The replaced line comes back exactly, punctuation and all.
+    QCOMPARE(MimeDefaults::withoutOmaroll(text, "image/png", "image/png=imv.desktop;"),
+             QStringLiteral("# mine\n[Default Applications]\nimage/png=imv.desktop;\n"
+                            "image/gif=%1;imv.desktop;\n\n"
+                            "[Added Associations]\nimage/png=other.desktop;\nimage/jpeg=%1;\n")
+                 .arg(desktop));
+    QCOMPARE(MimeDefaults::withoutOmaroll(text, "image/gif"),
+             QStringLiteral("# mine\n[Default Applications]\nimage/png=%1\nimage/gif=imv.desktop;\n\n"
+                            "[Added Associations]\nimage/png=%1;other.desktop;\nimage/jpeg=%1;\n")
+                 .arg(desktop));
+    QCOMPARE(MimeDefaults::withoutOmaroll(text, "video/mp4"), text);
+  }
+
+  void mimeDefaultsCyclesLeaveTheFileAsItWas() {
+    QTemporaryDir dir;
+    const auto oldConfig = qgetenv("XDG_CONFIG_HOME");
+    const auto oldData = qgetenv("XDG_DATA_HOME");
+    const auto oldDesktop = qgetenv("XDG_CURRENT_DESKTOP");
+    const auto oldPath = qgetenv("PATH");
+    const auto cleanup = qScopeGuard([&] {
+      for (const auto& pair : QList<QPair<const char*, QByteArray>>{
+             {"XDG_CONFIG_HOME", oldConfig}, {"XDG_DATA_HOME", oldData}, {"XDG_CURRENT_DESKTOP", oldDesktop}, {"PATH", oldPath}})
+        pair.second.isNull() ? qunsetenv(pair.first) : qputenv(pair.first, pair.second);
+    });
+    qputenv("XDG_CONFIG_HOME", dir.filePath("config").toUtf8());
+    qputenv("XDG_DATA_HOME", dir.filePath("data").toUtf8());
+    qputenv("XDG_CURRENT_DESKTOP", "");
+    // xdg-utils 1.2.1 skips a default whose Exec is not on PATH.
+    qputenv("PATH", QCoreApplication::applicationDirPath().toUtf8() + ":" + oldPath);
+    QVERIFY(QDir().mkpath(dir.filePath("data/applications")));
+    QVERIFY(QDir().mkpath(dir.filePath("config")));
+    QVERIFY(QFile::copy(QFINDTESTDATA("../packaging/io.github.tsouth89.omaroll.desktop"),
+                        dir.filePath("data/applications/io.github.tsouth89.omaroll.desktop")));
+    for (const auto& [name, types] : QList<QPair<QString, QByteArray>>{
+           {"imv", "image/png;image/jpeg;"}, {"mpv", "video/mp4;video/webm;video/x-matroska;"}}) {
+      QFile app(dir.filePath("data/applications/" + name + ".desktop"));
+      QVERIFY(app.open(QIODevice::WriteOnly));
+      app.write("[Desktop Entry]\nType=Application\nName=" + name.toUtf8() +
+                "\nExec=/usr/bin/true %f\nMimeType=" + types + "\n");
+    }
+    // Comments, blank lines, other groups, a trailing semicolon on one line
+    // and not another, and types the user has no line for at all.
+    const QByteArray original =
+        "# my defaults\n[Default Applications]\ntext/plain=nvim.desktop\n"
+        "video/mp4=mpv.desktop;\nimage/png=imv.desktop\n\nvideo/webm=mpv.desktop\n\n"
+        "[Added Associations]\nvideo/mp4=mpv.desktop;\n";
+    QFile list(dir.filePath("config/mimeapps.list"));
+    QVERIFY(list.open(QIODevice::WriteOnly));
+    QCOMPARE(list.write(original), original.size());
+    list.close();
+    // Videos alone: xdg-mime takes about a second per type here.
+    MimeDefaults defaults;
+    for (int cycle = 1; cycle <= 3; ++cycle) {
+      const QString set = defaults.apply(false, "videos");
+      QVERIFY2(defaults.succeeded(), qPrintable(set));
+      QVERIFY2(set.contains("video/mp4: mpv.desktop -> io.github.tsouth89.omaroll.desktop"),
+               qPrintable(set));
+      const QString unset = defaults.apply(true, "videos");
+      QVERIFY2(defaults.succeeded(), qPrintable(unset));
+      QVERIFY2(unset.contains("video/mp4: restored mpv.desktop"), qPrintable(unset));
+      QVERIFY2(unset.contains("video/webm: restored mpv.desktop"), qPrintable(unset));
+      QVERIFY(list.open(QIODevice::ReadOnly));
+      const QByteArray after = list.readAll();
+      list.close();
+      QVERIFY2(after == original, qPrintable(QStringLiteral("cycle %1:\n%2")
+                                                 .arg(cycle).arg(QString::fromUtf8(after))));
+    }
   }
 
   void defaultViewerChangesAreSummarized() {
@@ -11546,6 +11627,99 @@ private slots:
     QStringList expected{a, b};
     actual.sort(); expected.sort();
     QCOMPARE(actual, expected);
+  }
+
+  // A JPEG goes on the clipboard as itself and as PNG, so Omarchy's history,
+  // which keeps only image/png, records it.
+  void jpegCopiesOfferPngBesideTheirOwnBytes() {
+    QCOMPARE(ClipboardServe::offeredTypes("image/jpeg"),
+             (QStringList{"image/jpeg", "image/png"}));
+    QCOMPARE(ClipboardServe::offeredTypes("image/png"), QStringList{"image/png"});
+
+    // Encoded upright: EXIF orientation 6 turns a 40x20 landscape on its side.
+    QImage landscape(40, 20, QImage::Format_RGB32);
+    landscape.fill(Qt::darkGreen);
+    QByteArray jpeg;
+    QBuffer buffer(&jpeg);
+    QVERIFY(buffer.open(QIODevice::WriteOnly));
+    QVERIFY(landscape.save(&buffer, "JPG"));
+    const QByteArray exif = QByteArray::fromHex(
+        "ffe10022" "457869660000" "4d4d002a00000008" "0001" "011200030000000100060000" "00000000");
+    const QByteArray rotated = jpeg.left(2) + exif + jpeg.mid(2);
+    const QByteArray png = ClipboardServe::encodePng(rotated);
+    QVERIFY(png.startsWith("\x89PNG"));
+    const QImage decoded = QImage::fromData(png, "PNG");
+    QCOMPARE(decoded.size(), QSize(20, 40));
+    QVERIFY(ClipboardServe::encodePng("not a picture").isEmpty());
+  }
+
+  void clipboardHelperFallsBackToWlCopyWithoutDataControl() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString helper = QCoreApplication::applicationDirPath() + QStringLiteral("/omaroll");
+    const QString path = dir.filePath(QStringLiteral("photo # ü.jpg"));
+    QImage image(16, 12, QImage::Format_RGB32);
+    image.fill(Qt::darkBlue);
+    QVERIFY(image.save(path, "JPG"));
+
+    // Without a Wayland display the helper says so, without a platform plugin.
+    QProcess direct;
+    auto environment = QProcessEnvironment::systemEnvironment();
+    environment.remove(QStringLiteral("WAYLAND_DISPLAY"));
+    environment.remove(QStringLiteral("WAYLAND_SOCKET"));
+    environment.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("no-such-platform"));
+    direct.setProcessEnvironment(environment);
+    direct.start(helper, {QString::fromLatin1(ClipboardServe::kOption), "image/jpeg", path});
+    QVERIFY(direct.waitForFinished(5000));
+    QCOMPARE(direct.exitCode(), ClipboardServe::kUnavailable);
+    direct.start(helper, {QString::fromLatin1(ClipboardServe::kOption), "image/jpeg",
+                          dir.filePath("missing.jpg")});
+    QVERIFY(direct.waitForFinished(5000));
+    QCOMPARE(direct.exitCode(), 1);
+    direct.start(helper, {QString::fromLatin1(ClipboardServe::kOption)});
+    QVERIFY(direct.waitForFinished(5000));
+    QCOMPARE(direct.exitCode(), 2);
+
+    // A display without ext-data-control (here, none at all) leaves the copy
+    // to wl-copy with the file's own type.
+    QFile tool(dir.filePath(QStringLiteral("wl-copy")));
+    QVERIFY(tool.open(QIODevice::WriteOnly));
+    tool.write("#!/bin/sh\n/bin/cat > '");
+    tool.write(path.toUtf8());
+    tool.write(".copied'\nprintf '%s\\n' \"$@\" > '");
+    tool.write(path.toUtf8());
+    tool.write(".args'\nexit 0\n");
+    tool.close();
+    QVERIFY(tool.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                QFileDevice::ExeOwner));
+    const QByteArray previousPath = qgetenv("PATH");
+    const QByteArray previousDisplay = qgetenv("WAYLAND_DISPLAY");
+    const auto restore = qScopeGuard([&] {
+      qputenv("PATH", previousPath);
+      previousDisplay.isNull() ? qunsetenv("WAYLAND_DISPLAY")
+                               : qputenv("WAYLAND_DISPLAY", previousDisplay);
+    });
+    QVERIFY(qputenv("PATH", dir.path().toUtf8()));
+    QVERIFY(qputenv("WAYLAND_DISPLAY", dir.filePath("no-such-display").toUtf8()));
+    ActionLauncher launcher;
+    launcher.setClipboardHelper(helper);
+    QSignalSpy finished(&launcher, &ActionLauncher::submissionFinished);
+    QSignalSpy reported(&launcher, &ActionLauncher::reported);
+    QSignalSpy failed(&launcher, &ActionLauncher::failed);
+    QVERIFY(launcher.copyFile(path));
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 8000);
+    QVERIFY2(finished.first().at(1).toBool(), qPrintable(finished.first().at(2).toString()));
+    QCOMPARE(finished.first().at(0).toString(), QStringLiteral("wl-copy"));
+    QCOMPARE(reported.size(), 1);
+    QCOMPARE(failed.size(), 0);
+    QFile arguments(path + QStringLiteral(".args"));
+    QVERIFY(arguments.open(QIODevice::ReadOnly));
+    QCOMPARE(arguments.readAll(), QByteArray("--type\nimage/jpeg\n"));
+    QFile copied(path + QStringLiteral(".copied"));
+    QVERIFY(copied.open(QIODevice::ReadOnly));
+    QFile original(path);
+    QVERIFY(original.open(QIODevice::ReadOnly));
+    QCOMPARE(copied.readAll(), original.readAll());
   }
 
   void imageCopyTimeoutDoesNotConfirmSuccess() {

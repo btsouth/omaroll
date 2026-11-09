@@ -131,6 +131,22 @@ void ThumbnailCache::prune(qint64 maxBytes) {
   }
 }
 
+QSize ThumbnailCache::pixelSizeFor(const QSize& logicalSize, qreal devicePixelRatio) {
+  const qreal ratio = std::clamp(devicePixelRatio, qreal(1.0), kMaxDevicePixelRatio);
+  return {static_cast<int>(std::ceil(logicalSize.width() * ratio)),
+          static_cast<int>(std::ceil(logicalSize.height() * ratio))};
+}
+
+QString ThumbnailCache::cachedFile(const QString& path, const QSize& logicalSize,
+                                   qreal devicePixelRatio, int seekPercent) {
+  const QSize pixelSize = pixelSizeFor(logicalSize, devicePixelRatio);
+  if (path.isEmpty() || pixelSize.isEmpty()) return {};
+  const QString file = cacheDirectory() + QLatin1Char('/') +
+                       cacheKey(path, ThumbnailSource::path(path), pixelSize, seekPercent) +
+                       QStringLiteral(".jpg");
+  return QFileInfo::exists(file) ? file : QString();
+}
+
 QString ThumbnailCache::cacheKey(const QString& path, const QString& renderPath,
                                  const QSize& pixelSize, int seekPercent) {
   const QString version = FileVersion::diskKey(path);
@@ -263,9 +279,7 @@ QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
     return {};
   }
 
-  const qreal ratio = std::clamp(devicePixelRatio, qreal(1.0), kMaxDevicePixelRatio);
-  const QSize pixelSize(static_cast<int>(std::ceil(logicalSize.width() * ratio)),
-                        static_cast<int>(std::ceil(logicalSize.height() * ratio)));
+  const QSize pixelSize = pixelSizeFor(logicalSize, devicePixelRatio);
   if (pixelSize.isEmpty()) {
     return {};
   }

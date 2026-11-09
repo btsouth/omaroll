@@ -130,6 +130,9 @@ types could not be changed; add `--verbose` to list every type.
 manager.
 Settings has the same choice as **Set as default** and **Restore previous
 apps**, and says how many types changed and which apps were replaced.
+Restoring puts each line of `~/.config/mimeapps.list` back as it was and
+removes the lines Omaroll added, so setting and restoring any number of times
+leaves the file unchanged.
 
 To open a picture or video from a terminal:
 
@@ -174,6 +177,9 @@ is playing. Folders, PDFs and a plain `omaroll` open the library, and so does
 omaroll ~/Pictures
 omaroll --library photo.jpg
 ```
+
+The launcher also offers **Open Library** on Omaroll's entry, which runs
+`omaroll --library`.
 
 Images and videos without a filename extension are recognized from their file
 headers. Their names stay unchanged; unrelated files are ignored.
@@ -248,7 +254,11 @@ Every viewer shortcut is listed in [Shortcuts](docs/shortcuts.md#viewer), and
   after confirmation, as one step Undo puts back.
 - **Share and hand off.** Drag actual files into another app, copy images or
   text, send with LocalSend or Taildrop, and open specialist tools for trimming,
-  annotation, conversion and editing.
+  annotation, conversion and editing. A copied JPEG is offered as PNG too, so it
+  shows up in Omarchy's clipboard history while apps that take JPEG still get
+  the original bytes.
+- **Media keys and players.** A playing video answers media keys and the
+  shell's player controls, with a poster frame as its cover art.
 - **Present and finish.** Run a fullscreen slideshow, choose a screenshot
   background for sharing, and follow your Omarchy palette and font as they change.
 
@@ -363,7 +373,8 @@ yourself is never replaced or removed.
 When a second viewer opens on the same workspace, Omaroll tiles it and the
 viewers already there, so your layout arranges them instead of stacking them in
 the middle. They stay tiled as the others close; the next viewer opened on its
-own floats again.
+own floats again. This is on purpose: a viewer that tiles beside another one
+does not mean the float rule failed.
 A viewer opened this way maps under the library's title, "Omaroll", for a
 moment before taking its own, so rules you have keyed on that exact title also
 apply to it.
@@ -434,7 +445,7 @@ On Arch, install the build and runtime dependencies:
 sudo pacman -S --needed git base-devel cmake ninja pkgconf bubblewrap \
   qt6-base qt6-declarative qt6-multimedia qt6-imageformats qt6-svg qt6-wayland \
   kimageformats libavif libheif libraw hicolor-icon-theme xdg-desktop-portal \
-  ffmpeg ffmpegthumbnailer poppler wl-clipboard xdg-utils
+  ffmpeg ffmpegthumbnailer poppler wayland wl-clipboard xdg-utils
 ```
 
 ```bash

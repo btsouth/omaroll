@@ -90,6 +90,12 @@
   and, above it, the nearest of up to 100 sampled keyframes, and the preview
   follows a drag. Keyframes are decoded once in the background at low priority
   and cached, so a video opened again has previews at once.
+- A copied JPEG is offered as PNG as well as itself, so it appears in
+  Omarchy's clipboard history. The PNG is made only when something asks for
+  it, outside the app.
+- A playing video shows a poster frame as its cover art in the shell's player
+  controls and other MPRIS clients.
+- **Open Library** on Omaroll's launcher entry.
 
 ### Changed
 
@@ -102,6 +108,9 @@
 
 ### Fixed
 
+- `--unset-default` puts `~/.config/mimeapps.list` back exactly as it was
+  before `--set-default`. Repeated cycles used to leave blank lines behind and
+  move restored lines to the end of the section.
 - The empty library named Super + Shift + S for screenshots. It now names the
   key from your Hyprland bindings, Print Screen by default.
 - `--set-default` prints one line and the command that undoes it instead of a

@@ -1,4 +1,5 @@
 #include "actions/ActionLauncher.h"
+#include "actions/ClipboardServe.h"
 #include "actions/FileDrag.h"
 #include "actions/TrashRestore.h"
 #include "edit/ClipboardText.h"
@@ -243,11 +244,55 @@ bool ActionLauncher::copyFile(const QString& path) {
     return copyUris({path});
   }
 
+  // A JPEG goes on as itself and as PNG, so the shell's history keeps it.
+  if (ClipboardServe::offeredTypes(mime).size() > 1 && !qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY")) {
+    return copyWithPng(path, mime);
+  }
+
   // The house helper's --copy-only branch can exit zero after wl-copy fails.
   // Its copy operation is exactly this invocation, so track wl-copy directly
   // to establish whether the selection was accepted.
   return startSubmission(u"wl-copy"_s, {u"--type"_s, mime}, u"wl-clipboard"_s,
                          u"Copied to clipboard"_s, path, 5000);
+}
+
+bool ActionLauncher::copyWithPng(const QString& path, const QString& mime) {
+  auto* process = new QProcess(this);
+  process->setProcessEnvironment(externalProcessEnvironment());
+  process->setProgram(m_clipboardHelper.isEmpty() ? QCoreApplication::applicationFilePath()
+                                                  : m_clipboardHelper);
+  process->setArguments({QString::fromLatin1(ClipboardServe::kOption), mime, path});
+  process->setStandardInputFile(QProcess::nullDevice());
+  process->setStandardOutputFile(QProcess::nullDevice());
+  auto* timer = new QTimer(process);
+  timer->setSingleShot(true);
+  auto settled = std::make_shared<bool>(false);
+  const auto finish = [this, process, timer, settled, path, mime](bool copied) {
+    if (*settled) return;
+    *settled = true;
+    timer->stop();
+    process->deleteLater();
+    if (copied) {
+      emit reported(u"Copied to clipboard"_s);
+      emit submissionFinished(u"omaroll"_s, true, {});
+      return;
+    }
+    // No ext-data-control here, or it failed: the file's own type through
+    // wl-copy, as before, which reports its own outcome.
+    startSubmission(u"wl-copy"_s, {u"--type"_s, mime}, u"wl-clipboard"_s,
+                    u"Copied to clipboard"_s, path, 5000);
+  };
+  connect(process, &QProcess::finished, this,
+          [finish](int code, QProcess::ExitStatus status) {
+            finish(status == QProcess::NormalExit && code == 0);
+          });
+  connect(process, &QProcess::errorOccurred, this, [finish](QProcess::ProcessError error) {
+    if (error == QProcess::FailedToStart) finish(false);
+  });
+  connect(timer, &QTimer::timeout, process, [process] { process->kill(); });
+  process->start();
+  timer->start(3000);
+  return true;
 }
 
 bool ActionLauncher::runDetached(const QString& program, const QStringList& arguments,

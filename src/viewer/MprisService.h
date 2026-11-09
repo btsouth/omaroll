@@ -74,6 +74,10 @@ private:
   void changed(const QString& interface, const QStringList& names);
   void positionMoved(qint64 position);
   [[nodiscard]] QDBusObjectPath trackId() const;
+  void findArt();
+
+  // Cover art for players and the shell: a poster frame about this size.
+  static constexpr int kArtSize = 384;
 
   AppSettings* m_settings;
   std::optional<QDBusConnection> m_bus;
@@ -83,6 +87,9 @@ private:
   QList<Candidate> m_candidates;
   QString m_serviceName;
   quint64 m_track = 0;
+  // The poster frame's file, for the track it was found for.
+  QString m_art;
+  quint64 m_artTrack = 0;
   qint64 m_lastPosition = 0;
   QElapsedTimer m_sincePosition;
   // Set by Seek and SetPosition, so even a short seek is announced.

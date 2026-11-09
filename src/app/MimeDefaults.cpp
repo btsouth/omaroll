@@ -22,35 +22,87 @@ bool xdgMime(const QStringList &args, QString *output = nullptr) {
   return process.exitStatus() == QProcess::NormalExit &&
          process.exitCode() == 0;
 }
-// Remove only our tokens, preserving other handlers, groups and comments.
-bool removeEntries(const QString &path, const QStringList &types) {
+// Rewrites one list file through MimeDefaults::withoutOmaroll.
+bool removeEntries(const QString &path, const QString &type,
+                   const QString &original = {}) {
   QFile input(path);
   if (!input.exists())
     return true;
   if (!input.open(QIODevice::ReadOnly))
     return false;
-  auto lines = QString::fromUtf8(input.readAll()).split(u'\n');
+  const QString before = QString::fromUtf8(input.readAll());
   input.close();
-  bool changed = false;
-  for (auto &line : lines) {
-    const auto at = line.indexOf(u'=');
-    if (at < 0 || !types.contains(line.left(at).trimmed()))
-      continue;
-    auto handlers = line.mid(at + 1).split(u';', Qt::SkipEmptyParts);
-    if (!handlers.removeAll(desktop))
-      continue;
-    line = handlers.isEmpty() ? QString()
-                              : line.left(at + 1) + handlers.join(u';') + u';';
-    changed = true;
-  }
-  if (!changed)
+  const QString after = MimeDefaults::withoutOmaroll(before, type, original);
+  if (after == before)
     return true;
   QSaveFile output(path);
-  const auto bytes = lines.join(u'\n').toUtf8();
+  const auto bytes = after.toUtf8();
   return output.open(QIODevice::WriteOnly) &&
          output.write(bytes) == bytes.size() && output.commit();
 }
+QString readText(const QString &path) {
+  QFile file(path);
+  return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString();
+}
+QString recordKey(const QString &type) { return QStringLiteral("lines/") + type; }
+QStringList handlersOf(const QString &line) {
+  const auto at = line.indexOf(u'=');
+  return at < 0 ? QStringList() : line.mid(at + 1).split(u';', Qt::SkipEmptyParts);
+}
 } // namespace
+QString MimeDefaults::defaultLine(const QString &text, const QString &type) {
+  bool inDefaults = false;
+  for (const auto &line : text.split(u'\n')) {
+    if (line.startsWith(u'[')) {
+      inDefaults = line.trimmed() == u"[Default Applications]";
+      continue;
+    }
+    // The line xdg-mime replaces in place: exactly "type=" at its start.
+    if (inDefaults && line.startsWith(type + u'='))
+      return line;
+  }
+  return {};
+}
+QString MimeDefaults::withoutOmaroll(const QString &text, const QString &type,
+                                     const QString &original) {
+  auto lines = text.split(u'\n');
+  bool inDefaults = false;
+  bool restored = false;
+  for (qsizetype index = 0; index < lines.size();) {
+    QString &line = lines[index];
+    if (line.startsWith(u'[')) {
+      inDefaults = line.trimmed() == u"[Default Applications]";
+      ++index;
+      continue;
+    }
+    const auto at = line.indexOf(u'=');
+    if (at < 0 || line.left(at).trimmed() != type) {
+      ++index;
+      continue;
+    }
+    auto handlers = handlersOf(line);
+    if (!handlers.contains(desktop)) {
+      ++index;
+      continue;
+    }
+    // The line xdg-mime wrote over goes back exactly as it was.
+    if (inDefaults && !restored && !original.isEmpty() && handlers == QStringList{desktop}) {
+      line = original;
+      restored = true;
+      ++index;
+      continue;
+    }
+    handlers.removeAll(desktop);
+    if (handlers.isEmpty()) {
+      // Deleted, not blanked, so cycles leave no empty lines behind.
+      lines.removeAt(index);
+      continue;
+    }
+    line = line.left(at + 1) + handlers.join(u';') + u';';
+    ++index;
+  }
+  return lines.join(u'\n');
+}
 QStringList MimeDefaults::types(const QString &path, const QString &group) {
   if (!QStringList{"images", "videos", "pdf", "all"}.contains(group))
     return {};
@@ -248,6 +300,7 @@ MimeDefaults::Result MimeDefaults::run(bool unset, const QString &group) {
       QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
   QSettings state(config + QStringLiteral("/Omaroll/mime-defaults.ini"),
                   QSettings::IniFormat);
+  const QString userList = config + QStringLiteral("/mimeapps.list");
   QStringList report;
   bool ok = true;
   for (const auto &type : selected) {
@@ -265,6 +318,13 @@ MimeDefaults::Result MimeDefaults::run(bool unset, const QString &group) {
       // The handler being replaced now, which may be newer than one recorded
       // by an earlier --set-default.
       state.setValue(type, previous);
+      // And the exact line it sat on, if the user's own list had one, so
+      // --unset-default can put the file back byte for byte.
+      const QString line = defaultLine(readText(userList), type);
+      if (handlersOf(line).value(0) == previous && !previous.isEmpty())
+        state.setValue(recordKey(type), line);
+      else
+        state.remove(recordKey(type));
       state.sync();
       if (state.status() != QSettings::NoError ||
           !xdgMime({"default", desktop, type})) {
@@ -276,6 +336,9 @@ MimeDefaults::Result MimeDefaults::run(bool unset, const QString &group) {
                     " -> " + desktop;
     } else {
       const QString restore = state.value(type).toString();
+      QString original = state.value(recordKey(type)).toString();
+      if (previous != desktop || handlersOf(original).value(0) != restore)
+        original.clear();
       bool removed = true;
       // Only write user-owned configuration, never system defaults.
       const QStringList dirs = {config,
@@ -286,12 +349,17 @@ MimeDefaults::Result MimeDefaults::run(bool unset, const QString &group) {
                                 .toLower()
                                 .split(u':', Qt::SkipEmptyParts);
       for (const auto &dir : dirs) {
-        removed &= removeEntries(dir + "/mimeapps.list", {type});
-        removed &= removeEntries(dir + "/defaults.list", {type});
+        const QString list = dir + "/mimeapps.list";
+        removed &= removeEntries(list, type, list == userList ? original : QString());
+        removed &= removeEntries(dir + "/defaults.list", type);
         for (const auto &name : desktops)
-          removed &= removeEntries(dir + "/" + name + "-mimeapps.list", {type});
+          removed &= removeEntries(dir + "/" + name + "-mimeapps.list", type);
       }
-      if (removed && previous == desktop && !restore.isEmpty())
+      // Written only when the file does not already give that answer: a
+      // handler that came from a system default needs no line of its own.
+      QString restoredNow;
+      if (removed && previous == desktop && !restore.isEmpty() &&
+          !(xdgMime({"query", "default", type}, &restoredNow) && restoredNow == restore))
         removed = xdgMime({"default", restore, type});
       // A system-wide default, or Omaroll being the only installed app for
       // the type, can still open it with Omaroll; say so instead of claiming
@@ -300,6 +368,7 @@ MimeDefaults::Result MimeDefaults::run(bool unset, const QString &group) {
       if (removed && restore.isEmpty() && xdgMime({"query", "default", type}, &now) &&
           now == desktop) {
         state.remove(type);
+        state.remove(recordKey(type));
         report << type + ": removed your setting; it still opens with Omaroll "
                          "(a system default, or no other app handles it)";
         continue;
@@ -310,6 +379,7 @@ MimeDefaults::Result MimeDefaults::run(bool unset, const QString &group) {
         continue;
       }
       state.remove(type);
+      state.remove(recordKey(type));
       report << type + (previous == desktop
                             ? (restore.isEmpty() ? ": removed Omaroll"
                                                  : ": restored " + restore)
