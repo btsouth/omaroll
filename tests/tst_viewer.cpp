@@ -3273,6 +3273,8 @@ private slots:
 
   // Changing the subtitle or audio track early, while the backend is still
   // starting its streams, must not freeze the picture under a running clock.
+  // The first attempt switches as soon as playback starts, as a key pressed
+  // right after opening does; there the stall can follow one new frame.
   void earlyTrackChangeKeepsFramesMoving_data() {
     QTest::addColumn<QString>("track");
     QTest::newRow("subtitle") << QStringLiteral("subtitle");
@@ -3296,12 +3298,28 @@ private slots:
       QVERIFY(QTest::qWaitForWindowExposed(viewer.window));
       QMediaPlayer* player = nullptr;
       QTRY_VERIFY((player = viewer.window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+      const char* cycle = track == u"subtitle" ? "cycleSubtitles" : "cycleAudioTrack";
+      bool switched = false;
+      QMetaObject::Connection startWatch;
+      if (attempt == 0) {
+        startWatch = QObject::connect(
+            player, &QMediaPlayer::playbackStateChanged, viewer.window,
+            [&](QMediaPlayer::PlaybackState state) {
+              if (switched || state != QMediaPlayer::PlayingState) return;
+              switched = QMetaObject::invokeMethod(viewer.window, cycle);
+            },
+            Qt::QueuedConnection);
+      }
       QTRY_VERIFY_WITH_TIMEOUT(player->mediaStatus() != QMediaPlayer::LoadingMedia
                                    && player->mediaStatus() != QMediaPlayer::NoMedia, 10000);
-      // Spread the switch over the first 300 ms, as a quick key press does.
-      QTest::qWait((attempt * 37) % 300);
-      QVERIFY(QMetaObject::invokeMethod(viewer.window, track == u"subtitle" ? "cycleSubtitles"
-                                                                            : "cycleAudioTrack"));
+      if (attempt == 0) {
+        QTRY_VERIFY(switched);
+        QObject::disconnect(startWatch);
+      } else {
+        // Spread the switch over the first 300 ms, as a quick key press does.
+        QTest::qWait((attempt * 37) % 300);
+        QVERIFY(QMetaObject::invokeMethod(viewer.window, cycle));
+      }
       qint64 lastFrame = -1;
       int frozen = 0;
       int changes = 0;
@@ -3323,7 +3341,8 @@ private slots:
       if (frozen >= 8 || changes < 10) {
         ++failures;
         qWarning().noquote() << "track change" << attempt << track << "frame" << lastFrame / 1000
-                             << "position" << player->position() << "changes" << changes;
+                             << "position" << player->position() << "changes" << changes
+                             << "frozen" << frozen << "state" << player->playbackState();
       }
       viewer.window->close();
     }

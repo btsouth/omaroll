@@ -68,7 +68,9 @@
   37% for H.264. Frame buffers were mapped and unmapped on every frame.
 - `Ctrl+Q` quits again from the viewer and the library.
 - Switching subtitles or the audio track just after a video opens no longer
-  freezes the picture while the clock keeps running.
+  freezes the picture while the clock keeps running. A switch the moment it
+  starts playing, which could stall picture and clock for about a second,
+  now recovers within half a second.
 - Pausing just after opening a video at a `--start` time, or straight after a
   seek, shows the frame at that time instead of the thumbnail or the old frame.
 - Similar pictures no longer puts different screenshots of text, or different
