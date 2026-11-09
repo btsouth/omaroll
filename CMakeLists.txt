@@ -109,6 +109,8 @@ add_library(omaroll_core STATIC
   src/thumbs/LargeImageProvider.h
   src/thumbs/RawImageProvider.cpp
   src/thumbs/RawImageProvider.h
+  src/thumbs/Storyboard.cpp
+  src/thumbs/Storyboard.h
   src/thumbs/ThumbnailCache.cpp
   src/thumbs/ThumbnailCache.h
   src/thumbs/ThumbnailProvider.cpp
@@ -213,6 +215,7 @@ set(OMAROLL_QML_FILES
   qml/components/ViewerToolbar.qml
   qml/components/DropHighlight.qml
   qml/components/ViewerTransport.qml
+  qml/components/SeekPreview.qml
 )
 
 set_source_files_properties(qml/components/ShortcutCatalog.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
@@ -279,6 +282,8 @@ if(BUILD_TESTING)
   target_compile_definitions(omaroll_core PUBLIC OMAROLL_TESTING)
   add_executable(omaroll_benchmark_library EXCLUDE_FROM_ALL tests/benchmark_library.cpp)
   target_link_libraries(omaroll_benchmark_library PRIVATE omaroll_core)
+  add_executable(omaroll_benchmark_storyboard EXCLUDE_FROM_ALL tests/benchmark_storyboard.cpp)
+  target_link_libraries(omaroll_benchmark_storyboard PRIVATE omaroll_core)
   qt_add_executable(omaroll_tests tests/tst_omaroll.cpp)
   target_link_libraries(omaroll_tests PRIVATE omaroll_core Qt6::Test)
   add_test(NAME omaroll_tests COMMAND omaroll_tests)
@@ -308,6 +313,12 @@ if(BUILD_TESTING)
   target_link_libraries(omaroll_large_image_tests PRIVATE omaroll_core Qt6::Test)
   add_test(NAME omaroll_large_image_tests COMMAND omaroll_large_image_tests)
   set_tests_properties(omaroll_large_image_tests PROPERTIES ENVIRONMENT
+    "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
+
+  qt_add_executable(omaroll_storyboard_tests tests/tst_storyboard.cpp)
+  target_link_libraries(omaroll_storyboard_tests PRIVATE omaroll_core Qt6::Test)
+  add_test(NAME omaroll_storyboard_tests COMMAND omaroll_storyboard_tests)
+  set_tests_properties(omaroll_storyboard_tests PROPERTIES ENVIRONMENT
     "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
 
   qt_add_executable(omaroll_thumbnail_tests tests/tst_thumbnails.cpp)

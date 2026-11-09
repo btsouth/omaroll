@@ -56,6 +56,10 @@
 - Drop files on the viewer to open them there, or on the library to open them
   in the viewer. Folders dropped on the library are offered as library folders;
   folders dropped on the viewer open in the library.
+- Hovering the seek bar in the viewer and the library preview shows the time
+  and, above it, the nearest of up to 100 sampled keyframes, and the preview
+  follows a drag. Keyframes are decoded once in the background at low priority
+  and cached, so a video opened again has previews at once.
 
 ### Fixed
 
