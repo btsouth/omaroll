@@ -319,7 +319,8 @@ if(BUILD_TESTING)
   # --set-default, --diagnostics, the window rules commands and the man page,
   # against scratch directories and a fake xdg-mime.
   add_test(NAME omaroll_cli COMMAND bash ${CMAKE_SOURCE_DIR}/tests/check-cli.sh
-    $<TARGET_FILE:omaroll> ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR})
+    $<TARGET_FILE:omaroll> ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR}
+    ${CMAKE_INSTALL_MANDIR} ${CMAKE_INSTALL_DATAROOTDIR})
   # The suite touches QImage and QGuiApplication paths, so it needs a platform
   # plugin; offscreen keeps it runnable in a headless checkout or CI.
   set(omaroll_test_environment

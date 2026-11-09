@@ -4,12 +4,15 @@
 # matching --help and installing. Everything runs against scratch HOME, config
 # and data directories and a fake xdg-mime, never the real desktop.
 #
-# Usage: check-cli.sh <omaroll binary> <build dir> <source dir>
+# Usage: check-cli.sh <omaroll binary> <build dir> <source dir> [mandir] [datarootdir]
+# The last two are CMake's CMAKE_INSTALL_MANDIR and CMAKE_INSTALL_DATAROOTDIR.
 set -euo pipefail
 
 omaroll=$1
 build=$2
 source=$3
+mandir=${4:-share/man}
+datarootdir=${5:-share}
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
@@ -105,11 +108,13 @@ if command -v groff >/dev/null; then
   warnings=$(groff -man -ww -z "$man" 2>&1 || true)
   [[ -z $warnings ]] || fail "groff warnings: $warnings"
 fi
-cmake --install "$build" --prefix "$scratch/prefix" >/dev/null
-[[ -f $scratch/prefix/share/man/man1/omaroll.1 ]] || fail "man page not installed"
-[[ -f $scratch/prefix/share/omaroll/hypr/omaroll.lua ]] || fail "rules file not installed"
+# Under DESTDIR, so an absolute install directory stays in scratch too.
+DESTDIR=$scratch/dest cmake --install "$build" --prefix /prefix >/dev/null
+installed() { [[ $1 == /* ]] && echo "$scratch/dest$1" || echo "$scratch/dest/prefix/$1"; }
+[[ -f $(installed "$mandir")/man1/omaroll.1 ]] || fail "man page not installed"
+[[ -f $(installed "$datarootdir")/omaroll/hypr/omaroll.lua ]] || fail "rules file not installed"
 # The installed README points at the repository for pages and images it lacks.
-readme=$scratch/prefix/share/doc/omaroll/README.md
+readme=$(installed "$datarootdir")/doc/omaroll/README.md
 if grep -nE '\]\((docs|tests)/|src="docs/' "$readme"; then fail "installed README has relative links"; fi
 
 echo "check-cli: ok"

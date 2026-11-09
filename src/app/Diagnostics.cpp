@@ -52,9 +52,11 @@ Sources Sources::system() {
     return !QStandardPaths::findExecutable(program).isEmpty();
   };
   // TESSDATA_PREFIX replaces tesseract's own directory. Some set it to the
-  // directory above tessdata, so look in both.
+  // directory above tessdata, where tesseract 4 and later find nothing; that
+  // child is only looked at to say so.
   if (const QString prefix = qEnvironmentVariable("TESSDATA_PREFIX"); !prefix.isEmpty()) {
-    sources.tessdata = {prefix, prefix + QStringLiteral("/tessdata")};
+    sources.tessdata = {prefix};
+    sources.tessdataBelowPrefix = prefix + QStringLiteral("/tessdata");
   }
   if (const QString languages = qEnvironmentVariable("OMARCHY_OCR_LANGS"); !languages.isEmpty()) {
     sources.ocrLanguages = languages;
@@ -116,38 +118,73 @@ QVariantList missing(const Sources& sources) {
   bool anyRawEditor = false;
   for (const QString& editor : rawEditors) anyRawEditor |= present.contains(editor);
 
+  // The OCR languages Omaroll asks tesseract for, and the ones it has data
+  // for. Tesseract installs with any one language, which need not be the one
+  // asked for, and then finds no text at all.
+  static const QRegularExpression languageCode(QStringLiteral("^[A-Za-z0-9_]{1,32}$"));
+  QStringList languages;
+  for (const QString& entry : sources.ocrLanguages.split(QLatin1Char('+'), Qt::SkipEmptyParts)) {
+    const QString language = entry.trimmed();
+    if (languageCode.match(language).hasMatch() && !languages.contains(language)) languages << language;
+  }
+  if (languages.isEmpty()) languages << QStringLiteral("eng");
+  const auto hasData = [](const QStringList& directories, const QString& language) {
+    for (const QString& directory : directories) {
+      if (QFileInfo::exists(directory + QLatin1Char('/') + language + QStringLiteral(".traineddata"))) {
+        return true;
+      }
+    }
+    return false;
+  };
+  const auto dataPackage = [](const QString& language) {
+    return QStringLiteral("tesseract-data-") + language.toLower();
+  };
+  QStringList allDataPackages;
+  QStringList dataPackages;
+  QStringList misplaced;
+  for (const QString& language : std::as_const(languages)) {
+    if (!allDataPackages.contains(dataPackage(language))) allDataPackages << dataPackage(language);
+    if (hasData(sources.tessdata, language)) continue;
+    if (!sources.tessdataBelowPrefix.isEmpty() && hasData({sources.tessdataBelowPrefix}, language)) {
+      misplaced << language;
+    } else {
+      if (!dataPackages.contains(dataPackage(language))) dataPackages << dataPackage(language);
+    }
+  }
+
   QVariantList rows;
   QStringList packages;
+  const auto add = [&](const QString& program, const QString& feature, const QString& package,
+                       const QString& install) {
+    packages << package;
+    rows << QVariantMap{{QStringLiteral("program"), program},
+                        {QStringLiteral("feature"), feature},
+                        {QStringLiteral("package"), package},
+                        {QStringLiteral("install"), install}};
+  };
   for (const Tool& tool : tools()) {
     if (present.contains(tool.program) || tool.package == u"omarchy") continue;
     if (rawEditors.contains(tool.program) && (anyRawEditor || tool.program != u"darktable")) continue;
-    if (packages.contains(tool.package)) continue;
-    packages << tool.package;
-    rows << QVariantMap{{QStringLiteral("program"), tool.program},
-                        {QStringLiteral("feature"), tool.feature},
-                        {QStringLiteral("package"), tool.package},
-                        {QStringLiteral("install"), QStringLiteral("sudo pacman -S ") + tool.package}};
+    // Tesseract comes with the data for the languages it will be asked for.
+    const QString package = tool.program == u"tesseract"
+                                ? (QStringList{QStringLiteral("tesseract")} + allDataPackages).join(u' ')
+                                : tool.package;
+    if (packages.contains(package)) continue;
+    add(tool.program, tool.feature, package, QStringLiteral("sudo pacman -S ") + package);
   }
-  // Tesseract installs with any one language, which need not be the one
-  // asked for, and then finds no text at all.
   if (present.contains(QStringLiteral("tesseract"))) {
-    static const QRegularExpression code(QStringLiteral("^[A-Za-z0-9_]{1,32}$"));
-    for (const QString& entry : sources.ocrLanguages.split(QLatin1Char('+'), Qt::SkipEmptyParts)) {
-      const QString language = entry.trimmed();
-      if (!code.match(language).hasMatch()) continue;
-      bool found = false;
-      for (const QString& directory : sources.tessdata) {
-        found |= QFileInfo::exists(directory + QLatin1Char('/') + language + QStringLiteral(".traineddata"));
-      }
-      const QString package = QStringLiteral("tesseract-data-") + language.toLower();
-      if (found || packages.contains(package)) continue;
-      packages << package;
-      rows << QVariantMap{{QStringLiteral("program"), QStringLiteral("tesseract")},
-                          {QStringLiteral("feature"),
-                           QStringLiteral("Text in pictures, language %1").arg(language)},
-                          {QStringLiteral("package"), package},
-                          {QStringLiteral("install"), QStringLiteral("sudo pacman -S ") + package}};
+    for (const QString& package : std::as_const(dataPackages)) {
+      add(QStringLiteral("tesseract"),
+          QStringLiteral("Text in pictures, language %1").arg(package.mid(15)), package,
+          QStringLiteral("sudo pacman -S ") + package);
     }
+  }
+  // The data is there, one folder below where tesseract looks.
+  if (!misplaced.isEmpty()) {
+    add(QStringLiteral("tesseract"),
+        QStringLiteral("Text in pictures, language %1").arg(misplaced.join(u'+')),
+        QStringLiteral("TESSDATA_PREFIX"),
+        QStringLiteral("Set TESSDATA_PREFIX to its tessdata folder, which has the language data"));
   }
   return rows;
 }

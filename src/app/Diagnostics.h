@@ -25,6 +25,9 @@ struct Sources {
   // Where tesseract looks for language data, and the languages Omaroll asks
   // it for ($OMARCHY_OCR_LANGS, joined with +).
   QStringList tessdata = {QStringLiteral("/usr/share/tessdata")};
+  // TESSDATA_PREFIX/tessdata, where tesseract doesn't look: only to say
+  // when the data is there instead.
+  QString tessdataBelowPrefix;
   QString ocrLanguages = QStringLiteral("eng");
 
   static Sources system();
@@ -40,8 +43,10 @@ struct Tool {
 const QList<Tool>& tools();
 
 // Missing optional tools, one entry per package, Omarchy's own helpers left
-// out, then any OCR language data an installed tesseract lacks. Each map has
-// program, feature, package and install keys.
+// out, then any OCR language data an installed tesseract lacks. A missing
+// tesseract comes with the data for the configured languages. Each map has
+// program, feature, package and install keys; install is a pacman command,
+// or what to change when TESSDATA_PREFIX points above the data.
 QVariantList missing(const Sources& sources);
 
 // "0.57.1-2" for an installed pacman package, empty when absent.

@@ -748,16 +748,27 @@ ApplicationWindow {
     }
 
     // Asked by --render before it grabs: false while a view still waits on
-    // a scan. Each ask tries the compare again, so one that came too early,
-    // with the grid between models, is not lost.
+    // a scan or its pictures. Each ask tries the compare again, so one that
+    // came too early, with the grid between models, is not lost.
+    property bool renderingCompare: false
     function renderReady() {
         if (root.compareWhenSimilar) root.openRenderCompare()
-        return !root.compareWhenSimilar
+        if (root.compareWhenSimilar) return false
+        return !root.renderingCompare || compareSheet.imagesReady()
     }
 
     // Called by --render so a screenshot can be taken of a specific view
     // without anyone having to drive the UI by hand.
     function openViewForRender(view) {
+        if (view === "compare") {
+            // A real similar set from the demo library, once the scan finds
+            // it. Asked for before the grid fills, it still waits.
+            root.renderingCompare = true
+            root.compareWhenSimilar = true
+            Captures.similarOnly = true
+            root.openRenderCompare()
+            return
+        }
         if (library.count === 0) {
             return
         }
@@ -800,11 +811,6 @@ ApplicationWindow {
             root.perform("matte", Captures.pathAt(0))
         } else if (view === "corrections") {
             root.perform("corrections", Captures.pathAt(0))
-        } else if (view === "compare") {
-            // A real similar set from the demo library, once the scan finds it.
-            root.compareWhenSimilar = true
-            Captures.similarOnly = true
-            root.openRenderCompare()
         } else if (view === "export") {
             root.perform("export", Captures.pathAt(0))
         } else if (view === "rename") {

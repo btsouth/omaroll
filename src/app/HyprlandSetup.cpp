@@ -8,6 +8,8 @@
 #include <QSet>
 #include <QStringList>
 
+#include <cctype>
+
 namespace {
 
 // The first line of a rules file Omaroll wrote, so it can be replaced or
@@ -19,9 +21,14 @@ constexpr char kRequireComment[] = "-- Omaroll window rules. `omaroll --remove-w
 constexpr char kRequireCommentJoined[] =
     "-- Omaroll window rules, after a line break Omaroll added. "
     "`omaroll --remove-window-rules` removes both.";
-// Omarchy's optional require: a missing file is skipped instead of breaking
-// the whole config, while an error inside it still shows.
-constexpr char kRequire[] = "require(\"default.hypr.require_optional\").module(\"hypr.omaroll\")";
+// An optional require: a missing file is skipped instead of breaking the
+// whole config, while an error inside it still shows. It does what Omarchy's
+// default.hypr.require_optional does, without needing an Omarchy new enough to
+// have it.
+constexpr char kRequire[] =
+    "if package.searchpath(\"hypr.omaroll\", package.path) then require(\"hypr.omaroll\") end";
+// The same through Omarchy's helper, as earlier builds of this change wrote.
+constexpr char kOmarchyRequire[] = "require(\"default.hypr.require_optional\").module(\"hypr.omaroll\")";
 
 QString configPath(const QString& directory) { return directory + QStringLiteral("/hyprland.lua"); }
 QString rulesPath(const QString& directory) { return directory + QStringLiteral("/omaroll.lua"); }
@@ -67,8 +74,9 @@ int longBracket(const QByteArray& text, qsizetype at) {
   return index < text.size() && text.at(index) == '[' ? int(index - at - 1) : -1;
 }
 
-// The text with every Lua comment blanked to spaces and its line breaks kept,
-// so a line can be read for what it runs. Strings stay as they are.
+// The text with every Lua comment and long string blanked to spaces and its
+// line breaks kept, so a line can be read for what it runs. Quoted strings
+// stay as they are, since a require names its module in one.
 QByteArray code(const QByteArray& text) {
   QByteArray out = text;
   qsizetype index = 0;
@@ -102,7 +110,9 @@ QByteArray code(const QByteArray& text) {
       }
       index = at + 1;
     } else if (const int level = longBracket(text, index); level >= 0) {
-      index = closeLong(index + 2 + level, level);
+      const qsizetype end = closeLong(index + 2 + level, level);
+      blank(index, end);
+      index = end;
     } else {
       ++index;
     }
@@ -134,7 +144,7 @@ bool loadsRules(const QByteArray& codeLine) {
 bool requireLine(const QByteArray& line, const QByteArray& codeLine) {
   const QByteArray trimmed = line.trimmed();
   if (codeLine.trimmed() != trimmed) return false;  // a comment is involved
-  return trimmed == kRequire || trimmed == "require(\"hypr.omaroll\")" ||
+  return trimmed == kRequire || trimmed == kOmarchyRequire || trimmed == "require(\"hypr.omaroll\")" ||
          trimmed == "require('hypr.omaroll')";
 }
 
@@ -155,6 +165,39 @@ QList<int> loadingLines(const QByteArray& config) {
 
 bool omarchyConfig(const QByteArray& config) {
   return code(config).contains("default.hypr.omarchy");
+}
+
+// A line whose code starts with the return keyword.
+bool returnLine(const QByteArray& codeLine) {
+  return codeLine.startsWith("return") &&
+         (codeLine.size() == 6 || !(std::isalnum(static_cast<unsigned char>(codeLine.at(6))) ||
+                                    codeLine.at(6) == '_'));
+}
+
+constexpr qsizetype kNoPlace = -1;
+
+// Where install's block goes: the end, or the start of a closing one-line
+// top-level return, since Lua allows nothing after one. kNoPlace for any
+// other top-level return, which Omaroll can't safely place a line around.
+qsizetype insertionPoint(const QByteArray& config) {
+  const QList<QByteArray> rawLines = lines(config);
+  const QList<QByteArray> codeLines = lines(code(config));
+  qsizetype last = codeLines.size() - 1;
+  while (last >= 0 && codeLines.at(last).trimmed().isEmpty()) --last;
+  if (last >= 0 && returnLine(codeLines.at(last).trimmed())) {
+    for (qsizetype index = 0; index < last; ++index) {
+      if (returnLine(codeLines.at(index))) return kNoPlace;
+    }
+    qsizetype at = 0;
+    for (qsizetype index = 0; index < last; ++index) at += rawLines.at(index).size();
+    return at;
+  }
+  // A return written flush left that doesn't end the file: a multi-line
+  // return, or one in a function Omaroll can't tell from the chunk.
+  for (const QByteArray& line : codeLines) {
+    if (returnLine(line)) return kNoPlace;
+  }
+  return config.size();
 }
 
 bool ours(const QString& path) {
@@ -250,8 +293,21 @@ Result installRules(const QString& hyprDirectory) {
   }
   const QByteArray rules = bundledRules();
   if (rules.isEmpty()) return {false, QStringLiteral("The window rules are missing from this build.")};
+  const bool already = !loadingLines(config).isEmpty();
+  const qsizetype at = already ? config.size() : insertionPoint(config);
+  if (at == kNoPlace) {
+    return {false, QStringLiteral("~/.config/hypr/hyprland.lua has a return Omaroll can't add a line "
+                                  "around, so nothing was changed. Add require(\"hypr.omaroll\") "
+                                  "before it, then install again.")};
+  }
 
   const QString file = rulesPath(hyprDirectory);
+  // A link to nothing: writing would create its target, which removal could
+  // not tell apart from the user's own.
+  if (const QFileInfo info(file); info.isSymLink() && !info.exists()) {
+    return {false, QStringLiteral("~/.config/hypr/omaroll.lua is a link to a file that isn't there, "
+                                  "so nothing was changed. Fix or remove the link, then try again.")};
+  }
   const bool existed = QFile::exists(file);
   bool keptTheirs = false;
   if (existed && !ours(file)) {
@@ -267,13 +323,15 @@ Result installRules(const QString& hyprDirectory) {
     }
   }
 
-  const bool already = !loadingLines(config).isEmpty();
   if (!already) {
-    // Install appends one block in the file's own line endings, and says in
-    // its comment whether it had to end the last line first.
+    // Install adds one block in the file's own line endings, at the end or
+    // before a closing return, and says in its comment whether it had to end
+    // the last line first.
     const QByteArray eol = config.contains("\r\n") ? QByteArrayLiteral("\r\n") : QByteArrayLiteral("\n");
-    const bool joined = !config.isEmpty() && !config.endsWith('\n');
-    const Write written = writeIfUnchanged(configPath(hyprDirectory), config, config + block(joined, eol));
+    const bool joined = at == config.size() && !config.isEmpty() && !config.endsWith('\n');
+    QByteArray edited = config;
+    edited.insert(at, block(joined, eol));
+    const Write written = writeIfUnchanged(configPath(hyprDirectory), config, edited);
     if (written != Write::Done) {
       // Nothing loads a rules file written just now, so it goes again.
       if (!existed) QFile::remove(file);
@@ -360,16 +418,25 @@ QString screenshotKey(const QString& hyprDirectory, const QString& omarchyPath) 
   static const QRegularExpression noDefaults(
       QStringLiteral(R"re(^\s*(?:_G\.)?omarchy_default_bindings\s*=\s*false\b)re"));
 
-  // The user's bindings win over Omarchy's defaults.
+  // The user's bindings win over Omarchy's defaults, and a later unbind or
+  // rebind wins over an earlier binding. hyprland.lua loads bindings.lua
+  // after the defaults, so what it drops counts after bindings.lua too.
   QSet<QString> dropped;
-  for (const QString& line : codeLinesOf(hyprDirectory + QStringLiteral("/bindings.lua"))) {
+  QStringList bound;
+  const QStringList config = codeLinesOf(configPath(hyprDirectory));
+  for (const QString& line : codeLinesOf(hyprDirectory + QStringLiteral("/bindings.lua")) + config) {
+    if (const auto match = unbind.match(line); match.hasMatch()) {
+      const QString keys = chord(match.captured(2));
+      dropped << keys;
+      bound.removeAll(keys);
+    }
     if (const auto match = bind.match(line); match.hasMatch()) {
       const QString keys = chord(match.captured(2));
-      if (!keys.isEmpty()) return keys;
+      if (!keys.isEmpty() && !bound.contains(keys)) bound << keys;
     }
-    if (const auto match = unbind.match(line); match.hasMatch()) dropped << chord(match.captured(2));
   }
-  for (const QString& line : codeLinesOf(configPath(hyprDirectory))) {
+  if (!bound.isEmpty()) return bound.first();
+  for (const QString& line : config) {
     if (noDefaults.match(line).hasMatch()) return {};
   }
   const QString root = omarchyPath.isEmpty() ? QStringLiteral("/usr/share/omarchy") : omarchyPath;

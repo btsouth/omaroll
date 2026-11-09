@@ -27,9 +27,11 @@ QString defaultDirectory();
 QByteArray bundledRules();
 
 RulesState rulesState(const QString& hyprDirectory);
-// Writes hypr/omaroll.lua and appends one optional require to hyprland.lua.
-// A file there that Omaroll did not write is kept. hyprland.lua is only
-// replaced if nothing else changed it meanwhile.
+// Writes hypr/omaroll.lua and adds one optional require to hyprland.lua: at
+// the end, or before a closing one-line return. Any other top-level return,
+// or an omaroll.lua link to nothing, stops it before anything changes. A file
+// there that Omaroll did not write is kept. hyprland.lua is only replaced if
+// nothing else changed it meanwhile.
 Result installRules(const QString& hyprDirectory);
 // Takes back out exactly what install added, so hyprland.lua comes back byte
 // for byte, plus any line that is nothing but a require of hypr.omaroll. Other
