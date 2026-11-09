@@ -668,14 +668,16 @@ private slots:
     const auto oldConfig = qgetenv("XDG_CONFIG_HOME");
     const auto oldData = qgetenv("XDG_DATA_HOME");
     const auto oldDesktop = qgetenv("XDG_CURRENT_DESKTOP");
+    const auto oldPath = qgetenv("PATH");
     const auto cleanup = qScopeGuard([&] {
       for (const auto& pair : QList<QPair<const char*, QByteArray>>{
-             {"XDG_CONFIG_HOME", oldConfig}, {"XDG_DATA_HOME", oldData}, {"XDG_CURRENT_DESKTOP", oldDesktop}})
+             {"XDG_CONFIG_HOME", oldConfig}, {"XDG_DATA_HOME", oldData}, {"XDG_CURRENT_DESKTOP", oldDesktop}, {"PATH", oldPath}})
         pair.second.isNull() ? qunsetenv(pair.first) : qputenv(pair.first, pair.second);
     });
     qputenv("XDG_CONFIG_HOME", dir.filePath("config").toUtf8());
     qputenv("XDG_DATA_HOME", dir.filePath("data").toUtf8());
     qputenv("XDG_CURRENT_DESKTOP", "");
+    qputenv("PATH", QCoreApplication::applicationDirPath().toUtf8() + ":" + oldPath);
     QVERIFY(QDir().mkpath(dir.filePath("data/applications")));
     QVERIFY(QDir().mkpath(dir.filePath("config")));
     const QString desktop = "io.github.tsouth89.omaroll.desktop";
@@ -683,7 +685,7 @@ private slots:
                        dir.filePath("data/applications/") + desktop));
     QFile other(dir.filePath("data/applications/other.desktop"));
     QVERIFY(other.open(QIODevice::WriteOnly));
-    other.write("[Desktop Entry]\nType=Application\nName=Other\nExec=true %f\nMimeType=image/png;application/pdf;\n");
+    other.write("[Desktop Entry]\nType=Application\nName=Other\nExec=/usr/bin/true %f\nMimeType=image/png;application/pdf;\n");
     other.close();
     const auto writeDefaults = [&](const QByteArray& contents) {
       QFile f(dir.filePath("config/mimeapps.list"));
@@ -693,7 +695,7 @@ private slots:
     MimeDefaults defaults;
     const QString report = defaults.apply(false, "images");
     QVERIFY2(defaults.succeeded(), qPrintable(report));
-    QVERIFY(report.contains("image/png: other.desktop -> " + desktop));
+    QVERIFY2(report.contains("image/png: other.desktop -> " + desktop), qPrintable(report));
     // Repeating the command must retain the original replaced handler.
     defaults.apply(false, "images");
     QVERIFY(defaults.succeeded());
@@ -811,7 +813,7 @@ private slots:
     QCOMPARE(activation.first().first().toStringList(), QStringList{path});
   }
 
-  void executableForwardsCanonicalSelectionAndRejectsInvalidBatch() {
+  void executableForwardsCanonicalSelectionAndSkipsInvalidEntries() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString first = dir.filePath(QStringLiteral("--render=雪.png"));
@@ -856,11 +858,19 @@ private slots:
     for (const auto* child : launches) QCOMPARE(child->exitCode(), 0);
     QCOMPARE(activation.size(), 12);
     activation.clear();
-    process.start(binary, {first, dir.filePath(QStringLiteral("missing.png"))});
+    const QString missing = dir.filePath(QStringLiteral("missing.png"));
+    process.start(binary, {"--start", "00:02.5", first, missing});
+    QTRY_VERIFY_WITH_TIMEOUT(process.state() == QProcess::NotRunning, 5000);
+    QCOMPARE(process.exitCode(), 0);
+    QTRY_COMPARE(activation.size(), 1);
+    QCOMPARE(activation.first().at(0).toStringList(), QStringList{first});
+    QCOMPARE(activation.first().at(2).toLongLong(), 2500);
+    QCOMPARE(activation.first().at(3).toStringList(), QStringList{missing});
+    activation.clear();
+    process.start(binary, {missing});
     QVERIFY(process.waitForFinished(5000));
     QCOMPARE(process.exitCode(), 2);
     QVERIFY(process.readAllStandardError().contains("does not exist"));
-    QTest::qWait(30);
     QVERIFY(activation.isEmpty());
   }
 
