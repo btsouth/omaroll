@@ -2,6 +2,7 @@
 
 #include "ext-data-control-v1-client-protocol.h"
 #include "sources/ImageBudget.h"
+#include "sources/PinnedImageReader.h"
 
 #include <QBuffer>
 #include <QFileInfo>
@@ -142,7 +143,7 @@ void deliver(State& state, int fd, bool png,
     std::signal(SIGTERM, SIG_DFL);
     std::signal(SIGALRM, SIG_DFL);
     alarm(kWriteSeconds);
-    const QByteArray bytes = png ? encodePng(state.image) : state.bytes;
+    const QByteArray bytes = png ? encodePng(state.image, QString::fromUtf8(state.type)) : state.bytes;
     const int flags = fcntl(fd, F_GETFL);
     if (flags >= 0) fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
     const char* data = bytes.constData();
@@ -241,6 +242,14 @@ QByteArray uriList(const QString& path) {
   return QUrl::fromLocalFile(QFileInfo(path).absoluteFilePath()).toEncoded() + "\r\n";
 }
 
+namespace {
+// The listed format a served picture type is read as; empty for a file
+// reference, whose bytes say what they are.
+QByteArray readerFormat(const QString& servedType) {
+  return servedType.startsWith(u"image/") ? ImageFormats::forMimeType(servedType) : QByteArray();
+}
+} // namespace
+
 bool mayOfferPng(const QString& sourceType) {
   // PNG is itself; an SVG, compressed or not, has no size of its own to draw at.
   if (!sourceType.startsWith(u"image/") || sourceType == u"image/png" ||
@@ -262,9 +271,9 @@ QStringList offeredTypes(const QString& servedType, const QByteArray& bytes, qin
   QBuffer buffer;
   buffer.setData(bytes);
   buffer.open(QIODevice::ReadOnly);
-  // Only a JPEG is offered as PNG, so only the JPEG decoder sees it.
-  QImageReader reader(&buffer, "jpeg");
-  reader.setAutoDetectImageFormat(false);
+  // Pinned to what the type says, or for a file reference to what the bytes
+  // are, among the formats Omaroll lists: no other plugin sees them.
+  PinnedImageReader reader(&buffer, readerFormat(servedType));
   const ImageBudget::Estimate estimate = ImageBudget::estimate(reader);
   const qint64 pixels = qint64(estimate.stored.width()) * estimate.stored.height();
   const qint64 limit = ImageBudget::decodeLimitBytes();
@@ -277,11 +286,11 @@ QStringList offeredTypes(const QString& servedType, const QByteArray& bytes, qin
   return served << QStringLiteral("image/png");
 }
 
-QByteArray encodePng(const QByteArray& source) {
+QByteArray encodePng(const QByteArray& source, const QString& sourceType) {
   QBuffer input;
   input.setData(source);
-  QImageReader reader(&input, "jpeg");
-  reader.setAutoDetectImageFormat(false);
+  input.open(QIODevice::ReadOnly);
+  PinnedImageReader reader(&input, readerFormat(sourceType));
   reader.setAutoTransform(true);
   const QImage image = reader.read();
   if (image.isNull()) return {};
