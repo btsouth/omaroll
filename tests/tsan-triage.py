@@ -342,6 +342,25 @@ def queued_call_handoff(stacks):
                for receiver, poster in (stacks, stacks[::-1]))
 
 
+def qt_lock_private(stacks):
+    """QReadWriteLock's private part, which Qt allocates the first time two
+    threads contend for the lock and publishes with an atomic exchange inside
+    libQt6Core: a pthread mutex call straight from QBasicReadWriteLock on one
+    side, its allocation straight from libQt6Core on the other."""
+    if len(stacks) != 2:
+        return False
+    for lock, made in (stacks, stacks[::-1]):
+        locking, allocating = frame_functions(lock), frame_functions(made)
+        if len(locking) < 2 or len(allocating) < 2:
+            continue
+        if locking[0][0].startswith("pthread_mutex_") and \
+                locking[1][0].startswith("QBasicReadWriteLock::") and \
+                locking[1][1].startswith("libQt6Core") and \
+                ALLOCATION.match(allocating[0][0]) and allocating[1][1].startswith("libQt6Core"):
+            return True
+    return False
+
+
 def classify(block):
     if FATAL.search(block):
         return "fatal"
@@ -353,7 +372,8 @@ def classify(block):
         return "external"
     if (task_start_handoff(stacks) or pool_bookkeeping(block, stacks, threads)
             or qt_internal(block, stacks) or qt_owned_memory(stacks)
-            or qt_descriptor_reuse(block, stacks) or queued_call_handoff(stacks)):
+            or qt_descriptor_reuse(block, stacks) or queued_call_handoff(stacks)
+            or qt_lock_private(stacks)):
         return "external"
     for frames in stacks:
         function, module = first_frame(frames)
