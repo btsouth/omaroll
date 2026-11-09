@@ -1,5 +1,7 @@
 #pragma once
 
+#include "app/PlaybackHeap.h"
+
 #include <QMediaPlayer>
 #include <QQuickItem>
 #include <QPointer>
@@ -61,6 +63,7 @@ public:
     m_stallTimer.setInterval(kStallCheckMs);
     connect(&m_stallTimer, &QTimer::timeout, this, &VideoPresentation::checkStall);
   }
+  ~VideoPresentation() override { releaseHeap(); }
   Q_INVOKABLE QVideoSink* videoSink() {
     // Share the scene graph's RHI so hardware frames keep texture interop.
     if (m_output) m_input.setRhi(m_output->rhi());
@@ -86,6 +89,7 @@ public:
     m_ready = false;
     m_stallTimer.stop();
     m_input.setSubtitleText({});
+    releaseHeap();
     emit readyChanged();
   }
   // Call after changing the player's audio or subtitle track.
@@ -118,6 +122,11 @@ private:
     // The scene graph can acquire its RHI after the player is attached.
     if (m_output && m_input.rhi() != m_output->rhi()) m_input.setRhi(m_output->rhi());
     if (!m_frameSeen) return; // reset() ran since this frame
+    if (!m_heapHeld) {
+      // Frames are flowing: keep their buffers in the heap (PlaybackHeap.h).
+      PlaybackHeap::hold();
+      m_heapHeld = true;
+    }
     const bool changed = !m_ready || !m_hasFrame;
     m_ready = true;
     m_hasFrame = true;
@@ -169,6 +178,11 @@ private:
     if (!m_player) return;
     m_player->setPosition(m_player->position());
   }
+  void releaseHeap() {
+    if (!m_heapHeld) return;
+    m_heapHeld = false;
+    PlaybackHeap::release();
+  }
   std::atomic_bool m_frameSeen = false;
   std::atomic<qint64> m_frameStart = -1;
   std::atomic<qint64> m_frameEnd = -1;
@@ -183,4 +197,5 @@ private:
   quint64 m_stallFrames = 0;
   bool m_ready = false;
   bool m_hasFrame = false;
+  bool m_heapHeld = false;
 };

@@ -6,6 +6,7 @@
 #include "app/DemoLibrary.h"
 #include "app/HeadlessAudio.h"
 #include "app/OpenRequest.h"
+#include "app/PlaybackHeap.h"
 #include "app/LaunchRequest.h"
 #include "app/MimeDefaults.h"
 #include "app/SingleInstance.h"
@@ -61,10 +62,6 @@
 #include <QTimer>
 
 #include <memory>
-
-#ifdef __GLIBC__
-#include <malloc.h>
-#endif
 
 namespace {
 
@@ -371,12 +368,9 @@ private:
 } // namespace
 
 int main(int argc, char* argv[]) {
-#ifdef __GLIBC__
-  // Decoded pictures are freed straight back to the system. glibc otherwise
-  // raises this threshold after the first large free and keeps later pictures
-  // in its heaps, so browsing a folder only ever grows.
-  mallopt(M_MMAP_THRESHOLD, 4 * 1024 * 1024);
-#endif
+  // Decoded pictures go straight back to the system; playing video keeps its
+  // frame buffers instead (app/PlaybackHeap.h).
+  PlaybackHeap::usePictureDefaults();
   const StartupTrace startup;
   QGuiApplication::setApplicationName(QStringLiteral("Omaroll"));
   QGuiApplication::setApplicationDisplayName(QStringLiteral("Omaroll"));
