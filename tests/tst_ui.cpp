@@ -2621,9 +2621,16 @@ private slots:
     QCOMPARE(fit->property("label").toString(), QStringLiteral("Fit"));
     QCOMPARE(fit->property("shortcut").toString(), QStringLiteral("0"));
     QVERIFY(!fit->property("active").toBool());
+    // A turn fits the picture again, so turn first and zoom after.
+    click(fit);
+    QTRY_COMPARE(detail->property("imageZoom").toDouble(), 1.0);
     click(item("previewRotateRight"));
+    QTRY_COMPARE(detail->property("imageRotation").toInt(), 90);
     click(item("previewFlipVertical"));
     QTRY_VERIFY(detail->property("imageFlipVertical").toBool());
+    click(item("previewZoomIn"));
+    QTRY_COMPARE(detail->property("imageZoom").toDouble(), 1.25);
+    QTRY_COMPARE(fit->property("label").toString(), QStringLiteral("Fit"));
     click(fit);
     QTRY_COMPARE(detail->property("imageZoom").toDouble(), 1.0);
     QCOMPARE(detail->property("imageRotation").toInt(), 0);
