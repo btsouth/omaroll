@@ -34,6 +34,13 @@ FocusScope {
     property string layoutAnchorPath: ""
     property real layoutAnchorOffset: 0
     property bool restoringLayout: false
+    // False until a tile is picked by key, pointer or an open request. Until
+    // then the current tile is simply the first one, so a re-sort, such as
+    // camera dates arriving after the scan, keeps the first tile current
+    // rather than following the one that sorted first a moment ago.
+    property bool currentPicked: false
+    // True while a re-sort happens with the flat grid at its top.
+    property bool layoutAtTop: false
     // Date sorts show a section per day or month, similar pictures one per
     // set. The sections lay out Captures' own rows, so only for that model.
     readonly property var sectionModel: Captures.sectionRows
@@ -275,9 +282,17 @@ FocusScope {
     function pointTo(row) {
         if (row < 0) return
         reviewSets.suppressReveal = true
+        root.pick(row)
+        reviewSets.suppressReveal = false
+    }
+
+    // Makes a tile current on purpose, so it stays current when a re-sort
+    // moves it. Anything that opens, reveals or acts on a tile picks it.
+    function pick(row) {
+        if (row < 0) return
+        root.currentPicked = true
         root.selectedPath = Captures.pathAt(row)
         grid.currentIndex = row
-        reviewSets.suppressReveal = false
     }
 
     function activateTile(path) {
@@ -333,9 +348,13 @@ FocusScope {
 
     function moveCurrent(direction, extending) {
         const before = grid.currentIndex
+        // The flat grid has no days or months to jump between.
+        if (!root.sectioned && direction === "sectionNext") direction = "down"
+        if (!root.sectioned && direction === "sectionPrevious") direction = "up"
         const target = root.sectioned ? reviewSets.targetIndex(before, direction, !extending)
                                       : root.flatTarget(before, direction, !extending)
         if (target < 0) return
+        root.currentPicked = true
         if (extending && Captures.rowOf(anchorPath) < 0) {
             setAnchor(Captures.pathAt(before >= 0 ? before : target))
         }
@@ -362,17 +381,21 @@ FocusScope {
         Captures.commitPendingSearch()
         const current = grid.currentIndex
         const extending = (event.modifiers & Qt.ShiftModifier) !== 0
+        // Ctrl with the arrows jumps to the previous or next day or month.
+        const jumping = (event.modifiers & Qt.ControlModifier) !== 0
         let direction = ""
         switch (event.key) {
         case ShortcutCatalog.libraryKeys.Return:
         case ShortcutCatalog.libraryKeys.Enter:
             if (current >= 0) {
+                root.currentPicked = true
                 root.detailRequested(current)
                 event.accepted = true
             }
             return
         case ShortcutCatalog.libraryKeys.Space:
             if (current >= 0) {
+                root.currentPicked = true
                 root.chosen(current)
                 event.accepted = true
             }
@@ -414,11 +437,11 @@ FocusScope {
             break
         case ShortcutCatalog.libraryKeys.Up:
         case ShortcutCatalog.libraryKeys.K:
-            direction = "up"
+            direction = jumping && event.key === ShortcutCatalog.libraryKeys.Up ? "sectionPrevious" : "up"
             break
         case ShortcutCatalog.libraryKeys.Down:
         case ShortcutCatalog.libraryKeys.J:
-            direction = "down"
+            direction = jumping && event.key === ShortcutCatalog.libraryKeys.Down ? "sectionNext" : "down"
             break
         case ShortcutCatalog.libraryKeys.PageUp:
             direction = "pageUp"
@@ -457,6 +480,13 @@ FocusScope {
 
     function rememberLayout() {
         restoringLayout = true
+        // A view at its top stays there, as a list newest first should.
+        layoutAtTop = !root.sectioned && grid.contentY <= grid.originY + 1
+        if (layoutAtTop) {
+            layoutAnchorPath = ""
+            layoutAnchorOffset = 0
+            return
+        }
         const anchor = grid.indexAt(grid.contentX + 4, grid.contentY + 4)
         layoutAnchorPath = anchor >= 0 ? Captures.pathAt(anchor) : ""
         layoutAnchorOffset = anchor >= 0
@@ -466,11 +496,18 @@ FocusScope {
 
     function restoreLayout() {
         if (!grid.reuseItems) {
+            // The grid is detached for a resize, which restores its own
+            // place. What was remembered meanwhile is the empty grid's top.
+            layoutAtTop = false
+            layoutAnchorPath = ""
             restoringLayout = false
             return
         }
         const selected = Captures.rowOf(selectedPath)
-        if (selected >= 0) {
+        if (!root.currentPicked && grid.count > 0) {
+            grid.currentIndex = 0
+            selectedPath = Captures.pathAt(0)
+        } else if (selected >= 0) {
             grid.currentIndex = selected
         } else if (grid.count > 0) {
             if (grid.currentIndex < 0 || grid.currentIndex >= grid.count) {
@@ -486,7 +523,10 @@ FocusScope {
 
     function restoreLayoutAnchor() {
         const anchor = Captures.rowOf(layoutAnchorPath)
-        if (anchor >= 0) {
+        if (layoutAtTop) {
+            layoutAtTop = false
+            if (!root.sectioned) grid.positionViewAtBeginning()
+        } else if (anchor >= 0) {
             const wanted = Math.floor(anchor / root.columns) * grid.cellHeight
                            + layoutAnchorOffset
             grid.contentY = Math.max(0, Math.min(wanted, grid.contentHeight - grid.height))
@@ -669,7 +709,12 @@ FocusScope {
         }
         onCurrentIndexChanged: {
             if (!root.restoringLayout && grid.reuseItems) {
-                root.selectedPath = currentIndex >= 0 ? Captures.pathAt(currentIndex) : ""
+                const path = currentIndex >= 0 ? Captures.pathAt(currentIndex) : ""
+                // Another file made current on purpose, such as one opened
+                // from outside. Rows arriving above only move the index.
+                if (root.selectedPath !== "" && path !== "" && path !== root.selectedPath)
+                    root.currentPicked = true
+                root.selectedPath = path
             }
         }
         Connections {
@@ -682,6 +727,10 @@ FocusScope {
         delegate: Item {
             id: cell
             readonly property bool thumbnailPresented: card.thumbnailPresented
+            // A tile waiting in the pool keeps its last file, so it must not
+            // be read out. Some Qt versions only cull pooled items.
+            GridView.onPooled: cell.visible = false
+            GridView.onReused: cell.visible = true
 
             required property int index
             required property string path
@@ -742,8 +791,7 @@ FocusScope {
                     Captures.commitPendingSearch()
                     const row = Captures.rowOf(path)
                     if (row < 0) return
-                    root.selectedPath = path
-                    grid.currentIndex = row
+                    root.pointTo(row)
                     root.detailRequested(row)
                 }
                 onContextRequested: function(x, y) {
@@ -751,8 +799,7 @@ FocusScope {
                     Captures.commitPendingSearch()
                     const row = Captures.rowOf(path)
                     if (row < 0) return
-                    root.selectedPath = path
-                    grid.currentIndex = row
+                    root.pointTo(row)
                     root.contextRequested(row, x, y)
                 }
                 onToggleChecked: {

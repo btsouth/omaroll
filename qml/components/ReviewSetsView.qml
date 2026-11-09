@@ -57,6 +57,9 @@ FocusScope {
     property string currentPath: ""
     property real topOffset: 0
     property bool topHeader: false
+    // The view was at its top when the rows moved, so it stays there: the
+    // newest section stays in view when camera dates re-sort the library.
+    property bool keepTop: false
 
     // Exact geometry from the rows: the list's own contentHeight is an
     // estimate while header and tile rows of different heights are unseen.
@@ -160,8 +163,28 @@ FocusScope {
         case "pageDown": return root.vertical(current, 1, root.rowsPerPage())
         case "home": return 0
         case "end": return count - 1
+        case "sectionNext": return root.sectionStep(current, 1)
+        case "sectionPrevious": return root.sectionStep(current, -1)
         }
         return current
+    }
+
+    // The first tile of the next section, or going back, of the current
+    // tile's own section unless it is already there, then of the one before.
+    function sectionStep(current, step) {
+        if (root.sections.rebuildPending()) root.sections.rebuildNow()
+        const all = root.sections.sections()
+        let at = -1
+        for (let i = 0; i < all.length; ++i) {
+            if (current >= all[i].first && current < all[i].first + all[i].count) {
+                at = i
+                break
+            }
+        }
+        if (at < 0) return current
+        if (step > 0) return at + 1 < all.length ? all[at + 1].first : current
+        if (current > all[at].first) return all[at].first
+        return at > 0 ? all[at - 1].first : current
     }
 
     function rowsPerPage() { return Math.max(1, Math.floor(list.height / root.cellHeight)) }
@@ -225,8 +248,10 @@ FocusScope {
     function rememberTop() {
         if (!root.visible || list.contentY <= list.originY + 1) {
             root.topPath = ""
+            root.keepTop = root.visible
             return
         }
+        root.keepTop = false
         const item = list.itemAt(20, list.contentY + 1)
         root.topPath = item ? Captures.pathAt(item.first) : ""
         root.topOffset = item ? list.contentY - item.y : 0
@@ -234,6 +259,12 @@ FocusScope {
     }
 
     function restoreTop() {
+        if (root.keepTop) {
+            root.keepTop = false
+            root.topPath = ""
+            list.positionViewAtBeginning()
+            return
+        }
         if (root.topPath === "") return
         const row = Captures.rowOf(root.topPath)
         root.topPath = ""
@@ -280,6 +311,7 @@ FocusScope {
             if (root.revealPending && root.visible && root.sections.active) {
                 root.revealPending = false
                 root.topPath = ""
+                root.keepTop = false
                 Qt.callLater(root.revealCurrent)
             } else {
                 root.restoreTop()
@@ -365,6 +397,10 @@ FocusScope {
             readonly property bool header: true
             width: list.width
             height: root.headerHeight
+            // A header waiting in the pool is out of the layout but would
+            // still be read out, under whatever sections are showing.
+            ListView.onPooled: rowItem.visible = false
+            ListView.onReused: rowItem.visible = true
 
             function presented() { return true }
 
@@ -374,6 +410,7 @@ FocusScope {
                 anchors.fill: parent
                 anchors.leftMargin: Math.round(root.cellSpacing / 2)
                 anchors.rightMargin: Math.round(root.cellSpacing / 2)
+                Accessible.ignored: !headerRow.visible
                 Accessible.role: Accessible.Heading
                 Accessible.name: rowItem.label + ", " + rowItem.detail
 
@@ -442,6 +479,7 @@ FocusScope {
                         void root.host.sectionCountsRevision
                         return visible ? root.host.sectionCheckState(rowItem.sectionFirst, rowItem.sectionCount) : 0
                     }
+                    Accessible.ignored: !selectControl.visible
                     Accessible.role: Accessible.CheckBox
                     Accessible.name: "Select " + rowItem.label + ", " + rowItem.detail
                     Accessible.description: "Shift+X selects the current tile's section"
@@ -518,6 +556,8 @@ FocusScope {
             readonly property bool header: false
             width: list.width
             height: root.cellHeight
+            ListView.onPooled: rowItem.visible = false
+            ListView.onReused: rowItem.visible = true
 
             function presented() {
                 for (let i = 0; i < rowItem.count; ++i) {

@@ -39,7 +39,7 @@ for context, file, implicit in [('quick', 'ViewerKeys.qml', {'2', '3', '4'}), ('
         ids.update(re.findall(r'ShortcutTable::hint\(QStringLiteral\("library"\), QStringLiteral\("([^"]+)"\)\)', registry))
         table_ids = {r['id'] for r in rows if r['context'] == 'library'}
         assert ids <= table_ids, ids - table_ids
-        grid_ids = {'details', 'primary', 'select', 'left', 'right', 'up', 'down', 'ends', 'section-next', 'section-prev',
+        grid_ids = {'details', 'primary', 'select', 'left', 'right', 'up', 'down', 'ends', 'date-sections', 'section-next', 'section-prev',
                     'pages', 'extend', 'extend-far', 'extend-click', 'toggle-click', 'band', 'select-section'}
         assert table_ids <= ids | grid_ids, table_ids - ids - grid_ids
     else:
