@@ -9623,9 +9623,19 @@ private slots:
       return faults / frames;
     };
 
+    // A frame's pages: about 3,000 with 4 KB pages, fewer with larger ones.
+    const long pageBytes = sysconf(_SC_PAGESIZE);
+    const long framePages = long(format.frameWidth()) * format.frameHeight() * 3 / 2 / pageBytes;
     PlaybackHeap::usePictureDefaults();
     // The control: with the picture settings, each frame is mapped.
-    QVERIFY2(faultsPerFrame(nullptr, 12) > 1000, "the measure no longer sees mapped frames");
+    const long mapped = faultsPerFrame(nullptr, 12);
+    if (mapped <= framePages / 3) {
+      QFile hugePages(QStringLiteral("/sys/kernel/mm/transparent_hugepage/enabled"));
+      const bool huge = hugePages.open(QIODevice::ReadOnly) && hugePages.readAll().contains("[always]");
+      if (huge) QSKIP("Transparent huge pages map a frame in a few faults, so the measure cannot tell");
+      QFAIL(qPrintable(QStringLiteral("the measure no longer sees mapped frames: %1 faults per frame, %2 pages")
+                           .arg(mapped).arg(framePages)));
+    }
 
     QVideoSink output;
     {
@@ -9635,7 +9645,9 @@ private slots:
       for (int burst = 0; burst < 3; ++burst) {
         const long faults = faultsPerFrame(presentation.videoSink(), 30);
         QCoreApplication::processEvents();
-        QVERIFY2(faults < 100, qPrintable(QStringLiteral("%1 faults per frame").arg(faults)));
+        // About a thirtieth of a mapped frame: 100 with 4 KB pages.
+        QVERIFY2(faults < std::max(10L, framePages / 30),
+                 qPrintable(QStringLiteral("%1 faults per frame of %2 pages").arg(faults).arg(framePages)));
         QCOMPARE(PlaybackHeap::holders(), 1);
         QCOMPARE(PlaybackHeap::mmapThreshold(), PlaybackHeap::videoMmapThreshold);
       }
