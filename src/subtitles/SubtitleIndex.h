@@ -26,6 +26,10 @@ public:
   // Refuse absurd files rather than read a mislabelled video as text.
   static constexpr qint64 kMaximumFileBytes = 8 * 1024 * 1024;
 
+#ifdef OMAROLL_FUZZ
+  static void fuzzParse(const QString& path) { (void)parse(path); }
+#endif
+
   explicit SubtitleIndex(QObject* parent = nullptr);
 
   // Sidecar files beside the video, labelled by their language tag when the

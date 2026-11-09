@@ -83,6 +83,7 @@
 #include <QTextStream>
 #include <QVideoSink>
 #include <QVideoFrame>
+#include <QtQuickTest/quicktest.h>
 #include <QtTest>
 
 #include <algorithm>
@@ -418,9 +419,12 @@ private slots:
     m_window->resize(1280, 820);
     m_window->show();
     QVERIFY(QTest::qWaitForWindowExposed(m_window));
-    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowCount() >= 3, 15000);
+    // The first scan must finish before any test picks a row by position:
+    // rows still arriving would reorder under a key press.
+    QVERIFY(QTest::qWaitFor([&] { return !m_captures->scanning() && m_library->rowCount() >= 3; }, 60000));
     // Let the grid lay its tiles out before anything is clicked.
-    QTRY_VERIFY_WITH_TIMEOUT(cardFor(pathAt(1)) != nullptr, 5000);
+    QTRY_VERIFY(cardFor(pathAt(1)) != nullptr);
+    QTRY_VERIFY(item("library")->property("layoutReady").toBool());
     QVERIFY(!m_window->findChild<QMediaPlayer*>(QStringLiteral("videoPlayer")));
     QVERIFY(!m_window->findChild<QObject*>(QStringLiteral("videoOutput")));
   }
@@ -444,9 +448,9 @@ private slots:
     }
     for (int guard = 0; guard < 8 && prop("anySheetOpen").toBool(); ++guard) {
       invoke("dismissTopLayer");
-      QTest::qWait(20);
+      QCoreApplication::processEvents();
     }
-    QVERIFY(!prop("anySheetOpen").toBool());
+    QTRY_VERIFY(!prop("anySheetOpen").toBool());
     m_library->setDuplicatesOnly(false);
     m_library->setSimilarOnly(false);
     QMetaObject::invokeMethod(item("library"), "clearChecked");
@@ -740,7 +744,7 @@ private slots:
                                      Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant())));
     QQuickItem* viewport = item("detailStillViewport");
     QQuickItem* canvas = item("detailImageCanvas");
-    QTest::qWait(50);
+    QTRY_VERIFY(viewport->width() > 0 && viewport->height() > 0 && canvas->width() > 0);
     const QPointF pointer(viewport->width() * 0.6, viewport->height() * 0.6);
     const auto underPointer = [&] {
       return QPointF((viewport->property("contentX").toDouble() + pointer.x() - canvas->x()) / canvas->width(),
@@ -749,11 +753,14 @@ private slots:
     const QPointF before = underPointer();
     const QPointF at = viewport->mapToScene(pointer);
     for (int delta : {120, -120}) {
+      const qreal zoom = detail->property("imageZoom").toDouble();
       QWheelEvent wheel(at, m_window->mapToGlobal(at.toPoint()), QPoint(), QPoint(0, delta),
                         Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
       QCoreApplication::sendEvent(m_window, &wheel);
-      QTest::qWait(30);
-      QVERIFY(QLineF(before, underPointer()).length() < 0.001);
+      // The wheel must zoom, and zooming must keep the pointer's spot fixed.
+      QTRY_VERIFY(delta > 0 ? detail->property("imageZoom").toDouble() > zoom
+                            : detail->property("imageZoom").toDouble() < zoom);
+      QTRY_VERIFY(QLineF(before, underPointer()).length() < 0.001);
     }
   }
 
@@ -820,7 +827,7 @@ private slots:
                                      Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant())));
     QQuickItem* viewport = item("detailStillViewport");
     QQuickItem* canvas = item("detailImageCanvas");
-    QTest::qWait(50);
+    QTRY_VERIFY(viewport->width() > 0 && viewport->height() > 0 && canvas->width() > 0);
     const QPointF pointer(viewport->width() * 0.6, viewport->height() * 0.6);
     const auto underPointer = [&] {
       return QPointF((viewport->property("contentX").toDouble() + pointer.x() - canvas->x()) / canvas->width(),
@@ -965,16 +972,17 @@ private slots:
       m_settings->setScanDownloads(downloads);
       m_window->resize(1280, 820);
     });
-    QTest::qWait(100);
+    waitForLayout(QSize(width, 420));
     QQuickItem* browse = item("libraryBrowseButton");
-    const QRectF browseBounds = browse->mapRectToScene(browse->boundingRect());
-    QVERIFY(browseBounds.right() <= width - 19);
-    if (width >= 700) QCOMPARE(browse->property("toolTip").toString(), album + QStringLiteral("  ▾"));
+    QTRY_VERIFY(browse->mapRectToScene(browse->boundingRect()).right() <= width - 19);
+    if (width >= 700) QTRY_COMPARE(browse->property("toolTip").toString(), album + QStringLiteral("  ▾"));
     QQuickItem* status = item("libraryStatus");
-    const QRectF statusBounds = status->mapRectToScene(status->boundingRect());
-    const QRectF settingsBounds = pill(m_window->contentItem(), QStringLiteral("Settings"))
-        ->mapRectToScene(pill(m_window->contentItem(), QStringLiteral("Settings"))->boundingRect());
-    QVERIFY(statusBounds.right() < settingsBounds.left());
+    const auto clearOfSettings = [&] {
+      QQuickItem* settings = pill(m_window->contentItem(), QStringLiteral("Settings"));
+      return settings && status->mapRectToScene(status->boundingRect()).right()
+                             < settings->mapRectToScene(settings->boundingRect()).left();
+    };
+    QTRY_VERIFY(clearOfSettings());
   }
 
   void matteControlsKeepTheSheetOpen() {
@@ -1372,7 +1380,34 @@ private slots:
       if (size.width() < 720) {
         QTRY_VERIFY(!controls->property("wide").toBool());
       }
-      QTest::qWait(50);
+      waitForLayout(size);
+      // Rows can still be easing into place after the layout pass. Wait for a
+      // layout with no overlaps, then check it in detail for the message.
+      const auto overlaps = [&] {
+        QList<QQuickItem*> found;
+        find(controls, [&found](QQuickItem* candidate) {
+          if ((candidate->property("floating").isValid() ||
+               candidate->objectName() == QStringLiteral("correctionResult") ||
+               candidate->objectName() == QStringLiteral("straightenSlider") ||
+               candidate->objectName().startsWith(QStringLiteral("correctionWidth")) ||
+               candidate->objectName().startsWith(QStringLiteral("correctionHeight"))) &&
+              candidate->isVisible() && candidate->width() > 0) found.append(candidate);
+          return false;
+        });
+        const QRectF panel = controls->parentItem()->mapRectToScene(
+            QRectF(0, 0, controls->parentItem()->width(), controls->parentItem()->height()));
+        for (qsizetype i = 0; i < found.size(); ++i) {
+          const QRectF a = found[i]->mapRectToScene(QRectF(0, 0, found[i]->width(), found[i]->height()));
+          if (!panel.contains(a)) return true;
+          for (qsizetype j = i + 1; j < found.size(); ++j) {
+            const QRectF overlap = a.intersected(
+                found[j]->mapRectToScene(QRectF(0, 0, found[j]->width(), found[j]->height())));
+            if (overlap.width() >= 1 && overlap.height() >= 1) return true;
+          }
+        }
+        return false;
+      };
+      QTRY_VERIFY(!overlaps());
 
       QList<QQuickItem*> parts;
       find(controls, [&parts](QQuickItem* candidate) {
@@ -2223,6 +2258,8 @@ private slots:
     const QString first = pathAt(0), second = pathAt(1), third = pathAt(2);
     QVERIFY(QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, first)));
     QVERIFY(QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, second)));
+    // The grid may still be recreating delegates after the previous test.
+    QTRY_VERIFY(cardFor(second) != nullptr && grid->property("layoutReady").toBool());
     click(cardFor(second), Qt::RightButton);
     QTRY_VERIFY(menu->property("visible").toBool());
     QVERIFY(!item("detail")->isVisible());
@@ -2250,7 +2287,7 @@ private slots:
     m_window->resize(560, 420);
     const auto cleanup = qScopeGuard([&] { QMetaObject::invokeMethod(menu, "close"); m_window->resize(1280, 820); });
     QTRY_VERIFY(item("selectionActionsButton")->isVisible());
-    QTest::qWait(100);
+    waitForLayout(QSize(560, 420));
     click(item("selectionActionsButton"));
     QTRY_VERIFY(menu->property("visible").toBool());
     const QVariantList entries = menu->property("entries").value<QJSValue>().toVariant().toList();
@@ -2543,11 +2580,12 @@ private slots:
       invoke("dismissTopLayer");
       for (const QString& path : paths) m_settings->removeLibraryFolder(path);
       rescan();
+      // Removing folders schedules its own rescan; wait for that one too.
       const bool removed = QTest::qWaitFor([&] {
-        return std::all_of(paths.cbegin(), paths.cend(), [&](const QString& path) {
+        return !m_captures->scanning() && std::all_of(paths.cbegin(), paths.cend(), [&](const QString& path) {
           return m_captures->rowOf(path + QStringLiteral("/picture.png")) < 0;
         });
-      }, 5000);
+      }, 60000);
       m_window->resize(previous);
       QVERIFY(removed);
     });
@@ -2562,7 +2600,9 @@ private slots:
       QVERIFY(m_settings->addLibraryFolder(QUrl::fromLocalFile(path)));
       paths.append(path);
     }
-    QTRY_VERIFY_WITH_TIMEOUT(m_library->folders().contains(paths.constLast()), 5000);
+    // Each added folder asks for a scan; read the library once they are done.
+    rescan();
+    QTRY_VERIFY(m_library->folders().contains(paths.constLast()));
     m_window->resize(560, 420);
     QObject* browser = m_window->findChild<QObject*>(QStringLiteral("libraryBrowser"));
     QVERIFY(QMetaObject::invokeMethod(browser, "open"));
@@ -2682,7 +2722,7 @@ private slots:
     // CaptureGrid coalesces cell-width changes for 80 ms before rebuilding
     // delegate positions. Finish that relayout in this scenario so it cannot
     // detach the model while the next scenario is sending selection keys.
-    QTest::qWait(120);
+    QTRY_VERIFY(!m_window->findChild<QObject*>(QStringLiteral("gridRelayoutTimer"))->property("running").toBool());
     QTRY_VERIFY(item("library")->property("layoutReady").toBool());
   }
 
@@ -2837,6 +2877,13 @@ private slots:
     QCOMPARE(m_library->emptyReason(), QStringLiteral("search"));
     QTRY_COMPARE(title(), QStringLiteral("Nothing matches \u201czzz_no_matching_photo_zz\u201d in this folder"));
     QVERIFY(!title().contains(QStringLiteral("No media")));
+    // Behind a sheet the actions are off, so a sheet button over one cannot
+    // press it too (Restore last good backup sat over Set as default viewer).
+    QVERIFY(QMetaObject::invokeMethod(item("settingsSheet"), "open"));
+    QTRY_VERIFY(named(QStringLiteral("emptyAction_clear-search")) &&
+                !named(QStringLiteral("emptyAction_clear-search"))->isEnabled());
+    invoke("dismissTopLayer");
+    QTRY_VERIFY(named(QStringLiteral("emptyAction_clear-search"))->isEnabled());
     QVERIFY(clickAction(QStringLiteral("emptyAction_clear-search")));
     QTRY_VERIFY(m_library->searchText().isEmpty());
     QTRY_VERIFY(m_library->count() > 0);
@@ -3228,7 +3275,7 @@ private slots:
     QTRY_VERIFY(pill(m_window->contentItem(), QStringLiteral("Duplicates  ▾")) != nullptr);
     // CaptureGrid coalesces width changes for 80 ms. Finish that rebuild here
     // so its saved selection cannot land in the following scenario.
-    QTest::qWait(120);
+    QTRY_VERIFY(!m_window->findChild<QObject*>(QStringLiteral("gridRelayoutTimer"))->property("running").toBool());
     QTRY_VERIFY(item("library")->property("layoutReady").toBool());
   }
 
@@ -3419,7 +3466,6 @@ private slots:
     // Return and Space activate the focused row rather than the viewer's
     // default action. The first still action opens the matte sheet.
     openDetail(0);
-    QTest::qWait(30);
     QTRY_VERIFY(activeViewerAction() != nullptr);
     QCOMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_copy"));
     QMetaObject::invokeMethod(detail, "focusPreview");
@@ -3942,6 +3988,9 @@ private slots:
       rescan();
     });
     m_captures->addExtraFiles({first, second, child});
+    // The viewer opens once the scan has listed the file.
+    waitForScan();
+    QVERIFY(m_captures->rowOf(first) >= 0);
     QVERIFY(QMetaObject::invokeMethod(m_window, "openPath", Q_ARG(QVariant, first)));
     QQuickItem* detail = item("detail");
     QTRY_VERIFY(detail->isVisible());
@@ -4168,7 +4217,8 @@ private slots:
     QCOMPARE(layer->property("page").toInt(), 1);
 
     QTRY_COMPARE_WITH_TIMEOUT(firstPage->property("status").toInt(), 1, 10000);
-    QTest::qWait(200);
+    QTRY_VERIFY(firstPage->property("implicitWidth").toDouble() > 0 &&
+                firstPage->height() > firstPage->width() * 1.2);
     // The page cell follows the loaded page, not the requested size: a
     // regression here collapses the continuous view to a sliver per page.
     QVERIFY2(firstPage->height() > firstPage->width() * 1.2,
@@ -4264,8 +4314,7 @@ private slots:
 
     // Escape leaves selection mode and closes nothing.
     QTest::keyClick(m_window, Qt::Key_Escape);
-    QTest::qWait(60);
-    QCOMPARE(detail->property("pdfSelectMode").toBool(), false);
+    QTRY_COMPARE(detail->property("pdfSelectMode").toBool(), false);
     QVERIFY(detail->isVisible());
     QVERIFY(!m_pdfInfo->hasSelection());
 
@@ -4354,7 +4403,7 @@ private slots:
     // the search row narrows and drops the pill Ctrl+C stands in for, the page
     // row shortens its labels and drops what needs the most room.
     m_window->resize(560, 420);
-    QTest::qWait(150);
+    waitForLayout(QSize(560, 420));
     qInfo() << "document chrome at" << m_window->size()
             << "search row" << item("pdfSearchRow")->property("implicitWidth").toReal()
             << "page row" << item("pdfPageRow")->property("implicitWidth").toReal()
@@ -4398,7 +4447,7 @@ private slots:
     QQuickItem* albumPill = pill(m_window->contentItem(), QStringLiteral("Organize"));
     QVERIFY(albumPill);
     QTRY_VERIFY(centre(albumPill).x() > 0 && centre(albumPill).x() < m_window->width());
-    QTest::qWait(120);
+    waitForLayout();
     albumPill = pill(m_window->contentItem(), QStringLiteral("Organize"));
     QVERIFY(albumPill);
     QTRY_VERIFY(centre(albumPill).x() > 0 && centre(albumPill).x() < m_window->width());
@@ -4429,7 +4478,7 @@ private slots:
     QTRY_COMPARE(item("library")->property("checkedCount").toInt(), 1);
     QQuickItem* organize = pill(m_window->contentItem(), QStringLiteral("Organize"));
     QVERIFY(organize);
-    QTest::qWait(120);
+    waitForLayout();
     organize = pill(m_window->contentItem(), QStringLiteral("Organize"));
     click(organize);
     QObject* menu = m_window->findChild<QObject*>(QStringLiteral("albumActionMenu"));
@@ -5035,15 +5084,16 @@ private slots:
         QQuickItem* scroller = item("editorChooserScroll");
         // A resize updates popup geometry on the next polish pass. Scroll
         // using the settled viewport instead of the previous window's height.
-        QTest::qWait(150);
+        waitForLayout(size);
         scroller->setProperty("contentY", qMax(0.0, scroller->property("contentHeight").toDouble()
                                                    - scroller->height()));
         QQuickItem* button = item(buttonName);
-        QTRY_VERIFY(button->mapRectToItem(scroller, button->boundingRect()).bottom()
-                    <= scroller->height() + 1);
-        const QRectF rect = button->mapRectToItem(scroller, button->boundingRect());
-        QVERIFY2(rect.left() >= 0 && rect.right() <= scroller->width() + 1,
-                 qPrintable(QStringLiteral("%1 lies outside the chooser").arg(buttonName)));
+        const auto inside = [&] {
+          const QRectF rect = button->mapRectToItem(scroller, button->boundingRect());
+          return rect.bottom() <= scroller->height() + 1 && rect.left() >= 0 &&
+                 rect.right() <= scroller->width() + 1;
+        };
+        QTRY_VERIFY2(inside(), qPrintable(QStringLiteral("%1 lies outside the chooser").arg(buttonName)));
         click(button);
         QTRY_VERIFY(!chooser->property("visible").toBool());
       }
@@ -5488,13 +5538,13 @@ private slots:
     QVERIFY(QFile::remove(path));
     QVERIFY(QFile::copy(video, path));
     rescan();
-    QTRY_VERIFY_WITH_TIMEOUT(detail->property("isVideo").toBool(), 5000);
+    QTRY_VERIFY(detail->property("isVideo").toBool());
     QVERIFY(detail->isVisible());
     QCOMPARE(detail->property("path").toString(), path);
     QVERIFY(QFile::remove(path));
     QVERIFY(QFile::copy(still, path));
     rescan();
-    QTRY_VERIFY_WITH_TIMEOUT(!detail->property("isVideo").toBool(), 5000);
+    QTRY_VERIFY(!detail->property("isVideo").toBool());
     QTRY_VERIFY(detail->property("imageReady").toBool());
     QVERIFY(detail->isVisible());
   }
@@ -5517,7 +5567,12 @@ private slots:
     QVERIFY(player);
     QTRY_VERIFY(item("detail")->property("resumeAvailable").toBool());
     QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
-    QTest::qWait(200);
+    // Offering to resume must not start playback, not even for a moment.
+    QSignalSpy resumeStates(player, &QMediaPlayer::playbackStateChanged);
+    QTRY_VERIFY(player->mediaStatus() == QMediaPlayer::LoadedMedia ||
+                player->mediaStatus() == QMediaPlayer::BufferedMedia);
+    QTest::qWait(200); // Checks that nothing starts, so there is no event to wait for.
+    QVERIFY(!playedDuring(resumeStates));
     QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
     auto* mpris = qobject_cast<MprisService*>(
         m_engine->rootContext()->contextProperty(QStringLiteral("Mpris")).value<QObject*>());
@@ -5658,10 +5713,16 @@ private slots:
     QTRY_VERIFY(qAbs(player->position() - 5000) < 100);
     QTest::keyClick(m_window, Qt::Key_J);
     QTRY_COMPARE(player->position(), 0);
+    // Restoring the window must not resume a clip the user had paused.
+    QSignalSpy restoreStates(player, &QMediaPlayer::playbackStateChanged);
     m_window->showMinimized();
-    QTest::qWait(100);
+    QTRY_COMPARE(m_window->visibility(), QWindow::Minimized);
     m_window->showNormal();
-    QTest::qWait(200);
+    QTRY_VERIFY(m_window->visibility() != QWindow::Minimized);
+    QTRY_VERIFY(player->mediaStatus() == QMediaPlayer::LoadedMedia ||
+                player->mediaStatus() == QMediaPlayer::BufferedMedia);
+    QTest::qWait(200); // Checks that nothing starts, so there is no event to wait for.
+    QVERIFY(!playedDuring(restoreStates));
     QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
     QTest::keyClick(m_window, Qt::Key_Space);
     QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
@@ -5681,14 +5742,19 @@ private slots:
     QTRY_VERIFY(player->position() > 0 && player->position() < 3000);
     // Basic controls must remain within the narrow window.
     m_window->resize(560, 420);
-    QTest::qWait(100);
+    waitForLayout(QSize(560, 420));
     for (const QString& name : {QStringLiteral("videoPlayButton"),
                                 QStringLiteral("videoSoundButton"),
                                 QStringLiteral("playbackSpeedButton")}) {
       QQuickItem* control = item(name);
       QVERIFY(control->isVisible());
-      const QRectF bounds = control->mapRectToScene(control->boundingRect());
-      QVERIFY2(bounds.left() >= 0 && bounds.right() <= m_window->width(), qPrintable(name));
+      // The transport row eases into its narrow arrangement after the layout
+      // pass, so wait for the control to come to rest inside the window.
+      const auto inside = [&] {
+        const QRectF bounds = control->mapRectToScene(control->boundingRect());
+        return bounds.left() >= 0 && bounds.right() <= m_window->width();
+      };
+      QTRY_VERIFY2(inside(), qPrintable(name));
     }
     // The inspector leaves much less room than the closed preview. Seeking
     // must still have a useful target rather than a negative-width hit area.
@@ -5790,7 +5856,7 @@ private slots:
         });
       }, 15000);
       m_window->resize(1280, 820);
-      QTest::qWait(400);
+      waitForLayout(QSize(1280, 820));
       QVERIFY(removed);
     });
 
@@ -6084,7 +6150,7 @@ private slots:
       invoke("dismissTopLayer");
       m_settings->setTileWidth(tileWidth);
       m_window->resize(1280, 820);
-      QTest::qWait(300);
+      waitForLayout(QSize(1280, 820));
     });
     m_window->resize(1005, 545);
     m_settings->setTileWidth(440);
@@ -6238,12 +6304,39 @@ private:
                               Q_ARG(QVariant, QVariant()));
   }
 
+  // Waits until a resize has reached the window and the items it moved have
+  // been laid out again, rather than sleeping through a guessed polish pass.
+  // It does not cover timers or animations that move items afterwards, so a
+  // geometry check that follows it uses QTRY.
+  void waitForLayout(const QSize& size = QSize()) {
+    if (size.isValid()) QTRY_COMPARE(m_window->size(), size);
+    QVERIFY(QQuickTest::qWaitForPolish(m_window));
+  }
+
   // Rescans the library and waits for that scan to finish, however slow the
   // machine (an emulated aarch64 runner or a sanitizer build), so the checks
   // that follow see its result instead of racing it.
+  // A refresh during a scan is folded into a follow-up that starts after a
+  // debounce, so the scan in flight can finish before the files changed here
+  // are read. Wait that scan out first, then scan afresh.
+  // A refresh scheduled by the file watcher waits out its debounce first, and
+  // that pending one is folded into this scan.
   void rescan() {
-    m_captures->refresh();
     QVERIFY(QTest::qWaitFor([&] { return !m_captures->scanning(); }, 60000));
+    m_captures->refresh();
+    QVERIFY(m_captures->scanning());
+    waitForScan();
+  }
+
+  // Waits until no scan is running or waiting on its debounce.
+  void waitForScan() {
+    QVERIFY(QTest::qWaitFor([&] { return !m_captures->scanning() && !m_captures->refreshPending(); }, 60000));
+  }
+
+  static bool playedDuring(const QSignalSpy& states) {
+    return std::any_of(states.cbegin(), states.cend(), [](const QList<QVariant>& change) {
+      return change.at(0).value<QMediaPlayer::PlaybackState>() == QMediaPlayer::PlayingState;
+    });
   }
 
   void openDetail(int row) {
@@ -6402,7 +6495,11 @@ private:
   }
 
   void pinchAt(const QPoint& at) {
-    auto* device = QTest::createTouchDevice();
+    static auto* device = [] {
+      auto* touch = QTest::createTouchDevice();
+      touch->setParent(qApp); // The test owns this synthetic device.
+      return touch;
+    }();
     QTest::touchEvent(m_window, device).press(0, at - QPoint(40, 0), m_window)
                                       .press(1, at + QPoint(40, 0), m_window);
     QTest::qWait(30);

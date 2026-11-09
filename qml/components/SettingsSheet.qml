@@ -21,6 +21,11 @@ Item {
     // Set once a backup file has been chosen; the restore runs only after the
     // user confirms, since it replaces the current organization.
     property string pendingRestorePath: ""
+    // Asked before the last good backup replaces a damaged file's organization.
+    property bool confirmingBackupRestore: false
+    // The result, shown where the restore button was.
+    property string backupRestoreMessage: ""
+    property bool backupRestoreOk: false
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
@@ -73,6 +78,8 @@ Item {
         organizationMessage = ""
         organizationOk = false
         pendingRestorePath = ""
+        confirmingBackupRestore = false
+        backupRestoreMessage = ""
         defaultsMessage = ""
         MimeDefaults.refresh()
         visible = true
@@ -322,6 +329,72 @@ Item {
                 font.family: Theme.fontFamily
                 font.pixelSize: 12
                 color: Theme.red
+            }
+
+            Row {
+                width: parent.width
+                spacing: 12
+                visible: Settings.canRestoreOrganization
+
+                Text {
+                    width: parent.width - (root.confirmingBackupRestore
+                                           ? restoreBackupConfirm.width + restoreBackupCancel.width + 24
+                                           : restoreBackupButton.width + 12)
+                    anchors.verticalCenter: parent.verticalCenter
+                    wrapMode: Text.WordWrap
+                    text: root.confirmingBackupRestore
+                          ? "This replaces the albums, tags and marks still readable here. They are kept in a backup first."
+                          : "Omaroll keeps a daily backup of your organization."
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 10
+                    color: root.confirmingBackupRestore ? Theme.red : Theme.mutedText
+                }
+                PillButton {
+                    id: restoreBackupButton
+                    objectName: "restoreBackupButton"
+                    visible: !root.confirmingBackupRestore
+                    anchors.verticalCenter: parent.verticalCenter
+                    label: "Restore last good backup"
+                    onClicked: root.confirmingBackupRestore = true
+                }
+                PillButton {
+                    id: restoreBackupConfirm
+                    objectName: "restoreBackupConfirm"
+                    visible: root.confirmingBackupRestore
+                    anchors.verticalCenter: parent.verticalCenter
+                    active: true
+                    label: "Restore backup"
+                    onClicked: {
+                        root.confirmingBackupRestore = false
+                        const result = Settings.restoreLastGoodBackup()
+                        root.backupRestoreOk = result.ok
+                        root.backupRestoreMessage = result.message
+                        if (result.ok) {
+                            Captures.setAlbumFilter("", [])
+                            Captures.setTagFilter("", [])
+                            Captures.clearSmartCollection()
+                        }
+                    }
+                }
+                PillButton {
+                    id: restoreBackupCancel
+                    objectName: "restoreBackupCancel"
+                    visible: root.confirmingBackupRestore
+                    anchors.verticalCenter: parent.verticalCenter
+                    label: "Cancel"
+                    onClicked: root.confirmingBackupRestore = false
+                }
+            }
+
+            Text {
+                objectName: "backupRestoreMessage"
+                width: parent.width
+                visible: root.backupRestoreMessage !== ""
+                text: root.backupRestoreMessage
+                wrapMode: Text.WordWrap
+                font.family: Theme.fontFamily
+                font.pixelSize: 10
+                color: root.backupRestoreOk ? Theme.mutedText : Theme.red
             }
 
             Column {

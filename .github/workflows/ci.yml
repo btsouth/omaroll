@@ -89,7 +89,7 @@ jobs:
         run: >-
           pacman -Syyuu ${{ matrix.pacman_flags }} --noconfirm --needed
           appstream base-devel ccache cmake desktop-file-utils ffmpeg ffmpegthumbnailer
-          git imagemagick kimageformats libavif libheif libraw ninja pkgconf poppler python qt6-base
+          git imagemagick imath openexr kimageformats libavif libheif libraw ninja pkgconf poppler python qt6-base
           qt6-declarative qt6-imageformats qt6-multimedia qt6-svg qt6-wayland
           wl-clipboard xdg-desktop-portal xdg-utils mesa xorg-server-xvfb xorg-xauth
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -192,7 +192,7 @@ jobs:
         run: >-
           pacman -Syyuu --noconfirm --needed
           appstream base-devel ccache cmake desktop-file-utils ffmpeg ffmpegthumbnailer
-          git imagemagick kimageformats libavif libheif libraw ninja pkgconf poppler python qt6-base
+          git imagemagick imath openexr kimageformats libavif libheif libraw ninja pkgconf poppler python qt6-base
           qt6-declarative qt6-imageformats qt6-multimedia qt6-svg qt6-wayland
           wl-clipboard xdg-desktop-portal xdg-utils mesa xorg-server-xvfb xorg-xauth
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -226,5 +226,42 @@ jobs:
         with:
           name: tests-sanitizers
           path: '**/test-results.xml'
+          if-no-files-found: ignore
+          retention-days: 7
+
+  parser-and-race-checks:
+    name: ${{ matrix.mode }}
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      # TSan reserves a shadow address space and may re-exec with ASLR off.
+      # Docker's default seccomp profile denies the required personality call.
+      options: ${{ matrix.mode == 'tsan' && '--security-opt seccomp=unconfined' || '' }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [fuzz, tsan, coverage]
+    steps:
+      - name: Install dependencies
+        run: >-
+          pacman -Syu --noconfirm --needed base-devel clang llvm compiler-rt cmake ninja
+          ffmpeg ffmpegthumbnailer git imagemagick kimageformats libavif libheif libraw
+          imath openexr poppler python qt6-base qt6-declarative qt6-imageformats qt6-multimedia
+          qt6-svg qt6-wayland xdg-utils mesa
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Run instrumented checks
+        run: bash tests/run-instrumented.sh ${{ matrix.mode }}
+      - name: Save evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ matrix.mode }}-results
+          path: |
+            build/fuzz/fuzz-results
+            build/tsan/tsan-tests.txt
+            build/tsan/tsan-report.*
+            build/coverage/html
+            build/coverage/summary.txt
           if-no-files-found: ignore
           retention-days: 7

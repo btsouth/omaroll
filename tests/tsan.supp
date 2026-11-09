@@ -1,0 +1,5 @@
+# ThreadSanitizer suppressions for the threaded core tests that
+# tests/run-instrumented.sh selects. Reports from Qt's own handoffs are sorted
+# out by tests/tsan-triage.py, which names each one. Add an entry here only for
+# a report that reaches our code but whose ordering TSan cannot see, anchored
+# to the frame that shows it, with the reason.

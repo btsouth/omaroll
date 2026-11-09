@@ -71,12 +71,14 @@
 
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <functional>
 #include <array>
 #include <atomic>
 #include <bit>
@@ -396,6 +398,12 @@ private slots:
   // them at a scratch tree so a test run cannot touch a real library's marks.
   void initTestCase() {
     QVERIFY(m_scratch.isValid());
+#if defined(__SANITIZE_THREAD__) || (defined(__has_feature) && __has_feature(thread_sanitizer))
+    // TSan's thread registry aborts (a CHECK in ThreadRegistry::CreateThread)
+    // when the global pool retires a thread and a new one reuses its id. Keep
+    // pool threads alive under TSan; the work they run is unchanged.
+    QThreadPool::globalInstance()->setExpiryTimeout(-1);
+#endif
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        m_scratch.filePath(QStringLiteral("config")));
     QVERIFY(qputenv("XDG_CACHE_HOME", m_scratch.filePath(QStringLiteral("cache")).toUtf8()));
@@ -1231,7 +1239,9 @@ private slots:
       const int next = (i + 1) % paths.size();
       QCOMPARE(viewer.neighbourIsVideo(1), next >= 4);
       QCOMPARE(viewer.neighbourIsAnimated(1), next == 2 || next == 3);
-      QTRY_VERIFY_WITH_TIMEOUT(model.rowOf(paths.at(i)) >= 0, 5000);
+      // Wait for the scan to finish rather than guessing how long a sanitizer
+      // build takes to read these files.
+      QVERIFY(QTest::qWaitFor([&] { return !model.scanning() && model.rowOf(paths.at(i)) >= 0; }, 60000));
       const auto& record = model.recordAt(model.rowOf(paths.at(i)));
       QCOMPARE(record.fileName, QFileInfo(paths.at(i)).fileName());
       QCOMPARE(record.isVideo(), video);
@@ -1249,6 +1259,20 @@ private slots:
     // Edited copies keep the detected format rather than falling back to PNG.
     QCOMPARE(ImageEditor::outputPathFor(paths.at(1)), paths.at(1) + QStringLiteral("-edited.jpg"));
     QCOMPARE(ImageEditor::outputPathFor(paths.at(0)), paths.at(0) + QStringLiteral("-edited.png"));
+  }
+
+  void matroskaTrackHeadersCannotEscapeTheirParent() {
+    QTemporaryDir dir;
+    const QString path = dir.filePath("truncated-container");
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    // An EBML header with the matroska DocType, so the sniffer walks into the
+    // segment, followed by the libFuzzer parent-boundary reproducer.
+    const QByteArray bytes = QByteArray::fromHex("1a45dfa38b4282886d6174726f736b61") + QByteArray::fromBase64(
+        "e6OAGFOAZ4sWVK5rIACGrhYa34CEg1SKEhJF36OAGFOAZ4sWVK5rIACGrhYagICEg1SKEhpF36OAGFOAZ4sWVK5rhq6Dg4ODg4ODgzaDg4OBgwODgQ==");
+    QCOMPARE(file.write(bytes), bytes.size());
+    file.close();
+    QVERIFY(CaptureScanner::mediaSuffix(path, true).isEmpty());
   }
 
   // A minimal Matroska header: one track of the given type and codec, in a
@@ -2514,6 +2538,277 @@ private slots:
     QVERIFY(!settings.organizationError().isEmpty());
   }
 
+  void automaticOrganizationSnapshotsRotateAndRecover() {
+    QTemporaryDir dir;
+    const auto oldData = qgetenv("XDG_DATA_HOME");
+    qputenv("XDG_DATA_HOME", dir.filePath("data").toUtf8());
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, dir.filePath("config"));
+    const auto reset = qScopeGuard([&] {
+      qputenv("XDG_DATA_HOME", oldData);
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, m_scratch.filePath("config"));
+    });
+    QString ini, backups;
+    {
+      AppSettings settings;
+      QVERIFY(settings.createAlbum("Remember me"));
+      QSettings stored(QSettings::IniFormat, QSettings::UserScope, "omaroll", "omaroll");
+      ini = stored.fileName();
+      backups = settings.backupDirectory();
+      QDir backupDir(backups);
+      settings.flushBackups();
+      for (const auto& name : backupDir.entryList(QDir::Files)) QVERIFY(backupDir.remove(name));
+      const QDate today = QDate::currentDate();
+      for (int day = 40; day >= 0; --day) QVERIFY(settings.snapshotOrganization(today.addDays(-day)));
+      QCOMPARE(backupDir.entryList({"daily-*.json"}, QDir::Files).size(), 7);
+      QCOMPARE(backupDir.entryList({"weekly-*.json"}, QDir::Files).size(), 4);
+      const QString latest = backupDir.filePath("daily-" + today.toString(Qt::ISODate) + ".json");
+      QFile snapshot(latest);
+      QVERIFY(snapshot.open(QIODevice::ReadOnly));
+      const auto bytes = snapshot.readAll();
+      snapshot.close();
+      QVERIFY(settings.createAlbum("Later change"));
+      QVERIFY(settings.snapshotOrganization());
+      QVERIFY(snapshot.open(QIODevice::ReadOnly));
+      QCOMPARE(snapshot.readAll(), bytes); // Daily snapshot is immutable.
+      snapshot.close();
+      // Snapshots hold file paths, so only the owner can read them.
+      const auto permissions = QFileInfo(latest).permissions();
+      QVERIFY(!(permissions & (QFileDevice::ReadGroup | QFileDevice::ReadOther)));
+      QVERIFY(!(QFileInfo(backups).permissions() & (QFileDevice::ReadOther | QFileDevice::ExeOther)));
+      QVERIFY(settings.importOrganization(latest).value("ok").toBool());
+      QCOMPARE(settings.albumNames(), QStringList{"Remember me"});
+      QCOMPARE(backupDir.entryList({"before-restore-*.json"}, QDir::Files).size(), 1);
+      // Every retained snapshot is readable by the current importer, and the
+      // pre-restore copies stay bounded.
+      for (const QString& name : backupDir.entryList({"daily-*.json", "weekly-*.json"}, QDir::Files)) {
+        const auto result = settings.importOrganization(backupDir.filePath(name));
+        QVERIFY2(result.value("ok").toBool(), qPrintable(name + ": " + result.value("message").toString()));
+      }
+      QCOMPARE(backupDir.entryList({"before-restore-*.json"}, QDir::Files).size(), 4);
+      QCOMPARE(settings.albumNames(), QStringList{"Remember me"});
+    }
+    // Unreadable newest snapshots must fall back without mutating settings.
+    // This week's copy is dated Monday, which can be today.
+    const QDate today = QDate::currentDate();
+    for (const QString& name : {"daily-" + today.toString(Qt::ISODate) + ".json",
+                                "weekly-" + today.addDays(1 - today.dayOfWeek()).toString(Qt::ISODate) + ".json"}) {
+      QFile broken(QDir(backups).filePath(name));
+      QVERIFY(broken.open(QIODevice::WriteOnly));
+      QVERIFY(broken.write("{broken") > 0);
+    }
+    QFile damaged(ini);
+    QVERIFY(damaged.open(QIODevice::WriteOnly));
+    const QByteArray bad("[library]\nsortMode=3\n[truncated\n");
+    QCOMPARE(damaged.write(bad), bad.size());
+    damaged.close();
+    {
+      AppSettings settings;
+      QVERIFY(settings.canRestoreOrganization());
+      QVERIFY(!settings.organizationError().isEmpty());
+      QCOMPARE(settings.sortMode(), 3);
+      const auto restored = settings.restoreLastGoodBackup();
+      QVERIFY(restored.value("ok").toBool());
+      // Yesterday's snapshot, since today's could not be read.
+      QCOMPARE(restored.value("backupDate").toDate(), today.addDays(-1));
+      QVERIFY(settings.albumNames().contains("Remember me"));
+      QVERIFY(settings.organizationError().isEmpty());
+      QVERIFY(!settings.canRestoreOrganization());
+      QVERIFY(settings.createTag("After recovery"));
+    }
+    QDir config(QFileInfo(ini).absolutePath());
+    const auto preserved = config.entryList({"*.damaged-*"}, QDir::Files);
+    QCOMPARE(preserved.size(), 1);
+    QFile original(config.filePath(preserved.first()));
+    QVERIFY(original.open(QIODevice::ReadOnly));
+    QCOMPARE(original.readAll(), bad);
+    AppSettings restarted;
+    QVERIFY(restarted.albumNames().contains("Remember me"));
+    QVERIFY(restarted.tagNames().contains("After recovery"));
+    // Preferences that were still readable in the damaged file survive recovery.
+    QCOMPARE(restarted.sortMode(), 3);
+  }
+
+  // A morning snapshot, then a backup the user restores on purpose, then the
+  // settings file is damaged. Recovery brings back the import, not the
+  // morning's state or the before-restore copy of it.
+  void restoringABackupKeepsAnImportTheUserChose() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto reset = scratchProfile(dir);
+    {
+      AppSettings settings;
+      QVERIFY(settings.createAlbum(QStringLiteral("Before import")));
+      QVERIFY(settings.snapshotOrganization());
+      QVERIFY(settings.createAlbum(QStringLiteral("Chosen")));
+      const QString chosen = dir.filePath(QStringLiteral("chosen.json"));
+      QVERIFY(settings.exportOrganization(chosen).value(QStringLiteral("ok")).toBool());
+      settings.deleteAlbum(QStringLiteral("Chosen"));
+      QCOMPARE(settings.albumNames(), QStringList{QStringLiteral("Before import")});
+      QVERIFY(settings.importOrganization(chosen).value(QStringLiteral("ok")).toBool());
+      QVERIFY(settings.albumNames().contains(QStringLiteral("Chosen")));
+    }
+    damage(settingsFile(), "[library]\nsortMode=3\n[truncated\n");
+    AppSettings settings;
+    QVERIFY(settings.canRestoreOrganization());
+    const auto result = settings.restoreLastGoodBackup();
+    QVERIFY2(result.value(QStringLiteral("ok")).toBool(), qPrintable(result.value(QStringLiteral("message")).toString()));
+    QVERIFY(settings.albumNames().contains(QStringLiteral("Chosen")));
+    const QString day = QLocale().toString(QDate::currentDate(), QStringLiteral("d MMMM yyyy"));
+    QVERIFY2(result.value(QStringLiteral("message")).toString().endsWith(QStringLiteral(" from the backup of ") + day),
+             qPrintable(result.value(QStringLiteral("message")).toString()));
+
+    // With no daily or weekly snapshot left, the newest before-restore copy is
+    // the only option, and it is used.
+    QDir backups(settings.backupDirectory());
+    settings.flushBackups();
+    for (const QString& name : backups.entryList({QStringLiteral("daily-*.json"), QStringLiteral("weekly-*.json")}, QDir::Files))
+      QVERIFY(backups.remove(name));
+    QVERIFY(settings.createAlbum(QStringLiteral("Later")));
+    QVERIFY(settings.importOrganization(dir.filePath(QStringLiteral("chosen.json"))).value(QStringLiteral("ok")).toBool());
+    settings.flushBackups();
+    for (const QString& name : backups.entryList({QStringLiteral("daily-*.json"), QStringLiteral("weekly-*.json")}, QDir::Files))
+      QVERIFY(backups.remove(name));
+    QVERIFY(settings.restoreLastGoodBackup().value(QStringLiteral("ok")).toBool());
+    QVERIFY(settings.albumNames().contains(QStringLiteral("Later")));
+  }
+
+  // Snapshots written while the clock ran ahead must not push out today's,
+  // and they are the first to go as real days pass.
+  void organizationSnapshotsFromAClockThatRanAheadAgeOutFirst() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto reset = scratchProfile(dir);
+    AppSettings settings;
+    QVERIFY(settings.createAlbum(QStringLiteral("Kept")));
+    settings.flushBackups();
+    QDir backups(settings.backupDirectory());
+    for (const QString& name : backups.entryList(QDir::Files)) QVERIFY(backups.remove(name));
+    const QDate today = QDate::currentDate();
+    for (int day = 1; day <= 8; ++day) QVERIFY(settings.snapshotOrganization(today.addDays(400 + 7 * day)));
+    QVERIFY(settings.snapshotOrganization(today));
+    const QString daily = QStringLiteral("daily-%1.json").arg(today.toString(Qt::ISODate));
+    const QString weekly = QStringLiteral("weekly-%1.json").arg(today.addDays(1 - today.dayOfWeek()).toString(Qt::ISODate));
+    QVERIFY(backups.exists(daily));
+    QVERIFY(backups.exists(weekly));
+    for (int day = 1; day < 7; ++day) QVERIFY(settings.snapshotOrganization(today.addDays(day)));
+    QStringList expected;
+    for (int day = 0; day < 7; ++day) expected.append(QStringLiteral("daily-%1.json").arg(today.addDays(day).toString(Qt::ISODate)));
+    QCOMPARE(backups.entryList({QStringLiteral("daily-*.json")}, QDir::Files, QDir::Name), expected);
+    QVERIFY(backups.exists(weekly));
+  }
+
+  // The migration drops entries for files that are missing right now, so it
+  // runs only once the settings file it reads has been copied, and the legacy
+  // map stays until then.
+  void resumeMigrationWaitsForACopyOfTheLegacySettings() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto reset = scratchProfile(dir);
+    const QString first = dir.filePath(QStringLiteral("a.mp4"));
+    const QString second = dir.filePath(QStringLiteral("b.mp4"));
+    for (const QString& path : {first, second}) writeSmallFile(path, "video");
+    {
+      QSettings stored(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("omaroll"), QStringLiteral("omaroll"));
+      stored.setValue(QStringLiteral("playback/positions"), QVariantMap{{first, 12000}});
+    }
+    // No backups folder can be made under a regular file.
+    const QString blocked = dir.filePath(QStringLiteral("blocked"));
+    writeSmallFile(blocked, "not a folder");
+    qputenv("XDG_DATA_HOME", blocked.toUtf8());
+    {
+      AppSettings settings;
+      QCOMPARE(settings.videoPosition(first), 0);
+      settings.setVideoPosition(second, 34000);
+    }
+    {
+      QSettings stored(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("omaroll"), QStringLiteral("omaroll"));
+      QVERIFY(stored.contains(QStringLiteral("playback/positions")));
+    }
+    qputenv("XDG_DATA_HOME", dir.filePath(QStringLiteral("data")).toUtf8());
+    {
+      AppSettings settings;
+      QCOMPARE(settings.videoPosition(first), 12000);
+      QCOMPARE(settings.videoPosition(second), 34000);
+      const QDir backups(settings.backupDirectory());
+      QCOMPARE(backups.entryList({QStringLiteral("settings-before-resume-migration-*.ini")}, QDir::Files).size(), 1);
+    }
+    QSettings stored(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("omaroll"), QStringLiteral("omaroll"));
+    QVERIFY(!stored.contains(QStringLiteral("playback/positions")));
+    QCOMPARE(stored.value(QStringLiteral("playback/positionRecencyV2")).toStringList(),
+             QStringList({FileVersion::key(second), FileVersion::key(first)}));
+  }
+
+  // Repairing a damaged file first keeps the organization it still held, and
+  // a disk that fills up mid-repair leaves the damaged file in place.
+  void repairingDamagedSettingsKeepsWhatWasReadableAndSurvivesAFullDisk() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto reset = scratchProfile(dir);
+    const QString ini = settingsFile();
+    // Room for the damaged copy and the before-restore backup of what it
+    // still holds, not for the rebuilt settings file with every album.
+    constexpr rlim_t limit = 4096;
+    {
+      AppSettings settings;
+      for (int i = 0; i < 200; ++i)
+        QVERIFY(settings.createAlbum(QStringLiteral("Album %1 with a name long enough to take room").arg(i)));
+      // Today's snapshot was taken at the first save; take it again with every album.
+      settings.flushBackups();
+      QDir backups(settings.backupDirectory());
+      for (const QString& name : backups.entryList(QDir::Files)) QVERIFY(backups.remove(name));
+      QVERIFY(settings.snapshotOrganization());
+    }
+    QVERIFY(QFileInfo(ini).size() > qint64(limit));
+    const QByteArray bad("[library]\nfavorites=/remember.bmp\n[truncated\n");
+    damage(ini, bad);
+    AppSettings settings;
+    QVERIFY(settings.canRestoreOrganization());
+    QVERIFY(settings.isFavorite(QStringLiteral("/remember.bmp")));
+    QDir backups(settings.backupDirectory());
+    const QStringList before = backups.entryList({QStringLiteral("before-restore-*.json")}, QDir::Files);
+    {
+      const auto oldHandler = signal(SIGXFSZ, SIG_IGN);
+      rlimit old{};
+      QCOMPARE(getrlimit(RLIMIT_FSIZE, &old), 0);
+      rlimit small = old;
+      small.rlim_cur = limit;
+      QCOMPARE(setrlimit(RLIMIT_FSIZE, &small), 0);
+      const auto lift = qScopeGuard([&] {
+        setrlimit(RLIMIT_FSIZE, &old);
+        signal(SIGXFSZ, oldHandler);
+      });
+      const auto result = settings.restoreLastGoodBackup();
+      QVERIFY(!result.value(QStringLiteral("ok")).toBool());
+      QVERIFY(result.value(QStringLiteral("saveFailed")).toBool());
+    }
+    {
+      QFile file(ini);
+      QVERIFY(file.open(QIODevice::ReadOnly));
+      QCOMPARE(file.readAll(), bad);
+    }
+    QVERIFY(settings.canRestoreOrganization());
+    QVERIFY(settings.isFavorite(QStringLiteral("/remember.bmp")));
+    QVERIFY(QDir(QFileInfo(ini).absolutePath()).entryList({QStringLiteral("*.restore-*")}, QDir::Files).isEmpty());
+
+    const auto result = settings.restoreLastGoodBackup();
+    QVERIFY2(result.value(QStringLiteral("ok")).toBool(), qPrintable(result.value(QStringLiteral("message")).toString()));
+    QCOMPARE(settings.albumNames().size(), 200);
+    QVERIFY(!settings.canRestoreOrganization());
+    // The favourite that was still readable went into a before-restore copy.
+    bool kept = false;
+    for (const QString& name : backups.entryList({QStringLiteral("before-restore-*.json")}, QDir::Files)) {
+      if (before.contains(name)) continue;
+      QFile file(backups.filePath(name));
+      QVERIFY(file.open(QIODevice::ReadOnly));
+      kept = kept || file.readAll().contains("/remember.bmp");
+    }
+    QVERIFY(kept);
+    QVERIFY(QDir(QFileInfo(ini).absolutePath()).entryList({QStringLiteral("*.restore-*")}, QDir::Files).isEmpty());
+    AppSettings restarted;
+    QCOMPARE(restarted.albumNames().size(), 200);
+    QVERIFY(restarted.organizationError().isEmpty());
+  }
+
   void damagedSettingsArePreservedWhenOrganizationCannotSave() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -2891,7 +3186,10 @@ private slots:
     QVERIFY(dir.isValid());
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        dir.filePath(QStringLiteral("profile")));
-    const auto restoreProfile = qScopeGuard([this] {
+    const QByteArray oldData = qgetenv("XDG_DATA_HOME");
+    qputenv("XDG_DATA_HOME", dir.filePath(QStringLiteral("data")).toUtf8());
+    const auto restoreProfile = qScopeGuard([this, oldData] {
+      qputenv("XDG_DATA_HOME", oldData);
       QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                          m_scratch.filePath(QStringLiteral("config")));
     });
@@ -2912,6 +3210,14 @@ private slots:
       QCOMPARE(settings.videoPosition(first), 12000);
       QCOMPARE(settings.videoPosition(second), 34000);
       settings.setVideoPosition(second, 45000);
+      // The migration drops entries for missing files, so the settings file
+      // it read was copied first, legacy map included.
+      const QDir backups(settings.backupDirectory());
+      const QStringList copies = backups.entryList(
+          {QStringLiteral("settings-before-resume-migration-*.ini")}, QDir::Files);
+      QCOMPARE(copies.size(), 1);
+      QSettings copy(backups.filePath(copies.first()), QSettings::IniFormat);
+      QCOMPARE(copy.value(QStringLiteral("playback/positions")).toMap().size(), 3);
     }
     stored.sync();
     QVERIFY(!stored.contains(QStringLiteral("playback/positions")));
@@ -4182,7 +4488,9 @@ private slots:
     file.close();
     SubtitleIndex subtitles;
     QCOMPARE(subtitles.cueCount(path), 0); // Loading never waits on parsing.
-    QTRY_COMPARE(subtitles.cueCount(path), 20001);
+    // A sanitizer build takes several seconds over 20,000 cues; wait for the
+    // parsed index rather than guessing how long that takes.
+    QVERIFY(QTest::qWaitFor([&] { return subtitles.cueCount(path) == 20001; }, 60000));
     QCOMPARE(subtitles.textAt(path, 40000000), QStringLiteral("Long overlap\nCue 20000"));
     QCOMPARE(subtitles.textAt(path, 2000), QStringLiteral("Long overlap\nCue 1"));
     QCOMPARE(subtitles.textAt(path, 40000501), QStringLiteral("Long overlap"));
@@ -4248,6 +4556,31 @@ private slots:
     QCOMPARE(subtitles.textAt(vtt, 2500), QString());
   }
 
+  // Fuzzer finding: an hour count near the qint64 limit overflowed while it
+  // was converted to milliseconds (UBSan signed-integer-overflow).
+  void subtitleTimestampsPastTheMillisecondRangeAreSkipped() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString video = dir.filePath(QStringLiteral("clip.mp4"));
+    {
+      QFile file(video);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+    }
+    const QString srt = dir.filePath(QStringLiteral("clip.srt"));
+    {
+      QFile file(srt);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("1\n9223372036854775807:00:00,000 --> 9223372036854775807:00:01,000\nOverflow\n\n"
+                 "2\n00:00:00:2562047788015:00,000 --> 00:00:01,000\nToo many fields\n\n"
+                 "3\n2562047788016:00:00,000 --> 2562047788016:00:01,000\nPast milliseconds\n\n"
+                 "4\n00:00:01,000 --> 00:00:02,000\nKept\n\n");
+    }
+    SubtitleIndex subtitles;
+    QVERIFY(subtitles.files(video).contains(srt));
+    QTRY_COMPARE(subtitles.cueCount(srt), 1);
+    QCOMPARE(subtitles.textAt(srt, 1500), QStringLiteral("Kept"));
+  }
+
   void externalSubtitlesIgnoreUnrelatedSidecars() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -4295,12 +4628,12 @@ private slots:
     QTRY_COMPARE(inspector.pageCount(), 1);
     inspector.find(QStringLiteral("alpha"));
     inspector.find(QStringLiteral("beta")); // reuse in-flight extraction, answer latest query
-    QTRY_COMPARE(inspector.matches(), QVariantList({2}));
+    QTRY_COMPARE(inspector.matches(), QVariantList{QVariant(2)});
     inspector.find(QStringLiteral("alpha"));
-    QTRY_COMPARE(inspector.matches(), QVariantList({1}));
+    QTRY_COMPARE(inspector.matches(), QVariantList{QVariant(1)});
     inspector.clearSearch();
     inspector.find(QStringLiteral("beta"));
-    QTRY_COMPARE(inspector.matches(), QVariantList({2}));
+    QTRY_COMPARE(inspector.matches(), QVariantList{QVariant(2)});
     QFile calls(log);
     QVERIFY(calls.open(QIODevice::ReadOnly));
     QCOMPARE(calls.readAll().count("call"), 1);
@@ -10956,6 +11289,29 @@ private slots:
   }
 
 private:
+  // Points settings and backups at a scratch profile for one test.
+  [[nodiscard]] QScopeGuard<std::function<void()>> scratchProfile(const QTemporaryDir& dir) {
+    const QByteArray oldData = qgetenv("XDG_DATA_HOME");
+    qputenv("XDG_DATA_HOME", dir.filePath(QStringLiteral("data")).toUtf8());
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, dir.filePath(QStringLiteral("config")));
+    return QScopeGuard<std::function<void()>>([this, oldData] {
+      qputenv("XDG_DATA_HOME", oldData);
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                         m_scratch.filePath(QStringLiteral("config")));
+    });
+  }
+
+  static QString settingsFile() {
+    return QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("omaroll"),
+                     QStringLiteral("omaroll")).fileName();
+  }
+
+  static void damage(const QString& ini, const QByteArray& bytes) {
+    QFile file(ini);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    QCOMPARE(file.write(bytes), bytes.size());
+  }
+
   QTemporaryDir m_scratch;
 
   // A page laid out in code, in page points: two lines of two words each.

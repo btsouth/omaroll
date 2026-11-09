@@ -68,6 +68,8 @@ private slots:
     QVERIFY(QDir().mkpath(m_media));
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        m_scratch->filePath(QStringLiteral("config")));
+    // AppSettings writes organization snapshots under the data folder.
+    QVERIFY(qputenv("XDG_DATA_HOME", m_scratch->filePath(QStringLiteral("data")).toUtf8()));
     for (const char* variable : {"OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR",
                                  "XDG_PICTURES_DIR", "XDG_VIDEOS_DIR", "XDG_DOWNLOAD_DIR"}) {
       QVERIFY(qputenv(variable, m_media.toUtf8()));

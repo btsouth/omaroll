@@ -1620,7 +1620,8 @@ ApplicationWindow {
                     required property string modelData
                     required property int index
                     objectName: "emptyAction_" + modelData
-                    enabled: modelData !== "set-default" || !MimeDefaults.busy
+                    // Off behind a sheet: a sheet button over one must not press it too.
+                    enabled: !root.anySheetOpen && (modelData !== "set-default" || !MimeDefaults.busy)
                     active: index === 0
                     label: ({ "clear-search": "Clear search", "clear-filters": "Clear filters",
                               "show-all": "Show the whole library", "add-folder": "Add folder",

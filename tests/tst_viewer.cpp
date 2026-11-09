@@ -185,7 +185,9 @@ private slots:
         // The broken-file tests' pictures fail to decode on purpose.
         if (!warning.toString().contains(QStringLiteral("No thumbnail for "))
             && !warning.toString().contains(QStringLiteral("/broken/a notes.jpg"))
-            && !warning.toString().contains(QStringLiteral("/focus/b notes.jpg"))) {
+            && !warning.toString().contains(QStringLiteral("/focus/b notes.jpg"))
+            // Deleted on purpose while the viewer may still be prefetching it.
+            && !warning.toString().contains(QStringLiteral("/a removed sibling.png"))) {
           m_warnings.append(warning.toString());
         }
       }
@@ -666,7 +668,7 @@ private slots:
     QTRY_VERIFY(!prop("zooming").toBool());
     const qreal scale = prop("viewScale").toReal();
     const int rotation = prop("viewRotation").toInt();
-    const QString sibling = dir.filePath(QStringLiteral("a.png"));
+    const QString sibling = dir.filePath(QStringLiteral("a removed sibling.png"));
     QVERIFY(initial.save(sibling));
     QTRY_COMPARE_WITH_TIMEOUT(m_session->count(), 2, 5000);
     QCOMPARE(m_session->path(), path);
@@ -1136,7 +1138,9 @@ private slots:
     QTest::mouseMove(m_window, QPoint(m_window->width() / 2, m_window->height() * 2 / 3));
     QTRY_VERIFY(!prop("chromeShown").toBool());
     QTRY_VERIFY(!item(QStringLiteral("viewerHeader"))->isVisible());
-    QTest::qWait(100);
+    QSignalSpy rendered(m_window, &QQuickWindow::afterRendering);
+    m_window->update();
+    QTRY_VERIFY(!rendered.isEmpty());
     const QImage frame = m_window->grabWindow();
     QVERIFY(!frame.isNull());
     const qreal scale = frame.devicePixelRatio();
@@ -1164,9 +1168,19 @@ private slots:
     QVERIFY(image.save(path));
     open({path});
     QTRY_VERIFY(prop("imageReady").toBool());
-    QTest::qWait(100);
-    const QImage frame = m_window->grabWindow();
-    QVERIFY(!frame.isNull());
+    QSignalSpy rendered(m_window, &QQuickWindow::afterRendering);
+    m_window->update();
+    QTRY_VERIFY(!rendered.isEmpty());
+    QImage frame;
+    const auto convertedPixelReady = [&] {
+      frame = m_window->grabWindow();
+      if (frame.isNull()) return false;
+      const QColor color = frame.pixelColor(frame.width() / 2, frame.height() / 2);
+      return color.red() < 10 && color.green() > 150 && color.blue() < 25;
+    };
+    // imageReady precedes the image's opacity animation. Observe the pixels
+    // instead of assuming that one submitted frame has completed that fade.
+    QTRY_VERIFY(convertedPixelReady());
     // Chrome left over from earlier tests can dim the frame a little, so
     // check what the conversion changes: the stored red and blue are gone.
     const QColor color = frame.pixelColor(frame.width() / 2, frame.height() / 2);
@@ -3954,8 +3968,7 @@ private slots:
     // A held compositor reply must not block event delivery.
     bool heartbeat = false;
     QTimer::singleShot(5, this, [&] { heartbeat = true; });
-    QTest::qWait(10);
-    QVERIFY(heartbeat);
+    QTRY_VERIFY(heartbeat);
     QVERIFY(!second->isVisible());
     HyprlandPlacement::Plan plan;
     plan.viewers = 1;
@@ -4302,7 +4315,8 @@ private slots:
     QTRY_COMPARE(m_session->path(), bare);
     QTRY_VERIFY(prop("imageReady").toBool());
     QCOMPARE(prop("loadedSize").toSize(), QSize(24, 32));
-    QCOMPARE(prop("sourceWidth").toReal(), 48.0);
+    // As above, the raw's size comes from a probe that can finish after it shows.
+    QTRY_COMPARE(prop("sourceWidth").toReal(), 48.0);
     QTRY_COMPARE(detail->property("status").toInt(), 1);
     m_window->close();
     m_session->clear();

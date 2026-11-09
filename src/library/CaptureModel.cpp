@@ -529,6 +529,9 @@ void CaptureModel::refresh() {
   }
 
   m_scanning = true;
+  // This scan reads the current files, so a debounced refresh still waiting
+  // would only repeat it.
+  m_refreshTimer.stop();
   emit scanningChanged();
 
   const QList<CaptureScanner::Root> scanRoots = roots();

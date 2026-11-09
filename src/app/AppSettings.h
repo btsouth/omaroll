@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QDate>
 #include <QByteArray>
 #include "app/ShortcutTable.h"
 #include <QList>
@@ -12,7 +13,10 @@
 #include <QUrl>
 #include <QVariantMap>
 
+#include <memory>
+
 struct CaptureRecord;
+class BackupWriter;
 
 // Everything omaroll remembers between runs.
 //
@@ -24,6 +28,7 @@ struct CaptureRecord;
 // recovery. Unavailable files keep their organization until the user clears it.
 class AppSettings final : public QObject {
   Q_OBJECT
+  Q_PROPERTY(bool canRestoreOrganization READ canRestoreOrganization NOTIFY organizationErrorChanged)
   Q_PROPERTY(QString organizationError READ organizationError NOTIFY organizationErrorChanged)
   Q_PROPERTY(bool showHidden READ showHidden WRITE setShowHidden NOTIFY showHiddenChanged)
   // How many files carry a rating, so the Browse sheet can leave the rating
@@ -103,6 +108,8 @@ public:
   Q_INVOKABLE QString diagnostics(const QString &theme, qreal scale) const;
   Q_INVOKABLE void copyDiagnostics(const QString &theme, qreal scale) const;
   explicit AppSettings(QObject* parent = nullptr);
+  // Waits for a snapshot still being written.
+  ~AppSettings() override;
 
   [[nodiscard]] QString organizationError() const { return m_organizationError; }
   [[nodiscard]] bool showHidden() const { return m_showHidden; }
@@ -242,6 +249,17 @@ public:
   // state, so a bad file leaves the current profile exactly as it was. Both
   // return {ok, message}.
   static constexpr int kOrganizationVersion = 1;
+  [[nodiscard]] bool canRestoreOrganization() const;
+  // Imports the newest readable daily or weekly snapshot. A before-restore
+  // copy holds a state an import replaced on purpose, so it is used only when
+  // no scheduled snapshot reads. The message names the snapshot's date.
+  Q_INVOKABLE QVariantMap restoreLastGoodBackup();
+  // Writes a snapshot now and waits for it. The app's own snapshots are written
+  // on a worker; this is for tests, and the date is explicit for rotation tests.
+  bool snapshotOrganization(const QDate& date = QDate::currentDate(), bool beforeRestore = false);
+  // Waits for snapshot writes still running on the worker.
+  void flushBackups();
+  [[nodiscard]] QString backupDirectory() const;
   Q_INVOKABLE [[nodiscard]] QVariantMap exportOrganization(const QString& path) const;
   // Restores by replacing the current organization. Callers should confirm
   // first; the original files on disk are untouched either way.
@@ -369,7 +387,41 @@ private:
   [[nodiscard]] static bool relocationAvailable(const AlbumEntry& entry);
   [[nodiscard]] static AlbumEntry identityFor(const QString& path);
 
+  // Implicitly shared copies of the organization, cheap to take.
+  struct OrganizationState {
+    QMap<QString, QList<AlbumEntry>> albums;
+    QMap<QString, QList<AlbumEntry>> tags;
+    QMap<QString, QVariantMap> smartCollections;
+    QSet<QString> favorites;
+    QSet<QString> hidden;
+    QHash<QString, int> ratings;
+    QHash<QString, QString> captions;
+    QHash<QString, AlbumEntry> markIdentities;
+  };
+  [[nodiscard]] OrganizationState organizationState() const;
+  [[nodiscard]] static QByteArray encodeOrganization(const OrganizationState& state);
+  // Today's daily (and this week's weekly) snapshot. Encoded here, written,
+  // rotated and synced to disk on the backup thread. At most once a day
+  // unless `replace`, which rewrites today's after an import.
+  void scheduleDailySnapshot(bool replace = false);
+  // Writes a before-restore copy now. Returns false if it could not be saved.
+  bool saveBeforeRestore(const OrganizationState& state);
+  // Copies the raw settings file before the resume-position migration.
+  bool backupLegacySettings();
+
   QSettings m_settings;
+  // Writes snapshot files on its own thread, one after another.
+  std::unique_ptr<BackupWriter> m_backupWriter;
+  // Set when a damaged file is opened again after a failed repair. QSettings
+  // shares its parsed copy of an unchanged file between instances, so the new
+  // instance would not report the format error itself.
+  bool m_damaged = false;
+  [[nodiscard]] QSettings::Status settingsStatus() const {
+    return m_damaged ? QSettings::FormatError : m_settings.status();
+  }
+  QDate m_snapshotDate;
+  // An import saves organization several times; snapshot only its result.
+  bool m_restoring = false;
   QString m_organizationError;
   bool m_deferOrganizationSync = false;
   QSet<QString> m_favorites;

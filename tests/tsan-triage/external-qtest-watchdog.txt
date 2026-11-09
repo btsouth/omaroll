@@ -1,0 +1,20 @@
+==================
+WARNING: ThreadSanitizer: data race (pid=15)
+  Write of size 8 at 0x7fffffffe440 by main thread:
+    #0 memset <null> (omaroll_tests+0xa0f82)
+    #1 <null> <null> (libQt6Test.so.6+0x19416)
+    #2 <null> <null> (libc.so.6+0x27780)
+
+  Previous atomic read of size 1 at 0x7fffffffe440 by thread T1:
+    #0 pthread_cond_wait <null> (omaroll_tests+0xa7050)
+    #1 std::condition_variable::wait(std::unique_lock<std::mutex>&) <null> (libstdc++.so.6+0xdf970)
+
+  Location is stack of main thread.
+
+  Thread T1 'QtTest Watchdog' (tid=18, finished) created by main thread at:
+    #0 pthread_create <null> (omaroll_tests+0xa634e)
+    #1 QThread::start(QThread::Priority) <null> (libQt6Core.so.6+0x3765f4)
+    #2 <null> <null> (libc.so.6+0x27780)
+
+SUMMARY: ThreadSanitizer: data race (/src/build/tsan/omaroll_tests+0xa0f82) in memset
+==================

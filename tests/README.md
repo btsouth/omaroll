@@ -312,3 +312,107 @@ records continuous input and the scheduling policy that was discarded.
 
 A [recorded development baseline](../docs/performance/2026-09-05/README.md)
 includes raw results and the measurements still outstanding.
+
+## Parser fuzzing, races and coverage
+
+These builds need Clang and LLVM and are opt-in. Run them in a disposable Arch
+container: on devbox, `omaroll-ci-llvm` is `omaroll-ci` plus `clang llvm
+compiler-rt` (`/workspace/cache/omaroll-ci/Dockerfile.llvm`). TSan needs
+`--security-opt seccomp=unconfined` so it can turn off ASLR for its shadow
+memory.
+
+```sh
+bash tests/run-instrumented.sh fuzz 60   # each fuzzer for 60 seconds
+bash tests/run-instrumented.sh tsan      # threaded core tests under ThreadSanitizer
+bash tests/run-instrumented.sh coverage  # all suites, then llvm-cov
+```
+
+### Fuzzing
+
+`-DOMAROLL_FUZZ=ON` (Clang only) builds one libFuzzer harness per parser we
+wrote, from `tests/fuzz/driver.cpp`, with ASan and UBSan:
+
+| Harness | Parser |
+| --- | --- |
+| `fuzz_launch` | `LaunchRequest::parseStart` |
+| `fuzz_ipc` | single-instance JSON frame (`SingleInstance::parseFrame`) |
+| `fuzz_matroska` | EBML `readVint` and `hasMatroskaVideoTrack` |
+| `fuzz_pdf` | `pdftotext -bbox` output (`PdfSupport::parsePageWords`) |
+| `fuzz_image` | image headers and `ImageBudget` arithmetic |
+| `fuzz_raw` | `CameraRaw::readMetadata` (TIFF, ISO BMFF, Fujifilm) |
+| `fuzz_subtitles` | sidecar SRT and WebVTT parsing |
+| `fuzz_organization` | organization backup import, in a throwaway profile |
+
+`tests/fuzz/run.sh <build> <seconds>` runs each one from its seeds in
+`tests/fuzz/corpus/<harness>`, with a 10 second per-input timeout, a 2 GiB
+memory limit and 64 KiB inputs. New corpus entries, logs and crash files go to
+`<build>/fuzz-results`, never the checked-in seeds. Reproduce a crash with
+`build/fuzz/fuzz_<harness> <crash-file>`, add a regression test to the core
+suite, then fix it; check a minimised reproducer into the corpus too.
+
+Findings so far, each with a test in `tst_omaroll.cpp`: a Matroska element
+header could extend past its parent
+(`matroskaTrackHeadersCannotEscapeTheirParent`), and an SRT hour count near
+the 64-bit limit overflowed while converted to milliseconds
+(`subtitleTimestampsPastTheMillisecondRangeAreSkipped`).
+
+### Races, leaks and coverage
+
+Arch's Qt is not built with TSan, and Qt's mutexes and thread joins run on
+futexes inside libQt6Core, where TSan cannot see them. A run of the whole core
+suite reports dozens of Qt-internal handoffs and can abort in TSan's thread
+registry when a thread id is reused, so the TSan job runs only the core tests
+whose threading is ours: the single-instance handshake, the clipboard
+fallback's `std::mutex` handoff, sidecar subtitle parsing and organization
+snapshots written on a worker. Add a test to the pattern in
+`tests/run-instrumented.sh` when it covers new threaded code.
+
+`tests/tsan-triage.py` fails on every report except the Qt handoffs it lists
+by name, each with the reason; it does not trust a report just because its
+first frames are in Qt, since Qt has no frame pointers and the caller's frame
+is often missing. A TSan abort fails the job, and so does a selected test that
+did not run. `tests/tsan-triage/` holds real reports for its self-test
+(`python3 tests/tsan-triage.py --self-test`, also a ctest test), including a
+race on a `QString` that two threads append to. `tests/tsan.supp` is empty of
+race suppressions. LeakSanitizer stays on in every suite; `tests/lsan.supp` lists
+only external process-lifetime allocations (the NVIDIA GL driver, FFmpeg's
+decoder setup). The coverage build uses `-fprofile-instr-generate
+-fcoverage-mapping`, prints an `llvm-cov report` summary to
+`build/coverage/summary.txt` and writes HTML to `build/coverage/html`. There is
+no coverage threshold yet.
+
+### CI
+
+Pull requests run all eight fuzzers for 60 seconds each, the TSan core suite
+and the coverage build, which uploads its HTML report. The nightly workflow
+runs the UI and viewer suites with `ctest --repeat until-fail:5` on Omarchy
+stable, current Arch and aarch64.
+
+The UI and viewer suites wait on states and signals (scan finished, layout
+polished, media loaded, a frame rendered) rather than fixed sleeps. Timed waits
+remain only where the test checks that nothing happens for a while (a
+slideshow that must not advance, a debounce that must not fire) or paces
+synthetic input, such as drags and double-clicks.
+
+### Organization backups
+
+Snapshots use the same versioned JSON as Export organization and live in
+`$XDG_DATA_HOME/omaroll/backups`, readable only by the owner. The first
+healthy start or organization save each day writes `daily-<date>.json` on a
+worker thread; the first one each week is also kept as `weekly-<monday>.json`.
+Seven daily and four weekly files are kept. A file dated after today, from a
+clock that ran ahead, is pruned first and never pushes out today's. Every
+import first writes a `before-restore-*.json` (four kept) of the organization
+it replaces, then rewrites today's daily with the imported state. The
+resume-position migration first copies the raw settings file to
+`settings-before-resume-migration-*.ini`, and keeps the legacy key until a
+copy exists. A damaged settings file is never snapshotted.
+
+Restore last good backup asks first. It imports the newest readable daily or
+weekly snapshot, falling back to a before-restore copy only when none reads,
+and says which day it restored. Whatever organization the damaged file still
+held goes into a before-restore copy, the damaged file is kept as
+`omaroll.ini.damaged-<id>`, and the rebuilt settings file replaces it in one
+rename once it is complete, so a full disk leaves the damaged file in place.
+Settings that could still be read carry over. The format stays at version 1,
+so 1.18 reads these files.
