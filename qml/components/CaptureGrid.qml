@@ -19,6 +19,11 @@ FocusScope {
     property alias count: grid.count
     property string currentDayLabel: ""
     property bool layoutReady: true
+    // False from a resize until the grid has been rebuilt around the new
+    // columns. The model is detached for part of that, so keys pressed then
+    // have no rows to move through.
+    readonly property bool layoutSettled: layoutReady && grid.reuseItems && !restoringLayout
+                                          && !relayoutTimer.running
 
     // Multi-select is held by path, not by row. Sorting, filtering and rescans
     // all move rows around, and a selection that silently retargets is how bulk

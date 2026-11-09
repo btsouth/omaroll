@@ -587,6 +587,9 @@ private slots:
       QCoreApplication::processEvents();
     }
     QTRY_VERIFY(!prop("anySheetOpen").toBool());
+    // A test that resized the window leaves the grid rebuilding its columns,
+    // and a key pressed while the model is detached for that is lost.
+    QTRY_VERIFY(item("library")->property("layoutSettled").toBool());
     m_library->setDuplicatesOnly(false);
     m_library->setSimilarOnly(false);
     QMetaObject::invokeMethod(item("library"), "clearChecked");
@@ -1666,9 +1669,11 @@ private slots:
     QCOMPARE(filenameTip()->property("text").toString(), m_library->fileNameAt(0));
     QTRY_VERIFY(cardFor(path) && cardFor(path)->property("keyboardCurrent").toBool());
     // Initial selection alone must not leave a keyboard tooltip behind.
+    QVERIFY(item("library")->property("layoutSettled").toBool());
     QTest::keyClick(m_window, Qt::Key_Right);
     QTest::keyClick(m_window, Qt::Key_Left);
-    QTRY_VERIFY_WITH_TIMEOUT(filenameTip() && filenameTip()->property("visible").toBool(), 1500);
+    QTRY_COMPARE(item("library")->property("currentIndex").toInt(), 0);
+    QTRY_VERIFY(filenameTip() && filenameTip()->property("visible").toBool());
     QVERIFY(QMetaObject::invokeMethod(m_window, "openContextMenu", Q_ARG(QVariant, 0),
                                     Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
     QTRY_VERIFY(filenameTip() && !filenameTip()->property("visible").toBool());
@@ -1687,9 +1692,11 @@ private slots:
       QObject* tip = live ? live->findChild<QObject*>(QStringLiteral("captureFilenameTip")) : nullptr;
       return tip && tip->property("visible").toBool();
     };
-    QTRY_VERIFY_WITH_TIMEOUT(tipOn(1), 1500);
+    QTRY_COMPARE(item("library")->property("currentIndex").toInt(), 1);
+    QTRY_VERIFY(tipOn(1));
     QTest::keyClick(m_window, Qt::Key_Left);
-    QTRY_VERIFY_WITH_TIMEOUT(tipOn(0), 1500);
+    QTRY_COMPARE(item("library")->property("currentIndex").toInt(), 0);
+    QTRY_VERIFY(tipOn(0));
   }
 
   void filenameToggleKeepsCardAndThumbnailDimensions() {
@@ -2759,6 +2766,17 @@ private slots:
           objectName: "recycledCard"; width: Settings.tileWidth; height: parent.height / 2
           visible: false; z: 100
         }
+        // Holds decoded tiles in Qt's pixmap cache, as the same source, size
+        // and fill mode share one entry there.
+        property var keptThumbnails: []
+        Repeater {
+          model: keptThumbnails
+          Image {
+            objectName: "keptThumbnail"
+            visible: false; asynchronous: true; fillMode: Image.PreserveAspectCrop
+            source: modelData.source; sourceSize: modelData.size
+          }
+        }
         function insertRowAbove() {
           for (let i = 0; i < 2; ++i) {
             captures.insert(i, { path: "/thumbnail-test/" + (2000 + i) + ".png", fileName: "",
@@ -2837,6 +2855,36 @@ private slots:
     for (int row : {0, 1, 2, 3}) QCOMPARE(provider->rows().count(row), 1);
     provider->completeAll();
     QTRY_VERIFY(viewportReady());
+    // Qt drops thumbnails nothing shows from its shared cache, a quarter of
+    // them every 30 seconds or the oldest once the main window's push it past
+    // its budget. Keep the first rows' while the grid scrolls away, so coming
+    // back checks the tiles rather than how long this test took.
+    {
+      QVariantList kept;
+      for (int row : {0, 1, 2, 3}) {
+        const QString path = QStringLiteral("/thumbnail-test/%1.png").arg(row);
+        QQuickItem* tile = find(view, [&path](QQuickItem* candidate) {
+          return candidate->property("thumbnailLayoutReady").isValid()
+                 && candidate->property("path").toString() == path;
+        });
+        QVERIFY(tile);
+        QQuickItem* image = find(tile, [](QQuickItem* candidate) {
+          return candidate->property("sourceSize").isValid();
+        });
+        QVERIFY(image);
+        kept.append(QVariantMap{{QStringLiteral("source"), image->property("source")},
+                                {QStringLiteral("size"), image->property("sourceSize")}});
+      }
+      window->setProperty("keptThumbnails", kept);
+      const auto keptReady = [&] {
+        const QList<QQuickItem*> children = window->contentItem()->childItems();
+        return std::count_if(children.cbegin(), children.cend(), [](QQuickItem* candidate) {
+          return candidate->objectName() == QStringLiteral("keptThumbnail")
+                 && candidate->property("status").toInt() == 1; // Image.Ready.
+        });
+      };
+      QTRY_COMPARE(keptReady(), 4);
+    }
     // Keep selection in the synthetic viewport: changing an offscreen current
     // index during insertion lets Qt scroll toward that unrelated selection.
     view->setProperty("currentIndex", 62);
@@ -4844,7 +4892,7 @@ private slots:
     QVERIFY(QFileInfo::exists(m_library->pathAt(1)));
     QQuickItem* keep = pill(m_window->contentItem(), QStringLiteral("Keep selected"));
     QVERIFY(keep);
-    click(keep);
+    clickPlaced(keep);
     QTRY_VERIFY(item("confirm")->isVisible());
     QVERIFY(item("confirm")->property("title").toString().startsWith(QStringLiteral("Keep ")));
     QTest::keyClick(m_window, Qt::Key_Escape);
@@ -6109,7 +6157,7 @@ private slots:
     const int keptRow = m_library->rowOf(kept);
     QVERIFY(keptRow >= 0);
     item("library")->setProperty("currentIndex", keptRow);
-    click(pill(m_window->contentItem(), QStringLiteral("Keep selected")));
+    clickPlaced(pill(m_window->contentItem(), QStringLiteral("Keep selected")));
     QTRY_VERIFY(item("confirm")->isVisible());
     QTest::keyClick(m_window, Qt::Key_Return);
     QTRY_VERIFY(!item("confirm")->isVisible());
@@ -6346,7 +6394,7 @@ private slots:
       item("compareSheet")->setProperty("paths", QStringList());
       dir.remove();
       m_captures->refresh();
-      QTRY_VERIFY_WITH_TIMEOUT(!m_captures->scanning(), 15000);
+      waitForScan();
       // With the view still on, the similar index drops the deleted set, so
       // a later test that turns it on doesn't start from it.
       QTRY_VERIFY_WITH_TIMEOUT(!m_similarities->scanning() && m_similarities->groupPaths(original).isEmpty() &&
@@ -6355,9 +6403,11 @@ private slots:
                                15000);
       m_library->setSimilarOnly(false);
     });
-    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(original) >= 0 && m_library->rowOf(small) >= 0 &&
-                                 m_library->rowOf(large) >= 0,
-                             10000);
+    // The added files arrive with the scan they start, which takes over ten
+    // seconds on an emulated aarch64 runner.
+    waitForScan();
+    QTRY_VERIFY(m_library->rowOf(original) >= 0 && m_library->rowOf(small) >= 0 &&
+                m_library->rowOf(large) >= 0);
 
     m_library->setSimilarOnly(true);
     QTRY_COMPARE_WITH_TIMEOUT(m_similarities->groupPaths(original),
@@ -8430,6 +8480,15 @@ private:
     QVERIFY(target);
     QTRY_VERIFY(centre(target).x() > 0 && centre(target).x() < m_window->width());
     QTest::qWait(120);
+    click(target);
+  }
+
+  // A pill that has just appeared in a row has its size before the row has
+  // placed it, and a click at its old place lands on a neighbour. Click once
+  // the window's pending layout has run.
+  void clickPlaced(QQuickItem* target) {
+    QVERIFY(target);
+    QVERIFY(QQuickTest::qWaitForPolish(m_window));
     click(target);
   }
 

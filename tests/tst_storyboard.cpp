@@ -1016,11 +1016,15 @@ private slots:
     Storyboard::setFrameTimeoutMs(1500);
     useHelper("wait");
     const QString video = fakeVideo(QStringLiteral("busy.mp4"));
+    // Counted at launch: under a sanitizer a helper can be stopped by the
+    // timeout before it gets as far as logging its start.
+    const int launched = Storyboard::launchedProcesses();
     Storyboard storyboard;
     storyboard.setDuration(60000);
     storyboard.setSource(video);
     storyboard.setActive(true);
-    QTRY_VERIFY_WITH_TIMEOUT(helperStarts().size() >= 3 && !storyboard.running(), 60000);
+    QTRY_VERIFY_WITH_TIMEOUT(Storyboard::launchedProcesses() - launched >= 3 && !storyboard.running(),
+                             60000);
     QVERIFY(!storyboard.failed());
     QCOMPARE(storyboard.frameCount(), 0);
 
