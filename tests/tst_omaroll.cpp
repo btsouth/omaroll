@@ -3,6 +3,8 @@
 #include "actions/TailscalePeers.h"
 #include "actions/TrashRestore.h"
 #include "app/AppSettings.h"
+#include "app/VideoPresentation.h"
+#include <QVideoFrameFormat>
 #include "app/DemoLibrary.h"
 #include "app/HeadlessAudio.h"
 #include "app/VideoPlayback.h"
@@ -6860,6 +6862,74 @@ private slots:
     for (const QString& path : std::as_const(paths)) {
       QVERIFY(model.rowOf(path) >= 0);
     }
+  }
+
+  void mpvHandoffIncludesPosition() {
+    QTemporaryDir dir;
+    const QByteArray previousPath = qgetenv("PATH");
+    const auto restore = qScopeGuard([&] { qputenv("PATH", previousPath); });
+    const QString logPath = dir.filePath(QStringLiteral("arguments"));
+    QFile helper(dir.filePath(QStringLiteral("mpv")));
+    QVERIFY(helper.open(QIODevice::WriteOnly));
+    helper.write((QStringLiteral("#!/bin/sh\nprintf '%s\\n' \"$@\" > '") + logPath + "'\n").toUtf8());
+    helper.close();
+    QVERIFY(helper.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    qputenv("PATH", dir.path().toUtf8());
+    ActionLauncher launcher;
+    ActionRegistry registry(&launcher);
+    const QString path = dir.filePath(QStringLiteral("a clip.mkv"));
+    QVERIFY(registry.runBatchWith(QStringLiteral("play"), {{"seek", "2.375"}}, {path}));
+    QTRY_VERIFY(QFileInfo(logPath).size() > 0);
+    QFile log(logPath);
+    QVERIFY(log.open(QIODevice::ReadOnly));
+    QCOMPARE(log.readAll(), ("--start=2.375\n--\n" + path + "\n").toUtf8());
+  }
+
+  void videoPresentationOwnsCaptionsAndRetainsFrames() {
+    QVideoSink output;
+    VideoPresentation presentation(&output);
+    QVideoFrame frame(QVideoFrameFormat(QSize(160, 90), QVideoFrameFormat::Format_BGRA8888));
+    presentation.videoSink()->setVideoFrame(frame);
+    QTRY_VERIFY(presentation.ready());
+    QVERIFY(output.videoFrame().isValid());
+    presentation.videoSink()->setSubtitleText(QStringLiteral("One caption"));
+    QCOMPARE(presentation.subtitleText(), QStringLiteral("One caption"));
+    QVERIFY(output.subtitleText().isEmpty());
+    presentation.reset();
+    presentation.videoSink()->setVideoFrame({});
+    QVERIFY(!presentation.ready());
+    QVERIFY(presentation.hasFrame());
+    QVERIFY(output.videoFrame().isValid());
+    presentation.videoSink()->setVideoFrame(frame);
+    QTRY_VERIFY(presentation.ready());
+  }
+
+  void hdrTransferDetails_data() {
+    QTest::addColumn<QString>("transfer");
+    QTest::addColumn<QString>("label");
+    QTest::newRow("PQ") << QStringLiteral("smpte2084") << QStringLiteral("HDR10 (PQ)");
+    QTest::newRow("HLG") << QStringLiteral("arib-std-b67") << QStringLiteral("HLG");
+  }
+
+  void hdrTransferDetails() {
+    QFETCH(QString, transfer);
+    QFETCH(QString, label);
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("tagged.mkv"));
+    QProcess encoder;
+    encoder.start(QStringLiteral("ffmpeg"), {"-v", "error", "-f", "lavfi", "-i",
+        "color=s=160x90:d=0.1", "-vf",
+        "setparams=color_trc=" + transfer + ":color_primaries=bt2020:colorspace=bt2020nc",
+        "-c:v", "ffv1", path});
+    QVERIFY(encoder.waitForFinished(20000));
+    QCOMPARE(encoder.exitCode(), 0);
+    MediaInspector inspector;
+    inspector.inspect(path, true);
+    QTRY_VERIFY_WITH_TIMEOUT(!inspector.loading(), 5000);
+    QVERIFY2(inspector.lines().contains(label), qPrintable(inspector.lines().join(" | ")));
+    const auto dolby = MediaInspector::parseVideo(R"({"streams":[{"codec_type":"video",
+        "side_data_list":[{"side_data_type":"DOVI configuration record","dv_profile":8}]}]})", "mkv");
+    QVERIFY(dolby.contains(QStringLiteral("Dolby Vision")));
   }
 
   void imageDetailsRunLocallyForAnOddPath() {

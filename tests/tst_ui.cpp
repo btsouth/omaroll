@@ -5083,7 +5083,7 @@ private slots:
                        1000000);
     QVERIFY(!item("detail")->property("resumeAvailable").toBool());
     QVERIFY(!item("detail")->property("resumePending").toBool());
-    QTRY_COMPARE(player->position(), 1000);
+    QTRY_COMPARE(player->position(), 1001); // Enter the frame at the exact boundary.
     item("detail")->setProperty("resumeAvailable", true);
     click(item("resumeButton"));
     QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
@@ -5149,6 +5149,51 @@ private slots:
     QVERIFY(player->videoSink());
     player->setPosition(1000);
     QTRY_VERIFY(player->videoSink()->subtitleText().contains(QStringLiteral("Omaroll subtitle test")));
+    if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
+      player->pause();
+      QTest::qWait(150);
+      auto* overlay = item("subtitleOverlay");
+      QTRY_VERIFY(overlay->isVisible());
+      const auto capture = [&] {
+        auto* output = item("videoOutput");
+        const QImage image = m_window->grabWindow();
+        const QRectF rect = output->mapRectToScene(output->boundingRect());
+        return image.copy(QRectF(rect.topLeft() * image.devicePixelRatio(),
+                                rect.size() * image.devicePixelRatio()).toAlignedRect());
+      };
+      // Caption controls also show a transient notice and a hover tooltip.
+      // Clear those independently changing overlays before comparing pixels.
+      QTest::mouseMove(m_window, QPoint(5, 5));
+      QVERIFY(QMetaObject::invokeMethod(m_window, "say", Q_ARG(QVariant, QString())));
+      // Pause acknowledgement can precede the last queued frame on slower
+      // decoders. Detach delivery and re-submit one immutable frame, so the
+      // only pixels allowed to change in this comparison are captions.
+      auto* input = player->videoSink();
+      auto* originalOutput = player->videoOutput();
+      const QVideoFrame frozen = input->videoFrame();
+      const QString cue = input->subtitleText();
+      player->setVideoOutput(nullptr);
+      const auto restoreOutput = qScopeGuard([&] { player->setVideoOutput(originalOutput); });
+      input->setVideoFrame(frozen);
+      input->setSubtitleText(cue);
+      QTest::qWait(100);
+      const QImage themed = capture();
+      overlay->setVisible(false);
+      QTest::qWait(100);
+      const QImage embeddedOnly = capture();
+      QVERIFY(themed != embeddedOnly);
+      input->setSubtitleText({});
+      QTest::qWait(100);
+      const QImage withoutCaptions = capture();
+      if (withoutCaptions != embeddedOnly && qEnvironmentVariableIsSet("OMAROLL_PIXEL_EVIDENCE")) {
+        const QString dir = qEnvironmentVariable("OMAROLL_PIXEL_EVIDENCE");
+        embeddedOnly.save(dir + "/embedded-only.png");
+        withoutCaptions.save(dir + "/without-captions.png");
+      }
+      QCOMPARE(withoutCaptions, embeddedOnly);
+      overlay->setVisible(true);
+    }
+    player->play();
     player->setPosition(7000);
     QTRY_VERIFY(player->videoSink()->subtitleText().contains(QStringLiteral("Second subtitle")));
     click(item("subtitleButton"));

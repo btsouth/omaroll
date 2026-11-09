@@ -25,6 +25,8 @@ ApplicationWindow {
     // A viewer opened beside another maps under the plain title so that rule
     // leaves it tiled, then takes its own; see HyprlandPlacement.
     title: Session.fileName !== "" && !root.mapTiled ? Session.fileName + " · Omaroll" : "Omaroll"
+    readonly property var presentation: videoSurface.item
+        ? Settings.videoPresentation(videoSurface.item) : null
     property bool mapTiled: false
     // With several viewers open, messages that belong to no viewer in
     // particular appear only in the one used last.
@@ -141,7 +143,7 @@ ApplicationWindow {
         void Subtitles.revision
         return externalSubtitle !== "" && player
         ? Subtitles.textAt(externalSubtitle, Math.round(player.position) - root.subtitleOffsetMs)
-        : (videoOutput.videoSink ? videoOutput.videoSink.subtitleText : "")
+        : (root.presentation ? root.presentation.subtitleText : "")
     }
 
     readonly property bool favorite: { void root.marksVersion; return Settings.isFavorite(Session.path) }
@@ -460,6 +462,10 @@ ApplicationWindow {
     }
 
     function seekTo(milliseconds) {
+        root.seekTarget(milliseconds, true)
+    }
+
+    function seekTarget(milliseconds, roundBoundary) {
         if (!root.player) {
             return
         }
@@ -467,7 +473,9 @@ ApplicationWindow {
         const maximum = duration > 0 ? duration - 1 : Math.max(0, milliseconds)
         root.resumeAvailable = false
         root.resumePending = false
-        root.player.position = Math.max(0, Math.min(maximum, milliseconds))
+        root.player.position = Math.max(0, Math.min(maximum, roundBoundary
+            ? Settings.videoSeekTarget(milliseconds, root.player.metaData.value(MediaMetaData.VideoFrameRate))
+            : Math.round(milliseconds)))
     }
 
     // One frame back or forward, paused, as in mpv. Positions are whole
@@ -483,7 +491,7 @@ ApplicationWindow {
 
     function seek(milliseconds) {
         if (root.player && root.player.duration > 0) {
-            root.seekTo(root.player.position + milliseconds)
+            root.seekTarget(root.player.position + milliseconds, false)
         }
     }
 
@@ -889,6 +897,9 @@ ApplicationWindow {
         case "trash":
             root.requestTrash()
             return
+        case "play":
+            Registry.runBatchWith("play", {"seek": (Math.max(0, root.player ? root.player.position : 0) / 1000).toFixed(3)}, [path])
+            return
         case "frame": {
             if (!Session.isVideo || !root.player) {
                 return
@@ -1274,7 +1285,7 @@ ApplicationWindow {
             id: videoPoster
             objectName: "viewerVideoPoster"
             anchors.fill: parent
-            visible: Session.isVideo && !(root.player && root.player.hasVideo)
+            visible: Session.isVideo && !(root.presentation && root.presentation.ready)
             fillMode: Image.PreserveAspectFit
             asynchronous: true
             smooth: true
@@ -1312,12 +1323,13 @@ ApplicationWindow {
                         function onStartPositionChanged() { mediaPlayer.applyLaunchStart() }
                     }
                     source: root.videoSource
-                    videoOutput: videoSurface.item
+                    videoOutput: root.presentation
                     audioOutput: AudioOutput {
                         volume: Settings.videoVolume
                         muted: Settings.videoMuted || !root.audible
                     }
                     onSourceChanged: {
+                        if (root.presentation) root.presentation.reset()
                         root.videoError = ""
                         if (source.toString() !== "") {
                             playbackRate = Settings.rememberPlaybackSpeed ? Settings.videoPlaybackRate : 1
@@ -1405,7 +1417,8 @@ ApplicationWindow {
         Item {
             id: videoOutput
             anchors.fill: parent
-            visible: Session.isVideo && root.player !== null && root.player.hasVideo
+            visible: Session.isVideo && root.presentation && root.presentation.hasFrame
+                     && (root.presentation.ready || videoPoster.status !== Image.Ready)
             readonly property QtObject videoSink: videoSurface.item ? videoSurface.item.videoSink : null
 
             Loader {

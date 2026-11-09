@@ -188,7 +188,8 @@ void MediaInspector::inspect(const QString& path, bool video) {
                     QStringLiteral("-show_entries"),
                     QStringLiteral("format=format_name,bit_rate:stream="
                                    "codec_type,codec_name,profile,pix_fmt,"
-                                   "r_frame_rate,bit_rate,sample_rate,channel_layout"),
+                                   "r_frame_rate,bit_rate,sample_rate,channel_layout,"
+                                   "color_transfer,color_primaries:stream_side_data"),
                     QStringLiteral("-of"), QStringLiteral("json"), path});
   } else {
     // Fixed fields and fixed order make this independent of locale and of the
@@ -335,6 +336,21 @@ QStringList MediaInspector::parseVideo(const QByteArray& output, const QString& 
   if (!videoLine.isEmpty()) {
     lines.append(videoLine);
   }
+
+  const QString transfer = video.value(QStringLiteral("color_transfer")).toString();
+  const QString primaries = video.value(QStringLiteral("color_primaries")).toString();
+  QString hdr;
+  if (transfer == QStringLiteral("smpte2084")) {
+    hdr = primaries == QStringLiteral("bt2020") ? QStringLiteral("HDR10 (PQ)") : QStringLiteral("HDR (PQ)");
+  } else if (transfer == QStringLiteral("arib-std-b67")) {
+    hdr = QStringLiteral("HLG");
+  }
+  for (const auto& value : video.value(QStringLiteral("side_data_list")).toArray()) {
+    if (value.toObject().value(QStringLiteral("side_data_type")).toString().contains(QStringLiteral("DOVI"))) {
+      hdr = QStringLiteral("Dolby Vision");
+    }
+  }
+  if (!hdr.isEmpty()) lines.append(hdr);
 
   QStringList rate;
   bool okay = false;

@@ -13,6 +13,8 @@
   back whatever happened last. A batch or duplicate cleanup is one step, and a
   restored file goes back to its place in the viewer. Undo restores only the
   file that was trashed and never overwrites a file that took its name.
+- Video details show HDR10, HLG and Dolby Vision.
+- Open in mpv continues from the current position.
 
 ### Fixed
 
@@ -24,6 +26,11 @@
 - The viewer's Trash prompt is bound to the file it was opened on. If that
   file is replaced, or a symlink is pointed elsewhere, while the prompt is up,
   Trash refuses instead of moving the new file.
+- Embedded subtitles are drawn once, in the themed caption style, instead of
+  twice on top of each other.
+- Seeking to the exact start of a frame shows that frame, not the one before.
+- Moving to the next video keeps a picture on screen instead of flashing an
+  empty stage.
 
 ## 1.18.0
 

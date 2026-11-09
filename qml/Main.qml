@@ -265,6 +265,9 @@ ApplicationWindow {
             }
             textReviewSheet.open(path, Captures.fileNameAt(row))
             return
+        case "play":
+            Registry.runBatchWith("play", {"seek": (Math.max(0, detail.visible && detail.path === path ? detail.playbackPosition : 0) / 1000).toFixed(3)}, [path])
+            return
         case "frame": {
             if (!detail.visible || detail.path !== path || !video) {
                 root.say("Open a video and choose the frame first")
