@@ -8,6 +8,7 @@
 #include "thumbs/Storyboard.h"
 #include "sources/CameraRaw.h"
 #include "sources/ImageBudget.h"
+#include "sources/PinnedImageReader.h"
 #include "subtitles/SubtitleIndex.h"
 #include "pdf/PdfSupport.h"
 #include <QCoreApplication>
@@ -51,8 +52,15 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 #elif FUZZ_KIND == 4
   (void)PdfSupport::parsePageWords(bytes);
 #elif FUZZ_KIND == 5
+  // Read as Omaroll reads a file: the decoder its name maps to, then the
+  // listed one for its contents if that refuses. The first byte picks the
+  // name. Plugins for formats Omaroll does not list never see an input, as in
+  // the app; Qt's own guessing reached one of them and crashed (kimg_tim).
   QBuffer buffer; buffer.setData(bytes); buffer.open(QIODevice::ReadOnly);
-  QImageReader reader(&buffer);
+  const QList<QByteArray>& formats = ImageFormats::listed();
+  const QByteArray named = formats.isEmpty() || bytes.isEmpty()
+                               ? QByteArray() : formats.at(quint8(bytes.at(0)) % formats.size());
+  PinnedImageReader reader(&buffer, named);
   const ImageBudget::Estimate estimate = ImageBudget::estimate(reader);
   // The header's dimensions feed the memory arithmetic, so run that too.
   (void)ImageBudget::plan(estimate, 2560);

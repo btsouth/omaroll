@@ -30,6 +30,7 @@
 #include "thumbs/ThumbnailProvider.h"
 #include "viewer/MprisService.h"
 #include "viewer/ViewerSession.h"
+#include "sources/DecodeJournal.h"
 #include "sources/CaptureScanner.h"
 
 #include <QAudioDevice>
@@ -332,6 +333,8 @@ int main(int argc, char** argv) {
   shared->setContextProperty(u"Actions"_s, &actions); shared->setContextProperty(u"Registry"_s, &registry);
   shared->setContextProperty(u"Editors"_s, new ExternalEditors(&actions, &engine));
   shared->setContextProperty(u"DemoMode"_s, false);
+  DecodeCrashNotice decodeCrash;
+  shared->setContextProperty(u"DecodeCrash"_s, &decodeCrash);
   MimeDefaults mimeDefaults;
   shared->setContextProperty(u"MimeDefaults"_s, &mimeDefaults);
   MprisService mpris(&settings, QDBusConnection(QString()));

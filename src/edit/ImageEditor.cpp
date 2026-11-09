@@ -7,6 +7,7 @@
 #include "sources/CameraRaw.h"
 #include "sources/CaptureScanner.h"
 #include "sources/ImageBudget.h"
+#include "sources/PinnedImageReader.h"
 
 #include <QBuffer>
 #include <QColorSpace>
@@ -119,7 +120,7 @@ bool hasForeignExif(const QString& path) {
 }
 
 QImage readOriented(const QString& path) {
-  QImageReader reader(path);
+  PinnedImageReader reader(path);
   reader.setAutoTransform(true);
   return reader.read();
 }
@@ -193,7 +194,7 @@ SaveResult saveTransform(const QString& source, const ImageEditor::Transform& tr
                       transform.flipHorizontal || transform.flipVertical;
   if (format == QByteArrayLiteral("jpg") && turned && qFuzzyIsNull(transform.straightenDegrees) &&
       fullFrame && noResize) {
-    QImageReader probe(source);
+    PinnedImageReader probe(source);
     const JpegTransform::Symmetry symmetry =
         JpegTransform::compose(probe.transformation(), transform.quarterTurns,
                                transform.flipHorizontal, transform.flipVertical);
@@ -362,7 +363,7 @@ QString ImageEditor::previewProblem(const QString& path) const {
 }
 
 QSize ImageEditor::orientedSize(const QString& path) const {
-  QImageReader reader(path);
+  PinnedImageReader reader(path);
   reader.setAutoTransform(true);
   const QSize stored = reader.size();
   if (!stored.isValid() || stored.isEmpty()) {
@@ -611,12 +612,12 @@ void ImageEditor::saveCopies(const QStringList& paths, int quarterTurns, bool fl
 }
 
 bool ImageEditor::isAnimated(const QString& path) const {
-  QImageReader reader(path);
+  PinnedImageReader reader(path);
   return reader.supportsAnimation() && reader.imageCount() != 1;
 }
 
 bool ImageEditor::needsNativeExport(const QString& source) {
-  QImageReader reader(source);
+  PinnedImageReader reader(source);
   if (reader.transformation() != QImageIOHandler::TransformationNone) return true;
   // Qt exposes ICC profiles on decoded images. Probe a tiny image in the worker;
   // decoders without scaled reads may still decode the full frame there.

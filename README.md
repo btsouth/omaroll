@@ -442,6 +442,11 @@ cannot spoil the shot. `man omaroll` lists every option with examples.
   by path, size and modification time, bounded at 64MB and pruned
   least-recently-used. A changed file gets new previews; the old version's stay
   until they're pruned.
+  `$XDG_RUNTIME_DIR/omaroll/decoding` (256KB, owner only, gone at reboot)
+  records which picture each decoding thread is reading. If a decoder crashes
+  Omaroll, the next launch lists that file in
+  `~/.cache/omaroll/decoder-crashes.json` and skips it until its size or
+  modification time changes. Delete that file to try it again.
   Settings and organization live in `~/.config/omaroll` (`$XDG_CONFIG_HOME/omaroll`
   if that is set). Deleting that directory
   also removes albums, tags, favorites and saved views. Back it up first if you

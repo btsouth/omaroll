@@ -4,6 +4,7 @@
 #include "edit/CopyOutput.h"
 #include "sources/CameraRaw.h"
 #include "sources/ImageBudget.h"
+#include "sources/PinnedImageReader.h"
 
 #include <QClipboard>
 #include <QColorSpace>
@@ -372,7 +373,7 @@ MatteComposer::Result MatteComposer::copySaved(const QString& path, bool saved, 
     result.error = QStringLiteral("Install wl-clipboard to copy images");
     return result;
   }
-  QImageReader reader(path);
+  PinnedImageReader reader(path);
   result.fallbackImage = reader.read();
   if (result.fallbackImage.isNull()) {
     result.error = QStringLiteral("Could not read the saved matte for copying");
@@ -388,7 +389,7 @@ MatteComposer::Result MatteComposer::saveAndCopy(const QString& path, Matte matt
     outcome.error = QStringLiteral("That file is no longer there");
     return outcome;
   }
-  QImageReader reader(path);
+  PinnedImageReader reader(path);
   reader.setAutoTransform(true);
   // Match the RAW preview used by the library and the sheet.
   const QImage source = CameraRaw::isRawFile(path) ? CameraRaw::readPreview(path) : reader.read();

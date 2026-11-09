@@ -2,6 +2,7 @@
 
 #include "sources/DisplayColors.h"
 #include "sources/ImageBudget.h"
+#include "sources/PinnedImageReader.h"
 
 #include <QImageReader>
 #include <QMetaObject>
@@ -75,7 +76,7 @@ public:
 
 private:
   QImage read() {
-    QImageReader reader(m_path);
+    PinnedImageReader reader(m_path);
     reader.setAutoTransform(true);
     const ImageBudget::Estimate estimate = ImageBudget::estimate(reader);
     if (!estimate.valid()) return {};
@@ -114,7 +115,7 @@ private:
   // quarter or half when that is enough, so this costs about as much memory
   // as the screen at any zoom.
   QImage readArea() {
-    QImageReader reader(m_path);
+    PinnedImageReader reader(m_path);
     reader.setAutoTransform(false);
     const QSize stored = reader.size();
     if (stored.isEmpty()) {

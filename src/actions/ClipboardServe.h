@@ -56,7 +56,9 @@ inline constexpr qint64 kMaxPngPixels = 24'000'000;
 // A PNG of the picture as shown (EXIF orientation applied), or empty when it
 // cannot be read. Light compression: a clipboard history reading it gives up
 // after two seconds.
-[[nodiscard]] QByteArray encodePng(const QByteArray& source);
+// |sourceType| names the picture's format; empty, its bytes are read for it.
+// Either way only a format Omaroll lists is decoded.
+[[nodiscard]] QByteArray encodePng(const QByteArray& source, const QString& sourceType = QString());
 
 // The whole helper: argv is {program, kOption, type, file}. Returns the exit
 // code for the caller that waits on it; the background copy never returns.

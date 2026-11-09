@@ -378,7 +378,7 @@ wrote, from `tests/fuzz/driver.cpp`, with ASan and UBSan:
 | `fuzz_ipc` | single-instance JSON frame (`SingleInstance::parseFrame`) |
 | `fuzz_matroska` | EBML `readVint` and `hasMatroskaVideoTrack` |
 | `fuzz_pdf` | `pdftotext -bbox` output (`PdfSupport::parsePageWords`) |
-| `fuzz_image` | image headers and `ImageBudget` arithmetic |
+| `fuzz_image` | image headers through `PinnedImageReader`, and `ImageBudget` arithmetic |
 | `fuzz_raw` | `CameraRaw::readMetadata` (TIFF, ISO BMFF, Fujifilm) |
 | `fuzz_subtitles` | sidecar SRT and WebVTT parsing |
 | `fuzz_organization` | organization backup import, in a throwaway profile |
@@ -406,15 +406,33 @@ cp /tmp/fuzz-new/new/<harness>/* tests/fuzz/corpus/<harness>/
 ```
 
 Keep the seeds small: libFuzzer's file names are content hashes, and a few
-dozen inputs per harness is plenty. Reproduce a crash with
-`build/fuzz/fuzz_<harness> <crash-file>`, add a regression test to the core
-suite, then fix it; check a minimised reproducer into the corpus too.
+dozen inputs per harness is plenty.
 
-Findings so far, each with a test in `tst_omaroll.cpp`: a Matroska element
-header could extend past its parent
-(`matroskaTrackHeadersCannotEscapeTheirParent`), and an SRT hour count near
-the 64-bit limit overflowed while converted to milliseconds
-(`subtitleTimestampsPastTheMillisecondRangeAreSkipped`).
+Every fuzz crash becomes a regression test, including one inside a system
+library. When a fuzzer fails, `run.sh` prints each crash, leak, timeout or
+out-of-memory input as base64 in the log and the job summary, and CI uploads
+the files as the `fuzz-crash-inputs` artifact (30 days). Then:
+
+1. Reproduce it with `build/fuzz/fuzz_<harness> <input>`.
+2. Add a test that drives the input through the same path the app uses (the
+   core suite for our parsers, `tst_hostile_media.cpp` for decoders), and see
+   it fail.
+3. Fix it, or keep the input away from the code that crashes, then check the
+   input into `tests/fuzz/corpus/<harness>/` with a name that says what it is.
+
+A red fuzz job is never rerun until green: the same input fails again in the
+next run that reaches it.
+
+Findings so far, each with a test: a Matroska element header could extend
+past its parent (`matroskaTrackHeadersCannotEscapeTheirParent`), an SRT hour
+count near the 64-bit limit overflowed while converted to milliseconds
+(`subtitleTimestampsPastTheMillisecondRangeAreSkipped`), both in
+`tst_omaroll.cpp`, and a 24-byte TIM file crashed KImageFormats' TIM plugin,
+which Qt's format guessing offered it to under any picture name
+(`timFilesNamedAsPicturesNeverReachTheirPlugin` in `tst_hostile_media.cpp`,
+seed `corpus/image/crash-kimg-tim-24bytes`). Image readers are now pinned to
+the formats Omaroll lists, and the `image` harness reads the same way: its
+first byte picks the file's name from those formats.
 
 ### Races, leaks and coverage
 

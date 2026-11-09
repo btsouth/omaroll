@@ -34,6 +34,7 @@
 #include "search/QrDetector.h"
 #include "subtitles/SubtitleIndex.h"
 #include "sources/CaptureScanner.h"
+#include "sources/DecodeJournal.h"
 #include "theme/OmarchyTheme.h"
 #include "sources/ImageBudget.h"
 #include "thumbs/LargeImageProvider.h"
@@ -675,6 +676,17 @@ int main(int argc, char* argv[]) {
     if (result == SingleInstance::Result::Error) return 1;
   }
   startup.mark("instance");
+  // Before anything is decoded: a file that crashed the last run is skipped
+  // until it changes. A render or a demo reads only its own files and leaves
+  // the session's journal alone.
+  if (!rendering && !demo) {
+    // The journal itself on the per-boot tmpfs when there is one: no disk
+    // space or copy-on-write involved. Blocked files are kept in the cache.
+    const QString runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
+    DecodeJournal::open(QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) +
+                            QStringLiteral("/omaroll"),
+                        runtime.isEmpty() ? QString() : runtime + QStringLiteral("/omaroll"));
+  }
   // A video opened from outside: load the backend and start the GPU driver
   // while the window loads (app/VideoWarmup.h).
   if (!rendering && opensInViewer(request, preferLibrary) &&
@@ -743,6 +755,8 @@ int main(int argc, char* argv[]) {
   // answering only its own jobs; declared before the engine so it outlives
   // every window, and its saves finish in the drain at quit.
   ImageEditor viewerEditor;
+  // Which file crashed the last run, said once in the library.
+  DecodeCrashNotice decodeCrash;
 
   QQmlApplicationEngine engine;
   // Windows are built with QQmlComponent rather than engine.load(), so the
@@ -773,6 +787,7 @@ int main(int argc, char* argv[]) {
   engine.rootContext()->setContextProperty(QStringLiteral("Registry"), &registry);
   engine.rootContext()->setContextProperty(QStringLiteral("Editors"), &editors);
   engine.rootContext()->setContextProperty(QStringLiteral("DemoMode"), demo);
+  engine.rootContext()->setContextProperty(QStringLiteral("DecodeCrash"), &decodeCrash);
   // A render never appears as a player on the desktop's session bus.
   MprisService mpris(&settings, rendering ? std::optional(QDBusConnection(QString())) : std::nullopt);
   engine.rootContext()->setContextProperty(QStringLiteral("Mpris"), &mpris);

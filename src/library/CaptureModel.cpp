@@ -8,7 +8,9 @@
 #include "sources/CameraRaw.h"
 #include "sources/CaptureLocations.h"
 #include "sources/FileVersion.h"
+#include "sources/DecodeJournal.h"
 #include "sources/ImageBudget.h"
+#include "sources/PinnedImageReader.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -468,7 +470,16 @@ QString CaptureModel::dayLabelAt(int row) const {
 }
 
 QUrl CaptureModel::fileUrl(const QString& path) const {
-  return CameraRaw::isRawFile(path) ? CameraRaw::previewUrl(path) : QUrl::fromLocalFile(path);
+  if (CameraRaw::isRawFile(path)) return CameraRaw::previewUrl(path);
+  // The preview plays a GIF or WebP with Qt's movie reader, which tries every
+  // installed plugin on contents that don't match the name and journals
+  // nothing.
+  const QString suffix = CaptureScanner::mediaSuffix(path);
+  if ((suffix == u"gif" || suffix == u"webp") &&
+      (!ImageFormats::looksAnimated(path, suffix) || DecodeJournal::isBlocked(path))) {
+    return {};
+  }
+  return QUrl::fromLocalFile(path);
 }
 
 QSize CaptureModel::pictureSize(const QString& path) const {
@@ -488,12 +499,31 @@ void CaptureModel::readPicture(const QString& path) {
     // An extensionless file is identified by its header, so this is read here
     // too. Raws, animations, videos and documents keep their own loading.
     const QString suffix = CaptureScanner::mediaSuffix(path);
-    if (!CaptureScanner::isImage(suffix) || CameraRaw::isRaw(suffix) || suffix == u"gif" ||
-        suffix == u"webp") {
+    // A .gif or .webp that isn't one is read as a still, pinned, like any
+    // other picture under the wrong name; one that crashed Omaroll gets its
+    // error below.
+    const bool animated = (suffix == u"gif" || suffix == u"webp") &&
+                          ImageFormats::looksAnimated(path, suffix) && !DecodeJournal::isBlocked(path);
+    if (!CaptureScanner::isImage(suffix) || CameraRaw::isRaw(suffix) || animated) {
       return picture;
     }
     const QString version = FileVersion::key(path);
-    const ImageBudget::Plan plan = ImageBudget::plan(ImageBudget::estimate(path), edge);
+    const ImageBudget::Estimate estimate = ImageBudget::estimate(path);
+    const ImageBudget::Plan plan = ImageBudget::plan(estimate, edge);
+    // Nothing Omaroll lists reads it, or it crashed Omaroll before: nothing
+    // loads it, and the preview says so.
+    if (estimate.unreadable()) {
+      picture.insert(QStringLiteral("source"), QUrl());
+      picture.insert(QStringLiteral("error"),
+                     estimate.blocked ? QStringLiteral("This file crashed Omaroll the last time it "
+                                                       "was read")
+                                      : plan.error);
+      return picture;
+    }
+    // Another format inside than its name says: read pinned, never guessed.
+    if (!plan.reduced && !estimate.direct && estimate.valid()) {
+      picture.insert(QStringLiteral("source"), ImageBudget::pinnedUrl(path, version, estimate));
+    }
     if (!plan.reduced) return picture;
     // Nothing to load when not even the reduced copy can be decoded.
     // Areas show the detail, so the copy only needs the screen's size.
@@ -511,7 +541,8 @@ void CaptureModel::readPicture(const QString& path) {
     if (plan.detail) {
       QUrl detail = QUrl::fromLocalFile(path);
       detail.setQuery(QStringLiteral("omaroll=") + version);
-      picture.insert(QStringLiteral("detail"), detail);
+      picture.insert(QStringLiteral("detail"),
+                     estimate.direct ? detail : ImageBudget::pinnedUrl(path, version, estimate));
     }
     picture.insert(QStringLiteral("note"), plan.note);
     picture.insert(QStringLiteral("error"), plan.error);

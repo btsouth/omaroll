@@ -8,6 +8,8 @@
 #include "sources/FileVersion.h"
 #include "sources/ThumbnailSource.h"
 #include "viewer/PictureDiagnosis.h"
+#include "sources/DecodeJournal.h"
+#include "sources/PinnedImageReader.h"
 
 #include <QCollator>
 #include <QDateTime>
@@ -79,7 +81,9 @@ ViewerSession::ViewerSession(QObject* parent) : QObject(parent) {
       if (!candidate.path.isEmpty() && FileVersion::key(candidate.path) == candidate.version) {
         urls[i] = candidate.edge > 0
                       ? ImageBudget::reducedUrl(candidate.path, candidate.version, candidate.edge)
-                      : ::imageUrl(candidate.path, candidate.version);
+                  : candidate.estimate.direct
+                      ? ::imageUrl(candidate.path, candidate.version)
+                      : ImageBudget::pinnedUrl(candidate.path, candidate.version, candidate.estimate);
       }
     }
     m_neighbourPictures.clear();
@@ -138,13 +142,19 @@ QUrl ViewerSession::imageUrl() const {
   // Nothing to load for a picture that cannot be decoded at all; the viewer
   // shows pictureError instead.
   if (!m_pictureKnown || !m_plan.error.isEmpty()) return {};
-  return m_plan.reduced ? ImageBudget::reducedUrl(path(), m_contentVersion, m_reducedEdge)
-                        : ::imageUrl(path(), m_contentVersion);
+  if (m_plan.reduced) return ImageBudget::reducedUrl(path(), m_contentVersion, m_reducedEdge);
+  return stillUrl();
+}
+
+QUrl ViewerSession::stillUrl() const {
+  // Contents another format than the name says: Qt's own file loading would
+  // offer them to every installed plugin, so they are read pinned instead.
+  return m_pictureEstimate.direct ? ::imageUrl(path(), m_contentVersion)
+                                  : ImageBudget::pinnedUrl(path(), m_contentVersion, m_pictureEstimate);
 }
 
 QUrl ViewerSession::detailUrl() const {
-  return reduced() && m_plan.detail && !m_plan.areas ? ::imageUrl(path(), m_contentVersion)
-                                                     : QUrl();
+  return reduced() && m_plan.detail && !m_plan.areas ? stillUrl() : QUrl();
 }
 
 QUrl ViewerSession::areaUrl(const QRect& area, const QSize& size) const {
@@ -159,6 +169,7 @@ void ViewerSession::refreshPicture() {
   if (!isPlainStill()) {
     m_pictureKnown = false;
     m_plan = {};
+    m_pictureEstimate = {};
     m_picturePath.clear();
     m_pictureVersion.clear();
     return;
@@ -168,6 +179,7 @@ void ViewerSession::refreshPicture() {
   m_pictureVersion = m_contentVersion;
   m_pictureKnown = false;
   m_plan = {};
+  m_pictureEstimate = {};
   const auto known = m_neighbourPictures.constFind(m_picturePath);
   if (known != m_neighbourPictures.constEnd() && !m_pictureVersion.isEmpty() &&
       known->version == m_pictureVersion) {
@@ -234,6 +246,7 @@ void ViewerSession::startPictureProbe() {
 
 void ViewerSession::applyPicture(const PictureResult& result) {
   m_pictureKnown = true;
+  m_pictureEstimate = result.estimate;
   m_plan = ImageBudget::plan(result.estimate, ImageBudget::reducedEdge());
   m_reducedEdge = m_plan.reduced ? copyEdge(m_plan) : 0;
 }
@@ -256,7 +269,7 @@ QUrl ViewerSession::rawUrl() const {
 bool ViewerSession::isAnimated() const {
   // The same rule the library viewer uses: these two may hold several frames,
   // and AnimatedImage shows a single-frame file just as well.
-  return m_mediaSuffix == u"gif" || m_mediaSuffix == u"webp";
+  return m_animated;
 }
 
 void ViewerSession::setStartPosition(const QString& path, qint64 milliseconds) {
@@ -434,6 +447,7 @@ QUrl ViewerSession::neighbourImageUrl(int offset) const {
     if (plan.reduced && plan.error.isEmpty()) {
       return ImageBudget::reducedUrl(neighbour, version, copyEdge(plan));
     }
+    if (!known->estimate.direct) return ImageBudget::pinnedUrl(neighbour, version, known->estimate);
   }
   return ::imageUrl(neighbour, version);
 }
@@ -466,8 +480,10 @@ bool ViewerSession::neighbourIsVideo(int offset) const {
 }
 
 bool ViewerSession::neighbourIsAnimated(int offset) const {
-  const QString suffix = CaptureScanner::mediaSuffix(neighbourPath(offset));
-  return suffix == u"gif" || suffix == u"webp";
+  const QString neighbour = neighbourPath(offset);
+  const QString suffix = CaptureScanner::mediaSuffix(neighbour);
+  return (suffix == u"gif" || suffix == u"webp") && ImageFormats::looksAnimated(neighbour, suffix) &&
+         !DecodeJournal::isBlocked(neighbour);
 }
 
 void ViewerSession::forget(const QString& path) {
@@ -792,9 +808,16 @@ void ViewerSession::refreshPreloads() {
     const QString& neighbour = m_pendingPreloadPaths[i];
     if (neighbour.isEmpty()) continue;
     const QString version = FileVersion::key(neighbour);
+    // A renamed picture's approval is its pinned read, sized by its header.
+    const auto known = m_neighbourPictures.constFind(neighbour);
+    const QUrl pinned = known != m_neighbourPictures.cend() && known->version == version &&
+                                !known->estimate.direct
+                            ? ImageBudget::pinnedUrl(neighbour, version, known->estimate)
+                            : QUrl();
     for (const QUrl& approved : m_preloadUrls) {
       if (approved == ::imageUrl(neighbour, version)
-          || approved == ImageBudget::reducedUrl(neighbour, version, m_preloadEdge)) {
+          || approved == ImageBudget::reducedUrl(neighbour, version, m_preloadEdge)
+          || (!pinned.isEmpty() && approved == pinned)) {
         retained[i] = approved;
         break;
       }
@@ -838,10 +861,11 @@ ViewerSession::PreloadResult ViewerSession::probePreloads(const std::array<QStri
     // reports the sensor's size rather than the preview's, so it would only
     // ever be budgeted wrongly.
     if (CameraRaw::isRaw(suffix)) continue;
-    QImageReader reader(path);
+    PinnedImageReader reader(path);
     if (!reader.canRead() || reader.supportsAnimation()) continue;
-    const ImageBudget::Estimate estimate = ImageBudget::estimate(reader);
+    ImageBudget::Estimate estimate = ImageBudget::estimate(reader);
     if (!estimate.valid()) continue;
+    estimate.direct = !reader.renamed();
     result.pictures[i] = {path, version, estimate};
     // Too large to show whole: its copy waits until it is stepped onto.
     if (ImageBudget::plan(estimate).reduced) continue;
@@ -863,7 +887,7 @@ ViewerSession::PreloadResult ViewerSession::probePreloads(const std::array<QStri
     if (width > remaining / bytesPerPixel / height) continue;
     if (FileVersion::key(path) != version) continue;
     remaining -= width * height * bytesPerPixel;
-    result.candidates[i] = {path, version, reduced ? edge : 0};
+    result.candidates[i] = {path, version, reduced ? edge : 0, estimate};
   }
   return result;
 }
@@ -873,6 +897,13 @@ void ViewerSession::refreshDetails() {
   m_thumbnailVersion = ThumbnailSource::version(path(), FileVersion::thumbnailKey(path()));
   watchCurrentFile();
   m_mediaSuffix = CaptureScanner::mediaSuffix(path());
+  // Qt's movie reader has no format to pin and journals nothing, so a GIF or
+  // WebP plays only when its contents are one and it never crashed Omaroll.
+  // Anything else is read as a still, pinned, which shows a blocked file's
+  // error instead of opening it.
+  m_animated = (m_mediaSuffix == u"gif" || m_mediaSuffix == u"webp") &&
+               ImageFormats::looksAnimated(path(), m_mediaSuffix) &&
+               !DecodeJournal::isBlocked(path());
   refreshPicture();
   startPictureCheck();
   const QFileInfo info(path());

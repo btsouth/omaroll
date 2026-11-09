@@ -66,8 +66,16 @@ struct Estimate {
   // The decoder can produce a reduced size without a full decode first.
   bool scalable = false;
   bool jpeg = false;
+  // Set by estimate(path). Qt's own file loading, which a QML Image uses,
+  // would pick the same decoder: the name's, and it accepts the contents.
+  // Otherwise the picture is read through pinnedUrl(), never by Qt guessing.
+  bool direct = true;
+  // The file crashed Omaroll the last time it was read; nothing reads it.
+  bool blocked = false;
 
   [[nodiscard]] bool valid() const { return bytes >= 0; }
+  // Nothing Omaroll lists reads it, so nothing should try.
+  [[nodiscard]] bool unreadable() const { return blocked || (!valid() && !direct); }
 };
 
 // Reads only the header.
@@ -156,6 +164,9 @@ struct Plan {
 // What QML loads for the reduced copy, from LargeImageProvider. The file's
 // version keeps a replaced file out of Qt's pixmap cache.
 [[nodiscard]] QUrl reducedUrl(const QString& path, const QString& version, int edge);
+// The whole picture through the large provider's pinned reader: for a file
+// whose contents are another format than its name says.
+[[nodiscard]] QUrl pinnedUrl(const QString& path, const QString& version, const Estimate& estimate);
 
 // What QML loads for |area| of the upright picture, at most |size| large.
 [[nodiscard]] QUrl areaUrl(const QString& path, const QString& version, const QRect& area,

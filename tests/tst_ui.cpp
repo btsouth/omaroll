@@ -40,6 +40,7 @@
 #include "search/QrDetector.h"
 #include "theme/OmarchyTheme.h"
 #include "sources/CameraRaw.h"
+#include "sources/DecodeJournal.h"
 #include "sources/ImageBudget.h"
 #include "thumbs/LargeImageProvider.h"
 #include "thumbs/RawImageProvider.h"
@@ -84,6 +85,7 @@
 #include <QPointer>
 #include <QScopeGuard>
 #include <QSettings>
+#include <QElapsedTimer>
 #include <QSet>
 #include <QStandardPaths>
 #include <QStyleHints>
@@ -225,6 +227,44 @@ class UiTest : public QObject {
 private slots:
   // Organization that loads far smaller than today's backup is offered for
   // restore once, after the first frame, and Keep as is ends it.
+  // After a crash while reading a picture, the library names the file once,
+  // with a way to find it.
+  void decoderCrashNoticeNamesTheFileOnce() {
+    const QString journal = m_scratch.filePath(QStringLiteral("journal-ui"));
+    const QString victim = m_scratch.filePath(QStringLiteral("crashed-picture.png"));
+    QImage picture(8, 8, QImage::Format_RGB32);
+    picture.fill(Qt::darkCyan);
+    QVERIFY(picture.save(victim));
+    QVERIFY(DecodeJournal::open(journal));
+    {
+      DecodeJournal::Scope scope(victim);
+      DecodeJournal::simulateCrash();
+      DecodeJournal::close();
+    }
+    QVERIFY(DecodeJournal::open(journal));
+    const auto closeJournal = qScopeGuard([this] {
+      DecodeJournal::close();
+      if (!m_window->isVisible()) m_window->show();
+    });
+    // Not told while the library's window is hidden.
+    m_window->hide();
+    m_decodeCrash->reload();
+    QQuickItem* message = item("decoderCrashNotice");
+    QVERIFY(message);
+    QTest::qWait(50);
+    QCOMPARE(DecodeJournal::pendingNotice(), QFileInfo(victim).canonicalFilePath());
+    m_window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(m_window));
+    QTRY_VERIFY(message->isVisible());
+    QVERIFY2(message->property("text").toString().contains(u"crashed-picture.png"),
+             qPrintable(message->property("text").toString()));
+    // On screen once is enough: the next launch does not say it again.
+    QVERIFY(DecodeJournal::pendingNotice().isEmpty());
+    QVERIFY(DecodeJournal::isBlocked(victim));
+    click(item("decoderCrashDismiss"));
+    QTRY_VERIFY(!message->isVisible());
+  }
+
   void incompleteOrganizationIsOfferedForRestoreOnce() {
     m_settings->flushBackups();
     const QDir backups(m_settings->backupDirectory());
@@ -709,6 +749,8 @@ private slots:
     context->setContextProperty(QStringLiteral("MediaMetadata"), m_mediaMetadata);
     context->setContextProperty(QStringLiteral("Tailscale"), m_tailscale);
     context->setContextProperty(QStringLiteral("DemoMode"), true);
+    m_decodeCrash = new DecodeCrashNotice(this);
+    context->setContextProperty(QStringLiteral("DecodeCrash"), m_decodeCrash);
     // Without a bus connection, so playback never reaches the desktop's.
     context->setContextProperty(QStringLiteral("Mpris"),
                                 new MprisService(m_settings, QDBusConnection(QString()), this));
@@ -3912,13 +3954,12 @@ private slots:
     QQuickItem* detail = item("detail");
     QTRY_VERIFY(detail->property("imageReady").toBool());
     const QString missing = m_scratch.filePath(QStringLiteral("missing-image.png"));
-    // Only the still decoder runs; no hidden video poster requests this path.
-    m_expectedQmlWarnings = {QStringLiteral("Cannot open: ") + QUrl::fromLocalFile(missing).toString()};
+    // Its header can't be read, so nothing loads it: neither the still nor a
+    // hidden video poster requests this path, and the error comes at once.
     detail->setProperty("path", missing);
     QTRY_VERIFY(!detail->property("playbackError").toString().isEmpty());
     QVERIFY(detail->property("stillReady").toBool());
     QVERIFY(!detail->property("imageReady").toBool());
-    QTRY_VERIFY(m_expectedQmlWarnings.isEmpty());
     invoke("dismissTopLayer");
     QVERIFY(!detail->property("imageReady").toBool());
   }
@@ -6932,6 +6973,84 @@ private slots:
     QTRY_COMPARE_WITH_TIMEOUT(preview->property("status").toInt(), 1, 15000);
   }
 
+  // A PNG or JPEG under a .webp or .gif name is a still: the preview shows
+  // it, read pinned, instead of a movie reader that gets no source. A real
+  // GIF that crashed Omaroll shows its error. The slideshow moves past all.
+  void renamedAndBlockedAnimationsPreviewAndTheSlideshowMovesOn() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString pngWebp = QFileInfo(dir.path()).canonicalFilePath() + QStringLiteral("/png-inside.webp");
+    const QString jpegGif = QFileInfo(dir.path()).canonicalFilePath() + QStringLiteral("/jpeg-inside.gif");
+    const QString crashed = QFileInfo(dir.path()).canonicalFilePath() + QStringLiteral("/crashed.gif");
+    QImage fixture(80, 60, QImage::Format_RGB32);
+    fixture.fill(Qt::darkMagenta);
+    QVERIFY(fixture.save(pngWebp, "PNG"));
+    QVERIFY(fixture.save(jpegGif, "JPEG"));
+    {
+      QFile gif(crashed);
+      QVERIFY(gif.open(QIODevice::WriteOnly));
+      gif.write(QByteArray::fromHex("47494638396101000100800000000000ffffff2c00000000010001000002024401003b"));
+    }
+    for (const QString& path : {pngWebp, jpegGif, crashed}) m_disposablePaths.append(path);
+    // The GIF crashed the last run.
+    const QString journal = m_scratch.filePath(QStringLiteral("journal-animations"));
+    QVERIFY(DecodeJournal::open(journal));
+    {
+      DecodeJournal::Scope scope(crashed);
+      DecodeJournal::simulateCrash();
+      DecodeJournal::close();
+    }
+    QVERIFY(DecodeJournal::open(journal));
+    const int interval = m_settings->slideshowIntervalSeconds();
+    const auto restore = qScopeGuard([&] {
+      invoke("dismissTopLayer");
+      m_settings->setSlideshowIntervalSeconds(interval);
+      DecodeJournal::close();
+      QMetaObject::invokeMethod(m_window, "openFolder", Q_ARG(QVariant, QString()));
+      rescan();
+    });
+    m_captures->addExtraFiles({pngWebp, jpegGif, crashed});
+    waitForScan();
+    QQuickItem* detail = item("detail");
+    for (const QString& path : {pngWebp, jpegGif}) {
+      const int row = m_library->rowOf(path);
+      QVERIFY2(row >= 0, qPrintable(path));
+      QVERIFY(!m_library->isAnimatedAt(row));
+      openDetail(row);
+      QTRY_VERIFY(detail->isVisible());
+      QTRY_VERIFY_WITH_TIMEOUT(detail->property("imageReady").toBool(), 10000);
+      QVERIFY2(detail->property("playbackError").toString().isEmpty(),
+               qPrintable(detail->property("playbackError").toString()));
+      invoke("dismissTopLayer");
+    }
+    const int crashedRow = m_library->rowOf(crashed);
+    QVERIFY(crashedRow >= 0);
+    QVERIFY(!m_library->isAnimatedAt(crashedRow));
+    QVERIFY(m_captures->fileUrl(crashed).isEmpty());
+    openDetail(crashedRow);
+    QTRY_VERIFY(detail->isVisible());
+    QTRY_VERIFY(!detail->property("playbackError").toString().isEmpty());
+    QVERIFY(detail->property("stillReady").toBool());
+    invoke("dismissTopLayer");
+
+    // In the folder's own order, from the PNG, every file is shown in turn.
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openPath", Q_ARG(QVariant, pngWebp)));
+    QTRY_VERIFY(detail->isVisible());
+    QTRY_COMPARE(detail->property("path").toString(), pngWebp);
+    m_settings->setSlideshowIntervalSeconds(2);
+    QVERIFY(QMetaObject::invokeMethod(detail, "setSlideshow", Q_ARG(QVariant, true)));
+    QSet<QString> shown{pngWebp};
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (shown.size() < 3 && elapsed.elapsed() < 30000) {
+      QTest::qWait(50);
+      shown.insert(detail->property("path").toString());
+    }
+    QVERIFY2(shown.contains(jpegGif) && shown.contains(crashed),
+             qPrintable(QStringList(shown.values()).join(u", ")));
+    QVERIFY(detail->property("slideshowRunning").toBool());
+  }
+
   void shuffledFolderPreviewStaysInTheExactFolder() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -9925,6 +10044,7 @@ private:
   CaptureModel* m_captures = nullptr;
   CaptureFilterModel* m_library = nullptr;
   MimeDefaults* m_mimeDefaults = nullptr;
+  DecodeCrashNotice* m_decodeCrash = nullptr;
   FolderTreeModel* m_folderTree = nullptr;
   ActionLauncher* m_actions = nullptr;
   ActionRegistry* m_registry = nullptr;

@@ -1,6 +1,8 @@
 #include "viewer/PictureDiagnosis.h"
 
+#include "sources/DecodeJournal.h"
 #include "sources/ImageBudget.h"
+#include "sources/PinnedImageReader.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -125,16 +127,17 @@ Ending pngEnding(Bytes& bytes) {
   return Ending::CutOff;
 }
 
-// "Plain text document" reads as "a plain text document"; "JPEG image"
-// keeps its capitals. A leading abbreviation that is spelled out goes by how
-// its first letter sounds: "an MPEG-4 video", "an SVG image", "a USB drive";
-// one read as a word does not: "a HEIF image".
+// "Plain text document" reads as "a plain text document"; "JPEG image" and
+// "PlayStation graphics" keep their capitals. A leading abbreviation that is
+// spelled out goes by how its first letter sounds: "an MPEG-4 video", "an SVG
+// image", "a USB drive"; one read as a word does not: "a HEIF image".
 QString article(QString noun) {
   if (noun.isEmpty()) return noun;
-  if (noun.size() > 1 && noun.at(1).isLower()) noun[0] = noun.at(0).toLower();
+  const QString lead = noun.section(QLatin1Char(' '), 0, 0);
+  if (lead.size() > 1 && lead.mid(1) == lead.mid(1).toLower()) noun[0] = noun.at(0).toLower();
   const QChar first = noun.at(0).toLower();
   bool vowel = QStringLiteral("aeiou").contains(first);
-  const QString word = noun.section(QLatin1Char(' '), 0, 0).section(QLatin1Char('-'), 0, 0);
+  const QString word = lead.section(QLatin1Char('-'), 0, 0);
   if (word.size() > 1 && word.at(0).isUpper() && word.at(1).isUpper()) {
     const bool spelled = !QStringLiteral("AEIOU").contains(word.at(1)) && word != u"FLAC";
     if (first == u'u') vowel = false;
@@ -172,13 +175,19 @@ Finding failure(const QString& path) {
     return {QStringLiteral("empty"), QStringLiteral("This file is empty"),
             QStringLiteral("It holds no picture. A download or copy may not have finished.")};
   }
+  // Checked before anything reads it: reading it is what crashed.
+  if (DecodeJournal::isBlocked(path)) {
+    return {QStringLiteral("crashed"), QStringLiteral("This file crashed Omaroll"),
+            QStringLiteral("Omaroll closed while reading it last time, so it isn't opened again "
+                           "until the file changes. Another app may still open it.")};
+  }
   const QMimeDatabase mimes;
   const QMimeType content = mimes.mimeTypeForFile(path, QMimeDatabase::MatchContent);
   const QMimeType named = mimes.mimeTypeForFile(path, QMimeDatabase::MatchExtension);
   const bool contentKnown = content.isValid() && !content.isDefault();
   const QString namedFormat = named.isValid() && !named.isDefault() ? named.comment()
                                                                     : QStringLiteral("picture");
-  QImageReader reader(path);
+  PinnedImageReader reader(path);
   if (!reader.canRead()) {
     if (contentKnown && !content.name().startsWith(u"image/")) {
       return {QStringLiteral("not-picture"), QStringLiteral("This file isn't a picture"),
@@ -198,7 +207,21 @@ Finding failure(const QString& path) {
                              "kimageformats packages add more formats.")
                   .arg(article(format.comment()))};
     }
-    const QString reason = reader.errorString();
+    // Another kind of picture than its name says, in a format a plugin reads
+    // but Omaroll does not open. Its decoder is never asked.
+    if (contentKnown && ImageFormats::forMimeType(content.name()).isEmpty() &&
+        !(named.isValid() && named.inherits(content.name()))) {
+      if (named.isValid() && !named.isDefault()) {
+        return {QStringLiteral("wrong-type"), QStringLiteral("This file isn't what its name says"),
+                QStringLiteral("Its contents look like %1, not %2, and Omaroll doesn't open "
+                               "that format.")
+                    .arg(article(content.comment()), article(namedFormat))};
+      }
+      return {QStringLiteral("unsupported"), QStringLiteral("This format isn't supported"),
+              QStringLiteral("Its contents look like %1, which Omaroll doesn't open.")
+                  .arg(article(content.comment()))};
+    }
+    const QString reason = reader.refusal();
     return {QStringLiteral("damaged"), QStringLiteral("This file is damaged"),
             QStringLiteral("Its header can't be read%1.")
                 .arg(reason.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(reason))};

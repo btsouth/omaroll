@@ -3,9 +3,11 @@
 #include "pdf/PdfSupport.h"
 #include "sources/CameraRaw.h"
 #include "sources/CaptureScanner.h"
+#include "sources/DecodeJournal.h"
 #include "sources/DisplayColors.h"
 #include "sources/ImageBudget.h"
 #include "sources/ThumbnailSource.h"
+#include "sources/PinnedImageReader.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -173,7 +175,7 @@ QString ThumbnailCache::cachedFile(const QString& path, const QSize& logicalSize
   // Only a tile that loads: a damaged one that could not be replaced is no
   // cover art.
   const auto loads = [](const QString& tile) {
-    return !tile.isEmpty() && !QImageReader(tile).read().isNull();
+    return !tile.isEmpty() && !PinnedImageReader(tile).read().isNull();
   };
   if (loads(file)) return file;
   // thumbnail() also serves a still-valid tile from before the current key.
@@ -203,7 +205,11 @@ QImage ThumbnailCache::renderImage(const QString& path, const QSize& pixelSize, 
     return CameraRaw::readPreview(path, pixelSize);
   }
 
-  QImageReader reader(path);
+  // A file that crashed a decoder before gets no tile until it changes.
+  PinnedImageReader reader(path);
+  if (reader.blocked()) {
+    return {};
+  }
   reader.setAutoTransform(true);
 
   const QSize original = reader.size();
@@ -297,7 +303,7 @@ QImage ThumbnailCache::renderVideo(const QString& path, const QSize& pixelSize, 
     return {};
   }
 
-  QImage image(output);
+  QImage image = PinnedImageReader(output).read();
   return isCancelled(cancelled) ? QImage{} : image;
 }
 
@@ -320,10 +326,15 @@ QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
 
   const QString directory = cacheDirectory();
   const QString renderPath = ThumbnailSource::path(path);
+  // A file that crashed a decoder gets no tile at all until it changes, not
+  // even ffmpegthumbnailer's.
+  if (DecodeJournal::isBlocked(path) || (renderPath != path && DecodeJournal::isBlocked(renderPath))) {
+    return {};
+  }
   const QString key = cacheKey(path, renderPath, pixelSize, seekPercent);
   const QString cachePath = directory + QLatin1Char('/') + key + QStringLiteral(".jpg");
 
-  QImage cached(cachePath);
+  QImage cached = PinnedImageReader(cachePath).read();
   if (isCancelled(cancelled)) {
     return {};
   }
@@ -332,7 +343,7 @@ QImage ThumbnailCache::thumbnail(const QString& path, const QSize& logicalSize,
   }
   const QString legacyPath = legacyTile(path, renderPath, pixelSize, seekPercent);
   if (!legacyPath.isEmpty()) {
-    cached.load(legacyPath);
+    cached = PinnedImageReader(legacyPath).read();
     if (!cached.isNull()) return isCancelled(cancelled) ? QImage{} : cached;
   }
   if (recentlyFailed(key)) {

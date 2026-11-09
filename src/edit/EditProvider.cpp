@@ -3,6 +3,7 @@
 #include "edit/ImageEditor.h"
 #include "sources/DisplayColors.h"
 #include "sources/ImageBudget.h"
+#include "sources/PinnedImageReader.h"
 
 #include <QImageReader>
 #include <QMetaObject>
@@ -50,7 +51,7 @@ public:
       return;
     }
 
-    QImageReader reader(m_path);
+    PinnedImageReader reader(m_path);
     reader.setAutoTransform(true);
     const QSize original = reader.size();
     if (original.isValid() && !original.isEmpty()) {

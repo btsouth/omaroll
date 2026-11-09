@@ -1,6 +1,7 @@
 #include "sources/ImageBudget.h"
 
 #include "sources/FileVersion.h"
+#include "sources/PinnedImageReader.h"
 
 #include <QCoreApplication>
 #include <QGuiApplication>
@@ -99,7 +100,9 @@ Estimate estimate(QImageReader& reader) {
   result.depth = depthOf(reader, &result.formatKnown);
   result.bytes = imageBytes(size, result.depth);
   result.scalable = reader.supportsOption(QImageIOHandler::ScaledSize);
-  result.jpeg = reader.format() == "jpeg";
+  // A pinned reader keeps the name it was given; Qt's own guess says "jpeg".
+  const QByteArray format = reader.format().toLower();
+  result.jpeg = format == "jpeg" || format == "jpg" || format == "jfif" || format == "jpe";
   return result;
 }
 
@@ -121,9 +124,12 @@ qint64 bytesAt(const Estimate& estimate, const QSize& scaled) {
 }
 
 Estimate estimate(const QString& path) {
-  QImageReader reader(path);
+  PinnedImageReader reader(path);
   reader.setAutoTransform(true);
-  return estimate(reader);
+  Estimate result = estimate(reader);
+  result.direct = reader.pinned() && !reader.renamed();
+  result.blocked = reader.blocked();
+  return result;
 }
 
 bool fitsBudget(QImageReader& reader, qint64 budget) {
@@ -166,6 +172,11 @@ QString formatBytes(qint64 bytes) {
 
 Plan plan(const Estimate& estimate, int screenEdge) {
   Plan result;
+  // The viewers then load nothing, and say why once they have looked.
+  if (estimate.unreadable()) {
+    result.error = QStringLiteral("Could not display this picture");
+    return result;
+  }
   if (!estimate.valid()) return result;
   const Limits current = limits();
   const qint64 limit = decodeLimitBytes();
@@ -242,6 +253,11 @@ QUrl reducedUrl(const QString& path, const QString& version, int edge) {
                   .arg(edge)
                   .arg(version.isEmpty() ? FileVersion::key(path) : version) +
               QString::fromLatin1(QUrl::toPercentEncoding(path)));
+}
+
+QUrl pinnedUrl(const QString& path, const QString& version, const Estimate& estimate) {
+  return reducedUrl(path, version,
+                    std::max({1, estimate.oriented.width(), estimate.oriented.height()}));
 }
 
 QUrl areaUrl(const QString& path, const QString& version, const QRect& area, const QSize& size) {

@@ -13,6 +13,20 @@ mkdir -p "$build/fuzz-results"
 # Leak checks stay on; only the documented external allocations are ignored.
 export LSAN_OPTIONS="suppressions=$PWD/tests/lsan.supp${LSAN_OPTIONS:+:$LSAN_OPTIONS}"
 status=0
+# Every finding becomes a regression test (tests/README.md), so its input is
+# printed where it cannot expire with an artifact: base64 in the log and, on
+# GitHub, in the job summary. Inputs are at most 64 KiB (-max_len). CI also uploads the files as fuzz-crash-inputs.
+report_findings() {
+  local parser=$1 input
+  for input in "$build/fuzz-results/$parser"-{crash,leak,timeout,oom}-*; do
+    [[ -f $input ]] || continue
+    {
+      echo "fuzz_$parser finding: $(basename "$input") ($(stat -c %s "$input") bytes)"
+      echo "reproduce: build/fuzz/fuzz_$parser <input>; base64 of the whole input:"
+      base64 -w 76 "$input"
+    } | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}" >&2
+  done
+}
 for parser in "${parsers[@]}"; do
   seeds=tests/fuzz/corpus/$parser
   corpus="$build/fuzz-results/$parser"
@@ -29,6 +43,7 @@ for parser in "${parsers[@]}"; do
     status=1
     echo "fuzz_$parser failed; last lines of its log:" >&2
     tail -n 40 "$build/fuzz-results/$parser.log" >&2
+    report_findings "$parser"
   }
   { grep -h '^Done' "$build/fuzz-results/$parser.log" || true; } | sed "s/^/fuzz_$parser: /"
   # What the run found beyond the seeds: merge into a copy of the seeds, then
