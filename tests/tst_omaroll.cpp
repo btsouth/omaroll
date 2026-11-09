@@ -637,6 +637,32 @@ private slots:
     QCOMPARE(valid.get(), SingleInstance::Result::Forwarded);
   }
 
+  void unsupportedLaunchReportsAndNotifiesWithoutOpening() {
+    QTemporaryDir dir;
+    QFile notify(dir.filePath("notify-send"));
+    QVERIFY(notify.open(QIODevice::WriteOnly));
+    notify.write("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$OMAROLL_NOTIFY_LOG\"\n");
+    notify.close();
+    QVERIFY(notify.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    QFile input(dir.filePath("unsupported.txt"));
+    QVERIFY(input.open(QIODevice::WriteOnly));
+    input.write("ordinary text"); input.close();
+    auto env = QProcessEnvironment::systemEnvironment();
+    env.insert("PATH", dir.path() + ":" + env.value("PATH"));
+    env.insert("OMAROLL_NOTIFY_LOG", dir.filePath("notification"));
+    env.insert("QT_QPA_PLATFORM", "offscreen");
+    env.insert("XDG_CONFIG_HOME", dir.path());
+    QProcess process;
+    process.setProcessEnvironment(env);
+    process.start(QCoreApplication::applicationDirPath() + "/omaroll", {"--", input.fileName()});
+    QVERIFY(process.waitForFinished(5000));
+    QCOMPARE(process.exitCode(), 2);
+    QVERIFY(process.readAllStandardError().contains("unsupported media file"));
+    QFile log(dir.filePath("notification"));
+    QVERIFY(log.open(QIODevice::ReadOnly));
+    QVERIFY(log.readAll().contains(input.fileName().toUtf8()));
+  }
+
   void mimeDefaultsRestoreAndRemoveOnlyOmaroll() {
     QTemporaryDir dir;
     const auto oldConfig = qgetenv("XDG_CONFIG_HOME");
@@ -747,14 +773,13 @@ private slots:
     const OpenRequest folder = OpenRequest::fromPaths({dir.path()});
     QVERIFY(folder.error.isEmpty());
     QCOMPARE(folder.folder, dir.path());
-    for (const QStringList& paths : {QStringList{first, dir.path()},
-                                     QStringList{QDir::homePath()}}) {
+    for (const QStringList& paths : {QStringList{QDir::homePath()}}) {
       const OpenRequest rejected = OpenRequest::fromPaths(paths);
       QVERIFY(!rejected.error.isEmpty());
       QVERIFY(rejected.files.isEmpty());
       QVERIFY(rejected.folder.isEmpty());
     }
-    const auto mixed = OpenRequest::fromPaths({first, dir.filePath("missing.png")});
+    const auto mixed = OpenRequest::fromPaths({first, dir.filePath("missing.png"), dir.path()});
     QCOMPARE(mixed.files, QStringList{first});
     QVERIFY(mixed.error.isEmpty());
     QVERIFY(mixed.note().contains("missing.png"));
@@ -4761,7 +4786,9 @@ private slots:
     settle();
     forward({QStringLiteral("--"), second});
     settle();
-    forward({QStringLiteral("--"), first});
+    forward({QStringLiteral("--start=00:01.5"), QStringLiteral("--"), first, dir.filePath("skipped.txt")});
+    settle();
+    forward({QStringLiteral("--start"), QStringLiteral("0"), QStringLiteral("--"), second});
     settle();
     forward({QStringLiteral("--library"), QStringLiteral("--"), second});
     settle();

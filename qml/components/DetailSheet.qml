@@ -1556,7 +1556,7 @@ Item {
                             }
                         }
                         onMediaStatusChanged: {
-                        const explicitStart = applyLaunchStart()
+                            const explicitStart = applyLaunchStart()
                             if (mediaStatus === MediaPlayer.LoadedMedia && root.isVideo
                                     && root.resumePending && !root.slideshowRunning && !explicitStart) {
                                 root.resumePending = false

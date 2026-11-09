@@ -9,6 +9,7 @@
 OpenRequest OpenRequest::fromPaths(const QStringList& paths) {
   OpenRequest result;
   QSet<QString> seen;
+  QStringList failures;
   for (const QString& path : paths) {
     const QFileInfo info(path);
     if (!info.exists()) {
@@ -36,18 +37,19 @@ OpenRequest OpenRequest::fromPaths(const QStringList& paths) {
       }
     }
     if (!result.error.isEmpty()) {
-      // Invalid folder combinations remain errors; individual files can be skipped.
-      if (info.isDir()) {
+      // A protected folder remains an error; skip other invalid selection entries.
+      if (info.isDir() && paths.size() == 1) {
         result.files.clear();
         result.entryPaths.clear();
         result.folder.clear();
         return result;
       }
+      failures.append(result.error);
       result.skipped.append(path);
       result.error.clear();
     }
   }
   if (!result.skipped.isEmpty() && result.files.isEmpty() && result.folder.isEmpty())
-    result.error = QStringLiteral("unsupported or unreadable media: %1").arg(result.skipped.join(QStringLiteral(", ")));
+    result.error = failures.join(QLatin1Char('\n'));
   return result;
 }
