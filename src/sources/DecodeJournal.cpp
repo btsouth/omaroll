@@ -171,7 +171,17 @@ void onFatalSignal(int signal, siginfo_t* info, void* context) {
   const struct sigaction& previous = g_previous[signal];
   if (!markCrash(signal)) {
     // Not a decode: someone else's signal, which their handler may survive.
-    // It is handed on and this handler stays armed for the decoders.
+    // It is handed on and this handler stays armed for the decoders, unless
+    // that handler asked to be run once (QtTest's does): then the default
+    // comes next, as the kernel would have arranged, or a fault that runs
+    // again would call it again forever.
+    const bool once = previous.sa_flags & SA_RESETHAND;
+    if (once && previous.sa_handler != SIG_DFL && previous.sa_handler != SIG_IGN) {
+      struct sigaction fallback {};
+      fallback.sa_handler = SIG_DFL;
+      sigemptyset(&fallback.sa_mask);
+      ::sigaction(signal, &fallback, nullptr);
+    }
     if (previous.sa_flags & SA_SIGINFO) {
       if (previous.sa_sigaction) previous.sa_sigaction(signal, info, context);
       return;
@@ -251,8 +261,11 @@ void loadStore() {
       bool timed = false;
       const qint64 size = entry.value(QStringLiteral("size")).toString().toLongLong(&sized);
       const qint64 modified = entry.value(QStringLiteral("modified")).toString().toLongLong(&timed);
-      // A file that is gone needs no blocking, and the list stays short.
-      if (!sized || !timed || !QFileInfo::exists(path)) {
+      // A file that is gone needs no blocking, and the list stays short. One
+      // whose folder is gone too may be on a drive that is not plugged in,
+      // and is kept for when it is.
+      const QFileInfo info(path);
+      if (!sized || !timed || (!info.exists() && info.absoluteDir().exists())) {
         pruned = true;
         continue;
       }
@@ -328,11 +341,26 @@ namespace DecodeJournal {
 
 bool open(const QString& directory, const QString& journalDirectory) {
   if (g_base.load()) return true;
-  const QString journalFolder = journalDirectory.isEmpty() ? directory : journalDirectory;
-  if (!QDir().mkpath(directory) || !QDir().mkpath(journalFolder)) return false;
-  const QByteArray journalPath = QFile::encodeName(journalFolder + QStringLiteral("/decoding"));
-  const int fd = ::open(journalPath.constData(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
-  if (fd < 0) return false;
+  {
+    // First, so files blocked before are skipped whatever happens to the
+    // journal below.
+    const QMutexLocker lock(&g_mutex);
+    g_storePath = directory + QStringLiteral("/decoder-crashes.json");
+    loadStore();
+  }
+  QDir().mkpath(directory);
+  // The journal where asked, or beside the list when that folder fails.
+  const auto openJournal = [](const QString& folder) {
+    if (folder.isEmpty() || !QDir().mkpath(folder)) return -1;
+    const QByteArray path = QFile::encodeName(folder + QStringLiteral("/decoding"));
+    return ::open(path.constData(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+  };
+  int fd = openJournal(journalDirectory.isEmpty() ? directory : journalDirectory);
+  if (fd < 0 && !journalDirectory.isEmpty()) fd = openJournal(directory);
+  if (fd < 0) {
+    qWarning("omaroll: the decode journal cannot be opened; a decoder crash will not be recorded");
+    return false;
+  }
   // A second Omaroll (one forwarding its files, a render) leaves the first
   // one's journal alone.
   if (::flock(fd, LOCK_EX | LOCK_NB) != 0) {
@@ -346,8 +374,6 @@ bool open(const QString& directory, const QString& journalDirectory) {
     // Blocked files are kept apart from the journal, which may live on a
     // filesystem that is gone after a reboot.
     const QMutexLocker lock(&g_mutex);
-    g_storePath = directory + QStringLiteral("/decoder-crashes.json");
-    loadStore();
     Identity identity;
     const QString crashed = crashedPath(previous, &identity);
     if (!crashed.isEmpty()) {

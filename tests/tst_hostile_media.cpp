@@ -42,13 +42,16 @@
 #include <QTemporaryDir>
 #include <QtTest>
 
+#include <atomic>
 #include <csignal>
 #include <functional>
 #include <cstdlib>
 #include <memory>
+#include <new>
 #include <optional>
 
 #include <fcntl.h>
+#include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/prctl.h>
 #include <sys/statvfs.h>
@@ -334,6 +337,10 @@ void faultHere() {
   void* page = ::mmap(nullptr, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   *static_cast<volatile int*>(page) = 1;
 }
+
+// How often a run-once handler from before the journal ran, in a page the
+// forked child shares with the test.
+std::atomic<int>* g_runOnceCalls = nullptr;
 
 // What a recursive parser does to a crafted file: runs out of stack.
 __attribute__((noinline)) int recurse(int depth) {
@@ -685,23 +692,37 @@ private slots:
     QVERIFY(DecodeJournal::blocked().isEmpty());
     DecodeJournal::close();
 
-    // A blocked file that is gone is dropped from the list when it is read.
-    {
-      DecodeJournal::open(journal);
-      DecodeJournal::Scope scope(victim);
+    // A blocked file that is gone is dropped from the list when it is read,
+    // but not one whose folder is gone too, as on a drive that is not
+    // mounted: that one is still blocked when the drive is back.
+    const QString drive = m_dir.filePath(QStringLiteral("drive"));
+    const QString unplugged = m_dir.filePath(QStringLiteral("drive-unplugged"));
+    QVERIFY(QDir().mkpath(drive));
+    const QString away = drive + QStringLiteral("/on-a-drive.jpg");
+    QVERIFY(writeFile(away, jpegBytes(QSize(24, 18))));
+    const QString awayKey = QFileInfo(away).canonicalFilePath();
+    for (const QString& crashed : {victim, away}) {
+      QVERIFY(DecodeJournal::open(journal));
+      DecodeJournal::Scope scope(crashed);
       DecodeJournal::simulateCrash();
       DecodeJournal::close();
     }
     QVERIFY(DecodeJournal::open(journal));
-    QCOMPARE(DecodeJournal::blocked().size(), 1);
+    QCOMPARE(DecodeJournal::blocked().size(), 2);
     DecodeJournal::close();
     QVERIFY(QFile::remove(link));
     QVERIFY(QFile::remove(victim));
+    QVERIFY(QDir().rename(drive, unplugged));
     QVERIFY(DecodeJournal::open(journal));
-    QVERIFY(DecodeJournal::blocked().isEmpty());
+    QCOMPARE(DecodeJournal::blocked(), QStringList{awayKey});
     DecodeJournal::close();
     QVERIFY(DecodeJournal::open(journal));
-    QVERIFY(DecodeJournal::blocked().isEmpty());
+    QCOMPARE(DecodeJournal::blocked(), QStringList{awayKey});
+    DecodeJournal::close();
+    QVERIFY(QDir().rename(unplugged, drive));
+    QVERIFY(DecodeJournal::open(journal));
+    QVERIFY(DecodeJournal::isBlocked(away));
+    QVERIFY(ThumbnailCache::thumbnail(away, QSize(64, 64), 1.0).isNull());
     DecodeJournal::close();
   }
 
@@ -798,6 +819,80 @@ private slots:
     DecodeJournal::close();
   }
 
+  // A handler from before the journal that asked to run once (QtTest's does)
+  // runs once for a crash outside any decode, and then the default ends the
+  // process, instead of the fault calling it again forever.
+  void aRunOnceHandlerFromBeforeRunsOnce() {
+    const QString journal = m_dir.filePath(QStringLiteral("journal-run-once"));
+    void* shared = ::mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    QVERIFY(shared != MAP_FAILED);
+    const auto unmap = qScopeGuard([shared] { ::munmap(shared, 4096); });
+    g_runOnceCalls = new (shared) std::atomic<int>(0);
+    const auto closeJournal = qScopeGuard([] { DecodeJournal::close(); });
+    QVERIFY(DecodeJournal::open(journal));
+    const pid_t child = ::fork();
+    if (child == 0) {
+      ::prctl(PR_SET_DUMPABLE, 0);
+      // The old loop ends in SIGALRM rather than hanging the suite.
+      ::alarm(10);
+      struct sigaction once {};
+      once.sa_handler = [](int) { g_runOnceCalls->fetch_add(1); };
+      once.sa_flags = SA_RESETHAND;
+      sigemptyset(&once.sa_mask);
+      ::sigaction(SIGSEGV, &once, nullptr);
+      DecodeJournal::installCrashHandler();
+      faultHere();
+      ::_exit(0);
+    }
+    QVERIFY(child > 0);
+    int status = 0;
+    QCOMPARE(::waitpid(child, &status, 0), child);
+    QVERIFY2(WIFSIGNALED(status) && WTERMSIG(status) == SIGSEGV,
+             qPrintable(QStringLiteral("status %1").arg(status)));
+    QCOMPARE(g_runOnceCalls->load(), 1);
+    DecodeJournal::close();
+    QVERIFY(DecodeJournal::open(journal));
+    QVERIFY(DecodeJournal::blocked().isEmpty());
+  }
+
+  // Files blocked before are skipped even when this process keeps no
+  // journal: another Omaroll holds it, or its folder cannot be made.
+  void filesBlockedBeforeStaySkippedWithoutAJournal() {
+    const QString store = m_dir.filePath(QStringLiteral("journal-store-first"));
+    const QString victim = m_dir.filePath(QStringLiteral("blocked-store-first.jpg"));
+    QVERIFY(writeFile(victim, jpegBytes(QSize(24, 18))));
+    const auto closeJournal = qScopeGuard([] { DecodeJournal::close(); });
+    QVERIFY(DecodeJournal::open(store));
+    {
+      DecodeJournal::Scope scope(victim);
+      DecodeJournal::simulateCrash();
+      DecodeJournal::close();
+    }
+    QVERIFY(DecodeJournal::open(store));
+    QVERIFY(DecodeJournal::isBlocked(victim));
+    DecodeJournal::close();
+
+    // Another Omaroll holds the journal.
+    const int held = ::open(QFile::encodeName(store + QStringLiteral("/decoding")).constData(),
+                            O_RDWR | O_CLOEXEC);
+    QVERIFY(held >= 0);
+    const auto release = qScopeGuard([held] { ::close(held); });
+    QCOMPARE(::flock(held, LOCK_EX | LOCK_NB), 0);
+    QVERIFY(!DecodeJournal::open(store));
+    QVERIFY(!DecodeJournal::active());
+    QVERIFY(DecodeJournal::isBlocked(victim));
+    QVERIFY(ThumbnailCache::thumbnail(victim, QSize(64, 64), 1.0).isNull());
+    DecodeJournal::close();
+    QCOMPARE(::flock(held, LOCK_UN), 0);
+
+    // The journal's own folder cannot be made: it goes beside the list.
+    const QString notAFolder = m_dir.filePath(QStringLiteral("journal-not-a-folder"));
+    QVERIFY(writeFile(notAFolder, QByteArray("x")));
+    QVERIFY(DecodeJournal::open(store, notAFolder + QStringLiteral("/omaroll")));
+    QVERIFY(DecodeJournal::active());
+    QVERIFY(DecodeJournal::isBlocked(victim));
+  }
+
   // On a full disk there is no room for the journal. Omaroll goes on without
   // it, still skipping files blocked before, instead of dying of SIGBUS on
   // the first store into the mapping.
@@ -838,18 +933,20 @@ private slots:
       QSKIP("No small writable tmpfs at /dev/shm to fill");
     }
     const QString folder = QStringLiteral("/dev/shm/omaroll-journal-test-%1").arg(::getpid());
-    const QString filler = folder + QStringLiteral("/filler");
+    const QByteArray filler = QFile::encodeName(folder + QStringLiteral("/filler"));
     const auto cleanup = qScopeGuard([&] { QDir(folder).removeRecursively(); });
     QVERIFY(QDir().mkpath(folder));
-    {
-      QFile fill(filler);
-      QVERIFY(fill.open(QIODevice::WriteOnly | QIODevice::Unbuffered));
-      const QByteArray chunk(1024 * 1024, '\x5a');
-      while (fill.write(chunk) == chunk.size()) {
-      }
-      const QByteArray page(4096, '\x5a');
-      while (fill.write(page) == page.size()) {
-      }
+    // Unlinked at once: its space comes back when the last process holding
+    // it exits, however this test ends.
+    const int fill = ::open(filler.constData(), O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    QVERIFY(fill >= 0);
+    const auto release = qScopeGuard([fill] { ::close(fill); });
+    QCOMPARE(::unlink(filler.constData()), 0);
+    const QByteArray chunk(1024 * 1024, '\x5a');
+    while (::write(fill, chunk.constData(), size_t(chunk.size())) == chunk.size()) {
+    }
+    const QByteArray page(4096, '\x5a');
+    while (::write(fill, page.constData(), size_t(page.size())) == page.size()) {
     }
     // In a child, so the old SIGBUS shows as a failure rather than ending
     // the suite.
@@ -858,6 +955,7 @@ private slots:
     const pid_t child = ::fork();
     if (child == 0) {
       ::prctl(PR_SET_DUMPABLE, 0);
+      ::alarm(20);
       const bool opened = DecodeJournal::open(store, folder);
       DecodeJournal::Scope scope(picture);
       const bool decoded = !PinnedImageReader(picture).read().isNull();
