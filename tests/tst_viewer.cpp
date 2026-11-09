@@ -2183,6 +2183,98 @@ private slots:
     QVERIFY(truncation(write(QStringLiteral("other.gif"), QByteArray("GIF89a") + QByteArray(30, '\0'))).isEmpty());
   }
 
+  // A video that will not open is named for its cause too: gone, empty, not a
+  // video, no decoder for its codec, cut off or damaged.
+  void videoDiagnosisNamesTheCause() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto write = [&dir](const QString& name, const QByteArray& bytes) {
+      QFile file(dir.filePath(name));
+      if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size()) return QString();
+      return file.fileName();
+    };
+    QFile clipFile(media(QStringLiteral("clip.mp4")));
+    QVERIFY(clipFile.open(QIODevice::ReadOnly));
+    const QByteArray clip = clipFile.readAll();
+    // ffmpeg as a script that answers the way a real one does.
+    const auto fakeFfmpeg = [&dir](const QString& name, const QByteArray& message, int code) {
+      const QString path = dir.filePath(name);
+      QFile script(path);
+      if (!script.open(QIODevice::WriteOnly)) return QString();
+      script.write("#!/bin/sh\nprintf '%s\\n' '" + message + "' >&2\nexit " + QByteArray::number(code) + "\n");
+      script.close();
+      script.setPermissions(script.permissions() | QFileDevice::ExeOwner);
+      return path;
+    };
+    using PictureDiagnosis::videoFailure;
+    const QString none = dir.filePath(QStringLiteral("no-ffmpeg"));
+    QCOMPARE(videoFailure(dir.filePath(QStringLiteral("gone.mp4")), {}, none).cause, QStringLiteral("missing"));
+    QCOMPARE(videoFailure(write(QStringLiteral("empty.mp4"), {}), {}, none).cause, QStringLiteral("empty"));
+    const auto text = videoFailure(write(QStringLiteral("notes.mp4"), "Just some notes, not a video.\n"), {}, none);
+    QCOMPARE(text.cause, QStringLiteral("not-video"));
+    QVERIFY2(text.title == QStringLiteral("This file isn't a video"), qPrintable(text.title));
+    QVERIFY2(text.detail.contains(QStringLiteral("text")), qPrintable(text.detail));
+
+    const QString video = write(QStringLiteral("clip.mp4"), clip);
+    const auto codec = videoFailure(video, QStringLiteral("Could not open file"),
+        fakeFfmpeg(QStringLiteral("codec"), "[vist#0:0/hevc @ 0x55] Decoder (codec hevc) not found for input stream #0:0", 1));
+    QCOMPARE(codec.cause, QStringLiteral("unsupported"));
+    QVERIFY2(codec.detail.contains(QStringLiteral("hevc")), qPrintable(codec.detail));
+    const auto cut = videoFailure(video, {},
+        fakeFfmpeg(QStringLiteral("cut"), "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x55] moov atom not found", 1));
+    QCOMPARE(cut.cause, QStringLiteral("truncated"));
+    const auto damaged = videoFailure(video, {},
+        fakeFfmpeg(QStringLiteral("damaged"), "[in#0 @ 0x55] Error opening input: Invalid data found when processing input", 1));
+    QCOMPARE(damaged.cause, QStringLiteral("damaged"));
+    QVERIFY2(damaged.detail.contains(QStringLiteral("Invalid data found")), qPrintable(damaged.detail));
+    QVERIFY2(!damaged.detail.contains(QStringLiteral("0x55")), qPrintable(damaged.detail));
+    // FFmpeg reads it, so the player's own failure is all there is to say.
+    const auto other = videoFailure(video, QStringLiteral("Could not open file"),
+                                    fakeFfmpeg(QStringLiteral("fine"), "", 0));
+    QCOMPARE(other.cause, QStringLiteral("unknown"));
+    QVERIFY2(other.detail.contains(QStringLiteral("Could not open file")), qPrintable(other.detail));
+    // Without ffmpeg the player's words decide.
+    QCOMPARE(videoFailure(video, QStringLiteral("No decoder for this codec"), none).cause,
+             QStringLiteral("unsupported"));
+
+    if (QStandardPaths::findExecutable(QStringLiteral("ffmpeg")).isEmpty()) return;
+    // The real thing: a header followed by noise.
+    const auto real = videoFailure(write(QStringLiteral("noise.mp4"), clip.left(32) + QByteArray(8192, '\x5a')), {});
+    QVERIFY2(real.cause == QStringLiteral("damaged") || real.cause == QStringLiteral("truncated"),
+             qPrintable(real.cause + QStringLiteral(": ") + real.detail));
+    QCOMPARE(videoFailure(video, {}).cause, QStringLiteral("unknown"));
+  }
+
+  // A video that will not open says why like a picture does, hides the seek
+  // bar, and its arrow keys step to the next file instead of seeking.
+  void aVideoThatCannotOpenSaysWhyAndStepsFiles() {
+    const QString folder = m_scratch.filePath(QStringLiteral("broken-video"));
+    QVERIFY(QDir().mkpath(folder));
+    QFile clipFile(media(QStringLiteral("clip.mp4")));
+    QVERIFY(clipFile.open(QIODevice::ReadOnly));
+    const QString broken = folder + QStringLiteral("/a broken.mp4");
+    QFile file(broken);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(clipFile.read(32) + QByteArray(8192, '\x5a'));
+    file.close();
+    const QString fine = folder + QStringLiteral("/b fine.jpg");
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), fine));
+    open({broken});
+    QTRY_VERIFY_WITH_TIMEOUT(!prop("videoError").toString().isEmpty(), 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(prop("failureKnown").toBool(), 20000);
+    const QString cause = prop("errorCause").toString();
+    QVERIFY2(cause == QStringLiteral("damaged") || cause == QStringLiteral("truncated"), qPrintable(cause));
+    QVERIFY(item(QStringLiteral("viewerErrorTitle"))->property("text").toString().startsWith(QStringLiteral("This video is")));
+    QVERIFY(!item(QStringLiteral("viewerErrorDetail"))->property("text").toString().isEmpty());
+    QVERIFY(item(QStringLiteral("viewerErrorState"))->isVisible());
+    QVERIFY(item(QStringLiteral("viewerErrorTrash"))->isVisible());
+    QVERIFY(!item(QStringLiteral("viewerTransport"))->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTRY_COMPARE(m_session->path(), fine);
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QVERIFY(!item(QStringLiteral("viewerErrorState"))->isVisible());
+  }
+
   // The error state names the cause, offers what still applies to the file
   // and turns off the view controls that do not.
   void aPictureThatCannotBeShownSaysWhyAndKeepsItsActions() {

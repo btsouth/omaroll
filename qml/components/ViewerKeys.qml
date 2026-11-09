@@ -15,7 +15,8 @@ Item {
         const control = (event.modifiers & Qt.ControlModifier) !== 0
         const alt = (event.modifiers & Qt.AltModifier) !== 0
         const shift = (event.modifiers & Qt.ShiftModifier) !== 0
-        const video = Session.isVideo
+        // A video that did not open has nothing to seek; its keys step files.
+        const video = Session.isVideo && viewer.videoError === ""
         let handled = true
 
         if (video && shift && !control && !alt && event.key === ShortcutCatalog.quickKeys.L) {

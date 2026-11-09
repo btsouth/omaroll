@@ -6,6 +6,9 @@
 #include <QFileInfo>
 #include <QImageReader>
 #include <QMimeDatabase>
+#include <QProcess>
+#include <QRegularExpression>
+#include <QStandardPaths>
 
 #include <algorithm>
 #include <cstring>
@@ -220,6 +223,103 @@ Finding failure(const QString& path) {
   return {QStringLiteral("unknown"), QStringLiteral("Could not display this picture"),
           QStringLiteral("It decodes, but could not be drawn. It may be too large for the "
                          "graphics card, or it changed while it was opening.")};
+}
+
+Finding videoFailure(const QString& path, const QString& playerError, const QString& ffmpeg) {
+  const QFileInfo info(path);
+  if (!info.exists()) {
+    return {QStringLiteral("missing"), QStringLiteral("This file is no longer here"),
+            QStringLiteral("It was moved, renamed or deleted after it was opened.")};
+  }
+  if (!info.isReadable()) {
+    return {QStringLiteral("unreadable"), QStringLiteral("Omaroll can't read this file"),
+            QStringLiteral("You don't have permission to open it.")};
+  }
+  if (info.size() == 0) {
+    return {QStringLiteral("empty"), QStringLiteral("This file is empty"),
+            QStringLiteral("It holds no video. A download or copy may not have finished.")};
+  }
+  const QMimeDatabase mimes;
+  const QMimeType content = mimes.mimeTypeForFile(path, QMimeDatabase::MatchContent);
+  const QMimeType named = mimes.mimeTypeForFile(path, QMimeDatabase::MatchExtension);
+  const QString namedFormat = named.isValid() && !named.isDefault() ? named.comment()
+                                                                    : QStringLiteral("video");
+  const bool media = content.name().startsWith(u"video/") || content.name().startsWith(u"audio/") ||
+                     content.inherits(QStringLiteral("video/x-matroska")) ||
+                     content.inherits(QStringLiteral("application/ogg"));
+  if (content.isValid() && !content.isDefault() && !media) {
+    return {QStringLiteral("not-video"), QStringLiteral("This file isn't a video"),
+            QStringLiteral("Its contents look like %1, not %2.")
+                .arg(article(content.comment()), article(namedFormat))};
+  }
+  const QString reported = playerError.trimmed();
+  const auto damaged = [&](const QString& reason) -> Finding {
+    return {QStringLiteral("damaged"), QStringLiteral("This video is damaged"),
+            QStringLiteral("Its data can't be read%1. A download or copy may not have finished.")
+                .arg(reason.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(reason))};
+  };
+  const QString program = ffmpeg.isEmpty() ? QStandardPaths::findExecutable(QStringLiteral("ffmpeg")) : ffmpeg;
+  if (program.isEmpty()) {
+    // Without ffmpeg only the player's own words are left.
+    if (reported.contains(u"decoder", Qt::CaseInsensitive) || reported.contains(u"codec", Qt::CaseInsensitive)) {
+      return {QStringLiteral("unsupported"), QStringLiteral("This video's format isn't supported"),
+              QStringLiteral("No installed decoder plays it (%1).").arg(reported)};
+    }
+    return damaged(reported);
+  }
+  // The first video frame, decoded and thrown away.
+  QProcess probe;
+  probe.setProcessChannelMode(QProcess::SeparateChannels);
+  probe.setStandardOutputFile(QProcess::nullDevice());
+  probe.start(program, {QStringLiteral("-hide_banner"), QStringLiteral("-nostdin"),
+                        QStringLiteral("-v"), QStringLiteral("error"), QStringLiteral("-i"), path,
+                        QStringLiteral("-map"), QStringLiteral("0:v:0?"), QStringLiteral("-frames:v"),
+                        QStringLiteral("1"), QStringLiteral("-f"), QStringLiteral("null"), QStringLiteral("-")});
+  if (!probe.waitForStarted(5000)) return damaged(reported);
+  if (!probe.waitForFinished(15000)) {
+    probe.kill();
+    probe.waitForFinished(1000);
+    return {QStringLiteral("unknown"), QStringLiteral("Could not play this video"),
+            QStringLiteral("Reading it took too long%1.")
+                .arg(reported.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(reported))};
+  }
+  const QString errors = QString::fromUtf8(probe.readAllStandardError().left(16 * 1024));
+  // The last line that says something, with ffmpeg's "[demuxer @ 0x..] " and
+  // the file name taken off.
+  static const QRegularExpression prefix(QStringLiteral("^\\[[^\\]]*\\]\\s*"));
+  QString reason;
+  for (QString line : errors.split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
+    line.remove(prefix);
+    line.replace(path + QStringLiteral(": "), QString());
+    if (!line.trimmed().isEmpty()) reason = line.trimmed();
+  }
+  static const QRegularExpression missingDecoder(
+      QStringLiteral("(?:Decoder \\(codec ([\\w-]+)\\) not found|no decoder found for:? ?([\\w-]+)?|"
+                     "Decoding requested, but no decoder found for: ([\\w-]+))"),
+      QRegularExpression::CaseInsensitiveOption);
+  const QRegularExpressionMatch decoder = missingDecoder.match(errors);
+  if (decoder.hasMatch()) {
+    QString codec = decoder.captured(1);
+    if (codec.isEmpty()) codec = decoder.captured(2);
+    if (codec.isEmpty()) codec = decoder.captured(3);
+    return {QStringLiteral("unsupported"), QStringLiteral("This video's format isn't supported"),
+            codec.isEmpty() || codec == u"none"
+                ? QStringLiteral("No installed decoder plays it. Open in mpv, or another app, may still play it.")
+                : QStringLiteral("No installed decoder plays its %1 video. An FFmpeg build with %1 "
+                                 "support, or another app, can play it.").arg(codec)};
+  }
+  if (probe.exitStatus() == QProcess::NormalExit && probe.exitCode() == 0) {
+    return {QStringLiteral("unknown"), QStringLiteral("Could not play this video"),
+            QStringLiteral("FFmpeg reads it, but playback failed%1. Open in mpv may still play it.")
+                .arg(reported.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(reported))};
+  }
+  if (errors.contains(u"moov atom not found") || errors.contains(u"End of file") ||
+      errors.contains(u"partial file", Qt::CaseInsensitive) || errors.contains(u"Truncat", Qt::CaseInsensitive)) {
+    return {QStringLiteral("truncated"), QStringLiteral("This video is cut off"),
+            QStringLiteral("The file ends early, so it can't be played. A download or copy may "
+                           "not have finished.")};
+  }
+  return damaged(reason.isEmpty() ? reported : reason);
 }
 
 } // namespace PictureDiagnosis

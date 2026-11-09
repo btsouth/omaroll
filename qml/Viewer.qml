@@ -73,7 +73,8 @@ ApplicationWindow {
         : ""
     // Why, once the session has read the file: a title naming the cause and
     // a sentence about it. Until then the plain message above.
-    readonly property bool failureKnown: !Session.isVideo && Session.pictureFailure.title !== undefined
+    readonly property bool failureKnown: Session.pictureFailure.title !== undefined
+                                         && (!Session.isVideo || root.videoError !== "")
     readonly property string errorTitle: root.failureKnown ? Session.pictureFailure.title
                                                            : root.playbackError
     readonly property string errorDetail: root.failureKnown ? Session.pictureFailure.detail : ""
@@ -83,6 +84,8 @@ ApplicationWindow {
     readonly property string failedPicture: root.imageError && !Session.isVideo
                                             ? Session.path + "\n" + Session.contentVersion : ""
     onFailedPictureChanged: if (root.failedPicture !== "") Session.diagnosePicture()
+    // A video the player could not open is looked at the same way.
+    onVideoErrorChanged: if (root.videoError !== "" && Session.isVideo) Session.diagnoseVideo(root.videoError)
 
     // A still is fitted until it is zoomed; viewScale is then the logical
     // size of one source pixel. Zero means "fit".
@@ -1881,7 +1884,7 @@ ApplicationWindow {
 
                 Icon {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    visible: !Session.isVideo
+                    visible: !Session.isVideo || root.failureKnown
                     name: "warning"
                     size: 30
                     color: Theme.red
@@ -1892,10 +1895,11 @@ ApplicationWindow {
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.WordWrap
                     text: root.errorTitle
+                    readonly property bool plain: Session.isVideo && !root.failureKnown
                     font.family: Theme.fontFamily
-                    font.pixelSize: Session.isVideo ? 13 : 15
-                    font.weight: Session.isVideo ? Font.Normal : Font.DemiBold
-                    color: Session.isVideo ? Theme.red : Theme.brightForeground
+                    font.pixelSize: plain ? 13 : 15
+                    font.weight: plain ? Font.Normal : Font.DemiBold
+                    color: plain ? Theme.red : Theme.brightForeground
                     Accessible.role: Accessible.StaticText
                     Accessible.name: text
                 }
@@ -2204,7 +2208,8 @@ ApplicationWindow {
         ViewerTransport {
             id: transport
             objectName: "viewerTransport"
-            visible: Session.isVideo && !root.slideshowRunning
+            // Nothing to seek in a video that did not open.
+            visible: Session.isVideo && !root.slideshowRunning && root.videoError === ""
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottom: parent.bottom
             anchors.bottomMargin: 16

@@ -322,8 +322,8 @@ compiler-rt` (`/workspace/cache/omaroll-ci/Dockerfile.llvm`). TSan needs
 memory.
 
 ```sh
-bash tests/run-instrumented.sh fuzz 60   # each fuzzer for 60 seconds
-bash tests/run-instrumented.sh tsan      # threaded core tests under ThreadSanitizer
+bash tests/run-instrumented.sh fuzz 60   # each fuzzer for 60 seconds (45 by default)
+bash tests/run-instrumented.sh tsan      # threaded tests under ThreadSanitizer
 bash tests/run-instrumented.sh coverage  # all suites, then llvm-cov
 ```
 
@@ -342,11 +342,31 @@ wrote, from `tests/fuzz/driver.cpp`, with ASan and UBSan:
 | `fuzz_raw` | `CameraRaw::readMetadata` (TIFF, ISO BMFF, Fujifilm) |
 | `fuzz_subtitles` | sidecar SRT and WebVTT parsing |
 | `fuzz_organization` | organization backup import, in a throwaway profile |
+| `fuzz_query` | search query field tokens, quotes and exclusions (`SearchQuery::parse`), with a quote round trip |
+| `fuzz_storyboard` | seek preview cache entries (`StoryboardCache::load`) |
+| `fuzz_doctext` | PDF text cache entries (`DocumentTextIndex`) |
+| `fuzz_exifdate` | the quick EXIF date reader, checked against the general one |
+| `fuzz_hyprland` | `hyprland.lua` install and removal of the window rules, and the screenshot key from the bindings |
 
-`tests/fuzz/run.sh <build> <seconds>` runs each one from its seeds in
-`tests/fuzz/corpus/<harness>`, with a 10 second per-input timeout, a 2 GiB
-memory limit and 64 KiB inputs. New corpus entries, logs and crash files go to
-`<build>/fuzz-results`, never the checked-in seeds. Reproduce a crash with
+`tests/fuzz/run.sh <build> <seconds> [corpus root]` runs each one from its
+seeds in `tests/fuzz/corpus/<harness>`, with a 10 second per-input timeout, a
+2 GiB memory limit and 64 KiB inputs. New corpus entries, logs and crash files
+go to `<build>/fuzz-results`, never the checked-in seeds. A corpus root, as the
+nightly job passes, is fuzzed as well and grows in place. After each harness,
+the inputs that reach code its seeds do not are merged into
+`<build>/fuzz-results/new/<harness>`.
+
+To fold the nightly corpus back in, download the `fuzz-new-inputs` artifact
+from the latest nightly run, copy what you want to keep into the seeds, and
+commit it:
+
+```sh
+gh run download <run-id> -R btsouth/omaroll -n fuzz-new-inputs -D /tmp/fuzz-new
+cp /tmp/fuzz-new/new/<harness>/* tests/fuzz/corpus/<harness>/
+```
+
+Keep the seeds small: libFuzzer's file names are content hashes, and a few
+dozen inputs per harness is plenty. Reproduce a crash with
 `build/fuzz/fuzz_<harness> <crash-file>`, add a regression test to the core
 suite, then fix it; check a minimised reproducer into the corpus too.
 
@@ -363,8 +383,11 @@ futexes inside libQt6Core, where TSan cannot see them. A run of the whole core
 suite reports dozens of Qt-internal handoffs and can abort in TSan's thread
 registry when a thread id is reused, so the TSan job runs only the core tests
 whose threading is ours: the single-instance handshake, the clipboard
-fallback's `std::mutex` handoff, sidecar subtitle parsing and organization
-snapshots written on a worker. Add a test to the pattern in
+fallback's `std::mutex` handoff, sidecar subtitle parsing, organization
+snapshots and the launch check written on a worker, the metadata probe pool,
+the OCR and similarity indexers (`omaroll_tests`), PDF text extraction and its
+disk-backed matching (`omaroll_search_tests`) and storyboard extraction with
+its cache lane (all of `omaroll_storyboard_tests`). Add a test to the pattern in
 `tests/run-instrumented.sh` when it covers new threaded code.
 
 `tests/tsan-triage.py` fails on every report except the Qt handoffs it lists
@@ -383,10 +406,11 @@ no coverage threshold yet.
 
 ### CI
 
-Pull requests run all eight fuzzers for 60 seconds each, the TSan core suite
-and the coverage build, which uploads its HTML report. The nightly workflow
-runs the UI and viewer suites with `ctest --repeat until-fail:5` on Omarchy
-stable, current Arch and aarch64.
+Pull requests run every fuzzer for 45 seconds, the TSan suites and the
+coverage build, which uploads its HTML report. The nightly workflow runs the
+UI and viewer suites with `ctest --repeat until-fail:5` on Omarchy stable,
+current Arch and aarch64, and every fuzzer for five minutes from a corpus it
+keeps in the Actions cache.
 
 The UI and viewer suites wait on states and signals (scan finished, layout
 polished, media loaded, a frame rendered) rather than fixed sleeps. Timed waits

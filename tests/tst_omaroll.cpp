@@ -1327,6 +1327,11 @@ private slots:
     QVERIFY(bare.contains(QStringLiteral("GPU: not found")));
     QVERIFY(bare.filter(QStringLiteral("Scale factor")).isEmpty());
     QVERIFY(bare.contains(QStringLiteral("darktable: missing")));
+    // Which optional image formats have a plugin, from what Qt loaded.
+    const QStringList plugins = bare.filter(QStringLiteral("Image plugins: "));
+    QCOMPARE(plugins.size(), 1);
+    QCOMPARE(plugins.first().contains(QStringLiteral("WebP")),
+             QImageReader::supportedImageFormats().contains("webp"));
     empty.omarchyPath.clear();
     QVERIFY(Diagnostics::missing(empty).size() > 10);
     QCOMPARE(Diagnostics::themeName(empty), QStringLiteral("not found"));
