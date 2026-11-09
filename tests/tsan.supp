@@ -4,3 +4,9 @@
 # teardown. The event-queue mutex lives in Qt, so TSan misses that ordering.
 # Match only this event reclamation frame, not QtConcurrent worker frames.
 race:QCoreApplication::removePostedEvents
+# Arch's Qt is not built with TSan, so the atomic reference count that orders
+# a QFuture's final release is invisible to it. The last owner clears the
+# result store after the worker dropped its reference (seen when a
+# ViewerSession is destroyed right after its listing finished); TSan reports
+# only the unordered QMap accesses. Match only that teardown frame.
+race:QtPrivate::ResultStoreBase::clear
