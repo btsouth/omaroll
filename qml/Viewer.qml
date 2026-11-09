@@ -462,6 +462,10 @@ ApplicationWindow {
     }
 
     function seekTo(milliseconds) {
+        root.seekTarget(milliseconds, true)
+    }
+
+    function seekTarget(milliseconds, roundBoundary) {
         if (!root.player) {
             return
         }
@@ -469,7 +473,9 @@ ApplicationWindow {
         const maximum = duration > 0 ? duration - 1 : Math.max(0, milliseconds)
         root.resumeAvailable = false
         root.resumePending = false
-        root.player.position = Math.max(0, Math.min(maximum, Settings.videoSeekTarget(milliseconds, root.player.metaData.value(MediaMetaData.VideoFrameRate))))
+        root.player.position = Math.max(0, Math.min(maximum, roundBoundary
+            ? Settings.videoSeekTarget(milliseconds, root.player.metaData.value(MediaMetaData.VideoFrameRate))
+            : Math.round(milliseconds)))
     }
 
     // One frame back or forward, paused, as in mpv. Positions are whole
@@ -485,7 +491,7 @@ ApplicationWindow {
 
     function seek(milliseconds) {
         if (root.player && root.player.duration > 0) {
-            root.seekTo(root.player.position + milliseconds)
+            root.seekTarget(root.player.position + milliseconds, false)
         }
     }
 
