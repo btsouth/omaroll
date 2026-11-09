@@ -18,6 +18,14 @@
   file that was trashed and never overwrites a file that took its name.
 - Video details show HDR10, HLG and Dolby Vision.
 - Open in mpv continues from the current position.
+- Optional background text indexing in Settings: once the library scan settles,
+  picture text is read two to four at a time at low priority, only on mains
+  power, with a screenshots-only option and a "Text indexed N of M" status.
+  Search results say when some pictures' text has not been read yet.
+- Similar pictures show one section per set, and a Match setting chooses
+  Strict, Normal or Loose.
+- Compare shows each picture's dimensions, file size, date and folder, marks
+  the largest, and can keep one and move the others to Trash as one Undo step.
 - The empty library offers Add folder, Open file, Try the demo library and,
   when Omaroll isn't the default for pictures, Set as default viewer.
 - **Set as default** and **Restore previous apps** in Settings, saying what
@@ -32,6 +40,12 @@
 
 ### Fixed
 
+- Similar pictures no longer puts different screenshots of text, or different
+  text documents, in one set. Each pair is checked on a finer thumbnail, text
+  screenshots need a near-identical match and agreeing text, and a set only
+  holds pictures that all match each other.
+- Duplicate and similarity hashes are cached on disk, so relaunching no longer
+  reads every file again.
 - A search or filter that matches nothing in a populated folder now says
   "Nothing matches" with Clear search or Clear filters, instead of "No media
   in this folder".

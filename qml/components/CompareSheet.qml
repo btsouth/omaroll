@@ -4,8 +4,9 @@ import QtQuick
 //
 // Every picture shares one zoom factor and one pan offset, so scrolling the
 // wheel or dragging the backdrop inspects the same region of each at once.
-// This is for telling near-identical pictures apart, not for editing: nothing
-// here changes a file.
+// This is for telling near-identical pictures apart. Under each picture are
+// the facts for choosing a keeper, with the largest marked; "Keep this" moves
+// the others to Trash after a confirmation, as one step Undo puts back.
 Item {
     id: root
 
@@ -13,16 +14,123 @@ Item {
     property real zoom: 1.0
     property real panX: 0
     property real panY: 0
+    // Per path: {width, height, bytes, size, date, folder}, read when opened.
+    property var facts: ({})
+    property string largestPath: ""
+    property var pendingKeep: ({})
+    property var pendingTrash: []
 
     readonly property int imageCount: paths.length
+    // Under each picture, so the picture's own centre sits this much higher
+    // than its cell's.
+    readonly property int factsHeight: 56
+
+    // A keep-one cleanup finished: what to report and its undo step, if any.
+    signal finished(string message, int undoId)
 
     function open(list) {
         paths = list === undefined ? [] : list
         zoom = 1.0
         panX = 0
         panY = 0
+        readFacts()
         visible = true
         forceActiveFocus()
+    }
+
+    function readFacts() {
+        const next = {}
+        let best = ""
+        let bestPixels = -1
+        let bestBytes = -1
+        let tied = false
+        for (const path of paths) {
+            const row = Captures.rowOf(path)
+            const tile = row >= 0 ? Captures.tileAt(row) : ({})
+            const size = Library.pictureSize(path)
+            const pixels = size.width > 0 ? size.width * size.height : 0
+            const bytes = tile.bytes || 0
+            next[path] = {
+                width: size.width, height: size.height, bytes: bytes,
+                size: tile.sizeLabel || "",
+                date: tile.dayLabel ? tile.dayLabel + (tile.timeLabel ? " " + tile.timeLabel : "") : "",
+                folder: path.substring(0, path.lastIndexOf("/")) || "/"
+            }
+            if (pixels > bestPixels || (pixels === bestPixels && bytes > bestBytes)) {
+                best = path
+                bestPixels = pixels
+                bestBytes = bytes
+                tied = false
+            } else if (pixels === bestPixels && bytes === bestBytes) {
+                tied = true
+            }
+        }
+        facts = next
+        // Only a real difference is worth pointing at.
+        largestPath = paths.length > 1 && !tied ? best : ""
+    }
+
+    function factLine(path) {
+        const fact = facts[path]
+        if (fact === undefined) return ""
+        const parts = []
+        if (fact.width > 0) parts.push(fact.width + " × " + fact.height)
+        if (fact.size !== "") parts.push(fact.size)
+        if (fact.date !== "") parts.push(fact.date)
+        return parts.join("  ·  ")
+    }
+
+    function captureTarget(path) {
+        const target = Actions.captureFileAction(Captures.deletionPathAt(Captures.rowOf(path)), path)
+        if (target.path !== undefined) target.viewedPath = path
+        return target
+    }
+
+    // Asks before moving every other compared picture to Trash. The files are
+    // captured now, so a rescan behind the prompt cannot change its targets.
+    function requestKeep(path) {
+        const others = paths.filter(function (other) { return other !== path })
+        if (others.length === 0) return
+        const keep = captureTarget(path)
+        if (keep.path === undefined) return
+        const targets = []
+        for (const other of others) {
+            const target = captureTarget(other)
+            if (target.path === undefined) return
+            targets.push(target)
+        }
+        pendingKeep = keep
+        pendingTrash = targets
+        const name = path.substring(path.lastIndexOf("/") + 1)
+        keepConfirm.title = "Keep " + name + " and move "
+                + (others.length === 1 ? "the other picture" : "the other " + others.length)
+                + " to Trash?"
+        const names = others.slice(0, 4).map(function (other) {
+            return other.substring(other.lastIndexOf("/") + 1)
+        })
+        keepConfirm.detail = names.join("\n")
+                + (others.length > 4 ? "\nand " + (others.length - 4) + " more" : "")
+                + "\n\nThey stay recoverable from Trash, and Undo puts them back."
+        keepConfirm.open()
+    }
+
+    function keepConfirmed() {
+        const keep = pendingKeep
+        const targets = pendingTrash
+        pendingKeep = ({})
+        pendingTrash = []
+        if (keep.path === undefined) return
+        if (!Actions.capturedStillMatches(keep)) {
+            root.finished("The picture to keep changed, so nothing was moved", 0)
+            return
+        }
+        // Let go of the pictures before they move, so nothing reloads them.
+        root.close()
+        root.paths = []
+        // The moves run on a worker, which skips any target that changed and
+        // the kept file itself if it was reached by another path.
+        keepWork.pending = true
+        Actions.keepOneMoveOthersToTrash(keep, targets)
     }
 
     function close() { visible = false }
@@ -126,7 +234,8 @@ Item {
                 const column = Math.max(0, Math.min(grid.columns - 1, Math.floor(at.x / (grid.cellWidth + grid.spacing))))
                 const row = Math.max(0, Math.min(grid.rows - 1, Math.floor(at.y / (grid.cellHeight + grid.spacing))))
                 root.zoomBy(factor, at.x - column * (grid.cellWidth + grid.spacing) - grid.cellWidth / 2,
-                                    at.y - row * (grid.cellHeight + grid.spacing) - grid.cellHeight / 2)
+                                    at.y - row * (grid.cellHeight + grid.spacing)
+                                    - (grid.cellHeight - root.factsHeight) / 2)
             }
 
             WheelHandler {
@@ -206,6 +315,7 @@ Item {
                             objectName: "compareImage"
                             anchors.fill: parent
                             anchors.margins: 4
+                            anchors.bottomMargin: root.factsHeight + 4
                             source: cell.picture.path === cell.modelData ? cell.picture.source : ""
                             fillMode: Image.PreserveAspectFit
                             asynchronous: true
@@ -264,18 +374,94 @@ Item {
                             }
                         }
 
-                        Text {
+                        // What tells copies apart: size, file size, date and
+                        // folder, with the largest marked.
+                        Rectangle {
+                            id: factsBar
+                            objectName: "compareFacts"
+                            readonly property bool largest: root.largestPath === cell.modelData
                             anchors.left: parent.left
+                            anchors.right: parent.right
                             anchors.bottom: parent.bottom
-                            anchors.margins: 8
-                            width: parent.width - 16
-                            elide: Text.ElideMiddle
-                            text: cell.modelData.substring(cell.modelData.lastIndexOf("/") + 1)
-                            font.family: Theme.fontFamily
-                            font.pixelSize: 10
-                            color: Theme.brightForeground
-                            style: Text.Outline
-                            styleColor: Qt.rgba(0, 0, 0, 0.7)
+                            height: root.factsHeight
+                            color: root.shade(Theme.background, 0.94)
+                            border.width: largest ? 1 : 0
+                            border.color: Theme.accent
+                            radius: Theme.cornerRadius > 0 ? Math.min(4, Theme.cornerRadius) : 3
+
+                            Column {
+                                id: factsColumn
+                                anchors.left: parent.left
+                                anchors.right: keepButton.left
+                                anchors.verticalCenter: parent.verticalCenter
+                                anchors.leftMargin: 8
+                                anchors.rightMargin: 8
+                                spacing: 1
+
+                                Row {
+                                    width: parent.width
+                                    spacing: 6
+                                    Rectangle {
+                                        visible: factsBar.largest
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        width: largestLabel.implicitWidth + 10
+                                        height: largestLabel.implicitHeight + 2
+                                        radius: height / 2
+                                        color: Theme.accent
+                                        Text {
+                                            id: largestLabel
+                                            objectName: "compareLargest"
+                                            anchors.centerIn: parent
+                                            text: "Largest"
+                                            font.family: Theme.fontFamily
+                                            font.pixelSize: 9
+                                            font.weight: Font.DemiBold
+                                            color: Theme.background
+                                        }
+                                    }
+                                    Text {
+                                        width: parent.width - (factsBar.largest ? largestLabel.implicitWidth + 16 : 0)
+                                        elide: Text.ElideMiddle
+                                        text: cell.modelData.substring(cell.modelData.lastIndexOf("/") + 1)
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: 11
+                                        font.weight: Font.DemiBold
+                                        color: Theme.brightForeground
+                                    }
+                                }
+                                Text {
+                                    objectName: "compareFactLine"
+                                    width: parent.width
+                                    elide: Text.ElideRight
+                                    text: root.factLine(cell.modelData)
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: 10
+                                    color: Theme.foreground
+                                }
+                                Text {
+                                    width: parent.width
+                                    elide: Text.ElideMiddle
+                                    text: root.facts[cell.modelData] !== undefined
+                                          ? root.facts[cell.modelData].folder : ""
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: 10
+                                    color: Theme.mutedText
+                                }
+                            }
+
+                            PillButton {
+                                id: keepButton
+                                objectName: "compareKeep"
+                                anchors.right: parent.right
+                                anchors.rightMargin: 6
+                                anchors.verticalCenter: parent.verticalCenter
+                                visible: root.imageCount > 1
+                                width: visible ? implicitWidth : 0
+                                label: "Keep this"
+                                accessibleName: "Keep " + cell.modelData.substring(cell.modelData.lastIndexOf("/") + 1)
+                                toolTip: "Keep this one and move the others to Trash"
+                                onClicked: root.requestKeep(cell.modelData)
+                            }
                         }
                     }
                 }
@@ -312,6 +498,30 @@ Item {
             active: true
             onClicked: root.close()
         }
+    }
+
+    Connections {
+        id: keepWork
+        property bool pending: false
+        target: Actions
+        enabled: pending
+        function onKeepOneFinished(moved, skipped, trashed) {
+            keepWork.pending = false
+            // The whole cleanup is one step, so one Undo puts it all back.
+            const undoId = Settings.pushTrashUndo(trashed, null)
+            const total = moved + skipped.length
+            root.finished(skipped.length === 0
+                          ? "Kept one, moved " + moved + (moved === 1 ? " picture" : " pictures") + " to Trash"
+                          : "Moved " + moved + " of " + total + " pictures to Trash", undoId)
+        }
+    }
+
+    ConfirmSheet {
+        id: keepConfirm
+        objectName: "compareKeepConfirm"
+        confirmLabel: "Move to Trash"
+        onAccepted: root.keepConfirmed()
+        onVisibleChanged: if (!visible && root.visible) root.forceActiveFocus()
     }
 
     Keys.onPressed: function (event) {

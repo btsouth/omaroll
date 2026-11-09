@@ -118,6 +118,9 @@ public:
   // has areas and version instead of detail: zoomed in, the part on screen
   // loads from areaUrl(). See ImageBudget.
   Q_INVOKABLE void readPicture(const QString& path);
+  // A still's upright size in pixels, read from its header (a camera raw's
+  // from its metadata). Invalid when it cannot be read.
+  Q_INVOKABLE QSize pictureSize(const QString& path) const;
   Q_INVOKABLE QUrl areaUrl(const QString& path, const QString& version, const QRect& area,
                            const QSize& size) const;
 

@@ -180,6 +180,12 @@ public:
   Q_INVOKABLE qint64 stampAt(int row) const;
   Q_INVOKABLE QString thumbnailVersionAt(int row) const;
   Q_INVOKABLE QString ocrSnippetAt(int row) const;
+  // Every role of a row by its QML name, for views that lay rows out
+  // themselves rather than through a delegate model.
+  Q_INVOKABLE QVariantMap tileAt(int row) const;
+  // While a review filter is on, its sets in view order: each a map of
+  // first (row), count and label ("Similar set 2"). Empty otherwise.
+  Q_INVOKABLE QVariantList reviewSections() const;
 
   // Text found by the local OCR index. Updates are coalesced because a warm
   // cache can deliver many entries in one event-loop turn.

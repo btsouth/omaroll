@@ -7,6 +7,7 @@
 #include <QStringList>
 #include <QVariantList>
 #include <QVariantMap>
+#include <functional>
 #include <optional>
 
 class QProcess;
@@ -61,6 +62,11 @@ public:
   Q_INVOKABLE QVariantMap trashCaptured(const QVariantMap& target);
   Q_INVOKABLE QVariantMap renameCapturedFile(const QVariantMap& target, const QString& baseName);
   Q_INVOKABLE void moveDuplicateCopiesToTrash(const QVariantMap& keep, const QVariantList& copies);
+  // Keep one picture and move the other captured targets to Trash, on a
+  // worker. Skips any that changed, and the kept file reached by another path.
+  Q_INVOKABLE void keepOneMoveOthersToTrash(const QVariantMap& keep, const QVariantList& others);
+  // True while a captured target is still the same file it was when captured.
+  Q_INVOKABLE bool capturedStillMatches(const QVariantMap& target) const;
   // Explicit permanent deletion removes only this file or symlink, never a directory tree.
   Q_INVOKABLE bool deletePermanently(const QString& path);
   // Bind confirmation to the parent directory and entry, preserving a final symlink.
@@ -146,9 +152,13 @@ signals:
   void submissionFinished(const QString& program, bool success, const QString& detail);
   // trashed holds one undo record per moved copy, as trashCaptured returns.
   void duplicateCleanupFinished(int moved, const QStringList& skipped, const QVariantList& trashed);
+  void keepOneFinished(int moved, const QStringList& skipped, const QVariantList& trashed);
 
 private:
   [[nodiscard]] static bool capturedFileMatches(const QVariantMap& target);
+  [[nodiscard]] static bool sameCapturedEntry(const QVariantMap& left, const QVariantMap& right);
+  void trashOthers(const QVariantMap& keep, const QVariantList& others, bool identicalOnly,
+                   std::function<void(int, const QStringList&, const QVariantList&)> done);
   QVariantMap trashFile(const QString& path);
   QVariantMap renameFile(const QString& path, const QString& baseName, const QVariantMap& target);
   [[nodiscard]] QString locate(const QString& program, const QString& packageHint);

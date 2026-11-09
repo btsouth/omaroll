@@ -182,8 +182,8 @@ Options:
   --render-view <view>   Which view to render: grid, detail, video, slideshow,
                          matte, corrections, compare, export, rename, OCR,
                          editors, pins, context-menu, selection-menu,
-                         duplicates, browser, sidebar, settings, viewer, viewer-video,
-                         viewer-info, viewer-menu, viewer-help or
+                         duplicates, similar, browser, sidebar, settings, viewer,
+                         viewer-video, viewer-info, viewer-menu, viewer-help or
                          grid-filenames.
   --render-size <WxH>    Window size, from 560x420 (viewer 320x240) to 7680x4320.
                          Default 1280x820.
@@ -239,6 +239,22 @@ public:
                      [this] { m_similarities.setActive(m_library.similarOnly()); });
     QObject::connect(&m_similarities, &SimilarityIndex::groupsChanged, &m_library,
                      [this] { m_library.setSimilarGroups(m_similarities.groups()); });
+    // Recognized text keeps different screenshots out of one similar set.
+    QObject::connect(&m_textIndex, &OcrIndex::textReady, &m_similarities,
+                     &SimilarityIndex::setText);
+    m_similarities.setStrictness(settings.similarStrictness());
+    QObject::connect(&settings, &AppSettings::similarStrictnessChanged, &m_similarities,
+                     [this, &settings] { m_similarities.setStrictness(settings.similarStrictness()); });
+    m_textIndex.setScreenshotsOnly(settings.textIndexScreenshotsOnly());
+    m_textIndex.setBackground(settings.backgroundTextIndex() && !demo);
+    QObject::connect(&settings, &AppSettings::textIndexScreenshotsOnlyChanged, &m_textIndex,
+                     [this, &settings] {
+                       m_textIndex.setScreenshotsOnly(settings.textIndexScreenshotsOnly());
+                     });
+    QObject::connect(&settings, &AppSettings::backgroundTextIndexChanged, &m_textIndex,
+                     [this, &settings, demo] {
+                       m_textIndex.setBackground(settings.backgroundTextIndex() && !demo);
+                     });
 
     // Restore what the user last chose, then keep the two in step. Doing it
     // here rather than in either class keeps the proxy unaware of persistence
@@ -476,7 +492,7 @@ int main(int argc, char* argv[]) {
       QStringLiteral("video"),
       QStringLiteral("slideshow"),  QStringLiteral("matte"),   QStringLiteral("corrections"),
       QStringLiteral("compare"),    QStringLiteral("export"),  QStringLiteral("rename"),
-      QStringLiteral("ocr"),        QStringLiteral("duplicates"), QStringLiteral("browser"), QStringLiteral("sidebar"),
+      QStringLiteral("ocr"),        QStringLiteral("duplicates"), QStringLiteral("similar"), QStringLiteral("browser"), QStringLiteral("sidebar"),
       QStringLiteral("settings"),   QStringLiteral("editors"), QStringLiteral("pins"),
       QStringLiteral("context-menu"), QStringLiteral("selection-menu"),
       QStringLiteral("viewer"),  QStringLiteral("viewer-video"),

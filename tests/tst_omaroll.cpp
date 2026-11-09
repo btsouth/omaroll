@@ -58,6 +58,7 @@
 #include <QPdfWriter>
 #include <QProcess>
 #include <QScopeGuard>
+#include <QRandomGenerator>
 #include <QSaveFile>
 #include <QSignalSpy>
 #include <QSemaphore>
@@ -75,10 +76,16 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <bit>
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <future>
 #include <memory>
+#include <thread>
 
 namespace {
 
@@ -227,6 +234,96 @@ QByteArray fileHash(const QString& path) {
   return file.open(QIODevice::ReadOnly)
              ? QCryptographicHash::hash(file.readAll(), QCryptographicHash::Sha256)
              : QByteArray();
+}
+
+// Generated pictures for the similar-picture corpus. Glyph blocks stand in for
+// text, so the corpus does not depend on installed fonts.
+void drawGlyphLine(QPainter& painter, QRandomGenerator& random, int x, int y, int glyph,
+                   int characters, const QColor& ink) {
+  for (int index = 0; index < characters; ++index) {
+    const int left = x + index * glyph;
+    if (random.bounded(6) == 0) continue; // a space
+    const int width = glyph - 2;
+    const int height = glyph * 3 / 2;
+    painter.fillRect(left, y, std::max(1, width / 4), height, ink);
+    painter.fillRect(left, y + random.bounded(std::max(1, height - 2)), width,
+                     std::max(1, glyph / 5), ink);
+    if (random.bounded(2)) painter.fillRect(left + width - 2, y + height / 3, 2, height / 2, ink);
+  }
+}
+
+QImage terminalShot(quint32 seed) {
+  QImage image(1280, 720, QImage::Format_RGB32);
+  image.fill(QColor(30, 30, 46));
+  QPainter painter(&image);
+  QRandomGenerator random(seed);
+  const int lines = 16 + random.bounded(10);
+  for (int line = 0; line < lines; ++line) {
+    drawGlyphLine(painter, random, 14, 14 + line * 22, 9, 6 + random.bounded(70),
+                  QColor(200, 202, 230));
+  }
+  return image;
+}
+
+QImage documentShot(quint32 seed) {
+  QImage image(1000, 640, QImage::Format_RGB32);
+  image.fill(Qt::white);
+  QPainter painter(&image);
+  QRandomGenerator random(seed);
+  const int lines = 3 + random.bounded(2);
+  for (int line = 0; line < lines; ++line) {
+    drawGlyphLine(painter, random, 20, 30 + line * 44, 15, 10 + random.bounded(16),
+                  QColor(40, 40, 40));
+  }
+  return image;
+}
+
+QImage photoScene(quint32 seed) {
+  QImage image(960, 640, QImage::Format_RGB32);
+  QPainter painter(&image);
+  painter.setRenderHint(QPainter::Antialiasing);
+  QRandomGenerator random(seed);
+  QLinearGradient gradient(0, 0, image.width(), image.height() * (seed % 2 ? -1 : 1));
+  gradient.setColorAt(0, QColor::fromHsv(int(random.bounded(360)), 160, 140));
+  gradient.setColorAt(1, QColor::fromHsv(int(random.bounded(360)), 120, 230));
+  painter.fillRect(image.rect(), gradient);
+  for (int index = 0; index < 14; ++index) {
+    const int radius = 30 + random.bounded(90);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor::fromHsv(int(random.bounded(360)), 150 + random.bounded(100),
+                                     120 + random.bounded(130), 210));
+    painter.drawEllipse(QPoint(random.bounded(image.width()), random.bounded(image.height())),
+                        radius, radius);
+  }
+  return image;
+}
+
+QImage brightened(const QImage& source) {
+  QImage image = source.convertToFormat(QImage::Format_RGB32);
+  for (int y = 0; y < image.height(); ++y) {
+    auto* line = reinterpret_cast<QRgb*>(image.scanLine(y));
+    for (int x = 0; x < image.width(); ++x) {
+      const auto lift = [](int value) { return std::min(255, value * 11 / 10 + 22); };
+      line[x] = qRgb(lift(qRed(line[x])), lift(qGreen(line[x])), lift(qBlue(line[x])));
+    }
+  }
+  return image;
+}
+
+QString writeTesseract(const QString& directory, const QByteArray& body) {
+  const QString path = directory + QStringLiteral("/tesseract");
+  QFile file(path);
+  if (!file.open(QIODevice::WriteOnly)) return {};
+  file.write("#!/bin/sh\n" + body);
+  file.close();
+  file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+  return path;
+}
+
+void writeSmallFile(const QString& path, const QByteArray& content) {
+  QDir().mkpath(QFileInfo(path).absolutePath());
+  QFile file(path);
+  if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) file.write(content);
 }
 
 } // namespace
@@ -3821,6 +3918,64 @@ private slots:
     QCOMPARE(readFile(second), QByteArray("shared"));
   }
 
+  // The kept file reached by another path, as a bind mount or a symlinked
+  // folder gives it, is the same directory entry and is never moved, even
+  // though its bytes are identical.
+  void duplicateCleanupNeverMovesTheKeptFileThroughAnotherPath() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString kept = dir.filePath(QStringLiteral("kept.png"));
+    QVERIFY(writeFile(kept, "same bytes"));
+    QVERIFY(QFile::link(dir.path(), dir.filePath(QStringLiteral("alias"))));
+    const QString alias = dir.filePath(QStringLiteral("alias/kept.png"));
+    ActionLauncher launcher;
+    const QVariantMap keep = launcher.captureFileAction(kept);
+    const QVariantMap other = launcher.captureFileAction(alias);
+    QVERIFY(!keep.isEmpty() && !other.isEmpty());
+    QVERIFY(keep.value(QStringLiteral("path")) != other.value(QStringLiteral("path")));
+    QSignalSpy finished(&launcher, &ActionLauncher::duplicateCleanupFinished);
+    launcher.moveDuplicateCopiesToTrash(keep, {other});
+    QTRY_COMPARE(finished.size(), 1);
+    QCOMPARE(finished.first().at(0).toInt(), 0);
+    QCOMPARE(finished.first().at(1).toStringList(), QStringList{alias});
+    QCOMPARE(readFile(kept), QByteArray("same bytes"));
+  }
+
+  // Keeping one of a similar set moves the others on a worker as one undo
+  // step, and skips the kept file however it was reached.
+  void keepOneMovesOnlyTheOtherPicturesToTrash() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString kept = dir.filePath(QStringLiteral("kept.png"));
+    const QString smaller = dir.filePath(QStringLiteral("smaller.png"));
+    QVERIFY(writeFile(kept, "kept picture"));
+    QVERIFY(writeFile(smaller, "smaller picture"));
+    QVERIFY(QFile::link(dir.path(), dir.filePath(QStringLiteral("alias"))));
+    const QString alias = dir.filePath(QStringLiteral("alias/kept.png"));
+    ActionLauncher launcher;
+    const QVariantMap keep = launcher.captureFileAction(kept);
+    QSignalSpy finished(&launcher, &ActionLauncher::keepOneFinished);
+    launcher.keepOneMoveOthersToTrash(
+        keep, {launcher.captureFileAction(alias), launcher.captureFileAction(smaller)});
+    QTRY_COMPARE(finished.size(), 1);
+    QCOMPARE(finished.first().at(0).toInt(), 1);
+    QCOMPARE(finished.first().at(1).toStringList(), QStringList{alias});
+    QCOMPARE(readFile(kept), QByteArray("kept picture"));
+    QVERIFY(!QFileInfo::exists(smaller));
+    AppSettings settings;
+    QVERIFY(settings.pushTrashUndo(finished.first().at(2).toList()) > 0);
+    QCOMPARE(settings.undo(), QStringLiteral("Restored smaller.png"));
+    QCOMPARE(readFile(smaller), QByteArray("smaller picture"));
+
+    // A kept picture that changed behind the prompt stops the whole step.
+    QVERIFY(writeFile(kept, "edited since"));
+    finished.clear();
+    launcher.keepOneMoveOthersToTrash(keep, {launcher.captureFileAction(smaller)});
+    QTRY_COMPARE(finished.size(), 1);
+    QCOMPARE(finished.first().at(0).toInt(), 0);
+    QVERIFY(QFileInfo::exists(smaller));
+  }
+
   void duplicateCleanupReportsUndoRecords() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -6471,6 +6626,571 @@ private slots:
     // picture reports none.
     QCOMPARE(similarities.groupPaths(original), QStringList({original, recompressed}));
     QVERIFY(similarities.groupPaths(different).isEmpty());
+  }
+
+  // A corpus of generated pictures: copies of one picture that were resized,
+  // recompressed or brightened belong together; different screenshots of
+  // text, and different text documents, never do.
+  void similarPicturesMatchCopiesButNotDifferentTextScreenshots() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QStringList paths;
+    const auto save = [&](const QImage& image, const QString& name, const char* format = nullptr,
+                          int quality = -1) {
+      const QString path = dir.filePath(name);
+      if (!image.save(path, format, quality)) return false;
+      paths.append(path);
+      return true;
+    };
+    const QImage photoA = photoScene(11);
+    const QImage photoB = photoScene(24);
+    QVERIFY(save(photoA, QStringLiteral("a.png")));
+    QVERIFY(save(photoA.scaled(480, 320, Qt::IgnoreAspectRatio, Qt::SmoothTransformation),
+                 QStringLiteral("a-half.png")));
+    QVERIFY(save(photoA, QStringLiteral("a-recompressed.jpg"), "JPG", 55));
+    QVERIFY(save(brightened(photoA), QStringLiteral("a-brighter.png")));
+    QVERIFY(save(photoB, QStringLiteral("b.png")));
+    QVERIFY(save(photoB.scaled(640, 427, Qt::IgnoreAspectRatio, Qt::SmoothTransformation),
+                 QStringLiteral("b-small.jpg"), "JPG", 70));
+    for (quint32 seed = 0; seed < 6; ++seed) {
+      QVERIFY(save(terminalShot(100 + seed), QStringLiteral("term-%1.png").arg(seed)));
+    }
+    QVERIFY(save(terminalShot(100).scaled(640, 360, Qt::IgnoreAspectRatio,
+                                          Qt::SmoothTransformation),
+                 QStringLiteral("term-0-half.png")));
+    QVERIFY(save(terminalShot(100), QStringLiteral("term-0-recompressed.jpg"), "JPG", 60));
+    for (quint32 seed = 0; seed < 3; ++seed) {
+      QVERIFY(save(documentShot(200 + seed), QStringLiteral("doc-%1.png").arg(seed)));
+    }
+
+    QList<SimilarityIndex::Signature> signatures;
+    for (const QString& path : std::as_const(paths)) {
+      signatures.append(SimilarityIndex::signatureOf(path));
+      QVERIFY2(signatures.last().valid, qPrintable(path));
+    }
+    QVERIFY(signatures[paths.indexOf(dir.filePath(QStringLiteral("term-0.png")))].textLike());
+    QVERIFY(signatures[paths.indexOf(dir.filePath(QStringLiteral("doc-0.png")))].textLike());
+    QVERIFY(!signatures[paths.indexOf(dir.filePath(QStringLiteral("a.png")))].textLike());
+
+    const auto named = [&](int strictness) {
+      QList<QStringList> sets;
+      for (const QList<int>& set : SimilarityIndex::group(signatures, {}, strictness)) {
+        QStringList names;
+        for (int index : set) names.append(QFileInfo(paths[index]).fileName());
+        names.sort();
+        sets.append(names);
+      }
+      std::sort(sets.begin(), sets.end());
+      return sets;
+    };
+    const QList<QStringList> expected = {
+        {QStringLiteral("a-brighter.png"), QStringLiteral("a-half.png"),
+         QStringLiteral("a-recompressed.jpg"), QStringLiteral("a.png")},
+        {QStringLiteral("b-small.jpg"), QStringLiteral("b.png")},
+        {QStringLiteral("term-0-half.png"), QStringLiteral("term-0-recompressed.jpg"),
+         QStringLiteral("term-0.png")},
+    };
+    QCOMPARE(named(SimilarityIndex::Normal), expected);
+    // Looser still never joins different text; stricter still keeps exact
+    // resizes and recompressions.
+    for (const QStringList& set : named(SimilarityIndex::Loose)) {
+      QVERIFY2(set.filter(QStringLiteral("doc-")).size() <= 1, qPrintable(set.join(u' ')));
+      QVERIFY2(set.filter(QRegularExpression(QStringLiteral("^term-[1-5]"))).isEmpty() ||
+                   set.filter(QStringLiteral("term-")).size() == 1,
+               qPrintable(set.join(u' ')));
+    }
+    const QList<QStringList> strict = named(SimilarityIndex::Strict);
+    QVERIFY(std::any_of(strict.cbegin(), strict.cend(), [](const QStringList& set) {
+      return set.contains(QStringLiteral("a.png")) && set.contains(QStringLiteral("a-half.png"));
+    }));
+    QVERIFY(std::any_of(strict.cbegin(), strict.cend(), [](const QStringList& set) {
+      return set.contains(QStringLiteral("term-0.png")) &&
+             set.contains(QStringLiteral("term-0-half.png"));
+    }));
+
+    // Recognized text that disagrees keeps two copies of a layout apart, and
+    // agreeing text does not.
+    const auto& term = signatures[paths.indexOf(dir.filePath(QStringLiteral("term-0.png")))];
+    const auto& half = signatures[paths.indexOf(dir.filePath(QStringLiteral("term-0-half.png")))];
+    const QStringList commit = SimilarityIndex::wordsOf(QStringLiteral("git commit push origin main"));
+    const QStringList docker = SimilarityIndex::wordsOf(QStringLiteral("docker compose up build logs"));
+    QVERIFY(SimilarityIndex::matches(term, half, commit, commit, SimilarityIndex::Normal));
+    QVERIFY(!SimilarityIndex::matches(term, half, commit, docker, SimilarityIndex::Normal));
+    QVERIFY(SimilarityIndex::matches(term, half, {}, docker, SimilarityIndex::Normal));
+  }
+
+  // A~B and B~C must not put A with C: a set holds only pictures that all
+  // match one another.
+  void similarSetsDoNotChainThroughAMiddlePicture() {
+    QRandomGenerator random(7);
+    std::array<double, 1024> x{};
+    std::array<double, 1024> y{};
+    for (int index = 0; index < 1024; ++index) {
+      const double first = random.generateDouble() - 0.5;
+      const double second = random.generateDouble() - 0.5;
+      x[index] = first;
+      // Correlated about 0.7 with x.
+      y[index] = 0.7 * first + 0.714 * second;
+    }
+    const auto signature = [](const std::array<double, 1024>& values) {
+      SimilarityIndex::Signature result;
+      result.valid = true;
+      result.width = 640;
+      result.height = 480;
+      result.red = result.green = result.blue = 120;
+      result.flatness = 20;
+      result.chroma = 80;
+      result.hash = 0x0123456789abcdefULL;
+      result.thumbnail.resize(1024);
+      for (int index = 0; index < 1024; ++index) {
+        result.thumbnail[index] = char(std::clamp(int(128 + values[index] * 180), 0, 255));
+      }
+      result.prepare();
+      return result;
+    };
+    std::array<double, 1024> middle{};
+    for (int index = 0; index < 1024; ++index) middle[index] = (x[index] + y[index]) / 2;
+    const SimilarityIndex::Signature a = signature(x);
+    const SimilarityIndex::Signature b = signature(middle);
+    const SimilarityIndex::Signature c = signature(y);
+    QVERIFY(SimilarityIndex::matches(a, b, {}, {}, SimilarityIndex::Normal));
+    QVERIFY(SimilarityIndex::matches(b, c, {}, {}, SimilarityIndex::Normal));
+    QVERIFY(!SimilarityIndex::matches(a, c, {}, {}, SimilarityIndex::Normal));
+
+    const QList<QList<int>> sets = SimilarityIndex::group({a, b, c}, {}, SimilarityIndex::Normal);
+    QCOMPARE(sets.size(), 1);
+    QCOMPARE(sets.first().size(), 2);
+    QVERIFY(sets.first().contains(1));
+  }
+
+  // Thousands of near-identical pictures, as screenshots of one terminal
+  // are, group in bounded time and memory rather than one comparison and one
+  // link per pair. Both a run that matches and one that does not used to grow
+  // with the square of the count; 20,000 matching took gigabytes.
+  void similarGroupingStaysBoundedForThousandsOfNearIdenticalPictures() {
+    constexpr int kCount = 20000;
+    const auto pictures = [](bool matching) {
+      QRandomGenerator random(matching ? 3 : 4);
+      QList<SimilarityIndex::Signature> signatures;
+      signatures.reserve(kCount);
+      for (int index = 0; index < kCount; ++index) {
+        SimilarityIndex::Signature signature;
+        signature.valid = true;
+        signature.width = 1920;
+        signature.height = 1080;
+        signature.red = signature.green = signature.blue = 35;
+        signature.flatness = 220;
+        signature.chroma = 5;
+        // Dark screens whose hashes differ by a bit or two.
+        signature.hash = quint64(1) << random.bounded(64);
+        signature.thumbnail.resize(1024);
+        for (int pixel = 0; pixel < 1024; ++pixel) {
+          // One screen with a little noise, or a different screen each time.
+          const bool lit = matching ? pixel % 10 == 0 : random.bounded(10) == 0;
+          signature.thumbnail[pixel] =
+              char(30 + (lit ? 150 : 0) + (matching ? int(random.bounded(3)) : 0));
+        }
+        signature.prepare();
+        signatures.append(signature);
+      }
+      return signatures;
+    };
+    // Peak resident memory in KiB, after resetting it to the current size
+    // when `reset`. -1 when the kernel does not offer it.
+    const auto peak = [](bool reset) -> qint64 {
+      if (reset) {
+        QFile clear(QStringLiteral("/proc/self/clear_refs"));
+        if (!clear.open(QIODevice::WriteOnly) || clear.write("5") != 1) return -1;
+      }
+      QFile status(QStringLiteral("/proc/self/status"));
+      if (!status.open(QIODevice::ReadOnly)) return -1;
+      for (const QByteArray& line : status.readAll().split('\n')) {
+        if (line.startsWith("VmHWM:")) return line.mid(6).trimmed().split(' ').first().toLongLong();
+      }
+      return -1;
+    };
+#if defined(__SANITIZE_ADDRESS__)
+    // The sanitizer keeps freed memory in quarantine and shadows the rest.
+    constexpr qint64 kBudgetMiB = 1024;
+#else
+    constexpr qint64 kBudgetMiB = 256;
+#endif
+    for (const bool matching : {true, false}) {
+      const QList<SimilarityIndex::Signature> signatures = pictures(matching);
+      std::atomic_bool cancel = false;
+      std::promise<void> finished;
+      std::thread watchdog([&cancel, done = finished.get_future()] {
+        if (done.wait_for(std::chrono::seconds(60)) == std::future_status::timeout) cancel = true;
+      });
+      const qint64 before = peak(true);
+      QElapsedTimer timer;
+      timer.start();
+      const QList<QList<int>> sets =
+          SimilarityIndex::group(signatures, {}, SimilarityIndex::Normal, &cancel);
+      const qint64 elapsed = timer.elapsed();
+      const qint64 after = peak(false);
+      finished.set_value();
+      watchdog.join();
+      const qint64 growth = before >= 0 && after >= 0 ? (after - before) / 1024 : -1;
+      qInfo("Grouped %d near-identical %s pictures in %lld ms, peak memory +%lld MiB", kCount,
+            matching ? "matching" : "different", elapsed, growth);
+      QVERIFY2(!cancel.load(), "grouping took over a minute");
+      if (growth >= 0) QVERIFY2(growth < kBudgetMiB, qPrintable(QString::number(growth)));
+      if (matching) {
+        QCOMPARE(sets.size(), 1);
+        QCOMPARE(sets.first().size(), kCount);
+      } else {
+        QVERIFY(sets.isEmpty());
+      }
+    }
+  }
+
+  // Loose lets photos be ten bits apart, and two such hashes need not agree
+  // on any whole byte, so pairing has to look further than one byte.
+  void looseSimilarityFindsPhotosWhoseHashesShareNoByte() {
+    QRandomGenerator random(11);
+    SimilarityIndex::Signature photo;
+    photo.valid = true;
+    photo.width = 4000;
+    photo.height = 3000;
+    photo.red = 140;
+    photo.green = 120;
+    photo.blue = 90;
+    photo.flatness = 20;
+    photo.chroma = 80;
+    photo.hash = 0x5a5a5a5a5a5a5a5aULL;
+    photo.thumbnail.resize(1024);
+    for (int pixel = 0; pixel < 1024; ++pixel) {
+      photo.thumbnail[pixel] = char((pixel % 32) * 6 + (pixel / 32) * 2 + random.bounded(8));
+    }
+    photo.prepare();
+    SimilarityIndex::Signature edited = photo;
+    // Nine bits apart, one or two in every byte.
+    edited.hash = photo.hash ^ 0x0101010101010101ULL ^ 0x2ULL;
+    QCOMPARE(std::popcount(photo.hash ^ edited.hash), 9);
+    QVERIFY(!SimilarityIndex::matches(photo, edited, {}, {}, SimilarityIndex::Normal));
+    QVERIFY(SimilarityIndex::matches(photo, edited, {}, {}, SimilarityIndex::Loose));
+    QCOMPARE(SimilarityIndex::group({photo, edited}, {}, SimilarityIndex::Loose),
+             QList<QList<int>>({{0, 1}}));
+    QVERIFY(SimilarityIndex::group({photo, edited}, {}, SimilarityIndex::Normal).isEmpty());
+  }
+
+  // Copies of one picture that collapse together still never chain a set
+  // through a middle picture, and a picture that matches only some of the
+  // copies stays out of their set.
+  void collapsedCopiesStillNeedEveryPairToMatch() {
+    QRandomGenerator random(5);
+    std::array<double, 1024> base{};
+    std::array<double, 1024> drift{};
+    for (int index = 0; index < 1024; ++index) {
+      base[index] = random.generateDouble() - 0.5;
+      drift[index] = random.generateDouble() - 0.5;
+    }
+    const auto signature = [&](double amount, double noise) {
+      SimilarityIndex::Signature result;
+      result.valid = true;
+      result.width = 640;
+      result.height = 480;
+      result.red = result.green = result.blue = 120;
+      result.flatness = 20;
+      result.chroma = 80;
+      result.hash = 0x0123456789abcdefULL;
+      result.thumbnail.resize(1024);
+      for (int index = 0; index < 1024; ++index) {
+        const double value = base[index] + amount * drift[index] +
+                             noise * (random.generateDouble() - 0.5);
+        result.thumbnail[index] = char(std::clamp(int(128 + value * 120), 0, 255));
+      }
+      result.prepare();
+      return result;
+    };
+    QList<SimilarityIndex::Signature> signatures;
+    for (int copy = 0; copy < 12; ++copy) signatures.append(signature(0, 0.01));
+    // Drifted far enough to match the copies, but not the far picture.
+    signatures.append(signature(0.32, 0));
+    signatures.append(signature(0.64, 0));
+    QVERIFY(SimilarityIndex::matches(signatures[0], signatures[12], {}, {}, SimilarityIndex::Normal));
+    QVERIFY(SimilarityIndex::matches(signatures[12], signatures[13], {}, {}, SimilarityIndex::Normal));
+    QVERIFY(!SimilarityIndex::matches(signatures[0], signatures[13], {}, {}, SimilarityIndex::Normal));
+    const QList<QList<int>> sets = SimilarityIndex::group(signatures, {}, SimilarityIndex::Normal);
+    for (const QList<int>& set : sets) {
+      for (int a : set) {
+        for (int b : set) {
+          QVERIFY(a == b || SimilarityIndex::matches(signatures[a], signatures[b], {}, {},
+                                                     SimilarityIndex::Normal));
+        }
+      }
+    }
+    QVERIFY(std::any_of(sets.cbegin(), sets.cend(), [](const QList<int>& set) {
+      return set.size() >= 12 && set.contains(0) && set.contains(11) && !set.contains(13);
+    }));
+  }
+
+  // Hashes survive a relaunch, keyed by path, size and modification time, and
+  // a changed or unreadable cache only costs a fresh read.
+  void similarityAndDuplicateHashesPersistInTheCache() {
+    QTemporaryDir dir;
+    QTemporaryDir cache;
+    QVERIFY(dir.isValid() && cache.isValid());
+    const QByteArray previousCache = qgetenv("XDG_CACHE_HOME");
+    const auto restore = qScopeGuard([&] {
+      previousCache.isNull() ? qunsetenv("XDG_CACHE_HOME")
+                             : qputenv("XDG_CACHE_HOME", previousCache);
+    });
+    QVERIFY(qputenv("XDG_CACHE_HOME", cache.path().toUtf8()));
+    for (const char* name : {"OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR",
+                             "XDG_PICTURES_DIR", "XDG_VIDEOS_DIR"}) {
+      QVERIFY(qputenv(name, dir.path().toUtf8()));
+    }
+    const QImage scene = photoScene(5);
+    QVERIFY(scene.save(dir.filePath(QStringLiteral("scene.png"))));
+    QVERIFY(scene.scaled(480, 320).save(dir.filePath(QStringLiteral("scene-small.png"))));
+    QVERIFY(QFile::copy(dir.filePath(QStringLiteral("scene.png")),
+                        dir.filePath(QStringLiteral("scene-copy.png"))));
+    QVERIFY(photoScene(9).save(dir.filePath(QStringLiteral("other.png"))));
+
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QTRY_COMPARE_WITH_TIMEOUT(model.rowCount(), 4, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!model.scanning(), 5000);
+
+    const auto scanSimilar = [&] {
+      SimilarityIndex index(&model);
+      index.setActive(true);
+      [&] { QTRY_VERIFY_WITH_TIMEOUT(index.groupCount() == 1 && !index.scanning(), 10000); }();
+      return index.lastDecoded();
+    };
+    const auto scanDuplicates = [&] {
+      DuplicateIndex index(&model);
+      index.setActive(true);
+      [&] { QTRY_VERIFY_WITH_TIMEOUT(index.ready() && index.groupCount() == 1, 10000); }();
+      return index.lastHashed();
+    };
+
+    QCOMPARE(scanSimilar(), 4);
+    QVERIFY(QFileInfo(SimilarityIndex::cachePath()).isFile());
+    QVERIFY(!(QFileInfo(SimilarityIndex::cachePath()).permissions() &
+              (QFileDevice::ReadGroup | QFileDevice::ReadOther)));
+    QCOMPARE(scanSimilar(), 0);
+    QCOMPARE(scanDuplicates(), 2);
+    QVERIFY(QFileInfo(DuplicateIndex::cachePath()).isFile());
+    QCOMPARE(scanDuplicates(), 0);
+
+    // A rewritten file is read again; the others still come from the cache.
+    QVERIFY(photoScene(9).scaled(900, 600).save(dir.filePath(QStringLiteral("other.png"))));
+    QFile touched(dir.filePath(QStringLiteral("other.png")));
+    QVERIFY(touched.open(QIODevice::ReadWrite));
+    QVERIFY(touched.setFileTime(QDateTime::currentDateTime().addSecs(5),
+                                QFileDevice::FileModificationTime));
+    touched.close();
+    model.refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(!model.scanning(), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        model.recordAt(model.rowOf(dir.filePath(QStringLiteral("other.png")))).modified ==
+            QFileInfo(dir.filePath(QStringLiteral("other.png"))).lastModified().toMSecsSinceEpoch(),
+        5000);
+    QCOMPARE(scanSimilar(), 1);
+
+    // A damaged cache or one from another format is ignored, not trusted.
+    writeSmallFile(SimilarityIndex::cachePath(), QByteArray("not a cache"));
+    writeSmallFile(DuplicateIndex::cachePath(), QByteArray(64, '\x4f'));
+    QCOMPARE(scanSimilar(), 4);
+    QCOMPARE(scanDuplicates(), 2);
+
+    // An explicit recheck reads everything again.
+    SimilarityIndex index(&model);
+    index.setActive(true);
+    QTRY_VERIFY_WITH_TIMEOUT(index.groupCount() == 1 && !index.scanning(), 10000);
+    QCOMPARE(index.lastDecoded(), 0);
+    QSignalSpy scanning(&index, &SimilarityIndex::scanningChanged);
+    index.refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(scanning.size() >= 2 && !index.scanning(), 10000);
+    QCOMPARE(index.lastDecoded(), 4);
+  }
+
+  // Peripheral batteries (a wireless mouse, a game controller) say nothing
+  // about the computer's power, and a desktop's empty USB-C port does not put
+  // it on battery.
+  void backgroundTextIndexIgnoresPeripheralBatteries() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto supply = [&](const QString& machine, const QString& name,
+                            const QList<std::pair<QString, QByteArray>>& values) {
+      for (const auto& [file, value] : values) {
+        writeSmallFile(dir.filePath(machine + u'/' + name + u'/' + file), value + '\n');
+      }
+    };
+    const auto mouse = [&](const QString& machine) {
+      supply(machine, QStringLiteral("hidpp_battery_0"),
+             {{QStringLiteral("type"), "Battery"},
+              {QStringLiteral("status"), "Discharging"},
+              {QStringLiteral("scope"), "Device"}});
+    };
+    mouse(QStringLiteral("desktop"));
+    QVERIFY(!OcrIndex::onBattery(dir.filePath(QStringLiteral("desktop"))));
+
+    supply(QStringLiteral("usb-c-desktop"), QStringLiteral("ucsi-source-psy-USBC000:001"),
+           {{QStringLiteral("type"), "USB"}, {QStringLiteral("online"), "0"}});
+    QVERIFY(!OcrIndex::onBattery(dir.filePath(QStringLiteral("usb-c-desktop"))));
+
+    const auto laptop = [&](const QString& machine, bool plugged) {
+      supply(machine, QStringLiteral("AC"),
+             {{QStringLiteral("type"), "Mains"}, {QStringLiteral("online"), plugged ? "1" : "0"}});
+      supply(machine, QStringLiteral("BAT0"),
+             {{QStringLiteral("type"), "Battery"},
+              {QStringLiteral("status"), plugged ? "Charging" : "Discharging"},
+              {QStringLiteral("scope"), "System"}});
+      mouse(machine);
+    };
+    laptop(QStringLiteral("laptop-on-ac"), true);
+    QVERIFY(!OcrIndex::onBattery(dir.filePath(QStringLiteral("laptop-on-ac"))));
+    laptop(QStringLiteral("laptop-unplugged"), false);
+    QVERIFY(OcrIndex::onBattery(dir.filePath(QStringLiteral("laptop-unplugged"))));
+
+    // A laptop whose only external supply is a USB-C port, unplugged.
+    supply(QStringLiteral("usb-c-laptop"), QStringLiteral("BAT1"),
+           {{QStringLiteral("type"), "Battery"}, {QStringLiteral("status"), "Not charging"}});
+    supply(QStringLiteral("usb-c-laptop"), QStringLiteral("ucsi-source-psy-USBC000:001"),
+           {{QStringLiteral("type"), "USB"}, {QStringLiteral("online"), "0"}});
+    QVERIFY(OcrIndex::onBattery(dir.filePath(QStringLiteral("usb-c-laptop"))));
+    supply(QStringLiteral("usb-c-laptop"), QStringLiteral("ucsi-source-psy-USBC000:001"),
+           {{QStringLiteral("online"), "1"}});
+    QVERIFY(!OcrIndex::onBattery(dir.filePath(QStringLiteral("usb-c-laptop"))));
+  }
+
+  // Opt-in background text indexing: waits for mains power, runs a bounded
+  // number of low-priority Tesseract processes, reads screenshots only when
+  // asked, and pauses and resumes with the power supply.
+  void backgroundTextIndexIsBoundedLowPriorityAndPausesOnBattery() {
+    QTemporaryDir dir;
+    QTemporaryDir cacheDir;
+    QVERIFY(dir.isValid() && cacheDir.isValid());
+    const QByteArray previousCache = qgetenv("XDG_CACHE_HOME");
+    const QByteArray previousPath = qgetenv("PATH");
+    const QByteArray previousLog = qgetenv("OMAROLL_OCR_TEST_LOG");
+    const auto restore = qScopeGuard([&] {
+      const auto putBack = [](const char* name, const QByteArray& value) {
+        value.isNull() ? qunsetenv(name) : qputenv(name, value);
+      };
+      putBack("XDG_CACHE_HOME", previousCache);
+      putBack("PATH", previousPath);
+      putBack("OMAROLL_OCR_TEST_LOG", previousLog);
+    });
+    QVERIFY(qputenv("XDG_CACHE_HOME", cacheDir.path().toUtf8()));
+    const QString bin = dir.filePath(QStringLiteral("bin"));
+    QVERIFY(QDir().mkpath(bin));
+    const QString logPath = dir.filePath(QStringLiteral("runs.log"));
+    QVERIFY(!writeTesseract(bin, "echo \"start $(nice) $1\" >> \"$OMAROLL_OCR_TEST_LOG\"\n"
+                                 "sleep 0.3\n"
+                                 "echo \"end $1\" >> \"$OMAROLL_OCR_TEST_LOG\"\n"
+                                 "printf 'Picture words here\\n'\n").isEmpty());
+    QVERIFY(qputenv("PATH", (bin + QStringLiteral(":") + QString::fromUtf8(previousPath)).toUtf8()));
+    QVERIFY(qputenv("OMAROLL_OCR_TEST_LOG", logPath.toUtf8()));
+    writeSmallFile(logPath, {});
+
+    const QString shots = dir.filePath(QStringLiteral("shots"));
+    const QString pictures = dir.filePath(QStringLiteral("pictures"));
+    QVERIFY(QDir().mkpath(shots) && QDir().mkpath(pictures));
+    QVERIFY(qputenv("OMARCHY_SCREENSHOT_DIR", shots.toUtf8()));
+    QVERIFY(qputenv("XDG_PICTURES_DIR", pictures.toUtf8()));
+    QVERIFY(qputenv("OMARCHY_SCREENRECORD_DIR", dir.filePath(QStringLiteral("none")).toUtf8()));
+    QVERIFY(qputenv("XDG_VIDEOS_DIR", dir.filePath(QStringLiteral("none")).toUtf8()));
+    QImage image(24, 16, QImage::Format_RGB32);
+    for (int index = 0; index < 7; ++index) {
+      image.fill(QColor(index * 30, 40, 90));
+      QVERIFY(image.save(QStringLiteral("%1/screenshot-%2.png").arg(shots).arg(index)));
+    }
+    for (int index = 0; index < 5; ++index) {
+      image.fill(QColor(200, index * 40, 10));
+      QVERIFY(image.save(QStringLiteral("%1/photo-%2.png").arg(pictures).arg(index)));
+    }
+
+    const QString power = dir.filePath(QStringLiteral("power"));
+    writeSmallFile(power + QStringLiteral("/AC/type"), "Mains\n");
+    writeSmallFile(power + QStringLiteral("/AC/online"), "0\n");
+    writeSmallFile(power + QStringLiteral("/BAT0/type"), "Battery\n");
+    writeSmallFile(power + QStringLiteral("/BAT0/status"), "Discharging\n");
+    QVERIFY(OcrIndex::onBattery(power));
+    QVERIFY(!OcrIndex::onBattery(dir.filePath(QStringLiteral("no-power-supplies"))));
+
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QTRY_COMPARE_WITH_TIMEOUT(model.rowCount(), 12, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!model.scanning(), 5000);
+
+    const auto lines = [&] {
+      QFile log(logPath);
+      if (!log.open(QIODevice::ReadOnly)) return QStringList();
+      return QString::fromUtf8(log.readAll()).split(u'\n', Qt::SkipEmptyParts);
+    };
+    const auto count = [&](const QString& prefix) {
+      return int(lines().filter(QRegularExpression(QStringLiteral("^") + prefix)).size());
+    };
+
+    OcrIndex index(&model);
+    QVERIFY(index.available());
+    QSignalSpy texts(&index, &OcrIndex::textReady);
+    index.setPowerSupplyDirectory(power);
+    index.setSettleDelay(0);
+    index.setParallelLimit(3);
+    index.setScreenshotsOnly(true);
+    index.setBackground(true);
+    QTRY_COMPARE(index.pauseReason(), QStringLiteral("Paused on battery"));
+    QTest::qWait(600);
+    QVERIFY(lines().isEmpty());
+    QVERIFY(!index.backgroundRunning());
+
+    // Mains power: the seven screenshots, never more than three at once, at
+    // the lowest priority. The photos wait.
+    writeSmallFile(power + QStringLiteral("/AC/online"), "1\n");
+    index.checkPower();
+    QVERIFY(index.backgroundRunning());
+    QTRY_COMPARE_WITH_TIMEOUT(count(QStringLiteral("end ")), 7, 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(!index.indexing(), 3000);
+    QTRY_COMPARE(index.indexedCount(), 7);
+    QCOMPARE(index.eligibleCount(), 7);
+    QVERIFY(lines().filter(QStringLiteral("photo-")).isEmpty());
+    int concurrent = 0;
+    int peak = 0;
+    for (const QString& line : lines()) {
+      if (line.startsWith(QStringLiteral("start "))) {
+        QVERIFY2(line.startsWith(QStringLiteral("start 19 ")), qPrintable(line));
+        peak = std::max(peak, ++concurrent);
+      } else {
+        --concurrent;
+      }
+    }
+    QCOMPARE(peak, 3);
+    QTRY_COMPARE(texts.size(), 7);
+
+    // Every picture: the photos start, the battery pauses them after the
+    // ones already running, and mains power resumes the rest.
+    index.setParallelLimit(2);
+    index.setScreenshotsOnly(false);
+    QTRY_VERIFY_WITH_TIMEOUT(count(QStringLiteral("start ")) >= 8, 3000);
+    writeSmallFile(power + QStringLiteral("/AC/online"), "0\n");
+    index.checkPower();
+    QCOMPARE(index.pauseReason(), QStringLiteral("Paused on battery"));
+    QTRY_COMPARE_WITH_TIMEOUT(index.running(), 0, 3000);
+    const int startedBeforePause = count(QStringLiteral("start "));
+    QVERIFY(startedBeforePause < 12);
+    QTest::qWait(700);
+    QCOMPARE(count(QStringLiteral("start ")), startedBeforePause);
+    QVERIFY(index.indexedCount() < index.eligibleCount());
+    QCOMPARE(index.eligibleCount(), 12);
+    writeSmallFile(power + QStringLiteral("/AC/online"), "1\n");
+    index.checkPower();
+    QTRY_COMPARE_WITH_TIMEOUT(count(QStringLiteral("end ")), 12, 10000);
+    QTRY_COMPARE(index.indexedCount(), 12);
+    QCOMPARE(index.unreadCount(), 0);
+
+    // Turning it off stops new work; text already read stays.
+    index.setBackground(false);
+    QVERIFY(!index.backgroundRunning());
+    QVERIFY(!index.indexing());
+    QCOMPARE(index.pauseReason(), QString());
   }
 
   void duplicateSetsStayTogetherAndFollowTheChosenSort() {
