@@ -225,8 +225,9 @@ Rectangle {
                 visible: tile.ringed
             }
 
-            ToolTip {
-                visible: tile.fileName !== "" && (tap.hovered || tile.ringed)
+            ThemedToolTip {
+                requested: tap.hovered
+                keyboardRequested: tile.ringed
                 text: tile.fileName
                 delay: tile.ringed ? 0 : 500
             }
