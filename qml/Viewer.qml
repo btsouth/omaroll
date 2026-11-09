@@ -286,6 +286,9 @@ ApplicationWindow {
         return Qt.rgba(base.r, base.g, base.b, amount)
     }
 
+    // A pale surround around the picture, where its own edges can vanish.
+    readonly property bool lightSurround: Osd.luminance(Theme.surfaceBackground) > 0.4
+
     function say(message) {
         root.status = message
         root.undoId = 0
@@ -1457,6 +1460,30 @@ ApplicationWindow {
                     yScale: root.viewFlipVertical ? -1 : 1
                 }
 
+                // On a light theme's pale surround, a hairline and a soft
+                // shadow keep a white picture's edges visible.
+                Rectangle {
+                    objectName: "viewerPictureEdge"
+                    anchors.centerIn: parent
+                    width: stillLoader.width + 2
+                    height: stillLoader.height + 2
+                    rotation: root.viewRotation
+                    visible: root.stillReady && !root.imageError && root.lightSurround
+                    color: "transparent"
+                    border.width: 1
+                    border.color: Qt.rgba(0, 0, 0, 0.16)
+
+                    Rectangle {
+                        anchors.fill: parent
+                        anchors.margins: -3
+                        z: -1
+                        radius: 3
+                        color: "transparent"
+                        border.width: 3
+                        border.color: Qt.rgba(0, 0, 0, 0.05)
+                    }
+                }
+
                 // The picture's own area is solid, so a transparent PNG shows
                 // the theme's surface rather than the desktop through it.
                 Rectangle {
@@ -2039,12 +2066,14 @@ ApplicationWindow {
                     objectName: "viewerResumeButton"
                     label: "Resume from " + transport.clock(root.resumePosition)
                     floating: true
+                    osd: true
                     active: true
                     onClicked: root.resumeVideo()
                 }
                 PillButton {
                     label: "Start over"
                     floating: true
+                    osd: true
                     onClicked: root.restartVideo()
                 }
             }
@@ -2075,11 +2104,16 @@ ApplicationWindow {
 
             HoverHandler { id: headerHover }
 
+            // A dark scrim in every theme: a light one bleaches the top of
+            // the frame. Strong enough behind the name for light text over a
+            // white picture, gone by the bottom edge.
             Rectangle {
+                objectName: "viewerHeaderScrim"
                 anchors.fill: parent
                 gradient: Gradient {
-                    GradientStop { position: 0.0; color: root.shade(Theme.surfaceBackground, 0.82) }
-                    GradientStop { position: 1.0; color: root.shade(Theme.surfaceBackground, 0.0) }
+                    GradientStop { position: 0.0; color: Osd.scrimTop }
+                    GradientStop { position: 0.55; color: Osd.scrimMiddle }
+                    GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0) }
                 }
             }
 
@@ -2110,7 +2144,7 @@ ApplicationWindow {
                     font.family: Theme.fontFamily
                     font.pixelSize: 13
                     font.weight: Font.DemiBold
-                    color: Theme.brightForeground
+                    color: Osd.brightForeground
                     Accessible.role: Accessible.StaticText
                     Accessible.name: text
                     Accessible.description: "Drag the name, or Ctrl+drag the picture, to copy the file into another app"
@@ -2138,7 +2172,7 @@ ApplicationWindow {
                     text: (Session.index + 1) + " / " + Session.count
                     font.family: Theme.fontFamily
                     font.pixelSize: 11
-                    color: Theme.mutedText
+                    color: Osd.foreground
                 }
             }
 
@@ -2152,6 +2186,7 @@ ApplicationWindow {
 
                 IconButton {
                     objectName: "viewerInfoButton"
+                    osd: true
                     icon: "info"
                     toolTip: root.infoOpen ? "Hide details" : "Details"
                     shortcut: root.viewerShortcuts.info
@@ -2160,6 +2195,7 @@ ApplicationWindow {
                 }
                 IconButton {
                     objectName: "viewerLibraryButton"
+                    osd: true
                     icon: "grid"
                     toolTip: "Open in library"
                     shortcut: root.viewerShortcuts.library
@@ -2168,6 +2204,7 @@ ApplicationWindow {
                 IconButton {
                     id: moreButton
                     objectName: "viewerMoreButton"
+                    osd: true
                     icon: "more"
                     toolTip: "More"
                     active: actionMenu.visible
@@ -2183,6 +2220,7 @@ ApplicationWindow {
         IconButton {
             id: previousButton
             objectName: "viewerPrevious"
+            osd: true
             anchors.left: parent.left
             anchors.leftMargin: 14
             anchors.verticalCenter: parent.verticalCenter
@@ -2200,6 +2238,7 @@ ApplicationWindow {
         IconButton {
             id: nextButton
             objectName: "viewerNext"
+            osd: true
             anchors.right: parent.right
             // Clear of the details card while it is open.
             anchors.rightMargin: root.infoOpen ? infoPanel.width + 28 : 14
@@ -2313,9 +2352,9 @@ ApplicationWindow {
         width: zoomText.implicitWidth + 20
         height: zoomText.implicitHeight + 10
         radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, height / 2) : 3
-        color: root.shade(Theme.background, 0.86)
+        color: Osd.panel
         border.width: 1
-        border.color: root.shade(Theme.foreground, 0.12)
+        border.color: Osd.border
         opacity: 0
         visible: opacity > 0
 
@@ -2335,7 +2374,7 @@ ApplicationWindow {
                     + "  ·  " + root.zoomPercent + "%"
             font.family: Theme.fontFamily
             font.pixelSize: 11
-            color: Theme.brightForeground
+            color: Osd.brightForeground
         }
         Timer {
             id: zoomBadgeTimer
@@ -2356,9 +2395,9 @@ ApplicationWindow {
                         + (undoable ? undoButton.implicitWidth + 14 : 0), parent.width - 48)
         height: toastText.implicitHeight + 14
         radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, height / 2) : 3
-        color: root.shade(Theme.background, 0.90)
+        color: Osd.panelSolid
         border.width: 1
-        border.color: root.shade(Theme.foreground, 0.14)
+        border.color: Osd.border
         opacity: root.status !== "" ? 1 : 0
         visible: opacity > 0
         Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutQuad } }
@@ -2374,7 +2413,7 @@ ApplicationWindow {
             text: root.status
             font.family: Theme.fontFamily
             font.pixelSize: 12
-            color: Theme.accent
+            color: Osd.accent
         }
 
         Text {
@@ -2389,7 +2428,7 @@ ApplicationWindow {
             font.pixelSize: 12
             font.bold: true
             font.underline: undoArea.containsMouse
-            color: Theme.foreground
+            color: Osd.foreground
             Accessible.role: Accessible.Button
             Accessible.name: "Undo"
             Accessible.description: "Shortcut Ctrl+Z"
@@ -2417,7 +2456,7 @@ ApplicationWindow {
         width: Math.min(warningText.implicitWidth + 46, parent.width - 48)
         height: warningText.height + 12
         radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, height / 2) : 3
-        color: root.shade(Theme.background, 0.90)
+        color: Osd.panelSolid
         border.width: 1
         border.color: root.shade(Theme.yellow, 0.5)
         visible: !Session.isVideo && Session.pictureWarning !== "" && !root.imageError
@@ -2447,7 +2486,7 @@ ApplicationWindow {
                 elide: Text.ElideRight
                 font.family: Theme.fontFamily
                 font.pixelSize: 12
-                color: Theme.foreground
+                color: Osd.foreground
             }
         }
     }

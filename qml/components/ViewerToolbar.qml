@@ -85,9 +85,10 @@ Rectangle {
     implicitWidth: row.implicitWidth + 12
     implicitHeight: 46
     radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, height / 2) : 4
-    color: root.shade(Theme.background, 0.84)
+    // Dark over the picture in every theme; see Osd.
+    color: Osd.panel
     border.width: 1
-    border.color: root.shade(Theme.foreground, 0.12)
+    border.color: Osd.border
 
     HoverHandler { id: hover }
 
@@ -106,7 +107,7 @@ Rectangle {
             width: 1
             height: parent.height
             // Inline components cannot see this file's ids, so no root.shade.
-            color: Qt.rgba(Theme.foreground.r, Theme.foreground.g, Theme.foreground.b, 0.14)
+            color: Osd.divider
         }
     }
 
@@ -117,6 +118,7 @@ Rectangle {
 
         IconButton {
             objectName: root.namePrefix + "ZoomOut"
+            osd: true
             enabled: root.viewControls
             visible: !root.compact
             icon: "zoom-out"
@@ -126,6 +128,7 @@ Rectangle {
         }
         IconButton {
             objectName: root.namePrefix + "FitToggle"
+            osd: true
             enabled: root.viewControls
             visible: !root.compact
             label: root.offerActual ? "1:1" : "Fit"
@@ -136,6 +139,7 @@ Rectangle {
         }
         IconButton {
             objectName: root.namePrefix + "ZoomIn"
+            osd: true
             enabled: root.viewControls
             visible: !root.compact
             icon: "zoom-in"
@@ -161,6 +165,7 @@ Rectangle {
 
         IconButton {
             objectName: root.namePrefix + "ToolbarPrevious"
+            osd: true
             enabled: root.canStep
             icon: "chevron-left"
             toolTip: "Previous"
@@ -169,6 +174,7 @@ Rectangle {
         }
         IconButton {
             objectName: root.namePrefix + "SlideshowButton"
+            osd: true
             enabled: root.canStep
             icon: root.slideshowRunning ? "pause" : "play"
             active: root.slideshowRunning
@@ -178,6 +184,7 @@ Rectangle {
         }
         IconButton {
             objectName: root.namePrefix + "ToolbarNext"
+            osd: true
             enabled: root.canStep
             icon: "chevron-right"
             toolTip: "Next"
@@ -188,6 +195,7 @@ Rectangle {
 
         IconButton {
             objectName: root.namePrefix + "RotateLeft"
+            osd: true
             enabled: root.viewControls
             icon: "rotate-left"
             toolTip: "Rotate left"
@@ -196,6 +204,7 @@ Rectangle {
         }
         IconButton {
             objectName: root.namePrefix + "RotateRight"
+            osd: true
             enabled: root.viewControls
             icon: "rotate-right"
             toolTip: "Rotate right"
@@ -204,6 +213,7 @@ Rectangle {
         }
         IconButton {
             objectName: root.namePrefix + "FlipHorizontal"
+            osd: true
             enabled: root.viewControls
             visible: root.flipControls
             icon: "flip-horizontal"
@@ -215,6 +225,7 @@ Rectangle {
         }
         IconButton {
             objectName: root.namePrefix + "FlipVertical"
+            osd: true
             enabled: root.viewControls
             visible: root.flipControls
             icon: "flip-vertical"
@@ -234,6 +245,7 @@ Rectangle {
             IconButton {
                 id: saveButton
                 objectName: root.namePrefix + "SaveCopy"
+                osd: true
                 anchors.fill: parent
                 enabled: root.canSaveCopy
                 icon: "save"
@@ -246,6 +258,7 @@ Rectangle {
 
         IconButton {
             objectName: root.namePrefix + "FullScreenButton"
+            osd: true
             visible: root.fullScreenControl
             icon: root.fullScreen ? "fullscreen-exit" : "fullscreen"
             toolTip: root.fullScreen ? "Exit full screen" : "Full screen"
@@ -254,6 +267,7 @@ Rectangle {
         }
         IconButton {
             objectName: root.namePrefix + "TrashButton"
+            osd: true
             visible: root.trashControl
             icon: "trash"
             toolTip: "Move to Trash"

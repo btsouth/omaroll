@@ -23,8 +23,8 @@
   power, with a screenshots-only option and a "Text indexed N of M" status.
   Search results say when some pictures' text has not been read yet.
 - Date sorts show a header for each day, or each month where days are thin or
-  tiles are small, with its count and a Select control. Tiles that aren't from
-  today show their date beside the time.
+  tiles are small, with its count and a Select control. Tiles in a month's
+  section show their date beside the time.
 - Selection works like a file manager: Shift+click and Shift with the arrows,
   Home, End, Page Up or Page Down extend from the last picked tile, Ctrl+click
   adds or removes one, and dragging from empty space draws a band that selects
@@ -116,6 +116,23 @@
   whole path in a tooltip.
 - Save copy keeps its place on the viewer toolbar, greyed until the picture
   is turned or flipped, so no button moves as it comes and goes.
+- Controls over pictures and videos stay dark in every theme, like mpv's: the
+  viewer's top scrim, toolbar, video bar, filmstrip, seek preview and notices,
+  and the preview's video bar. Only the accent follows the theme, lifted until
+  it reads, and the time, track and icons meet WCAG AA contrast.
+- The library header keeps one main row: the title and count, the search field
+  and the buttons. Kinds are a segmented control with full names, or a menu in
+  a narrow window. With a selection, the bulk actions that fit are measured
+  and the rest stay in Actions, so nothing runs into the title at half width.
+  The gear and favourites star are line icons, Pin folder sits beside the
+  folder chip, and an empty library shows no filter row.
+- Shortcut help lists one shortcut per row with its keys on the right, one cap
+  per key, and arrow sets as Shift + Arrows. The sheet is as big as its list,
+  fits a 1280x720 viewer, shrinks when filtered and fades where it scrolls.
+  RAW editor shortcuts are under Actions.
+- Tile captions use a short gradient instead of a dark strip. Tiles inside a
+  day's section show only the time, and a picture on a light theme's pale
+  surround gets a faint edge.
 - Reading dates and cameras for a new library no longer slows the window.
   Two to four probes run at once at low priority, their output is parsed off
   the window thread, and "Reading media details" updates about once a second.

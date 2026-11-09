@@ -56,6 +56,8 @@
 #include <QGuiApplication>
 #include <QImageReader>
 #include <QJSValue>
+#include <cmath>
+#include <QQmlListReference>
 #include <QMediaDevices>
 #include <QMediaMetaData>
 #include <QMediaPlayer>
@@ -628,6 +630,150 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_Right);
     QCOMPARE(m_session->path(), first);
     QVERIFY(prop("slideshowRunning").toBool());
+  }
+
+  // WCAG relative luminance and contrast, for the checks below.
+  static double luminance(const QColor& colour) {
+    const auto channel = [](double value) {
+      return value <= 0.04045 ? value / 12.92 : std::pow((value + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * channel(colour.redF()) + 0.7152 * channel(colour.greenF()) +
+           0.0722 * channel(colour.blueF());
+  }
+  static double contrast(const QColor& a, const QColor& b) {
+    const double first = luminance(a), second = luminance(b);
+    return (std::max(first, second) + 0.05) / (std::min(first, second) + 0.05);
+  }
+  // A translucent colour over an opaque one.
+  static QColor over(const QColor& top, const QColor& bottom) {
+    const double a = top.alphaF();
+    return QColor::fromRgbF(top.redF() * a + bottom.redF() * (1 - a), top.greenF() * a + bottom.greenF() * (1 - a),
+                            top.blueF() * a + bottom.blueF() * (1 - a));
+  }
+
+  void controlsOverMediaStayDarkInEveryTheme_data() {
+    QTest::addColumn<QString>("palette");
+    QTest::newRow("dark") << QStringLiteral("dark");
+    QTest::newRow("light") << QStringLiteral("light");
+  }
+
+  void controlsOverMediaStayDarkInEveryTheme() {
+    QFETCH(QString, palette);
+    QTemporaryDir themeDir;
+    QVERIFY(themeDir.isValid());
+    const QString themeRoot = themeDir.filePath(QStringLiteral("omarchy/current/theme"));
+    QVERIFY(QDir().mkpath(themeRoot));
+    const QString fixture = QFINDTESTDATA("fixtures/themes") + QLatin1Char('/') + palette;
+    for (const auto& name : {QStringLiteral("colors.toml"), QStringLiteral("shell.toml")})
+      QVERIFY(QFile::copy(fixture + QStringLiteral("/theme/") + name, themeRoot + QLatin1Char('/') + name));
+    OmarchyTheme theme(themeDir.path(), themeDir.path());
+    m_engine->rootContext()->setContextProperty(QStringLiteral("Theme"), &theme);
+    const auto restoreTheme = qScopeGuard([&] {
+      m_engine->rootContext()->setContextProperty(QStringLiteral("Theme"), m_theme);
+    });
+    if (palette == QStringLiteral("light")) QVERIFY(luminance(theme.background()) > 0.6);
+
+    // The worst case under a panel: a white frame.
+    const QColor white(Qt::white);
+    open({media(QStringLiteral("clip.mp4"))});
+    QQuickItem* transport = item(QStringLiteral("viewerTransport"));
+    QTRY_VERIFY(transport->isVisible());
+    const QColor panel = transport->property("color").value<QColor>();
+    const QColor backing = over(panel, white);
+    QVERIFY2(luminance(backing) < 0.08, qPrintable(panel.name(QColor::HexArgb)));
+    // Time text, the seek track and its fill clear WCAG AA on that.
+    for (const char* name : {"viewerElapsed", "viewerDuration"}) {
+      const QColor text = item(QString::fromLatin1(name))->property("color").value<QColor>();
+      QVERIFY2(contrast(text, backing) >= 4.5, name);
+    }
+    const QColor track = over(item(QStringLiteral("viewerSeekTrack"))->property("color").value<QColor>(), backing);
+    QVERIFY2(contrast(track, backing) >= 3.0, qPrintable(QString::number(contrast(track, backing))));
+    const QColor fill = item(QStringLiteral("viewerSeekFill"))->property("color").value<QColor>();
+    QVERIFY2(contrast(fill, backing) >= 4.5, qPrintable(fill.name()));
+    // Icons are light on it too, whatever the theme's foreground.
+    QQuickItem* play = item(QStringLiteral("viewerPlayButton"));
+    QVERIFY(play->property("osd").toBool());
+    QVERIFY(contrast(play->property("textColour").value<QColor>(), backing) >= 4.5);
+
+    // The top scrim is dark, never the theme's light surface.
+    QQuickItem* scrim = item(QStringLiteral("viewerHeaderScrim"));
+    QVariant gradientValue = scrim->property("gradient");
+    QObject* gradient = gradientValue.value<QObject*>();
+    if (!gradient) gradient = gradientValue.value<QJSValue>().toQObject();
+    QVERIFY(gradient);
+    QQmlListReference stops(gradient, "stops");
+    QVERIFY(stops.count() >= 2);
+    const QColor top = stops.at(0)->property("color").value<QColor>();
+    QVERIFY2(luminance(over(top, white)) < 0.15, qPrintable(top.name(QColor::HexArgb)));
+    QVERIFY(contrast(item(QStringLiteral("viewerTitle"))->property("color").value<QColor>(), over(top, white)) >= 4.5);
+
+    // The picture toolbar matches the video bar.
+    open({media(QStringLiteral("Shot 1.jpg"))});
+    QQuickItem* toolbar = item(QStringLiteral("viewerToolbar"));
+    QTRY_VERIFY(toolbar->isVisible());
+    QCOMPARE(toolbar->property("color").value<QColor>(), panel);
+    QVERIFY(item(QStringLiteral("viewerZoomIn"))->property("osd").toBool());
+    // A light theme's pale surround gets a hairline round the picture.
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QCOMPARE(item(QStringLiteral("viewerPictureEdge"))->isVisible(), luminance(theme.surfaceBackground()) > 0.4);
+  }
+
+  void shortcutHelpFitsALaptopViewer_data() {
+    QTest::addColumn<bool>("video");
+    QTest::newRow("picture") << false;
+    QTest::newRow("video") << true;
+  }
+
+  void shortcutHelpFitsALaptopViewer() {
+    QFETCH(bool, video);
+    open({media(video ? QStringLiteral("clip.mp4") : QStringLiteral("Shot 1.jpg"))});
+    const QSize before = m_window->size();
+    const auto restore = qScopeGuard([&] { m_window->resize(before); });
+    m_window->resize(1280, 720);
+    QTRY_COMPARE(m_window->size(), QSize(1280, 720));
+    QObject* help = m_window->findChild<QObject*>(QStringLiteral("viewerShortcutHelp"));
+    QVERIFY(help);
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(help->property("visible").toBool());
+    QQuickItem* flick = item(QStringLiteral("viewerShortcutScroll"))->property("contentItem").value<QQuickItem*>();
+    QVERIFY(flick);
+    // Everything shows without scrolling, inside the window.
+    QTRY_VERIFY(flick->property("contentHeight").toReal() <= flick->height() + 0.5);
+    const qreal fullHeight = help->property("height").toReal();
+    QVERIFY(fullHeight <= 720 - 24);
+    QVERIFY(!item(QStringLiteral("shortcutHelpFade"))->isVisible());
+
+    // One row per shortcut, label left and caps right, one cap per key, with
+    // the pan arrows collapsed.
+    auto* content = help->property("contentItem").value<QQuickItem*>();
+    if (!video) {
+      QQuickItem* pan = find(content, [](QQuickItem* candidate) {
+        return candidate->property("text").toString() ==
+               QStringLiteral("Shift+Left / Shift+Right / Shift+Up / Shift+Down");
+      });
+      QVERIFY(pan);
+      const QVariantList caps = pan->property("modelData").toMap().value(QStringLiteral("caps")).toList();
+      QCOMPARE(caps.size(), 1);
+      QCOMPARE(caps.first().toStringList(), (QStringList{QStringLiteral("Shift"), QStringLiteral("Arrows")}));
+      QVERIFY(!pan->property("stacked").toBool());
+      // The RAW entries are actions now.
+      QVariant groups = help->property("groups");
+      bool rawInActions = false;
+      for (const QVariant& group : groups.value<QJSValue>().toVariant().toList()) {
+        const QVariantMap map = group.toMap();
+        for (const QVariant& row : map.value(QStringLiteral("rows")).toList()) {
+          if (row.toMap().value(QStringLiteral("label")).toString() == QStringLiteral("Open RAW editor"))
+            rawInActions = map.value(QStringLiteral("title")).toString() == QStringLiteral("Actions");
+        }
+      }
+      QVERIFY(rawInActions);
+    }
+
+    // A filter down to a few rows shrinks the sheet.
+    help->setProperty("filter", QStringLiteral("trash"));
+    QTRY_VERIFY(help->property("height").toReal() < fullHeight / 2);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!help->property("visible").toBool());
   }
 
   void detailsStayInsideAShortWindowAndScrollToTheFolder_data() {
