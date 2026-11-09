@@ -3646,12 +3646,24 @@ private slots:
     QVERIFY(settings.pushTrashUndo({record}) > 0);
     QCOMPARE(settings.undo(), expected);
     QCOMPARE(restored.size(), 0);
-    // A refused step is used up rather than blocking older undo steps.
-    QVERIFY(!settings.canUndo());
+    // A refusal the user can fix stays undoable; one they can't is used up
+    // rather than blocking older undo steps.
+    const bool fixable = change == u"occupied" || change == u"folder";
+    QCOMPARE(settings.canUndo(), fixable);
     if (change == u"occupied") {
       QCOMPARE(readFile(path), QByteArray("newcomer"));
       QCOMPARE(readFile(trashPath), QByteArray("original"));
       QVERIFY(QFileInfo::exists(trashInfoFor(trashPath)));
+      QVERIFY(QFile::remove(path));
+    } else if (change == u"folder") {
+      QVERIFY(QDir().mkpath(folder));
+    }
+    if (fixable) {
+      QCOMPARE(settings.undo(), QStringLiteral("Restored photo.png"));
+      QCOMPARE(readFile(path), QByteArray("original"));
+      QVERIFY(!QFileInfo::exists(trashPath));
+      QVERIFY(!QFileInfo::exists(trashInfoFor(trashPath)));
+      QVERIFY(!settings.canUndo());
     } else if (change == u"replaced") {
       QCOMPARE(readFile(trashPath), QByteArray("someone else"));
       QVERIFY(!QFileInfo::exists(path));
@@ -3731,7 +3743,31 @@ private slots:
     QCOMPARE(readFile(second), QByteArray("taken"));
     QCOMPARE(restored.size(), 1);
     QCOMPARE(restored.first().at(0).toList().size(), 1);
-    QFile::remove(again.at(1).toMap().value(QStringLiteral("trashPath")).toString());
+    // The refused file stays undoable once its name is free again.
+    QVERIFY(settings.canUndo());
+    QVERIFY(QFile::remove(second));
+    QCOMPARE(settings.undo(), QStringLiteral("Restored second.png"));
+    QCOMPARE(readFile(second), QByteArray("second"));
+    QVERIFY(!settings.canUndo());
+  }
+
+  void trashUndoRestoresHardLinksTrashedTogether() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString first = dir.filePath(QStringLiteral("first.png"));
+    const QString second = dir.filePath(QStringLiteral("second.png"));
+    QVERIFY(writeFile(first, "shared"));
+    QVERIFY(::link(QFile::encodeName(first).constData(), QFile::encodeName(second).constData()) == 0);
+    ActionLauncher launcher;
+    // Trashing the second name changes the inode's change time, which the
+    // first record must tolerate.
+    const QVariantList records{launcher.trashCaptured(launcher.captureFileAction(first)),
+                               launcher.trashCaptured(launcher.captureFileAction(second))};
+    AppSettings settings;
+    QVERIFY(settings.pushTrashUndo(records) > 0);
+    QCOMPARE(settings.undo(), QStringLiteral("Restored 2 items"));
+    QCOMPARE(readFile(first), QByteArray("shared"));
+    QCOMPARE(readFile(second), QByteArray("shared"));
   }
 
   void duplicateCleanupReportsUndoRecords() {

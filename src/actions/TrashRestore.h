@@ -21,6 +21,9 @@ namespace TrashRestore {
 struct Result {
   bool ok = false;
   QString message;
+  // Refused for a reason the user can fix (the name is taken, the folder is
+  // gone), so the undo is worth offering again.
+  bool retryable = false;
 };
 
 // Puts a file recorded by moveToTrash back where it was, and removes its

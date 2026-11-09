@@ -2003,13 +2003,27 @@ QString AppSettings::undo() {
   UndoStep step = m_undoStack.takeLast();
   if (step.isTrash()) {
     QVariantList restored;
+    QVariantList retry;
     QStringList problems;
     for (const QVariant& value : std::as_const(step.trashed)) {
       const TrashRestore::Result result = TrashRestore::restore(value.toMap());
-      if (result.ok) restored.append(value);
-      else problems.append(result.message);
+      if (result.ok) {
+        restored.append(value);
+      } else {
+        problems.append(result.message);
+        if (result.retryable) retry.append(value);
+      }
     }
-    emit undoChanged();
+    // Files refused for a reason the user can fix stay undoable, as the
+    // newest step, so Ctrl+Z can try them again.
+    if (!retry.isEmpty()) {
+      UndoStep again;
+      again.trashed = retry;
+      again.origin = step.origin;
+      pushUndoStep(std::move(again));
+    } else {
+      emit undoChanged();
+    }
     if (!restored.isEmpty()) emit trashRestored(restored, step.origin.data());
     const qsizetype total = step.trashed.size();
     if (problems.isEmpty()) {
