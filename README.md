@@ -271,16 +271,17 @@ Every viewer shortcut is listed in [Shortcuts](docs/shortcuts.md#viewer), and
   after confirmation, as one step Undo puts back.
 - **Share and hand off.** Drag actual files into another app, copy images or
   text, send with LocalSend or Taildrop, and open specialist tools for trimming,
-  annotation, conversion and editing. A copied image of up to 24 megapixels that fits
-  the image memory limit is offered as PNG too, so it can show up in
-  Omarchy's clipboard history while apps that take JPEG still get the original
-  bytes. A WebP, HEIC, AVIF, JPEG XL, GIF or other picture Qt reads goes on as
-  a file reference with a PNG beside it, the first frame for an animation, and
-  pastes as its URI in a terminal. The
-  history waits two seconds for the PNG, so on a slow machine a
-  large photo may still be missed. It needs a compositor with ext-data-control,
-  which Omarchy's Hyprland has; elsewhere, and for larger photos, the copy is
-  JPEG only and pastes as before, but the history skips it.
+  annotation, conversion and editing. A copied JPEG goes on as itself and as
+  PNG, so it can show up in Omarchy's clipboard history while apps that take
+  JPEG still get the original bytes. A WebP, HEIC, AVIF, JPEG XL, GIF or other
+  picture Qt reads goes on as a file reference, which pastes as its URI in a
+  terminal, with a PNG beside it (the first frame for an animation). The PNG is
+  added for pictures of up to 24 megapixels that fit the image memory limit,
+  and the history waits two seconds for it, so on a slow machine a large photo
+  may still be missed. It needs a compositor with ext-data-control, which
+  Omarchy's Hyprland has. Elsewhere, and for larger pictures, there is no PNG:
+  a JPEG goes on as JPEG only and other formats as a file reference only. Both
+  paste as before, but the history keeps no picture of them.
 - **Media keys and players.** A playing video answers media keys and the
   shell's player controls, with a poster frame as its cover art.
 - **Present and finish.** Run a fullscreen slideshow, choose a screenshot
