@@ -1999,7 +1999,7 @@ private slots:
                        {metadata.value(QStringLiteral("mpris:trackid")), qlonglong(1000000)}).type(),
              QDBusMessage::ReplyMessage);
     QVERIFY(!prop("resumeAvailable").toBool());
-    QTRY_COMPARE(player->position(), 1000);
+    QTRY_COMPARE(player->position(), 1001); // Enter the frame at the exact boundary.
     QCOMPARE(mprisCall(remote, QStringLiteral("PlayPause")).type(), QDBusMessage::ReplyMessage);
     QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
     m_window->setProperty("resumeAvailable", true);

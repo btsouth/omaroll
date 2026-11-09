@@ -5083,7 +5083,7 @@ private slots:
                        1000000);
     QVERIFY(!item("detail")->property("resumeAvailable").toBool());
     QVERIFY(!item("detail")->property("resumePending").toBool());
-    QTRY_COMPARE(player->position(), 1000);
+    QTRY_COMPARE(player->position(), 1001); // Enter the frame at the exact boundary.
     item("detail")->setProperty("resumeAvailable", true);
     click(item("resumeButton"));
     QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
