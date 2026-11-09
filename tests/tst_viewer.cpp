@@ -45,6 +45,7 @@
 #include <QDBusVariant>
 #include <QDataStream>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QGuiApplication>
 #include <QImageReader>
@@ -73,7 +74,9 @@
 #include <QStyleHints>
 #include <QTemporaryDir>
 #include <QTextStream>
+#include <QThread>
 #include <QThreadPool>
+#include <QTimer>
 #include <QtTest>
 
 #include <algorithm>
@@ -2319,6 +2322,169 @@ private slots:
     QVERIFY(!prop("resumeAvailable").toBool());
   }
 
+  // A launch with --start, as main.cpp makes it: a viewer of its own with a
+  // player created on demand, the start set after the window opens, and the
+  // GUI thread slow. The start must survive, and a pause straight after
+  // launch must show the frame at the position, not the poster.
+  void launchStartSurvivesSlowStartup_data() {
+    QTest::addColumn<QString>("load");
+    QTest::addColumn<bool>("pauseEarly");
+    QTest::newRow("idle") << QStringLiteral("idle") << false;
+    QTest::newRow("busy-gui") << QStringLiteral("busy") << false;
+    QTest::newRow("slow-status") << QStringLiteral("status") << false;
+    QTest::newRow("idle-pause") << QStringLiteral("idle") << true;
+    QTest::newRow("busy-gui-pause") << QStringLiteral("busy") << true;
+    QTest::newRow("slow-status-pause") << QStringLiteral("status") << true;
+    QTest::newRow("lost-seek") << QStringLiteral("lost") << false;
+  }
+
+  void launchStartSurvivesSlowStartup() {
+    QFETCH(QString, load);
+    QFETCH(bool, pauseEarly);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    // A long GOP: the start lands 5.5 s past the last keyframe, so the exact
+    // seek decodes for a while before its frame exists.
+    const QString clip = dir.filePath(QStringLiteral("gop.mkv"));
+    QVERIFY(encodeClip(clip, 40, 300));
+    const int loops = qEnvironmentVariableIntValue("OMAROLL_RACE_LOOPS") > 0
+                          ? qEnvironmentVariableIntValue("OMAROLL_RACE_LOOPS") : 2;
+    const qint64 start = 25500;
+    int failures = 0;
+    for (int attempt = 0; attempt < loops; ++attempt) {
+      const QString path = dir.filePath(QStringLiteral("launch-%1.mkv").arg(attempt));
+      QVERIFY(QFile::copy(clip, path));
+      FreshViewer viewer = freshViewer();
+      QVERIFY(viewer.window);
+      QTimer busy;
+      if (load == u"busy") {
+        // A loaded machine: every turn of the event loop runs late.
+        busy.setInterval(0);
+        connect(&busy, &QTimer::timeout, this, [] { QThread::msleep(15); });
+        busy.start();
+      }
+      std::vector<QMetaObject::Connection> stalls;
+      const auto unstall = qScopeGuard([&] {
+        for (const auto& connection : stalls) disconnect(connection);
+      });
+      viewer.session->open({path});
+      viewer.session->setStartPosition(path, start);
+      viewer.window->show();
+      QMediaPlayer* player = nullptr;
+      QTRY_VERIFY((player = viewer.window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+      if (load == u"status") {
+        // Status, duration and seekability reach QML late and out of step.
+        stalls.push_back(connect(player, &QMediaPlayer::mediaStatusChanged, this,
+                                 [] { QThread::msleep(120); }));
+        stalls.push_back(connect(player, &QMediaPlayer::seekableChanged, this,
+                                 [] { QThread::msleep(80); }));
+        stalls.push_back(connect(player, &QMediaPlayer::durationChanged, this,
+                                 [] { QThread::msleep(80); }));
+      }
+      if (load == u"lost") {
+        // The backend loses the launch seek: it lands, then the player is
+        // back at the start before playback begins.
+        auto lost = std::make_shared<bool>(false);
+        stalls.push_back(connect(player, &QMediaPlayer::positionChanged, this,
+                                 [player, lost, start](qint64 position) {
+                                   if (*lost || position < start - 100) return;
+                                   *lost = true;
+                                   player->setPosition(0);
+                                 }));
+      }
+      if (pauseEarly) {
+        // Space as soon as playback starts, while the exact seek still decodes.
+        QTRY_VERIFY_WITH_TIMEOUT(player->playbackState() == QMediaPlayer::PlayingState, 10000);
+        QVERIFY(QMetaObject::invokeMethod(viewer.window, "togglePlayback"));
+        QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
+      }
+      const auto settled = [&] {
+        if (pauseEarly) {
+          const QVideoFrame frame = player->videoSink()->videoFrame();
+          const qint64 at = player->position() * 1000;
+          QObject* presentation = viewer.window->property("presentation").value<QObject*>();
+          return player->playbackState() == QMediaPlayer::PausedState && frame.isValid()
+                 && presentation && presentation->property("ready").toBool()
+                 && frame.startTime() <= at + 100000 && frame.endTime() >= at - 100000
+                 && player->position() >= start - 200;
+        }
+        return player->playbackState() == QMediaPlayer::PlayingState
+               && player->position() >= start;
+      };
+      const bool ok = QTest::qWaitFor(settled, 12000);
+      busy.stop();
+      if (!ok) {
+        ++failures;
+        const QVideoFrame frame = player->videoSink()->videoFrame();
+        qWarning().noquote() << "launch" << attempt << load << "state" << player->playbackState()
+                             << "status" << player->mediaStatus() << "position" << player->position()
+                             << "frame" << (frame.isValid() ? frame.startTime() / 1000 : -1)
+                             << "poster" << viewer.item(QStringLiteral("viewerVideoPoster"))->isVisible();
+      }
+      viewer.window->close();
+    }
+    QCOMPARE(failures, 0);
+  }
+
+  // Changing the subtitle or audio track early, while the backend is still
+  // starting its streams, must not freeze the picture under a running clock.
+  void earlyTrackChangeKeepsFramesMoving_data() {
+    QTest::addColumn<QString>("track");
+    QTest::newRow("subtitle") << QStringLiteral("subtitle");
+    QTest::newRow("audio") << QStringLiteral("audio");
+  }
+
+  void earlyTrackChangeKeepsFramesMoving() {
+    QFETCH(QString, track);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const int loops = qEnvironmentVariableIntValue("OMAROLL_RACE_LOOPS") > 0
+                          ? qEnvironmentVariableIntValue("OMAROLL_RACE_LOOPS") : 4;
+    int failures = 0;
+    for (int attempt = 0; attempt < loops; ++attempt) {
+      const QString path = dir.filePath(QStringLiteral("tracks-%1.mkv").arg(attempt));
+      QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/viewer/tracks.mkv"), path));
+      FreshViewer viewer = freshViewer();
+      QVERIFY(viewer.window);
+      viewer.session->open({path});
+      viewer.window->show();
+      QVERIFY(QTest::qWaitForWindowExposed(viewer.window));
+      QMediaPlayer* player = nullptr;
+      QTRY_VERIFY((player = viewer.window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+      QTRY_VERIFY_WITH_TIMEOUT(player->mediaStatus() != QMediaPlayer::LoadingMedia
+                                   && player->mediaStatus() != QMediaPlayer::NoMedia, 10000);
+      // Spread the switch over the first 300 ms, as a quick key press does.
+      QTest::qWait((attempt * 37) % 300);
+      QVERIFY(QMetaObject::invokeMethod(viewer.window, track == u"subtitle" ? "cycleSubtitles"
+                                                                            : "cycleAudioTrack"));
+      qint64 lastFrame = -1;
+      int frozen = 0;
+      int changes = 0;
+      QElapsedTimer clock;
+      clock.start();
+      while (clock.elapsed() < 2500) {
+        QTest::qWait(100);
+        if (player->playbackState() != QMediaPlayer::PlayingState) break;
+        const qint64 frame = player->videoSink()->videoFrame().startTime();
+        if (frame != lastFrame) {
+          ++changes;
+          frozen = 0;
+        } else {
+          ++frozen;
+        }
+        lastFrame = frame;
+        if (frozen >= 8) break;
+      }
+      if (frozen >= 8 || changes < 10) {
+        ++failures;
+        qWarning().noquote() << "track change" << attempt << track << "frame" << lastFrame / 1000
+                             << "position" << player->position() << "changes" << changes;
+      }
+      viewer.window->close();
+    }
+    QCOMPARE(failures, 0);
+  }
+
   void remoteCommandsRespectResumeIntent() {
     if (!QDBusConnection(QStringLiteral("omaroll-test-client")).isConnected())
       QSKIP("dbus-daemon is not available");
@@ -4344,6 +4510,48 @@ private:
            << quint16(32) << quint32(0) << quint32(0) << qint32(0) << qint32(0)
            << quint32(0) << quint32(0);
     return stream.status() == QDataStream::Ok;
+  }
+
+  // A viewer window of its own, as ViewerWindows makes for each launch, so
+  // the player is created fresh rather than reused from earlier tests.
+  struct FreshViewer {
+    std::unique_ptr<ViewerSession> session;
+    std::unique_ptr<QQmlContext> context;
+    std::unique_ptr<QObject> root;
+    QQuickWindow* window = nullptr;
+    QQuickItem* item(const QString& name) const {
+      return find(window->contentItem(), [&name](QQuickItem* candidate) {
+        return candidate->objectName() == name;
+      });
+    }
+  };
+
+  FreshViewer freshViewer() {
+    FreshViewer viewer;
+    viewer.session = std::make_unique<ViewerSession>();
+    viewer.context = std::make_unique<QQmlContext>(m_engine->rootContext());
+    viewer.context->setContextProperty(QStringLiteral("Session"), viewer.session.get());
+    viewer.context->setContextProperty(QStringLiteral("MediaInfo"), m_mediaInfo);
+    viewer.context->setContextProperty(QStringLiteral("Subtitles"), m_subtitles);
+    QQmlComponent component(m_engine);
+    component.loadFromModule("Omaroll", "Viewer");
+    viewer.root.reset(component.create(viewer.context.get()));
+    viewer.window = qobject_cast<QQuickWindow*>(viewer.root.get());
+    if (viewer.window) viewer.window->resize(640, 400);
+    return viewer;
+  }
+
+  static bool encodeClip(const QString& path, int seconds, int gop) {
+    QProcess encoder;
+    encoder.start(QStringLiteral("ffmpeg"),
+                  {"-v", "error", "-f", "lavfi", "-i",
+                   QStringLiteral("testsrc2=s=320x180:r=30:d=%1").arg(seconds), "-f", "lavfi",
+                   "-i", QStringLiteral("sine=frequency=440:duration=%1").arg(seconds), "-c:v",
+                   "libx264", "-preset", "ultrafast", "-g", QString::number(gop),
+                   "-keyint_min", QString::number(gop), "-sc_threshold", "0", "-c:a", "aac",
+                   "-shortest", path});
+    return encoder.waitForFinished(60000) && encoder.exitStatus() == QProcess::NormalExit
+           && encoder.exitCode() == 0;
   }
 
   QString media(const QString& name) const { return m_folder + QLatin1Char('/') + name; }
