@@ -259,7 +259,7 @@ jobs:
           name: ${{ matrix.mode }}-results
           path: |
             build/fuzz/fuzz-results
-            build/tsan/Testing/Temporary/LastTest.log
+            build/tsan/tsan-tests.txt
             build/tsan/tsan-report.*
             build/coverage/html
             build/coverage/summary.txt

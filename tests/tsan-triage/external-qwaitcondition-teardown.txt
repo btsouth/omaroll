@@ -1,0 +1,39 @@
+==================
+WARNING: ThreadSanitizer: data race (pid=130)
+  Write of size 1 at 0x721800008520 by main thread:
+    #0 pthread_mutex_destroy <null> (omaroll_tests+0xa7f4b)
+    #1 QWaitCondition::~QWaitCondition() <null> (libQt6Core.so.6+0x37e81d)
+    #2 OmarollTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /src/build/tsan/omaroll_tests_autogen/include/tst_omaroll.moc:970:22 (omaroll_tests+0x12e18a)
+    #3 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #4 <null> <null> (libc.so.6+0x27780)
+
+  Previous atomic read of size 1 at 0x721800008520 by thread T26:
+    #0 pthread_cond_wait <null> (omaroll_tests+0xa7050)
+    #1 QWaitCondition::wait(QMutex*, QDeadlineTimer) <null> (libQt6Core.so.6+0x37f980)
+
+  Location is heap block of size 96 at 0x721800008520 allocated by main thread:
+    #0 operator new(unsigned long) <null> (omaroll_tests+0x12c6f8)
+    #1 QWaitCondition::QWaitCondition() <null> (libQt6Core.so.6+0x37e769)
+    #2 QtConcurrent::NonPromiseTaskResolver<MimeDefaults::applyAsync(bool, QString const&)::$_0>::run(std::tuple<MimeDefaults::applyAsync(bool, QString const&)::$_0>&&, QtConcurrent::TaskStartParameters const&) /usr/include/qt6/QtConcurrent/qtconcurrentstoredfunctioncall.h:180:19 (omaroll_tests+0x4e4dd8)
+    #3 auto QtConcurrent::run<MimeDefaults::applyAsync(bool, QString const&)::$_0>(QThreadPool*, MimeDefaults::applyAsync(bool, QString const&)::$_0&&) /usr/include/qt6/QtConcurrent/qtconcurrentrun.h:48:12 (omaroll_tests+0x4e4c96)
+    #4 auto QtConcurrent::run<MimeDefaults::applyAsync(bool, QString const&)::$_0>(MimeDefaults::applyAsync(bool, QString const&)::$_0&&) /usr/include/qt6/QtConcurrent/qtconcurrentrun.h:65:12 (omaroll_tests+0x4e0ea8)
+    #5 MimeDefaults::applyAsync(bool, QString const&) /src/src/app/MimeDefaults.cpp:120:22 (omaroll_tests+0x4e0d75)
+    #6 OmarollTest::mimeDefaultsRestoreAndRemoveOnlyOmaroll() /src/tests/tst_omaroll.cpp:847:14 (omaroll_tests+0x1594e4)
+    #7 OmarollTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /src/build/tsan/omaroll_tests_autogen/include/tst_omaroll.moc:970:22 (omaroll_tests+0x12e18a)
+    #8 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #9 <null> <null> (libc.so.6+0x27780)
+
+  Thread T26 'Thread (pooled)' (tid=21928, finished) created by main thread at:
+    #0 pthread_create <null> (omaroll_tests+0xa634e)
+    #1 QThread::start(QThread::Priority) <null> (libQt6Core.so.6+0x3765f4)
+    #2 QtConcurrent::NonPromiseTaskResolver<MimeDefaults::applyAsync(bool, QString const&)::$_0>::run(std::tuple<MimeDefaults::applyAsync(bool, QString const&)::$_0>&&, QtConcurrent::TaskStartParameters const&) /usr/include/qt6/QtConcurrent/qtconcurrentstoredfunctioncall.h:180:19 (omaroll_tests+0x4e4dd8)
+    #3 auto QtConcurrent::run<MimeDefaults::applyAsync(bool, QString const&)::$_0>(QThreadPool*, MimeDefaults::applyAsync(bool, QString const&)::$_0&&) /usr/include/qt6/QtConcurrent/qtconcurrentrun.h:48:12 (omaroll_tests+0x4e4c96)
+    #4 auto QtConcurrent::run<MimeDefaults::applyAsync(bool, QString const&)::$_0>(MimeDefaults::applyAsync(bool, QString const&)::$_0&&) /usr/include/qt6/QtConcurrent/qtconcurrentrun.h:65:12 (omaroll_tests+0x4e0ea8)
+    #5 MimeDefaults::applyAsync(bool, QString const&) /src/src/app/MimeDefaults.cpp:120:22 (omaroll_tests+0x4e0d75)
+    #6 OmarollTest::mimeDefaultsRestoreAndRemoveOnlyOmaroll() /src/tests/tst_omaroll.cpp:847:14 (omaroll_tests+0x1594e4)
+    #7 OmarollTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /src/build/tsan/omaroll_tests_autogen/include/tst_omaroll.moc:970:22 (omaroll_tests+0x12e18a)
+    #8 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #9 <null> <null> (libc.so.6+0x27780)
+
+SUMMARY: ThreadSanitizer: data race (/src/build/tsan/omaroll_tests+0xa7f4b) in pthread_mutex_destroy
+==================

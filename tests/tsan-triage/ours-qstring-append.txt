@@ -1,0 +1,44 @@
+==================
+WARNING: ThreadSanitizer: data race (pid=1)
+  Write of size 2 at 0x7250000001a0 by thread T2:
+    #0 memcpy <null> (omaroll_race+0x631f3)
+    #1 <null> <null> (libQt6Core.so.6+0x2ac6e3)
+    #2 void std::__invoke_impl<void, void (*)()>(std::__invoke_other, void (*&&)()) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/invoke.h:63:14 (omaroll_race+0xf1182)
+    #3 std::__invoke_result<void (*)()>::type std::__invoke<void (*)()>(void (*&&)()) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/invoke.h:98:14 (omaroll_race+0xf10e5)
+    #4 void std::thread::_Invoker<std::tuple<void (*)()>>::_M_invoke<0ul>(std::_Index_tuple<0ul>) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/std_thread.h:303:13 (omaroll_race+0xf109d)
+    #5 std::thread::_Invoker<std::tuple<void (*)()>>::operator()() /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/std_thread.h:310:11 (omaroll_race+0xf1045)
+    #6 std::thread::_State_impl<std::thread::_Invoker<std::tuple<void (*)()>>>::_M_run() /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/std_thread.h:255:13 (omaroll_race+0xf0ee9)
+    #7 <null> <null> (libstdc++.so.6+0xea858)
+
+  Previous write of size 8 at 0x7250000001a0 by thread T1:
+    #0 realloc <null> (omaroll_race+0x665ce)
+    #1 QArrayData::reallocateUnaligned(QArrayData*, void*, long long, long long, QArrayData::AllocationOption) <null> (libQt6Core.so.6+0x2dcd1b)
+    #2 void std::__invoke_impl<void, void (*)()>(std::__invoke_other, void (*&&)()) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/invoke.h:63:14 (omaroll_race+0xf1182)
+    #3 std::__invoke_result<void (*)()>::type std::__invoke<void (*)()>(void (*&&)()) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/invoke.h:98:14 (omaroll_race+0xf10e5)
+    #4 void std::thread::_Invoker<std::tuple<void (*)()>>::_M_invoke<0ul>(std::_Index_tuple<0ul>) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/std_thread.h:303:13 (omaroll_race+0xf109d)
+    #5 std::thread::_Invoker<std::tuple<void (*)()>>::operator()() /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/std_thread.h:310:11 (omaroll_race+0xf1045)
+    #6 std::thread::_State_impl<std::thread::_Invoker<std::tuple<void (*)()>>>::_M_run() /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/std_thread.h:255:13 (omaroll_race+0xf0ee9)
+    #7 <null> <null> (libstdc++.so.6+0xea858)
+
+  Location is heap block of size 512 at 0x725000000000 allocated by thread T1:
+    #0 realloc <null> (omaroll_race+0x665ce)
+    #1 QArrayData::reallocateUnaligned(QArrayData*, void*, long long, long long, QArrayData::AllocationOption) <null> (libQt6Core.so.6+0x2dcd1b)
+    #2 void std::__invoke_impl<void, void (*)()>(std::__invoke_other, void (*&&)()) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/invoke.h:63:14 (omaroll_race+0xf1182)
+    #3 std::__invoke_result<void (*)()>::type std::__invoke<void (*)()>(void (*&&)()) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/invoke.h:98:14 (omaroll_race+0xf10e5)
+    #4 void std::thread::_Invoker<std::tuple<void (*)()>>::_M_invoke<0ul>(std::_Index_tuple<0ul>) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/std_thread.h:303:13 (omaroll_race+0xf109d)
+    #5 std::thread::_Invoker<std::tuple<void (*)()>>::operator()() /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/std_thread.h:310:11 (omaroll_race+0xf1045)
+    #6 std::thread::_State_impl<std::thread::_Invoker<std::tuple<void (*)()>>>::_M_run() /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/std_thread.h:255:13 (omaroll_race+0xf0ee9)
+    #7 <null> <null> (libstdc++.so.6+0xea858)
+
+  Thread T2 (tid=14, running) created by main thread at:
+    #0 pthread_create <null> (omaroll_race+0x6837e)
+    #1 std::thread::_M_start_thread(std::unique_ptr<std::thread::_State, std::default_delete<std::thread::_State>>, void (*)()) <null> (libstdc++.so.6+0xea961)
+    #2 main /src/race.cpp:6:30 (omaroll_race+0xef9d6)
+
+  Thread T1 (tid=13, finished) created by main thread at:
+    #0 pthread_create <null> (omaroll_race+0x6837e)
+    #1 std::thread::_M_start_thread(std::unique_ptr<std::thread::_State, std::default_delete<std::thread::_State>>, void (*)()) <null> (libstdc++.so.6+0xea961)
+    #2 main /src/race.cpp:6:15 (omaroll_race+0xef9c4)
+
+SUMMARY: ThreadSanitizer: data race (/src/omaroll_race+0x631f3) in memcpy
+==================

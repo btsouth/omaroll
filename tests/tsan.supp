@@ -1,13 +1,5 @@
-# ThreadSanitizer suppressions for the core suite. Reports whose accesses all
-# start inside uninstrumented Qt or glibc are sorted out by tests/tsan-triage.py
-# instead; list here only reports that reach instrumented code, each with the
-# reason it is not ours.
-
-# Arch's Qt is not built with TSan, so the atomic reference count that orders
-# a QFuture's final release is invisible to it. Whichever side drops the last
-# reference frees the shared state (result store, wait condition) after the
-# worker is done with it. Seen when a ViewerSession is destroyed right after
-# its listing finished: QResultStore's header code, compiled into our binary,
-# clears the map the worker filled under Qt's mutex. Every such report runs
-# through the QFuture destructor, so match that frame only.
-race:::~QFuture()
+# ThreadSanitizer suppressions for the threaded core tests that
+# tests/run-instrumented.sh selects. Reports from Qt's own handoffs are sorted
+# out by tests/tsan-triage.py, which names each one. Add an entry here only for
+# a report that reaches our code but whose ordering TSan cannot see, anchored
+# to the frame that shows it, with the reason.

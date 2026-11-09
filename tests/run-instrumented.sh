@@ -18,18 +18,41 @@ case "$mode" in
     cmake -S . -B build/tsan-app -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
     cmake --build build/tsan-app --parallel 4 --target omaroll
     cp build/tsan-app/omaroll "$build/omaroll"
-    # Arch's Qt and glibc are not built with TSan, so their internal locking is
-    # invisible to it. Collect every report, then let tests/tsan-triage.py fail
-    # only on reports whose accesses start in instrumented code.
+    # Arch's Qt is not built with TSan. Qt's mutexes and thread joins run on
+    # futexes inside libQt6Core, where TSan cannot see them, so a run of the
+    # whole core suite reports dozens of Qt-internal handoffs (posted events,
+    # QFutureInterface, QImage, the environment) and can abort when a thread id
+    # is reused. Run the tests whose threading is ours and visible to TSan:
+    # the single-instance handshake, the clipboard fallback's std::mutex
+    # handoff, sidecar subtitle parsing and organization snapshots on a worker.
+    # Every report then fails the job unless tests/tsan-triage.py knows it as a
+    # Qt handoff. Thread leaks are off: Qt never joins its threads where TSan
+    # can see it, so every pooled thread would be reported.
     # (ignore_noninstrumented_modules is not usable: it also hides Qt's own
-    # thread joins, and TSan then aborts when a thread id is reused.)
+    # thread starts, and TSan then aborts when a thread id is reused.)
+    pattern='^(singleInstance|executableForwards|nativeClipboardFallback|externalSubtitles|subtitle|automaticOrganization|restoringABackup|resumeMigration|repairingDamagedSettings|organizationSnapshots)'
+    mapfile -t tests < <(QT_QPA_PLATFORM=offscreen "$build/omaroll_tests" -functions | sed 's/()$//' | grep -E "$pattern")
+    echo "tsan: ${#tests[@]} core tests"
     rm -f "$build"/tsan-report.*
     test_status=0
-    QT_QPA_PLATFORM=offscreen \
-      TSAN_OPTIONS="halt_on_error=0:exitcode=0:second_deadlock_stack=1:log_path=$PWD/$build/tsan-report:suppressions=$PWD/tests/tsan.supp" \
-      ctest --test-dir "$build" -R '^omaroll_tests$' --output-on-failure || test_status=$?
+    (cd "$build" && QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software PULSE_SERVER=unix:/nonexistent \
+      PIPEWIRE_REMOTE=omaroll-no-audio \
+      TSAN_OPTIONS="halt_on_error=0:exitcode=0:report_thread_leaks=0:second_deadlock_stack=1:log_path=$PWD/tsan-report:suppressions=$OLDPWD/tests/tsan.supp" \
+      ./omaroll_tests -o tsan-tests.txt,txt -o -,txt "${tests[@]}") || test_status=$?
+    # exitcode=0 also covers TSan's own aborts, so check that every test ran.
+    if ! grep -Eq '^Totals: [0-9]+ passed, 0 failed' "$build/tsan-tests.txt"; then
+      echo "tsan: the selected tests did not run to completion"
+      test_status=1
+    fi
+    for test in "${tests[@]}"; do
+      if ! grep -Eq "^(PASS|SKIP) +: OmarollTest::$test\(" "$build/tsan-tests.txt"; then
+        echo "tsan: $test did not run"
+        test_status=1
+      fi
+    done
     shopt -s nullglob
     reports=("$build"/tsan-report.*)
+    python3 tests/tsan-triage.py --self-test
     triage_status=0
     if ((${#reports[@]})); then
       python3 tests/tsan-triage.py "${reports[@]}" || triage_status=$?
