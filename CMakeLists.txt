@@ -343,7 +343,10 @@ if(BUILD_TESTING)
     OMAROLL_QML_IMPORT_PATH="${CMAKE_BINARY_DIR}/uitest-imports")
 
   qt_add_executable(omaroll_ui_tests tests/tst_ui.cpp)
-  target_link_libraries(omaroll_ui_tests PRIVATE omaroll_core Qt6::Multimedia Qt6::QuickControls2 Qt6::Test)
+  # Layout readiness (qWaitForPolish) comes from Qt Quick Test, part of the
+  # same Qt Declarative package.
+  find_package(Qt6 6.8 REQUIRED COMPONENTS QuickTest)
+  target_link_libraries(omaroll_ui_tests PRIVATE omaroll_core Qt6::Multimedia Qt6::QuickControls2 Qt6::QuickTest Qt6::Test)
   target_compile_definitions(omaroll_ui_tests PRIVATE
     OMAROLL_QML_IMPORT_PATH="${CMAKE_BINARY_DIR}/uitest-imports")
   add_test(NAME omaroll_ui_tests COMMAND omaroll_ui_tests)

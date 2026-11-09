@@ -83,6 +83,7 @@
 #include <QTextStream>
 #include <QVideoSink>
 #include <QVideoFrame>
+#include <QtQuickTest/quicktest.h>
 #include <QtTest>
 
 #include <algorithm>
@@ -964,7 +965,7 @@ private slots:
       m_settings->setScanDownloads(downloads);
       m_window->resize(1280, 820);
     });
-    QTest::qWait(100);
+    waitForLayout(QSize(width, 420));
     QQuickItem* browse = item("libraryBrowseButton");
     const QRectF browseBounds = browse->mapRectToScene(browse->boundingRect());
     QVERIFY(browseBounds.right() <= width - 19);
@@ -1371,7 +1372,7 @@ private slots:
       if (size.width() < 720) {
         QTRY_VERIFY(!controls->property("wide").toBool());
       }
-      QTest::qWait(50);
+      waitForLayout(size);
 
       QList<QQuickItem*> parts;
       find(controls, [&parts](QQuickItem* candidate) {
@@ -2249,7 +2250,7 @@ private slots:
     m_window->resize(560, 420);
     const auto cleanup = qScopeGuard([&] { QMetaObject::invokeMethod(menu, "close"); m_window->resize(1280, 820); });
     QTRY_VERIFY(item("selectionActionsButton")->isVisible());
-    QTest::qWait(100);
+    waitForLayout(QSize(560, 420));
     click(item("selectionActionsButton"));
     QTRY_VERIFY(menu->property("visible").toBool());
     const QVariantList entries = menu->property("entries").value<QJSValue>().toVariant().toList();
@@ -4352,7 +4353,7 @@ private slots:
     // the search row narrows and drops the pill Ctrl+C stands in for, the page
     // row shortens its labels and drops what needs the most room.
     m_window->resize(560, 420);
-    QTest::qWait(150);
+    waitForLayout(QSize(560, 420));
     qInfo() << "document chrome at" << m_window->size()
             << "search row" << item("pdfSearchRow")->property("implicitWidth").toReal()
             << "page row" << item("pdfPageRow")->property("implicitWidth").toReal()
@@ -4396,7 +4397,7 @@ private slots:
     QQuickItem* albumPill = pill(m_window->contentItem(), QStringLiteral("Organize"));
     QVERIFY(albumPill);
     QTRY_VERIFY(centre(albumPill).x() > 0 && centre(albumPill).x() < m_window->width());
-    QTest::qWait(120);
+    waitForLayout();
     albumPill = pill(m_window->contentItem(), QStringLiteral("Organize"));
     QVERIFY(albumPill);
     QTRY_VERIFY(centre(albumPill).x() > 0 && centre(albumPill).x() < m_window->width());
@@ -4427,7 +4428,7 @@ private slots:
     QTRY_COMPARE(item("library")->property("checkedCount").toInt(), 1);
     QQuickItem* organize = pill(m_window->contentItem(), QStringLiteral("Organize"));
     QVERIFY(organize);
-    QTest::qWait(120);
+    waitForLayout();
     organize = pill(m_window->contentItem(), QStringLiteral("Organize"));
     click(organize);
     QObject* menu = m_window->findChild<QObject*>(QStringLiteral("albumActionMenu"));
@@ -5033,7 +5034,7 @@ private slots:
         QQuickItem* scroller = item("editorChooserScroll");
         // A resize updates popup geometry on the next polish pass. Scroll
         // using the settled viewport instead of the previous window's height.
-        QTest::qWait(150);
+        waitForLayout(size);
         scroller->setProperty("contentY", qMax(0.0, scroller->property("contentHeight").toDouble()
                                                    - scroller->height()));
         QQuickItem* button = item(buttonName);
@@ -5681,7 +5682,7 @@ private slots:
     QTRY_VERIFY(player->position() > 0 && player->position() < 3000);
     // Basic controls must remain within the narrow window.
     m_window->resize(560, 420);
-    QTest::qWait(100);
+    waitForLayout(QSize(560, 420));
     for (const QString& name : {QStringLiteral("videoPlayButton"),
                                 QStringLiteral("videoSoundButton"),
                                 QStringLiteral("playbackSpeedButton")}) {
@@ -5790,7 +5791,7 @@ private slots:
         });
       }, 15000);
       m_window->resize(1280, 820);
-      QTest::qWait(400);
+      waitForLayout(QSize(1280, 820));
       QVERIFY(removed);
     });
 
@@ -6084,7 +6085,7 @@ private slots:
       invoke("dismissTopLayer");
       m_settings->setTileWidth(tileWidth);
       m_window->resize(1280, 820);
-      QTest::qWait(300);
+      waitForLayout(QSize(1280, 820));
     });
     m_window->resize(1005, 545);
     m_settings->setTileWidth(440);
@@ -6236,6 +6237,13 @@ private:
   void perform(const QString& id, const QString& path) {
     QMetaObject::invokeMethod(m_window, "perform", Q_ARG(QVariant, id), Q_ARG(QVariant, path),
                               Q_ARG(QVariant, QVariant()));
+  }
+
+  // Waits until a resize has reached the window and the items it moved have
+  // been laid out again, rather than sleeping through a guessed polish pass.
+  void waitForLayout(const QSize& size = QSize()) {
+    if (size.isValid()) QTRY_COMPARE(m_window->size(), size);
+    QVERIFY(QQuickTest::qWaitForPolish(m_window));
   }
 
   // Rescans the library and waits for that scan to finish, however slow the
