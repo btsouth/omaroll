@@ -312,3 +312,45 @@ records continuous input and the scheduling policy that was discarded.
 
 A [recorded development baseline](../docs/performance/2026-09-05/README.md)
 includes raw results and the measurements still outstanding.
+
+## Parser fuzzing, races and coverage
+
+Clang/LLVM builds are opt-in. In the disposable `omaroll-ci` container on
+**devbox**, install `clang llvm` and run:
+
+```sh
+bash tests/run-instrumented.sh fuzz 60
+bash tests/run-instrumented.sh tsan
+bash tests/run-instrumented.sh coverage
+```
+
+The fuzz build requires `-DOMAROLL_FUZZ=ON` and Clang. Eight independent
+libFuzzer targets cover launch timestamps, IPC JSON validation, EBML VINTs and
+Matroska tracks, PDF bbox XML, image headers, camera RAW metadata, sidecar
+subtitles and organization imports. Each runs for 60 seconds with ASan/UBSan,
+a ten-second per-input timeout and a 64 KiB mutation limit. Seed corpora live
+in `tests/fuzz/corpus`; discovered inputs and logs go in
+`build/fuzz/fuzz-results`, never the checked-in seeds. Increase the second
+argument for longer campaigns. Reproduce a finding with the relevant
+`build/fuzz/fuzz_<parser> <artifact>` and add a regression test before fixing it.
+The organization driver uses a disposable profile and data directory.
+
+Pull requests run all eight fuzzers, the offscreen core suite under TSan,
+and a separate LLVM coverage build. Coverage uploads an HTML report and prints
+a source summary, without a percentage gate. TSan aborts on its first finding;
+`tests/tsan.supp` is reserved for documented external-library races. LSan stays
+on in every suite; `tests/lsan.supp` lists only confirmed external allocations.
+The nightly workflow repeats the UI and viewer suites five times until failure
+on stable Arch, current Arch and ARM. Deliberate timing observations (for
+example proving slideshow cannot advance while confirmation is open), input
+pacing and double-click recognition still use timed waits; layout, media and
+render readiness use their actual states/signals where available.
+
+Organization snapshots use the existing versioned importer/exporter. They live
+under `$XDG_DATA_HOME/omaroll/backups` (normally `~/.local/share/omaroll/backups`):
+seven daily snapshots, four weekly snapshots and up to four pre-restore copies.
+A daily snapshot is never overwritten. A damaged INI is never snapshotted over
+a good copy; recovery preserves its original bytes as an adjacent `.damaged-*`
+file before replacing it. Organization format migrations must first take a
+forced snapshot, just as import does. This change adds no live INI keys and
+keeps organization backup version 1, readable by 1.18.

@@ -3958,8 +3958,7 @@ private slots:
     // A held compositor reply must not block event delivery.
     bool heartbeat = false;
     QTimer::singleShot(5, this, [&] { heartbeat = true; });
-    QTest::qWait(10);
-    QVERIFY(heartbeat);
+    QTRY_VERIFY(heartbeat);
     QVERIFY(!second->isVisible());
     HyprlandPlacement::Plan plan;
     plan.viewers = 1;

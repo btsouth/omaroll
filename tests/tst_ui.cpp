@@ -444,9 +444,9 @@ private slots:
     }
     for (int guard = 0; guard < 8 && prop("anySheetOpen").toBool(); ++guard) {
       invoke("dismissTopLayer");
-      QTest::qWait(20);
+      QCoreApplication::processEvents();
     }
-    QVERIFY(!prop("anySheetOpen").toBool());
+    QTRY_VERIFY(!prop("anySheetOpen").toBool());
     m_library->setDuplicatesOnly(false);
     m_library->setSimilarOnly(false);
     QMetaObject::invokeMethod(item("library"), "clearChecked");
@@ -740,7 +740,7 @@ private slots:
                                      Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant())));
     QQuickItem* viewport = item("detailStillViewport");
     QQuickItem* canvas = item("detailImageCanvas");
-    QTest::qWait(50);
+    QTRY_VERIFY(viewport->width() > 0 && viewport->height() > 0 && canvas->width() > 0);
     const QPointF pointer(viewport->width() * 0.6, viewport->height() * 0.6);
     const auto underPointer = [&] {
       return QPointF((viewport->property("contentX").toDouble() + pointer.x() - canvas->x()) / canvas->width(),
@@ -752,8 +752,7 @@ private slots:
       QWheelEvent wheel(at, m_window->mapToGlobal(at.toPoint()), QPoint(), QPoint(0, delta),
                         Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
       QCoreApplication::sendEvent(m_window, &wheel);
-      QTest::qWait(30);
-      QVERIFY(QLineF(before, underPointer()).length() < 0.001);
+      QTRY_VERIFY(QLineF(before, underPointer()).length() < 0.001);
     }
   }
 
@@ -820,7 +819,7 @@ private slots:
                                      Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant())));
     QQuickItem* viewport = item("detailStillViewport");
     QQuickItem* canvas = item("detailImageCanvas");
-    QTest::qWait(50);
+    QTRY_VERIFY(viewport->width() > 0 && viewport->height() > 0 && canvas->width() > 0);
     const QPointF pointer(viewport->width() * 0.6, viewport->height() * 0.6);
     const auto underPointer = [&] {
       return QPointF((viewport->property("contentX").toDouble() + pointer.x() - canvas->x()) / canvas->width(),
@@ -2682,7 +2681,7 @@ private slots:
     // CaptureGrid coalesces cell-width changes for 80 ms before rebuilding
     // delegate positions. Finish that relayout in this scenario so it cannot
     // detach the model while the next scenario is sending selection keys.
-    QTest::qWait(120);
+    QTRY_VERIFY(!m_window->findChild<QObject*>(QStringLiteral("gridRelayoutTimer"))->property("running").toBool());
     QTRY_VERIFY(item("library")->property("layoutReady").toBool());
   }
 
@@ -3228,7 +3227,7 @@ private slots:
     QTRY_VERIFY(pill(m_window->contentItem(), QStringLiteral("Duplicates  ▾")) != nullptr);
     // CaptureGrid coalesces width changes for 80 ms. Finish that rebuild here
     // so its saved selection cannot land in the following scenario.
-    QTest::qWait(120);
+    QTRY_VERIFY(!m_window->findChild<QObject*>(QStringLiteral("gridRelayoutTimer"))->property("running").toBool());
     QTRY_VERIFY(item("library")->property("layoutReady").toBool());
   }
 
@@ -3419,7 +3418,6 @@ private slots:
     // Return and Space activate the focused row rather than the viewer's
     // default action. The first still action opens the matte sheet.
     openDetail(0);
-    QTest::qWait(30);
     QTRY_VERIFY(activeViewerAction() != nullptr);
     QCOMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_copy"));
     QMetaObject::invokeMethod(detail, "focusPreview");
@@ -4168,7 +4166,8 @@ private slots:
     QCOMPARE(layer->property("page").toInt(), 1);
 
     QTRY_COMPARE_WITH_TIMEOUT(firstPage->property("status").toInt(), 1, 10000);
-    QTest::qWait(200);
+    QTRY_VERIFY(firstPage->property("implicitWidth").toDouble() > 0 &&
+                firstPage->height() > firstPage->width() * 1.2);
     // The page cell follows the loaded page, not the requested size: a
     // regression here collapses the continuous view to a sliver per page.
     QVERIFY2(firstPage->height() > firstPage->width() * 1.2,
@@ -4264,8 +4263,7 @@ private slots:
 
     // Escape leaves selection mode and closes nothing.
     QTest::keyClick(m_window, Qt::Key_Escape);
-    QTest::qWait(60);
-    QCOMPARE(detail->property("pdfSelectMode").toBool(), false);
+    QTRY_COMPARE(detail->property("pdfSelectMode").toBool(), false);
     QVERIFY(detail->isVisible());
     QVERIFY(!m_pdfInfo->hasSelection());
 
@@ -5660,7 +5658,7 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_J);
     QTRY_COMPARE(player->position(), 0);
     m_window->showMinimized();
-    QTest::qWait(100);
+    QTRY_COMPARE(m_window->visibility(), QWindow::Minimized);
     m_window->showNormal();
     QTRY_VERIFY(player->mediaStatus() == QMediaPlayer::LoadedMedia ||
                 player->mediaStatus() == QMediaPlayer::BufferedMedia);

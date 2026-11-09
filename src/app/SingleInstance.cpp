@@ -70,44 +70,44 @@ SingleInstance::Result forward(QLocalSocket& socket, const QByteArray& frame, bo
 bool SingleInstance::parseFrame(const QByteArray& frame, QStringList& paths, bool& library,
                                 qint64& startMs, QStringList& skipped) {
   if (frame.size() > maxFrameBytes) return false;
-        const QJsonDocument message = QJsonDocument::fromJson(frame);
-        if (!message.isObject()) {
-          return false;
-        }
-        const QJsonObject object = message.object();
-        paths.clear();
-        if (object.contains(QStringLiteral("paths"))) {
-          const QJsonValue value = object.value(QStringLiteral("paths"));
-          if (!value.isArray() || value.toArray().size() > maxPaths) {
-            return false;
-          }
-          for (const QJsonValue& path : value.toArray()) {
-            if (!path.isString()) {
-              return false;
-            }
-            paths.append(path.toString());
-          }
-        } else if (object.value(QStringLiteral("path")).isString()) {
-          const QString path = object.value(QStringLiteral("path")).toString();
-          if (!path.isEmpty()) paths.append(path);
-        } else {
-          return false;
-        }
-        if (object.contains(QStringLiteral("library")) && !object.value(QStringLiteral("library")).isBool()) {
-          return false;
-        }
-        const auto start = object.value(QStringLiteral("startMs"));
-        if (!start.isUndefined() && (!start.isDouble() || start.toDouble() < -1 ||
-            start.toDouble() > 9007199254740991.0 || std::floor(start.toDouble()) != start.toDouble())) { return false; }
-        skipped.clear();
-        const auto skippedValue = object.value(QStringLiteral("skipped"));
-        if (!skippedValue.isUndefined()) {
-          if (!skippedValue.isArray() || skippedValue.toArray().size() > maxPaths) { return false; }
-          for (const auto& name : skippedValue.toArray()) {
-            if (!name.isString()) { return false; }
-            skipped.append(name.toString());
-          }
-        }
+  const QJsonDocument message = QJsonDocument::fromJson(frame);
+  if (!message.isObject()) {
+    return false;
+  }
+  const QJsonObject object = message.object();
+  paths.clear();
+  if (object.contains(QStringLiteral("paths"))) {
+    const QJsonValue value = object.value(QStringLiteral("paths"));
+    if (!value.isArray() || value.toArray().size() > maxPaths) {
+      return false;
+    }
+    for (const QJsonValue& path : value.toArray()) {
+      if (!path.isString()) {
+        return false;
+      }
+      paths.append(path.toString());
+    }
+  } else if (object.value(QStringLiteral("path")).isString()) {
+    const QString path = object.value(QStringLiteral("path")).toString();
+    if (!path.isEmpty()) paths.append(path);
+  } else {
+    return false;
+  }
+  if (object.contains(QStringLiteral("library")) && !object.value(QStringLiteral("library")).isBool()) {
+    return false;
+  }
+  const auto start = object.value(QStringLiteral("startMs"));
+  if (!start.isUndefined() && (!start.isDouble() || start.toDouble() < -1 ||
+      start.toDouble() > 9007199254740991.0 || std::floor(start.toDouble()) != start.toDouble())) { return false; }
+  skipped.clear();
+  const auto skippedValue = object.value(QStringLiteral("skipped"));
+  if (!skippedValue.isUndefined()) {
+    if (!skippedValue.isArray() || skippedValue.toArray().size() > maxPaths) { return false; }
+    for (const auto& name : skippedValue.toArray()) {
+      if (!name.isString()) { return false; }
+      skipped.append(name.toString());
+    }
+  }
   library = object.value(QStringLiteral("library")).toBool();
   startMs = start.isUndefined() ? -1 : qint64(start.toDouble());
   return true;
