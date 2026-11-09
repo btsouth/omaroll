@@ -217,6 +217,46 @@ def library_module(frames):
     return module.split(".so", 1)[0] if module else None
 
 
+FREE = re.compile(r"^(operator delete|free)\b")
+
+
+def qt_owned_memory(stacks):
+    """Memory Qt allocates and frees itself on two threads, under a mutex in
+    libQt6Core that TSan cannot see. Each side is an allocator interceptor
+    called straight from Qt (or from libc called by Qt), and the side that
+    frees has nothing of ours past that call:
+    - a posted event: allocated where a task reports its result
+      (QFutureInterfaceBase), deleted by QCoreApplicationPrivate::sendPostedEvents;
+    - QThreadPool's queue and the runnables QtGui makes for its own threaded
+      image work, freed by a pooled thread inside libQt6Core;
+    - Qt Core's own calls into libc (strdup and free while handling the local
+      time zone)."""
+    if len(stacks) != 2:
+        return False
+    for freeing, allocating in (stacks, stacks[::-1]):
+        freed = frame_functions(freeing)
+        made = frame_functions(allocating)
+        if len(freed) < 2 or len(made) < 2:
+            continue
+        if not FREE.match(freed[0][0]) or not ALLOCATION.match(made[0][0]):
+            continue
+        freer, allocator = freed[1], made[1]
+        if freer[0].startswith("QCoreApplicationPrivate::sendPostedEvents(") and \
+                allocator[0].startswith("QFutureInterfaceBase::reportResultsReady("):
+            return True
+        # Not any allocation in libQt6Core: a QString of ours is allocated
+        # there too, and its last reference dropped on a pooled thread is ours.
+        if freer[1].startswith("libQt6Core") and qt_only(freeing) and (
+                allocator[0].startswith("QThreadPoolPrivate::enqueueTask(")
+                or allocator[1].startswith("libQt6Gui")):
+            return True
+        if freer[1].startswith("libc.so") and allocator[1].startswith("libc.so") and \
+                len(freed) > 2 and len(made) > 2 and \
+                freed[2][1].startswith("libQt6Core") and made[2][1].startswith("libQt6Core"):
+            return True
+    return False
+
+
 def qt_descriptor_reuse(block, stacks):
     """A file descriptor number Qt closed and opened again (a QProcess pipe,
     an event dispatcher wakeup), with Qt making both calls. We never do I/O
@@ -251,7 +291,8 @@ def classify(block):
     if any(names.get(thread) in KNOWN_QT_THREADS for thread in threads):
         return "external"
     if (task_start_handoff(stacks) or pool_bookkeeping(block, stacks, threads)
-            or qt_internal(block, stacks) or qt_descriptor_reuse(block, stacks)):
+            or qt_internal(block, stacks) or qt_owned_memory(stacks)
+            or qt_descriptor_reuse(block, stacks)):
         return "external"
     for frames in stacks:
         function, module = first_frame(frames)

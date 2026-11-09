@@ -2905,7 +2905,8 @@ private slots:
       // The saved copy joined the shared library model. Drop it again before
       // the next test, or pathAt(0) hands it a file that no longer exists.
       QMetaObject::invokeMethod(m_captures, "refresh");
-      QTRY_VERIFY(!m_captures->scanning());
+      // A follow-up scan can still be pending once this one stops.
+      waitForScan();
       QTRY_COMPARE(m_captures->rowOf(ImageEditor::outputPathFor(path)), -1);
       m_window->resize(1280, 820);
     });

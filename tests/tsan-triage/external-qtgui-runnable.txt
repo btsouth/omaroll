@@ -1,0 +1,27 @@
+QtGui allocates a runnable for its own threaded image work (here during a
+QPainter fill on the main thread) and QThreadPool deletes it on a pooled
+thread in libQt6Core once it has run. Seen in CI on #171 (run 42641036483).
+==================
+WARNING: ThreadSanitizer: data race (pid=2898)
+  Write of size 8 at 0x72080000d0c0 by thread T2:
+    #0 operator delete(void*, unsigned long) <null> (omaroll_tests+0x133aff)
+    #1 <null> <null> (libQt6Core.so.6+0x2c1431)
+
+  Previous write of size 8 at 0x72080000d0c0 by main thread:
+    #0 operator new(unsigned long) <null> (omaroll_tests+0x132f68)
+    #1 <null> <null> (libQt6Gui.so.6+0x80a5bf)
+    #2 OmarollTest::similarPicturesMatchCopiesButNotDifferentTextScreenshots() /__w/omaroll/omaroll/tests/tst_omaroll.cpp:8478:27 (omaroll_tests+0x2b0a84)
+    #3 OmarollTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /__w/omaroll/omaroll/build/tsan/omaroll_tests_autogen/include/tst_omaroll.moc:1265:23 (omaroll_tests+0x135df0)
+    #4 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #5 <null> <null> (libc.so.6+0x27780)
+
+  Thread T2 'Thread (pooled)' (tid=2901, running) created by main thread at:
+    #0 pthread_create <null> (omaroll_tests+0xacbbe)
+    #1 QThread::start(QThread::Priority) <null> (libQt6Core.so.6+0x3765f4)
+    #2 OmarollTest::similarPicturesMatchCopiesButNotDifferentTextScreenshots() /__w/omaroll/omaroll/tests/tst_omaroll.cpp:8478:27 (omaroll_tests+0x2b0a84)
+    #3 OmarollTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /__w/omaroll/omaroll/build/tsan/omaroll_tests_autogen/include/tst_omaroll.moc:1265:23 (omaroll_tests+0x135df0)
+    #4 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #5 <null> <null> (libc.so.6+0x27780)
+
+SUMMARY: ThreadSanitizer: data race (/__w/omaroll/omaroll/build/tsan/omaroll_tests+0x133aff) in operator delete(void*, unsigned long)
+==================
