@@ -396,6 +396,12 @@ private slots:
   // them at a scratch tree so a test run cannot touch a real library's marks.
   void initTestCase() {
     QVERIFY(m_scratch.isValid());
+#if defined(__SANITIZE_THREAD__) || (defined(__has_feature) && __has_feature(thread_sanitizer))
+    // TSan's thread registry aborts (a CHECK in ThreadRegistry::CreateThread)
+    // when the global pool retires a thread and a new one reuses its id. Keep
+    // pool threads alive under TSan; the work they run is unchanged.
+    QThreadPool::globalInstance()->setExpiryTimeout(-1);
+#endif
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        m_scratch.filePath(QStringLiteral("config")));
     QVERIFY(qputenv("XDG_CACHE_HOME", m_scratch.filePath(QStringLiteral("cache")).toUtf8()));
