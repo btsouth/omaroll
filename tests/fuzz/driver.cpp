@@ -7,6 +7,7 @@
 #include "pdf/PdfSupport.h"
 #include <QCoreApplication>
 #include <QTemporaryDir>
+#include <QDir>
 #include <QFile>
 #include <QSettings>
 #include <QBuffer>
@@ -61,8 +62,15 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 #elif FUZZ_KIND == 7
   SubtitleIndex::fuzzParse(path);
 #elif FUZZ_KIND == 8
-  AppSettings settings;
-  (void)settings.importOrganization(path);
+  // Each input starts from an empty profile and backups folder, so a finding
+  // reproduces from its own input alone.
+  QDir profile(env.dir.filePath(QStringLiteral("omaroll")));
+  profile.removeRecursively();
+  {
+    AppSettings settings;
+    (void)settings.importOrganization(path);
+  }
+  profile.removeRecursively();
 #endif
 #endif
   return 0;

@@ -1,7 +1,8 @@
 # Qt initializes the proprietary OpenGL driver even when the offscreen Quick
 # backend is software-only. The driver retains one process-lifetime allocation.
 leak:libnvidia-glcore.so
-# Qt FFmpeg's decoder initialization retains an 8-byte libavcodec 63 allocation
+# Qt FFmpeg's decoder initialization retains an 8-byte libavcodec allocation
 # (plus its av_malloc children) after player teardown on Arch. No project
-# allocation frame is suppressed. Recheck when the FFmpeg major changes.
-leak:libavcodec.so.63
+# allocation frame is suppressed. Matched without the soname's major version,
+# so the next FFmpeg major does not turn it into a failure.
+leak:libavcodec.so
