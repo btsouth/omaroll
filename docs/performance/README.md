@@ -135,11 +135,11 @@ the startup budgets by three.
 | Video: `qml` / `video_frame` | 2,000 / 8,000 ms | 450 / 2,600 ms |
 | 100-file library: `qml` / `grid_frame` | 3,000 / 9,000 ms | 840 / 3,100 ms |
 | 4K30 software playback | 350% of a core, 60,000 faults/s | 60%, 6,000 to 20,000 |
+| Window thread while indexing 10,000 files (nightly) | 10% of a core | 2.3% (offscreen) |
 
 The fault budget is per second, so a runner that decodes fewer frames also
 faults less. The per-frame guard is `omaroll_tests`, which sends 4K frames
 through the presentation and fails above 100 faults a frame.
-| Window thread while indexing 10,000 files (nightly) | 10% of a core | 2.3% (offscreen) |
 
 Software-decoded frames come from FFmpeg's buffer pool, so the playback check
 cannot see the per-frame copies of hardware frames that #159 fixed.
