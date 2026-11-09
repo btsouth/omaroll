@@ -511,7 +511,11 @@ FocusScope {
                 return true
             }
 
-            Row {
+            // Each tile places itself by its column. A Row positioner would
+            // place tiles only at its next polish, so tiles it had just made
+            // (the pool shrinking after a resize settles, or growing) sat in
+            // the first column until then, on top of each other.
+            Item {
                 Repeater {
                     id: tiles
                     model: root.poolColumns
@@ -528,6 +532,7 @@ FocusScope {
                         readonly property bool presented: card.thumbnailPresented
                         readonly property string path: tile.path || ""
                         visible: used
+                        x: index * root.cellWidth
                         width: root.cellWidth
                         height: root.cellHeight
 
