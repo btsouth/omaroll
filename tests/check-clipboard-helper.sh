@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # The real clipboard helper (`omaroll --serve-clipboard`) against a compositor
 # with ext-data-control: both types offered, the PNG whole, the JPEG bytes
-# unchanged, the helper working from /, a second copy replacing the first
-# helper, and the helper leaving once something else is copied.
+# unchanged, the helper working from /, finished paste writers reaped, a
+# second copy replacing the first helper, a GIF and a WebP as a file reference
+# with a PNG beside it, and the helper leaving once something else is copied.
 #
 # It takes over the session's clipboard, so it runs only when asked to, in a
 # throwaway desktop such as omabox:
@@ -55,6 +56,14 @@ fi
 pid=$(helper "$first")
 [[ -n $pid && $pid != *$'\n'* ]] || fail "expected one helper for the first copy, found: ${pid:-none}"
 [[ $(readlink "/proc/$pid/cwd") == / ]] || fail "the helper works from $(readlink "/proc/$pid/cwd")"
+# The pastes above are finished; their writers must not linger as zombies.
+zombies=0
+for _ in $(seq 30); do
+  zombies=$(ps -o stat= --ppid "$pid" | grep -c '^Z' || true)
+  ((zombies == 0)) && break
+  sleep 0.1
+done
+((zombies == 0)) || fail "$zombies finished paste writers left as zombies"
 
 "$omaroll" --serve-clipboard image/jpeg "$second" || fail "the second copy failed"
 gone "$pid" || fail "the first helper is still running after the second copy"
@@ -63,6 +72,35 @@ second_pid=$(helper "$second")
 [[ -n $second_pid ]] || fail "no helper for the second copy"
 [[ -z $(pgrep -f -- "--serve-clipboard image/jpeg $first\$" || true) ]] || fail "helpers piled up"
 
+# Other formats: the file's URI, and a PNG of the picture (a GIF's first frame).
+png_of() {
+  wl-paste --type image/png > "$scratch/$1.png"
+  [[ $(head -c 8 "$scratch/$1.png" | od -An -tx1 | tr -d ' \n') == 89504e470d0a1a0a ]] ||
+    fail "image/png for $1 is not a PNG"
+  [[ $(tail -c 8 "$scratch/$1.png" | od -An -tx1 | tr -d ' \n') == 49454e44ae426082 ]] ||
+    fail "image/png for $1 is cut off"
+}
+last_pid=$second_pid
+for name in animated.gif still.webp; do
+  file=$scratch/$name
+  cp "$source/tests/fixtures/viewer/$name" "$file"
+  "$omaroll" --serve-clipboard text/uri-list "$file" || fail "copying $name failed"
+  gone "$last_pid" || fail "the previous helper is still running after copying $name"
+  types=$(wl-paste --list-types)
+  expected=$'text/uri-list\ntext/plain\ntext/plain;charset=utf-8\nTEXT\nSTRING\nUTF8_STRING\nimage/png'
+  [[ $types == "$expected" ]] || fail "offered types for $name: $types"
+  [[ $(wl-paste --no-newline --type text/uri-list) == "file://$file"$'\r' ]] ||
+    fail "uri for $name: $(wl-paste --type text/uri-list | od -c | head -3)"
+  # A terminal or a plain text field gets the same URI.
+  for type in 'text/plain;charset=utf-8' UTF8_STRING; do
+    [[ $(wl-paste --no-newline --type "$type") == "file://$file"$'\r' ]] ||
+      fail "$type for $name: $(wl-paste --type "$type" | od -c | head -3)"
+  done
+  png_of "$name"
+  last_pid=$(pgrep -f -- "--serve-clipboard text/uri-list $file\$" || true)
+  [[ -n $last_pid ]] || fail "no helper for $name"
+done
+
 echo text | wl-copy
-gone "$second_pid" || fail "the helper is still running after a text copy"
+gone "$last_pid" || fail "the helper is still running after a text copy"
 echo "PASS: clipboard helper"

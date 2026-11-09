@@ -4,6 +4,14 @@
 
 ### Added
 
+- The empty library offers Omaroll's Hyprland window rules once, with Install
+  and Not now, and `--set-default` names the command until they are installed
+  or turned down. Without them a stock Omarchy tiles and dims the viewer.
+- Copying a WebP, HEIC, AVIF, JPEG XL, GIF or other picture Qt reads offers a
+  PNG beside the file reference, the first frame for an animation, so it pastes
+  as a picture into chat apps and editors and shows up in clipboard history.
+  A terminal still gets the file's URI as text.
+- Diagnostics report VA-API: the installed drivers, or why there are none.
 - Searchable shortcut help in the viewer, library and preview, with grouped key caps.
 - About in Settings with version links and privacy-safe Copy diagnostics.
 - Themed tooltips and library footer hints that fit whole labels.
@@ -109,6 +117,10 @@
 
 ### Changed
 
+- `--unset-default` ends with how many other types keep their system default,
+  instead of saying they "still open with Omaroll".
+- The `--set-default` restore record moved from `~/.config/Omaroll` to
+  `~/.config/omaroll`, beside the settings. An existing one moves on the next run.
 - A video opened from a file manager starts its decoder sooner: the GPU
   driver and the video backend load while the window does, so the first frame
   arrives about 20 ms earlier on NVIDIA.
@@ -159,6 +171,11 @@
 
 ### Fixed
 
+- A file opened through a running Omaroll brings its window to the front: the
+  launcher's activation token is passed along with the request.
+- An invalid `--start` time is shown as a desktop notice too, not only on stderr.
+- The clipboard helper reaps each paste writer as it finishes instead of
+  leaving a zombie until the next paste.
 - Restoring the automatic backup no longer loses the day's organization. Today's
   backup is taken again a few minutes after the last change, within 15 minutes
   during steady editing, and when Omaroll quits, instead of only at the day's

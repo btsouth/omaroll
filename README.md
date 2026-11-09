@@ -140,7 +140,11 @@ Added Associations entry for Omaroll that you wrote yourself goes too, while
 Removed Associations entries stay. It does the same in the desktop's own list
 beside it, such as `hyprland-mimeapps.list`, and in the lists in
 `~/.local/share/applications`, without putting anything back there. And an
-app you chose after `--set-default` stays your choice.
+app you chose after `--set-default` stays your choice. Types that had no
+setting of yours to put back keep their system default, and the summary counts
+them. What `--set-default` replaced is kept in
+`~/.config/omaroll/mime-defaults.ini`; a record left in `~/.config/Omaroll` by
+an older version moves there on the next run.
 
 To open a picture or video from a terminal:
 
@@ -219,6 +223,8 @@ omaroll --start=1:23 clip.mp4
 ```
 
 File managers can pass the same option to hand over a preview's position.
+A time Omaroll can't read is shown as a desktop notice as well as on stderr,
+since a file manager launch has no terminal.
 
 Several files can be opened together, in the order given:
 
@@ -265,13 +271,17 @@ Every viewer shortcut is listed in [Shortcuts](docs/shortcuts.md#viewer), and
   after confirmation, as one step Undo puts back.
 - **Share and hand off.** Drag actual files into another app, copy images or
   text, send with LocalSend or Taildrop, and open specialist tools for trimming,
-  annotation, conversion and editing. A copied JPEG of up to 24 megapixels that fits
-  the image memory limit is offered as PNG too, so it can show up in
-  Omarchy's clipboard history while apps that take JPEG still get the original
-  bytes. The history waits two seconds for the PNG, so on a slow machine a
-  large photo may still be missed. It needs a compositor with ext-data-control,
-  which Omarchy's Hyprland has; elsewhere, and for larger photos, the copy is
-  JPEG only and pastes as before, but the history skips it.
+  annotation, conversion and editing. A copied JPEG goes on as itself and as
+  PNG, so it can show up in Omarchy's clipboard history while apps that take
+  JPEG still get the original bytes. A WebP, HEIC, AVIF, JPEG XL, GIF or other
+  picture Qt reads goes on as a file reference, which pastes as its URI in a
+  terminal, with a PNG beside it (the first frame for an animation). The PNG is
+  added for pictures of up to 24 megapixels that fit the image memory limit,
+  and the history waits two seconds for it, so on a slow machine a large photo
+  may still be missed. It needs a compositor with ext-data-control, which
+  Omarchy's Hyprland has. Elsewhere, and for larger pictures, there is no PNG:
+  a JPEG goes on as JPEG only and other formats as a file reference only. Both
+  paste as before, but the history keeps no picture of them.
 - **Media keys and players.** A playing video answers media keys and the
   shell's player controls, with a poster frame as its cover art.
 - **Present and finish.** Run a fullscreen slideshow, choose a screenshot
@@ -384,7 +394,9 @@ This writes a copy of `/usr/share/omaroll/hypr/omaroll.lua` to
 `~/.config/hypr/` and adds a short block to `~/.config/hypr/hyprland.lua` that
 loads it if it is there.
 `omaroll --remove-window-rules` takes both out again, leaving `hyprland.lua`
-exactly as it was, and **Hyprland window rules** in Settings does either. It
+exactly as it was, and **Hyprland window rules** in Settings does either. The
+empty library offers installation once, until installed or dismissed, and
+`--set-default` points to the command too. It
 needs Omarchy's Lua Hyprland config. A line of your own that only says
 `require("hypr.omaroll")` is removed too; any other line that loads the rules is
 reported and left for you to edit. A `~/.config/hypr/omaroll.lua` you wrote

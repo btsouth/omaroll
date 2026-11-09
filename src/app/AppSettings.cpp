@@ -272,7 +272,11 @@ AppSettings::AppSettings(QObject* parent)
     : QObject(parent), m_settings(QSettings::IniFormat, QSettings::UserScope,
                                   QStringLiteral("omaroll"), QStringLiteral("omaroll")),
       m_backupWriter(std::make_unique<BackupWriter>()) {
-  const bool existingProfile = !m_settings.allKeys().isEmpty();
+  // `--install-window-rules` may write its one key before the first launch;
+  // that alone is still a new profile.
+  QStringList profileKeys = m_settings.allKeys();
+  profileKeys.removeAll(QLatin1String(kWindowRulesOfferDismissedKey));
+  const bool existingProfile = !profileKeys.isEmpty();
   // Saves made while loading wait for the launch check below.
   m_healthPending = m_settings.status() == QSettings::NoError;
   const QStringList favorites = m_settings.value(kFavorites).toStringList();
@@ -2973,8 +2977,40 @@ QString AppSettings::windowRules() const {
 QString AppSettings::installWindowRules() {
   const auto result = HyprlandSetup::installRules(
       m_hyprDirectory.isEmpty() ? HyprlandSetup::defaultDirectory() : m_hyprDirectory);
+  // Installed once, never offered again, even if they are removed later.
+  if (result.ok) setValue(kWindowRulesOfferDismissedKey, true);
   emit windowRulesChanged();
   return result.message;
+}
+
+const char* const AppSettings::kWindowRulesOfferDismissedKey = "hyprland/windowRulesOfferDismissed";
+
+bool AppSettings::windowRulesOfferDismissed() const {
+  return m_settings.value(kWindowRulesOfferDismissedKey, false).toBool();
+}
+
+bool AppSettings::windowRulesOfferDismissedOnDisk() {
+  const QSettings settings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("omaroll"),
+                           QStringLiteral("omaroll"));
+  return settings.value(kWindowRulesOfferDismissedKey, false).toBool();
+}
+
+bool AppSettings::endWindowRulesOfferOnDisk() {
+  QSettings settings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("omaroll"),
+                     QStringLiteral("omaroll"));
+  // Sections are parsed lazily; read them all, as the app does, so a format
+  // error anywhere is known before anything is written.
+  (void)settings.allKeys();
+  if (settings.status() == QSettings::FormatError) return false;
+  settings.setValue(kWindowRulesOfferDismissedKey, true);
+  settings.sync();
+  return settings.status() == QSettings::NoError;
+}
+
+void AppSettings::dismissWindowRulesOffer() {
+  if (windowRulesOfferDismissed()) return;
+  setValue(kWindowRulesOfferDismissedKey, true);
+  emit windowRulesChanged();
 }
 
 QString AppSettings::removeWindowRules() {

@@ -5296,6 +5296,57 @@ private slots:
     window->close();
   }
 
+  // A forwarded request's activation token belongs to the viewer it opens.
+  // Placement can hold that viewer back while later requests arrive, so each
+  // one is shown with its own token, and none is left in the environment.
+  void aViewerWaitingForPlacementKeepsItsOwnActivationToken() {
+    const QByteArray saved = qgetenv("XDG_ACTIVATION_TOKEN");
+    const auto restore = qScopeGuard([&] {
+      saved.isNull() ? qunsetenv("XDG_ACTIVATION_TOKEN") : qputenv("XDG_ACTIVATION_TOKEN", saved);
+    });
+    ViewerWindows viewers(*m_engine);
+    viewers.setPlacementDeadline(30000);
+    QList<HyprlandPlacement::Reply> pending;
+    viewers.setPlacementQuery([&](QObject*, HyprlandPlacement::Reply reply) {
+      pending.append(std::move(reply));
+    });
+    viewers.setPlacementTile([](const QStringList&) {});
+    qunsetenv("XDG_ACTIVATION_TOKEN");
+    auto* first = viewers.open({media(QStringLiteral("Shot 1.jpg"))});
+    QVERIFY(first && first->isVisible());
+    // As SingleInstance does: the token only while the request is handled.
+    const auto request = [&](const QByteArray& token, const QString& name) {
+      qputenv("XDG_ACTIVATION_TOKEN", token);
+      QQuickWindow* window = viewers.open({media(name)});
+      qunsetenv("XDG_ACTIVATION_TOKEN");
+      return window;
+    };
+    auto* second = request("second-token", QStringLiteral("shot 2.jpg"));
+    auto* third = request("third-token", QStringLiteral("shot 10.jpg"));
+    QVERIFY(second && !second->isVisible());
+    QVERIFY(third && !third->isVisible());
+    QCOMPARE(pending.size(), 2);
+    QByteArray secondSaw, thirdSaw;
+    connect(second, &QWindow::visibleChanged, this,
+            [&] { secondSaw = qgetenv("XDG_ACTIVATION_TOKEN"); });
+    connect(third, &QWindow::visibleChanged, this,
+            [&] { thirdSaw = qgetenv("XDG_ACTIVATION_TOKEN"); });
+    HyprlandPlacement::Plan plan;
+    plan.viewers = 1;
+    plan.floating = {QStringLiteral("0xabc")};
+    pending.takeLast()(plan);
+    QVERIFY(third->isVisible());
+    QCOMPARE(thirdSaw, QByteArray("third-token"));
+    QVERIFY(qEnvironmentVariableIsEmpty("XDG_ACTIVATION_TOKEN"));
+    pending.takeFirst()(plan);
+    QVERIFY(second->isVisible());
+    QCOMPARE(secondSaw, QByteArray("second-token"));
+    QVERIFY(qEnvironmentVariableIsEmpty("XDG_ACTIVATION_TOKEN"));
+    third->close();
+    second->close();
+    first->close();
+  }
+
   // Each file opened from outside gets a viewer of its own. Asking again for
   // what one already shows brings that one forward, a selection stays one
   // viewer, and closing leaves the rest alone with one closed viewer kept.

@@ -55,6 +55,9 @@ public:
       }
     }
 #endif
+    // A launcher's activation token is spent on Omaroll's own window; a stale
+    // one must not reach a helper that opens a window later.
+    environment.remove(QStringLiteral("XDG_ACTIVATION_TOKEN"));
     return environment;
   }
 

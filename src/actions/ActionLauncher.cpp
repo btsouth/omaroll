@@ -236,12 +236,18 @@ bool ActionLauncher::copyFile(const QString& path) {
   }
 
   // Only PNG and JPEG paste as picture data anywhere that matters, and the
-  // shell's clipboard history records only text and image/png. A video, a
-  // GIF or a WebP goes on as a file reference instead, which Nautilus and
-  // browser uploads take.
+  // shell's clipboard history records only text and image/png. Any other
+  // picture Qt reads (WebP, HEIC, AVIF, JPEG XL, a GIF's first frame) goes on
+  // as a file reference, which Nautilus and browser uploads take, with a PNG
+  // beside it for chat apps, editors and the history. A video, or a picture
+  // without a Wayland session, is a file reference alone.
   const QString mime = mimeTypeFor(path);
   if (mime != u"image/png"_s && mime != u"image/jpeg"_s) {
-    return copyUris({path});
+    if (!ClipboardServe::mayOfferPng(mime) || qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY")) {
+      return copyUris({path});
+    }
+    newCopy();
+    return copyWithPng(path, QString::fromLatin1(ClipboardServe::kUriList));
   }
   newCopy();
 
@@ -295,12 +301,19 @@ bool ActionLauncher::copyWithPng(const QString& path, const QString& mime) {
       return;
     }
     if (copied) {
-      emit reported(u"Copied to clipboard"_s);
+      // A file reference says so, as it did before the PNG came with it.
+      emit reported(mime == QLatin1StringView(ClipboardServe::kUriList) ? u"Copied as a file"_s
+                                                                          : u"Copied to clipboard"_s);
       emit submissionFinished(u"omaroll"_s, true, {});
       return;
     }
-    // No ext-data-control here, or it failed: the file's own type through
-    // wl-copy, as before, which reports its own outcome.
+    // No ext-data-control here, or it failed: the file reference, or the
+    // file's own type, through wl-copy as before.
+    if (mime == QLatin1StringView(ClipboardServe::kUriList)) {
+      const bool ok = copyUris({path});
+      emit submissionFinished(u"wl-copy"_s, ok, {});
+      return;
+    }
     startSubmission(u"wl-copy"_s, {u"--type"_s, mime}, u"wl-clipboard"_s,
                     u"Copied to clipboard"_s, path, 5000, &m_copyProcess);
   };

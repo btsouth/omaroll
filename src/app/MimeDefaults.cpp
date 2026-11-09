@@ -295,6 +295,24 @@ MimeDefaults::State MimeDefaults::query() {
   return state;
 }
 
+QString MimeDefaults::recordPath() {
+  const QString config =
+      QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
+  const QString path = config + QStringLiteral("/omaroll/mime-defaults.ini");
+  // Before 1.19 the record sat in ~/.config/Omaroll, apart from the
+  // settings. Without it --unset-default would have nothing to put back.
+  const QString legacyDirectory = config + QStringLiteral("/Omaroll");
+  const QString legacy = legacyDirectory + QStringLiteral("/mime-defaults.ini");
+  if (!QFile::exists(path) && QFile::exists(legacy) &&
+      QDir().mkpath(config + QStringLiteral("/omaroll"))) {
+    if (QFile::rename(legacy, path) ||
+        (QFile::copy(legacy, path) && QFile::remove(legacy)))
+      QDir().rmdir(legacyDirectory);  // only when nothing else is in it
+  }
+  // A failed move must keep the old restore record usable.
+  return !QFile::exists(path) && QFile::exists(legacy) ? legacy : path;
+}
+
 QString MimeDefaults::summarize(bool unset, const QString &report, bool ok,
                                 const QString &group) {
   int changed = 0;
@@ -374,12 +392,15 @@ QString MimeDefaults::summarize(bool unset, const QString &report, bool ok,
                     ? QStringLiteral("Omaroll is no longer the default for %1.").arg(types(changed))
                     : QStringLiteral("Restored %1 for %2.").arg(list(apps), types(changed));
   }
+  // Types with nothing of the user's to put back: they follow the system's
+  // own default, which may be Omaroll. Said as what it is, not as a failure.
   if (still > 0) {
     const QString remains =
-        QStringLiteral("%1 still %2 with Omaroll, from a system default or because no other app "
-                       "handles %3.")
-            .arg(types(still), still == 1 ? QStringLiteral("opens") : QStringLiteral("open"),
-                 still == 1 ? QStringLiteral("it") : QStringLiteral("them"));
+        summary.isEmpty()
+            ? (still == 1 ? QStringLiteral("1 type keeps its system default.")
+                          : QStringLiteral("%1 keep their system default.").arg(types(still)))
+            : (still == 1 ? QStringLiteral("1 other type keeps its system default.")
+                          : QStringLiteral("%1 other types keep their system default.").arg(still));
     summary = summary.isEmpty() ? remains : summary + u' ' + remains;
   }
   if (failed > 0) {
@@ -402,8 +423,7 @@ MimeDefaults::Result MimeDefaults::run(bool unset, const QString &group) {
             false};
   const QString config =
       QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
-  QSettings state(config + QStringLiteral("/Omaroll/mime-defaults.ini"),
-                  QSettings::IniFormat);
+  QSettings state(recordPath(), QSettings::IniFormat);
   const QString userList = config + QStringLiteral("/mimeapps.list");
   QStringList report;
   bool ok = true;

@@ -404,6 +404,19 @@ private:
   QQuickWindow* m_window = nullptr;
 };
 
+
+// A refused launch from a file manager or launcher has no terminal, so it is
+// said on screen too, when a notification daemon is there to say it.
+void notifyFailure(const QString& message) {
+  const QString notify = QStandardPaths::findExecutable(QStringLiteral("notify-send"));
+  if (notify.isEmpty()) return;
+  QProcess notification;
+  notification.start(notify, {QStringLiteral("--"), QStringLiteral("Omaroll"), message});
+  if (!notification.waitForFinished(2000)) {
+    notification.kill();
+    notification.waitForFinished();
+  }
+}
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -455,6 +468,13 @@ int main(int argc, char* argv[]) {
                                                ? HyprlandSetup::installRules(directory)
                                                : HyprlandSetup::removeRules(directory);
       QTextStream(result.ok ? stdout : stderr) << result.message << Qt::endl;
+      // Installed once, the library and --set-default stop offering them,
+      // as when Settings installs them.
+      if (result.ok && argument == "--install-window-rules" &&
+          !AppSettings::endWindowRulesOfferOnDisk()) {
+        QTextStream(stderr) << "omaroll: the settings file could not be read or written, so it was "
+                               "left as it is; the library may offer the rules again\n";
+      }
       return result.ok ? 0 : 2;
     }
   }
@@ -485,6 +505,15 @@ int main(int argc, char* argv[]) {
     if (!unset && report.contains(QStringLiteral(" -> "))) {
       out << "To undo: omaroll --unset-default" << (group == u"all" ? QString() : u' ' + group)
           << Qt::endl;
+    }
+    // Without the rules a stock Omarchy tiles and dims the viewer it just
+    // made the default. Said until they are installed or the offer is turned
+    // down in the library.
+    if (!unset && defaults.succeeded() &&
+        HyprlandSetup::rulesState(HyprlandSetup::defaultDirectory()) ==
+            HyprlandSetup::RulesState::NotInstalled &&
+        !AppSettings::windowRulesOfferDismissedOnDisk()) {
+      out << "To float the viewer and keep it opaque: omaroll --install-window-rules" << Qt::endl;
     }
     if (!verbose && !defaults.succeeded()) {
       // The failed types, so a partial failure can be acted on.
@@ -603,7 +632,14 @@ int main(int argc, char* argv[]) {
   qint64 startMs = -1;
   if (optionPresent(arguments, "--start")) {
     const auto parsed = LaunchRequest::parseStart(optionValue(arguments, "--start"));
-    if (!parsed) { qWarning("omaroll: invalid --start time"); return 2; }
+    if (!parsed) {
+      // A file manager launch has no terminal to show stderr.
+      const QString message = QStringLiteral("Could not use --start %1: give seconds, mm:ss or hh:mm:ss").arg(
+          optionValue(arguments, "--start").left(40));
+      QTextStream(stderr) << "omaroll: " << message << Qt::endl;
+      notifyFailure(message);
+      return 2;
+    }
     startMs = *parsed;
   }
   const bool demo = rendering || optionPresent(arguments, QStringLiteral("--demo"));
@@ -611,12 +647,7 @@ int main(int argc, char* argv[]) {
       OpenRequest::fromPaths(demo ? QStringList() : positionalArguments(arguments));
   if (!request.error.isEmpty()) {
     QTextStream(stderr) << "omaroll: " << request.error << Qt::endl;
-    const QString notify = QStandardPaths::findExecutable("notify-send");
-    if (!notify.isEmpty()) {
-      QProcess notification;
-      notification.start(notify, {"--", "Omaroll", request.error});
-      if (!notification.waitForFinished(2000)) { notification.kill(); notification.waitForFinished(); }
-    }
+    notifyFailure(request.error);
     return 2;
   }
   QStringList requestedPaths;

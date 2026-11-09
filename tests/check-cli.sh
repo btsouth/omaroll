@@ -72,7 +72,7 @@ grep -qx 'Could not set image/png' "$scratch/err" || fail "failed type not repor
 # --diagnostics: no display needed, and the facts a bug report asks for.
 out=$(QT_QPA_PLATFORM=no-such-platform WAYLAND_DISPLAY= DISPLAY= "$omaroll" --diagnostics)
 for field in 'Omaroll: ' 'Qt: ' 'Platform: none (command line)' 'Omarchy: ' 'Hyprland: ' 'GPU: ' \
-             'Theme: ' 'tesseract: ' 'ffmpeg: '; do
+             'Theme: ' 'VA-API: ' 'tesseract: ' 'ffmpeg: '; do
   grep -q "^$field" <<<"$out" || fail "--diagnostics lacks '$field': $out"
 done
 grep -q "$scratch" <<<"$out" && fail "--diagnostics printed a path: $out"
@@ -88,6 +88,40 @@ grep -q 'hypr.omaroll' "$HOME/.config/hypr/hyprland.lua" || fail "rules not requ
 "$omaroll" --remove-window-rules | grep -q 'removed' || fail "remove did not report"
 [[ ! -e $HOME/.config/hypr/omaroll.lua ]] || fail "rules file left behind"
 cmp -s "$scratch/hyprland.before" "$HOME/.config/hypr/hyprland.lua" || fail "hyprland.lua not restored"
+
+# --set-default offers the rules while they would help, and not once the offer
+# was turned down in the library, or after they were installed, even if they
+# were removed again. Each check is a real change, not an "already" no-op.
+offer='To float the viewer and keep it opaque: omaroll --install-window-rules'
+set_images() { "$omaroll" --unset-default images >/dev/null; "$omaroll" --set-default images; }
+settings=$XDG_CONFIG_HOME/omaroll/omaroll.ini
+# The install above ended the offer; start again from a fresh profile.
+rm -f "$settings"
+out=$(set_images)
+grep -q 'now opens' <<<"$out" || fail "--set-default images changed nothing: $out"
+grep -qxF "$offer" <<<"$out" || fail "--set-default did not offer the window rules: $out"
+mkdir -p "$XDG_CONFIG_HOME/omaroll"
+printf '[hyprland]\nwindowRulesOfferDismissed=true\n' > "$settings"
+out=$(set_images)
+grep -qF 'install-window-rules' <<<"$out" && fail "offered rules after Not now: $out"
+rm "$settings"
+"$omaroll" --install-window-rules >/dev/null
+grep -q '^windowRulesOfferDismissed=true' "$settings" || fail "installing did not end the offer"
+out=$(set_images)
+grep -qF 'install-window-rules' <<<"$out" && fail "offered rules that are installed: $out"
+"$omaroll" --remove-window-rules >/dev/null
+out=$(set_images)
+grep -qF 'install-window-rules' <<<"$out" && fail "offered rules again after installing once: $out"
+rm "$settings"
+# A damaged settings file is left for the app's recovery, never rewritten.
+# The broken line is only found once Qt parses its section.
+printf '[library]\nsortMode=3\n[view]\nbroken line\n' > "$settings"
+cp "$settings" "$scratch/settings.damaged"
+"$omaroll" --install-window-rules >/dev/null 2>"$scratch/err" || fail "install failed with damaged settings"
+grep -q 'left as it is' "$scratch/err" || fail "damaged settings not reported: $(cat "$scratch/err")"
+cmp -s "$scratch/settings.damaged" "$settings" || fail "--install-window-rules rewrote damaged settings"
+"$omaroll" --remove-window-rules >/dev/null
+rm "$settings"
 
 # The man page covers every option in --help, and installs.
 man=$source/packaging/omaroll.1

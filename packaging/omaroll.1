@@ -30,7 +30,8 @@ folder is added to the library if it is not already watched.
 .TP
 .BI \-\-start " time"
 Start the request's first video at seconds, mm:ss or hh:mm:ss (fractions
-allowed). Overrides the saved resume position.
+allowed). Overrides the saved resume position. A time that can't be read
+exits with status 2, with the reason on stderr and as a desktop notice.
 .TP
 .BR \-\-set\-default " [" \fIgroup\fR ]
 Use Omaroll for a group of file types:
@@ -39,7 +40,9 @@ Use Omaroll for a group of file types:
 .BR pdf ,
 or
 .B all
-(images and videos, the default). Prints what changed and how to undo it. Add
+(images and videos, the default). Prints what changed and how to undo it, and,
+while Omaroll's Hyprland window rules are not installed or turned down, the
+command that installs them. Add
 .B \-\-verbose
 to list every type.
 .TP
@@ -66,7 +69,8 @@ and of the lists in
 (\fI~/.local/share/applications\fR), and nothing in those is put back; and an
 app chosen after
 .B \-\-set\-default
-stays.
+stays. Types with nothing of yours to put back keep their system default, and
+the summary counts them.
 .TP
 .B \-\-install\-window\-rules
 Add Omaroll's Hyprland rules to
@@ -163,6 +167,15 @@ Settings, albums, tags, favourites and saved views;
 when
 .B XDG_CONFIG_HOME
 is unset.
+.TP
+.I $XDG_CONFIG_HOME/omaroll/mime\-defaults.ini
+What
+.B \-\-set\-default
+replaced, for
+.B \-\-unset\-default
+to put back. A record in
+.I ~/.config/Omaroll
+from an older version moves here on the next run.
 .TP
 .I $XDG_CACHE_HOME/omaroll
 Thumbnails, the cover art a playing video shows in player controls, and the

@@ -4,6 +4,8 @@
 #include "sources/ImageBudget.h"
 
 #include <QBuffer>
+#include <QFileInfo>
+#include <QUrl>
 #include <QCoreApplication>
 #include <QFile>
 #include <QImage>
@@ -19,6 +21,8 @@
 #include <cstring>
 #include <dirent.h>
 #include <fcntl.h>
+#include <poll.h>
+#include <sys/signalfd.h>
 #include <memory>
 #include <utility>
 #include <sys/wait.h>
@@ -35,7 +39,10 @@ struct State {
   wl_seat* seat = nullptr;
   ext_data_control_manager_v1* manager = nullptr;
   QByteArray type;
+  // What a paste of that type gets, and the picture a PNG is made from: the
+  // same bytes for a JPEG, or the file's own beside its URI.
   QByteArray bytes;
+  QByteArray image;
   QStringList offered;
   bool cancelled = false;
   // Until the background copy takes over, paste requests wait here, so every
@@ -48,6 +55,9 @@ struct State {
   int displayFd = -1;
   // Paste writers still running, reaped as they finish.
   std::vector<pid_t> writers;
+  // Says when a writer has finished, so it is reaped then and not left a
+  // zombie until the next paste.
+  int childFd = -1;
 };
 
 // A paste is written by a child of its own, which makes the PNG first when
@@ -123,12 +133,16 @@ void deliver(State& state, int fd, bool png,
       if (other != fd) close(other);
     }
     if (state.displayFd >= 0) close(state.displayFd);
+    if (state.childFd >= 0) close(state.childFd);
+    sigset_t none;
+    sigemptyset(&none);
+    sigprocmask(SIG_SETMASK, &none, nullptr);
     // This process never starts a thread of its own, so its children may
     // use Qt freely. The deadline holds even if the app ignored these signals.
     std::signal(SIGTERM, SIG_DFL);
     std::signal(SIGALRM, SIG_DFL);
     alarm(kWriteSeconds);
-    const QByteArray bytes = png ? encodePng(state.bytes) : state.bytes;
+    const QByteArray bytes = png ? encodePng(state.image) : state.bytes;
     const int flags = fcntl(fd, F_GETFL);
     if (flags >= 0) fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
     const char* data = bytes.constData();
@@ -151,8 +165,11 @@ void deliver(State& state, int fd, bool png,
 void send(void* data, ext_data_control_source_v1*, const char* mimeType, int32_t fd) {
   auto* state = static_cast<State*>(data);
   const QByteArray type(mimeType);
-  const bool png = type == "image/png" && state->offered.contains(u"image/png");
-  if (type != state->type && !png) {
+  // The PNG is made from the picture; every other offered type gets the
+  // served bytes (a file reference's text aliases get its URI).
+  const bool png = type == "image/png" && type != state->type &&
+                   state->offered.contains(u"image/png");
+  if (!png && !state->offered.contains(QString::fromLatin1(type))) {
     close(fd);
   } else if (!state->serving) {
     state->queued.emplace_back(fd, png);
@@ -180,12 +197,68 @@ void finished(void* data, ext_data_control_device_v1*) {
 }
 constexpr ext_data_control_device_v1_listener kDevice{dataOffer, selection, finished, selection};
 
+// wl_display_dispatch, plus reaping writers as they finish.
+void serve(State& state, wl_display* display) {
+  while (!state.cancelled) {
+    while (wl_display_prepare_read(display) != 0) {
+      if (wl_display_dispatch_pending(display) < 0) return;
+    }
+    if (state.cancelled) {
+      wl_display_cancel_read(display);
+      return;
+    }
+    const int flushed = wl_display_flush(display);
+    if (flushed < 0 && errno != EAGAIN) {
+      wl_display_cancel_read(display);
+      return;
+    }
+    pollfd fds[2] = {{state.displayFd, short(POLLIN | (flushed < 0 ? POLLOUT : 0)), 0},
+                     {state.childFd, POLLIN, 0}};
+    // If signalfd is unavailable, still reap while the clipboard is idle.
+    if (poll(fds, 2, state.childFd < 0 ? 100 : -1) < 0) {
+      wl_display_cancel_read(display);
+      if (errno == EINTR) continue;
+      return;
+    }
+    if (fds[0].revents & (POLLIN | POLLERR | POLLHUP)) {
+      if (wl_display_read_events(display) < 0) return;
+    } else {
+      wl_display_cancel_read(display);
+    }
+    if (fds[1].revents & POLLIN) {
+      signalfd_siginfo info;
+      while (read(state.childFd, &info, sizeof info) == sizeof info) {
+      }
+    }
+    reap(state);
+    if (wl_display_dispatch_pending(display) < 0) return;
+  }
+}
+
 } // namespace
 
-bool mayOfferPng(const QString& sourceType) { return sourceType == u"image/jpeg"; }
+QByteArray uriList(const QString& path) {
+  return QUrl::fromLocalFile(QFileInfo(path).absoluteFilePath()).toEncoded() + "\r\n";
+}
 
-QStringList offeredTypes(const QString& sourceType, const QByteArray& bytes, qint64 maxPixels) {
-  if (!mayOfferPng(sourceType)) return {sourceType};
+bool mayOfferPng(const QString& sourceType) {
+  // PNG is itself; an SVG, compressed or not, has no size of its own to draw at.
+  if (!sourceType.startsWith(u"image/") || sourceType == u"image/png" ||
+      sourceType.startsWith(u"image/svg+xml")) {
+    return false;
+  }
+  static const QList<QByteArray> readable = QImageReader::supportedMimeTypes();
+  return readable.contains(sourceType.toLatin1());
+}
+
+QStringList offeredTypes(const QString& servedType, const QByteArray& bytes, qint64 maxPixels) {
+  if (servedType == u"image/png") return {servedType};
+  // A file reference also pastes as text, as wl-copy offered it: a terminal
+  // or a plain text field gets the URI.
+  QStringList served{servedType};
+  if (servedType == QLatin1StringView(kUriList)) {
+    for (const char* alias : kUriTextAliases) served << QString::fromLatin1(alias);
+  }
   QBuffer buffer;
   buffer.setData(bytes);
   buffer.open(QIODevice::ReadOnly);
@@ -197,9 +270,9 @@ QStringList offeredTypes(const QString& sourceType, const QByteArray& bytes, qin
   // the picture goes on as itself only, as wl-copy put it before.
   if (!estimate.valid() || pixels <= 0 || pixels > maxPixels ||
       (limit > 0 && estimate.bytes > limit)) {
-    return {sourceType};
+    return served;
   }
-  return {sourceType, QStringLiteral("image/png")};
+  return served << QStringLiteral("image/png");
 }
 
 QByteArray encodePng(const QByteArray& source) {
@@ -243,6 +316,9 @@ int run(int argc, char** argv) {
     return 1;
   }
   file.close();
+  state->image = state->bytes;
+  // A file reference, with a PNG of the picture beside it.
+  if (state->type == kUriList) state->bytes = uriList(file.fileName());
 
   // wayland-client would otherwise try wayland-0 in any session at all.
   if (qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY") && qEnvironmentVariableIsEmpty("WAYLAND_SOCKET")) {
@@ -263,7 +339,10 @@ int run(int argc, char** argv) {
   ext_data_control_source_v1* source =
       ext_data_control_manager_v1_create_data_source(state->manager);
   ext_data_control_source_v1_add_listener(source, &kSource, state.get());
-  state->offered = offeredTypes(QString::fromUtf8(state->type), state->bytes);
+  state->offered = offeredTypes(QString::fromUtf8(state->type), state->image);
+  // Kept only to make the PNG from: without one, up to the size cap of a
+  // file would otherwise sit here for as long as the copy is served.
+  if (!state->offered.contains(u"image/png")) state->image = QByteArray();
   for (const QString& type : std::as_const(state->offered)) {
     ext_data_control_source_v1_offer(source, type.toUtf8().constData());
   }
@@ -308,6 +387,14 @@ int run(int argc, char** argv) {
   state->displayFd = wl_display_get_fd(display);
   closeInherited(state->displayFd);
   std::signal(SIGPIPE, SIG_IGN);
+  // Finished writers are told about here rather than through a handler, so
+  // they are reaped in this loop alone and their pids stay ours until then.
+  sigset_t children;
+  sigemptyset(&children);
+  sigaddset(&children, SIGCHLD);
+  if (sigprocmask(SIG_BLOCK, &children, nullptr) == 0) {
+    state->childFd = signalfd(-1, &children, SFD_CLOEXEC | SFD_NONBLOCK);
+  }
   // Pastes asked for while the selection was being taken, now from here.
   state->serving = true;
   const std::vector<std::pair<int, bool>> queued = std::exchange(state->queued, {});
@@ -316,8 +403,7 @@ int run(int argc, char** argv) {
     deliver(*state, queued[index].first, queued[index].second,
             {queued.begin() + qsizetype(index) + 1, queued.end()});
   }
-  while (!state->cancelled && wl_display_dispatch(display) >= 0) {
-  }
+  serve(*state, display);
   stopWriters(*state);
   wl_display_disconnect(display);
   _exit(0);

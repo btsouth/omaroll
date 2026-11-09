@@ -65,6 +65,9 @@ Sources Sources::system() {
   if (const QString languages = qEnvironmentVariable("OMARCHY_OCR_LANGS"); !languages.isEmpty()) {
     sources.ocrLanguages = languages;
   }
+  if (const QString drivers = qEnvironmentVariable("LIBVA_DRIVERS_PATH"); !drivers.isEmpty()) {
+    sources.vaDrivers = drivers.split(QLatin1Char(':'), Qt::SkipEmptyParts);
+  }
   return sources;
 }
 
@@ -262,6 +265,26 @@ QStringList graphics(const Sources& sources) {
   return lines;
 }
 
+QString vaapi(const Sources& sources) {
+  static const QRegularExpression renderNode(QStringLiteral("^renderD\\d+$"));
+  bool render = false;
+  for (const QString& entry : QDir(sources.dri).entryList(QDir::System | QDir::Files | QDir::NoDotAndDotDot)) {
+    render |= renderNode.match(entry).hasMatch();
+  }
+  QStringList drivers;
+  for (const QString& directory : sources.vaDrivers) {
+    for (const QString& file : QDir(directory).entryList({QStringLiteral("*_drv_video.so")},
+                                                          QDir::Files | QDir::System, QDir::Name)) {
+      const QString name =
+          bounded(file.chopped(int(qstrlen("_drv_video.so"))), QStringLiteral("0-9A-Za-z_-"), 32);
+      if (!name.isEmpty() && !drivers.contains(name)) drivers << name;
+    }
+  }
+  if (!render) return QStringLiteral("not available (no GPU render node)");
+  if (drivers.isEmpty()) return QStringLiteral("not available (no VA driver installed)");
+  return drivers.join(QStringLiteral(", ")) + QStringLiteral(" (installed; decoding not probed)");
+}
+
 QString themeName(const Sources& sources) {
   // The directory the app's theme is read from, so the two never disagree.
   QString slug = readLine(OmarchyTheme::currentRootFor(sources.stateHome, sources.configHome) +
@@ -317,6 +340,7 @@ QString report(const Sources& sources, const QString& platform, const QString& t
                (formats.isEmpty() ? QStringLiteral("none of the optional formats") : formats.join(QStringLiteral(", ")));
   lines << QStringLiteral("Video decoding backend: Qt Multimedia ") + backend +
                QStringLiteral(" (actual hardware/software decoder depends on media)");
+  lines << QStringLiteral("VA-API: ") + vaapi(sources);
   for (const Tool& tool : tools()) {
     const bool found = sources.hasProgram && sources.hasProgram(tool.program);
     lines << tool.program + QStringLiteral(": ") +

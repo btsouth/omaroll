@@ -16,6 +16,7 @@
 #include "app/OpenRequest.h"
 #include "app/LaunchRequest.h"
 #include "app/MimeDefaults.h"
+#include <QLocalServer>
 #include <QLocalSocket>
 #include <QMimeDatabase>
 #include <QJsonArray>
@@ -625,7 +626,10 @@ private slots:
     // Preserve later safety/profile settings, while child apps receive the
     // original hardware overrides, including unset versus explicitly empty.
     playback.insert(QStringLiteral("PIPEWIRE_REMOTE"), QStringLiteral("omaroll-no-audio"));
+    // A launcher's activation token is never handed on.
+    playback.insert(QStringLiteral("XDG_ACTIVATION_TOKEN"), QStringLiteral("spent"));
     const auto external = policy.externalEnvironment(playback);
+    QVERIFY(!external.contains(QStringLiteral("XDG_ACTIVATION_TOKEN")));
     QCOMPARE(external.contains(decodeKey), decodeSet);
     QCOMPARE(external.contains(encodeKey), encodeSet);
     if (decodeSet) QCOMPARE(external.value(decodeKey), decode);
@@ -687,6 +691,34 @@ private slots:
       QCOMPARE(explicitPreferences.imagePrimaryAction(), QStringLiteral("edit"));
       QCOMPARE(explicitPreferences.videoPrimaryAction(), QStringLiteral("play"));
     }
+    // `--install-window-rules` before the first launch writes one key; the
+    // profile is still new.
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, profiles.filePath("rules-first"));
+    QVERIFY(AppSettings::endWindowRulesOfferOnDisk());
+    QVERIFY(AppSettings::windowRulesOfferDismissedOnDisk());
+    {
+      AppSettings rulesFirst;
+      QCOMPARE(rulesFirst.imagePrimaryAction(), QStringLiteral("preview"));
+      QCOMPARE(rulesFirst.videoPrimaryAction(), QStringLiteral("preview"));
+      QVERIFY(rulesFirst.windowRulesOfferDismissed());
+    }
+    // The command line leaves a damaged settings file alone, as the app does.
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, profiles.filePath("damaged"));
+    QVERIFY(QDir().mkpath(profiles.filePath("damaged/omaroll")));
+    const QString damagedIni = profiles.filePath("damaged/omaroll/omaroll.ini");
+    // The second is only found once Qt parses the later section.
+    for (const QByteArray& bad : {QByteArray("[library]\nsortMode=3\n[truncated\n"),
+                                  QByteArray("[library]\nsortMode=3\n[view]\nbroken line\n")}) {
+      {
+        QFile damaged(damagedIni);
+        QVERIFY(damaged.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        QCOMPARE(damaged.write(bad), bad.size());
+      }
+      QVERIFY(!AppSettings::endWindowRulesOfferOnDisk());
+      QFile untouched(damagedIni);
+      QVERIFY(untouched.open(QIODevice::ReadOnly));
+      QCOMPARE(untouched.readAll(), bad);
+    }
   }
 
   void singleInstanceForwardsTheOpenedPath() {
@@ -703,6 +735,73 @@ private slots:
     QCOMPARE(forwarded.get(), SingleInstance::Result::Forwarded);
     QTRY_COMPARE_WITH_TIMEOUT(activation.size(), 1, 1000);
     QCOMPARE(activation.first().first().toStringList(), QStringList{path});
+  }
+
+  // The launcher's XDG activation token goes with the request, and is in the
+  // running instance's environment while it handles it, where Qt's Wayland
+  // plugin takes it for requestActivate().
+  void singleInstanceForwardsTheActivationToken() {
+    const QByteArray saved = qgetenv("XDG_ACTIVATION_TOKEN");
+    const auto restore = qScopeGuard([&] {
+      saved.isNull() ? qunsetenv("XDG_ACTIVATION_TOKEN") : qputenv("XDG_ACTIVATION_TOKEN", saved);
+    });
+    QStringList paths, skipped;
+    bool library = false;
+    qint64 start = -1;
+    QString token;
+    QVERIFY(SingleInstance::parseFrame(R"({"paths":[],"activationToken":"Hypr_1-2.3"})", paths,
+                                       library, start, skipped, token));
+    QCOMPARE(token, QStringLiteral("Hypr_1-2.3"));
+    // An odd token is dropped, and the files still open.
+    QVERIFY(SingleInstance::parseFrame(R"({"paths":["/a.png"],"activationToken":"a b"})", paths,
+                                       library, start, skipped, token));
+    QVERIFY(token.isEmpty());
+    QCOMPARE(paths, QStringList{"/a.png"});
+    QVERIFY(!SingleInstance::parseFrame(R"({"paths":[],"activationToken":7})", paths, library,
+                                        start, skipped, token));
+
+    const QString server = QStringLiteral("omaroll-token-%1-%2")
+                               .arg(QCoreApplication::applicationPid())
+                               .arg(QRandomGenerator::global()->generate());
+    SingleInstance first(server);
+    QCOMPARE(first.claimOrNotify(), SingleInstance::Result::Primary);
+    QStringList seen;
+    connect(&first, &SingleInstance::activationRequested, this,
+            [&seen] { seen << qEnvironmentVariable("XDG_ACTIVATION_TOKEN"); });
+    qunsetenv("XDG_ACTIVATION_TOKEN");
+    const auto send = [&](const QByteArray& frame) {
+      auto* socket = new QLocalSocket(this);
+      socket->connectToServer(server);
+      QVERIFY(socket->waitForConnected(1000));
+      socket->write(frame);
+      socket->flush();
+      connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
+    };
+    send(R"({"paths":[],"activationToken":"from-launcher"})" "\n");
+    QTRY_COMPARE(seen.size(), 1);
+    QCOMPARE(seen.last(), QStringLiteral("from-launcher"));
+    // Gone once the request is handled, whether or not a window used it.
+    QVERIFY(qEnvironmentVariableIsEmpty("XDG_ACTIVATION_TOKEN"));
+    // A request without one leaves no stale token behind.
+    send(R"({"paths":[]})" "\n");
+    QTRY_COMPARE(seen.size(), 2);
+    QCOMPARE(seen.last(), QString());
+
+    // Sending: the token in this launch's environment is in the frame.
+    QLocalServer raw;
+    const QString rawName = server + QStringLiteral("-raw");
+    QVERIFY(raw.listen(rawName));
+    qputenv("XDG_ACTIVATION_TOKEN", "launch-token");
+    auto forwarded = notifyInstance(rawName, {QStringLiteral("/tmp/b.png")});
+    QTRY_VERIFY(raw.hasPendingConnections());
+    QLocalSocket* incoming = raw.nextPendingConnection();
+    QTRY_VERIFY(incoming->canReadLine());
+    QVERIFY(SingleInstance::parseFrame(incoming->readLine(), paths, library, start, skipped, token));
+    QCOMPARE(token, QStringLiteral("launch-token"));
+    incoming->write("accepted\n");
+    incoming->flush();
+    QTRY_VERIFY(forwarded.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready);
+    QCOMPARE(forwarded.get(), SingleInstance::Result::Forwarded);
   }
 
   void singleInstanceForwardsMultiplePaths() {
@@ -1009,6 +1108,71 @@ private slots:
     QFile log(dir.filePath("notification"));
     QVERIFY(log.open(QIODevice::ReadOnly));
     QVERIFY(log.readAll().contains(input.fileName().toUtf8()));
+  }
+
+  // A file manager launch has no terminal: a bad --start is said on screen.
+  void invalidStartNotifies() {
+    QTemporaryDir dir;
+    QFile notify(dir.filePath("notify-send"));
+    QVERIFY(notify.open(QIODevice::WriteOnly));
+    notify.write("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$OMAROLL_NOTIFY_LOG\"\n");
+    notify.close();
+    QVERIFY(notify.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    auto env = QProcessEnvironment::systemEnvironment();
+    env.insert("PATH", dir.path() + ":" + env.value("PATH"));
+    env.insert("OMAROLL_NOTIFY_LOG", dir.filePath("notification"));
+    env.insert("QT_QPA_PLATFORM", "offscreen");
+    env.insert("XDG_CONFIG_HOME", dir.path());
+    QProcess process;
+    process.setProcessEnvironment(env);
+    process.start(QCoreApplication::applicationDirPath() + "/omaroll",
+                  {"--start", "soon", "--", dir.filePath("clip.mp4")});
+    QVERIFY(process.waitForFinished(5000));
+    QCOMPARE(process.exitCode(), 2);
+    QVERIFY(process.readAllStandardError().contains("Could not use --start soon"));
+    QFile log(dir.filePath("notification"));
+    QVERIFY(log.open(QIODevice::ReadOnly));
+    const QByteArray said = log.readAll();
+    QVERIFY2(said.contains("Omaroll\nCould not use --start soon: give seconds, mm:ss or hh:mm:ss"),
+             said.constData());
+  }
+
+  // The --set-default record moved beside the settings; one left by an older
+  // version moves with it, so --unset-default can still put things back.
+  void mimeDefaultsRecordMovesBesideSettings() {
+    QTemporaryDir dir;
+    const auto oldConfig = qgetenv("XDG_CONFIG_HOME");
+    const auto cleanup = qScopeGuard([&] {
+      oldConfig.isNull() ? qunsetenv("XDG_CONFIG_HOME") : qputenv("XDG_CONFIG_HOME", oldConfig);
+    });
+    qputenv("XDG_CONFIG_HOME", dir.path().toUtf8());
+    const QString expected = dir.filePath("omaroll/mime-defaults.ini");
+    // Nothing to move: the path is beside the settings and nothing is made.
+    QCOMPARE(MimeDefaults::recordPath(), expected);
+    QVERIFY(!QFileInfo::exists(dir.filePath("Omaroll")));
+
+    QVERIFY(QDir().mkpath(dir.filePath("Omaroll")));
+    QFile legacy(dir.filePath("Omaroll/mime-defaults.ini"));
+    QVERIFY(legacy.open(QIODevice::WriteOnly));
+    const QByteArray record = "[General]\nimage%2Fpng=imv.desktop\n";
+    legacy.write(record);
+    legacy.close();
+    QCOMPARE(MimeDefaults::recordPath(), expected);
+    QFile moved(expected);
+    QVERIFY(moved.open(QIODevice::ReadOnly));
+    QCOMPARE(moved.readAll(), record);
+    QVERIFY(!QFileInfo::exists(dir.filePath("Omaroll")));
+
+    // A newer record wins; the old one, and anything beside it, is left alone.
+    QVERIFY(QDir().mkpath(dir.filePath("Omaroll")));
+    QVERIFY(legacy.open(QIODevice::WriteOnly));
+    legacy.write("[General]\nimage%2Fpng=old.desktop\n");
+    legacy.close();
+    QCOMPARE(MimeDefaults::recordPath(), expected);
+    moved.close();
+    QVERIFY(moved.open(QIODevice::ReadOnly));
+    QCOMPARE(moved.readAll(), record);
+    QVERIFY(QFileInfo::exists(dir.filePath("Omaroll/mime-defaults.ini")));
   }
 
   void mimeDefaultsRestoreAndRemoveOnlyOmaroll() {
@@ -1538,8 +1702,7 @@ private slots:
         "image/x-tga: removed your setting; it still opens with Omaroll "
         "(a system default, or no other app handles it)");
     QCOMPARE(MimeDefaults::summarize(true, unset, true),
-             QStringLiteral("Restored Loupe and mpv for 3 types. 1 type still opens with Omaroll, "
-                            "from a system default or because no other app handles it."));
+             QStringLiteral("Restored Loupe and mpv for 3 types. 1 other type keeps its system default."));
     QCOMPARE(MimeDefaults::summarize(true, QStringLiteral("image/png: kept other.desktop"), true),
              QStringLiteral("Nothing to restore. Omaroll was not the default."));
     // A setting removed while Omaroll stays the default is not "nothing".
@@ -1547,14 +1710,20 @@ private slots:
         "image/png: removed your setting; it still opens with Omaroll (a system default, or no "
         "other app handles it)");
     QCOMPARE(MimeDefaults::summarize(true, stays, true),
-             QStringLiteral("1 type still opens with Omaroll, from a system default or because no "
-                            "other app handles it."));
+             QStringLiteral("1 type keeps its system default."));
     QCOMPARE(MimeDefaults::summarize(true, QStringLiteral("image/gif: restored imv.desktop\n") + stays +
                                                QStringLiteral("\nimage/jpeg: removed your setting; "
                                                               "it still opens with Omaroll (x)"),
                                      true),
-             QStringLiteral("Restored imv for 1 type. 2 types still open with Omaroll, from a system "
-                            "default or because no other app handles them."));
+             QStringLiteral("Restored imv for 1 type. 2 other types keep their system default."));
+    // Many untouched types after a real restore read as kept, not as a failed undo.
+    QString many = QStringLiteral("image/gif: restored imv.desktop");
+    for (int i = 0; i < 36; ++i)
+      many += QStringLiteral("\nimage/x-%1: removed your setting; it still opens with Omaroll (x)").arg(i);
+    QCOMPARE(MimeDefaults::summarize(true, many, true),
+             QStringLiteral("Restored imv for 1 type. 36 other types keep their system default."));
+    QCOMPARE(MimeDefaults::summarize(true, many.section(u'\n', 1), true),
+             QStringLiteral("36 types keep their system default."));
     // Worded for the group that was asked for.
     const QString pdf = QStringLiteral(
         "application/pdf: org.gnome.Papers.desktop -> io.github.tsouth89.omaroll.desktop");
@@ -1601,6 +1770,12 @@ private slots:
     sources.omarchyPath = QStringLiteral("/usr/share/omarchy");
     sources.drm = root.filePath(QStringLiteral("drm"));
     sources.modules = root.filePath(QStringLiteral("module"));
+    make(QStringLiteral("dri/renderD128"), "");
+    make(QStringLiteral("va/radeonsi_drv_video.so"), "");
+    make(QStringLiteral("va/nvidia_drv_video.so"), "");
+    make(QStringLiteral("va/libva.so"), "");
+    sources.dri = root.filePath(QStringLiteral("dri"));
+    sources.vaDrivers = {root.filePath(QStringLiteral("va")), root.filePath(QStringLiteral("none"))};
     sources.stateHome = root.filePath(QStringLiteral("state"));
     sources.configHome = root.filePath(QStringLiteral("config"));
     const QStringList installed = {QStringLiteral("ffmpeg"), QStringLiteral("ffprobe"),
@@ -1638,6 +1813,14 @@ private slots:
     QVERIFY2(lines.contains(QStringLiteral("Hyprland: 0.57.1-2")), qPrintable(report));
     QVERIFY2(lines.contains(QStringLiteral("GPU: AMD (1002:744c), driver amdgpu 6.1.2")), qPrintable(report));
     QCOMPARE(lines.filter(QStringLiteral("GPU: ")).size(), 1);
+    QVERIFY2(lines.contains(QStringLiteral("VA-API: nvidia, radeonsi (installed; decoding not probed)")), qPrintable(report));
+    {
+      Diagnostics::Sources noDriver = sources;
+      noDriver.vaDrivers = {root.filePath(QStringLiteral("none"))};
+      QCOMPARE(Diagnostics::vaapi(noDriver), QStringLiteral("not available (no VA driver installed)"));
+      noDriver.dri = root.filePath(QStringLiteral("none"));
+      QCOMPARE(Diagnostics::vaapi(noDriver), QStringLiteral("not available (no GPU render node)"));
+    }
     QVERIFY(lines.contains(QStringLiteral("Theme: Catppuccin Latte")));
     QVERIFY(lines.contains(QStringLiteral("Scale factor: 1.5")));
     QVERIFY(lines.contains(QStringLiteral("tesseract: missing")));
@@ -1761,6 +1944,7 @@ private slots:
     QVERIFY(bare.contains(QStringLiteral("Omarchy: development checkout")));
     QVERIFY(bare.contains(QStringLiteral("Hyprland: not installed")));
     QVERIFY(bare.contains(QStringLiteral("GPU: not found")));
+    QCOMPARE(bare.filter(QStringLiteral("VA-API: ")).size(), 1);
     QVERIFY(bare.filter(QStringLiteral("Scale factor")).isEmpty());
     QVERIFY(bare.contains(QStringLiteral("darktable: missing")));
     // Which optional image formats have a plugin, from what Qt loaded.
@@ -1771,6 +1955,44 @@ private slots:
     empty.omarchyPath.clear();
     QVERIFY(Diagnostics::missing(empty).size() > 10);
     QCOMPARE(Diagnostics::themeName(empty), QStringLiteral("not found"));
+  }
+
+  void windowRulesOfferStaysDismissed() {
+    QTemporaryDir profile;
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, profile.path());
+    const auto restore = qScopeGuard([&] {
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                         m_scratch.filePath("config"));
+    });
+    {
+      AppSettings settings;
+      QVERIFY(!settings.windowRulesOfferDismissed());
+      settings.dismissWindowRulesOffer();
+      QVERIFY(settings.windowRulesOfferDismissed());
+    }
+    {
+      AppSettings settings;
+      QVERIFY(settings.windowRulesOfferDismissed());
+    }
+    // Installation also ends the offer permanently, including after removal.
+    QSettings state(QSettings::IniFormat, QSettings::UserScope, "omaroll", "omaroll");
+    state.remove(AppSettings::kWindowRulesOfferDismissedKey);
+    state.sync();
+    const QString hypr = profile.filePath("hypr");
+    QVERIFY(QDir().mkpath(hypr));
+    QFile config(hypr + "/hyprland.lua");
+    QVERIFY(config.open(QIODevice::WriteOnly));
+    config.write("require(\"default.hypr.omarchy\")\n");
+    config.close();
+    AppSettings settings;
+    settings.setHyprDirectory(hypr);
+    QVERIFY(!settings.windowRulesOfferDismissed());
+    settings.installWindowRules();
+    QCOMPARE(settings.windowRules(), QStringLiteral("installed"));
+    QVERIFY(settings.windowRulesOfferDismissed());
+    settings.removeWindowRules();
+    QCOMPARE(settings.windowRules(), QStringLiteral("available"));
+    QVERIFY(settings.windowRulesOfferDismissed());
   }
 
   void windowRulesInstallAndRemoveCleanly() {
@@ -12829,6 +13051,107 @@ private slots:
     const QImage decoded = QImage::fromData(png, "PNG");
     QCOMPARE(decoded.size(), QSize(20, 40));
     QVERIFY(ClipboardServe::encodePng("not a picture").isEmpty());
+  }
+
+  // WebP, GIF and the other formats Qt reads go on as a file reference with a
+  // PNG beside it, an animation's first frame. Video stays a reference alone.
+  void clipboardOffersPngBesideOtherPictures() {
+    QVERIFY(ClipboardServe::mayOfferPng("image/gif"));
+    QVERIFY(!ClipboardServe::mayOfferPng("image/png"));
+    QVERIFY(!ClipboardServe::mayOfferPng("image/svg+xml"));
+    QVERIFY(!ClipboardServe::mayOfferPng("image/svg+xml-compressed"));
+    QVERIFY(!ClipboardServe::mayOfferPng("video/mp4"));
+    QVERIFY(!ClipboardServe::mayOfferPng("text/uri-list"));
+    if (QImageReader::supportedMimeTypes().contains("image/webp"))
+      QVERIFY(ClipboardServe::mayOfferPng("image/webp"));
+
+    const QString gifPath = QFINDTESTDATA("fixtures/viewer/animated.gif");
+    QFile gif(gifPath);
+    QVERIFY(gif.open(QIODevice::ReadOnly));
+    const QByteArray bytes = gif.readAll();
+    // The URI also pastes as text, as wl-copy offered it, into a terminal.
+    const QStringList uriTypes{"text/uri-list", "text/plain", "text/plain;charset=utf-8", "TEXT",
+                               "STRING", "UTF8_STRING"};
+    QCOMPARE(ClipboardServe::offeredTypes(QString::fromLatin1(ClipboardServe::kUriList), bytes),
+             uriTypes + QStringList{"image/png"});
+    QCOMPARE(ClipboardServe::offeredTypes("image/png", bytes), QStringList{"image/png"});
+    QCOMPARE(ClipboardServe::offeredTypes(QString::fromLatin1(ClipboardServe::kUriList), "not a picture"),
+             uriTypes);
+    QCOMPARE(ClipboardServe::offeredTypes("image/jpeg", "not a picture"), QStringList{"image/jpeg"});
+    QImageReader reader(gifPath);
+    const QImage first = reader.read();
+    QVERIFY(!first.isNull());
+    QVERIFY(reader.imageCount() > 1 || reader.supportsAnimation());
+    const QImage png = QImage::fromData(ClipboardServe::encodePng(bytes), "PNG");
+    QCOMPARE(png.convertToFormat(QImage::Format_ARGB32), first.convertToFormat(QImage::Format_ARGB32));
+    QCOMPARE(ClipboardServe::uriList("/tmp/a b#c.webp"), QByteArray("file:///tmp/a%20b%23c.webp\r\n"));
+
+    // The app hands such a picture to the helper as a file reference. Where
+    // the helper can't serve it, the plain reference goes through wl-copy.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("loop # 1.gif"));
+    QVERIFY(QFile::copy(gifPath, path));
+    const auto executable = [&](const QString& name, const QByteArray& body) {
+      QFile file(dir.filePath(name));
+      if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+      file.write("#!/bin/sh\n" + body);
+      file.close();
+      return file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                 QFileDevice::ExeOwner);
+    };
+    const QString helperArgs = dir.filePath(QStringLiteral("helper.args"));
+    const QString copied = dir.filePath(QStringLiteral("copied"));
+    QVERIFY(executable(QStringLiteral("helper"),
+                       "printf '%s\\n' \"$@\" > '" + helperArgs.toUtf8() + "'\nexit 3\n"));
+    QVERIFY(executable(QStringLiteral("wl-copy"),
+                       "printf '%s\\n' \"$@\" > '" + copied.toUtf8() + ".args'\n/bin/cat > '" +
+                           copied.toUtf8() + "'\n"));
+    const QByteArray previousPath = qgetenv("PATH");
+    const QByteArray previousDisplay = qgetenv("WAYLAND_DISPLAY");
+    const QByteArray previousSocket = qgetenv("WAYLAND_SOCKET");
+    const auto restore = qScopeGuard([&] {
+      qputenv("PATH", previousPath);
+      previousDisplay.isNull() ? qunsetenv("WAYLAND_DISPLAY")
+                               : qputenv("WAYLAND_DISPLAY", previousDisplay);
+      if (!previousSocket.isNull()) qputenv("WAYLAND_SOCKET", previousSocket);
+    });
+    QVERIFY(qputenv("PATH", dir.path().toUtf8() + ":/usr/bin:/bin"));
+    // Never a real compositor: the helper here is a script anyway.
+    QVERIFY(qputenv("WAYLAND_DISPLAY", dir.filePath("no-such-display").toUtf8()));
+    qunsetenv("WAYLAND_SOCKET");
+    ActionLauncher launcher;
+    launcher.setClipboardHelper(dir.filePath(QStringLiteral("helper")));
+    QSignalSpy finished(&launcher, &ActionLauncher::submissionFinished);
+    QSignalSpy failed(&launcher, &ActionLauncher::failed);
+    QSignalSpy reported(&launcher, &ActionLauncher::reported);
+    QVERIFY(launcher.copyFile(path));
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 8000);
+    QVERIFY(finished.first().at(1).toBool());
+    QCOMPARE(failed.size(), 0);
+    QCOMPARE(reported.size(), 1);
+    QCOMPARE(reported.first().first().toString(), QStringLiteral("Copied as a file"));
+    QFile args(helperArgs);
+    QVERIFY(args.open(QIODevice::ReadOnly));
+    QCOMPARE(args.readAll(),
+             QByteArray(ClipboardServe::kOption) + "\ntext/uri-list\n" + path.toUtf8() + "\n");
+    QFile wlArgs(copied + QStringLiteral(".args"));
+    QVERIFY(wlArgs.open(QIODevice::ReadOnly));
+    QCOMPARE(wlArgs.readAll(), QByteArray("--type\ntext/uri-list\n"));
+    QFile reference(copied);
+    QVERIFY(reference.open(QIODevice::ReadOnly));
+    QCOMPARE(reference.readAll(), ClipboardServe::uriList(path));
+
+    // Served by the helper itself: still said as a file copy.
+    QVERIFY(executable(QStringLiteral("helper"), "exit 0\n"));
+    finished.clear();
+    reported.clear();
+    QVERIFY(launcher.copyFile(path));
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 8000);
+    QCOMPARE(finished.first().at(0).toString(), QStringLiteral("omaroll"));
+    QVERIFY(finished.first().at(1).toBool());
+    QCOMPARE(reported.size(), 1);
+    QCOMPARE(reported.first().first().toString(), QStringLiteral("Copied as a file"));
   }
 
   void clipboardHelperFallsBackToWlCopyWithoutDataControl() {
