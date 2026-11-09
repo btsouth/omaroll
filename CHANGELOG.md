@@ -93,6 +93,19 @@
 
 ### Changed
 
+- Settings is grouped into titled sections (Library, Viewer, Video, Search
+  and text, Albums and backups, Integration, About) with a side index on wide
+  windows, real switches for on/off choices and larger supporting text. The
+  sheet grows with a big window and fades where the list continues.
+- The viewer menu has View, Share and Edit submenus. Every menu stays inside
+  the window, scrolls with the wheel and follows the arrow keys when it is
+  taller than a short window.
+- The library preview uses the viewer's icon toolbar, with rotate left and
+  right, instead of text buttons. Its resize grip sits inside the corner.
+- Long paths in the viewer's details are shortened in the middle, with the
+  whole path in a tooltip.
+- Saving a rotated copy keeps the toolbar's buttons where they were while the
+  pointer is on it.
 - Reading dates and cameras for a new library no longer slows the window.
   Two to four probes run at once at low priority, their output is parsed off
   the window thread, and "Reading media details" updates about once a second.

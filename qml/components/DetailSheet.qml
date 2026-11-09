@@ -201,8 +201,7 @@ Item {
     // the theme font, so the decision follows the font rather than a guess.
     readonly property bool compactControls: root.fullScreen
         || stage.width < stage.rowChrome + wideTopMeasure.implicitWidth
-           + (root.isVideo && !root.slideshowRunning ? transport.minimumWidth
-                                                      : wideImageMeasure.implicitWidth)
+           + (root.isVideo && !root.slideshowRunning ? transport.minimumWidth : 0)
     // A document's rows carry words, so each gives way as its own row runs out of
     // stage. The match steppers go first, while the row they share still fits
     // whole. The page row shortens its labels before it loses anything: the arrow
@@ -473,8 +472,8 @@ Item {
         }
     }
 
-    function rotateImage() {
-        imageRotation = (imageRotation + 90) % 360
+    function rotateImage(clockwise) {
+        imageRotation = (imageRotation + (clockwise === false ? 270 : 90)) % 360
         imageZoom = 1.0
         Qt.callLater(stillViewport.centerContent)
     }
@@ -974,26 +973,7 @@ Item {
                 spacing: 6
                 Repeater {
                     model: root.isVideo ? ["Fullscreen"]
-                                        : ["Start slideshow"]
-                    PillButton { label: modelData }
-                }
-            }
-            Row {
-                id: wideImageMeasure
-                visible: false
-                spacing: 6
-                Repeater {
-                    model: ["Fit", "Actual", "−", "+", "Rotate", "Flip H", "Flip V", "Full"]
-                    PillButton { label: modelData }
-                }
-                Item { width: 42; height: 1 }
-            }
-            Row {
-                id: compactImageMeasure
-                visible: false
-                spacing: 6
-                Repeater {
-                    model: ["Fit", "1:1", "−", "+", "↻", "↔", "↕", "⛶"]
+                                        : ["Pause slideshow", "Fullscreen"]
                     PillButton { label: modelData }
                 }
             }
@@ -1962,6 +1942,8 @@ Item {
 
             Rectangle {
                 id: topControlsPanel
+                // A still's slideshow and full screen are on its toolbar.
+                visible: root.isVideo || root.slideshowRunning
                 readonly property bool stacked: root.isVideo && !root.slideshowRunning
                                                 && stage.width < transport.minimumWidth + width + 44
                 anchors.bottom: parent.bottom
@@ -2005,104 +1987,52 @@ Item {
                 }
             }
 
-            Row {
+            // The quick viewer's own toolbar, so a picture has the same
+            // controls, icons and keys wherever it is open.
+            ViewerToolbar {
                 id: imageControls
-                anchors.right: topControlsPanel.left
-                anchors.rightMargin: 12
+                objectName: "previewToolbar"
+                namePrefix: "preview"
+                anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: parent.bottom
-                anchors.bottomMargin: 16
+                anchors.bottomMargin: 5
                 visible: !root.isVideo && !root.slideshowRunning
-                spacing: 6
-
-                Rectangle {
-                    parent: stage
-                    visible: imageControls.visible
-                    anchors.fill: imageControls
-                    anchors.margins: -5
-                    z: -1
-                    radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 4
-                    color: Qt.rgba(Theme.darkerBackground.r, Theme.darkerBackground.g,
-                                   Theme.darkerBackground.b, 0.72)
-                    border.width: 1
-                    border.color: Qt.rgba(Theme.foreground.r, Theme.foreground.g,
-                                          Theme.foreground.b, 0.18)
-                }
-
-                PillButton {
-                    label: "Fit"
-                    toolTip: "Fit image"
-                    shortcut: root.viewerShortcuts.fit.label
-                    active: root.imageZoom === 1 && root.imageRotation === 0
-                            && !root.imageFlipHorizontal && !root.imageFlipVertical
-                    onClicked: root.resetImageView()
-                }
-                PillButton {
-                    objectName: "actualSizeButton"
-                    visible: !root.isDocument && stage.width >= 430
-                    label: root.compactControls ? "1:1" : "Actual"
-                    toolTip: "Actual size (1 toggles fit and actual size)"
-                    Accessible.description: "Show actual size. Press 1 to toggle fit and actual size."
-                    active: Math.abs(root.displayedImageScale - 1) < 0.01
-                    onClicked: root.showActualImageSize()
-                }
-                PillButton {
-                    label: "−"
-                    toolTip: "Zoom out"
-                    shortcut: root.viewerShortcuts.zoomOut.label
-                    onClicked: root.adjustImageZoom(1 / 1.25)
-                }
-                Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    visible: !root.compactControls
-                    width: 42
-                    horizontalAlignment: Text.AlignHCenter
-                    text: Math.round(root.displayedImageScale * 100) + "%"
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 11
-                    color: Theme.mutedText
-                }
-                PillButton {
-                    label: "+"
-                    toolTip: "Zoom in"
-                    shortcut: root.viewerShortcuts.zoomIn.label
-                    onClicked: root.adjustImageZoom(1.25)
-                }
-                PillButton {
-                    label: root.compactControls ? "↻" : "Rotate"
-                    toolTip: "Rotate"
-                    shortcut: root.viewerShortcuts.rotate.label
-                    onClicked: root.rotateImage()
-                }
-                PillButton {
-                    objectName: "flipHorizontalButton"
-                    visible: !root.isDocument && stage.width >= 560
-                    label: root.compactControls ? "↔" : "Flip H"
-                    toolTip: "Flip horizontally"
-                    shortcut: root.viewerShortcuts.flipHorizontal.label
-                    active: root.imageFlipHorizontal
-                    onClicked: root.imageFlipHorizontal = !root.imageFlipHorizontal
-                }
-                PillButton {
-                    objectName: "flipVerticalButton"
-                    visible: !root.isDocument && stage.width >= 560
-                    label: root.compactControls ? "↕" : "Flip V"
-                    toolTip: "Flip vertically"
-                    shortcut: root.viewerShortcuts.flipVertical.label
-                    active: root.imageFlipVertical
-                    onClicked: root.imageFlipVertical = !root.imageFlipVertical
-                }
-                PillButton {
-                    // At the minimum window width with details shown, even the
-                    // icon row is a few pixels too wide. F11 still works.
-                    visible: !root.compactControls
-                             || stage.width >= stage.rowChrome + compactImageMeasure.implicitWidth
-                                               + topControls.implicitWidth
-                    label: root.fullScreen ? "↙" : (root.compactControls ? "⛶" : "Full")
-                    toolTip: root.fullScreen ? "Exit fullscreen"
-                                             : "Fullscreen"
-                    shortcut: root.viewerShortcuts.fullscreen.label
-                    onClicked: root.setFullScreen(!root.fullScreen)
-                }
+                compact: stage.width < 470
+                flipControls: !root.isDocument && stage.width >= 600
+                actualControl: !root.isDocument
+                trashControl: false
+                fullScreenControl: true
+                fullScreen: root.fullScreen
+                fitted: root.isDocument ? root.imageZoom === 1
+                                        : Math.abs(root.displayedImageScale - 1) >= 0.01
+                canStep: root.canNavigate
+                slideshowRunning: root.slideshowRunning
+                flippedHorizontally: root.imageFlipHorizontal
+                flippedVertically: root.imageFlipVertical
+                hints: ({
+                    "zoom-out": root.viewerShortcuts.zoomOut.label,
+                    "zoom-in": root.viewerShortcuts.zoomIn.label,
+                    "actual": root.viewerShortcuts.actual.label,
+                    "fit": root.viewerShortcuts.fit.label,
+                    "previous": root.viewerShortcuts.previous.label,
+                    "next": root.viewerShortcuts.next.label,
+                    "slideshow": root.viewerShortcuts.slideshow.label,
+                    "rotate-right": root.viewerShortcuts.rotate.label,
+                    "flip-horizontal": root.viewerShortcuts.flipHorizontal.label,
+                    "flip-vertical": root.viewerShortcuts.flipVertical.label,
+                    "fullscreen": root.viewerShortcuts.fullscreen.label
+                })
+                onZoomOut: root.adjustImageZoom(1 / 1.25)
+                onZoomIn: root.adjustImageZoom(1.25)
+                onToggleFit: root.isDocument ? root.resetImageView() : root.toggleActualImageSize()
+                onPrevious: root.requestNavigation(-1)
+                onNext: root.requestNavigation(1)
+                onSlideshow: root.setSlideshow(!root.slideshowRunning)
+                onRotateLeft: root.rotateImage(false)
+                onRotateRight: root.rotateImage(true)
+                onFlipHorizontal: root.imageFlipHorizontal = !root.imageFlipHorizontal
+                onFlipVertical: root.imageFlipVertical = !root.imageFlipVertical
+                onToggleFullScreen: root.setFullScreen(!root.fullScreen)
             }
 
             // Reserve a row below the picture for the saved spot, so the
@@ -3092,15 +3022,21 @@ Item {
             objectName: "detailResize_" + modelData
             visible: root.visible && !root.fullScreen
             z: 10
+            // The corner's grab area sits mostly inside the panel, over the
+            // grip drawn there, with a few pixels past the edge to catch a
+            // pointer that overshoots.
             x: modelData === "left" ? panel.x - 4
-               : modelData === "right" || modelData === "corner" ? panel.x + panel.width - 8 : panel.x + 8
+               : modelData === "corner" ? panel.x + panel.width - 18
+               : modelData === "right" ? panel.x + panel.width - 8 : panel.x + 8
             y: modelData === "top" ? panel.y - 4
-               : modelData === "bottom" || modelData === "corner" ? panel.y + panel.height - 8 : panel.y + 8
-            width: modelData === "corner" ? 16 : modelData === "left" || modelData === "right" ? 12 : panel.width - 16
-            height: modelData === "corner" ? 16 : modelData === "top" || modelData === "bottom" ? 12 : panel.height - 16
+               : modelData === "corner" ? panel.y + panel.height - 18
+               : modelData === "bottom" ? panel.y + panel.height - 8 : panel.y + 8
+            width: modelData === "corner" ? 22 : modelData === "left" || modelData === "right" ? 12 : panel.width - 16
+            height: modelData === "corner" ? 22 : modelData === "top" || modelData === "bottom" ? 12 : panel.height - 16
             cursorShape: modelData === "corner" ? Qt.SizeFDiagCursor
                          : modelData === "left" || modelData === "right" ? Qt.SizeHorCursor : Qt.SizeVerCursor
             preventStealing: true
+            hoverEnabled: modelData === "corner"
             property point start
             property real startWidth
             property real startHeight
@@ -3120,14 +3056,31 @@ Item {
                                             : undefined)
             }
             onReleased: root.rememberPreviewSize(horizontal, vertical)
-            Rectangle {
+            // A size grip of six dots in a triangle, inside the corner and
+            // clear of a rounded theme's curve.
+            Item {
+                id: grip
+                objectName: resizeHandle.modelData === "corner" ? "detailResizeGrip" : ""
                 visible: resizeHandle.modelData === "corner"
-                anchors.centerIn: parent
-                width: 8
-                height: 8
-                color: "transparent"
-                border.width: 1
-                border.color: Theme.mutedText
+                readonly property real inset: 4 + (Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 16) * 0.3 : 0)
+                width: 10
+                height: 10
+                x: 18 - width - inset
+                y: 18 - height - inset
+                opacity: resizeHandle.containsMouse || resizeHandle.pressed ? 0.95 : 0.6
+                Repeater {
+                    model: [[8, 8], [4, 8], [8, 4], [0, 8], [4, 4], [8, 0]]
+                    Rectangle {
+                        required property var modelData
+                        x: modelData[0]
+                        y: modelData[1]
+                        width: 2
+                        height: 2
+                        radius: Theme.cornerRadius > 0 ? 1 : 0
+                        color: resizeHandle.containsMouse || resizeHandle.pressed ? Theme.foreground
+                                                                                 : Theme.mutedText
+                    }
+                }
             }
         }
     }
