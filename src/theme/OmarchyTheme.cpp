@@ -1,4 +1,5 @@
 #include "theme/OmarchyTheme.h"
+#include "app/StartupTrace.h"
 
 #include <QCryptographicHash>
 #include <QDir>
@@ -188,6 +189,9 @@ void OmarchyTheme::reload() {
                        QStringLiteral("background-alpha"), m_surfaceAlpha);
 
   m_fontFamily = resolvedMonospaceFamily();
+  // Resolving the family loads the font database. With a cold fontconfig
+  // cache, as on a fresh profile, this is where startup waits.
+  StartupTrace::note("fonts");
   refreshHyprlandMetrics();
   refreshWatchPaths();
   emit themeChanged();

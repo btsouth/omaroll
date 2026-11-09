@@ -16,6 +16,8 @@
 class ThumbnailProvider final : public QQuickAsyncImageProvider {
 public:
   static constexpr const char* kProviderId = "thumbs";
+  // Thumbnails made at once: 2 to 8, leaving a core for the window.
+  [[nodiscard]] static int workerCount();
 
   ThumbnailProvider();
   ~ThumbnailProvider() override;

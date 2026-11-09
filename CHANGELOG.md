@@ -101,6 +101,15 @@
 
 ### Changed
 
+- A video opened from a file manager starts its decoder sooner: the GPU
+  driver and the video backend load while the window does, so the first frame
+  arrives about 20 ms earlier on NVIDIA.
+- The first look at a big folder fills its tiles sooner, with up to eight
+  thumbnails made at once instead of four: a fresh 10,000-file grid took
+  0.87 s instead of 1.03 s.
+- [Current performance numbers](docs/performance/README.md), against mpv and
+  imv, and CI budgets for startup stages, playback page faults and the window
+  thread while indexing.
 - Reading dates and cameras for a new library no longer slows the window.
   Two to four probes run at once at low priority, their output is parsed off
   the window thread, and "Reading media details" updates about once a second.

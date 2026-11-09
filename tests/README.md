@@ -164,9 +164,11 @@ to time album and tag reconciliation with that many members in each collection;
 collection creation stays outside the timers. Peak memory belongs to the
 benchmark process, which also creates fixtures; it is not application memory.
 
-The startup probe launches the actual executable six times using offscreen Qt
-and OpenGL, recording the actual graphics driver. Each launch gets fresh
-settings and a fresh thumbnail cache, with 100 copies of the transparent PNG.
+The startup probe launches the actual executable nine times using offscreen Qt
+and OpenGL, recording the actual graphics driver: a picture and a generated
+1080p H.264 clip in the quick viewer, then a library of 100 copies of the
+transparent PNG, three times each. Each launch gets fresh settings and a fresh
+thumbnail cache. The clip is decoded in software, as on CI.
 Use `--fixture resources/demo/alpine-dawn.jpg` to measure a photographic image,
 `--files N` to change the library size, and `--runs N` for repeated samples.
 Fixture creation is excluded. The output records the fixture hash and size.
@@ -177,9 +179,18 @@ loading, plus delivery of the trace; they do not measure compositor presentation
 `OMAROLL_STARTUP_TRACE=1` enables diagnostic JSON lines on stderr. Timings start
 at entry to `main`, excluding process spawning and dynamic loading before main:
 
-- `application`, `theme`, `services`, `qml`: cumulative setup milestones.
-  `services` is recorded after image providers and context properties are
-  registered, immediately before QML loading.
+- `application`, `instance`, `theme`, `services`, `qml`: cumulative setup
+  milestones. `instance` follows the single-instance claim. `services` is
+  recorded after image providers and context properties are registered,
+  immediately before QML loading.
+- `fonts`: the theme has resolved its font, which loads the font database.
+  With a cold fontconfig cache, as with a fresh `XDG_CACHE_HOME`, this takes
+  about 150 ms on the reference machine instead of about 10.
+- `warmup_done`: a direct video launch has loaded the multimedia backend and
+  started the GPU driver on a worker (`src/app/VideoWarmup.h`).
+- `scenegraph`: the render thread has its graphics context.
+- `player`: the quick viewer is creating its player. `media_loaded`: the window
+  thread has learned the file is open; decoding starts from here.
 - `first_frame`: first scene-graph frame submitted.
 - `image_frame`: frame submitted after the requested still image reports a
   successful decode and has nonzero display dimensions. For videos, the
@@ -191,9 +202,12 @@ at entry to `main`, excluding process spawning and dynamic loading before main:
   sink. Observation happens on the GUI thread and can include a frame that
   arrived before the sink was attached to tracing. This is not a submitted-frame
   milestone or proof of physical presentation.
+- `video_frame`: frame submitted with a decoded video picture showing.
 - `grid_frame`: frame submitted after scanning settles and every cell
   intersecting the viewport has a decoded thumbnail at full opacity. An empty
   library, missing delegate, failed decode or fading thumbnail does not qualify.
+- `scan_applied`: the first library scan's rows are in the model.
+- `index_start`, `index_done`: metadata indexing began and finished.
 
 Readiness is sampled on the GUI thread before scene synchronization, latched
 at synchronization, then reported at Qt's
@@ -203,25 +217,42 @@ presentation by Hyprland. The UI tests separately exercise failed images,
 thumbnail fading and rendered media. Normal launches do not enable tracing.
 
 The probe fails with recent application diagnostics if required milestones are
-absent within its eight-second observation window. CI checks that evidence
-arrives and retains the JSON; it sets no speed threshold. Post-start CPU is sampled
-between seconds three and eight. Background indexing may still be running; this
+absent within its observation window: eight seconds, or up to thirty while the
+expected frame has not arrived. `--budget MODE:STAGE=MS` fails it when that
+stage's median is over the budget, and `--budget-scale` multiplies every
+budget. CI runs three launches of each with loose budgets, scaled by three on
+aarch64; see the workflow for the values. Post-start CPU is sampled from
+second three to the end of the observation window. Background indexing may still be running; this
 is not a guarantee that the application is idle.
 Zero means no CPU ticks were observed in that interval. Do not run benchmarks
 concurrently with builds or other tests.
 
 Use `xvfb-run -a` around the startup command on headless CI hosts that need an
-X display for Mesa. These measurements are informational, not CI timing gates.
-Wayland presentation and cold disk reads require separate measurements.
+X display for Mesa. The CI budgets are several times what a desktop measures:
+they catch a stage that starts waiting on something, not small regressions.
+Wayland presentation and cold disk reads require separate measurements; the
+current numbers are in [docs/performance](../docs/performance/README.md).
+
+The indexing probe opens a library offscreen with a fresh profile and reads
+the window thread's CPU time from `index_start` to `index_done`. Without
+`--library` it generates one with `make-performance-fixtures.py`. The nightly
+workflow fails it above 10% of one core for 10,000 files; the window thread
+used about 2% there, and 60 to 90% before metadata moved to workers (#164):
+
+```sh
+xvfb-run -a python3 tests/benchmark_indexing.py build/release/omaroll --files 10000 --max-gui-percent 10
+```
 
 The playback probe plays a 4K clip in the quick viewer and reports the
 process's CPU as a share of one core, its busiest threads and its minor page
 faults over four seconds, starting 1.5 seconds after the first decoded frame.
 It generates a 4K30 H.264 clip unless `--clip` names one. By default it runs
-offscreen with software decoding and llvmpipe; CI runs it that way with a loose
-`--max-cpu 350` budget on x86_64 and no budget on aarch64. Software-decoded
-frames come from FFmpeg's buffer pool, so CI cannot see per-frame copies of
-hardware frames. Check that path with `--gpu`, which opens a real window on
+offscreen with software decoding and llvmpipe; CI runs it that way with loose
+`--max-cpu 350 --max-faults 60000` budgets on x86_64 and none on aarch64.
+Software-decoded frames come from FFmpeg's buffer pool, so CI cannot see
+per-frame copies of hardware frames; the fault budget catches only a frame
+mapped every time. `omaroll_tests` covers the copies: it hands 4K NV12 frames
+to the presentation from a decoder thread and fails above 100 faults a frame. Check that path with `--gpu`, which opens a real window on
 the session's GPU with Omaroll's hardware decoders, inside omabox:
 
 ```sh

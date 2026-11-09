@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build-and-test:
-    timeout-minutes: 30
+    timeout-minutes: 45
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container }}
     env:
@@ -76,3 +76,11 @@ jobs:
         run: bash packaging/arch/check-omarchy-stable.sh build/release/omaroll
       - name: Repeat UI and viewer suites
         run: ctest --test-dir build/release -R 'omaroll_(ui|viewer)_tests' --repeat until-fail:5 --output-on-failure
+      # Metadata is read on workers (#164): the window thread used about 2% of
+      # a core while 10,000 files were indexed, against 60 to 90% before.
+      # Skipped on ARM, where the probes alone take most of the job's time.
+      - name: Check the window thread while indexing 10,000 files
+        if: matrix.check != 'aarch64'
+        run: >-
+          xvfb-run -a python3 tests/benchmark_indexing.py build/release/omaroll
+          --files 10000 --max-gui-percent 10

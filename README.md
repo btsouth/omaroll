@@ -416,6 +416,8 @@ cannot spoil the shot. `man omaroll` lists every option with examples.
   in line with a plain Qt player; mpv uses 6 to 8% there because it keeps
   frames on the graphics card. See
   [the measurements](docs/performance/2026-11-09-playback-cost/README.md).
+  Startup, library and playback numbers next to mpv and imv are in
+  [docs/performance](docs/performance/README.md).
 - **Cache and state.** Thumbnails in `~/.cache/omaroll/thumbs`, bounded at 256MB
   by default, configurable from 64MB to 1GB, and pruned least-recently-used.
   Embedded media dates use a small identity-checked index in the same cache
