@@ -138,6 +138,14 @@ public:
   QString windowRules() const;
   Q_INVOKABLE QString installWindowRules();
   Q_INVOKABLE QString removeWindowRules();
+  // The rules are offered once outside Settings (the first-run library and
+  // --set-default). Dismissing that offer, or installing, ends it.
+  Q_PROPERTY(bool windowRulesOfferDismissed READ windowRulesOfferDismissed NOTIFY
+                 windowRulesChanged)
+  [[nodiscard]] bool windowRulesOfferDismissed() const;
+  Q_INVOKABLE void dismissWindowRulesOffer();
+  // The settings key, for the command line, which reads it without AppSettings.
+  static const char* const kWindowRulesOfferDismissedKey;
   // Where the rules go. Tests point this at a scratch directory.
   void setHyprDirectory(const QString &directory);
   explicit AppSettings(QObject* parent = nullptr);

@@ -2973,8 +2973,22 @@ QString AppSettings::windowRules() const {
 QString AppSettings::installWindowRules() {
   const auto result = HyprlandSetup::installRules(
       m_hyprDirectory.isEmpty() ? HyprlandSetup::defaultDirectory() : m_hyprDirectory);
+  // Installed once, never offered again, even if they are removed later.
+  if (result.ok) setValue(kWindowRulesOfferDismissedKey, true);
   emit windowRulesChanged();
   return result.message;
+}
+
+const char* const AppSettings::kWindowRulesOfferDismissedKey = "hyprland/windowRulesOfferDismissed";
+
+bool AppSettings::windowRulesOfferDismissed() const {
+  return m_settings.value(kWindowRulesOfferDismissedKey, false).toBool();
+}
+
+void AppSettings::dismissWindowRulesOffer() {
+  if (windowRulesOfferDismissed()) return;
+  setValue(kWindowRulesOfferDismissedKey, true);
+  emit windowRulesChanged();
 }
 
 QString AppSettings::removeWindowRules() {

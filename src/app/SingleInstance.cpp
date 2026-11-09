@@ -30,6 +30,16 @@ QString digest(const QString& value) {
   return QString::fromLatin1(QCryptographicHash::hash(value.toUtf8(), QCryptographicHash::Sha256).toHex());
 }
 
+// XDG activation tokens are short printable ASCII. Bounded so a stray value
+// can't reach the environment.
+bool validToken(const QString& token) {
+  if (token.isEmpty() || token.size() > 512) return false;
+  for (const QChar c : token) {
+    if (c.unicode() <= 0x20 || c.unicode() >= 0x7f) return false;
+  }
+  return true;
+}
+
 bool missingEndpoint(QLocalSocket::LocalSocketError error) {
   return error == QLocalSocket::ServerNotFoundError || error == QLocalSocket::ConnectionRefusedError;
 }
@@ -69,6 +79,12 @@ SingleInstance::Result forward(QLocalSocket& socket, const QByteArray& frame, bo
 
 bool SingleInstance::parseFrame(const QByteArray& frame, QStringList& paths, bool& library,
                                 qint64& startMs, QStringList& skipped) {
+  QString token;
+  return parseFrame(frame, paths, library, startMs, skipped, token);
+}
+
+bool SingleInstance::parseFrame(const QByteArray& frame, QStringList& paths, bool& library,
+                                qint64& startMs, QStringList& skipped, QString& activationToken) {
   if (frame.size() > maxFrameBytes) return false;
   const QJsonDocument message = QJsonDocument::fromJson(frame);
   if (!message.isObject()) {
@@ -108,6 +124,11 @@ bool SingleInstance::parseFrame(const QByteArray& frame, QStringList& paths, boo
       skipped.append(name.toString());
     }
   }
+  // An opaque compositor string; anything else is dropped, not refused, so a
+  // launch still opens its files without the focus hand-over.
+  const QJsonValue token = object.value(QStringLiteral("activationToken"));
+  if (!token.isUndefined() && !token.isString()) return false;
+  activationToken = validToken(token.toString()) ? token.toString() : QString();
   library = object.value(QStringLiteral("library")).toBool();
   startMs = start.isUndefined() ? -1 : qint64(start.toDouble());
   return true;
@@ -161,11 +182,18 @@ SingleInstance::SingleInstance(const QString& serverName, QObject* parent)
         QStringList paths, skipped;
         bool library = false;
         qint64 startMs = -1;
-        if (socket->bytesAvailable() != 0 || !parseFrame(frame, paths, library, startMs, skipped)) {
+        QString token;
+        if (socket->bytesAvailable() != 0 ||
+            !parseFrame(frame, paths, library, startMs, skipped, token)) {
           socket->abort();
           return;
         }
         accepted = true;
+        // The launcher's token lets the window that takes the request come
+        // to the front. Qt's Wayland plugin uses it on the next
+        // requestActivate() and then clears it.
+        if (!token.isEmpty()) qputenv("XDG_ACTIVATION_TOKEN", token.toLatin1());
+        else qunsetenv("XDG_ACTIVATION_TOKEN");
         emit activationRequested(paths, library, startMs, skipped);
         socket->write(acknowledgement);
         socket->disconnectFromServer();
@@ -186,6 +214,11 @@ SingleInstance::Result SingleInstance::claimOrNotify(const QStringList& paths, b
                       {QStringLiteral("library"), library},
                       {QStringLiteral("startMs"), double(startMs)},
                       {QStringLiteral("skipped"), QJsonArray::fromStringList(skipped)}};
+  // Focus belongs to whichever window opens the request, which is in the
+  // running instance; the launcher's token has to go there with it.
+  if (const QString token = qEnvironmentVariable("XDG_ACTIVATION_TOKEN"); validToken(token)) {
+    message.insert(QStringLiteral("activationToken"), token);
+  }
   const QByteArray frame = QJsonDocument(message).toJson(QJsonDocument::Compact) + '\n';
   if (frame.size() > maxFrameBytes) {
     qWarning() << "omaroll: the open request exceeds the single-instance limit";

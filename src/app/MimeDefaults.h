@@ -49,6 +49,10 @@ public:
   static QString summarize(bool unset, const QString &report, bool ok,
                            const QString &group = QStringLiteral("all"));
 
+  // Where --set-default keeps what it replaced, beside the settings. A record
+  // left in the old ~/.config/Omaroll is moved here first.
+  static QString recordPath();
+
   bool known() const { return m_known; }
   bool imagesDefault() const { return m_imagesDefault; }
   bool videosDefault() const { return m_videosDefault; }

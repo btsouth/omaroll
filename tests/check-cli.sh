@@ -72,7 +72,7 @@ grep -qx 'Could not set image/png' "$scratch/err" || fail "failed type not repor
 # --diagnostics: no display needed, and the facts a bug report asks for.
 out=$(QT_QPA_PLATFORM=no-such-platform WAYLAND_DISPLAY= DISPLAY= "$omaroll" --diagnostics)
 for field in 'Omaroll: ' 'Qt: ' 'Platform: none (command line)' 'Omarchy: ' 'Hyprland: ' 'GPU: ' \
-             'Theme: ' 'tesseract: ' 'ffmpeg: '; do
+             'Theme: ' 'VA-API: ' 'tesseract: ' 'ffmpeg: '; do
   grep -q "^$field" <<<"$out" || fail "--diagnostics lacks '$field': $out"
 done
 grep -q "$scratch" <<<"$out" && fail "--diagnostics printed a path: $out"
@@ -88,6 +88,21 @@ grep -q 'hypr.omaroll' "$HOME/.config/hypr/hyprland.lua" || fail "rules not requ
 "$omaroll" --remove-window-rules | grep -q 'removed' || fail "remove did not report"
 [[ ! -e $HOME/.config/hypr/omaroll.lua ]] || fail "rules file left behind"
 cmp -s "$scratch/hyprland.before" "$HOME/.config/hypr/hyprland.lua" || fail "hyprland.lua not restored"
+
+# --set-default offers the rules while they would help, and not once they are
+# installed or the offer was turned down in the library.
+offer='To float the viewer and keep it opaque: omaroll --install-window-rules'
+out=$("$omaroll" --set-default images)
+grep -qxF "$offer" <<<"$out" || fail "--set-default did not offer the window rules: $out"
+"$omaroll" --install-window-rules >/dev/null
+out=$("$omaroll" --set-default images)
+grep -qF 'install-window-rules' <<<"$out" && fail "offered rules that are installed: $out"
+"$omaroll" --remove-window-rules >/dev/null
+mkdir -p "$XDG_CONFIG_HOME/omaroll"
+printf '[hyprland]\nwindowRulesOfferDismissed=true\n' > "$XDG_CONFIG_HOME/omaroll/omaroll.conf"
+out=$("$omaroll" --set-default images)
+grep -qF 'install-window-rules' <<<"$out" && fail "offered rules after Not now: $out"
+rm "$XDG_CONFIG_HOME/omaroll/omaroll.conf"
 
 # The man page covers every option in --help, and installs.
 man=$source/packaging/omaroll.1

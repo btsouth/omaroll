@@ -265,10 +265,11 @@ Every viewer shortcut is listed in [Shortcuts](docs/shortcuts.md#viewer), and
   after confirmation, as one step Undo puts back.
 - **Share and hand off.** Drag actual files into another app, copy images or
   text, send with LocalSend or Taildrop, and open specialist tools for trimming,
-  annotation, conversion and editing. A copied JPEG of up to 24 megapixels that fits
+  annotation, conversion and editing. A copied image of up to 24 megapixels that fits
   the image memory limit is offered as PNG too, so it can show up in
   Omarchy's clipboard history while apps that take JPEG still get the original
-  bytes. The history waits two seconds for the PNG, so on a slow machine a
+  bytes. WebP, HEIC, AVIF, JPEG XL, GIF and other readable still formats offer
+  a file reference plus PNG, using the first frame of animations. The history waits two seconds for the PNG, so on a slow machine a
   large photo may still be missed. It needs a compositor with ext-data-control,
   which Omarchy's Hyprland has; elsewhere, and for larger photos, the copy is
   JPEG only and pastes as before, but the history skips it.
@@ -384,7 +385,9 @@ This writes a copy of `/usr/share/omaroll/hypr/omaroll.lua` to
 `~/.config/hypr/` and adds a short block to `~/.config/hypr/hyprland.lua` that
 loads it if it is there.
 `omaroll --remove-window-rules` takes both out again, leaving `hyprland.lua`
-exactly as it was, and **Hyprland window rules** in Settings does either. It
+exactly as it was, and **Hyprland window rules** in Settings does either. The
+empty library offers installation once, until installed or dismissed, and
+`--set-default` points to the command too. It
 needs Omarchy's Lua Hyprland config. A line of your own that only says
 `require("hypr.omaroll")` is removed too; any other line that loads the rules is
 reported and left for you to edit. A `~/.config/hypr/omaroll.lua` you wrote
@@ -504,3 +507,9 @@ edit or trash files.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+The default-handler restore record lives beside settings in
+`~/.config/omaroll/mime-defaults.ini`; older records move there automatically.
+`--unset-default` reports exact restore counts and how many types keep their
+system default. Invalid `--start` values also send a desktop notice. Diagnostics
+list VA-API render-node and driver prerequisites without probing decoding.

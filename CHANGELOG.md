@@ -4,6 +4,11 @@
 
 ### Added
 
+- First-run window rule installation, PNG clipboard data for readable still
+  formats, forwarded activation tokens, and a desktop notice for invalid start times.
+- VA-API prerequisites in diagnostics. Default-handler records now migrate beside
+  settings, undo summaries explain system defaults, and paste writers are reaped promptly.
+
 - Searchable shortcut help in the viewer, library and preview, with grouped key caps.
 - About in Settings with version links and privacy-safe Copy diagnostics.
 - Themed tooltips and library footer hints that fit whole labels.

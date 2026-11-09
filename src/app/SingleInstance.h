@@ -22,6 +22,9 @@ public:
   // Shared bounded JSON validator, independent of socket delivery.
   static bool parseFrame(const QByteArray& frame, QStringList& paths, bool& library,
                          qint64& startMs, QStringList& skipped);
+  // The same, plus the launcher's XDG activation token, empty when none came.
+  static bool parseFrame(const QByteArray& frame, QStringList& paths, bool& library,
+                         qint64& startMs, QStringList& skipped, QString& activationToken);
 
 signals:
   void activationRequested(const QStringList& paths, bool library, qint64 startMs, const QStringList& skipped);

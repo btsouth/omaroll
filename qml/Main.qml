@@ -1755,6 +1755,44 @@ ApplicationWindow {
                 }
             }
         }
+
+        // Offered once: without these rules a stock Omarchy tiles and dims
+        // the viewer. Installing or Not now ends the offer for good.
+        Column {
+            objectName: "windowRulesOffer"
+            width: parent.width
+            visible: emptyState.reason === "library" && Theme.omarchyAvailable
+                     && Settings.windowRules === "available" && !Settings.windowRulesOfferDismissed
+            topPadding: 8
+            spacing: 6
+            Text {
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                text: "Float the viewer and keep it opaque, the way Omarchy treats imv and mpv?"
+                font.family: Theme.fontFamily
+                font.pixelSize: 12
+                color: Theme.mutedText
+            }
+            Row {
+                anchors.horizontalCenter: parent.horizontalCenter
+                spacing: 8
+                PillButton {
+                    objectName: "windowRulesOfferInstall"
+                    enabled: !root.anySheetOpen
+                    label: "Install window rules"
+                    toolTip: "Add Omaroll's rules to your Hyprland config. Settings can remove them."
+                    onClicked: root.say(Settings.installWindowRules())
+                }
+                PillButton {
+                    objectName: "windowRulesOfferDismiss"
+                    enabled: !root.anySheetOpen
+                    label: "Not now"
+                    toolTip: "Settings can add them later"
+                    onClicked: Settings.dismissWindowRulesOffer()
+                }
+            }
+        }
     }
 
     Connections {
