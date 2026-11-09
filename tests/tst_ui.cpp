@@ -70,6 +70,7 @@
 #include <QMimeData>
 #include <QMutex>
 #include <QMutexLocker>
+#include <QtEndian>
 #include <QPainter>
 #include <QPdfWriter>
 #include <QPointingDevice>
@@ -3536,6 +3537,50 @@ private slots:
              QSize(qRound(poster->width()), qRound(poster->height())));
     invoke("dismissTopLayer");
     QTRY_VERIFY(poster->property("source").toUrl().isEmpty());
+  }
+
+  // The preview fails a video with no stream as the viewer does: it stops,
+  // says so, and drops the last file's frame instead of showing it.
+  void previewFailsAVideoWithNoStreamsAndDropsTheOldFrame() {
+    int videoRow = -1;
+    for (int row = 0; row < m_library->rowCount() && videoRow < 0; ++row) {
+      if (m_library->isVideoAt(row) && pathAt(row).endsWith(QStringLiteral(".mp4"))) videoRow = row;
+    }
+    if (videoRow < 0) QSKIP("no MP4 in the test library");
+    QFile source(pathAt(videoRow));
+    QVERIFY(source.open(QIODevice::ReadOnly));
+    QByteArray bytes = source.readAll();
+    const qsizetype at = bytes.indexOf("moov");
+    QVERIFY(at >= 4);
+    const quint32 size = qFromBigEndian<quint32>(bytes.constData() + at - 4);
+    QVERIFY(size >= 8 && at - 4 + qsizetype(size) <= bytes.size());
+    for (qsizetype i = at + 4; i < at - 4 + qsizetype(size); ++i) bytes[i] = '\x5a';
+    const QString streamless = m_scratch.filePath(QStringLiteral("streamless-preview.mp4"));
+    // It has no frame to make a thumbnail from, and says so.
+    m_disposablePaths.append(streamless);
+    {
+      QFile out(streamless);
+      QVERIFY(out.open(QIODevice::WriteOnly));
+      QCOMPARE(out.write(bytes), bytes.size());
+    }
+
+    openDetail(videoRow);
+    QQuickItem* detail = item("detail");
+    QTRY_COMPARE_WITH_TIMEOUT(detail->property("playbackState").toInt(),
+                              static_cast<int>(QMediaPlayer::PlayingState), 5000);
+    QObject* presentation = detail->property("presentation").value<QObject*>();
+    QVERIFY(presentation);
+    QTRY_VERIFY_WITH_TIMEOUT(presentation->property("ready").toBool(), 10000);
+    QQuickItem* output = item("videoOutput");
+    QTRY_VERIFY(output->isVisible());
+
+    detail->setProperty("path", streamless);
+    QTRY_VERIFY_WITH_TIMEOUT(detail->property("videoFailed").toBool(), 10000);
+    QCOMPARE(detail->property("playbackError").toString(), QStringLiteral("No video or audio stream could be read"));
+    QCOMPARE(detail->property("playbackState").toInt(), static_cast<int>(QMediaPlayer::StoppedState));
+    QVERIFY(!output->isVisible());
+    QVERIFY(!item("detailVideoPoster")->isVisible());
+    invoke("dismissTopLayer");
   }
 
   void startupReadinessExcludesPlaceholdersAndFailedImages() {

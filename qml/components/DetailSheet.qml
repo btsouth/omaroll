@@ -73,6 +73,11 @@ Item {
     property string caption: ""
     property int kind: 0
     property string playbackError: ""
+    // A video error with no frame presenting: the file did not open, or
+    // playback stopped. Nothing of it is left on the stage.
+    readonly property bool videoFailed: isVideo && playbackError !== ""
+        && !(!!presentation && presentation.ready && !!player
+             && player.playbackState !== MediaPlayer.StoppedState)
     property bool canNavigate: false
     property real imageZoom: 1.0
     property int imageRotation: 0
@@ -1036,7 +1041,7 @@ Item {
                 asynchronous: true
                 smooth: true
                 mipmap: true
-                visible: root.isVideo && !(root.presentation && root.presentation.ready)
+                visible: root.isVideo && !root.videoFailed && !(root.presentation && root.presentation.ready)
                 // The thumbnail provider applies the ratio from its URL once.
                 sourceSize: Qt.size(Math.round(width), Math.round(height))
                 source: !root.visible || !root.isVideo || root.path === "" ? ""
@@ -1506,9 +1511,22 @@ Item {
                         // A clip the ffmpeg backend cannot decode must say so rather
                         // than sit behind a dead play button.
                         onErrorOccurred: function (error, errorString) {
-                            root.playbackError = errorString !== "" ? errorString : "Could not play this file"
+                            fail(errorString !== "" ? errorString : "Could not play this file")
+                        }
+                        function fail(message) {
+                            root.playbackError = message
                             if (root.slideshowRunning) {
                                 slideshowErrorTimer.restart()
+                            }
+                        }
+                        // No stream, or no frame while playing, raises no
+                        // error; stop, so MPRIS says Stopped too.
+                        property Connections presentationFailure: Connections {
+                            target: root.presentation
+                            function onFailureChanged() {
+                                if (root.presentation.failure === "") return
+                                mediaPlayer.stop()
+                                mediaPlayer.fail(root.presentation.failure)
                             }
                         }
                         onPositionChanged: {
@@ -1614,8 +1632,11 @@ Item {
                 anchors.fill: parent
                 anchors.margins: 16
                 anchors.bottomMargin: stage.videoFooterHeight
-                visible: root.isVideo && root.presentation && root.presentation.hasFrame
-                         && (root.presentation.ready || videoPoster.status !== Image.Ready)
+                // The last file's frame is kept only while this file's
+                // poster loads, and never under an error.
+                visible: root.isVideo && !root.videoFailed && !!root.presentation
+                         && root.presentation.hasFrame
+                         && (root.presentation.ready || videoPoster.status === Image.Loading)
                 readonly property rect sourceRect: videoSurface.item
                                                    ? videoSurface.item.sourceRect : Qt.rect(0, 0, 0, 0)
                 readonly property QtObject videoSink: videoSurface.item ? videoSurface.item.videoSink : null
@@ -2212,6 +2233,7 @@ Item {
                         storyboard: previewFrames
                         time: at / Math.max(1, scrub.width) * (player ? player.duration : 0)
                         label: transport.clock(time)
+                        frameLabel: frameTime >= 0 ? transport.clock(frameTime) : ""
                         maximumFrameWidth: Math.min(192, transport.width - 6)
                     }
                 }

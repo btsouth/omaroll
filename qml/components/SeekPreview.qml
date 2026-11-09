@@ -2,7 +2,9 @@ import QtQuick
 
 // The frame and time under the pointer on a seek bar. The frame comes from
 // the video's storyboard, nearest the time; until there is one, or for a clip
-// too short to have one, only the time shows.
+// too short to have one, only the time shows. Frames are keyframes, which can
+// be seconds from the pointer, so a frame from another second says its own
+// time in its corner.
 Rectangle {
     id: root
 
@@ -10,6 +12,8 @@ Rectangle {
     // Milliseconds under the pointer.
     property real time: 0
     property string label: ""
+    // The shown frame's own time, formatted like the label.
+    property string frameLabel: ""
     // The window's room for it, in logical pixels.
     property real maximumFrameWidth: 192
     property real maximumFrameHeight: 108
@@ -19,6 +23,9 @@ Rectangle {
     readonly property int frameIndex: root.storyboard && root.storyboard.frameCount > 0
                                       ? root.storyboard.frameAt(root.time) : -1
     readonly property bool showsFrame: root.frameIndex >= 0 && root.frameWidth >= 48
+    readonly property real frameTime: root.frameIndex >= 0 ? root.storyboard.frameTime(root.frameIndex) : -1
+    readonly property bool frameElsewhere: root.showsFrame && root.frameTime >= 0
+                                           && root.frameLabel !== "" && root.frameLabel !== root.label
     readonly property real aspect: root.storyboard ? root.storyboard.aspectRatio : 16 / 9
     readonly property real frameWidth: Math.floor(Math.min(root.maximumFrameWidth,
                                                            root.maximumFrameHeight * root.aspect))
@@ -49,6 +56,29 @@ Rectangle {
         fillMode: Image.PreserveAspectCrop
         source: root.showsFrame && root.storyboard.frameCount > 0
                 ? root.storyboard.frameUrl(root.frameIndex) : ""
+
+        Rectangle {
+            objectName: "seekPreviewFrameTime"
+            visible: root.frameElsewhere
+            anchors.left: parent.left
+            anchors.bottom: parent.bottom
+            anchors.margins: 3
+            width: frameTimeText.implicitWidth + 8
+            height: frameTimeText.implicitHeight + 2
+            radius: 2
+            color: Qt.rgba(0, 0, 0, 0.68)
+            Accessible.role: Accessible.StaticText
+            Accessible.name: "Frame from " + root.frameLabel
+
+            Text {
+                id: frameTimeText
+                anchors.centerIn: parent
+                text: root.frameLabel
+                font.family: Theme.fontFamily
+                font.pixelSize: 10
+                color: "#ffffff"
+            }
+        }
     }
 
     Text {

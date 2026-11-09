@@ -161,7 +161,8 @@ the previous picture stays visible until the new clip's first decoded frame.
 
 Hovering the seek bar, in the viewer or the library preview, shows the time
 under the pointer and, above it, the nearest of up to 100 sampled keyframes, so
-the picture can be a few seconds from that time on a long video. Once a video is
+the picture can be a few seconds from that time on a long video. A keyframe
+from another second shows its own time in its corner. Once a video is
 playing, Omaroll has ffmpeg decode those keyframes in the background, at low
 priority and at most two at a time, and waits while you seek. Only the focused,
 unminimized window decodes; what's done so far is kept when you switch away.
@@ -202,6 +203,9 @@ memory limit. Open with, Show in folder and Move to Trash stay available, and
 the zoom and rotate controls are off. A JPEG or PNG that ends early, as an
 unfinished download does, shows with a "cut off" note, since the missing part
 otherwise looks like grey picture. In the filmstrip such files are marked.
+A video that won't play says why the same way, with Open in mpv too unless
+it isn't a video at all. That includes a file with no stream FFmpeg can read
+and one that plays for ten seconds without a picture.
 
 Drag the file name in the viewer's header, or `Ctrl`+drag the picture, to drop
 the file itself into a file manager, browser or chat; a plain drag still pans.
