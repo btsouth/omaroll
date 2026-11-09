@@ -6918,8 +6918,9 @@ private slots:
     const QString path = dir.filePath(QStringLiteral("tagged.mkv"));
     QProcess encoder;
     encoder.start(QStringLiteral("ffmpeg"), {"-v", "error", "-f", "lavfi", "-i",
-        "color=s=160x90:d=0.1", "-c:v", "ffv1", "-color_trc", transfer,
-        "-color_primaries", "bt2020", path});
+        "color=s=160x90:d=0.1", "-vf",
+        "setparams=color_trc=" + transfer + ":color_primaries=bt2020:colorspace=bt2020nc",
+        "-c:v", "ffv1", path});
     QVERIFY(encoder.waitForFinished(20000));
     QCOMPARE(encoder.exitCode(), 0);
     MediaInspector inspector;

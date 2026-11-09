@@ -31,7 +31,7 @@ public:
       emit readyChanged();
     });
   }
-  QVideoSink* videoSink() {
+  Q_INVOKABLE QVideoSink* videoSink() {
     // Share the scene graph's RHI so hardware frames keep texture interop.
     if (m_output) m_input.setRhi(m_output->rhi());
     return &m_input;
