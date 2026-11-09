@@ -81,6 +81,7 @@
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QQmlProperty>
 #include <QSGRendererInterface>
 #include <QPointer>
 #include <QScopeGuard>
@@ -587,6 +588,40 @@ private slots:
     visit(visit, hints);
     QVERIFY(visible > 0);
     QVERIFY(visible < 8);
+  }
+
+  // Rounded themes mask the thumbnail on the GPU; square themes and the
+  // software renderer never do. Grid tiles share one mask.
+  void thumbnailMaskOnlyForRoundedThemesOnTheGpu() {
+    QQuickItem* grid = item("library");
+    QTRY_VERIFY(m_library->rowCount() > 0);
+    QQuickItem* card = nullptr;
+    QTRY_VERIFY((card = cardFor(pathAt(0))));
+    const auto wanted = [card](int radius, QSGRendererInterface::GraphicsApi api) {
+      QVariant result;
+      QMetaObject::invokeMethod(card, "thumbnailMaskWanted", Q_RETURN_ARG(QVariant, result),
+                                Q_ARG(QVariant, radius), Q_ARG(QVariant, int(api)));
+      return result.toBool();
+    };
+    QVERIFY(!wanted(0, QSGRendererInterface::OpenGL));
+    QVERIFY(!wanted(0, QSGRendererInterface::Software));
+    QVERIFY(!wanted(6, QSGRendererInterface::Software));
+    QVERIFY(!wanted(6, QSGRendererInterface::Unknown));
+    QVERIFY(wanted(6, QSGRendererInterface::OpenGL));
+    QVERIFY(wanted(6, QSGRendererInterface::Vulkan));
+
+    // What this window does, with this theme and renderer.
+    const bool gpu = m_window->rendererInterface()->graphicsApi() != QSGRendererInterface::Software;
+    const bool rounded = m_theme->cornerRadius() > 0;
+    QCOMPARE(card->property("roundedThumbnail").toBool(), gpu && rounded);
+    QQuickItem* mask = item("captureTileMask");
+    QCOMPARE(QQmlProperty(mask, QStringLiteral("layer.enabled")).read().toBool(), gpu && rounded);
+    QCOMPARE(card->property("thumbnailMaskSource").value<QQuickItem*>(), mask);
+    // The shared mask is the size of a tile's picture, inside its border.
+    QTRY_COMPARE(mask->width(), card->width() - 2);
+    QCOMPARE(mask->height(), card->height() - 2);
+    // Sectioned or flat, the tiles use the grid's one mask.
+    QVERIFY(grid->property("sectioned").isValid());
   }
 
   // The hints are about what applies now: the highlighted tile without a
@@ -3454,6 +3489,42 @@ private slots:
     QCOMPARE(sheet->property("zoom").toDouble(), 1.0);
     QCOMPARE(sheet->property("panX").toDouble(), 0.0);
 
+    // The shared toolbar drives the same zoom: in, out, and Fit to reset.
+    // Only its zoom group shows; Compare has nothing to step through or turn.
+    const auto button = [&](const char* name) {
+      return find(sheet, [name](QQuickItem* candidate) {
+        return candidate->objectName() == QLatin1String(name);
+      });
+    };
+    QQuickItem* zoomIn = button("compareZoomIn");
+    QQuickItem* zoomOut = button("compareZoomOut");
+    QQuickItem* fit = button("compareFitToggle");
+    QVERIFY(zoomIn && zoomOut && fit);
+    for (const char* hidden : {"compareToolbarPrevious", "compareToolbarNext", "compareSlideshowButton",
+                               "compareRotateLeft", "compareRotateRight", "compareFlipHorizontal",
+                               "compareTrashButton"}) {
+      QQuickItem* control = button(hidden);
+      QVERIFY2(!control || !control->isVisible(), hidden);
+    }
+    QCOMPARE(fit->property("label").toString(), QStringLiteral("Fit"));
+    QVERIFY(fit->property("active").toBool());
+    // Apart, so two presses on one button never read as a double click.
+    const auto press = [&](QQuickItem* target) {
+      QTest::qWait(QGuiApplication::styleHints()->mouseDoubleClickInterval() + 50);
+      click(target);
+    };
+    press(zoomIn);
+    QTRY_VERIFY(qAbs(sheet->property("zoom").toDouble() - 1.25) < 0.001);
+    QTRY_VERIFY(!fit->property("active").toBool());
+    press(zoomIn);
+    QTRY_VERIFY(qAbs(sheet->property("zoom").toDouble() - 1.5625) < 0.001);
+    press(zoomOut);
+    QTRY_VERIFY(qAbs(sheet->property("zoom").toDouble() - 1.25) < 0.001);
+    press(fit);
+    QTRY_COMPARE(sheet->property("zoom").toDouble(), 1.0);
+    QCOMPARE(sheet->property("panX").toDouble(), 0.0);
+    QTRY_VERIFY(fit->property("active").toBool());
+
     invoke("dismissTopLayer");
     QTRY_VERIFY(!sheet->isVisible());
   }
@@ -5272,6 +5343,56 @@ private slots:
     QTRY_VERIFY(!sortMenu->property("visible").toBool());
     QTRY_VERIFY(item("library")->hasActiveFocus());
     m_library->setSortMode(0);
+  }
+
+  // Switching Browse from Folders to a collection shows that collection's
+  // buttons, and a count changing under a focused segment leaves the focus
+  // where it was.
+  void libraryBrowserSegmentsShowCollectionActionsAndKeepFocus() {
+    const QString album = QStringLiteral("Browse segment album");
+    const QString tag = QStringLiteral("browse-segment-tag");
+    QVERIFY(m_settings->createAlbum(album));
+    QVERIFY(m_settings->createTag(tag));
+    QObject* browser = m_window->findChild<QObject*>(QStringLiteral("libraryBrowser"));
+    QVERIFY(browser);
+    const auto restore = qScopeGuard([&] {
+      QMetaObject::invokeMethod(browser, "close");
+      m_settings->deleteAlbum(album);
+      m_settings->deleteAlbum(album + QStringLiteral(" 2"));
+      m_settings->deleteTag(tag);
+    });
+    QMetaObject::invokeMethod(browser, "open");
+    QTRY_VERIFY(browser->property("visible").toBool());
+    QTRY_COMPARE(browser->property("section").toInt(), 0);
+    QQuickItem* actions = item("browseCollectionActions");
+    QVERIFY(!actions->isVisible());
+
+    const struct { int section; const char* button; } cases[] = {
+        {1, "browseNewAlbum"}, {3, "browseNewTag"}, {4, "browseSaveView"}};
+    for (const auto& entry : cases) {
+      // Back to Folders first, so each case starts from the hidden row.
+      clickPlaced(item("browseFacet-0"));
+      QTRY_COMPARE(browser->property("section").toInt(), 0);
+      QTRY_VERIFY(!actions->isVisible());
+      clickPlaced(item(QStringLiteral("browseFacet-%1").arg(entry.section)));
+      QTRY_COMPARE(browser->property("section").toInt(), entry.section);
+      QTRY_VERIFY2(actions->isVisible(), entry.button);
+      QTRY_VERIFY2(item(QLatin1String(entry.button))->isVisible(), entry.button);
+    }
+    // With an album chosen, rename and delete show too.
+    clickPlaced(item("browseFacet-1"));
+    QTRY_VERIFY(item("browseRenameChoice")->isVisible());
+    QVERIFY(item("browseDeleteChoice")->isVisible());
+
+    // Focus a segment from the keyboard's side, then change its count.
+    QQuickItem* albums = item("browseFacet-1");
+    albums->forceActiveFocus(Qt::TabFocusReason);
+    QTRY_VERIFY(albums->hasActiveFocus());
+    const int before = albums->property("count").toInt();
+    QVERIFY(m_settings->createAlbum(album + QStringLiteral(" 2")));
+    QTRY_COMPARE(albums->property("count").toInt(), before + 1);
+    QCOMPARE(item("browseFacet-1"), albums);
+    QVERIFY(albums->hasActiveFocus());
   }
 
   void libraryBrowserFindsAndOpensAFolderFromTheKeyboard() {

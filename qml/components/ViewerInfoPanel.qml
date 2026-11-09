@@ -174,12 +174,27 @@ Rectangle {
                 elide: Text.ElideMiddle
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
-                font.underline: folderMouse.containsMouse
-                color: folderMouse.containsMouse ? Osd.accent : Osd.mutedText
+                font.underline: folderMouse.containsMouse || activeFocus
+                color: folderMouse.containsMouse || activeFocus ? Osd.accent : Osd.mutedText
+                activeFocusOnTab: true
                 Accessible.role: Accessible.Button
-                Accessible.name: "Path: " + root.filePath
-                Accessible.description: "Open containing folder"
+                Accessible.name: "Open folder " + root.folder
+                Accessible.description: root.filePath
                 Accessible.onPressAction: root.folderRequested()
+                Keys.onReturnPressed: root.folderRequested()
+                Keys.onEnterPressed: root.folderRequested()
+                Keys.onSpacePressed: root.folderRequested()
+
+                Rectangle {
+                    objectName: "viewerInfoFolderFocus"
+                    anchors.fill: parent
+                    anchors.margins: -2
+                    visible: parent.activeFocus
+                    color: "transparent"
+                    radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 3) : 2
+                    border.width: 1
+                    border.color: Osd.accent
+                }
 
                 MouseArea {
                     id: folderMouse
@@ -190,6 +205,8 @@ Rectangle {
                 }
                 ThemedToolTip {
                     requested: folderMouse.containsMouse
+                    keyboardRequested: parent.activeFocus && parent.Window.window
+                                       && parent.Window.window.keyboardNavigation === true
                     text: root.filePath + "\nOpen containing folder"
                     delay: 500
                 }

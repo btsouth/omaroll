@@ -85,12 +85,17 @@ Item {
 
     // Rounded themes clip the picture to the tile's corners. Item.clip only
     // cuts to the bounding box, so the thumbnail draws through a mask. The
-    // mask is a layer, rendered again only when the thumbnail itself changes,
-    // so scrolling costs nothing extra. Square themes, and the software
-    // renderer that cannot run the effect, keep the plain image.
-    readonly property bool roundedThumbnail: Theme.cornerRadius > 0
-                                             && GraphicsInfo.api !== GraphicsInfo.Software
-                                             && GraphicsInfo.api !== GraphicsInfo.Unknown
+    // picture's layer is rendered again only when the thumbnail changes, so
+    // tiles on screen cost nothing extra while scrolling. Square themes, and
+    // the software renderer that cannot run the effect, keep the plain image.
+    function thumbnailMaskWanted(radius, api) {
+        return radius > 0 && api !== GraphicsInfo.Software && api !== GraphicsInfo.Unknown
+    }
+    readonly property bool roundedThumbnail: thumbnailMaskWanted(Theme.cornerRadius, GraphicsInfo.api)
+    // A grid of same-size tiles shares one mask (CaptureGrid); a card on its
+    // own draws its own.
+    property Item sharedMask: null
+    readonly property Item thumbnailMaskSource: sharedMask !== null ? sharedMask : thumbnailMask
     // Inside the frame's 1 px border.
     readonly property real innerRadius: Math.max(0, Theme.cornerRadius - 1)
 
@@ -246,7 +251,7 @@ Item {
             layer.smooth: true
             layer.effect: MultiEffect {
                 maskEnabled: true
-                maskSource: thumbnailMask
+                maskSource: root.thumbnailMaskSource
                 // A soft threshold antialiases the corner.
                 maskThresholdMin: 0.5
                 maskSpreadAtMin: 1.0
@@ -269,7 +274,7 @@ Item {
             anchors.fill: thumbnail
             visible: false
             radius: root.innerRadius
-            layer.enabled: root.roundedThumbnail
+            layer.enabled: root.roundedThumbnail && root.sharedMask === null
             layer.smooth: true
         }
 

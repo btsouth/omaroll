@@ -35,6 +35,8 @@ FocusScope {
     property int cellWidth: 100
     property int cellHeight: 68
     property int cellSpacing: 12
+    // The grid's one rounded thumbnail mask; tiles here are its size too.
+    property Item tileMask: null
     // Month sections where a day header would sit over a row or two.
     property bool compact: false
     // Bumped once per event-loop turn after the library or the rows change,
@@ -596,6 +598,7 @@ FocusScope {
                             id: card
                             anchors.fill: parent
                             anchors.margins: Math.round(root.cellSpacing / 2)
+                            sharedMask: root.tileMask
 
                             path: cell.path
                             fileName: cell.tile.fileName || ""

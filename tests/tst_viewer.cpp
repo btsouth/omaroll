@@ -875,9 +875,25 @@ private slots:
     };
     visit(visit, panel);
     QCOMPARE(mentions, 1);
-    // Dark over the picture in both palettes, like the toolbar.
+    // The line is a button named for what it does, and the keyboard reaches it.
+    QAccessibleInterface* folderButton = QAccessible::queryAccessibleInterface(folder);
+    QVERIFY(folderButton);
+    QCOMPARE(folderButton->role(), QAccessible::Button);
+    QCOMPARE(folderButton->text(QAccessible::Name), QStringLiteral("Open folder ") + where);
+    QVERIFY(folder->activeFocusOnTab());
+    folder->forceActiveFocus(Qt::TabFocusReason);
+    QTRY_VERIFY(folder->hasActiveFocus());
+    QVERIFY(item(QStringLiteral("viewerInfoFolderFocus"))->isVisible());
+    // Dark over the picture like the toolbar, with light text, in this row's
+    // palette. The light row checks that the panel does not follow the
+    // theme's pale background.
+    QCOMPARE(theme.mode(), palette);
     const QColor panelColour = panel->property("color").value<QColor>();
     QVERIFY2(panelColour.lightnessF() < 0.2, qPrintable(panelColour.name()));
+    const QColor folderColour = folder->property("color").value<QColor>();
+    QVERIFY2(folderColour.lightnessF() > 0.6, qPrintable(folderColour.name()));
+    if (palette == QStringLiteral("light"))
+      QVERIFY(theme.background().lightnessF() > 0.6);
   }
 
   void picturesReloadAfterSavesAndKeepTheirViewWhenSiblingsChange() {

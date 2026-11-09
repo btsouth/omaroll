@@ -575,17 +575,26 @@ FocusScope {
                             id: facetHolder
                             width: parent.width
                             height: facetFrame.height
-                            readonly property var facets: [
-                                {section: 0, label: "Folders", count: Captures.folders.length, shown: true},
-                                {section: 1, label: "Albums", count: Settings.albumNames.length, shown: true},
-                                {section: 2, label: "Dates", count: Captures.dateBuckets.length, shown: true},
-                                {section: 3, label: "Tags", count: Settings.tagNames.length, shown: true},
-                                // Only a library with photos from a real camera
-                                // earns this; a screenshot library never sees it.
-                                {section: 5, label: "Cameras", count: Captures.cameras.length,
-                                 shown: root.hasCameras || root.section === 5},
-                                {section: 4, label: "Smart", count: Settings.smartCollectionNames.length, shown: true}
-                            ]
+                            // A fixed set of segments, so a count that changes
+                            // updates one label instead of rebuilding the row
+                            // (and taking keyboard focus out of it).
+                            readonly property var sections: [0, 1, 2, 3, 5, 4]
+                            readonly property var labels: ["Folders", "Albums", "Dates", "Tags", "Cameras", "Smart"]
+                            function count(index) {
+                                switch (sections[index]) {
+                                case 0: return Captures.folders.length
+                                case 1: return Settings.albumNames.length
+                                case 2: return Captures.dateBuckets.length
+                                case 3: return Settings.tagNames.length
+                                case 5: return Captures.cameras.length
+                                default: return Settings.smartCollectionNames.length
+                                }
+                            }
+                            // Only a library with photos from a real camera earns
+                            // Cameras; a screenshot library never sees it.
+                            function shown(index) {
+                                return sections[index] !== 5 || root.hasCameras || root.section === 5
+                            }
                             // Measured with the counts, off screen, so the choice
                             // cannot feed back on itself.
                             readonly property bool countsShown: countedFacets.implicitWidth <= width
@@ -594,13 +603,13 @@ FocusScope {
                                 id: countedFacets
                                 visible: false
                                 Repeater {
-                                    model: facetHolder.facets
+                                    model: 6
                                     PillButton {
-                                        required property var modelData
-                                        visible: modelData.shown
+                                        required property int index
+                                        visible: facetHolder.shown(index)
                                         segment: true
-                                        label: modelData.label
-                                        badge: modelData.count
+                                        label: facetHolder.labels[index]
+                                        badge: facetHolder.count(index)
                                     }
                                 }
                             }
@@ -620,20 +629,22 @@ FocusScope {
                                     anchors.verticalCenter: parent.verticalCenter
 
                                     Repeater {
-                                        model: facetHolder.facets
+                                        model: 6
 
                                         PillButton {
-                                            required property var modelData
-                                            objectName: "browseFacet-" + modelData.section
-                                            visible: modelData.shown
+                                            required property int index
+                                            readonly property int section: facetHolder.sections[index]
+                                            readonly property int count: facetHolder.count(index)
+                                            objectName: "browseFacet-" + section
+                                            visible: facetHolder.shown(index)
                                             segment: true
                                             checkable: true
-                                            label: modelData.label
-                                            badge: facetHolder.countsShown ? modelData.count : -1
-                                            accessibleName: modelData.label + ", " + root.formatCount(modelData.count)
-                                            active: root.section === modelData.section
+                                            label: facetHolder.labels[index]
+                                            badge: facetHolder.countsShown ? count : -1
+                                            accessibleName: label + ", " + root.formatCount(count)
+                                            active: root.section === section
                                             onClicked: {
-                                                root.section = modelData.section
+                                                root.section = section
                                                 folderSearch.forceActiveFocus()
                                             }
                                         }
@@ -645,11 +656,15 @@ FocusScope {
                         Flow {
                             width: parent.width
                             spacing: 7
-                            visible: newAlbum.visible || newTag.visible || saveView.visible
-                                     || renameChoice.visible || deleteChoice.visible
+                            objectName: "browseCollectionActions"
+                            // From the section itself: the buttons inside are
+                            // hidden while this row is, so their visibility
+                            // cannot decide it.
+                            visible: root.section === 1 || root.section === 3 || root.section === 4
 
                             PillButton {
                                 id: newAlbum
+                                objectName: "browseNewAlbum"
                                 visible: root.section === 1
                                 label: "+ New album"
                                 onClicked: {
@@ -659,18 +674,21 @@ FocusScope {
                             }
                             PillButton {
                                 id: newTag
+                                objectName: "browseNewTag"
                                 visible: root.section === 3
                                 label: "+ New tag"
                                 onClicked: { root.close(); root.createTagRequested() }
                             }
                             PillButton {
                                 id: saveView
+                                objectName: "browseSaveView"
                                 visible: root.section === 4
                                 label: "+ Save view"
                                 onClicked: { root.close(); root.saveSmartCollectionRequested() }
                             }
                             PillButton {
                                 id: renameChoice
+                                objectName: "browseRenameChoice"
                                 visible: (root.section === 1 || root.section === 3) && choices.currentIndex >= 0
                                 label: "Rename selected"
                                 toolTip: root.section === 3
@@ -680,6 +698,7 @@ FocusScope {
                             }
                             PillButton {
                                 id: deleteChoice
+                                objectName: "browseDeleteChoice"
                                 visible: (root.section === 1 || root.section === 3 || root.section === 4)
                                          && choices.currentIndex >= 0
                                 label: "Delete selected"
