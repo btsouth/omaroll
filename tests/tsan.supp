@@ -24,3 +24,8 @@ race:realloc$
 # file times on worker threads). Seen as a strdup on a pool thread and a free
 # inside libc on the main thread. Omaroll never calls strdup.
 race:strdup$
+# Qt D-Bus runs its own QDBusConnection thread. libQt6DBus allocates events on
+# the calling thread and Qt deletes them on that thread after delivery, through
+# the uninstrumented event queue. No Omaroll code runs on the D-Bus thread, so
+# match any report with a libQt6DBus frame.
+race:libQt6DBus.so
