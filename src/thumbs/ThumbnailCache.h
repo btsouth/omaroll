@@ -48,7 +48,8 @@ public:
   [[nodiscard]] static QString cacheDirectory();
 
   // The file thumbnail() keeps on disk for the same arguments, once it has
-  // made one; empty before that. MPRIS points players at it as cover art.
+  // made one; empty before that, or when the file does not load. MPRIS
+  // points players at it as cover art.
   [[nodiscard]] static QString cachedFile(const QString& path, const QSize& logicalSize,
                                           qreal devicePixelRatio, int seekPercent = 20);
 

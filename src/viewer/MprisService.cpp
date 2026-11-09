@@ -11,11 +11,13 @@
 #include <QMediaPlayer>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QThreadPool>
 #include <QUrl>
 #include <QtConcurrent>
 
 #include <algorithm>
 #include <cmath>
+#include <tuple>
 #include <utility>
 
 namespace {
@@ -26,6 +28,18 @@ const QString kPlayerInterface = QStringLiteral("org.mpris.MediaPlayer2.Player")
 const QString kServiceName = QStringLiteral("org.mpris.MediaPlayer2.omaroll");
 constexpr double kMinimumRate = 0.25;
 constexpr double kMaximumRate = 4.0;
+
+// Posters render one at a time on a thread of their own, so a slow video
+// never holds up the shared pool's picture work. Never freed, so exit does
+// not wait for a render.
+QThreadPool& posterPool() {
+  static QThreadPool* const pool = [] {
+    auto* created = new QThreadPool;
+    created->setMaxThreadCount(1);
+    return created;
+  }();
+  return *pool;
+}
 
 } // namespace
 
@@ -151,20 +165,27 @@ void MprisService::findArt() {
   m_artTrack = m_track;
   const quint64 track = m_track;
   m_artCancel = std::make_shared<std::atomic_bool>(false);
-  QFuture<QString> poster = QtConcurrent::run([file, cancel = m_artCancel] {
+  QFuture<QString> poster = QtConcurrent::run(&posterPool(), [file, cancel = m_artCancel] {
     if (cancel->load()) return QString();
     // Through thumbnail() even when a file is there: it reads the tile
     // back and makes it again if it is damaged, so a path is only handed out
     // for a picture that loads.
     // A second try covers the video changing on disk between the two calls,
-    // which moves its cache key.
+    // which moves its cache key. Without a change there is none: a cache
+    // that cannot be written would only render the video again.
+    const auto version = [&file] {
+      const QFileInfo info(file);
+      return std::tuple(info.size(), info.lastModified(), info.metadataChangeTime());
+    };
     const QSize size(kArtSize, kArtSize);
     for (int attempt = 0; attempt < 2; ++attempt) {
+      const auto before = version();
       if (ThumbnailCache::thumbnail(file, size, 1.0, 20, {cancel.get(), nullptr}).isNull() ||
           cancel->load()) {
         return QString();
       }
       if (QString art = ThumbnailCache::cachedFile(file, size, 1.0); !art.isEmpty()) return art;
+      if (version() == before) break;
     }
     return QString();
   });

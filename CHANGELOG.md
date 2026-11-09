@@ -162,7 +162,8 @@
   `--set-default`, including a section or file xdg-mime had to create and a
   missing final newline. Repeated cycles used to leave blank lines behind and
   move restored lines to the end of the section. Omaroll is still taken out
-  of every list there, Added Associations included.
+  of the lists there, Added Associations included; Removed Associations
+  entries stay.
 - Typing a search while the library showed "Nothing matches" could apply the
   half-typed search early and trip a binding loop on slower machines.
 - The empty library named Super + Shift + S for screenshots. It now names the

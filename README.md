@@ -130,14 +130,17 @@ types could not be changed; add `--verbose` to list every type.
 manager.
 Settings has the same choice as **Set as default** and **Restore previous
 apps**, and says how many types changed and which apps were replaced.
-Restoring puts each line of `mimeapps.list` (in `$XDG_CONFIG_HOME`, usually
-`~/.config`) back as it was and removes what Omaroll added, including a
-`[Default Applications]` section or a whole file that was not there before, so
-setting and restoring any number of times leaves the file unchanged. Two
-exceptions: restoring takes Omaroll out of every list there for the types it
-restores (pictures and videos, or PDFs with `pdf`), so an Added Associations
-entry for Omaroll that you wrote yourself goes too; and an app you chose after
-`--set-default` stays your choice.
+Restoring puts each line of `mimeapps.list` (in `$XDG_CONFIG_HOME`, or
+`~/.config` when that is unset or empty) back as it was and removes what
+Omaroll added, including a `[Default Applications]` section or a whole file
+that was not there before, so setting and restoring any number of times leaves
+the file unchanged. The exceptions: restoring takes Omaroll out of that file
+for the types it restores (pictures and videos, or PDFs with `pdf`), so an
+Added Associations entry for Omaroll that you wrote yourself goes too, while
+Removed Associations entries stay. It does the same in the desktop's own list
+beside it, such as `hyprland-mimeapps.list`, and in the lists in
+`~/.local/share/applications`, without putting anything back there. And an
+app you chose after `--set-default` stays your choice.
 
 To open a picture or video from a terminal:
 
@@ -388,8 +391,8 @@ reported and left for you to edit. A `~/.config/hypr/omaroll.lua` you wrote
 yourself is never replaced or removed.
 
 When a second viewer opens on the same workspace, Omaroll tiles it and the
-viewers already there (the viewers of the running Omaroll, which normally holds
-them all), so your layout arranges them instead of stacking them in
+viewers already there (each Omaroll tiles its own viewers; normally one Omaroll
+holds them all), so your layout arranges them instead of stacking them in
 the middle. They stay tiled as the others close; the next viewer opened on its
 own floats again. This is on purpose: a viewer that tiles beside another one
 does not mean the float rule failed.

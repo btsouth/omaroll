@@ -43,6 +43,9 @@ struct State {
   bool serving = false;
   std::vector<std::pair<int, bool>> queued;
   bool refusalLogged = false;
+  // The compositor connection, which writers close: a writer outliving a
+  // killed server must not keep it open.
+  int displayFd = -1;
   // Paste writers still running, reaped as they finish.
   std::vector<pid_t> writers;
 };
@@ -119,6 +122,7 @@ void deliver(State& state, int fd, bool png,
     for (const auto& [other, otherPng] : pending) {
       if (other != fd) close(other);
     }
+    if (state.displayFd >= 0) close(state.displayFd);
     // This process never starts a thread of its own, so its children may
     // use Qt freely. The deadline holds even if the app ignored these signals.
     std::signal(SIGTERM, SIG_DFL);
@@ -301,7 +305,8 @@ int run(int argc, char** argv) {
     dup2(null, STDERR_FILENO);
     if (null > STDERR_FILENO) close(null);
   }
-  closeInherited(wl_display_get_fd(display));
+  state->displayFd = wl_display_get_fd(display);
+  closeInherited(state->displayFd);
   std::signal(SIGPIPE, SIG_IGN);
   // Pastes asked for while the selection was being taken, now from here.
   state->serving = true;

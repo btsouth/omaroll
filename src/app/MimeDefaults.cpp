@@ -138,10 +138,24 @@ QString MimeDefaults::withoutOmaroll(const QString &text, const QString &type,
                 : savedEntry.left(savedEntry.indexOf(u'=') + 1) + handlers.join(u';') + u';' +
                       (original.endsWith(u'\r') ? QStringLiteral("\r") : QString());
   }
+  bool inRemoved = false;
   for (qsizetype index = 0; index < lines.size();) {
     QString &line = lines[index];
     if (line.startsWith(u'[')) {
       inDefaults = line.trimmed() == u"[Default Applications]";
+      // The user's exclusions keep Omaroll out of lower lists; they stay.
+      inRemoved = line.trimmed() == u"[Removed Associations]";
+      ++index;
+      continue;
+    }
+    if (inRemoved) {
+      ++index;
+      continue;
+    }
+    // Put back by an earlier unset whose other lists failed: a retry finds it
+    // in place and leaves it, rather than writing a single handler over it.
+    if (inDefaults && !putBack && !saved.isEmpty() && line == saved) {
+      putBack = true;
       ++index;
       continue;
     }

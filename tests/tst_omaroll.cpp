@@ -1146,6 +1146,16 @@ private slots:
     QVERIFY(restored);
     MimeDefaults::withoutOmaroll(text, "image/gif", "image/gif=imv.desktop;", &restored);
     QVERIFY(!restored);
+    // A line an earlier unset already put back counts as restored.
+    const QString back = MimeDefaults::withoutOmaroll(text, "image/png", "image/png=imv.desktop;");
+    QCOMPARE(MimeDefaults::withoutOmaroll(back, "image/png", "image/png=imv.desktop;", &restored),
+             back);
+    QVERIFY(restored);
+    // The user's exclusions stay: they keep Omaroll out of lists below.
+    const QString removed = QStringLiteral(
+        "[Removed Associations]\nimage/png=%1;\n[Added Associations]\nimage/png=%1;\n").arg(desktop);
+    QCOMPARE(MimeDefaults::withoutOmaroll(removed, "image/png"),
+             QStringLiteral("[Removed Associations]\nimage/png=%1;\n[Added Associations]\n").arg(desktop));
     // CRLF lists: Omaroll is found without a trailing semicolon, and the
     // lines that stay keep their carriage returns.
     const QString crlf = QStringLiteral(
@@ -1435,6 +1445,77 @@ private slots:
     QVERIFY2(defaults.succeeded(), qPrintable(unset));
     QVERIFY(list.open(QIODevice::ReadOnly));
     QCOMPARE(list.readAll(), original);
+  }
+
+  // An unset that put the user's line back but failed on another list is
+  // tried again. The retry must leave that line as it is, even when the app
+  // it now answers with is not the one recorded, and not write the recorded
+  // app over it.
+  void mimeDefaultsRetryKeepsTheLineAlreadyRestored() {
+    QTemporaryDir dir;
+    const auto oldConfig = qgetenv("XDG_CONFIG_HOME");
+    const auto oldData = qgetenv("XDG_DATA_HOME");
+    const auto oldDesktop = qgetenv("XDG_CURRENT_DESKTOP");
+    const auto oldPath = qgetenv("PATH");
+    const auto cleanup = qScopeGuard([&] {
+      for (const auto& pair : QList<QPair<const char*, QByteArray>>{
+             {"XDG_CONFIG_HOME", oldConfig}, {"XDG_DATA_HOME", oldData}, {"XDG_CURRENT_DESKTOP", oldDesktop}, {"PATH", oldPath}})
+        pair.second.isNull() ? qunsetenv(pair.first) : qputenv(pair.first, pair.second);
+    });
+    qputenv("XDG_CONFIG_HOME", dir.filePath("config").toUtf8());
+    qputenv("XDG_DATA_HOME", dir.filePath("data").toUtf8());
+    qputenv("XDG_CURRENT_DESKTOP", "Hyprland");
+    qputenv("PATH", QCoreApplication::applicationDirPath().toUtf8() + ":" + oldPath);
+    QVERIFY(QDir().mkpath(dir.filePath("data/applications")));
+    QVERIFY(QDir().mkpath(dir.filePath("config")));
+    const QString desktop = QStringLiteral("io.github.tsouth89.omaroll.desktop");
+    QVERIFY(QFile::copy(QFINDTESTDATA("../packaging/io.github.tsouth89.omaroll.desktop"),
+                        dir.filePath("data/applications/" + desktop)));
+    const auto install = [&](const QString& name) {
+      QFile app(dir.filePath("data/applications/" + name + ".desktop"));
+      QVERIFY(app.open(QIODevice::WriteOnly));
+      app.write("[Desktop Entry]\nType=Application\nName=" + name.toUtf8() +
+                "\nExec=/usr/bin/true %f\nMimeType=application/pdf;\n");
+    };
+    install(QStringLiteral("evince"));
+    const QByteArray original = "[Default Applications]\napplication/pdf=gone.desktop;evince.desktop;\n";
+    QFile list(dir.filePath("config/mimeapps.list"));
+    QVERIFY(list.open(QIODevice::WriteOnly));
+    QCOMPARE(list.write(original), original.size());
+    list.close();
+    MimeDefaults defaults;
+    const QString set = defaults.apply(false, "pdf");
+    QVERIFY2(set.contains("application/pdf: evince.desktop -> " + desktop), qPrintable(set));
+
+    // A desktop list also names Omaroll, and cannot be read for now.
+    QFile other(dir.filePath("config/hyprland-mimeapps.list"));
+    QVERIFY(other.open(QIODevice::WriteOnly));
+    other.write("[Default Applications]\napplication/pdf=" + desktop.toUtf8() + ";\n");
+    other.close();
+    const QFile::Permissions permissions = other.permissions();
+    QVERIFY(other.setPermissions(QFileDevice::Permissions()));
+    if (other.open(QIODevice::ReadOnly)) {
+      other.close();
+      QVERIFY(other.setPermissions(permissions));
+      QSKIP("Unreadable files can be read here (root)");
+    }
+    const QString partial = defaults.apply(true, "pdf");
+    QVERIFY2(!defaults.succeeded(), qPrintable(partial));
+    QVERIFY(list.open(QIODevice::ReadOnly));
+    QCOMPARE(list.readAll(), original);
+    list.close();
+
+    // The user's first app is installed meanwhile, so the restored line now
+    // answers ahead of the recorded evince.
+    install(QStringLiteral("gone"));
+    QVERIFY(other.setPermissions(permissions));
+    const QString retried = defaults.apply(true, "pdf");
+    QVERIFY2(defaults.succeeded(), qPrintable(retried));
+    QVERIFY(list.open(QIODevice::ReadOnly));
+    QCOMPARE(list.readAll(), original);
+    list.close();
+    QVERIFY(other.open(QIODevice::ReadOnly));
+    QCOMPARE(other.readAll(), QByteArray("[Default Applications]\n"));
   }
 
   void defaultViewerChangesAreSummarized() {

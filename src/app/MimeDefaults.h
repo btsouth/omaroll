@@ -22,10 +22,11 @@ public:
   static QStringList types(const QString &desktopFile, const QString &group);
   // mimeapps.list text: the [Default Applications] line for a type, or empty.
   static QString defaultLine(const QString &text, const QString &type);
-  // The text without Omaroll as a handler for the type, in any group. Lines
-  // left with no handler are deleted, not blanked. With original, the
-  // default line naming only Omaroll becomes that line again instead (less
-  // Omaroll, if it names it too); restored says whether that happened.
+  // The text without Omaroll as a handler for the type, in any group but
+  // [Removed Associations]. Lines left with no handler are deleted, not
+  // blanked. With original, the default line naming only Omaroll becomes that
+  // line again instead (less Omaroll, if it names it too); restored says
+  // whether that line is in place now, put back here or by an earlier call.
   static QString withoutOmaroll(const QString &text, const QString &type,
                                 const QString &original = {}, bool *restored = nullptr);
   // The text without what xdg-mime added around Omaroll's lines: the empty

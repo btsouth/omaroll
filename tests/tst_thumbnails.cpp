@@ -16,6 +16,8 @@
 #include <QThread>
 #include <QtTest>
 
+#include <sys/stat.h>
+
 #include <chrono>
 #include <future>
 #include <memory>
@@ -146,9 +148,25 @@ private slots:
 
     // Once the source changes the old tile no longer counts, and the new
     // one thumbnail() writes is named instead.
-    QTest::qWait(20);
-    QVERIFY(QFile::setPermissions(path, QFile::permissions(path) | QFile::ReadGroup));
-    QVERIFY(QFile::setPermissions(path, QFile::permissions(path) & ~QFile::ReadGroup));
+    // Touched until its ctime is past the tile's mtime, which takes up to a
+    // second on file systems with whole-second timestamps.
+    const auto after = [](const QString& changed, const QString& tile) {
+      struct stat source {};
+      struct stat written {};
+      return ::stat(QFile::encodeName(changed).constData(), &source) == 0 &&
+             ::stat(QFile::encodeName(tile).constData(), &written) == 0 &&
+             (source.st_ctim.tv_sec > written.st_mtim.tv_sec ||
+              (source.st_ctim.tv_sec == written.st_mtim.tv_sec &&
+               source.st_ctim.tv_nsec > written.st_mtim.tv_nsec));
+    };
+    QElapsedTimer touching;
+    touching.start();
+    do {
+      QTest::qWait(10);
+      QVERIFY(QFile::setPermissions(path, QFile::permissions(path) | QFile::ReadGroup));
+      QVERIFY(QFile::setPermissions(path, QFile::permissions(path) & ~QFile::ReadGroup));
+    } while (!after(path, legacy) && touching.elapsed() < 3000);
+    QVERIFY(after(path, legacy));
     QVERIFY(ThumbnailCache::cachedFile(path, QSize(48, 48), 1).isEmpty());
     QVERIFY(!ThumbnailCache::thumbnail(path, QSize(48, 48), 1).isNull());
     const QString current = ThumbnailCache::cachedFile(path, QSize(48, 48), 1);
@@ -171,6 +189,7 @@ private slots:
     QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
     file.close();
     QVERIFY(QImage(tile).isNull());
+    QVERIFY(ThumbnailCache::cachedFile(path, QSize(48, 48), 1).isEmpty());
     QVERIFY(!ThumbnailCache::thumbnail(path, QSize(48, 48), 1).isNull());
     QCOMPARE(ThumbnailCache::cachedFile(path, QSize(48, 48), 1), tile);
     QVERIFY(!QImage(tile).isNull());

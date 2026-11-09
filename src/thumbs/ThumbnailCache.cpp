@@ -170,9 +170,15 @@ QString ThumbnailCache::cachedFile(const QString& path, const QSize& logicalSize
   const QString file = cacheDirectory() + QLatin1Char('/') +
                        cacheKey(path, renderPath, pixelSize, seekPercent) +
                        QStringLiteral(".jpg");
-  if (QFileInfo::exists(file)) return file;
+  // Only a tile that loads: a damaged one that could not be replaced is no
+  // cover art.
+  const auto loads = [](const QString& tile) {
+    return !tile.isEmpty() && !QImageReader(tile).read().isNull();
+  };
+  if (loads(file)) return file;
   // thumbnail() also serves a still-valid tile from before the current key.
-  return legacyTile(path, renderPath, pixelSize, seekPercent);
+  const QString legacy = legacyTile(path, renderPath, pixelSize, seekPercent);
+  return loads(legacy) ? legacy : QString();
 }
 
 QString ThumbnailCache::cacheKey(const QString& path, const QString& renderPath,
