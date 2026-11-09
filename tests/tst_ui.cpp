@@ -6260,8 +6260,13 @@ private:
   // Rescans the library and waits for that scan to finish, however slow the
   // machine (an emulated aarch64 runner or a sanitizer build), so the checks
   // that follow see its result instead of racing it.
+  // A refresh during a scan is folded into a follow-up that starts after a
+  // debounce, so the scan in flight can finish before the files changed here
+  // are read. Wait that scan out first, then scan afresh.
   void rescan() {
+    QVERIFY(QTest::qWaitFor([&] { return !m_captures->scanning(); }, 60000));
     m_captures->refresh();
+    QVERIFY(m_captures->scanning());
     QVERIFY(QTest::qWaitFor([&] { return !m_captures->scanning(); }, 60000));
   }
 
