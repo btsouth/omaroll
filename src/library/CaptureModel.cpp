@@ -53,6 +53,16 @@ QString dayLabel(const QDate& date) {
   return QLocale::system().toString(date, QStringLiteral("d MMMM yyyy"));
 }
 
+// The short form a tile has room for beside its time.
+QString shortDateLabel(const QDate& date) {
+  const QDate today = QDate::currentDate();
+  if (!date.isValid() || date == today) {
+    return {};
+  }
+  return QLocale::system().toString(
+      date, date.year() == today.year() ? QStringLiteral("d MMM") : QStringLiteral("d MMM yyyy"));
+}
+
 QString sizeLabel(qint64 bytes) {
   return QLocale::system().formattedDataSize(bytes, 1, QLocale::DataSizeTraditionalFormat);
 }
@@ -142,7 +152,7 @@ void CaptureModel::checkDayRollover() {
   m_labelDate = today;
   if (!m_records.isEmpty()) {
     emit dataChanged(index(0), index(static_cast<int>(m_records.size()) - 1),
-                     {CaptureRoles::DayLabelRole});
+                     {CaptureRoles::DayLabelRole, CaptureRoles::DateLabelRole});
   }
   emit dayLabelsChanged();
 }
@@ -282,6 +292,8 @@ QVariant CaptureModel::data(const QModelIndex& index, int role) const {
     return dayLabel(record.captured.date());
   case CaptureRoles::TimeLabelRole:
     return QLocale::system().toString(record.captured.time(), QLocale::ShortFormat);
+  case CaptureRoles::DateLabelRole:
+    return shortDateLabel(record.captured.date());
   case CaptureRoles::SizeLabelRole:
     return sizeLabel(record.bytes);
   case CaptureRoles::BytesRole:
@@ -325,6 +337,7 @@ QHash<int, QByteArray> CaptureModel::roleNames() const {
       {CaptureRoles::DayKeyRole, "dayKey"},
       {CaptureRoles::DayLabelRole, "dayLabel"},
       {CaptureRoles::TimeLabelRole, "timeLabel"},
+      {CaptureRoles::DateLabelRole, "dateLabel"},
       {CaptureRoles::SizeLabelRole, "sizeLabel"},
       {CaptureRoles::BytesRole, "bytes"},
       {CaptureRoles::StampRole, "stamp"},
@@ -419,7 +432,8 @@ void CaptureModel::applyMetadata(const QList<MetadataUpdate>& updates) {
     QList<int> roles;
     if (dateChanged) {
       roles.append({CaptureRoles::CapturedRole, CaptureRoles::DayKeyRole,
-                    CaptureRoles::DayLabelRole, CaptureRoles::TimeLabelRole});
+                    CaptureRoles::DayLabelRole, CaptureRoles::TimeLabelRole,
+                    CaptureRoles::DateLabelRole});
     }
     if (cameraChanged) {
       roles.append({CaptureRoles::CameraRole, CaptureRoles::LensRole});

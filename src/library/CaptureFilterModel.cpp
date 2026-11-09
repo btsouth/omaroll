@@ -3,6 +3,7 @@
 #include "app/AppSettings.h"
 #include "library/CaptureModel.h"
 #include "library/CaptureRoles.h"
+#include "library/SectionRows.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -141,6 +142,7 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
         const bool metadataOnly = !roles.isEmpty() && std::all_of(roles.begin(), roles.end(), [](int role) {
           return role == CaptureRoles::CapturedRole || role == CaptureRoles::DayKeyRole ||
                  role == CaptureRoles::DayLabelRole || role == CaptureRoles::TimeLabelRole ||
+                 role == CaptureRoles::DateLabelRole ||
                  role == CaptureRoles::CameraRole || role == CaptureRoles::LensRole;
         });
         if (!metadataOnly || !m_cameraFilter.isEmpty() || !m_lensFilter.isEmpty() ||
@@ -972,6 +974,13 @@ QVariantList CaptureFilterModel::reviewSections() const {
   }
   close(rows);
   return sections;
+}
+
+QObject* CaptureFilterModel::sectionRows() {
+  if (!m_sectionRows) {
+    m_sectionRows = new SectionRows(this);
+  }
+  return m_sectionRows;
 }
 
 QString CaptureFilterModel::timeLabelAt(int row) const {
