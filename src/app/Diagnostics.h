@@ -19,10 +19,16 @@ struct Sources {
   QString omarchyPath;  // $OMARCHY_PATH, else /usr/share/omarchy
   QString drm = QStringLiteral("/sys/class/drm");
   QString modules = QStringLiteral("/sys/module");
-  // Render nodes, and where libva looks for drivers ($LIBVA_DRIVERS_PATH,
-  // else the distribution's directory).
+  // Render nodes, and where libva looks for drivers: $LIBVA_DRIVERS_PATH,
+  // else the usual directories of Arch, Debian/Ubuntu and Fedora (whose
+  // RPM Fusion drivers sit in dri-freeworld or dri-nonfree).
   QString dri = QStringLiteral("/dev/dri");
-  QStringList vaDrivers = {QStringLiteral("/usr/lib/dri")};
+  QStringList vaDrivers = {QStringLiteral("/usr/lib/dri"),
+                           QStringLiteral("/usr/lib/x86_64-linux-gnu/dri"),
+                           QStringLiteral("/usr/lib/aarch64-linux-gnu/dri"),
+                           QStringLiteral("/usr/lib64/dri"),
+                           QStringLiteral("/usr/lib64/dri-freeworld"),
+                           QStringLiteral("/usr/lib64/dri-nonfree")};
   QString stateHome;    // ~/.local/state
   QString configHome;   // ~/.config
   std::function<bool(const QString&)> hasProgram;  // PATH lookup by default
