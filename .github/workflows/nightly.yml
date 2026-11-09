@@ -108,6 +108,18 @@ jobs:
           restore-keys: fuzz-corpus-v1-
       - name: Fuzz each parser for five minutes
         run: bash tests/run-instrumented.sh fuzz 300 "$PWD/fuzz-corpus"
+      - name: Upload fuzz crash inputs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-crash-inputs
+          path: |
+            build/fuzz/fuzz-results/*-crash-*
+            build/fuzz/fuzz-results/*-leak-*
+            build/fuzz/fuzz-results/*-timeout-*
+            build/fuzz/fuzz-results/*-oom-*
+          if-no-files-found: ignore
+          retention-days: 30
       - name: Save the grown corpus
         # Not when the run stopped before the corpus folder was made.
         if: always() && hashFiles('fuzz-corpus/**') != ''

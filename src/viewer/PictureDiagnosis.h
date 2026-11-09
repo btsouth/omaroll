@@ -9,8 +9,10 @@
 namespace PictureDiagnosis {
 
 struct Finding {
-  // missing, unreadable, empty, not-picture, unsupported, damaged,
-  // truncated, too-large or unknown.
+  // missing, unreadable, empty, crashed (it crashed Omaroll before and has
+  // not changed), not-picture, wrong-type (another picture format, one
+  // Omaroll does not open), unsupported, damaged, truncated, too-large or
+  // unknown.
   QString cause;
   QString title;
   QString detail;

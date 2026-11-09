@@ -2,6 +2,7 @@
 
 #include "sources/CaptureScanner.h"
 #include "sources/FileVersion.h"
+#include "sources/PinnedImageReader.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -445,7 +446,7 @@ QImage upright(const QImage& image, int orientation) {
 }
 
 QImage readPreview(const QString& path, const QSize& cover) {
-  QImageReader reader(path);
+  PinnedImageReader reader(path);
   reader.setQuality(kPreviewQuality);
   const QSize full = reader.size();
   QImage image = reader.read();
@@ -469,7 +470,7 @@ QImage readPreview(const QString& path, const QSize& cover) {
 }
 
 QImage readFull(const QString& path) {
-  QImageReader reader(path);
+  PinnedImageReader reader(path);
   reader.setQuality(kFullQuality);
   return reader.read();
 }
@@ -478,7 +479,7 @@ QSize fullSize(const QString& path) {
   if (!isRawFile(path)) {
     return {};
   }
-  QImageReader reader(path);
+  PinnedImageReader reader(path);
   const QSize size = reader.size();
   return size.isValid() && !size.isEmpty() ? size : QSize();
 }

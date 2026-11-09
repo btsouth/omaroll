@@ -41,6 +41,8 @@ public:
                                            QDateTime& captured);
 
   [[nodiscard]] static bool isImage(const QString& suffix);
+  // The listed still and animated image suffixes, camera raws left out.
+  [[nodiscard]] static const QStringList& imageSuffixes();
   [[nodiscard]] static bool isVideo(const QString& suffix);
   [[nodiscard]] static bool isDocument(const QString& suffix);
   [[nodiscard]] static bool isSupported(const QString& suffix);

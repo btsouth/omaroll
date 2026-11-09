@@ -5,6 +5,7 @@
 #include "library/HashCache.h"
 #include "sources/CameraRaw.h"
 #include "sources/ImageBudget.h"
+#include "sources/PinnedImageReader.h"
 
 #include <QDataStream>
 #include <QFileInfo>
@@ -593,7 +594,7 @@ SimilarityIndex::Signature SimilarityIndex::signatureOf(const QString& path,
       sample = sample.scaled(kSample, kSample, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
     }
   } else {
-    QImageReader reader(path);
+    PinnedImageReader reader(path);
     reader.setAutoTransform(true);
     original = reader.size();
     if (!original.isValid() || original.isEmpty()) {

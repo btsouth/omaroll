@@ -2,6 +2,8 @@
 #include "sources/ThumbnailSource.h"
 
 #include "sources/CameraRaw.h"
+#include "sources/DecodeJournal.h"
+#include "sources/PinnedImageReader.h"
 #include "sources/RawJpegPairs.h"
 
 #include <QDir>
@@ -132,6 +134,8 @@ bool isTransientCaptureArtifact(const QString& name) {
 bool CaptureScanner::isImage(const QString& suffix) {
   return kImageSuffixes.contains(suffix.toLower()) || CameraRaw::isRaw(suffix);
 }
+
+const QStringList& CaptureScanner::imageSuffixes() { return kImageSuffixes; }
 
 bool CaptureScanner::isVideo(const QString& suffix) {
   return kVideoSuffixes.contains(suffix.toLower());
@@ -448,7 +452,11 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots, const std::a
         record.modified = entry.lastModified().toMSecsSinceEpoch();
         record.video = video;
         record.document = document;
-        record.animated = image && (suffix == u"gif" || suffix == u"webp");
+        // Played with Qt's movie reader, which has no format to pin: only a
+        // .gif or .webp that is one, and never one that crashed Omaroll.
+        record.animated = image && (suffix == u"gif" || suffix == u"webp") &&
+                          ImageFormats::looksAnimated(canonicalFile, suffix) &&
+                          !DecodeJournal::isBlocked(canonicalFile);
         record.raw = image && CameraRaw::isRaw(suffix);
         record.captured = entry.lastModified();
         struct stat status {};

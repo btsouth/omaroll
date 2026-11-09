@@ -3,6 +3,7 @@
 #include "matte/MatteComposer.h"
 #include "sources/CameraRaw.h"
 #include "sources/ImageBudget.h"
+#include "sources/PinnedImageReader.h"
 
 #include <QImageReader>
 #include <QMetaObject>
@@ -59,7 +60,7 @@ public:
                                Qt::SmoothTransformation);
       }
     } else {
-      QImageReader reader(m_path);
+      PinnedImageReader reader(m_path);
       reader.setAutoTransform(true);
 
       const QSize original = reader.size();

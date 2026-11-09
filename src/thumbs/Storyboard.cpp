@@ -114,7 +114,9 @@ bool StoryboardFrames::insert(qint64 time, const QByteArray& jpeg) {
   if (!frameSize.isValid()) {
     QBuffer buffer;
     buffer.setData(jpeg);
-    frameSize = QImageReader(&buffer).size();
+    QImageReader reader(&buffer, "jpeg");
+    reader.setAutoDetectImageFormat(false);
+    frameSize = reader.size();
   }
   const qsizetype index = at - times.begin();
   times.insert(index, time);
@@ -191,6 +193,7 @@ bool decodes(const QByteArray& jpeg) {
   QBuffer buffer;
   buffer.setData(jpeg);
   QImageReader reader(&buffer, "jpeg");
+  reader.setAutoDetectImageFormat(false);
   QImage image;
   return reader.read(&image) && !image.isNull();
 }

@@ -1245,6 +1245,14 @@ ApplicationWindow {
         z: 2
     }
 
+    DecoderCrashNotice {
+        anchors.top: library.top
+        anchors.horizontalCenter: library.horizontalCenter
+        anchors.topMargin: 10
+        width: Math.min(implicitWidth, library.width - 24)
+        z: 2
+    }
+
     CaptureGrid {
         id: library
         objectName: "library"

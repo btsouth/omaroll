@@ -88,6 +88,10 @@ add_library(omaroll_core STATIC
   src/sources/FileVersion.h
   src/sources/ImageBudget.cpp
   src/sources/ImageBudget.h
+  src/sources/DecodeJournal.cpp
+  src/sources/DecodeJournal.h
+  src/sources/PinnedImageReader.cpp
+  src/sources/PinnedImageReader.h
   src/actions/ActionLauncher.cpp
   src/actions/ActionLauncher.h
   src/actions/FileDrag.h
@@ -240,6 +244,7 @@ set(OMAROLL_QML_FILES
   qml/components/SettingRow.qml
   qml/components/SettingSwitch.qml
   qml/components/TextSearchNotice.qml
+  qml/components/DecoderCrashNotice.qml
   qml/components/SettingsSheet.qml
   qml/components/EditorChooser.qml
   qml/components/PinnedFolders.qml

@@ -262,7 +262,9 @@ QStringList offeredTypes(const QString& servedType, const QByteArray& bytes, qin
   QBuffer buffer;
   buffer.setData(bytes);
   buffer.open(QIODevice::ReadOnly);
-  QImageReader reader(&buffer);
+  // Only a JPEG is offered as PNG, so only the JPEG decoder sees it.
+  QImageReader reader(&buffer, "jpeg");
+  reader.setAutoDetectImageFormat(false);
   const ImageBudget::Estimate estimate = ImageBudget::estimate(reader);
   const qint64 pixels = qint64(estimate.stored.width()) * estimate.stored.height();
   const qint64 limit = ImageBudget::decodeLimitBytes();
@@ -278,7 +280,8 @@ QStringList offeredTypes(const QString& servedType, const QByteArray& bytes, qin
 QByteArray encodePng(const QByteArray& source) {
   QBuffer input;
   input.setData(source);
-  QImageReader reader(&input);
+  QImageReader reader(&input, "jpeg");
+  reader.setAutoDetectImageFormat(false);
   reader.setAutoTransform(true);
   const QImage image = reader.read();
   if (image.isNull()) return {};

@@ -173,6 +173,14 @@
 
 ### Fixed
 
+- A picture whose contents are another format than its name (a 24-byte TIM
+  file named `.png`, `.jpg` or `.tga`) no longer crashes Omaroll at every
+  launch. Images are only read by the decoder for their name, or for their
+  contents when that is a format Omaroll lists, never by plugins Omaroll
+  doesn't use. The viewer says "This file isn't what its name says".
+- If a picture still crashes Omaroll while it is being read, the next launch
+  skips it for thumbnails, indexing and the viewer until the file changes, and
+  the library says once which file it was, with Show in folder.
 - A file opened through a running Omaroll brings its window to the front: the
   launcher's activation token is passed along with the request.
 - An invalid `--start` time is shown as a desktop notice too, not only on stderr.

@@ -241,6 +241,8 @@ private:
   // A still that is shown from its file, as opposed to a video, a camera raw's
   // preview or an animation.
   [[nodiscard]] bool isPlainStill() const;
+  // The whole still: its file, or the pinned provider's read of it.
+  [[nodiscard]] QUrl stillUrl() const;
   void refreshPicture();
   void startPictureProbe();
   void startPictureCheck();
@@ -250,6 +252,7 @@ private:
     QString version;
     // The copy's longest side, for a picture larger than the screen.
     int edge = 0;
+    ImageBudget::Estimate estimate;
   };
   struct PictureResult {
     QString path;
@@ -281,6 +284,8 @@ private:
   QString m_sizeLabel;
   QString m_dateLabel;
   QString m_mediaSuffix;
+  bool m_animated = false;
+  ImageBudget::Estimate m_pictureEstimate;
   QSize m_rawSize;
   QString m_contentVersion;
   QString m_thumbnailVersion;
