@@ -50,8 +50,9 @@ public:
   Q_INVOKABLE void openFiles(const QStringList& paths);
   // What a file drag carries: the same for library tiles and the viewer.
   Q_INVOKABLE QVariantMap fileDragData(const QStringList& paths) const;
-  // Dropped URLs as {files, folders, folderUrls, skipped}, skipped naming
-  // what is not a local file or folder.
+  // Dropped URLs as {files, folders, folderUrls, skipped, note}, skipped
+  // naming what is not a local file or folder and note saying so briefly.
+  // Folders are canonical, as the library stores them.
   Q_INVOKABLE QVariantMap sortDrop(const QList<QUrl>& urls) const;
   // The demo library, in a window of its own: another Omaroll, run with
   // --demo, which never touches this one's settings or folders.

@@ -180,7 +180,8 @@ QVariantMap ActionLauncher::sortDrop(const QList<QUrl>& urls) const {
   return {{u"files"_s, sorted.files},
           {u"folders"_s, sorted.folders},
           {u"folderUrls"_s, folderUrls},
-          {u"skipped"_s, sorted.skipped}};
+          {u"skipped"_s, sorted.skipped},
+          {u"note"_s, FileDrag::skippedNote(sorted.skipped)}};
 }
 
 bool ActionLauncher::chooseFilesToOpen() {

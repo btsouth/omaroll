@@ -110,6 +110,9 @@ ApplicationWindow {
                                             && !root.imageError && Session.path !== ""
     property int viewCopyJob: 0
     property int viewCopySerial: -1
+    // The file the copy is of, which the window may have stepped away from
+    // by the time it is saved.
+    property string viewCopySource: ""
     property string viewCopyDescription: ""
     readonly property bool savingViewCopy: root.viewCopyJob > 0
     // Read straight off the loaded image, so a picture that arrives from the
@@ -547,10 +550,16 @@ ApplicationWindow {
             return
         }
         root.viewCopySerial = Session.openSerial()
+        root.viewCopySource = Session.path
         root.viewCopyDescription = root.viewCopyKind
         root.viewCopyJob = ImageEdit.nextJobId()
+        // A link's copy goes beside the link, in the folder being browsed.
         ImageEdit.saveViewCopy(Session.path, root.viewRotation / 90, root.viewFlipHorizontal,
-                               root.viewFlipVertical, root.viewCopyJob)
+                               root.viewFlipVertical, root.viewCopyJob, Session.deletionPath)
+    }
+
+    function fileNameOf(path) {
+        return path.substring(path.lastIndexOf("/") + 1)
     }
 
     Connections {
@@ -558,8 +567,12 @@ ApplicationWindow {
         function onViewCopySaved(outputPath, note, jobId) {
             if (jobId !== root.viewCopyJob) return
             root.viewCopyJob = 0
-            Session.showSaved(outputPath, root.viewCopySerial)
-            root.say("Saved a " + root.viewCopyDescription + " copy beside the original"
+            const shown = Session.showSaved(outputPath, root.viewCopySource, root.viewCopySerial)
+            const saved = "Saved a " + root.viewCopyDescription + " copy"
+            root.say((shown === "shown" ? saved + " beside the original"
+                      : shown === "listed" ? saved + " of " + root.fileNameOf(root.viewCopySource)
+                                             + " beside it"
+                      : saved + " to " + outputPath)
                      + (note !== "" ? ". " + note : ""))
             if (note !== "") {
                 statusTimer.interval = 5000
@@ -612,7 +625,7 @@ ApplicationWindow {
     }
 
     // Files dropped here open here, as from the file manager, with a note
-    // naming any skipped; a folder or a document goes to the library.
+    // naming any skipped; each folder, and a document, goes to the library.
     function openDropped(urls) {
         const result = Session.openDropped(urls)
         if (result.error !== undefined) {
@@ -620,7 +633,8 @@ ApplicationWindow {
             return
         }
         if (result.handOff === true) Actions.openFiles(result.paths)
-        if (result.note !== undefined && result.note !== "") root.say(result.note)
+        for (const folder of result.folders) Actions.openFiles([folder])
+        if (result.note !== "") root.say(result.note)
     }
 
     function step(direction) {

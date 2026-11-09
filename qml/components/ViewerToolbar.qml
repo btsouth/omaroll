@@ -149,6 +149,7 @@ Rectangle {
             enabled: root.viewControls
             visible: root.flipControls
             icon: "flip-horizontal"
+            checkable: true
             active: root.flippedHorizontally
             toolTip: "Flip horizontally"
             shortcut: ShortcutCatalog.quickHints["flip-horizontal"]
@@ -159,6 +160,7 @@ Rectangle {
             enabled: root.viewControls
             visible: root.flipControls
             icon: "flip-vertical"
+            checkable: true
             active: root.flippedVertically
             toolTip: "Flip vertically"
             shortcut: ShortcutCatalog.quickHints["flip-vertical"]

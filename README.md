@@ -109,9 +109,13 @@ A picture or video opens in the viewer: the media fills the window, a small
 picture included, and the name, the controls and the menu appear when the
 pointer moves. Rotating and flipping turn the view only. Once the view is
 turned or flipped, **Save rotated copy** (`Ctrl+S`, or the save button in the
-toolbar) writes `name-edited.ext` beside the original and opens it; the
-original is never changed. A JPEG is turned losslessly with `jpegtran` when its
-size allows, and the notice says when it had to be re-encoded instead.
+toolbar) writes `name-edited.ext` beside the original, with the original's
+permissions, and opens it; the original is never changed. A JPEG is turned
+losslessly with `jpegtran` when its size allows, with an EXIF orientation tag
+folded into the same turn, and keeps its EXIF (date taken, camera, place)
+marked upright. The notice says when the copy had to be re-encoded, when it is
+saved in another format (a GIF is saved as PNG) and when metadata could not be
+kept. A lossless WebP stays lossless.
 Pictures and videos in the folder are listed by filename; press `B`
 for a filmstrip of them above the controls, and click one to open it. Use the arrows
 to step through pictures, or Page Up and Page Down to change files while a video

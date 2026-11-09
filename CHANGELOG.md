@@ -47,11 +47,15 @@
 - Save rotated copy in the viewer (`Ctrl+S`) once the view is turned or
   flipped: a copy beside the original that opens next to it. JPEGs are turned
   losslessly with jpegtran where the size allows; otherwise the notice says the
-  copy was re-encoded.
+  copy was re-encoded. A copy keeps the original's permissions.
+- Corrected JPEG copies keep their EXIF, XMP and IPTC metadata, with the
+  orientation tag set to upright, instead of dropping it. A phone photo with an
+  orientation tag is now turned losslessly too.
 - Drag the shown file out of the viewer by its name or with `Ctrl`+drag; a
   plain drag still pans.
 - Drop files on the viewer to open them there, or on the library to open them
-  in the viewer. Folders dropped on the library are offered as library folders.
+  in the viewer. Folders dropped on the library are offered as library folders;
+  folders dropped on the viewer open in the library.
 
 ### Fixed
 

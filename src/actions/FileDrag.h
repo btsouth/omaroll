@@ -1,5 +1,7 @@
 #pragma once
 
+#include "app/OpenRequest.h"
+
 #include <QFileInfo>
 #include <QList>
 #include <QStringList>
@@ -28,8 +30,11 @@ inline QVariantMap mimeData(const QStringList& paths) {
 
 // Dropped URLs, in the order dropped: local files, local folders, and the
 // names of what cannot be opened here (a web address, or something gone).
+// Folders are canonical, as the library stores them, so a linked folder is
+// shown as the folder it adds. |fileInfos| are the files, already read.
 struct Sorted {
   QStringList files;
+  QList<QFileInfo> fileInfos;
   QStringList folders;
   QStringList skipped;
 };
@@ -44,9 +49,11 @@ inline Sorted sort(const QList<QUrl>& urls) {
     }
     const QFileInfo info(url.toLocalFile());
     if (info.isDir()) {
-      sorted.folders.append(info.absoluteFilePath());
+      const QString canonical = info.canonicalFilePath();
+      sorted.folders.append(canonical.isEmpty() ? info.absoluteFilePath() : canonical);
     } else if (info.exists()) {
       sorted.files.append(info.absoluteFilePath());
+      sorted.fileInfos.append(info);
     } else {
       sorted.skipped.append(info.fileName());
     }
@@ -54,9 +61,6 @@ inline Sorted sort(const QList<QUrl>& urls) {
   return sorted;
 }
 
-inline QString skippedNote(const QStringList& skipped) {
-  return skipped.isEmpty() ? QString()
-                           : QStringLiteral("Skipped: %1").arg(skipped.join(QStringLiteral(", ")));
-}
+inline QString skippedNote(const QStringList& skipped) { return OpenRequest::skippedNote(skipped); }
 
 } // namespace FileDrag

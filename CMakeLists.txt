@@ -77,6 +77,8 @@ add_library(omaroll_core STATIC
   src/edit/ImageEditor.h
   src/edit/CopyOutput.cpp
   src/edit/CopyOutput.h
+  src/edit/JpegExif.cpp
+  src/edit/JpegExif.h
   src/edit/JpegTransform.cpp
   src/edit/JpegTransform.h
   src/edit/ClipboardImage.cpp

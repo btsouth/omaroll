@@ -2021,13 +2021,19 @@ ApplicationWindow {
     // own tiles are not dropped back on it.
     function openDropped(urls) {
         const sorted = Actions.sortDrop(urls)
-        if (sorted.files.length > 0) Actions.openFiles(sorted.files)
         if (sorted.folders.length > 0) {
+            // Asked here first; the files open once it is answered, so the
+            // viewer cannot come up over the question.
             folderDropConfirm.folders = sorted.folders
             folderDropConfirm.folderUrls = sorted.folderUrls
+            folderDropConfirm.pendingFiles = sorted.files
+            root.raise()
+            root.requestActivate()
             folderDropConfirm.open()
+        } else if (sorted.files.length > 0) {
+            Actions.openFiles(sorted.files)
         }
-        if (sorted.skipped.length > 0) root.say("Skipped: " + sorted.skipped.join(", "))
+        if (sorted.note !== "") root.say(sorted.note)
         else if (sorted.files.length === 0 && sorted.folders.length === 0) root.say("Nothing there to open")
     }
 
@@ -2053,6 +2059,8 @@ ApplicationWindow {
         objectName: "folderDropConfirm"
         property var folders: []
         property var folderUrls: []
+        // Dropped with the folders; opened when the question is answered.
+        property var pendingFiles: []
         title: folders.length === 1 ? "Add this folder to Omaroll?"
                                     : "Add these " + folders.length + " folders to Omaroll?"
         detail: folders.join("\n") + "\n\nOmaroll watches " + (folders.length === 1 ? "it" : "them")
@@ -2065,7 +2073,13 @@ ApplicationWindow {
             folderDropConfirm.folderUrls = []
             root.addDroppedFolders(folders, urls)
         }
-        onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
+        onVisibleChanged: {
+            if (visible) return
+            root.restoreFocusAfterSheet()
+            const files = folderDropConfirm.pendingFiles
+            folderDropConfirm.pendingFiles = []
+            if (files.length > 0) Actions.openFiles(files)
+        }
     }
 
     DropArea {
@@ -2073,7 +2087,8 @@ ApplicationWindow {
         objectName: "libraryDropArea"
         anchors.fill: parent
         keys: ["text/uri-list"]
-        enabled: !root.modalOpen
+        // Not under a sheet, the detail view or an open menu.
+        enabled: !root.anySheetOpen && !root.popupOpen
         onEntered: function (drag) {
             if (!drag.hasUrls || drag.source !== null) drag.accepted = false
             else drag.accept(Qt.CopyAction)
