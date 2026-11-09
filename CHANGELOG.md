@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep automatic organization backups and restore the last good copy when settings are damaged.
+
 ### Added
 
 - Searchable shortcut help in the viewer, library and preview, with grouped key caps.

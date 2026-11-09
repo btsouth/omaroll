@@ -495,3 +495,12 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots, const std::a
   RawJpegPairs::assign(records);
   return records;
 }
+
+#ifdef OMAROLL_FUZZ
+void fuzzMatroska(const QByteArray& data) {
+  qsizetype at = 0;
+  quint64 value = 0;
+  while (readVint(data, at, value, false)) {}
+  (void)hasMatroskaVideoTrack(data);
+}
+#endif

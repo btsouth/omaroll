@@ -5488,13 +5488,13 @@ private slots:
     QVERIFY(QFile::remove(path));
     QVERIFY(QFile::copy(video, path));
     rescan();
-    QTRY_VERIFY_WITH_TIMEOUT(detail->property("isVideo").toBool(), 5000);
+    QTRY_VERIFY(detail->property("isVideo").toBool());
     QVERIFY(detail->isVisible());
     QCOMPARE(detail->property("path").toString(), path);
     QVERIFY(QFile::remove(path));
     QVERIFY(QFile::copy(still, path));
     rescan();
-    QTRY_VERIFY_WITH_TIMEOUT(!detail->property("isVideo").toBool(), 5000);
+    QTRY_VERIFY(!detail->property("isVideo").toBool());
     QTRY_VERIFY(detail->property("imageReady").toBool());
     QVERIFY(detail->isVisible());
   }
@@ -5517,7 +5517,8 @@ private slots:
     QVERIFY(player);
     QTRY_VERIFY(item("detail")->property("resumeAvailable").toBool());
     QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
-    QTest::qWait(200);
+    QTRY_VERIFY(player->mediaStatus() == QMediaPlayer::LoadedMedia ||
+                player->mediaStatus() == QMediaPlayer::BufferedMedia);
     QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
     auto* mpris = qobject_cast<MprisService*>(
         m_engine->rootContext()->contextProperty(QStringLiteral("Mpris")).value<QObject*>());
@@ -5661,7 +5662,8 @@ private slots:
     m_window->showMinimized();
     QTest::qWait(100);
     m_window->showNormal();
-    QTest::qWait(200);
+    QTRY_VERIFY(player->mediaStatus() == QMediaPlayer::LoadedMedia ||
+                player->mediaStatus() == QMediaPlayer::BufferedMedia);
     QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
     QTest::keyClick(m_window, Qt::Key_Space);
     QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);

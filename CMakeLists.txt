@@ -311,14 +311,12 @@ if(BUILD_TESTING)
   set_tests_properties(omaroll_thumbnail_tests PROPERTIES ENVIRONMENT
     "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
 
-  # Hostile files reach the decoders and the helpers. Qt Multimedia starts the
-  # FFmpeg and D-Bus stacks, so leak detection is noisy here for the same
-  # reason as the UI suites; ASan and UBSan still run.
+  # Hostile files reach the decoders and helpers, including leak detection.
   qt_add_executable(omaroll_hostile_media_tests tests/tst_hostile_media.cpp)
   target_link_libraries(omaroll_hostile_media_tests PRIVATE omaroll_core Qt6::Multimedia Qt6::Test)
   add_test(NAME omaroll_hostile_media_tests COMMAND omaroll_hostile_media_tests)
   set_tests_properties(omaroll_hostile_media_tests PROPERTIES ENVIRONMENT
-    "${omaroll_test_environment};ASAN_OPTIONS=detect_leaks=0")
+    "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
 
   # The UI suite loads the real Main.qml and drives it with synthetic input.
   # The module's files are compiled into the omaroll executable, so a second
@@ -349,11 +347,9 @@ if(BUILD_TESTING)
   target_compile_definitions(omaroll_ui_tests PRIVATE
     OMAROLL_QML_IMPORT_PATH="${CMAKE_BINARY_DIR}/uitest-imports")
   add_test(NAME omaroll_ui_tests COMMAND omaroll_ui_tests)
-  # Qt Multimedia initializes the system FFmpeg, VAAPI/CUDA and D-Bus stacks,
-  # whose process-lifetime allocations make LeakSanitizer noisy. The core suite
-  # retains leak detection; this real-window suite still runs ASan and UBSan.
+  # Suppress only documented external process-lifetime allocations.
   set_tests_properties(omaroll_ui_tests PROPERTIES ENVIRONMENT
-    "${omaroll_test_environment};ASAN_OPTIONS=detect_leaks=0")
+    "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
 
   # The quick viewer in its own process, so its window never competes with
   # the library's for focus.
@@ -363,5 +359,25 @@ if(BUILD_TESTING)
     OMAROLL_QML_IMPORT_PATH="${CMAKE_BINARY_DIR}/uitest-imports")
   add_test(NAME omaroll_viewer_tests COMMAND omaroll_viewer_tests)
   set_tests_properties(omaroll_viewer_tests PROPERTIES ENVIRONMENT
-    "${omaroll_test_environment};ASAN_OPTIONS=detect_leaks=0")
+    "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
+endif()
+
+option(OMAROLL_FUZZ "Build libFuzzer parser harnesses (Clang only)" OFF)
+if(OMAROLL_FUZZ)
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR "OMAROLL_FUZZ requires Clang")
+  endif()
+  target_compile_definitions(omaroll_core PRIVATE OMAROLL_FUZZ)
+  target_compile_options(omaroll_core PRIVATE -fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+  target_link_options(omaroll_core INTERFACE -fsanitize=fuzzer-no-link,address,undefined)
+  set(fuzz_kinds launch ipc matroska pdf image raw subtitles organization)
+  set(kind 0)
+  foreach(parser IN LISTS fuzz_kinds)
+    math(EXPR kind "${kind} + 1")
+    add_executable(fuzz_${parser} tests/fuzz/driver.cpp)
+    target_compile_definitions(fuzz_${parser} PRIVATE FUZZ_KIND=${kind})
+    target_compile_options(fuzz_${parser} PRIVATE -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all)
+    target_link_options(fuzz_${parser} PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_link_libraries(fuzz_${parser} PRIVATE omaroll_core)
+  endforeach()
 endif()

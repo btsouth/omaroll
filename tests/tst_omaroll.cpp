@@ -2514,6 +2514,68 @@ private slots:
     QVERIFY(!settings.organizationError().isEmpty());
   }
 
+  void automaticOrganizationSnapshotsRotateAndRecover() {
+    QTemporaryDir dir;
+    const auto oldData = qgetenv("XDG_DATA_HOME");
+    qputenv("XDG_DATA_HOME", dir.filePath("data").toUtf8());
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, dir.filePath("config"));
+    const auto reset = qScopeGuard([&] {
+      qputenv("XDG_DATA_HOME", oldData);
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, m_scratch.filePath("config"));
+    });
+    QString ini, backups;
+    {
+      AppSettings settings;
+      QVERIFY(settings.createAlbum("Remember me"));
+      QSettings stored(QSettings::IniFormat, QSettings::UserScope, "omaroll", "omaroll");
+      ini = stored.fileName();
+      backups = settings.backupDirectory();
+      QDir backupDir(backups);
+      for (const auto& name : backupDir.entryList(QDir::Files)) QVERIFY(backupDir.remove(name));
+      const QDate today = QDate::currentDate();
+      for (int day = 40; day >= 0; --day) QVERIFY(settings.snapshotOrganization(today.addDays(-day)));
+      QCOMPARE(backupDir.entryList({"daily-*.json"}, QDir::Files).size(), 7);
+      QCOMPARE(backupDir.entryList({"weekly-*.json"}, QDir::Files).size(), 4);
+      const QString latest = backupDir.filePath("daily-" + today.toString(Qt::ISODate) + ".json");
+      QFile snapshot(latest);
+      QVERIFY(snapshot.open(QIODevice::ReadOnly));
+      const auto bytes = snapshot.readAll();
+      snapshot.close();
+      QVERIFY(settings.createAlbum("Later change"));
+      QVERIFY(settings.snapshotOrganization());
+      QVERIFY(snapshot.open(QIODevice::ReadOnly));
+      QCOMPARE(snapshot.readAll(), bytes); // Daily snapshot is immutable.
+      snapshot.close();
+      QVERIFY(settings.importOrganization(latest).value("ok").toBool());
+      QCOMPARE(settings.albumNames(), QStringList{"Remember me"});
+      QCOMPARE(backupDir.entryList({"before-restore-*.json"}, QDir::Files).size(), 1);
+    }
+    QFile damaged(ini);
+    QVERIFY(damaged.open(QIODevice::WriteOnly));
+    const QByteArray bad("[library]\n[truncated\n");
+    QCOMPARE(damaged.write(bad), bad.size());
+    damaged.close();
+    {
+      AppSettings settings;
+      QVERIFY(settings.canRestoreOrganization());
+      QVERIFY(!settings.organizationError().isEmpty());
+      QVERIFY(settings.restoreLastGoodBackup().value("ok").toBool());
+      QVERIFY(settings.albumNames().contains("Remember me"));
+      QVERIFY(settings.organizationError().isEmpty());
+      QVERIFY(!settings.canRestoreOrganization());
+      QVERIFY(settings.createTag("After recovery"));
+    }
+    QDir config(QFileInfo(ini).absolutePath());
+    const auto preserved = config.entryList({"*.damaged-*"}, QDir::Files);
+    QCOMPARE(preserved.size(), 1);
+    QFile original(config.filePath(preserved.first()));
+    QVERIFY(original.open(QIODevice::ReadOnly));
+    QCOMPARE(original.readAll(), bad);
+    AppSettings restarted;
+    QVERIFY(restarted.albumNames().contains("Remember me"));
+    QVERIFY(restarted.tagNames().contains("After recovery"));
+  }
+
   void damagedSettingsArePreservedWhenOrganizationCannotSave() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

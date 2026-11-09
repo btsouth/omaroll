@@ -1,3 +1,6 @@
+#include <QUuid>
+#include <memory>
+#include <QStandardPaths>
 #include "app/AppSettings.h"
 #include "actions/TrashRestore.h"
 #include "app/VideoPlayback.h"
@@ -395,6 +398,7 @@ AppSettings::AppSettings(QObject* parent)
     m_markIdentities.insert(it.key(), entry);
   }
 
+  snapshotOrganization();
   m_previousVisit = m_settings.value(kLastVisit).toString();
   setValue(kLastVisit, QDateTime::currentDateTime().toString(Qt::ISODate));
 }
@@ -1373,6 +1377,52 @@ void AppSettings::reconcileTags(const QList<CaptureRecord>& records) {
   }
 }
 
+QString AppSettings::backupDirectory() const {
+  return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)
+         + QStringLiteral("/omaroll/backups");
+}
+
+bool AppSettings::snapshotOrganization(const QDate& date, bool beforeRestore) const {
+  if (m_settings.status() != QSettings::NoError || !date.isValid()) return false;
+  QDir dir(backupDirectory());
+  if (!QDir().mkpath(dir.path())) return false;
+  const QString daily = QStringLiteral("daily-%1.json").arg(date.toString(Qt::ISODate));
+  const QString name = beforeRestore
+      ? QStringLiteral("before-restore-%1.json").arg(QUuid::createUuid().toString(QUuid::WithoutBraces))
+      : daily;
+  if ((beforeRestore || !dir.exists(name)) &&
+      !exportOrganization(dir.filePath(name)).value(QStringLiteral("ok")).toBool()) return false;
+  // Keep the first successful daily snapshot of each ISO week independently.
+  const QDate monday = date.addDays(1 - date.dayOfWeek());
+  const QString weekly = QStringLiteral("weekly-%1.json").arg(monday.toString(Qt::ISODate));
+  if (!dir.exists(weekly) && !QFile::copy(dir.filePath(name), dir.filePath(weekly))) return false;
+  const auto prune = [&dir](const QString& pattern, int keep, QDir::SortFlags sort) {
+    const auto names = dir.entryList({pattern}, QDir::Files, sort);
+    for (int i = keep; i < names.size(); ++i) dir.remove(names.at(i));
+  };
+  prune(QStringLiteral("daily-*.json"), 7, QDir::Name | QDir::Reversed);
+  prune(QStringLiteral("weekly-*.json"), 4, QDir::Name | QDir::Reversed);
+  prune(QStringLiteral("before-restore-*.json"), 4, QDir::Time);
+  return true;
+}
+
+bool AppSettings::canRestoreOrganization() const {
+  return m_settings.status() == QSettings::FormatError &&
+         !QDir(backupDirectory()).entryList({QStringLiteral("daily-*.json"),
+                 QStringLiteral("weekly-*.json"), QStringLiteral("before-restore-*.json")}, QDir::Files).isEmpty();
+}
+
+QVariantMap AppSettings::restoreLastGoodBackup() {
+  QDir dir(backupDirectory());
+  const auto names = dir.entryList({QStringLiteral("daily-*.json"), QStringLiteral("weekly-*.json"),
+                                  QStringLiteral("before-restore-*.json")}, QDir::Files, QDir::Time);
+  for (const QString& name : names) {
+    const auto result = importOrganization(dir.filePath(name));
+    if (result.value(QStringLiteral("ok")).toBool()) return result;
+  }
+  return {{QStringLiteral("ok"), false}, {QStringLiteral("message"), QStringLiteral("No readable organization backup was found")}};
+}
+
 QVariantMap AppSettings::exportOrganization(const QString& path) const {
   if (path.isEmpty()) {
     return {{QStringLiteral("ok"), false},
@@ -1692,6 +1742,20 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
   resolvePresent(albums);
   resolvePresent(tags);
 
+  if (m_settings.status() == QSettings::FormatError) {
+    // Preserve the damaged bytes before rebuilding QSettings, whose error is sticky.
+    const QString ini = m_settings.fileName();
+    if (!QFile::copy(ini, ini + QStringLiteral(".damaged-") + QUuid::createUuid().toString(QUuid::WithoutBraces)))
+      return {{QStringLiteral("ok"), false}, {QStringLiteral("message"), QStringLiteral("Could not preserve damaged settings")}};
+    QSaveFile clean(ini);
+    if (!clean.open(QIODevice::WriteOnly) || clean.write("[General]\n") != 10 || !clean.commit())
+      return {{QStringLiteral("ok"), false}, {QStringLiteral("message"), QStringLiteral("Could not repair settings")}};
+    std::destroy_at(&m_settings);
+    std::construct_at(&m_settings, ini, QSettings::IniFormat);
+  } else if (!snapshotOrganization(QDate::currentDate(), true)) {
+    return {{QStringLiteral("ok"), false}, {QStringLiteral("message"), QStringLiteral("Could not save a backup before restoring")}};
+  }
+
   const auto oldAlbums = m_albums;
   const auto oldTags = m_tags;
   const auto oldViews = m_smartCollections;
@@ -1990,6 +2054,7 @@ bool AppSettings::syncOrganization() {
     m_organizationError = error;
     emit organizationErrorChanged();
   }
+  if (error.isEmpty()) snapshotOrganization();
   return error.isEmpty();
 }
 

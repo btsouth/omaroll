@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QDate>
 #include <QByteArray>
 #include "app/ShortcutTable.h"
 #include <QList>
@@ -24,6 +25,7 @@ struct CaptureRecord;
 // recovery. Unavailable files keep their organization until the user clears it.
 class AppSettings final : public QObject {
   Q_OBJECT
+  Q_PROPERTY(bool canRestoreOrganization READ canRestoreOrganization NOTIFY organizationErrorChanged)
   Q_PROPERTY(QString organizationError READ organizationError NOTIFY organizationErrorChanged)
   Q_PROPERTY(bool showHidden READ showHidden WRITE setShowHidden NOTIFY showHiddenChanged)
   // How many files carry a rating, so the Browse sheet can leave the rating
@@ -242,6 +244,11 @@ public:
   // state, so a bad file leaves the current profile exactly as it was. Both
   // return {ok, message}.
   static constexpr int kOrganizationVersion = 1;
+  [[nodiscard]] bool canRestoreOrganization() const;
+  Q_INVOKABLE QVariantMap restoreLastGoodBackup();
+  // Date is explicit for deterministic rotation tests. Normal callers use today.
+  bool snapshotOrganization(const QDate& date = QDate::currentDate(), bool beforeRestore = false) const;
+  [[nodiscard]] QString backupDirectory() const;
   Q_INVOKABLE [[nodiscard]] QVariantMap exportOrganization(const QString& path) const;
   // Restores by replacing the current organization. Callers should confirm
   // first; the original files on disk are untouched either way.

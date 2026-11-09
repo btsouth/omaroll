@@ -1136,7 +1136,9 @@ private slots:
     QTest::mouseMove(m_window, QPoint(m_window->width() / 2, m_window->height() * 2 / 3));
     QTRY_VERIFY(!prop("chromeShown").toBool());
     QTRY_VERIFY(!item(QStringLiteral("viewerHeader"))->isVisible());
-    QTest::qWait(100);
+    QSignalSpy rendered(m_window, &QQuickWindow::afterRendering);
+    m_window->update();
+    QTRY_VERIFY(!rendered.isEmpty());
     const QImage frame = m_window->grabWindow();
     QVERIFY(!frame.isNull());
     const qreal scale = frame.devicePixelRatio();
@@ -1164,7 +1166,9 @@ private slots:
     QVERIFY(image.save(path));
     open({path});
     QTRY_VERIFY(prop("imageReady").toBool());
-    QTest::qWait(100);
+    QSignalSpy rendered(m_window, &QQuickWindow::afterRendering);
+    m_window->update();
+    QTRY_VERIFY(!rendered.isEmpty());
     const QImage frame = m_window->grabWindow();
     QVERIFY(!frame.isNull());
     // Chrome left over from earlier tests can dim the frame a little, so
