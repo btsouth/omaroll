@@ -2,9 +2,6 @@
 
 ## Unreleased
 
-- Keep library date order correct when camera dates arrive after scanning, and keep the newest section visible at startup or when already at the top.
-- Hide recycled date headers from assistive technology and add Ctrl+Up/Down to jump between day or month sections.
-
 ### Added
 
 - The empty library offers Omaroll's Hyprland window rules once, with Install
@@ -117,6 +114,8 @@
 - A playing video shows a poster frame as its cover art in the shell's player
   controls and other MPRIS clients.
 - **Open Library** on Omaroll's launcher entry.
+- `Ctrl+Up` and `Ctrl+Down` in the library jump to the previous or next day
+  or month section.
 
 ### Changed
 
@@ -194,6 +193,12 @@
   save a copy" instead of "Save flipped copy".
 - The seek-bar preview marks a keyframe from another second with its own time,
   so the picture isn't taken for the hovered time.
+- Copies of older photos no longer sort by the day they were copied while
+  showing their camera date. When camera dates arrive after the scan, the
+  library re-sorts by them, and a view at its top stays on the newest section
+  instead of opening scrolled past it.
+- Screen readers no longer hear day sections hidden under a month header.
+  Date headers are headings named with the date and count.
 - Restoring the automatic backup no longer loses the day's organization. Today's
   backup is taken again a few minutes after the last change, within 15 minutes
   during steady editing, and when Omaroll quits, instead of only at the day's

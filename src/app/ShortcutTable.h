@@ -85,7 +85,7 @@ inline QVariantList rows() {
   {"context": "library", "id": "up", "keys": ["Up", "K"], "label": "Move up", "group": "Navigation", "flag": "", "tokens": ["Up", "K"]},
   {"context": "library", "id": "right", "keys": ["Right", "L"], "label": "Move right", "group": "Navigation", "flag": "", "tokens": ["Right", "L"]},
   {"context": "library", "id": "ends", "keys": ["Home", "End"], "label": "First / last tile", "group": "Navigation", "flag": "", "tokens": ["Home", "End"]},
-  {"context": "library", "id": "date-sections", "keys": ["Ctrl+Up", "Ctrl+Down"], "label": "Previous / next day or month section", "group": "Navigation", "flag": "", "tokens": ["Up", "Down"]},
+  {"context": "library", "id": "date-sections", "keys": ["Ctrl+Up", "Ctrl+Down"], "label": "Previous / next day or month", "group": "Navigation", "flag": "", "tokens": ["Up", "Down"]},
   {"context": "library", "id": "pages", "keys": ["PgUp", "PgDown"], "label": "Page up / down", "group": "Navigation", "flag": "", "tokens": ["PageUp", "PageDown"]},
   {"context": "library", "id": "extend", "keys": ["Shift+Left", "Shift+Right", "Shift+Up", "Shift+Down"], "label": "Extend the selection", "group": "Organization", "flag": "", "tokens": ["Left", "Right", "Up", "Down"]},
   {"context": "library", "id": "extend-far", "keys": ["Shift+Home", "Shift+End", "Shift+PgUp", "Shift+PgDown"], "label": "Extend the selection to the first / last tile or a page", "group": "Organization", "flag": "", "tokens": ["Home", "End", "PageUp", "PageDown"]},

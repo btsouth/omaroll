@@ -1951,10 +1951,9 @@ private slots:
     }(), 3000);
   }
 
-  // A longer dated library: exact jumps and the scrollbar, the page keys,
-  // Shift+X and the mixed state of a day's control, Ctrl+wheel over the
-  // sections, a band that scrolls, an anchor a search hides, and a capture
-  // arriving while the view is scrolled.
+  // Exact copies whose camera dates arrive after the scan: the order follows
+  // the dates, the view stays at its top, Ctrl+arrows jump between sections,
+  // and only the headers on screen reach the accessibility tree.
   void lateCameraDatesKeepTheNewestSectionVisible() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -2040,6 +2039,10 @@ private slots:
     }
   }
 
+  // A longer dated library: exact jumps and the scrollbar, the page keys,
+  // Shift+X and the mixed state of a day's control, Ctrl+wheel over the
+  // sections, a band that scrolls, an anchor a search hides, and a capture
+  // arriving while the view is scrolled.
   void dateSectionsScrollKeysAndKeepTheirPlace() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
