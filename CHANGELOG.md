@@ -40,7 +40,8 @@
 - Automatic backups of your albums, tags, ratings and other organization, kept
   in `~/.local/share/omaroll/backups` (the last 7 days and 4 weeks, plus a
   copy before every restore). If the settings file is damaged, Settings offers
-  Restore last good backup, which keeps the damaged file beside it.
+  Restore last good backup. It asks first, says which day it restored, keeps
+  the damaged file beside it and saves whatever organization it still held.
 
 ### Fixed
 

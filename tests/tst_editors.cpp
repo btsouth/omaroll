@@ -112,6 +112,8 @@ private slots:
     QVERIFY(m_scratch.isValid());
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        m_scratch.filePath(QStringLiteral("config")));
+    // AppSettings writes organization snapshots under the data folder.
+    QVERIFY(qputenv("XDG_DATA_HOME", m_scratch.filePath(QStringLiteral("data")).toUtf8()));
   }
 
   void init() {
