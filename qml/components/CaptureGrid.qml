@@ -367,22 +367,23 @@ FocusScope {
         // ones that act on the selection. Single-letter action keys live in
         // Main so they work whether or not the grid has focus.
         Keys.onPressed: function (event) {
+        if ((event.key === ShortcutCatalog.libraryKeys.Tab || event.key === ShortcutCatalog.libraryKeys.Backtab) && root.Window.window) root.Window.window.keyboardNavigation = true
             Captures.commitPendingSearch()
             switch (event.key) {
-            case Qt.Key_Return:
-            case Qt.Key_Enter:
+            case ShortcutCatalog.libraryKeys.Return:
+            case ShortcutCatalog.libraryKeys.Enter:
                 if (grid.currentIndex >= 0) {
                     root.detailRequested(grid.currentIndex)
                     event.accepted = true
                 }
                 break
-            case Qt.Key_Space:
+            case ShortcutCatalog.libraryKeys.Space:
                 if (grid.currentIndex >= 0) {
                     root.chosen(grid.currentIndex)
                     event.accepted = true
                 }
                 break
-            case Qt.Key_Delete:
+            case ShortcutCatalog.libraryKeys.Delete:
                 // Shift+Delete belongs to the non-repeating permanent-delete
                 // shortcut. A repeat rejected there must not turn into Trash.
                 if (event.modifiers & Qt.ShiftModifier) {
@@ -394,42 +395,42 @@ FocusScope {
                     event.accepted = true
                 }
                 break
-            case Qt.Key_X:
+            case ShortcutCatalog.libraryKeys.X:
                 if (grid.currentIndex >= 0) {
                     root.toggleChecked(Captures.pathAt(grid.currentIndex))
                     event.accepted = true
                 }
                 break
-            case Qt.Key_H:
+            case ShortcutCatalog.libraryKeys.H:
                 grid.moveCurrentIndexLeft()
                 event.accepted = true
                 break
-            case Qt.Key_J:
+            case ShortcutCatalog.libraryKeys.J:
                 grid.moveCurrentIndexDown()
                 event.accepted = true
                 break
-            case Qt.Key_K:
+            case ShortcutCatalog.libraryKeys.K:
                 grid.moveCurrentIndexUp()
                 event.accepted = true
                 break
-            case Qt.Key_L:
+            case ShortcutCatalog.libraryKeys.L:
                 grid.moveCurrentIndexRight()
                 event.accepted = true
                 break
-            case Qt.Key_Tab:
+            case ShortcutCatalog.libraryKeys.Tab:
                 root.sectionStepRequested(event.modifiers & Qt.ShiftModifier ? -1 : 1)
                 event.accepted = true
                 break
-            case Qt.Key_Backtab:
+            case ShortcutCatalog.libraryKeys.Backtab:
                 root.sectionStepRequested(-1)
                 event.accepted = true
                 break
-            case Qt.Key_Home:
+            case ShortcutCatalog.libraryKeys.Home:
                 grid.currentIndex = 0
                 grid.positionViewAtBeginning()
                 event.accepted = true
                 break
-            case Qt.Key_End:
+            case ShortcutCatalog.libraryKeys.End:
                 grid.currentIndex = grid.count - 1
                 grid.positionViewAtEnd()
                 event.accepted = true

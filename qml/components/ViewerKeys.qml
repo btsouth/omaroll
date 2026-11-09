@@ -7,6 +7,7 @@ Item {
     required property var viewer
 
     Keys.onPressed: function (event) {
+        if (event.key === ShortcutCatalog.quickKeys.Tab || event.key === ShortcutCatalog.quickKeys.Backtab) viewer.keyboardNavigation = true
         if (viewer.choosingEditor) {
             event.accepted = false
             return
@@ -17,82 +18,82 @@ Item {
         const video = Session.isVideo
         let handled = true
 
-        if (video && shift && !control && !alt && event.key === Qt.Key_L) {
+        if (video && shift && !control && !alt && event.key === ShortcutCatalog.quickKeys.L) {
             if (!event.isAutoRepeat) viewer.toggleVideoLoop()
-        } else if (video && shift && !control && !alt && event.key === Qt.Key_A) {
+        } else if (video && shift && !control && !alt && event.key === ShortcutCatalog.quickKeys.A) {
             viewer.cycleAudioTrack()
-        } else if (alt && event.key >= Qt.Key_0 && event.key <= Qt.Key_5) {
-            viewer.rate(event.key - Qt.Key_0)
-        } else if (control && event.key === Qt.Key_Z) {
+        } else if (alt && event.key >= ShortcutCatalog.quickKeys.0 && event.key <= ShortcutCatalog.quickKeys.5) {
+            viewer.rate(event.key - ShortcutCatalog.quickKeys.0)
+        } else if (control && event.key === ShortcutCatalog.quickKeys.Z) {
             viewer.undo()
-        } else if (control && event.key === Qt.Key_C) {
+        } else if (control && event.key === ShortcutCatalog.quickKeys.C) {
             if (shift) viewer.copyPath(false)
             else viewer.perform("copy")
-        } else if (control && event.key === Qt.Key_O) {
+        } else if (control && event.key === ShortcutCatalog.quickKeys.O) {
             viewer.perform("open-with")
-        } else if (control && event.key === Qt.Key_W) {
+        } else if (control && event.key === ShortcutCatalog.quickKeys.W) {
             viewer.close()
-        } else if (control && event.key === Qt.Key_Q) {
+        } else if (control && event.key === ShortcutCatalog.quickKeys.Q) {
             Qt.quit()
         } else if (shift && !control && !alt && !video
-                   && [Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down].indexOf(event.key) >= 0) {
-            viewer.panImage(event.key === Qt.Key_Left ? -80 : event.key === Qt.Key_Right ? 80 : 0,
-                          event.key === Qt.Key_Up ? -80 : event.key === Qt.Key_Down ? 80 : 0)
+                   && [ShortcutCatalog.quickKeys.Left, ShortcutCatalog.quickKeys.Right, ShortcutCatalog.quickKeys.Up, ShortcutCatalog.quickKeys.Down].indexOf(event.key) >= 0) {
+            viewer.panImage(event.key === ShortcutCatalog.quickKeys.Left ? -80 : event.key === ShortcutCatalog.quickKeys.Right ? 80 : 0,
+                          event.key === ShortcutCatalog.quickKeys.Up ? -80 : event.key === ShortcutCatalog.quickKeys.Down ? 80 : 0)
         } else if (control || alt) {
             handled = false
         } else {
             switch (event.key) {
             // Tab would walk focus into the details card and leave the
             // viewer's keys behind.
-            case Qt.Key_Tab:
-            case Qt.Key_Backtab:
+            case ShortcutCatalog.quickKeys.Tab:
+            case ShortcutCatalog.quickKeys.Backtab:
                 break
-            case Qt.Key_Escape:
+            case ShortcutCatalog.quickKeys.Escape:
                 if (viewer.slideshowRunning) viewer.setSlideshow(false)
                 else if (viewer.fullScreen) viewer.setFullScreen(false)
                 else if (viewer.infoOpen) viewer.infoOpen = false
                 else viewer.close()
                 break
-            case Qt.Key_Left:
-            case Qt.Key_Right: {
-                const direction = event.key === Qt.Key_Left ? -1 : 1
+            case ShortcutCatalog.quickKeys.Left:
+            case ShortcutCatalog.quickKeys.Right: {
+                const direction = event.key === ShortcutCatalog.quickKeys.Left ? -1 : 1
                 if (video) viewer.seek(direction * 5000)
                 else viewer.step(direction)
                 break
             }
-            case Qt.Key_PageUp:
-            case Qt.Key_PageDown:
-                viewer.step(event.key === Qt.Key_PageUp ? -1 : 1)
+            case ShortcutCatalog.quickKeys.PageUp:
+            case ShortcutCatalog.quickKeys.PageDown:
+                viewer.step(event.key === ShortcutCatalog.quickKeys.PageUp ? -1 : 1)
                 break
-            case Qt.Key_Home:
-            case Qt.Key_End:
+            case ShortcutCatalog.quickKeys.Home:
+            case ShortcutCatalog.quickKeys.End:
                 if (video && viewer.player) {
-                    viewer.seekTo(event.key === Qt.Key_Home ? 0 : viewer.player.duration)
+                    viewer.seekTo(event.key === ShortcutCatalog.quickKeys.Home ? 0 : viewer.player.duration)
                 } else {
-                    Session.jump(event.key === Qt.Key_Home ? 0 : Session.count - 1)
+                    Session.jump(event.key === ShortcutCatalog.quickKeys.Home ? 0 : Session.count - 1)
                 }
                 break
-            case Qt.Key_Space:
-            case Qt.Key_K:
+            case ShortcutCatalog.quickKeys.Space:
+            case ShortcutCatalog.quickKeys.K:
                 if (video || Session.isAnimated) viewer.togglePlayback()
                 else handled = false
                 break
-            case Qt.Key_J:
-            case Qt.Key_L:
-                if (video) viewer.seek(event.key === Qt.Key_J ? -10000 : 10000)
+            case ShortcutCatalog.quickKeys.J:
+            case ShortcutCatalog.quickKeys.L:
+                if (video) viewer.seek(event.key === ShortcutCatalog.quickKeys.J ? -10000 : 10000)
                 else handled = false
                 break
-            case Qt.Key_Comma:
-            case Qt.Key_Period:
-                if (video) viewer.stepFrame(event.key === Qt.Key_Comma ? -1 : 1)
+            case ShortcutCatalog.quickKeys.Comma:
+            case ShortcutCatalog.quickKeys.Period:
+                if (video) viewer.stepFrame(event.key === ShortcutCatalog.quickKeys.Comma ? -1 : 1)
                 else handled = false
                 break
-            case Qt.Key_Up:
-            case Qt.Key_Down:
-                if (video) viewer.adjustVolume(event.key === Qt.Key_Up ? 0.05 : -0.05)
+            case ShortcutCatalog.quickKeys.Up:
+            case ShortcutCatalog.quickKeys.Down:
+                if (video) viewer.adjustVolume(event.key === ShortcutCatalog.quickKeys.Up ? 0.05 : -0.05)
                 else handled = false
                 break
-            case Qt.Key_M:
+            case ShortcutCatalog.quickKeys.M:
                 if (video) {
                     Settings.videoMuted = !Settings.videoMuted
                     viewer.say(Settings.videoMuted ? "Muted" : "Sound on")
@@ -100,112 +101,112 @@ Item {
                     handled = false
                 }
                 break
-            case Qt.Key_C:
+            case ShortcutCatalog.quickKeys.C:
                 if (video) viewer.cycleSubtitles()
                 else handled = false
                 break
-            case Qt.Key_Z:
-            case Qt.Key_X:
-                if (video) viewer.adjustSubtitleOffset(event.key === Qt.Key_Z ? -500 : 500)
+            case ShortcutCatalog.quickKeys.Z:
+            case ShortcutCatalog.quickKeys.X:
+                if (video) viewer.adjustSubtitleOffset(event.key === ShortcutCatalog.quickKeys.Z ? -500 : 500)
                 else handled = false
                 break
-            case Qt.Key_BracketLeft:
-            case Qt.Key_BracketRight:
+            case ShortcutCatalog.quickKeys.BracketLeft:
+            case ShortcutCatalog.quickKeys.BracketRight:
                 if (video && viewer.player) {
                     viewer.setPlaybackRate(viewer.player.playbackRate
-                        + (event.key === Qt.Key_BracketLeft ? -0.25 : 0.25))
+                        + (event.key === ShortcutCatalog.quickKeys.BracketLeft ? -0.25 : 0.25))
                 } else {
                     handled = false
                 }
                 break
-            case Qt.Key_Backspace:
+            case ShortcutCatalog.quickKeys.Backspace:
                 if (video && viewer.player) {
                     viewer.setPlaybackRate(1)
                 } else {
                     handled = false
                 }
                 break
-            case Qt.Key_Plus:
-            case Qt.Key_Equal:
+            case ShortcutCatalog.quickKeys.Plus:
+            case ShortcutCatalog.quickKeys.Equal:
                 viewer.zoomBy(1.25)
                 break
-            case Qt.Key_Minus:
-            case Qt.Key_Underscore:
+            case ShortcutCatalog.quickKeys.Minus:
+            case ShortcutCatalog.quickKeys.Underscore:
                 viewer.zoomBy(1 / 1.25)
                 break
-            case Qt.Key_Question:
-            case Qt.Key_F1:
+            case ShortcutCatalog.quickKeys.Question:
+            case ShortcutCatalog.quickKeys.F1:
                 viewer.showShortcutHelp()
                 break
-            case Qt.Key_W:
+            case ShortcutCatalog.quickKeys.W:
                 if (!video && shift) viewer.toggleFill()
                 else if (!video) viewer.setFitMode("width")
                 break
-            case Qt.Key_0:
+            case ShortcutCatalog.quickKeys.0:
                 if (!video) viewer.fitToWindow()
                 break
-            case Qt.Key_1:
+            case ShortcutCatalog.quickKeys.1:
                 if (!video) viewer.toggleActualSize()
                 break
-            case Qt.Key_R:
+            case ShortcutCatalog.quickKeys.R:
                 viewer.rotate(!shift)
                 break
-            case Qt.Key_F:
-            case Qt.Key_F11:
+            case ShortcutCatalog.quickKeys.F:
+            case ShortcutCatalog.quickKeys.F11:
                 viewer.setFullScreen(!viewer.fullScreen)
                 break
-            case Qt.Key_F5:
+            case ShortcutCatalog.quickKeys.F5:
                 viewer.setSlideshow(!viewer.slideshowRunning)
                 break
-            case Qt.Key_I:
+            case ShortcutCatalog.quickKeys.I:
                 viewer.infoOpen = !viewer.infoOpen
                 break
-            case Qt.Key_Return:
-            case Qt.Key_Enter:
+            case ShortcutCatalog.quickKeys.Return:
+            case ShortcutCatalog.quickKeys.Enter:
                 Session.openInLibrary()
                 break
-            case Qt.Key_Delete:
+            case ShortcutCatalog.quickKeys.Delete:
                 if (shift) {
                     if (!event.isAutoRepeat) viewer.requestPermanentDelete()
                 } else {
                     viewer.requestTrash()
                 }
                 break
-            case Qt.Key_V:
+            case ShortcutCatalog.quickKeys.V:
                 viewer.toggleFavorite()
                 break
-            case Qt.Key_Y:
+            case ShortcutCatalog.quickKeys.Y:
                 viewer.perform("copy")
                 break
-            case Qt.Key_S:
+            case ShortcutCatalog.quickKeys.S:
                 viewer.perform("send")
                 break
-            case Qt.Key_D:
-            case Qt.Key_O:
+            case ShortcutCatalog.quickKeys.D:
+            case ShortcutCatalog.quickKeys.O:
                 if (Session.isRaw) viewer.perform(event.modifiers & Qt.ShiftModifier ? "choose-editor" : "develop")
                 else handled = false
                 break
-            case Qt.Key_A:
+            case ShortcutCatalog.quickKeys.A:
                 if (!video) viewer.perform("annotate")
                 else handled = false
                 break
-            case Qt.Key_B:
+            case ShortcutCatalog.quickKeys.B:
                 if (Session.count > 1) viewer.toggleFilmstrip()
                 else handled = false
                 break
-            case Qt.Key_T:
+            case ShortcutCatalog.quickKeys.T:
                 if (video) viewer.perform("trim")
                 else handled = false
                 break
-            case Qt.Key_G:
+            case ShortcutCatalog.quickKeys.G:
                 if (video) viewer.perform("frame")
                 else handled = false
                 break
-            case Qt.Key_P:
+            case ShortcutCatalog.quickKeys.P:
                 if (video) viewer.perform("play")
                 else handled = false
                 break
-            case Qt.Key_Menu:
+            case ShortcutCatalog.quickKeys.Menu:
                 viewer.showActionMenu()
                 break
             default:

@@ -216,20 +216,7 @@ Item {
         && stage.width < 24 + pdfPageMeasure.implicitWidth
     readonly property bool narrowPdfPage: root.compactPdfPage
         && stage.width < 24 + pdfPageGlyphMeasure.implicitWidth
-    readonly property var viewerShortcuts: ({
-        previous: { key: Qt.Key_Left, label: "Left" },
-        next: { key: Qt.Key_Right, label: "Right" },
-        slideshow: { key: Qt.Key_F5, label: "F5" },
-        info: { key: Qt.Key_I, label: "I" },
-        fullscreen: { key: Qt.Key_F11, label: "F11" },
-        fit: { key: Qt.Key_0, label: "0" },
-        actual: { key: Qt.Key_1, label: "1" },
-        zoomOut: { key: Qt.Key_Minus, label: "−" },
-        zoomIn: { key: Qt.Key_Plus, label: "+" },
-        rotate: { key: Qt.Key_R, label: "R" },
-        flipHorizontal: { key: Qt.Key_H, label: "Shift+H" },
-        flipVertical: { key: Qt.Key_V, label: "Shift+V" }
-    })
+    readonly property var viewerShortcuts: ShortcutCatalog.previewKeys
     property bool actionNavigationActive: false
     property string focusedActionId: ""
     onQrDetectedChanged: {
@@ -2788,8 +2775,8 @@ Item {
 
                             HoverHandler { id: techHover; cursorShape: Qt.PointingHandCursor }
                             TapHandler { onTapped: root.technicalExpanded = !root.technicalExpanded }
-                            ToolTip {
-                                visible: techHover.hovered
+                            ThemedToolTip {
+                                requested: techHover.hovered
                                 text: root.technicalExpanded
                                       ? "Hide codec and stream details"
                                       : "Show codec and stream details"
@@ -2970,8 +2957,8 @@ Item {
                         cursorShape: row.usable ? Qt.PointingHandCursor : Qt.ArrowCursor
                     }
 
-                    ToolTip {
-                        visible: rowHover.hovered && row.toolTipText !== ""
+                    ThemedToolTip {
+                        requested: rowHover.hovered && row.toolTipText !== ""
                         text: row.toolTipText
                         delay: 500
                     }
@@ -2985,6 +2972,7 @@ Item {
                     }
 
                     Keys.onPressed: function (event) {
+        if ((event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) && root.Window.window) root.Window.window.keyboardNavigation = true
                         if (event.key === Qt.Key_Up || event.key === Qt.Key_Down) {
                             root.focusRelativeAction(event.key === Qt.Key_Up ? -1 : 1)
                             event.accepted = true
@@ -3137,6 +3125,7 @@ Item {
     }
 
     Keys.onPressed: function (event) {
+        if ((event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) && root.Window.window) root.Window.window.keyboardNavigation = true
         if (event.key === Qt.Key_Delete && (event.modifiers & Qt.ShiftModifier)
                 && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier))) {
             if (pdfSearch.activeFocus) return

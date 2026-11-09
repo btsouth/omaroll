@@ -23,61 +23,76 @@ struct CaptureRecord;
 // recovery. Unavailable files keep their organization until the user clears it.
 class AppSettings final : public QObject {
   Q_OBJECT
-  Q_PROPERTY(QString organizationError READ organizationError NOTIFY organizationErrorChanged)
-  Q_PROPERTY(bool showHidden READ showHidden WRITE setShowHidden NOTIFY showHiddenChanged)
+  Q_PROPERTY(QString organizationError READ organizationError NOTIFY
+                 organizationErrorChanged)
+  Q_PROPERTY(bool showHidden READ showHidden WRITE setShowHidden NOTIFY
+                 showHiddenChanged)
   // How many files carry a rating, so the Browse sheet can leave the rating
   // row out of a library nobody has rated.
   Q_PROPERTY(int ratedCount READ ratedCount NOTIFY marksChanged)
-  Q_PROPERTY(int sortMode READ sortMode WRITE setSortMode NOTIFY sortModeChanged)
-  Q_PROPERTY(int kindFilter READ kindFilter WRITE setKindFilter NOTIFY kindFilterChanged)
   Q_PROPERTY(
-      bool scanDownloads READ scanDownloads WRITE setScanDownloads NOTIFY scanDownloadsChanged)
+      int sortMode READ sortMode WRITE setSortMode NOTIFY sortModeChanged)
+  Q_PROPERTY(int kindFilter READ kindFilter WRITE setKindFilter NOTIFY
+                 kindFilterChanged)
+  Q_PROPERTY(bool scanDownloads READ scanDownloads WRITE setScanDownloads NOTIFY
+                 scanDownloadsChanged)
+  Q_PROPERTY(int recursionDepth READ recursionDepth WRITE setRecursionDepth
+                 NOTIFY recursionDepthChanged)
+  Q_PROPERTY(QStringList libraryFolders READ libraryFolders NOTIFY
+                 libraryFoldersChanged)
   Q_PROPERTY(
-      int recursionDepth READ recursionDepth WRITE setRecursionDepth NOTIFY recursionDepthChanged)
-  Q_PROPERTY(QStringList libraryFolders READ libraryFolders NOTIFY libraryFoldersChanged)
-  Q_PROPERTY(QStringList pinnedFolders READ pinnedFolders NOTIFY pinnedFoldersChanged)
-  Q_PROPERTY(bool pairRawJpeg READ pairRawJpeg WRITE setPairRawJpeg NOTIFY pairRawJpegChanged)
-  Q_PROPERTY(QString imagePrimaryAction READ imagePrimaryAction WRITE setImagePrimaryAction NOTIFY
-                 imagePrimaryActionChanged)
-  Q_PROPERTY(QString videoPrimaryAction READ videoPrimaryAction WRITE setVideoPrimaryAction NOTIFY
-                 videoPrimaryActionChanged)
-  Q_PROPERTY(int thumbnailCacheMb READ thumbnailCacheMb WRITE setThumbnailCacheMb NOTIFY
-                 thumbnailCacheMbChanged)
+      QStringList pinnedFolders READ pinnedFolders NOTIFY pinnedFoldersChanged)
+  Q_PROPERTY(bool pairRawJpeg READ pairRawJpeg WRITE setPairRawJpeg NOTIFY
+                 pairRawJpegChanged)
+  Q_PROPERTY(QString imagePrimaryAction READ imagePrimaryAction WRITE
+                 setImagePrimaryAction NOTIFY imagePrimaryActionChanged)
+  Q_PROPERTY(QString videoPrimaryAction READ videoPrimaryAction WRITE
+                 setVideoPrimaryAction NOTIFY videoPrimaryActionChanged)
+  Q_PROPERTY(int thumbnailCacheMb READ thumbnailCacheMb WRITE
+                 setThumbnailCacheMb NOTIFY thumbnailCacheMbChanged)
   // Target width of a grid tile in logical pixels. Ctrl+wheel and Ctrl+plus
   // or minus step it; the grid flexes the real width to fill each row.
-  Q_PROPERTY(int tileWidth READ tileWidth WRITE setTileWidth NOTIFY tileWidthChanged)
-  Q_PROPERTY(bool showGridFilenames READ showGridFilenames WRITE setShowGridFilenames NOTIFY
-                 showGridFilenamesChanged)
-  Q_PROPERTY(bool showFolderSidebar READ showFolderSidebar WRITE setShowFolderSidebar NOTIFY showFolderSidebarChanged)
-  Q_PROPERTY(int folderSidebarWidth READ folderSidebarWidth WRITE setFolderSidebarWidth NOTIFY folderSidebarWidthChanged)
-  Q_PROPERTY(int previewWidth READ previewWidth WRITE setPreviewWidth NOTIFY previewWidthChanged)
-  Q_PROPERTY(int previewHeight READ previewHeight WRITE setPreviewHeight NOTIFY previewHeightChanged)
-  Q_PROPERTY(bool slideshowVideos READ slideshowVideos WRITE setSlideshowVideos NOTIFY
-                 slideshowVideosChanged)
-  Q_PROPERTY(bool confirmPermanentDelete READ confirmPermanentDelete WRITE setConfirmPermanentDelete NOTIFY
-                 confirmPermanentDeleteChanged)
+  Q_PROPERTY(
+      int tileWidth READ tileWidth WRITE setTileWidth NOTIFY tileWidthChanged)
+  Q_PROPERTY(bool showGridFilenames READ showGridFilenames WRITE
+                 setShowGridFilenames NOTIFY showGridFilenamesChanged)
+  Q_PROPERTY(bool showFolderSidebar READ showFolderSidebar WRITE
+                 setShowFolderSidebar NOTIFY showFolderSidebarChanged)
+  Q_PROPERTY(int folderSidebarWidth READ folderSidebarWidth WRITE
+                 setFolderSidebarWidth NOTIFY folderSidebarWidthChanged)
+  Q_PROPERTY(int previewWidth READ previewWidth WRITE setPreviewWidth NOTIFY
+                 previewWidthChanged)
+  Q_PROPERTY(int previewHeight READ previewHeight WRITE setPreviewHeight NOTIFY
+                 previewHeightChanged)
+  Q_PROPERTY(bool slideshowVideos READ slideshowVideos WRITE setSlideshowVideos
+                 NOTIFY slideshowVideosChanged)
+  Q_PROPERTY(bool confirmPermanentDelete READ confirmPermanentDelete WRITE
+                 setConfirmPermanentDelete NOTIFY confirmPermanentDeleteChanged)
   // Slideshow timing and order.
-  Q_PROPERTY(int slideshowIntervalSeconds READ slideshowIntervalSeconds WRITE
-                 setSlideshowIntervalSeconds NOTIFY slideshowIntervalSecondsChanged)
-  Q_PROPERTY(bool slideshowShuffle READ slideshowShuffle WRITE setSlideshowShuffle NOTIFY
-                 slideshowShuffleChanged)
+  Q_PROPERTY(
+      int slideshowIntervalSeconds READ slideshowIntervalSeconds WRITE
+          setSlideshowIntervalSeconds NOTIFY slideshowIntervalSecondsChanged)
+  Q_PROPERTY(bool slideshowShuffle READ slideshowShuffle WRITE
+                 setSlideshowShuffle NOTIFY slideshowShuffleChanged)
   // The viewer's strip of neighbouring files, shown with its controls once
   // turned on with B or the menu.
-  Q_PROPERTY(bool viewerFilmstrip READ viewerFilmstrip WRITE setViewerFilmstrip NOTIFY
-                 viewerFilmstripChanged)
-  Q_PROPERTY(bool enlargeSmallPictures READ enlargeSmallPictures WRITE setEnlargeSmallPictures NOTIFY
-                 enlargeSmallPicturesChanged)
+  Q_PROPERTY(bool viewerFilmstrip READ viewerFilmstrip WRITE setViewerFilmstrip
+                 NOTIFY viewerFilmstripChanged)
+  Q_PROPERTY(bool enlargeSmallPictures READ enlargeSmallPictures WRITE
+                 setEnlargeSmallPictures NOTIFY enlargeSmallPicturesChanged)
   // Video playback preferences, remembered across files and sessions.
-  Q_PROPERTY(qreal videoVolume READ videoVolume WRITE setVideoVolume NOTIFY videoVolumeChanged)
-  Q_PROPERTY(bool videoMuted READ videoMuted WRITE setVideoMuted NOTIFY videoMutedChanged)
-  Q_PROPERTY(bool rememberPlaybackSpeed READ rememberPlaybackSpeed WRITE setRememberPlaybackSpeed
-                 NOTIFY rememberPlaybackSpeedChanged)
-  Q_PROPERTY(qreal videoPlaybackRate READ videoPlaybackRate WRITE setVideoPlaybackRate
-                 NOTIFY videoPlaybackRateChanged)
+  Q_PROPERTY(qreal videoVolume READ videoVolume WRITE setVideoVolume NOTIFY
+                 videoVolumeChanged)
+  Q_PROPERTY(bool videoMuted READ videoMuted WRITE setVideoMuted NOTIFY
+                 videoMutedChanged)
+  Q_PROPERTY(bool rememberPlaybackSpeed READ rememberPlaybackSpeed WRITE
+                 setRememberPlaybackSpeed NOTIFY rememberPlaybackSpeedChanged)
+  Q_PROPERTY(qreal videoPlaybackRate READ videoPlaybackRate WRITE
+                 setVideoPlaybackRate NOTIFY videoPlaybackRateChanged)
   Q_PROPERTY(QStringList albumNames READ albumNames NOTIFY albumsChanged)
   Q_PROPERTY(QStringList tagNames READ tagNames NOTIFY tagsChanged)
-  Q_PROPERTY(
-      QStringList smartCollectionNames READ smartCollectionNames NOTIFY smartCollectionsChanged)
+  Q_PROPERTY(QStringList smartCollectionNames READ smartCollectionNames NOTIFY
+                 smartCollectionsChanged)
   Q_PROPERTY(QString previousVisit READ previousVisit CONSTANT)
   Q_PROPERTY(bool undoAvailable READ canUndo NOTIFY undoChanged)
   // The step Ctrl+Z would take back next, or 0. A Trash toast offers Undo only
@@ -85,9 +100,17 @@ class AppSettings final : public QObject {
   Q_PROPERTY(int latestUndoId READ latestUndoId NOTIFY undoChanged)
 
 public:
-  explicit AppSettings(QObject* parent = nullptr);
+  Q_PROPERTY(QString appVersion READ appVersion CONSTANT)
+  Q_PROPERTY(QString qtVersion READ qtVersion CONSTANT)
+  QString appVersion() const { return QStringLiteral(OMAROLL_VERSION); }
+  QString qtVersion() const { return QString::fromLatin1(qVersion()); }
+  Q_INVOKABLE QString diagnostics(const QString &theme, qreal scale) const;
+  Q_INVOKABLE void copyDiagnostics(const QString &theme, qreal scale) const;
+  explicit AppSettings(QObject *parent = nullptr);
 
-  [[nodiscard]] QString organizationError() const { return m_organizationError; }
+  [[nodiscard]] QString organizationError() const {
+    return m_organizationError;
+  }
   [[nodiscard]] bool showHidden() const { return m_showHidden; }
   void setShowHidden(bool value);
 
@@ -104,25 +127,29 @@ public:
   void setRecursionDepth(int value);
 
   [[nodiscard]] QStringList libraryFolders() const { return m_libraryFolders; }
-  Q_INVOKABLE bool addLibraryFolder(const QUrl& folder);
-  Q_INVOKABLE void removeLibraryFolder(const QString& folder);
+  Q_INVOKABLE bool addLibraryFolder(const QUrl &folder);
+  Q_INVOKABLE void removeLibraryFolder(const QString &folder);
   // Pins are shortcuts independent of library sources. Unpinning never
   // removes a source, and unavailable entries remain until explicitly removed.
   [[nodiscard]] QStringList pinnedFolders() const { return m_pinnedFolders; }
-  Q_INVOKABLE bool pinFolder(const QUrl& folder);
-  Q_INVOKABLE bool pinFolderPath(const QString& folder) {
+  Q_INVOKABLE bool pinFolder(const QUrl &folder);
+  Q_INVOKABLE bool pinFolderPath(const QString &folder) {
     return pinFolder(QUrl::fromLocalFile(folder));
   }
-  Q_INVOKABLE void unpinFolder(const QString& folder);
-  Q_INVOKABLE [[nodiscard]] bool isFolderPinned(const QString& folder) const;
+  Q_INVOKABLE void unpinFolder(const QString &folder);
+  Q_INVOKABLE [[nodiscard]] bool isFolderPinned(const QString &folder) const;
 
   [[nodiscard]] bool pairRawJpeg() const { return m_pairRawJpeg; }
   void setPairRawJpeg(bool value);
 
-  [[nodiscard]] QString imagePrimaryAction() const { return m_imagePrimaryAction; }
-  void setImagePrimaryAction(const QString& action);
-  [[nodiscard]] QString videoPrimaryAction() const { return m_videoPrimaryAction; }
-  void setVideoPrimaryAction(const QString& action);
+  [[nodiscard]] QString imagePrimaryAction() const {
+    return m_imagePrimaryAction;
+  }
+  void setImagePrimaryAction(const QString &action);
+  [[nodiscard]] QString videoPrimaryAction() const {
+    return m_videoPrimaryAction;
+  }
+  void setVideoPrimaryAction(const QString &action);
   [[nodiscard]] int thumbnailCacheMb() const { return m_thumbnailCacheMb; }
   void setThumbnailCacheMb(int megabytes);
 
@@ -140,24 +167,30 @@ public:
   void setPreviewHeight(int height);
   [[nodiscard]] bool slideshowVideos() const { return m_slideshowVideos; }
   void setSlideshowVideos(bool value);
-  [[nodiscard]] bool confirmPermanentDelete() const { return m_confirmPermanentDelete; }
+  [[nodiscard]] bool confirmPermanentDelete() const {
+    return m_confirmPermanentDelete;
+  }
   void setConfirmPermanentDelete(bool value);
-  [[nodiscard]] int slideshowIntervalSeconds() const { return m_slideshowIntervalSeconds; }
+  [[nodiscard]] int slideshowIntervalSeconds() const {
+    return m_slideshowIntervalSeconds;
+  }
   void setSlideshowIntervalSeconds(int seconds);
   [[nodiscard]] bool slideshowShuffle() const { return m_slideshowShuffle; }
   void setSlideshowShuffle(bool value);
   [[nodiscard]] bool viewerFilmstrip() const { return m_viewerFilmstrip; }
   void setViewerFilmstrip(bool value);
-  [[nodiscard]] bool enlargeSmallPictures() const { return m_enlargeSmallPictures; }
+  [[nodiscard]] bool enlargeSmallPictures() const {
+    return m_enlargeSmallPictures;
+  }
   void setEnlargeSmallPictures(bool value);
 
   // Where a video was last left, in milliseconds. Zero means no saved spot.
   // Entries are pruned so a long-lived library does not grow forever.
-  Q_INVOKABLE [[nodiscard]] qint64 videoPosition(const QString& path) const;
-  Q_INVOKABLE void setVideoPosition(const QString& path, qint64 milliseconds,
-                                     const QString& identity = {});
-  Q_INVOKABLE [[nodiscard]] QString videoIdentity(const QString& path) const;
-  Q_INVOKABLE void clearVideoPosition(const QString& path);
+  Q_INVOKABLE [[nodiscard]] qint64 videoPosition(const QString &path) const;
+  Q_INVOKABLE void setVideoPosition(const QString &path, qint64 milliseconds,
+                                    const QString &identity = {});
+  Q_INVOKABLE [[nodiscard]] QString videoIdentity(const QString &path) const;
+  Q_INVOKABLE void clearVideoPosition(const QString &path);
 
   [[nodiscard]] qreal videoVolume() const { return m_videoVolume; }
   Q_INVOKABLE void prepareVideoPlayback() const;
@@ -166,51 +199,57 @@ public:
   void setVideoVolume(qreal value);
   [[nodiscard]] bool videoMuted() const { return m_videoMuted; }
   void setVideoMuted(bool value);
-  [[nodiscard]] bool rememberPlaybackSpeed() const { return m_rememberPlaybackSpeed; }
+  [[nodiscard]] bool rememberPlaybackSpeed() const {
+    return m_rememberPlaybackSpeed;
+  }
   void setRememberPlaybackSpeed(bool value);
   [[nodiscard]] qreal videoPlaybackRate() const { return m_videoPlaybackRate; }
   void setVideoPlaybackRate(qreal value);
 
   [[nodiscard]] QStringList albumNames() const;
-  Q_INVOKABLE [[nodiscard]] QStringList albumPaths(const QString& name) const;
-  Q_INVOKABLE [[nodiscard]] int albumItemCount(const QString& name) const;
-  Q_INVOKABLE [[nodiscard]] int unavailableAlbumItemCount(const QString& name) const;
-  Q_INVOKABLE bool createAlbum(const QString& name);
-  Q_INVOKABLE void deleteAlbum(const QString& name);
+  Q_INVOKABLE [[nodiscard]] QStringList albumPaths(const QString &name) const;
+  Q_INVOKABLE [[nodiscard]] int albumItemCount(const QString &name) const;
+  Q_INVOKABLE [[nodiscard]] int
+  unavailableAlbumItemCount(const QString &name) const;
+  Q_INVOKABLE bool createAlbum(const QString &name);
+  Q_INVOKABLE void deleteAlbum(const QString &name);
   // Moves an album's membership to a new name. False when the target already
   // exists or the name is unusable; membership is never lost on failure.
-  Q_INVOKABLE bool renameAlbum(const QString& oldName, const QString& newName);
-  Q_INVOKABLE bool addToAlbum(const QString& name, const QStringList& paths);
-  Q_INVOKABLE void removeFromAlbum(const QString& name, const QStringList& paths);
-  Q_INVOKABLE void removeUnavailableFromAlbum(const QString& name);
-  void reconcileAlbums(const QList<CaptureRecord>& records);
+  Q_INVOKABLE bool renameAlbum(const QString &oldName, const QString &newName);
+  Q_INVOKABLE bool addToAlbum(const QString &name, const QStringList &paths);
+  Q_INVOKABLE void removeFromAlbum(const QString &name,
+                                   const QStringList &paths);
+  Q_INVOKABLE void removeUnavailableFromAlbum(const QString &name);
+  void reconcileAlbums(const QList<CaptureRecord> &records);
 
   // Tags nest with a slash: "Travel/Japan" sits under "Travel". Names come
   // back in tree order, and a parent's paths include every descendant's.
   [[nodiscard]] QStringList tagNames() const;
-  Q_INVOKABLE [[nodiscard]] QStringList tagPaths(const QString& name) const;
-  Q_INVOKABLE [[nodiscard]] QStringList tagsForPath(const QString& path) const;
-  Q_INVOKABLE [[nodiscard]] int tagItemCount(const QString& name) const;
-  Q_INVOKABLE bool createTag(const QString& name);
-  Q_INVOKABLE void deleteTag(const QString& name);
+  Q_INVOKABLE [[nodiscard]] QStringList tagPaths(const QString &name) const;
+  Q_INVOKABLE [[nodiscard]] QStringList tagsForPath(const QString &path) const;
+  Q_INVOKABLE [[nodiscard]] int tagItemCount(const QString &name) const;
+  Q_INVOKABLE bool createTag(const QString &name);
+  Q_INVOKABLE void deleteTag(const QString &name);
   // Renames a tag and every tag nested under it, so "Travel/Japan" becomes
   // "Trips/Japan" when "Travel" becomes "Trips". False on a name clash; the
   // existing tree is left untouched.
-  Q_INVOKABLE bool renameTag(const QString& oldName, const QString& newName);
-  Q_INVOKABLE bool addTag(const QString& name, const QStringList& paths);
-  Q_INVOKABLE void removeTag(const QString& name, const QStringList& paths);
-  void reconcileTags(const QList<CaptureRecord>& records);
+  Q_INVOKABLE bool renameTag(const QString &oldName, const QString &newName);
+  Q_INVOKABLE bool addTag(const QString &name, const QStringList &paths);
+  Q_INVOKABLE void removeTag(const QString &name, const QStringList &paths);
+  void reconcileTags(const QList<CaptureRecord> &records);
 
   // Repoints favourites, hidden, ratings and captions when their file was
   // moved or renamed outside Omaroll, matching the same inode/device size or
   // content fingerprint that albums and tags already use. Unmatched marks
   // remain remembered even when their files are unavailable.
-  void reconcileMarks(const QList<CaptureRecord>& records);
+  void reconcileMarks(const QList<CaptureRecord> &records);
 
   [[nodiscard]] QStringList smartCollectionNames() const;
-  Q_INVOKABLE [[nodiscard]] QVariantMap smartCollection(const QString& name) const;
-  Q_INVOKABLE bool saveSmartCollection(const QString& name, const QVariantMap& view);
-  Q_INVOKABLE void deleteSmartCollection(const QString& name);
+  Q_INVOKABLE [[nodiscard]] QVariantMap
+  smartCollection(const QString &name) const;
+  Q_INVOKABLE bool saveSmartCollection(const QString &name,
+                                       const QVariantMap &view);
+  Q_INVOKABLE void deleteSmartCollection(const QString &name);
 
   // A versioned, portable snapshot of everything the user organized: albums,
   // tags, favourites, hidden files, ratings, captions and smart collections.
@@ -219,24 +258,27 @@ public:
   // state, so a bad file leaves the current profile exactly as it was. Both
   // return {ok, message}.
   static constexpr int kOrganizationVersion = 1;
-  Q_INVOKABLE [[nodiscard]] QVariantMap exportOrganization(const QString& path) const;
+  Q_INVOKABLE [[nodiscard]] QVariantMap
+  exportOrganization(const QString &path) const;
   // Restores by replacing the current organization. Callers should confirm
   // first; the original files on disk are untouched either way.
-  Q_INVOKABLE [[nodiscard]] QVariantMap importOrganization(const QString& path);
+  Q_INVOKABLE [[nodiscard]] QVariantMap importOrganization(const QString &path);
 
   [[nodiscard]] QString previousVisit() const { return m_previousVisit; }
 
-  Q_INVOKABLE [[nodiscard]] bool isFavorite(const QString& path) const;
-  Q_INVOKABLE [[nodiscard]] bool isHidden(const QString& path) const;
+  Q_INVOKABLE [[nodiscard]] bool isFavorite(const QString &path) const;
+  Q_INVOKABLE [[nodiscard]] bool isHidden(const QString &path) const;
 
-  Q_INVOKABLE void toggleFavorite(const QString& path);
-  Q_INVOKABLE void toggleHidden(const QString& path);
+  Q_INVOKABLE void toggleFavorite(const QString &path);
+  Q_INVOKABLE void toggleHidden(const QString &path);
 
   // One ordered undo history for the destructive actions: favourites, hidden
   // files, ratings and captions, and moves to Trash. One step per action
   // (a whole batch is one step), capped. undo() takes back the newest step and
   // returns what to tell the user.
-  Q_INVOKABLE [[nodiscard]] bool canUndo() const { return !m_undoStack.isEmpty(); }
+  Q_INVOKABLE [[nodiscard]] bool canUndo() const {
+    return !m_undoStack.isEmpty();
+  }
   [[nodiscard]] int latestUndoId() const {
     return m_undoStack.isEmpty() ? 0 : m_undoStack.constLast().id;
   }
@@ -245,24 +287,27 @@ public:
   // ActionLauncher::trashCaptured returns. |origin| is the viewer session the
   // files left, if any; each record may carry the index it had there. Returns
   // the step's id, or 0 when nothing in |records| can be restored.
-  Q_INVOKABLE int pushTrashUndo(const QVariantList& records, QObject* origin = nullptr);
+  Q_INVOKABLE int pushTrashUndo(const QVariantList &records,
+                                QObject *origin = nullptr);
 
   // Stars, 1 to 5. Zero is unrated and is not stored.
-  Q_INVOKABLE [[nodiscard]] int rating(const QString& path) const;
-  Q_INVOKABLE void setRating(const QStringList& paths, int rating);
-  [[nodiscard]] int ratedCount() const { return static_cast<int>(m_ratings.size()); }
+  Q_INVOKABLE [[nodiscard]] int rating(const QString &path) const;
+  Q_INVOKABLE void setRating(const QStringList &paths, int rating);
+  [[nodiscard]] int ratedCount() const {
+    return static_cast<int>(m_ratings.size());
+  }
   // A short free-text caption. Searched with filenames and picture text.
   // Empty removes the entry.
-  Q_INVOKABLE [[nodiscard]] QString caption(const QString& path) const;
-  Q_INVOKABLE void setCaption(const QString& path, const QString& text);
+  Q_INVOKABLE [[nodiscard]] QString caption(const QString &path) const;
+  Q_INVOKABLE void setCaption(const QString &path, const QString &text);
 
   // Keep user-owned organization attached when an explicit in-app rename
   // changes the path. Discovery itself remains read-only.
-  Q_INVOKABLE void relocatePath(const QString& oldPath, const QString& newPath);
+  Q_INVOKABLE void relocatePath(const QString &oldPath, const QString &newPath);
 
   // Bulk marks: one persist and one signal for the whole set.
-  Q_INVOKABLE void setFavorite(const QStringList& paths, bool on);
-  Q_INVOKABLE void setHidden(const QStringList& paths, bool on);
+  Q_INVOKABLE void setFavorite(const QStringList &paths, bool on);
+  Q_INVOKABLE void setHidden(const QStringList &paths, bool on);
 
   // Every path with remembered organization, including unavailable files.
   [[nodiscard]] QStringList markedPaths() const;
@@ -305,13 +350,13 @@ signals:
   // Files an undo put back from the Trash, for the viewer that showed them
   // (|origin|, or null) to take them back at their old places and the library
   // to rescan.
-  void trashRestored(const QVariantList& records, QObject* origin);
+  void trashRestored(const QVariantList &records, QObject *origin);
   void organizationErrorChanged();
 
 private:
 #ifdef OMAROLL_TESTING
   friend class OmarollTest;
-  static thread_local QStringList* s_fingerprintReadPaths;
+  static thread_local QStringList *s_fingerprintReadPaths;
 #endif
   struct AlbumEntry {
     QString path;
@@ -333,15 +378,15 @@ private:
   void pushMarksUndo();
   void clearMarksUndo();
   bool syncOrganization();
-  void setValue(const char* key, const QVariant& value);
+  void setValue(const char *key, const QVariant &value);
   // Records (or forgets) the on-disk identity behind a path's marks, so the
   // mark can be found again after an external move.
-  void refreshMarkIdentity(const QString& path);
-  [[nodiscard]] bool pathHasMark(const QString& path) const;
-  bool reconcileCollectionMap(QMap<QString, QList<AlbumEntry>>& collections,
-                              const QList<CaptureRecord>& records);
-  [[nodiscard]] static bool relocationAvailable(const AlbumEntry& entry);
-  [[nodiscard]] static AlbumEntry identityFor(const QString& path);
+  void refreshMarkIdentity(const QString &path);
+  [[nodiscard]] bool pathHasMark(const QString &path) const;
+  bool reconcileCollectionMap(QMap<QString, QList<AlbumEntry>> &collections,
+                              const QList<CaptureRecord> &records);
+  [[nodiscard]] static bool relocationAvailable(const AlbumEntry &entry);
+  [[nodiscard]] static AlbumEntry identityFor(const QString &path);
 
   QSettings m_settings;
   QString m_organizationError;

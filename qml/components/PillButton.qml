@@ -108,8 +108,8 @@ Item {
             cursorShape: root.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
         }
 
-        ToolTip {
-            visible: root.resolvedToolTip !== "" && (hover.hovered || root.activeFocus)
+        ThemedToolTip {
+            requested: root.resolvedToolTip !== "" && (hover.hovered || (root.activeFocus && root.Window.window && root.Window.window.keyboardNavigation === true))
             text: root.resolvedToolTip
             delay: 500
         }
