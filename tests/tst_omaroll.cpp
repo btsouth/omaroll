@@ -890,7 +890,8 @@ private slots:
         "image/x-tga: removed your setting; it still opens with Omaroll "
         "(a system default, or no other app handles it)");
     QCOMPARE(MimeDefaults::summarize(true, unset, true),
-             QStringLiteral("Restored Loupe and mpv for 3 types."));
+             QStringLiteral("Restored Loupe and mpv for 3 types. 1 type still opens with Omaroll, "
+                            "from a system default or because no other app handles it."));
     QCOMPARE(MimeDefaults::summarize(true, QStringLiteral("image/png: kept other.desktop"), true),
              QStringLiteral("Nothing to restore. Omaroll was not the default."));
     // A setting removed while Omaroll stays the default is not "nothing".
