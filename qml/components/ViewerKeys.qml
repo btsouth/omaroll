@@ -22,8 +22,8 @@ Item {
             if (!event.isAutoRepeat) viewer.toggleVideoLoop()
         } else if (video && shift && !control && !alt && event.key === ShortcutCatalog.quickKeys.A) {
             viewer.cycleAudioTrack()
-        } else if (alt && event.key >= ShortcutCatalog.quickKeys.0 && event.key <= ShortcutCatalog.quickKeys.5) {
-            viewer.rate(event.key - ShortcutCatalog.quickKeys.0)
+        } else if (alt && event.key >= ShortcutCatalog.quickKeys["0"] && event.key <= ShortcutCatalog.quickKeys["5"]) {
+            viewer.rate(event.key - ShortcutCatalog.quickKeys["0"])
         } else if (control && event.key === ShortcutCatalog.quickKeys.Z) {
             viewer.undo()
         } else if (control && event.key === ShortcutCatalog.quickKeys.C) {
@@ -142,10 +142,10 @@ Item {
                 if (!video && shift) viewer.toggleFill()
                 else if (!video) viewer.setFitMode("width")
                 break
-            case ShortcutCatalog.quickKeys.0:
+            case ShortcutCatalog.quickKeys["0"]:
                 if (!video) viewer.fitToWindow()
                 break
-            case ShortcutCatalog.quickKeys.1:
+            case ShortcutCatalog.quickKeys["1"]:
                 if (!video) viewer.toggleActualSize()
                 break
             case ShortcutCatalog.quickKeys.R:

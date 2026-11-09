@@ -1906,14 +1906,14 @@ ApplicationWindow {
         onClosed: if (detail.visible) detail.forceActiveFocus(); else library.forceActiveFocus()
     }
     Shortcut {
-        sequences: ["?", "F1"]
+        sequences: ShortcutCatalog.sequence("library", "help")
         enabled: !root.modalOpen && !root.popupOpen
         onActivated: root.showShortcutHelp()
     }
 
     // Shortcuts. All disabled while a sheet is open, which owns its own keys.
     Shortcut {
-        sequences: ShortcutCatalog.libraryBindings.binding12
+        sequences: ShortcutCatalog.sequence("library", "copy-path")
         enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: root.perform("copy-path", root.currentPath())
     }
@@ -1953,12 +1953,12 @@ ApplicationWindow {
         onActivated: root.perform("annotate", root.currentPath())
     }
     Shortcut {
-        sequences: ShortcutCatalog.libraryBindings.binding0
+        sequences: ShortcutCatalog.sequence("library", "develop")
         enabled: !root.anySheetOpen && !root.popupOpen && !filters.searchActive
         onActivated: root.perform("develop", root.currentPath())
     }
     Shortcut {
-        sequences: ShortcutCatalog.libraryBindings.binding1
+        sequences: ShortcutCatalog.sequence("library", "choose-editor")
         enabled: !root.anySheetOpen && !root.popupOpen && !filters.searchActive
         onActivated: root.perform("choose-editor", root.currentPath())
     }
@@ -2001,13 +2001,13 @@ ApplicationWindow {
     }
     // Undo the destructive organization marks, from the grid or the viewer.
     Shortcut {
-        sequences: ShortcutCatalog.libraryBindings.binding2
+        sequences: ShortcutCatalog.sequence("library", "undo")
         enabled: !root.modalOpen && !root.popupOpen && !filters.searchActive
                  && !detail.captionEditing && Settings.undoAvailable
         onActivated: root.undo()
     }
     Shortcut {
-        sequences: ShortcutCatalog.libraryBindings.binding3
+        sequences: ShortcutCatalog.sequence("library", "delete")
         autoRepeat: false
         enabled: !root.anySheetOpen && !root.popupOpen && !filters.searchActive
         onActivated: root.requestPermanentDelete(library.checkedCount > 0
@@ -2032,12 +2032,12 @@ ApplicationWindow {
         onActivated: root.perform("open-with", root.currentPath())
     }
     Shortcut {
-        sequences: ShortcutCatalog.libraryBindings.binding4
+        sequences: ShortcutCatalog.sequence("library", "refresh")
         enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: Library.refresh()
     }
     Shortcut {
-        sequences: ShortcutCatalog.libraryBindings.binding5
+        sequences: ShortcutCatalog.sequence("library", "search")
         enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: filters.focusSearch()
     }
@@ -2048,7 +2048,7 @@ ApplicationWindow {
             id: sectionKey
             required property int index
             Shortcut {
-                sequences: [filters.sectionShortcut(sectionKey.index)]
+                sequences: [ShortcutCatalog.sequence("library", "sections")[sectionKey.index]]
                 enabled: !root.anySheetOpen && !root.popupOpen
                 onActivated: filters.selectSection(sectionKey.index)
             }
@@ -2063,47 +2063,47 @@ ApplicationWindow {
             id: ratingKey
             required property int index
             Shortcut {
-                sequences: ["Alt+" + ratingKey.index]
+                sequences: [ShortcutCatalog.sequence("library", "rating")[ratingKey.index]]
                 enabled: !root.modalOpen && !root.popupOpen && !filters.searchActive
                 onActivated: root.rate(ratingKey.index)
             }
         }
     }
     Shortcut {
-        sequences: ShortcutCatalog.libraryBindings.binding6
+        sequences: ShortcutCatalog.sequence("library", "select-all")
         enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: library.checkAll()
     }
     Shortcut {
-        sequences: ShortcutCatalog.libraryBindings.binding7
+        sequences: ShortcutCatalog.sequence("library", "folders")
         autoRepeat: false
         enabled: !root.anySheetOpen && !root.popupOpen && !filters.searchActive
         onActivated: Settings.showFolderSidebar = !Settings.showFolderSidebar
     }
     // Tile size, the way every browser and file manager does it.
     Shortcut {
-        sequences: ShortcutCatalog.libraryBindings.binding8
+        sequences: ShortcutCatalog.sequence("library", "larger")
         enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: Settings.tileWidth += library.tileStep
     }
     Shortcut {
-        sequences: ShortcutCatalog.libraryBindings.binding9
+        sequences: ShortcutCatalog.sequence("library", "smaller")
         enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: Settings.tileWidth -= library.tileStep
     }
     Shortcut {
-        sequences: ShortcutCatalog.libraryBindings.binding10
+        sequences: ShortcutCatalog.sequence("library", "reset")
         enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: Settings.tileWidth = 240
     }
     Shortcut {
-        sequences: [StandardKey.Quit]
+        sequences: ShortcutCatalog.sequence("library", "quit")
         onActivated: Qt.quit()
     }
     // Sheets can move focus into a child control, so Escape is owned here at
     // window scope. With no sheet, the search field still owns its Escape.
     Shortcut {
-        sequences: ShortcutCatalog.libraryBindings.binding11
+        sequences: ShortcutCatalog.sequence("library", "escape")
         enabled: !root.popupOpen && (root.anySheetOpen || !filters.searchActive)
         onActivated: {
             // Unwind the viewer's editor/menu before PDF selection or preview.
