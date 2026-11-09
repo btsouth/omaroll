@@ -323,7 +323,7 @@ ApplicationWindow {
         if (root.imageReady) return 2
         const poster = Session.isVideo && videoPoster.visible && videoPoster.status === Image.Ready
         return (Session.isVideo && root.player && root.player.hasVideo ? 2 : 0)
-            | (poster ? 8 : 0)
+            | (poster ? 8 : 0) | (Session.isVideo && videoOutput.visible ? 16 : 0)
     }
 
     function revealChrome() {
