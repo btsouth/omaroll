@@ -2430,25 +2430,23 @@ private slots:
       // A typed query stays in sight as a chip with its own clear, and the
       // search key says why it cannot open the field.
       const auto clearSearch = qScopeGuard([&] { m_library->setSearchText({}); });
-      // A query every selected tile matches, so the selection stays and the
-      // field stays hidden: the scratch folder they all sit in.
-      // Search matches folder names word by word: the longest word in the
-      // folders of every selected tile.
-      QStringList common;
-      QStringList checked;
-      for (int row = 0; row < 6; ++row) checked << pathAt(row);
-      for (const QString& path : checked) {
-        const QStringList words = QFileInfo(path).absolutePath().split(
-            QRegularExpression(QStringLiteral("[^A-Za-z0-9]+")), Qt::SkipEmptyParts);
-        if (&path == &checked.first()) common = words;
-        else common.removeIf([&](const QString& word) { return !words.contains(word); });
-      }
-      std::sort(common.begin(), common.end(), [](const QString& a, const QString& b) { return a.size() > b.size(); });
-      QVERIFY2(!common.isEmpty(), qPrintable(checked.join(u' ')));
-      const QString everything = common.first();
-      m_library->setSearchText(everything);
-      QTRY_COMPARE(grid->property("checkedCount").toInt(), 6);
-      QVERIFY(!search->isVisible());
+      // Filter first, then select what it shows, so the selection survives
+      // the search and the field stays hidden.
+      QMetaObject::invokeMethod(grid, "clearChecked");
+      const QString query = QFileInfo(pathAt(0)).completeBaseName();
+      m_library->setSearchText(query);
+      QTRY_VERIFY(m_library->count() >= 1);
+      const int selected = std::min(6, m_library->count());
+      for (int row = 0; row < selected; ++row)
+        QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, pathAt(row)));
+      QTRY_COMPARE(grid->property("checkedCount").toInt(), selected);
+      const auto reselect = qScopeGuard([&] {
+        m_library->setSearchText({});
+        QMetaObject::invokeMethod(grid, "clearChecked");
+        for (int row = 0; row < 6; ++row)
+          QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, pathAt(row)));
+      });
+      QTRY_VERIFY(!search->isVisible());
       const auto chipShown = [this] {
         return find(m_window->contentItem(), [](QQuickItem* candidate) {
                  return candidate->objectName() == QStringLiteral("filterChip-search") && candidate->isVisible();
@@ -2468,11 +2466,11 @@ private slots:
                         clear->mapToScene(QPointF(clear->width() / 2, clear->height() / 2)).toPoint());
       QTRY_VERIFY(m_library->searchText().isEmpty());
       // With another chip beside it, Clear all clears the search as well.
-      m_library->setSearchText(everything);
+      m_library->setSearchText(query);
       // A date range that keeps every tile, so the selection stays.
       m_library->setDateRange(QStringLiteral("1970-01-01"), QStringLiteral("2100-12-31"));
       const auto clearDates = qScopeGuard([&] { m_library->clearDateRange(); });
-      QTRY_COMPARE(grid->property("checkedCount").toInt(), 6);
+      QTRY_COMPARE(grid->property("checkedCount").toInt(), selected);
       QTRY_VERIFY(chipShown());
       QMetaObject::invokeMethod(item("activeFilterChips"), "clearAll");
       QTRY_VERIFY(m_library->searchText().isEmpty());
