@@ -1,0 +1,60 @@
+A queued call copies a frame the storyboard job allocated before posting
+(seen on #171). The allocation alone does not show it was made on the posting
+path, so it stays ours: the job marks its frames with tsan::handOver and
+tsan::takeOver (src/app/TsanHandoff.h).
+==================
+WARNING: ThreadSanitizer: data race (pid=3363)
+  Atomic write of size 4 at 0x7290000d6000 by main thread:
+    #0 std::__atomic_base<int>::fetch_add(int, std::memory_order) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/atomic_base.h:648:16 (omaroll_storyboard_tests+0x16026a)
+    #1 int QAtomicOps<int>::fetchAndAddRelaxed<int>(std::atomic<int>&, QAtomicAdditiveType<int>::AdditiveT) /usr/include/qt6/QtCore/qatomic_cxx11.h:343:25 (omaroll_storyboard_tests+0x16026a)
+    #2 QBasicAtomicInteger<int>::refRelaxed() /usr/include/qt6/QtCore/qbasicatomic.h:60:34 (omaroll_storyboard_tests+0x1601da)
+    #3 QArrayData::ref() /usr/include/qt6/QtCore/qarraydata.h:72:14 (omaroll_storyboard_tests+0x160195)
+    #4 QArrayDataPointer<char>::ref() /usr/include/qt6/QtCore/qarraydatapointer.h:351:37 (omaroll_storyboard_tests+0x162dc8)
+    #5 QArrayDataPointer<char>::QArrayDataPointer(QArrayDataPointer<char> const&) /usr/include/qt6/QtCore/qarraydatapointer.h:38:9 (omaroll_storyboard_tests+0x162d68)
+    #6 QByteArray::QByteArray(QByteArray const&) /usr/include/qt6/QtCore/qbytearray.h:673:63 (omaroll_storyboard_tests+0x162c75)
+    #7 void QtPrivate::QMovableArrayOps<QByteArray>::emplace<QByteArray const&>(long long, QByteArray const&) /usr/include/qt6/QtCore/qarraydataops.h:790:11 (omaroll_storyboard_tests+0x3a8340)
+    #8 QList<QByteArray>::iterator QList<QByteArray>::emplace<QByteArray const&>(long long, QByteArray const&) /usr/include/qt6/QtCore/qlist.h:967:8 (omaroll_storyboard_tests+0x63c8b2)
+    #9 QList<QByteArray>::insert(long long, QByteArray const&) /usr/include/qt6/QtCore/qlist.h:555:14 (omaroll_storyboard_tests+0x630ae5)
+    #10 StoryboardFrames::insert(long long, QByteArray const&) /__w/omaroll/omaroll/src/thumbs/Storyboard.cpp:120:9 (omaroll_storyboard_tests+0x61d5af)
+    #11 Storyboard::acceptSample(unsigned long long, long long, long long, QByteArray const&) /__w/omaroll/omaroll/src/thumbs/Storyboard.cpp:1069:35 (omaroll_storyboard_tests+0x6285a6)
+    #12 StoryboardJob::postSample(long long, long long, QByteArray const&)::'lambda'(Storyboard*)::operator()(Storyboard*) const /__w/omaroll/omaroll/src/thumbs/Storyboard.cpp:569:15 (omaroll_storyboard_tests+0x637233)
+    #13 void StoryboardJob::post<StoryboardJob::postSample(long long, long long, QByteArray const&)::'lambda'(Storyboard*)>(StoryboardJob::postSample(long long, long long, QByteArray const&)::'lambda'(Storyboard*))::'lambda'()::operator()() const /__w/omaroll/omaroll/src/thumbs/Storyboard.cpp:549:62 (omaroll_storyboard_tests+0x637184)
+    #14 QtPrivate::FunctorCall<std::integer_sequence<unsigned long>, QtPrivate::List<>, void, void StoryboardJob::post<StoryboardJob::postSample(long long, long long, QByteArray const&)::'lambda'(Storyboard*)>(StoryboardJob::postSample(long long, long long, QByteArray const&)::'lambda'(Storyboard*))::'lambda'()>::call(void StoryboardJob::post<StoryboardJob::postSample(long long, long long, QByteArray const&)::'lambda'(Storyboard*)>(StoryboardJob::postSample(long long, long long, QByteArray const&)::'lambda'(Storyboard*))::'lambda'()&, void**)::'lambda'()::operator()() const /usr/include/qt6/QtCore/qobjectdefs_impl.h:117:24 (omaroll_storyboard_tests+0x637115)
+    #15 void QtPrivate::FunctorCallBase::call_internal<void, QtPrivate::FunctorCall<std::integer_sequence<unsigned long>, QtPrivate::List<>, void, void StoryboardJob::post<StoryboardJob::postSample(long long, long long, QByteArray const&)::'lambda'(Storyboard*)>(StoryboardJob::postSample(long long, long long, QByteArray const&)::'lambda'(Storyboard*))::'lambda'()>::call(void StoryboardJob::post<StoryboardJob::postSample(long long, long long, QByteArray const&)::'lambda'(Storyboard*)>(StoryboardJob::postSample(long long, long long, QByteArray const&)::'lambda'(Storyboard*))::'lambda'()&, void**)::'lambda'()>(void**, QtPrivate::FunctorCall<std::integer_sequence<unsigned long>, QtPrivate::List<>, void, void StoryboardJob::post<StoryboardJob::postSample(long long, long long, QByteArray const&)::'lambda'(Storyboard*)>(StoryboardJob::postSample(long long, long long, QByteArray const&)::'lambda'(Storyboard*))::'lambda'()>::call(void StoryboardJob::post<StoryboardJob::postSample(long long, long long, QByteArray const&)::'lambda'(Storyboard*)>(StoryboardJob::postSample(long long, long long, QByteArray const&)::'lambda'(Storyboard*))::'lambda'()&, void**)::'lambda'()&&) /usr/include/qt6/QtCore/qobjectdefs_impl.h:66:17 (omaroll_storyboard_tests+0x6370b1)
+    #16 QtPrivate::FunctorCall<std::integer_sequence<unsigned long>, QtPrivate::List<>, void, void StoryboardJob::post<StoryboardJob::postSample(long long, long long, QByteArray const&)::'lambda'(Storyboard*)>(StoryboardJob::postSample(long long, long long, QByteArray const&)::'lambda'(Storyboard*))::'lambda'()>::call(void StoryboardJob::post<StoryboardJob::postSample(long long, long long, QByteArray const&)::'lambda'(Storyboard*)>(StoryboardJob::postSample(long long, long long, QByteArray const&)::'lambda'(Storyboard*))::'lambda'()&, void**) /usr/include/qt6/QtCore/qobjectdefs_impl.h:116:13 (omaroll_storyboard_tests+0x637027)
+    #17 void QtPrivate::FunctorCallable<void StoryboardJob::post<StoryboardJob::postSample(long long, long long, QByteArray const&)::'lambda'(Storyboard*)>(StoryboardJob::postSample(long long, long long, QByteArray const&)::'lambda'(Storyboard*))::'lambda'()>::call<QtPrivate::List<>, void>(void StoryboardJob::post<StoryboardJob::postSample(long long, long long, QByteArray const&)::'lambda'(Storyboard*)>(StoryboardJob::postSample(long long, long long, QByteArray const&)::'lambda'(Storyboard*))::'lambda'()&, void*, void**) /usr/include/qt6/QtCore/qobjectdefs_impl.h:338:13 (omaroll_storyboard_tests+0x636f41)
+    #18 QtPrivate::QCallableObject<void StoryboardJob::post<StoryboardJob::postSample(long long, long long, QByteArray const&)::'lambda'(Storyboard*)>(StoryboardJob::postSample(long long, long long, QByteArray const&)::'lambda'(Storyboard*))::'lambda'(), QtPrivate::List<>, void>::impl(int, QtPrivate::QSlotObjectBase*, QObject*, void**, bool*) /usr/include/qt6/QtCore/qobjectdefs_impl.h:548:21 (omaroll_storyboard_tests+0x636e06)
+    #19 QObject::event(QEvent*) <null> (libQt6Core.so.6+0x1ebe65)
+    #20 StoryboardTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /__w/omaroll/omaroll/build/tsan/omaroll_storyboard_tests_autogen/include/tst_storyboard.moc:185:21 (omaroll_storyboard_tests+0x12da4a)
+    #21 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #22 <null> <null> (libc.so.6+0x27780)
+
+  Previous write of size 8 at 0x7290000d6000 by thread T3:
+    #0 malloc <null> (omaroll_storyboard_tests+0xa1d25)
+    #1 QByteArray::reallocData(long long, QArrayData::AllocationOption) <null> (libQt6Core.so.6+0x259c1c)
+    #2 Storyboard::start()::$_0::operator()() const::'lambda'()::operator()() const /__w/omaroll/omaroll/src/thumbs/Storyboard.cpp:1021:41 (omaroll_storyboard_tests+0x63034d)
+    #3 QRunnable::QGenericRunnable::Helper<Storyboard::start()::$_0::operator()() const::'lambda'()>::impl(QRunnable::QGenericRunnable::HelperBase::Op, QRunnable::QGenericRunnable::HelperBase*, void*) /usr/include/qt6/QtCore/qrunnable.h:74:31 (omaroll_storyboard_tests+0x630274)
+    #4 <null> <null> (libQt6Core.so.6+0x2c1424)
+
+  As if synchronized via sleep:
+    #0 nanosleep <null> (omaroll_storyboard_tests+0xa0a7e)
+    #1 QTest::qWait(std::chrono::duration<long, std::ratio<1l, 1000l>>) <null> (libQt6Core.so.6+0x2078a7)
+    #2 StoryboardTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /__w/omaroll/omaroll/build/tsan/omaroll_storyboard_tests_autogen/include/tst_storyboard.moc:185:21 (omaroll_storyboard_tests+0x12da4a)
+    #3 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #4 <null> <null> (libc.so.6+0x27780)
+
+  Location is heap block of size 8192 at 0x7290000d6000 allocated by thread T3:
+    #0 malloc <null> (omaroll_storyboard_tests+0xa1d25)
+    #1 QByteArray::reallocData(long long, QArrayData::AllocationOption) <null> (libQt6Core.so.6+0x259c1c)
+    #2 Storyboard::start()::$_0::operator()() const::'lambda'()::operator()() const /__w/omaroll/omaroll/src/thumbs/Storyboard.cpp:1021:41 (omaroll_storyboard_tests+0x63034d)
+    #3 QRunnable::QGenericRunnable::Helper<Storyboard::start()::$_0::operator()() const::'lambda'()>::impl(QRunnable::QGenericRunnable::HelperBase::Op, QRunnable::QGenericRunnable::HelperBase*, void*) /usr/include/qt6/QtCore/qrunnable.h:74:31 (omaroll_storyboard_tests+0x630274)
+    #4 <null> <null> (libQt6Core.so.6+0x2c1424)
+
+  Thread T3 'Thread (pooled)' (tid=3367, running) created by thread T2 at:
+    #0 pthread_create <null> (omaroll_storyboard_tests+0xa412e)
+    #1 QThread::start(QThread::Priority) <null> (libQt6Core.so.6+0x3765f4)
+    #2 Storyboard::start()::$_0::operator()() const /__w/omaroll/omaroll/src/thumbs/Storyboard.cpp:1021:22 (omaroll_storyboard_tests+0x62fc68)
+    #3 QRunnable::QGenericRunnable::Helper<Storyboard::start()::$_0>::impl(QRunnable::QGenericRunnable::HelperBase::Op, QRunnable::QGenericRunnable::HelperBase*, void*) /usr/include/qt6/QtCore/qrunnable.h:74:31 (omaroll_storyboard_tests+0x62f7f4)
+    #4 <null> <null> (libQt6Core.so.6+0x2c1424)
+
+SUMMARY: ThreadSanitizer: data race /usr/include/qt6/QtCore/qatomic_cxx11.h:343:25 in int QAtomicOps<int>::fetchAndAddRelaxed<int>(std::atomic<int>&, QAtomicAdditiveType<int>::AdditiveT)

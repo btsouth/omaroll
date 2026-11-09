@@ -3,8 +3,11 @@
 #include "library/CaptureModel.h"
 #include "search/DocumentTextIndex.h"
 #include "search/SearchQuery.h"
+#include "sources/FileVersion.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
+#include <QDataStream>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -724,7 +727,7 @@ private slots:
       model.setRecordsForTesting(records);
       QTRY_COMPARE(calls(), 2);
       QTRY_VERIFY(!index.indexing());
-      QCOMPARE(names(proxy), QStringList{QStringLiteral("report.pdf")});
+      QTRY_COMPARE(names(proxy), QStringList{QStringLiteral("report.pdf")});
 
       QVERIFY(index.clearCache() >= 1);
       QTRY_COMPARE(proxy.count(), 0);
@@ -1238,6 +1241,55 @@ private slots:
   // Past its budget, PDF text leaves memory least recently used first and
   // is matched from disk off the GUI thread, so every document stays
   // searchable, with snippets.
+  // A damaged cache entry whose size header claims more than any saved text
+  // is a miss, so the document is read again; it is never decompressed into
+  // the gigabytes the header asks for (found by fuzz_doctext).
+  void documentTextCacheRejectsAnImpossibleSize() {
+    const QString pdf = m_scratch->filePath(QStringLiteral("claimed.pdf"));
+    {
+      QFile file(pdf);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("%PDF-1.4\n");
+    }
+    const QString entryPath = DocumentTextIndex::cacheDirectory() + QLatin1Char('/') +
+        QString::fromLatin1(QCryptographicHash::hash(pdf.toUtf8(), QCryptographicHash::Sha256).toHex()) +
+        QStringLiteral(".txt");
+    QVERIFY(QDir().mkpath(DocumentTextIndex::cacheDirectory()));
+    const auto writeEntry = [&](quint32 claimed) {
+      QByteArray compressed = qCompress(QByteArrayLiteral("invoice total"));
+      compressed[0] = char(claimed >> 24);
+      compressed[1] = char(claimed >> 16);
+      compressed[2] = char(claimed >> 8);
+      compressed[3] = char(claimed);
+      QFile file(entryPath);
+      QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+      QDataStream out(&file);
+      out.setVersion(QDataStream::Qt_6_0);
+      out << quint32(0x50445431) << quint16(3) << pdf << FileVersion::diskKey(pdf) << compressed;
+    };
+    writeEntry(13);
+    QCOMPARE(DocumentTextIndex::cachedText(pdf), QStringLiteral("invoice total"));
+    writeEntry(quint32(DocumentTextIndex::kTextLimit * 4 + 1));
+    QVERIFY(DocumentTextIndex::cachedText(pdf).isNull());
+    writeEntry(0x9cf3cc2b);
+    QVERIFY(DocumentTextIndex::cachedText(pdf).isNull());
+    // A size header within the cap on text that inflates past it is a miss too.
+    {
+      const QByteArray big(DocumentTextIndex::kTextLimit * 4 + 1, 'a');
+      QByteArray compressed = qCompress(big);
+      compressed[0] = 0;
+      compressed[1] = 0;
+      compressed[2] = 0;
+      compressed[3] = 16;
+      QFile file(entryPath);
+      QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+      QDataStream out(&file);
+      out.setVersion(QDataStream::Qt_6_0);
+      out << quint32(0x50445431) << quint16(3) << pdf << FileVersion::diskKey(pdf) << compressed;
+    }
+    QVERIFY(DocumentTextIndex::cachedText(pdf).isNull());
+  }
+
   void documentTextStaysBoundedAndSearchable() {
     AppSettings settings;
     settings.setScanDownloads(false);

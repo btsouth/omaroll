@@ -15,7 +15,8 @@ Item {
         const control = (event.modifiers & Qt.ControlModifier) !== 0
         const alt = (event.modifiers & Qt.AltModifier) !== 0
         const shift = (event.modifiers & Qt.ShiftModifier) !== 0
-        const video = Session.isVideo
+        // A video with nothing presenting has nothing to seek; its keys step files.
+        const video = Session.isVideo && !viewer.videoUnplayable
         let handled = true
 
         if (video && shift && !control && !alt && event.key === ShortcutCatalog.quickKeys.L) {
@@ -213,7 +214,8 @@ Item {
                 else handled = false
                 break
             case ShortcutCatalog.quickKeys.P:
-                if (video) viewer.perform("play")
+                // Still offered for a video that failed: mpv may play it.
+                if (Session.isVideo) viewer.perform("play")
                 else handled = false
                 break
             case ShortcutCatalog.quickKeys.Menu:

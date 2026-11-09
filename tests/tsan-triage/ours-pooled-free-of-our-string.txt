@@ -1,0 +1,22 @@
+A QString our code allocated on the main thread is freed on a pooled thread
+whose stack lost our frames (Qt has no frame pointers). Qt-owned memory rules
+must not take this: the allocation is ours, through QArrayData in libQt6Core.
+==================
+WARNING: ThreadSanitizer: data race (pid=720)
+  Write of size 8 at 0x721000004000 by thread T3:
+    #0 free <null> (omaroll_tests+0xaa282)
+    #1 <null> <null> (libQt6Core.so.6+0x1a2c00)
+
+  Previous write of size 8 at 0x721000004000 by main thread:
+    #0 malloc <null> (omaroll_tests+0xa9725)
+    #1 QArrayData::allocate(QArrayData**, long long, long long, long long, QArrayData::AllocationOption) <null> (libQt6Core.so.6+0x1a2b3c)
+    #2 SimilarityIndex::matchesFor(QString const&) /src/src/search/SimilarityIndex.cpp:405:5 (omaroll_tests+0x5c1100)
+    #3 <null> <null> (libc.so.6+0x27780)
+
+  Thread T3 'Thread (pooled)' (tid=723, running) created by main thread at:
+    #0 pthread_create <null> (omaroll_tests+0xabb2e)
+    #1 QThread::start(QThread::Priority) <null> (libQt6Core.so.6+0x3765f4)
+    #2 <null> <null> (libc.so.6+0x27780)
+
+SUMMARY: ThreadSanitizer: data race (/src/build/tsan/omaroll_tests+0xaa282) in free
+==================

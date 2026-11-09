@@ -1,0 +1,31 @@
+A QtConcurrent task's own body reads memory the main thread reallocated: a
+lifetime race in our code. The task is past the handover (it is running our
+lambda, not copying its captures), so the allocation on the main side does
+not make it Qt's.
+==================
+WARNING: ThreadSanitizer: data race (pid=710)
+  Read of size 8 at 0x722c00002000 by thread T4:
+    #0 MediaMetadataIndex::scheduleProbes()::$_0::operator()() const /src/src/library/MediaMetadataIndex.cpp:312:20 (omaroll_tests+0x5d2000)
+    #1 void std::__invoke_impl<void, QtConcurrent::StoredFunctionCall<MediaMetadataIndex::scheduleProbes()::$_0>::runFunctor()::'lambda'(MediaMetadataIndex::scheduleProbes()::$_0) const&, MediaMetadataIndex::scheduleProbes()::$_0>(std::__invoke_other, QtConcurrent::StoredFunctionCall<MediaMetadataIndex::scheduleProbes()::$_0>::runFunctor()::'lambda'(MediaMetadataIndex::scheduleProbes()::$_0) const&, MediaMetadataIndex::scheduleProbes()::$_0&&) /usr/lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/invoke.h:61:14 (omaroll_tests+0x5d2100)
+    #2 QtConcurrent::StoredFunctionCall<MediaMetadataIndex::scheduleProbes()::$_0>::runFunctor() /usr/include/qt6/QtConcurrent/qtconcurrentstoredfunctioncall.h:123:27 (omaroll_tests+0x5d2200)
+    #3 QtConcurrent::RunFunctionTaskBase<void>::run() /usr/include/qt6/QtConcurrent/qtconcurrentrunbase.h:84:13 (omaroll_tests+0x5d2300)
+    #4 <null> <null> (libQt6Core.so.6+0x2c1904)
+
+  Previous write of size 8 at 0x722c00002000 by main thread:
+    #0 operator new(unsigned long) <null> (omaroll_tests+0x128318)
+    #1 OmarollTest::metadataIndexSurvivesRescan() /src/tests/tst_omaroll.cpp:6120:18 (omaroll_tests+0x2b0000)
+    #2 OmarollTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /src/build/tsan/omaroll_tests_autogen/include/tst_omaroll.moc:1250:23 (omaroll_tests+0x13a100)
+    #3 <null> <null> (libc.so.6+0x27780)
+
+  Location is heap block of size 64 at 0x722c00002000 allocated by main thread:
+    #0 operator new(unsigned long) <null> (omaroll_tests+0x128318)
+    #1 OmarollTest::metadataIndexSurvivesRescan() /src/tests/tst_omaroll.cpp:6120:18 (omaroll_tests+0x2b0000)
+    #2 <null> <null> (libc.so.6+0x27780)
+
+  Thread T4 'Thread (pooled)' (tid=713, running) created by main thread at:
+    #0 pthread_create <null> (omaroll_tests+0xabb2e)
+    #1 QThread::start(QThread::Priority) <null> (libQt6Core.so.6+0x3765f4)
+    #2 <null> <null> (libc.so.6+0x27780)
+
+SUMMARY: ThreadSanitizer: data race (/src/src/library/MediaMetadataIndex.cpp:312:20) in MediaMetadataIndex::scheduleProbes()::$_0::operator()() const
+==================

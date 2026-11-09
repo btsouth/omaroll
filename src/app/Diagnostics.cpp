@@ -4,10 +4,14 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QImageReader>
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QSysInfo>
 #include <QVariantMap>
+
+#include <initializer_list>
+#include <utility>
 
 namespace {
 
@@ -301,6 +305,16 @@ QString report(const Sources& sources, const QString& platform, const QString& t
   }
   lines << QStringLiteral("Theme: ") + safeTheme;
   if (scale > 0) lines << QStringLiteral("Scale factor: ") + QString::number(scale);
+  // The plugin-backed formats a bug report most often turns on.
+  const QList<QByteArray> readable = QImageReader::supportedImageFormats();
+  QStringList formats;
+  for (const auto& [name, label] : std::initializer_list<std::pair<const char*, const char*>>{
+           {"heif", "HEIF"}, {"avif", "AVIF"}, {"jxl", "JPEG XL"}, {"webp", "WebP"},
+           {"exr", "EXR"}, {"psd", "PSD"}, {"jp2", "JPEG 2000"}, {"tga", "TGA"}, {"dds", "DDS"}}) {
+    if (readable.contains(QByteArray(name))) formats << QString::fromLatin1(label);
+  }
+  lines << QStringLiteral("Image plugins: ") +
+               (formats.isEmpty() ? QStringLiteral("none of the optional formats") : formats.join(QStringLiteral(", ")));
   lines << QStringLiteral("Video decoding backend: Qt Multimedia ") + backend +
                QStringLiteral(" (actual hardware/software decoder depends on media)");
   for (const Tool& tool : tools()) {

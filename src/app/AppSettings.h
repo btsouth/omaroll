@@ -13,9 +13,12 @@
 #include <QSet>
 #include <QSettings>
 #include <QStringList>
+#include <QElapsedTimer>
+#include <QTimer>
 #include <QUrl>
 #include <QVariantMap>
 
+#include <atomic>
 #include <memory>
 
 struct CaptureRecord;
@@ -33,6 +36,10 @@ class AppSettings final : public QObject {
   Q_OBJECT
   Q_PROPERTY(bool canRestoreOrganization READ canRestoreOrganization NOTIFY organizationErrorChanged)
   Q_PROPERTY(QString organizationError READ organizationError NOTIFY organizationErrorChanged)
+  // Set once a launch finds organization damaged or clearly incomplete while a
+  // recent backup holds more. The library offers Restore once, after its first
+  // frame.
+  Q_PROPERTY(QString launchWarning READ launchWarning NOTIFY launchWarningChanged)
   Q_PROPERTY(bool showHidden READ showHidden WRITE setShowHidden NOTIFY showHiddenChanged)
   // How many files carry a rating, so the Browse sheet can leave the rating
   // row out of a library nobody has rated.
@@ -138,6 +145,16 @@ public:
   ~AppSettings() override;
 
   [[nodiscard]] QString organizationError() const { return m_organizationError; }
+  [[nodiscard]] QString launchWarning() const { return m_launchWarning; }
+  // Keeps organization that only looked incomplete. The snapshot it was
+  // compared with is kept as a before-restore copy first, then today's
+  // snapshot is taken from what is here now, so the warning does not return.
+  // Empty when kept; otherwise why nothing changed (the fuller backup could
+  // not be copied aside, so it is not replaced and the warning stays).
+  Q_INVOKABLE QString keepCurrentOrganization();
+  // Compares what is here with today's or yesterday's snapshot again, as each
+  // launch does after loading. For tests.
+  void recheckOrganizationHealth() { checkOrganizationHealth(false); }
   [[nodiscard]] bool showHidden() const { return m_showHidden; }
   void setShowHidden(bool value);
 
@@ -289,8 +306,13 @@ public:
   // Writes a snapshot now and waits for it. The app's own snapshots are written
   // on a worker; this is for tests, and the date is explicit for rotation tests.
   bool snapshotOrganization(const QDate& date = QDate::currentDate(), bool beforeRestore = false);
-  // Waits for snapshot writes still running on the worker.
+  // Waits for snapshot writes still running on the worker, and applies the
+  // launch check if it has finished.
   void flushBackups();
+  // How long after the last organization change today's snapshot is taken
+  // again. Tests shorten it.
+  void setBackupRefreshDelay(int milliseconds) { m_snapshotRefreshDelay = milliseconds; }
+  void setBackupRefreshMaxWait(int milliseconds) { m_snapshotMaxWait = milliseconds; }
   [[nodiscard]] QString backupDirectory() const;
   Q_INVOKABLE [[nodiscard]] QVariantMap exportOrganization(const QString& path) const;
   // Restores by replacing the current organization. Callers should confirm
@@ -384,6 +406,7 @@ signals:
   // to rescan.
   void trashRestored(const QVariantList& records, QObject* origin);
   void organizationErrorChanged();
+  void launchWarningChanged();
 
 private:
   QString m_hyprDirectory;
@@ -438,9 +461,34 @@ private:
   [[nodiscard]] OrganizationState organizationState() const;
   [[nodiscard]] static QByteArray encodeOrganization(const OrganizationState& state);
   // Today's daily (and this week's weekly) snapshot. Encoded here, written,
-  // rotated and synced to disk on the backup thread. At most once a day
-  // unless `replace`, which rewrites today's after an import.
+  // rotated and synced to disk on the backup thread. Without `replace` it
+  // keeps a snapshot already written today; the refresh after changes, the
+  // one at exit and the one after an import replace it.
   void scheduleDailySnapshot(bool replace = false);
+  // After each saved organization change: today's first snapshot now, and a
+  // refresh a few minutes after the last change.
+  void noteOrganizationSaved();
+  // Compares what loaded with today's or yesterday's snapshot, on the backup
+  // thread, before any snapshot of this launch can replace them.
+  void checkOrganizationHealth(bool existingProfile);
+  void applyOrganizationHealth();
+  [[nodiscard]] bool snapshotsHeld() const { return m_healthPending || m_organizationSuspect; }
+  [[nodiscard]] static int organizationSize(const OrganizationState& state);
+  // A backup file's contents, checked the way an import checks them. Pure,
+  // so the launch check can run it on the backup thread.
+  struct DecodedOrganization {
+    QString exportedAt;
+    QMap<QString, QList<AlbumEntry>> albums;
+    QMap<QString, QList<AlbumEntry>> tags;
+    QSet<QString> favorites;
+    QSet<QString> hidden;
+    QHash<QString, int> ratings;
+    QHash<QString, QString> captions;
+    QMap<QString, QVariantMap> smartCollections;
+    QHash<QString, AlbumEntry> markIdentities;
+  };
+  // Empty when |payload| decodes; otherwise {ok: false, message}.
+  [[nodiscard]] static QVariantMap decodeOrganization(const QByteArray& payload, DecodedOrganization& out);
   // Writes a before-restore copy now. Returns false if it could not be saved.
   bool saveBeforeRestore(const OrganizationState& state);
   // Copies the raw settings file before the resume-position migration.
@@ -457,6 +505,32 @@ private:
     return m_damaged ? QSettings::FormatError : m_settings.status();
   }
   QDate m_snapshotDate;
+  QTimer m_snapshotRefresh;
+  // Picks up the launch check's result once the backup thread has it.
+  QTimer m_healthPoll;
+  // A change saved since today's snapshot was last encoded.
+  bool m_snapshotDirty = false;
+  // Set by the backup thread when a scheduled write fails; the change is then
+  // owed again and retried by the next refresh or at exit.
+  std::shared_ptr<std::atomic<bool>> m_snapshotWriteFailed = std::make_shared<std::atomic<bool>>(false);
+  void noteSnapshotFailure();
+  // How much organization the profile held when it loaded.
+  int m_loadedSize = 0;
+  // Steady editing keeps restarting the refresh; it still runs this long
+  // after the first change it has not taken.
+  QElapsedTimer m_snapshotDirtySince;
+  int m_snapshotRefreshDelay = 3 * 60 * 1000;
+  int m_snapshotMaxWait = 15 * 60 * 1000;
+  void startSnapshotRefresh();
+  // Until the launch check reports, and while organization looks incomplete,
+  // no snapshot is written, so a damaged load cannot replace a good backup.
+  bool m_healthPending = false;
+  bool m_organizationSuspect = false;
+  bool m_snapshotAfterHealth = false;
+  struct HealthReport;
+  std::shared_ptr<HealthReport> m_health;
+  QString m_suspectSnapshot;
+  QString m_launchWarning;
   // An import saves organization several times; snapshot only its result.
   bool m_restoring = false;
   QString m_organizationError;

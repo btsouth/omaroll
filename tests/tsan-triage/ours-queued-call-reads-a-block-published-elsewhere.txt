@@ -1,0 +1,19 @@
+A decoder thread allocates a block and publishes it with a plain flag; a
+queued lambda on the main thread reads it. Nothing ties the allocation to
+posting the call, so it is ours. (Found in review of #171.)
+==================
+WARNING: ThreadSanitizer: data race (pid=1)
+  Read of size 8 at 0x7290000d6000 by main thread:
+    #0 Viewer::poll()::$_0::operator()() const /src/src/Viewer.cpp:40:5 (omaroll+0x100)
+    #1 QtPrivate::QCallableObject<Viewer::poll()::$_0, QtPrivate::List<>, void>::impl(int, QtPrivate::QSlotObjectBase*, QObject*, void**, bool*) /usr/include/qt6/QtCore/qobjectdefs_impl.h:546:21 (omaroll+0x200)
+    #2 QObject::event(QEvent*) <null> (libQt6Core.so.6+0x1ebe65)
+
+  Previous write of size 8 at 0x7290000d6000 by thread T3:
+    #0 operator new(unsigned long) <null> (omaroll+0x12a4d8)
+    #1 Decoder::decodeNext() /src/src/Decoder.cpp:90:20 (omaroll+0x300)
+    #2 Decoder::run() /src/src/Decoder.cpp:20:3 (omaroll+0x310)
+
+  Thread T3 'Decoder' (tid=3, running) created by main thread at:
+    #0 pthread_create <null> (omaroll+0xa412e)
+
+SUMMARY: ThreadSanitizer: data race

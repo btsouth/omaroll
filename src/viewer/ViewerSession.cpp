@@ -208,6 +208,16 @@ void ViewerSession::diagnosePicture() {
   }));
 }
 
+void ViewerSession::diagnoseVideo(const QString& playerError) {
+  if (path().isEmpty() || !isVideo()) return;
+  const QString file = path();
+  const QString version = m_contentVersion;
+  if (!m_pictureFailure.isEmpty() && m_checkedPath == file && m_checkedVersion == version) return;
+  m_failureCheck.setFuture(QtConcurrent::run([file, version, playerError] {
+    return CheckResult{file, version, {}, PictureDiagnosis::videoFailure(file, playerError).toMap()};
+  }));
+}
+
 void ViewerSession::startPictureProbe() {
   if (m_pictureProbeRunning || m_pictureKnown || m_picturePath.isEmpty()) return;
   m_pictureProbeRunning = true;

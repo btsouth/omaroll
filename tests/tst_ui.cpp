@@ -57,6 +57,9 @@
 #include <QDir>
 #include <QJSValue>
 #include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QGuiApplication>
@@ -204,6 +207,78 @@ class UiTest : public QObject {
   Q_OBJECT
 
 private slots:
+  // Organization that loads far smaller than today's backup is offered for
+  // restore once, after the first frame, and Keep as is ends it.
+  void incompleteOrganizationIsOfferedForRestoreOnce() {
+    m_settings->flushBackups();
+    const QDir backups(m_settings->backupDirectory());
+    QVERIFY(QDir().mkpath(backups.path()));
+    const QString today = backups.filePath(QStringLiteral("daily-%1.json")
+                                               .arg(QDate::currentDate().toString(Qt::ISODate)));
+    QJsonArray favorites;
+    for (int i = 0; i < 1000; ++i) favorites.append(QStringLiteral("/gone/%1.jpg").arg(i));
+    // Complete, as an import would accept it; anything less is passed over.
+    const QJsonObject snapshot{{QStringLiteral("format"), QStringLiteral("omaroll.organization")},
+                               {QStringLiteral("version"), 1},
+                               {QStringLiteral("albums"), QJsonObject()},
+                               {QStringLiteral("tags"), QJsonObject()},
+                               {QStringLiteral("favorites"), favorites},
+                               {QStringLiteral("hidden"), QJsonArray()},
+                               {QStringLiteral("ratings"), QJsonObject()},
+                               {QStringLiteral("captions"), QJsonObject()},
+                               {QStringLiteral("smartCollections"), QJsonObject()}};
+    {
+      QFile file(today);
+      QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+      file.write(QJsonDocument(snapshot).toJson());
+    }
+    m_settings->recheckOrganizationHealth();
+    m_settings->flushBackups();
+    QVERIFY(!m_settings->launchWarning().isEmpty());
+    QVERIFY(m_settings->canRestoreOrganization());
+    QQuickItem* sheet = item("launchRestore");
+    QTRY_VERIFY(sheet->isVisible());
+    QVERIFY2(sheet->property("detail").toString().contains(QStringLiteral("1000 items")),
+             qPrintable(sheet->property("detail").toString()));
+    QQuickItem* keep = find(sheet, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("confirmSheetCancel");
+    });
+    QVERIFY(keep);
+    QCOMPARE(keep->property("label").toString(), QStringLiteral("Keep as is"));
+    const auto clickKeep = [&] {
+      QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier,
+                        keep->mapToScene(QPointF(keep->width() / 2, keep->height() / 2)).toPoint());
+    };
+    const auto askAgain = [&] {
+      QVERIFY(m_window->setProperty("launchRestoreAsked", false));
+      QVERIFY(QMetaObject::invokeMethod(m_window, "offerLaunchRestore"));
+      QTRY_VERIFY(sheet->isVisible());
+    };
+    // Escape leaves it unanswered: the sheet goes, the offer stays.
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!sheet->isVisible());
+    QVERIFY(!m_settings->launchWarning().isEmpty());
+    QVERIFY(m_settings->canRestoreOrganization());
+    // Keep as is that cannot copy the fuller backup aside asks again, saying why.
+    askAgain();
+    const QString held = today + QStringLiteral(".held");
+    QVERIFY(QFile::rename(today, held));
+    clickKeep();
+    QTRY_VERIFY(sheet->isVisible());
+    QVERIFY2(sheet->property("detail").toString().startsWith(QStringLiteral("Could not keep a copy")),
+             qPrintable(sheet->property("detail").toString()));
+    QVERIFY(!m_settings->launchWarning().isEmpty());
+    QVERIFY(QFile::rename(held, today));
+    clickKeep();
+    QTRY_VERIFY(!sheet->isVisible());
+    QVERIFY(m_settings->launchWarning().isEmpty());
+    QVERIFY(!m_settings->canRestoreOrganization());
+    m_settings->flushBackups();
+    QFile file(today);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QVERIFY(!file.readAll().contains("/gone/999.jpg"));
+  }
+
   void helpFiltersByContextAndDiagnosticsArePrivate() {
     const auto restoreSize = qScopeGuard([&] { m_window->resize(1280, 820); });
     m_window->resize(1920, 1080);
@@ -3318,7 +3393,8 @@ private slots:
       // The saved copy joined the shared library model. Drop it again before
       // the next test, or pathAt(0) hands it a file that no longer exists.
       QMetaObject::invokeMethod(m_captures, "refresh");
-      QTRY_VERIFY(!m_captures->scanning());
+      // A follow-up scan can still be pending once this one stops.
+      waitForScan();
       QTRY_COMPARE(m_captures->rowOf(ImageEditor::outputPathFor(path)), -1);
       m_window->resize(1280, 820);
     });

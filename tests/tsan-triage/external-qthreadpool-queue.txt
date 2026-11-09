@@ -1,0 +1,44 @@
+==================
+WARNING: ThreadSanitizer: data race (pid=332)
+  Write of size 8 at 0x72080000b170 by thread T3:
+    #0 memmove <null> (omaroll_search_tests+0x9ccb3)
+    #1 <null> <null> (libQt6Core.so.6+0x2c1767)
+
+  Previous write of size 8 at 0x72080000b170 by thread T4:
+    #0 memmove <null> (omaroll_search_tests+0x9ccb3)
+    #1 <null> <null> (libQt6Core.so.6+0x2c1767)
+
+  Location is heap block of size 32 at 0x72080000b160 allocated by thread T3:
+    #0 malloc <null> (omaroll_search_tests+0x9fb65)
+    #1 <null> <null> (libQt6Core.so.6+0x2c0d0f)
+
+  Thread T3 'Thread (pooled)' (tid=336, running) created by main thread at:
+    #0 pthread_create <null> (omaroll_search_tests+0xa1f6e)
+    #1 QThread::start(QThread::Priority) <null> (libQt6Core.so.6+0x3765f4)
+    #2 QtConcurrent::NonPromiseTaskResolver<CaptureModel::startScan()::$_0>::run(std::tuple<CaptureModel::startScan()::$_0>&&, QtConcurrent::TaskStartParameters const&) /usr/include/qt6/QtConcurrent/qtconcurrentstoredfunctioncall.h:180:19 (omaroll_search_tests+0x331ab8)
+    #3 auto QtConcurrent::run<CaptureModel::startScan()::$_0>(QThreadPool*, CaptureModel::startScan()::$_0&&) /usr/include/qt6/QtConcurrent/qtconcurrentrun.h:48:12 (omaroll_search_tests+0x331981)
+    #4 auto QtConcurrent::run<CaptureModel::startScan()::$_0>(CaptureModel::startScan()::$_0&&) /usr/include/qt6/QtConcurrent/qtconcurrentrun.h:65:12 (omaroll_search_tests+0x32c468)
+    #5 CaptureModel::startScan() /src/src/library/CaptureModel.cpp:545:27 (omaroll_search_tests+0x32c27f)
+    #6 CaptureModel::refresh() /src/src/library/CaptureModel.cpp:534:3 (omaroll_search_tests+0x323ffc)
+    #7 CaptureModel::CaptureModel(AppSettings*, QObject*) /src/src/library/CaptureModel.cpp:112:3 (omaroll_search_tests+0x323ddf)
+    #8 SearchTest::pdfTextIsExtractedOffTheGuiThreadAndCached() /src/tests/tst_search.cpp:688:18 (omaroll_search_tests+0x15aca2)
+    #9 SearchTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /src/build/tsan/omaroll_search_tests_autogen/include/tst_search.moc:150:22 (omaroll_search_tests+0x12999a)
+    #10 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #11 <null> <null> (libc.so.6+0x27780)
+
+  Thread T4 'Thread (pooled)' (tid=338, running) created by main thread at:
+    #0 pthread_create <null> (omaroll_search_tests+0xa1f6e)
+    #1 QThread::start(QThread::Priority) <null> (libQt6Core.so.6+0x3765f4)
+    #2 QtConcurrent::NonPromiseTaskResolver<DocumentTextIndex::processNext()::$_0>::run(std::tuple<DocumentTextIndex::processNext()::$_0>&&, QtConcurrent::TaskStartParameters const&) /usr/include/qt6/QtConcurrent/qtconcurrentstoredfunctioncall.h:180:19 (omaroll_search_tests+0x5b4618)
+    #3 auto QtConcurrent::run<DocumentTextIndex::processNext()::$_0>(QThreadPool*, DocumentTextIndex::processNext()::$_0&&) /usr/include/qt6/QtConcurrent/qtconcurrentrun.h:48:12 (omaroll_search_tests+0x5b44d3)
+    #4 auto QtConcurrent::run<DocumentTextIndex::processNext()::$_0>(DocumentTextIndex::processNext()::$_0&&) /usr/include/qt6/QtConcurrent/qtconcurrentrun.h:65:12 (omaroll_search_tests+0x5b19a8)
+    #5 DocumentTextIndex::processNext() /src/src/search/DocumentTextIndex.cpp:232:25 (omaroll_search_tests+0x5b16c4)
+    #6 DocumentTextIndex::sync() /src/src/search/DocumentTextIndex.cpp:219:3 (omaroll_search_tests+0x5af6bf)
+    #7 DocumentTextIndex::setBackground(bool) /src/src/search/DocumentTextIndex.cpp:165:17 (omaroll_search_tests+0x5b0e76)
+    #8 SearchTest::pdfTextIsExtractedOffTheGuiThreadAndCached() /src/tests/tst_search.cpp:717:13 (omaroll_search_tests+0x15e210)
+    #9 SearchTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /src/build/tsan/omaroll_search_tests_autogen/include/tst_search.moc:150:22 (omaroll_search_tests+0x12999a)
+    #10 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #11 <null> <null> (libc.so.6+0x27780)
+
+SUMMARY: ThreadSanitizer: data race (/src/build/tsan/omaroll_search_tests+0x9ccb3) in memmove
+==================

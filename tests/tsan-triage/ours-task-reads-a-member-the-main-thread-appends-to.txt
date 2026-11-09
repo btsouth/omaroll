@@ -1,0 +1,28 @@
+A task reads a QByteArray member the main thread keeps appending to in
+place, through Qt. It is the same shape as a payload Qt filled before the
+task started, and a real race. (Found in review of #171.)
+==================
+WARNING: ThreadSanitizer: data race (pid=1)
+  Read of size 3 at 0x729000020010 by thread T7:
+    #0 memcmp <null> (omaroll_tests+0xba0ee)
+    #1 <null> <null> (libQt6Core.so.6+0xdea6b)
+    #2 Index::parse(QByteArray const&) /src/src/Index.cpp:304:29 (omaroll_tests+0x73a132)
+    #3 Index::start()::$_0::operator()() const /src/src/Index.cpp:575:24 (omaroll_tests+0x7434ad)
+    #4 QtConcurrent::StoredFunctionCall<Index::start()::$_0>::runFunctor() /usr/include/qt6/QtConcurrent/qtconcurrentstoredfunctioncall.h:123:27 (omaroll_tests+0x1)
+    #5 QtConcurrent::RunFunctionTaskBase<void>::run() /usr/include/qt6/QtConcurrent/qtconcurrentrunbase.h:84:13 (omaroll_tests+0x74bbb2)
+    #6 <null> <null> (libQt6Core.so.6+0x2c1904)
+
+  Previous write of size 8 at 0x729000020010 by main thread:
+    #0 memcpy <null> (omaroll_tests+0xa8ab3)
+    #1 QByteArray::append(QByteArrayView) <null> (libQt6Core.so.6+0x2b4000)
+    #2 Index::onReadyRead() /src/src/Index.cpp:540:5 (omaroll_tests+0x745946)
+
+  Location is heap block of size 8192 at 0x729000020000 allocated by main thread:
+    #0 malloc <null> (omaroll_tests+0xab835)
+    #1 QByteArray::reallocData(long long, QArrayData::AllocationOption) <null> (libQt6Core.so.6+0x259c1c)
+    #2 Index::onReadyRead() /src/src/Index.cpp:540:5 (omaroll_tests+0x745946)
+
+  Thread T7 'Thread (pooled)' (tid=812, running) created by main thread at:
+    #0 pthread_create <null> (omaroll_tests+0xadc3e)
+
+SUMMARY: ThreadSanitizer: data race

@@ -1,0 +1,30 @@
+A pooled task of ours copies a QString that the main thread is changing.
+Qt has no frame pointers, so the pooled stack lost our frames and shows only
+Qt. The main side is our own code calling into QtCore on a QString, so this
+must stay ours.
+==================
+WARNING: ThreadSanitizer: data race (pid=700)
+  Write of size 8 at 0x721c0000f000 by main thread:
+    #0 memcpy <null> (omaroll_tests+0xa69a3)
+    #1 QString::append(QString const&) <null> (libQt6Core.so.6+0x2a1b2c)
+    #2 SimilarityIndex::matchesFor(QString const&) /src/src/search/SimilarityIndex.cpp:410:12 (omaroll_tests+0x5c1234)
+    #3 OmarollTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /src/build/tsan/omaroll_tests_autogen/include/tst_omaroll.moc:1248:23 (omaroll_tests+0x13a000)
+    #4 <null> <null> (libc.so.6+0x27780)
+
+  Previous read of size 8 at 0x721c0000f000 by thread T3:
+    #0 memcpy <null> (omaroll_tests+0xa69a3)
+    #1 <null> <null> (libQt6Core.so.6+0x2913a0)
+
+  Location is heap block of size 96 at 0x721c0000f000 allocated by main thread:
+    #0 malloc <null> (omaroll_tests+0xa9725)
+    #1 QArrayData::allocate(QArrayData**, long long, long long, long long, QArrayData::AllocationOption) <null> (libQt6Core.so.6+0x1a2b3c)
+    #2 SimilarityIndex::matchesFor(QString const&) /src/src/search/SimilarityIndex.cpp:405:5 (omaroll_tests+0x5c1100)
+    #3 <null> <null> (libc.so.6+0x27780)
+
+  Thread T3 'Thread (pooled)' (tid=703, running) created by main thread at:
+    #0 pthread_create <null> (omaroll_tests+0xabb2e)
+    #1 QThread::start(QThread::Priority) <null> (libQt6Core.so.6+0x3765f4)
+    #2 <null> <null> (libc.so.6+0x27780)
+
+SUMMARY: ThreadSanitizer: data race (/src/build/tsan/omaroll_tests+0xa69a3) in memcpy
+==================

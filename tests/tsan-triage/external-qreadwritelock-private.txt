@@ -1,0 +1,50 @@
+QReadWriteLock's private part: Qt allocates it on the main thread the first
+time two threads contend for the lock, and the backup writer's thread then
+locks its mutex inside QBasicReadWriteLock. Qt publishes the pointer with an
+atomic exchange in libQt6Core. Seen in CI on #171 (run 42647584605).
+==================
+WARNING: ThreadSanitizer: data race (pid=2886)
+  Atomic read of size 1 at 0x7294000000c0 by thread T2:
+    #0 pthread_mutex_lock <null> (omaroll_tests+0xaf9bb)
+    #1 QBasicReadWriteLock::contendedUnlock(void*) <null> (libQt6Core.so.6+0x37cc87)
+    #2 void std::__invoke_impl<void, AppSettings::checkOrganizationHealth(bool)::$_0&>(std::__invoke_other, AppSettings::checkOrganizationHealth(bool)::$_0&) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/invoke.h:63:14 (omaroll_tests+0x51d675)
+    #3 std::enable_if<is_invocable_r_v<void, AppSettings::checkOrganizationHealth(bool)::$_0&>, void>::type std::__invoke_r<void, AppSettings::checkOrganizationHealth(bool)::$_0&>(AppSettings::checkOrganizationHealth(bool)::$_0&) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/invoke.h:113:2 (omaroll_tests+0x51d5d5)
+    #4 std::_Function_handler<void (), AppSettings::checkOrganizationHealth(bool)::$_0>::_M_invoke(std::_Any_data const&) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/std_function.h:295:9 (omaroll_tests+0x51d35d)
+    #5 std::function<void ()>::operator()() const /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/std_function.h:581:9 (omaroll_tests+0x40bf1d)
+    #6 BackupWriter::run() /__w/omaroll/omaroll/src/app/AppSettings.cpp:256:7 (omaroll_tests+0x54f9c0)
+    #7 BackupWriter::post(std::function<void ()>)::'lambda'()::operator()() const /__w/omaroll/omaroll/src/app/AppSettings.cpp:242:37 (omaroll_tests+0x54f905)
+    #8 void std::__invoke_impl<void, BackupWriter::post(std::function<void ()>)::'lambda'()>(std::__invoke_other, BackupWriter::post(std::function<void ()>)::'lambda'()&&) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/invoke.h:63:14 (omaroll_tests+0x54f8a5)
+    #9 std::__invoke_result<BackupWriter::post(std::function<void ()>)::'lambda'()>::type std::__invoke<BackupWriter::post(std::function<void ()>)::'lambda'()>(BackupWriter::post(std::function<void ()>)::'lambda'()&&) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/invoke.h:98:14 (omaroll_tests+0x54f815)
+    #10 void std::thread::_Invoker<std::tuple<BackupWriter::post(std::function<void ()>)::'lambda'()>>::_M_invoke<0ul>(std::_Index_tuple<0ul>) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/std_thread.h:303:13 (omaroll_tests+0x54f7cd)
+    #11 std::thread::_Invoker<std::tuple<BackupWriter::post(std::function<void ()>)::'lambda'()>>::operator()() /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/std_thread.h:310:11 (omaroll_tests+0x54f775)
+    #12 std::thread::_State_impl<std::thread::_Invoker<std::tuple<BackupWriter::post(std::function<void ()>)::'lambda'()>>>::_M_run() /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/std_thread.h:255:13 (omaroll_tests+0x54f639)
+    #13 <null> <null> (libstdc++.so.6+0xea858)
+
+  Previous write of size 8 at 0x7294000000c0 by main thread:
+    #0 operator new[](unsigned long, std::align_val_t) <null> (omaroll_tests+0x1344dc)
+    #1 <null> <null> (libQt6Core.so.6+0x379f6a)
+    #2 OmarollTest::clearingOcrSearchStopsTheQueuedLibraryWork() /__w/omaroll/omaroll/tests/tst_omaroll.cpp:7591:17 (omaroll_tests+0x2922da)
+    #3 OmarollTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /__w/omaroll/omaroll/build/tsan/omaroll_tests_autogen/include/tst_omaroll.moc:1262:23 (omaroll_tests+0x136d8f)
+    #4 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #5 <null> <null> (libc.so.6+0x27780)
+
+  Location is heap block of size 9280 at 0x729400000000 allocated by main thread:
+    #0 operator new[](unsigned long, std::align_val_t) <null> (omaroll_tests+0x1344dc)
+    #1 <null> <null> (libQt6Core.so.6+0x379f6a)
+    #2 OmarollTest::clearingOcrSearchStopsTheQueuedLibraryWork() /__w/omaroll/omaroll/tests/tst_omaroll.cpp:7591:17 (omaroll_tests+0x2922da)
+    #3 OmarollTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /__w/omaroll/omaroll/build/tsan/omaroll_tests_autogen/include/tst_omaroll.moc:1262:23 (omaroll_tests+0x136d8f)
+    #4 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #5 <null> <null> (libc.so.6+0x27780)
+
+  Thread T2 (tid=2889, running) created by main thread at:
+    #0 pthread_create <null> (omaroll_tests+0xadc3e)
+    #1 std::thread::_M_start_thread(std::unique_ptr<std::thread::_State, std::default_delete<std::thread::_State>>, void (*)()) <null> (libstdc++.so.6+0xea961)
+    #2 BackupWriter::post(std::function<void ()>) /__w/omaroll/omaroll/src/app/AppSettings.cpp:242:16 (omaroll_tests+0x539768)
+    #3 AppSettings::checkOrganizationHealth(bool) /__w/omaroll/omaroll/src/app/AppSettings.cpp:1692:19 (omaroll_tests+0x4cfa58)
+    #4 AppSettings::AppSettings(QObject*) /__w/omaroll/omaroll/src/app/AppSettings.cpp:479:47 (omaroll_tests+0x4cc358)
+    #5 OmarollTest::clearingOcrSearchStopsTheQueuedLibraryWork() /__w/omaroll/omaroll/tests/tst_omaroll.cpp:7591:17 (omaroll_tests+0x2922da)
+    #6 OmarollTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /__w/omaroll/omaroll/build/tsan/omaroll_tests_autogen/include/tst_omaroll.moc:1262:23 (omaroll_tests+0x136d8f)
+    #7 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #8 <null> <null> (libc.so.6+0x27780)
+
+SUMMARY: ThreadSanitizer: data race (/__w/omaroll/omaroll/build/tsan/omaroll_tests+0xaf9bb) in pthread_mutex_lock

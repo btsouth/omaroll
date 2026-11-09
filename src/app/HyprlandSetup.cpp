@@ -106,7 +106,18 @@ QByteArray code(const QByteArray& text) {
     } else if (c == '"' || c == '\'') {
       qsizetype at = index + 1;
       while (at < text.size() && text.at(at) != c && text.at(at) != '\n') {
-        at += text.at(at) == '\\' ? 2 : 1;
+        if (text.at(at) != '\\') {
+          ++at;
+        } else if (at + 1 < text.size() && text.at(at + 1) == 'z') {
+          // \z skips the whitespace after it, line breaks included, and the
+          // string goes on.
+          at += 2;
+          while (at < text.size() && std::isspace(static_cast<unsigned char>(text.at(at)))) ++at;
+        } else if (at + 2 < text.size() && text.at(at + 1) == '\r' && text.at(at + 2) == '\n') {
+          at += 3; // An escaped CRLF line break.
+        } else {
+          at += 2;
+        }
       }
       index = at + 1;
     } else if (const int level = longBracket(text, index); level >= 0) {
@@ -300,6 +311,19 @@ Result installRules(const QString& hyprDirectory) {
                                   "around, so nothing was changed. Add require(\"hypr.omaroll\") "
                                   "before it, then install again.")};
   }
+  // Install adds one block in the file's own line endings, at the end or
+  // before a closing return, and says in its comment whether it had to end
+  // the last line first.
+  const QByteArray eol = config.contains("\r\n") ? QByteArrayLiteral("\r\n") : QByteArrayLiteral("\n");
+  const bool joined = at == config.size() && !config.isEmpty() && !config.endsWith('\n');
+  QByteArray edited = config;
+  if (!already) edited.insert(at, block(joined, eol));
+  // A block comment or long string left open runs to the end of the file, so
+  // a line added there would load nothing.
+  if (loadingLines(edited).isEmpty()) {
+    return {false, QStringLiteral("~/.config/hypr/hyprland.lua ends inside a comment or string that "
+                                  "is never closed, so nothing was changed. Close it, then install again.")};
+  }
 
   const QString file = rulesPath(hyprDirectory);
   // A link to nothing: writing would create its target, which removal could
@@ -324,13 +348,6 @@ Result installRules(const QString& hyprDirectory) {
   }
 
   if (!already) {
-    // Install adds one block in the file's own line endings, at the end or
-    // before a closing return, and says in its comment whether it had to end
-    // the last line first.
-    const QByteArray eol = config.contains("\r\n") ? QByteArrayLiteral("\r\n") : QByteArrayLiteral("\n");
-    const bool joined = at == config.size() && !config.isEmpty() && !config.endsWith('\n');
-    QByteArray edited = config;
-    edited.insert(at, block(joined, eol));
     const Write written = writeIfUnchanged(configPath(hyprDirectory), config, edited);
     if (written != Write::Done) {
       // Nothing loads a rules file written just now, so it goes again.

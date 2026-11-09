@@ -1,0 +1,5 @@
+doï»¿e("bootstrap.lua")
+require("default.hypr.omarchy")
+require("hypr.bindings×ÖõÿÑ–nd("SUPER + SHIFT + S", nil, "omarchy-capture-screenshot")
+--[[
+o.bind("Sxt")

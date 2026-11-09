@@ -84,3 +84,48 @@ jobs:
         run: >-
           xvfb-run -a python3 tests/benchmark_indexing.py build/release/omaroll
           --files 10000 --max-gui-percent 10
+
+  # Longer fuzzing than each push gets, from a corpus that grows from night to
+  # night. Inputs that reach code the checked-in seeds do not are uploaded as
+  # fuzz-new-inputs; tests/README.md says how to fold them into the seeds.
+  fuzz:
+    timeout-minutes: 120
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install dependencies
+        run: >-
+          pacman -Syu --noconfirm --needed base-devel clang llvm compiler-rt cmake ninja
+          ffmpeg ffmpegthumbnailer git imagemagick kimageformats libavif libheif libraw
+          imath openexr poppler python qt6-base qt6-declarative qt6-imageformats qt6-multimedia
+          qt6-svg qt6-wayland xdg-utils mesa
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Restore the grown corpus
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fuzz-corpus
+          key: fuzz-corpus-v1-${{ github.run_id }}
+          restore-keys: fuzz-corpus-v1-
+      - name: Fuzz each parser for five minutes
+        run: bash tests/run-instrumented.sh fuzz 300 "$PWD/fuzz-corpus"
+      - name: Save the grown corpus
+        # Not when the run stopped before the corpus folder was made.
+        if: always() && hashFiles('fuzz-corpus/**') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fuzz-corpus
+          key: fuzz-corpus-v1-${{ github.run_id }}
+      - name: Upload new inputs and findings
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-new-inputs
+          path: |
+            build/fuzz/fuzz-results/new
+            build/fuzz/fuzz-results/*-crash-*
+            build/fuzz/fuzz-results/*-leak-*
+            build/fuzz/fuzz-results/*-timeout-*
+            build/fuzz/fuzz-results/*-oom-*
+            build/fuzz/fuzz-results/*.log
+          if-no-files-found: ignore
+          retention-days: 14

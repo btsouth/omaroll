@@ -94,6 +94,10 @@ bool save(const QString& key, const StoryboardFrames& frames);
 // Least recently used first. Staging files left by a process that died while
 // saving count toward the limit and are removed once abandoned.
 void prune(qint64 maximumBytes = kMaximumBytes);
+#ifdef OMAROLL_FUZZ
+// Loads |bytes| as a cache entry and checks what a successful load returns.
+void fuzzLoad(const QByteArray& bytes);
+#endif
 
 } // namespace StoryboardCache
 

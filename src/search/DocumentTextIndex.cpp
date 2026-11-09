@@ -1,11 +1,14 @@
 #include "search/DocumentTextIndex.h"
 
+#include <cstdlib>
+
 #include "library/CaptureModel.h"
 #include "pdf/PdfSupport.h"
 #include "search/OcrIndex.h"
 #include "sources/FileVersion.h"
 
 #include <QCryptographicHash>
+#include <QtEndian>
 #include <QDataStream>
 #include <QDeadlineTimer>
 #include <QDir>
@@ -62,8 +65,16 @@ CacheEntry readEntry(const QString& file, qint64 limit, bool withText) {
 // The text of a valid entry, or a null string when it does not decompress.
 QString entryText(const CacheEntry& entry, qsizetype limit) {
   if (entry.compressed.isEmpty()) return QString(QLatin1String(""));
+  // qUncompress allocates the size its first four bytes claim before reading
+  // any data, so a damaged entry could ask for gigabytes. Saved text is at
+  // most |limit| characters, four UTF-8 bytes each at worst.
+  if (entry.compressed.size() < 4 ||
+      qFromBigEndian<quint32>(entry.compressed.constData()) > quint64(limit) * 4) {
+    return {};
+  }
   const QByteArray text = qUncompress(entry.compressed);
-  if (text.isEmpty()) return {};
+  // More than any saved text can be, whatever the header said: not ours.
+  if (text.isEmpty() || text.size() > qsizetype(quint64(limit) * 4)) return {};
   return QString::fromUtf8(text).left(limit);
 }
 
@@ -339,6 +350,14 @@ QString DocumentTextIndex::cachedText(const QString& path) {
   if (!entry.valid || entry.path != path || entry.key != FileVersion::diskKey(path)) return {};
   return entryText(entry, kTextLimit);
 }
+
+#ifdef OMAROLL_FUZZ
+void DocumentTextIndex::fuzzReadCache(const QString& file) {
+  const CacheEntry entry = readEntry(file, kTextLimit * 4, true);
+  if (entry.valid && entryText(entry, kTextLimit).size() > kTextLimit) std::abort();
+  (void)readEntry(file, kTextLimit * 4, false);
+}
+#endif
 
 void DocumentTextIndex::reread(const QString& path) {
   if (m_known.remove(path) == 0) return;

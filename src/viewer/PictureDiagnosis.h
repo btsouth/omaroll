@@ -25,6 +25,13 @@ struct Finding {
 // the reader reports. Decodes past the memory limit are not attempted.
 [[nodiscard]] Finding failure(const QString& path);
 
+// Why a video the player reported |playerError| for will not play: missing,
+// unreadable, empty, not-video, unsupported (no decoder for its codec),
+// truncated, damaged or unknown. Decodes its first frame with ffmpeg, under a
+// time limit, when ffmpeg is installed; |ffmpeg| overrides it for tests.
+[[nodiscard]] Finding videoFailure(const QString& path, const QString& playerError,
+                                   const QString& ffmpeg = QString());
+
 // A JPEG or PNG that ends before its last marker: what a download or copy
 // cut short leaves behind. Qt shows the missing part as grey without saying
 // so. Empty for complete files and every other format.

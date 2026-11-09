@@ -1,0 +1,3 @@
+dofile("bootstrap.lua")
+require("default.hypr.omarchy")
+return {}

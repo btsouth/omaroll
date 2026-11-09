@@ -458,7 +458,15 @@ cannot spoil the shot. `man omaroll` lists every option with examples.
   Settings and organization live in `~/.config/omaroll` (`$XDG_CONFIG_HOME/omaroll`
   if that is set). Deleting that directory
   also removes albums, tags, favorites and saved views. Back it up first if you
-  want to keep them. The thumbnail cache can be deleted and regenerated.
+  want to keep them. Omaroll also keeps automatic backups of your organization
+  in `~/.local/share/omaroll/backups` (7 daily, 4 weekly, readable only by you).
+  Today's is refreshed a few minutes after each change and at exit. A launch
+  that finds the settings file damaged offers the newest backup that reads,
+  whatever its age. A launch whose albums, tags and marks look far smaller than
+  a backup from the past seven days offers that fuller backup once. In
+  Settings, Restore last good backup takes the newest backup that reads, and
+  Restore lets you pick any backup file. The thumbnail cache can be deleted and
+  regenerated.
 
 ## Development
 

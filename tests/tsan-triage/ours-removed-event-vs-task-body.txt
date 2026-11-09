@@ -1,0 +1,39 @@
+Our task body calls into Qt Core, which allocates, and the main thread
+frees that block while removing posted events. Only the callout Qt posts from
+RunFunctionTaskBase::run itself is Qt's; a Qt call made by our code is ours.
+==================
+WARNING: ThreadSanitizer: data race (pid=3204)
+  Write of size 8 at 0x7210000069c0 by main thread:
+    #0 operator delete(void*, unsigned long) <null> (omaroll_search_tests+0x12af4f)
+    #1 QCoreApplication::removePostedEvents(QObject*, int) <null> (libQt6Core.so.6+0x18a8bd)
+    #2 DocumentTextIndex::~DocumentTextIndex() /__w/omaroll/omaroll/src/search/DocumentTextIndex.cpp:106:1 (omaroll_search_tests+0x5e01b1)
+    #3 std::default_delete<DocumentTextIndex>::operator()(DocumentTextIndex*) const /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/unique_ptr.h:92:2 (omaroll_search_tests+0x1b23af)
+    #4 std::__uniq_ptr_impl<DocumentTextIndex, std::default_delete<DocumentTextIndex>>::reset(DocumentTextIndex*) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/unique_ptr.h:204:4 (omaroll_search_tests+0x1b2310)
+    #5 std::unique_ptr<DocumentTextIndex, std::default_delete<DocumentTextIndex>>::reset(DocumentTextIndex*) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/unique_ptr.h:530:7 (omaroll_search_tests+0x1adfe5)
+    #6 SearchTest::pdfReadsAreBoundedAndFailuresAreRemembered() /__w/omaroll/omaroll/tests/tst_search.cpp:844:11 (omaroll_search_tests+0x169cf7)
+    #7 SearchTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /__w/omaroll/omaroll/build/tsan/omaroll_search_tests_autogen/include/tst_search.moc:151:22 (omaroll_search_tests+0x12ba4a)
+    #8 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #9 <null> <null> (libc.so.6+0x27780)
+
+  Previous write of size 8 at 0x7210000069c0 by thread T3:
+    #0 operator new(unsigned long) <null> (omaroll_search_tests+0x12a3b8)
+    #1 <null> <null> (libQt6Core.so.6+0x3869a1)
+    #2 DocumentTextIndex::processNext()::$_0::operator()() const /__w/omaroll/omaroll/src/search/DocumentTextIndex.cpp:180:9 (omaroll_search_tests+0x5e4a00)
+    #3 QtConcurrent::RunFunctionTaskBase<DocumentTextIndex::Result>::run() /usr/include/qt6/QtConcurrent/qtconcurrentrunbase.h:84:13 (omaroll_search_tests+0x5e8ef2)
+    #4 <null> <null> (libQt6Core.so.6+0x2c1904)
+
+  Thread T3 'Thread (pooled)' (tid=3208, running) created by main thread at:
+    #0 pthread_create <null> (omaroll_search_tests+0xa400e)
+    #1 QThread::start(QThread::Priority) <null> (libQt6Core.so.6+0x3765f4)
+    #2 QtConcurrent::NonPromiseTaskResolver<CaptureModel::startScan()::$_0>::run(std::tuple<CaptureModel::startScan()::$_0>&&, QtConcurrent::TaskStartParameters const&) /usr/include/qt6/QtConcurrent/qtconcurrentstoredfunctioncall.h:180:19 (omaroll_search_tests+0x337a68)
+    #3 auto QtConcurrent::run<CaptureModel::startScan()::$_0>(QThreadPool*, CaptureModel::startScan()::$_0&&) /usr/include/qt6/QtConcurrent/qtconcurrentrun.h:48:12 (omaroll_search_tests+0x337931)
+    #4 auto QtConcurrent::run<CaptureModel::startScan()::$_0>(CaptureModel::startScan()::$_0&&) /usr/include/qt6/QtConcurrent/qtconcurrentrun.h:65:12 (omaroll_search_tests+0x332418)
+    #5 CaptureModel::startScan() /__w/omaroll/omaroll/src/library/CaptureModel.cpp:559:27 (omaroll_search_tests+0x33222f)
+    #6 CaptureModel::refresh() /__w/omaroll/omaroll/src/library/CaptureModel.cpp:548:3 (omaroll_search_tests+0x329bac)
+    #7 CaptureModel::CaptureModel(AppSettings*, QObject*) /__w/omaroll/omaroll/src/library/CaptureModel.cpp:122:3 (omaroll_search_tests+0x32998f)
+    #8 SearchTest::pdfReadsAreBoundedAndFailuresAreRemembered() /__w/omaroll/omaroll/tests/tst_search.cpp:769:18 (omaroll_search_tests+0x164e69)
+    #9 SearchTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /__w/omaroll/omaroll/build/tsan/omaroll_search_tests_autogen/include/tst_search.moc:151:22 (omaroll_search_tests+0x12ba4a)
+    #10 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #11 <null> <null> (libc.so.6+0x27780)
+
+SUMMARY: ThreadSanitizer: data race (/__w/omaroll/omaroll/build/tsan/omaroll_search_tests+0x12af4f) in operator delete(void*, unsigned long)

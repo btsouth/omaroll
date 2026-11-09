@@ -97,6 +97,8 @@ public:
   [[nodiscard]] QVariantMap pictureFailure() const { return m_pictureFailure; }
   // The viewer could not show the current still: find out why, on a worker.
   Q_INVOKABLE void diagnosePicture();
+  // The player could not open the current video: the same, for a video.
+  Q_INVOKABLE void diagnoseVideo(const QString& playerError);
   [[nodiscard]] QString contentVersion() const { return m_contentVersion; }
   [[nodiscard]] QString thumbnailVersion() const { return m_thumbnailVersion; }
   [[nodiscard]] QString fileName() const;

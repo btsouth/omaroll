@@ -43,8 +43,9 @@
   Move to Trash. A JPEG or PNG that ends early gets a "cut off" note, and broken
   files are marked in the filmstrip.
 - `omaroll --diagnostics` prints the same report as Copy diagnostics without
-  opening a window. Both now include the Omarchy and Hyprland versions and the
-  graphics card and driver.
+  opening a window. Both now include the Omarchy and Hyprland versions, the
+  graphics card and driver, and which optional image formats (HEIF, AVIF,
+  JPEG XL and others) have a plugin.
 - About in Settings lists missing optional tools, and OCR language data
   tesseract lacks, with the feature each one enables and its `pacman -S`
   command. Changelog opens this version's release
@@ -158,6 +159,17 @@
 
 ### Fixed
 
+- Restoring the automatic backup no longer loses the day's organization. Today's
+  backup is taken again a few minutes after the last change, within 15 minutes
+  during steady editing, and when Omaroll quits, instead of only at the day's
+  first launch.
+- A launch that finds the settings file damaged, or albums, tags and marks
+  that look emptied or cut short next to the newest backup of the past week, offers
+  Restore once. Keep as is keeps the fuller backup as a before-restore copy.
+  Until it is answered, the backup is not overwritten.
+- A video that won't open says why, like a picture: no decoder for its codec,
+  cut off, damaged or not a video, with Open in mpv, Open with, Show in folder
+  and Trash. The seek bar hides and the arrow keys step to the next file.
 - `--unset-default` puts `mimeapps.list` back exactly as it was before
   `--set-default`, including a section or file xdg-mime had to create and a
   missing final newline. Repeated cycles used to leave blank lines behind and
