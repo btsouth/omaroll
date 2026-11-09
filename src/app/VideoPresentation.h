@@ -21,7 +21,11 @@ public:
       // Source changes clear the input. Retain the previous picture until a
       // new decoded frame (or a ready poster in QML) can replace it.
       if (!frame.isValid()) return;
-      if (m_output) m_output->setVideoFrame(frame);
+      if (m_output) {
+        // The scene graph can acquire its RHI after the player is attached.
+        if (m_input.rhi() != m_output->rhi()) m_input.setRhi(m_output->rhi());
+        m_output->setVideoFrame(frame);
+      }
       m_ready = true;
       m_hasFrame = true;
       emit readyChanged();

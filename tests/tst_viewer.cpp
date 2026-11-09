@@ -2079,6 +2079,36 @@ private slots:
     player->pause();
   }
 
+  void videoNavigationRetainsPictureWhileLoading() {
+    QTemporaryDir dir;
+    const QString first = dir.filePath(QStringLiteral("a.mkv"));
+    const QString second = dir.filePath(QStringLiteral("b.mkv"));
+    const QString fixture = QFINDTESTDATA("fixtures/viewer/tracks.mkv");
+    QVERIFY(QFile::copy(fixture, first));
+    QVERIFY(QFile::copy(fixture, second));
+    open({first, second});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY(player->videoSink() && player->videoSink()->videoFrame().isValid());
+    auto* output = item(QStringLiteral("viewerVideoOutput"));
+    auto* sink = output->property("videoSink").value<QVideoSink*>();
+    QVERIFY(sink);
+    bool sawClear = false;
+    bool retained = true;
+    const auto connection = connect(player->videoSink(), &QVideoSink::videoFrameChanged,
+        this, [&](const QVideoFrame& frame) {
+          if (frame.isValid()) return;
+          sawClear = true;
+          retained = retained && sink->videoFrame().isValid();
+        });
+    const auto disconnect = qScopeGuard([&] { QObject::disconnect(connection); });
+    QTest::keyClick(m_window, Qt::Key_PageDown);
+    QTRY_COMPARE(m_session->path(), second);
+    QTRY_VERIFY(sawClear);
+    QVERIFY(retained);
+    QTRY_VERIFY(player->videoSink()->videoFrame().isValid());
+  }
+
   void exactFrameBoundarySeek() {
     QTemporaryDir dir;
     const QString path = dir.filePath(QStringLiteral("boundary.mkv"));
