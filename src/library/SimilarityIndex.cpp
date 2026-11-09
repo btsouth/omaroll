@@ -20,6 +20,8 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -30,7 +32,8 @@ constexpr int kThumbnailPixels = kThumbnail * kThumbnail;
 
 constexpr quint32 kCacheMagic = 0x4f534931; // OSI1
 constexpr quint16 kCacheVersion = 1;
-constexpr qint64 kMaximumCacheBytes = 64LL * 1024 * 1024;
+// About 1.1 KB a picture, so this holds roughly 400,000 of them.
+constexpr qint64 kMaximumCacheBytes = 512LL * 1024 * 1024;
 
 // Per strictness: Strict, Normal, Loose.
 struct Limits {
@@ -115,6 +118,133 @@ int findSet(QList<int>& sets, int value) {
 
 quint64 pairKey(int left, int right) {
   return (quint64(quint32(std::min(left, right))) << 32) | quint32(std::max(left, right));
+}
+
+// Grouping limits, so a library of thousands of near-identical pictures stays
+// quick and small. Past them a set can come out smaller, never wrong.
+constexpr int kMaximumClumpTries = 16;
+constexpr std::size_t kMaximumCandidates = 96;
+constexpr std::size_t kMaximumBucketScan = 8192;
+constexpr qsizetype kMaximumEdges = 1 << 20;
+constexpr qsizetype kExactClumpPairs = 9;
+// A clump member is within this share of every limit of its first picture.
+constexpr double kClumpShare = 0.25;
+// Slack for rounding when distances are added up rather than measured.
+constexpr double kSlack = 1e-9;
+
+// Each of these is a distance that obeys the triangle inequality, so how far
+// apart two members of two clumps can be follows from their first pictures.
+// Pearson correlation is the cosine of an angle; word agreement is a Jaccard
+// index; the aspect check is a bound on the ratio's logarithm.
+double aspectDistance(const SimilarityIndex::Signature& left,
+                      const SimilarityIndex::Signature& right) {
+  return std::abs(std::log(double(left.width) / left.height) -
+                  std::log(double(right.width) / right.height));
+}
+const double kAspectLimit = -std::log(0.92);
+
+int lumaOf(const SimilarityIndex::Signature& signature) {
+  return (signature.red + signature.green + signature.blue) / 3;
+}
+
+int tintDistance(const SimilarityIndex::Signature& left, const SimilarityIndex::Signature& right) {
+  const int leftLuma = lumaOf(left);
+  const int rightLuma = lumaOf(right);
+  return std::abs((left.red - leftLuma) - (right.red - rightLuma)) +
+         std::abs((left.green - leftLuma) - (right.green - rightLuma)) +
+         std::abs((left.blue - leftLuma) - (right.blue - rightLuma));
+}
+
+double angleBetween(const SimilarityIndex::Signature& left,
+                    const SimilarityIndex::Signature& right) {
+  return std::acos(std::clamp(correlation(left, right), -1.0, 1.0));
+}
+
+bool flat(const SimilarityIndex::Signature& signature) { return variance(signature) < 4.0; }
+
+bool hasWords(const QStringList& words) { return words.size() >= kMinimumWords; }
+
+// How far a clump's members are from its first picture, at most.
+struct Spread {
+  double aspect = 0;
+  double luma = 0;
+  double tint = 0;
+  double words = 0;
+  double shade = 0;
+  double angle = 0;
+
+  void widen(const Spread& other) {
+    aspect = std::max(aspect, other.aspect);
+    luma = std::max(luma, other.luma);
+    tint = std::max(tint, other.tint);
+    words = std::max(words, other.words);
+    shade = std::max(shade, other.shade);
+    angle = std::max(angle, other.angle);
+  }
+};
+
+const Limits& limitsFor(const SimilarityIndex::Signature& left,
+                        const SimilarityIndex::Signature& right, int level) {
+  return left.textLike() || right.textLike() ? kTextLike[level] : kPicture[level];
+}
+
+// Whether `member` belongs in the clump started by `leader`: the same hash,
+// the same kind of picture, and within a share of every limit of it.
+bool fitsClump(const SimilarityIndex::Signature& leader, const QStringList& leaderWords,
+               const SimilarityIndex::Signature& member, const QStringList& memberWords,
+               int level, Spread* distance) {
+  if (!member.valid || member.hash != leader.hash || member.textLike() != leader.textLike() ||
+      flat(member) != flat(leader) || hasWords(memberWords) != hasWords(leaderWords) ||
+      member.width <= 0 || member.height <= 0) {
+    return false;
+  }
+  const Limits& limits = limitsFor(leader, member, level);
+  distance->aspect = aspectDistance(leader, member);
+  distance->luma = std::abs(lumaOf(leader) - lumaOf(member));
+  distance->tint = tintDistance(leader, member);
+  if (distance->aspect > kClumpShare * kAspectLimit ||
+      distance->luma > kClumpShare * limits.brightness ||
+      distance->tint > kClumpShare * limits.tint) {
+    return false;
+  }
+  if (hasWords(leaderWords)) {
+    distance->words = 1.0 - wordAgreement(leaderWords, memberWords);
+    if (distance->words > kClumpShare * (1.0 - limits.words)) return false;
+  }
+  if (flat(leader)) {
+    distance->shade = std::abs(double(leader.sum - member.sum)) / kThumbnailPixels;
+    return distance->shade <= kClumpShare * 6.0;
+  }
+  distance->angle = angleBetween(leader, member);
+  return distance->angle <= kClumpShare * std::acos(limits.correlation);
+}
+
+// Whether every member of one clump matches every member of another, judged
+// from their first pictures, which match, and each clump's spread. Members
+// share their first picture's hash and kind, so only the distances remain.
+bool withinSpread(const SimilarityIndex::Signature& left, const QStringList& leftWords,
+                  const Spread& leftSpread, const SimilarityIndex::Signature& right,
+                  const QStringList& rightWords, const Spread& rightSpread, int level) {
+  const Limits& limits = limitsFor(left, right, level);
+  if (aspectDistance(left, right) + leftSpread.aspect + rightSpread.aspect >
+          kAspectLimit - kSlack ||
+      std::abs(lumaOf(left) - lumaOf(right)) + leftSpread.luma + rightSpread.luma >
+          limits.brightness ||
+      tintDistance(left, right) + leftSpread.tint + rightSpread.tint > limits.tint) {
+    return false;
+  }
+  if (hasWords(leftWords) && hasWords(rightWords) &&
+      1.0 - wordAgreement(leftWords, rightWords) + leftSpread.words + rightSpread.words >
+          1.0 - limits.words - kSlack) {
+    return false;
+  }
+  if (flat(left)) {
+    return std::abs(double(left.sum - right.sum)) / kThumbnailPixels + leftSpread.shade +
+               rightSpread.shade <=
+           6.0;
+  }
+  return angleBetween(left, right) + leftSpread.angle + rightSpread.angle <=
+         std::acos(limits.correlation) - kSlack;
 }
 
 } // namespace
@@ -256,9 +386,97 @@ bool SimilarityIndex::matches(const Signature& left, const Signature& right,
 QList<QList<int>> SimilarityIndex::group(const QList<Signature>& signatures,
                                          const QList<QStringList>& words, int strictness,
                                          const std::atomic_bool* cancel) {
-  // Candidate pairs: any two whose difference hashes share one of eight
-  // bytes, which every pair within seven bits does. Each is then checked
-  // in full.
+  const int level = std::clamp(strictness, 0, 2);
+  const QStringList none;
+  const auto wordsAt = [&](int index) -> const QStringList& {
+    return index < words.size() ? words.at(index) : none;
+  };
+  const auto stopped = [cancel] { return cancel && cancel->load(); };
+
+  // First, near-identical pictures with one hash collapse into clumps around
+  // their first picture, each within a quarter of every limit of it. Any two
+  // members are then within the full limits of each other, so a clump is
+  // already a set, and a library of thousands of copies of one screen costs
+  // one comparison per picture rather than one per pair.
+  struct Clump {
+    int leader = 0;
+    QList<int> members;
+    Spread radius;
+  };
+  QList<Clump> clumps;
+  QHash<quint64, QList<int>> clumpsByHash;
+  for (int index = 0; index < signatures.size(); ++index) {
+    if (stopped()) return {};
+    const Signature& signature = signatures[index];
+    if (!signature.valid) continue;
+    QList<int>& sameHash = clumpsByHash[signature.hash];
+    bool joined = false;
+    for (qsizetype k = sameHash.size() - 1, tries = 0; k >= 0 && tries < kMaximumClumpTries;
+         --k, ++tries) {
+      Clump& clump = clumps[sameHash[k]];
+      Spread distance;
+      if (fitsClump(signatures[clump.leader], wordsAt(clump.leader), signature, wordsAt(index),
+                    level, &distance)) {
+        clump.members.append(index);
+        clump.radius.widen(distance);
+        joined = true;
+        break;
+      }
+    }
+    if (!joined) {
+      sameHash.append(int(clumps.size()));
+      clumps.append({index, {index}, {}});
+    }
+  }
+
+  // Two clumps link when every picture in one matches every picture in the
+  // other: checked in full for small clumps, and otherwise from their first
+  // pictures and how far the rest may be from them.
+  const auto clumpsMatch = [&](const Clump& a, const Clump& b, double* score) {
+    const Signature& left = signatures[a.leader];
+    const Signature& right = signatures[b.leader];
+    if (!matches(left, right, wordsAt(a.leader), wordsAt(b.leader), level, score)) return false;
+    if (a.members.size() == 1 && b.members.size() == 1) return true;
+    if (withinSpread(left, wordsAt(a.leader), a.radius, right, wordsAt(b.leader), b.radius,
+                     level)) {
+      return true;
+    }
+    if (a.members.size() * b.members.size() > kExactClumpPairs) return false;
+    for (int x : a.members) {
+      for (int y : b.members) {
+        if ((x != a.leader || y != b.leader) &&
+            !matches(signatures[x], signatures[y], wordsAt(x), wordsAt(y), level)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  };
+
+  // Candidate pairs: two hashes within the loosest distance at this
+  // strictness agree exactly on at least one of that many plus one parts.
+  // Buckets hold distinct hashes, and each clump is compared with at most a
+  // fixed number of the closest earlier ones, so a library whose hashes are
+  // all alike stays linear. Past the limits a set may come out smaller, never
+  // wrong.
+  const int distance = std::max(kPicture[level].hashDistance, kTextLike[level].hashDistance);
+  const int parts = std::max(8, distance + 1);
+  std::vector<int> partShift(parts);
+  std::vector<int> partBits(parts);
+  for (int part = 0, shift = 0; part < parts; ++part) {
+    partBits[part] = 64 / parts + (part < 64 % parts ? 1 : 0);
+    partShift[part] = shift;
+    shift += partBits[part];
+  }
+  const auto bucketOf = [&](quint64 hash, int part) {
+    return part * 256 + int((hash >> partShift[part]) & ((quint64(1) << partBits[part]) - 1));
+  };
+  std::vector<std::vector<int>> buckets(std::size_t(parts) * 256);
+  QHash<quint64, int> hashIds;
+  std::vector<quint64> hashValues;
+  std::vector<std::vector<int>> clumpsOfHash;
+  std::vector<int> seen;
+
   struct Edge {
     int left;
     int right;
@@ -266,52 +484,74 @@ QList<QList<int>> SimilarityIndex::group(const QList<Signature>& signatures,
   };
   QList<Edge> edges;
   QSet<quint64> linked;
-  QMultiHash<int, int> chunks;
-  const QStringList none;
-  for (int index = 0; index < signatures.size(); ++index) {
-    if (cancel && cancel->load()) return {};
-    if (!signatures[index].valid) continue;
-    QSet<int> possible;
-    for (int chunk = 0; chunk < 8; ++chunk) {
-      const int key = chunk * 256 + int((signatures[index].hash >> (chunk * 8)) & 0xff);
-      for (auto it = chunks.constFind(key); it != chunks.cend() && it.key() == key; ++it) {
-        possible.insert(it.value());
+  std::vector<std::pair<int, int>> near;
+  std::vector<int> candidates;
+  for (int node = 0; node < clumps.size() && edges.size() < kMaximumEdges; ++node) {
+    if (stopped()) return {};
+    const quint64 hash = signatures[clumps[node].leader].hash;
+    near.clear();
+    for (int part = 0; part < parts; ++part) {
+      const std::vector<int>& bucket = buckets[std::size_t(bucketOf(hash, part))];
+      const std::size_t first =
+          bucket.size() > kMaximumBucketScan ? bucket.size() - kMaximumBucketScan : 0;
+      for (std::size_t k = bucket.size(); k-- > first;) {
+        const int id = bucket[k];
+        if (seen[std::size_t(id)] == node) continue;
+        seen[std::size_t(id)] = node;
+        const int bits = std::popcount(hashValues[std::size_t(id)] ^ hash);
+        if (bits <= distance) near.emplace_back(bits, -id);
       }
     }
-    const QStringList& ownWords = index < words.size() ? words.at(index) : none;
-    for (int other : std::as_const(possible)) {
-      if (cancel && cancel->load()) return {};
-      const QStringList& otherWords = other < words.size() ? words.at(other) : none;
+    // Closest hashes first, and of those the most recent.
+    std::sort(near.begin(), near.end());
+    candidates.clear();
+    for (const auto& [bits, negativeId] : near) {
+      const std::vector<int>& others = clumpsOfHash[std::size_t(-negativeId)];
+      for (std::size_t k = others.size(); k-- > 0 && candidates.size() < kMaximumCandidates;) {
+        candidates.push_back(others[k]);
+      }
+      if (candidates.size() >= kMaximumCandidates) break;
+    }
+    for (int other : candidates) {
+      if (stopped()) return {};
       double score = 0;
-      if (matches(signatures[index], signatures[other], ownWords, otherWords, strictness,
-                  &score)) {
-        edges.append({other, index, score});
-        linked.insert(pairKey(other, index));
+      if (edges.size() < kMaximumEdges && clumpsMatch(clumps[other], clumps[node], &score)) {
+        edges.append({other, node, score});
+        linked.insert(pairKey(other, node));
       }
     }
-    for (int chunk = 0; chunk < 8; ++chunk) {
-      chunks.insert(chunk * 256 + int((signatures[index].hash >> (chunk * 8)) & 0xff), index);
+    auto id = hashIds.constFind(hash);
+    if (id == hashIds.cend()) {
+      id = hashIds.insert(hash, int(hashValues.size()));
+      hashValues.push_back(hash);
+      clumpsOfHash.emplace_back();
+      seen.push_back(-1);
+      for (int part = 0; part < parts; ++part) {
+        buckets[std::size_t(bucketOf(hash, part))].push_back(id.value());
+      }
     }
+    clumpsOfHash[std::size_t(id.value())].push_back(node);
   }
 
   // Complete linkage, closest pairs first: two sets merge only when every
-  // picture in one matches every picture in the other.
+  // clump in one links with every clump in the other.
   std::sort(edges.begin(), edges.end(), [](const Edge& a, const Edge& b) {
     if (a.score != b.score) return a.score > b.score;
     return a.left != b.left ? a.left < b.left : a.right < b.right;
   });
-  QList<int> sets(signatures.size());
-  QHash<int, QList<int>> members;
-  for (int index = 0; index < sets.size(); ++index) {
-    sets[index] = index;
+  QList<int> sets(clumps.size());
+  std::vector<QList<int>> members(std::size_t(clumps.size()));
+  for (int node = 0; node < sets.size(); ++node) {
+    sets[node] = node;
+    members[std::size_t(node)] = {node};
   }
   for (const Edge& edge : std::as_const(edges)) {
-    if (cancel && cancel->load()) return {};
+    if (stopped()) return {};
     const int left = findSet(sets, edge.left);
     const int right = findSet(sets, edge.right);
     if (left == right) continue;
-    const QList<int> leftMembers = members.value(left, {left});
-    const QList<int> rightMembers = members.value(right, {right});
+    const QList<int>& leftMembers = members[std::size_t(left)];
+    const QList<int>& rightMembers = members[std::size_t(right)];
     bool everyPair = true;
     for (int a : leftMembers) {
       for (int b : rightMembers) {
@@ -324,13 +564,14 @@ QList<QList<int>> SimilarityIndex::group(const QList<Signature>& signatures,
     }
     if (!everyPair) continue;
     sets[right] = left;
-    members[left] = leftMembers + rightMembers;
-    members.remove(right);
+    members[std::size_t(left)].append(rightMembers);
+    members[std::size_t(right)] = {};
   }
   QList<QList<int>> result;
-  for (auto it = members.cbegin(); it != members.cend(); ++it) {
-    if (it.value().size() < 2) continue;
-    QList<int> set = it.value();
+  for (const QList<int>& nodes : members) {
+    QList<int> set;
+    for (int node : nodes) set.append(clumps[node].members);
+    if (set.size() < 2) continue;
     std::sort(set.begin(), set.end());
     result.append(set);
   }
@@ -446,6 +687,11 @@ SimilarityIndex::SimilarityIndex(CaptureModel* model, QObject* parent)
   m_refreshTimer.setSingleShot(true);
   m_refreshTimer.setInterval(180);
   connect(&m_refreshTimer, &QTimer::timeout, this, &SimilarityIndex::start);
+  m_textTimer.setSingleShot(true);
+  m_textTimer.setInterval(1500);
+  connect(&m_textTimer, &QTimer::timeout, this, [this] {
+    if (m_active && m_textChanged && !m_watcher.isRunning()) start();
+  });
   connect(&m_watcher, &QFutureWatcher<Result>::finished, this, [this] {
     const Result result = m_watcher.future().takeResult();
     if (result.generation == m_generation && m_active && !m_restartQueued && !m_dirty &&
@@ -462,6 +708,8 @@ SimilarityIndex::SimilarityIndex(CaptureModel* model, QObject* parent)
     if (m_active && (m_restartQueued || m_dirty)) {
       m_restartQueued = false;
       QTimer::singleShot(0, this, &SimilarityIndex::start);
+    } else if (m_active && m_textChanged) {
+      m_textTimer.start();
     }
   });
   if (m_model) {
@@ -527,13 +775,17 @@ void SimilarityIndex::setText(const QString& path, const QString& text) {
     m_words.insert(path, words);
   }
   // Text only ever splits a set, so only a picture already in one matters.
+  // A running scan finishes with the text it started with, then one more
+  // runs; cancelling it on every result could keep it from ever finishing.
   if (m_active && m_groups.contains(path)) {
-    markDirty();
+    m_textChanged = true;
+    if (!m_watcher.isRunning()) m_textTimer.start();
   }
 }
 
 void SimilarityIndex::requestStop() {
   m_refreshTimer.stop();
+  m_textTimer.stop();
   m_active = false;
   m_restartQueued = false;
   ++m_generation;
@@ -548,6 +800,8 @@ void SimilarityIndex::setActive(bool active) {
   emit activeChanged();
   if (!active) {
     m_refreshTimer.stop();
+    m_textTimer.stop();
+    m_textChanged = false;
     if (m_watcher.isRunning()) {
       ++m_generation;
       m_cancel->store(true);
@@ -617,6 +871,9 @@ void SimilarityIndex::start() {
   const QList<Candidate> work = candidates();
   m_dirty = false;
   m_restartQueued = false;
+  // The word lists are copied below, so this scan sees every result so far.
+  m_textChanged = false;
+  m_textTimer.stop();
   ++m_generation;
   if (work.size() < 2) {
     if (!m_groups.isEmpty()) {

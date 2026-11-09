@@ -127,17 +127,10 @@ Item {
         // Let go of the pictures before they move, so nothing reloads them.
         root.close()
         root.paths = []
-        const records = []
-        for (const target of targets) {
-            const record = Actions.trashCaptured(target)
-            if (record.path !== undefined) records.push(record)
-        }
-        // The whole cleanup is one step, so one Undo puts it all back.
-        const undoId = Settings.pushTrashUndo(records, null)
-        const moved = records.length
-        root.finished(moved === targets.length
-                      ? "Kept one, moved " + moved + (moved === 1 ? " picture" : " pictures") + " to Trash"
-                      : "Moved " + moved + " of " + targets.length + " pictures to Trash", undoId)
+        // The moves run on a worker, which skips any target that changed and
+        // the kept file itself if it was reached by another path.
+        keepWork.pending = true
+        Actions.keepOneMoveOthersToTrash(keep, targets)
     }
 
     function close() { visible = false }
@@ -504,6 +497,22 @@ Item {
             label: "Done"
             active: true
             onClicked: root.close()
+        }
+    }
+
+    Connections {
+        id: keepWork
+        property bool pending: false
+        target: Actions
+        enabled: pending
+        function onKeepOneFinished(moved, skipped, trashed) {
+            keepWork.pending = false
+            // The whole cleanup is one step, so one Undo puts it all back.
+            const undoId = Settings.pushTrashUndo(trashed, null)
+            const total = moved + skipped.length
+            root.finished(skipped.length === 0
+                          ? "Kept one, moved " + moved + (moved === 1 ? " picture" : " pictures") + " to Trash"
+                          : "Moved " + moved + " of " + total + " pictures to Trash", undoId)
         }
     }
 

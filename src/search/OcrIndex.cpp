@@ -14,6 +14,7 @@
 #include <QThreadPool>
 
 #include <algorithm>
+#include <utility>
 
 #include <sys/resource.h>
 #include <sys/syscall.h>
@@ -205,6 +206,7 @@ void OcrIndex::setScreenshotsOnly(bool value) {
   m_screenshotsOnly = value;
   emit backgroundChanged();
   if (m_active || backgroundRunning()) sync();
+  else scheduleCoverage();
 }
 
 QString OcrIndex::pauseReason() const {
@@ -238,15 +240,20 @@ void OcrIndex::setPowerSupplyDirectory(const QString& directory) {
 
 bool OcrIndex::onBattery(const QString& directory) {
   const QDir supplies(directory);
+  bool battery = false;
+  bool discharging = false;
   bool externalKnown = false;
   bool externalOnline = false;
-  bool discharging = false;
   for (const QString& name : supplies.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
     const QString base = supplies.filePath(name) + QLatin1Char('/');
+    // Mice, keyboards, controllers and headsets report their own batteries
+    // with Device scope; they say nothing about how the computer is powered.
+    if (readSmall(base + QStringLiteral("scope")) == QLatin1String("Device")) continue;
     const QString type = readSmall(base + QStringLiteral("type"));
     if (type == QLatin1String("Battery")) {
-      const QString status = readSmall(base + QStringLiteral("status"));
-      discharging = discharging || status == QLatin1String("Discharging");
+      battery = true;
+      discharging = discharging || readSmall(base + QStringLiteral("status")) ==
+                                       QLatin1String("Discharging");
     } else if (type == QLatin1String("Mains") || type.startsWith(QLatin1String("USB"))) {
       const QString online = readSmall(base + QStringLiteral("online"));
       if (!online.isEmpty()) {
@@ -255,10 +262,11 @@ bool OcrIndex::onBattery(const QString& directory) {
       }
     }
   }
-  if (externalOnline) return false;
-  // No supply reports power: on battery when one is draining, or when the
-  // only external supplies say they are offline.
-  return discharging || (externalKnown && !externalOnline);
+  // A computer without its own battery runs on mains, whatever its USB-C
+  // ports report. One with a battery is on it when nothing external is
+  // online and the battery drains or every external supply says offline.
+  if (!battery || externalOnline) return false;
+  return discharging || externalKnown;
 }
 
 void OcrIndex::checkPower() {
@@ -318,11 +326,12 @@ void OcrIndex::recognize(const QString& path, bool refresh) {
   m_reviewModified = candidate.modified;
   m_reviewBytes = candidate.bytes;
   if (refresh) {
+    const bool wasKnown = known(candidate);
     m_entries.remove(candidate.path);
-    m_failed.remove(failureKey(candidate));
+    m_failed.remove(candidate.path);
     QFile::remove(cachePath(candidate.path));
     emit textReady(candidate.path, {});
-    scheduleCoverage();
+    noteCoverage(candidate, wasKnown);
   } else {
     const auto entry = m_entries.constFind(candidate.path);
     if (entry != m_entries.cend() && entry->modified == candidate.modified &&
@@ -424,7 +433,13 @@ bool OcrIndex::known(const Candidate& candidate) const {
   const auto entry = m_entries.constFind(candidate.path);
   return (entry != m_entries.cend() && entry->modified == candidate.modified &&
           entry->bytes == candidate.bytes) ||
-         m_failed.contains(failureKey(candidate));
+         failed(candidate);
+}
+
+bool OcrIndex::failed(const Candidate& candidate) const {
+  const auto found = m_failed.constFind(candidate.path);
+  return found != m_failed.cend() && found->modified == candidate.modified &&
+         found->bytes == candidate.bytes;
 }
 
 void OcrIndex::sync() {
@@ -474,6 +489,11 @@ void OcrIndex::sync() {
     m_queue.append(std::move(pictures));
   }
   m_stills = std::move(stills);
+  m_stillRows.clear();
+  m_stillRows.reserve(m_stills.size());
+  for (qsizetype index = 0; index < m_stills.size(); ++index) {
+    m_stillRows.insert(m_stills[index].path, int(index));
+  }
 
   int busy = 0;
   for (const auto& worker : m_workers) {
@@ -564,7 +584,7 @@ void OcrIndex::processNext() {
       break;
     }
     const Candidate candidate = m_queue.takeFirst();
-    if (!stillCurrent(candidate) || m_failed.contains(failureKey(candidate))) {
+    if (!stillCurrent(candidate) || failed(candidate)) {
       advanceProgress();
       continue;
     }
@@ -713,8 +733,9 @@ void OcrIndex::finish(Worker* worker, bool successful) {
       publishReview(candidate, text);
     }
   } else {
-    m_failed.insert(failureKey(candidate));
-    scheduleCoverage();
+    const bool wasKnown = known(candidate);
+    m_failed.insert(candidate.path, {candidate.modified, candidate.bytes});
+    noteCoverage(candidate, wasKnown);
     if (candidate.path == m_reviewPath) {
       publishReview(candidate, {}, QStringLiteral("Could not extract text"));
     }
@@ -757,10 +778,37 @@ void OcrIndex::advanceProgress() {
 }
 
 void OcrIndex::scheduleCoverage() {
+  m_coverageRecount = true;
+  if (!m_coverageTimer.isActive()) m_coverageTimer.start();
+}
+
+// One still read or forgotten: adjust the counts rather than recount them,
+// which on a large library would be a pass over every still per result.
+void OcrIndex::noteCoverage(const Candidate& candidate, bool wasKnown) {
+  const auto row = m_stillRows.constFind(candidate.path);
+  if (row == m_stillRows.cend()) return;
+  const Candidate& still = m_stills.at(row.value());
+  if (still.modified != candidate.modified || still.bytes != candidate.bytes) return;
+  const bool nowKnown = known(still);
+  if (nowKnown == wasKnown) return;
+  const int step = nowKnown ? 1 : -1;
+  m_unreadCount -= step;
+  if (!m_screenshotsOnly || still.screenshot) m_indexedCount += step;
+  // Signal at most a few times a second.
+  m_coverageSignal = true;
   if (!m_coverageTimer.isActive()) m_coverageTimer.start();
 }
 
 void OcrIndex::updateCoverage() {
+  if (!m_coverageRecount) {
+    if (m_coverageSignal) {
+      m_coverageSignal = false;
+      emit coverageChanged();
+    }
+    return;
+  }
+  m_coverageRecount = false;
+  const bool pending = std::exchange(m_coverageSignal, false);
   int indexed = 0;
   int eligible = 0;
   int unread = 0;
@@ -772,7 +820,8 @@ void OcrIndex::updateCoverage() {
       if (read) ++indexed;
     }
   }
-  if (indexed != m_indexedCount || eligible != m_eligibleCount || unread != m_unreadCount) {
+  if (pending || indexed != m_indexedCount || eligible != m_eligibleCount ||
+      unread != m_unreadCount) {
     m_indexedCount = indexed;
     m_eligibleCount = eligible;
     m_unreadCount = unread;
@@ -900,9 +949,10 @@ void OcrIndex::pruneCache() {
 }
 
 void OcrIndex::adopt(const Candidate& candidate, const QString& text) {
+  const bool wasKnown = known(candidate);
   m_entries.insert(candidate.path, {candidate.modified, candidate.bytes, text});
   emit textReady(candidate.path, normalizedText(text));
-  scheduleCoverage();
+  noteCoverage(candidate, wasKnown);
 }
 
 void OcrIndex::publishReview(const Candidate& candidate, const QString& text,
@@ -915,9 +965,4 @@ void OcrIndex::publishReview(const Candidate& candidate, const QString& text,
   m_reviewError = error;
   m_reviewing = false;
   emit reviewChanged();
-}
-
-QString OcrIndex::failureKey(const Candidate& candidate) const {
-  return candidate.path + QChar::Null + QString::number(candidate.modified) + QLatin1Char(':') +
-         QString::number(candidate.bytes);
 }

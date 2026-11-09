@@ -78,10 +78,14 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <bit>
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <future>
 #include <memory>
+#include <thread>
 
 namespace {
 
@@ -3865,6 +3869,64 @@ private slots:
     QCOMPARE(readFile(second), QByteArray("shared"));
   }
 
+  // The kept file reached by another path, as a bind mount or a symlinked
+  // folder gives it, is the same directory entry and is never moved, even
+  // though its bytes are identical.
+  void duplicateCleanupNeverMovesTheKeptFileThroughAnotherPath() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString kept = dir.filePath(QStringLiteral("kept.png"));
+    QVERIFY(writeFile(kept, "same bytes"));
+    QVERIFY(QFile::link(dir.path(), dir.filePath(QStringLiteral("alias"))));
+    const QString alias = dir.filePath(QStringLiteral("alias/kept.png"));
+    ActionLauncher launcher;
+    const QVariantMap keep = launcher.captureFileAction(kept);
+    const QVariantMap other = launcher.captureFileAction(alias);
+    QVERIFY(!keep.isEmpty() && !other.isEmpty());
+    QVERIFY(keep.value(QStringLiteral("path")) != other.value(QStringLiteral("path")));
+    QSignalSpy finished(&launcher, &ActionLauncher::duplicateCleanupFinished);
+    launcher.moveDuplicateCopiesToTrash(keep, {other});
+    QTRY_COMPARE(finished.size(), 1);
+    QCOMPARE(finished.first().at(0).toInt(), 0);
+    QCOMPARE(finished.first().at(1).toStringList(), QStringList{alias});
+    QCOMPARE(readFile(kept), QByteArray("same bytes"));
+  }
+
+  // Keeping one of a similar set moves the others on a worker as one undo
+  // step, and skips the kept file however it was reached.
+  void keepOneMovesOnlyTheOtherPicturesToTrash() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString kept = dir.filePath(QStringLiteral("kept.png"));
+    const QString smaller = dir.filePath(QStringLiteral("smaller.png"));
+    QVERIFY(writeFile(kept, "kept picture"));
+    QVERIFY(writeFile(smaller, "smaller picture"));
+    QVERIFY(QFile::link(dir.path(), dir.filePath(QStringLiteral("alias"))));
+    const QString alias = dir.filePath(QStringLiteral("alias/kept.png"));
+    ActionLauncher launcher;
+    const QVariantMap keep = launcher.captureFileAction(kept);
+    QSignalSpy finished(&launcher, &ActionLauncher::keepOneFinished);
+    launcher.keepOneMoveOthersToTrash(
+        keep, {launcher.captureFileAction(alias), launcher.captureFileAction(smaller)});
+    QTRY_COMPARE(finished.size(), 1);
+    QCOMPARE(finished.first().at(0).toInt(), 1);
+    QCOMPARE(finished.first().at(1).toStringList(), QStringList{alias});
+    QCOMPARE(readFile(kept), QByteArray("kept picture"));
+    QVERIFY(!QFileInfo::exists(smaller));
+    AppSettings settings;
+    QVERIFY(settings.pushTrashUndo(finished.first().at(2).toList()) > 0);
+    QCOMPARE(settings.undo(), QStringLiteral("Restored smaller.png"));
+    QCOMPARE(readFile(smaller), QByteArray("smaller picture"));
+
+    // A kept picture that changed behind the prompt stops the whole step.
+    QVERIFY(writeFile(kept, "edited since"));
+    finished.clear();
+    launcher.keepOneMoveOthersToTrash(keep, {launcher.captureFileAction(smaller)});
+    QTRY_COMPARE(finished.size(), 1);
+    QCOMPARE(finished.first().at(0).toInt(), 0);
+    QVERIFY(QFileInfo::exists(smaller));
+  }
+
   void duplicateCleanupReportsUndoRecords() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -6652,6 +6714,169 @@ private slots:
     QVERIFY(sets.first().contains(1));
   }
 
+  // Thousands of near-identical pictures, as screenshots of one terminal
+  // are, group in bounded time and memory rather than one comparison and one
+  // link per pair. Both a run that matches and one that does not used to grow
+  // with the square of the count; 20,000 matching took gigabytes.
+  void similarGroupingStaysBoundedForThousandsOfNearIdenticalPictures() {
+    constexpr int kCount = 20000;
+    const auto pictures = [](bool matching) {
+      QRandomGenerator random(matching ? 3 : 4);
+      QList<SimilarityIndex::Signature> signatures;
+      signatures.reserve(kCount);
+      for (int index = 0; index < kCount; ++index) {
+        SimilarityIndex::Signature signature;
+        signature.valid = true;
+        signature.width = 1920;
+        signature.height = 1080;
+        signature.red = signature.green = signature.blue = 35;
+        signature.flatness = 220;
+        signature.chroma = 5;
+        // Dark screens whose hashes differ by a bit or two.
+        signature.hash = quint64(1) << random.bounded(64);
+        signature.thumbnail.resize(1024);
+        for (int pixel = 0; pixel < 1024; ++pixel) {
+          // One screen with a little noise, or a different screen each time.
+          const bool lit = matching ? pixel % 10 == 0 : random.bounded(10) == 0;
+          signature.thumbnail[pixel] =
+              char(30 + (lit ? 150 : 0) + (matching ? int(random.bounded(3)) : 0));
+        }
+        signature.prepare();
+        signatures.append(signature);
+      }
+      return signatures;
+    };
+    // Peak resident memory in KiB, after resetting it to the current size
+    // when `reset`. -1 when the kernel does not offer it.
+    const auto peak = [](bool reset) -> qint64 {
+      if (reset) {
+        QFile clear(QStringLiteral("/proc/self/clear_refs"));
+        if (!clear.open(QIODevice::WriteOnly) || clear.write("5") != 1) return -1;
+      }
+      QFile status(QStringLiteral("/proc/self/status"));
+      if (!status.open(QIODevice::ReadOnly)) return -1;
+      for (const QByteArray& line : status.readAll().split('\n')) {
+        if (line.startsWith("VmHWM:")) return line.mid(6).trimmed().split(' ').first().toLongLong();
+      }
+      return -1;
+    };
+#if defined(__SANITIZE_ADDRESS__)
+    // The sanitizer keeps freed memory in quarantine and shadows the rest.
+    constexpr qint64 kBudgetMiB = 1024;
+#else
+    constexpr qint64 kBudgetMiB = 256;
+#endif
+    for (const bool matching : {true, false}) {
+      const QList<SimilarityIndex::Signature> signatures = pictures(matching);
+      std::atomic_bool cancel = false;
+      std::promise<void> finished;
+      std::thread watchdog([&cancel, done = finished.get_future()] {
+        if (done.wait_for(std::chrono::seconds(60)) == std::future_status::timeout) cancel = true;
+      });
+      const qint64 before = peak(true);
+      QElapsedTimer timer;
+      timer.start();
+      const QList<QList<int>> sets =
+          SimilarityIndex::group(signatures, {}, SimilarityIndex::Normal, &cancel);
+      const qint64 elapsed = timer.elapsed();
+      const qint64 after = peak(false);
+      finished.set_value();
+      watchdog.join();
+      const qint64 growth = before >= 0 && after >= 0 ? (after - before) / 1024 : -1;
+      qInfo("Grouped %d near-identical %s pictures in %lld ms, peak memory +%lld MiB", kCount,
+            matching ? "matching" : "different", elapsed, growth);
+      QVERIFY2(!cancel.load(), "grouping took over a minute");
+      if (growth >= 0) QVERIFY2(growth < kBudgetMiB, qPrintable(QString::number(growth)));
+      if (matching) {
+        QCOMPARE(sets.size(), 1);
+        QCOMPARE(sets.first().size(), kCount);
+      } else {
+        QVERIFY(sets.isEmpty());
+      }
+    }
+  }
+
+  // Loose lets photos be ten bits apart, and two such hashes need not agree
+  // on any whole byte, so pairing has to look further than one byte.
+  void looseSimilarityFindsPhotosWhoseHashesShareNoByte() {
+    QRandomGenerator random(11);
+    SimilarityIndex::Signature photo;
+    photo.valid = true;
+    photo.width = 4000;
+    photo.height = 3000;
+    photo.red = 140;
+    photo.green = 120;
+    photo.blue = 90;
+    photo.flatness = 20;
+    photo.chroma = 80;
+    photo.hash = 0x5a5a5a5a5a5a5a5aULL;
+    photo.thumbnail.resize(1024);
+    for (int pixel = 0; pixel < 1024; ++pixel) {
+      photo.thumbnail[pixel] = char((pixel % 32) * 6 + (pixel / 32) * 2 + random.bounded(8));
+    }
+    photo.prepare();
+    SimilarityIndex::Signature edited = photo;
+    // Nine bits apart, one or two in every byte.
+    edited.hash = photo.hash ^ 0x0101010101010101ULL ^ 0x2ULL;
+    QCOMPARE(std::popcount(photo.hash ^ edited.hash), 9);
+    QVERIFY(!SimilarityIndex::matches(photo, edited, {}, {}, SimilarityIndex::Normal));
+    QVERIFY(SimilarityIndex::matches(photo, edited, {}, {}, SimilarityIndex::Loose));
+    QCOMPARE(SimilarityIndex::group({photo, edited}, {}, SimilarityIndex::Loose),
+             QList<QList<int>>({{0, 1}}));
+    QVERIFY(SimilarityIndex::group({photo, edited}, {}, SimilarityIndex::Normal).isEmpty());
+  }
+
+  // Copies of one picture that collapse together still never chain a set
+  // through a middle picture, and a picture that matches only some of the
+  // copies stays out of their set.
+  void collapsedCopiesStillNeedEveryPairToMatch() {
+    QRandomGenerator random(5);
+    std::array<double, 1024> base{};
+    std::array<double, 1024> drift{};
+    for (int index = 0; index < 1024; ++index) {
+      base[index] = random.generateDouble() - 0.5;
+      drift[index] = random.generateDouble() - 0.5;
+    }
+    const auto signature = [&](double amount, double noise) {
+      SimilarityIndex::Signature result;
+      result.valid = true;
+      result.width = 640;
+      result.height = 480;
+      result.red = result.green = result.blue = 120;
+      result.flatness = 20;
+      result.chroma = 80;
+      result.hash = 0x0123456789abcdefULL;
+      result.thumbnail.resize(1024);
+      for (int index = 0; index < 1024; ++index) {
+        const double value = base[index] + amount * drift[index] +
+                             noise * (random.generateDouble() - 0.5);
+        result.thumbnail[index] = char(std::clamp(int(128 + value * 120), 0, 255));
+      }
+      result.prepare();
+      return result;
+    };
+    QList<SimilarityIndex::Signature> signatures;
+    for (int copy = 0; copy < 12; ++copy) signatures.append(signature(0, 0.01));
+    // Drifted far enough to match the copies, but not the far picture.
+    signatures.append(signature(0.32, 0));
+    signatures.append(signature(0.64, 0));
+    QVERIFY(SimilarityIndex::matches(signatures[0], signatures[12], {}, {}, SimilarityIndex::Normal));
+    QVERIFY(SimilarityIndex::matches(signatures[12], signatures[13], {}, {}, SimilarityIndex::Normal));
+    QVERIFY(!SimilarityIndex::matches(signatures[0], signatures[13], {}, {}, SimilarityIndex::Normal));
+    const QList<QList<int>> sets = SimilarityIndex::group(signatures, {}, SimilarityIndex::Normal);
+    for (const QList<int>& set : sets) {
+      for (int a : set) {
+        for (int b : set) {
+          QVERIFY(a == b || SimilarityIndex::matches(signatures[a], signatures[b], {}, {},
+                                                     SimilarityIndex::Normal));
+        }
+      }
+    }
+    QVERIFY(std::any_of(sets.cbegin(), sets.cend(), [](const QList<int>& set) {
+      return set.size() >= 12 && set.contains(0) && set.contains(11) && !set.contains(13);
+    }));
+  }
+
   // Hashes survive a relaunch, keyed by path, size and modification time, and
   // a changed or unreadable cache only costs a fresh read.
   void similarityAndDuplicateHashesPersistInTheCache() {
@@ -6733,6 +6958,56 @@ private slots:
     index.refresh();
     QTRY_VERIFY_WITH_TIMEOUT(scanning.size() >= 2 && !index.scanning(), 10000);
     QCOMPARE(index.lastDecoded(), 4);
+  }
+
+  // Peripheral batteries (a wireless mouse, a game controller) say nothing
+  // about the computer's power, and a desktop's empty USB-C port does not put
+  // it on battery.
+  void backgroundTextIndexIgnoresPeripheralBatteries() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto supply = [&](const QString& machine, const QString& name,
+                            const QList<std::pair<QString, QByteArray>>& values) {
+      for (const auto& [file, value] : values) {
+        writeSmallFile(dir.filePath(machine + u'/' + name + u'/' + file), value + '\n');
+      }
+    };
+    const auto mouse = [&](const QString& machine) {
+      supply(machine, QStringLiteral("hidpp_battery_0"),
+             {{QStringLiteral("type"), "Battery"},
+              {QStringLiteral("status"), "Discharging"},
+              {QStringLiteral("scope"), "Device"}});
+    };
+    mouse(QStringLiteral("desktop"));
+    QVERIFY(!OcrIndex::onBattery(dir.filePath(QStringLiteral("desktop"))));
+
+    supply(QStringLiteral("usb-c-desktop"), QStringLiteral("ucsi-source-psy-USBC000:001"),
+           {{QStringLiteral("type"), "USB"}, {QStringLiteral("online"), "0"}});
+    QVERIFY(!OcrIndex::onBattery(dir.filePath(QStringLiteral("usb-c-desktop"))));
+
+    const auto laptop = [&](const QString& machine, bool plugged) {
+      supply(machine, QStringLiteral("AC"),
+             {{QStringLiteral("type"), "Mains"}, {QStringLiteral("online"), plugged ? "1" : "0"}});
+      supply(machine, QStringLiteral("BAT0"),
+             {{QStringLiteral("type"), "Battery"},
+              {QStringLiteral("status"), plugged ? "Charging" : "Discharging"},
+              {QStringLiteral("scope"), "System"}});
+      mouse(machine);
+    };
+    laptop(QStringLiteral("laptop-on-ac"), true);
+    QVERIFY(!OcrIndex::onBattery(dir.filePath(QStringLiteral("laptop-on-ac"))));
+    laptop(QStringLiteral("laptop-unplugged"), false);
+    QVERIFY(OcrIndex::onBattery(dir.filePath(QStringLiteral("laptop-unplugged"))));
+
+    // A laptop whose only external supply is a USB-C port, unplugged.
+    supply(QStringLiteral("usb-c-laptop"), QStringLiteral("BAT1"),
+           {{QStringLiteral("type"), "Battery"}, {QStringLiteral("status"), "Not charging"}});
+    supply(QStringLiteral("usb-c-laptop"), QStringLiteral("ucsi-source-psy-USBC000:001"),
+           {{QStringLiteral("type"), "USB"}, {QStringLiteral("online"), "0"}});
+    QVERIFY(OcrIndex::onBattery(dir.filePath(QStringLiteral("usb-c-laptop"))));
+    supply(QStringLiteral("usb-c-laptop"), QStringLiteral("ucsi-source-psy-USBC000:001"),
+           {{QStringLiteral("online"), "1"}});
+    QVERIFY(!OcrIndex::onBattery(dir.filePath(QStringLiteral("usb-c-laptop"))));
   }
 
   // Opt-in background text indexing: waits for mains power, runs a bounded

@@ -113,6 +113,11 @@ private:
     bool screenshot = false;
   };
 
+  struct Version {
+    qint64 modified = 0;
+    qint64 bytes = 0;
+  };
+
   struct Entry {
     qint64 modified = 0;
     qint64 bytes = 0;
@@ -147,6 +152,7 @@ private:
   void updateBackgroundState();
   void scheduleCoverage();
   void updateCoverage();
+  void noteCoverage(const Candidate& candidate, bool wasKnown);
   [[nodiscard]] bool stillCurrent(const Candidate& candidate) const;
   [[nodiscard]] QString cachePath(const QString& path) const;
   [[nodiscard]] bool readCache(const Candidate& candidate, QString* text) const;
@@ -155,7 +161,7 @@ private:
   void adopt(const Candidate& candidate, const QString& text);
   void publishReview(const Candidate& candidate, const QString& text,
                      const QString& error = {});
-  [[nodiscard]] QString failureKey(const Candidate& candidate) const;
+  [[nodiscard]] bool failed(const Candidate& candidate) const;
   [[nodiscard]] bool known(const Candidate& candidate) const;
 
   CaptureModel* m_model = nullptr;
@@ -164,7 +170,8 @@ private:
   QString m_legacyLanguages;
   QHash<QString, Entry> m_entries;
   QList<Candidate> m_queue;
-  QSet<QString> m_failed;
+  // The version of each picture Tesseract could not read.
+  QHash<QString, Version> m_failed;
   std::vector<std::unique_ptr<Worker>> m_workers;
   std::optional<Candidate> m_reviewCandidate;
   bool m_active = false;
@@ -190,6 +197,9 @@ private:
   QTimer m_powerTimer;
   QTimer m_coverageTimer;
   QList<Candidate> m_stills;
+  QHash<QString, int> m_stillRows;
+  bool m_coverageRecount = false;
+  bool m_coverageSignal = false;
   int m_indexedCount = 0;
   int m_eligibleCount = 0;
   int m_unreadCount = 0;

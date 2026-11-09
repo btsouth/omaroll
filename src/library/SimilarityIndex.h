@@ -22,6 +22,8 @@ class CaptureModel;
 // chat windows) need a much closer match, and when both have indexed text
 // that text must agree. Sets use complete linkage: a picture joins a set only
 // when it matches every member, so A~B and B~C never put A with C.
+// Near-identical copies collapse first and each picture is compared with a
+// bounded number of others, so time and memory stay linear in the library.
 //
 // Signatures are kept in ~/.cache/omaroll, keyed by path, size and
 // modification time, so a relaunch does not decode every still again.
@@ -144,6 +146,10 @@ private:
   CaptureModel* m_model = nullptr;
   QFutureWatcher<Result> m_watcher;
   QTimer m_refreshTimer;
+  // Recognized text arrives a picture at a time during background indexing.
+  // It never cancels a scan; one more runs after the current one, debounced.
+  QTimer m_textTimer;
+  bool m_textChanged = false;
   std::shared_ptr<std::atomic_bool> m_cancel;
   QHash<QString, Signature> m_cache;
   QHash<QString, QString> m_groups;
