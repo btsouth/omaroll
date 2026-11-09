@@ -29,3 +29,8 @@ race:strdup$
 # the uninstrumented event queue. No Omaroll code runs on the D-Bus thread, so
 # match any report with a libQt6DBus frame.
 race:libQt6DBus.so
+# A queued invokeMethod allocates its call event inside Qt on the posting
+# thread, and Qt deletes it on the receiving thread after delivery, through
+# the uninstrumented event queue. Match the allocating Qt frame, never
+# sendPostedEvents, which every queued slot runs under.
+race:QMetaObject::invokeMethodImpl
