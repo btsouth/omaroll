@@ -30,9 +30,9 @@ Rectangle {
     implicitWidth: root.count * (root.tileWidth + root.spacing) - root.spacing + 12
     implicitHeight: root.tileHeight + 12
     radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 10) : 4
-    color: root.shade(Theme.background, 0.84)
+    color: Osd.panel
     border.width: 1
-    border.color: root.shade(Theme.foreground, 0.12)
+    border.color: Osd.border
 
     HoverHandler { id: hover }
 
@@ -127,7 +127,7 @@ Rectangle {
             Rectangle {
                 anchors.fill: parent
                 radius: 3
-                color: root.shade(Theme.foreground, 0.08)
+                color: Qt.rgba(1, 1, 1, 0.08)
             }
 
             Image {
@@ -165,7 +165,7 @@ Rectangle {
                     text: "Can't show"
                     font.family: Theme.fontFamily
                     font.pixelSize: 9
-                    color: Theme.mutedText
+                    color: Osd.mutedText
                 }
             }
 
@@ -211,7 +211,7 @@ Rectangle {
                 radius: 3
                 color: "transparent"
                 border.width: 2
-                border.color: Theme.accent
+                border.color: Osd.accent
                 visible: tile.current
             }
             // The keyboard ring, outside the current file's border.
@@ -221,7 +221,7 @@ Rectangle {
                 radius: 4
                 color: "transparent"
                 border.width: 2
-                border.color: Theme.brightForeground
+                border.color: Osd.brightForeground
                 visible: tile.ringed
             }
 
