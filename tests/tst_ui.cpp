@@ -571,7 +571,8 @@ private slots:
     QCOMPARE(namedAction->text(QAccessible::Name), QStringLiteral("Rename"));
     // Once the menu closes, moving with the keyboard shows tips again, on
     // other tiles and on the one that was up.
-    invoke("dismissTopLayer");
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(item("library")->hasActiveFocus());
     QTest::keyClick(m_window, Qt::Key_Right);
     const auto tipOn = [&](int row) {
       QQuickItem* live = cardFor(pathAt(row));
