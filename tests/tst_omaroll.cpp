@@ -634,6 +634,64 @@ private slots:
     QCOMPARE(valid.get(), SingleInstance::Result::Forwarded);
   }
 
+  void mimeDefaultsRestoreAndRemoveOnlyOmaroll() {
+    QTemporaryDir dir;
+    const auto oldConfig = qgetenv("XDG_CONFIG_HOME");
+    const auto oldData = qgetenv("XDG_DATA_HOME");
+    const auto oldDesktop = qgetenv("XDG_CURRENT_DESKTOP");
+    const auto cleanup = qScopeGuard([&] {
+      for (const auto& pair : QList<QPair<const char*, QByteArray>>{
+             {"XDG_CONFIG_HOME", oldConfig}, {"XDG_DATA_HOME", oldData}, {"XDG_CURRENT_DESKTOP", oldDesktop}})
+        pair.second.isNull() ? qunsetenv(pair.first) : qputenv(pair.first, pair.second);
+    });
+    qputenv("XDG_CONFIG_HOME", dir.filePath("config").toUtf8());
+    qputenv("XDG_DATA_HOME", dir.filePath("data").toUtf8());
+    qputenv("XDG_CURRENT_DESKTOP", "");
+    QVERIFY(QDir().mkpath(dir.filePath("data/applications")));
+    QVERIFY(QDir().mkpath(dir.filePath("config")));
+    const QString desktop = "io.github.tsouth89.omaroll.desktop";
+    QVERIFY(QFile::copy(QFINDTESTDATA("../packaging/io.github.tsouth89.omaroll.desktop"),
+                       dir.filePath("data/applications/") + desktop));
+    QFile other(dir.filePath("data/applications/other.desktop"));
+    QVERIFY(other.open(QIODevice::WriteOnly));
+    other.write("[Desktop Entry]\nType=Application\nName=Other\nExec=true %f\nMimeType=image/png;application/pdf;\n");
+    other.close();
+    const auto writeDefaults = [&](const QByteArray& contents) {
+      QFile f(dir.filePath("config/mimeapps.list"));
+      return f.open(QIODevice::WriteOnly) && f.write(contents) == contents.size();
+    };
+    QVERIFY(writeDefaults("[Default Applications]\nimage/png=other.desktop;\napplication/pdf=other.desktop;\ninode/directory=other.desktop;\n"));
+    MimeDefaults defaults;
+    const QString report = defaults.apply(false, "images");
+    QVERIFY2(defaults.succeeded(), qPrintable(report));
+    QVERIFY(report.contains("image/png: other.desktop -> " + desktop));
+    // Repeating the command must retain the original replaced handler.
+    defaults.apply(false, "images");
+    QVERIFY(defaults.succeeded());
+    const QString restored = defaults.apply(true, "images");
+    QVERIFY2(defaults.succeeded(), qPrintable(restored));
+    QVERIFY(restored.contains("image/png: restored other.desktop"));
+    QFile config(dir.filePath("config/mimeapps.list"));
+    QVERIFY(config.open(QIODevice::ReadOnly));
+    auto contents = config.readAll(); config.close();
+    QVERIFY(contents.contains("inode/directory=other.desktop;"));
+    QVERIFY(contents.contains("application/pdf=other.desktop;"));
+    // No saved record: remove only Omaroll, including Added Associations.
+    QVERIFY(writeDefaults("[Default Applications]\nimage/png=io.github.tsouth89.omaroll.desktop;other.desktop;\n[Added Associations]\nimage/png=io.github.tsouth89.omaroll.desktop;other.desktop;\n"));
+    defaults.apply(true, "images");
+    QVERIFY(defaults.succeeded());
+    QVERIFY(config.open(QIODevice::ReadOnly));
+    contents = config.readAll();
+    QVERIFY(!contents.contains(desktop.toUtf8()));
+    QVERIFY(contents.contains("image/png=other.desktop;"));
+    const auto all = MimeDefaults::types(dir.filePath("data/applications/") + desktop, "all");
+    QVERIFY(!all.contains("inode/directory"));
+    QVERIFY(!all.contains("application/pdf"));
+    QVERIFY(all.contains("image/png"));
+    QVERIFY(all.contains("video/mp4"));
+    QVERIFY(MimeDefaults::types(dir.filePath("data/applications/") + desktop, "bad").isEmpty());
+  }
+
   void explicitStartParsingAndFirstVideo() {
     for (const auto& pair : QList<QPair<QString, qint64>>{{"0", 0}, {"83.5", 83500},
              {"01:23.5", 83500}, {"1:02:03", 3723000}}) {

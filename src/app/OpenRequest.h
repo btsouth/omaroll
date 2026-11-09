@@ -3,7 +3,7 @@
 #include <QStringList>
 #include <QHash>
 
-// Validate the whole request before changing a window or forwarding it. Paths
+// Validate paths, retaining supported files and reporting skipped entries. Paths
 // are canonical and deduplicated in the order supplied by the file manager.
 struct OpenRequest {
   QStringList files;

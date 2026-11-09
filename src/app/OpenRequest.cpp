@@ -41,9 +41,7 @@ OpenRequest OpenRequest::fromPaths(const QStringList& paths) {
         result.files.clear();
         result.entryPaths.clear();
         result.folder.clear();
-        if (!result.skipped.isEmpty() && result.files.isEmpty() && result.folder.isEmpty())
-    result.error = QStringLiteral("unsupported or unreadable media: %1").arg(result.skipped.join(QStringLiteral(", ")));
-  return result;
+        return result;
       }
       result.skipped.append(path);
       result.error.clear();
