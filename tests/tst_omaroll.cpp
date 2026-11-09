@@ -9627,14 +9627,13 @@ private slots:
     const long pageBytes = sysconf(_SC_PAGESIZE);
     const long framePages = long(format.frameWidth()) * format.frameHeight() * 3 / 2 / pageBytes;
     PlaybackHeap::usePictureDefaults();
-    // The control: with the picture settings, each frame is mapped. The
-    // runner's memory state sometimes lets a round reuse frames anyway (251
-    // faults a frame once on CI), so the best of three rounds counts.
+    // The control: with the picture settings, each frame is mapped. A kernel
+    // that faults in larger folios needs fewer faults per frame (about 250 of
+    // 3,037 pages on some x86 runners), so the budget below is a tenth of the
+    // control, the most of three rounds.
     long mapped = 0;
-    for (int round = 0; round < 3 && mapped <= framePages / 3; ++round) {
-      mapped = std::max(mapped, faultsPerFrame(nullptr, 12));
-    }
-    if (mapped <= framePages / 3) {
+    for (int round = 0; round < 3; ++round) mapped = std::max(mapped, faultsPerFrame(nullptr, 12));
+    if (mapped < 100) {
       QFile hugePages(QStringLiteral("/sys/kernel/mm/transparent_hugepage/enabled"));
       const bool huge = hugePages.open(QIODevice::ReadOnly) && hugePages.readAll().contains("[always]");
       if (huge) QSKIP("Transparent huge pages map a frame in a few faults, so the measure cannot tell");
@@ -9653,9 +9652,10 @@ private slots:
       for (int burst = 0; burst < 3; ++burst) {
         const long faults = faultsPerFrame(presentation.videoSink(), 30);
         QCoreApplication::processEvents();
-        // About a thirtieth of a mapped frame: 100 with 4 KB pages.
-        QVERIFY2(faults < std::max(10L, framePages / 30),
-                 qPrintable(QStringLiteral("%1 faults per frame of %2 pages").arg(faults).arg(framePages)));
+        // The #159 regression faults like the control; reuse stays far below.
+        QVERIFY2(faults * 10 < mapped,
+                 qPrintable(QStringLiteral("%1 faults per frame, %2 with the picture settings")
+                                .arg(faults).arg(mapped)));
         QCOMPARE(PlaybackHeap::holders(), 1);
         QCOMPARE(PlaybackHeap::mmapThreshold(), PlaybackHeap::videoMmapThreshold);
       }
