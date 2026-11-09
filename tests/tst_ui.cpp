@@ -1298,7 +1298,11 @@ private slots:
     QVERIFY2(std::abs(scrollPosition() - extent) < 1, qPrintable(QString::number(scrollPosition())));
     scrollTo(extent / 5);
     scrollTo(extent / 2);
-    QCOMPARE(top(), middle);
+    // The same row, at the same offset give or take the rounding of a
+    // fractional position to whole pixels.
+    QCOMPARE(top().first, middle.first);
+    QVERIFY2(std::abs(top().second - middle.second) <= 1,
+             qPrintable(QStringLiteral("%1 against %2").arg(top().second).arg(middle.second)));
     // The scrollbar reports that exact position.
     QQuickItem* scrollbar = item("sectionsScrollBar");
     QVERIFY(scrollbar);
