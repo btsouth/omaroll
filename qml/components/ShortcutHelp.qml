@@ -137,7 +137,7 @@ Popup {
                             Column {
                                 required property var modelData
                                 width: parent.width
-                                spacing: 8
+                                spacing: 4
                                 Text {
                                     text: parent.modelData.title
                                     color: Theme.accent
