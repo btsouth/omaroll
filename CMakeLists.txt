@@ -56,6 +56,8 @@ add_library(omaroll_core STATIC
   src/sources/ImageBudget.h
   src/actions/ActionLauncher.cpp
   src/actions/ActionLauncher.h
+  src/actions/TrashRestore.cpp
+  src/actions/TrashRestore.h
   src/actions/OpenWithRequest.cpp
   src/actions/OpenWithRequest.h
   src/actions/ActionRegistry.cpp

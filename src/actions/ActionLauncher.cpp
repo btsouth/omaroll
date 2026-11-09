@@ -1,4 +1,5 @@
 #include "actions/ActionLauncher.h"
+#include "actions/TrashRestore.h"
 #include "edit/ClipboardText.h"
 #include "actions/OpenWithRequest.h"
 #include "app/VideoPlayback.h"
@@ -540,21 +541,18 @@ bool ActionLauncher::open(const QString& path) {
 }
 
 bool ActionLauncher::moveToTrash(const QString& path) {
+  return !trashFile(path).isEmpty();
+}
+
+QVariantMap ActionLauncher::trashFile(const QString& path) {
   if (!QFileInfo::exists(path)) {
     emit failed(u"That file is no longer there"_s);
-    return false;
+    return {};
   }
-
-  // Qt creates Trash/files and Trash/info, but expects the XDG data-home
-  // parent to exist. A genuinely fresh account may not have used it yet.
-  QDir().mkpath(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation));
-  if (!QFile::moveToTrash(path)) {
-    // Most often a trash directory that does not exist on the volume the file
-    // lives on, which is worth saying rather than hiding behind "failed".
-    emit failed(u"Could not move this file to Trash. Its volume may not support Trash"_s);
-    return false;
-  }
-  return true;
+  QString error;
+  QVariantMap record = TrashRestore::moveToTrash(path, &error);
+  if (record.isEmpty()) emit failed(error);
+  return record;
 }
 
 QVariantMap ActionLauncher::captureFileAction(const QString& path, const QString& expectedMediaPath) {
@@ -598,6 +596,19 @@ bool ActionLauncher::moveCapturedToTrash(const QVariantMap& target) {
   return moveToTrash(target.value(u"path"_s).toString());
 }
 
+QVariantMap ActionLauncher::trashCaptured(const QVariantMap& target) {
+  if (!capturedFileMatches(target)) {
+    emit failed(u"%1 changed or disappeared. Open the Trash prompt again"_s
+                    .arg(target.value(u"path"_s).toString()));
+    return {};
+  }
+  QVariantMap record = trashFile(target.value(u"path"_s).toString());
+  if (!record.isEmpty() && target.contains(u"viewedPath"_s)) {
+    record.insert(u"viewedPath"_s, target.value(u"viewedPath"_s));
+  }
+  return record;
+}
+
 QVariantMap ActionLauncher::renameCapturedFile(const QVariantMap& target, const QString& baseName) {
   if (!capturedFileMatches(target)) {
     return {{u"ok"_s, false}, {u"error"_s, u"That file changed or disappeared. Open Rename again"_s}};
@@ -619,13 +630,15 @@ void ActionLauncher::moveDuplicateCopiesToTrash(const QVariantMap& keep, const Q
     watcher->deleteLater();
     const int moved = result.value(u"moved"_s).toInt();
     const QStringList skipped = result.value(u"skipped"_s).toStringList();
+    const QVariantList trashed = result.value(u"trashed"_s).toList();
     if (!skipped.isEmpty()) emit failed(u"Skipped changed, unreadable or nonidentical copies:\n%1"_s
                                           .arg(skipped.join(QLatin1Char('\n'))));
-    emit duplicateCleanupFinished(moved, skipped);
+    emit duplicateCleanupFinished(moved, skipped, trashed);
   });
   watcher->setFuture(QtConcurrent::run([keep, copies] {
     int moved = 0;
     QStringList skipped;
+    QVariantList trashed;
     const QString keepPath = keep.value(u"path"_s).toString();
     for (const QVariant& value : copies) {
       const QVariantMap target = value.toMap();
@@ -641,10 +654,16 @@ void ActionLauncher::moveDuplicateCopiesToTrash(const QVariantMap& keep, const Q
       }
       // Check versions again after reading, immediately before the move.
       identical = identical && copy.atEnd() && capturedFileMatches(keep) && capturedFileMatches(target);
-      if (identical && QFile::moveToTrash(path)) ++moved;
-      else skipped.append(path);
+      QVariantMap record = identical ? TrashRestore::moveToTrash(path) : QVariantMap();
+      if (!record.isEmpty()) {
+        ++moved;
+        if (target.contains(u"viewedPath"_s)) record.insert(u"viewedPath"_s, target.value(u"viewedPath"_s));
+        trashed.append(record);
+      } else {
+        skipped.append(path);
+      }
     }
-    return QVariantMap{{u"moved"_s, moved}, {u"skipped"_s, skipped}};
+    return QVariantMap{{u"moved"_s, moved}, {u"skipped"_s, skipped}, {u"trashed"_s, trashed}};
   }));
 }
 

@@ -79,7 +79,27 @@ ApplicationWindow {
 
     function say(message) {
         notice.text = message
+        notice.undoId = 0
+        noticeTimer.interval = 4200
         noticeTimer.restart()
+    }
+
+    // A result that can be taken back: the footer offers Undo for a while, as
+    // long as nothing newer has joined the undo history.
+    function sayUndoable(message, id) {
+        root.say(message)
+        notice.undoId = id
+        if (id > 0) {
+            noticeTimer.interval = 8000
+            noticeTimer.restart()
+        }
+    }
+
+    // Ctrl+Z and the footer's Undo: whatever happened last, marks or Trash.
+    function undo() {
+        if (!Settings.canUndo()) return
+        const message = Settings.undo()
+        if (message !== "") root.say(message)
     }
 
     function organizationStatus(message) {
@@ -594,6 +614,8 @@ ApplicationWindow {
             detail.rating = Settings.rating(detail.path)
             detail.caption = Settings.caption(detail.path)
         }
+        // Files back from the Trash, from here or from a viewer window.
+        function onTrashRestored(records, origin) { Library.refresh() }
     }
 
     function captureTrashTarget(path) {
@@ -1458,7 +1480,7 @@ ApplicationWindow {
         Text {
             anchors.left: parent.left
             anchors.leftMargin: 20
-            anchors.right: themeLabel.left
+            anchors.right: notice.undoable ? footerUndo.left : themeLabel.left
             anchors.rightMargin: 16
             anchors.verticalCenter: parent.verticalCenter
             elide: Text.ElideRight
@@ -1483,6 +1505,35 @@ ApplicationWindow {
             color: notice.text !== "" || making !== ""
                    ? Theme.accent : Theme.mutedText
             Behavior on color { ColorAnimation { duration: 180 } }
+        }
+
+        // Undo for the result on the left, such as a move to Trash.
+        Text {
+            id: footerUndo
+            objectName: "footerUndoButton"
+            anchors.right: themeLabel.left
+            anchors.rightMargin: 16
+            anchors.verticalCenter: parent.verticalCenter
+            visible: notice.undoable
+            text: "Undo"
+            font.family: Theme.fontFamily
+            font.pixelSize: 11
+            font.bold: true
+            font.underline: footerUndoArea.containsMouse
+            color: Theme.foreground
+            Accessible.role: Accessible.Button
+            Accessible.name: "Undo"
+            Accessible.description: "Shortcut Ctrl+Z"
+            Accessible.onPressAction: root.undo()
+
+            MouseArea {
+                id: footerUndoArea
+                anchors.fill: parent
+                anchors.margins: -6
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.undo()
+            }
         }
 
         Text {
@@ -1703,25 +1754,34 @@ ApplicationWindow {
                 Actions.moveDuplicateCopiesToTrash(root.pendingDuplicateKeep, root.pendingDeleteBatch)
                 root.say("Checking exact copies before moving them")
             } else if (root.pendingDeleteBatch.length > 0) {
-                let moved = 0
+                const records = []
                 const failed = []
                 for (const target of root.pendingDeleteBatch) {
-                    if (Actions.moveCapturedToTrash(target)) moved++
+                    const record = Actions.trashCaptured(target)
+                    if (record.path !== undefined) records.push(record)
                     else failed.push(target.viewedPath)
                 }
+                const moved = records.length
+                // The whole batch is one step, so one Undo puts it all back.
+                const undoId = Settings.pushTrashUndo(records, null)
                 if (moved > 0) {
-                    root.say(moved === root.pendingDeleteBatch.length
+                    root.sayUndoable(moved === root.pendingDeleteBatch.length
                              ? "Moved " + moved + (moved === 1 ? " item" : " items") + " to Trash"
-                             : "Moved " + moved + " of " + root.pendingDeleteBatch.length + " items to Trash")
+                             : "Moved " + moved + " of " + root.pendingDeleteBatch.length + " items to Trash",
+                             undoId)
                 }
                 library.clearChecked()
                 for (const path of failed) library.toggleChecked(path)
-                if (failed.length > 0) root.say("Moved " + moved + " of " + root.pendingDeleteBatch.length
-                                              + " items to Trash; " + failed.length + " could not be moved")
+                if (failed.length > 0) root.sayUndoable("Moved " + moved + " of " + root.pendingDeleteBatch.length
+                                              + " items to Trash; " + failed.length + " could not be moved",
+                                              undoId)
                 Library.refresh()
-            } else if (Actions.moveCapturedToTrash(root.pendingDeleteTarget)) {
-                root.say("Moved to Trash")
-                Library.refresh()
+            } else {
+                const record = Actions.trashCaptured(root.pendingDeleteTarget)
+                if (record.path !== undefined) {
+                    root.sayUndoable("Moved to Trash", Settings.pushTrashUndo([record], null))
+                    Library.refresh()
+                }
             }
             root.pendingDeleteTarget = ({})
             root.pendingDeleteBatch = []
@@ -1748,6 +1808,10 @@ ApplicationWindow {
     QtObject {
         id: notice
         property string text: ""
+        // The undo step this notice reports, while it is still the latest.
+        property int undoId: 0
+        readonly property bool undoable: notice.text !== "" && notice.undoId > 0
+                                         && notice.undoId === Settings.latestUndoId
     }
 
     Timer {
@@ -1758,8 +1822,10 @@ ApplicationWindow {
 
     Connections {
         target: Actions
-        function onDuplicateCleanupFinished(moved, skipped) {
-            if (skipped.length === 0) root.say("Moved " + moved + " exact copies to Trash")
+        function onDuplicateCleanupFinished(moved, skipped, trashed) {
+            const undoId = Settings.pushTrashUndo(trashed, null)
+            if (skipped.length === 0) root.sayUndoable("Moved " + moved + " exact copies to Trash", undoId)
+            else if (undoId > 0) notice.undoId = undoId
             library.clearChecked()
             Library.refresh()
         }
@@ -1906,10 +1972,7 @@ ApplicationWindow {
         sequences: ["Ctrl+Z"]
         enabled: !root.modalOpen && !root.popupOpen && !filters.searchActive
                  && !detail.captionEditing && Settings.undoAvailable
-        onActivated: {
-            Settings.undo()
-            root.say("Undone")
-        }
+        onActivated: root.undo()
     }
     Shortcut {
         sequences: ["Shift+Del"]

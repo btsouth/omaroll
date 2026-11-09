@@ -149,6 +149,14 @@ public:
   // A file this window just moved to the Trash. The next one takes its place,
   // or the previous one at the end; an empty sequence emits emptied().
   Q_INVOKABLE void forget(const QString& path);
+  // Changes whenever open() or clear() starts another set of files.
+  Q_INVOKABLE [[nodiscard]] int openSerial() const { return m_openSerial; }
+  // Undo of forget(): a file put back from the Trash returns at |index| and
+  // becomes the current one. |entry| is the name it was trashed under when
+  // that differs from |path| (a symlink). |serial| is openSerial() when it
+  // was trashed; false when this session has moved on to other files, or the
+  // file is not there.
+  Q_INVOKABLE bool restore(const QString& path, const QString& entry, int index, int serial);
 
   // Hands the current file to the library window.
   Q_INVOKABLE void openInLibrary();
@@ -240,6 +248,7 @@ private:
   bool m_pairRawJpeg = true;
   quint64 m_sequenceRevision = 0;
   int m_index = -1;
+  int m_openSerial = 0;
   bool m_selection = false;
   double m_stamp = 0;
   QString m_sizeLabel;

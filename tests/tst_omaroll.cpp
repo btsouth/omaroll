@@ -1,6 +1,7 @@
 #include "actions/ActionLauncher.h"
 #include "actions/ActionRegistry.h"
 #include "actions/TailscalePeers.h"
+#include "actions/TrashRestore.h"
 #include "app/AppSettings.h"
 #include "app/DemoLibrary.h"
 #include "app/HeadlessAudio.h"
@@ -3504,6 +3505,293 @@ private slots:
     settings.reconcileMarks(records);
     settings.reconcileMarks(records);
     QCOMPARE(settings.markedPaths(), QStringList{original});
+  }
+
+  // A file written for a Trash undo test, with |bytes| as its content.
+  static bool writeFile(const QString& path, const QByteArray& bytes) {
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly | QIODevice::Truncate) && file.write(bytes) == bytes.size();
+  }
+
+  static QByteArray readFile(const QString& path) {
+    QFile file(path);
+    return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+  }
+
+  static QString trashInfoFor(const QString& trashPath) {
+    const QFileInfo trashed(trashPath);
+    return QFileInfo(trashed.absolutePath()).absolutePath() + QStringLiteral("/info/") +
+           trashed.fileName() + QStringLiteral(".trashinfo");
+  }
+
+  void trashUndoRestoresTheSameFileAndRemovesItsTrashInfo() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("put back.png"));
+    QVERIFY(writeFile(path, "original"));
+    struct stat before {};
+    QVERIFY(::lstat(QFile::encodeName(path).constData(), &before) == 0);
+    ActionLauncher launcher;
+    QVariantMap target = launcher.captureFileAction(path);
+    target.insert(QStringLiteral("viewedPath"), path);
+    const QVariantMap record = launcher.trashCaptured(target);
+    QCOMPARE(record.value(QStringLiteral("path")).toString(), path);
+    QCOMPARE(record.value(QStringLiteral("viewedPath")).toString(), path);
+    const QString trashPath = record.value(QStringLiteral("trashPath")).toString();
+    QVERIFY(QFileInfo::exists(trashPath));
+    QVERIFY(QFileInfo::exists(trashInfoFor(trashPath)));
+    QVERIFY(!QFileInfo::exists(path));
+
+    AppSettings settings;
+    QSignalSpy restored(&settings, &AppSettings::trashRestored);
+    QObject origin;
+    const int id = settings.pushTrashUndo({record}, &origin);
+    QVERIFY(id > 0);
+    QCOMPARE(settings.latestUndoId(), id);
+    QCOMPARE(settings.undo(), QStringLiteral("Restored put back.png"));
+    QCOMPARE(readFile(path), QByteArray("original"));
+    struct stat after {};
+    QVERIFY(::lstat(QFile::encodeName(path).constData(), &after) == 0);
+    QCOMPARE(after.st_ino, before.st_ino);
+    QVERIFY(!QFileInfo::exists(trashPath));
+    QVERIFY(!QFileInfo::exists(trashInfoFor(trashPath)));
+    QCOMPARE(restored.size(), 1);
+    QCOMPARE(restored.first().at(1).value<QObject*>(), &origin);
+    QCOMPARE(restored.first().at(0).toList().first().toMap().value(QStringLiteral("path")).toString(), path);
+    QVERIFY(!settings.canUndo());
+    QCOMPARE(settings.latestUndoId(), 0);
+    // Nothing that cannot be restored joins the history.
+    QCOMPARE(settings.pushTrashUndo({QVariantMap{{QStringLiteral("path"), path}}}), 0);
+    QVERIFY(!settings.canUndo());
+  }
+
+  void trashUndoSharesOneOrderedHistoryWithMarks() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, dir.filePath(QStringLiteral("profile")));
+    const auto restoreProfile = qScopeGuard([this] {
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, m_scratch.filePath(QStringLiteral("config")));
+    });
+    const QString kept = dir.filePath(QStringLiteral("kept.png"));
+    const QString trashed = dir.filePath(QStringLiteral("trashed.png"));
+    QVERIFY(writeFile(kept, "kept"));
+    QVERIFY(writeFile(trashed, "trashed"));
+    AppSettings settings;
+    ActionLauncher launcher;
+    settings.setFavorite({kept}, true);
+    QVERIFY(settings.pushTrashUndo({launcher.trashCaptured(launcher.captureFileAction(trashed))}) > 0);
+    settings.setRating({kept}, 4);
+    QVERIFY(!QFileInfo::exists(trashed));
+
+    QCOMPARE(settings.undo(), QStringLiteral("Undone"));
+    QCOMPARE(settings.rating(kept), 0);
+    QVERIFY(!QFileInfo::exists(trashed));
+    QCOMPARE(settings.undo(), QStringLiteral("Restored trashed.png"));
+    QCOMPARE(readFile(trashed), QByteArray("trashed"));
+    QVERIFY(settings.isFavorite(kept));
+    QCOMPARE(settings.undo(), QStringLiteral("Undone"));
+    QVERIFY(!settings.isFavorite(kept));
+    QVERIFY(!settings.canUndo());
+
+    // A restored backup or a relocation drops marks steps, not moves to Trash.
+    QVERIFY(settings.pushTrashUndo({launcher.trashCaptured(launcher.captureFileAction(trashed))}) > 0);
+    settings.setFavorite({kept}, true);
+    const QString moved = dir.filePath(QStringLiteral("moved.png"));
+    QVERIFY(QFile::rename(kept, moved));
+    settings.relocatePath(kept, moved);
+    QVERIFY(settings.canUndo());
+    QCOMPARE(settings.undo(), QStringLiteral("Restored trashed.png"));
+    QVERIFY(QFileInfo::exists(trashed));
+    QVERIFY(settings.isFavorite(moved));
+  }
+
+  void trashUndoRefusesAnOccupiedPathAndAnEmptiedOrChangedTrash_data() {
+    QTest::addColumn<QString>("change");
+    QTest::newRow("occupied") << QStringLiteral("occupied");
+    QTest::newRow("emptied") << QStringLiteral("emptied");
+    QTest::newRow("replaced-in-trash") << QStringLiteral("replaced");
+    QTest::newRow("folder-gone") << QStringLiteral("folder");
+  }
+
+  void trashUndoRefusesAnOccupiedPathAndAnEmptiedOrChangedTrash() {
+    QFETCH(QString, change);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString folder = dir.filePath(QStringLiteral("folder"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString path = folder + QStringLiteral("/photo.png");
+    QVERIFY(writeFile(path, "original"));
+    ActionLauncher launcher;
+    const QVariantMap record = launcher.trashCaptured(launcher.captureFileAction(path));
+    const QString trashPath = record.value(QStringLiteral("trashPath")).toString();
+    QVERIFY(QFileInfo::exists(trashPath));
+    QString expected;
+    if (change == u"occupied") {
+      QVERIFY(writeFile(path, "newcomer"));
+      expected = QStringLiteral("Another file is already named photo.png. The trashed one is still in the Trash");
+    } else if (change == u"emptied") {
+      QVERIFY(QFile::remove(trashPath));
+      QVERIFY(QFile::remove(trashInfoFor(trashPath)));
+      expected = QStringLiteral("photo.png is no longer in the Trash");
+    } else if (change == u"replaced") {
+      QVERIFY(QFile::remove(trashPath));
+      QVERIFY(writeFile(trashPath, "someone else"));
+      expected = QStringLiteral("photo.png in the Trash is a different file now. Restore it from the file manager");
+    } else {
+      QVERIFY(QDir(folder).removeRecursively());
+      expected = QStringLiteral("photo.png's folder is gone. It is still in the Trash");
+    }
+    AppSettings settings;
+    QSignalSpy restored(&settings, &AppSettings::trashRestored);
+    QVERIFY(settings.pushTrashUndo({record}) > 0);
+    QCOMPARE(settings.undo(), expected);
+    QCOMPARE(restored.size(), 0);
+    // A refusal the user can fix stays undoable; one they can't is used up
+    // rather than blocking older undo steps.
+    const bool fixable = change == u"occupied" || change == u"folder";
+    QCOMPARE(settings.canUndo(), fixable);
+    if (change == u"occupied") {
+      QCOMPARE(readFile(path), QByteArray("newcomer"));
+      QCOMPARE(readFile(trashPath), QByteArray("original"));
+      QVERIFY(QFileInfo::exists(trashInfoFor(trashPath)));
+      QVERIFY(QFile::remove(path));
+    } else if (change == u"folder") {
+      QVERIFY(QDir().mkpath(folder));
+    }
+    if (fixable) {
+      QCOMPARE(settings.undo(), QStringLiteral("Restored photo.png"));
+      QCOMPARE(readFile(path), QByteArray("original"));
+      QVERIFY(!QFileInfo::exists(trashPath));
+      QVERIFY(!QFileInfo::exists(trashInfoFor(trashPath)));
+      QVERIFY(!settings.canUndo());
+    } else if (change == u"replaced") {
+      QCOMPARE(readFile(trashPath), QByteArray("someone else"));
+      QVERIFY(!QFileInfo::exists(path));
+    } else {
+      QVERIFY(!QFileInfo::exists(path));
+    }
+    if (QFileInfo::exists(trashPath)) QFile::remove(trashPath);
+    QFile::remove(trashInfoFor(trashPath));
+  }
+
+  void trashUndoRestoresFromAVolumeTrashAndKeepsSymlinks() {
+    // A file on another volume goes to that volume's .Trash-<uid>, which has
+    // the same files/ and info/ layout as the home Trash.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString volumeTrash = dir.filePath(QStringLiteral(".Trash-%1").arg(::getuid()));
+    QVERIFY(QDir().mkpath(volumeTrash + QStringLiteral("/files")));
+    QVERIFY(QDir().mkpath(volumeTrash + QStringLiteral("/info")));
+    const QString path = dir.filePath(QStringLiteral("on volume.jpg"));
+    QVERIFY(writeFile(path, "volume"));
+    const QString trashPath = volumeTrash + QStringLiteral("/files/on volume.jpg");
+    QVERIFY(writeFile(trashInfoFor(trashPath), "[Trash Info]\nPath=on%20volume.jpg\n"));
+    QVERIFY(QFile::rename(path, trashPath));
+    struct stat entry {};
+    QVERIFY(::lstat(QFile::encodeName(trashPath).constData(), &entry) == 0);
+    const QVariantMap record{{QStringLiteral("path"), path}, {QStringLiteral("trashPath"), trashPath},
+                             {QStringLiteral("device"), QString::number(qulonglong(entry.st_dev))},
+                             {QStringLiteral("inode"), QString::number(qulonglong(entry.st_ino))},
+                             {QStringLiteral("stamp"), QStringLiteral("%1:%2.%3:%4.%5")
+                                  .arg(qlonglong(entry.st_size))
+                                  .arg(qlonglong(entry.st_mtim.tv_sec)).arg(qlonglong(entry.st_mtim.tv_nsec))
+                                  .arg(qlonglong(entry.st_ctim.tv_sec)).arg(qlonglong(entry.st_ctim.tv_nsec))}};
+    const TrashRestore::Result result = TrashRestore::restore(record);
+    QVERIFY2(result.ok, qPrintable(result.message));
+    QCOMPARE(readFile(path), QByteArray("volume"));
+    QVERIFY(!QFileInfo::exists(trashPath));
+    QVERIFY(!QFileInfo::exists(trashInfoFor(trashPath)));
+
+    // A trashed symlink comes back as the symlink, still pointing at its file.
+    const QString alias = dir.filePath(QStringLiteral("alias.jpg"));
+    QVERIFY(QFile::link(path, alias));
+    ActionLauncher launcher;
+    const QVariantMap linkRecord = launcher.trashCaptured(launcher.captureFileAction(alias, path));
+    QVERIFY(!linkRecord.isEmpty());
+    QVERIFY(!QFileInfo(alias).isSymLink());
+    QVERIFY(QFileInfo::exists(path));
+    const TrashRestore::Result linkResult = TrashRestore::restore(linkRecord);
+    QVERIFY2(linkResult.ok, qPrintable(linkResult.message));
+    QVERIFY(QFileInfo(alias).isSymLink());
+    QCOMPARE(QFileInfo(alias).symLinkTarget(), path);
+  }
+
+  void trashUndoOfABatchRestoresWhatItCan() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString first = dir.filePath(QStringLiteral("first.png"));
+    const QString second = dir.filePath(QStringLiteral("second.png"));
+    QVERIFY(writeFile(first, "first"));
+    QVERIFY(writeFile(second, "second"));
+    ActionLauncher launcher;
+    const QVariantList records{launcher.trashCaptured(launcher.captureFileAction(first)),
+                               launcher.trashCaptured(launcher.captureFileAction(second))};
+    AppSettings settings;
+    QVERIFY(settings.pushTrashUndo(records) > 0);
+    QCOMPARE(settings.undo(), QStringLiteral("Restored 2 items"));
+    QCOMPARE(readFile(first), QByteArray("first"));
+    QCOMPARE(readFile(second), QByteArray("second"));
+
+    const QVariantList again{launcher.trashCaptured(launcher.captureFileAction(first)),
+                             launcher.trashCaptured(launcher.captureFileAction(second))};
+    QVERIFY(writeFile(second, "taken"));
+    QSignalSpy restored(&settings, &AppSettings::trashRestored);
+    QVERIFY(settings.pushTrashUndo(again) > 0);
+    QCOMPARE(settings.undo(), QStringLiteral("Restored 1 of 2 items. Another file is already named "
+                                             "second.png. The trashed one is still in the Trash"));
+    QCOMPARE(readFile(first), QByteArray("first"));
+    QCOMPARE(readFile(second), QByteArray("taken"));
+    QCOMPARE(restored.size(), 1);
+    QCOMPARE(restored.first().at(0).toList().size(), 1);
+    // The refused file stays undoable once its name is free again.
+    QVERIFY(settings.canUndo());
+    QVERIFY(QFile::remove(second));
+    QCOMPARE(settings.undo(), QStringLiteral("Restored second.png"));
+    QCOMPARE(readFile(second), QByteArray("second"));
+    QVERIFY(!settings.canUndo());
+  }
+
+  void trashUndoRestoresHardLinksTrashedTogether() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString first = dir.filePath(QStringLiteral("first.png"));
+    const QString second = dir.filePath(QStringLiteral("second.png"));
+    QVERIFY(writeFile(first, "shared"));
+    QVERIFY(::link(QFile::encodeName(first).constData(), QFile::encodeName(second).constData()) == 0);
+    ActionLauncher launcher;
+    // Trashing the second name changes the inode's change time, which the
+    // first record must tolerate.
+    const QVariantList records{launcher.trashCaptured(launcher.captureFileAction(first)),
+                               launcher.trashCaptured(launcher.captureFileAction(second))};
+    AppSettings settings;
+    QVERIFY(settings.pushTrashUndo(records) > 0);
+    QCOMPARE(settings.undo(), QStringLiteral("Restored 2 items"));
+    QCOMPARE(readFile(first), QByteArray("shared"));
+    QCOMPARE(readFile(second), QByteArray("shared"));
+  }
+
+  void duplicateCleanupReportsUndoRecords() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString kept = dir.filePath(QStringLiteral("kept.png"));
+    const QString copy = dir.filePath(QStringLiteral("copy.png"));
+    QVERIFY(writeFile(kept, "same bytes"));
+    QVERIFY(writeFile(copy, "same bytes"));
+    ActionLauncher launcher;
+    QVariantMap copyTarget = launcher.captureFileAction(copy);
+    copyTarget.insert(QStringLiteral("viewedPath"), copy);
+    QSignalSpy finished(&launcher, &ActionLauncher::duplicateCleanupFinished);
+    launcher.moveDuplicateCopiesToTrash(launcher.captureFileAction(kept), {copyTarget});
+    QTRY_COMPARE(finished.size(), 1);
+    QCOMPARE(finished.first().at(0).toInt(), 1);
+    const QVariantList trashed = finished.first().at(2).toList();
+    QCOMPARE(trashed.size(), 1);
+    QCOMPARE(trashed.first().toMap().value(QStringLiteral("viewedPath")).toString(), copy);
+    QVERIFY(!QFileInfo::exists(copy));
+    AppSettings settings;
+    QVERIFY(settings.pushTrashUndo(trashed) > 0);
+    QCOMPARE(settings.undo(), QStringLiteral("Restored copy.png"));
+    QCOMPARE(readFile(copy), QByteArray("same bytes"));
   }
 
   void undoRestoresThePreviousMarks() {
