@@ -1251,6 +1251,8 @@ ApplicationWindow {
         anchors.topMargin: 10
         width: Math.min(implicitWidth, library.width - 24)
         z: 2
+        // Above the grid, so sheets and menus would not stop a stray click.
+        enabled: !root.anySheetOpen && !root.popupOpen
     }
 
     CaptureGrid {
