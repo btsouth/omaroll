@@ -496,6 +496,10 @@ FocusScope {
 
     function restoreLayout() {
         if (!grid.reuseItems) {
+            // The grid is detached for a resize, which restores its own
+            // place. What was remembered meanwhile is the empty grid's top.
+            layoutAtTop = false
+            layoutAnchorPath = ""
             restoringLayout = false
             return
         }
@@ -723,6 +727,10 @@ FocusScope {
         delegate: Item {
             id: cell
             readonly property bool thumbnailPresented: card.thumbnailPresented
+            // A tile waiting in the pool keeps its last file, so it must not
+            // be read out. Some Qt versions only cull pooled items.
+            GridView.onPooled: cell.visible = false
+            GridView.onReused: cell.visible = true
 
             required property int index
             required property string path

@@ -204,6 +204,21 @@ private:
   QList<std::shared_ptr<Request>> m_requests;
 };
 
+// Runs a callback once, the first time the signal it is connected to fires.
+// QML handlers on the same signal run before it.
+class OneShotHook : public QObject {
+  Q_OBJECT
+public:
+  std::function<void()> run;
+public slots:
+  void fire() {
+    if (!run) return;
+    auto callback = std::move(run);
+    run = nullptr;
+    callback();
+  }
+};
+
 class UiTest : public QObject {
   Q_OBJECT
 
@@ -2157,6 +2172,91 @@ private slots:
     resort();
     QVERIFY(m_library->rowOf(pressed) != 5);
     QCOMPARE(currentPath(), pressed);
+  }
+
+  // The flat grid: tiles waiting in its pool stay out of the accessibility
+  // tree, and a re-sort while a resize has the grid detached keeps the place
+  // the resize restores.
+  void flatGridPoolAndResizeKeepTheirPlace() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QStringList paths;
+    for (int i = 0; i < 320; ++i) {
+      const QString path = dir.filePath(QStringLiteral("flat-%1.jpg").arg(i, 3, 10, QLatin1Char('0')));
+      QVERIFY(QFile::copy(m_oddPath, path));
+      paths.append(path);
+      m_disposablePaths.append(path);
+    }
+    auto* grid = item("library");
+    const int sortMode = m_library->sortMode();
+    const int tileWidth = m_settings->tileWidth();
+    const auto cleanup = qScopeGuard([&] {
+      m_settings->setTileWidth(tileWidth);
+      m_library->setSortMode(static_cast<CaptureFilterModel::SortMode>(sortMode));
+      m_library->setFolderFilter({});
+      dir.remove();
+      rescan();
+      QTRY_VERIFY(!m_captures->scanning());
+    });
+    const auto scrollPosition = [&] {
+      QVariant value;
+      QMetaObject::invokeMethod(grid, "scrollPosition", Q_RETURN_ARG(QVariant, value));
+      return value.toDouble();
+    };
+    const auto scrollExtent = [&] {
+      QVariant value;
+      QMetaObject::invokeMethod(grid, "scrollExtent", Q_RETURN_ARG(QVariant, value));
+      return value.toDouble();
+    };
+    const auto scrollTo = [&](double y) {
+      QMetaObject::invokeMethod(grid, "scrollTo", Q_ARG(QVariant, y));
+      QTRY_VERIFY(std::abs(scrollPosition() - y) < 1);
+      QTest::qWait(100);
+    };
+    m_settings->setTileWidth(160);
+    m_captures->addExtraFiles(paths);
+    m_library->setFolderFilter(dir.path());
+    m_library->setSortMode(CaptureFilterModel::NameAscending);
+    QTRY_COMPARE(m_library->count(), paths.size());
+    QTRY_VERIFY(!m_mediaMetadata->indexing());
+    QTRY_VERIFY(!grid->property("sectioned").toBool());
+    QTRY_VERIFY(grid->property("layoutSettled").toBool());
+    QTRY_VERIFY(scrollExtent() > 2500);
+
+    // Down to the end and back fills the pool with tiles from the end.
+    scrollTo(scrollExtent());
+    scrollTo(0);
+    QAccessibleInterface* window = QAccessible::queryAccessibleInterface(m_window);
+    QVERIFY(window);
+    QStringList pooled;
+    int tiles = 0;
+    std::function<void(QAccessibleInterface*)> walk = [&](QAccessibleInterface* node) {
+      if (!node) return;
+      auto* quick = qobject_cast<QQuickItem*>(node->object());
+      if (quick && grid->isAncestorOf(quick) && quick->property("dragPaths").isValid()) {
+        ++tiles;
+        if (!quick->isVisible() || !shownByItsView(quick))
+          pooled.append(node->text(QAccessible::Name));
+      }
+      for (int i = 0; i < node->childCount(); ++i) walk(node->child(i));
+    };
+    walk(window);
+    QVERIFY(tiles > 0);
+    QVERIFY2(pooled.isEmpty(), qPrintable(pooled.join(" | ")));
+
+    // A re-sort lands while the resize has the grid detached, at its top.
+    scrollTo(600);
+    QObject* relayout = m_window->findChild<QObject*>(QStringLiteral("gridRelayoutTimer"));
+    QVERIFY(relayout);
+    const double before = scrollPosition();
+    OneShotHook hook;
+    hook.run = [&] { m_library->setSortMode(CaptureFilterModel::LargestFirst); };
+    QVERIFY(QObject::connect(relayout, SIGNAL(triggered()), &hook, SLOT(fire())));
+    m_settings->setTileWidth(200);
+    QTRY_VERIFY(!hook.run);
+    QTRY_VERIFY(grid->property("layoutSettled").toBool());
+    QTest::qWait(200);
+    QVERIFY2(scrollPosition() > before / 2, qPrintable(QString::number(scrollPosition())));
   }
 
   // A longer dated library: exact jumps and the scrollbar, the page keys,

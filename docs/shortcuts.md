@@ -70,7 +70,7 @@ the viewer. The preview is the built-in viewer inside the library.
 |---|---|
 | `F9` | Show · hide the folder sidebar (windows at least 760px wide) |
 | arrows · `hjkl` | Move |
-| `Ctrl+↑` `Ctrl+↓` | Previous · next day or month (date sorts) |
+| `Ctrl+↑` `Ctrl+↓` | Previous · next day or month (date sorts). From inside a section, `Ctrl+↑` first goes to its first tile, then to the section before |
 | `Enter` · double click | Open the built-in preview |
 | right click | Actions for that file or its selected files |
 | `Space` on the grid or a still/PDF preview | Your preferred action; built-in viewing for new installs, or open document for PDFs |
