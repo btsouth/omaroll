@@ -2431,7 +2431,9 @@ private slots:
       const auto clearSearch = qScopeGuard([&] { m_library->setSearchText({}); });
       // A query every selected tile matches, so the selection stays and the
       // field stays hidden: the scratch folder they all sit in.
-      const QString everything = QDir(m_scratch.path()).dirName();
+      // Search matches folder names word by word: its random last word.
+      const QString everything = QDir(m_scratch.path()).dirName().section(QLatin1Char('-'), -1);
+      QVERIFY(QFileInfo(pathAt(0)).absolutePath().contains(everything));
       m_library->setSearchText(everything);
       QTRY_COMPARE(grid->property("checkedCount").toInt(), 6);
       QVERIFY(!search->isVisible());
