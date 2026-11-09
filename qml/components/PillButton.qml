@@ -37,6 +37,8 @@ Item {
 
     activeFocusOnTab: true
     opacity: root.enabled ? 1 : 0.42
+    // A hidden button, such as one in a recycled row, is not read out.
+    Accessible.ignored: !root.visible
     Accessible.role: Accessible.Button
     Accessible.name: root.accessibleName
     Accessible.checkable: root.checkable

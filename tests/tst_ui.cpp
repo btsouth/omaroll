@@ -1966,46 +1966,66 @@ private slots:
     }
     auto* grid = item("library");
     auto* view = item("reviewSets");
+    auto* rows = qobject_cast<SectionRows*>(m_library->sectionRows());
+    QVERIFY(rows);
+    const int tileWidth = m_settings->tileWidth();
     const auto cleanup = qScopeGuard([&] {
       m_library->setFolderFilter({});
-      m_settings->setTileWidth(280);
+      m_settings->setTileWidth(tileWidth);
       dir.remove();
       rescan();
       QTRY_VERIFY(!m_captures->scanning());
     });
+    const auto settled = [&] {
+      return !rows->rebuildPending() && grid->property("layoutSettled").toBool();
+    };
+    const auto exactTop = [&] { return view->property("exactTop").toReal(); };
     m_captures->addExtraFiles(paths);
     m_library->setFolderFilter(dir.path());
     QTRY_COMPARE(m_library->count(), paths.size());
     QTRY_VERIFY(!m_mediaMetadata->indexing());
-    QTRY_VERIFY(grid->property("layoutSettled").toBool());
+    QTRY_VERIFY(view->isVisible());
+    QTRY_VERIFY(settled());
     QMetaObject::invokeMethod(grid, "scrollTo", Q_ARG(QVariant, 0));
+    // As at launch: nothing picked yet, so the current tile is the first.
     grid->setProperty("currentPicked", false);
-    // The first displayed copy moves to an older camera date. Its exact
-    // copies arrive in separated source row ranges in the same batch.
+    grid->setProperty("currentIndex", 0);
+    grid->setProperty("selectedPath", pathAt(0));
+    QTRY_VERIFY(exactTop() <= 1);
+
+    // Camera dates arrive in one batch and reverse the order, so the tile
+    // that was first, and current, sorts last. The view stays on the newest.
+    const QString oldFirst = pathAt(0);
     QList<CaptureModel::MetadataUpdate> updates;
-    for (int i = 0; i < paths.size(); ++i) {
-      const CaptureRecord& record = m_captures->recordAt(m_captures->rowOf(paths.at(i)));
-      const QDateTime taken(QDate(2020, i < 20 ? 6 : 5, 28 - i % 20), QTime(12, 0));
-      updates.append({record.path, record.modified, record.bytes, taken,
+    for (int row = 0; row < paths.size(); ++row) {
+      const QString path = pathAt(row);
+      const CaptureRecord& record = m_captures->recordAt(m_captures->rowOf(path));
+      updates.append({record.path, record.modified, record.bytes,
+                      QDateTime(QDate(2020, 5, 9).addDays(row), QTime(12, 0)),
                       record.device, record.inode, {}, {}});
     }
     m_captures->applyMetadata(updates);
-    QTRY_VERIFY(grid->property("layoutSettled").toBool());
-    QTRY_VERIFY(view->property("exactTop").toReal() <= 1);
-    QTRY_COMPARE(grid->property("currentIndex").toInt(), 0);
-    // With an explicitly picked tile, keep that selection but still keep
-    // the viewport at the top during a second late-date reorder.
+    QTRY_COMPARE(pathAt(paths.size() - 1), oldFirst);
+    QTRY_VERIFY(settled());
+    QTRY_VERIFY(rows->sections().value(0).toMap().value("label").toString().contains("June"));
+    QTest::qWait(150);
+    QVERIFY2(exactTop() <= 1, qPrintable(QString::number(exactTop())));
+    QCOMPARE(grid->property("currentIndex").toInt(), 0);
+
+    // A picked tile stays current when it moves, and a view at its top stays.
     QMetaObject::invokeMethod(grid, "pointTo", Q_ARG(QVariant, 0));
     const QString picked = pathAt(0);
     const CaptureRecord record = m_captures->recordAt(m_captures->rowOf(picked));
     m_captures->applyMetadata({{record.path, record.modified, record.bytes,
         QDateTime(QDate(2018, 1, 1), QTime(12, 0)), record.device, record.inode, {}, {}}});
-    QTRY_COMPARE(pathAt(grid->property("currentIndex").toInt()), picked);
-    QTRY_VERIFY(view->property("exactTop").toReal() <= 1);
+    QTRY_COMPARE(pathAt(paths.size() - 1), picked);
+    QTRY_VERIFY(settled());
+    QTest::qWait(150);
+    QCOMPARE(pathAt(grid->property("currentIndex").toInt()), picked);
+    QVERIFY2(exactTop() <= 1, qPrintable(QString::number(exactTop())));
 
-    auto* rows = qobject_cast<SectionRows*>(m_library->sectionRows());
-    QVERIFY(rows);
     const auto jumps = [&] {
+      QTRY_VERIFY(settled());
       const auto sections = rows->sections();
       QVERIFY(sections.size() > 1);
       grid->forceActiveFocus();
@@ -2013,30 +2033,43 @@ private slots:
       QTRY_COMPARE(grid->property("currentIndex").toInt(), 0);
       QTest::keyClick(m_window, Qt::Key_Down, Qt::ControlModifier);
       QTRY_COMPARE(grid->property("currentIndex").toInt(), sections.at(1).toMap().value("first").toInt());
+      // Back from a section's second tile goes to its first, then further.
+      QTest::keyClick(m_window, Qt::Key_Right);
+      QTRY_COMPARE(grid->property("currentIndex").toInt(), sections.at(1).toMap().value("first").toInt() + 1);
+      QTest::keyClick(m_window, Qt::Key_Up, Qt::ControlModifier);
+      QTRY_COMPARE(grid->property("currentIndex").toInt(), sections.at(1).toMap().value("first").toInt());
       QTest::keyClick(m_window, Qt::Key_Up, Qt::ControlModifier);
       QTRY_COMPARE(grid->property("currentIndex").toInt(), 0);
     };
     jumps();
+    // Small tiles show months, so the day headers and rows go back to the pool.
     m_settings->setTileWidth(160);
-    QTRY_VERIFY(grid->property("layoutSettled").toBool());
     QTRY_COMPARE(rows->sectionCount(), 3);
     jumps();
-    // The accessibility tree contains only current month headings. Pooled
-    // day headers and their Select controls must disappear entirely.
-    auto* accessible = QAccessible::queryAccessibleInterface(view);
-    QVERIFY(accessible);
-    QStringList names;
+    QTest::qWait(150);
+
+    // Only what is on screen reaches the accessibility tree: month headings,
+    // never a pooled day header or a hidden tile.
+    QAccessibleInterface* window = QAccessible::queryAccessibleInterface(m_window);
+    QVERIFY(window);
+    QStringList headings;
+    QStringList hidden;
     std::function<void(QAccessibleInterface*)> walk = [&](QAccessibleInterface* node) {
       if (!node) return;
-      if (node->role() == QAccessible::Heading) names.append(node->text(QAccessible::Name));
+      auto* quick = qobject_cast<QQuickItem*>(node->object());
+      if (quick && view->isAncestorOf(quick)) {
+        if (!quick->isVisible()) hidden.append(node->text(QAccessible::Name));
+        if (node->role() == QAccessible::Heading) headings.append(node->text(QAccessible::Name));
+      }
       for (int i = 0; i < node->childCount(); ++i) walk(node->child(i));
     };
-    walk(accessible);
-    QVERIFY(!names.isEmpty());
-    for (const QString& name : names) {
-      QVERIFY2(name.startsWith("May 2020") || name.startsWith("June 2020") ||
-               name.startsWith("January 2018"), qPrintable(name));
+    walk(window);
+    QVERIFY(!headings.isEmpty());
+    for (const QString& name : std::as_const(headings)) {
+      QVERIFY2(name.startsWith("June 2020, ") || name.startsWith("May 2020, ") ||
+               name.startsWith("January 2018, "), qPrintable(name));
     }
+    QVERIFY2(hidden.isEmpty(), qPrintable(hidden.join(" | ")));
   }
 
   // A longer dated library: exact jumps and the scrollbar, the page keys,

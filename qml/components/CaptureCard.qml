@@ -51,6 +51,8 @@ Item {
     // Raised before the drag image is grabbed, so the badge below is in it.
     property bool dragging: false
 
+    // A tile in a hidden or recycled row is not read out.
+    Accessible.ignored: !root.visible
     Accessible.role: Accessible.ListItem
     Accessible.name: [fileName, kindLabel, dateLabel, timeLabel].filter(function(value) { return value !== "" }).join(", ")
     Accessible.description: thumbnailFailed ? "Preview unavailable" : ""
