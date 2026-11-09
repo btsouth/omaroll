@@ -1190,7 +1190,7 @@ private slots:
       const auto tesseractRow = [&] {
         for (const QVariant& row : Diagnostics::missing(ocr)) {
           const QVariantMap map = row.toMap();
-          if (map.value(QStringLiteral("program")) == u"tesseract") {
+          if (map.value(QStringLiteral("program")).toString() == u"tesseract") {
             return map.value(QStringLiteral("install")).toString();
           }
         }
