@@ -112,7 +112,8 @@ Item {
                     font.family: Theme.fontFamily
                     font.pixelSize: 12
                     color: Theme.mutedText
-                    wrapMode: Text.WrapAnywhere
+                    // Words stay whole; a long path still breaks where it must.
+                    wrapMode: Text.Wrap
                 }
             }
 

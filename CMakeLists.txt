@@ -60,6 +60,7 @@ add_library(omaroll_core STATIC
   src/sources/ImageBudget.h
   src/actions/ActionLauncher.cpp
   src/actions/ActionLauncher.h
+  src/actions/FileDrag.h
   src/actions/TrashRestore.cpp
   src/actions/TrashRestore.h
   src/actions/FileChooserRequest.cpp
@@ -208,6 +209,7 @@ set(OMAROLL_QML_FILES
   qml/components/FooterHints.qml
   qml/components/ViewerFilmstrip.qml
   qml/components/ViewerToolbar.qml
+  qml/components/DropHighlight.qml
   qml/components/ViewerTransport.qml
 )
 

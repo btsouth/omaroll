@@ -42,6 +42,16 @@
   copy before every restore). If the settings file is damaged, Settings offers
   Restore last good backup. It asks first, says which day it restored, keeps
   the damaged file beside it and saves whatever organization it still held.
+- Flip horizontally and vertically in the viewer (`Shift+H`, `Shift+V`, the
+  toolbar and the menu), view only like rotate, and reset on the next file.
+- Save rotated copy in the viewer (`Ctrl+S`) once the view is turned or
+  flipped: a copy beside the original that opens next to it. JPEGs are turned
+  losslessly with jpegtran where the size allows; otherwise the notice says the
+  copy was re-encoded.
+- Drag the shown file out of the viewer by its name or with `Ctrl`+drag; a
+  plain drag still pans.
+- Drop files on the viewer to open them there, or on the library to open them
+  in the viewer. Folders dropped on the library are offered as library folders.
 
 ### Fixed
 

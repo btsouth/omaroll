@@ -1,5 +1,8 @@
 #include "viewer/ViewerSession.h"
 
+#include "actions/FileDrag.h"
+#include "app/OpenRequest.h"
+
 #include "sources/CameraRaw.h"
 #include "sources/CaptureScanner.h"
 #include "sources/FileVersion.h"
@@ -521,6 +524,47 @@ bool ViewerSession::restore(const QString& path, const QString& entry, int index
   // The listing puts it back in name order with its companion, if any.
   startListing();
   return true;
+}
+
+QVariantMap ViewerSession::openDropped(const QList<QUrl>& urls) {
+  const FileDrag::Sorted sorted = FileDrag::sort(urls);
+  const QStringList paths = sorted.files + sorted.folders;
+  if (paths.isEmpty()) {
+    return {{QStringLiteral("error"), sorted.skipped.isEmpty()
+                                          ? QStringLiteral("Nothing there to open")
+                                          : FileDrag::skippedNote(sorted.skipped)}};
+  }
+  // A folder opens the library, as `omaroll FOLDER` does; the launch path
+  // there says what it skipped.
+  if (!sorted.folders.isEmpty()) {
+    return {{QStringLiteral("handOff"), true}, {QStringLiteral("paths"), paths},
+            {QStringLiteral("note"), FileDrag::skippedNote(sorted.skipped)}};
+  }
+  OpenRequest request = OpenRequest::fromPaths(paths);
+  request.skipped.append(sorted.skipped);
+  if (request.files.isEmpty()) {
+    return {{QStringLiteral("error"), request.error.isEmpty() ? request.note() : request.error}};
+  }
+  if (!canOpen(request.files)) {
+    return {{QStringLiteral("handOff"), true}, {QStringLiteral("paths"), paths},
+            {QStringLiteral("note"), FileDrag::skippedNote(sorted.skipped)}};
+  }
+  open(request.files);
+  setDeletionPaths(request.entryPaths);
+  return {{QStringLiteral("opened"), true}, {QStringLiteral("note"), request.note()}};
+}
+
+bool ViewerSession::showSaved(const QString& path, int serial) {
+  if (serial != m_openSerial || m_paths.isEmpty()) return false;
+  const QString canonical = QFileInfo(path).canonicalFilePath();
+  if (canonical.isEmpty()) return false;
+  // The folder watcher may have listed it already.
+  const int at = int(m_paths.indexOf(canonical));
+  if (at >= 0) return jump(at);
+  // Before the folder's listing lands, the opened file is the whole folder.
+  if (!m_selection && m_folderPaths.isEmpty()) m_folderPaths = m_paths;
+  const int beside = m_selection ? m_index + 1 : int(m_folderPaths.indexOf(this->path())) + 1;
+  return restore(canonical, canonical, beside, serial);
 }
 
 void ViewerSession::refreshSelection(const QString& preferred) {

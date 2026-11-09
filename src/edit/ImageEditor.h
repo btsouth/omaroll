@@ -79,6 +79,13 @@ public:
                             qreal cropWidth, qreal cropHeight, int targetWidth, int targetHeight,
                             int jobId = 0);
 
+  // The viewer's turn and flips, written as "<stem>-edited.<ext>" beside the
+  // original, which is never touched. A JPEG is turned losslessly by jpegtran
+  // where it can be; otherwise it is re-encoded and |note| says why. Emits
+  // viewCopySaved() or failed().
+  Q_INVOKABLE void saveViewCopy(const QString& path, int quarterTurns, bool flipHorizontal,
+                                bool flipVertical, int jobId = 0);
+
   // Copies the selected region (same pipeline, no resize) to the clipboard.
   // Emits copied() or failed(). Nothing is written to disk.
   Q_INVOKABLE void copyRegion(const QString& path, int quarterTurns, bool flipHorizontal,
@@ -110,6 +117,7 @@ public:
 
 signals:
   void saved(const QString& outputPath, int jobId);
+  void viewCopySaved(const QString& outputPath, const QString& note, int jobId);
   void copied(int jobId);
   void failed(const QString& message, int jobId);
   void busyChanged();

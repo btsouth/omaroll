@@ -60,6 +60,7 @@
 #include <QImageReader>
 #include <QMediaPlayer>
 #include <QMediaMetaData>
+#include <QMimeData>
 #include <QMutex>
 #include <QMutexLocker>
 #include <QPainter>
@@ -5426,6 +5427,73 @@ private slots:
     QVERIFY(m_settings->showFolderSidebar());
   }
 
+  // Dragged in from another app: files open as they would from the file
+  // manager, folders are offered as library folders first, and anything
+  // that is not a local file is named.
+  void filesAndFoldersDroppedOnTheLibrary() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString root = QFileInfo(dir.path()).canonicalFilePath();
+    const QString picture = root + QStringLiteral("/dropped.jpg");
+    const QString first = root + QStringLiteral("/first");
+    const QString second = root + QStringLiteral("/second");
+    QImage image(64, 48, QImage::Format_RGB32);
+    image.fill(Qt::darkCyan);
+    QVERIFY(image.save(picture));
+    QVERIFY(QDir().mkpath(first));
+    QVERIFY(QDir().mkpath(second));
+    const auto cleanup = qScopeGuard([this, first, second] {
+      m_settings->removeLibraryFolder(first);
+      m_settings->removeLibraryFolder(second);
+    });
+    QSignalSpy opened(m_actions, &ActionLauncher::openRequested);
+    QQuickItem* confirm = item("folderDropConfirm");
+
+    QVERIFY(dropOn(m_window, {QUrl::fromLocalFile(picture)}, [this] {
+      QVERIFY(item("libraryDropHighlight")->property("shown").toBool());
+    }));
+    QTRY_COMPARE(opened.size(), 1);
+    QCOMPARE(opened.last().first().toStringList(), QStringList{picture});
+    QVERIFY(!confirm->isVisible());
+    QTRY_VERIFY(!item("libraryDropHighlight")->property("shown").toBool());
+
+    // A folder is a question first, and Escape leaves it out.
+    QVERIFY(dropOn(m_window, {QUrl::fromLocalFile(first)}));
+    QTRY_VERIFY(confirm->isVisible());
+    QCOMPARE(confirm->property("title").toString(), QStringLiteral("Add this folder to Omaroll?"));
+    QCOMPARE(opened.size(), 1);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!confirm->isVisible());
+    QVERIFY(!m_settings->libraryFolders().contains(first));
+
+    // Mixed: the file opens, both folders are asked about together and the
+    // web address is named.
+    QVERIFY(dropOn(m_window, {QUrl::fromLocalFile(picture), QUrl::fromLocalFile(first),
+                              QUrl::fromLocalFile(second),
+                              QUrl(QStringLiteral("https://example.com/cat.png"))}));
+    QTRY_COMPARE(opened.size(), 2);
+    QCOMPARE(opened.last().first().toStringList(), QStringList{picture});
+    QTRY_VERIFY(confirm->isVisible());
+    QCOMPARE(confirm->property("title").toString(), QStringLiteral("Add these 2 folders to Omaroll?"));
+    QCOMPARE(item("footerStatus")->property("text").toString(), QStringLiteral("Skipped: cat.png"));
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!confirm->isVisible());
+    QVERIFY(m_settings->libraryFolders().contains(first));
+    QVERIFY(m_settings->libraryFolders().contains(second));
+    QCOMPARE(item("footerStatus")->property("text").toString(),
+             QStringLiteral("Added 2 folders. Omaroll is scanning them now."));
+
+    // Added already: said, not added twice.
+    QVERIFY(dropOn(m_window, {QUrl::fromLocalFile(first), QUrl::fromLocalFile(second)}));
+    QTRY_VERIFY(confirm->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!confirm->isVisible());
+    QCOMPARE(item("footerStatus")->property("text").toString(),
+             QStringLiteral("Those folders are already added, unavailable, or your home folder"));
+    QCOMPARE(m_settings->libraryFolders().count(first), 1);
+    QTRY_VERIFY(!m_captures->scanning());
+  }
+
   void pinnedFoldersRemainShortcutsWithoutRemovingTheirSource() {
     QVERIFY(m_settings->pinFolderPath(QFileInfo(m_oddPath).absolutePath()));
     QQuickItem* pins = item("pinnedFolders");
@@ -6356,6 +6424,22 @@ private:
       }
     }
     return nullptr;
+  }
+
+  // Files dragged in from another app: enter, move, then drop at the middle.
+  static bool dropOn(QQuickWindow* window, const QList<QUrl>& urls,
+                     const std::function<void()>& whileOver = {}) {
+    QMimeData data;
+    data.setUrls(urls);
+    const QPoint at(window->width() / 2, window->height() / 2);
+    QDragEnterEvent enter(at, Qt::CopyAction, &data, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(window, &enter);
+    QDragMoveEvent move(at, Qt::CopyAction, &data, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(window, &move);
+    if (whileOver) whileOver();
+    QDropEvent drop(QPointF(at), Qt::CopyAction, &data, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(window, &drop);
+    return drop.isAccepted();
   }
 
   QQuickItem* item(const QString& objectName) const {

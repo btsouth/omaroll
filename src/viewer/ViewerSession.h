@@ -168,6 +168,17 @@ public:
   // file is not there.
   Q_INVOKABLE bool restore(const QString& path, const QString& entry, int index, int serial);
 
+  // Files dropped on this window, opened here the way `omaroll FILE...`
+  // opens them: {opened: true, note} naming anything skipped. A folder or a
+  // document is {handOff: true, paths, note}, for the library, as a launch
+  // with them would be. {error} when nothing could be opened.
+  Q_INVOKABLE QVariantMap openDropped(const QList<QUrl>& urls);
+  // A copy this window just saved beside the current file: it joins the
+  // sequence next to the original and becomes the current file. |serial| is
+  // openSerial() when the save began; false once the window has moved on to
+  // other files.
+  Q_INVOKABLE bool showSaved(const QString& path, int serial);
+
   // Hands the current file to the library window.
   Q_INVOKABLE void openInLibrary();
 

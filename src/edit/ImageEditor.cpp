@@ -93,10 +93,13 @@ QString writeImage(const QImage& image, const QString& preferred, const QByteArr
 struct SaveResult {
   QString output;
   QString error;
+  // Why a pure turn or flip of a JPEG was re-encoded rather than done
+  // losslessly; empty when it was lossless or there was nothing to say.
+  QString note;
 };
 
 SaveResult saveTransform(const QString& source, const ImageEditor::Transform& transform) {
-  if (CameraRaw::isRawFile(source)) return {{}, kRawRefusal};
+  if (CameraRaw::isRawFile(source)) return {{}, kRawRefusal, {}};
   QString error;
   QString output;
   const QByteArray format = writableFormat(source);
@@ -110,10 +113,15 @@ SaveResult saveTransform(const QString& source, const ImageEditor::Transform& tr
   const bool noResize = transform.targetWidth <= 0 && transform.targetHeight <= 0;
   const bool turned = (((transform.quarterTurns % 4) + 4) % 4) != 0 ||
                       transform.flipHorizontal || transform.flipVertical;
+  QString note;
   if (format == QByteArrayLiteral("jpg") && turned && qFuzzyIsNull(transform.straightenDegrees) &&
-      fullFrame && noResize && JpegTransform::available()) {
+      fullFrame && noResize) {
     QImageReader probe(source);
-    if (probe.transformation() == QImageIOHandler::TransformationNone) {
+    if (!JpegTransform::available()) {
+      note = QStringLiteral("Re-encoded, since jpegtran is not installed");
+    } else if (probe.transformation() != QImageIOHandler::TransformationNone) {
+      note = QStringLiteral("Re-encoded to apply its orientation tag");
+    } else {
       CopyOutput candidate(composedOutputPath(source, false));
       if (candidate.device() &&
           JpegTransform::apply(source, candidate.encoderPath(), transform.quarterTurns,
@@ -121,6 +129,10 @@ SaveResult saveTransform(const QString& source, const ImageEditor::Transform& tr
         output = candidate.publish();
         if (output.isEmpty()) error = QStringLiteral("Could not safely save a copy beside %1")
                                          .arg(QFileInfo(source).fileName());
+      } else {
+        // -perfect refuses a size that is not a whole number of JPEG blocks,
+        // where a lossless turn would drop the partial edge.
+        note = QStringLiteral("Re-encoded, since its size cannot be turned losslessly");
       }
     }
   }
@@ -144,7 +156,7 @@ SaveResult saveTransform(const QString& source, const ImageEditor::Transform& tr
     }
   }
 
-  return {output, error};
+  return {output, error, error.isEmpty() ? note : QString()};
 }
 
 } // namespace
@@ -303,7 +315,8 @@ void ImageEditor::saveCopy(const QString& path, int quarterTurns, bool flipHoriz
     transform.cropH = ch;
     transform.targetWidth = targetW;
     transform.targetHeight = targetH;
-    const auto [output, error] = saveTransform(source, transform);
+    const auto [output, error, note] = saveTransform(source, transform);
+    (void)note;
 
     QMetaObject::invokeMethod(
         this,
@@ -314,6 +327,50 @@ void ImageEditor::saveCopy(const QString& path, int quarterTurns, bool flipHoriz
             emit failed(error, jobId);
           } else {
             emit saved(output, jobId);
+          }
+        },
+        Qt::QueuedConnection);
+  });
+}
+
+void ImageEditor::saveViewCopy(const QString& path, int quarterTurns, bool flipHorizontal,
+                               bool flipVertical, int jobId) {
+  if (m_busy) {
+    emit failed(QStringLiteral("Still saving the last copy"), jobId);
+    return;
+  }
+  if (!QFileInfo(path).isFile()) {
+    emit failed(QStringLiteral("That file is no longer there"), jobId);
+    return;
+  }
+  if (CameraRaw::isRawFile(path)) {
+    emit failed(kRawRefusal, jobId);
+    return;
+  }
+  Transform transform;
+  transform.quarterTurns = quarterTurns;
+  transform.flipHorizontal = flipHorizontal;
+  transform.flipVertical = flipVertical;
+  if ((((quarterTurns % 4) + 4) % 4) == 0 && flipHorizontal == flipVertical &&
+      !flipHorizontal) {
+    emit failed(QStringLiteral("The picture is not turned or flipped"), jobId);
+    return;
+  }
+
+  m_busy = true;
+  emit busyChanged();
+  const QString source = path;
+  (void)QtConcurrent::run([this, source, transform, jobId] {
+    const auto [output, error, note] = saveTransform(source, transform);
+    QMetaObject::invokeMethod(
+        this,
+        [this, output, error, note, jobId] {
+          m_busy = false;
+          emit busyChanged();
+          if (!error.isEmpty()) {
+            emit failed(error, jobId);
+          } else {
+            emit viewCopySaved(output, note, jobId);
           }
         },
         Qt::QueuedConnection);
@@ -422,7 +479,8 @@ void ImageEditor::saveCopies(const QStringList& paths, int quarterTurns, bool fl
     transform.targetWidth = targetW;
     transform.targetHeight = targetH;
     for (const QString& source : sources) {
-      const auto [output, error] = saveTransform(source, transform);
+      const auto [output, error, note] = saveTransform(source, transform);
+      (void)note;
       if (error.isEmpty()) ++succeeded;
       else ++failedCount;
       results.append(QVariantMap{{QStringLiteral("source"), source},

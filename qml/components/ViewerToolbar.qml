@@ -1,8 +1,8 @@
 import QtQuick
 
 // The common picture controls, in the order Windows Photo Viewer taught
-// everyone: zoom, then previous, slideshow and next, then rotate, then delete.
-// Everything less common lives in the viewer's menu.
+// everyone: zoom, then previous, slideshow and next, then rotate and flip, then
+// delete. Everything less common lives in the viewer's menu.
 Rectangle {
     id: root
 
@@ -13,6 +13,13 @@ Rectangle {
     property bool compact: false
     // Off while the picture could not be shown: nothing to zoom or turn.
     property bool viewControls: true
+    // Flip gives way before zoom does; the keys and the menu still flip.
+    property bool flipControls: true
+    property bool flippedHorizontally: false
+    property bool flippedVertically: false
+    // Turned or flipped: a copy of what is on screen can be saved.
+    property bool canSaveCopy: false
+    property string saveCopyLabel: "Save rotated copy"
     readonly property bool hovered: hover.hovered
 
     signal zoomOut()
@@ -23,6 +30,9 @@ Rectangle {
     signal slideshow()
     signal rotateLeft()
     signal rotateRight()
+    signal flipHorizontal()
+    signal flipVertical()
+    signal saveCopy()
     signal trash()
 
     function shade(base, amount) {
@@ -133,6 +143,34 @@ Rectangle {
             toolTip: "Rotate right"
             shortcut: ShortcutCatalog.sequence("quick", "rotate")[0]
             onClicked: root.rotateRight()
+        }
+        IconButton {
+            objectName: "viewerFlipHorizontal"
+            enabled: root.viewControls
+            visible: root.flipControls
+            icon: "flip-horizontal"
+            active: root.flippedHorizontally
+            toolTip: "Flip horizontally"
+            shortcut: ShortcutCatalog.quickHints["flip-horizontal"]
+            onClicked: root.flipHorizontal()
+        }
+        IconButton {
+            objectName: "viewerFlipVertical"
+            enabled: root.viewControls
+            visible: root.flipControls
+            icon: "flip-vertical"
+            active: root.flippedVertically
+            toolTip: "Flip vertically"
+            shortcut: ShortcutCatalog.quickHints["flip-vertical"]
+            onClicked: root.flipVertical()
+        }
+        IconButton {
+            objectName: "viewerSaveCopy"
+            visible: root.canSaveCopy
+            icon: "save"
+            toolTip: root.saveCopyLabel
+            shortcut: ShortcutCatalog.quickHints["save-view-copy"]
+            onClicked: root.saveCopy()
         }
         Divider {}
 

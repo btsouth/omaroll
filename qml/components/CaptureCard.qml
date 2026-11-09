@@ -121,6 +121,7 @@ Item {
     Drag.dragType: Drag.Automatic
     Drag.supportedActions: Qt.CopyAction
     Drag.proposedAction: Qt.CopyAction
+    // The same data the quick viewer's drag carries (FileDrag in C++).
     Drag.mimeData: ({
         "text/uri-list": Library.uriList(root.dragPaths),
         "text/plain": root.dragPaths.join("\n")
