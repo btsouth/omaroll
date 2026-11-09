@@ -252,7 +252,7 @@ offscreen with software decoding and llvmpipe; CI runs it that way with loose
 Software-decoded frames come from FFmpeg's buffer pool, so CI cannot see
 per-frame copies of hardware frames; the fault budget catches only a frame
 mapped every time. `omaroll_tests` covers the copies: it hands 4K NV12 frames
-to the presentation from a decoder thread and fails above 100 faults a frame on x86 (it skips on ARM, whose allocator reuses those frames anyway). Check that path with `--gpu`, which opens a real window on
+to the presentation from a decoder thread and fails unless they fault under a tenth as often as with the picture settings (it skips when frames are reused even with those, as on ARM). Check that path with `--gpu`, which opens a real window on
 the session's GPU with Omaroll's hardware decoders, inside omabox:
 
 ```sh
