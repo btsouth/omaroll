@@ -1251,6 +1251,19 @@ private slots:
     QCOMPARE(ImageEditor::outputPathFor(paths.at(0)), paths.at(0) + QStringLiteral("-edited.png"));
   }
 
+  void matroskaTrackHeadersCannotEscapeTheirParent() {
+    QTemporaryDir dir;
+    const QString path = dir.filePath("truncated-container");
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    // Empty EBML header followed by the libFuzzer parent-boundary reproducer.
+    const QByteArray bytes = QByteArray::fromHex("1a45dfa380") + QByteArray::fromBase64(
+        "e6OAGFOAZ4sWVK5rIACGrhYa34CEg1SKEhJF36OAGFOAZ4sWVK5rIACGrhYagICEg1SKEhpF36OAGFOAZ4sWVK5rhq6Dg4ODg4ODgzaDg4OBgwODgQ==");
+    QCOMPARE(file.write(bytes), bytes.size());
+    file.close();
+    QVERIFY(CaptureScanner::mediaSuffix(path, true).isEmpty());
+  }
+
   // A minimal Matroska header: one track of the given type and codec, in a
   // segment of unknown size as a live recorder writes it.
   static QByteArray matroska(char trackType, const QByteArray& codec) {

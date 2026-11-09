@@ -152,7 +152,7 @@ namespace {
 // recorders write for the segment.
 bool readVint(const QByteArray& data, qsizetype& at, quint64& value, bool keepMarker,
               bool* unknown = nullptr) {
-  if (at >= data.size()) {
+  if (at < 0 || at >= data.size()) {
     return false;
   }
   const auto first = static_cast<unsigned char>(data.at(at));
@@ -193,6 +193,9 @@ bool isVideoTrack(const QByteArray& data, qsizetype at, qsizetype end) {
     if (!readVint(data, at, id, true) || !readVint(data, at, size, false)) {
       return false;
     }
+    // A VINT can be readable in the file but extend beyond its parent.
+    // Check before converting the remaining length to an unsigned value.
+    if (at > end) return false;
     const qsizetype length = qsizetype(std::min<quint64>(size, quint64(end - at)));
     if (id == kTrackType && length == 1) {
       return data.at(at) == 1;
@@ -215,6 +218,7 @@ bool hasVideoTrackIn(const QByteArray& data, qsizetype at, qsizetype end, int de
     if (!readVint(data, at, id, true) || !readVint(data, at, size, false, &unknown)) {
       return false;
     }
+    if (at > end) return false;
     const qsizetype stop = unknown || size > quint64(end - at) ? end : at + qsizetype(size);
     if (id == kTrackEntry && depth == 2) {
       if (isVideoTrack(data, at, stop)) {
