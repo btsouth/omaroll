@@ -39,7 +39,8 @@ Everything works locally, without accounts or telemetry.
 
 3. Double-click a picture or video in your file manager, or run
    `omaroll photo.jpg`. Run `omaroll` on its own for the library.
-4. Press `?` or `F1` in the library or the viewer for its shortcuts.
+4. Press `?` or `F1` in the library or the viewer for its shortcuts. Close any
+   open sheet or menu first.
 5. Optional: Omarchy dims every window a little. To keep pictures at full
    opacity and float the viewer, add Omaroll's Hyprland rules.
    `omaroll --remove-window-rules` takes them out, and Settings has the same
