@@ -4482,7 +4482,8 @@ private slots:
       QQuickItem* thumbnail = find(card, [](QQuickItem* candidate) {
         return candidate->property("source").toUrl().toString().startsWith(QStringLiteral("image://thumbs/"));
       });
-      return !thumbnail || thumbnail->property("status").toInt() != 2; // Image.Loading
+      const int status = thumbnail ? thumbnail->property("status").toInt() : 1;
+      return status == 1 || status == 3; // Image.Ready or Image.Error
     };
     QTRY_VERIFY(thumbnailSettled());
     QVERIFY(QMetaObject::invokeMethod(m_window, "requestPermanentDelete",
