@@ -148,7 +148,9 @@ public:
   // Keeps organization that only looked incomplete. The snapshot it was
   // compared with is kept as a before-restore copy first, then today's
   // snapshot is taken from what is here now, so the warning does not return.
-  Q_INVOKABLE void keepCurrentOrganization();
+  // Empty when kept; otherwise why nothing changed (the fuller backup could
+  // not be copied aside, so it is not replaced and the warning stays).
+  Q_INVOKABLE QString keepCurrentOrganization();
   // Compares what is here with today's or yesterday's snapshot again, as each
   // launch does after loading. For tests.
   void recheckOrganizationHealth() { checkOrganizationHealth(false); }

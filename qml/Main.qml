@@ -2179,7 +2179,10 @@ ApplicationWindow {
             }
             root.say(result.message)
         }
-        onCancelled: Settings.keepCurrentOrganization()
+        onCancelled: {
+            const error = Settings.keepCurrentOrganization()
+            if (error !== "") root.say(error)
+        }
         onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
     }
 

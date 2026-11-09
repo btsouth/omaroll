@@ -52,9 +52,21 @@ case "$mode" in
     # threads gets there; a short one does not.
     run_suite() {
       local binary=$1 class=$2 pattern=$3 tests test results status=0
-      mapfile -t tests < <(QT_QPA_PLATFORM=offscreen "$build/$binary" -functions | sed 's/()$//' |
+      local listed
+      # A binary that cannot list its tests, or a pattern that no longer
+      # matches anything, fails the job rather than passing with nothing run.
+      if ! listed=$(QT_QPA_PLATFORM=offscreen TSAN_OPTIONS="exitcode=0:log_path=$PWD/tsan-report" \
+          "$build/$binary" -functions); then
+        echo "tsan: $binary could not list its tests"
+        return 1
+      fi
+      mapfile -t tests < <(sed 's/()$//' <<<"$listed" |
         grep -E "$pattern" | grep -Ev '^(init|cleanup|initTestCase|cleanupTestCase)$' | grep -Ev "$skip")
       echo "tsan: ${#tests[@]} $binary tests"
+      if (( ${#tests[@]} == 0 )); then
+        echo "tsan: no $binary tests matched $pattern"
+        return 1
+      fi
       for test in "${tests[@]}"; do
         results="$PWD/$build/tsan-tests-$binary-$test.txt"
         (cd "$build" && QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software PULSE_SERVER=unix:/nonexistent \

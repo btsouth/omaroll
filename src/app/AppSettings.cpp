@@ -1767,19 +1767,24 @@ void AppSettings::noteOrganizationSaved() {
   startSnapshotRefresh();
 }
 
-void AppSettings::keepCurrentOrganization() {
+QString AppSettings::keepCurrentOrganization() {
   const bool suspect = m_organizationSuspect;
   if (suspect) {
     flushBackups();
     // The fuller snapshot stays available to Import and as the last fallback.
+    // Without that copy, replacing today's snapshot would lose it, so nothing
+    // changes and the warning stays.
     const QDir dir(backupDirectory());
     const QString name = QStringLiteral("before-restore-%1.json")
                              .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
-    if (QFile::copy(m_suspectSnapshot, dir.filePath(name))) {
-      QFile::setPermissions(dir.filePath(name), kOwnerOnly);
-      pruneBackups(dir, QStringLiteral("before-restore-*.json"), kBeforeRestoreBackups,
-                   QDateTime::currentDateTimeUtc(), name, modifiedStamp);
+    if (!QFile::copy(m_suspectSnapshot, dir.filePath(name))) {
+      QFile::remove(dir.filePath(name));
+      return QStringLiteral("Could not keep a copy of the fuller backup, so nothing was changed. "
+                            "Check the free space in %1.").arg(dir.path());
     }
+    QFile::setPermissions(dir.filePath(name), kOwnerOnly);
+    pruneBackups(dir, QStringLiteral("before-restore-*.json"), kBeforeRestoreBackups,
+                 QDateTime::currentDateTimeUtc(), name, modifiedStamp);
     m_organizationSuspect = false;
     m_suspectSnapshot.clear();
     m_snapshotDirty = false;
@@ -1790,6 +1795,7 @@ void AppSettings::keepCurrentOrganization() {
     emit launchWarningChanged();
   }
   if (suspect) emit organizationErrorChanged();
+  return {};
 }
 
 void AppSettings::scheduleDailySnapshot(bool replace) {
