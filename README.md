@@ -18,15 +18,50 @@ Everything works locally, without accounts or telemetry.
 
 > Omaroll is an independent community project, not an official Omarchy application.
 
-[Install](#install-or-update) · [Open files](#open-files) · [Features](#features) · [Homepage](https://btsouth.github.io/omaroll/) · [Contributing](CONTRIBUTING.md)
+[Quick start](#quick-start) · [Install](#install-or-update) · [Features](#features) · [Shortcuts](docs/shortcuts.md) · [Changelog](CHANGELOG.md) · [Homepage](https://btsouth.github.io/omaroll/)
+
+## Quick start
+
+1. Install Omaroll. On Omarchy's edge channel, run `sudo pacman -S omaroll`.
+   On other channels and plain Arch Linux, use the signed repository
+   ([details](#install-or-update)):
+
+   ```bash
+   curl -fsSL https://pkgs.btso.dev/install.sh | bash -s -- omaroll
+   ```
+
+2. Make it the default for pictures and videos. `omaroll --unset-default` puts
+   the previous apps back.
+
+   ```bash
+   omaroll --set-default
+   ```
+
+3. Double-click a picture or video in your file manager, or run
+   `omaroll photo.jpg`. Run `omaroll` on its own for the library.
+4. Press `?` or `F1` in the library or the viewer for its shortcuts. Close any
+   open sheet or menu first.
+5. Optional: Omarchy dims every window a little. To keep pictures at full
+   opacity and float the viewer, add Omaroll's Hyprland rules.
+   `omaroll --remove-window-rules` takes them out, and Settings has the same
+   switch.
+
+   ```bash
+   omaroll --install-window-rules
+   ```
+
+| | Quick viewer | Library |
+|---|---|---|
+| Dark | <img src="docs/viewer-dark.png" width="400" alt="The quick viewer showing a mountain lake in the Tokyo Night theme"> | <img src="docs/library-dark.png" width="400" alt="The library grid in the Tokyo Night theme"> |
+| Light | <img src="docs/viewer-light.png" width="400" alt="The quick viewer showing a mountain lake in the Catppuccin Latte theme"> | <img src="docs/library-light.png" width="400" alt="The library grid in the Catppuccin Latte theme"> |
 
 [![Omaroll's library over the Ethereal theme. Click to play the demo](docs/demo-poster.webp)](https://btsouth.github.io/omaroll/docs/omaroll-demo.mp4?v=1.18.0)
 
 [Watch the 38-second demo](https://btsouth.github.io/omaroll/docs/omaroll-demo.mp4?v=1.18.0)
 
-Press **?** or **F1** in the viewer, library or library preview for searchable,
-context-specific shortcut help. Settings includes About and **Copy diagnostics**
-for bug reports.
+Something wrong? Copy diagnostics from **About** in Settings, or run
+`omaroll --diagnostics` if no window opens, and paste it into a
+[bug report](https://github.com/btsouth/omaroll/issues/new/choose).
 
 ## Install or update
 
@@ -87,8 +122,12 @@ To make Omaroll the default for pictures and videos, run:
 omaroll --set-default
 ```
 
-`omaroll --set-default pdf` does the same for PDFs, and `omaroll --unset-default`
-puts back the apps it replaced. Folders keep opening in your file manager.
+It prints how many types changed and the command that undoes it, even if some
+types could not be changed; add `--verbose` to list every type.
+`omaroll --unset-default` puts back the apps it replaced.
+`omaroll --set-default pdf` does the same for PDFs, and
+`omaroll --unset-default pdf` undoes that. Folders keep opening in your file
+manager.
 Settings has the same choice as **Set as default** and **Restore previous
 apps**, and says how many types changed and which apps were replaced.
 
@@ -181,61 +220,8 @@ its own viewer, so two pictures can sit side by side; opening one that is
 already up brings its viewer forward. The library and viewers share one
 process, so a favourite or rating set in one shows in the others.
 
-<details>
-<summary>Viewer shortcuts</summary>
-
-| Key in the viewer | Does |
-|---|---|
-| `←` `→` · `Page Up` `Page Down` | Previous · next file. On a video the arrows seek instead |
-| `Home` `End` | First · last file, or the start · end of a video |
-| mouse back/forward buttons | Previous · next file |
-| `Ctrl+O` | Choose another application for the current file |
-| wheel · pinch | Zoom around the pointer |
-| `+` `-` | Zoom in · out |
-| drag · two-finger scroll | Move around a zoomed picture, down a long screenshot |
-| `W` | Fit width, starting at the top of tall pictures |
-| `Shift` + `W` | Fill the window, cropping the edges, until pressed again |
-| `Shift` + arrows | Pan a picture zoomed beyond fit |
-| `0` · `1` or double click | Fit · toggle fit and actual size |
-| `R` · `Shift+R` | Rotate right · left, the view only, never the file |
-| `Shift+H` · `Shift+V` | Flip horizontally · vertically, the view only |
-| `Ctrl+S` | Save a rotated or flipped copy beside the original |
-| `Ctrl` + drag · drag the name | Drag the file into another app |
-| `Space` · `K` | Play · pause a video or animation |
-| click a video | Play · pause |
-| `J` `L` · `↑` `↓` · `M` | Seek ten seconds · volume · mute |
-| `,` `.` | Step one frame back · forward, pausing first |
-| `[` `]` · `Backspace` · `C` | Speed · normal speed · cycle subtitles |
-| `Shift+L` | Loop video on or off; slideshows still advance |
-| `Shift+A` | Cycle audio tracks when more than one is available |
-| `Z` `X` | Show sidecar subtitles 0.5 seconds earlier · later, up to 10 seconds |
-| `F` · `F11` · double click a video | Full screen |
-| `F5` | Slideshow |
-| `I` | Details: size, date, rating, camera or codec |
-| `B` | Hide or show the filmstrip |
-| `D` · `Shift+D` | Open a RAW in the preferred editor · choose an editor |
-| `V` · `Alt+1`-`Alt+5` · `Ctrl+Z` | Favourite · rate · undo the last mark or move to Trash |
-| `Ctrl+Shift+C` | Copy the opened path as plain text |
-| `?` · `F1` | Show or hide the grouped shortcut help |
-| `Y` · `S` · `A` | Copy · send · annotate |
-| `T` · `G` · `P` | Trim · save the current frame · open in mpv |
-| `Del` | Move to Trash, with confirm; Undo on the notice or `Ctrl+Z` puts it back |
-| `Shift+Del` | Delete permanently, with confirmation on by default |
-| right click · menu button | Everything else that suits the file |
-| `Enter` · grid button | Open the file in the library |
-| `Esc` | Close help, leave the slideshow or full screen, close the details, then close |
-
-In both image viewers, `1` goes to actual size from a custom zoom. Press it
-again at actual size to fit the image. The quick viewer menu also offers Fit
-without enlarging and Copy file name. Turn off **Enlarge small pictures to fit**
-in Settings to show small pictures at 100% when fitted.
-
-Settings offers **Remember playback speed**, off by default. When enabled,
-the last speed chosen in the quick viewer applies to newly opened videos.
-`Backspace` also resets that preference to normal speed. Video loop lasts
-until the viewer closes; subtitle delay resets when the file changes.
-
-</details>
+Every viewer shortcut is listed in [Shortcuts](docs/shortcuts.md#viewer), and
+`?` shows them in the viewer.
 
 ## Features
 
@@ -268,173 +254,30 @@ until the viewer closes; subtitle delay resets when the file changes.
 
 ## Library actions
 
-The library offers actions for the current file or selection. Omaroll handles
-organization and safe copies itself, and delegates specialist work to these tools.
-
-| Capture | Action | Handler |
-|---|---|---|
-| Recording | Trim *(default)* | `omacut` |
-| Recording | Convert · resize | `omarchy-transcode` |
-| Recording | Open in mpv | `mpv` |
-| Recording | Save current frame | `ffmpeg`, from the viewer position |
-| Image | Add background | native, no external app required |
-| Screenshot | Annotate | `$OMARCHY_SCREENSHOT_EDITOR`; Tensaku by default |
-| Image | Open in Omaframe | `omaframe`: annotation, borders, backgrounds and frames |
-| Screenshot | Extract and select text | `tesseract` |
-| Image | Convert · resize | `omarchy-transcode` |
-| Image | Edit · View | `pinta` · `imv` |
-| Image | Set as background | `omarchy-theme-bg-set` |
-| Image | Copy QR content (only after detection) | `zbarimg` |
-| Image | Crop, rotate, resize · Copy region | native |
-| Image | Correct a selection | native |
-| Image | Compare side by side | native |
-| Image or PDF | Print | `lp` (CUPS) |
-| PDF | Open document *(default)* | `sushi` |
-| Any | Open in Omaroll · Albums and tags | native |
-| Any | Rename in place | native, extension preserved |
-| Any | Copy image or file | `wl-copy`: PNG/JPEG pixels, otherwise file URIs |
-| Any | Send with LocalSend | `omarchy-menu-share` |
-| Any | Send to a machine | `omarchy-tailscale-send`, after picking the machine |
-| Any | Show in file manager | select the file in the configured folder handler when supported, or open its folder through `xdg-open` |
-| Any | Open with… | desktop application chooser, without changing MIME defaults |
-| Any | Move to Trash | XDG trash, never `unlink` |
-
-Single-file menus include viewing and editing actions. Selection menus offer
-only actions supported for every selected file, including printing pictures
-and PDFs. Menu shortcuts act on the same captured targets as clicks.
-
-**Open with** passes the original file to the application you choose. Saving
-in an editor can change that file. It requires a desktop portal that supports
-the application chooser; if unavailable, Omaroll reports an error.
+The library offers actions for the current file or selection: trim, convert,
+annotate, extract text, add a background, set as the desktop background,
+print, send, rename and more. Omaroll handles organization and safe copies
+itself and hands specialist work to tools such as `omacut`,
+`omarchy-transcode`, Tensaku, Omaframe and Tesseract. An action whose tool is missing is greyed with the
+package to install, and **About** in Settings lists every missing tool with its
+`pacman` command.
 
 A move to Trash can be undone with **Undo** on the notice that follows it, or
-with `Ctrl+Z`, which takes back whatever happened last: a mark or a move to
-Trash. A batch or a duplicate cleanup comes back as one step, and a file
-returns to its place in the viewer. Undo puts back only the file that was
-trashed and never replaces a file that has since taken its name; if the Trash
-was emptied or the name is taken, it says so and leaves both alone. If the
-file changes or is replaced while the Trash prompt is open, the prompt refuses
-instead of trashing the newcomer.
+with `Ctrl+Z`. `Shift+Delete` skips Trash and asks first by default.
 
-`Shift+Delete` skips Trash and cannot be undone. Both viewers and the library
-ask for confirmation by default. **Confirm permanent deletion** in Settings
-can turn that prompt off; regular `Delete` continues to use Trash and its
-existing confirmation. Permanent deletion removes the chosen file or symlink, or the checked files,
-without automatically including RAW/JPEG companions.
-
-The image and video defaults, including whether slideshows include videos, can
-be changed in Settings.
-
-When `$OMARCHY_SCREENSHOT_EDITOR` is unset or set to `tensaku-edit`, Omaroll
-uses Tensaku directly with a new output path.
-
-**Open in Omaframe** is available for existing images in the library and quick
-viewer. It opens the image in Omaframe's studio for annotation or a frame,
-border and background. Omaframe saves a new PNG in its chosen output folder
-and copies it to the clipboard, leaving the source unchanged. This action
-does not change the configured annotation editor. You can choose it as the image action
-in Settings; Space runs that action. Enter and double click open the built-in preview.
-Right click opens actions for the pointed file or its existing selection.
-
-Camera RAWs can open in darktable, RawTherapee, ART, digiKam, GIMP or a custom
-command. Choose an editor from the menu, use its star to save a preference,
-or enable **Always ask**. Custom commands accept `{path}` in an argument of a direct editor command;
-without it, Omaroll appends the file path. Shell commands and `env` wrappers are
-refused. Use a wrapper script for shell logic. Use double quotes around arguments
-containing spaces. Omaroll passes arguments directly without a shell.
-
-Matching RAW and JPEG files in the same folder appear as one item by default.
-The companion action switches between the originals; rename and Trash act on
-the file being viewed. Ambiguous matches stay separate, and duplicate reviews
-show both files. Turn grouping off in Settings to show every file separately.
-
-Pin a folder in Settings or from its library view to add a shortcut above the
-grid. Pinning also adds that folder as a library source. Unpinning removes only
-the shortcut, leaving the source and files alone.
-
-An action whose program is missing is shown greyed with the package to install,
-rather than hidden. The medium decides the list, not the folder: a downloaded
-clip gets the recording actions and a downloaded photo gets the image actions.
-
-Turn on Show filenames in grid in Settings to keep names visible on thumbnails.
-Long names are shortened with an ellipsis; hover or keyboard focus shows the full name.
-
-Gallery previews open with a compact header. Drag an edge or the bottom-right
-corner to resize the preview; Omaroll remembers the size and fits it to the window.
-Wheel and pinch zoom keep the point under the pointer fixed, including in Compare.
-Toggle the inspector for ratings, captions and file details, or use the overflow
-menu for other actions. Copy path and Copy file name copy plain text for the opened
-entry, preserving a symlink's name and path.
-
-![The gallery preview with its inspector tucked away](docs/detail.png)
+[Library actions](docs/actions.md) lists every action and its handler, with
+RAW editors, RAW and JPEG pairs, pinned folders and the preview.
 
 ## Search
 
-The search box matches filenames, captions, tags, album names, folder names
-below the library's folders, camera and lens, the text inside pictures and the text of PDFs. Case and
-accents are ignored, so `cafe` finds `café-paris.jpg` and `CAFÉ` finds "cafe".
-Every word must match. Fields narrow the search:
-
-| Type | To find |
-|---|---|
-| `tag:travel` · `album:iceland` | Tagged, or in an album. A tag also matches its nested tags |
-| `in:pictures/2024` · `in:~/Pictures` | In a folder, written from home or in full |
-| `camera:fuji` · `lens:35mm` | Taken with a camera or lens |
-| `type:video` (or `kind:`) | `screenshot`, `recording`, `photo`, `video`, `download`, `pdf`, `raw`, `animated` |
-| `before:2024` · `after:2023-06` · `after:2024-06-01` | Earlier or later than a year, month or day |
-| `"exact phrase"` · `tag:"road trip"` | Words side by side |
-| `-draft` · `-tag:work` · `-"old copy"` | Leave those out |
-
-A field value matches the start of a word, so `camera:fuji` finds
-"FUJIFILM X-T4" and `tag:japan` finds "Travel/Japan". `before:` is earlier
-than the whole period and `after:` later, so `after:2023 before:2025` is 2024.
-Anything else with a colon is searched as plain text. Inside quotes, `\"` is a
-quote and `\\` a backslash, so `album:"Road \"Trip\""` names that album. Typing a field offers
-the library's tags, albums, folders, cameras, kinds and years; Up and Down pick
-one and Enter or Tab takes it. **?** lists the syntax too.
-
-Choices in **Browse** combine: a folder, an album, a tag, a date, a camera or
-lens and a minimum rating narrow together. Each shows as a chip under the
-filter bar with its own clear button. **Save current view** keeps the search,
-tokens included, the kind and sort, and the folder, album, tag, date, camera,
-lens and rating chips. Duplicate and similar reviews are not saved. Deleting an
-album or tag deletes the saved views that open it. Omaroll 1.18 and older open
-such a view with only its plain words and without its album.
-
-Picture text is read locally by Tesseract and kept in a private cache. By
-default it is read while a search is open, one picture at a time, screenshots
-first; the status line counts the pictures read, and a notice under the results
-says when some have not been read yet.
-
-PDF text comes from `pdftotext`, the first 50 pages of each document, read one
-document at a time while a search is open or in the background, and cached the
-same way. A document that takes longer than 20 seconds is skipped until it
-changes. A library of long PDFs keeps most of their text in that cache rather
-than in memory, and searches it there.
-
-**Index text in the background** in Settings reads the library once its scan
-has settled instead, two to four pictures at a time at the lowest CPU and disk
-priority, and pauses while the computer runs on battery. PDFs are read in the
-background too, one at a time, with the same pause. Its status reads
-"Text indexed N of M". **Screenshots only** limits it to screenshots; a search
-still reads other pictures as before.
-
-**Similar pictures** in Browse groups copies of a picture that were resized,
-recompressed or brightened, and close bursts. Each set is a section with its
-size and a Compare button. A candidate pair must match on a fine thumbnail,
-not just a small hash, and every picture in a set must match every other, so
-sets do not chain. Screenshots of text need a near-identical match, and when
-both pictures have recognized text, the text must agree. **Match** sets how
-close: Strict keeps only near-identical copies, Loose also finds recrops and
-heavier edits.
-
-Compare shows each picture's dimensions, file size, date and folder, and marks
-the largest. **Keep this** moves the others to Trash after a confirmation, as
-one step that Undo puts back. Exact and similar matches are only suggestions:
-nothing is removed without that confirmation.
-
-Duplicate and similarity hashes are kept in `~/.cache/omaroll`, keyed by path,
-size and modification time, so a relaunch does not read every file again.
+The search box matches filenames, captions, tags, albums, folders, cameras
+and the text inside pictures and PDFs, ignoring accents, with fields such as
+`tag:`, `in:` and `before:`. Picture text is read locally by Tesseract.
+**Similar pictures** in Browse groups resized,
+recompressed or brightened copies and close bursts, and Compare puts a set side
+by side so you can keep one. Nothing is removed without a confirmation.
+[Search and similar pictures](docs/search.md) explains the search fields, indexing,
+match levels and the caches.
 
 ## Mattes
 
@@ -450,64 +293,9 @@ and put on your clipboard.
 
 ## Library shortcuts
 
-<details>
-<summary>Library and in-library preview shortcuts</summary>
-
-| Key | Does |
-|---|---|
-| `F9` | Show · hide the folder sidebar (windows at least 760px wide) |
-| arrows · `hjkl` | Move |
-| `Enter` · double click | Open the built-in preview |
-| right click | Actions for that file or its selected files |
-| `Space` on the grid or a still/PDF preview | Your preferred action; built-in viewing for new installs, or open document for PDFs |
-| `Space` in a video or animated-image preview | Play · pause |
-| `←` `→` in a preview | Previous · next file in the same folder |
-| `J` `L` in a video preview | Seek backward · forward five seconds |
-| `,` `.` in a video preview | Step one frame back · forward |
-| `M` · `↑` `↓` or `9` `0` in a video preview | Mute · volume down/up |
-| `[` `]` · `Backspace` in a video preview | Change speed · reset speed |
-| `Home` `End` in a video preview | Start · end |
-| `+` `-` · `0` · `1` · `R` in an image preview | Zoom · fit · toggle fit and actual size · rotate |
-| `Shift+H` `Shift+V` in an image preview | Flip horizontally · vertically |
-| `F11` in a preview | Enter · leave fullscreen |
-| `F5` in a preview | Start · pause slideshow |
-| `I` in a preview | Show · hide file info and actions |
-| `M` | Add background |
-| `T` · `P` | Trim · Play a recording |
-| `G` in a video preview | Save the current frame beside the recording |
-| `A` · `C` | Annotate · Extract text |
-| `E` | Convert or resize, including the selection |
-| mouse back/forward buttons in a preview | Previous · next file |
-| `Ctrl+O` | Choose another application for the current file |
-| `N` | Rename, preserving the extension |
-| `Y` · `S` · `F` | Clipboard · Send · Show in file manager |
-| `Ctrl+Shift+C` | Copy the current file path as text; Copy file name is in the menu |
-| `V` · `Ctrl+H` | Favourite · Hide |
-| `Shift+Del` | Delete the current file or checked files permanently |
-| `Q` · `B` | Crop, rotate, resize the open picture · correct the whole selection |
-| `K` | Compare the selection, or the open picture's copies |
-| `Ctrl+Z` | Undo the last favourite, hide, rating or caption change, or move to Trash |
-| `Alt+C` in the library preview | Edit the caption; Enter saves and Escape cancels |
-| `1`-`8` · `Tab` `Shift+Tab` | Jump to a section · next · previous section; with the sidebar open, Tab moves between the grid and sidebar |
-| `↑` `↓` · `←` `→` · `Enter` in the sidebar | Move · collapse or expand · open the folder |
-| `Alt+1`-`Alt+5` · `Alt+0` | Rate · clear rating, in the grid or the viewer |
-| `Page Up` `Page Down` in a PDF preview | Previous · next page |
-| `Select text` in a PDF, then drag | Pick the words under the pointer |
-| `Ctrl+C` with words picked | Copy them |
-| `X` · `Ctrl+A` | Select · Select all |
-| with a selection | `V` `Ctrl+H` `Y` `S` `Del` act on every checked file |
-| `Ctrl` + wheel · `Ctrl` `+` `-` `0` | Bigger or smaller tiles · reset |
-| drag | Drop the file, or the whole selection, into another app |
-| `Del` | Move to Trash, with confirm; Undo in the footer or `Ctrl+Z` puts it back |
-| `/` · `R` | Search names, text, tags and folders · Rescan |
-| `Esc` | Leave a PDF text selection, clear the tile selection, then close |
-
-</details>
-
-The same letters work inside the preview. A folder handed to `omaroll` opens as
-a recursive folder view for that session. Pictures and videos opened from a
-file manager go to the viewer instead; its keys are listed under
-[Open files](#open-files).
+Every library and preview shortcut is listed in
+[Shortcuts](docs/shortcuts.md#library-and-preview), and `?` shows them in the
+library.
 
 ## Formats
 
@@ -539,8 +327,13 @@ number of megabytes to choose the limit yourself. JPEG always opens, at a
 reduced size if necessary; other formats have to fit the limit to open.
 
 Videos: MP4, M4V, F4V, MKV, WebM, MOV, AVI, DivX, MPEG, VOB, WMV, ASF, FLV,
-Ogg video, OGM, 3GP, 3G2 and MTS/M2TS. Playback uses Qt's FFmpeg backend. An
-optional action can still hand the file to mpv.
+Ogg video, OGM, 3GP, 3G2 and MTS/M2TS. Playback uses Qt's FFmpeg backend by
+default, decoding in hardware where the driver allows (CUDA on NVIDIA,
+otherwise VA-API) and in software otherwise. With FFmpeg, Qt copies each
+decoded frame back to main memory, so 4K video costs more CPU than in mpv; see
+[playback cost](docs/performance/2026-11-09-playback-cost/README.md).
+`QT_MEDIA_BACKEND=gstreamer` picks Qt's GStreamer backend instead, which those
+notes don't cover. An optional action can still hand the file to mpv.
 
 Documents: PDF. Thumbnails, previews, and page counts use Poppler locally.
 
@@ -549,23 +342,23 @@ Documents: PDF. Thumbnails, previews, and page counts use Poppler locally.
 Omaroll paints its own translucent chrome from your theme and draws every
 thumbnail fully opaque on top. Omarchy dims all windows slightly by default,
 which would wash out the pictures, so Omaroll opts out the same way mpv, imv and
-Pinta do. Copy `/usr/share/omaroll/hypr/omaroll.lua` (or `packaging/hypr/omaroll.lua`
-from the source tree) into `~/.config/hypr/` and require it, or add to your
-Hyprland config:
+Pinta do. Its rules also float the viewer, centred, the way Omarchy floats imv
+and mpv; the viewer then opens at most of the screen's size, and the library
+keeps its tile. To add them:
 
-```lua
-o.window("^(io\\.github\\.tsouth89\\.omaroll)$", { tag = "-default-opacity" })
-o.window("^(io\\.github\\.tsouth89\\.omaroll)$", { opacity = "1 1" })
+```bash
+omaroll --install-window-rules
 ```
 
-The same file can float the viewer, centred, the way Omarchy floats imv and
-mpv. The viewer then opens at most of the screen's size, and the library keeps
-its tile:
-
-```lua
-o.window({ class = "^(io\\.github\\.tsouth89\\.omaroll)$", title = ".* · Omaroll" }, { float = true })
-o.window({ class = "^(io\\.github\\.tsouth89\\.omaroll)$", title = ".* · Omaroll" }, { center = true })
-```
+This writes a copy of `/usr/share/omaroll/hypr/omaroll.lua` to
+`~/.config/hypr/` and adds a short block to `~/.config/hypr/hyprland.lua` that
+loads it if it is there.
+`omaroll --remove-window-rules` takes both out again, leaving `hyprland.lua`
+exactly as it was, and **Hyprland window rules** in Settings does either. It
+needs Omarchy's Lua Hyprland config. A line of your own that only says
+`require("hypr.omaroll")` is removed too; any other line that loads the rules is
+reported and left for you to edit. A `~/.config/hypr/omaroll.lua` you wrote
+yourself is never replaced or removed.
 
 When a second viewer opens on the same workspace, Omaroll tiles it and the
 viewers already there, so your layout arranges them instead of stacking them in
@@ -591,16 +384,19 @@ omaroll --demo
 ```
 
 Builds a deterministic fictional library in a temp directory and browses that
-instead. Nothing personal appears on screen, which is also how every screenshot
-in this repository is made.
+instead. It includes a resized copy and a short burst, so Similar pictures and
+Compare have sets to show. Nothing personal appears on screen, which is also
+how every screenshot in this repository is made.
 
 ```bash
 omaroll --render shot.png --render-view matte
 ```
 
-Renders a view to a PNG and exits. Views include `grid`, `grid-filenames`, `detail`, `document`, `video`, `matte`, `viewer` and
-`viewer-video`; see [validation](tests/README.md) for the full render matrix. It grabs the scene
-graph rather than the screen, so an overlapping window cannot spoil the shot.
+Renders a view to a PNG and exits. Views include `grid`, `grid-filenames`,
+`detail`, `document`, `video`, `matte`, `similar`, `compare`, `viewer` and
+`viewer-video`; see [validation](tests/README.md) for the full render matrix.
+It grabs the scene graph rather than the screen, so an overlapping window
+cannot spoil the shot. `man omaroll` lists every option with examples.
 
 ## Design notes
 
@@ -625,7 +421,8 @@ graph rather than the screen, so an overlapping window cannot spoil the shot.
   by path, size and modification time, bounded at 64MB and pruned
   least-recently-used. A changed file gets new previews; the old version's stay
   until they're pruned.
-  Settings and organization live in `~/.config/omaroll`. Deleting that directory
+  Settings and organization live in `~/.config/omaroll` (`$XDG_CONFIG_HOME/omaroll`
+  if that is set). Deleting that directory
   also removes albums, tags, favorites and saved views. Back it up first if you
   want to keep them. The thumbnail cache can be deleted and regenerated.
 

@@ -17,6 +17,8 @@ struct Layout {
   QString root;
   QString pictures;
   QString videos;
+  // False when a file could not be written, for example on a full disk.
+  bool complete = true;
 };
 
 // Generates the files and returns where they live. Each process owns a

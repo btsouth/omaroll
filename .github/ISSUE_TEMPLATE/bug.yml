@@ -10,7 +10,7 @@ body:
     id: diagnostics
     attributes:
       label: Diagnostics
-      description: In Omaroll 1.19 or newer, open Settings, choose Copy diagnostics in About, then paste the result here.
+      description: In Omaroll 1.19 or newer, open Settings and choose Copy diagnostics under About, or run `omaroll --diagnostics` if no window opens. Paste the result here.
       render: text
   - type: input
     id: version
@@ -22,8 +22,8 @@ body:
     id: system
     attributes:
       label: System
-      description: Skip this if you pasted diagnostics.
-      placeholder: Omarchy version, active theme, graphics hardware
+      description: Skip this if you pasted diagnostics. Otherwise name your Omarchy version, theme and graphics card.
+      placeholder: Omarchy 3.1, Tokyo Night, AMD Radeon 780M
   - type: textarea
     id: media
     attributes:
