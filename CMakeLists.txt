@@ -99,10 +99,14 @@ add_library(omaroll_core STATIC
   src/pdf/PdfProvider.h
   src/pdf/PdfSupport.cpp
   src/pdf/PdfSupport.h
+  src/search/DocumentTextIndex.cpp
+  src/search/DocumentTextIndex.h
   src/search/OcrIndex.cpp
   src/search/OcrIndex.h
   src/search/QrDetector.cpp
   src/search/QrDetector.h
+  src/search/SearchQuery.cpp
+  src/search/SearchQuery.h
   src/subtitles/SubtitleIndex.cpp
   src/subtitles/SubtitleIndex.h
   src/thumbs/LargeImageProvider.cpp
@@ -178,6 +182,7 @@ set(OMAROLL_QML_FILES
   qml/components/CaptureGrid.qml
   qml/components/DayHeader.qml
   qml/components/Chrome.qml
+  qml/components/ActiveFilterChips.qml
   qml/components/FilterBar.qml
   qml/components/LibraryBrowserSheet.qml
   qml/components/PictureArea.qml
@@ -190,6 +195,7 @@ set(OMAROLL_QML_FILES
   qml/components/BatchCorrectionSheet.qml
   qml/components/CompareSheet.qml
   qml/components/ReviewSetsView.qml
+  qml/components/SearchSuggestions.qml
   qml/components/SimilarStrictnessPicker.qml
   qml/components/TextIndexSettings.qml
   qml/components/TextSearchNotice.qml
@@ -302,6 +308,12 @@ if(BUILD_TESTING)
   qt_add_executable(omaroll_companion_tests tests/tst_companions.cpp)
   target_link_libraries(omaroll_companion_tests PRIVATE omaroll_core Qt6::Test)
   add_test(NAME omaroll_companion_tests COMMAND omaroll_companion_tests)
+  qt_add_executable(omaroll_search_tests tests/tst_search.cpp)
+  target_link_libraries(omaroll_search_tests PRIVATE omaroll_core Qt6::Test)
+  add_test(NAME omaroll_search_tests COMMAND omaroll_search_tests)
+  # Times a 50k-item search, so it runs alone rather than beside the UI suites.
+  set_tests_properties(omaroll_search_tests PROPERTIES RUN_SERIAL TRUE
+    ENVIRONMENT "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
   qt_add_executable(omaroll_editor_tests tests/tst_editors.cpp)
   target_link_libraries(omaroll_editor_tests PRIVATE omaroll_core Qt6::Test)
   add_test(NAME omaroll_editor_tests COMMAND omaroll_editor_tests)

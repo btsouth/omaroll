@@ -25,6 +25,7 @@
 #include "matte/MatteProvider.h"
 #include "pdf/PdfInspector.h"
 #include "pdf/PdfProvider.h"
+#include "search/DocumentTextIndex.h"
 #include "search/OcrIndex.h"
 #include "search/QrDetector.h"
 #include "subtitles/SubtitleIndex.h"
@@ -221,6 +222,7 @@ public:
         // enriched in the background after their fast filesystem scan lands.
         m_mediaMetadata(demo ? nullptr : &m_captures),
         m_textIndex(&m_captures),
+        m_documentText(&m_captures),
         m_qr(&m_captures),
         m_duplicates(&m_captures),
         m_similarities(&m_captures),
@@ -228,10 +230,22 @@ public:
     // QML only ever sees the proxy, so sorting and filtering can change
     // without any delegate knowing.
     m_library.setSourceModel(&m_captures);
-    QObject::connect(&m_library, &CaptureFilterModel::searchTextChanged, &m_textIndex,
-                     [this] { m_textIndex.setSearchText(m_library.searchText()); });
+    // Only plain words and phrases need recognized text; a query of field
+    // tokens such as type:video starts no indexing.
+    QObject::connect(&m_library, &CaptureFilterModel::searchTextChanged, &m_textIndex, [this] {
+      m_textIndex.setSearchText(m_library.textSearch());
+      m_documentText.setSearchText(m_library.textSearch());
+    });
     QObject::connect(&m_textIndex, &OcrIndex::textReady, &m_library,
                      &CaptureFilterModel::setOcrText);
+    // PDF text has a store of its own, so a file that changes between picture
+    // and PDF keeps each producer's text apart. Most of it can wait in the
+    // disk cache rather than memory.
+    QObject::connect(&m_documentText, &DocumentTextIndex::textReady, &m_library,
+                     &CaptureFilterModel::setDocumentText);
+    m_library.setDocumentTextLoader(&DocumentTextIndex::cachedText);
+    QObject::connect(&m_library, &CaptureFilterModel::documentTextLost, &m_documentText,
+                     &DocumentTextIndex::reread);
     QObject::connect(&m_library, &CaptureFilterModel::duplicatesOnlyChanged, &m_duplicates,
                      [this] { m_duplicates.setActive(m_library.duplicatesOnly()); });
     QObject::connect(&m_duplicates, &DuplicateIndex::groupsChanged, &m_library,
@@ -248,6 +262,7 @@ public:
                      [this, &settings] { m_similarities.setStrictness(settings.similarStrictness()); });
     m_textIndex.setScreenshotsOnly(settings.textIndexScreenshotsOnly());
     m_textIndex.setBackground(settings.backgroundTextIndex() && !demo);
+    m_documentText.setBackground(settings.backgroundTextIndex() && !demo);
     QObject::connect(&settings, &AppSettings::textIndexScreenshotsOnlyChanged, &m_textIndex,
                      [this, &settings] {
                        m_textIndex.setScreenshotsOnly(settings.textIndexScreenshotsOnly());
@@ -255,6 +270,7 @@ public:
     QObject::connect(&settings, &AppSettings::backgroundTextIndexChanged, &m_textIndex,
                      [this, &settings, demo] {
                        m_textIndex.setBackground(settings.backgroundTextIndex() && !demo);
+                       m_documentText.setBackground(settings.backgroundTextIndex() && !demo);
                      });
 
     // Restore what the user last chose, then keep the two in step. Doing it
@@ -290,6 +306,7 @@ public:
     m_context.setContextProperty(QStringLiteral("Matte"), &m_matte);
     m_context.setContextProperty(QStringLiteral("ImageEdit"), &m_imageEditor);
     m_context.setContextProperty(QStringLiteral("TextIndex"), &m_textIndex);
+    m_context.setContextProperty(QStringLiteral("DocumentText"), &m_documentText);
     m_context.setContextProperty(QStringLiteral("Qr"), &m_qr);
     m_context.setContextProperty(QStringLiteral("Subtitles"), &m_subtitles);
     m_context.setContextProperty(QStringLiteral("Duplicates"), &m_duplicates);
@@ -307,6 +324,7 @@ public:
     m_captures.requestStop();
     m_mediaMetadata.requestStop();
     m_textIndex.requestStop();
+    m_documentText.requestStop();
     m_duplicates.requestStop();
     m_similarities.requestStop();
   }
@@ -351,6 +369,7 @@ private:
   CaptureFilterModel m_library;
   FolderTreeModel m_folderTree;
   OcrIndex m_textIndex;
+  DocumentTextIndex m_documentText;
   QrDetector m_qr;
   SubtitleIndex m_subtitles;
   DuplicateIndex m_duplicates;
