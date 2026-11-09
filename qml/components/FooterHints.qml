@@ -2,7 +2,13 @@ import QtQuick
 
 Item {
     id: root
-    property var hints: ["Enter details", "Space act", "M background", "T trim", "V favourite", "Del trash", "/ search", "F9 folders"]
+    readonly property var hints: [
+        ["details", "details"], ["primary", "act"], ["matte", "background"],
+        ["trim", "trim"], ["favorite", "favourite"], ["trash", "trash"],
+        ["search", "search"], ["folders", "folders"]
+    ].map(function(hint) {
+        return ShortcutCatalog.display([ShortcutCatalog.sequence("library", hint[0])[0]]) + " " + hint[1]
+    })
     Row {
         id: row
         spacing: 16

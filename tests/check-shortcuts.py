@@ -10,6 +10,7 @@ rows = json.loads(source.split('R"shortcuts(', 1)[1].split(')shortcuts"', 1)[0])
 names = {'+': 'Plus', '=': 'Equal', '-': 'Minus', '_': 'Underscore', ',': 'Comma', '.': 'Period', '[': 'BracketLeft', ']': 'BracketRight', '?': 'Question', 'Esc': 'Escape', 'Del': 'Delete', 'PgUp': 'PageUp', 'PgDown': 'PageDown'}
 for context, file, implicit in [('quick', 'ViewerKeys.qml', {'2', '3', '4'}), ('library', 'CaptureGrid.qml', {'Left', 'Right', 'Up', 'Down', 'Escape', 'Question', 'F1', 'R', 'Slash', 'F9', 'A', 'D', 'O', 'Z', 'Plus', 'Equal', 'Minus', '0', '1', '2', '3', '4', '5', '6', '7', '8', 'Q', 'C'})]:
     handler = (root / 'qml/components' / file).read_text()
+    assert not re.search(r"Qt\.Key_", handler), "Shortcut key defined outside the table"
     actual = set(re.findall(rf'ShortcutCatalog\.{context}Keys\.(\w+)', handler))
     actual.update(re.findall(rf'ShortcutCatalog\.{context}Keys\["(\d+)"\]', handler))
     documented = set()
@@ -26,6 +27,7 @@ for context, file, implicit in [('quick', 'ViewerKeys.qml', {'2', '3', '4'}), ('
     # Library action handlers live in Main and registry, not CaptureGrid.
     if context == 'library':
         main = (root / 'qml/Main.qml').read_text()
+        assert not re.search(r'sequences?:\s*\[?"', main), "Library shortcut defined outside the table"
         registry = (root / 'src/actions/ActionRegistry.cpp').read_text()
         ids = set(re.findall(r'ShortcutCatalog.sequence\("library", "([^"]+)"\)', main))
         ids.update(re.findall(r'ShortcutTable::hint\(QStringLiteral\("library"\), QStringLiteral\("([^"]+)"\)\)', registry))

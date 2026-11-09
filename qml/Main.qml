@@ -1493,7 +1493,7 @@ ApplicationWindow {
         Text {
             anchors.left: parent.left
             anchors.leftMargin: 20
-            anchors.right: notice.undoable ? footerUndo.left : themeLabel.left
+            anchors.right: notice.undoable ? footerUndo.left : helpHint.left
             anchors.rightMargin: 16
             anchors.verticalCenter: parent.verticalCenter
             elide: Text.ElideRight
@@ -1524,7 +1524,7 @@ ApplicationWindow {
             objectName: "footerHints"
             anchors.left: parent.left
             anchors.leftMargin: 20
-            anchors.right: themeLabel.left
+            anchors.right: helpHint.left
             anchors.rightMargin: 16
             anchors.verticalCenter: parent.verticalCenter
             height: 16
@@ -1535,7 +1535,7 @@ ApplicationWindow {
         Text {
             id: footerUndo
             objectName: "footerUndoButton"
-            anchors.right: themeLabel.left
+            anchors.right: helpHint.left
             anchors.rightMargin: 16
             anchors.verticalCenter: parent.verticalCenter
             visible: notice.undoable
@@ -1561,11 +1561,11 @@ ApplicationWindow {
         }
 
         Text {
-            id: themeLabel
+            id: helpHint
             anchors.right: parent.right
             anchors.rightMargin: 20
             anchors.verticalCenter: parent.verticalCenter
-            text: "? Help"
+            text: ShortcutCatalog.sequence("library", "help")[0] + " Help"
             MouseArea { anchors.fill: parent; anchors.margins: -6; cursorShape: Qt.PointingHandCursor; onClicked: root.showShortcutHelp() }
             font.family: Theme.fontFamily
             font.pixelSize: 11
