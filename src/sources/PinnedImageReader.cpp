@@ -155,6 +155,7 @@ void PinnedImageReader::pin(const QByteArray& named, bool trustName,
       return;
     }
   }
+  if (!source->isSequential()) source->seek(start);
   const QByteArray content = sniff();
   // Nothing else listed reads it.
   if (content.isEmpty() || content == named) {
