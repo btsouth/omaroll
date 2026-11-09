@@ -42,6 +42,20 @@
   copy before every restore). If the settings file is damaged, Settings offers
   Restore last good backup. It asks first, says which day it restored, keeps
   the damaged file beside it and saves whatever organization it still held.
+- Search also matches tags, album names, folders, cameras, lenses and PDF
+  text, and ignores accents, so "cafe" finds "café" and "lodz" finds "Łódź".
+  PDF text is read in the background from the first 50 pages and cached,
+  pausing on battery, and most of a large PDF library's text waits in that
+  cache rather than in memory.
+- Search fields: `tag:`, `album:`, `in:`, `camera:`, `lens:`, `type:`,
+  `before:` and `after:`, plus quoted phrases and `-word` to leave matches out.
+  Typing a field suggests values from the library, and the help sheet lists
+  the syntax.
+- Browse choices combine, so a folder, date and camera narrow together. Each
+  active one shows as a chip with its own clear button, and saved views keep
+  the search and the album too. Older versions open those views with their
+  plain words only. Deleting an album or tag also deletes the saved views that
+  open it.
 - Flip horizontally and vertically in the viewer (`Shift+H`, `Shift+V`, the
   toolbar and the menu), view only like rotate, and reset on the next file.
 - Save rotated copy in the viewer (`Ctrl+S`) once the view is turned or
