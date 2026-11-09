@@ -5347,13 +5347,13 @@ private slots:
     QCOMPARE(setOf(QStringLiteral("coastal-wave.jpg")),
              QStringList({QStringLiteral("coastal-wave-2.jpg"), QStringLiteral("coastal-wave-3.jpg"),
                           QStringLiteral("coastal-wave.jpg")}));
-    // Pictures that never load keep the render waiting, so it times out
-    // instead of saving a half-drawn sheet.
+    // New pictures in the sheet keep the render waiting until they load, so
+    // it never saves a half-drawn sheet.
     QVERIFY(item("compareSheet")->isVisible());
-    item("compareSheet")->setProperty("paths", QStringList{QStringLiteral("/nonexistent/omaroll-a.png"),
-                                                           QStringLiteral("/nonexistent/omaroll-b.png")});
-    QCoreApplication::processEvents();
+    QStringList reversed(shown.crbegin(), shown.crend());
+    item("compareSheet")->setProperty("paths", reversed);
     QVERIFY(!ready());
+    QTRY_VERIFY_WITH_TIMEOUT(ready(), 10000);
   }
 
   void permanentDeleteUsesCapturedSelectionAndConfirmsInTheDetailViewer() {
