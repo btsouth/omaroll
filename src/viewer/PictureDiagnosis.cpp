@@ -7,6 +7,7 @@
 #include <QImageReader>
 #include <QMimeDatabase>
 
+#include <algorithm>
 #include <cstring>
 
 namespace PictureDiagnosis {
@@ -21,55 +22,101 @@ quint32 bigEndian32(const uchar* data) {
          quint32(data[3]);
 }
 
+// The file read in chunks rather than mapped: a file cut short while it is
+// checked, which the viewer's file watcher reruns this for, ends the walk
+// instead of faulting on a page that is gone.
+class Bytes {
+public:
+  explicit Bytes(QFile& file) : m_file(file), m_size(file.size()) {}
+  [[nodiscard]] qint64 size() const { return m_size; }
+
+  // The byte at |pos|, or -1 past the end.
+  int at(qint64 pos) {
+    if (pos < 0 || pos >= m_size) return -1;
+    if (pos < m_base || pos >= m_base + m_chunk.size()) {
+      m_base = pos;
+      m_chunk = m_file.seek(pos) ? m_file.read(kChunk) : QByteArray();
+      // A short read is a file that shrank since it was opened.
+      if (m_chunk.size() < kChunk) m_size = std::min(m_size, pos + m_chunk.size());
+      if (m_chunk.isEmpty()) return -1;
+    }
+    return uchar(m_chunk.at(pos - m_base));
+  }
+
+  bool read(qint64 pos, uchar* out, int count) {
+    for (int i = 0; i < count; ++i) {
+      const int value = at(pos + i);
+      if (value < 0) return false;
+      out[i] = uchar(value);
+    }
+    return true;
+  }
+
+private:
+  static constexpr qint64 kChunk = 64 * 1024;
+  QFile& m_file;
+  qint64 m_size;
+  qint64 m_base = 0;
+  QByteArray m_chunk;
+};
+
 enum class Ending { Complete, CutOff, Garbled };
 
 // Walks the segments and the entropy-coded data between them to the
 // end-of-image marker. Data after it, such as the video a motion photo
 // appends, is fine. Running out of bytes first is a cut-off file; something
 // other than a marker where one belongs is a damaged one.
-Ending jpegEnding(const uchar* data, qint64 size) {
-  if (size >= 2 && data[size - 2] == 0xFF && data[size - 1] == 0xD9) return Ending::Complete;
+Ending jpegEnding(Bytes& bytes) {
+  const qint64 size = bytes.size();
+  if (bytes.at(size - 2) == 0xFF && bytes.at(size - 1) == 0xD9) return Ending::Complete;
   qint64 at = 2;
-  while (at < size) {
-    if (data[at] != 0xFF) return Ending::Garbled;
-    while (at < size && data[at] == 0xFF) ++at;
-    if (at >= size) return Ending::CutOff;
-    const uchar marker = data[at++];
+  for (;;) {
+    int value = bytes.at(at);
+    if (value < 0) return Ending::CutOff;
+    if (value != 0xFF) return Ending::Garbled;
+    while ((value = bytes.at(at)) == 0xFF) ++at;
+    if (value < 0) return Ending::CutOff;
+    const int marker = value;
+    ++at;
     if (marker == 0xD9) return Ending::Complete;
     if (marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7)) continue;
     if (marker == 0x00) return Ending::Garbled;
-    if (at + 2 > size) return Ending::CutOff;
-    const qint64 length = (qint64(data[at]) << 8) | data[at + 1];
+    const int high = bytes.at(at);
+    const int low = bytes.at(at + 1);
+    if (high < 0 || low < 0) return Ending::CutOff;
+    const qint64 length = (qint64(high) << 8) | low;
     if (length < 2) return Ending::Garbled;
     at += length;
-    if (at > size) return Ending::CutOff;
+    if (at > bytes.size()) return Ending::CutOff;
     if (marker != 0xDA) continue;
     // Scan data: a marker is 0xFF followed by anything but a stuffed zero
     // or a restart marker.
-    while (at + 1 < size) {
-      if (data[at] == 0xFF && data[at + 1] != 0x00 &&
-          !(data[at + 1] >= 0xD0 && data[at + 1] <= 0xD7)) {
-        break;
-      }
+    for (;;) {
+      const int first = bytes.at(at);
+      const int second = bytes.at(at + 1);
+      if (first < 0 || second < 0) return Ending::CutOff;
+      if (first == 0xFF && second != 0x00 && !(second >= 0xD0 && second <= 0xD7)) break;
       ++at;
     }
-    if (at + 1 >= size) return Ending::CutOff;
   }
-  return Ending::CutOff;
 }
 
-Ending pngEnding(const uchar* data, qint64 size) {
+Ending pngEnding(Bytes& bytes) {
   static const uchar iend[] = {0, 0, 0, 0, 'I', 'E', 'N', 'D', 0xAE, 0x42, 0x60, 0x82};
-  if (size >= 12 && memcmp(data + size - 12, iend, 12) == 0) return Ending::Complete;
+  uchar tail[12];
+  if (bytes.read(bytes.size() - 12, tail, 12) && memcmp(tail, iend, 12) == 0) {
+    return Ending::Complete;
+  }
   qint64 at = 8;
-  while (at + 8 <= size) {
-    const qint64 length = bigEndian32(data + at);
+  uchar head[8];
+  while (bytes.read(at, head, 8)) {
+    const qint64 length = bigEndian32(head);
     for (int i = 4; i < 8; ++i) {
-      const uchar letter = data[at + i];
+      const uchar letter = head[i];
       if (!((letter >= 'A' && letter <= 'Z') || (letter >= 'a' && letter <= 'z')))
         return Ending::Garbled;
     }
-    if (memcmp(data + at + 4, "IEND", 4) == 0) return Ending::Complete;
+    if (memcmp(head + 4, "IEND", 4) == 0) return Ending::Complete;
     at += 12 + length;
   }
   return Ending::CutOff;
@@ -90,15 +137,13 @@ QString article(QString noun) {
 QString truncation(const QString& path) {
   QFile file(path);
   if (!file.open(QIODevice::ReadOnly)) return {};
-  const qint64 size = file.size();
-  if (size < 8) return {};
-  const uchar* data = file.map(0, size);
-  if (!data) return {};
-  const bool jpeg = data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF;
+  Bytes bytes(file);
+  uchar head[8];
+  if (bytes.size() < 8 || !bytes.read(0, head, 8)) return {};
+  const bool jpeg = head[0] == 0xFF && head[1] == 0xD8 && head[2] == 0xFF;
   static const uchar signature[] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
-  const bool png = memcmp(data, signature, 8) == 0;
-  const Ending ending = jpeg ? jpegEnding(data, size) : png ? pngEnding(data, size) : Ending::Complete;
-  file.unmap(const_cast<uchar*>(data));
+  const bool png = memcmp(head, signature, 8) == 0;
+  const Ending ending = jpeg ? jpegEnding(bytes) : png ? pngEnding(bytes) : Ending::Complete;
   return ending == Ending::CutOff ? kCutOff : QString();
 }
 
