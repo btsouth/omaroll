@@ -1426,11 +1426,13 @@ private slots:
 
     // A band that touches no tile, drawn in the empty end of a short row,
     // replaces a Shift range with nothing.
+    QStringList firstThree{added.at(0), added.at(1), added.at(2)};
+    firstThree.sort();
     QTRY_VERIFY((card = cardFor(added.at(0))) != nullptr);
     QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, centre(card));
     QTRY_VERIFY((card = cardFor(added.at(2))) != nullptr);
     QTest::mouseClick(m_window, Qt::LeftButton, Qt::ShiftModifier, centre(card));
-    QTRY_COMPARE(checkedPaths(), (QStringList{added.at(0), added.at(1), added.at(2)}));
+    QTRY_COMPARE(checkedPaths(), firstThree);
     QQuickItem* last = nullptr;
     QTRY_VERIFY((last = cardFor(added.at(dayFirst.at(1) + 1))) != nullptr);
     const qreal cell = grid->property("cellWidth").toReal();
@@ -1447,7 +1449,7 @@ private slots:
     // Shift+click on the same end again builds on that empty selection.
     QTRY_VERIFY((card = cardFor(added.at(2))) != nullptr);
     QTest::mouseClick(m_window, Qt::LeftButton, Qt::ShiftModifier, centre(card));
-    QTRY_COMPARE(checkedPaths(), (QStringList{added.at(0), added.at(1), added.at(2)}));
+    QTRY_COMPARE(checkedPaths(), firstThree);
     QCOMPARE(grid->property("checkedCount").toInt(), 3);
     QVERIFY2(selectionConsistent(grid, &why), qPrintable(why));
     QMetaObject::invokeMethod(grid, "clearChecked");
