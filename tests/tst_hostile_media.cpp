@@ -566,6 +566,19 @@ private slots:
     QVERIFY(estimate.valid());
     QVERIFY(!estimate.direct);
     QVERIFY(!ThumbnailCache::thumbnail(renamed, QSize(64, 64), 1.0).isNull());
+    // Also after a decoder that reads into the file before refusing it.
+    for (const char* name : {"jpeg-inside.gif", "jpeg-inside.webp", "png-inside.gif"}) {
+      PinnedImageReader other(m_dir.filePath(QLatin1String(name)));
+      QVERIFY2(other.canRead() && other.renamed(), name);
+      QVERIFY2(other.read().size() == QSize(24, 18), name);
+    }
+    // Bytes from elsewhere, under a type that is wrong.
+    QBuffer bytes;
+    bytes.setData(jpegBytes(QSize(24, 18)));
+    QVERIFY(bytes.open(QIODevice::ReadOnly));
+    PinnedImageReader fromBytes(&bytes, "gif");
+    QVERIFY(fromBytes.canRead() && fromBytes.renamed());
+    QCOMPARE(fromBytes.read().size(), QSize(24, 18));
     // So does a picture whose name is right, read directly.
     QVERIFY(ImageBudget::estimate(m_dir.filePath(QStringLiteral("tiny.jpg"))).direct);
   }
@@ -1045,6 +1058,9 @@ private:
       if (!put(name, timCrashInput())) return false;
     }
     if (!put("png-inside.jpg", pngBytes(QSize(24, 18)))) return false;
+    if (!put("jpeg-inside.gif", jpegBytes(QSize(24, 18)))) return false;
+    if (!put("jpeg-inside.webp", jpegBytes(QSize(24, 18)))) return false;
+    if (!put("png-inside.gif", pngBytes(QSize(24, 18)))) return false;
     if (!put("text.pdf", "Not a document.\n")) return false;
     if (!put("empty.png", QByteArray())) return false;
     if (!put("empty.jpg", QByteArray())) return false;

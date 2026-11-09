@@ -146,6 +146,8 @@ void PinnedImageReader::pin(const QByteArray& named, bool trustName,
     setDevice(nullptr);
     return;
   }
+  // Where the picture starts, before the name's decoder looks.
+  const qint64 start = source->isSequential() ? 0 : source->pos();
   if (!named.isEmpty()) {
     setFormat(named);
     if (trustName || QImageReader::canRead()) {
@@ -159,10 +161,11 @@ void PinnedImageReader::pin(const QByteArray& named, bool trustName,
     refuse();
     return;
   }
-  // Drops the decoder that refused it, keeping the open device.
-  const qint64 start = source->isSequential() ? 0 : source->pos();
+  // Drops the decoder that refused it, keeping the open device, back at the
+  // picture's start: the refusing decoder may have read past it.
   if (fileName().isEmpty()) {
     setDevice(source);
+    if (!source->isSequential()) source->seek(start);
   } else {
     const QString file = fileName();
     setFileName(file);
@@ -172,7 +175,6 @@ void PinnedImageReader::pin(const QByteArray& named, bool trustName,
       return;
     }
   }
-  if (!source->isSequential()) source->seek(start);
   setFormat(content);
   m_renamed = true;
   m_pinned = QImageReader::canRead();
