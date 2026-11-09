@@ -24,6 +24,10 @@ Everything works locally, without accounts or telemetry.
 
 [Watch the 38-second demo](https://btsouth.github.io/omaroll/docs/omaroll-demo.mp4?v=1.18.0)
 
+Press **?** or **F1** in the viewer, library or library preview for searchable,
+context-specific shortcut help. Settings includes About and **Copy diagnostics**
+for bug reports.
+
 ## Install or update
 
 Requires Omarchy or Arch Linux on x86_64 or aarch64, with Qt 6.8+ and Poppler.

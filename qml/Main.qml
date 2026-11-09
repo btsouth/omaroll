@@ -4,6 +4,9 @@ import Omaroll
 
 ApplicationWindow {
     id: root
+    readonly property bool tooltipsBlocked: root.popupOpen
+    property bool keyboardNavigation: false
+    TapHandler { acceptedButtons: Qt.AllButtons; onPressedChanged: if (pressed) root.keyboardNavigation = false }
 
     width: 1180
     height: 780
@@ -58,7 +61,7 @@ ApplicationWindow {
                                       || correctionSheet.visible
                                       || batchSheet.visible
                                       || compareSheet.visible
-                                      || libraryBrowser.visible || settingsSheet.visible
+                                      || libraryBrowser.visible || settingsSheet.visible || shortcutHelp.visible
                                       || albumNameSheet.visible
                                       || exportSheet.visible || renameSheet.visible
                                       || tailscaleSheet.visible || textReviewSheet.visible
@@ -1018,6 +1021,13 @@ ApplicationWindow {
 
             PillButton {
                 anchors.verticalCenter: parent.verticalCenter
+                label: "Help"
+                shortcut: ShortcutCatalog.display(ShortcutCatalog.sequence("library", "help"))
+                onClicked: root.showShortcutHelp()
+            }
+
+            PillButton {
+                anchors.verticalCenter: parent.verticalCenter
                 label: "⚙"
                 accessibleName: "Settings"
                 toolTip: "Settings"
@@ -1483,7 +1493,7 @@ ApplicationWindow {
         Text {
             anchors.left: parent.left
             anchors.leftMargin: 20
-            anchors.right: notice.undoable ? footerUndo.left : themeLabel.left
+            anchors.right: notice.undoable ? footerUndo.left : helpHint.left
             anchors.rightMargin: 16
             anchors.verticalCenter: parent.verticalCenter
             elide: Text.ElideRight
@@ -1502,7 +1512,7 @@ ApplicationWindow {
                   ? notice.text
                   : making !== ""
                   ? making
-                  : "Enter details   ·   Space act   ·   M background   ·   T trim   ·   V favourite   ·   Del trash   ·   / search   ·   F9 folders"
+                  : ""
             font.family: Theme.fontFamily
             font.pixelSize: 11
             color: notice.text !== "" || making !== ""
@@ -1510,11 +1520,22 @@ ApplicationWindow {
             Behavior on color { ColorAnimation { duration: 180 } }
         }
 
+        FooterHints {
+            objectName: "footerHints"
+            anchors.left: parent.left
+            anchors.leftMargin: 20
+            anchors.right: helpHint.left
+            anchors.rightMargin: 16
+            anchors.verticalCenter: parent.verticalCenter
+            height: 16
+            visible: notice.text === "" && Actions.pendingOutputs.length === 0
+        }
+
         // Undo for the result on the left, such as a move to Trash.
         Text {
             id: footerUndo
             objectName: "footerUndoButton"
-            anchors.right: themeLabel.left
+            anchors.right: helpHint.left
             anchors.rightMargin: 16
             anchors.verticalCenter: parent.verticalCenter
             visible: notice.undoable
@@ -1540,11 +1561,12 @@ ApplicationWindow {
         }
 
         Text {
-            id: themeLabel
+            id: helpHint
             anchors.right: parent.right
             anchors.rightMargin: 20
             anchors.verticalCenter: parent.verticalCenter
-            text: Library.scanning ? "Scanning…" : Theme.themeName
+            text: Library.scanning ? "Scanning…" : ShortcutCatalog.sequence("library", "help")[0] + " Help"
+            MouseArea { anchors.fill: parent; anchors.margins: -6; cursorShape: Qt.PointingHandCursor; onClicked: root.showShortcutHelp() }
             font.family: Theme.fontFamily
             font.pixelSize: 11
             color: Theme.mutedText
@@ -1882,9 +1904,24 @@ ApplicationWindow {
         function onFailed(message) { root.say(message) }
     }
 
+    function showShortcutHelp() {
+        shortcutHelp.context = detail.visible ? "preview" : "library"
+        shortcutHelp.open()
+    }
+    ShortcutHelp {
+        id: shortcutHelp
+        objectName: "libraryShortcutHelp"
+        onClosed: root.restoreFocusAfterSheet()
+    }
+    Shortcut {
+        sequences: ShortcutCatalog.sequence("library", "help")
+        enabled: !root.modalOpen && !root.popupOpen
+        onActivated: root.showShortcutHelp()
+    }
+
     // Shortcuts. All disabled while a sheet is open, which owns its own keys.
     Shortcut {
-        sequence: "Ctrl+Shift+C"
+        sequences: ShortcutCatalog.sequence("library", "copy-path")
         enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: root.perform("copy-path", root.currentPath())
     }
@@ -1924,12 +1961,12 @@ ApplicationWindow {
         onActivated: root.perform("annotate", root.currentPath())
     }
     Shortcut {
-        sequences: ["D", "O"]
+        sequences: ShortcutCatalog.sequence("library", "develop")
         enabled: !root.anySheetOpen && !root.popupOpen && !filters.searchActive
         onActivated: root.perform("develop", root.currentPath())
     }
     Shortcut {
-        sequences: ["Shift+D", "Shift+O"]
+        sequences: ShortcutCatalog.sequence("library", "choose-editor")
         enabled: !root.anySheetOpen && !root.popupOpen && !filters.searchActive
         onActivated: root.perform("choose-editor", root.currentPath())
     }
@@ -1972,13 +2009,13 @@ ApplicationWindow {
     }
     // Undo the destructive organization marks, from the grid or the viewer.
     Shortcut {
-        sequences: ["Ctrl+Z"]
+        sequences: ShortcutCatalog.sequence("library", "undo")
         enabled: !root.modalOpen && !root.popupOpen && !filters.searchActive
                  && !detail.captionEditing && Settings.undoAvailable
         onActivated: root.undo()
     }
     Shortcut {
-        sequences: ["Shift+Del"]
+        sequences: ShortcutCatalog.sequence("library", "delete")
         autoRepeat: false
         enabled: !root.anySheetOpen && !root.popupOpen && !filters.searchActive
         onActivated: root.requestPermanentDelete(library.checkedCount > 0
@@ -2003,12 +2040,12 @@ ApplicationWindow {
         onActivated: root.perform("open-with", root.currentPath())
     }
     Shortcut {
-        sequences: ["R"]
+        sequences: ShortcutCatalog.sequence("library", "refresh")
         enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: Library.refresh()
     }
     Shortcut {
-        sequences: ["/"]
+        sequences: ShortcutCatalog.sequence("library", "search")
         enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: filters.focusSearch()
     }
@@ -2019,7 +2056,7 @@ ApplicationWindow {
             id: sectionKey
             required property int index
             Shortcut {
-                sequences: [filters.sectionShortcut(sectionKey.index)]
+                sequences: [ShortcutCatalog.sequence("library", "sections")[sectionKey.index]]
                 enabled: !root.anySheetOpen && !root.popupOpen
                 onActivated: filters.selectSection(sectionKey.index)
             }
@@ -2034,47 +2071,47 @@ ApplicationWindow {
             id: ratingKey
             required property int index
             Shortcut {
-                sequences: ["Alt+" + ratingKey.index]
+                sequences: [ShortcutCatalog.sequence("library", "rating")[ratingKey.index]]
                 enabled: !root.modalOpen && !root.popupOpen && !filters.searchActive
                 onActivated: root.rate(ratingKey.index)
             }
         }
     }
     Shortcut {
-        sequences: ["Ctrl+A"]
+        sequences: ShortcutCatalog.sequence("library", "select-all")
         enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: library.checkAll()
     }
     Shortcut {
-        sequences: ["F9"]
+        sequences: ShortcutCatalog.sequence("library", "folders")
         autoRepeat: false
         enabled: !root.anySheetOpen && !root.popupOpen && !filters.searchActive
         onActivated: Settings.showFolderSidebar = !Settings.showFolderSidebar
     }
     // Tile size, the way every browser and file manager does it.
     Shortcut {
-        sequences: ["Ctrl++", "Ctrl+="]
+        sequences: ShortcutCatalog.sequence("library", "larger")
         enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: Settings.tileWidth += library.tileStep
     }
     Shortcut {
-        sequences: ["Ctrl+-"]
+        sequences: ShortcutCatalog.sequence("library", "smaller")
         enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: Settings.tileWidth -= library.tileStep
     }
     Shortcut {
-        sequences: ["Ctrl+0"]
+        sequences: ShortcutCatalog.sequence("library", "reset")
         enabled: !root.anySheetOpen && !root.popupOpen
         onActivated: Settings.tileWidth = 240
     }
     Shortcut {
-        sequences: [StandardKey.Quit]
+        sequences: ShortcutCatalog.sequence("library", "quit")
         onActivated: Qt.quit()
     }
     // Sheets can move focus into a child control, so Escape is owned here at
     // window scope. With no sheet, the search field still owns its Escape.
     Shortcut {
-        sequences: ["Escape"]
+        sequences: ShortcutCatalog.sequence("library", "escape")
         enabled: !root.popupOpen && (root.anySheetOpen || !filters.searchActive)
         onActivated: {
             // Unwind the viewer's editor/menu before PDF selection or preview.

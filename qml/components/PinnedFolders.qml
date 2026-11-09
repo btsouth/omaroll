@@ -121,8 +121,8 @@ Rectangle {
                 onClicked: Settings.unpinFolder(chip.modelData)
             }
 
-            ToolTip {
-                visible: chip.hovered
+            ThemedToolTip {
+                requested: chip.hovered
                 text: chip.modelData
                 delay: 500
             }

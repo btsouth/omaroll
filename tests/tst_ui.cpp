@@ -44,6 +44,7 @@
 #include "viewer/MprisService.h"
 
 #include <QAccessible>
+#include <QJSValue>
 #include <QAudioBuffer>
 #include <QAudioBufferOutput>
 #include <QAudioDevice>
@@ -176,6 +177,66 @@ class UiTest : public QObject {
   Q_OBJECT
 
 private slots:
+  void helpFiltersByContextAndDiagnosticsArePrivate() {
+    const auto restoreSize = qScopeGuard([&] { m_window->resize(1280, 820); });
+    m_window->resize(1920, 1080);
+    QObject* help = m_window->findChild<QObject*>(QStringLiteral("libraryShortcutHelp"));
+    QVERIFY(help);
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(help->property("visible").toBool());
+    QCOMPARE(help->property("context").toString(), QStringLiteral("library"));
+    auto* content = help->property("contentItem").value<QQuickItem*>();
+    QVERIFY(content);
+    auto* scroll = content->findChild<QQuickItem*>(QStringLiteral("viewerShortcutScroll"));
+    QVERIFY(scroll);
+    auto* flick = scroll->property("contentItem").value<QQuickItem*>();
+    QVERIFY(flick);
+    QTRY_VERIFY(flick->property("contentHeight").toReal() <= flick->height());
+    help->setProperty("filter", QStringLiteral("zz-no-match-zz"));
+    QCoreApplication::processEvents();
+    const auto groups = help->property("groups").value<QJSValue>();
+    QCOMPARE(groups.property(QStringLiteral("length")).toInt(), 0);
+    help->setProperty("filter", QStringLiteral("search"));
+    QCoreApplication::processEvents();
+    QVERIFY(help->property("groups").value<QJSValue>().property(QStringLiteral("length")).toInt() > 0);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!help->property("visible").toBool());
+    openDetail(0);
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(help->property("visible").toBool());
+    QCOMPARE(help->property("context").toString(), QStringLiteral("preview"));
+    QTRY_VERIFY(flick->property("contentHeight").toReal() <= flick->height());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!help->property("visible").toBool());
+    const QString report = m_settings->diagnostics(QDir::homePath() + QStringLiteral("/theme"), 1.5);
+    QVERIFY(!report.contains(QDir::homePath()));
+    QVERIFY(report.contains(QStringLiteral("Qt: ")));
+    QVERIFY(report.contains(QStringLiteral("Scale factor: 1.5")));
+    QVERIFY(report.contains(QStringLiteral("ffmpeg: ")));
+  }
+
+  void footerDropsWholeHintsAtNarrowWidth() {
+    const auto restoreSize = qScopeGuard([&] { m_window->resize(1280, 820); });
+    m_window->resize(560, 700);
+    QCoreApplication::processEvents();
+    auto* hints = m_window->findChild<QQuickItem*>(QStringLiteral("footerHints"));
+    QVERIFY(hints);
+    int visible = 0;
+    const auto visit = [&](auto&& self, QQuickItem* parent) -> void {
+      for (auto* child : parent->childItems()) {
+        if (child->isVisible() && child->property("text").isValid()) {
+          ++visible;
+          QCOMPARE(child->property("elide").toInt(), 3); // Text.ElideNone
+          QVERIFY(child->mapToItem(hints, QPointF(child->width(), 0)).x() <= hints->width() + 1);
+        }
+        self(self, child);
+      }
+    };
+    visit(visit, hints);
+    QVERIFY(visible > 0);
+    QVERIFY(visible < 8);
+  }
+
   void initTestCase() {
     QVERIFY(m_scratch.isValid());
     QQuickStyle::setStyle(QStringLiteral("Basic"));
@@ -496,14 +557,31 @@ private slots:
     QTRY_VERIFY(filenameTip());
     QCOMPARE(filenameTip()->property("text").toString(), m_library->fileNameAt(0));
     QTRY_VERIFY(cardFor(path) && cardFor(path)->property("keyboardCurrent").toBool());
+    // Initial selection alone must not leave a keyboard tooltip behind.
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTest::keyClick(m_window, Qt::Key_Left);
     QTRY_VERIFY_WITH_TIMEOUT(filenameTip() && filenameTip()->property("visible").toBool(), 1500);
     QVERIFY(QMetaObject::invokeMethod(m_window, "openContextMenu", Q_ARG(QVariant, 0),
                                     Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
+    QTRY_VERIFY(filenameTip() && !filenameTip()->property("visible").toBool());
     QQuickItem* rename = item("contextAction_rename");
     QCOMPARE(rename->property("text").toString(), QStringLiteral("Rename"));
     auto* namedAction = QAccessible::queryAccessibleInterface(rename);
     QVERIFY(namedAction);
     QCOMPARE(namedAction->text(QAccessible::Name), QStringLiteral("Rename"));
+    // Once the menu closes, moving with the keyboard shows tips again, on
+    // other tiles and on the one that was up.
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(item("library")->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Right);
+    const auto tipOn = [&](int row) {
+      QQuickItem* live = cardFor(pathAt(row));
+      QObject* tip = live ? live->findChild<QObject*>(QStringLiteral("captureFilenameTip")) : nullptr;
+      return tip && tip->property("visible").toBool();
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(tipOn(1), 1500);
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QTRY_VERIFY_WITH_TIMEOUT(tipOn(0), 1500);
   }
 
   void filenameToggleKeepsCardAndThumbnailDimensions() {
@@ -4396,6 +4474,18 @@ private slots:
     QVERIFY(picture.save(second));
     m_captures->addExtraFiles({first, second});
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(second) >= 0, 10000);
+    // Let the tile's thumbnail load before the file becomes a directory, or
+    // its late request logs a warning the final check would count.
+    const auto thumbnailSettled = [&] {
+      QQuickItem* card = cardFor(second);
+      if (!card) return true; // not on screen, so never requested
+      QQuickItem* thumbnail = find(card, [](QQuickItem* candidate) {
+        return candidate->property("source").toUrl().toString().startsWith(QStringLiteral("image://thumbs/"));
+      });
+      const int status = thumbnail ? thumbnail->property("status").toInt() : 1;
+      return status == 1 || status == 3; // Image.Ready or Image.Error
+    };
+    QTRY_VERIFY(thumbnailSettled());
     QVERIFY(QMetaObject::invokeMethod(m_window, "requestPermanentDelete",
                                      Q_ARG(QVariant, QVariant(QStringList{first, second}))));
     QTRY_VERIFY(item("permanentConfirm")->isVisible());

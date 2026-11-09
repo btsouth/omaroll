@@ -782,8 +782,8 @@ FocusScope {
                     }
 
                     HoverHandler { id: rowHover }
-                    ToolTip {
-                        visible: root.section === 0 && rowHover.hovered
+                    ThemedToolTip {
+                        requested: root.section === 0 && rowHover.hovered
                         text: choiceRow.value
                         delay: 500
                     }

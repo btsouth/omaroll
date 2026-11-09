@@ -196,8 +196,8 @@ Rectangle {
                     cursorShape: Qt.PointingHandCursor
                     onClicked: root.folderRequested()
                 }
-                ToolTip {
-                    visible: folderMouse.containsMouse
+                ThemedToolTip {
+                    requested: folderMouse.containsMouse
                     text: "Open containing folder"
                     delay: 500
                 }

@@ -199,6 +199,35 @@ Item {
                 color: root.shade(Theme.foreground, 0.12)
             }
 
+            Column {
+                width: parent.width
+                spacing: 8
+                Text {
+                    text: "About Omaroll"
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 14
+                    color: Theme.brightForeground
+                }
+                Text {
+                    text: "Omaroll " + Settings.appVersion + " · Qt " + Settings.qtVersion
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 12
+                    color: Theme.foreground
+                }
+                Flow {
+                    width: parent.width
+                    spacing: 8
+                    PillButton { label: "Changelog"; onClicked: Qt.openUrlExternally("https://github.com/btsouth/omaroll/blob/main/CHANGELOG.md") }
+                    PillButton { label: "Homepage"; onClicked: Qt.openUrlExternally("https://btsouth.github.io/omaroll/") }
+                    PillButton { label: "Report an issue"; onClicked: Qt.openUrlExternally("https://github.com/btsouth/omaroll/issues") }
+                    PillButton {
+                        objectName: "copyDiagnostics"
+                        label: "Copy diagnostics"
+                        onClicked: { Settings.copyDiagnostics(Theme.themeName, root.Screen.devicePixelRatio); label = "Diagnostics copied" }
+                    }
+                }
+            }
+
             Text {
                 width: parent.width
                 visible: Settings.organizationError !== ""

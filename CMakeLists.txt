@@ -191,11 +191,16 @@ set(OMAROLL_QML_FILES
   qml/components/IconButton.qml
   qml/components/ViewerInfoPanel.qml
   qml/components/ViewerKeys.qml
-  qml/components/ViewerShortcutHelp.qml
+  qml/components/ShortcutHelp.qml
+  qml/components/ShortcutCatalog.qml
+  qml/components/ThemedToolTip.qml
+  qml/components/FooterHints.qml
   qml/components/ViewerFilmstrip.qml
   qml/components/ViewerToolbar.qml
   qml/components/ViewerTransport.qml
 )
+
+set_source_files_properties(qml/components/ShortcutCatalog.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 qt_add_qml_module(omaroll
   URI Omaroll
@@ -250,6 +255,11 @@ install(FILES PRIVACY.md SUPPORT.md CHANGELOG.md
 # Tests
 include(CTest)
 if(BUILD_TESTING)
+  # Packaging builds may lack Python; the check runs wherever it is present.
+  find_package(Python3 COMPONENTS Interpreter)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME omaroll_shortcut_coverage COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/check-shortcuts.py)
+  endif()
   target_compile_definitions(omaroll_core PUBLIC OMAROLL_TESTING)
   add_executable(omaroll_benchmark_library EXCLUDE_FROM_ALL tests/benchmark_library.cpp)
   target_link_libraries(omaroll_benchmark_library PRIVATE omaroll_core)
@@ -309,6 +319,9 @@ if(BUILD_TESTING)
   foreach(qml_file IN LISTS OMAROLL_QML_FILES)
     get_filename_component(qml_name ${qml_file} NAME_WE)
     file(CREATE_LINK ${CMAKE_SOURCE_DIR}/${qml_file} ${uitest_module}/${qml_name}.qml SYMBOLIC)
+    if(qml_name STREQUAL "ShortcutCatalog")
+      string(APPEND uitest_qmldir "singleton ")
+    endif()
     string(APPEND uitest_qmldir "${qml_name} 1.0 ${qml_name}.qml\n")
   endforeach()
   file(WRITE ${uitest_module}/qmldir "${uitest_qmldir}")

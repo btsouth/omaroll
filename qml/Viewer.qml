@@ -9,6 +9,10 @@ import Omaroll
 // workbench belong to the library, one key away.
 ApplicationWindow {
     id: root
+    readonly property bool tooltipsBlocked: root.blockingActionOpen
+    property bool keyboardNavigation: false
+    TapHandler { acceptedButtons: Qt.AllButtons; onPressedChanged: if (pressed) root.keyboardNavigation = false }
+
 
     width: 1180
     height: 780
@@ -752,13 +756,7 @@ ApplicationWindow {
     // The keys a viewer is expected to have, and what the menu shows beside
     // each entry. They are this window's own: F is full screen here, as in
     // every player, rather than the library's Open containing folder.
-    readonly property var viewerShortcuts: ({
-        library: "Enter", copy: "Y", "open-with": "Ctrl+O", annotate: "A", develop: "D", "choose-editor": "Shift+D", send: "S", trim: "T", frame: "G",
-        play: "P", rotate: "R", slideshow: "F5", fullscreen: "F", info: "I", filmstrip: "B",
-        "video-loop": "Shift+L", "audio-track": "Shift+A",
-        "subtitles-earlier": "Z", "subtitles-later": "X",
-        favorite: "V", trash: "Del", "copy-path": "Ctrl+Shift+C", "fit-width": "W", fill: "Shift+W", help: "? / F1", fit: "0", actual: "1"
-    })
+    readonly property var viewerShortcuts: ShortcutCatalog.quickHints
 
     // Handed-off actions, in the order the menu offers them. Only what is
     // installed and suits the medium is shown.
@@ -1713,7 +1711,7 @@ ApplicationWindow {
                     objectName: "viewerInfoButton"
                     icon: "info"
                     toolTip: root.infoOpen ? "Hide details" : "Details"
-                    shortcut: "I"
+                    shortcut: root.viewerShortcuts.info
                     active: root.infoOpen
                     onClicked: root.infoOpen = !root.infoOpen
                 }
@@ -1721,7 +1719,7 @@ ApplicationWindow {
                     objectName: "viewerLibraryButton"
                     icon: "grid"
                     toolTip: "Open in library"
-                    shortcut: "Enter"
+                    shortcut: root.viewerShortcuts.library
                     onClicked: Session.openInLibrary()
                 }
                 IconButton {
@@ -1753,7 +1751,7 @@ ApplicationWindow {
             icon: "chevron-left"
             iconSize: 20
             toolTip: "Previous"
-            shortcut: Session.isVideo ? "Page Up" : "Left"
+            shortcut: ShortcutCatalog.display([ShortcutCatalog.sequence("quick", Session.isVideo ? "step" : "previous")[0]])
             onClicked: root.step(-1)
         }
         IconButton {
@@ -1770,7 +1768,7 @@ ApplicationWindow {
             icon: "chevron-right"
             iconSize: 20
             toolTip: "Next"
-            shortcut: Session.isVideo ? "Page Down" : "Right"
+            shortcut: ShortcutCatalog.display([ShortcutCatalog.sequence("quick", Session.isVideo ? "step" : "previous")[1]])
             onClicked: root.step(1)
         }
 
@@ -2074,7 +2072,7 @@ ApplicationWindow {
         }
     }
 
-    ViewerShortcutHelp {
+    ShortcutHelp {
         id: shortcutHelp
         objectName: "viewerShortcutHelp"
         video: Session.isVideo

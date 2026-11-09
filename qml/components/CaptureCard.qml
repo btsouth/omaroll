@@ -56,9 +56,10 @@ Item {
     Accessible.onPressAction: root.chosen()
     Accessible.onToggleAction: root.toggleChecked()
 
-    ToolTip {
+    ThemedToolTip {
         objectName: "captureFilenameTip"
-        visible: root.fileName !== "" && (hover.hovered || root.keyboardCurrent)
+        requested: hover.hovered
+        keyboardRequested: root.keyboardCurrent && root.Window.window && root.Window.window.keyboardNavigation === true
         text: root.fileName
         delay: 600
     }
