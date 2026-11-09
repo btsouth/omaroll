@@ -40,6 +40,7 @@
 
 ### Fixed
 
+- `Ctrl+Q` quits again from the viewer and the library.
 - Similar pictures no longer puts different screenshots of text, or different
   text documents, in one set. Each pair is checked on a finer thumbnail, text
   screenshots need a near-identical match and agreeing text, and a set only

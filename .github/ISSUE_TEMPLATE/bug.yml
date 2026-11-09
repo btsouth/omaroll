@@ -10,10 +10,20 @@ body:
     id: diagnostics
     attributes:
       label: Diagnostics
-      description: Open Settings, choose Copy diagnostics in About, then paste the result here.
+      description: In Omaroll 1.19 or newer, open Settings, choose Copy diagnostics in About, then paste the result here.
       render: text
-    validations:
-      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Omaroll version
+      description: Skip this if you pasted diagnostics. `omaroll --version` prints it.
+      placeholder: 1.18.0
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: Skip this if you pasted diagnostics.
+      placeholder: Omarchy version, active theme, graphics hardware
   - type: textarea
     id: media
     attributes:
