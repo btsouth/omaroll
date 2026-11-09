@@ -15,4 +15,6 @@ race:QtPrivate::ResultStoreBase::clear
 # never reports. Seen as a malloc in one pool thread and a realloc in another,
 # with no Omaroll frame in either access. Omaroll never calls realloc itself;
 # its own container accesses are instrumented and reported where they happen.
-race:^realloc$
+# TSan matches the interceptor's internal name (___interceptor_realloc), so
+# anchor only the end; every C++ frame ends in its parameter list instead.
+race:realloc$
