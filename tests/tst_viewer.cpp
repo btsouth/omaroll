@@ -2151,11 +2151,6 @@ private slots:
     const auto text = failure(write(QStringLiteral("notes.jpg"), "Just some notes, not a photo.\n"));
     QCOMPARE(text.cause, QStringLiteral("not-picture"));
     QVERIFY2(text.detail.contains(QStringLiteral("text")), qPrintable(text.detail));
-    // A Windows Media file reads as an ASF container, application/vnd.ms-asf:
-    // a damaged one is still a video.
-    const QByteArray asfHeader = QByteArray::fromHex("3026b2758e66cf11a6d900aa0062ce6c") + QByteArray(512, '\0');
-    const auto wmv = videoFailure(write(QStringLiteral("cut.wmv"), asfHeader), {}, none);
-    QVERIFY2(wmv.cause != QStringLiteral("not-video"), qPrintable(wmv.cause + QStringLiteral(": ") + wmv.detail));
     QVERIFY2(text.detail.contains(QStringLiteral("JPEG")), qPrintable(text.detail));
     // A DjVu page: a picture, but in a format no installed plugin reads.
     const auto djvu = failure(write(QStringLiteral("page.png"),
@@ -2219,6 +2214,11 @@ private slots:
     QCOMPARE(text.cause, QStringLiteral("not-video"));
     QVERIFY2(text.title == QStringLiteral("This file isn't a video"), qPrintable(text.title));
     QVERIFY2(text.detail.contains(QStringLiteral("text")), qPrintable(text.detail));
+    // A Windows Media file reads as an ASF container, application/vnd.ms-asf:
+    // a damaged one is still a video.
+    const QByteArray asfHeader = QByteArray::fromHex("3026b2758e66cf11a6d900aa0062ce6c") + QByteArray(512, '\0');
+    const auto wmv = videoFailure(write(QStringLiteral("cut.wmv"), asfHeader), {}, none);
+    QVERIFY2(wmv.cause != QStringLiteral("not-video"), qPrintable(wmv.cause + QStringLiteral(": ") + wmv.detail));
 
     const QString video = write(QStringLiteral("clip.mp4"), clip);
     const auto codec = videoFailure(video, QStringLiteral("Could not open file"),
