@@ -38,6 +38,8 @@ add_library(omaroll_core STATIC
   src/library/CaptureModel.h
   src/library/CaptureFilterModel.cpp
   src/library/CaptureFilterModel.h
+  src/library/SectionRows.cpp
+  src/library/SectionRows.h
   src/library/FolderTreeModel.cpp
   src/library/FolderTreeModel.h
   src/library/DuplicateIndex.cpp
