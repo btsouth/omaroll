@@ -4,6 +4,7 @@
 
 #include <QMediaPlayer>
 #include <QQuickItem>
+#include <QElapsedTimer>
 #include <QPointer>
 #include <QTimer>
 #include <QVideoSink>
@@ -22,6 +23,8 @@
 //   seek always draws one frame, so seek again to where the player says it is.
 // - A track change rebuilds the decoders under a running clock and can stall
 //   the picture for good, often with the clock. If frames stop, seek in place.
+//   This also covers a change right after opening, when the stall can follow
+//   a single new frame, so it times from the last frame, not a fixed window.
 class VideoPresentation : public QQuickItem {
   Q_OBJECT
   Q_PROPERTY(QVideoSink* videoSink READ videoSink CONSTANT)
@@ -33,9 +36,13 @@ public:
   // How far a paused picture may be from the reported position before it is
   // treated as stale. Generous: audio and video positions differ a little.
   static constexpr qint64 kPausedToleranceUs = 500'000;
-  // A track change gets this long to deliver a new frame while playing.
-  static constexpr int kStallCheckMs = 400;
-  static constexpr int kStallChecks = 6;
+  // After a track change, playing video that shows no new frame for this
+  // long (or three frame durations, if longer) is stalled.
+  static constexpr int kStallMs = 400;
+  static constexpr int kStallPollMs = 100;
+  // How long a track change is watched, and how long a resync may take.
+  static constexpr int kStallWatchMs = 2400;
+  static constexpr int kResyncGraceMs = 1200;
   static constexpr int kStallResyncs = 2;
 
   explicit VideoPresentation(QVideoSink* output, QQuickItem* surface = nullptr)
@@ -60,7 +67,7 @@ public:
               }
             },
             Qt::DirectConnection);
-    m_stallTimer.setInterval(kStallCheckMs);
+    m_stallTimer.setInterval(kStallPollMs);
     connect(&m_stallTimer, &QTimer::timeout, this, &VideoPresentation::checkStall);
   }
   ~VideoPresentation() override { releaseHeap(); }
@@ -99,8 +106,10 @@ public:
         || m_player->playbackState() != QMediaPlayer::PlayingState) {
       return;
     }
-    m_stallChecks = kStallChecks;
-    m_stallGrace = 0;
+    m_stallClock.start();
+    m_stallUntil = kStallWatchMs;
+    m_stallProgress = 0;
+    m_stallLimit = 0;
     m_stallResyncs = 0;
     m_stallFrames = m_frames.load(std::memory_order_acquire);
     m_stallTimer.start();
@@ -148,31 +157,39 @@ private:
     if (!showsPosition()) resync();
   }
   void checkStall() {
+    const qint64 now = m_stallClock.elapsed();
     if (!m_player || m_player->playbackState() != QMediaPlayer::PlayingState
-        || --m_stallChecks < 0) {
+        || now >= m_stallUntil) {
       m_stallTimer.stop();
       return;
     }
     const quint64 frames = m_frames.load(std::memory_order_acquire);
     if (frames != m_stallFrames) {
       m_stallFrames = frames;
-      m_stallGrace = 0;
+      m_stallProgress = now;
+      m_stallLimit = 0;
       return;
     }
-    // No new frame for a whole check. The clock can stall with the picture,
-    // so don't wait for it to move; a seek gets longer to show its frame.
-    if (m_stallGrace > 0) {
-      --m_stallGrace;
-      return;
-    }
+    // The clock can stall with the picture, so time from the last new frame
+    // rather than wait for the clock to move. A seek gets longer to show one.
+    const qint64 limit = m_stallLimit > 0 ? m_stallLimit : stallMs();
+    if (now - m_stallProgress < limit) return;
     if (m_stallResyncs >= kStallResyncs) {
       m_stallTimer.stop();
       return;
     }
     ++m_stallResyncs;
-    m_stallGrace = 3;
-    m_stallChecks = std::max(m_stallChecks, 5);
+    m_stallProgress = now;
+    m_stallLimit = kResyncGraceMs;
+    m_stallUntil = std::max(m_stallUntil, now + kResyncGraceMs + kStallMs * 2);
     resync();
+  }
+  // Slow video may go longer than kStallMs between frames.
+  qint64 stallMs() const {
+    const qint64 frameUs = m_frameEnd.load(std::memory_order_relaxed)
+                           - m_frameStart.load(std::memory_order_relaxed);
+    const qreal rate = m_player ? std::max<qreal>(0.25, m_player->playbackRate()) : 1.0;
+    return std::max<qint64>(kStallMs, qint64(3 * frameUs / 1000 / rate));
   }
   void resync() {
     if (!m_player) return;
@@ -191,8 +208,10 @@ private:
   QPointer<QVideoSink> m_output;
   QPointer<QMediaPlayer> m_player;
   QTimer m_stallTimer;
-  int m_stallChecks = 0;
-  int m_stallGrace = 0;
+  QElapsedTimer m_stallClock;
+  qint64 m_stallUntil = 0;
+  qint64 m_stallProgress = 0;
+  qint64 m_stallLimit = 0;
   int m_stallResyncs = 0;
   quint64 m_stallFrames = 0;
   bool m_ready = false;
