@@ -90,7 +90,9 @@ QtObject {
         let hints = {};
         for (const row of rows)
             if (row.context === "quick")
-                hints[row.id] = display(row.keys);
+                // Menus show one key, as they did; Shift+Del beside
+                // "Move to Trash" would suggest the wrong action.
+                hints[row.id] = display([row.keys[0]]);
         hints["subtitles-earlier"] = sequence("quick", "subtitle-offset")[0];
         hints["subtitles-later"] = sequence("quick", "subtitle-offset")[1];
         return hints;

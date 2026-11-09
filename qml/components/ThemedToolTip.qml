@@ -6,12 +6,16 @@ ToolTip {
     property bool requested: false
     property bool keyboardRequested: false
     property bool focusSuppressed: false
+    // A sheet or a disabled owner hides the keyboard tip that was up, until
+    // the keyboard moves on; tips that weren't requested stay available.
     onBlockedChanged: if (blocked)
-        focusSuppressed = true
+        focusSuppressed = focusSuppressed || keyboardRequested
+    onKeyboardRequestedChanged: if (!keyboardRequested)
+        focusSuppressed = false
     Connections {
         target: tip.owner
         function onEnabledChanged() {
-            if (!tip.owner.enabled) tip.focusSuppressed = true;
+            if (!tip.owner.enabled) tip.focusSuppressed = tip.focusSuppressed || tip.keyboardRequested;
         }
         function onActiveFocusChanged() {
             if (tip.owner.activeFocus)

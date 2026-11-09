@@ -178,6 +178,7 @@ class UiTest : public QObject {
 
 private slots:
   void helpFiltersByContextAndDiagnosticsArePrivate() {
+    const auto restoreSize = qScopeGuard([&] { m_window->resize(1280, 820); });
     m_window->resize(1920, 1080);
     QObject* help = m_window->findChild<QObject*>(QStringLiteral("libraryShortcutHelp"));
     QVERIFY(help);
@@ -215,6 +216,7 @@ private slots:
   }
 
   void footerDropsWholeHintsAtNarrowWidth() {
+    const auto restoreSize = qScopeGuard([&] { m_window->resize(1280, 820); });
     m_window->resize(560, 700);
     QCoreApplication::processEvents();
     auto* hints = m_window->findChild<QQuickItem*>(QStringLiteral("footerHints"));
@@ -567,6 +569,18 @@ private slots:
     auto* namedAction = QAccessible::queryAccessibleInterface(rename);
     QVERIFY(namedAction);
     QCOMPARE(namedAction->text(QAccessible::Name), QStringLiteral("Rename"));
+    // Once the menu closes, moving with the keyboard shows tips again, on
+    // other tiles and on the one that was up.
+    invoke("dismissTopLayer");
+    QTest::keyClick(m_window, Qt::Key_Right);
+    const auto tipOn = [&](int row) {
+      QQuickItem* live = cardFor(pathAt(row));
+      QObject* tip = live ? live->findChild<QObject*>(QStringLiteral("captureFilenameTip")) : nullptr;
+      return tip && tip->property("visible").toBool();
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(tipOn(1), 1500);
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QTRY_VERIFY_WITH_TIMEOUT(tipOn(0), 1500);
   }
 
   void filenameToggleKeepsCardAndThumbnailDimensions() {

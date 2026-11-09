@@ -255,8 +255,11 @@ install(FILES PRIVACY.md SUPPORT.md CHANGELOG.md
 # Tests
 include(CTest)
 if(BUILD_TESTING)
-  find_package(Python3 REQUIRED COMPONENTS Interpreter)
-  add_test(NAME omaroll_shortcut_coverage COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/check-shortcuts.py)
+  # Packaging builds may lack Python; the check runs wherever it is present.
+  find_package(Python3 COMPONENTS Interpreter)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME omaroll_shortcut_coverage COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/check-shortcuts.py)
+  endif()
   target_compile_definitions(omaroll_core PUBLIC OMAROLL_TESTING)
   add_executable(omaroll_benchmark_library EXCLUDE_FROM_ALL tests/benchmark_library.cpp)
   target_link_libraries(omaroll_benchmark_library PRIVATE omaroll_core)

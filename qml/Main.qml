@@ -1565,7 +1565,7 @@ ApplicationWindow {
             anchors.right: parent.right
             anchors.rightMargin: 20
             anchors.verticalCenter: parent.verticalCenter
-            text: ShortcutCatalog.sequence("library", "help")[0] + " Help"
+            text: Library.scanning ? "Scanning…" : ShortcutCatalog.sequence("library", "help")[0] + " Help"
             MouseArea { anchors.fill: parent; anchors.margins: -6; cursorShape: Qt.PointingHandCursor; onClicked: root.showShortcutHelp() }
             font.family: Theme.fontFamily
             font.pixelSize: 11
@@ -1911,7 +1911,7 @@ ApplicationWindow {
     ShortcutHelp {
         id: shortcutHelp
         objectName: "libraryShortcutHelp"
-        onClosed: if (detail.visible) detail.forceActiveFocus(); else library.forceActiveFocus()
+        onClosed: root.restoreFocusAfterSheet()
     }
     Shortcut {
         sequences: ShortcutCatalog.sequence("library", "help")
