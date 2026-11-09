@@ -26,9 +26,10 @@ public:
         if (m_input.rhi() != m_output->rhi()) m_input.setRhi(m_output->rhi());
         m_output->setVideoFrame(frame);
       }
+      const bool changed = !m_ready || !m_hasFrame;
       m_ready = true;
       m_hasFrame = true;
-      emit readyChanged();
+      if (changed) emit readyChanged();
     });
   }
   Q_INVOKABLE QVideoSink* videoSink() {
