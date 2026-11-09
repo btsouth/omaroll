@@ -58,6 +58,7 @@
 #include <QJSValue>
 #include <QFile>
 #include <QFileInfo>
+#include <QRegularExpression>
 #include <QGuiApplication>
 #include <QImage>
 #include <QImageReader>
@@ -2431,9 +2432,20 @@ private slots:
       const auto clearSearch = qScopeGuard([&] { m_library->setSearchText({}); });
       // A query every selected tile matches, so the selection stays and the
       // field stays hidden: the scratch folder they all sit in.
-      // Search matches folder names word by word: its random last word.
-      const QString everything = QDir(m_scratch.path()).dirName().section(QLatin1Char('-'), -1);
-      QVERIFY(QFileInfo(pathAt(0)).absolutePath().contains(everything));
+      // Search matches folder names word by word: the longest word in the
+      // folders of every selected tile.
+      QStringList common;
+      QStringList checked;
+      for (int row = 0; row < 6; ++row) checked << pathAt(row);
+      for (const QString& path : checked) {
+        const QStringList words = QFileInfo(path).absolutePath().split(
+            QRegularExpression(QStringLiteral("[^A-Za-z0-9]+")), Qt::SkipEmptyParts);
+        if (&path == &checked.first()) common = words;
+        else common.removeIf([&](const QString& word) { return !words.contains(word); });
+      }
+      std::sort(common.begin(), common.end(), [](const QString& a, const QString& b) { return a.size() > b.size(); });
+      QVERIFY2(!common.isEmpty(), qPrintable(checked.join(u' ')));
+      const QString everything = common.first();
       m_library->setSearchText(everything);
       QTRY_COMPARE(grid->property("checkedCount").toInt(), 6);
       QVERIFY(!search->isVisible());
