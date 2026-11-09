@@ -1711,7 +1711,7 @@ ApplicationWindow {
                     objectName: "viewerInfoButton"
                     icon: "info"
                     toolTip: root.infoOpen ? "Hide details" : "Details"
-                    shortcut: "I"
+                    shortcut: root.viewerShortcuts.info
                     active: root.infoOpen
                     onClicked: root.infoOpen = !root.infoOpen
                 }
@@ -1719,7 +1719,7 @@ ApplicationWindow {
                     objectName: "viewerLibraryButton"
                     icon: "grid"
                     toolTip: "Open in library"
-                    shortcut: "Enter"
+                    shortcut: root.viewerShortcuts.library
                     onClicked: Session.openInLibrary()
                 }
                 IconButton {
@@ -1751,7 +1751,7 @@ ApplicationWindow {
             icon: "chevron-left"
             iconSize: 20
             toolTip: "Previous"
-            shortcut: Session.isVideo ? "Page Up" : "Left"
+            shortcut: ShortcutCatalog.display([ShortcutCatalog.sequence("quick", Session.isVideo ? "step" : "previous")[0]])
             onClicked: root.step(-1)
         }
         IconButton {
@@ -1768,7 +1768,7 @@ ApplicationWindow {
             icon: "chevron-right"
             iconSize: 20
             toolTip: "Next"
-            shortcut: Session.isVideo ? "Page Down" : "Right"
+            shortcut: ShortcutCatalog.display([ShortcutCatalog.sequence("quick", Session.isVideo ? "step" : "previous")[1]])
             onClicked: root.step(1)
         }
 

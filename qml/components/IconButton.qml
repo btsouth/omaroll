@@ -96,7 +96,8 @@ Item {
     }
 
     ThemedToolTip {
-        requested: root.resolvedToolTip !== "" && (root.hovered || (root.activeFocus && root.Window.window && root.Window.window.keyboardNavigation === true))
+        requested: root.hovered
+        keyboardRequested: root.activeFocus && root.Window.window && root.Window.window.keyboardNavigation === true
         text: root.resolvedToolTip
         delay: 500
     }

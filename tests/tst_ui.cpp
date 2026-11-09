@@ -540,9 +540,13 @@ private slots:
     QTRY_VERIFY(filenameTip());
     QCOMPARE(filenameTip()->property("text").toString(), m_library->fileNameAt(0));
     QTRY_VERIFY(cardFor(path) && cardFor(path)->property("keyboardCurrent").toBool());
+    // Initial selection alone must not leave a keyboard tooltip behind.
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTest::keyClick(m_window, Qt::Key_Left);
     QTRY_VERIFY_WITH_TIMEOUT(filenameTip() && filenameTip()->property("visible").toBool(), 1500);
     QVERIFY(QMetaObject::invokeMethod(m_window, "openContextMenu", Q_ARG(QVariant, 0),
                                     Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)));
+    QTRY_VERIFY(filenameTip() && !filenameTip()->property("visible").toBool());
     QQuickItem* rename = item("contextAction_rename");
     QCOMPARE(rename->property("text").toString(), QStringLiteral("Rename"));
     auto* namedAction = QAccessible::queryAccessibleInterface(rename);

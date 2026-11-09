@@ -2972,7 +2972,6 @@ Item {
                     }
 
                     Keys.onPressed: function (event) {
-        if ((event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) && root.Window.window) root.Window.window.keyboardNavigation = true
                         if (event.key === Qt.Key_Up || event.key === Qt.Key_Down) {
                             root.focusRelativeAction(event.key === Qt.Key_Up ? -1 : 1)
                             event.accepted = true

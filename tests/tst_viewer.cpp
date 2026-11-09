@@ -2703,9 +2703,11 @@ private slots:
   void shortcutHelpIsModalScrollableAndRestoresFocus_data() {
     QTest::addColumn<bool>("video");
     QTest::addColumn<QSize>("size");
-    QTest::newRow("picture") << false << QSize(1200, 800);
+    QTest::newRow("picture") << false << QSize(420, 800);
+    QTest::newRow("wide-picture") << false << QSize(1920, 1080);
     QTest::newRow("narrow-picture") << false << QSize(320, 240);
-    QTest::newRow("video") << true << QSize(1200, 800);
+    QTest::newRow("video") << true << QSize(420, 800);
+    QTest::newRow("wide-video") << true << QSize(1920, 1080);
   }
 
   void shortcutHelpIsModalScrollableAndRestoresFocus() {
@@ -2725,13 +2727,17 @@ private slots:
     QVERIFY(scroll);
     QQuickItem* flick = scroll->property("contentItem").value<QQuickItem*>();
     QVERIFY(flick);
-    QTRY_VERIFY(flick->property("contentHeight").toReal() > flick->height());
     const QString path = m_session->path();
-    QTest::keyClick(m_window, Qt::Key_PageDown);
-    QTRY_VERIFY(flick->property("contentY").toReal() > 0);
-    QCOMPARE(m_session->path(), path);
-    QTest::keyClick(m_window, Qt::Key_Home);
-    QTRY_COMPARE(flick->property("contentY").toReal(), 0.0);
+    if (size.width() >= 1920) {
+      QTRY_VERIFY(flick->property("contentHeight").toReal() <= flick->height());
+    } else {
+      QTRY_VERIFY(flick->property("contentHeight").toReal() > flick->height());
+      QTest::keyClick(m_window, Qt::Key_PageDown);
+      QTRY_VERIFY(flick->property("contentY").toReal() > 0);
+      QCOMPARE(m_session->path(), path);
+      QTest::keyClick(m_window, Qt::Key_Home);
+      QTRY_COMPARE(flick->property("contentY").toReal(), 0.0);
+    }
     QTest::keyClick(m_window, Qt::Key_Question, Qt::ShiftModifier);
     QTRY_VERIFY(!help->property("visible").toBool());
     QTRY_VERIFY(item(QStringLiteral("viewerKeys"))->hasActiveFocus());

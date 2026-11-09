@@ -367,7 +367,7 @@ FocusScope {
         // ones that act on the selection. Single-letter action keys live in
         // Main so they work whether or not the grid has focus.
         Keys.onPressed: function (event) {
-        if ((event.key === ShortcutCatalog.libraryKeys.Tab || event.key === ShortcutCatalog.libraryKeys.Backtab) && root.Window.window) root.Window.window.keyboardNavigation = true
+        if (root.Window.window) root.Window.window.keyboardNavigation = true
             Captures.commitPendingSearch()
             switch (event.key) {
             case ShortcutCatalog.libraryKeys.Return:

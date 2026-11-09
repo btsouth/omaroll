@@ -58,7 +58,8 @@ Item {
 
     ThemedToolTip {
         objectName: "captureFilenameTip"
-        requested: root.fileName !== "" && (hover.hovered)
+        requested: hover.hovered
+        keyboardRequested: root.keyboardCurrent && root.Window.window && root.Window.window.keyboardNavigation === true
         text: root.fileName
         delay: 600
     }

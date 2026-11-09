@@ -8,7 +8,6 @@ ApplicationWindow {
     property bool keyboardNavigation: false
     TapHandler { acceptedButtons: Qt.AllButtons; onPressedChanged: if (pressed) root.keyboardNavigation = false }
 
-
     width: 1180
     height: 780
     minimumWidth: 560
@@ -1018,6 +1017,13 @@ ApplicationWindow {
                 maximumWidth: Math.max(80, root.width * 0.24)
                 label: library.currentDayLabel
                 shown: Captures.count > 0 && library.checkedCount === 0
+            }
+
+            PillButton {
+                anchors.verticalCenter: parent.verticalCenter
+                label: "Help"
+                shortcut: ShortcutCatalog.display(ShortcutCatalog.sequence("library", "help"))
+                onClicked: root.showShortcutHelp()
             }
 
             PillButton {

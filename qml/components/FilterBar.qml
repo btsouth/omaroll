@@ -34,7 +34,7 @@ Item {
         Captures.kindFilter = kinds[index]
     }
 
-    function sectionShortcut(index) { return String(index + 1) }
+    function sectionShortcut(index) { return ShortcutCatalog.sequence("library", "sections")[index] || "" }
 
     // Tab walks the sections in the order the pills show them and wraps.
     // Favourites is orthogonal to the kind and stays out of the cycle.
