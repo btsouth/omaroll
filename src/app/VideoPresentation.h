@@ -27,7 +27,11 @@ public:
       emit readyChanged();
     });
   }
-  QVideoSink* videoSink() { return &m_input; }
+  QVideoSink* videoSink() {
+    // Share the scene graph's RHI so hardware frames keep texture interop.
+    if (m_output) m_input.setRhi(m_output->rhi());
+    return &m_input;
+  }
   QString subtitleText() const { return m_input.subtitleText(); }
   bool ready() const { return m_ready; }
   bool hasFrame() const { return m_hasFrame; }

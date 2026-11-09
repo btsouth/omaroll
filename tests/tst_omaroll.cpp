@@ -4,6 +4,7 @@
 #include "actions/TrashRestore.h"
 #include "app/AppSettings.h"
 #include "app/VideoPresentation.h"
+#include <QVideoFrameFormat>
 #include "app/DemoLibrary.h"
 #include "app/HeadlessAudio.h"
 #include "app/VideoPlayback.h"
@@ -6861,6 +6862,27 @@ private slots:
     for (const QString& path : std::as_const(paths)) {
       QVERIFY(model.rowOf(path) >= 0);
     }
+  }
+
+  void mpvHandoffIncludesPosition() {
+    QTemporaryDir dir;
+    const QByteArray previousPath = qgetenv("PATH");
+    const auto restore = qScopeGuard([&] { qputenv("PATH", previousPath); });
+    const QString logPath = dir.filePath(QStringLiteral("arguments"));
+    QFile helper(dir.filePath(QStringLiteral("mpv")));
+    QVERIFY(helper.open(QIODevice::WriteOnly));
+    helper.write((QStringLiteral("#!/bin/sh\nprintf '%s\\n' \"$@\" > '") + logPath + "'\n").toUtf8());
+    helper.close();
+    QVERIFY(helper.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    qputenv("PATH", dir.path().toUtf8());
+    ActionLauncher launcher;
+    ActionRegistry registry(&launcher);
+    const QString path = dir.filePath(QStringLiteral("a clip.mkv"));
+    QVERIFY(registry.runBatchWith(QStringLiteral("play"), {{"seek", "2.375"}}, {path}));
+    QTRY_VERIFY(QFileInfo(logPath).size() > 0);
+    QFile log(logPath);
+    QVERIFY(log.open(QIODevice::ReadOnly));
+    QCOMPARE(log.readAll(), ("--start=2.375\n--\n" + path + "\n").toUtf8());
   }
 
   void videoPresentationOwnsCaptionsAndRetainsFrames() {

@@ -5149,6 +5149,28 @@ private slots:
     QVERIFY(player->videoSink());
     player->setPosition(1000);
     QTRY_VERIFY(player->videoSink()->subtitleText().contains(QStringLiteral("Omaroll subtitle test")));
+    if (qEnvironmentVariableIsSet("OMAROLL_REQUIRE_OPENGL")) {
+      player->pause();
+      QTest::qWait(150);
+      auto* overlay = item("subtitleOverlay");
+      QTRY_VERIFY(overlay->isVisible());
+      const auto capture = [&] {
+        auto* output = item("videoOutput");
+        const QImage image = m_window->grabWindow();
+        const QRectF rect = output->mapRectToScene(output->boundingRect());
+        return image.copy(QRectF(rect.topLeft() * image.devicePixelRatio(),
+                                rect.size() * image.devicePixelRatio()).toAlignedRect());
+      };
+      const QImage themed = capture();
+      overlay->setVisible(false);
+      QTest::qWait(100);
+      const QImage embeddedOnly = capture();
+      QVERIFY(themed != embeddedOnly);
+      player->videoSink()->setSubtitleText({});
+      QTest::qWait(100);
+      QCOMPARE(capture(), embeddedOnly);
+      overlay->setVisible(true);
+    }
     player->setPosition(7000);
     QTRY_VERIFY(player->videoSink()->subtitleText().contains(QStringLiteral("Second subtitle")));
     click(item("subtitleButton"));

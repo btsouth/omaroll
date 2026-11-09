@@ -1323,7 +1323,7 @@ ApplicationWindow {
                         muted: Settings.videoMuted || !root.audible
                     }
                     onSourceChanged: {
-                            if (root.presentation) root.presentation.reset()
+                        if (root.presentation) root.presentation.reset()
                         root.videoError = ""
                         if (source.toString() !== "") {
                             playbackRate = Settings.rememberPlaybackSpeed ? Settings.videoPlaybackRate : 1
