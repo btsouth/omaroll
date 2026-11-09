@@ -47,11 +47,22 @@
   follows a drag. Keyframes are decoded once in the background at low priority
   and cached, so a video opened again has previews at once.
 
+### Changed
+
+- Reading dates and cameras for a new library no longer slows the window.
+  Two to four probes run at once at low priority, their output is parsed off
+  the window thread, and "Reading media details" updates about once a second.
+  A first index of 50,000 files takes about a minute instead of four, and
+  scrolling stays smooth while it runs. A probe for files that left the
+  library stops at once.
+
 ### Fixed
 
 - 4K video playback uses about half the CPU it did with hardware decoding:
   41% instead of 74% of a core for 10-bit HEVC at 60 fps, and 22% instead of
   37% for H.264. Frame buffers were mapped and unmapped on every frame.
+- Opening a folder no longer flashes "No media yet" before its files appear.
+  The library says it is looking until the scan answers.
 - `Ctrl+Q` quits again from the viewer and the library.
 - Switching subtitles or the audio track just after a video opens no longer
   freezes the picture while the clock keeps running.

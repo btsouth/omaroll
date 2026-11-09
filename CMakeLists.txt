@@ -178,6 +178,7 @@ set(OMAROLL_QML_FILES
   qml/components/FilterBar.qml
   qml/components/LibraryBrowserSheet.qml
   qml/components/PictureArea.qml
+  qml/components/LoadingState.qml
   qml/components/PillButton.qml
   qml/components/ConfirmSheet.qml
   qml/components/DetailSheet.qml

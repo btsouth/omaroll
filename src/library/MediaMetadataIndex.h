@@ -8,16 +8,20 @@
 #include <QObject>
 #include <QProcess>
 #include <QSet>
+#include <QThreadPool>
 #include <QTimer>
 #include <atomic>
 #include <memory>
+#include <vector>
 
 // Reads embedded metadata from general photos and videos: the original
 // capture date, and the camera and lens that took them.
 //
 // Discovery itself stays a fast filesystem walk. Once a scan lands, this
 // class checks small image batches with ImageMagick and videos one at a time
-// with ffprobe, then replaces only mtime fallbacks. Omarchy's timestamped
+// with ffprobe, a few at once at low priority, then replaces only mtime
+// fallbacks. Probe output is parsed on a worker; the window thread only
+// adopts the parsed results. Omarchy's timestamped
 // capture names always remain authoritative. Results, including "nothing
 // embedded", are cached by path and filesystem identity so an unchanged
 // library is not probed every launch.
@@ -47,7 +51,15 @@ public:
   [[nodiscard]] int total() const { return m_total; }
 
   [[nodiscard]] static QString cachePath();
+  // How many probes may run at once on this machine: 2 to 4.
+  [[nodiscard]] static int maximumParallelProbes();
+  // Progress is published at most this often while probes finish.
+  static constexpr int kProgressIntervalMs = 1000;
   [[nodiscard]] static QDateTime parseImageDate(const QByteArray& output);
+  // One EXIF date field. parseExifDate reads the usual shapes directly and
+  // defers anything else to parseExifDateGeneral, so both always agree.
+  [[nodiscard]] static QDateTime parseExifDate(const QString& value);
+  [[nodiscard]] static QDateTime parseExifDateGeneral(const QString& value);
   [[nodiscard]] static Details parseImageDetails(const QByteArray& output);
   [[nodiscard]] static QDateTime parseVideoDate(const QByteArray& output);
   [[nodiscard]] static Details parseVideoDetails(const QByteArray& output);
@@ -71,6 +83,12 @@ private:
     bool raw = false;
   };
 
+  struct Probe;
+  struct Parsed {
+    QHash<int, Details> results;
+    QSet<int> completed;
+  };
+
   struct Entry {
     qint64 modified = 0;
     qint64 bytes = 0;
@@ -81,7 +99,11 @@ private:
 
   void sync();
   void processNext();
-  void finishCurrent(bool successful);
+  [[nodiscard]] bool startProbe();
+  void processFinished(Probe* probe, bool successful);
+  void finishProbe(Probe* probe, const Parsed& parsed);
+  void cancelStaleProbes();
+  [[nodiscard]] int inFlightCount() const;
   [[nodiscard]] bool isCurrent(const Candidate& candidate) const;
   [[nodiscard]] bool stillCurrent(const Candidate& candidate) const;
   [[nodiscard]] static QHash<int, Details> parseImageBatch(const QByteArray& output,
@@ -93,6 +115,7 @@ private:
   void setIndexing(bool value);
   void resetProgress(int total);
   void advanceProgress(int amount = 1);
+  void publishProgress();
   void loadCache();
   void scheduleSave();
   void saveCache();
@@ -104,13 +127,14 @@ private:
   QList<Candidate> m_queue;
   QHash<QString, CaptureModel::MetadataUpdate> m_pendingUpdates;
   QHash<QString, QString> m_failed;
-  QList<Candidate> m_current;
-  QProcess m_process;
-  // Raws are read in-process, a batch at a time on a worker: a slow disk or
-  // network share must not stall the window.
-  QFutureWatcher<QList<Details>> m_rawProbe;
-  QTimer m_timeout;
+  // Parsing and raw header reads run here, never on the window thread: a
+  // slow disk or network share must not stall the window.
+  QThreadPool m_pool;
+  std::vector<std::unique_ptr<Probe>> m_probes;
+  int m_parallel = 2;
   QTimer m_syncTimer;
+  QTimer m_progressTimer;
+  bool m_progressPending = false;
   QTimer m_saveTimer;
   QTimer m_updateTimer;
   std::shared_ptr<std::atomic_bool> m_stopping = std::make_shared<std::atomic_bool>(false);

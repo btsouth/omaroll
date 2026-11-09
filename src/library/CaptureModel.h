@@ -155,6 +155,7 @@ private:
 
   [[nodiscard]] QList<CaptureScanner::Root> roots() const;
   void rewatch(const QStringList& scannedDirectories = {});
+  void startScan();
   void scheduleRefresh();
   void scheduleMidnight();
   void applyMarks();

@@ -1537,6 +1537,15 @@ ApplicationWindow {
         if (id.indexOf("clear") === 0 || id === "show-all") library.forceActiveFocus()
     }
 
+    // Until the scan answers, say it is looking rather than show the empty
+    // state.
+    LoadingState {
+        objectName: "libraryLoadingState"
+        anchors.centerIn: library
+        width: Math.min(440, library.width - 40)
+        waiting: Captures.sourceCount === 0 && Library.scanning
+    }
+
     Column {
         id: emptyState
         objectName: "libraryEmptyState"

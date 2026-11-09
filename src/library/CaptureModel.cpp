@@ -533,7 +533,10 @@ void CaptureModel::refresh() {
   // would only repeat it.
   m_refreshTimer.stop();
   emit scanningChanged();
+  startScan();
+}
 
+void CaptureModel::startScan() {
   const QList<CaptureScanner::Root> scanRoots = roots();
   const std::shared_ptr<std::atomic_bool> cancel = m_cancel;
 
@@ -737,8 +740,15 @@ void CaptureModel::adoptResults(ScanResult result) {
 
   rebuildRowIndex();
 
-  m_scanning = false;
-  emit scanningChanged();
+  // An empty answer to a scan that was already superseded, such as the usual
+  // folders before a folder passed on the command line, does not mean the
+  // library is empty. Stay scanning and start the follow-up now, so the
+  // window never flashes its empty state first.
+  const bool followUpNow = m_rescanQueued && m_records.isEmpty() && !m_cancel->load();
+  if (!followUpNow) {
+    m_scanning = false;
+    emit scanningChanged();
+  }
   emit countChanged();
   emit automaticFoldersChanged();
 
@@ -747,7 +757,11 @@ void CaptureModel::adoptResults(ScanResult result) {
 
   if (m_rescanQueued) {
     m_rescanQueued = false;
-    scheduleRefresh();
+    if (followUpNow) {
+      startScan();
+    } else {
+      scheduleRefresh();
+    }
   }
 }
 
