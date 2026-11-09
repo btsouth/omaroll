@@ -316,7 +316,8 @@ includes raw results and the measurements still outstanding.
 ## Parser fuzzing, races and coverage
 
 Clang/LLVM builds are opt-in. In the disposable `omaroll-ci` container on
-**devbox**, install `clang llvm` and run:
+**devbox**, install `clang llvm` and run (TSan needs Docker option
+`--security-opt seccomp=unconfined` to allow its ASLR setup):
 
 ```sh
 bash tests/run-instrumented.sh fuzz 60

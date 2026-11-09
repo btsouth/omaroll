@@ -1169,8 +1169,16 @@ private slots:
     QSignalSpy rendered(m_window, &QQuickWindow::afterRendering);
     m_window->update();
     QTRY_VERIFY(!rendered.isEmpty());
-    const QImage frame = m_window->grabWindow();
-    QVERIFY(!frame.isNull());
+    QImage frame;
+    const auto convertedPixelReady = [&] {
+      frame = m_window->grabWindow();
+      if (frame.isNull()) return false;
+      const QColor color = frame.pixelColor(frame.width() / 2, frame.height() / 2);
+      return color.red() < 10 && color.green() > 150 && color.blue() < 25;
+    };
+    // imageReady precedes the image's opacity animation. Observe the pixels
+    // instead of assuming that one submitted frame has completed that fade.
+    QTRY_VERIFY(convertedPixelReady());
     // Chrome left over from earlier tests can dim the frame a little, so
     // check what the conversion changes: the stored red and blue are gone.
     const QColor color = frame.pixelColor(frame.width() / 2, frame.height() / 2);

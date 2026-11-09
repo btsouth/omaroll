@@ -232,7 +232,11 @@ jobs:
   parser-and-race-checks:
     name: ${{ matrix.mode }}
     runs-on: ubuntu-latest
-    container: archlinux:latest
+    container:
+      image: archlinux:latest
+      # TSan reserves a shadow address space and may re-exec with ASLR off.
+      # Docker's default seccomp profile denies the required personality call.
+      options: ${{ matrix.mode == 'tsan' && '--security-opt seccomp=unconfined' || '' }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
