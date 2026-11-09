@@ -110,8 +110,9 @@ omaroll --library photo.jpg
 Images and videos without a filename extension are recognized from their file
 headers. Their names stay unchanged; unrelated files are ignored.
 
-To start a video at a given time, use `--start` with seconds, mm:ss or
-hh:mm:ss, which also takes precedence over the saved position:
+To start a video in the viewer at a given time, use `--start` with seconds,
+mm:ss or hh:mm:ss. It applies to the first video you open and takes precedence
+over the saved position:
 
 ```bash
 omaroll --start=1:23 clip.mp4

@@ -114,6 +114,13 @@ public:
 
   // Paths must already be canonical, as OpenRequest makes them.
   Q_INVOKABLE void open(const QStringList& paths);
+  // A start time requested with --start, for one video of this window's
+  // request. It is used once, and dropped when the window opens other files.
+  void setStartPosition(const QString& path, qint64 milliseconds);
+  Q_INVOKABLE [[nodiscard]] qint64 pendingStartPosition(const QString& path) const {
+    return path == m_startPath ? m_startMs : -1;
+  }
+  Q_INVOKABLE qint64 takeStartPosition(const QString& path);
   // Merge new requests without losing aliases for retained selection members.
   void setDeletionPaths(const QHash<QString, QString>& entryPaths);
   // Forget the sequence, so a closed window does not flash the last picture
@@ -172,6 +179,7 @@ signals:
   void companionPathChanged();
   void emptied();
   void libraryRequested(const QString& path);
+  void startPositionChanged();
 
 private:
   [[nodiscard]] QString neighbourPath(int offset) const;
@@ -242,6 +250,8 @@ private:
   QString m_thumbnailVersion;
   // The folder being shown and the opened file, for relisting after a change.
   QString m_folder;
+  QString m_startPath;
+  qint64 m_startMs = -1;
   QString m_opened;
   // A listing that finishes after another open() describes the wrong folder.
   quint64 m_generation = 0;

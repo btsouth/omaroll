@@ -1254,12 +1254,12 @@ ApplicationWindow {
                     objectName: "viewerPlayer"
                     property string resumeIdentity: ""
                     function applyLaunchStart() {
-                        if (typeof LaunchRequest === "undefined" || LaunchRequest.pendingStart(Session.path) < 0) return false
+                        if (Session.pendingStartPosition(Session.path) < 0) return false
                         root.resumePending = false
                         root.resumeAvailable = false
                         if (seekable && duration > 0 && (mediaStatus === MediaPlayer.LoadedMedia
                                 || mediaStatus === MediaPlayer.BufferingMedia || mediaStatus === MediaPlayer.BufferedMedia)) {
-                            position = Math.min(duration, LaunchRequest.takeStart(Session.path))
+                            position = Math.min(duration, Session.takeStartPosition(Session.path))
                             play()
                         }
                         return true
@@ -1267,8 +1267,8 @@ ApplicationWindow {
                     onSeekableChanged: applyLaunchStart()
                     onDurationChanged: applyLaunchStart()
                     property Connections launchConnection: Connections {
-                        target: typeof LaunchRequest !== "undefined" ? LaunchRequest : null
-                        function onChanged() { mediaPlayer.applyLaunchStart() }
+                        target: Session
+                        function onStartPositionChanged() { mediaPlayer.applyLaunchStart() }
                     }
                     source: root.videoSource
                     videoOutput: videoSurface.item

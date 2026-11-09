@@ -101,8 +101,9 @@ QString MimeDefaults::apply(bool unset, const QString &group) {
         report << type + ": already Omaroll";
         continue;
       }
-      if (!state.contains(type))
-        state.setValue(type, previous);
+      // The handler being replaced now, which may be newer than one recorded
+      // by an earlier --set-default.
+      state.setValue(type, previous);
       state.sync();
       if (state.status() != QSettings::NoError ||
           !run({"default", desktop, type})) {
@@ -131,6 +132,14 @@ QString MimeDefaults::apply(bool unset, const QString &group) {
       }
       if (removed && previous == desktop && !restore.isEmpty())
         removed = run({"default", restore, type});
+      // A system-wide default can still name Omaroll after the user's
+      // entries are gone; say so rather than report a change that didn't happen.
+      QString now;
+      if (removed && run({"query", "default", type}, &now) && now == desktop) {
+        ok = false;
+        report << type + ": still Omaroll (set outside your own configuration)";
+        continue;
+      }
       if (!removed) {
         ok = false;
         report << "Could not unset " + type;

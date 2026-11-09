@@ -11,7 +11,6 @@
 #include "actions/ActionRegistry.h"
 #include "actions/ExternalEditors.h"
 #include "app/AppSettings.h"
-#include "app/LaunchRequest.h"
 #include "app/DemoLibrary.h"
 #include "app/HeadlessAudio.h"
 #include "app/OpenRequest.h"
@@ -194,8 +193,6 @@ private slots:
     shared->setContextProperty(QStringLiteral("Theme"), m_theme);
     shared->setContextProperty(QStringLiteral("Actions"), m_actions);
     shared->setContextProperty(QStringLiteral("Settings"), m_settings);
-    m_launch = new LaunchRequest(this);
-    shared->setContextProperty(QStringLiteral("LaunchRequest"), m_launch);
     shared->setContextProperty(QStringLiteral("Registry"), m_registry);
     shared->setContextProperty(QStringLiteral("Editors"), new ExternalEditors(m_actions, m_engine));
     shared->setContextProperty(QStringLiteral("DemoMode"), true);
@@ -1955,19 +1952,19 @@ private slots:
     const QString path = m_scratch.filePath("explicit-start.mkv");
     QVERIFY(QFile::exists(path) || QFile::copy(QFINDTESTDATA("fixtures/viewer/tracks.mkv"), path));
     m_settings->setVideoPosition(path, 7000);
-    m_launch->prepare({path}, 1000);
+    m_session->setStartPosition(path, 1000);
     open({path});
     QMediaPlayer* player = nullptr;
     QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
-    QTRY_COMPARE(m_launch->pendingStart(path), -1);
+    QTRY_COMPARE(m_session->pendingStartPosition(path), -1);
     QTRY_VERIFY(player->position() >= 900 && player->position() < 5000);
     QVERIFY(!prop("resumeAvailable").toBool());
     QVERIFY(!prop("resumePending").toBool());
     player->pause();
     // A forwarded request for the already-open source seeks again, including zero.
-    m_launch->prepare({path}, 0);
+    m_session->setStartPosition(path, 0);
     QTRY_VERIFY(player->position() < 1500);
-    QCOMPARE(m_launch->pendingStart(path), -1);
+    QCOMPARE(m_session->pendingStartPosition(path), -1);
     QVERIFY(!prop("resumeAvailable").toBool());
   }
 
@@ -3815,7 +3812,6 @@ private:
   OmarchyTheme* m_theme = nullptr;
   AppSettings* m_settings = nullptr;
   ActionLauncher* m_actions = nullptr;
-  LaunchRequest* m_launch = nullptr;
   ActionRegistry* m_registry = nullptr;
   ViewerSession* m_session = nullptr;
   MediaInspector* m_mediaInfo = nullptr;

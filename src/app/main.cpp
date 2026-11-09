@@ -387,7 +387,10 @@ int main(int argc, char* argv[]) {
   if (optionPresent(rawArguments, "--set-default") || optionPresent(rawArguments, "--unset-default")) {
     QCoreApplication core(argc, argv);
     const bool unset = optionPresent(rawArguments, "--unset-default");
-    if (unset && optionPresent(rawArguments, "--set-default")) return 2;
+    if (unset && optionPresent(rawArguments, "--set-default")) {
+      QTextStream(stderr) << "omaroll: use either --set-default or --unset-default\n";
+      return 2;
+    }
     const QString option = unset ? "--unset-default" : "--set-default";
     QString group = optionValue(rawArguments, option);
     if (group.isEmpty()) group = "all";
@@ -534,6 +537,10 @@ int main(int argc, char* argv[]) {
   // should take over, or be refused by, a real session's instance.
   SingleInstance instance;
   if (!rendering && !demo) {
+    // Said here too, since a running older version ignores the skipped names.
+    if (!request.skipped.isEmpty()) {
+      QTextStream(stderr) << "omaroll: " << request.note() << Qt::endl;
+    }
     const auto result = instance.claimOrNotify(requestedPaths, preferLibrary, startMs, request.skipped);
     if (result == SingleInstance::Result::Forwarded) return 0;
     if (result == SingleInstance::Result::Error) return 1;
@@ -591,10 +598,7 @@ int main(int argc, char* argv[]) {
   ActionRegistry registry(&actions);
   ExternalEditors editors(&actions);
 
-  LaunchRequest launchRequest;
-  launchRequest.prepare(request.files, startMs);
   QQmlApplicationEngine engine;
-  engine.rootContext()->setContextProperty(QStringLiteral("LaunchRequest"), &launchRequest);
   auto* thumbnailProvider = new ThumbnailProvider;
   auto* matteProvider = new MatteProvider;
   auto* editProvider = new EditProvider;
@@ -669,14 +673,24 @@ int main(int argc, char* argv[]) {
                        viewer->close();
                      }
                    });
-  const auto openViewer = [&](const QStringList& files, const QHash<QString, QString>& entries = {}) {
-    return viewers.open(files, entries);
+  // A --start time belongs to the window that receives the request, so it
+  // can't seek another window showing the same video, or linger.
+  const auto openViewer = [&](const QStringList& files, const QHash<QString, QString>& entries = {},
+                              qint64 start = -1) {
+    QQuickWindow* opened = viewers.open(files, entries);
+    if (start >= 0 && opened) {
+      if (ViewerSession* session = viewers.sessionOf(opened)) {
+        session->setStartPosition(LaunchRequest::firstVideo(files), start);
+      }
+    }
+    return opened;
   };
 
   const bool startInViewer = rendering ? renderingViewer : opensInViewer(request, preferLibrary);
   QQuickWindow* window = startInViewer
                              ? openViewer(rendering ? viewerRenderFiles : request.files,
-                                          rendering ? QHash<QString, QString>() : request.entryPaths)
+                                          rendering ? QHash<QString, QString>() : request.entryPaths,
+                                          rendering ? -1 : startMs)
                              : openLibrary(request);
   startup.mark("qml");
   if (!window) {
@@ -705,9 +719,8 @@ int main(int argc, char* argv[]) {
             return;
           }
           opened.skipped.append(skipped);
-          launchRequest.prepare(opened.files, start);
           QQuickWindow* receiver = opensInViewer(opened, library)
-              ? openViewer(opened.files, opened.entryPaths) : openLibrary(opened);
+              ? openViewer(opened.files, opened.entryPaths, start) : openLibrary(opened);
           if (receiver && !opened.note().isEmpty())
             QMetaObject::invokeMethod(receiver, "say", Q_ARG(QVariant, opened.note()));
         });

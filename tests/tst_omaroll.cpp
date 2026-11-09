@@ -732,12 +732,34 @@ private slots:
     }
     for (const auto& value : QStringList{"", "-1", "nan", "1:60", "1:2:3:4", "1e99", "99999999999999999999"})
       QVERIFY(!LaunchRequest::parseStart(value));
-    LaunchRequest request;
-    request.prepare({"/a.png", "/b.mp4", "/c.mkv"}, 0);
-    QCOMPARE(request.pendingStart("/a.png"), -1);
-    QCOMPARE(request.pendingStart("/c.mkv"), -1);
-    QCOMPARE(request.takeStart("/b.mp4"), 0);
-    QCOMPARE(request.pendingStart("/b.mp4"), -1);
+    QCOMPARE(LaunchRequest::firstVideo({"/a.png", "/b.mp4", "/c.mkv"}), QStringLiteral("/b.mp4"));
+    QVERIFY(LaunchRequest::firstVideo({"/a.png"}).isEmpty());
+
+    // The time belongs to one window: another showing the same video never
+    // takes it, it is used once, and opening other files drops it.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString clip = dir.filePath("b.mp4");
+    const QString other = dir.filePath("x.png");
+    for (const QString& path : {clip, other}) {
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+    }
+    ViewerSession receiving;
+    ViewerSession bystander;
+    receiving.open({clip});
+    bystander.open({clip});
+    receiving.setStartPosition(clip, 1500);
+    QCOMPARE(bystander.pendingStartPosition(clip), -1);
+    QCOMPARE(receiving.pendingStartPosition(other), -1);
+    QCOMPARE(receiving.takeStartPosition(clip), 1500);
+    QCOMPARE(receiving.takeStartPosition(clip), -1);
+    receiving.setStartPosition(clip, 0);
+    receiving.open({other});
+    QCOMPARE(receiving.pendingStartPosition(clip), -1);
+    receiving.setStartPosition(clip, 0);
+    receiving.clear();
+    QCOMPARE(receiving.pendingStartPosition(clip), -1);
   }
 
   void singleInstanceForwardsStartAndSkippedNames() {

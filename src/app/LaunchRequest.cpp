@@ -21,16 +21,11 @@ std::optional<qint64> LaunchRequest::parseStart(const QString &value) {
     return {};
   return qint64(std::round(seconds * 1000));
 }
-void LaunchRequest::prepare(const QStringList &files, qint64 milliseconds) {
-  for (const auto &path : files)
-    m_starts.remove(path);
-  if (milliseconds >= 0) {
-    for (const auto &path : files) {
-      if (CaptureScanner::isVideo(CaptureScanner::mediaSuffix(path))) {
-        m_starts.insert(path, milliseconds);
-        break;
-      }
+QString LaunchRequest::firstVideo(const QStringList& files) {
+  for (const auto& path : files) {
+    if (CaptureScanner::isVideo(CaptureScanner::mediaSuffix(path))) {
+      return path;
     }
   }
-  emit changed();
+  return {};
 }
