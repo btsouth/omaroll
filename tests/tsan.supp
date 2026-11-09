@@ -34,3 +34,8 @@ race:libQt6DBus.so
 # the uninstrumented event queue. Match the allocating Qt frame, never
 # sendPostedEvents, which every queued slot runs under.
 race:QMetaObject::invokeMethodImpl
+# Qt destroys a QFuture's QWaitCondition after the pool thread that waited on
+# it was woken; the wake and the destroy are ordered by Qt's internal mutex,
+# which TSan cannot see. Omaroll itself uses std::condition_variable, so this
+# matches only Qt's own wait conditions.
+race:QWaitCondition::~QWaitCondition
