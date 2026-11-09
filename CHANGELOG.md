@@ -112,15 +112,18 @@
 ### Fixed
 
 - Restoring the automatic backup no longer loses the day's organization. Today's
-  backup is taken again a few minutes after the last change and when Omaroll
-  quits, instead of only at the day's first launch.
+  backup is taken again a few minutes after the last change, within 15 minutes
+  during steady editing, and when Omaroll quits, instead of only at the day's
+  first launch.
 - A launch that finds the settings file damaged, or albums, tags and marks
-  that look emptied or cut short next to today's or yesterday's backup, offers
+  that look emptied or cut short next to the newest backup of the past week, offers
   Restore once. Keep as is keeps the fuller backup as a before-restore copy.
   Until it is answered, the backup is not overwritten.
 - A video that won't open says why, like a picture: no decoder for its codec,
   cut off, damaged or not a video, with Open in mpv, Open with, Show in folder
   and Trash. The seek bar hides and the arrow keys step to the next file.
+- Typing a search while the library showed "Nothing matches" could apply the
+  half-typed search early and trip a binding loop on slower machines.
 - The empty library named Super + Shift + S for screenshots. It now names the
   key from your Hyprland bindings, Print Screen by default.
 - `--set-default` prints one line and the command that undoes it instead of a
