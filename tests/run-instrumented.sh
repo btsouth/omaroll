@@ -41,6 +41,10 @@ case "$mode" in
     search='^(pdfText|pdfReads|pdfIndexing|documentText|textProducers|rowsThatMove|snippetsOfLong|longTextSnippets)'
     # Storyboard tests are threaded throughout; the real-video ones run ffmpeg.
     storyboard='.'
+    # These four end in TSan's thread-registry abort every time, even alone:
+    # each starts and kills many helper processes. ASan and the Release suite
+    # still run them.
+    skip='^(localOcrSearchRunsOnceThenUsesItsPrivateCache|indexShutdownCancelsQueuedWorkBeforeDrainingThePool|failedSamplesAreTriedAgainNextTime|crashedDecodersAreNotFailures)$'
     rm -f "$build"/tsan-report.* "$build"/tsan-tests*.txt
     test_status=0
     # One process per test. TSan's thread registry aborts once Qt reuses a
@@ -49,7 +53,7 @@ case "$mode" in
     run_suite() {
       local binary=$1 class=$2 pattern=$3 tests test results status=0
       mapfile -t tests < <(QT_QPA_PLATFORM=offscreen "$build/$binary" -functions | sed 's/()$//' |
-        grep -E "$pattern" | grep -Ev '^(init|cleanup|initTestCase|cleanupTestCase)$')
+        grep -E "$pattern" | grep -Ev '^(init|cleanup|initTestCase|cleanupTestCase)$' | grep -Ev "$skip")
       echo "tsan: ${#tests[@]} $binary tests"
       for test in "${tests[@]}"; do
         results="$PWD/$build/tsan-tests-$binary-$test.txt"

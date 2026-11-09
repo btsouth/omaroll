@@ -120,6 +120,52 @@ def only_qt_pool_frames(frames):
                for function, module in functions[1:])
 
 
+def qt_only(frames):
+    """No frame of ours past the interceptor. TSan builds race stacks from the
+    calls it saw instrumented code make, so a stack like this means none of
+    our code, header templates included, was running on that thread: Qt was
+    at work on its own, as in QImage's threaded conversions or QThreadPool's
+    queue."""
+    functions = frame_functions(frames)
+    return bool(functions) and all(not module.startswith("omaroll") or INTERCEPTOR.match(function)
+                                   for function, module in functions)
+
+
+def made_by_library(frames):
+    """The access was made inside a library call (Qt, libpng), not by us."""
+    functions = frame_functions(frames)
+    for function, module in functions:
+        if module.startswith("omaroll") and INTERCEPTOR.match(function):
+            continue
+        return not module.startswith("omaroll")
+    return False
+
+
+def qt_internal(stacks):
+    """One side is Qt alone and the other access happened inside a library
+    call too. Two of our threads racing on a QString both show our frames
+    under the Qt call, so they never match."""
+    if len(stacks) != 2:
+        return False
+    for one, other in (stacks, stacks[::-1]):
+        if qt_only(one) and (qt_only(other) or made_by_library(other)):
+            return True
+    return False
+
+
+def qt_descriptor_reuse(block, stacks):
+    """A file descriptor number Qt closed and opened again (a QProcess pipe,
+    an event dispatcher wakeup), with Qt making both calls. We never do I/O
+    on Qt's descriptors ourselves."""
+    if len(stacks) != 2 or not re.search(r"^  Location is file descriptor \d+", block, re.M):
+        return False
+    for frames in stacks:
+        functions = frame_functions(frames)
+        if len(functions) < 2 or not functions[1][1].startswith("libQt6"):
+            return False
+    return True
+
+
 def pool_bookkeeping(block, stacks, threads):
     names = dict(THREAD.findall(block))
     if len(stacks) != 2 or any(names.get(thread) != POOL_THREAD for thread in threads):
@@ -140,7 +186,8 @@ def classify(block):
     names = dict(THREAD.findall(block))
     if any(names.get(thread) in KNOWN_QT_THREADS for thread in threads):
         return "external"
-    if task_start_handoff(stacks) or pool_bookkeeping(block, stacks, threads):
+    if (task_start_handoff(stacks) or pool_bookkeeping(block, stacks, threads)
+            or qt_internal(stacks) or qt_descriptor_reuse(block, stacks)):
         return "external"
     for frames in stacks:
         function, module = first_frame(frames)

@@ -1,0 +1,40 @@
+==================
+WARNING: ThreadSanitizer: data race (pid=1179)
+  Read of size 8 at 0x72b000000220 by main thread:
+    #0 write <null> (omaroll_storyboard_tests+0xb1660)
+    #1 <null> <null> (libQt6Core.so.6+0x41e4d9)
+    #2 QTest::qWait(std::chrono::duration<long, std::ratio<1l, 1000l>>) <null> (libQt6Core.so.6+0x2078a7)
+    #3 StoryboardTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /src/build/tsan/omaroll_storyboard_tests_autogen/include/tst_storyboard.moc:188:22 (omaroll_storyboard_tests+0x12c9da)
+    #4 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #5 <null> <null> (libc.so.6+0x27780)
+
+  Previous write of size 8 at 0x72b000000220 by thread T3:
+    #0 pipe2 <null> (omaroll_storyboard_tests+0xa9afd)
+    #1 <null> <null> (libQt6Core.so.6+0x42170e)
+    #2 Storyboard::start()::$_0::operator()() const::'lambda'()::operator()() const /src/src/thumbs/Storyboard.cpp:1021:41 (omaroll_storyboard_tests+0x60130d)
+    #3 QRunnable::QGenericRunnable::Helper<Storyboard::start()::$_0::operator()() const::'lambda'()>::impl(QRunnable::QGenericRunnable::HelperBase::Op, QRunnable::QGenericRunnable::HelperBase*, void*) /usr/include/qt6/QtCore/qrunnable.h:74:31 (omaroll_storyboard_tests+0x601234)
+    #4 <null> <null> (libQt6Core.so.6+0x2c1424)
+
+  As if synchronized via sleep:
+    #0 nanosleep <null> (omaroll_storyboard_tests+0x9f9de)
+    #1 QTest::qWait(std::chrono::duration<long, std::ratio<1l, 1000l>>) <null> (libQt6Core.so.6+0x2078a7)
+    #2 StoryboardTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /src/build/tsan/omaroll_storyboard_tests_autogen/include/tst_storyboard.moc:188:22 (omaroll_storyboard_tests+0x12c9da)
+    #3 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #4 <null> <null> (libc.so.6+0x27780)
+
+  Location is file descriptor 17 created by thread T3 at:
+    #0 pipe2 <null> (omaroll_storyboard_tests+0xa9afd)
+    #1 <null> <null> (libQt6Core.so.6+0x42170e)
+    #2 Storyboard::start()::$_0::operator()() const::'lambda'()::operator()() const /src/src/thumbs/Storyboard.cpp:1021:41 (omaroll_storyboard_tests+0x60130d)
+    #3 QRunnable::QGenericRunnable::Helper<Storyboard::start()::$_0::operator()() const::'lambda'()>::impl(QRunnable::QGenericRunnable::HelperBase::Op, QRunnable::QGenericRunnable::HelperBase*, void*) /usr/include/qt6/QtCore/qrunnable.h:74:31 (omaroll_storyboard_tests+0x601234)
+    #4 <null> <null> (libQt6Core.so.6+0x2c1424)
+
+  Thread T3 'Thread (pooled)' (tid=1183, running) created by thread T2 at:
+    #0 pthread_create <null> (omaroll_storyboard_tests+0xa308e)
+    #1 QThread::start(QThread::Priority) <null> (libQt6Core.so.6+0x3765f4)
+    #2 Storyboard::start()::$_0::operator()() const /src/src/thumbs/Storyboard.cpp:1021:22 (omaroll_storyboard_tests+0x600c28)
+    #3 QRunnable::QGenericRunnable::Helper<Storyboard::start()::$_0>::impl(QRunnable::QGenericRunnable::HelperBase::Op, QRunnable::QGenericRunnable::HelperBase*, void*) /usr/include/qt6/QtCore/qrunnable.h:74:31 (omaroll_storyboard_tests+0x6007b4)
+    #4 <null> <null> (libQt6Core.so.6+0x2c1424)
+
+SUMMARY: ThreadSanitizer: data race (/src/build/tsan/omaroll_storyboard_tests+0xb1660) in write
+==================

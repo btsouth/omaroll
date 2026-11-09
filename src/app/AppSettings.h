@@ -486,6 +486,8 @@ private:
   }
   QDate m_snapshotDate;
   QTimer m_snapshotRefresh;
+  // Picks up the launch check's result once the backup thread has it.
+  QTimer m_healthPoll;
   // A change saved since today's snapshot was last encoded.
   bool m_snapshotDirty = false;
   // Until the launch check reports, and while organization looks incomplete,

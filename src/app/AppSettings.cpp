@@ -466,6 +466,8 @@ AppSettings::AppSettings(QObject* parent)
     m_settings.remove(kLegacyVideoPositions);
     m_settings.sync();
   }
+  m_healthPoll.setInterval(25);
+  connect(&m_healthPoll, &QTimer::timeout, this, &AppSettings::applyOrganizationHealth);
   m_snapshotRefresh.setSingleShot(true);
   m_snapshotRefresh.setInterval(kSnapshotRefreshMs);
   connect(&m_snapshotRefresh, &QTimer::timeout, this, [this] {
@@ -486,6 +488,7 @@ AppSettings::~AppSettings() {
   // A clean exit takes the refresh still waiting; the backup writer then
   // finishes its queue before it is destroyed.
   m_snapshotRefresh.stop();
+  m_healthPoll.stop();
   flushBackups();
   if (m_snapshotDirty && !snapshotsHeld()) scheduleDailySnapshot(true);
 }
@@ -1683,8 +1686,10 @@ void AppSettings::checkOrganizationHealth(bool existingProfile) {
   m_snapshotAfterHealth = m_snapshotAfterHealth || existingProfile;
   m_health = std::make_shared<HealthReport>();
   const QDate today = QDate::currentDate();
-  QPointer<AppSettings> self(this);
-  m_backupWriter->post([report = m_health, path = backupDirectory(), today, self] {
+  // Polled from the window thread rather than posted back, so the handoff is
+  // the report's own mutex.
+  m_healthPoll.start();
+  m_backupWriter->post([report = m_health, path = backupDirectory(), today] {
     for (const QDate& day : {today, today.addDays(-1)}) {
       QFile file(QDir(path).filePath(QStringLiteral("daily-%1.json").arg(day.toString(Qt::ISODate))));
       if (file.size() > kMaximumOrganizationBytes || !file.open(QIODevice::ReadOnly)) continue;
@@ -1697,13 +1702,8 @@ void AppSettings::checkOrganizationHealth(bool existingProfile) {
       report->snapshotSize = snapshotSize(root);
       break;
     }
-    {
-      std::lock_guard lock(report->mutex);
-      report->done = true;
-    }
-    // Dropped if the settings object has gone; its destructor applies it then.
-    QMetaObject::invokeMethod(self.data(), [self] { if (self) self->applyOrganizationHealth(); },
-                              Qt::QueuedConnection);
+    std::lock_guard lock(report->mutex);
+    report->done = true;
   });
 }
 
@@ -1716,6 +1716,7 @@ void AppSettings::applyOrganizationHealth() {
     std::lock_guard lock(m_health->mutex);
     if (!m_health->done || m_health->applied) return;
     m_health->applied = true;
+    m_healthPoll.stop();
     snapshot = m_health->snapshot;
     date = m_health->date;
     size = m_health->snapshotSize;

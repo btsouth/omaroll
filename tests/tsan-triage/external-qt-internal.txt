@@ -1,0 +1,103 @@
+==================
+WARNING: ThreadSanitizer: data race (pid=1004)
+  Write of size 8 at 0x7fffffffe7e0 by main thread:
+    #0 memset <null> (omaroll_storyboard_tests+0x9dcc2)
+    #1 <null> <null> (libQt6Test.so.6+0x19416)
+    #2 <null> <null> (libc.so.6+0x27780)
+
+  Previous atomic read of size 1 at 0x7fffffffe7e0 by thread T1:
+    #0 pthread_cond_clockwait <null> (omaroll_storyboard_tests+0xa4332)
+    #1 <null> <null> (libQt6Test.so.6+0x2bd9a)
+
+  As if synchronized via sleep:
+    #0 nanosleep <null> (omaroll_storyboard_tests+0x9f9de)
+    #1 QTest::qWait(std::chrono::duration<long, std::ratio<1l, 1000l>>) <null> (libQt6Core.so.6+0x2078a7)
+    #2 StoryboardTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /src/build/tsan/omaroll_storyboard_tests_autogen/include/tst_storyboard.moc:182:21 (omaroll_storyboard_tests+0x12c97a)
+    #3 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #4 <null> <null> (libc.so.6+0x27780)
+
+  Location is stack of main thread.
+
+  Thread T1 'QtTest Watchdog' (tid=1006, finished) created by main thread at:
+    #0 pthread_create <null> (omaroll_storyboard_tests+0xa308e)
+    #1 QThread::start(QThread::Priority) <null> (libQt6Core.so.6+0x3765f4)
+    #2 <null> <null> (libc.so.6+0x27780)
+
+SUMMARY: ThreadSanitizer: data race (/src/build/tsan/omaroll_storyboard_tests+0x9dcc2) in memset
+==================
+==================
+WARNING: ThreadSanitizer: data race (pid=554)
+  Read of size 8 at 0x7fffef3b5000 by main thread:
+    #0 memcpy <null> (omaroll_tests+0xa69a3)
+    #1 png_write_row <null> (libpng16.so.16+0x2ac9d)
+    #2 OmarollTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /src/build/tsan/omaroll_tests_autogen/include/tst_omaroll.moc:1248:23 (omaroll_tests+0x134ce3)
+    #3 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #4 <null> <null> (libc.so.6+0x27780)
+
+  Previous write of size 8 at 0x7fffef3b5000 by thread T2:
+    #0 memcpy <null> (omaroll_tests+0xa69a3)
+    #1 <null> <null> (libQt6Gui.so.6+0x809469)
+
+  Location is heap block of size 307200 at 0x7fffef3b5000 allocated by main thread:
+    #0 malloc <null> (omaroll_tests+0xa9725)
+    #1 QImageData::create(QSize const&, QImage::Format) <null> (libQt6Gui.so.6+0x1350a6)
+    #2 OmarollTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /src/build/tsan/omaroll_tests_autogen/include/tst_omaroll.moc:1248:23 (omaroll_tests+0x134ce3)
+    #3 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #4 <null> <null> (libc.so.6+0x27780)
+
+  Thread T2 'Thread (pooled)' (tid=557, running) created by main thread at:
+    #0 pthread_create <null> (omaroll_tests+0xabb2e)
+    #1 QThread::start(QThread::Priority) <null> (libQt6Core.so.6+0x3765f4)
+    #2 OmarollTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /src/build/tsan/omaroll_tests_autogen/include/tst_omaroll.moc:1248:23 (omaroll_tests+0x134ce3)
+    #3 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #4 <null> <null> (libc.so.6+0x27780)
+
+SUMMARY: ThreadSanitizer: data race (/src/build/tsan/omaroll_tests+0xa69a3) in memcpy
+==================
+==================
+WARNING: ThreadSanitizer: data race (pid=554)
+  Write of size 8 at 0x7fffef3b5008 by main thread:
+    #0 free <null> (omaroll_tests+0xaa282)
+    #1 QImageData::~QImageData() <null> (libQt6Gui.so.6+0x134f59)
+    #2 OmarollTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /src/build/tsan/omaroll_tests_autogen/include/tst_omaroll.moc:1248:23 (omaroll_tests+0x134ce3)
+    #3 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #4 <null> <null> (libc.so.6+0x27780)
+
+  Previous write of size 8 at 0x7fffef3b5008 by thread T2:
+    #0 memcpy <null> (omaroll_tests+0xa69a3)
+    #1 <null> <null> (libQt6Gui.so.6+0x809469)
+
+  Thread T2 'Thread (pooled)' (tid=557, running) created by main thread at:
+    #0 pthread_create <null> (omaroll_tests+0xabb2e)
+    #1 QThread::start(QThread::Priority) <null> (libQt6Core.so.6+0x3765f4)
+    #2 OmarollTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /src/build/tsan/omaroll_tests_autogen/include/tst_omaroll.moc:1248:23 (omaroll_tests+0x134ce3)
+    #3 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #4 <null> <null> (libc.so.6+0x27780)
+
+SUMMARY: ThreadSanitizer: data race (/src/build/tsan/omaroll_tests+0xaa282) in free
+==================
+==================
+WARNING: ThreadSanitizer: data race (pid=568)
+  Write of size 8 at 0x72080000d220 by thread T2:
+    #0 operator delete(void*, unsigned long) <null> (omaroll_tests+0x132a6f)
+    #1 <null> <null> (libQt6Gui.so.6+0x80bf6a)
+
+  Previous write of size 8 at 0x72080000d220 by main thread:
+    #0 operator new(unsigned long) <null> (omaroll_tests+0x131ed8)
+    #1 <null> <null> (libQt6Gui.so.6+0x7f047f)
+    #2 (anonymous namespace)::photoScene(unsigned int) /src/tests/tst_omaroll.cpp:425:13 (omaroll_tests+0x13c2b8)
+    #3 OmarollTest::similarPicturesMatchCopiesButNotDifferentTextScreenshots() /src/tests/tst_omaroll.cpp:8038:27 (omaroll_tests+0x2a07d4)
+    #4 OmarollTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /src/build/tsan/omaroll_tests_autogen/include/tst_omaroll.moc:1249:23 (omaroll_tests+0x134cfc)
+    #5 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #6 <null> <null> (libc.so.6+0x27780)
+
+  Thread T2 'Thread (pooled)' (tid=571, running) created by main thread at:
+    #0 pthread_create <null> (omaroll_tests+0xabb2e)
+    #1 QThread::start(QThread::Priority) <null> (libQt6Core.so.6+0x3765f4)
+    #2 OmarollTest::similarPicturesMatchCopiesButNotDifferentTextScreenshots() /src/tests/tst_omaroll.cpp:8038:27 (omaroll_tests+0x2a07d4)
+    #3 OmarollTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /src/build/tsan/omaroll_tests_autogen/include/tst_omaroll.moc:1249:23 (omaroll_tests+0x134cfc)
+    #4 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0)
+    #5 <null> <null> (libc.so.6+0x27780)
+
+SUMMARY: ThreadSanitizer: data race (/src/build/tsan/omaroll_tests+0x132a6f) in operator delete(void*, unsigned long)
+==================
