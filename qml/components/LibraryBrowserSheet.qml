@@ -258,10 +258,14 @@ FocusScope {
             return
         }
         const name = String(choices.model[index])
-        if (section === 1) Settings.deleteAlbum(name)
-        else if (section === 3) Settings.deleteTag(name)
+        // Saved views that open a deleted album or tag go with it.
+        let views = 0
+        if (section === 1) views = Settings.deleteAlbum(name)
+        else if (section === 3) views = Settings.deleteTag(name)
         else Settings.deleteSmartCollection(name)
         folderMessage = "Deleted " + name
+                        + (views === 1 ? " and the saved view that used it"
+                           : views > 1 ? " and " + views + " saved views that used it" : "")
         Qt.callLater(syncCurrentChoice)
     }
 

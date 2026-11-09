@@ -91,14 +91,61 @@ private slots:
     QCOMPARE(SearchText::fold(plain).constData(), plain.constData());
 
     QList<qsizetype> sources;
-    const QString folded = SearchText::fold(QStringLiteral("ﬁ Café"), &sources);
+    QString folded = SearchText::fold(QStringLiteral("ﬁ Café"), &sources);
     QCOMPARE(folded, QStringLiteral("fi cafe"));
     QCOMPARE(sources, (QList<qsizetype>{0, 0, 1, 2, 3, 4, 5}));
+
+    // Letters NFKD leaves whole are spelled out, in either case.
+    QCOMPARE(SearchText::fold(QStringLiteral("Straße STRASSE ẞ")), QStringLiteral("strasse strasse ss"));
+    QCOMPARE(SearchText::fold(QStringLiteral("Łódź")), QStringLiteral("lodz"));
+    QCOMPARE(SearchText::fold(QStringLiteral("Øresund")), QStringLiteral("oresund"));
+    QCOMPARE(SearchText::fold(QStringLiteral("Đà Nẵng")), QStringLiteral("da nang"));
+    QCOMPARE(SearchText::fold(QStringLiteral("æble Æble Œuvre Þing Ðið")),
+             QStringLiteral("aeble aeble oeuvre thing did"));
+    QCOMPARE(SearchText::fold(QStringLiteral("Iİı Ħal Ŧ")), QStringLiteral("iii hal t"));
+    // Marks go after case folding in both forms, so the Greek ypogegrammeni,
+    // which folds to iota, is kept the same way in each.
+    QCOMPARE(SearchText::fold(QStringLiteral("ᾳ")), QStringLiteral("αι"));
+    QCOMPARE(SearchText::fold(QStringLiteral("ᾳ"), &sources), QStringLiteral("αι"));
+    QCOMPARE(sources, (QList<qsizetype>{0, 0}));
+    const QString mixed = QStringLiteral("Straße — Łódź ﬁle 𝐀B Ǖ ᾳ é");
+    QCOMPARE(SearchText::fold(mixed, &sources), SearchText::fold(mixed));
+    QCOMPARE(sources.size(), SearchText::fold(mixed).size());
 
     QVERIFY(SearchText::containsWordStart(QStringLiteral("fujifilm x-t4"), QStringLiteral("x-t")));
     QVERIFY(SearchText::containsWordStart(QStringLiteral("travel/japan"), QStringLiteral("jap")));
     QVERIFY(!SearchText::containsWordStart(QStringLiteral("party"), QStringLiteral("art")));
     QVERIFY(SearchText::containsWordStart(QStringLiteral("party art"), QStringLiteral("art")));
+  }
+
+  void longTextSnippetsComeFromTheOriginal() {
+    // Long enough for many pieces, with the match on a piece boundary, after
+    // decomposed letters that fold shorter and ligatures that fold longer.
+    QString text;
+    for (int line = 0; line < 400; ++line) {
+      text += QStringLiteral("Line %1 ﬁne café Straße 𝐀 ").arg(line);
+    }
+    qsizetype boundary = 2048 * 3 - 3;
+    if (text.at(boundary).isLowSurrogate()) ++boundary;
+    text.insert(boundary, QStringLiteral("ŁÓDŹ Harbour"));
+    const SearchText::FoldedText kept = SearchText::FoldedText::make(text);
+    QCOMPARE(QString::fromUtf8(kept.original), text);
+    QCOMPARE(QString::fromUtf8(kept.folded), SearchText::fold(text));
+    QVERIFY(kept.marks.size() > 3);
+    const QString snippet = kept.snippet(QByteArrayLiteral("lodz harbour"), 10, 10);
+    QVERIFY2(snippet.contains(QStringLiteral("ŁÓDŹ Harbour")), qPrintable(snippet));
+    QVERIFY(snippet.startsWith(QChar(0x2026)));
+    QVERIFY(snippet.endsWith(QChar(0x2026)));
+    QVERIFY(snippet.size() <= 1 + 10 + 12 + 10 + 1);
+    // The first and last characters, with nothing to cut on that side.
+    const QString start = kept.snippet(QByteArrayLiteral("line 0 fine"), 10, 4);
+    QVERIFY2(start.startsWith(QStringLiteral("Line 0 ﬁne")), qPrintable(start));
+    QVERIFY(!start.startsWith(QChar(0x2026)));
+    const QString end = kept.snippet(QByteArrayLiteral("line 399 fine cafe strasse"), 4, 10);
+    QVERIFY2(end.endsWith(QStringLiteral("Straße 𝐀")), qPrintable(end));
+    QVERIFY(kept.snippet(QByteArrayLiteral("nowhere"), 10, 10).isEmpty());
+    // Matched text that folds to letters the original spells differently.
+    QVERIFY(kept.snippet(QByteArrayLiteral("strasse a line 12 "), 0, 0).contains(QStringLiteral("Straße 𝐀 Line 12")));
   }
 
   void queryParsesTokensPhrasesAndExclusions() {
@@ -199,6 +246,11 @@ private slots:
     expect(QStringLiteral("24-70"), {QStringLiteral("waterfall.jpg")});
     expect(QStringLiteral("fjords"), {QStringLiteral("waterfall.jpg")});
     expect(QStringLiteral("resume"), {QStringLiteral("report.pdf")});
+    proxy.setOcrText(path("Clips/clip.mp4"), QStringLiteral("Łódź Straße Øresund Đà Nẵng"));
+    for (const char* word : {"lodz", "strasse", "STRASSE", "oresund", "\"da nang\"", "straße"}) {
+      expect(QString::fromUtf8(word), {QStringLiteral("clip.mp4")});
+    }
+    proxy.setOcrText(path("Clips/clip.mp4"), {});
     expect(QStringLiteral("iceland fuji"), {QStringLiteral("café-paris.jpg")});
 
     // Field tokens match the start of a word in their own field only.
@@ -303,6 +355,50 @@ private slots:
     QTRY_COMPARE(names(proxy), QStringList{QStringLiteral("report.pdf")});
   }
 
+  void plainWordsMatchFoldersBelowTheLibraryRoots() {
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QTRY_VERIFY(!model.scanning());
+    const QString root = QFileInfo(m_media).canonicalFilePath();
+    QVERIFY(!root.isEmpty());
+    const auto at = [&](const QString& relative) {
+      CaptureRecord record;
+      record.path = relative.startsWith(QLatin1Char('/')) ? relative : root + QLatin1Char('/') + relative;
+      record.fileName = QFileInfo(record.path).fileName();
+      record.kind = CaptureRecord::Picture;
+      record.captured = QDateTime(QDate(2024, 1, 1), QTime(12, 0));
+      return record;
+    };
+    model.setRecordsForTesting({at(QStringLiteral("loose.jpg")),
+                                at(QStringLiteral("2024/Road trip/a.jpg")),
+                                at(QStringLiteral("Videos-old/b.jpg")),
+                                at(m_files + QStringLiteral("/Elsewhere/c.jpg"))});
+    CaptureFilterModel proxy;
+    proxy.setSourceModel(&model);
+    const auto found = [&](const QString& query) {
+      proxy.setSearchText(query);
+      return names(proxy);
+    };
+    // The root's own path is not searched by plain words; what is below it is.
+    const QString rootName = SearchText::fold(QFileInfo(root).fileName());
+    QVERIFY(found(rootName).isEmpty());
+    QVERIFY(found(SearchText::fold(QFileInfo(root).dir().dirName())).isEmpty());
+    QCOMPARE(found(QStringLiteral("road")), QStringList{QStringLiteral("a.jpg")});
+    QCOMPARE(found(QStringLiteral("2024")), QStringList{QStringLiteral("a.jpg")});
+    QCOMPARE(found(QStringLiteral("trip")), QStringList{QStringLiteral("a.jpg")});
+    // At a word start only, so "eos" does not find "videos".
+    QCOMPARE(found(QStringLiteral("old")), QStringList{QStringLiteral("b.jpg")});
+    QVERIFY(found(QStringLiteral("ideos")).isEmpty());
+    QVERIFY(found(QStringLiteral("rip")).isEmpty());
+    // Outside every root, a file's own folder name counts.
+    QCOMPARE(found(QStringLiteral("elsewhere")), QStringList{QStringLiteral("c.jpg")});
+    QVERIFY(found(SearchText::fold(QFileInfo(m_files).fileName())).isEmpty());
+    // in: still takes the whole path.
+    QCOMPARE(found(QStringLiteral("in:") + root + QStringLiteral("/2024")),
+             QStringList{QStringLiteral("a.jpg")});
+  }
+
   void suggestionsOfferValuesForTheTokenAtTheCursor() {
     AppSettings settings;
     settings.setScanDownloads(false);
@@ -389,9 +485,11 @@ private slots:
     QCOMPARE(names(proxy), QStringList{QStringLiteral("café-paris.jpg")});
 
     // A saved view keeps the token query and every facet, album included.
-    const QVariantMap view = proxy.currentView();
-    QCOMPARE(view.value(QStringLiteral("search")).toString(),
+    // "search" keeps only plain words, which is what 1.18 reads.
+    QVariantMap view = proxy.currentView();
+    QCOMPARE(view.value(QStringLiteral("query")).toString(),
              QStringLiteral("-type:animated after:2023"));
+    QVERIFY(view.value(QStringLiteral("search")).toString().isEmpty());
     QCOMPARE(view.value(QStringLiteral("album")).toString(), QStringLiteral("Weekend Café"));
     QVERIFY(settings.saveSmartCollection(QStringLiteral("Paris trip"), view));
     proxy.setSearchText({});
@@ -413,6 +511,147 @@ private slots:
     QVERIFY(settings.renameAlbum(QStringLiteral("Weekend Café"), QStringLiteral("Paris")));
     QCOMPARE(settings.smartCollection(QStringLiteral("Paris trip")).value(QStringLiteral("album")).toString(),
              QStringLiteral("Paris"));
+
+    // Plain words and tokens together: the words alone go in "search".
+    proxy.setSearchText(QStringLiteral("Café -draft tag:x \"Dinner with\""));
+    view = proxy.currentView();
+    QCOMPARE(view.value(QStringLiteral("search")).toString(), QStringLiteral("Café Dinner with"));
+
+    // A view saved by 1.18 has plain words only, and they keep that meaning.
+    proxy.setAlbumFilter({}, {});
+    proxy.setFolderFilter({});
+    proxy.applyView(QStringLiteral("Old"), {{QStringLiteral("search"), QStringLiteral("draft")}});
+    QCOMPARE(names(proxy), QStringList{QStringLiteral("draft copy.jpg")});
+    proxy.applyView(QStringLiteral("Old"),
+                    {{QStringLiteral("search"), QStringLiteral("-paris type:photo")}});
+    QVERIFY(proxy.searchText().contains(QStringLiteral("\"-paris\"")));
+    QCOMPARE(proxy.count(), 0);
+    proxy.setOcrText(path("Clips/clip.mp4"), QStringLiteral("notes on -paris type:photo"));
+    QTRY_COMPARE(names(proxy), QStringList{QStringLiteral("clip.mp4")});
+    proxy.setOcrText(path("Clips/clip.mp4"), {});
+
+    // Deleting the album deletes the views that open it, and no others.
+    QVERIFY(settings.saveSmartCollection(QStringLiteral("No album"),
+                                         {{QStringLiteral("query"), QStringLiteral("cafe")}}));
+    QCOMPARE(settings.deleteAlbum(QStringLiteral("Paris")), 1);
+    QVERIFY(settings.smartCollection(QStringLiteral("Paris trip")).isEmpty());
+    QVERIFY(!settings.smartCollection(QStringLiteral("No album")).isEmpty());
+    QVERIFY(settings.createTag(QStringLiteral("Travel/Japan")));
+    QVERIFY(settings.saveSmartCollection(QStringLiteral("Japan"),
+                                         {{QStringLiteral("tag"), QStringLiteral("Travel/Japan")}}));
+    QCOMPARE(settings.deleteTag(QStringLiteral("Travel")), 1);
+    QVERIFY(settings.smartCollection(QStringLiteral("Japan")).isEmpty());
+    QCOMPARE(settings.smartCollectionNames(), QStringList{QStringLiteral("No album")});
+  }
+
+  void clearingEveryFacetIsOneFilterPass() {
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QTRY_VERIFY(!model.scanning());
+    model.setRecordsForTesting(library());
+    CaptureFilterModel proxy;
+    proxy.setSourceModel(&model);
+    QVERIFY(settings.createAlbum(QStringLiteral("Trip")));
+    QVERIFY(settings.addToAlbum(QStringLiteral("Trip"), {path("Iceland/café-paris.jpg")}));
+    proxy.setFolderFilter(m_files + QStringLiteral("/Iceland"));
+    proxy.setAlbumFilter(QStringLiteral("Trip"), settings.albumPaths(QStringLiteral("Trip")));
+    proxy.setDateRange(QStringLiteral("2024-01-01"), QStringLiteral("2024-12-31"));
+    proxy.setCameraFilter(QStringLiteral("FUJIFILM X-T4"));
+    proxy.setLensFilter(QStringLiteral("XF35mmF1.4 R"));
+    proxy.setMinimumRating(0);
+    proxy.setSearchText(QStringLiteral("jpg"));
+    proxy.setKindFilter(CaptureRecord::Picture);
+    QCOMPARE(proxy.count(), 1);
+
+    // Each filter pass ends by refreshing every row's pairing roles once.
+    QSignalSpy passes(&proxy, &QAbstractItemModel::dataChanged);
+    QSignalSpy resets(&proxy, &QAbstractItemModel::modelReset);
+    QSignalSpy layouts(&proxy, &QAbstractItemModel::layoutChanged);
+    proxy.clearFacets(false);
+    QCOMPARE(passes.size(), 1);
+    QCOMPARE(resets.size() + layouts.size(), 0);
+    QVERIFY(proxy.folderFilter().isEmpty());
+    QVERIFY(proxy.albumFilter().isEmpty());
+    QVERIFY(proxy.dateFrom().isEmpty());
+    QVERIFY(proxy.cameraFilter().isEmpty());
+    QVERIFY(proxy.lensFilter().isEmpty());
+    // The search and kind are not facets.
+    QCOMPARE(proxy.searchText(), QStringLiteral("jpg"));
+    QCOMPARE(proxy.kindFilter(), int(CaptureRecord::Picture));
+    QCOMPARE(names(proxy), sorted({QStringLiteral("café-paris.jpg"), QStringLiteral("waterfall.jpg"),
+                                   QStringLiteral("draft copy.jpg")}));
+    proxy.setTagFilter(QStringLiteral("x"), {});
+    passes.clear();
+    proxy.clearFacets(true);
+    // One pass, and one refresh of the search snippets.
+    QCOMPARE(passes.size(), 2);
+    QVERIFY(proxy.searchText().isEmpty());
+    QVERIFY(proxy.tagFilter().isEmpty());
+  }
+
+  // Large libraries take a filter change in one go once enough rows change;
+  // smaller changes go row by row. Both must leave the same rows in order.
+  void bulkAndIncrementalFilterChangesAgree() {
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QTRY_VERIFY(!model.scanning());
+    constexpr int kItems = 6000;
+    QList<CaptureRecord> records;
+    for (int index = 0; index < kItems; ++index) {
+      CaptureRecord record;
+      record.fileName = QStringLiteral("item-%1-%2.jpg").arg(index).arg(index % 7 == 0 ? "seven" : "x");
+      record.path = QStringLiteral("/library/set %1/").arg(index % 13) + record.fileName;
+      record.kind = CaptureRecord::Picture;
+      record.captured = QDateTime(QDate(2020, 1, 1), QTime(9, 0)).addSecs(qint64(index) * 997 % 50000 * 60);
+      record.bytes = 1000 + (index * 31) % 4000;
+      records.append(record);
+    }
+    model.setRecordsForTesting(records);
+    CaptureFilterModel proxy;
+    proxy.setSourceModel(&model);
+    QSignalSpy layouts(&proxy, &QAbstractItemModel::layoutChanged);
+    QSignalSpy inserts(&proxy, &QAbstractItemModel::rowsInserted);
+    QSignalSpy removes(&proxy, &QAbstractItemModel::rowsRemoved);
+    const auto rows = [](const CaptureFilterModel& model) {
+      QStringList paths;
+      for (int row = 0; row < model.rowCount(); ++row) paths.append(model.pathAt(row));
+      return paths;
+    };
+    // Each step against a model that starts with the same filter, which Qt
+    // maps from scratch.
+    const QStringList steps{QStringLiteral("seven"),            // thousands removed: bulk
+                            QStringLiteral("seven -item-7-"),   // one row: incremental
+                            QStringLiteral("seven -item-1"),    // over a hundred: incremental
+                            QStringLiteral("item"),             // thousands back: bulk
+                            QStringLiteral("in:\"set 3\" -seven"),
+                            QString()};
+    int bulk = 0;
+    int incremental = 0;
+    for (const QString& step : steps) {
+      layouts.clear();
+      inserts.clear();
+      removes.clear();
+      proxy.setSearchText(step);
+      bulk += layouts.isEmpty() ? 0 : 1;
+      incremental += inserts.size() + removes.size() > 0 && layouts.isEmpty() ? 1 : 0;
+      CaptureFilterModel fresh;
+      fresh.setSearchText(step);
+      fresh.setSourceModel(&model);
+      QCOMPARE(proxy.rowCount(), fresh.rowCount());
+      QVERIFY2(rows(proxy) == rows(fresh), qPrintable(step));
+    }
+    QVERIFY(bulk >= 2);
+    QVERIFY(incremental >= 2);
+    // The sort holds through both too.
+    proxy.setSortMode(CaptureFilterModel::LargestFirst);
+    proxy.setSearchText(QStringLiteral("seven"));
+    CaptureFilterModel fresh;
+    fresh.setSortMode(CaptureFilterModel::LargestFirst);
+    fresh.setSearchText(QStringLiteral("seven"));
+    fresh.setSourceModel(&model);
+    QCOMPARE(rows(proxy), rows(fresh));
   }
 
   void pdfTextIsExtractedOffTheGuiThreadAndCached() {
@@ -487,6 +726,114 @@ private slots:
                   .entryList({QStringLiteral("*.txt")}, QDir::Files)
                   .isEmpty());
     }
+  }
+
+  void pdfReadsAreBoundedAndFailuresAreRemembered() {
+    const QString bin = m_scratch->filePath(QStringLiteral("bin"));
+    QVERIFY(QDir().mkpath(bin));
+    const QString log = m_scratch->filePath(QStringLiteral("calls"));
+    QFile helper(bin + QStringLiteral("/pdftotext"));
+    QVERIFY(helper.open(QIODevice::WriteOnly));
+    helper.write("#!/bin/sh\necho \"$*\" >> '" + log.toUtf8() + "'\n"
+                 "case \"$*\" in\n"
+                 "  *slow.pdf*) exec sleep 30 ;;\n"
+                 "  *late.pdf*) sleep 1; printf 'late words' ;;\n"
+                 "  *big.pdf*) head -c 3000000 /dev/zero | tr '\\0' 'a' ;;\n"
+                 "  *) printf 'plain words' ;;\n"
+                 "esac\n");
+    helper.close();
+    QVERIFY(helper.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                  QFileDevice::ExeOwner));
+    const QByteArray oldPath = qgetenv("PATH");
+    const auto restorePath = qScopeGuard([&] { qputenv("PATH", oldPath); });
+    QVERIFY(qputenv("PATH", bin.toUtf8() + ':' + oldPath));
+    const auto calls = [&](const char* name) {
+      QFile file(log);
+      if (!file.open(QIODevice::ReadOnly)) return 0;
+      int count = 0;
+      for (const QByteArray& line : file.readAll().split('\n')) count += line.contains(name) ? 1 : 0;
+      return count;
+    };
+
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QTRY_VERIFY(!model.scanning());
+    const auto document = [&](const char* relative, qint64 shift = 0) {
+      CaptureRecord result = record(relative, CaptureRecord::Document, {2024, 1, 1});
+      result.document = true;
+      result.modified += shift;
+      return result;
+    };
+    QList<CaptureRecord> records{document("Docs/big.pdf"), document("Docs/slow.pdf")};
+    model.setRecordsForTesting(records);
+
+    {
+      DocumentTextIndex index(&model);
+      index.setTimeoutMs(1500);
+      QSignalSpy ready(&index, &DocumentTextIndex::textReady);
+      const auto textFor = [&](const QString& file) {
+        QString text;
+        for (const QList<QVariant>& arguments : std::as_const(ready)) {
+          if (arguments.at(0).toString() == file) text = arguments.at(1).toString();
+        }
+        return text;
+      };
+      index.setSearchText(QStringLiteral("words"));
+      QTRY_COMPARE(calls("slow.pdf"), 1);
+      QTRY_VERIFY(!index.indexing());
+      // Output past the limit is cut there, and the tool stopped.
+      QCOMPARE(calls("big.pdf"), 1);
+      QCOMPARE(textFor(path("Docs/big.pdf")).size(), DocumentTextIndex::kTextLimit);
+      QVERIFY(textFor(path("Docs/slow.pdf")).isEmpty());
+      // The cache holds the text compressed.
+      const QFileInfoList cached = QDir(DocumentTextIndex::cacheDirectory())
+                                       .entryInfoList({QStringLiteral("*.txt")}, QDir::Files);
+      QCOMPARE(cached.size(), 1);
+      QVERIFY2(cached.first().size() < DocumentTextIndex::kTextLimit / 8,
+               qPrintable(QString::number(cached.first().size())));
+
+      // The document that timed out is not read again on the next sync...
+      model.setRecordsForTesting(records);
+      QTest::qWait(800);
+      QVERIFY(!index.indexing());
+      QCOMPARE(calls("slow.pdf"), 1);
+      QCOMPARE(calls("big.pdf"), 1);
+      // ...until it changes.
+      records[1] = document("Docs/slow.pdf", 1000);
+      model.setRecordsForTesting(records);
+      QTRY_COMPARE(calls("slow.pdf"), 2);
+      QTRY_VERIFY(!index.indexing());
+
+      // Clearing the cache while a document is read drops what it returns.
+      index.setTimeoutMs(5000);
+      records.prepend(document("Docs/late.pdf"));
+      model.setRecordsForTesting(records);
+      QTRY_COMPARE(calls("late.pdf"), 1);
+      QVERIFY(index.indexing());
+      ready.clear();
+      QVERIFY(index.clearCache() >= 1);
+      QTRY_VERIFY_WITH_TIMEOUT(!index.indexing(), 5000);
+      QTest::qWait(100);
+      QVERIFY(textFor(path("Docs/late.pdf")).isEmpty());
+      QVERIFY(QDir(DocumentTextIndex::cacheDirectory())
+                  .entryList({QStringLiteral("*.txt")}, QDir::Files)
+                  .isEmpty());
+    }
+
+    // Closing while a document is read stops the tool rather than waiting
+    // for it.
+    records = {document("Docs/slow.pdf", 2000)};
+    model.setRecordsForTesting(records);
+    auto index = std::make_unique<DocumentTextIndex>(&model);
+    index->setTimeoutMs(30'000);
+    index->setSearchText(QStringLiteral("words"));
+    QTRY_COMPARE(calls("slow.pdf"), 3);
+    QVERIFY(index->indexing());
+    QElapsedTimer closing;
+    closing.start();
+    index.reset();
+    QVERIFY2(closing.elapsed() < 3000, qPrintable(QString::number(closing.elapsed())));
   }
 
   void searchStaysFastInAFiftyThousandItemLibrary() {
@@ -591,6 +938,64 @@ private slots:
     QVERIFY2(median < budget, qPrintable(QString::number(median)));
     QVERIFY2(slowest < budget * 3, qPrintable(QString::number(slowest)));
     QVERIFY2(first < budget * 3, qPrintable(QString::number(first)));
+  }
+
+  // Snippets are read for every visible tile after each keystroke and each
+  // text that arrives, so long PDF text must not be refolded per read.
+  void snippetsOfLongDocumentsStayCheap() {
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QTRY_VERIFY(!model.scanning());
+    constexpr int kDocuments = 24;
+    QList<CaptureRecord> records;
+    for (int index = 0; index < kDocuments; ++index) {
+      CaptureRecord record;
+      record.fileName = QStringLiteral("report-%1.pdf").arg(index);
+      record.path = QStringLiteral("/library/Documents/") + record.fileName;
+      record.kind = CaptureRecord::Document;
+      record.document = true;
+      record.captured = QDateTime(QDate(2024, 1, 1), QTime(9, 0)).addSecs(index);
+      records.append(record);
+    }
+    model.setRecordsForTesting(records);
+    CaptureFilterModel proxy;
+    proxy.setSourceModel(&model);
+
+    // Half a million characters of ordinary text with one em dash, as most
+    // PDFs have, and the match near the end.
+    QString body;
+    body.reserve(512 * 1024);
+    const QString line = QStringLiteral("Quarterly figures for the northern region, page break. ");
+    while (body.size() < 512 * 1024 - 200) body += line;
+    body.insert(1000, QChar(0x2014));
+    for (int index = 0; index < kDocuments; ++index) {
+      proxy.setOcrText(records.at(index).path,
+                       body + QStringLiteral(" Final total for Zürich %1 closes it.").arg(index));
+    }
+    proxy.setSearchText(QStringLiteral("zurich"));
+    QCOMPARE(proxy.count(), kDocuments);
+    const QString first = proxy.ocrSnippetAt(0);
+    QVERIFY2(first.contains(QStringLiteral("Zürich")), qPrintable(first));
+    QVERIFY(first.startsWith(QChar(0x2026)));
+
+    qint64 best = std::numeric_limits<qint64>::max();
+    for (int attempt = 0; attempt < 3; ++attempt) {
+      const qint64 cpu = threadMicros();
+      for (int row = 0; row < proxy.count(); ++row) (void)proxy.ocrSnippetAt(row);
+      best = std::min(best, threadMicros() - cpu);
+    }
+    qInfo().noquote() << QStringLiteral("%1 snippets of 512K-character text: %2 ms CPU")
+                             .arg(kDocuments)
+                             .arg(best / 1000.0, 0, 'f', 2);
+#if OMAROLL_SANITIZED
+    const qint64 budget = 60'000;
+#elif defined(NDEBUG)
+    const qint64 budget = 3'000;
+#else
+    const qint64 budget = 15'000;
+#endif
+    QVERIFY2(best < budget, qPrintable(QString::number(best)));
   }
 
 private:

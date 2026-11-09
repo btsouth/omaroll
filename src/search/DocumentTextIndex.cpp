@@ -20,9 +20,9 @@
 namespace {
 
 constexpr quint32 kCacheMagic = 0x50445431; // PDT1
-constexpr quint16 kCacheVersion = 1;
+// 2: the text as compressed UTF-8. Version 1 entries are pruned.
+constexpr quint16 kCacheVersion = 2;
 constexpr qint64 kMaximumCacheBytes = 64LL * 1024 * 1024;
-constexpr int kExtractTimeoutMs = 20'000;
 
 QString cacheHome() {
   const QString configured = qEnvironmentVariable("XDG_CACHE_HOME");
@@ -95,9 +95,12 @@ void DocumentTextIndex::setBackground(bool enabled) {
 }
 
 bool DocumentTextIndex::known(const Candidate& candidate) const {
-  const auto found = m_known.constFind(candidate.path);
-  return found != m_known.cend() && found->modified == candidate.modified &&
-         found->bytes == candidate.bytes;
+  const auto same = [&candidate](const QHash<QString, Candidate>& map) {
+    const auto found = map.constFind(candidate.path);
+    return found != map.cend() && found->modified == candidate.modified &&
+           found->bytes == candidate.bytes;
+  };
+  return same(m_known) || same(m_failed);
 }
 
 bool DocumentTextIndex::current(const Candidate& candidate) const {
@@ -130,6 +133,11 @@ void DocumentTextIndex::sync() {
       ++it;
     }
   }
+  // A failed document that changed gets another try.
+  m_failed.removeIf([&live](const QHash<QString, Candidate>::iterator it) {
+    const auto found = live.constFind(it.key());
+    return found == live.cend() || found->modified != it->modified || found->bytes != it->bytes;
+  });
   if (!wanted()) return;
   // The model holds the newest scan results first.
   m_queue.clear();
@@ -150,8 +158,9 @@ void DocumentTextIndex::processNext() {
     const QString program = QStandardPaths::findExecutable(QStringLiteral("pdftotext"));
     const QString cache = cachePath(candidate.path);
     m_watcher.setFuture(QtConcurrent::run(
-        [candidate, program, cache, cancel = m_cancel, generation = m_generation] {
-          Result result = extract(candidate, program, cache, *cancel);
+        [candidate, program, cache, timeout = m_timeoutMs, cancel = m_cancel,
+         generation = m_generation] {
+          Result result = extract(candidate, program, cache, timeout, *cancel);
           result.generation = generation;
           return result;
         }));
@@ -170,6 +179,8 @@ void DocumentTextIndex::finished() {
   } else if (result.read && current(result.candidate)) {
     m_known.insert(result.candidate.path, result.candidate);
     if (!result.text.isEmpty()) emit textReady(result.candidate.path, result.text);
+  } else if (!result.read && !m_stopped && current(result.candidate)) {
+    m_failed.insert(result.candidate.path, result.candidate);
   }
   if (m_stopped) {
     setIndexing(false);
@@ -181,6 +192,7 @@ void DocumentTextIndex::finished() {
 DocumentTextIndex::Result DocumentTextIndex::extract(const Candidate& candidate,
                                                      const QString& program,
                                                      const QString& cachePath,
+                                                     int timeoutMs,
                                                      const std::atomic_bool& cancel) {
   Result result{candidate, {}, false};
   {
@@ -193,14 +205,17 @@ DocumentTextIndex::Result DocumentTextIndex::extract(const Candidate& candidate,
       QString path;
       qint64 modified = 0;
       qint64 bytes = 0;
-      QString text;
-      stream >> magic >> version >> path >> modified >> bytes >> text;
+      QByteArray compressed;
+      stream >> magic >> version >> path >> modified >> bytes >> compressed;
       if (stream.status() == QDataStream::Ok && magic == kCacheMagic &&
           version == kCacheVersion && path == candidate.path &&
           modified == candidate.modified && bytes == candidate.bytes) {
-        result.text = text.left(kTextLimit);
-        result.read = true;
-        return result;
+        const QByteArray text = compressed.isEmpty() ? QByteArray() : qUncompress(compressed);
+        if (compressed.isEmpty() || !text.isEmpty()) {
+          result.text = QString::fromUtf8(text).left(kTextLimit);
+          result.read = true;
+          return result;
+        }
       }
     }
   }
@@ -217,7 +232,7 @@ DocumentTextIndex::Result DocumentTextIndex::extract(const Candidate& candidate,
   // rather than buffering a whole book.
   QByteArray output;
   const qsizetype byteLimit = kTextLimit * 4;
-  QDeadlineTimer deadline(kExtractTimeoutMs);
+  QDeadlineTimer deadline(timeoutMs);
   bool truncated = false;
   while (process.state() != QProcess::NotRunning) {
     if (deadline.hasExpired() || cancel.load()) {
@@ -251,8 +266,9 @@ DocumentTextIndex::Result DocumentTextIndex::extract(const Candidate& candidate,
     if (file.open(QIODevice::WriteOnly)) {
       QDataStream stream(&file);
       stream.setVersion(QDataStream::Qt_6_0);
+      const QByteArray text = result.text.toUtf8();
       stream << kCacheMagic << kCacheVersion << candidate.path << candidate.modified
-             << candidate.bytes << result.text;
+             << candidate.bytes << (text.isEmpty() ? QByteArray() : qCompress(text));
       if (stream.status() == QDataStream::Ok && file.commit()) {
         QFile::setPermissions(cachePath, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
       }
@@ -268,6 +284,7 @@ int DocumentTextIndex::clearCache() {
   for (auto it = m_known.cbegin(); it != m_known.cend(); ++it) emit textReady(it.key(), {});
   if (m_running && !m_known.contains(m_current.path)) emit textReady(m_current.path, {});
   m_known.clear();
+  m_failed.clear();
   int removed = 0;
   QDir directory(cacheDirectory());
   for (const QString& name : directory.entryList({QStringLiteral("*.txt")}, QDir::Files)) {

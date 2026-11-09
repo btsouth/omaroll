@@ -344,8 +344,8 @@ entry, preserving a symlink's name and path.
 
 ## Search
 
-The search box matches filenames, captions, tags, album names, the folder
-path, camera and lens, the text inside pictures and the text of PDFs. Case and
+The search box matches filenames, captions, tags, album names, folder names
+below the library's folders, camera and lens, the text inside pictures and the text of PDFs. Case and
 accents are ignored, so `cafe` finds `café-paris.jpg` and `CAFÉ` finds "cafe".
 Every word must match. Fields narrow the search:
 
@@ -369,11 +369,15 @@ one and Enter or Tab takes it. **?** lists the syntax too.
 Choices in **Browse** combine: a folder, an album, a tag, a date, a camera or
 lens and a minimum rating narrow together. Each shows as a chip under the
 filter bar with its own clear button. **Save current view** keeps the search,
-tokens included, and every chip.
+tokens included, the kind and sort, and the folder, album, tag, date, camera,
+lens and rating chips. Duplicate and similar reviews are not saved. Deleting an
+album or tag deletes the saved views that open it. Omaroll 1.18 and older open
+such a view with only its plain words and without its album.
 
 Picture text is read locally by Tesseract and kept in a private cache. PDF
 text comes from `pdftotext`, the first 50 pages of each document, read in the
-background one document at a time and cached the same way. By default it is
+background one document at a time and cached the same way. A document that
+takes longer than 20 seconds is skipped until it changes. By default it is
 read while a search is open, one picture at a time, screenshots first; the
 status line counts the pictures read, and a notice under the results says
 when some have not been read yet.

@@ -1,9 +1,12 @@
 #pragma once
 
+#include <QByteArray>
 #include <QDate>
 #include <QList>
 #include <QString>
 #include <QStringList>
+
+#include <utility>
 
 // The library search language.
 //
@@ -22,12 +25,35 @@
 // token, such as "note:x" or "before:soon", is searched as plain text.
 namespace SearchText {
 
-// Unicode NFKD, combining marks dropped, case folded. Returns the input
-// unchanged (and shared) when there is nothing to fold.
+// Each character on its own: Unicode NFKD, case folded, combining marks
+// dropped, and the Latin letters with no decomposition spelled out (ß as ss,
+// ø as o, ł as l, đ and ð as d, æ as ae, œ as oe, þ as th, ı as i, ħ as h,
+// ŧ as t). Character by character, so folding a piece of text gives the same
+// characters as that piece of the folded whole. Returns the input unchanged
+// (and shared) when there is nothing to fold.
 [[nodiscard]] QString fold(const QString& text);
 // As fold(), with each output character's index in the input, so a match in
 // folded text can be shown in the original.
 [[nodiscard]] QString fold(const QString& text, QList<qsizetype>* sourceIndexes);
+
+// Long text kept for search, such as a PDF's: the original and its folded
+// form, both UTF-8, with a mark every couple of thousand characters where the
+// two line up. A match found in the folded text is shown from the original
+// by refolding only the piece around it.
+struct FoldedText {
+  QByteArray original;
+  QByteArray folded;
+  // Byte offsets in folded and original where the same character starts.
+  QList<std::pair<qsizetype, qsizetype>> marks;
+
+  [[nodiscard]] static FoldedText make(const QString& text);
+  [[nodiscard]] bool isEmpty() const { return original.isEmpty(); }
+  [[nodiscard]] qsizetype bytes() const { return original.size() + folded.size(); }
+  // The original text around the first match of a folded needle: up to
+  // |before| characters ahead of it and |after| behind, simplified, with an
+  // ellipsis where it was cut. Empty when the needle is not there.
+  [[nodiscard]] QString snippet(const QByteArray& needle, int before, int after) const;
+};
 // Whether needle starts at the beginning of a word anywhere in haystack.
 // Both are expected folded.
 [[nodiscard]] bool containsWordStart(const QString& haystack, const QString& needle);
@@ -45,6 +71,9 @@ struct SearchQuery {
     bool negated = false;
     bool phrase = false;
     MediaType type = Image;
+    // Text: the value in UTF-8, for matching long folded text, and as typed.
+    QByteArray utf8;
+    QString typed;
     // Before: the first day of the period. After: the last day.
     QDate date;
   };
@@ -58,6 +87,13 @@ struct SearchQuery {
   // Plain words and phrases, folded, positive ones first. Used for snippets
   // and to decide whether text indexing is worth starting.
   [[nodiscard]] QStringList textValues(bool includeNegated = false) const;
+  // The positive plain words as typed, which is all a saved view's "search"
+  // means to 1.18 and older.
+  [[nodiscard]] QString plainWords() const;
+  // A search saved before field tokens existed, as a query that means the
+  // same: every word is literal text, so "-draft" and "type:video" are
+  // searched for as written.
+  [[nodiscard]] static QString fromPlainWords(const QString& words);
 
   // Field names, as typed. The first of each group is the canonical one.
   [[nodiscard]] static QStringList fieldNames();

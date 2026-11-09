@@ -72,25 +72,12 @@ Flow {
         return list
     }
 
-    function clearAll() {
-        Captures.duplicatesOnly = false
-        Captures.similarOnly = false
-        Captures.folderFilter = ""
-        Captures.setAlbumFilter("", [])
-        Captures.setTagFilter("", [])
-        Captures.cameraFilter = ""
-        Captures.lensFilter = ""
-        Captures.minimumRating = 0
-        Captures.clearDateRange()
-        Captures.clearSmartCollection()
-    }
+    // One filter pass in C++, rather than one per facet.
+    function clearAll() { Captures.clearFacets(false) }
 
     function clear(key) {
-        if (key === "view") {
-            // A saved view set everything it shows, search included.
-            clearAll()
-            Captures.searchText = ""
-        }
+        // A saved view set everything it shows, search included.
+        if (key === "view") Captures.clearFacets(true)
         else if (key === "duplicates") Captures.duplicatesOnly = false
         else if (key === "similar") Captures.similarOnly = false
         else if (key === "folder") Captures.folderFilter = ""

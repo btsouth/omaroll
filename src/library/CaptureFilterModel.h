@@ -223,6 +223,9 @@ public:
   // left, as with any other change to its filters: what remains is no longer
   // that view.
   Q_INVOKABLE void clearRefinements();
+  // Every Browse facet and review filter, and the search too when asked, in
+  // one filter pass. Kind, favourites and sort are kept. Leaves a saved view.
+  Q_INVOKABLE void clearFacets(bool includeSearch = false);
 
   [[nodiscard]] QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
   [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
@@ -267,14 +270,15 @@ private:
     quint64 organization = 0;
     QString name;
     QString folder;
+    QString folderWords;
     QString cameraKey;
     QString lensKey;
     QString captionKey;
     QString tags;
     QString albums;
     quint64 text = 0;
-    // Folded picture or PDF text, or empty.
-    QString ocr;
+    // Folded picture or PDF text as UTF-8, or empty.
+    QByteArray ocr;
   };
 
   void beginFilterUpdate();
@@ -290,7 +294,14 @@ private:
   [[nodiscard]] bool anyMatches(int relax) const;
   [[nodiscard]] bool matchesSearch(int sourceRow, const CaptureRecord& record) const;
   [[nodiscard]] const SearchKeys& searchKeys(int sourceRow, const CaptureRecord& record) const;
-  [[nodiscard]] QString folderKey(const QString& path) const;
+  struct FolderKeys {
+    // Folded, from home: what in: matches.
+    QString path;
+    // Folded, below the library root: what plain words match.
+    QString words;
+  };
+  [[nodiscard]] const FolderKeys& folderKeys(const QString& path) const;
+  void reloadLibraryRoots();
   [[nodiscard]] bool rebuildFolderIndex();
   [[nodiscard]] bool rebuildDateIndex();
   [[nodiscard]] bool rebuildCameraIndex();
@@ -308,7 +319,8 @@ private:
   QStringList m_searchTerms;
   SearchQuery m_query;
   mutable std::vector<SearchKeys> m_searchKeys;
-  mutable QHash<QString, QString> m_folderKeys;
+  mutable QHash<QString, FolderKeys> m_folderKeys;
+  QStringList m_libraryRoots;
   AppSettings* m_settings = nullptr;
   // Folded tag and album names per path, one per line.
   QHash<QString, QString> m_tagText;
@@ -350,8 +362,7 @@ private:
   QHash<QString, QString> m_duplicateGroups;
   QHash<QString, QString> m_similarGroups;
   QHash<QString, int> m_duplicateOrdinals;
-  QHash<QString, QString> m_ocrText;
-  QHash<QString, QString> m_ocrFolded;
+  QHash<QString, SearchText::FoldedText> m_text;
   QTimer m_folderIndexTimer;
   bool m_metadataIndexesDirty = false;
   QTimer m_duplicateOrderTimer;

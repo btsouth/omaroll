@@ -3,6 +3,8 @@
 #include <QDir>
 #include <QRegularExpression>
 
+#include <algorithm>
+
 namespace {
 
 bool isAscii(const QString& text, bool* hasUpper) {
@@ -14,8 +16,6 @@ bool isAscii(const QString& text, bool* hasUpper) {
   }
   return true;
 }
-
-bool dropped(QChar character) { return character.category() == QChar::Mark_NonSpacing; }
 
 struct FieldName {
   const char* name;
@@ -82,40 +82,191 @@ bool parsePeriod(const QString& value, QDate* first, QDate* last) {
 
 namespace SearchText {
 
+namespace {
+
+// Latin letters that NFKD leaves whole, spelled the way people type them.
+// Applied after case folding, so only lower case appears here.
+QLatin1StringView spelledOut(char32_t character) {
+  switch (character) {
+  case 0x00DF: return QLatin1StringView("ss"); // ß, and ẞ once folded
+  case 0x00E6: return QLatin1StringView("ae"); // æ
+  case 0x00F0: return QLatin1StringView("d");  // ð
+  case 0x00F8: return QLatin1StringView("o");  // ø
+  case 0x00FE: return QLatin1StringView("th"); // þ
+  case 0x0111: return QLatin1StringView("d");  // đ
+  case 0x0127: return QLatin1StringView("h");  // ħ
+  case 0x0131: return QLatin1StringView("i");  // ı
+  case 0x0142: return QLatin1StringView("l");  // ł
+  case 0x0153: return QLatin1StringView("oe"); // œ
+  case 0x0167: return QLatin1StringView("t");  // ŧ
+  default: return {};
+  }
+}
+
+// Appends one folded code point, skipping combining marks.
+template <typename Sink>
+void emitFolded(char32_t character, Sink&& sink) {
+  if (QChar::category(character) == QChar::Mark_NonSpacing) return;
+  const QLatin1StringView spelled = spelledOut(character);
+  if (!spelled.isEmpty()) {
+    for (const char letter : spelled) sink(QChar(QLatin1Char(letter)));
+    return;
+  }
+  if (QChar::requiresSurrogates(character)) {
+    sink(QChar(QChar::highSurrogate(character)));
+    sink(QChar(QChar::lowSurrogate(character)));
+  } else {
+    sink(QChar(static_cast<char16_t>(character)));
+  }
+}
+
+// Folds text[index, index + length), one code point, through sink. Marks are
+// dropped after case folding, since folding can turn a mark into a letter
+// (the Greek ypogegrammeni becomes iota).
+template <typename Sink>
+void foldCharacter(const QString& text, qsizetype index, qsizetype length, char32_t character,
+                   Sink&& sink) {
+  if (QChar::decompositionTag(character) == QChar::NoDecomposition) {
+    emitFolded(QChar::toCaseFolded(character), sink);
+    return;
+  }
+  const QString piece =
+      text.mid(index, length).normalized(QString::NormalizationForm_KD).toCaseFolded();
+  for (qsizetype at = 0; at < piece.size(); ++at) {
+    char32_t unit = piece.at(at).unicode();
+    if (piece.at(at).isHighSurrogate() && at + 1 < piece.size() &&
+        piece.at(at + 1).isLowSurrogate()) {
+      unit = QChar::surrogateToUcs4(piece.at(at), piece.at(at + 1));
+      ++at;
+    }
+    emitFolded(unit, sink);
+  }
+}
+
+template <typename Sink>
+void foldEach(const QString& text, Sink&& sink) {
+  const qsizetype size = text.size();
+  const QChar* data = text.constData();
+  for (qsizetype index = 0; index < size;) {
+    const char16_t unit = data[index].unicode();
+    if (unit < 0x80) {
+      sink(index, QChar(unit >= u'A' && unit <= u'Z' ? char16_t(unit + 32) : unit));
+      ++index;
+      continue;
+    }
+    qsizetype length = 1;
+    char32_t character = unit;
+    if (QChar::isHighSurrogate(unit) && index + 1 < size && data[index + 1].isLowSurrogate()) {
+      character = QChar::surrogateToUcs4(unit, data[index + 1].unicode());
+      length = 2;
+    }
+    foldCharacter(text, index, length, character,
+                  [&](QChar folded) { sink(index, folded); });
+    index += length;
+  }
+}
+
+} // namespace
+
 QString fold(const QString& text) {
   bool upper = false;
   if (isAscii(text, &upper)) return upper ? text.toLower() : text;
-  QString decomposed = text.normalized(QString::NormalizationForm_KD);
-  decomposed.removeIf(dropped);
-  return decomposed.toCaseFolded();
+  QString out;
+  out.reserve(text.size());
+  foldEach(text, [&](qsizetype, QChar folded) { out.append(folded); });
+  return out;
 }
 
 QString fold(const QString& text, QList<qsizetype>* sourceIndexes) {
   sourceIndexes->clear();
+  sourceIndexes->reserve(text.size());
   bool upper = false;
   if (isAscii(text, &upper)) {
-    sourceIndexes->reserve(text.size());
     for (qsizetype index = 0; index < text.size(); ++index) sourceIndexes->append(index);
     return upper ? text.toLower() : text;
   }
   QString out;
   out.reserve(text.size());
-  sourceIndexes->reserve(text.size());
-  for (qsizetype index = 0; index < text.size(); ++index) {
-    const qsizetype length =
-        text.at(index).isHighSurrogate() && index + 1 < text.size() &&
-                text.at(index + 1).isLowSurrogate()
-            ? 2 : 1;
-    const QString piece =
-        text.mid(index, length).normalized(QString::NormalizationForm_KD).toCaseFolded();
-    for (const QChar character : piece) {
-      if (dropped(character)) continue;
-      out.append(character);
-      sourceIndexes->append(index);
-    }
-    index += length - 1;
-  }
+  foldEach(text, [&](qsizetype source, QChar folded) {
+    out.append(folded);
+    sourceIndexes->append(source);
+  });
   return out;
+}
+
+FoldedText FoldedText::make(const QString& text) {
+  // Folding is character by character, so pieces fold the same alone as in
+  // the whole. A piece never splits a surrogate pair, so its UTF-8 is the
+  // same piece of the whole's UTF-8 too.
+  constexpr qsizetype kPiece = 2048;
+  FoldedText result;
+  result.original.reserve(text.size());
+  result.folded.reserve(text.size());
+  for (qsizetype at = 0; at < text.size();) {
+    qsizetype end = std::min(text.size(), at + kPiece);
+    if (end < text.size() && text.at(end - 1).isHighSurrogate() && text.at(end).isLowSurrogate()) {
+      ++end;
+    }
+    const QString piece = text.mid(at, end - at);
+    result.marks.append({result.folded.size(), result.original.size()});
+    result.original += piece.toUtf8();
+    result.folded += fold(piece).toUtf8();
+    at = end;
+  }
+  result.original.squeeze();
+  result.folded.squeeze();
+  return result;
+}
+
+QString FoldedText::snippet(const QByteArray& needle, int before, int after) const {
+  if (needle.isEmpty() || marks.isEmpty()) return {};
+  const qsizetype found = folded.indexOf(needle);
+  if (found < 0) return {};
+  const qsizetype foundEnd = found + needle.size();
+  // The piece where the match starts, and the one where it ends.
+  const auto byFolded = [](qsizetype offset, const std::pair<qsizetype, qsizetype>& mark) {
+    return offset < mark.first;
+  };
+  const qsizetype first = std::upper_bound(marks.cbegin(), marks.cend(), found, byFolded) -
+                          marks.cbegin() - 1;
+  const qsizetype last = std::upper_bound(marks.cbegin(), marks.cend(), foundEnd - 1, byFolded) -
+                         marks.cbegin() - 1;
+  if (first < 0 || last < first) return {};
+  const qsizetype rawStart = marks.at(first).second;
+  const qsizetype rawEnd = last + 1 < marks.size() ? marks.at(last + 1).second : original.size();
+  const QString window = QString::fromUtf8(original.constData() + rawStart, rawEnd - rawStart);
+  QList<qsizetype> sources;
+  const QString foldedWindow = fold(window, &sources);
+  const qsizetype local =
+      QString::fromUtf8(folded.constData() + marks.at(first).first, found - marks.at(first).first)
+          .size();
+  const QString term = QString::fromUtf8(needle);
+  if (local + term.size() > foldedWindow.size() ||
+      QStringView(foldedWindow).mid(local, term.size()) != term) {
+    return {};
+  }
+
+  // A little of the original either side, cut at a character boundary.
+  const auto continuation = [this](qsizetype offset) {
+    return (static_cast<unsigned char>(original.at(offset)) & 0xC0) == 0x80;
+  };
+  qsizetype prefixStart = std::max<qsizetype>(0, rawStart - qsizetype(before) * 4);
+  while (prefixStart < rawStart && continuation(prefixStart)) ++prefixStart;
+  qsizetype suffixEnd = std::min<qsizetype>(original.size(), rawEnd + qsizetype(after) * 4);
+  while (suffixEnd > rawEnd && suffixEnd < original.size() && continuation(suffixEnd)) --suffixEnd;
+  const QString prefix =
+      QString::fromUtf8(original.constData() + prefixStart, rawStart - prefixStart);
+  const QString text = prefix + window +
+                       QString::fromUtf8(original.constData() + rawEnd, suffixEnd - rawEnd);
+
+  const qsizetype match = prefix.size() + sources.at(local);
+  const qsizetype matchEnd = prefix.size() + sources.at(local + term.size() - 1) + 1;
+  const qsizetype start = std::max<qsizetype>(0, match - before);
+  const qsizetype end = std::min<qsizetype>(text.size(), matchEnd + after);
+  QString snippet = text.mid(start, end - start).simplified();
+  if (start > 0 || prefixStart > 0) snippet.prepend(QChar(0x2026));
+  if (end < text.size() || suffixEnd < original.size()) snippet.append(QChar(0x2026));
+  return snippet;
 }
 
 bool containsWordStart(const QString& haystack, const QString& needle) {
@@ -181,6 +332,8 @@ SearchQuery SearchQuery::parse(const QString& text) {
     if (value.isEmpty() || value == QStringLiteral("-")) return;
     Term term;
     term.value = value;
+    term.utf8 = value.toUtf8();
+    term.typed = raw.simplified();
     term.negated = negated;
     term.phrase = phrase || value.contains(QLatin1Char(' '));
     query.terms.append(term);
@@ -282,4 +435,27 @@ QStringList SearchQuery::textValues(bool includeNegated) const {
     }
   }
   return values;
+}
+
+QString SearchQuery::plainWords() const {
+  QStringList words;
+  for (const Term& term : terms) {
+    if (term.field == Text && !term.negated) words.append(term.typed);
+  }
+  return words.join(QLatin1Char(' '));
+}
+
+QString SearchQuery::fromPlainWords(const QString& words) {
+  QStringList parts;
+  for (QString word : words.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts)) {
+    if (word.startsWith(QLatin1Char('-')) || word.contains(QLatin1Char(':')) ||
+        word.contains(QLatin1Char('"'))) {
+      // A quote cannot be quoted; the rest of the word still matches.
+      word.remove(QLatin1Char('"'));
+      if (word.isEmpty()) continue;
+      word = QLatin1Char('"') + word + QLatin1Char('"');
+    }
+    parts.append(word);
+  }
+  return parts.join(QLatin1Char(' '));
 }

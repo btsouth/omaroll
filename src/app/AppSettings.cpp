@@ -941,12 +941,27 @@ bool AppSettings::createAlbum(const QString& name) {
   return m_organizationError.isEmpty();
 }
 
-void AppSettings::deleteAlbum(const QString& name) {
+int AppSettings::deleteAlbum(const QString& name) {
   if (m_albums.remove(name) == 0) {
-    return;
+    return 0;
   }
+  const int views = removeViewsNaming(QStringLiteral("album"),
+                                      [&name](const QString& album) { return album == name; });
   persistAlbums();
+  if (views > 0) {
+    persistSmartCollections();
+    emit smartCollectionsChanged();
+  }
   emit albumsChanged();
+  return views;
+}
+
+int AppSettings::removeViewsNaming(const QString& key,
+                                   const std::function<bool(const QString&)>& matches) {
+  return static_cast<int>(m_smartCollections.removeIf([&](QMap<QString, QVariantMap>::iterator view) {
+    const QString value = view.value().value(key).toString();
+    return !value.isEmpty() && matches(value);
+  }));
 }
 
 bool AppSettings::renameAlbum(const QString& oldName, const QString& newName) {
@@ -1153,7 +1168,7 @@ bool AppSettings::createTag(const QString& name) {
   return m_organizationError.isEmpty();
 }
 
-void AppSettings::deleteTag(const QString& name) {
+int AppSettings::deleteTag(const QString& name) {
   int removed = m_tags.remove(name);
   for (const QString& existing : m_tags.keys()) {
     if (tagIsUnder(existing, name)) {
@@ -1161,10 +1176,21 @@ void AppSettings::deleteTag(const QString& name) {
     }
   }
   if (removed == 0) {
-    return;
+    return 0;
   }
+  const int views = removeViewsNaming(QStringLiteral("tag"), [&name](const QString& tag) {
+    return tag == name || tagIsUnder(tag, name);
+  });
+  m_deferOrganizationSync = true;
   persistTags();
+  if (views > 0) {
+    persistSmartCollections();
+    emit smartCollectionsChanged();
+  }
+  m_deferOrganizationSync = false;
+  syncOrganization();
   emit tagsChanged();
+  return views;
 }
 
 bool AppSettings::renameTag(const QString& oldName, const QString& newName) {

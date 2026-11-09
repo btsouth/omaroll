@@ -137,6 +137,8 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
   if (auto* captures = qobject_cast<CaptureModel*>(model)) {
     // Tag and album names are searched, so membership follows the settings.
     m_settings = captures->settings();
+    m_sourceConnections.append(connect(captures, &CaptureModel::folderSourcesChanged, this,
+                                       &CaptureFilterModel::reloadLibraryRoots));
     if (m_settings) {
       m_sourceConnections.append(connect(m_settings, &AppSettings::tagsChanged, this,
                                          &CaptureFilterModel::reloadOrganization));
@@ -204,6 +206,7 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
   (void)rebuildDateIndex();
   (void)rebuildCameraIndex();
   reloadOrganization();
+  reloadLibraryRoots();
   emit foldersChanged();
   emit dateBucketsChanged();
   emit camerasChanged();
@@ -703,7 +706,10 @@ void CaptureFilterModel::setMinimumRating(int stars) {
 QVariantMap CaptureFilterModel::currentView() {
   commitPendingSearch();
   QVariantMap view;
-  view.insert(QStringLiteral("search"), m_searchText);
+  // "search" stays plain words, which is all 1.18 and older understand;
+  // the query with its field tokens has a key of its own.
+  view.insert(QStringLiteral("search"), m_query.plainWords());
+  view.insert(QStringLiteral("query"), m_searchText);
   view.insert(QStringLiteral("kind"), m_kindFilter);
   view.insert(QStringLiteral("folder"), m_folderFilter);
   view.insert(QStringLiteral("favorites"), m_favoritesOnly);
@@ -724,7 +730,11 @@ QVariantMap CaptureFilterModel::currentView() {
 void CaptureFilterModel::applyView(const QString& name, const QVariantMap& view,
                                    const QStringList& tagPaths) {
   beginFilterUpdate();
-  applySearchText(view.value(QStringLiteral("search")).toString());
+  // A view saved before field tokens has only plain words, which keep their
+  // old meaning: "-draft" there is text, not an exclusion.
+  applySearchText(view.contains(QStringLiteral("query"))
+                      ? view.value(QStringLiteral("query")).toString()
+                      : SearchQuery::fromPlainWords(view.value(QStringLiteral("search")).toString()));
   m_kindFilter = qBound(kAllKinds, view.value(QStringLiteral("kind"), kAllKinds).toInt(),
                         static_cast<int>(CaptureRecord::Document));
   m_folderFilter = view.value(QStringLiteral("folder")).toString();
@@ -1016,16 +1026,18 @@ void CaptureFilterModel::setOcrText(const QString& path, const QString& text) {
     return;
   }
   if (text.isEmpty()) {
-    if (m_ocrText.remove(path) == 0) {
+    if (m_text.remove(path) == 0) {
       return;
     }
-    m_ocrFolded.remove(path);
   } else {
-    if (m_ocrText.value(path) == text) {
+    // Kept as UTF-8, the original for snippets and the folded form for
+    // matching: a long PDF costs about twice its length rather than four
+    // times, and matching scans half the bytes.
+    const auto found = m_text.constFind(path);
+    if (found != m_text.cend() && found->original == text.toUtf8()) {
       return;
     }
-    m_ocrText.insert(path, text);
-    m_ocrFolded.insert(path, SearchText::fold(text));
+    m_text.insert(path, SearchText::FoldedText::make(text));
   }
   ++m_textVersion;
   if (m_query.hasText()) {
@@ -1089,41 +1101,20 @@ QString CaptureFilterModel::ocrSnippet(const CaptureRecord& record) const {
   if (m_searchTerms.isEmpty()) {
     return {};
   }
-  const QString text = m_ocrText.value(record.path);
-  if (text.isEmpty()) {
+  const auto found = m_text.constFind(record.path);
+  if (found == m_text.cend()) {
     return {};
   }
+  // Read for every visible tile after each keystroke, so the match is found
+  // in the folded text already kept and only the piece around it is folded
+  // again to show it from the original.
   const QString name = SearchText::fold(record.fileName);
-  QList<qsizetype> sources;
-  const QString folded = SearchText::fold(text, &sources);
-  qsizetype foldedMatch = -1;
-  qsizetype foldedLength = 0;
   for (const QString& term : m_searchTerms) {
-    const qsizetype at = name.contains(term) ? -1 : folded.indexOf(term);
-    if (at >= 0) {
-      foldedMatch = at;
-      foldedLength = term.size();
-      break;
-    }
+    if (name.contains(term)) continue;
+    const QString snippet = found->snippet(term.toUtf8(), 44, 56);
+    if (!snippet.isEmpty()) return snippet;
   }
-  if (foldedMatch < 0 || sources.size() != folded.size()) {
-    return {};
-  }
-
-  // Folding can change lengths ("ﬁ" is two letters), so the match is mapped
-  // back to the recognized text it came from.
-  const qsizetype match = sources.at(foldedMatch);
-  const qsizetype matchEnd = sources.at(foldedMatch + foldedLength - 1) + 1;
-  const qsizetype start = qMax<qsizetype>(0, match - 44);
-  const qsizetype end = qMin<qsizetype>(text.size(), matchEnd + 56);
-  QString snippet = text.mid(start, end - start).simplified();
-  if (start > 0) {
-    snippet.prepend(QChar(0x2026));
-  }
-  if (end < text.size()) {
-    snippet.append(QChar(0x2026));
-  }
-  return snippet;
+  return {};
 }
 
 bool CaptureFilterModel::recordLessThan(const CaptureRecord& first,
@@ -1300,6 +1291,70 @@ void CaptureFilterModel::clearRefinements() {
   setLensFilter(QString());
 }
 
+void CaptureFilterModel::clearFacets(bool includeSearch) {
+  commitPendingSearch();
+  const bool review = m_duplicatesOnly || m_similarOnly;
+  const bool dates = m_dateFrom.isValid() || m_dateTo.isValid() || !m_modifiedAfter.isEmpty() ||
+                     m_dateField != 0;
+  const bool search = includeSearch && !m_searchText.isEmpty();
+  const bool any = review || dates || search || !m_folderFilter.isEmpty() ||
+                   !m_albumFilter.isEmpty() || !m_tagFilter.isEmpty() ||
+                   !m_cameraFilter.isEmpty() || !m_lensFilter.isEmpty() || m_minimumRating > 0;
+  if (!any) {
+    clearSmartCollection();
+    return;
+  }
+  const bool duplicates = m_duplicatesOnly;
+  const bool similar = m_similarOnly;
+  const bool folder = !m_folderFilter.isEmpty();
+  const bool album = !m_albumFilter.isEmpty();
+  const bool tag = !m_tagFilter.isEmpty();
+  const bool camera = !m_cameraFilter.isEmpty();
+  const bool lens = !m_lensFilter.isEmpty();
+  const bool rating = m_minimumRating > 0;
+  // One filter pass for all of them, rather than one per facet.
+  beginFilterUpdate();
+  m_duplicatesOnly = false;
+  m_similarOnly = false;
+  m_folderFilter.clear();
+  m_albumFilter.clear();
+  m_albumPaths.clear();
+  m_tagFilter.clear();
+  m_tagPaths.clear();
+  m_cameraFilter.clear();
+  m_lensFilter.clear();
+  m_minimumRating = 0;
+  m_dateFrom = {};
+  m_dateTo = {};
+  m_dateField = 0;
+  m_modifiedAfter.clear();
+  m_modifiedAfterMs = 0;
+  if (search) applySearchText({});
+  endFilterUpdate();
+  if (review) {
+    // Review sets sort by set; the plain grid goes back to the sort order.
+    rebuildDuplicateOrdinals();
+    invalidate();
+  }
+  clearSmartCollection();
+  if (search) {
+    if (rowCount() > 0) {
+      emit dataChanged(index(0, 0), index(rowCount() - 1, 0), {CaptureRoles::OcrSnippetRole});
+    }
+    emit searchTextChanged();
+  }
+  if (duplicates) emit duplicatesOnlyChanged();
+  if (similar) emit similarOnlyChanged();
+  if (folder) emit folderFilterChanged();
+  if (album) emit albumFilterChanged();
+  if (tag) emit tagFilterChanged();
+  if (camera) emit cameraFilterChanged();
+  if (lens) emit lensFilterChanged();
+  if (rating) emit minimumRatingChanged();
+  if (dates) emit dateRangeChanged();
+  emit countChanged();
+}
+
 bool CaptureFilterModel::lessThan(const QModelIndex& left, const QModelIndex& right) const {
   const CaptureRecord& a = sourceRecord(left.row());
   const CaptureRecord& b = sourceRecord(right.row());
@@ -1354,26 +1409,67 @@ void CaptureFilterModel::reloadOrganization() {
   emit countChanged();
 }
 
-// Folders are searched as written from home, so "home" or a user name does
-// not match the whole library.
-QString CaptureFilterModel::folderKey(const QString& path) const {
+// in: matches the folder as written from home, so "home" or a user name does
+// not match the whole library. Plain words match only the folders below the
+// library root the file was found in; a file outside every root matches its
+// own folder's name.
+const CaptureFilterModel::FolderKeys& CaptureFilterModel::folderKeys(const QString& path) const {
   const qsizetype slash = path.lastIndexOf(QLatin1Char('/'));
   const QString directory = slash > 0 ? path.left(slash) : QString();
   const auto found = m_folderKeys.constFind(directory);
   if (found != m_folderKeys.cend()) return found.value();
   static const QString home = QDir::homePath();
-  QString key = directory;
+  FolderKeys keys;
+  QString written = directory;
   if (directory == home) {
-    key = QStringLiteral("~");
-  } else if (directory.startsWith(home) && directory.at(home.size()) == QLatin1Char('/')) {
-    key = QStringLiteral("~") + directory.mid(home.size());
+    written = QStringLiteral("~");
+  } else if (directory.startsWith(home) && directory.size() > home.size() &&
+             directory.at(home.size()) == QLatin1Char('/')) {
+    written = QStringLiteral("~") + directory.mid(home.size());
   }
-  key = SearchText::fold(key);
+  keys.path = SearchText::fold(written);
+  bool underRoot = false;
+  for (const QString& root : m_libraryRoots) {
+    // Roots are canonical, so only "/" ends in a slash.
+    const qsizetype prefix = root.endsWith(QLatin1Char('/')) ? root.size() : root.size() + 1;
+    if (directory == root) {
+      underRoot = true;
+    } else if (directory.size() > prefix && directory.startsWith(root) &&
+               directory.at(prefix - 1) == QLatin1Char('/')) {
+      keys.words = SearchText::fold(directory.mid(prefix));
+      underRoot = true;
+    }
+    if (underRoot) break;
+  }
+  if (!underRoot) {
+    keys.words = SearchText::fold(directory.mid(directory.lastIndexOf(QLatin1Char('/')) + 1));
+  }
   // Bounded: a library has far fewer folders than files, and a rescan that
   // churns through many renamed folders starts the cache over.
   if (m_folderKeys.size() > 65536) m_folderKeys.clear();
-  m_folderKeys.insert(directory, key);
-  return key;
+  return m_folderKeys.insert(directory, keys).value();
+}
+
+void CaptureFilterModel::reloadLibraryRoots() {
+  QStringList roots;
+  if (const auto* captures = qobject_cast<const CaptureModel*>(sourceModel())) {
+    for (const QVariant& row : captures->folderSources()) {
+      const QString root = row.toMap().value(QStringLiteral("path")).toString();
+      if (!root.isEmpty()) roots.append(root);
+    }
+  }
+  // The deepest root first, so a library folder inside Pictures counts from
+  // itself.
+  std::sort(roots.begin(), roots.end(),
+            [](const QString& first, const QString& second) { return first.size() > second.size(); });
+  if (roots == m_libraryRoots) return;
+  m_libraryRoots = std::move(roots);
+  m_folderKeys.clear();
+  std::vector<SearchKeys>().swap(m_searchKeys);
+  if (m_query.isEmpty() || !sourceModel()) return;
+  beginFilterUpdate();
+  endFilterUpdate();
+  emit countChanged();
 }
 
 const CaptureFilterModel::SearchKeys& CaptureFilterModel::searchKeys(
@@ -1394,7 +1490,9 @@ const CaptureFilterModel::SearchKeys& CaptureFilterModel::searchKeys(
     keys.lens = record.lens;
     keys.caption = record.caption;
     keys.name = SearchText::fold(record.fileName);
-    keys.folder = folderKey(record.path);
+    const FolderKeys& folder = folderKeys(record.path);
+    keys.folder = folder.path;
+    keys.folderWords = folder.words;
     keys.cameraKey = SearchText::fold(record.camera);
     keys.lensKey = SearchText::fold(record.lens);
     keys.captionKey = SearchText::fold(record.caption);
@@ -1408,7 +1506,8 @@ const CaptureFilterModel::SearchKeys& CaptureFilterModel::searchKeys(
   // Text arrives a picture at a time; rows look it up again only after some
   // arrived, not on every keystroke.
   if (keys.text != m_textVersion) {
-    keys.ocr = m_ocrFolded.value(record.path);
+    const auto found = m_text.constFind(record.path);
+    keys.ocr = found == m_text.cend() ? QByteArray() : found->folded;
     keys.text = m_textVersion;
   }
   return keys;
@@ -1420,10 +1519,13 @@ bool CaptureFilterModel::matchesSearch(int sourceRow, const CaptureRecord& recor
     bool hit = false;
     switch (term.field) {
     case SearchQuery::Text:
-      hit = keys.name.contains(term.value) || keys.folder.contains(term.value) ||
+      // Folders count from below the library's roots and at a word start,
+      // so "pictures" or "eos" does not match a whole root.
+      hit = keys.name.contains(term.value) ||
+            SearchText::containsWordStart(keys.folderWords, term.value) ||
             keys.captionKey.contains(term.value) || keys.tags.contains(term.value) ||
             keys.albums.contains(term.value) || keys.cameraKey.contains(term.value) ||
-            keys.lensKey.contains(term.value) || keys.ocr.contains(term.value);
+            keys.lensKey.contains(term.value) || keys.ocr.contains(term.utf8);
       break;
     case SearchQuery::Tag:
       hit = SearchText::containsWordStart(keys.tags, term.value);
