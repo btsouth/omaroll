@@ -93,8 +93,16 @@ public:
   Q_INVOKABLE int rowOfItem(int item) const;
   // The section holding a library row: first, count, label and its header row.
   Q_INVOKABLE QVariantMap sectionOfItem(int item) const;
-  // Header, first and count of one list row, for geometry outside a delegate.
+  // Header, first and count of one list row, for geometry outside a delegate,
+  // and its key: the section's label and the row's tile offset in it (-1 for
+  // the header).
   Q_INVOKABLE QVariantMap rowAt(int row) const;
+  // The list row with that key now, or -1.
+  Q_INVOKABLE int rowOfKey(const QString& label, int offset) const;
+  // First row and count of the section with that label now, or empty.
+  Q_INVOKABLE QVariantMap sectionNamed(const QString& label) const;
+  // True while a change to the library waits for its rebuild.
+  Q_INVOKABLE bool rebuildPending() const { return m_rebuild.isActive(); }
   Q_INVOKABLE QVariantList sections() const;
   // First library row of the section holding item, or -1.
   Q_INVOKABLE int sectionFirstOf(int item) const;

@@ -56,6 +56,7 @@ FocusScope {
     // The tile last made current, to tell a move from an index shift.
     property string currentPath: ""
     property real topOffset: 0
+    property bool topHeader: false
 
     // Exact geometry from the rows: the list's own contentHeight is an
     // estimate while header and tile rows of different heights are unseen.
@@ -184,14 +185,18 @@ FocusScope {
     // A point in this view, for the rubber band: the list row under it and
     // how far into that row. Rows above the first answer row 0 at -1.
     function pointInfo(x, y) {
+        return root.infoAt(x, list.contentY + Math.max(0, Math.min(y, list.height - 1)))
+    }
+    // The same for a point in the list's content; `found` says whether a
+    // laid-out row or the end of the list answered rather than a guess.
+    function infoAt(x, cy) {
         const total = root.sections.rowCount()
-        if (total === 0) return {row: 0, offset: 0, header: false, past: true}
-        const cy = list.contentY + Math.max(0, Math.min(y, list.height - 1))
+        if (total === 0) return {row: 0, offset: 0, header: false, past: true, found: true}
         const item = list.itemAt(Math.max(0, Math.min(x, list.width - 1)), cy)
-        if (item) return {row: item.index, offset: cy - item.y, header: item.header, past: false}
+        if (item) return {row: item.index, offset: cy - item.y, header: item.header, past: false, found: true}
         const last = list.itemAtIndex(total - 1)
-        if (last && cy >= last.y + last.height) return {row: total, offset: 0, header: false, past: true}
-        return {row: 0, offset: -1, header: true, past: false}
+        if (last && cy >= last.y + last.height) return {row: total, offset: 0, header: false, past: true, found: true}
+        return {row: 0, offset: -1, header: true, past: false, found: false}
     }
     function rowInfo(row) { return root.sections.rowAt(row) }
     function rowTotal() { return root.sections.rowCount() }
@@ -225,6 +230,7 @@ FocusScope {
         const item = list.itemAt(20, list.contentY + 1)
         root.topPath = item ? Captures.pathAt(item.first) : ""
         root.topOffset = item ? list.contentY - item.y : 0
+        root.topHeader = !!item && item.header
     }
 
     function restoreTop() {
@@ -233,7 +239,9 @@ FocusScope {
         root.topPath = ""
         if (row < 0) return
         let listRow = root.sections.rowOfItem(row)
-        if (listRow > 0 && root.sections.rowAt(listRow - 1).header
+        // Back to the header only when the header was what sat at the top;
+        // the offset was measured from that row.
+        if (root.topHeader && listRow > 0 && root.sections.rowAt(listRow - 1).header
                 && root.sections.rowAt(listRow).first === row) {
             listRow -= 1
         }
@@ -434,8 +442,8 @@ FocusScope {
                     Accessible.checkable: true
                     Accessible.checked: selection === 2
                     Accessible.checkStateMixed: selection === 1
-                    Accessible.onPressAction: root.host.toggleSection(rowItem.sectionFirst, rowItem.sectionCount)
-                    Accessible.onToggleAction: root.host.toggleSection(rowItem.sectionFirst, rowItem.sectionCount)
+                    Accessible.onPressAction: root.host.toggleSection(rowItem.label)
+                    Accessible.onToggleAction: root.host.toggleSection(rowItem.label)
 
                     Rectangle {
                         id: selectBox
@@ -479,8 +487,9 @@ FocusScope {
                     HoverHandler { id: selectHover }
                     TapHandler {
                         onTapped: {
+                            const label = rowItem.label
                             Captures.commitPendingSearch()
-                            root.host.toggleSection(rowItem.sectionFirst, rowItem.sectionCount)
+                            root.host.toggleSection(label)
                         }
                     }
                 }

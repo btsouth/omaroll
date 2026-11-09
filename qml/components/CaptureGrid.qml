@@ -231,8 +231,17 @@ FocusScope {
     }
 
     // A section header's control: select the section, or clear it once all
-    // of it is selected.
-    function toggleSection(first, count) {
+    // of it is selected. The section is named by its label and looked up
+    // once the rows are up to date: a search just committed or a capture
+    // just arrived changes Captures at once but the sections a turn later,
+    // and the header's own first row and count would then cover another
+    // day's files.
+    function toggleSection(label) {
+        if (sectionModel.rebuildPending()) sectionModel.rebuildNow()
+        const section = sectionModel.sectionNamed(label)
+        if (section.first === undefined) return
+        const first = section.first
+        const count = section.count
         const all = sectionCheckState(first, count) === 2
         const next = Object.assign({}, checkedSet)
         const changed = []
@@ -249,9 +258,10 @@ FocusScope {
     // Shift+X: the section holding the current tile.
     function toggleCurrentSection() {
         if (!root.sectioned || sectionModel.mode !== 1 || grid.currentIndex < 0) return
+        if (sectionModel.rebuildPending()) sectionModel.rebuildNow()
         const section = sectionModel.sectionOfItem(grid.currentIndex)
-        if (section.first === undefined) return
-        toggleSection(section.first, section.count)
+        if (section.label === undefined) return
+        toggleSection(section.label)
     }
 
     // The current tile follows the pointer without scrolling: a tile that
@@ -513,6 +523,7 @@ FocusScope {
             root.sectionCounts.set = null
             root.sectionCountsDirty = false
             root.sectionCountsRevision++
+            band.rebase()
         }
     }
     Connections {
@@ -871,8 +882,14 @@ FocusScope {
         property real startY: 0
         property real startContentY: 0
         property var startInfo: null
+        // The list row the band started on, by section and place in it, so
+        // rows added or removed above it while dragging do not move the
+        // band's start to another row.
+        property var startKey: null
         property var base: ({})
-        property string lastKey: ""
+        // null until the first step, so a first step that touches no tile
+        // still replaces the selection.
+        property var lastKey: null
         // Paths the band covered at its last step: rows can move under a
         // band, paths cannot.
         property var lastPaths: null
@@ -888,8 +905,13 @@ FocusScope {
             startY = mouse.y
             startContentY = root.activeFlickable().contentY + mouse.y
             startInfo = root.activeView().pointInfo(mouse.x, mouse.y)
+            startKey = null
+            if (root.sectioned && !startInfo.past) {
+                const row = root.sectionModel.rowAt(startInfo.row)
+                if (row.label !== undefined) startKey = { label: row.label, offset: row.offset }
+            }
             base = (mouse.modifiers & Qt.ControlModifier) ? root.checkedSet : ({})
-            lastKey = ""
+            lastKey = null
             lastPaths = null
             dragging = false
             root.forceActiveFocus()
@@ -924,13 +946,29 @@ FocusScope {
         // loses what left the library, as the selection did.
         function rowsShifted() {
             if (startInfo === null) return
-            lastKey = ""
+            lastKey = null
             lastPaths = null
             const kept = {}
             for (const path of Object.keys(base)) {
                 if (Captures.rowOf(path) >= 0) kept[path] = true
             }
             base = kept
+        }
+
+        // The sections were rebuilt: find the start again where the band
+        // is drawn, or by its row when that spot has scrolled out of the
+        // laid-out rows, then select what the band covers now.
+        function rebase() {
+            if (startInfo === null || !root.sectioned) return
+            let info = reviewSets.infoAt(startX, startContentY)
+            if (!info.found) {
+                info = Object.assign({}, startInfo)
+                const row = startKey !== null ? root.sectionModel.rowOfKey(startKey.label, startKey.offset) : -1
+                if (row >= 0) info.row = row
+            }
+            startInfo = info
+            lastKey = null
+            refresh()
         }
 
         function finish() {

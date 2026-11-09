@@ -495,12 +495,13 @@ Item {
         TapHandler {
             acceptedButtons: Qt.LeftButton
             acceptedModifiers: Qt.ShiftModifier
-            onSingleTapped: root.extendRequested()
+            // Every click counts, however quickly it follows the last one.
+            onTapped: root.extendRequested()
         }
         TapHandler {
             acceptedButtons: Qt.LeftButton
             acceptedModifiers: Qt.ControlModifier
-            onSingleTapped: root.toggleRequested()
+            onTapped: root.toggleRequested()
         }
 
         // Right click goes straight to the actions, which is what a right

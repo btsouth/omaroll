@@ -336,9 +336,29 @@ QVariantMap SectionRows::sectionOfItem(int item) const {
 QVariantMap SectionRows::rowAt(int row) const {
   if (row < 0 || row >= m_rows.size()) return {};
   const Row& at = m_rows.at(row);
+  const RowKey key = keyOf(at);
   return {{QStringLiteral("header"), at.header},
           {QStringLiteral("first"), at.first},
-          {QStringLiteral("count"), at.count}};
+          {QStringLiteral("count"), at.count},
+          {QStringLiteral("label"), key.first},
+          {QStringLiteral("offset"), key.second}};
+}
+
+int SectionRows::rowOfKey(const QString& label, int offset) const {
+  const RowKey key{label, offset};
+  for (qsizetype row = 0; row < m_rows.size(); ++row) {
+    if (keyOf(m_rows.at(row)) == key) return static_cast<int>(row);
+  }
+  return -1;
+}
+
+QVariantMap SectionRows::sectionNamed(const QString& label) const {
+  for (const Section& section : m_sections) {
+    if (section.label == label) {
+      return {{QStringLiteral("first"), section.first}, {QStringLiteral("count"), section.count}};
+    }
+  }
+  return {};
 }
 
 QVariantList SectionRows::sections() const {

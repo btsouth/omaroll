@@ -8064,13 +8064,15 @@ private slots:
     proxy.setSortMode(CaptureFilterModel::NewestFirst);
     rows->rebuildNow();
 
-    // A search narrows the sections to what it shows.
+    // A search narrows the sections to what it shows, and clearing it brings
+    // back the same sections, whatever today's date makes of them.
+    const QStringList unsearched = labels();
     proxy.setSearchText(QStringLiteral("2025-09-14"));
     rows->rebuildNow();
     QCOMPARE(labels(), QStringList({day(QDate(2025, 9, 14)) + QStringLiteral(":0:3")}));
     proxy.setSearchText({});
     rows->rebuildNow();
-    QCOMPARE(rows->sectionCount(), 5);
+    QCOMPARE(labels(), unsearched);
 
     // A rebuild with nothing new reports nothing.
     QSignalSpy inserted(rows, &QAbstractItemModel::rowsInserted);
