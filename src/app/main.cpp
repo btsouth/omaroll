@@ -511,7 +511,7 @@ int main(int argc, char* argv[]) {
   const OpenRequest request =
       OpenRequest::fromPaths(demo ? QStringList() : positionalArguments(arguments));
   if (!request.error.isEmpty()) {
-    qWarning().noquote() << "omaroll:" << request.error;
+    QTextStream(stderr) << "omaroll: " << request.error << Qt::endl;
     const QString notify = QStandardPaths::findExecutable("notify-send");
     if (!notify.isEmpty()) {
       QProcess notification;
