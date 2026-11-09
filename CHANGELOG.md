@@ -56,6 +56,10 @@
   the search and the album too. Older versions open those views with their
   plain words only. Deleting an album or tag also deletes the saved views that
   open it.
+- Hovering the seek bar in the viewer and the library preview shows the time
+  and, above it, the nearest of up to 100 sampled keyframes, and the preview
+  follows a drag. Keyframes are decoded once in the background at low priority
+  and cached, so a video opened again has previews at once.
 
 ### Fixed
 

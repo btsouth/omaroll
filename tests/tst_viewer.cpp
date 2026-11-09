@@ -23,6 +23,7 @@
 #include "theme/OmarchyTheme.h"
 #include "thumbs/LargeImageProvider.h"
 #include "thumbs/RawImageProvider.h"
+#include "thumbs/Storyboard.h"
 #include "thumbs/ThumbnailProvider.h"
 #include "viewer/HyprlandPlacement.h"
 #include "viewer/MprisService.h"
@@ -66,6 +67,7 @@
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
+#include <QPointer>
 #include <QScopeGuard>
 #include <QSemaphore>
 #include <QSettings>
@@ -83,8 +85,26 @@
 #include <functional>
 #include <memory>
 #include <limits>
+#include <signal.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+// Twelve seconds of moving pattern with a keyframe every two seconds, so a
+// storyboard has several distinct frames. The checked-in fixture has one.
+static QString makeStoryboardVideo(const QString& path) {
+  const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+  if (ffmpeg.isEmpty()) return {};
+  QProcess make;
+  make.start(ffmpeg, {QStringLiteral("-nostdin"), QStringLiteral("-loglevel"), QStringLiteral("error"),
+                      QStringLiteral("-y"), QStringLiteral("-f"), QStringLiteral("lavfi"),
+                      QStringLiteral("-i"), QStringLiteral("testsrc2=size=320x180:rate=12:duration=12"),
+                      QStringLiteral("-c:v"), QStringLiteral("mpeg4"), QStringLiteral("-q:v"),
+                      QStringLiteral("5"), QStringLiteral("-g"), QStringLiteral("24"), path});
+  return make.waitForFinished(30000) && make.exitStatus() == QProcess::NormalExit &&
+                 make.exitCode() == 0
+             ? path
+             : QString();
+}
 
 class StartupPosterProvider final : public QQuickImageProvider {
 public:
@@ -200,6 +220,7 @@ private slots:
     m_engine->addImageProvider(QLatin1String(RawImageProvider::kProviderId), m_raws);
     m_large = new LargeImageProvider;
     m_engine->addImageProvider(QLatin1String(LargeImageProvider::kProviderId), m_large);
+    Storyboard::install(*m_engine);
 
     QQmlContext* shared = m_engine->rootContext();
     shared->setContextProperty(QStringLiteral("Theme"), m_theme);
@@ -240,6 +261,10 @@ private slots:
     }
     delete m_engine;
     m_engine = nullptr;
+    // The storyboards are gone; their workers finish saving before the
+    // cache and the pools go away.
+    Storyboard::shutdown();
+    Storyboard::waitForWorkers();
     delete m_mpris;
     m_mpris = nullptr;
     QDBusConnection::disconnectFromBus(QStringLiteral("omaroll-test-player"));
@@ -2328,6 +2353,220 @@ private slots:
     window->close();
   }
 
+  // Hovering the seek bar shows the storyboard frame nearest the pointer,
+  // above the time, once the video's keyframes have been decoded.
+  void seekBarHoverShowsAStoryboardFrameAboveTheTime() {
+    if (QStandardPaths::findExecutable(QStringLiteral("ffmpeg")).isEmpty()) {
+      QSKIP("ffmpeg is not installed");
+    }
+    const QString path = m_scratch.filePath(QStringLiteral("storyboard.mkv"));
+    QVERIFY(QFile::exists(path) || !makeStoryboardVideo(path).isEmpty());
+    open({path});
+    m_window->resize(1200, 800);
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY(player->duration() > 0);
+    auto* storyboard = m_window->findChild<Storyboard*>(QStringLiteral("viewerStoryboard"));
+    QVERIFY(storyboard);
+    QCOMPARE(storyboard->source(), path);
+    QTRY_VERIFY_WITH_TIMEOUT(storyboard->complete(), 30000);
+    QVERIFY(storyboard->frameCount() >= 2);
+    player->pause();
+    m_window->setProperty("chromePinned", true);
+
+    QQuickItem* scrub = item(QStringLiteral("viewerScrub"));
+    QQuickItem* preview = item(QStringLiteral("viewerSeekPreview"));
+    QQuickItem* frame = find(preview, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("seekPreviewFrame");
+    });
+    QQuickItem* time = find(preview, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("seekPreviewTime");
+    });
+    QVERIFY(frame && time);
+    const auto along = [scrub](qreal fraction) {
+      return scrub->mapToScene(QPointF(scrub->width() * fraction, scrub->height() / 2)).toPoint();
+    };
+    // The frame is there as soon as the pointer is: no decoder, no wait.
+    QList<qint64> latencies;
+    QStringList sources;
+    for (const qreal fraction : {0.05, 0.25, 0.5, 0.75, 0.95}) {
+      QElapsedTimer hover;
+      hover.start();
+      QTest::mouseMove(m_window, along(fraction));
+      QVERIFY(preview->isVisible());
+      QVERIFY(frame->isVisible());
+      QCOMPARE(frame->property("status").toInt(), 1); // Image.Ready
+      latencies.append(hover.nsecsElapsed() / 1000);
+      sources.append(frame->property("source").toString());
+    }
+    std::sort(latencies.begin(), latencies.end());
+    qInfo("hover to preview frame: median %lld us, max %lld us", latencies.at(2), latencies.constLast());
+    sources.removeDuplicates();
+    QVERIFY(sources.size() >= 2);
+
+    QTest::mouseMove(m_window, along(0.5));
+    QCOMPARE(time->property("text").toString(), QStringLiteral("0:06"));
+    // The frame sits above the time, and the whole preview above the bar,
+    // in the theme's rounded box.
+    const QRectF frameBounds = frame->mapRectToScene(frame->boundingRect());
+    const QRectF timeBounds = time->mapRectToScene(time->boundingRect());
+    const QRectF previewBounds = preview->mapRectToScene(preview->boundingRect());
+    QVERIFY(frameBounds.bottom() <= timeBounds.top());
+    QVERIFY(previewBounds.contains(frameBounds) && previewBounds.contains(timeBounds));
+    QVERIFY(previewBounds.bottom() < scrub->mapToScene(QPointF()).y());
+    QCOMPARE(qRound(frameBounds.width()), 192);
+    QCOMPARE(qRound(frameBounds.height()), 108);
+    QCOMPARE(preview->property("radius").toReal(),
+             m_theme->cornerRadius() > 0 ? qMin(qreal(m_theme->cornerRadius()), 8.0) : 3.0);
+    // Rendered: the test pattern's colours, not an empty box.
+    QSignalSpy frames(m_window, &QQuickWindow::frameSwapped);
+    m_window->requestUpdate();
+    QTRY_VERIFY(frames.size() >= 1);
+    const QImage shot = m_window->grabWindow();
+    QVERIFY(!shot.isNull());
+    const qreal scale = shot.devicePixelRatio();
+    const QRect pixels = QRectF(frameBounds.topLeft() * scale, frameBounds.size() * scale)
+                             .toAlignedRect().adjusted(2, 2, -2, -2).intersected(shot.rect());
+    QSet<QRgb> colours;
+    for (int y = pixels.top(); y <= pixels.bottom(); y += 6) {
+      for (int x = pixels.left(); x <= pixels.right(); x += 6) {
+        colours.insert(shot.pixel(x, y) & 0xf0f0f0);
+      }
+    }
+    QVERIFY2(colours.size() >= 6, qPrintable(QString::number(colours.size())));
+
+    // A drag keeps the preview with the pointer and holds the extraction.
+    QTest::mousePress(m_window, Qt::LeftButton, Qt::NoModifier, along(0.3));
+    QVERIFY(storyboard->paused());
+    QTest::mouseMove(m_window, along(0.8));
+    QVERIFY(preview->isVisible());
+    QTRY_COMPARE(time->property("text").toString(), QStringLiteral("0:10"));
+    QVERIFY(frame->isVisible());
+    QTest::mouseRelease(m_window, Qt::LeftButton, Qt::NoModifier, along(0.8));
+    QTRY_VERIFY(player->position() > 8000);
+    QTRY_VERIFY_WITH_TIMEOUT(!storyboard->paused(), 3000);
+    // A keyboard seek holds it too, for a moment.
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QVERIFY(storyboard->paused());
+    QTRY_VERIFY_WITH_TIMEOUT(!storyboard->paused(), 3000);
+
+    // A narrow viewer keeps the preview inside the window.
+    m_window->resize(320, 240);
+    QTRY_VERIFY(scrub->width() > 0 && scrub->mapToScene(QPointF(scrub->width(), 0)).x() <= 320);
+    QTest::mouseMove(m_window, along(0.98));
+    QTRY_VERIFY(preview->isVisible());
+    const QRectF narrow = preview->mapRectToScene(preview->boundingRect());
+    QVERIFY2(narrow.left() >= 0 && narrow.right() <= m_window->width(),
+             qPrintable(QStringLiteral("%1..%2").arg(narrow.left()).arg(narrow.right())));
+    QVERIFY2(narrow.top() >= 0, qPrintable(QString::number(narrow.top())));
+    QTest::mouseMove(m_window, along(0.02));
+    QTRY_VERIFY(preview->mapRectToScene(preview->boundingRect()).left() >= 0);
+    m_window->resize(1200, 800);
+    m_window->setProperty("chromePinned", false);
+    QTest::mouseMove(m_window, QPoint(600, 200));
+    QTRY_VERIFY(!preview->isVisible());
+
+    // Moving on to a picture clears the storyboard.
+    m_session->open({media(QStringLiteral("Shot 1.jpg"))});
+    QTRY_COMPARE(storyboard->frameCount(), 0);
+    QVERIFY(!storyboard->running());
+  }
+
+  // Only the focused viewer decodes previews: one left behind another window
+  // stops its decoders, as does closing it.
+  void previewDecodersFollowFocusAndStopOnClose() {
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty()) {
+      QSKIP("ffmpeg is not installed");
+    }
+    const QString path = m_scratch.filePath(QStringLiteral("storyboard-focus.mkv"));
+    QVERIFY(QFile::exists(path) || !makeStoryboardVideo(path).isEmpty());
+    // Storyboard decodes hang and log their pid; anything else is ffmpeg.
+    QTemporaryDir bin;
+    QVERIFY(bin.isValid());
+    const QString log = bin.filePath(QStringLiteral("starts"));
+    const QString helper = bin.filePath(QStringLiteral("ffmpeg"));
+    {
+      QFile script(helper);
+      QVERIFY(script.open(QIODevice::WriteOnly));
+      script.write(QStringLiteral("#!/bin/sh\ncase \" $* \" in *\" -skip_frame \"*) echo $$ >> '%1'; exec sleep 30;; esac\n"
+                                  "exec '%2' \"$@\"\n").arg(log, ffmpeg).toUtf8());
+    }
+    QVERIFY(QFile::setPermissions(helper, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    const QByteArray oldPath = qgetenv("PATH");
+    qputenv("PATH", QFile::encodeName(bin.path()) + ':' + oldPath);
+    const auto restore = qScopeGuard([&] { qputenv("PATH", oldPath); });
+    const auto pids = [&log] {
+      QList<qint64> found;
+      QFile file(log);
+      if (file.open(QIODevice::ReadOnly)) {
+        for (const QByteArray& line : file.readAll().split('\n')) {
+          if (!line.isEmpty()) found.append(line.toLongLong());
+        }
+      }
+      return found;
+    };
+    const auto alive = [](qint64 pid) { return ::kill(pid_t(pid), 0) == 0; };
+
+    open({path});
+    QPointer<Storyboard> storyboard = m_window->findChild<Storyboard*>(QStringLiteral("viewerStoryboard"));
+    QVERIFY(storyboard);
+    QTRY_VERIFY_WITH_TIMEOUT(pids().size() == Storyboard::kParallelProcesses, 10000);
+    QVERIFY(storyboard->active());
+    const QList<qint64> first = pids();
+
+    // The controls fading with the pointer at rest stop nothing: the
+    // decoders carry on, and none start over.
+    m_window->setProperty("chromeTimeout", 50);
+    QTest::mouseMove(m_window, QPoint(m_window->width() / 2, m_window->height() / 3));
+    QTRY_VERIFY(!prop("chromeShown").toBool());
+    QTRY_VERIFY(!item(QStringLiteral("viewerTransport"))->isVisible());
+    QTest::qWait(Storyboard::kStartDelayMs + 200);
+    QVERIFY(storyboard->active());
+    QVERIFY(storyboard->running());
+    for (const qint64 pid : first) QVERIFY(alive(pid));
+    QCOMPARE(pids().size(), first.size());
+    m_window->setProperty("chromeTimeout", 2200);
+
+    // Minimized, it stops; restored, it carries on.
+    m_window->showMinimized();
+    QTRY_VERIFY(!storyboard->active());
+    for (const qint64 pid : first) QTRY_VERIFY_WITH_TIMEOUT(!alive(pid), 3000);
+    m_window->showNormal();
+    m_window->requestActivate();
+    QTRY_VERIFY(m_window->isActive());
+    QTRY_VERIFY(storyboard->active());
+    QTRY_VERIFY_WITH_TIMEOUT(pids().size() == 2 * Storyboard::kParallelProcesses, 10000);
+    const QList<qint64> restored = pids().mid(first.size());
+
+    // Another window takes focus: this one's decoders stop.
+    QQuickWindow other;
+    other.resize(200, 200);
+    other.show();
+    other.requestActivate();
+    QTRY_VERIFY(other.isActive());
+    QTRY_VERIFY(!storyboard->active());
+    for (const qint64 pid : restored) QTRY_VERIFY_WITH_TIMEOUT(!alive(pid), 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(Storyboard::runningProcesses(), 0, 3000);
+    QTest::qWait(Storyboard::kStartDelayMs + 200);
+    QCOMPARE(pids().size(), first.size() + restored.size());
+
+    // Back in front, it carries on.
+    other.close();
+    m_window->requestActivate();
+    QTRY_VERIFY(m_window->isActive());
+    QTRY_VERIFY(storyboard->active());
+    QTRY_VERIFY_WITH_TIMEOUT(pids().size() == 3 * Storyboard::kParallelProcesses, 10000);
+    const QList<qint64> second = pids().mid(first.size() + restored.size());
+
+    // Closing the viewer window stops them too.
+    m_window->close();
+    QTRY_VERIFY(!m_window->isVisible());
+    for (const qint64 pid : second) QTRY_VERIFY_WITH_TIMEOUT(!alive(pid), 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(Storyboard::runningProcesses(), 0, 3000);
+    QVERIFY(!storyboard || !storyboard->running());
+  }
+
   void explicitStartOverridesSavedResume() {
     const QString path = m_scratch.filePath("explicit-start.mkv");
     QVERIFY(QFile::exists(path) || QFile::copy(QFINDTESTDATA("fixtures/viewer/tracks.mkv"), path));
@@ -2341,8 +2580,13 @@ private slots:
     QVERIFY(!prop("resumeAvailable").toBool());
     QVERIFY(!prop("resumePending").toBool());
     player->pause();
-    // A forwarded request for the already-open source seeks again, including zero.
+    // A forwarded request for the already-open source seeks again, including zero,
+    // and holds seek-preview decodes like any other seek.
+    auto* storyboard = m_window->findChild<Storyboard*>(QStringLiteral("viewerStoryboard"));
+    QVERIFY(storyboard);
+    QTRY_VERIFY_WITH_TIMEOUT(!storyboard->paused(), 3000);
     m_session->setStartPosition(path, 0);
+    QTRY_VERIFY(storyboard->paused());
     QTRY_VERIFY(player->position() < 1500);
     QCOMPARE(m_session->pendingStartPosition(path), -1);
     QVERIFY(!prop("resumeAvailable").toBool());

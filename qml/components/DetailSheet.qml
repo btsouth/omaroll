@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls.Basic
 import QtMultimedia
+import Omaroll.Media
 
 // One capture, large, with everything you can do to it.
 //
@@ -501,6 +502,7 @@ Item {
         if (!root.player) return
         root.resumeAvailable = false
         root.resumePending = false
+        scrubSettle.restart()
         const maximum = player.duration > 0 ? player.duration - 1 : Math.max(0, milliseconds)
         player.position = Math.max(0, Math.min(maximum, roundBoundary
             ? Settings.videoSeekTarget(milliseconds, root.player.metaData.value(MediaMetaData.VideoFrameRate))
@@ -2235,12 +2237,56 @@ Item {
                     }
 
                     HoverHandler { id: scrubHover; cursorShape: Qt.PointingHandCursor }
-                    TapHandler { onTapped: function (point) { scrub.seekTo(point.position.x) } }
+                    TapHandler {
+                        id: scrubTap
+                        onTapped: function (point) { scrub.seekTo(point.position.x) }
+                    }
                     DragHandler {
                         id: scrubDrag
                         target: null
                         onCentroidChanged: if (active) scrub.seekTo(centroid.position.x)
+                        onActiveChanged: if (!active) scrubSettle.restart()
                     }
+
+                    // The frame and time under the pointer, following a drag
+                    // too; the video itself seeks as before.
+                    SeekPreview {
+                        objectName: "videoSeekPreview"
+                        visible: (scrubHover.hovered || scrubDrag.active) && !!player && player.duration > 0
+                        readonly property real at: Math.max(0, Math.min(scrub.width, scrubDrag.active
+                            ? scrubDrag.centroid.position.x : scrubHover.point.position.x))
+                        x: Math.max(-scrub.x, Math.min(transport.width - scrub.x - width, at - width / 2))
+                        y: -height - 8
+                        z: 2
+                        storyboard: previewFrames
+                        time: at / Math.max(1, scrub.width) * (player ? player.duration : 0)
+                        label: transport.clock(time)
+                        maximumFrameWidth: Math.min(192, transport.width - 6)
+                    }
+                }
+
+                // Keyframes for the seek preview, decoded in the background
+                // once the video is showing and held from the press of any
+                // seek, a drag, a tap or a key, until a second after it. Only
+                // while this window has focus and is not minimized, so a quick
+                // viewer opened in front gets the decoder. A file the library
+                // sees change starts over.
+                Storyboard {
+                    id: previewFrames
+                    objectName: "videoStoryboard"
+                    source: root.isVideo ? root.path : ""
+                    version: root.thumbnailVersion
+                    duration: player ? player.duration : 0
+                    devicePixelRatio: Screen.devicePixelRatio
+                    active: root.visible && transport.visible && root.Window.active && stage.windowShown
+                            && !!root.presentation && root.presentation.ready === true
+                            && !!player && player.hasVideo === true
+                    paused: scrubDrag.active || scrubTap.pressed || scrubSettle.running
+                }
+
+                Timer {
+                    id: scrubSettle
+                    interval: 1000
                 }
 
                 Text {
@@ -3296,6 +3342,7 @@ Item {
             return
         }
         if (root.isVideo && (event.key === ShortcutCatalog.previewKeyCodes["Home"] || event.key === ShortcutCatalog.previewKeyCodes["End"])) {
+            scrubSettle.restart()
             player.position = event.key === ShortcutCatalog.previewKeyCodes["Home"] ? 0 : player.duration
             event.accepted = true
             return
