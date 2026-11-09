@@ -727,7 +727,7 @@ private slots:
       model.setRecordsForTesting(records);
       QTRY_COMPARE(calls(), 2);
       QTRY_VERIFY(!index.indexing());
-      QCOMPARE(names(proxy), QStringList{QStringLiteral("report.pdf")});
+      QTRY_COMPARE(names(proxy), QStringList{QStringLiteral("report.pdf")});
 
       QVERIFY(index.clearCache() >= 1);
       QTRY_COMPARE(proxy.count(), 0);
