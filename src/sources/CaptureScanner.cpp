@@ -292,6 +292,7 @@ QString CaptureScanner::mediaSuffix(const QString& path, bool explicitOpen) {
     const QMutexLocker lock(&explicitMutex);
     if (explicitOpen) {
       explicitPaths.insert(path);
+      explicitPaths.insert(info.absoluteFilePath());
       explicitPaths.insert(info.canonicalFilePath());
     } else if (!explicitPaths.contains(path)) {
       return suffix;
