@@ -1,4 +1,5 @@
 #include "app/Diagnostics.h"
+#include "theme/OmarchyTheme.h"
 
 #include <QDir>
 #include <QFile>
@@ -192,12 +193,10 @@ QStringList graphics(const Sources& sources) {
 }
 
 QString themeName(const Sources& sources) {
-  QString slug;
-  for (const QString& root : {sources.stateHome, sources.configHome}) {
-    if (root.isEmpty()) continue;
-    slug = readLine(root + QStringLiteral("/omarchy/current/theme.name"), 80);
-    if (!slug.isEmpty()) break;
-  }
+  // The directory the app's theme is read from, so the two never disagree.
+  QString slug = readLine(OmarchyTheme::currentRootFor(sources.stateHome, sources.configHome) +
+                              QStringLiteral("/theme.name"),
+                          80);
   if (slug.isEmpty()) return QStringLiteral("not found");
   QStringList words = slug.replace(QLatin1Char('-'), QLatin1Char(' ')).split(QLatin1Char(' '), Qt::SkipEmptyParts);
   for (QString& word : words) word[0] = word.at(0).toUpper();

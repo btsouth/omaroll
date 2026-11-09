@@ -893,6 +893,19 @@ private slots:
              QStringLiteral("Restored Loupe and mpv for 3 types."));
     QCOMPARE(MimeDefaults::summarize(true, QStringLiteral("image/png: kept other.desktop"), true),
              QStringLiteral("Nothing to restore. Omaroll was not the default."));
+    // A setting removed while Omaroll stays the default is not "nothing".
+    const QString stays = QStringLiteral(
+        "image/png: removed your setting; it still opens with Omaroll (a system default, or no "
+        "other app handles it)");
+    QCOMPARE(MimeDefaults::summarize(true, stays, true),
+             QStringLiteral("1 type still opens with Omaroll, from a system default or because no "
+                            "other app handles it."));
+    QCOMPARE(MimeDefaults::summarize(true, QStringLiteral("image/gif: restored imv.desktop\n") + stays +
+                                               QStringLiteral("\nimage/jpeg: removed your setting; "
+                                                              "it still opens with Omaroll (x)"),
+                                     true),
+             QStringLiteral("Restored imv for 1 type. 2 types still open with Omaroll, from a system "
+                            "default or because no other app handles them."));
     // Worded for the group that was asked for.
     const QString pdf = QStringLiteral(
         "application/pdf: org.gnome.Papers.desktop -> io.github.tsouth89.omaroll.desktop");
@@ -950,6 +963,24 @@ private slots:
              QStringLiteral("0.57.1-2"));
     QCOMPARE(Diagnostics::packageVersion(sources.pacmanLocal, QStringLiteral("omarchy")), QString());
     QCOMPARE(Diagnostics::themeName(sources), QStringLiteral("Catppuccin Latte"));
+    {
+      // A leftover state name without a theme beside it loses to the config
+      // root the app reads its colours from.
+      QTemporaryDir split;
+      const auto put = [&](const QString& relative, const QByteArray& contents) {
+        QDir().mkpath(QFileInfo(split.filePath(relative)).path());
+        QFile file(split.filePath(relative));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(contents);
+      };
+      put(QStringLiteral("state/omarchy/current/theme.name"), "old-theme\n");
+      put(QStringLiteral("config/omarchy/current/theme.name"), "tokyo-night\n");
+      put(QStringLiteral("config/omarchy/current/theme/colors.toml"), "background = \"#000000\"\n");
+      Diagnostics::Sources moved = sources;
+      moved.stateHome = split.filePath(QStringLiteral("state"));
+      moved.configHome = split.filePath(QStringLiteral("config"));
+      QCOMPARE(Diagnostics::themeName(moved), QStringLiteral("Tokyo Night"));
+    }
 
     const QString report = Diagnostics::report(sources, QStringLiteral("wayland"),
                                                QStringLiteral("Catppuccin Latte"), 1.5);
@@ -1081,6 +1112,122 @@ private slots:
     QCOMPARE(read(target), original);
   }
 
+  void windowRulesRestoreHyprlandLuaByteForByte() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString hypr = root.filePath(QStringLiteral("hypr"));
+    QVERIFY(QDir().mkpath(hypr));
+    const QString config = hypr + QStringLiteral("/hyprland.lua");
+    const QString rules = hypr + QStringLiteral("/omaroll.lua");
+    const auto read = [](const QString& path) {
+      QFile file(path);
+      return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+    };
+    const auto write = [](const QString& path, const QByteArray& bytes) {
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+      file.write(bytes);
+    };
+    const QByteArray omarchy = "require(\"default.hypr.omarchy\")";
+
+    // Install then remove gives back exactly the bytes that were there.
+    const QList<QPair<const char*, QByteArray>> cases = {
+        {"no trailing newline", omarchy},
+        {"not UTF-8", "-- caf\xe9\n" + omarchy + "\n"},
+        {"BOM", "\xEF\xBB\xBF" + omarchy + "\n"},
+        {"CRLF", omarchy + "\r\n-- mine\r\n"},
+        {"CRLF, no trailing newline", omarchy + "\r\n-- mine"},
+        {"trailing blank lines", omarchy + "\n\n\n"},
+        {"a mention in a comment", omarchy + "\nrequire(\"hypr.bindings\") -- see \"hypr.omaroll\"\n"},
+        {"a block-commented require",
+         omarchy + "\n--[[\nrequire(\"hypr.omaroll\")\n]]\n--[==[ require('hypr.omaroll') ]==]\n"},
+    };
+    for (const auto& [name, original] : cases) {
+      write(config, original);
+      QVERIFY2(HyprlandSetup::rulesState(hypr) == HyprlandSetup::RulesState::NotInstalled, name);
+      auto result = HyprlandSetup::installRules(hypr);
+      QVERIFY2(result.ok, qPrintable(QLatin1String(name) + u": " + result.message));
+      QVERIFY2(read(config).startsWith(original), name);
+      QVERIFY2(read(config).contains("module(\"hypr.omaroll\")"), name);
+      QVERIFY2(HyprlandSetup::rulesState(hypr) == HyprlandSetup::RulesState::Installed, name);
+      if (QByteArray(name).startsWith("CRLF")) {
+        QVERIFY2(!read(config).mid(original.size()).replace("\r\n", "").contains('\n'), name);
+      }
+      result = HyprlandSetup::removeRules(hypr);
+      QVERIFY2(result.ok, qPrintable(QLatin1String(name) + u": " + result.message));
+      QCOMPARE(read(config).toHex(), original.toHex());
+      QVERIFY2(!QFile::exists(rules), name);
+    }
+
+    // Lines written after an install that ended the last line stay on their
+    // own line.
+    write(config, omarchy);
+    QVERIFY(HyprlandSetup::installRules(hypr).ok);
+    write(config, read(config) + "require(\"hypr.later\")\n");
+    QVERIFY(HyprlandSetup::removeRules(hypr).ok);
+    QCOMPARE(read(config), omarchy + "\nrequire(\"hypr.later\")\n");
+
+    // A line that loads the rules among other things is the user's: install
+    // sees the rules as loaded, and removal reports the line instead of
+    // dropping hypr.mine with it. The rules file stays, since a plain require
+    // of a missing module would break the config.
+    const QByteArray combined = omarchy + "\nrequire(\"hypr.omaroll\"); require(\"hypr.mine\")\n";
+    write(config, combined);
+    QCOMPARE(HyprlandSetup::rulesState(hypr), HyprlandSetup::RulesState::Installed);
+    auto result = HyprlandSetup::installRules(hypr);
+    QVERIFY(result.message.contains(QStringLiteral("already")));
+    QCOMPARE(read(config), combined);
+    QVERIFY(QFile::exists(rules));
+    result = HyprlandSetup::removeRules(hypr);
+    QVERIFY(result.ok);
+    QVERIFY2(result.message.contains(QStringLiteral("Line 2 ")), qPrintable(result.message));
+    QCOMPARE(read(config), combined);
+    QVERIFY(QFile::exists(rules));
+    QVERIFY(QFile::remove(rules));
+
+    // An editor save between Omaroll's read and write wins; nothing is
+    // overwritten and a rules file written just now goes again.
+    write(config, omarchy + "\n");
+    HyprlandSetup::beforeConfigWrite = [&] {
+      write(config, omarchy + "\n-- saved meanwhile\n");
+    };
+    result = HyprlandSetup::installRules(hypr);
+    HyprlandSetup::beforeConfigWrite = nullptr;
+    QVERIFY(!result.ok);
+    QVERIFY2(result.message.contains(QStringLiteral("changed")), qPrintable(result.message));
+    QCOMPARE(read(config), omarchy + "\n-- saved meanwhile\n");
+    QVERIFY(!QFile::exists(rules));
+    QVERIFY(HyprlandSetup::installRules(hypr).ok);
+    HyprlandSetup::beforeConfigWrite = [&] { write(config, read(config) + "-- again\n"); };
+    result = HyprlandSetup::removeRules(hypr);
+    HyprlandSetup::beforeConfigWrite = nullptr;
+    QVERIFY(!result.ok);
+    QVERIFY(read(config).endsWith("-- again\n"));
+    QVERIFY(QFile::exists(rules));
+    QVERIFY(HyprlandSetup::removeRules(hypr).ok);
+    QCOMPARE(read(config), omarchy + "\n-- saved meanwhile\n-- again\n");
+
+    // hyprland.lua that can't be replaced: install fails and leaves no
+    // omaroll.lua behind.
+    const QString locked = root.filePath(QStringLiteral("locked"));
+    QVERIFY(QDir().mkpath(locked));
+    const QString target = locked + QStringLiteral("/hyprland.lua");
+    write(target, omarchy + "\n");
+    QVERIFY(QFile::remove(config));
+    QVERIFY(QFile::link(target, config));
+    QVERIFY(QFile::setPermissions(locked, QFileDevice::ReadOwner | QFileDevice::ExeOwner));
+    const auto unlock = qScopeGuard([&] {
+      QFile::setPermissions(locked, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    });
+    if (QFile probe(locked + QStringLiteral("/probe")); probe.open(QIODevice::WriteOnly)) {
+      QSKIP("running with permission to write a read-only directory");
+    }
+    result = HyprlandSetup::installRules(hypr);
+    QVERIFY(!result.ok);
+    QVERIFY(!QFile::exists(rules));
+    QCOMPARE(read(target), omarchy + "\n");
+  }
+
   void screenshotKeyComesFromTheBindings() {
     QTemporaryDir root;
     QVERIFY(root.isValid());
@@ -1105,6 +1252,36 @@ private slots:
                "o.bind(\"SUPER + SHIFT + s\", \"Screenshot\", \"omarchy-capture-screenshot region\")\n");
     mine.close();
     QCOMPARE(HyprlandSetup::screenshotKey(hypr, omarchy), QStringLiteral("Super + Shift + S"));
+
+    const auto put = [](const QString& path, const QByteArray& bytes) {
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+      file.write(bytes);
+    };
+    // Omarchy's own template binds with a nil description, and rebinds.
+    put(hypr + QStringLiteral("/bindings.lua"),
+        "o.bind(\"SUPER + SHIFT + S\", nil, \"omarchy-capture-screenshot\")\n");
+    QCOMPARE(HyprlandSetup::screenshotKey(hypr, omarchy), QStringLiteral("Super + Shift + S"));
+    put(hypr + QStringLiteral("/bindings.lua"),
+        "o.rebind(\"SUPER + P\", \"Screenshot\", \"omarchy-capture-screenshot\")\n");
+    QCOMPARE(HyprlandSetup::screenshotKey(hypr, omarchy), QStringLiteral("Super + P"));
+    // An unbound or rebound default falls to the next one, and a block
+    // comment binds nothing.
+    put(hypr + QStringLiteral("/bindings.lua"),
+        "--[[\no.bind(\"SUPER + X\", nil, \"omarchy-capture-screenshot\")\n]]\n"
+        "hl.unbind(\"PRINT\")\n");
+    QCOMPARE(HyprlandSetup::screenshotKey(hypr, omarchy), QStringLiteral("Super + Ctrl + Alt + C"));
+    put(hypr + QStringLiteral("/bindings.lua"),
+        "o.unbind(\"Print\")\no.rebind(\"SUPER + CTRL + ALT + C\", nil, \"other\")\n");
+    QCOMPARE(HyprlandSetup::screenshotKey(hypr, omarchy), QString());
+    // With Omarchy's defaults off, only the user's bindings count.
+    put(hypr + QStringLiteral("/bindings.lua"), "");
+    put(hypr + QStringLiteral("/hyprland.lua"),
+        "-- omarchy_default_bindings = false\nrequire(\"default.hypr.omarchy\")\n");
+    QCOMPARE(HyprlandSetup::screenshotKey(hypr, omarchy), QStringLiteral("Print Screen"));
+    put(hypr + QStringLiteral("/hyprland.lua"),
+        "omarchy_default_bindings = false\nrequire(\"default.hypr.omarchy\")\n");
+    QCOMPARE(HyprlandSetup::screenshotKey(hypr, omarchy), QString());
   }
 
   void demoLibraryHasSimilarSets() {

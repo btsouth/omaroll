@@ -143,6 +143,9 @@ QString MimeDefaults::summarize(bool unset, const QString &report, bool ok,
   int changed = 0;
   int failed = 0;
   int unchanged = 0;
+  // Types whose setting was removed but still open with Omaroll, from a system
+  // default or no other app.
+  int still = 0;
   QStringList apps;
   const auto name = [](QString handler) {
     handler = handler.trimmed();
@@ -170,6 +173,8 @@ QString MimeDefaults::summarize(bool unset, const QString &report, bool ok,
       if (!apps.contains(restored)) apps << restored;
     } else if (unset && outcome == u"removed Omaroll") {
       ++changed;
+    } else if (unset && outcome.contains(u"still opens with Omaroll")) {
+      ++still;
     } else {
       ++unchanged;
     }
@@ -205,12 +210,20 @@ QString MimeDefaults::summarize(bool unset, const QString &report, bool ok,
                          apps.isEmpty() ? QString()
                                         : QStringLiteral(", replacing ") + list(apps));
   } else {
-    if (changed == 0 && failed == 0)
+    if (changed == 0 && failed == 0 && still == 0)
       summary = QStringLiteral("Nothing to restore. Omaroll was not the default.");
     else if (changed > 0)
       summary = apps.isEmpty()
                     ? QStringLiteral("Omaroll is no longer the default for %1.").arg(types(changed))
                     : QStringLiteral("Restored %1 for %2.").arg(list(apps), types(changed));
+  }
+  if (still > 0) {
+    const QString remains =
+        QStringLiteral("%1 still %2 with Omaroll, from a system default or because no other app "
+                       "handles %3.")
+            .arg(types(still), still == 1 ? QStringLiteral("opens") : QStringLiteral("open"),
+                 still == 1 ? QStringLiteral("it") : QStringLiteral("them"));
+    summary = summary.isEmpty() ? remains : summary + u' ' + remains;
   }
   if (failed > 0) {
     const QString failure = QStringLiteral("%1 could not be changed.").arg(types(failed));

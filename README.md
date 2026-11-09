@@ -332,9 +332,12 @@ omaroll --install-window-rules
 This writes a copy of `/usr/share/omaroll/hypr/omaroll.lua` to
 `~/.config/hypr/` and adds a short block to `~/.config/hypr/hyprland.lua` that
 loads it if it is there.
-`omaroll --remove-window-rules` takes both out again, and **Hyprland window
-rules** in Settings does either. It needs Omarchy's Lua Hyprland config. A
-`~/.config/hypr/omaroll.lua` you wrote yourself is never replaced or removed.
+`omaroll --remove-window-rules` takes both out again, leaving `hyprland.lua`
+exactly as it was, and **Hyprland window rules** in Settings does either. It
+needs Omarchy's Lua Hyprland config. A line of your own that only says
+`require("hypr.omaroll")` is removed too; any other line that loads the rules is
+reported and left for you to edit. A `~/.config/hypr/omaroll.lua` you wrote
+yourself is never replaced or removed.
 
 When a second viewer opens on the same workspace, Omaroll tiles it and the
 viewers already there, so your layout arranges them instead of stacking them in

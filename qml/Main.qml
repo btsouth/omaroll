@@ -745,6 +745,12 @@ ApplicationWindow {
         function onGroupsChanged() { Qt.callLater(root.openRenderCompare) }
     }
 
+    // Asked by --render before it grabs: false while a view still waits on
+    // a scan.
+    function renderReady() {
+        return !root.compareWhenSimilar
+    }
+
     // Called by --render so a screenshot can be taken of a specific view
     // without anyone having to drive the UI by hand.
     function openViewForRender(view) {
@@ -1459,8 +1465,10 @@ ApplicationWindow {
             return {
                 title: "No media yet",
                 detail: (Theme.omarchyAvailable
-                         ? "Take a screenshot with " + Settings.screenshotKey
-                           + ", or record from the Capture menu. "
+                         ? (Settings.screenshotKey !== ""
+                            ? "Take a screenshot with " + Settings.screenshotKey
+                              + ", or record from the Capture menu. "
+                            : "Take a screenshot or record from the Capture menu. ")
                          : "")
                         + "Anything in your Pictures and Videos folders shows up here, "
                         + "and so does any folder you add. Your files stay where they are; "

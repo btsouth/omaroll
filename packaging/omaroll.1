@@ -51,7 +51,11 @@ full opacity for its windows and a floating viewer. Needs Omarchy's Lua
 Hyprland config. Settings has the same choice.
 .TP
 .B \-\-remove\-window\-rules
-Take those rules out again. A rules file you wrote yourself is kept.
+Take those rules out again, leaving
+.I hyprland.lua
+as it was before. A line that only requires hypr.omaroll goes too; any other
+line that loads the rules is reported and left for you to edit. A rules file
+you wrote yourself is kept.
 .TP
 .B \-\-diagnostics
 Print the versions, graphics and optional tools that a bug report needs, and
@@ -66,10 +70,10 @@ Render the window to a PNG and exit. Draws offscreen, so no compositor can
 resize it or overlap it.
 .TP
 .BI \-\-render\-view " view"
-Which view to render: grid, detail, video, slideshow, matte, corrections,
-compare, export, rename, OCR, editors, pins, context-menu, selection-menu,
-duplicates, similar, browser, sidebar, settings, viewer, viewer-video,
-viewer-info, viewer-menu, viewer-help or grid-filenames.
+Which view to render: grid, detail, document, video, slideshow, matte,
+corrections, compare, export, rename, ocr, editors, pins, context-menu,
+selection-menu, duplicates, similar, browser, sidebar, settings, viewer,
+viewer-video, viewer-info, viewer-menu, viewer-help or grid-filenames.
 .TP
 .BI \-\-render\-size " WxH"
 Window size, from 560x420 (viewer 320x240) to 7680x4320. Default 1280x820.

@@ -81,6 +81,16 @@ man=$source/packaging/omaroll.1
 for option in $("$omaroll" --help | grep -oE '(^|[[:space:]])--[a-z][a-z-]+' | tr -d ' ' | sort -u); do
   grep -qF -- "$(sed 's/-/\\-/g' <<<"$option")" "$man" || fail "man page lacks $option"
 done
+# --help and the man page name exactly the render views main.cpp accepts.
+views() { tr ',' '\n' | sed -E 's/ or /\n/g' | tr -d ' .' | grep -v '^$' | sort -u; }
+accepted=$(sed -n '/renderViews = {/,/};/p' "$source/src/app/main.cpp" | grep -oE 'QStringLiteral\("[a-z-]+"\)' |
+  sed -E 's/.*\("(.*)"\)/\1/' | sort -u)
+helped=$("$omaroll" --help | sed -n '/--render-view/,/--render-size/p' | sed '$d' |
+  sed -E 's/.*Which view to render: //; s/^ +//' | tr '\n' ' ' | views)
+manned=$(sed -n '/^Which view to render:/,/^\.TP/p' "$man" | sed '$d' |
+  sed -E 's/^Which view to render: //' | tr '\n' ' ' | views)
+[[ -n $accepted && $accepted == "$helped" ]] || fail "--help render views differ: $(diff <(echo "$accepted") <(echo "$helped"))"
+[[ $accepted == "$manned" ]] || fail "man page render views differ: $(diff <(echo "$accepted") <(echo "$manned"))"
 if command -v groff >/dev/null; then
   warnings=$(groff -man -ww -z "$man" 2>&1 || true)
   [[ -z $warnings ]] || fail "groff warnings: $warnings"

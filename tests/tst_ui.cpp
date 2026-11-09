@@ -266,6 +266,31 @@ private slots:
     const QString detail = state.toMap().value(QStringLiteral("detail")).toString();
     QVERIFY2(!detail.contains(QStringLiteral("Super + Shift + S")), qPrintable(detail));
     QCOMPARE(detail.contains(QStringLiteral("Take a screenshot with Super + P")), m_theme->omarchyAvailable());
+    {
+      // No key takes a screenshot: point at the Capture menu without naming one.
+      QFile bindings(hypr + QStringLiteral("/bindings.lua"));
+      QVERIFY(bindings.open(QIODevice::WriteOnly | QIODevice::Truncate));
+      bindings.write("hl.unbind(\"SUPER + P\")\n");
+      bindings.close();
+      QFile config(hypr + QStringLiteral("/hyprland.lua"));
+      QVERIFY(config.open(QIODevice::WriteOnly | QIODevice::Truncate));
+      config.write("omarchy_default_bindings = false\n" + original);
+      config.close();
+      m_settings->setHyprDirectory(hypr);
+      QCOMPARE(m_settings->screenshotKey(), QString());
+      QVariant bare;
+      QVERIFY(QMetaObject::invokeMethod(m_window, "emptyState", Q_RETURN_ARG(QVariant, bare),
+                                        Q_ARG(QVariant, QStringLiteral("library"))));
+      if (bare.metaType() == QMetaType::fromType<QJSValue>()) bare = bare.value<QJSValue>().toVariant();
+      const QString text = bare.toMap().value(QStringLiteral("detail")).toString();
+      QVERIFY2(!text.contains(QStringLiteral("screenshot with")), qPrintable(text));
+      QCOMPARE(text.contains(QStringLiteral("Take a screenshot or record from the Capture menu.")),
+               m_theme->omarchyAvailable());
+      config.open(QIODevice::WriteOnly | QIODevice::Truncate);
+      config.write(original);
+      config.close();
+      m_settings->setHyprDirectory(hypr);
+    }
 
     QVERIFY(QMetaObject::invokeMethod(settings, "open"));
     QTRY_VERIFY(settings->isVisible());
@@ -4925,8 +4950,18 @@ private slots:
       m_library->setSimilarOnly(false);
     });
     // What --render-view compare opens: a set the similar scan found.
+    // --render grabs once renderReady says so, which is never before the
+    // sheet is up, however long the scan takes.
+    const auto ready = [&] {
+      QVariant value;
+      QMetaObject::invokeMethod(m_window, "renderReady", Q_RETURN_ARG(QVariant, value));
+      return value.toBool();
+    };
+    QVERIFY(ready());
     QVERIFY(QMetaObject::invokeMethod(m_window, "openViewForRender", Q_ARG(QVariant, QStringLiteral("compare"))));
+    QVERIFY(ready() == item("compareSheet")->isVisible());
     QTRY_VERIFY_WITH_TIMEOUT(item("compareSheet")->isVisible(), 20000);
+    QVERIFY(ready());
     QVariant pathsValue = item("compareSheet")->property("paths");
     if (pathsValue.metaType() == QMetaType::fromType<QJSValue>()) pathsValue = pathsValue.value<QJSValue>().toVariant();
     const QStringList shown = pathsValue.toStringList();

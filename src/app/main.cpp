@@ -188,9 +188,9 @@ Options:
                          your own files. Nothing personal appears on screen.
   --render <file.png>    Render the window to a PNG and exit. Draws offscreen,
                          so no compositor can resize it or overlap it.
-  --render-view <view>   Which view to render: grid, detail, video, slideshow,
-                         matte, corrections, compare, export, rename, OCR,
-                         editors, pins, context-menu, selection-menu,
+  --render-view <view>   Which view to render: grid, detail, document, video,
+                         slideshow, matte, corrections, compare, export,
+                         rename, ocr, editors, pins, context-menu, selection-menu,
                          duplicates, similar, browser, sidebar, settings, viewer,
                          viewer-video, viewer-info, viewer-menu, viewer-help or
                          grid-filenames.
@@ -827,7 +827,7 @@ int main(int argc, char* argv[]) {
       }
     });
 
-    QTimer::singleShot(11000, &application, [window, renderPath] {
+    const auto grab = [window, renderPath] {
       const QImage frame = window->grabWindow();
       if (frame.isNull() || !frame.save(renderPath)) {
         qWarning().noquote() << "could not write" << renderPath;
@@ -836,7 +836,27 @@ int main(int argc, char* argv[]) {
       }
       QTextStream(stdout) << "wrote " << renderPath << Qt::endl;
       QCoreApplication::quit();
+    };
+    // Some views wait on a scan (Compare needs a similar set), so from the
+    // usual moment keep asking the window whether the view is up, for at most
+    // a minute, and give a late one a second to settle.
+    auto waited = std::make_shared<int>(0);
+    auto* poll = new QTimer(&application);
+    poll->setInterval(250);
+    QObject::connect(poll, &QTimer::timeout, &application, [window, grab, waited, poll] {
+      QVariant ready = true;
+      if (window->metaObject()->indexOfMethod("renderReady()") >= 0) {
+        QMetaObject::invokeMethod(window, "renderReady", Q_RETURN_ARG(QVariant, ready));
+      }
+      if (!ready.toBool() && *waited < 49000) {
+        *waited += 250;
+        return;
+      }
+      poll->stop();
+      if (!ready.toBool()) qWarning().noquote() << "omaroll: the view was not ready; rendering anyway";
+      QTimer::singleShot(*waited > 0 ? 1000 : 0, QCoreApplication::instance(), grab);
     });
+    QTimer::singleShot(11000, &application, [poll] { poll->start(); });
   }
 
   return QGuiApplication::exec();
