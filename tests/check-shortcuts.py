@@ -8,14 +8,14 @@ root = pathlib.Path(__file__).resolve().parent.parent
 source = (root / 'src/app/ShortcutTable.h').read_text()
 rows = json.loads(source.split('R"shortcuts(', 1)[1].split(')shortcuts"', 1)[0])
 names = {'+': 'Plus', '=': 'Equal', '-': 'Minus', '_': 'Underscore', ',': 'Comma', '.': 'Period', '[': 'BracketLeft', ']': 'BracketRight', '?': 'Question', 'Esc': 'Escape', 'Del': 'Delete', 'PgUp': 'PageUp', 'PgDown': 'PageDown'}
-for context, file, implicit in [('quick', 'ViewerKeys.qml', {'2', '3', '4'}), ('library', 'CaptureGrid.qml', {'Left', 'Right', 'Up', 'Down', 'Escape', 'Question', 'F1', 'R', 'Slash', 'F9', 'A', 'D', 'O', 'Z', 'Plus', 'Equal', 'Minus', '0', '1', '2', '3', '4', '5', '6', '7', '8', 'Q', 'C'})]:
-    handler = (root / 'qml/components' / file).read_text()
+for context, file, implicit in [('quick', 'ViewerKeys.qml', {'2', '3', '4'}), ('library', 'CaptureGrid.qml', set())]:    handler = (root / 'qml/components' / file).read_text()
     assert not re.search(r"Qt\.Key_", handler), "Shortcut key defined outside the table"
     actual = set(re.findall(rf'ShortcutCatalog\.{context}Keys\.(\w+)', handler))
     actual.update(re.findall(rf'ShortcutCatalog\.{context}Keys\["(\d+)"\]', handler))
     documented = set()
     for row in rows:
         assert row['label'] and row['group'] and row['keys'], row
+        assert len(row['tokens']) == len(row['keys']), row
         if row['context'] != context:
             continue
         for index, key in enumerate(row['keys']):
@@ -24,6 +24,7 @@ for context, file, implicit in [('quick', 'ViewerKeys.qml', {'2', '3', '4'}), ('
             else:
                 token = '+' if key.endswith('+') else key.rsplit('+', 1)[-1]
                 documented.add(names.get(token, token))
+    assert actual <= documented, actual - documented
     # Library action handlers live in Main and registry, not CaptureGrid.
     if context == 'library':
         main = (root / 'qml/Main.qml').read_text()
