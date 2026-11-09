@@ -5308,6 +5308,7 @@ private slots:
     const auto cleanup = qScopeGuard([&] {
       invoke("dismissTopLayer");
       item("compareSheet")->setProperty("paths", QStringList());
+      m_window->setProperty("renderingCompare", false);
       m_library->setSimilarOnly(false);
     });
     // What --render-view compare opens: a set the similar scan found.
@@ -5320,9 +5321,10 @@ private slots:
     };
     QVERIFY(ready());
     QVERIFY(QMetaObject::invokeMethod(m_window, "openViewForRender", Q_ARG(QVariant, QStringLiteral("compare"))));
-    QVERIFY(ready() == item("compareSheet")->isVisible());
+    // Ready only once the sheet is up with its pictures loaded.
+    QVERIFY(!ready() || item("compareSheet")->isVisible());
     QTRY_VERIFY_WITH_TIMEOUT(item("compareSheet")->isVisible(), 20000);
-    QVERIFY(ready());
+    QTRY_VERIFY_WITH_TIMEOUT(ready(), 10000);
     QVariant pathsValue = item("compareSheet")->property("paths");
     if (pathsValue.metaType() == QMetaType::fromType<QJSValue>()) pathsValue = pathsValue.value<QJSValue>().toVariant();
     const QStringList shown = pathsValue.toStringList();
@@ -5345,6 +5347,13 @@ private slots:
     QCOMPARE(setOf(QStringLiteral("coastal-wave.jpg")),
              QStringList({QStringLiteral("coastal-wave-2.jpg"), QStringLiteral("coastal-wave-3.jpg"),
                           QStringLiteral("coastal-wave.jpg")}));
+    // Pictures that never load keep the render waiting, so it times out
+    // instead of saving a half-drawn sheet.
+    QVERIFY(item("compareSheet")->isVisible());
+    item("compareSheet")->setProperty("paths", QStringList{QStringLiteral("/nonexistent/omaroll-a.png"),
+                                                           QStringLiteral("/nonexistent/omaroll-b.png")});
+    QCoreApplication::processEvents();
+    QVERIFY(!ready());
   }
 
   void permanentDeleteUsesCapturedSelectionAndConfirmsInTheDetailViewer() {
