@@ -486,7 +486,7 @@ ApplicationWindow {
         const row = Captures.rowOf(root.pendingInitialPath)
         if (row >= 0) {
             root.pendingInitialPath = ""
-            library.currentIndex = row
+            library.pick(row)
             root.viewerFolderOnly = root.viewerPaths.length === 0
             root.openDetail(row)
         }
@@ -563,7 +563,7 @@ ApplicationWindow {
                     Qt.callLater(function () {
                         const stableRow = Captures.rowOf(revealPath)
                         if (stableRow >= 0) {
-                            library.currentIndex = stableRow
+                            library.pick(stableRow)
                         }
                     })
                 }
@@ -1503,7 +1503,7 @@ ApplicationWindow {
             }
             if (eligible.length > 0) {
                 const row = eligible[Math.floor(Math.random() * eligible.length)]
-                library.currentIndex = row
+                library.pick(row)
                 root.openDetail(row)
                 return
             }
@@ -1528,7 +1528,7 @@ ApplicationWindow {
         if (row < 0) {
             return
         }
-        library.currentIndex = row
+        library.pick(row)
         root.openDetail(row)
     }
 

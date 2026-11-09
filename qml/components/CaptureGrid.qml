@@ -281,11 +281,18 @@ FocusScope {
     // moved under the pointer between two clicks would open the wrong file.
     function pointTo(row) {
         if (row < 0) return
-        root.currentPicked = true
         reviewSets.suppressReveal = true
+        root.pick(row)
+        reviewSets.suppressReveal = false
+    }
+
+    // Makes a tile current on purpose, so it stays current when a re-sort
+    // moves it. Anything that opens, reveals or acts on a tile picks it.
+    function pick(row) {
+        if (row < 0) return
+        root.currentPicked = true
         root.selectedPath = Captures.pathAt(row)
         grid.currentIndex = row
-        reviewSets.suppressReveal = false
     }
 
     function activateTile(path) {
@@ -776,8 +783,7 @@ FocusScope {
                     Captures.commitPendingSearch()
                     const row = Captures.rowOf(path)
                     if (row < 0) return
-                    root.selectedPath = path
-                    grid.currentIndex = row
+                    root.pointTo(row)
                     root.detailRequested(row)
                 }
                 onContextRequested: function(x, y) {
@@ -785,8 +791,7 @@ FocusScope {
                     Captures.commitPendingSearch()
                     const row = Captures.rowOf(path)
                     if (row < 0) return
-                    root.selectedPath = path
-                    grid.currentIndex = row
+                    root.pointTo(row)
                     root.contextRequested(row, x, y)
                 }
                 onToggleChecked: {
