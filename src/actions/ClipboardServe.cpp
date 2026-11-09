@@ -100,7 +100,10 @@ void global(void* data, wl_registry* registry, uint32_t name, const char* interf
 void globalRemove(void*, wl_registry*, uint32_t) {}
 constexpr wl_registry_listener kRegistry{global, globalRemove};
 
-void deliver(State& state, int fd, bool png) {
+// pending: requests still waiting for their own writers. Their descriptors
+// are closed in this writer, or their readers would wait on it for EOF.
+void deliver(State& state, int fd, bool png,
+             const std::vector<std::pair<int, bool>>& pending = {}) {
   reap(state);
   if (state.writers.size() >= kMaxWriters) {
     if (!state.refusalLogged) {
@@ -113,9 +116,11 @@ void deliver(State& state, int fd, bool png) {
   }
   const pid_t writer = fork();
   if (writer == 0) {
+    for (const auto& [other, otherPng] : pending) {
+      if (other != fd) close(other);
+    }
     // This process never starts a thread of its own, so its children may
-    // use Qt freely.
-    // The deadline holds even if the app ignored these signals.
+    // use Qt freely. The deadline holds even if the app ignored these signals.
     std::signal(SIGTERM, SIG_DFL);
     std::signal(SIGALRM, SIG_DFL);
     alarm(kWriteSeconds);
@@ -300,7 +305,12 @@ int run(int argc, char** argv) {
   std::signal(SIGPIPE, SIG_IGN);
   // Pastes asked for while the selection was being taken, now from here.
   state->serving = true;
-  for (const auto& [fd, png] : std::exchange(state->queued, {})) deliver(*state, fd, png);
+  const std::vector<std::pair<int, bool>> queued = std::exchange(state->queued, {});
+  for (std::size_t index = 0; index < queued.size(); ++index) {
+    // Earlier ones are closed here already; each writer closes the later ones.
+    deliver(*state, queued[index].first, queued[index].second,
+            {queued.begin() + qsizetype(index) + 1, queued.end()});
+  }
   while (!state->cancelled && wl_display_dispatch(display) >= 0) {
   }
   stopWriters(*state);

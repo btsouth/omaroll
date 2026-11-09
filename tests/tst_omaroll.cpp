@@ -1338,19 +1338,74 @@ private slots:
     // A list that cannot be read is left alone, and the restore can be tried
     // again once it can. (Root reads it anyway, so that part needs a user.)
     QVERIFY(defaults.apply(false, "pdf").contains("-> io.github.tsouth89.omaroll.desktop"));
+    QVERIFY(list.open(QIODevice::ReadOnly));
+    const QByteArray whileSet = list.readAll();
+    list.close();
     QFile::Permissions permissions = list.permissions();
     QVERIFY(list.setPermissions(QFileDevice::Permissions()));
     if (!list.open(QIODevice::ReadOnly)) {
       const QString refused = defaults.apply(true, "pdf");
       QVERIFY2(!defaults.succeeded(), qPrintable(refused));
       QVERIFY(list.setPermissions(permissions));
-      QVERIFY(list.exists());
+      QVERIFY(list.open(QIODevice::ReadOnly));
+      QCOMPARE(list.readAll(), whileSet);
+      list.close();
     } else {
       list.close();
       QVERIFY(list.setPermissions(permissions));
     }
     const QString retried = defaults.apply(true, "pdf");
     QVERIFY2(defaults.succeeded(), qPrintable(retried));
+    QVERIFY(list.open(QIODevice::ReadOnly));
+    QCOMPARE(list.readAll(), original);
+  }
+
+  // A second --set-default, made while another app answers through a list
+  // that ranks higher, must not save Omaroll's own line over the user's line
+  // saved by the first, or --unset-default would delete that line for good.
+  void mimeDefaultsKeepTheSavedLineAcrossARepeatedSet() {
+    QTemporaryDir dir;
+    const auto oldConfig = qgetenv("XDG_CONFIG_HOME");
+    const auto oldData = qgetenv("XDG_DATA_HOME");
+    const auto oldDesktop = qgetenv("XDG_CURRENT_DESKTOP");
+    const auto oldPath = qgetenv("PATH");
+    const auto cleanup = qScopeGuard([&] {
+      for (const auto& pair : QList<QPair<const char*, QByteArray>>{
+             {"XDG_CONFIG_HOME", oldConfig}, {"XDG_DATA_HOME", oldData}, {"XDG_CURRENT_DESKTOP", oldDesktop}, {"PATH", oldPath}})
+        pair.second.isNull() ? qunsetenv(pair.first) : qputenv(pair.first, pair.second);
+    });
+    qputenv("XDG_CONFIG_HOME", dir.filePath("config").toUtf8());
+    qputenv("XDG_DATA_HOME", dir.filePath("data").toUtf8());
+    qputenv("XDG_CURRENT_DESKTOP", "Hyprland");
+    qputenv("PATH", QCoreApplication::applicationDirPath().toUtf8() + ":" + oldPath);
+    QVERIFY(QDir().mkpath(dir.filePath("data/applications")));
+    QVERIFY(QDir().mkpath(dir.filePath("config")));
+    QVERIFY(QFile::copy(QFINDTESTDATA("../packaging/io.github.tsouth89.omaroll.desktop"),
+                        dir.filePath("data/applications/io.github.tsouth89.omaroll.desktop")));
+    for (const QString name : {QStringLiteral("evince"), QStringLiteral("other")}) {
+      QFile app(dir.filePath("data/applications/" + name + ".desktop"));
+      QVERIFY(app.open(QIODevice::WriteOnly));
+      app.write("[Desktop Entry]\nType=Application\nName=" + name.toUtf8() +
+                "\nExec=/usr/bin/true %f\nMimeType=application/pdf;\n");
+    }
+    const QByteArray original = "[Default Applications]\napplication/pdf=evince.desktop;\n";
+    QFile list(dir.filePath("config/mimeapps.list"));
+    QVERIFY(list.open(QIODevice::WriteOnly));
+    QCOMPARE(list.write(original), original.size());
+    list.close();
+    MimeDefaults defaults;
+    const QString first = defaults.apply(false, "pdf");
+    QVERIFY2(first.contains("application/pdf: evince.desktop -> io.github.tsouth89.omaroll.desktop"),
+             qPrintable(first));
+    QFile chosen(dir.filePath("config/hyprland-mimeapps.list"));
+    QVERIFY(chosen.open(QIODevice::WriteOnly));
+    chosen.write("[Default Applications]\napplication/pdf=other.desktop;\n");
+    chosen.close();
+    const QString second = defaults.apply(false, "pdf");
+    QVERIFY2(second.contains("application/pdf: other.desktop -> io.github.tsouth89.omaroll.desktop"),
+             qPrintable(second));
+    const QString unset = defaults.apply(true, "pdf");
+    QVERIFY2(defaults.succeeded(), qPrintable(unset));
     QVERIFY(list.open(QIODevice::ReadOnly));
     QCOMPARE(list.readAll(), original);
   }

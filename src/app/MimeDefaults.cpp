@@ -87,7 +87,8 @@ bool restoreStructure(QSettings &state, const QString &userList) {
   const bool newline = state.value(kFileNewline).toBool();
   bool ok = true;
   if (QFile::exists(userList)) {
-    // Unreadable now: change nothing and keep the record for the next try.
+    // Unreadable now: leave its structure as it is and keep the record for
+    // the next try.
     const std::optional<QString> text = readText(userList);
     if (!text)
       return false;
@@ -423,12 +424,19 @@ MimeDefaults::Result MimeDefaults::run(bool unset, const QString &group) {
         state.setValue(kFileNewline, before.isEmpty() || before.endsWith(u'\n'));
       }
       // And the exact line xdg-mime is about to overwrite, whichever of its
-      // apps answers now, so --unset-default puts it back as it was.
+      // apps answers now, so --unset-default puts it back as it was. A line
+      // that is only Omaroll's, from an earlier --set-default, never replaces
+      // the user's line saved then.
       const QString line = defaultLine(before, type);
-      if (!line.isEmpty())
+      const bool omarollsOwn = handlersOf(line.chopped(line.endsWith(u'\r') ? 1 : 0)) ==
+                               QStringList{desktop};
+      if (omarollsOwn && state.contains(recordKey(type))) {
+        // Keep it.
+      } else if (!line.isEmpty() && !omarollsOwn) {
         state.setValue(recordKey(type), line);
-      else
+      } else {
         state.remove(recordKey(type));
+      }
       state.sync();
       if (state.status() != QSettings::NoError ||
           !xdgMime({"default", desktop, type})) {
@@ -444,7 +452,10 @@ MimeDefaults::Result MimeDefaults::run(bool unset, const QString &group) {
       // even if another app answers now through a list that ranks higher.
       const QString original = state.value(recordKey(type)).toString();
       bool removed = true;
-      // Only write user-owned configuration, never system defaults.
+      // Only write user-owned configuration, never system defaults. Each
+      // list is handled on its own: one that cannot be read is left as it is
+      // (and the type reported as not unset), while Omaroll is still taken
+      // out of the others, which keeps the saved record for a retry.
       const QStringList dirs = {config,
                                 QStandardPaths::writableLocation(
                                     QStandardPaths::GenericDataLocation) +
