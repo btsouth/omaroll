@@ -2,16 +2,21 @@
 
 #include <QBuffer>
 #include <QCryptographicHash>
+#include <QDataStream>
 #include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QEventLoop>
 #include <QFile>
 #include <QGuiApplication>
 #include <QImage>
+#include <QLoggingCategory>
 #include <QProcess>
 #include <QQmlEngine>
 #include <QQuickImageProvider>
 #include <QSaveFile>
+#include <QScopeGuard>
+#include <QSignalSpy>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QThread>
@@ -21,6 +26,7 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <memory>
 
@@ -54,8 +60,11 @@ QByteArray jpeg(const QColor& color, const QSize& size = QSize(64, 36)) {
 // Executed in place of ffmpeg. The mode file says what to do: "wait" holds
 // until it changes, "success" writes a frame 0.5 s before the target,
 // "limit N" succeeds for the first N launches and then waits like "wait",
-// "slow S" waits at -ss S and succeeds elsewhere, and anything else fails
-// the way ffmpeg does for a file with no video stream.
+// "slow S" waits at -ss S and succeeds elsewhere, "failat S" fails at -ss S
+// and succeeds elsewhere, "exponent" succeeds with a tiny offset written in
+// scientific notation, "crash" dies, "cover" plays a file whose first video
+// stream is cover art (red) ahead of the video (blue), and anything else
+// fails the way ffmpeg does for a file with no video stream.
 int runHelper(const QStringList& arguments) {
   const int seek = arguments.indexOf(QStringLiteral("-ss"));
   const int input = arguments.indexOf(QStringLiteral("-i"));
@@ -88,7 +97,12 @@ int runHelper(const QStringList& arguments) {
     QThread::msleep(10);
   }
   const QByteArray mode = readFile(modePath);
-  if (mode != "success" && !mode.startsWith("limit ") && !mode.startsWith("slow ")) {
+  if (mode == "crash") {
+    ::raise(SIGKILL);
+  }
+  const bool declines = mode.startsWith("failat ") && at.toUtf8() == mode.mid(7);
+  if (declines || (mode != "success" && mode != "exponent" && mode != "cover" && !mode.startsWith("limit ") &&
+                   !mode.startsWith("slow ") && !mode.startsWith("failat "))) {
     QFile err;
     (void)err.open(stderr, QIODevice::WriteOnly);
     err.write("Stream map '0:v:0' matches no streams.\n");
@@ -99,15 +113,54 @@ int runHelper(const QStringList& arguments) {
   // As ffmpeg logs it: the input's path first, then showinfo for the frame
   // written and for frames the filter saw after it.
   err.write("Input #0, matroska,webm, from '" + path.toUtf8() + "':\n");
-  err.write("[Parsed_showinfo_0 @ 0x1a2b] n:   0 pts:  -64 pts_time:-0.5 duration: 1\n");
+  err.write(mode == "exponent"
+                ? "[Parsed_showinfo_0 @ 0x1a2b] n:   0 pts:   0 pts_time:-1e-05 duration: 1\n"
+                : "[Parsed_showinfo_0 @ 0x1a2b] n:   0 pts:  -64 pts_time:-0.5 duration: 1\n");
   err.write("[Parsed_showinfo_0 @ 0x1a2b] n:   1 pts:   64 pts_time:1.5 duration: 1\n");
   QFile out;
   (void)out.open(stdout, QIODevice::WriteOnly);
+  if (mode == "cover") {
+    const QString stream = arguments.value(arguments.indexOf(QStringLiteral("-map")) + 1);
+    // "v" is any video stream, cover art included; "V" leaves it out.
+    out.write(jpeg(stream == QStringLiteral("0:V:0") ? QColor(Qt::blue) : QColor(Qt::red)));
+    return 0;
+  }
   out.write(jpeg(QColor(40, 120, 200)));
   return 0;
 }
 
 bool alive(qint64 pid) { return ::kill(pid_t(pid), 0) == 0; }
+
+// Run in a child process: puts a FIFO where the video's cache entry goes, so
+// the cache lane blocks opening it, then shuts down. Exits only if shutdown
+// and the process's own exit did not wait for that read.
+int runShutdownCheck(const QString& video) {
+  const QString key = StoryboardCache::key(video, StoryboardPlan::pixelBox(1));
+  const QString entry = StoryboardCache::directory() + QLatin1Char('/') + key + QStringLiteral(".storyboard");
+  if (key.isEmpty() || !QDir().mkpath(StoryboardCache::directory()) ||
+      ::mkfifo(QFile::encodeName(entry).constData(), 0600) != 0) {
+    return 3;
+  }
+  {
+    Storyboard storyboard;
+    storyboard.setDuration(60000);
+    storyboard.setSource(video);
+    storyboard.setActive(true);
+    QEventLoop loop;
+    QTimer::singleShot(Storyboard::kStartDelayMs + 700, &loop, &QEventLoop::quit);
+    loop.exec();
+    if (!storyboard.running()) {
+      return 4;
+    }
+    QElapsedTimer elapsed;
+    elapsed.start();
+    Storyboard::shutdown();
+    if (elapsed.elapsed() > 5000) {
+      return 5;
+    }
+  }
+  return 0;
+}
 
 // Twelve seconds of moving pattern with a keyframe every two seconds, so a
 // storyboard has several distinct frames. The checked-in fixture has one.
@@ -150,10 +203,15 @@ private slots:
   }
 
   void cleanup() {
+    // Every storyboard is gone by now. Their workers may still be saving
+    // what they decoded, into this test's cache, so they finish before the
+    // environment points anywhere else.
+    Storyboard::waitForWorkers();
+    // Nothing outlives its storyboard.
+    QCOMPARE(Storyboard::runningProcesses(), 0);
     restoreEnvironment("PATH", m_oldPath);
     restoreEnvironment("XDG_CACHE_HOME", m_oldCache);
-    // Nothing outlives its storyboard.
-    QTRY_COMPARE_WITH_TIMEOUT(Storyboard::runningProcesses(), 0, 5000);
+    Storyboard::setFailureMemoryMs(10 * 60 * 1000);
     m_scratch.reset();
   }
 
@@ -522,12 +580,17 @@ private slots:
     QTRY_COMPARE_WITH_TIMEOUT(helperStarts().size(), 4 + Storyboard::kParallelProcesses, 60000);
     storyboard.setActive(false);
     QTRY_COMPARE_WITH_TIMEOUT(Storyboard::runningProcesses(), 0, 3000);
+    const QString oldUrl = storyboard.frameUrl(0);
     QTest::qWait(10);
     QVERIFY(writeFile(video, "a different video"));
     QVERIFY(writeFile(modePath(), "success"));
     storyboard.setActive(true);
     QTRY_VERIFY_WITH_TIMEOUT(storyboard.complete(), 60000);
     QCOMPARE(storyboard.frameCount(), samples);
+    // The same frame time in the new version is a different image, so it
+    // has a different URL: Qt caches images by URL.
+    QCOMPARE(storyboard.frameTime(0), 1000 - 500);
+    QVERIFY(storyboard.frameUrl(0) != oldUrl);
     QCOMPARE(helperStarts().size(), 4 + Storyboard::kParallelProcesses + samples);
   }
 
@@ -742,6 +805,410 @@ private slots:
     QCOMPARE(storyboard.frameCount(), 0);
   }
 
+  // Another local user can read neither the frames nor the folder they are
+  // in, whatever the umask, and an entry made before that becomes private.
+  void cacheIsOwnerOnly() {
+    const mode_t old = ::umask(022);
+    const auto restore = qScopeGuard([old] { ::umask(old); });
+    StoryboardFrames frames;
+    frames.insert(1000, jpeg(Qt::red));
+    const QString key = QString::fromLatin1(QCryptographicHash::hash("private", QCryptographicHash::Md5).toHex());
+    QVERIFY(StoryboardCache::save(key, frames));
+    const auto mode = [](const QString& path) {
+      struct stat info {};
+      return ::stat(QFile::encodeName(path).constData(), &info) == 0 ? int(info.st_mode & 0777) : -1;
+    };
+    const QString entry = StoryboardCache::directory() + QLatin1Char('/') + key + QStringLiteral(".storyboard");
+    QCOMPARE(mode(StoryboardCache::directory()), 0700);
+    QCOMPARE(mode(entry), 0600);
+    // Nothing is left beside it.
+    QCOMPARE(QDir(StoryboardCache::directory()).entryList(QDir::Files), QStringList{QFileInfo(entry).fileName()});
+
+    QVERIFY(::chmod(QFile::encodeName(entry).constData(), 0644) == 0);
+    QVERIFY(::chmod(QFile::encodeName(StoryboardCache::directory()).constData(), 0755) == 0);
+    QVERIFY(StoryboardCache::load(key));
+    QCOMPARE(mode(entry), 0600);
+    QVERIFY(StoryboardCache::save(key, frames));
+    QCOMPARE(mode(StoryboardCache::directory()), 0700);
+  }
+
+  // A frame that is too long to be one is turned down before it is read,
+  // and one that does not decode makes the entry a miss.
+  void cacheRejectsOversizedAndUndecodableFrames() {
+    const QString key = QString::fromLatin1(QCryptographicHash::hash("broken", QCryptographicHash::Md5).toHex());
+    const QString entry = StoryboardCache::directory() + QLatin1Char('/') + key + QStringLiteral(".storyboard");
+    QVERIFY(QDir().mkpath(StoryboardCache::directory()));
+    const auto write = [&](quint32 length, const QByteArray& bytes) {
+      QByteArray contents;
+      QDataStream out(&contents, QIODevice::WriteOnly);
+      out.setVersion(QDataStream::Qt_6_5);
+      out << quint32(0x4f4d5342) << quint16(3) << QSize(64, 36) << qint32(1) << qint64(1000) << length;
+      out.writeRawData(bytes.constData(), int(bytes.size()));
+      out << qint32(1) << true << qint64(1000);
+      return writeFile(entry, contents);
+    };
+    const QByteArray good = jpeg(Qt::red);
+    QVERIFY(write(quint32(good.size()), good));
+    QVERIFY(StoryboardCache::load(key));
+    // Far beyond the file and any frame: not allocated, not read.
+    QVERIFY(write(0xfffffff0u, good));
+    QVERIFY(!StoryboardCache::load(key));
+    QVERIFY(write(3u * 1024 * 1024, QByteArray(3 * 1024 * 1024, 'x')));
+    QVERIFY(!StoryboardCache::load(key));
+
+    // JPEG markers at both ends and nothing a decoder can use between them.
+    QLoggingCategory::setFilterRules(QStringLiteral("qt.gui.imageio.jpeg*=false"));
+    const auto quiet = qScopeGuard([] { QLoggingCategory::setFilterRules({}); });
+    QByteArray damaged = good;
+    for (qsizetype index = 2; index < damaged.size() - 2; ++index) damaged[index] = char(0);
+    QVERIFY(write(quint32(damaged.size()), damaged));
+    QVERIFY(!StoryboardCache::load(key));
+    QVERIFY(write(quint32(good.size() / 2), good.left(good.size() / 2)));
+    QVERIFY(!StoryboardCache::load(key));
+
+    // So a video whose entry went bad is decoded again, not shown blank.
+    useHelper("success");
+    const QString video = fakeVideo(QStringLiteral("damaged.mp4"));
+    StoryboardFrames frames;
+    frames.insert(500, jpeg(Qt::red));
+    frames.insert(2500, damaged);
+    for (const qint64 target : StoryboardPlan::sampleTimes(10000)) frames.markSampled(target);
+    frames.complete = true;
+    QVERIFY(StoryboardCache::save(StoryboardCache::key(video, StoryboardPlan::pixelBox(1)), frames));
+    Storyboard storyboard;
+    storyboard.setDuration(10000);
+    storyboard.setSource(video);
+    storyboard.setActive(true);
+    QTRY_VERIFY_WITH_TIMEOUT(storyboard.complete(), 60000);
+    QVERIFY(!storyboard.fromCache());
+    QCOMPARE(helperStarts().size(), StoryboardPlan::sampleTimes(10000).size());
+  }
+
+  // Staging files left by a process that died while saving go, once they
+  // are old enough not to be another process's save in progress.
+  void pruneRemovesAbandonedStagingFiles() {
+    StoryboardFrames frames;
+    frames.insert(1000, jpeg(Qt::red));
+    const QString key = QString::fromLatin1(QCryptographicHash::hash("kept", QCryptographicHash::Md5).toHex());
+    QVERIFY(StoryboardCache::save(key, frames));
+    const QString entry = StoryboardCache::directory() + QLatin1Char('/') + key + QStringLiteral(".storyboard");
+    const QString abandoned = entry + QStringLiteral(".4242.99.tmp");
+    const QString saving = entry + QStringLiteral(".4243.99.tmp");
+    QVERIFY(writeFile(abandoned, QByteArray(4096, 'a')));
+    QVERIFY(writeFile(saving, QByteArray(4096, 'b')));
+    const qint64 old = QDateTime::currentSecsSinceEpoch() - StoryboardCache::kAbandonedStagingMs / 1000 - 60;
+    const struct timespec when[2] = {{old, 0}, {old, 0}};
+    QVERIFY(::utimensat(AT_FDCWD, QFile::encodeName(abandoned).constData(), when, 0) == 0);
+    StoryboardCache::prune();
+    QVERIFY(!QFile::exists(abandoned));
+    QVERIFY(QFile::exists(saving));
+    QVERIFY(QFile::exists(entry));
+    // A save in progress still counts toward the limit.
+    StoryboardCache::prune(QFileInfo(entry).size() + 1024);
+    QVERIFY(!QFile::exists(entry));
+    QVERIFY(QFile::exists(saving));
+  }
+
+  // FFmpeg 6.1 can give a tiny offset in scientific notation.
+  void frameTimesReadScientificNotation() {
+    useHelper("exponent");
+    const QString video = fakeVideo(QStringLiteral("exponent.mp4"));
+    Storyboard storyboard;
+    storyboard.setDuration(10000);
+    storyboard.setSource(video);
+    storyboard.setActive(true);
+    QTRY_VERIFY_WITH_TIMEOUT(storyboard.complete(), 60000);
+    QCOMPARE(storyboard.frameCount(), 5);
+    QCOMPARE(storyboard.frameTime(0), 1000);
+    QCOMPARE(storyboard.frameTime(4), 9000);
+  }
+
+  // Cover art stored as a video stream ahead of the real one is not what
+  // the seek bar shows.
+  void attachedCoverArtIsSkipped() {
+    useHelper("cover");
+    const QString covered = fakeVideo(QStringLiteral("covered.mkv"));
+    {
+      Storyboard storyboard;
+      storyboard.setDuration(10000);
+      storyboard.setSource(covered);
+      storyboard.setActive(true);
+      QTRY_VERIFY_WITH_TIMEOUT(storyboard.complete(), 60000);
+    }
+    Storyboard::waitForWorkers();
+    const auto frames = StoryboardCache::load(StoryboardCache::key(covered, StoryboardPlan::pixelBox(1)));
+    QVERIFY(frames && !frames->jpegs.isEmpty());
+    for (const QByteArray& bytes : frames->jpegs) {
+      const QImage image = QImage::fromData(bytes, "JPG");
+      const QColor colour = image.pixelColor(image.width() / 2, image.height() / 2);
+      QVERIFY2(colour.blue() > 160 && colour.red() < 80, qPrintable(colour.name()));
+    }
+  }
+
+  // And with ffmpeg itself, on a file that carries cover art.
+  void realCoverArtFileShowsItsVideo() {
+    if (m_ffmpeg.isEmpty()) QSKIP("ffmpeg is not installed");
+    const QString cover = m_scratch->filePath(QStringLiteral("cover.png"));
+    const QString video = m_scratch->filePath(QStringLiteral("covered.mp4"));
+    QProcess make;
+    make.start(m_ffmpeg, {QStringLiteral("-nostdin"), QStringLiteral("-loglevel"), QStringLiteral("error"),
+                          QStringLiteral("-y"), QStringLiteral("-f"), QStringLiteral("lavfi"),
+                          QStringLiteral("-i"), QStringLiteral("color=c=red:size=320x180"),
+                          QStringLiteral("-frames:v"), QStringLiteral("1"), cover});
+    QVERIFY(make.waitForFinished(30000) && make.exitCode() == 0);
+    make.start(m_ffmpeg, {QStringLiteral("-nostdin"), QStringLiteral("-loglevel"), QStringLiteral("error"),
+                          QStringLiteral("-y"), QStringLiteral("-i"), cover, QStringLiteral("-f"),
+                          QStringLiteral("lavfi"), QStringLiteral("-i"),
+                          QStringLiteral("color=c=blue:size=320x180:rate=10:duration=12"),
+                          QStringLiteral("-map"), QStringLiteral("0"), QStringLiteral("-map"), QStringLiteral("1"),
+                          QStringLiteral("-c:v:0"), QStringLiteral("png"), QStringLiteral("-c:v:1"),
+                          QStringLiteral("mpeg4"), QStringLiteral("-g"), QStringLiteral("20"),
+                          QStringLiteral("-disposition:v:0"), QStringLiteral("attached_pic"), video});
+    QVERIFY(make.waitForFinished(30000));
+    QVERIFY2(make.exitCode() == 0, make.readAllStandardError().constData());
+    Storyboard storyboard;
+    storyboard.setDuration(12000);
+    storyboard.setSource(video);
+    storyboard.setActive(true);
+    QTRY_VERIFY_WITH_TIMEOUT(!storyboard.running() && (storyboard.complete() || storyboard.failed()), 30000);
+    QVERIFY(storyboard.complete());
+    const auto cached = StoryboardCache::load(StoryboardCache::key(video, StoryboardPlan::pixelBox(1)));
+    QVERIFY(cached && !cached->jpegs.isEmpty());
+    for (const QByteArray& bytes : cached->jpegs) {
+      const QImage image = QImage::fromData(bytes, "JPG");
+      const QColor colour = image.pixelColor(image.width() / 2, image.height() / 2);
+      QVERIFY2(colour.blue() > 160 && colour.red() < 80, qPrintable(colour.name()));
+    }
+  }
+
+  // One sample ffmpeg fails on, with the rest fine, may have been a passing
+  // problem: it is left for the next open to try again.
+  void failedSamplesAreTriedAgainNextTime() {
+    useHelper("failat 5.000");
+    const QString video = fakeVideo(QStringLiteral("gap.mp4"));
+    const qsizetype samples = StoryboardPlan::sampleTimes(20000).size();
+    {
+      Storyboard storyboard;
+      storyboard.setDuration(20000);
+      storyboard.setSource(video);
+      storyboard.setActive(true);
+      QTRY_VERIFY_WITH_TIMEOUT(!storyboard.running() && storyboard.frameCount() > 0, 60000);
+      QCOMPARE(storyboard.frameCount(), samples - 1);
+      QVERIFY(!storyboard.complete());
+      QVERIFY(!storyboard.failed());
+    }
+    QCOMPARE(helperStarts().size(), samples);
+    Storyboard::waitForWorkers();
+    QVERIFY(writeFile(modePath(), "success"));
+    Storyboard storyboard;
+    storyboard.setDuration(20000);
+    storyboard.setSource(video);
+    storyboard.setActive(true);
+    QTRY_VERIFY_WITH_TIMEOUT(storyboard.complete(), 60000);
+    QCOMPARE(storyboard.frameCount(), samples);
+    QCOMPARE(helperStarts().size(), samples + 1);
+    QCOMPARE(helperStarts().constLast().value(1), QStringLiteral("5.000"));
+  }
+
+  // Every first sample timing out says the machine was busy, not that the
+  // file is bad: back in front, the viewer tries again.
+  void allTimeoutsStayRetryable() {
+    Storyboard::setFrameTimeoutMs(1500);
+    useHelper("wait");
+    const QString video = fakeVideo(QStringLiteral("busy.mp4"));
+    Storyboard storyboard;
+    storyboard.setDuration(60000);
+    storyboard.setSource(video);
+    storyboard.setActive(true);
+    QTRY_VERIFY_WITH_TIMEOUT(helperStarts().size() >= 3 && !storyboard.running(), 60000);
+    QVERIFY(!storyboard.failed());
+    QCOMPARE(storyboard.frameCount(), 0);
+
+    Storyboard::setFrameTimeoutMs(30000);
+    QVERIFY(writeFile(modePath(), "success"));
+    storyboard.setActive(false);
+    storyboard.setActive(true);
+    QTRY_VERIFY_WITH_TIMEOUT(storyboard.complete(), 60000);
+    QCOMPARE(storyboard.frameCount(), StoryboardPlan::sampleTimes(60000).size());
+  }
+
+  // A decoder that crashes says nothing about the file, so the file is not
+  // set aside as one without video.
+  void crashedDecodersAreNotFailures() {
+    useHelper("crash");
+    const QString video = fakeVideo(QStringLiteral("crash.mp4"));
+    {
+      Storyboard storyboard;
+      storyboard.setDuration(60000);
+      storyboard.setSource(video);
+      storyboard.setActive(true);
+      QTRY_VERIFY_WITH_TIMEOUT(helperStarts().size() >= 3 && !storyboard.running(), 60000);
+      QVERIFY(!storyboard.failed());
+    }
+    Storyboard::waitForWorkers();
+    QVERIFY(writeFile(modePath(), "success"));
+    Storyboard storyboard;
+    storyboard.setDuration(60000);
+    storyboard.setSource(video);
+    storyboard.setActive(true);
+    QTRY_VERIFY_WITH_TIMEOUT(storyboard.complete(), 60000);
+  }
+
+  // A file ffmpeg turns down is left alone for a while, not for good.
+  void declinedFilesAreTriedAgainLater() {
+    Storyboard::setFailureMemoryMs(300);
+    useHelper("fail");
+    const QString video = fakeVideo(QStringLiteral("later.mp4"));
+    {
+      Storyboard storyboard;
+      storyboard.setDuration(60000);
+      storyboard.setSource(video);
+      storyboard.setActive(true);
+      QTRY_VERIFY_WITH_TIMEOUT(storyboard.failed(), 60000);
+    }
+    QTest::qWait(400);
+    QVERIFY(writeFile(modePath(), "success"));
+    Storyboard storyboard;
+    storyboard.setDuration(60000);
+    storyboard.setSource(video);
+    storyboard.setActive(true);
+    QTRY_VERIFY_WITH_TIMEOUT(storyboard.complete(), 60000);
+  }
+
+  // A new duration is a new plan: the run for the old one stops and the
+  // new one covers the whole clip, reusing the samples that still fit.
+  void durationChangeRebuildsThePlan() {
+    useHelper("wait");
+    const QString video = fakeVideo(QStringLiteral("growing.mp4"));
+    Storyboard storyboard;
+    storyboard.setDuration(10000);
+    storyboard.setSource(video);
+    storyboard.setActive(true);
+    QTRY_COMPARE_WITH_TIMEOUT(helperStarts().size(), Storyboard::kParallelProcesses, 60000);
+    const QList<QStringList> first = helperStarts();
+    storyboard.setDuration(20000);
+    for (const QStringList& start : first) {
+      QTRY_VERIFY_WITH_TIMEOUT(!alive(start.value(0).toLongLong()), 3000);
+    }
+    QVERIFY(writeFile(modePath(), "success"));
+    QTRY_VERIFY_WITH_TIMEOUT(storyboard.complete(), 60000);
+    QCOMPARE(storyboard.frameCount(), StoryboardPlan::sampleTimes(20000).size());
+    QCOMPARE(storyboard.frameTime(storyboard.frameCount() - 1), 19000 - 500);
+    QCOMPARE(helperStarts().size(), first.size() + StoryboardPlan::sampleTimes(20000).size());
+
+    // A duration a few milliseconds off is the same plan near enough.
+    const qsizetype starts = helperStarts().size();
+    storyboard.setDuration(20033);
+    QVERIFY(storyboard.complete());
+    QTest::qWait(Storyboard::kStartDelayMs + 200);
+    QCOMPARE(helperStarts().size(), starts);
+  }
+
+  // A complete entry for a shorter duration is a start, not the whole job.
+  void cachedPlanForAnotherDurationIsNotComplete() {
+    useHelper("success");
+    const QString video = fakeVideo(QStringLiteral("replanned.mp4"));
+    StoryboardFrames frames;
+    for (const qint64 target : StoryboardPlan::sampleTimes(10000)) {
+      frames.insert(target - 500, jpeg(Qt::red));
+      frames.markSampled(target);
+    }
+    frames.complete = true;
+    QVERIFY(StoryboardCache::save(StoryboardCache::key(video, StoryboardPlan::pixelBox(1)), frames));
+    Storyboard storyboard;
+    storyboard.setDuration(20000);
+    storyboard.setSource(video);
+    storyboard.setActive(true);
+    QTRY_VERIFY_WITH_TIMEOUT(storyboard.complete(), 60000);
+    QVERIFY(!storyboard.fromCache());
+    QCOMPARE(storyboard.frameCount(), StoryboardPlan::sampleTimes(20000).size());
+    QCOMPARE(helperStarts().size(), StoryboardPlan::sampleTimes(20000).size() - frames.sampled.size());
+  }
+
+  // A file rewritten while it is being decoded starts over. Nothing from
+  // the run that saw both versions is kept under the old version's key.
+  void fileChangedDuringExtractionStartsOver() {
+    useHelper("wait");
+    const QString video = fakeVideo(QStringLiteral("changing.mp4"));
+    const QString oldKey = StoryboardCache::key(video, StoryboardPlan::pixelBox(1));
+    const qsizetype samples = StoryboardPlan::sampleTimes(60000).size();
+    Storyboard storyboard;
+    storyboard.setDuration(60000);
+    storyboard.setSource(video);
+    storyboard.setActive(true);
+    QTRY_COMPARE_WITH_TIMEOUT(helperStarts().size(), Storyboard::kParallelProcesses, 60000);
+    QTest::qWait(10);
+    QVERIFY(writeFile(video, "the same name, another video"));
+    const QString newKey = StoryboardCache::key(video, StoryboardPlan::pixelBox(1));
+    QVERIFY(newKey != oldKey);
+    QVERIFY(writeFile(modePath(), "success"));
+    QTRY_VERIFY_WITH_TIMEOUT(storyboard.complete(), 60000);
+    QCOMPARE(storyboard.frameCount(), samples);
+    Storyboard::waitForWorkers();
+    QVERIFY(!StoryboardCache::load(oldKey));
+    const auto saved = StoryboardCache::load(newKey);
+    QVERIFY(saved && saved->complete);
+    QCOMPARE(helperStarts().size(), Storyboard::kParallelProcesses + samples);
+  }
+
+  // The library says when a file changed; that starts over too, with frame
+  // URLs of its own so Qt's image cache cannot serve the old frames.
+  void versionChangeStartsOver() {
+    useHelper("success");
+    const QString video = fakeVideo(QStringLiteral("versioned.mp4"));
+    Storyboard storyboard;
+    storyboard.setDuration(10000);
+    storyboard.setVersion(QStringLiteral("1"));
+    storyboard.setSource(video);
+    storyboard.setActive(true);
+    QTRY_VERIFY_WITH_TIMEOUT(storyboard.complete(), 60000);
+    const QString before = storyboard.frameUrl(0);
+    storyboard.setVersion(QStringLiteral("2"));
+    QCOMPARE(storyboard.frameCount(), 0);
+    QVERIFY(!storyboard.complete());
+    QTRY_VERIFY_WITH_TIMEOUT(storyboard.complete(), 60000);
+    QVERIFY(storyboard.frameUrl(0) != before);
+  }
+
+  // `running` is a property QML binds to, so it says when it stops.
+  void cancellingNotifiesRunning() {
+    useHelper("wait");
+    const QString video = fakeVideo(QStringLiteral("notify.mp4"));
+    Storyboard storyboard;
+    storyboard.setDuration(60000);
+    storyboard.setSource(video);
+    storyboard.setActive(true);
+    QTRY_VERIFY_WITH_TIMEOUT(storyboard.running(), 5000);
+    QSignalSpy state(&storyboard, &Storyboard::stateChanged);
+    storyboard.setSource(QString());
+    QVERIFY(!storyboard.running());
+    QVERIFY(state.size() >= 1);
+
+    storyboard.setSource(video);
+    QTRY_VERIFY_WITH_TIMEOUT(storyboard.running(), 5000);
+    state.clear();
+    storyboard.setDuration(StoryboardPlan::kMinimumDurationMs - 1);
+    QVERIFY(!storyboard.running());
+    QVERIFY(state.size() >= 1);
+  }
+
+  // Exit does not wait on cache I/O that never returns, as on a stalled
+  // mount; here a FIFO the cache lane blocks opening.
+  void shutdownDoesNotWaitForStalledCacheIo() {
+    const QString video = fakeVideo(QStringLiteral("stalled.mp4"));
+    QProcess child;
+    child.setProcessChannelMode(QProcess::ForwardedErrorChannel);
+    child.start(QCoreApplication::applicationFilePath(), {QStringLiteral("--storyboard-shutdown-check"), video});
+    const bool exited = child.waitForFinished(20000);
+    if (!exited) {
+      child.kill();
+      child.waitForFinished(3000);
+    }
+    QVERIFY2(exited, "exit waited on the stalled cache read");
+    QCOMPARE(child.exitStatus(), QProcess::NormalExit);
+    QCOMPARE(child.exitCode(), 0);
+  }
+
 private:
   void useHelper(const QByteArray& mode) {
     const QString bin = m_scratch->filePath(QStringLiteral("bin"));
@@ -801,6 +1268,10 @@ int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     QStringList arguments = app.arguments().mid(2);
     return runHelper(arguments);
+  }
+  if (argc > 2 && qstrcmp(argv[1], "--storyboard-shutdown-check") == 0) {
+    QCoreApplication app(argc, argv);
+    return runShutdownCheck(app.arguments().at(2));
   }
   QGuiApplication app(argc, argv);
   StoryboardTest test;

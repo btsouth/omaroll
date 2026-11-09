@@ -38,6 +38,10 @@ inline constexpr int kBoxHeight = 108;
 [[nodiscard]] QList<int> extractionOrder(int count);
 // Index of the time closest to `at`, or -1 for an empty list.
 [[nodiscard]] int nearest(const QList<qint64>& sortedTimes, qint64 at);
+// How far a sample tried for another plan, say for a duration reported a
+// few milliseconds differently, may be from a target and still stand in for
+// it: a quarter of a slot, which lands on the same keyframe or one as near.
+[[nodiscard]] qint64 tolerance(const QList<qint64>& times);
 
 } // namespace StoryboardPlan
 
@@ -45,7 +49,8 @@ inline constexpr int kBoxHeight = 108;
 // that land on the same keyframe are one frame. `sampled` lists the sample
 // times already tried to the end, with or without a frame, so a storyboard
 // that was cut short or timed out fills in only the rest. It is `complete`
-// once every planned sample has been tried.
+// once every planned sample has been tried; that is worked out again against
+// the current plan whenever it matters, since the plan follows the duration.
 struct StoryboardFrames {
   QSize frameSize;
   QList<qint64> times;
@@ -55,7 +60,11 @@ struct StoryboardFrames {
 
   bool insert(qint64 time, const QByteArray& jpeg);
   void markSampled(qint64 target);
-  [[nodiscard]] bool wasSampled(qint64 target) const;
+  [[nodiscard]] bool wasSampled(qint64 target, qint64 tolerance = 0) const;
+  // Every one of `times` was tried, within `tolerance`.
+  [[nodiscard]] bool covers(const QList<qint64>& times, qint64 tolerance) const;
+  // Drops the samples that belong to no target of `times`.
+  void keepSampled(const QList<qint64>& times, qint64 tolerance);
   // Adds the other's frames and samples. True when a frame was added.
   bool merge(const StoryboardFrames& other);
   [[nodiscard]] bool isEmpty() const { return times.isEmpty(); }
@@ -67,15 +76,23 @@ namespace StoryboardCache {
 // a hundred videos. Always rebuildable, like the thumbnail cache.
 inline constexpr qint64 kMaximumBytes = 64LL * 1024 * 1024;
 
+// A save in progress takes well under a second. A staging file older than
+// this was left by a process that died while saving.
+inline constexpr qint64 kAbandonedStagingMs = 10LL * 60 * 1000;
+
+// Owner-only, like the frames it holds: a private video's frames are as
+// private as the video.
 [[nodiscard]] QString directory();
 // Keyed by path, size, mtime and ctime, and the frame box. Empty when the
 // file cannot be read. This stats the file, so call it off the GUI thread.
 [[nodiscard]] QString key(const QString& path, const QSize& pixelBox);
 // A hit counts as a use for eviction. A partial entry loads too; check
-// `complete`.
+// `complete`. An entry with a frame that does not decode is a miss, so it is
+// decoded again rather than shown blank.
 [[nodiscard]] std::optional<StoryboardFrames> load(const QString& key);
 bool save(const QString& key, const StoryboardFrames& frames);
-// Least recently used first.
+// Least recently used first. Staging files left by a process that died while
+// saving count toward the limit and are removed once abandoned.
 void prune(qint64 maximumBytes = kMaximumBytes);
 
 } // namespace StoryboardCache
@@ -84,14 +101,19 @@ struct StoryboardJob;
 
 // One video's storyboard, for QML. Extraction waits until `active` (the first
 // frame is on screen in the focused window), holds new decodes while `paused`
-// (the user is seeking), and stops when the source changes, `active` goes
-// false or the object goes away. Whatever was decoded by then is kept, in
+// (the user is seeking), and stops when the source or its `version` changes,
+// `active` goes false or the object goes away. A file that changes on disk
+// while it is being decoded starts over rather than mixing two versions. Whatever was decoded by then is kept, in
 // memory and in the cache, and the next run decodes only the samples still
 // missing. Frames are served by the "storyboard" image provider at the URLs
 // frameUrl() gives.
 class Storyboard : public QObject {
   Q_OBJECT
   Q_PROPERTY(QString source READ source WRITE setSource NOTIFY sourceChanged)
+  // Anything that changes when the file does, such as the library's
+  // thumbnail version. Optional: the file's own version is checked anyway
+  // each time extraction starts.
+  Q_PROPERTY(QString version READ version WRITE setVersion NOTIFY versionChanged)
   Q_PROPERTY(qreal duration READ duration WRITE setDuration NOTIFY durationChanged)
   Q_PROPERTY(qreal devicePixelRatio READ devicePixelRatio WRITE setDevicePixelRatio
                  NOTIFY devicePixelRatioChanged)
@@ -118,8 +140,14 @@ public:
 
   // Registers the QML type and adds the image provider to this engine.
   static void install(QQmlEngine& engine);
-  // Stops every extraction and waits for the workers. For application exit.
+  // Stops every extraction and waits a moment for the workers. For
+  // application exit: a worker stuck on a stalled mount is left behind
+  // rather than waited for, and the process exits without it.
   static void shutdown();
+  // Waits for the workers of storyboards already gone to finish saving.
+  // For teardown in tests and tools, before the cache moves or the process
+  // ends; a storyboard still extracting keeps it waiting.
+  static void waitForWorkers();
 
   // Process counters, for tests and measurements.
   [[nodiscard]] static int runningProcesses();
@@ -127,10 +155,14 @@ public:
 #ifdef OMAROLL_TESTING
   // How long one sample may take before it is given up for this run.
   static void setFrameTimeoutMs(int milliseconds);
+  // How long a file ffmpeg turned down is left alone.
+  static void setFailureMemoryMs(int milliseconds);
 #endif
 
   [[nodiscard]] QString source() const { return m_source; }
   void setSource(const QString& source);
+  [[nodiscard]] QString version() const { return m_version; }
+  void setVersion(const QString& version);
   [[nodiscard]] qreal duration() const { return m_duration; }
   void setDuration(qreal duration);
   [[nodiscard]] qreal devicePixelRatio() const { return m_devicePixelRatio; }
@@ -153,6 +185,7 @@ public:
 
 signals:
   void sourceChanged();
+  void versionChanged();
   void durationChanged();
   void devicePixelRatioChanged();
   void activeChanged();
@@ -160,28 +193,47 @@ signals:
   void framesChanged();
   void stateChanged();
 
+public:
+  // How a run ended.
+  enum class Outcome {
+    Decoded,   // frames, complete or not
+    Retryable, // nothing yet, but only for now: timeouts, crashes, I/O
+    Failed,    // ffmpeg turned the file down: no video it can read
+    Changed,   // the file changed on disk while it was being decoded
+  };
+
 private:
   friend struct StoryboardJob;
   void reconsider();
   void start();
-  void cancel();
+  bool cancel();
   void clear();
+  void renewToken();
   void publish();
   void acceptSample(quint64 generation, qint64 target, qint64 time, const QByteArray& jpeg);
-  void acceptCached(quint64 serial, const StoryboardFrames& frames);
+  void acceptCached(quint64 serial, const StoryboardFrames& frames, bool complete);
   void adoptKey(quint64 serial, const QString& key);
-  void finish(quint64 serial, bool succeeded, bool complete);
+  void finish(quint64 serial, Outcome outcome, bool complete);
 
   QString m_source;
+  QString m_version;
   qreal m_duration = 0;
   qreal m_devicePixelRatio = 1;
   bool m_active = false;
   bool m_paused = false;
 
   QString m_identity;
+  // The sample times for the current duration.
+  QList<qint64> m_plan;
+  // Names this object's frames for the image provider, and changes with the
+  // file version, so Qt's image cache never serves another version's frame.
   QString m_token;
   quint64 m_instance = 0;
+  quint64 m_tokens = 0;
   quint64 m_generation = 0;
+  // A run that ended because the file changed is started again once; a file
+  // still being written waits until something else changes.
+  bool m_restartedForChange = false;
   StoryboardFrames m_frames;
   // The file version m_frames came from. A file rewritten under the same
   // path starts over rather than mixing old frames with new.

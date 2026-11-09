@@ -2237,7 +2237,10 @@ Item {
                     }
 
                     HoverHandler { id: scrubHover; cursorShape: Qt.PointingHandCursor }
-                    TapHandler { onTapped: function (point) { scrub.seekTo(point.position.x) } }
+                    TapHandler {
+                        id: scrubTap
+                        onTapped: function (point) { scrub.seekTo(point.position.x) }
+                    }
                     DragHandler {
                         id: scrubDrag
                         target: null
@@ -2263,18 +2266,22 @@ Item {
                 }
 
                 // Keyframes for the seek preview, decoded in the background
-                // once the video is showing and held for a second after any
-                // seek: a drag, a tap or a key. Only while this window has
-                // focus, so a quick viewer opened in front gets the decoder.
+                // once the video is showing and held from the press of any
+                // seek, a drag, a tap or a key, until a second after it. Only
+                // while this window has focus and is not minimized, so a quick
+                // viewer opened in front gets the decoder. A file the library
+                // sees change starts over.
                 Storyboard {
                     id: previewFrames
                     objectName: "videoStoryboard"
                     source: root.isVideo ? root.path : ""
+                    version: root.thumbnailVersion
                     duration: player ? player.duration : 0
                     devicePixelRatio: Screen.devicePixelRatio
-                    active: root.visible && transport.visible && root.Window.active && !!root.presentation
-                            && root.presentation.ready === true && !!player && player.hasVideo === true
-                    paused: scrubDrag.active || scrubSettle.running
+                    active: root.visible && transport.visible && root.Window.active && stage.windowShown
+                            && !!root.presentation && root.presentation.ready === true
+                            && !!player && player.hasVideo === true
+                    paused: scrubDrag.active || scrubTap.pressed || scrubSettle.running
                 }
 
                 Timer {

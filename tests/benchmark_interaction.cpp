@@ -623,6 +623,7 @@ int main(int argc, char** argv) {
   if (viewer) viewer->close();
   if (galleryRoot) gallery->close();
   viewerRoot.reset(); galleryRoot.reset(); galleryServices.reset();
+  Storyboard::shutdown(); Storyboard::waitForWorkers();
   thumbnails->shutdown(); mattes->shutdown(); edits->shutdown(); pdfs->shutdown(); large->shutdown();
   if (!QThreadPool::globalInstance()->waitForDone(30000)) run.fatal = u"Image worker teardown timeout"_s;
   result[u"samples"_s] = run.samples; result[u"diagnostics"_s] = run.diagnostics;

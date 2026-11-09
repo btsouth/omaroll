@@ -261,6 +261,10 @@ private slots:
     }
     delete m_engine;
     m_engine = nullptr;
+    // The storyboards are gone; their workers finish saving before the
+    // cache and the pools go away.
+    Storyboard::shutdown();
+    Storyboard::waitForWorkers();
     delete m_mpris;
     m_mpris = nullptr;
     QDBusConnection::disconnectFromBus(QStringLiteral("omaroll-test-player"));
@@ -2511,6 +2515,30 @@ private slots:
     QVERIFY(storyboard->active());
     const QList<qint64> first = pids();
 
+    // The controls fading with the pointer at rest stop nothing: the
+    // decoders carry on, and none start over.
+    m_window->setProperty("chromeTimeout", 50);
+    QTest::mouseMove(m_window, QPoint(m_window->width() / 2, m_window->height() / 3));
+    QTRY_VERIFY(!prop("chromeShown").toBool());
+    QTRY_VERIFY(!item(QStringLiteral("viewerTransport"))->isVisible());
+    QTest::qWait(Storyboard::kStartDelayMs + 200);
+    QVERIFY(storyboard->active());
+    QVERIFY(storyboard->running());
+    for (const qint64 pid : first) QVERIFY(alive(pid));
+    QCOMPARE(pids().size(), first.size());
+    m_window->setProperty("chromeTimeout", 2200);
+
+    // Minimized, it stops; restored, it carries on.
+    m_window->showMinimized();
+    QTRY_VERIFY(!storyboard->active());
+    for (const qint64 pid : first) QTRY_VERIFY_WITH_TIMEOUT(!alive(pid), 3000);
+    m_window->showNormal();
+    m_window->requestActivate();
+    QTRY_VERIFY(m_window->isActive());
+    QTRY_VERIFY(storyboard->active());
+    QTRY_VERIFY_WITH_TIMEOUT(pids().size() == 2 * Storyboard::kParallelProcesses, 10000);
+    const QList<qint64> restored = pids().mid(first.size());
+
     // Another window takes focus: this one's decoders stop.
     QQuickWindow other;
     other.resize(200, 200);
@@ -2518,18 +2546,18 @@ private slots:
     other.requestActivate();
     QTRY_VERIFY(other.isActive());
     QTRY_VERIFY(!storyboard->active());
-    for (const qint64 pid : first) QTRY_VERIFY_WITH_TIMEOUT(!alive(pid), 3000);
+    for (const qint64 pid : restored) QTRY_VERIFY_WITH_TIMEOUT(!alive(pid), 3000);
     QTRY_COMPARE_WITH_TIMEOUT(Storyboard::runningProcesses(), 0, 3000);
     QTest::qWait(Storyboard::kStartDelayMs + 200);
-    QCOMPARE(pids().size(), first.size());
+    QCOMPARE(pids().size(), first.size() + restored.size());
 
     // Back in front, it carries on.
     other.close();
     m_window->requestActivate();
     QTRY_VERIFY(m_window->isActive());
     QTRY_VERIFY(storyboard->active());
-    QTRY_VERIFY_WITH_TIMEOUT(pids().size() == 2 * Storyboard::kParallelProcesses, 10000);
-    const QList<qint64> second = pids().mid(first.size());
+    QTRY_VERIFY_WITH_TIMEOUT(pids().size() == 3 * Storyboard::kParallelProcesses, 10000);
+    const QList<qint64> second = pids().mid(first.size() + restored.size());
 
     // Closing the viewer window stops them too.
     m_window->close();
@@ -2552,8 +2580,13 @@ private slots:
     QVERIFY(!prop("resumeAvailable").toBool());
     QVERIFY(!prop("resumePending").toBool());
     player->pause();
-    // A forwarded request for the already-open source seeks again, including zero.
+    // A forwarded request for the already-open source seeks again, including zero,
+    // and holds seek-preview decodes like any other seek.
+    auto* storyboard = m_window->findChild<Storyboard*>(QStringLiteral("viewerStoryboard"));
+    QVERIFY(storyboard);
+    QTRY_VERIFY_WITH_TIMEOUT(!storyboard->paused(), 3000);
     m_session->setStartPosition(path, 0);
+    QTRY_VERIFY(storyboard->paused());
     QTRY_VERIFY(player->position() < 1500);
     QCOMPARE(m_session->pendingStartPosition(path), -1);
     QVERIFY(!prop("resumeAvailable").toBool());

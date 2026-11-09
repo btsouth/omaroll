@@ -36,7 +36,11 @@ qint64 durationMs(const QString& path) {
   return qint64(QString::fromLatin1(probe.readAllStandardOutput()).trimmed().toDouble() * 1000);
 }
 
+// A run that has not finished by then is reported as such, not waited on.
+constexpr int kRunDeadlineMs = 30 * 60 * 1000;
+
 struct Run {
+  bool finished = false;
   qint64 wallMs = 0;
   qint64 firstFrameMs = -1;
   qint64 cpuMs = 0;
@@ -56,9 +60,17 @@ Run run(const QString& path, qint64 duration, qreal ratio) {
   QObject::connect(&storyboard, &Storyboard::framesChanged, &loop, [&] {
     if (result.firstFrameMs < 0) result.firstFrameMs = elapsed.elapsed();
   });
+  // Done when complete or failed, or when a run ends short, with samples
+  // that timed out.
+  bool started = false;
   QObject::connect(&storyboard, &Storyboard::stateChanged, &loop, [&] {
-    if (storyboard.complete() || storyboard.failed()) loop.quit();
+    started = started || storyboard.running();
+    if (storyboard.complete() || storyboard.failed() || (started && !storyboard.running())) {
+      result.finished = true;
+      loop.quit();
+    }
   });
+  QTimer::singleShot(kRunDeadlineMs, &loop, &QEventLoop::quit);
   QTimer sampler;
   QObject::connect(&sampler, &QTimer::timeout, &loop, [&] {
     result.peakProcesses = std::max(result.peakProcesses, Storyboard::runningProcesses());
@@ -94,6 +106,13 @@ int main(int argc, char** argv) {
   QTemporaryDir cache;
   qputenv("XDG_CACHE_HOME", cache.path().toUtf8());
   const qint64 duration = durationMs(path);
+  if (duration < StoryboardPlan::kMinimumDurationMs) {
+    // No storyboard is made for it, so there is nothing to measure.
+    QTextStream(stderr) << "omaroll_benchmark_storyboard: " << path << " has no duration ffprobe "
+                        << "can read, or is under " << StoryboardPlan::kMinimumDurationMs / 1000
+                        << " s\n";
+    return 2;
+  }
 
   const Run cold = run(path, duration, ratio);
   const Run warm = run(path, duration, ratio);
@@ -104,13 +123,14 @@ int main(int argc, char** argv) {
   QTextStream out(stdout);
   out << "file " << QFileInfo(path).fileName() << " duration_s " << duration / 1000 << " ratio "
       << ratio << '\n'
-      << "cold wall_ms " << cold.wallMs << " first_frame_ms " << cold.firstFrameMs
+      << "cold finished " << cold.finished << " wall_ms " << cold.wallMs << " first_frame_ms " << cold.firstFrameMs
       << " decoder_cpu_ms " << cold.cpuMs << " cpu_core_pct "
       << (cold.wallMs > 0 ? 100.0 * cold.cpuMs / cold.wallMs : 0) << " frames " << cold.frames
       << " processes " << cold.launched << " peak_parallel " << cold.peakProcesses << '\n'
-      << "warm wall_ms " << warm.wallMs << " from_cache " << warm.fromCache << " processes "
+      << "warm finished " << warm.finished << " wall_ms " << warm.wallMs << " from_cache " << warm.fromCache << " processes "
       << warm.launched << '\n'
       << "cache_bytes " << bytes << '\n';
   Storyboard::shutdown();
-  return cold.frames > 0 ? 0 : 1;
+  Storyboard::waitForWorkers();
+  return cold.finished && cold.frames > 0 ? 0 : 1;
 }

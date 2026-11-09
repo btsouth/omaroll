@@ -457,6 +457,10 @@ private slots:
     m_large->shutdown();
     delete m_engine;
     m_engine = nullptr;
+    // The storyboards are gone; their workers finish saving before the
+    // cache and the pools go away.
+    Storyboard::shutdown();
+    Storyboard::waitForWorkers();
     QThreadPool::globalInstance()->waitForDone();
   }
 
@@ -5612,9 +5616,12 @@ private slots:
     QTest::mouseMove(m_window, along(0.95));
     QTRY_VERIFY(frame->property("source").toString() != middle);
 
-    // A tap or a key seeks too, and holds new decodes for a moment.
+    // A tap or a key seeks too, and holds new decodes for a moment, from
+    // the press on.
     QVERIFY(!storyboard->paused());
-    QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, along(0.25));
+    QTest::mousePress(m_window, Qt::LeftButton, Qt::NoModifier, along(0.25));
+    QVERIFY(storyboard->paused());
+    QTest::mouseRelease(m_window, Qt::LeftButton, Qt::NoModifier, along(0.25));
     QVERIFY(storyboard->paused());
     QTRY_VERIFY_WITH_TIMEOUT(!storyboard->paused(), 3000);
     QTest::keyClick(m_window, Qt::Key_Home);
@@ -5633,6 +5640,14 @@ private slots:
       QTRY_VERIFY(other.isActive());
       QTRY_VERIFY(!storyboard->active());
     }
+    m_window->requestActivate();
+    QTRY_VERIFY(m_window->isActive());
+    QTRY_VERIFY(storyboard->active());
+
+    // Minimized, it decodes nothing either.
+    m_window->showMinimized();
+    QTRY_VERIFY(!storyboard->active());
+    m_window->showNormal();
     m_window->requestActivate();
     QTRY_VERIFY(m_window->isActive());
     QTRY_VERIFY(storyboard->active());

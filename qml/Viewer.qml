@@ -1385,6 +1385,8 @@ ApplicationWindow {
                                 || mediaStatus === MediaPlayer.BufferingMedia || mediaStatus === MediaPlayer.BufferedMedia)) {
                             launchTarget = Math.min(duration, Session.takeStartPosition(Session.path))
                             launchRetries = 0
+                            // A seek like any other: seek previews hold off.
+                            transport.noteSeek()
                             position = launchTarget
                             play()
                         }
@@ -1987,6 +1989,7 @@ ApplicationWindow {
             width: Math.min(880, parent.width - 32)
             player: root.player
             source: Session.isVideo ? Session.path : ""
+            previewsWanted: Session.isVideo && !root.slideshowRunning
             frameShown: !!root.presentation && root.presentation.ready
             devicePixelRatio: root.dpr
             fullScreen: root.fullScreen

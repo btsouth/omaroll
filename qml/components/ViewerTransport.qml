@@ -17,6 +17,10 @@ Rectangle {
     // previews are decoded only after that, so they never delay playback.
     property string source: ""
     property bool frameShown: false
+    // Whether the viewer is showing this video with its controls at hand:
+    // not in a slideshow. The controls' own visibility fades with the
+    // pointer, and decoding must not stop and start with it.
+    property bool previewsWanted: true
     property real devicePixelRatio: 1
     readonly property bool scrubbing: scrubMouse.pressed
     // Any seek, from the bar, the keyboard or elsewhere, holds new preview
@@ -197,14 +201,17 @@ Rectangle {
     // Keyframes for the seek preview, decoded in the background once the
     // video is showing and held while the user seeks. Only the focused
     // window decodes, so a viewer left open behind it never holds the
-    // decoder the one in front is waiting for.
+    // decoder the one in front is waiting for. It carries on while the
+    // controls fade, and stops when the window is minimized.
     Storyboard {
         id: previewFrames
         source: root.source
         duration: root.duration
         devicePixelRatio: root.devicePixelRatio
         objectName: "viewerStoryboard"
-        active: root.visible && !!root.Window.window && root.Window.window.visible
+        active: root.previewsWanted && !!root.Window.window && root.Window.window.visible
+                && root.Window.visibility !== Window.Minimized
+                && root.Window.visibility !== Window.Hidden
                 && root.Window.active && root.frameShown
                 && !!root.player && root.player.hasVideo === true
         paused: scrubMouse.pressed || seekSettle.running
