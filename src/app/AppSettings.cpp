@@ -1,4 +1,5 @@
 #include "app/AppSettings.h"
+#include "actions/TrashRestore.h"
 #include "sources/FileVersion.h"
 #include "app/VideoPlayback.h"
 
@@ -1953,22 +1954,16 @@ bool AppSettings::syncOrganization() {
 }
 
 void AppSettings::clearMarksUndo() {
-  if (m_undoStack.isEmpty()) return;
-  m_undoStack.clear();
-  emit undoChanged();
+  // A restored backup or a relocation makes old marks snapshots wrong. Moves
+  // to Trash are about files on disk and stay undoable.
+  const qsizetype removed = m_undoStack.removeIf([](const UndoStep& step) { return !step.isTrash(); });
+  if (removed > 0) emit undoChanged();
 }
 
-void AppSettings::pushMarksUndo() {
-  if (m_undoing) {
-    return;
-  }
-  MarksSnapshot snapshot;
-  snapshot.favorites = m_favorites;
-  snapshot.hidden = m_hidden;
-  snapshot.ratings = m_ratings;
-  snapshot.captions = m_captions;
-  snapshot.identities = m_markIdentities;
-  m_undoStack.append(std::move(snapshot));
+void AppSettings::pushUndoStep(UndoStep step) {
+  step.id = m_nextUndoId++;
+  if (m_nextUndoId <= 0) m_nextUndoId = 1;
+  m_undoStack.append(std::move(step));
   constexpr int kMaximumUndo = 64;
   while (m_undoStack.size() > kMaximumUndo) {
     m_undoStack.removeFirst();
@@ -1976,11 +1971,60 @@ void AppSettings::pushMarksUndo() {
   emit undoChanged();
 }
 
-void AppSettings::undo() {
-  if (m_undoStack.isEmpty()) {
+void AppSettings::pushMarksUndo() {
+  if (m_undoing) {
     return;
   }
-  MarksSnapshot snapshot = m_undoStack.takeLast();
+  UndoStep step;
+  step.marks.favorites = m_favorites;
+  step.marks.hidden = m_hidden;
+  step.marks.ratings = m_ratings;
+  step.marks.captions = m_captions;
+  step.marks.identities = m_markIdentities;
+  pushUndoStep(std::move(step));
+}
+
+int AppSettings::pushTrashUndo(const QVariantList& records, QObject* origin) {
+  UndoStep step;
+  for (const QVariant& value : records) {
+    const QVariantMap record = value.toMap();
+    if (!record.value(QStringLiteral("trashPath")).toString().isEmpty()) step.trashed.append(record);
+  }
+  if (step.trashed.isEmpty()) return 0;
+  step.origin = origin;
+  pushUndoStep(std::move(step));
+  return m_undoStack.constLast().id;
+}
+
+QString AppSettings::undo() {
+  if (m_undoStack.isEmpty()) {
+    return {};
+  }
+  UndoStep step = m_undoStack.takeLast();
+  if (step.isTrash()) {
+    QVariantList restored;
+    QStringList problems;
+    for (const QVariant& value : std::as_const(step.trashed)) {
+      const TrashRestore::Result result = TrashRestore::restore(value.toMap());
+      if (result.ok) restored.append(value);
+      else problems.append(result.message);
+    }
+    emit undoChanged();
+    if (!restored.isEmpty()) emit trashRestored(restored, step.origin.data());
+    const qsizetype total = step.trashed.size();
+    if (problems.isEmpty()) {
+      return total == 1 ? QStringLiteral("Restored %1").arg(QFileInfo(
+                              restored.first().toMap().value(QStringLiteral("path")).toString()).fileName())
+                        : QStringLiteral("Restored %1 items").arg(total);
+    }
+    if (total == 1) return problems.first();
+    if (restored.isEmpty()) {
+      return QStringLiteral("Could not restore %1 items. %2").arg(total).arg(problems.first());
+    }
+    return QStringLiteral("Restored %1 of %2 items. %3")
+        .arg(restored.size()).arg(total).arg(problems.first());
+  }
+  MarksSnapshot snapshot = std::move(step.marks);
   m_undoing = true;
   m_favorites = std::move(snapshot.favorites);
   m_hidden = std::move(snapshot.hidden);
@@ -1991,6 +2035,7 @@ void AppSettings::undo() {
   emit marksChanged();
   m_undoing = false;
   emit undoChanged();
+  return QStringLiteral("Undone");
 }
 
 void AppSettings::refreshMarkIdentity(const QString& path) {

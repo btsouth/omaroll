@@ -1,0 +1,144 @@
+#include "actions/TrashRestore.h"
+
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QScopeGuard>
+#include <QStandardPaths>
+
+#include <cerrno>
+#include <cstdio>
+#include <cstring>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#ifndef RENAME_NOREPLACE
+#define RENAME_NOREPLACE (1 << 0)
+#endif
+
+using namespace Qt::StringLiterals;
+
+namespace TrashRestore {
+
+namespace {
+
+QString number(auto value) { return QString::number(qulonglong(value)); }
+
+// Device and inode alone are not enough: a filesystem may hand a freed
+// inode straight to the next new file. Size and both timestamps tell a later
+// file apart; the move into the Trash set the change time.
+QString stamp(const struct stat& info) {
+  return u"%1:%2.%3:%4.%5"_s.arg(qlonglong(info.st_size))
+      .arg(qlonglong(info.st_mtim.tv_sec)).arg(qlonglong(info.st_mtim.tv_nsec))
+      .arg(qlonglong(info.st_ctim.tv_sec)).arg(qlonglong(info.st_ctim.tv_nsec));
+}
+
+QString errorText(int code) { return QString::fromLocal8Bit(std::strerror(code)); }
+
+// Renames |from| in |fromDir| to |to| in |toDir| only if |to| is free. Some
+// filesystems do not take RENAME_NOREPLACE; a hard link followed by removing
+// the old name is just as unable to replace an existing file.
+int renameNoReplace(int fromDir, const char* from, int toDir, const char* to) {
+  if (::renameat2(fromDir, from, toDir, to, RENAME_NOREPLACE) == 0) return 0;
+  if (errno != EINVAL && errno != ENOSYS && errno != ENOTSUP) return errno;
+  if (::linkat(fromDir, from, toDir, to, 0) != 0) return errno;
+  if (::unlinkat(fromDir, from, 0) != 0) {
+    const int code = errno;
+    ::unlinkat(toDir, to, 0);
+    return code;
+  }
+  return 0;
+}
+
+} // namespace
+
+QVariantMap moveToTrash(const QString& path, QString* error) {
+  const auto fail = [error](const QString& message) {
+    if (error) *error = message;
+    return QVariantMap();
+  };
+  const QString absolute = QFileInfo(path).absoluteFilePath();
+  struct stat before {};
+  if (path.isEmpty() || ::lstat(QFile::encodeName(absolute).constData(), &before) != 0) {
+    return fail(u"That file is no longer there"_s);
+  }
+
+  // Qt creates Trash/files and Trash/info, but expects the XDG data-home
+  // parent to exist. A genuinely fresh account may not have used it yet.
+  QDir().mkpath(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation));
+  QString trashPath;
+  if (!QFile::moveToTrash(absolute, &trashPath)) {
+    // Most often a trash directory that does not exist on the volume the file
+    // lives on, which is worth saying rather than hiding behind "failed".
+    return fail(u"Could not move this file to Trash. Its volume may not support Trash"_s);
+  }
+
+  QVariantMap record{{u"path"_s, absolute}, {u"trashPath"_s, QString()}};
+  struct stat after {};
+  if (!trashPath.isEmpty() && ::lstat(QFile::encodeName(trashPath).constData(), &after) == 0) {
+    record.insert(u"trashPath"_s, trashPath);
+    // Strings keep 64-bit identities intact through QML's numbers.
+    record.insert(u"device"_s, number(after.st_dev));
+    record.insert(u"inode"_s, number(after.st_ino));
+    record.insert(u"stamp"_s, stamp(after));
+  }
+  return record;
+}
+
+Result restore(const QVariantMap& record) {
+  const QString original = record.value(u"path"_s).toString();
+  const QString trashPath = record.value(u"trashPath"_s).toString();
+  const QString name = QFileInfo(original).fileName();
+  if (original.isEmpty() || trashPath.isEmpty() || name.isEmpty()) {
+    return {false, u"Could not undo that move to Trash. Restore it from the file manager"_s};
+  }
+
+  // A trashed file sits at <trash>/files/<name>, described by
+  // <trash>/info/<name>.trashinfo, in the home Trash and a volume's alike.
+  const QFileInfo trashed(trashPath);
+  const QString filesDir = trashed.absolutePath();
+  const QString trashRoot = QFileInfo(filesDir).absolutePath();
+  const QString trashName = trashed.fileName();
+  if (QFileInfo(filesDir).fileName() != u"files" || trashName.isEmpty()) {
+    return {false, u"Could not undo that move to Trash. Restore %1 from the file manager"_s.arg(name)};
+  }
+
+  const int files = ::open(QFile::encodeName(filesDir).constData(),
+                           O_PATH | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+  if (files < 0) return {false, u"%1 is no longer in the Trash"_s.arg(name)};
+  const auto closeFiles = qScopeGuard([files] { ::close(files); });
+  const QByteArray encodedTrashName = QFile::encodeName(trashName);
+  struct stat entry {};
+  if (::fstatat(files, encodedTrashName.constData(), &entry, AT_SYMLINK_NOFOLLOW) != 0) {
+    return {false, u"%1 is no longer in the Trash"_s.arg(name)};
+  }
+  if (number(entry.st_dev) != record.value(u"device"_s).toString() ||
+      number(entry.st_ino) != record.value(u"inode"_s).toString() ||
+      stamp(entry) != record.value(u"stamp"_s).toString()) {
+    return {false, u"%1 in the Trash is a different file now. Restore it from the file manager"_s.arg(name)};
+  }
+
+  const QString parent = QFileInfo(original).absolutePath();
+  const int folder = ::open(QFile::encodeName(parent).constData(),
+                            O_PATH | O_DIRECTORY | O_CLOEXEC);
+  if (folder < 0) {
+    return {false, u"%1's folder is gone. It is still in the Trash"_s.arg(name)};
+  }
+  const auto closeFolder = qScopeGuard([folder] { ::close(folder); });
+  const int code = renameNoReplace(files, encodedTrashName.constData(), folder,
+                                   QFile::encodeName(name).constData());
+  if (code == EEXIST) {
+    return {false, u"Another file is already named %1. The trashed one is still in the Trash"_s.arg(name)};
+  }
+  if (code != 0) {
+    return {false, u"Could not restore %1: %2. It is still in the Trash"_s.arg(name, errorText(code))};
+  }
+
+  // The file is back; a stale .trashinfo would leave a ghost entry in the
+  // file manager's Trash.
+  QFile::remove(trashRoot + u"/info/"_s + trashName + u".trashinfo"_s);
+  return {true, {}};
+}
+
+} // namespace TrashRestore

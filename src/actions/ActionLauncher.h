@@ -49,6 +49,9 @@ public:
   Q_INVOKABLE QVariantMap captureFileAction(const QString& path,
                                             const QString& expectedMediaPath = {});
   Q_INVOKABLE bool moveCapturedToTrash(const QVariantMap& target);
+  // The same, returning what an undo needs: {path, trashPath, device, inode, stamp}
+  // plus the target's viewedPath. Empty, with failed() emitted, when refused.
+  Q_INVOKABLE QVariantMap trashCaptured(const QVariantMap& target);
   Q_INVOKABLE QVariantMap renameCapturedFile(const QVariantMap& target, const QString& baseName);
   Q_INVOKABLE void moveDuplicateCopiesToTrash(const QVariantMap& keep, const QVariantList& copies);
   // Explicit permanent deletion removes only this file or symlink, never a directory tree.
@@ -132,10 +135,12 @@ signals:
   void outputAlreadyDone(const QString& path);
   void pendingOutputsChanged();
   void submissionFinished(const QString& program, bool success, const QString& detail);
-  void duplicateCleanupFinished(int moved, const QStringList& skipped);
+  // trashed holds one undo record per moved copy, as trashCaptured returns.
+  void duplicateCleanupFinished(int moved, const QStringList& skipped, const QVariantList& trashed);
 
 private:
   [[nodiscard]] static bool capturedFileMatches(const QVariantMap& target);
+  QVariantMap trashFile(const QString& path);
   QVariantMap renameFile(const QString& path, const QString& baseName, const QVariantMap& target);
   [[nodiscard]] QString locate(const QString& program, const QString& packageHint);
   bool copyText(const QString& text, bool sensitive, const QString& mimeType = {});

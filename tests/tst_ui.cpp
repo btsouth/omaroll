@@ -4261,6 +4261,79 @@ private slots:
     QTRY_VERIFY(grid->property("currentIndex").toInt() < m_library->rowCount());
   }
 
+  // The library's Trash, single, batch and duplicate cleanup, is one undo
+  // step each, from the footer's Undo or Ctrl+Z.
+  void libraryTrashUndoBringsFilesBack() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString first = dir.filePath(QStringLiteral("undo-a.png"));
+    const QString second = dir.filePath(QStringLiteral("undo-b.png"));
+    const QString copy = dir.filePath(QStringLiteral("undo-copy.png"));
+    QImage picture(37, 23, QImage::Format_RGB32);
+    picture.fill(QColor(201, 33, 77));
+    QVERIFY(picture.save(first));
+    picture.fill(QColor(11, 133, 77));
+    QVERIFY(picture.save(second));
+    QVERIFY(QFile::copy(second, copy));
+    for (const QString& path : {first, second, copy}) m_disposablePaths.append(path);
+    m_captures->addExtraFiles({first, second, copy});
+    const auto cleanup = qScopeGuard([&] {
+      invoke("dismissTopLayer");
+      m_library->setDuplicatesOnly(false);
+      dir.remove();
+      m_captures->refresh();
+      QTRY_VERIFY(!m_captures->scanning());
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(first) >= 0 && m_library->rowOf(second) >= 0 &&
+                             m_library->rowOf(copy) >= 0, 10000);
+    QQuickItem* grid = item("library");
+
+    // One file, put back with the footer's Undo.
+    grid->setProperty("currentIndex", m_library->rowOf(first));
+    QTest::keyClick(m_window, Qt::Key_Delete);
+    QTRY_VERIFY(item("confirm")->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!item("confirm")->isVisible());
+    QTRY_VERIFY(!QFileInfo::exists(first));
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(first) < 0, 10000);
+    QQuickItem* undo = item("footerUndoButton");
+    QTRY_VERIFY(undo->isVisible());
+    click(undo);
+    QTRY_VERIFY(QFileInfo::exists(first));
+    QCOMPARE(QImage(first).pixelColor(0, 0), QColor(201, 33, 77));
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(first) >= 0, 10000);
+    QVERIFY(!undo->isVisible());
+
+    // A batch is one step.
+    for (const QString& path : {first, second})
+      QVERIFY(QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, path)));
+    QVERIFY(QMetaObject::invokeMethod(m_window, "requestDeleteBatch",
+                                    Q_ARG(QVariant, QVariant(QStringList{first, second})),
+                                    Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant())));
+    QTRY_VERIFY(item("confirm")->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!item("confirm")->isVisible());
+    QTRY_VERIFY(!QFileInfo::exists(first) && !QFileInfo::exists(second));
+    QTRY_VERIFY(undo->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Z, Qt::ControlModifier);
+    QTRY_VERIFY(QFileInfo::exists(first) && QFileInfo::exists(second));
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(first) >= 0 && m_library->rowOf(second) >= 0, 10000);
+
+    // Duplicate cleanup, which checks the bytes on a worker, is one step too.
+    m_library->setDuplicatesOnly(true);
+    QTRY_COMPARE_WITH_TIMEOUT(m_duplicates->otherCopies(second), QStringList{copy}, 15000);
+    QSignalSpy finished(m_actions, &ActionLauncher::duplicateCleanupFinished);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "keepSelectedDuplicate", Q_ARG(QVariant, second)));
+    QTRY_VERIFY(item("confirm")->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 5000);
+    QVERIFY(!QFileInfo::exists(copy));
+    QTRY_VERIFY(undo->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Z, Qt::ControlModifier);
+    QTRY_VERIFY(QFileInfo::exists(copy));
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(copy) >= 0, 10000);
+  }
+
   void permanentDeleteUsesCapturedSelectionAndConfirmsInTheDetailViewer() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

@@ -4,6 +4,7 @@
 #include <QList>
 #include <QMap>
 #include <QObject>
+#include <QPointer>
 #include <QSet>
 #include <QSettings>
 #include <QStringList>
@@ -79,6 +80,9 @@ class AppSettings final : public QObject {
       QStringList smartCollectionNames READ smartCollectionNames NOTIFY smartCollectionsChanged)
   Q_PROPERTY(QString previousVisit READ previousVisit CONSTANT)
   Q_PROPERTY(bool undoAvailable READ canUndo NOTIFY undoChanged)
+  // The step Ctrl+Z would take back next, or 0. A Trash toast offers Undo only
+  // while its own move is still the latest thing that happened.
+  Q_PROPERTY(int latestUndoId READ latestUndoId NOTIFY undoChanged)
 
 public:
   explicit AppSettings(QObject* parent = nullptr);
@@ -226,10 +230,20 @@ public:
   Q_INVOKABLE void toggleFavorite(const QString& path);
   Q_INVOKABLE void toggleHidden(const QString& path);
 
-  // Undo for the destructive organization actions: favourites, hidden files,
-  // ratings and captions. One step per action, capped, cleared by nothing else.
+  // One ordered undo history for the destructive actions: favourites, hidden
+  // files, ratings and captions, and moves to Trash. One step per action
+  // (a whole batch is one step), capped. undo() takes back the newest step and
+  // returns what to tell the user.
   Q_INVOKABLE [[nodiscard]] bool canUndo() const { return !m_undoStack.isEmpty(); }
-  Q_INVOKABLE void undo();
+  [[nodiscard]] int latestUndoId() const {
+    return m_undoStack.isEmpty() ? 0 : m_undoStack.constLast().id;
+  }
+  Q_INVOKABLE QString undo();
+  // Records files just moved to Trash as one step, from the records
+  // ActionLauncher::trashCaptured returns. |origin| is the viewer session the
+  // files left, if any; each record may carry the index it had there. Returns
+  // the step's id, or 0 when nothing in |records| can be restored.
+  Q_INVOKABLE int pushTrashUndo(const QVariantList& records, QObject* origin = nullptr);
 
   // Stars, 1 to 5. Zero is unrated and is not stored.
   Q_INVOKABLE [[nodiscard]] int rating(const QString& path) const;
@@ -286,6 +300,10 @@ signals:
   // caring which one it was.
   void marksChanged();
   void undoChanged();
+  // Files an undo put back from the Trash, for the viewer that showed them
+  // (|origin|, or null) to take them back at their old places and the library
+  // to rescan.
+  void trashRestored(const QVariantList& records, QObject* origin);
   void organizationErrorChanged();
 
 private:
@@ -341,7 +359,17 @@ private:
     QHash<QString, QString> captions;
     QHash<QString, AlbumEntry> identities;
   };
-  QList<MarksSnapshot> m_undoStack;
+  struct UndoStep {
+    int id = 0;
+    // A marks step restores this snapshot; a Trash step restores its records.
+    MarksSnapshot marks;
+    QVariantList trashed;
+    QPointer<QObject> origin;
+    [[nodiscard]] bool isTrash() const { return !trashed.isEmpty(); }
+  };
+  void pushUndoStep(UndoStep step);
+  QList<UndoStep> m_undoStack;
+  int m_nextUndoId = 1;
   bool m_undoing = false;
 
   bool m_showHidden = false;

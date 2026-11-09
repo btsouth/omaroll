@@ -8,6 +8,11 @@
   and `--unset-default` puts back the apps it replaced. Add `pdf` for PDFs.
 - `--start` opens a video at a given time, so a file manager's preview can
   hand over its position.
+- Undo for Trash in the viewer and the library: an Undo button on the notice
+  and `Ctrl+Z`, which share one history with mark changes, so `Ctrl+Z` takes
+  back whatever happened last. A batch or duplicate cleanup is one step, and a
+  restored file goes back to its place in the viewer. Undo restores only the
+  file that was trashed and never overwrites a file that took its name.
 
 ### Fixed
 
@@ -16,6 +21,9 @@
 - Files with less common extensions for supported types, such as `.jfif`,
   open, and a `.ts` or `.ogg` file you open is checked for video by its content.
 - The package now installs the EXR, JPEG XL and JPEG 2000 libraries it needs.
+- The viewer's Trash prompt is bound to the file it was opened on. If that
+  file is replaced, or a symlink is pointed elsewhere, while the prompt is up,
+  Trash refuses instead of moving the new file.
 
 ## 1.18.0
 

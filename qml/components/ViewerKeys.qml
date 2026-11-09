@@ -24,10 +24,7 @@ Item {
         } else if (alt && event.key >= Qt.Key_0 && event.key <= Qt.Key_5) {
             viewer.rate(event.key - Qt.Key_0)
         } else if (control && event.key === Qt.Key_Z) {
-            if (Settings.canUndo()) {
-                Settings.undo()
-                viewer.say("Undone")
-            }
+            viewer.undo()
         } else if (control && event.key === Qt.Key_C) {
             if (shift) viewer.copyPath(false)
             else viewer.perform("copy")

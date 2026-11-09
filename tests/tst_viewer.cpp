@@ -77,6 +77,7 @@
 #include <functional>
 #include <memory>
 #include <limits>
+#include <sys/stat.h>
 #include <unistd.h>
 
 class StartupPosterProvider final : public QQuickImageProvider {
@@ -2978,6 +2979,202 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_Return);
     QTRY_VERIFY(!QFile::exists(second));
     QTRY_VERIFY(!m_window->isVisible());
+  }
+
+  // The prompt is bound to the file it was opened on. A file swapped in under
+  // the same name, or the symlink pointed at another file, is not trashed.
+  void trashRefusesAFileReplacedWhileThePromptIsOpen_data() {
+    QTest::addColumn<bool>("symlink");
+    QTest::newRow("replaced") << false;
+    QTest::newRow("symlink-retargeted") << true;
+  }
+
+  void trashRefusesAFileReplacedWhileThePromptIsOpen() {
+    QFETCH(bool, symlink);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("elsewhere"))));
+    const QString name = dir.filePath(QStringLiteral("review ü.jpg"));
+    const QString other = dir.filePath(QStringLiteral("z.jpg"));
+    const QString first = dir.filePath(QStringLiteral("elsewhere/first.jpg"));
+    const QString second = dir.filePath(QStringLiteral("elsewhere/second.jpg"));
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), symlink ? first : name));
+    QVERIFY(QFile::copy(media(QStringLiteral("shot 2.jpg")), symlink ? second : dir.filePath(QStringLiteral("elsewhere/incoming.jpg"))));
+    QVERIFY(QFile::copy(media(QStringLiteral("shot 10.jpg")), other));
+    if (symlink) {
+      QVERIFY(QFile::link(first, name));
+      const OpenRequest request = OpenRequest::fromPaths({name});
+      open(request.files);
+      m_session->setDeletionPaths(request.entryPaths);
+      QTRY_VERIFY(m_session->sequenceRevision() >= 2);
+    } else {
+      open({name});
+    }
+    QTRY_COMPARE(m_session->count(), 2);
+    QCOMPARE(m_session->deletionPath(), name);
+    const QDir trash(m_scratch.filePath(QStringLiteral("data/Trash/files")));
+    const QStringList trashedBefore = trash.entryList(QDir::Files | QDir::System);
+
+    QTest::keyClick(m_window, Qt::Key_Delete);
+    QQuickItem* confirm = item(QStringLiteral("viewerConfirm"));
+    QTRY_VERIFY(confirm->isVisible());
+    const QString preserved = dir.filePath(QStringLiteral("original-preserved.jpg"));
+    if (symlink) {
+      QVERIFY(QFile::remove(name));
+      QVERIFY(QFile::link(second, name));
+    } else {
+      QVERIFY(QFile::rename(name, preserved));
+      QVERIFY(QFile::rename(dir.filePath(QStringLiteral("elsewhere/incoming.jpg")), name));
+    }
+    QSignalSpy failed(m_actions, &ActionLauncher::failed);
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!confirm->isVisible());
+    QCOMPARE(failed.size(), 1);
+    QVERIFY(failed.first().first().toString().contains(QStringLiteral("changed or disappeared")));
+    QCOMPARE(trash.entryList(QDir::Files | QDir::System), trashedBefore);
+    if (symlink) {
+      QVERIFY(QFileInfo(name).isSymLink());
+      QCOMPARE(QFileInfo(name).symLinkTarget(), second);
+      QVERIFY(QFile::exists(first));
+    } else {
+      QVERIFY(QFile::exists(preserved));
+      QFile replacement(name), expected(media(QStringLiteral("shot 2.jpg")));
+      QVERIFY(replacement.open(QIODevice::ReadOnly) && expected.open(QIODevice::ReadOnly));
+      QCOMPARE(replacement.readAll(), expected.readAll());
+    }
+    QVERIFY(QFile::exists(second) || !symlink);
+    // Nothing moved, so the viewer stays put and keeps stepping normally.
+    QVERIFY(m_window->isVisible());
+    QVERIFY(!m_session->path().isEmpty());
+    QVERIFY(QFileInfo::exists(m_session->path()));
+    QVERIFY(!prop("undoId").toInt());
+    const QString before = m_session->path();
+    QTRY_VERIFY(m_session->count() >= 2);
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTRY_VERIFY(m_session->path() != before);
+    QVERIFY(QFileInfo::exists(m_session->path()));
+  }
+
+  // Undo puts the file back on disk and back in the viewer where it was.
+  void trashUndoPutsTheFileBackAtItsPlace_data() {
+    QTest::addColumn<bool>("selection");
+    QTest::addColumn<bool>("button");
+    QTest::newRow("folder-ctrl-z") << false << false;
+    QTest::newRow("folder-toast-undo") << false << true;
+    QTest::newRow("selection-ctrl-z") << true << false;
+    QTest::newRow("selection-toast-undo") << true << true;
+  }
+
+  void trashUndoPutsTheFileBackAtItsPlace() {
+    QFETCH(bool, selection);
+    QFETCH(bool, button);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QStringList files{dir.filePath(QStringLiteral("a.jpg")), dir.filePath(QStringLiteral("b.jpg")),
+                            dir.filePath(QStringLiteral("c.jpg"))};
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), files.at(0)));
+    QVERIFY(QFile::copy(media(QStringLiteral("shot 2.jpg")), files.at(1)));
+    QVERIFY(QFile::copy(media(QStringLiteral("shot 10.jpg")), files.at(2)));
+    const QString middle = files.at(1);
+    struct stat before {};
+    QVERIFY(::lstat(QFile::encodeName(middle).constData(), &before) == 0);
+    if (selection) open(files);
+    else open({files.at(0)});
+    QTRY_COMPARE(m_session->count(), 3);
+    QVERIFY(m_session->jump(1));
+    QCOMPARE(m_session->path(), middle);
+    const bool favourite = m_settings->isFavorite(files.at(2));
+    const auto restoreFavourite = qScopeGuard([&] { m_settings->setFavorite({files.at(2)}, favourite); });
+
+    QTest::keyClick(m_window, Qt::Key_Delete);
+    QTRY_VERIFY(item(QStringLiteral("viewerConfirm"))->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!QFile::exists(middle));
+    QTRY_COMPARE(m_session->path(), files.at(2));
+    QCOMPARE(m_session->count(), 2);
+    QCOMPARE(prop("status").toString(), QStringLiteral("Moved to Trash"));
+    QQuickItem* undo = item(QStringLiteral("viewerUndoButton"));
+    QTRY_VERIFY(undo->isVisible());
+
+    if (button) {
+      click(undo);
+    } else {
+      // Ctrl+Z takes back whatever happened last, so a favourite set after
+      // the move comes off first, and the Trash's Undo offer goes with it.
+      QTest::keyClick(m_window, Qt::Key_V);
+      QTRY_VERIFY(m_settings->isFavorite(files.at(2)) != favourite);
+      QTRY_VERIFY(!undo->isVisible());
+      QTest::keyClick(m_window, Qt::Key_Z, Qt::ControlModifier);
+      QTRY_COMPARE(m_settings->isFavorite(files.at(2)), favourite);
+      QVERIFY(!QFile::exists(middle));
+      QTest::keyClick(m_window, Qt::Key_Z, Qt::ControlModifier);
+    }
+    QTRY_VERIFY(QFile::exists(middle));
+    struct stat after {};
+    QVERIFY(::lstat(QFile::encodeName(middle).constData(), &after) == 0);
+    QCOMPARE(after.st_ino, before.st_ino);
+    QTRY_COMPARE(m_session->path(), middle);
+    QCOMPARE(m_session->index(), 1);
+    QTRY_COMPARE(m_session->count(), 3);
+    QCOMPARE(m_session->sequence(), files);
+    QCOMPARE(prop("status").toString(), QStringLiteral("Restored b.jpg"));
+    QVERIFY(!undo->isVisible());
+    // The listing that follows keeps it in its place.
+    QTest::qWait(200);
+    QCOMPARE(m_session->sequence(), files);
+    QCOMPARE(m_session->path(), middle);
+  }
+
+  // A window that has moved on to other files gets the file back on disk
+  // only, not slipped into an unrelated selection.
+  void trashUndoLeavesALaterSelectionAlone() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QStringList files;
+    for (const QString& name : {QStringLiteral("a.jpg"), QStringLiteral("b.jpg"), QStringLiteral("x.jpg"),
+                                QStringLiteral("y.jpg")}) {
+      files.append(dir.filePath(name));
+      QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), files.last()));
+    }
+    open({files.at(0), files.at(1)});
+    QTest::keyClick(m_window, Qt::Key_Delete);
+    QTRY_VERIFY(item(QStringLiteral("viewerConfirm"))->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!QFile::exists(files.at(0)));
+    open({files.at(2), files.at(3)});
+    QTRY_COMPARE(m_session->path(), files.at(2));
+    QTest::keyClick(m_window, Qt::Key_Z, Qt::ControlModifier);
+    QTRY_VERIFY(QFile::exists(files.at(0)));
+    QCOMPARE(m_session->sequence(), QStringList({files.at(2), files.at(3)}));
+    QCOMPARE(m_session->path(), files.at(2));
+  }
+
+  // Ctrl+Z after the original name was taken leaves both files alone.
+  void trashUndoRefusesWhenTheNameIsTaken() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString first = dir.filePath(QStringLiteral("a.jpg"));
+    const QString second = dir.filePath(QStringLiteral("b.jpg"));
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), first));
+    QVERIFY(QFile::copy(media(QStringLiteral("shot 2.jpg")), second));
+    open({first});
+    QTRY_COMPARE(m_session->count(), 2);
+    QTest::keyClick(m_window, Qt::Key_Delete);
+    QTRY_VERIFY(item(QStringLiteral("viewerConfirm"))->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!QFile::exists(first));
+    QTRY_COMPARE(m_session->path(), second);
+    QVERIFY(QFile::copy(media(QStringLiteral("shot 10.jpg")), first));
+    QTRY_COMPARE(m_session->count(), 2);
+    const QString current = m_session->path();
+    QTest::keyClick(m_window, Qt::Key_Z, Qt::ControlModifier);
+    QTRY_COMPARE(prop("status").toString(),
+                 QStringLiteral("Another file is already named a.jpg. The trashed one is still in the Trash"));
+    QFile kept(first), expected(media(QStringLiteral("shot 10.jpg")));
+    QVERIFY(kept.open(QIODevice::ReadOnly) && expected.open(QIODevice::ReadOnly));
+    QCOMPARE(kept.readAll(), expected.readAll());
+    QCOMPARE(m_session->path(), current);
+    QCOMPARE(m_session->count(), 2);
   }
 
   void permanentDeleteConfirmsAndOptOutDoesNotRepeatOrChangeTrash() {

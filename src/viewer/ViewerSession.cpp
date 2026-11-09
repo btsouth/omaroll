@@ -230,6 +230,7 @@ void ViewerSession::open(const QStringList& paths) {
   m_companions.clear();
   m_listingPending = false;
   m_relist.stop();
+  ++m_openSerial;
   if (paths.size() > 1) {
     m_selection = true;
     m_folder.clear();
@@ -264,6 +265,7 @@ void ViewerSession::clear() {
   m_companions.clear();
   m_listingPending = false;
   m_relist.stop();
+  ++m_openSerial;
   m_folder.clear();
   m_opened.clear();
   m_selection = false;
@@ -446,6 +448,32 @@ void ViewerSession::forget(const QString& path) {
   }
   setSequence(remaining, next);
   if (m_selection) watchSelectionFolders();
+}
+
+bool ViewerSession::restore(const QString& path, const QString& entry, int index, int serial) {
+  if (serial != m_openSerial || m_paths.isEmpty() || path.isEmpty() || m_paths.contains(path) ||
+      !QFileInfo(path).isFile()) {
+    return false;
+  }
+  const QString name = entry.isEmpty() ? path : entry;
+  if (m_selection) {
+    QStringList paths = m_paths;
+    const int at = std::clamp(index, 0, int(paths.size()));
+    paths.insert(at, path);
+    if (name != path) m_explicitEntryPaths.insert(path, name);
+    setSequence(paths, at);
+    watchSelectionFolders();
+    return true;
+  }
+  if (QFileInfo(name).dir().canonicalPath() != m_folder) return false;
+  if (!m_folderPaths.contains(path)) {
+    m_folderPaths.insert(std::clamp(index, 0, int(m_folderPaths.size())), path);
+  }
+  if (name != path) m_deletionPaths.insert(path, name);
+  rebuildFolderSequence(path);
+  // The listing puts it back in name order with its companion, if any.
+  startListing();
+  return true;
 }
 
 void ViewerSession::refreshSelection(const QString& preferred) {

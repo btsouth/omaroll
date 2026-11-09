@@ -194,7 +194,28 @@ ApplicationWindow {
 
     function say(message) {
         root.status = message
+        root.undoId = 0
+        statusTimer.interval = 2600
         statusTimer.restart()
+    }
+
+    // A result that can be taken back: the toast offers Undo for a while,
+    // as long as nothing newer has joined the undo history.
+    property int undoId: 0
+    function sayUndoable(message, id) {
+        root.say(message)
+        root.undoId = id
+        if (id > 0) {
+            statusTimer.interval = 6000
+            statusTimer.restart()
+        }
+    }
+
+    // Ctrl+Z and the toast's Undo: whatever happened last, marks or Trash.
+    function undo() {
+        if (!Settings.canUndo()) return
+        const message = Settings.undo()
+        if (message !== "") root.say(message)
     }
 
     // Called by the opt-in startup trace, before scene synchronization.
@@ -680,7 +701,16 @@ ApplicationWindow {
             return
         }
         if (confirm.visible || permanentConfirm.visible || editorChooser.visible) return
-        confirm.path = Session.deletionPath
+        // Bind the prompt to this file as it is now. A file swapped in under
+        // the same name, or a symlink pointed elsewhere, while the prompt is
+        // up is refused rather than trashed in its place.
+        const target = Actions.captureFileAction(Session.deletionPath, Session.path)
+        if (target.path === undefined) return
+        target.viewedPath = Session.path
+        confirm.target = target
+        confirm.index = Session.index
+        confirm.serial = Session.openSerial()
+        confirm.path = target.path
         confirm.viewedPath = Session.path
         confirm.detail = confirm.path
         confirm.open()
@@ -986,6 +1016,7 @@ ApplicationWindow {
             root.player.stop()
         }
         root.infoOpen = false
+        root.undoId = 0
         confirm.close()
         permanentConfirm.close()
         actionMenu.close()
@@ -996,6 +1027,16 @@ ApplicationWindow {
     Connections {
         target: Settings
         function onMarksChanged() { root.marksVersion++ }
+        // Undo put back a file this window moved to Trash: show it again
+        // where it was.
+        function onTrashRestored(records, origin) {
+            if (origin !== Session) return
+            for (const record of records) {
+                Session.restore(record.viewedPath !== undefined ? record.viewedPath : record.path,
+                                record.path, record.index !== undefined ? record.index : 0,
+                                record.openSerial !== undefined ? record.openSerial : -1)
+            }
+        }
         function onOrganizationErrorChanged() {
             if (root.visible && root.frontmost && Settings.organizationError !== "")
                 root.say(Settings.organizationError)
@@ -1839,7 +1880,9 @@ ApplicationWindow {
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.top: parent.top
         anchors.topMargin: 58
-        width: Math.min(toastText.implicitWidth + 28, parent.width - 48)
+        readonly property bool undoable: root.undoId > 0 && root.undoId === Settings.latestUndoId
+        width: Math.min(toastText.implicitWidth + 28
+                        + (undoable ? undoButton.implicitWidth + 14 : 0), parent.width - 48)
         height: toastText.implicitHeight + 14
         radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, height / 2) : 3
         color: root.shade(Theme.background, 0.90)
@@ -1851,13 +1894,44 @@ ApplicationWindow {
 
         Text {
             id: toastText
-            anchors.centerIn: parent
-            width: Math.min(implicitWidth, parent.width - 28)
+            anchors.left: parent.left
+            anchors.leftMargin: 14
+            anchors.verticalCenter: parent.verticalCenter
+            width: Math.min(implicitWidth, parent.width - 28
+                            - (toast.undoable ? undoButton.implicitWidth + 14 : 0))
             elide: Text.ElideRight
             text: root.status
             font.family: Theme.fontFamily
             font.pixelSize: 12
             color: Theme.accent
+        }
+
+        Text {
+            id: undoButton
+            objectName: "viewerUndoButton"
+            anchors.left: toastText.right
+            anchors.leftMargin: 14
+            anchors.verticalCenter: parent.verticalCenter
+            visible: toast.undoable
+            text: "Undo"
+            font.family: Theme.fontFamily
+            font.pixelSize: 12
+            font.bold: true
+            font.underline: undoArea.containsMouse
+            color: Theme.foreground
+            Accessible.role: Accessible.Button
+            Accessible.name: "Undo"
+            Accessible.description: "Shortcut Ctrl+Z"
+            Accessible.onPressAction: root.undo()
+
+            MouseArea {
+                id: undoArea
+                anchors.fill: parent
+                anchors.margins: -6
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.undo()
+            }
         }
     }
 
@@ -2006,16 +2080,28 @@ ApplicationWindow {
     ConfirmSheet {
         id: confirm
         objectName: "viewerConfirm"
+        property var target: ({})
+        property int index: 0
+        property int serial: 0
         property string path: ""
         property string viewedPath: ""
         title: "Move this item to Trash?"
         confirmLabel: "Move to Trash"
         onAccepted: {
-            if (confirm.path !== "" && Actions.moveToTrash(confirm.path)) {
-                Session.forget(confirm.viewedPath)
-                root.say("Moved to Trash")
-            }
+            const target = confirm.target
+            const index = confirm.index
+            const serial = confirm.serial
+            confirm.target = ({})
             confirm.path = ""
+            if (target.path === undefined) return
+            // A refusal is said by Actions.failed; the viewer stays on the
+            // file now at that name.
+            const record = Actions.trashCaptured(target)
+            if (record.path === undefined) return
+            record.index = index
+            record.openSerial = serial
+            Session.forget(target.viewedPath)
+            root.sayUndoable("Moved to Trash", Settings.pushTrashUndo([record], Session))
         }
         onVisibleChanged: if (!visible) keys.forceActiveFocus()
     }

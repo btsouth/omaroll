@@ -164,12 +164,12 @@ process, so a favourite or rating set in one shows in the others.
 | `I` | Details: size, date, rating, camera or codec |
 | `B` | Hide or show the filmstrip |
 | `D` · `Shift+D` | Open a RAW in the preferred editor · choose an editor |
-| `V` · `Alt+1`-`Alt+5` · `Ctrl+Z` | Favourite · rate · undo |
+| `V` · `Alt+1`-`Alt+5` · `Ctrl+Z` | Favourite · rate · undo the last mark or move to Trash |
 | `Ctrl+Shift+C` | Copy the opened path as plain text |
 | `?` · `F1` | Show or hide the grouped shortcut help |
 | `Y` · `S` · `A` | Copy · send · annotate |
 | `T` · `G` · `P` | Trim · save the current frame · open in mpv |
-| `Del` | Move to Trash, with confirm |
+| `Del` | Move to Trash, with confirm; Undo on the notice or `Ctrl+Z` puts it back |
 | `Shift+Del` | Delete permanently, with confirmation on by default |
 | right click · menu button | Everything else that suits the file |
 | `Enter` · grid button | Open the file in the library |
@@ -194,7 +194,7 @@ until the viewer closes; subtitle delay resets when the file changes.
   used when available. Add folders without importing or copying their files.
 - **Organize without changing originals.** Albums, nested tags, captions,
   favourites, ratings and saved searches live in Omaroll's settings. Undo marks
-  with Ctrl+Z, and back up or restore your organization from Settings.
+  and moves to Trash with Ctrl+Z, and back up or restore your organization from Settings.
 - **Find words in pictures.** Search filenames immediately, then add local
   Tesseract results as indexing progresses. Reuse or clear the private text cache.
 - **Preview images, video and PDFs.** Zoom, pan, rotate and flip pictures, in
@@ -253,6 +253,15 @@ and PDFs. Menu shortcuts act on the same captured targets as clicks.
 **Open with** passes the original file to the application you choose. Saving
 in an editor can change that file. It requires a desktop portal that supports
 the application chooser; if unavailable, Omaroll reports an error.
+
+A move to Trash can be undone with **Undo** on the notice that follows it, or
+with `Ctrl+Z`, which takes back whatever happened last: a mark or a move to
+Trash. A batch or a duplicate cleanup comes back as one step, and a file
+returns to its place in the viewer. Undo puts back only the file that was
+trashed and never replaces a file that has since taken its name; if the Trash
+was emptied or the name is taken, it says so and leaves both alone. If the
+file changes or is replaced while the Trash prompt is open, the prompt refuses
+instead of trashing the newcomer.
 
 `Shift+Delete` skips Trash and cannot be undone. Both viewers and the library
 ask for confirmation by default. **Confirm permanent deletion** in Settings
@@ -356,7 +365,7 @@ and put on your clipboard.
 | `Shift+Del` | Delete the current file or checked files permanently |
 | `Q` · `B` | Crop, rotate, resize the open picture · correct the whole selection |
 | `K` | Compare the selection, or the open picture's copies |
-| `Ctrl+Z` | Undo the last favourite, hide, rating or caption change |
+| `Ctrl+Z` | Undo the last favourite, hide, rating or caption change, or move to Trash |
 | `Alt+C` in the library preview | Edit the caption; Enter saves and Escape cancels |
 | `1`-`8` · `Tab` `Shift+Tab` | Jump to a section · next · previous section; with the sidebar open, Tab moves between the grid and sidebar |
 | `↑` `↓` · `←` `→` · `Enter` in the sidebar | Move · collapse or expand · open the folder |
@@ -368,7 +377,7 @@ and put on your clipboard.
 | with a selection | `V` `Ctrl+H` `Y` `S` `Del` act on every checked file |
 | `Ctrl` + wheel · `Ctrl` `+` `-` `0` | Bigger or smaller tiles · reset |
 | drag | Drop the file, or the whole selection, into another app |
-| `Del` | Move to Trash, with confirm |
+| `Del` | Move to Trash, with confirm; Undo in the footer or `Ctrl+Z` puts it back |
 | `/` · `R` | Search filenames and picture text · Rescan |
 | `Esc` | Leave a PDF text selection, clear the tile selection, then close |
 
