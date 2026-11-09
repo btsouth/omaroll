@@ -29,12 +29,27 @@ KNOWN_QT_HANDOFFS = [
     r"QWaitCondition::(~QWaitCondition|wait)\(",
 ]
 HANDOFF = re.compile("|".join(KNOWN_QT_HANDOFFS))
+# A QtConcurrent::run task: the functor and its captures are copied into the
+# task on the submitting thread, then QThreadPool::start hands the task over
+# under QThreadPool's mutex, which TSan cannot see. A pool-side access while
+# StoredFunctionCall copies its stored arguments out (or the pool calls the
+# task's run, reading its vtable), against the task being
+# built (or the captured data being allocated) on the submitting thread, is
+# that handoff. Seen for DocumentTextIndex::processNext.
+TASK_RUN = re.compile(r"QtConcurrent::(StoredFunctionCall<.*>::runFunctor|RunFunctionTaskBase<.*>::run)\(")
+TASK_START = re.compile(r"QtConcurrent::(NonPromiseTaskResolver<|run<)")
+ALLOCATION = re.compile(r"^(operator new|malloc|calloc|realloc)\b")
+# QThreadPool's own queue, touched by two pooled threads in libQt6Core code
+# with nothing of ours on either stack, in a block a pooled thread allocated
+# there. Our code on a pooled thread always has frames of our own, since it
+# is built with frame pointers.
+POOL_THREAD = "Thread (pooled)"
 # Qt threads whose end TSan never sees, since Qt joins its threads inside
 # libQt6Core. QtTest's watchdog waits on a condition variable on the main
 # thread's stack, and that stack is reused after the watchdog is gone.
 KNOWN_QT_THREADS = ["QtTest Watchdog"]
 FRAME = re.compile(r"^\s*#\d+ (.*?) (?:<null>|\S+:\d+(?::\d+)?) \(([^()+]+)\+0x[0-9a-f]+\)")
-ACCESS = re.compile(r"^  (Previous )?(atomic )?(Read|Write|read|write) of size .* by (main thread|thread (T\d+))")
+ACCESS = re.compile(r"^  (Previous )?([Aa]tomic )?(Read|Write|read|write) of size .* by (main thread|thread (T\d+))")
 THREAD = re.compile(r"^  Thread (T\d+) '([^']*)'", re.M)
 INTERCEPTOR = re.compile(
     r"^(operator new|operator delete|malloc|calloc|realloc|free|strdup|"
@@ -73,6 +88,49 @@ def access_stacks(block):
     return stacks, threads
 
 
+def frame_functions(frames):
+    out = []
+    for frame in frames:
+        match = FRAME.match(frame)
+        if match:
+            out.append(match.groups())
+    return out
+
+
+def task_start_handoff(stacks):
+    if len(stacks) != 2:
+        return False
+    for task, other in (stacks, stacks[::-1]):
+        if not any(TASK_RUN.search(frame) for frame in task):
+            continue
+        if any(TASK_START.search(frame) for frame in other):
+            return True
+        frames = frame_functions(other)
+        if frames and ALLOCATION.match(frames[0][0]):
+            return True
+    return False
+
+
+def only_qt_pool_frames(frames):
+    """An interceptor in our binary, then unnamed libQt6Core frames only."""
+    functions = frame_functions(frames)
+    if len(functions) < 2 or not INTERCEPTOR.match(functions[0][0]):
+        return False
+    return all(function == "<null>" and module.startswith("libQt6Core")
+               for function, module in functions[1:])
+
+
+def pool_bookkeeping(block, stacks, threads):
+    names = dict(THREAD.findall(block))
+    if len(stacks) != 2 or any(names.get(thread) != POOL_THREAD for thread in threads):
+        return False
+    location = re.search(r"^  Location is heap block .* allocated by thread (T\d+):\n((?:\s*#\d+ .*\n?)+)",
+                         block, re.M)
+    if not location or names.get(location.group(1)) != POOL_THREAD:
+        return False
+    return all(only_qt_pool_frames(frames) for frames in stacks + [location.group(2).splitlines()])
+
+
 def classify(block):
     if FATAL.search(block):
         return "fatal"
@@ -81,6 +139,8 @@ def classify(block):
         return "ours"  # Not a two-access race (double lock, signal, leak): look at it.
     names = dict(THREAD.findall(block))
     if any(names.get(thread) in KNOWN_QT_THREADS for thread in threads):
+        return "external"
+    if task_start_handoff(stacks) or pool_bookkeeping(block, stacks, threads):
         return "external"
     for frames in stacks:
         function, module = first_frame(frames)

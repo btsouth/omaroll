@@ -387,11 +387,15 @@ fallback's `std::mutex` handoff, sidecar subtitle parsing, organization
 snapshots and the launch check written on a worker, the metadata probe pool,
 the OCR and similarity indexers (`omaroll_tests`), PDF text extraction and its
 disk-backed matching (`omaroll_search_tests`) and storyboard extraction with
-its cache lane (all of `omaroll_storyboard_tests`). Add a test to the pattern in
+its cache lane (all of `omaroll_storyboard_tests`). Each test runs in its own
+process, since a long process with many pooled threads reaches TSan's
+thread-registry abort. Add a test to the pattern in
 `tests/run-instrumented.sh` when it covers new threaded code.
 
 `tests/tsan-triage.py` fails on every report except the Qt handoffs it lists
-by name, each with the reason; it does not trust a report just because its
+by name, each with the reason (a `QWaitCondition` torn down after its wait,
+a `QtConcurrent::run` task built on one thread and started on a pooled one,
+and `QThreadPool`'s own queue); it does not trust a report just because its
 first frames are in Qt, since Qt has no frame pointers and the caller's frame
 is often missing. A TSan abort fails the job, and so does a selected test that
 did not run. `tests/tsan-triage/` holds real reports for its self-test

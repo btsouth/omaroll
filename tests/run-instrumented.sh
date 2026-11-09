@@ -43,28 +43,29 @@ case "$mode" in
     storyboard='.'
     rm -f "$build"/tsan-report.* "$build"/tsan-tests*.txt
     test_status=0
+    # One process per test. TSan's thread registry aborts once Qt reuses a
+    # thread id it never saw joined, and a long process with many pooled
+    # threads gets there; a short one does not.
     run_suite() {
-      local binary=$1 class=$2 pattern=$3 tests
+      local binary=$1 class=$2 pattern=$3 tests test results status=0
       mapfile -t tests < <(QT_QPA_PLATFORM=offscreen "$build/$binary" -functions | sed 's/()$//' |
         grep -E "$pattern" | grep -Ev '^(init|cleanup|initTestCase|cleanupTestCase)$')
       echo "tsan: ${#tests[@]} $binary tests"
-      local results="$PWD/$build/tsan-tests-$binary.txt" status=0
-      (cd "$build" && QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software PULSE_SERVER=unix:/nonexistent \
-        PIPEWIRE_REMOTE=omaroll-no-audio \
-        TSAN_OPTIONS="halt_on_error=0:exitcode=0:report_thread_leaks=0:second_deadlock_stack=1:log_path=$PWD/tsan-report:suppressions=$OLDPWD/tests/tsan.supp" \
-        "./$binary" -o "$results,txt" -o -,txt "${tests[@]}") || status=$?
-      # exitcode=0 also covers TSan's own aborts, so check that every test ran.
-      if ! grep -Eq '^Totals: [0-9]+ passed, 0 failed' "$results"; then
-        echo "tsan: the selected $binary tests did not run to completion"
-        status=1
-      fi
       for test in "${tests[@]}"; do
-        if ! grep -Eq "^(PASS|SKIP) +: $class::$test\(" "$results"; then
-          echo "tsan: $binary $test did not run"
+        results="$PWD/$build/tsan-tests-$binary-$test.txt"
+        (cd "$build" && QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software PULSE_SERVER=unix:/nonexistent \
+          PIPEWIRE_REMOTE=omaroll-no-audio \
+          TSAN_OPTIONS="halt_on_error=0:exitcode=0:report_thread_leaks=0:second_deadlock_stack=1:log_path=$PWD/tsan-report:suppressions=$OLDPWD/tests/tsan.supp" \
+          "./$binary" -o "$results,txt" "$test" >/dev/null 2>&1) || true
+        # exitcode=0 also covers TSan's own aborts, so check that the test ran.
+        if ! grep -Eq '^Totals: [0-9]+ passed, 0 failed' "$results" 2>/dev/null ||
+           ! grep -Eq "^(PASS|SKIP) +: $class::$test\(" "$results"; then
+          echo "tsan: $binary $test did not pass"
+          [[ -f $results ]] && grep -E '^(FAIL|QFATAL)' "$results" | head -5
           status=1
         fi
+        [[ -f $results ]] && cat "$results" >> "$build/tsan-tests.txt"
       done
-      cat "$results" >> "$build/tsan-tests.txt"
       return "$status"
     }
     run_suite omaroll_tests OmarollTest "$core" || test_status=1
