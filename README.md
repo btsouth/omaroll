@@ -140,7 +140,11 @@ Added Associations entry for Omaroll that you wrote yourself goes too, while
 Removed Associations entries stay. It does the same in the desktop's own list
 beside it, such as `hyprland-mimeapps.list`, and in the lists in
 `~/.local/share/applications`, without putting anything back there. And an
-app you chose after `--set-default` stays your choice.
+app you chose after `--set-default` stays your choice. Types that had no
+setting of yours to put back keep their system default, and the summary counts
+them. What `--set-default` replaced is kept in
+`~/.config/omaroll/mime-defaults.ini`; a record left in `~/.config/Omaroll` by
+an older version moves there on the next run.
 
 To open a picture or video from a terminal:
 
@@ -219,6 +223,8 @@ omaroll --start=1:23 clip.mp4
 ```
 
 File managers can pass the same option to hand over a preview's position.
+A time Omaroll can't read is shown as a desktop notice as well as on stderr,
+since a file manager launch has no terminal.
 
 Several files can be opened together, in the order given:
 
@@ -268,8 +274,9 @@ Every viewer shortcut is listed in [Shortcuts](docs/shortcuts.md#viewer), and
   annotation, conversion and editing. A copied image of up to 24 megapixels that fits
   the image memory limit is offered as PNG too, so it can show up in
   Omarchy's clipboard history while apps that take JPEG still get the original
-  bytes. WebP, HEIC, AVIF, JPEG XL, GIF and other readable still formats offer
-  a file reference plus PNG, using the first frame of animations. The history waits two seconds for the PNG, so on a slow machine a
+  bytes. A WebP, HEIC, AVIF, JPEG XL, GIF or other picture Qt reads goes on as
+  a file reference with a PNG beside it, the first frame for an animation. The
+  history waits two seconds for the PNG, so on a slow machine a
   large photo may still be missed. It needs a compositor with ext-data-control,
   which Omarchy's Hyprland has; elsewhere, and for larger photos, the copy is
   JPEG only and pastes as before, but the history skips it.
@@ -367,12 +374,6 @@ decoded frame back to main memory, so 4K video costs more CPU than in mpv; see
 notes don't cover. An optional action can still hand the file to mpv.
 
 Documents: PDF. Thumbnails, previews, and page counts use Poppler locally.
-
-The default-handler restore record lives beside settings in
-`~/.config/omaroll/mime-defaults.ini`; older records move there automatically.
-`--unset-default` reports exact restore counts and how many types keep their
-system default. Invalid `--start` values also send a desktop notice. Diagnostics
-list VA-API render-node and driver prerequisites without probing decoding.
 
 ## Theme and window rules
 
