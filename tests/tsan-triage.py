@@ -139,6 +139,12 @@ def handing_over(task):
     return False
 
 
+# Implicit sharing at work: a QString, QByteArray or Qt container's data
+# pointer copied, or its reference count taken.
+SHARED_COPY = re.compile(r"^(QArrayDataPointer<.*>::(QArrayDataPointer|ref)\(|QArrayData::ref\(|"
+                         r"QBasicAtomicInteger<int>::refRelaxed\(|std::__atomic_base<int>::fetch_add\()")
+
+
 def task_start_handoff(stacks):
     if len(stacks) != 2:
         return False
@@ -152,9 +158,13 @@ def task_start_handoff(stacks):
         # it, a write on the other thread detaches into a new block, so this
         # block cannot change after the task started. Our own allocations
         # do not pass: they need evidence they were made before the start.
-        frames = frame_functions(other)
-        if len(frames) >= 2 and ALLOCATION.match(frames[0][0]) and frames[0][1].startswith("omaroll") \
-                and frames[1][1].startswith("libQt6Core"):
+        # The task side must be that sharing itself: QArrayDataPointer copying
+        # or referencing the block, not a copy constructor of ours reading
+        # through a pointer into some Qt buffer.
+        frames, copying = frame_functions(other), frame_functions(task)
+        sharing = bool(copying) and SHARED_COPY.match(first_frame(task)[0] or "") is not None
+        if sharing and len(frames) >= 2 and ALLOCATION.match(frames[0][0]) and \
+                frames[0][1].startswith("omaroll") and frames[1][1].startswith("libQt6Core"):
             return True
     return False
 
@@ -403,6 +413,9 @@ def classify(block):
     stacks, threads = access_stacks(block)
     if not stacks:
         return "ours"  # Not a two-access race (double lock, signal, leak): look at it.
+    # A frame the triage could not read may be ours; no rule may vouch for it.
+    if any(function == "<unparsed>" for frames in stacks for function, _ in frame_functions(frames)):
+        return "ours"
     names = dict(THREAD.findall(block))
     if any(names.get(thread) in KNOWN_QT_THREADS for thread in threads):
         return "external"
