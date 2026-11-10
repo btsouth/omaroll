@@ -38,6 +38,9 @@ Item {
     // Where the file is, its folders and name, shown while reviewing sets:
     // copies look the same, so this is what tells them apart.
     property string folderLabel: ""
+    // A similar set's looser member: it matches one picture of the set
+    // rather than every one, as the first frame of a burst does.
+    property bool looserMatch: false
     property string caption: ""
     // The camera format of a RAW file, so it reads apart from the JPEG the
     // camera wrote beside it.
@@ -62,7 +65,8 @@ Item {
     // A tile in a hidden or recycled row is not read out.
     Accessible.ignored: !root.visible
     Accessible.role: Accessible.ListItem
-    Accessible.name: [fileName, kindLabel, dateLabel, timeLabel, folderLabel].filter(function(value) { return value !== "" }).join(", ")
+    Accessible.name: [fileName, kindLabel, dateLabel, timeLabel, folderLabel,
+                      looserMatch ? "looser match" : ""].filter(function(value) { return value !== "" }).join(", ")
     Accessible.description: thumbnailFailed ? "Preview unavailable" : ""
     Accessible.selected: selected
     Accessible.selectable: true
@@ -478,6 +482,35 @@ Item {
                 font.weight: Font.DemiBold
                 color: "#ffffff"
             }
+        }
+
+        Rectangle {
+            objectName: "looserMatchBadge"
+            anchors.top: parent.top
+            anchors.topMargin: root.rawFormat !== "" ? 34 : 8
+            anchors.right: parent.right
+            anchors.rightMargin: 8
+            visible: root.looserMatch
+            width: looserLabel.implicitWidth + 12
+            height: looserLabel.implicitHeight + 6
+            radius: 3
+            color: Qt.rgba(0, 0, 0, 0.55)
+
+            Text {
+                id: looserLabel
+                anchors.centerIn: parent
+                text: "Looser match"
+                font.family: Theme.fontFamily
+                font.pixelSize: 11
+                color: "#ffffff"
+            }
+            ThemedToolTip {
+                owner: parent
+                requested: looserHover.hovered
+                text: "Matches one picture in this set, not all of them"
+                delay: 500
+            }
+            HoverHandler { id: looserHover }
         }
 
         Rectangle {

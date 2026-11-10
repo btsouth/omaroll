@@ -46,23 +46,19 @@ struct Limits {
   double words;
 };
 // Photos and other colourful pictures. Bursts and edits of one scene belong
-// together at Normal; Loose reaches recrops and heavier edits. The last row
-// is never chosen: past Loose, it only admits looser members (see group()).
-constexpr std::array<Limits, 4> kPicture = {{
+// together at Normal; Loose reaches recrops and heavier edits.
+constexpr std::array<Limits, 3> kPicture = {{
     {5, 0.95, 45, 30, 0.9},
     {7, 0.90, 70, 45, 0.8},
     {10, 0.84, 100, 70, 0.65},
-    {12, 0.80, 120, 85, 0.55},
 }};
 // Screenshots of text. Two terminals or documents share their layout, so only
 // a near-identical thumbnail counts, and recognized text must agree.
-constexpr std::array<Limits, 4> kTextLike = {{
+constexpr std::array<Limits, 3> kTextLike = {{
     {3, 0.99, 30, 20, 0.95},
     {5, 0.975, 50, 30, 0.85},
     {7, 0.95, 80, 45, 0.7},
-    {8, 0.94, 90, 50, 0.65},
 }};
-constexpr int kLoosestLevel = 3;
 // Below this many recognized words text is not used to decide.
 constexpr int kMinimumWords = 3;
 
@@ -344,7 +340,7 @@ QStringList SimilarityIndex::wordsOf(const QString& text) {
 
 namespace {
 
-// matches() at a level from Strict to one past Loose.
+// matches() at a level, unclamped.
 bool matchesAt(const SimilarityIndex::Signature& left, const SimilarityIndex::Signature& right,
                const QStringList& leftWords, const QStringList& rightWords, int level,
                double* score) {
@@ -566,9 +562,12 @@ QList<QList<int>> SimilarityIndex::group(const QList<Signature>& signatures,
   });
   QList<int> sets(clumps.size());
   std::vector<QList<int>> members(std::size_t(clumps.size()));
+  // Pictures in each set, by its root.
+  std::vector<qsizetype> pictures(std::size_t(clumps.size()));
   for (int node = 0; node < sets.size(); ++node) {
     sets[node] = node;
     members[std::size_t(node)] = {node};
+    pictures[std::size_t(node)] = clumps[node].members.size();
   }
   for (const Edge& edge : std::as_const(edges)) {
     if (stopped()) return {};
@@ -591,22 +590,21 @@ QList<QList<int>> SimilarityIndex::group(const QList<Signature>& signatures,
     sets[right] = left;
     members[std::size_t(left)].append(rightMembers);
     members[std::size_t(right)] = {};
+    pictures[std::size_t(left)] += pictures[std::size_t(right)];
+    pictures[std::size_t(right)] = 0;
   }
 
-  // Complete linkage leaves the ends of a burst out: the first frame matches
-  // the second but not the fourth. A picture left on its own joins a set as
-  // a looser member when it matches one of the set at this strictness and
-  // every one of it at the next looser level. It is judged against the set
-  // as linkage left it, so looser members never pull in one another and the
-  // order they are looked at in does not matter. Only links already found
-  // are followed, and the checks are capped, so this stays as bounded as
-  // linkage itself.
-  const int outer = std::min(level + 1, kLoosestLevel);
-  const auto pictureCount = [&](int root) {
-    qsizetype count = 0;
-    for (int node : members[std::size_t(root)]) count += clumps[node].members.size();
-    return count;
-  };
+  // At Normal, complete linkage leaves the ends of a burst out: the first
+  // frame matches the second but not the fourth. A picture left on its own
+  // joins a set as a looser member when it matches one of the set at Normal
+  // and every one of it at Loose. It is judged against the set as linkage
+  // left it, so looser members never pull in one another and the order they
+  // are looked at in does not matter. Only links already found are
+  // followed, and the checks are capped, so this stays as bounded as linkage
+  // itself. Strict stays strict, and Loose has no looser level to ask.
+  const bool leftovers = level == Normal;
+  const int outer = Loose;
+  const auto pictureCount = [&](int root) { return pictures[std::size_t(root)]; };
   const auto alone = [&](int node) {
     return members[std::size_t(node)].size() == 1 && clumps[node].members.size() == 1;
   };
@@ -617,6 +615,7 @@ QList<QList<int>> SimilarityIndex::group(const QList<Signature>& signatures,
   // Per leftover, in node order, and per set it links with, by root.
   std::map<int, std::map<int, Offer>> offers;
   for (const Edge& edge : std::as_const(edges)) {
+    if (!leftovers) break;
     if (stopped()) return {};
     for (const auto& [loose, other] : {std::pair{edge.left, edge.right},
                                        std::pair{edge.right, edge.left}}) {
@@ -798,8 +797,9 @@ SimilarityIndex::SimilarityIndex(CaptureModel* model, QObject* parent)
       m_cache = result.cache;
       m_diskLoaded = true;
       m_lastDecoded = result.decoded;
-      if (m_groups != result.groups) {
+      if (m_groups != result.groups || m_looser != result.looser) {
         m_groups = result.groups;
+        m_looser = result.looser;
         emit groupsChanged();
       }
     }
@@ -977,6 +977,7 @@ void SimilarityIndex::start() {
   if (work.size() < 2) {
     if (!m_groups.isEmpty()) {
       m_groups.clear();
+      m_looser.clear();
       emit groupsChanged();
     }
     setProgress(0, 0);
@@ -1059,8 +1060,12 @@ void SimilarityIndex::start() {
     QList<QStringList> wordLists;
     wordLists.reserve(work.size());
     for (const Candidate& candidate : work) wordLists.append(words.value(candidate.path));
-    const QList<QList<int>> sets = group(signatures, wordLists, strictness, cancel.get());
+    QList<QList<int>> looser;
+    const QList<QList<int>> sets = group(signatures, wordLists, strictness, cancel.get(), &looser);
     if (cancel->load()) return result;
+    for (const QList<int>& members : std::as_const(looser)) {
+      for (int index : members) result.looser.insert(work[index].path);
+    }
     for (const QList<int>& set : sets) {
       QStringList paths;
       for (int index : set) paths.append(work[index].path);

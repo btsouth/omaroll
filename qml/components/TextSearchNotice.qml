@@ -37,6 +37,8 @@ Rectangle {
         color: Theme.mutedText
     }
 
+    // A link to look at, a button to the keyboard: Tab reaches it, Enter
+    // or Space opens the settings, and it shows a ring while focused.
     Text {
         id: link
         objectName: "textSearchSettingsLink"
@@ -46,12 +48,32 @@ Rectangle {
         text: "Text settings"
         font.family: Theme.fontFamily
         font.pixelSize: 11
-        font.underline: linkHover.hovered
+        font.underline: linkHover.hovered || link.activeFocus
         color: Theme.accent
+        activeFocusOnTab: root.visible
         Accessible.role: Accessible.Button
         Accessible.name: "Text search settings"
+        Accessible.description: "Open the text indexing settings"
+        Accessible.focusable: true
         Accessible.onPressAction: root.settingsRequested()
+        Keys.onPressed: function (event) {
+            if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
+                root.settingsRequested()
+                event.accepted = true
+            }
+        }
         HoverHandler { id: linkHover; cursorShape: Qt.PointingHandCursor }
         TapHandler { onTapped: root.settingsRequested() }
+
+        Rectangle {
+            objectName: "textSearchSettingsFocusRing"
+            anchors.fill: parent
+            anchors.margins: -3
+            visible: link.activeFocus
+            color: "transparent"
+            radius: 3
+            border.width: 2
+            border.color: Theme.accent
+        }
     }
 }

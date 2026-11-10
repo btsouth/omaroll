@@ -72,7 +72,7 @@ inline QVariantList rows() {
   {"context": "library", "id": "larger", "keys": ["Ctrl++", "Ctrl+="], "label": "Larger tiles", "group": "Window", "flag": "", "tokens": ["Plus", "Equal"]},
   {"context": "library", "id": "smaller", "keys": ["Ctrl+-"], "label": "Smaller tiles", "group": "Window", "flag": "", "tokens": ["Minus"]},
   {"context": "library", "id": "reset", "keys": ["Ctrl+0"], "label": "Reset tile size", "group": "Window", "flag": "", "tokens": ["0"]},
-  {"context": "library", "id": "escape", "keys": ["Esc"], "label": "Close sheet, clear selection or close window", "group": "Window", "flag": "", "tokens": ["Escape"]},
+  {"context": "library", "id": "escape", "keys": ["Esc"], "label": "Close sheet, clear selection, leave Find similar or close window", "group": "Window", "flag": "", "tokens": ["Escape"]},
   {"context": "library", "id": "copy-path", "keys": ["Ctrl+Shift+C"], "label": "Copy path", "group": "Window", "flag": "", "tokens": ["C"]},
   {"context": "library", "id": "help", "keys": ["?", "F1"], "label": "Help", "group": "Window", "flag": "", "tokens": ["Question", "F1"]},
   {"context": "library", "id": "quit", "keys": ["Ctrl+Q"], "label": "Quit", "group": "Window", "flag": "", "tokens": ["Q"]},

@@ -9911,11 +9911,57 @@ private slots:
     // Leaving the review forgets the picture.
     proxy.setSimilarOnly(false);
     QVERIFY(proxy.similarTo().isEmpty());
+    QVERIFY(!proxy.findingSimilar());
     QCOMPARE(proxy.count(), 5);
     proxy.setSimilarTo(glacier);
     proxy.setDuplicatesOnly(true);
     QVERIFY(proxy.similarTo().isEmpty());
+    QVERIFY(!proxy.findingSimilar());
     QCOMPARE(proxy.count(), 4);
+    proxy.setDuplicatesOnly(false);
+
+    // Find similar shows the whole set whatever the view was narrowed to,
+    // and leaving its review puts that view back.
+    const QString iceland = dir.filePath(QStringLiteral("iceland"));
+    proxy.setKindFilter(int(CaptureRecord::Recording));
+    proxy.setFavoritesOnly(true);
+    proxy.setMinimumRating(3);
+    proxy.setFolderFilter(iceland);
+    proxy.setSearchText(QStringLiteral("glacier"));
+    proxy.commitPendingSearch();
+    QCOMPARE(proxy.count(), 0);
+    QSignalSpy kinds(&proxy, &CaptureFilterModel::kindFilterChanged);
+    proxy.findSimilar(copy);
+    QVERIFY(proxy.findingSimilar());
+    QCOMPARE(proxy.count(), 2);
+    QVERIFY(proxy.rowOf(glacier) >= 0 && proxy.rowOf(copy) >= 0);
+    QCOMPARE(proxy.kindFilter(), int(CaptureFilterModel::kAllKinds));
+    QVERIFY(!proxy.favoritesOnly());
+    QCOMPARE(proxy.minimumRating(), 0);
+    QVERIFY(proxy.folderFilter().isEmpty());
+    QVERIFY(proxy.searchText().isEmpty());
+    QVERIFY(kinds.count() >= 1);
+    // Another picture's set in the same review keeps the view to go back to.
+    proxy.findSimilar(falls);
+    QCOMPARE(proxy.count(), 2);
+    proxy.setSimilarOnly(false);
+    QVERIFY(!proxy.findingSimilar());
+    QVERIFY(!proxy.similarOnly());
+    QCOMPARE(proxy.kindFilter(), int(CaptureRecord::Recording));
+    QVERIFY(proxy.favoritesOnly());
+    QCOMPARE(proxy.minimumRating(), 3);
+    QCOMPARE(proxy.folderFilter(), iceland);
+    QCOMPARE(proxy.searchText(), QStringLiteral("glacier"));
+    QCOMPARE(proxy.count(), 0);
+    // Clearing every filter during the review forgets the old view.
+    proxy.findSimilar(copy);
+    proxy.clearFacets(true);
+    QVERIFY(!proxy.findingSimilar());
+    QVERIFY(proxy.folderFilter().isEmpty());
+    QVERIFY(proxy.searchText().isEmpty());
+    proxy.setKindFilter(CaptureFilterModel::kAllKinds);
+    proxy.setFavoritesOnly(false);
+    QCOMPARE(proxy.count(), 5);
   }
 
   // A corpus of generated pictures: copies of one picture that were resized,
@@ -10235,10 +10281,11 @@ private slots:
   }
 
   // A burst whose middle frames match one another and whose ends match only
-  // their neighbours: complete linkage keeps the middle three, and the ends
-  // join as looser members because they are within Loose of every one of
-  // them. At Strict the ends are too far for Normal, so the set stays as
-  // linkage left it. The order of the pictures does not matter.
+  // their neighbours: at Normal complete linkage keeps the middle three, and
+  // the ends join as looser members because they are within Loose of every
+  // one of them. Strict and Loose have no looser members, so their sets are
+  // what complete linkage alone makes, as before looser members existed.
+  // The order of the pictures does not matter.
   void burstEndsJoinTheirSetAsLooserMembers() {
     QRandomGenerator random(13);
     // Two patterns of the same spread with nothing in common, so a frame at
@@ -10301,6 +10348,19 @@ private slots:
     QCOMPARE(looser, QList<QList<int>>({{0, 4}}));
     QCOMPARE(SimilarityIndex::group(burst, {}, SimilarityIndex::Strict, nullptr, &looser),
              QList<QList<int>>({{1, 2, 3}}));
+    QCOMPARE(looser, QList<QList<int>>({{}}));
+    // At Loose either end reaches the middle three but not the other end, so
+    // linkage takes one of them, every pair matching, and nothing more.
+    const QList<QList<int>> loose =
+        SimilarityIndex::group(burst, {}, SimilarityIndex::Loose, nullptr, &looser);
+    QCOMPARE(loose.size(), 1);
+    QCOMPARE(loose.first().size(), 4);
+    QVERIFY(loose.first().contains(1) && loose.first().contains(2) && loose.first().contains(3));
+    for (int a : loose.first()) {
+      for (int b : loose.first()) {
+        QVERIFY(a == b || SimilarityIndex::matches(burst[a], burst[b], {}, {}, SimilarityIndex::Loose));
+      }
+    }
     QCOMPARE(looser, QList<QList<int>>({{}}));
 
     QList<SimilarityIndex::Signature> reversed(burst.crbegin(), burst.crend());

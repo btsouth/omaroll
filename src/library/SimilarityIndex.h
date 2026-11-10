@@ -4,6 +4,7 @@
 #include <QFutureWatcher>
 #include <QHash>
 #include <QObject>
+#include <QSet>
 #include <QStringList>
 #include <QTimer>
 
@@ -23,8 +24,8 @@ class CaptureModel;
 // that text must agree. Sets use complete linkage: a picture joins a set only
 // when it matches every member, so A~B and B~C never put A with C. A picture
 // that linkage leaves alone, such as the first or last frame of a burst, then
-// joins as a looser member when it matches one member and is within the next
-// looser strictness of all of them.
+// joins at Normal as a looser member when it matches one member and is within
+// Loose of all of them.
 // Near-identical copies collapse first and each picture is compared with a
 // bounded number of others, so time and memory stay linear in the library.
 //
@@ -63,6 +64,11 @@ public:
   // Every path in this picture's similar set, itself included, sorted. Empty
   // when it is not part of a set.
   Q_INVOKABLE [[nodiscard]] QStringList groupPaths(const QString& path) const;
+  // Whether this picture joined its set as a looser member: it matches one
+  // picture of it rather than all (see group()).
+  Q_INVOKABLE [[nodiscard]] bool isLooser(const QString& path) const {
+    return m_looser.contains(path);
+  }
 
   void requestStop();
   void setActive(bool active);
@@ -137,6 +143,7 @@ private:
   struct Result {
     quint64 generation = 0;
     QHash<QString, QString> groups;
+    QSet<QString> looser;
     QHash<QString, Signature> cache;
     int decoded = 0;
     bool complete = false;
@@ -158,6 +165,7 @@ private:
   std::shared_ptr<std::atomic_bool> m_cancel;
   QHash<QString, Signature> m_cache;
   QHash<QString, QString> m_groups;
+  QSet<QString> m_looser;
   QHash<QString, QStringList> m_words;
   quint64 m_generation = 0;
   int m_strictness = Normal;

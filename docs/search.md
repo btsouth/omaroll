@@ -26,7 +26,8 @@ one and Enter or Tab takes it. **?** lists the syntax too.
 A search that finds nothing offers **Did you mean** with each unknown word
 replaced by the closest word the library knows, from names, folders, tags,
 albums, cameras, captions and text already read, so `invoce` offers
-`invoice`. One letter may differ in a word of four or five letters, two in a
+`invoice`, and tries again as more text is read. Nothing from hidden files is
+offered unless hidden files are shown. One letter may differ in a word of four or five letters, two in a
 longer one.
 
 Choices in **Browse** combine: a folder, an album, a tag, a date, a camera or
@@ -40,7 +41,8 @@ such a view with only its plain words and without its album.
 Picture text is read locally by Tesseract and kept in a private cache. By
 default it is read while a search is open, one picture at a time, screenshots
 first; the status line counts the pictures read, and a notice under the results
-says when some have not been read yet, with a link to the text settings. Until
+says when some have not been read yet, with a link to the text settings that
+`Tab` reaches and `Enter` opens. Until
 the first match, the results say the text is still being read rather than that
 nothing matches. A match in picture or PDF text shows on the tile with the
 matching word in the middle of the line, and PDF tiles carry a PDF badge.
@@ -61,16 +63,19 @@ still reads other pictures as before.
 **Similar pictures** in Browse groups copies of a picture that were resized,
 recompressed or brightened, and close bursts. **Find similar pictures** in a
 picture's menu, in the grid, the preview or the viewer, opens the review on
-that picture's set alone, or says nothing similar was found. Each set is a
+that picture's whole set, or says nothing similar was found. It sets the kind,
+favourites, rating, folder, search and other choices aside while it shows the
+set, and puts them back when you leave the review with its chip, `Esc` or the
+mouse's Back button. Each set is a
 section with its size and a Compare button, and each tile shows the end of
 its path, folders and name, so copies can be told apart. **Exact duplicates** are sectioned the same way.
 A set that another filter leaves with a single picture, such as a folder
 holding one copy, is left out. A candidate pair must match on a fine
 thumbnail, not just a small hash, and every picture in a set must match every
-other, so sets do not chain. The one exception is a picture left on its own
-whose closest match is in a set, such as the first or last frame of a burst:
-it joins that set when it is within the next looser match level of every
-picture in it. Screenshots of text need a near-identical match, and when
+other, so sets do not chain. The one exception, at Normal, is a picture left
+on its own that matches a picture in a set, such as the first or last frame
+of a burst: it joins that set when it is within Loose of every picture in it,
+and its tile says "Looser match". Strict and Loose have no looser members. Screenshots of text need a near-identical match, and when
 both pictures have recognized text, the text must agree. **Match** sets how
 close: Strict keeps only near-identical copies, Loose also finds recrops and
 heavier edits.

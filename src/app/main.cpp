@@ -304,8 +304,12 @@ public:
                      [this, &settings] { m_library.setPairRawJpeg(settings.pairRawJpeg()); });
     QObject::connect(&m_library, &CaptureFilterModel::sortModeChanged, &settings,
                      [this, &settings] { settings.setSortMode(m_library.sortMode()); });
+    // Find similar clears the kind for a while; the user's choice is the one
+    // it puts back, so only that is kept.
     QObject::connect(&m_library, &CaptureFilterModel::kindFilterChanged, &settings,
-                     [this, &settings] { settings.setKindFilter(m_library.kindFilter()); });
+                     [this, &settings] {
+                       if (!m_library.findingSimilar()) settings.setKindFilter(m_library.kindFilter());
+                     });
     QObject::connect(&m_library, &CaptureFilterModel::showHiddenChanged, &settings,
                      [this, &settings] { settings.setShowHidden(m_library.showHidden()); });
 

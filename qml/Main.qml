@@ -486,13 +486,13 @@ ApplicationWindow {
         root.finishPendingOpen()
     }
     // Find similar, from the grid, the preview or a viewer: the similar
-    // review narrowed to this picture's set. The rest of the view is cleared
-    // first, so a folder or a search cannot split the set.
+    // review narrowed to this picture's set. The view is put aside first, so
+    // a kind, favourites, folder or search cannot split the set; leaving the
+    // review (its chip, Escape or the mouse's Back button) puts it back.
     function findSimilar(path) {
         root.pendingInitialPath = ""
         if (detail.visible) detail.close()
-        Captures.clearFacets(true)
-        Captures.similarTo = path
+        Captures.findSimilar(path)
         library.forceActiveFocus()
     }
     function finishPendingOpen() {
@@ -1254,6 +1254,20 @@ ApplicationWindow {
         onVisibleChanged: if (!visible && activeFocus) library.forceActiveFocus()
     }
 
+    // The mouse's Back button leaves a Find similar review, over the grid or
+    // its empty state. The handler takes only that button, so every other
+    // press goes through to the grid below.
+    Item {
+        anchors.fill: library
+        z: 1
+        TapHandler {
+            objectName: "findSimilarBack"
+            acceptedButtons: Qt.BackButton
+            enabled: Captures.findingSimilar && !root.anySheetOpen
+            onTapped: Captures.similarOnly = false
+        }
+    }
+
     TextSearchNotice {
         onSettingsRequested: settingsSheet.openSection("search")
         anchors.bottom: library.bottom
@@ -1725,7 +1739,7 @@ ApplicationWindow {
         anchors.centerIn: library
         width: Math.min(440, library.width - 40)
         readonly property bool documents: typeof DocumentText !== "undefined" && DocumentText.indexing
-        waiting: Captures.count === 0 && !Library.scanning && Captures.appliedSearchText.trim() !== ""
+        waiting: Captures.count === 0 && !Library.scanning && Captures.searchReadsText
                  && (TextIndex.indexing || documents)
         text: "No matches yet. " + (TextIndex.indexing && TextIndex.total > 0
                                    ? "Reading the text in pictures, " + TextIndex.completed + " of "
@@ -1741,7 +1755,7 @@ ApplicationWindow {
         spacing: 10
         visible: Captures.count === 0 && !Library.scanning && !TextIndex.indexing
                  && !(typeof DocumentText !== "undefined" && DocumentText.indexing
-                      && Captures.appliedSearchText.trim() !== "")
+                      && Captures.searchReadsText)
                  && !(Captures.duplicatesOnly && Duplicates.scanning)
                  && !(Captures.similarOnly && Similarities.scanning)
         readonly property string reason: visible ? Captures.emptyReason : ""
@@ -2701,6 +2715,8 @@ ApplicationWindow {
                 root.dismissTopLayer()
             } else if (library.checkedCount > 0) {
                 library.clearChecked()
+            } else if (Captures.findingSimilar) {
+                Captures.similarOnly = false
             } else {
                 root.close()
             }

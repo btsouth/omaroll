@@ -633,6 +633,9 @@ FocusScope {
                             hiddenMark: cell.tile.hidden === true
                             ocrSnippet: cell.tile.ocrSnippet || ""
                             folderLabel: root.reviewMode ? root.folderOf(cell.path) : ""
+                            looserMatch: root.reviewMode && Captures.similarOnly
+                                         && typeof Similarities !== "undefined"
+                                         && (Similarities.groupCount, Similarities.isLooser(cell.path))
                             caption: cell.tile.caption || ""
                             rawFormat: cell.tile.rawFormat || ""
                             selected: !!root.host && root.host.currentIndex === cell.row

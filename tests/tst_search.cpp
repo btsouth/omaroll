@@ -422,6 +422,58 @@ private slots:
     suggests(QStringLiteral("kestral"), QStringLiteral("kestrel"));
     proxy.setSearchText({});
     QVERIFY(proxy.didYouMean().isEmpty());
+
+    // Words that arrive after a search found no close word are tried again:
+    // the text of a picture read later, here.
+    proxy.setSearchText(QStringLiteral("quarterli"));
+    QCOMPARE(proxy.count(), 0);
+    QTest::qWait(400);
+    QVERIFY(proxy.didYouMean().isEmpty());
+    proxy.setOcrText(path("Iceland/waterfall.jpg"), QStringLiteral("Quarterly figures"));
+    QTRY_COMPARE(proxy.didYouMean(), QStringLiteral("quarterly"));
+    proxy.setSearchText({});
+
+    // Fields alone do not wait on picture or PDF text.
+    proxy.setSearchText(QStringLiteral("type:video tag:work"));
+    QVERIFY(!proxy.searchReadsText());
+    proxy.setSearchText(QStringLiteral("type:video invoice"));
+    QVERIFY(proxy.searchReadsText());
+
+    // The match in a snippet ends after a whole surrogate pair: bold A folds
+    // to "a" and is two UTF-16 units.
+    proxy.setSearchText(QStringLiteral("xa"));
+    QCOMPARE(proxy.snippetMatch(QStringLiteral("x\U0001D400y")), QVariantList({0, 3}));
+    QCOMPARE(proxy.snippetMatch(QStringLiteral("Le xÀ")), QVariantList({3, 2}));
+    proxy.setSearchText({});
+  }
+
+  // Nothing of a hidden file is offered by "Did you mean" until hidden files
+  // are shown, its recognized text included.
+  void didYouMeanKeepsHiddenFilesOut() {
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QTRY_VERIFY(!model.scanning());
+    QList<CaptureRecord> records = library();
+    CaptureRecord secret = record("Shots/secret.png", CaptureRecord::Screenshot, {2024, 4, 4});
+    secret.hidden = true;
+    records.append(secret);
+    model.setRecordsForTesting(records);
+    CaptureFilterModel proxy;
+    proxy.setSourceModel(&model);
+    QCOMPARE(proxy.rowOf(path("Shots/secret.png")), -1);
+    proxy.setOcrText(path("Shots/secret.png"), QStringLiteral("Zanzibar ferry tickets"));
+    proxy.setSearchText(QStringLiteral("zanzibr"));
+    QCOMPARE(proxy.count(), 0);
+    QTest::qWait(1500);
+    QVERIFY2(proxy.didYouMean().isEmpty(), qPrintable(proxy.didYouMean()));
+    proxy.setSearchText(QStringLiteral("secrat"));
+    QTest::qWait(400);
+    QVERIFY2(proxy.didYouMean().isEmpty(), qPrintable(proxy.didYouMean()));
+    proxy.setSearchText(QStringLiteral("zanzibr"));
+    proxy.setShowHidden(true);
+    QCOMPARE(proxy.count(), 0);
+    QTRY_COMPARE(proxy.didYouMean(), QStringLiteral("zanzibar"));
   }
 
   void plainWordsMatchFoldersBelowTheLibraryRoots() {

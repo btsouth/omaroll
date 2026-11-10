@@ -3029,6 +3029,27 @@ private slots:
     QTRY_VERIFY(!object->property("thumbnailFailed").toBool());
   }
 
+  // A similar set's looser member says so on its tile, to sight and to
+  // assistive technology.
+  void looserMembersAreMarkedOnTheirTiles() {
+    QQmlComponent component(m_engine);
+    component.setData(R"QML(
+      import QtQuick
+      import Omaroll
+      CaptureCard { width: 240; height: 160; fileName: "burst-1.jpg" }
+    )QML", QUrl());
+    std::unique_ptr<QObject> object(component.create());
+    QVERIFY2(object, qPrintable(component.errorString()));
+    auto* badge = object->findChild<QQuickItem*>(QStringLiteral("looserMatchBadge"));
+    QVERIFY(badge);
+    QVERIFY(!badge->isVisible());
+    object->setProperty("looserMatch", true);
+    QVERIFY(badge->isVisible());
+    auto* card = qobject_cast<QQuickItem*>(object.get());
+    QVERIFY(QAccessible::queryAccessibleInterface(card));
+    QVERIFY(QAccessible::queryAccessibleInterface(card)->text(QAccessible::Name).contains(QStringLiteral("looser match")));
+  }
+
   void failedTrashTargetsRemainChecked() {
     QTemporaryDir dir;
     const QString good = dir.filePath(QStringLiteral("trash-good.png"));
@@ -6491,20 +6512,82 @@ private slots:
     QVERIFY(std::any_of(entries.cbegin(), entries.cend(), [](const QVariant& entry) {
       return entry.toMap().value(QStringLiteral("id")).toString() == QStringLiteral("similar");
     }));
-    QVERIFY(QMetaObject::invokeMethod(m_window, "perform", Q_ARG(QVariant, QStringLiteral("similar")),
-                                      Q_ARG(QVariant, dawn), Q_ARG(QVariant, false)));
-    QTRY_VERIFY(m_library->similarOnly());
-    QCOMPARE(m_library->similarTo(), dawn);
-    QTRY_VERIFY_WITH_TIMEOUT(!m_similarities->scanning() && m_library->count() == 2, 15000);
-    QVERIFY(m_library->rowOf(dawn) >= 0);
+    // A narrowed view does not split the set, and comes back afterwards.
+    const QString folder = QFileInfo(dawn).absolutePath();
+    m_library->setFolderFilter(folder);
+    m_library->setFavoritesOnly(true);
+    const auto findSimilar = [&] {
+      QVERIFY(QMetaObject::invokeMethod(m_window, "perform", Q_ARG(QVariant, QStringLiteral("similar")),
+                                        Q_ARG(QVariant, dawn), Q_ARG(QVariant, false)));
+      QTRY_VERIFY(m_library->similarOnly());
+      QVERIFY(m_library->findingSimilar());
+      QCOMPARE(m_library->similarTo(), dawn);
+      QVERIFY(!m_library->favoritesOnly());
+      QVERIFY(m_library->folderFilter().isEmpty());
+      QTRY_VERIFY_WITH_TIMEOUT(!m_similarities->scanning() && m_library->count() == 2, 15000);
+      QVERIFY(m_library->rowOf(dawn) >= 0);
+    };
+    const auto restored = [&](const char* how) {
+      QTRY_VERIFY2(!m_library->similarOnly(), how);
+      QVERIFY(!m_library->findingSimilar());
+      QVERIFY(m_library->similarTo().isEmpty());
+      QVERIFY(m_library->favoritesOnly());
+      QCOMPARE(m_library->folderFilter(), folder);
+    };
+    findSimilar();
     QTRY_VERIFY(find(m_window->contentItem(), [](QQuickItem* candidate) {
       return candidate->objectName() == QStringLiteral("reviewSummary") && candidate->isVisible()
              && candidate->property("text").toString().startsWith(QStringLiteral("Pictures like alpine-dawn.jpg"));
     }));
+    // Escape leaves the review rather than closing the window.
+    item("library")->forceActiveFocus();
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    restored("Escape");
+    QVERIFY(m_window->isVisible());
+    // So does the mouse's Back button.
+    findSimilar();
+    QTest::mouseClick(m_window, Qt::BackButton, Qt::NoModifier, centre(item("library")));
+    restored("Back button");
+    // And so does the chip's clear button, through similarOnly.
+    findSimilar();
     m_library->setSimilarOnly(false);
-    QVERIFY(m_library->similarTo().isEmpty());
+    restored("chip");
+    m_library->setFavoritesOnly(false);
+    m_library->setFolderFilter(QString());
     QTRY_VERIFY(m_library->count() > 2);
     QTRY_VERIFY(item("library")->property("layoutReady").toBool());
+  }
+
+  // The text notice's settings link works from the keyboard: Tab reaches
+  // it, it shows a ring, and Enter and Space open the settings.
+  void textNoticeSettingsLinkTakesTheKeyboard() {
+    QQmlComponent component(m_engine);
+    component.setData(R"QML(
+      import QtQuick
+      import Omaroll
+      TextSearchNotice { visible: true }
+    )QML", QUrl());
+    std::unique_ptr<QObject> object(component.create());
+    QVERIFY2(object, qPrintable(component.errorString()));
+    auto* notice = qobject_cast<QQuickItem*>(object.get());
+    QVERIFY(notice);
+    notice->setParentItem(m_window->contentItem());
+    notice->setZ(100);
+    QSignalSpy requested(notice, SIGNAL(settingsRequested()));
+    auto* link = notice->findChild<QQuickItem*>(QStringLiteral("textSearchSettingsLink"));
+    auto* ring = notice->findChild<QQuickItem*>(QStringLiteral("textSearchSettingsFocusRing"));
+    QVERIFY(link && ring);
+    QVERIFY(link->activeFocusOnTab());
+    QVERIFY(!ring->isVisible());
+    link->forceActiveFocus(Qt::TabFocusReason);
+    QTRY_VERIFY(link->hasActiveFocus());
+    QVERIFY(ring->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_COMPARE(requested.count(), 1);
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTRY_COMPARE(requested.count(), 2);
+    object.reset();
+    item("library")->forceActiveFocus();
   }
 
   void browseQuickDatesApplyTheExpectedRanges() {

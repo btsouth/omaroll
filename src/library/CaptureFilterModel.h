@@ -18,6 +18,7 @@
 #include <functional>
 #include <list>
 #include <memory>
+#include <optional>
 #include <vector>
 
 class AppSettings;
@@ -68,6 +69,8 @@ class CaptureFilterModel final : public QSortFilterProxyModel {
   // "Find similar": the similar review narrowed to the set holding this
   // picture. Setting it turns the review on; leaving the review clears it.
   Q_PROPERTY(QString similarTo READ similarTo WRITE setSimilarTo NOTIFY similarOnlyChanged)
+  // True from findSimilar() until the review is left and the view put back.
+  Q_PROPERTY(bool findingSimilar READ findingSimilar NOTIFY similarOnlyChanged)
   Q_PROPERTY(bool pairRawJpeg READ pairRawJpeg WRITE setPairRawJpeg NOTIFY pairRawJpegChanged)
   Q_PROPERTY(int count READ count NOTIFY countChanged)
   Q_PROPERTY(bool empty READ empty NOTIFY countChanged)
@@ -86,6 +89,9 @@ class CaptureFilterModel final : public QSortFilterProxyModel {
   // its unknown words replaced by close words the library knows. Worked
   // out on a worker shortly after the search lands; empty otherwise.
   Q_PROPERTY(QString didYouMean READ didYouMean NOTIFY didYouMeanChanged)
+  // Whether the applied search has words that picture or PDF text could
+  // answer. type:video, tag:work and the like do not wait on text.
+  Q_PROPERTY(bool searchReadsText READ searchReadsText NOTIFY searchTextChanged)
   // Header and tile rows for the sectioned grid (date sorts, similar sets).
   Q_PROPERTY(QObject* sectionRows READ sectionRows CONSTANT)
 
@@ -187,7 +193,15 @@ public:
   void setSimilarOnly(bool value);
   void setSimilarGroups(const QHash<QString, QString>& groups);
   [[nodiscard]] QString similarTo() const { return m_similarTo; }
+  // Non-empty: findSimilar(path). Empty: leaves a Find similar review.
   void setSimilarTo(const QString& path);
+  // Find similar: remembers the view as it is (kind, favourites, rating,
+  // folder, search, album, tag, dates, camera, lens, saved view), clears it
+  // so the whole set shows, and narrows the similar review to the set
+  // holding this picture. Leaving the review puts that view back; choosing
+  // another review, a saved view or Clear all forgets it.
+  Q_INVOKABLE void findSimilar(const QString& path);
+  [[nodiscard]] bool findingSimilar() const { return m_savedScope.has_value(); }
   [[nodiscard]] bool pairRawJpeg() const { return m_pairRawJpeg; }
   void setPairRawJpeg(bool value);
   // Explicitly opened files take precedence over the default RAW card. Both
@@ -224,6 +238,7 @@ public:
   Q_INVOKABLE QVariantList snippetMatch(const QString& snippet) const;
 
   [[nodiscard]] QString didYouMean() const { return m_didYouMean; }
+  [[nodiscard]] bool searchReadsText() const { return m_query.hasText(); }
   // Where "Did you mean" finds known words. Each source adds text on the
   // GUI thread; it is split into words on a worker. Names, folders, tags,
   // albums, cameras, lenses, captions and recognized text are built in.
@@ -398,6 +413,30 @@ private:
   [[nodiscard]] bool rebuildCameraIndex();
   void rebuildDuplicateOrdinals();
   void rebuildLoneReviewPaths();
+  // The view Find similar cleared, put back when its review is left.
+  struct Scope {
+    QString search;
+    int kind = kAllKinds;
+    bool favorites = false;
+    int rating = 0;
+    bool duplicates = false;
+    QString folder;
+    QString album;
+    QSet<QString> albumPaths;
+    QString tag;
+    QSet<QString> tagPaths;
+    QString camera;
+    QString lens;
+    QDate dateFrom;
+    QDate dateTo;
+    int dateField = 0;
+    QString modifiedAfter;
+    qint64 modifiedAfterMs = 0;
+    QString smartCollection;
+  };
+  void applyScope(const Scope& scope);
+  void restoreScope();
+  void emitScopeChanged();
   [[nodiscard]] const CaptureRecord& sourceRecord(int sourceRow) const;
   [[nodiscard]] bool recordLessThan(const CaptureRecord& first, const CaptureRecord& second) const;
   [[nodiscard]] QString ocrSnippet(const CaptureRecord& record) const;
@@ -465,6 +504,7 @@ private:
   // filters apply: a set of one has nothing to compare.
   QSet<QString> m_loneReviewPaths;
   QString m_similarTo;
+  std::optional<Scope> m_savedScope;
   QSet<QString> m_explicitPaths;
   QTimer m_pairingTimer;
   QHash<QString, QString> m_duplicateGroups;
@@ -500,8 +540,13 @@ private:
   // "Did you mean": the suggestion, the search it was worked out for, and
   // the worker doing it.
   void startSpelling();
+  // Names, tags, text or what is hidden changed, so a search that found no
+  // close word may find one now.
+  void vocabularyChanged();
   QString m_didYouMean;
   QString m_spellingFor;
+  quint64 m_vocabularyVersion = 0;
+  quint64 m_spellingVersion = 0;
   QTimer m_spellingTimer;
   QFutureWatcher<QString> m_spellingWatcher;
   std::shared_ptr<std::atomic_bool> m_spellingCancel = std::make_shared<std::atomic_bool>(false);
