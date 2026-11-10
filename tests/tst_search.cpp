@@ -3,6 +3,7 @@
 #include "library/CaptureModel.h"
 #include "search/DocumentTextIndex.h"
 #include "search/SearchQuery.h"
+#include "search/SpellingSuggestions.h"
 #include "sources/FileVersion.h"
 
 #include <QCoreApplication>
@@ -357,6 +358,70 @@ private slots:
     settings.setCaption(path("Docs/report.pdf"), QStringLiteral("Board meeting"));
     proxy.setSearchText(QStringLiteral("board"));
     QTRY_COMPARE(names(proxy), QStringList{QStringLiteral("report.pdf")});
+  }
+
+  // A search that finds nothing offers the same search with its unknown
+  // words replaced by close words the library knows, worked out off the GUI
+  // thread. Field tokens, phrases and exclusions stay as typed.
+  void didYouMeanOffersACloseKnownWord() {
+    using namespace SpellingSuggestions;
+    QCOMPARE(distance(u"invoce", u"invoice", 2), 1);
+    QCOMPARE(distance(u"recieve", u"receive", 2), 1);
+    QCOMPARE(distance(u"kitten", u"sitting", 3), 3);
+    QCOMPARE(distance(u"abcdef", u"uvwxyz", 1), 2);
+    Vocabulary words;
+    addWords(QStringLiteral("Invoice 42 total due at CAFÉ Nord"), &words);
+    addWords(QStringLiteral("Iceland/waterfall.jpg"), &words);
+    QCOMPARE(words.value(QStringLiteral("cafe")), 1);
+    QVERIFY(!words.contains(QStringLiteral("42")));
+    QCOMPARE(closest(QStringLiteral("invoce"), words), QStringLiteral("invoice"));
+    QVERIFY(closest(QStringLiteral("invoice"), words).isEmpty());
+    QVERIFY(closest(QStringLiteral("ice"), words).isEmpty());
+    QVERIFY(closest(QStringLiteral("zzzzzz"), words).isEmpty());
+    QCOMPARE(suggest(QStringLiteral("Invoce tag:work -draft"), words),
+             QStringLiteral("invoice tag:work -draft"));
+    QCOMPARE(suggest(QStringLiteral("watrfall  \"invoce total\""), words),
+             QStringLiteral("waterfall  \"invoce total\""));
+    QVERIFY(suggest(QStringLiteral("invoice"), words).isEmpty());
+    // The more common of two equally close words.
+    addWords(QStringLiteral("bolt bolt"), &words);
+    addWords(QStringLiteral("boat"), &words);
+    QCOMPARE(closest(QStringLiteral("bott"), words), QStringLiteral("bolt"));
+
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QTRY_VERIFY(!model.scanning());
+    model.setRecordsForTesting(library());
+    CaptureFilterModel proxy;
+    proxy.setSourceModel(&model);
+    QVERIFY(settings.createTag(QStringLiteral("Wanderlust/Fjords")));
+    proxy.setOcrText(path("Shots/screenshot-2023-03-01.png"),
+                     QStringLiteral("Invoice 42 total due at CAFÉ Nord"));
+    QSignalSpy changed(&proxy, &CaptureFilterModel::didYouMeanChanged);
+    const auto suggests = [&](const QString& query, const QString& expected) {
+      proxy.setSearchText(query);
+      QCOMPARE(proxy.count(), 0);
+      QTRY_COMPARE(proxy.didYouMean(), expected);
+    };
+    // Picture text, a tag, a folder, a camera.
+    suggests(QStringLiteral("invoce"), QStringLiteral("invoice"));
+    suggests(QStringLiteral("fjrods"), QStringLiteral("fjords"));
+    suggests(QStringLiteral("icelnd"), QStringLiteral("iceland"));
+    suggests(QStringLiteral("fujiflm"), QStringLiteral("fujifilm"));
+    QVERIFY(changed.count() >= 4);
+    // A search that finds something, or nothing close, offers nothing.
+    proxy.setSearchText(QStringLiteral("iceland"));
+    QVERIFY(proxy.count() > 0);
+    QVERIFY(proxy.didYouMean().isEmpty());
+    proxy.setSearchText(QStringLiteral("qqqqqqqq"));
+    QTest::qWait(400);
+    QVERIFY(proxy.didYouMean().isEmpty());
+    // Sources are pluggable: embedded keywords can add their words.
+    proxy.addTermSource([](Texts* texts) { texts->plain.append(QStringLiteral("Kestrel")); });
+    suggests(QStringLiteral("kestral"), QStringLiteral("kestrel"));
+    proxy.setSearchText({});
+    QVERIFY(proxy.didYouMean().isEmpty());
   }
 
   void plainWordsMatchFoldersBelowTheLibraryRoots() {

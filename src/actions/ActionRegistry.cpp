@@ -205,6 +205,11 @@ QList<ActionRegistry::Definition> ActionRegistry::buildTable() {
        .shortcut = ShortcutTable::hint(QStringLiteral("library"), QStringLiteral("compare")),
        .media = Still},
 
+      // Native: the similar review narrowed to the set holding this picture.
+      {.id = u"similar"_s,
+       .label = u"Find similar pictures"_s,
+       .media = Still},
+
       // tensaku-edit, Omarchy's wrapper, saves over the input. Fine for the
       // screenshot it was written for, not for a photo omaroll also offers
       // this on, so the default calls tensaku itself with the wrapper's own
@@ -518,7 +523,8 @@ QVariantList ActionRegistry::actionsForKind(bool video, bool document,
     const QStringList common = {u"copy"_s, u"files"_s, u"open-with"_s, u"print"_s, u"open-document"_s};
     const QStringList editing = {u"omaframe"_s, u"corrections"_s, u"correctionsbatch"_s,
         u"matte"_s, u"compare"_s, u"export"_s, u"trim"_s, u"frame"_s};
-    const QStringList organization = {u"rename"_s, u"favorite"_s, u"hide"_s, u"trash"_s};
+    const QStringList organization = {u"similar"_s, u"rename"_s, u"favorite"_s, u"hide"_s,
+                                      u"trash"_s};
     row[u"group"_s] = common.contains(definition.id) ? u"File"_s
         : editing.contains(definition.id) ? u"Edit and finish"_s
         : organization.contains(definition.id) ? u"Organize"_s : u"Tools and sharing"_s;

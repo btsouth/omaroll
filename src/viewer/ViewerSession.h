@@ -185,6 +185,8 @@ public:
 
   // Hands the current file to the library window.
   Q_INVOKABLE void openInLibrary();
+  // The same, with the library showing the current picture's similar set.
+  Q_INVOKABLE void findSimilarInLibrary();
 
   // True when every file can be shown here. PDFs and folders belong to the
   // library, which has the document controls and the grid.
@@ -213,6 +215,7 @@ signals:
   void companionPathChanged();
   void emptied();
   void libraryRequested(const QString& path);
+  void similarRequested(const QString& path);
   void startPositionChanged();
 
 private:

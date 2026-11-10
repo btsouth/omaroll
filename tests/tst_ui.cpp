@@ -6055,6 +6055,21 @@ private slots:
     QCOMPARE(m_library->folderFilter(), folder);
     m_library->setFolderFilter(QString());
 
+    // A typo offers the close word the library knows, as the first action.
+    m_library->setSearchText(QStringLiteral("alpien"));
+    QTRY_COMPARE(m_library->count(), 0);
+    QTRY_COMPARE(m_library->didYouMean(), QStringLiteral("alpine"));
+    QTRY_VERIFY(named(QStringLiteral("emptyAction_did-you-mean")));
+    QCOMPARE(named(QStringLiteral("emptyAction_did-you-mean"))->property("label").toString(),
+             QStringLiteral("Did you mean \u201calpine\u201d?"));
+    const QString searchDetail = item(QStringLiteral("libraryEmptyDetail"))->property("text").toString();
+    QVERIFY2(searchDetail.contains(QStringLiteral("tags, albums, folders")), qPrintable(searchDetail));
+    QVERIFY(clickAction(QStringLiteral("emptyAction_did-you-mean")));
+    QTRY_COMPARE(m_library->searchText(), QStringLiteral("alpine"));
+    QTRY_VERIFY(m_library->count() > 0);
+    m_library->setSearchText(QString());
+    QTRY_VERIFY(m_library->count() > 0);
+
     // Filters, and a search on top of them, clear together.
     m_library->setCameraFilter(QStringLiteral("No Such Camera"));
     m_library->setSearchText(QStringLiteral("alpine"));
@@ -6424,6 +6439,21 @@ private slots:
     QCOMPARE(m_library->gridLabelAt(0), QStringLiteral("Exact match 1 of 1"));
     QVERIFY(QFileInfo::exists(m_library->pathAt(0)));
     QVERIFY(QFileInfo::exists(m_library->pathAt(1)));
+    // Sectioned per set like similar pictures, with each copy's folder.
+    QTRY_VERIFY(find(m_window->contentItem(), [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("reviewSetHeader") && candidate->isVisible()
+             && candidate->property("text").toString() == QStringLiteral("Exact match 1");
+    }));
+    QTRY_VERIFY(find(m_window->contentItem(), [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("reviewSummary") && candidate->isVisible()
+             && candidate->property("text").toString().startsWith(QStringLiteral("1 set of exact copies"));
+    }));
+    const QFileInfo copy(m_library->pathAt(0));
+    const QString where = copy.dir().dirName() + u'/' + copy.fileName();
+    QTRY_VERIFY(find(m_window->contentItem(), [&where](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("captureSnippetLabel") && candidate->isVisible()
+             && candidate->property("text").toString().endsWith(where);
+    }));
     QQuickItem* keep = pill(m_window->contentItem(), QStringLiteral("Keep selected"));
     QVERIFY(keep);
     clickPlaced(keep);
@@ -6441,6 +6471,39 @@ private slots:
     // CaptureGrid coalesces width changes for 80 ms. Finish that rebuild here
     // so its saved selection cannot land in the following scenario.
     QTRY_VERIFY(!m_window->findChild<QObject*>(QStringLiteral("gridRelayoutTimer"))->property("running").toBool());
+    QTRY_VERIFY(item("library")->property("layoutReady").toBool());
+  }
+
+  // Find similar, from a picture's menu: the similar review on its set alone.
+  void findSimilarOpensThePicturesSet() {
+    m_library->setDuplicatesOnly(false);
+    QTRY_VERIFY(!m_library->duplicatesOnly());
+    QString dawn;
+    for (int row = 0; row < m_library->count(); ++row) {
+      if (m_library->fileNameAt(row) == QStringLiteral("alpine-dawn.jpg")) dawn = m_library->pathAt(row);
+    }
+    QVERIFY(!dawn.isEmpty());
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("libraryContextMenu"));
+    QVERIFY(menu);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "prepareContextMenu",
+                                      Q_ARG(QVariant, QVariant(QStringList{dawn}))));
+    const QVariantList entries = menu->property("entries").value<QJSValue>().toVariant().toList();
+    QVERIFY(std::any_of(entries.cbegin(), entries.cend(), [](const QVariant& entry) {
+      return entry.toMap().value(QStringLiteral("id")).toString() == QStringLiteral("similar");
+    }));
+    QVERIFY(QMetaObject::invokeMethod(m_window, "perform", Q_ARG(QVariant, QStringLiteral("similar")),
+                                      Q_ARG(QVariant, dawn), Q_ARG(QVariant, false)));
+    QTRY_VERIFY(m_library->similarOnly());
+    QCOMPARE(m_library->similarTo(), dawn);
+    QTRY_VERIFY_WITH_TIMEOUT(!m_similarities->scanning() && m_library->count() == 2, 15000);
+    QVERIFY(m_library->rowOf(dawn) >= 0);
+    QTRY_VERIFY(find(m_window->contentItem(), [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("reviewSummary") && candidate->isVisible()
+             && candidate->property("text").toString().startsWith(QStringLiteral("Pictures like alpine-dawn.jpg"));
+    }));
+    m_library->setSimilarOnly(false);
+    QVERIFY(m_library->similarTo().isEmpty());
+    QTRY_VERIFY(m_library->count() > 2);
     QTRY_VERIFY(item("library")->property("layoutReady").toBool());
   }
 

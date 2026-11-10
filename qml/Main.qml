@@ -250,6 +250,9 @@ ApplicationWindow {
             batchSheet.open(checked)
             return
         }
+        case "similar":
+            root.findSimilar(path)
+            return
         case "compare": {
             const targets = targetPaths !== undefined ? targetPaths
                             : library.checkedCount > 1 ? library.checkedPaths() : []
@@ -481,6 +484,16 @@ ApplicationWindow {
         }
         root.pendingInitialPath = paths[0]
         root.finishPendingOpen()
+    }
+    // Find similar, from the grid, the preview or a viewer: the similar
+    // review narrowed to this picture's set. The rest of the view is cleared
+    // first, so a folder or a search cannot split the set.
+    function findSimilar(path) {
+        root.pendingInitialPath = ""
+        if (detail.visible) detail.close()
+        Captures.clearFacets(true)
+        Captures.similarTo = path
+        library.forceActiveFocus()
     }
     function finishPendingOpen() {
         const row = Captures.rowOf(root.pendingInitialPath)
@@ -1242,6 +1255,7 @@ ApplicationWindow {
     }
 
     TextSearchNotice {
+        onSettingsRequested: settingsSheet.openSection("search")
         anchors.bottom: library.bottom
         anchors.horizontalCenter: library.horizontalCenter
         anchors.bottomMargin: 10
@@ -1592,16 +1606,19 @@ ApplicationWindow {
                      detail: "Files are compared by content. Nothing is removed automatically.",
                      actions: ["show-all"] }
         }
+        if (reason === "similar" && Captures.similarTo !== "") {
+            return { title: "No similar pictures found",
+                     detail: "Nothing else in the library looks like "
+                             + Captures.similarTo.substring(Captures.similarTo.lastIndexOf("/") + 1)
+                             + (Similarities.strictness < 2 ? ". Loose strictness finds more." : "."),
+                     actions: ["show-all"] }
+        }
         if (reason === "similar") {
             return { title: "No similar pictures",
                      detail: "Pictures are compared visually. Review every suggestion before removing anything.",
                      actions: ["show-all"] }
         }
-        if (reason === "search") {
-            return { title: "Nothing matches \u201c" + Captures.appliedSearchText.trim() + "\u201d" + where,
-                     detail: "Search looks at file names, captions and text found in pictures.",
-                     actions: ["clear-search"] }
-        }
+        if (reason === "search") return root.searchEmptyState(where)
         if (reason === "filters") {
             const parts = []
             if (Captures.kindFilter !== filters.kindAll && kinds[Captures.kindFilter])
@@ -1643,8 +1660,30 @@ ApplicationWindow {
                  actions: [] }
     }
 
+    // An empty search: what search looks at, a close word from the library
+    // when there is one, and the text setting while pictures' text is off
+    // or not all read, since a missing match may only be unread.
+    function searchEmptyState(where) {
+        const actions = Captures.didYouMean !== "" ? ["did-you-mean", "clear-search"] : ["clear-search"]
+        const unread = TextIndex.available ? TextIndex.unreadCount : 0
+        if (unread > 0) actions.push("text-settings")
+        return { title: "Nothing matches \u201c" + Captures.appliedSearchText.trim() + "\u201d" + where,
+                 detail: "Search looks at names, tags, albums, folders, cameras, captions and the text in "
+                         + "pictures and PDFs."
+                         + (!TextIndex.available ? " Text in pictures is not searched without Tesseract."
+                            : unread > 0 ? " The text in " + unread + (unread === 1 ? " picture" : " pictures")
+                                           + " has not been read yet." : ""),
+                 actions: actions }
+    }
+
     function emptyAction(id) {
         switch (id) {
+        case "did-you-mean":
+            Captures.searchText = Captures.didYouMean
+            break
+        case "text-settings":
+            settingsSheet.openSection("search")
+            return
         case "clear-search":
             Captures.searchText = ""
             break
@@ -1679,6 +1718,21 @@ ApplicationWindow {
         waiting: Captures.sourceCount === 0 && Library.scanning
     }
 
+    // A search with nothing yet while text is still being read is not a
+    // final answer, so it says so rather than look like one.
+    LoadingState {
+        objectName: "searchReadingState"
+        anchors.centerIn: library
+        width: Math.min(440, library.width - 40)
+        readonly property bool documents: typeof DocumentText !== "undefined" && DocumentText.indexing
+        waiting: Captures.count === 0 && !Library.scanning && Captures.appliedSearchText.trim() !== ""
+                 && (TextIndex.indexing || documents)
+        text: "No matches yet. " + (TextIndex.indexing && TextIndex.total > 0
+                                   ? "Reading the text in pictures, " + TextIndex.completed + " of "
+                                     + TextIndex.total + "…"
+                                   : "Reading the text in PDFs…")
+    }
+
     Column {
         id: emptyState
         objectName: "libraryEmptyState"
@@ -1686,6 +1740,8 @@ ApplicationWindow {
         width: Math.min(440, library.width - 40)
         spacing: 10
         visible: Captures.count === 0 && !Library.scanning && !TextIndex.indexing
+                 && !(typeof DocumentText !== "undefined" && DocumentText.indexing
+                      && Captures.appliedSearchText.trim() !== "")
                  && !(Captures.duplicatesOnly && Duplicates.scanning)
                  && !(Captures.similarOnly && Similarities.scanning)
         readonly property string reason: visible ? Captures.emptyReason : ""
@@ -1765,7 +1821,9 @@ ApplicationWindow {
                     // Off behind a sheet: a sheet button over one must not press it too.
                     enabled: !root.anySheetOpen && (modelData !== "set-default" || !MimeDefaults.busy)
                     active: index === 0
-                    label: ({ "clear-search": "Clear search", "clear-filters": "Clear filters",
+                    label: ({ "did-you-mean": "Did you mean \u201c" + Captures.didYouMean + "\u201d?",
+                              "text-settings": "Text search settings",
+                              "clear-search": "Clear search", "clear-filters": "Clear filters",
                               "show-all": "Show the whole library", "add-folder": "Add folder",
                               "open-file": "Open file", "demo": "Try the demo library",
                               "set-default": MimeDefaults.busy ? "Setting as default…"

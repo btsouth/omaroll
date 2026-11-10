@@ -21,6 +21,7 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <map>
 #include <utility>
 #include <vector>
 
@@ -45,19 +46,23 @@ struct Limits {
   double words;
 };
 // Photos and other colourful pictures. Bursts and edits of one scene belong
-// together at Normal; Loose reaches recrops and heavier edits.
-constexpr std::array<Limits, 3> kPicture = {{
+// together at Normal; Loose reaches recrops and heavier edits. The last row
+// is never chosen: past Loose, it only admits looser members (see group()).
+constexpr std::array<Limits, 4> kPicture = {{
     {5, 0.95, 45, 30, 0.9},
     {7, 0.90, 70, 45, 0.8},
     {10, 0.84, 100, 70, 0.65},
+    {12, 0.80, 120, 85, 0.55},
 }};
 // Screenshots of text. Two terminals or documents share their layout, so only
 // a near-identical thumbnail counts, and recognized text must agree.
-constexpr std::array<Limits, 3> kTextLike = {{
+constexpr std::array<Limits, 4> kTextLike = {{
     {3, 0.99, 30, 20, 0.95},
     {5, 0.975, 50, 30, 0.85},
     {7, 0.95, 80, 45, 0.7},
+    {8, 0.94, 90, 50, 0.65},
 }};
+constexpr int kLoosestLevel = 3;
 // Below this many recognized words text is not used to decide.
 constexpr int kMinimumWords = 3;
 
@@ -132,6 +137,10 @@ constexpr qsizetype kExactClumpPairs = 9;
 constexpr double kClumpShare = 0.25;
 // Slack for rounding when distances are added up rather than measured.
 constexpr double kSlack = 1e-9;
+// Looser members: sets tried per leftover picture, and clump comparisons in
+// all.
+constexpr std::size_t kMaximumLeftoverSets = 3;
+constexpr qsizetype kMaximumLeftoverChecks = 1 << 16;
 
 // Each of these is a distance that obeys the triangle inequality, so how far
 // apart two members of two clumps can be follows from their first pictures.
@@ -333,13 +342,15 @@ QStringList SimilarityIndex::wordsOf(const QString& text) {
   return sorted;
 }
 
-bool SimilarityIndex::matches(const Signature& left, const Signature& right,
-                              const QStringList& leftWords, const QStringList& rightWords,
-                              int strictness, double* score) {
+namespace {
+
+// matches() at a level from Strict to one past Loose.
+bool matchesAt(const SimilarityIndex::Signature& left, const SimilarityIndex::Signature& right,
+               const QStringList& leftWords, const QStringList& rightWords, int level,
+               double* score) {
   if (!left.valid || !right.valid || !similarAspect(left, right)) {
     return false;
   }
-  const int level = std::clamp(strictness, 0, 2);
   const bool text = left.textLike() || right.textLike();
   const Limits& limits = text ? kTextLike[level] : kPicture[level];
   if (std::popcount(left.hash ^ right.hash) > limits.hashDistance) {
@@ -384,9 +395,19 @@ bool SimilarityIndex::matches(const Signature& left, const Signature& right,
   return true;
 }
 
+} // namespace
+
+bool SimilarityIndex::matches(const Signature& left, const Signature& right,
+                              const QStringList& leftWords, const QStringList& rightWords,
+                              int strictness, double* score) {
+  return matchesAt(left, right, leftWords, rightWords, std::clamp(strictness, 0, 2), score);
+}
+
 QList<QList<int>> SimilarityIndex::group(const QList<Signature>& signatures,
                                          const QList<QStringList>& words, int strictness,
-                                         const std::atomic_bool* cancel) {
+                                         const std::atomic_bool* cancel,
+                                         QList<QList<int>>* looser) {
+  if (looser) looser->clear();
   const int level = std::clamp(strictness, 0, 2);
   const QStringList none;
   const auto wordsAt = [&](int index) -> const QStringList& {
@@ -433,25 +454,28 @@ QList<QList<int>> SimilarityIndex::group(const QList<Signature>& signatures,
   // Two clumps link when every picture in one matches every picture in the
   // other: checked in full for small clumps, and otherwise from their first
   // pictures and how far the rest may be from them.
-  const auto clumpsMatch = [&](const Clump& a, const Clump& b, double* score) {
+  const auto clumpsMatchAt = [&](const Clump& a, const Clump& b, int at, double* score) {
     const Signature& left = signatures[a.leader];
     const Signature& right = signatures[b.leader];
-    if (!matches(left, right, wordsAt(a.leader), wordsAt(b.leader), level, score)) return false;
+    if (!matchesAt(left, right, wordsAt(a.leader), wordsAt(b.leader), at, score)) return false;
     if (a.members.size() == 1 && b.members.size() == 1) return true;
     if (withinSpread(left, wordsAt(a.leader), a.radius, right, wordsAt(b.leader), b.radius,
-                     level)) {
+                     at)) {
       return true;
     }
     if (a.members.size() * b.members.size() > kExactClumpPairs) return false;
     for (int x : a.members) {
       for (int y : b.members) {
         if ((x != a.leader || y != b.leader) &&
-            !matches(signatures[x], signatures[y], wordsAt(x), wordsAt(y), level)) {
+            !matchesAt(signatures[x], signatures[y], wordsAt(x), wordsAt(y), at, nullptr)) {
           return false;
         }
       }
     }
     return true;
+  };
+  const auto clumpsMatch = [&](const Clump& a, const Clump& b, double* score) {
+    return clumpsMatchAt(a, b, level, score);
   };
 
   // Candidate pairs: two hashes within the loosest distance at this
@@ -568,15 +592,89 @@ QList<QList<int>> SimilarityIndex::group(const QList<Signature>& signatures,
     members[std::size_t(left)].append(rightMembers);
     members[std::size_t(right)] = {};
   }
-  QList<QList<int>> result;
-  for (const QList<int>& nodes : members) {
+
+  // Complete linkage leaves the ends of a burst out: the first frame matches
+  // the second but not the fourth. A picture left on its own joins a set as
+  // a looser member when it matches one of the set at this strictness and
+  // every one of it at the next looser level. It is judged against the set
+  // as linkage left it, so looser members never pull in one another and the
+  // order they are looked at in does not matter. Only links already found
+  // are followed, and the checks are capped, so this stays as bounded as
+  // linkage itself.
+  const int outer = std::min(level + 1, kLoosestLevel);
+  const auto pictureCount = [&](int root) {
+    qsizetype count = 0;
+    for (int node : members[std::size_t(root)]) count += clumps[node].members.size();
+    return count;
+  };
+  const auto alone = [&](int node) {
+    return members[std::size_t(node)].size() == 1 && clumps[node].members.size() == 1;
+  };
+  struct Offer {
+    int links = 0;
+    double best = 0;
+  };
+  // Per leftover, in node order, and per set it links with, by root.
+  std::map<int, std::map<int, Offer>> offers;
+  for (const Edge& edge : std::as_const(edges)) {
+    if (stopped()) return {};
+    for (const auto& [loose, other] : {std::pair{edge.left, edge.right},
+                                       std::pair{edge.right, edge.left}}) {
+      if (!alone(loose)) continue;
+      const int root = findSet(sets, other);
+      if (root == loose || pictureCount(root) < 2) continue;
+      Offer& offer = offers[loose][root];
+      ++offer.links;
+      offer.best = std::max(offer.best, edge.score);
+    }
+  }
+  std::vector<std::pair<int, int>> joins;
+  qsizetype checks = 0;
+  for (const auto& [loose, bySet] : offers) {
+    if (stopped()) return {};
+    std::vector<std::pair<int, Offer>> ranked(bySet.cbegin(), bySet.cend());
+    std::sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) {
+      if (a.second.links != b.second.links) return a.second.links > b.second.links;
+      if (a.second.best != b.second.best) return a.second.best > b.second.best;
+      return a.first < b.first;
+    });
+    for (std::size_t choice = 0; choice < ranked.size() && choice < kMaximumLeftoverSets;
+         ++choice) {
+      const int root = ranked[choice].first;
+      const QList<int>& nodes = members[std::size_t(root)];
+      if (checks + nodes.size() > kMaximumLeftoverChecks) break;
+      checks += nodes.size();
+      const bool fits = std::all_of(nodes.cbegin(), nodes.cend(), [&](int node) {
+        return clumpsMatchAt(clumps[node], clumps[loose], outer, nullptr);
+      });
+      if (fits) {
+        joins.emplace_back(root, loose);
+        break;
+      }
+    }
+  }
+  std::map<int, QList<int>> joined;
+  for (const auto& [root, loose] : joins) joined[root].append(clumps[loose].leader);
+  for (const auto& [root, loose] : joins) members[std::size_t(loose)] = {};
+
+  std::vector<std::pair<QList<int>, QList<int>>> found;
+  for (int root = 0; root < int(members.size()); ++root) {
     QList<int> set;
-    for (int node : nodes) set.append(clumps[node].members);
+    for (int node : members[std::size_t(root)]) set.append(clumps[node].members);
+    QList<int> extra = joined.count(root) ? joined[root] : QList<int>();
+    set.append(extra);
     if (set.size() < 2) continue;
     std::sort(set.begin(), set.end());
-    result.append(set);
+    std::sort(extra.begin(), extra.end());
+    found.emplace_back(std::move(set), std::move(extra));
   }
-  std::sort(result.begin(), result.end());
+  std::sort(found.begin(), found.end());
+  QList<QList<int>> result;
+  result.reserve(qsizetype(found.size()));
+  for (auto& [set, extra] : found) {
+    result.append(std::move(set));
+    if (looser) looser->append(std::move(extra));
+  }
   return result;
 }
 

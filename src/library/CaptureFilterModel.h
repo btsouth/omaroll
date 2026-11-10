@@ -12,6 +12,7 @@
 #include <QVariantMap>
 
 #include "search/SearchQuery.h"
+#include "search/SpellingSuggestions.h"
 
 #include <atomic>
 #include <functional>
@@ -64,6 +65,9 @@ class CaptureFilterModel final : public QSortFilterProxyModel {
   Q_PROPERTY(
       bool duplicatesOnly READ duplicatesOnly WRITE setDuplicatesOnly NOTIFY duplicatesOnlyChanged)
   Q_PROPERTY(bool similarOnly READ similarOnly WRITE setSimilarOnly NOTIFY similarOnlyChanged)
+  // "Find similar": the similar review narrowed to the set holding this
+  // picture. Setting it turns the review on; leaving the review clears it.
+  Q_PROPERTY(QString similarTo READ similarTo WRITE setSimilarTo NOTIFY similarOnlyChanged)
   Q_PROPERTY(bool pairRawJpeg READ pairRawJpeg WRITE setPairRawJpeg NOTIFY pairRawJpegChanged)
   Q_PROPERTY(int count READ count NOTIFY countChanged)
   Q_PROPERTY(bool empty READ empty NOTIFY countChanged)
@@ -78,6 +82,10 @@ class CaptureFilterModel final : public QSortFilterProxyModel {
   // choices does. "scope": the folder, album, tag, date range or saved view
   // holds nothing to show.
   Q_PROPERTY(QString emptyReason READ emptyReason NOTIFY countChanged)
+  // "Did you mean": for a search that shows nothing, the same search with
+  // its unknown words replaced by close words the library knows. Worked
+  // out on a worker shortly after the search lands; empty otherwise.
+  Q_PROPERTY(QString didYouMean READ didYouMean NOTIFY didYouMeanChanged)
   // Header and tile rows for the sectioned grid (date sorts, similar sets).
   Q_PROPERTY(QObject* sectionRows READ sectionRows CONSTANT)
 
@@ -178,6 +186,8 @@ public:
   [[nodiscard]] bool similarOnly() const { return m_similarOnly; }
   void setSimilarOnly(bool value);
   void setSimilarGroups(const QHash<QString, QString>& groups);
+  [[nodiscard]] QString similarTo() const { return m_similarTo; }
+  void setSimilarTo(const QString& path);
   [[nodiscard]] bool pairRawJpeg() const { return m_pairRawJpeg; }
   void setPairRawJpeg(bool value);
   // Explicitly opened files take precedence over the default RAW card. Both
@@ -208,6 +218,17 @@ public:
   Q_INVOKABLE qint64 stampAt(int row) const;
   Q_INVOKABLE QString thumbnailVersionAt(int row) const;
   Q_INVOKABLE QString ocrSnippetAt(int row) const;
+  // Where the current search's first matching word is in a snippet, as
+  // [start, length] in its characters, so a tile can show the match. Empty
+  // when no word is there.
+  Q_INVOKABLE QVariantList snippetMatch(const QString& snippet) const;
+
+  [[nodiscard]] QString didYouMean() const { return m_didYouMean; }
+  // Where "Did you mean" finds known words. Each source adds text on the
+  // GUI thread; it is split into words on a worker. Names, folders, tags,
+  // albums, cameras, lenses, captions and recognized text are built in.
+  using TermSource = std::function<void(SpellingSuggestions::Texts*)>;
+  void addTermSource(TermSource source);
   // Every role of a row by its QML name, for views that lay rows out
   // themselves rather than through a delegate model.
   Q_INVOKABLE QVariantMap tileAt(int row) const;
@@ -277,6 +298,7 @@ signals:
   void kindFilterChanged();
   void sortModeChanged();
   void searchTextChanged();
+  void didYouMeanChanged();
   void favoritesOnlyChanged();
   void folderFilterChanged();
   void foldersChanged();
@@ -375,6 +397,7 @@ private:
   [[nodiscard]] bool rebuildDateIndex();
   [[nodiscard]] bool rebuildCameraIndex();
   void rebuildDuplicateOrdinals();
+  void rebuildLoneReviewPaths();
   [[nodiscard]] const CaptureRecord& sourceRecord(int sourceRow) const;
   [[nodiscard]] bool recordLessThan(const CaptureRecord& first, const CaptureRecord& second) const;
   [[nodiscard]] QString ocrSnippet(const CaptureRecord& record) const;
@@ -438,6 +461,10 @@ private:
   bool m_similarOnly = false;
   bool m_pairRawJpeg = true;
   QSet<QString> m_groupedOutPaths;
+  // Review set members whose set has no other member left once the other
+  // filters apply: a set of one has nothing to compare.
+  QSet<QString> m_loneReviewPaths;
+  QString m_similarTo;
   QSet<QString> m_explicitPaths;
   QTimer m_pairingTimer;
   QHash<QString, QString> m_duplicateGroups;
@@ -470,6 +497,15 @@ private:
   QTimer m_duplicateOrderTimer;
   QTimer m_ocrFilterTimer;
   QTimer m_releaseKeysTimer;
+  // "Did you mean": the suggestion, the search it was worked out for, and
+  // the worker doing it.
+  void startSpelling();
+  QString m_didYouMean;
+  QString m_spellingFor;
+  QTimer m_spellingTimer;
+  QFutureWatcher<QString> m_spellingWatcher;
+  std::shared_ptr<std::atomic_bool> m_spellingCancel = std::make_shared<std::atomic_bool>(false);
+  std::vector<TermSource> m_termSources;
   QList<QMetaObject::Connection> m_sourceConnections;
   SectionRows* m_sectionRows = nullptr;
 };

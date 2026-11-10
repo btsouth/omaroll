@@ -299,8 +299,9 @@ The search box matches filenames, captions, tags, albums, folders, cameras
 and the text inside pictures and PDFs, ignoring accents, with fields such as
 `tag:`, `in:` and `before:`. Picture text is read locally by Tesseract.
 **Similar pictures** in Browse groups resized,
-recompressed or brightened copies and close bursts, and Compare puts a set side
-by side so you can keep one. Nothing is removed without a confirmation.
+recompressed or brightened copies and close bursts, **Find similar pictures**
+on a picture opens its set, and Compare puts a set side by side so you can
+keep one. A search that finds nothing offers a close word the library knows. Nothing is removed without a confirmation.
 [Search and similar pictures](docs/search.md) explains the search fields, indexing,
 match levels and the caches.
 

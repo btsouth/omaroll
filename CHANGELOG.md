@@ -117,8 +117,28 @@
 - **Open Library** on Omaroll's launcher entry.
 - `Ctrl+Up` and `Ctrl+Down` in the library jump to the previous or next day
   or month section.
+- **Find similar pictures** in a picture's menu, in the grid, the preview and
+  the viewer, opens the similar review on that picture's set, or says nothing
+  similar was found.
+- A search that finds nothing offers **Did you mean** with a close word from
+  the library's names, folders, tags, albums, cameras, captions and text, so
+  `invoce` offers `invoice`.
+- PDF tiles carry a PDF badge.
 
 ### Changed
+
+- Exact duplicates are reviewed in sections, one per set, with Compare, and
+  review tiles show the end of their path, folders and name, so identical
+  copies can be told apart.
+- The first and last frames of a burst join its similar set as looser
+  members: a picture left on its own joins a set when it matches one picture
+  of it and is within the next looser match level of every picture in it.
+- While picture or PDF text is still being read, an empty search says so
+  instead of showing a blank grid, and the empty search state names
+  everything search looks at, how many pictures are still unread and links
+  to the text settings. So does the incomplete text notice.
+- A text match far into a picture's or PDF's text is shown with the matching
+  word in the middle of the tile's line instead of cut off at the end.
 
 - Rounded themes round the thumbnails too: the picture and its caption fade
   are clipped to the tile's corners instead of poking out past the ring.
@@ -208,7 +228,9 @@
   them, since it now opens in the backups folder.
 - `--set-default` and `--unset-default` say when `mimeapps.list` is not
   valid UTF-8 or starts with a byte-order mark, and leave it unchanged.
-
+- A review set that another filter leaves with one picture, such as a folder
+  holding one of two copies, is left out instead of showing "Similar set 2 ·
+  1 item" with a Compare button that has nothing to compare.
 - A picture whose contents are another format than its name (a 24-byte TIM
   file named `.png`, `.jpg` or `.tga`) no longer crashes Omaroll at every
   launch. Images are only read by the decoder for their name, or for their

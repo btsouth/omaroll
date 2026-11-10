@@ -92,6 +92,8 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cmath>
+#include <numeric>
 #include <functional>
 #include <array>
 #include <atomic>
@@ -9822,6 +9824,100 @@ private slots:
     QVERIFY(similarities.groupPaths(different).isEmpty());
   }
 
+  // Exact duplicates are sectioned per set as similar sets are. Once another
+  // filter leaves a set with one member it drops out, since there is nothing
+  // left to compare it with. Find similar narrows the review to one set.
+  void reviewSetsAreSectionedAndNeverShowASetOfOne() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    for (const char* name : {"OMARCHY_SCREENSHOT_DIR", "OMARCHY_SCREENRECORD_DIR",
+                             "XDG_PICTURES_DIR", "XDG_VIDEOS_DIR"}) {
+      QVERIFY(qputenv(name, dir.path().toUtf8()));
+    }
+    QVERIFY(QDir(dir.path()).mkpath(QStringLiteral("iceland")));
+    QVERIFY(QDir(dir.path()).mkpath(QStringLiteral("misc")));
+    const QString glacier = dir.filePath(QStringLiteral("iceland/glacier.png"));
+    const QString copy = dir.filePath(QStringLiteral("misc/glacier-copy.png"));
+    const QString falls = dir.filePath(QStringLiteral("iceland/falls.png"));
+    const QString fallsAgain = dir.filePath(QStringLiteral("iceland/falls-2.png"));
+    const QString alone = dir.filePath(QStringLiteral("iceland/alone.png"));
+    int shade = 10;
+    for (const QString& path : {glacier, copy, falls, fallsAgain, alone}) {
+      QImage image(32, 24, QImage::Format_RGB32);
+      image.fill(QColor(shade, 80, 120));
+      shade += 40;
+      QVERIFY(image.save(path, "PNG"));
+    }
+
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QTRY_COMPARE_WITH_TIMEOUT(model.rowCount(), 5, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!model.scanning(), 5000);
+    CaptureFilterModel proxy;
+    proxy.setSourceModel(&model);
+    auto* rows = qobject_cast<SectionRows*>(proxy.sectionRows());
+    QVERIFY(rows);
+    rows->setActive(true);
+    const QHash<QString, QString> groups = {
+        {glacier, QStringLiteral("a")}, {copy, QStringLiteral("a")},
+        {falls, QStringLiteral("b")}, {fallsAgain, QStringLiteral("b")}};
+    proxy.setDuplicateGroups(groups);
+    proxy.setSimilarGroups(groups);
+    const auto labels = [&] {
+      rows->rebuildNow();
+      QStringList result;
+      for (const SectionRows::Section& section : rows->computeSections()) {
+        result.append(section.label + u':' + QString::number(section.count));
+      }
+      return result;
+    };
+
+    proxy.setDuplicatesOnly(true);
+    QCOMPARE(rows->mode(), int(SectionRows::ReviewSections));
+    QCOMPARE(proxy.count(), 4);
+    QCOMPARE(labels(), QStringList({QStringLiteral("Exact match 1:2"),
+                                    QStringLiteral("Exact match 2:2")}));
+    // In one folder the glacier's copy is out of scope, so its set goes.
+    proxy.setFolderFilter(dir.filePath(QStringLiteral("iceland")));
+    QCOMPARE(proxy.count(), 2);
+    QCOMPARE(proxy.rowOf(glacier), -1);
+    QCOMPARE(labels(), QStringList({QStringLiteral("Exact match 1:2")}));
+    proxy.setSimilarOnly(true);
+    QCOMPARE(proxy.count(), 2);
+    QCOMPARE(labels(), QStringList({QStringLiteral("Similar set 1:2")}));
+    // A search that leaves one of each set leaves nothing to review.
+    proxy.setFolderFilter({});
+    proxy.setSearchText(QStringLiteral("glacier.png"));
+    proxy.commitPendingSearch();
+    QCOMPARE(proxy.count(), 0);
+    QCOMPARE(proxy.emptyReason(), QStringLiteral("similar"));
+    proxy.setSearchText({});
+    proxy.commitPendingSearch();
+    QCOMPARE(proxy.count(), 4);
+
+    // Find similar: only the set holding that picture, or nothing.
+    proxy.setSimilarOnly(false);
+    proxy.setSimilarTo(copy);
+    QVERIFY(proxy.similarOnly());
+    QCOMPARE(proxy.count(), 2);
+    QVERIFY(proxy.rowOf(glacier) >= 0 && proxy.rowOf(copy) >= 0);
+    proxy.setSimilarTo(falls);
+    QCOMPARE(proxy.count(), 2);
+    QVERIFY(proxy.rowOf(fallsAgain) >= 0);
+    proxy.setSimilarTo(alone);
+    QCOMPARE(proxy.count(), 0);
+    QCOMPARE(proxy.emptyReason(), QStringLiteral("similar"));
+    // Leaving the review forgets the picture.
+    proxy.setSimilarOnly(false);
+    QVERIFY(proxy.similarTo().isEmpty());
+    QCOMPARE(proxy.count(), 5);
+    proxy.setSimilarTo(glacier);
+    proxy.setDuplicatesOnly(true);
+    QVERIFY(proxy.similarTo().isEmpty());
+    QCOMPARE(proxy.count(), 4);
+  }
+
   // A corpus of generated pictures: copies of one picture that were resized,
   // recompressed or brightened belong together; different screenshots of
   // text, and different text documents, never do.
@@ -10106,18 +10202,111 @@ private slots:
     QVERIFY(SimilarityIndex::matches(signatures[0], signatures[12], {}, {}, SimilarityIndex::Normal));
     QVERIFY(SimilarityIndex::matches(signatures[12], signatures[13], {}, {}, SimilarityIndex::Normal));
     QVERIFY(!SimilarityIndex::matches(signatures[0], signatures[13], {}, {}, SimilarityIndex::Normal));
-    const QList<QList<int>> sets = SimilarityIndex::group(signatures, {}, SimilarityIndex::Normal);
-    for (const QList<int>& set : sets) {
-      for (int a : set) {
-        for (int b : set) {
+    QList<QList<int>> looser;
+    const QList<QList<int>> sets =
+        SimilarityIndex::group(signatures, {}, SimilarityIndex::Normal, nullptr, &looser);
+    QCOMPARE(looser.size(), sets.size());
+    QList<QList<int>> cores;
+    for (qsizetype at = 0; at < sets.size(); ++at) {
+      QList<int> core = sets[at];
+      core.removeIf([&](int index) { return looser[at].contains(index); });
+      for (int a : core) {
+        for (int b : core) {
           QVERIFY(a == b || SimilarityIndex::matches(signatures[a], signatures[b], {}, {},
                                                      SimilarityIndex::Normal));
         }
       }
+      // A looser member matches one of the set and is within Loose of all.
+      for (int loose : looser[at]) {
+        QVERIFY(std::any_of(core.cbegin(), core.cend(), [&](int member) {
+          return SimilarityIndex::matches(signatures[loose], signatures[member], {}, {},
+                                          SimilarityIndex::Normal);
+        }));
+        for (int member : core) {
+          QVERIFY(SimilarityIndex::matches(signatures[loose], signatures[member], {}, {},
+                                           SimilarityIndex::Loose));
+        }
+      }
+      cores.append(core);
     }
-    QVERIFY(std::any_of(sets.cbegin(), sets.cend(), [](const QList<int>& set) {
-      return set.size() >= 12 && set.contains(0) && set.contains(11) && !set.contains(13);
+    QVERIFY(std::any_of(cores.cbegin(), cores.cend(), [](const QList<int>& core) {
+      return core.size() >= 12 && core.contains(0) && core.contains(11) && !core.contains(13);
     }));
+  }
+
+  // A burst whose middle frames match one another and whose ends match only
+  // their neighbours: complete linkage keeps the middle three, and the ends
+  // join as looser members because they are within Loose of every one of
+  // them. At Strict the ends are too far for Normal, so the set stays as
+  // linkage left it. The order of the pictures does not matter.
+  void burstEndsJoinTheirSetAsLooserMembers() {
+    QRandomGenerator random(13);
+    // Two patterns of the same spread with nothing in common, so a frame at
+    // angle t, cos t of one plus sin t of the other, correlates with a frame
+    // at angle u by cos(t - u).
+    std::array<double, 1024> base{};
+    std::array<double, 1024> pan{};
+    std::array<double, 1024> other{};
+    for (int index = 0; index < 1024; ++index) {
+      base[index] = random.generateDouble() - 0.5;
+      pan[index] = random.generateDouble() - 0.5;
+      other[index] = random.generateDouble() - 0.5;
+    }
+    const auto centre = [](std::array<double, 1024>& values) {
+      const double mean = std::accumulate(values.cbegin(), values.cend(), 0.0) / 1024;
+      for (double& value : values) value -= mean;
+    };
+    const auto dot = [](const std::array<double, 1024>& a, const std::array<double, 1024>& b) {
+      return std::inner_product(a.cbegin(), a.cend(), b.cbegin(), 0.0);
+    };
+    centre(base);
+    centre(pan);
+    const double along = dot(pan, base) / dot(base, base);
+    for (int index = 0; index < 1024; ++index) pan[index] -= along * base[index];
+    const double scale = std::sqrt(dot(base, base) / dot(pan, pan));
+    for (double& value : pan) value *= scale;
+    const auto frame = [&](double angle, bool scene) {
+      SimilarityIndex::Signature result;
+      result.valid = true;
+      result.width = 640;
+      result.height = 480;
+      result.red = result.green = result.blue = 120;
+      result.flatness = 20;
+      result.chroma = 80;
+      result.hash = 0x0123456789abcdefULL;
+      result.thumbnail.resize(1024);
+      for (int index = 0; index < 1024; ++index) {
+        const double value = scene ? std::cos(angle) * base[index] + std::sin(angle) * pan[index]
+                                   : other[index];
+        result.thumbnail[index] = char(std::clamp(int(128 + value * 120), 0, 255));
+      }
+      result.prepare();
+      return result;
+    };
+    // Normal reaches 0.45 apart, Loose 0.57. The ends are 0.2 from their
+    // neighbour and 0.5 from the far end of the middle three.
+    QList<SimilarityIndex::Signature> burst;
+    for (const double angle : {0.0, 0.2, 0.35, 0.5, 0.7}) burst.append(frame(angle, true));
+    burst.append(frame(0, false));
+    QVERIFY(SimilarityIndex::matches(burst[0], burst[1], {}, {}, SimilarityIndex::Normal));
+    QVERIFY(SimilarityIndex::matches(burst[1], burst[3], {}, {}, SimilarityIndex::Normal));
+    QVERIFY(!SimilarityIndex::matches(burst[0], burst[3], {}, {}, SimilarityIndex::Normal));
+    QVERIFY(SimilarityIndex::matches(burst[0], burst[3], {}, {}, SimilarityIndex::Loose));
+    QVERIFY(!SimilarityIndex::matches(burst[1], burst[4], {}, {}, SimilarityIndex::Normal));
+    QVERIFY(!SimilarityIndex::matches(burst[0], burst[4], {}, {}, SimilarityIndex::Loose));
+
+    QList<QList<int>> looser;
+    QCOMPARE(SimilarityIndex::group(burst, {}, SimilarityIndex::Normal, nullptr, &looser),
+             QList<QList<int>>({{0, 1, 2, 3, 4}}));
+    QCOMPARE(looser, QList<QList<int>>({{0, 4}}));
+    QCOMPARE(SimilarityIndex::group(burst, {}, SimilarityIndex::Strict, nullptr, &looser),
+             QList<QList<int>>({{1, 2, 3}}));
+    QCOMPARE(looser, QList<QList<int>>({{}}));
+
+    QList<SimilarityIndex::Signature> reversed(burst.crbegin(), burst.crend());
+    QCOMPARE(SimilarityIndex::group(reversed, {}, SimilarityIndex::Normal, nullptr, &looser),
+             QList<QList<int>>({{1, 2, 3, 4, 5}}));
+    QCOMPARE(looser, QList<QList<int>>({{1, 5}}));
   }
 
   // Hashes survive a relaunch, keyed by path, size and modification time, and

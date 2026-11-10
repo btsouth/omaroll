@@ -141,6 +141,8 @@ add_library(omaroll_core STATIC
   src/search/QrDetector.h
   src/search/SearchQuery.cpp
   src/search/SearchQuery.h
+  src/search/SpellingSuggestions.cpp
+  src/search/SpellingSuggestions.h
   src/subtitles/SubtitleIndex.cpp
   src/subtitles/SubtitleIndex.h
   src/thumbs/LargeImageProvider.cpp

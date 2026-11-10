@@ -127,6 +127,15 @@ Item {
         forceActiveFocus()
     }
 
+    // Opens on one section by its objectName suffix, such as "search".
+    function openSection(name) {
+        open()
+        const index = root.sectionItems.findIndex(function (section) {
+            return section.objectName === "settingsSection_" + name
+        })
+        if (index >= 0) Qt.callLater(root.showSection, index)
+    }
+
     function close() { visible = false }
 
     function defaultsStatus() {

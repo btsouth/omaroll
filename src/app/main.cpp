@@ -834,9 +834,14 @@ int main(int argc, char* argv[]) {
   // A viewer hands a file to the library, then steps aside. The library is
   // up before the viewer closes, so closing it never ends the app.
   QObject::connect(&viewers, &ViewerWindows::libraryRequested, &application,
-                   [&](const QString& path, QQuickWindow* viewer) {
+                   [&](const QString& path, QQuickWindow* viewer, bool similar) {
                      const OpenRequest opened = OpenRequest::fromPaths({path});
                      if (QQuickWindow* library = openLibrary(opened)) {
+                       if (similar) {
+                         QMetaObject::invokeMethod(
+                             library, "findSimilar",
+                             Q_ARG(QVariant, opened.files.value(0, path)));
+                       }
                        library->raise();
                        library->requestActivate();
                        viewer->close();
