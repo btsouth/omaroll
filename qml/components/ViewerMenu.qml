@@ -14,6 +14,8 @@ Menu {
     property string groupId: ""
     // The window it opens in, whose height it must fit.
     property var hostWindow: null
+    // What rebuildMenu() last built, for a menu put together by hand.
+    property string builtRows: ""
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)

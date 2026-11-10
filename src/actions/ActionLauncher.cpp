@@ -33,6 +33,7 @@
 #include <QScopeGuard>
 
 #include <cerrno>
+#include <cstdio>
 #include <csignal>
 #include <cstring>
 #include <fcntl.h>
@@ -750,6 +751,98 @@ QVariantMap ActionLauncher::renameCapturedFile(const QVariantMap& target, const 
   return result;
 }
 
+QVariantMap ActionLauncher::moveCapturedFile(const QVariantMap& target, const QString& folder) {
+  return transferCapturedFile(target, folder, false);
+}
+
+QVariantMap ActionLauncher::copyCapturedFile(const QVariantMap& target, const QString& folder) {
+  return transferCapturedFile(target, folder, true);
+}
+
+bool ActionLauncher::relocateEntry(const QString& from, const QString& to) {
+  const QByteArray source = QFile::encodeName(from);
+  const QByteArray target = QFile::encodeName(to);
+  // The kernel refuses to replace an existing |to|, with no gap between a
+  // check and the move.
+  if (::renameat2(AT_FDCWD, source.constData(), AT_FDCWD, target.constData(), RENAME_NOREPLACE) == 0) {
+    return true;
+  }
+  if (errno == EINVAL || errno == ENOSYS) {
+    // A filesystem without RENAME_NOREPLACE: a hard link fails on an
+    // existing name just the same.
+    if (::link(source.constData(), target.constData()) != 0) return false;
+    if (::unlink(source.constData()) == 0) return true;
+    ::unlink(target.constData());
+    return false;
+  }
+  if (errno != EXDEV) return false;
+  // Another filesystem: copy (which never replaces a file either), keep the
+  // modified time the sort and the library use, then remove the original.
+  struct stat entry {};
+  if (::lstat(source.constData(), &entry) != 0 || !S_ISREG(entry.st_mode)) return false;
+  const QDateTime modified = QFileInfo(from).lastModified();
+  if (!QFile::copy(from, to)) return false;
+  QFile copied(to);
+  if (copied.open(QIODevice::ReadWrite)) {
+    copied.setFileTime(modified, QFileDevice::FileModificationTime);
+    copied.close();
+  }
+  if (QFile::remove(from)) return true;
+  QFile::remove(to);
+  return false;
+}
+
+QVariantMap ActionLauncher::transferCapturedFile(const QVariantMap& target, const QString& folder,
+                                                 bool copy) {
+  const auto failure = [](const QString& message) {
+    return QVariantMap{{u"ok"_s, false}, {u"error"_s, message}};
+  };
+  if (!capturedFileMatches(target)) {
+    return failure(u"That file changed or disappeared. Open it again before moving it"_s);
+  }
+  const QFileInfo source(target.value(u"path"_s).toString());
+  // The folder picker hands over a URL.
+  const QString local = folder.startsWith(u"file:"_s) ? QUrl(folder).toLocalFile() : folder;
+  const QFileInfo destination(local);
+  if (local.isEmpty() || !destination.isDir()) return failure(u"That folder is not there"_s);
+  if (!destination.isWritable()) return failure(u"That folder cannot be written to"_s);
+  const QDir directory(destination.absoluteFilePath());
+  if (!copy && directory.canonicalPath() == source.dir().canonicalPath()) {
+    return failure(u"The file is already in that folder"_s);
+  }
+  // A moved link could stop pointing at its file; the file it points at can
+  // be moved from its own folder instead. A copy copies the picture itself.
+  if (!copy && source.isSymLink()) {
+    return failure(u"This is a link to a file elsewhere. Move that file instead"_s);
+  }
+  const QString base = source.completeBaseName();
+  const QString suffix = source.suffix().isEmpty() ? QString() : u"."_s + source.suffix();
+  // The file's own name first, then "name (2)", "name (3)" and so on. Each
+  // attempt refuses to replace a file that appeared in the meantime.
+  for (int attempt = 1; attempt <= 999; ++attempt) {
+    const QString fileName = attempt == 1 ? source.fileName()
+                                          : u"%1 (%2)%3"_s.arg(base).arg(attempt).arg(suffix);
+    const QString path = directory.filePath(fileName);
+    if (QFileInfo(path).exists() || QFileInfo(path).isSymLink()) continue;
+    if (!capturedFileMatches(target)) {
+      return failure(u"That file changed or disappeared. Open it again before moving it"_s);
+    }
+    const bool done = copy ? QFile::copy(source.absoluteFilePath(), path)
+                           : relocateEntry(source.absoluteFilePath(), path);
+    if (!done) {
+      if (QFileInfo(path).exists()) continue; // taken just now
+      return failure(copy ? u"Could not copy this file there"_s : u"Could not move this file there"_s);
+    }
+    return {{u"ok"_s, true},
+            {u"path"_s, path},
+            {u"fileName"_s, fileName},
+            {u"folder"_s, directory.absolutePath()},
+            {u"mediaPath"_s, QFileInfo(path).canonicalFilePath()},
+            {u"renamed"_s, attempt > 1}};
+  }
+  return failure(u"Too many files with that name are already there"_s);
+}
+
 bool ActionLauncher::capturedStillMatches(const QVariantMap& target) const {
   return !target.value(u"path"_s).toString().isEmpty() && capturedFileMatches(target);
 }
@@ -949,7 +1042,7 @@ QVariantMap ActionLauncher::renameFile(const QString& path, const QString& baseN
   if (!captured.isEmpty() && !capturedFileMatches(captured)) {
     return failure(u"That file changed or disappeared. Open Rename again"_s);
   }
-  if (!QFile::rename(source.absoluteFilePath(), target)) {
+  if (!relocateEntry(source.absoluteFilePath(), target)) {
     return failure(u"Could not rename this file"_s);
   }
 

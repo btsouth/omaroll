@@ -169,10 +169,15 @@ folded into the same turn, and keeps its EXIF (date taken, camera, place)
 marked upright. The notice says when the copy had to be re-encoded, when it is
 saved in another format (a GIF is saved as PNG) and when metadata could not be
 kept. A lossless WebP stays lossless.
-Pictures and videos in the folder are listed by filename; press `B`
-for a filmstrip of them above the controls, and click one to open it. Use the arrows
+Pictures and videos in the folder are listed by filename, or by date taken,
+date modified or size, either way round, from View, Sort in the menu; the
+choice is remembered. Press `B` for a filmstrip of them above the controls,
+centred on the open file, and click one to open it. Use the arrows
 to step through pictures, or Page Up and Page Down to change files while a video
-is playing. Folders, PDFs and a plain `omaroll` open the library, and so does
+is playing. `N` renames the file, and Edit in the menu moves or copies it to
+another folder without ever replacing a file there; favourites, ratings,
+albums and tags follow a rename or move. `,` and `.` step a paused GIF or WebP
+one frame at a time, as they do a video. Folders, PDFs and a plain `omaroll` open the library, and so does
 `--library` with any file:
 
 ```bash

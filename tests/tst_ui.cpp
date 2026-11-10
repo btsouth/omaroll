@@ -7989,6 +7989,29 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_Z, Qt::ControlModifier);
     QTRY_VERIFY(QFileInfo::exists(copy));
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(copy) >= 0, 10000);
+    m_library->setDuplicatesOnly(false);
+
+    // "Move to Trash without asking": Delete moves at once, Undo still works.
+    QVERIFY(!m_settings->trashWithoutAsking());
+    m_settings->setTrashWithoutAsking(true);
+    const auto asking = qScopeGuard([this] { m_settings->setTrashWithoutAsking(false); });
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(first) >= 0, 10000);
+    grid->setProperty("currentIndex", m_library->rowOf(first));
+    QTest::keyClick(m_window, Qt::Key_Delete);
+    QVERIFY(!item("confirm")->isVisible());
+    QTRY_VERIFY(!QFileInfo::exists(first));
+    QTRY_VERIFY(undo->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Z, Qt::ControlModifier);
+    QTRY_VERIFY(QFileInfo::exists(first));
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(first) >= 0, 10000);
+    // Keeping one of a set still asks first.
+    QVERIFY(QMetaObject::invokeMethod(m_window, "requestDeleteBatch",
+                                    Q_ARG(QVariant, QVariant(QStringList{second})),
+                                    Q_ARG(QVariant, QStringLiteral("Keep one?")), Q_ARG(QVariant, QVariant())));
+    QTRY_VERIFY(item("confirm")->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!item("confirm")->isVisible());
+    QVERIFY(QFileInfo::exists(second));
   }
 
   // Similar sets show as sections; Compare lists the facts for choosing a

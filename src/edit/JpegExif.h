@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QByteArray>
+#include <QDateTime>
 #include <QSize>
 
 // The metadata a corrected JPEG copy carries over from its original: the
@@ -14,6 +15,11 @@ namespace JpegExif {
 // is unlinked. Edits |jpeg| in place without changing its length. Returns
 // whether |jpeg| has an EXIF segment at all.
 bool normalize(QByteArray& jpeg, const QSize& size);
+
+// When the picture was taken: DateTimeOriginal, else DateTimeDigitized,
+// else the IFD0 DateTime, as local time. Invalid when |jpeg| (which may be
+// just the start of the file) carries none of them.
+QDateTime dateTaken(const QByteArray& jpeg);
 
 // The APP1 (EXIF, XMP), APP13 (IPTC) and comment segments before the first
 // scan, ready to insert into another JPEG. Colour (APP2 ICC, APP14 Adobe)

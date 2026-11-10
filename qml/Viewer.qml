@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Dialogs
 import QtMultimedia
 import Omaroll
 
@@ -51,6 +52,7 @@ ApplicationWindow {
     property bool slideshowRunning: false
     readonly property bool blockingActionOpen: actionMenu.visible || confirm.visible
                                               || permanentConfirm.visible || editorChooser.visible || shortcutHelp.visible
+                                              || renameSheet.visible
     onBlockingActionOpenChanged: {
         if (root.blockingActionOpen) slideshowTimer.stop()
         else Qt.callLater(root.resumeSlideshow)
@@ -240,6 +242,8 @@ ApplicationWindow {
     readonly property real displayWidth: root.rotatedWidth * root.effectiveScale
     readonly property real displayHeight: root.rotatedHeight * root.effectiveScale
     readonly property int zoomPercent: Math.round(root.effectiveScale * root.dpr * 100)
+    // Past 200%, pixels are drawn as squares rather than blended.
+    readonly property bool pixelated: root.effectiveScale * root.dpr >= 2
     readonly property bool imageReady: root.visible && !Session.isVideo && root.stillReady
                                        && root.sourceWidth > 0
 
@@ -296,6 +300,7 @@ ApplicationWindow {
                                         || root.controlsFocused
                                         || shortcutHelp.visible
                                         || actionMenu.visible || confirm.visible || permanentConfirm.visible || editorChooser.visible
+                                        || renameSheet.visible
                                         || header.hovered || transport.hovered
                                         || previousButton.hovered || nextButton.hovered
                                         || toolbar.hovered || filmstrip.hovered
@@ -304,7 +309,14 @@ ApplicationWindow {
     readonly property bool pointerHidden: !root.chromeShown
                                           && (root.playing || root.fullScreen || root.slideshowRunning)
 
+    // The folder's order, remembered across launches. Set before any file
+    // opens, since the window is made first.
+    Binding { target: Session; property: "sortOrder"; value: Settings.viewerSort }
+    Binding { target: Session; property: "sortReversed"; value: Settings.viewerSortReversed }
+
     readonly property bool choosingEditor: editorChooser.visible
+    // A sheet with its own keys: the viewer's shortcuts wait until it closes.
+    readonly property bool sheetOpen: editorChooser.visible || renameSheet.visible
     function showShortcutHelp() { shortcutHelp.open() }
     function showActionMenu() { actionMenu.popup(stage, stage.width / 2, stage.height / 2) }
 
@@ -734,7 +746,25 @@ ApplicationWindow {
 
     // One frame back or forward, paused, as in mpv. Positions are whole
     // milliseconds, so aim for the middle of the frame rather than its start.
+    // An animated GIF or WebP steps through its own frames, wrapping round.
     function stepFrame(direction) {
+        if (!Session.isVideo && Session.isAnimated) {
+            const animation = stillLoader.item
+            if (!animation || animation.frameCount < 2) return
+            root.animationPlaying = false
+            const count = animation.frameCount
+            const target = (animation.currentFrame + direction + count) % count
+            // A GIF or WebP is read one frame after another: going back
+            // rewinds to the first frame and reads on to the one wanted.
+            let from = animation.currentFrame
+            if (target < from) {
+                animation.currentFrame = 0
+                from = 0
+            }
+            for (let frame = from + 1; frame <= target; ++frame) animation.currentFrame = frame
+            root.say("Frame " + (animation.currentFrame + 1) + " of " + count)
+            return
+        }
         if (!root.player || root.player.duration <= 0) return
         if (root.playing) root.player.pause()
         const rate = root.player.metaData.value(MediaMetaData.VideoFrameRate)
@@ -973,6 +1003,11 @@ ApplicationWindow {
         const target = Actions.captureFileAction(Session.deletionPath, Session.path)
         if (target.path === undefined) return
         target.viewedPath = Session.path
+        // Undo brings it back, so the question can be skipped.
+        if (Settings.trashWithoutAsking) {
+            root.trashTarget(target, Session.index, Session.openSerial())
+            return
+        }
         confirm.target = target
         confirm.index = Session.index
         confirm.serial = Session.openSerial()
@@ -980,6 +1015,78 @@ ApplicationWindow {
         confirm.viewedPath = Session.path
         confirm.detail = confirm.path
         confirm.open()
+    }
+
+    function trashTarget(target, index, serial) {
+        // A refusal is said by Actions.failed; the viewer stays on the
+        // file now at that name.
+        const record = Actions.trashCaptured(target)
+        if (record.path === undefined) return
+        record.index = index
+        record.openSerial = serial
+        Session.forget(target.viewedPath)
+        root.sayUndoable("Moved to Trash", Settings.pushTrashUndo([record], Session))
+    }
+
+    // Rename in place, with the library's sheet; the file stays on screen
+    // under its new name, and its favourite, rating, albums and tags follow.
+    function requestRename() {
+        if (Session.path === "" || root.blockingActionOpen) return
+        renameSheet.viewedPath = Session.path
+        renameSheet.open(Session.deletionPath, root.fileNameOf(Session.deletionPath), Session.path)
+    }
+
+    function finishRename(oldPath, newPath, fileName, mediaPath) {
+        const viewed = renameSheet.viewedPath
+        // Marks are kept under the file's own path; a link's entry has its own.
+        if (mediaPath !== "") Settings.relocatePath(viewed, mediaPath)
+        if (oldPath !== viewed) Settings.relocatePath(oldPath, newPath)
+        Session.renamed(viewed, mediaPath !== "" ? mediaPath : newPath, newPath)
+        root.say("Renamed to " + fileName)
+    }
+
+    // Move or copy to a folder chosen in the desktop's folder picker. A move
+    // takes the file out of this folder, so the next one is shown, as after
+    // Trash.
+    function requestTransfer(copy) {
+        if (Session.path === "" || root.blockingActionOpen) return
+        const target = Actions.captureFileAction(Session.deletionPath, Session.path)
+        if (target.path === undefined) return
+        target.viewedPath = Session.path
+        folderPicker.target = target
+        folderPicker.copy = copy
+        folderPicker.title = copy ? "Copy to folder" : "Move to folder"
+        const path = Session.path
+        folderPicker.currentFolder = "file://" + path.substring(0, path.lastIndexOf("/"))
+                                         .split("/").map(encodeURIComponent).join("/")
+        folderPicker.open()
+    }
+
+    // |folder| is a path or a file URL. False, said, when it was refused.
+    function transferTo(target, folder, copy) {
+        const result = copy ? Actions.copyCapturedFile(target, folder)
+                            : Actions.moveCapturedFile(target, folder)
+        if (!result.ok) {
+            root.say(result.error)
+            return false
+        }
+        const where = root.fileNameOf(result.folder) || result.folder
+        const named = result.renamed ? " as " + result.fileName : ""
+        if (copy) {
+            root.say("Copied to " + where + named)
+            return true
+        }
+        // The new place as the viewer and the library name it, which a
+        // folder reached through a link resolves.
+        Settings.relocatePath(target.viewedPath, result.mediaPath !== "" ? result.mediaPath : result.path)
+        Session.forget(target.viewedPath)
+        root.say("Moved to " + where + named)
+        return true
+    }
+
+    function setSort(order) {
+        Settings.viewerSort = order
+        root.say("Sorted by " + root.sortOrders.find(function (row) { return row.id === order }).label.toLowerCase())
     }
 
     function requestPermanentDelete() {
@@ -1020,7 +1127,11 @@ ApplicationWindow {
     readonly property var shareOrder: ["copy", "copy-path", "copy-name", "|", "open-with", "play", "files",
                                        "|", "send", "print", "background"]
     readonly property var editOrder: ["develop", "choose-editor", "edit", "annotate", "omaframe", "|",
-                                      "trim", "frame", "save-view-copy"]
+                                      "trim", "frame", "save-view-copy", "|",
+                                      "rename", "move-to-folder", "copy-to-folder"]
+    // The folder orders, as ViewerSort names them, under View > Sort.
+    readonly property var sortOrders: [{id: "name", label: "Name"}, {id: "taken", label: "Date taken"},
+                                       {id: "modified", label: "Date modified"}, {id: "size", label: "Size"}]
 
     // Rows in |order| that exist in |byId|, with separators only between
     // runs that both have something.
@@ -1055,6 +1166,9 @@ ApplicationWindow {
         }
         byId["copy-path"] = {id: "copy-path", label: "Copy path"}
         byId["copy-name"] = {id: "copy-name", label: "Copy file name"}
+        byId["rename"] = {id: "rename", label: "Rename…"}
+        byId["move-to-folder"] = {id: "move-to-folder", label: "Move to folder…"}
+        byId["copy-to-folder"] = {id: "copy-to-folder", label: "Copy to folder…"}
 
         const view = []
         if (video) {
@@ -1083,10 +1197,21 @@ ApplicationWindow {
                                           available: !root.savingViewCopy}
             }
         }
+        const sort = []
         if (Session.count > 1) {
             if (view.length > 0) view.push({separator: true})
             view.push({id: "filmstrip",
                        label: Settings.viewerFilmstrip ? "Hide filmstrip" : "Show filmstrip"})
+            // A selection keeps the order it was opened in.
+            if (!Session.selection) {
+                view.push({submenu: "sort", label: "Sort"})
+                for (const order of root.sortOrders) {
+                    sort.push({id: "sort-" + order.id, label: order.label,
+                               checked: Session.sortOrder === order.id})
+                }
+                sort.push({separator: true})
+                sort.push({id: "sort-reverse", label: "Reverse order", checked: Session.sortReversed})
+            }
         }
         const share = root.orderedRows(root.shareOrder, byId)
         const edit = root.orderedRows(root.editOrder, byId)
@@ -1111,7 +1236,7 @@ ApplicationWindow {
         top.push({id: "favorite",
                   label: root.favorite ? "Remove from favourites" : "Add to favourites"})
         top.push({id: "trash", label: "Move to Trash"})
-        return {top: top, view: view, share: share, edit: edit}
+        return {top: top, view: view, share: share, edit: edit, sort: sort}
     }
 
     readonly property var menuGroups: root.menuModel()
@@ -1120,35 +1245,36 @@ ApplicationWindow {
     function menuEntries() {
         const groups = root.menuGroups
         const all = []
-        for (const row of groups.top) {
-            if (row.submenu) {
-                for (const inner of groups[row.submenu]) all.push(Object.assign({group: row.submenu}, inner))
-            } else {
-                all.push(row)
+        const add = function (rows, group) {
+            for (const row of rows) {
+                if (row.submenu) add(groups[row.submenu], row.submenu)
+                else all.push(group ? Object.assign({group: group}, row) : row)
             }
         }
+        add(groups.top, "")
         return all
     }
 
     // The top level is put together by hand: the submenus are Menus of their
     // own, which a Repeater cannot place among its rows.
-    property string builtMenuRows: ""
-    function rebuildActionMenu() {
+    // View, which holds Sort, is built the same way.
+    function rebuildMenu(menu) {
         // The rows are recomputed on many changes that leave them the same.
-        const signature = JSON.stringify(actionMenu.rows)
-        if (signature === root.builtMenuRows) return
-        root.builtMenuRows = signature
-        const submenus = {view: viewMenu, share: shareMenu, edit: editMenu}
-        while (actionMenu.count > 0) {
-            const item = actionMenu.itemAt(0)
-            if (item && item.subMenu) actionMenu.takeMenu(0)
-            else actionMenu.removeItem(item)
+        const signature = JSON.stringify(menu.rows)
+        if (signature === menu.builtRows) return
+        menu.builtRows = signature
+        const submenus = {view: viewMenu, share: shareMenu, edit: editMenu, sort: sortMenu}
+        while (menu.count > 0) {
+            const item = menu.itemAt(0)
+            if (item && item.subMenu) menu.takeMenu(0)
+            else menu.removeItem(item)
         }
-        for (const row of actionMenu.rows) {
-            if (row.submenu) actionMenu.addMenu(submenus[row.submenu])
-            else actionMenu.addItem(topMenuRow.createObject(actionMenu.contentItem, {row: row}))
+        for (const row of menu.rows) {
+            if (row.submenu) menu.addMenu(submenus[row.submenu])
+            else menu.addItem(topMenuRow.createObject(menu.contentItem, {row: row}))
         }
     }
+    function rebuildActionMenu() { root.rebuildMenu(actionMenu) }
 
     function performMenuAction(id) {
         root.perform(id)
@@ -1228,6 +1354,23 @@ ApplicationWindow {
             return
         case "trash":
             root.requestTrash()
+            return
+        case "rename":
+            root.requestRename()
+            return
+        case "move-to-folder":
+        case "copy-to-folder":
+            root.requestTransfer(id === "copy-to-folder")
+            return
+        case "sort-name":
+        case "sort-taken":
+        case "sort-modified":
+        case "sort-size":
+            root.setSort(id.substring(5))
+            return
+        case "sort-reverse":
+            Settings.viewerSortReversed = !Settings.viewerSortReversed
+            root.say(Settings.viewerSortReversed ? "Reverse order" : "Normal order")
             return
         case "play":
             Registry.runBatchWith("play", {"seek": (Math.max(0, root.player ? root.player.position : 0) / 1000).toFixed(3)}, [path])
@@ -1533,6 +1676,14 @@ ApplicationWindow {
                     rotation: root.viewRotation
                     visible: root.stillReady && !root.imageError
                     color: Theme.surfaceBackground
+
+                    // Shows where a picture is transparent, as the library
+                    // preview does. Settings can turn it off.
+                    Checkerboard {
+                        objectName: "viewerCheckerboard"
+                        anchors.fill: parent
+                        visible: Settings.transparencyCheckerboard
+                    }
                 }
 
                 Loader {
@@ -1567,9 +1718,9 @@ ApplicationWindow {
                 // The preloaded neighbours match, so they share its cache.
                 colorSpace.namedColorSpace: ColorSpace.SRgb
                 autoTransform: true
-                // Smooth while fitted, even when a small picture is scaled up;
-                // crisp pixels once zoomed well past their real size.
-                smooth: root.viewScale === 0 || root.effectiveScale * root.dpr < 2
+                // Smooth up to twice the picture's real size, fitted or
+                // zoomed; past that, crisp pixels, so they can be inspected.
+                smooth: !root.pixelated
                 mipmap: true
                 fillMode: Image.Stretch
                 // A preloaded neighbour is simply there; one that had to be
@@ -1638,8 +1789,10 @@ ApplicationWindow {
                 asynchronous: true
                 autoTransform: true
                 cache: false
-                playing: root.visible && root.animationPlaying
-                smooth: root.viewScale === 0 || root.effectiveScale * root.dpr < 2
+                // Paused rather than stopped, so , and . can step its frames.
+                playing: root.visible
+                paused: !root.animationPlaying
+                smooth: !root.pixelated
                 fillMode: Image.Stretch
             }
         }
@@ -2615,6 +2768,7 @@ ApplicationWindow {
         rating: root.rating
         favorite: root.favorite
         lines: MediaInfo.path === Session.path ? MediaInfo.lines : []
+        coordinates: MediaInfo.path === Session.path ? MediaInfo.coordinates : ""
         loading: MediaInfo.path === Session.path && MediaInfo.loading
         Keys.forwardTo: [keys]
         onRateRequested: function (stars) { root.rate(stars) }
@@ -2622,6 +2776,8 @@ ApplicationWindow {
         onFolderRequested: root.perform("files")
         onCopyPathRequested: root.copyPath(false)
         onCopyNameRequested: root.copyPath(true)
+        onCopyLocationRequested: root.say(Actions.copyPlainText(coordinates) ? "Location copied"
+                                                                         : "Could not copy the location")
     }
 
     Component {
@@ -2641,8 +2797,8 @@ ApplicationWindow {
         dim: false
         rows: root.menuGroups.top
         readonly property var entries: root.menuEntries()
-        onRowsChanged: root.rebuildActionMenu()
-        Component.onCompleted: root.rebuildActionMenu()
+        onRowsChanged: root.rebuildMenu(actionMenu)
+        Component.onCompleted: root.rebuildMenu(actionMenu)
         onClosed: if (!shortcutHelp.visible) keys.forceActiveFocus()
         // The row that opens a submenu.
         delegate: ViewerMenuItem {}
@@ -2656,8 +2812,19 @@ ApplicationWindow {
         title: "View"
         hostWindow: root
         rows: root.menuGroups.view
+        onRowsChanged: root.rebuildMenu(viewMenu)
+        Component.onCompleted: root.rebuildMenu(viewMenu)
+        delegate: ViewerMenuItem {}
+    }
+    ViewerMenu {
+        id: sortMenu
+        objectName: "viewerSubmenu_sort"
+        groupId: "sort"
+        title: "Sort"
+        hostWindow: root
+        rows: root.menuGroups.sort
         Repeater {
-            model: viewMenu.rows
+            model: sortMenu.rows
             ViewerMenuItem {
                 required property var modelData
                 row: modelData
@@ -2731,16 +2898,33 @@ ApplicationWindow {
             confirm.target = ({})
             confirm.path = ""
             if (target.path === undefined) return
-            // A refusal is said by Actions.failed; the viewer stays on the
-            // file now at that name.
-            const record = Actions.trashCaptured(target)
-            if (record.path === undefined) return
-            record.index = index
-            record.openSerial = serial
-            Session.forget(target.viewedPath)
-            root.sayUndoable("Moved to Trash", Settings.pushTrashUndo([record], Session))
+            root.trashTarget(target, index, serial)
         }
         onVisibleChanged: if (!visible) keys.forceActiveFocus()
+    }
+
+    RenameSheet {
+        id: renameSheet
+        objectName: "viewerRenameSheet"
+        // The file the viewer showed, which a renamed link still points at.
+        property string viewedPath: ""
+        onRenamed: function (oldPath, newPath, fileName) {
+            root.finishRename(oldPath, newPath, fileName, renameSheet.renamedMediaPath)
+        }
+        onVisibleChanged: if (!visible) keys.forceActiveFocus()
+    }
+
+    FolderDialog {
+        id: folderPicker
+        objectName: "viewerFolderPicker"
+        property var target: ({})
+        property bool copy: false
+        onAccepted: {
+            const target = folderPicker.target
+            folderPicker.target = ({})
+            if (target.path !== undefined) root.transferTo(target, selectedFolder.toString(), folderPicker.copy)
+        }
+        onRejected: folderPicker.target = ({})
     }
 
     ConfirmSheet {

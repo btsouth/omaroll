@@ -8,7 +8,7 @@ Item {
 
     Keys.onPressed: function (event) {
         if (event.key === ShortcutCatalog.quickKeys.Tab || event.key === ShortcutCatalog.quickKeys.Backtab) viewer.keyboardNavigation = true
-        if (viewer.choosingEditor) {
+        if (viewer.sheetOpen) {
             event.accepted = false
             return
         }
@@ -91,8 +91,11 @@ Item {
                 break
             case ShortcutCatalog.quickKeys.Comma:
             case ShortcutCatalog.quickKeys.Period:
-                if (video) viewer.stepFrame(event.key === ShortcutCatalog.quickKeys.Comma ? -1 : 1)
+                if (video || Session.isAnimated) viewer.stepFrame(event.key === ShortcutCatalog.quickKeys.Comma ? -1 : 1)
                 else handled = false
+                break
+            case ShortcutCatalog.quickKeys.N:
+                if (!event.isAutoRepeat) viewer.requestRename()
                 break
             case ShortcutCatalog.quickKeys.Up:
             case ShortcutCatalog.quickKeys.Down:

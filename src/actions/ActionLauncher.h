@@ -73,6 +73,11 @@ public:
   // plus the target's viewedPath. Empty, with failed() emitted, when refused.
   Q_INVOKABLE QVariantMap trashCaptured(const QVariantMap& target);
   Q_INVOKABLE QVariantMap renameCapturedFile(const QVariantMap& target, const QString& baseName);
+  // Moves (or copies) a captured file into |folder| under its own name, or
+  // the first free "name (2).ext" when that is taken. Never overwrites.
+  // {ok, path, fileName, mediaPath, renamed} or {ok: false, error}.
+  Q_INVOKABLE QVariantMap moveCapturedFile(const QVariantMap& target, const QString& folder);
+  Q_INVOKABLE QVariantMap copyCapturedFile(const QVariantMap& target, const QString& folder);
   Q_INVOKABLE void moveDuplicateCopiesToTrash(const QVariantMap& keep, const QVariantList& copies);
   // Keep one picture and move the other captured targets to Trash, on a
   // worker. Skips any that changed, and the kept file reached by another path.
@@ -179,6 +184,11 @@ private:
                    std::function<void(int, const QStringList&, const QVariantList&)> done);
   QVariantMap trashFile(const QString& path);
   QVariantMap renameFile(const QString& path, const QString& baseName, const QVariantMap& target);
+  QVariantMap transferCapturedFile(const QVariantMap& target, const QString& folder, bool copy);
+  // The one place a file changes its path, for rename and move alike, so
+  // whatever travels with a file travels the same way for both. Refuses to
+  // replace an existing |to|.
+  [[nodiscard]] static bool relocateEntry(const QString& from, const QString& to);
   [[nodiscard]] QString locate(const QString& program, const QString& packageHint);
   bool copyText(const QString& text, bool sensitive, const QString& mimeType = {});
   bool startSubmission(const QString& program, const QStringList& arguments,

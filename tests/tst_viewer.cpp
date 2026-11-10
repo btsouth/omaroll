@@ -68,6 +68,7 @@
 #include <QAbstractVideoBuffer>
 #include <QVideoFrame>
 #include <QVideoSink>
+#include <QSet>
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
@@ -6316,6 +6317,496 @@ private slots:
     QTRY_COMPARE(prop("playbackError").toString(),
                  QStringLiteral("This picture needs about 23 MiB; the limit on this computer is "
                                 "10 MiB"));
+  }
+
+  // In a folder too long for the strip, the open file's tile is in view and
+  // in the middle however it was reached: opened, stepped to, after the strip
+  // comes back, and after the window is resized.
+  void theFilmstripCentresTheOpenFile() {
+    const QString folder = m_scratch.filePath(QStringLiteral("filmstrip-long"));
+    QVERIFY(QDir().mkpath(folder));
+    QStringList files;
+    for (int i = 1; i <= 20; ++i) {
+      files.append(folder + QStringLiteral("/%1.png").arg(i, 2, 10, QLatin1Char('0')));
+      QImage image(32, 24, QImage::Format_RGB32);
+      image.fill(QColor::fromHsv(i * 17, 200, 200));
+      QVERIFY(image.save(files.last()));
+    }
+    m_settings->setViewerFilmstrip(true);
+    m_window->setProperty("chromePinned", true);
+    const auto restore = qScopeGuard([this] {
+      m_window->setProperty("chromePinned", false);
+      m_settings->setViewerFilmstrip(false);
+    });
+    QQuickItem* list = nullptr;
+    const auto centred = [&](int index) {
+      if (!list) list = qobject_cast<QQuickItem*>(m_window->findChild<QObject*>(QStringLiteral("viewerFilmstripList")));
+      const QString name = QStringLiteral("viewerFilmstripTile") + QString::number(index);
+      QQuickItem* tile = list ? find(list, [&name](QQuickItem* candidate) { return candidate->objectName() == name; })
+                              : nullptr;
+      if (!tile || !tile->isVisible()) return false;
+      const qreal middle = list->mapFromItem(tile, QPointF(tile->width() / 2, 0)).x();
+      // At either end the strip stops at its bounds instead.
+      const qreal maximum = list->property("contentWidth").toReal() - list->width();
+      const qreal contentX = list->property("contentX").toReal();
+      if (contentX <= 0.5 || contentX >= maximum - 0.5) {
+        return middle - tile->width() / 2 >= -0.5 && middle + tile->width() / 2 <= list->width() + 0.5;
+      }
+      return qAbs(middle - list->width() / 2) <= 1;
+    };
+
+    // Opened at the 14th of 20, as from the file manager.
+    open({files.at(13)});
+    QTRY_COMPARE(m_session->count(), 20);
+    QTRY_VERIFY(item(QStringLiteral("viewerFilmstrip"))->isVisible());
+    QTRY_VERIFY(centred(13));
+    open({files.at(0)});
+    QTRY_COMPARE(m_session->index(), 0);
+    QTRY_VERIFY(centred(0));
+    QVERIFY(m_session->jump(14));
+    QTRY_VERIFY(centred(14));
+    QVERIFY(m_session->jump(11));
+    QTRY_VERIFY(centred(11));
+    QVERIFY(m_session->jump(6));
+    QTRY_VERIFY(centred(6));
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTRY_COMPARE(m_session->index(), 7);
+    QTRY_VERIFY(centred(7));
+    QVERIFY(m_session->jump(19));
+    QTRY_VERIFY(centred(19));
+    QVERIFY(m_session->jump(12));
+    QTRY_VERIFY(centred(12));
+
+    // Put away and brought back, or the window made narrower.
+    QTest::keyClick(m_window, Qt::Key_B);
+    QTRY_VERIFY(!item(QStringLiteral("viewerFilmstrip"))->isVisible());
+    QVERIFY(m_session->jump(4));
+    QTest::keyClick(m_window, Qt::Key_B);
+    QTRY_VERIFY(item(QStringLiteral("viewerFilmstrip"))->isVisible());
+    QTRY_VERIFY(centred(4));
+    QVERIFY(m_session->jump(10));
+    QTRY_VERIFY(centred(10));
+    m_window->resize(700, 600);
+    QTRY_COMPARE(m_window->width(), 700);
+    QTRY_VERIFY(centred(10));
+  }
+
+  // The Sort choice reorders the folder, is remembered, and leaves the open
+  // file open; stepping then follows the new order.
+  void sortReordersTheFolderAndKeepsTheCurrentFile() {
+    const QString folder = m_scratch.filePath(QStringLiteral("sorted"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString a = folder + QStringLiteral("/a.png");
+    const QString b = folder + QStringLiteral("/b.png");
+    const QString c = folder + QStringLiteral("/c.png");
+    // Sizes c < a < b; modified b < c < a.
+    QImage small(8, 8, QImage::Format_RGB32);
+    small.fill(Qt::red);
+    QImage noisy(64, 64, QImage::Format_RGB32);
+    for (int y = 0; y < 64; ++y)
+      for (int x = 0; x < 64; ++x) noisy.setPixel(x, y, qRgb((x * 37 + y * 11) % 256, (x * y) % 256, (x + y * 53) % 256));
+    QImage middle(16, 16, QImage::Format_RGB32);
+    for (int y = 0; y < 16; ++y)
+      for (int x = 0; x < 16; ++x) middle.setPixel(x, y, qRgb(x * 16, y * 16, (x * y) % 256));
+    QVERIFY(middle.save(a));
+    QVERIFY(noisy.save(b));
+    QVERIFY(small.save(c));
+    QVERIFY(QFileInfo(c).size() < QFileInfo(a).size() && QFileInfo(a).size() < QFileInfo(b).size());
+    const QDateTime base(QDate(2024, 3, 1), QTime(12, 0));
+    for (const auto& [path, days] : {std::pair{a, 3}, std::pair{b, 1}, std::pair{c, 2}}) {
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::ReadWrite));
+      QVERIFY(file.setFileTime(base.addDays(days), QFileDevice::FileModificationTime));
+    }
+    const auto restore = qScopeGuard([this] {
+      m_settings->setViewerSort(QStringLiteral("name"));
+      m_settings->setViewerSortReversed(false);
+    });
+    QCOMPARE(m_settings->viewerSort(), QStringLiteral("name"));
+
+    open({a});
+    QTRY_COMPARE(m_session->sequence(), (QStringList{a, b, c}));
+    QVERIFY(m_session->jump(1));
+    QCOMPARE(m_session->path(), b);
+
+    // The rows are under View > Sort, the one in use ticked.
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("viewerMenu"));
+    QVariantMap sortRows;
+    for (const QVariant& entry : menu->property("entries").toList()) {
+      const QVariantMap row = entry.toMap();
+      if (row.value(QStringLiteral("group")) == QStringLiteral("sort")) sortRows.insert(row.value(QStringLiteral("id")).toString(), row);
+    }
+    for (const QString& id : {QStringLiteral("sort-name"), QStringLiteral("sort-taken"), QStringLiteral("sort-modified"),
+                              QStringLiteral("sort-size"), QStringLiteral("sort-reverse")})
+      QVERIFY2(sortRows.contains(id), qPrintable(id));
+    QVERIFY(sortRows.value(QStringLiteral("sort-name")).toMap().value(QStringLiteral("checked")).toBool());
+    QVERIFY(!sortRows.value(QStringLiteral("sort-size")).toMap().value(QStringLiteral("checked")).toBool());
+    bool inView = false;
+    for (const QVariant& row : m_window->property("menuGroups").value<QJSValue>().toVariant().toMap().value(QStringLiteral("view")).toList())
+      inView = inView || row.toMap().value(QStringLiteral("submenu")) == QStringLiteral("sort");
+    QVERIFY(inView);
+
+    QVERIFY(QMetaObject::invokeMethod(m_window, "perform", Q_ARG(QVariant, QStringLiteral("sort-size"))));
+    QCOMPARE(m_settings->viewerSort(), QStringLiteral("size"));
+    QTRY_COMPARE(m_session->sequence(), (QStringList{c, a, b}));
+    QCOMPARE(m_session->path(), b);
+    QCOMPARE(m_session->index(), 2);
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTRY_COMPARE(m_session->path(), c);
+
+    QVERIFY(QMetaObject::invokeMethod(m_window, "perform", Q_ARG(QVariant, QStringLiteral("sort-modified"))));
+    QTRY_COMPARE(m_session->sequence(), (QStringList{b, c, a}));
+    QCOMPARE(m_session->path(), c);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "perform", Q_ARG(QVariant, QStringLiteral("sort-reverse"))));
+    QVERIFY(m_settings->viewerSortReversed());
+    QTRY_COMPARE(m_session->sequence(), (QStringList{a, c, b}));
+    QCOMPARE(m_session->path(), c);
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTRY_COMPARE(m_session->path(), b);
+
+    // Remembered: a new settings object reads it back.
+    {
+      AppSettings again;
+      QCOMPARE(again.viewerSort(), QStringLiteral("modified"));
+      QVERIFY(again.viewerSortReversed());
+    }
+    // Opened again later, the folder comes up in that order.
+    m_window->close();
+    open({c});
+    QTRY_COMPARE(m_session->sequence(), (QStringList{a, c, b}));
+    QCOMPARE(m_session->path(), c);
+
+    // An explicit selection keeps the order it was opened in, and has no Sort.
+    open({b, a});
+    QTRY_COMPARE(m_session->sequence(), (QStringList{b, a}));
+    bool offered = false;
+    for (const QVariant& entry : menu->property("entries").toList())
+      offered = offered || entry.toMap().value(QStringLiteral("id")) == QStringLiteral("sort-size");
+    QVERIFY(!offered);
+  }
+
+  // N renames in place with the library's sheet: the file stays on screen
+  // under its new name and keeps its favourite. A taken name is refused.
+  void renameKeepsTheFileOpenAndRefusesATakenName() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString first = dir.filePath(QStringLiteral("a.jpg"));
+    const QString second = dir.filePath(QStringLiteral("b.jpg"));
+    const QString third = dir.filePath(QStringLiteral("c.jpg"));
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), first));
+    QVERIFY(QFile::copy(media(QStringLiteral("shot 2.jpg")), second));
+    QVERIFY(QFile::copy(media(QStringLiteral("shot 10.jpg")), third));
+    const QByteArray secondBytes = digest(second);
+    open({first});
+    QTRY_COMPARE(m_session->count(), 3);
+    QVERIFY(m_session->jump(1));
+    m_settings->setFavorite({second}, true);
+    const QString renamed = dir.filePath(QStringLiteral("z beach.jpg"));
+    const auto restore = qScopeGuard([&] { m_settings->setFavorite({second, renamed}, false); });
+
+    QQuickItem* sheet = item(QStringLiteral("viewerRenameSheet"));
+    QTest::keyClick(m_window, Qt::Key_N);
+    QTRY_VERIFY(sheet->isVisible());
+    QQuickItem* input = item(QStringLiteral("renameInput"));
+    QTRY_VERIFY(input->hasActiveFocus());
+    QCOMPARE(input->property("text").toString(), QStringLiteral("b"));
+    // The viewer's keys wait while the sheet is up.
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QCOMPARE(m_session->path(), second);
+
+    // A taken name is refused, and nothing is overwritten.
+    input->setProperty("text", QStringLiteral("c"));
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!sheet->property("errorMessage").toString().isEmpty());
+    QVERIFY(sheet->isVisible());
+    QVERIFY(QFile::exists(second));
+    QVERIFY(digest(third) != secondBytes);
+
+    input->setProperty("text", QStringLiteral("z beach"));
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!sheet->isVisible());
+    QVERIFY(!QFile::exists(second));
+    QCOMPARE(digest(renamed), secondBytes);
+    QTRY_COMPARE(m_session->path(), renamed);
+    QCOMPARE(prop("status").toString(), QStringLiteral("Renamed to z beach.jpg"));
+    QVERIFY(m_settings->isFavorite(renamed));
+    QVERIFY(!m_settings->isFavorite(second));
+    // In name order it is last now, and still the file on screen.
+    QTRY_COMPARE(m_session->sequence(), (QStringList{first, third, renamed}));
+    QCOMPARE(m_session->path(), renamed);
+    QTRY_VERIFY(item(QStringLiteral("viewerKeys"))->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QTRY_COMPARE(m_session->path(), third);
+
+    // The menu offers it, with its key, beside Move and Copy.
+    QVERIFY(menuIds(m_window->findChild<QObject*>(QStringLiteral("viewerMenu"))).contains(QStringLiteral("rename")));
+  }
+
+  // Move takes the file out of this folder and shows the next, as Trash
+  // does, and its favourite goes with it. Copy leaves it. A name already in
+  // the folder is never replaced: the file arrives as "name (2)".
+  void moveAndCopyToAFolderNeverOverwrite() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(QStringLiteral("from"));
+    const QString destination = dir.filePath(QStringLiteral("to"));
+    QVERIFY(QDir().mkpath(source));
+    QVERIFY(QDir().mkpath(destination));
+    const QString first = source + QStringLiteral("/a.jpg");
+    const QString second = source + QStringLiteral("/b.jpg");
+    const QString third = source + QStringLiteral("/c.jpg");
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), first));
+    QVERIFY(QFile::copy(media(QStringLiteral("shot 2.jpg")), second));
+    QVERIFY(QFile::copy(media(QStringLiteral("shot 10.jpg")), third));
+    // Already there under the same name, with other contents.
+    QImage other(10, 10, QImage::Format_RGB32);
+    other.fill(Qt::green);
+    QVERIFY(other.save(destination + QStringLiteral("/b.jpg"), "JPEG"));
+    const QByteArray occupant = digest(destination + QStringLiteral("/b.jpg"));
+    const QByteArray moving = digest(second);
+    open({first});
+    QTRY_COMPARE(m_session->count(), 3);
+    QVERIFY(m_session->jump(1));
+    m_settings->setFavorite({second}, true);
+    const QString arrived = destination + QStringLiteral("/b (2).jpg");
+    const auto restore = qScopeGuard([&] { m_settings->setFavorite({second, arrived}, false); });
+
+    const auto target = [&](const QString& path) {
+      QVariantMap captured = m_actions->captureFileAction(path, path);
+      captured.insert(QStringLiteral("viewedPath"), path);
+      return captured;
+    };
+    QVariant moved;
+    QVERIFY(QMetaObject::invokeMethod(m_window, "transferTo", Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, target(second)),
+                                      Q_ARG(QVariant, QUrl::fromLocalFile(destination).toString()),
+                                      Q_ARG(QVariant, false)));
+    QVERIFY(moved.toBool());
+    QVERIFY(!QFile::exists(second));
+    QCOMPARE(digest(arrived), moving);
+    QCOMPARE(digest(destination + QStringLiteral("/b.jpg")), occupant);
+    QCOMPARE(prop("status").toString(), QStringLiteral("Moved to to as b (2).jpg"));
+    QTRY_COMPARE(m_session->path(), third);
+    QCOMPARE(m_session->count(), 2);
+    QVERIFY(m_settings->isFavorite(arrived));
+    QVERIFY(!m_settings->isFavorite(second));
+
+    // Copy: the file stays, in the window and the folder.
+    QVariant copied;
+    QVERIFY(QMetaObject::invokeMethod(m_window, "transferTo", Q_RETURN_ARG(QVariant, copied),
+                                      Q_ARG(QVariant, target(third)), Q_ARG(QVariant, destination),
+                                      Q_ARG(QVariant, true)));
+    QVERIFY(copied.toBool());
+    QVERIFY(QFile::exists(third));
+    QCOMPARE(digest(destination + QStringLiteral("/c.jpg")), digest(third));
+    QCOMPARE(prop("status").toString(), QStringLiteral("Copied to to"));
+    QCOMPARE(m_session->path(), third);
+    // Again into the same folder, and into its own: a second name each time.
+    QVERIFY(QMetaObject::invokeMethod(m_window, "transferTo", Q_RETURN_ARG(QVariant, copied),
+                                      Q_ARG(QVariant, target(third)), Q_ARG(QVariant, destination),
+                                      Q_ARG(QVariant, true)));
+    QVERIFY(QFile::exists(destination + QStringLiteral("/c (2).jpg")));
+    QVERIFY(QMetaObject::invokeMethod(m_window, "transferTo", Q_RETURN_ARG(QVariant, copied),
+                                      Q_ARG(QVariant, target(third)), Q_ARG(QVariant, source),
+                                      Q_ARG(QVariant, true)));
+    QVERIFY(QFile::exists(source + QStringLiteral("/c (2).jpg")));
+    QCOMPARE(digest(source + QStringLiteral("/c (2).jpg")), digest(third));
+
+    // A move into the folder it is already in, or into one that is not
+    // there, is refused and changes nothing.
+    QVERIFY(QMetaObject::invokeMethod(m_window, "transferTo", Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, target(third)), Q_ARG(QVariant, source),
+                                      Q_ARG(QVariant, false)));
+    QVERIFY(!moved.toBool());
+    QCOMPARE(prop("status").toString(), QStringLiteral("The file is already in that folder"));
+    QVERIFY(QMetaObject::invokeMethod(m_window, "transferTo", Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, target(third)), Q_ARG(QVariant, dir.filePath(QStringLiteral("gone"))),
+                                      Q_ARG(QVariant, false)));
+    QVERIFY(!moved.toBool());
+    QVERIFY(QFile::exists(third));
+    // A file changed after it was chosen is not moved.
+    const QVariantMap stale = target(third);
+    {
+      QFile file(third);
+      QVERIFY(file.open(QIODevice::Append));
+      file.write("changed");
+    }
+    QVERIFY(QMetaObject::invokeMethod(m_window, "transferTo", Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, stale), Q_ARG(QVariant, destination),
+                                      Q_ARG(QVariant, false)));
+    QVERIFY(!moved.toBool());
+    QVERIFY(QFile::exists(third));
+    QVERIFY(!QFile::exists(destination + QStringLiteral("/c (3).jpg")));
+
+    // A link is not moved: it could stop pointing at its file.
+    const QString link = source + QStringLiteral("/link.jpg");
+    QVERIFY(QFile::link(third, link));
+    QVariantMap linked = m_actions->captureFileAction(link, third);
+    QVERIFY(!linked.isEmpty());
+    linked.insert(QStringLiteral("viewedPath"), third);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "transferTo", Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, linked), Q_ARG(QVariant, destination),
+                                      Q_ARG(QVariant, false)));
+    QVERIFY(!moved.toBool());
+    QVERIFY(QFileInfo(link).isSymLink());
+    QVERIFY(!QFileInfo::exists(destination + QStringLiteral("/link.jpg")));
+
+    // The rows are in Edit.
+    QStringList edit;
+    for (const QVariant& row : m_window->property("menuGroups").value<QJSValue>().toVariant().toMap().value(QStringLiteral("edit")).toList())
+      edit.append(row.toMap().value(QStringLiteral("id")).toString());
+    QVERIFY(edit.contains(QStringLiteral("rename")));
+    QVERIFY(edit.contains(QStringLiteral("move-to-folder")));
+    QVERIFY(edit.contains(QStringLiteral("copy-to-folder")));
+  }
+
+  // With the switch on, Delete moves to Trash at once, and Undo still puts
+  // the file back.
+  void trashWithoutAskingStillUndoes() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString first = dir.filePath(QStringLiteral("a.jpg"));
+    const QString second = dir.filePath(QStringLiteral("b.jpg"));
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), first));
+    QVERIFY(QFile::copy(media(QStringLiteral("shot 2.jpg")), second));
+    QVERIFY(!m_settings->trashWithoutAsking());
+    m_settings->setTrashWithoutAsking(true);
+    const auto restore = qScopeGuard([this] { m_settings->setTrashWithoutAsking(false); });
+    open({first});
+    QTRY_COMPARE(m_session->count(), 2);
+
+    QTest::keyClick(m_window, Qt::Key_Delete);
+    QVERIFY(!item(QStringLiteral("viewerConfirm"))->isVisible());
+    QTRY_VERIFY(!QFile::exists(first));
+    QTRY_COMPARE(m_session->path(), second);
+    QCOMPARE(prop("status").toString(), QStringLiteral("Moved to Trash"));
+    QTRY_VERIFY(item(QStringLiteral("viewerUndoButton"))->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Z, Qt::ControlModifier);
+    QTRY_VERIFY(QFile::exists(first));
+    QTRY_COMPARE(m_session->path(), first);
+    QTRY_COMPARE(m_session->count(), 2);
+
+    // Off again, it asks.
+    m_settings->setTrashWithoutAsking(false);
+    QTest::keyClick(m_window, Qt::Key_Delete);
+    QTRY_VERIFY(item(QStringLiteral("viewerConfirm"))->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!item(QStringLiteral("viewerConfirm"))->isVisible());
+    QVERIFY(QFile::exists(first));
+  }
+
+  // Paused, , and . step an animation's frames, wrapping at the ends.
+  void commaAndPeriodStepAnAnimation_data() {
+    QTest::addColumn<QString>("fixture");
+    QTest::newRow("gif") << QStringLiteral("animated.gif");
+    QTest::newRow("webp") << QStringLiteral("animated.webp");
+  }
+
+  void commaAndPeriodStepAnAnimation() {
+    QFETCH(QString, fixture);
+    const QString source = QFINDTESTDATA(qPrintable("fixtures/viewer/" + fixture));
+    QVERIFY(!source.isEmpty());
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(fixture);
+    QVERIFY(QFile::copy(source, path));
+    open({path});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QVERIFY(m_session->isAnimated());
+    QQuickItem* animation = item(QStringLiteral("viewerAnimation"));
+    QTRY_VERIFY(animation->property("playing").toBool());
+    const int count = animation->property("frameCount").toInt();
+    QVERIFY(count > 2);
+
+    QTRY_VERIFY(!animation->property("paused").toBool());
+    QTest::keyClick(m_window, Qt::Key_Period);
+    QVERIFY(!prop("animationPlaying").toBool());
+    QTRY_VERIFY(animation->property("paused").toBool());
+    const int at = animation->property("currentFrame").toInt();
+    QTest::keyClick(m_window, Qt::Key_Period);
+    QTRY_COMPARE(animation->property("currentFrame").toInt(), (at + 1) % count);
+    QCOMPARE(prop("status").toString(), QStringLiteral("Frame %1 of %2").arg((at + 1) % count + 1).arg(count));
+    QTest::keyClick(m_window, Qt::Key_Comma);
+    QTest::keyClick(m_window, Qt::Key_Comma);
+    QTRY_COMPARE(animation->property("currentFrame").toInt(), (at - 1 + count) % count);
+    // Stepping back from the first frame wraps to the last.
+    animation->setProperty("currentFrame", 0);
+    QTRY_COMPARE(animation->property("currentFrame").toInt(), 0);
+    QTest::keyClick(m_window, Qt::Key_Comma);
+    QTRY_COMPARE(animation->property("currentFrame").toInt(), count - 1);
+    // It stays on that frame.
+    QTest::qWait(300);
+    QCOMPARE(animation->property("currentFrame").toInt(), count - 1);
+    QVERIFY(animation->property("paused").toBool());
+    // Space plays it again.
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTRY_VERIFY(!animation->property("paused").toBool());
+    QTRY_VERIFY(animation->property("currentFrame").toInt() != count - 1);
+    m_window->close();
+    m_session->clear();
+  }
+
+  // A picture with transparency sits on a checkerboard in the theme's
+  // colours, which Settings can turn off.
+  void transparentPicturesShowACheckerboard() {
+    const QString folder = m_scratch.filePath(QStringLiteral("checkerboard"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString path = folder + QStringLiteral("/clear.png");
+    QImage picture(400, 300, QImage::Format_ARGB32);
+    picture.fill(Qt::transparent);
+    QVERIFY(picture.save(path));
+    QVERIFY(m_settings->transparencyCheckerboard());
+    open({path});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QQuickItem* board = item(QStringLiteral("viewerCheckerboard"));
+    QTRY_VERIFY(board->isVisible());
+    QTRY_COMPARE(board->property("status").toInt(), 1);
+    QCOMPARE(board->property("fillMode").toInt(), 3); // Image.Tile
+    QCOMPARE(board->property("base").value<QColor>(), m_theme->surfaceBackground());
+    // Two colours, eight logical pixels a square, across the picture.
+    m_window->setProperty("chromeTimeout", 50);
+    QTest::mouseMove(m_window, QPoint(m_window->width() / 2, m_window->height() * 2 / 3));
+    QTRY_VERIFY(!prop("chromeShown").toBool());
+    const QImage frame = m_window->grabWindow();
+    const qreal ratio = frame.devicePixelRatio();
+    const QPointF centre = board->mapToScene(QPointF(board->width() / 2, board->height() / 2));
+    const auto at = [&](qreal dx, qreal dy) {
+      return frame.pixelColor(QPoint(int((centre.x() + dx) * ratio), int((centre.y() + dy) * ratio)));
+    };
+    QSet<QRgb> colours;
+    for (int i = 0; i < 4; ++i) colours.insert(at(i * 8 + 4, 4).rgb());
+    QCOMPARE(colours.size(), 2);
+
+    m_settings->setTransparencyCheckerboard(false);
+    const auto restore = qScopeGuard([this] { m_settings->setTransparencyCheckerboard(true); });
+    QTRY_VERIFY(!board->isVisible());
+  }
+
+  // Up to twice its real size a picture is smoothed; past that, fitted or
+  // zoomed, its pixels are drawn as squares.
+  void enlargedPicturesStopSmoothingPastTwoTimes() {
+    const QString folder = m_scratch.filePath(QStringLiteral("pixels"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString path = folder + QStringLiteral("/tiny.png");
+    QImage picture(160, 100, QImage::Format_RGB32);
+    picture.fill(Qt::white);
+    for (int x = 0; x < 160; x += 2) picture.setPixelColor(x, 50, Qt::black);
+    QVERIFY(picture.save(path));
+    QVERIFY(m_settings->enlargeSmallPictures());
+    open({path});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QCOMPARE(prop("viewScale").toReal(), 0.0);
+    QVERIFY(prop("zoomPercent").toInt() > 200);
+    QVERIFY(prop("pixelated").toBool());
+    QQuickItem* image = item(QStringLiteral("viewerImage"));
+    QVERIFY(!image->smooth());
+    // Actual size is smoothed (or exact) again.
+    QTest::keyClick(m_window, Qt::Key_1);
+    QTRY_VERIFY(prop("zoomPercent").toInt() <= 150);
+    QTRY_VERIFY(!prop("pixelated").toBool());
+    QTRY_VERIFY(image->smooth());
+    QTest::keyClick(m_window, Qt::Key_0);
+    QTRY_VERIFY(!image->smooth());
   }
 
   void theWindowRaisedNoQmlWarnings() {

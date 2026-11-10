@@ -4,6 +4,21 @@
 
 ### Added
 
+- Sort in the viewer's View menu: name, date taken, date modified or size, and
+  Reverse order, remembered across launches. Stepping and the filmstrip follow
+  it and the open file stays open. A selection of files keeps its own order.
+- Rename (`N`), Move to folder and Copy to folder in the viewer. A file never
+  replaces one already in the folder; it arrives as "name (2)". After a move
+  the next file is shown, and favourites, ratings, albums and tags go with it.
+- `,` and `.` step a paused GIF or animated WebP frame by frame.
+- The viewer's details show where a photo or video was taken when the file
+  says, with Copy location for the decimal coordinates. Nothing is looked up
+  online.
+- A checkerboard in the theme's colours behind transparent pictures in the
+  viewer, as in the library preview, with a setting for both.
+- **Move to Trash without asking** in Settings, off by default. Delete then
+  moves to Trash at once in the library and the viewer, and Undo still works.
+
 - The empty library offers Omaroll's Hyprland window rules once, with Install
   and Not now, and `--set-default` names the command until they are installed
   or turned down. Without them a stock Omarchy tiles and dims the viewer.
@@ -208,6 +223,10 @@
   them, since it now opens in the backups folder.
 - `--set-default` and `--unset-default` say when `mimeapps.list` is not
   valid UTF-8 or starts with a byte-order mark, and leave it unchanged.
+- The viewer's filmstrip keeps the open file in view and in the middle. In a
+  folder of more than about ten files it used to show the wrong stretch of it.
+- Pictures enlarged past 200% are drawn with sharp pixels even when fitted, so
+  a small picture no longer looks blurred.
 
 - A picture whose contents are another format than its name (a 24-byte TIM
   file named `.png`, `.jpg` or `.tga`) no longer crashes Omaroll at every
