@@ -51,6 +51,9 @@ Rectangle {
     property bool viewControls: true
     // Flip gives way before zoom does; the keys and the menu still flip.
     property bool flipControls: true
+    // Compare uses only the zoom group: it has nothing to step through or turn.
+    property bool stepControls: true
+    property bool transformControls: true
     property bool flippedHorizontally: false
     property bool flippedVertically: false
     // Turned or flipped: a copy of what is on screen can be saved.
@@ -157,15 +160,16 @@ Rectangle {
             text: root.zoomText
             font.family: Theme.fontFamily
             font.pixelSize: 12
-            color: Theme.mutedText
+            color: Osd.mutedText
             Accessible.role: Accessible.StaticText
             Accessible.name: "Zoom " + root.zoomText
         }
-        Divider { visible: !root.compact }
+        Divider { visible: !root.compact && (root.stepControls || root.transformControls) }
 
         IconButton {
             objectName: root.namePrefix + "ToolbarPrevious"
             osd: true
+            visible: root.stepControls
             enabled: root.canStep
             icon: "chevron-left"
             toolTip: "Previous"
@@ -175,6 +179,7 @@ Rectangle {
         IconButton {
             objectName: root.namePrefix + "SlideshowButton"
             osd: true
+            visible: root.stepControls
             enabled: root.canStep
             icon: root.slideshowRunning ? "pause" : "play"
             active: root.slideshowRunning
@@ -185,17 +190,19 @@ Rectangle {
         IconButton {
             objectName: root.namePrefix + "ToolbarNext"
             osd: true
+            visible: root.stepControls
             enabled: root.canStep
             icon: "chevron-right"
             toolTip: "Next"
             shortcut: root.hint("next")
             onClicked: root.next()
         }
-        Divider {}
+        Divider { visible: root.stepControls && root.transformControls }
 
         IconButton {
             objectName: root.namePrefix + "RotateLeft"
             osd: true
+            visible: root.transformControls
             enabled: root.viewControls
             icon: "rotate-left"
             toolTip: "Rotate left"
@@ -205,6 +212,7 @@ Rectangle {
         IconButton {
             objectName: root.namePrefix + "RotateRight"
             osd: true
+            visible: root.transformControls
             enabled: root.viewControls
             icon: "rotate-right"
             toolTip: "Rotate right"
@@ -215,7 +223,7 @@ Rectangle {
             objectName: root.namePrefix + "FlipHorizontal"
             osd: true
             enabled: root.viewControls
-            visible: root.flipControls
+            visible: root.flipControls && root.transformControls
             icon: "flip-horizontal"
             checkable: true
             active: root.flippedHorizontally
@@ -227,7 +235,7 @@ Rectangle {
             objectName: root.namePrefix + "FlipVertical"
             osd: true
             enabled: root.viewControls
-            visible: root.flipControls
+            visible: root.flipControls && root.transformControls
             icon: "flip-vertical"
             checkable: true
             active: root.flippedVertically
@@ -238,7 +246,8 @@ Rectangle {
         Item {
             id: saveSlot
             objectName: root.namePrefix + "SaveCopySlot"
-            visible: root.canSaveCopy || root.saveSlotReserved || root.holdSaveSlot
+            visible: root.transformControls
+                     && (root.canSaveCopy || root.saveSlotReserved || root.holdSaveSlot)
             width: saveButton.implicitWidth
             height: saveButton.implicitHeight
 

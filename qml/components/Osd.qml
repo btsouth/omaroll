@@ -11,6 +11,9 @@ QtObject {
     // The panel behind controls, and the scrim at the top of the viewer.
     readonly property color panel: Qt.rgba(0.07, 0.075, 0.086, 0.84)
     readonly property color panelSolid: Qt.rgba(0.07, 0.075, 0.086, 0.96)
+    // The surround behind a picture or video in a light theme, a little darker
+    // than the panels so the toolbar still reads as a raised surface.
+    readonly property color backdrop: Qt.rgba(0.055, 0.058, 0.066, 1)
     readonly property color border: Qt.rgba(1, 1, 1, 0.14)
     readonly property color scrimTop: Qt.rgba(0, 0, 0, 0.74)
     readonly property color scrimMiddle: Qt.rgba(0, 0, 0, 0.42)

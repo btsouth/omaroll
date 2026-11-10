@@ -335,6 +335,9 @@ int main(int argc, char** argv) {
   shared->setContextProperty(u"DemoMode"_s, false);
   DecodeCrashNotice decodeCrash;
   shared->setContextProperty(u"DecodeCrash"_s, &decodeCrash);
+  // The viewer's editor, as main.cpp shares it; the gallery's own context
+  // overrides the name with the library's editor.
+  shared->setContextProperty(u"ImageEdit"_s, new ImageEditor(&engine));
   MimeDefaults mimeDefaults;
   shared->setContextProperty(u"MimeDefaults"_s, &mimeDefaults);
   MprisService mpris(&settings, QDBusConnection(QString()));

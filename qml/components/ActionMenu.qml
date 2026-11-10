@@ -85,7 +85,7 @@ Menu {
                     text: "Needs " + (entry.modelData.hint || "")
                     elide: Text.ElideRight
                     font.family: Theme.fontFamily
-                    font.pixelSize: 10
+                    font.pixelSize: 11
                     color: Theme.mutedText
                 }
                 Text {
@@ -97,7 +97,7 @@ Menu {
                     text: entry.separator ? ""
                           : (entry.modelData.shortcut || "")
                     font.family: Theme.fontFamily
-                    font.pixelSize: 10
+                    font.pixelSize: 11
                     color: Theme.mutedText
                 }
             }

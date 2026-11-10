@@ -94,7 +94,7 @@ Popup {
                 anchors.verticalCenter: parent.verticalCenter
                 text: row.modelData.detail
                 font.family: Theme.fontFamily
-                font.pixelSize: 10
+                font.pixelSize: 11
                 color: Theme.mutedText
             }
             HoverHandler { id: rowHover }

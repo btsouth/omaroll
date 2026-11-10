@@ -128,6 +128,29 @@
 
 ### Changed
 
+- Rounded themes round the thumbnails too: the picture and its caption fade
+  are clipped to the tile's corners instead of poking out past the ring.
+- Browse groups its choices under Views, Recent, Rated at least and Sources,
+  and Folders, Albums, Dates, Tags and Smart are one segmented control like the
+  kinds in the header.
+- Compare uses the same dark icon toolbar as the viewer and the preview.
+- No text is smaller than 11 px.
+- The viewer's details are dark over the picture in light themes, like the
+  toolbar, and show the file's folder once instead of the path and then the
+  folder again.
+- In light themes the viewer's surround is dark behind a picture or video,
+  matching its toolbar and scrims, instead of a pale letterbox. An empty or
+  failed stage keeps the theme's colours.
+- The preview's Previous and Next arrows are dark over the picture like the
+  viewer's, and screen readers hear "Previous" and "Next" instead of arrows.
+- The header's Folders toggle is framed like Help and Settings and fills while
+  the sidebar shows.
+- Library footer hints follow the selection: keys for the highlighted tile
+  without one, and favourite, Trash, clear and copy with one.
+- Unchecked tile checkboxes are an outline with a dark halo, so they read as
+  empty over light and dark pictures.
+- Help lists Shift+Home/End and Shift+Page Up/Down as two rows, so their keys
+  fit on one line.
 - `--unset-default` ends with how many other types keep their system default,
   instead of saying they "still open with Omaroll".
 - The homepage is published with each release instead of from main, so its

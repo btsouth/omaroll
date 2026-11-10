@@ -757,9 +757,14 @@ private slots:
     QTRY_VERIFY(toolbar->isVisible());
     QCOMPARE(toolbar->property("color").value<QColor>(), panel);
     QVERIFY(item(QStringLiteral("viewerZoomIn"))->property("osd").toBool());
-    // A light theme's pale surround gets a hairline round the picture.
+    // Behind the picture the surround is dark in both palettes, so a light
+    // theme has no pale letterbox and needs no hairline round the picture.
     QTRY_VERIFY(prop("imageReady").toBool());
-    QCOMPARE(item(QStringLiteral("viewerPictureEdge"))->isVisible(), luminance(theme.surfaceBackground()) > 0.4);
+    QQuickItem* backdrop = item(QStringLiteral("viewerBackdrop"));
+    const QColor tint = backdrop->property("tint").value<QColor>();
+    QVERIFY2(luminance(tint) < 0.05, qPrintable(tint.name()));
+    if (palette == QStringLiteral("dark")) QCOMPARE(tint, theme.surfaceBackground());
+    QVERIFY(!item(QStringLiteral("viewerPictureEdge"))->isVisible());
   }
 
   void shortcutHelpFitsALaptopViewer_data() {
@@ -861,6 +866,39 @@ private slots:
     QQuickItem* folder = item(QStringLiteral("viewerInfoFolder"));
     QTRY_VERIFY(folder->mapToScene(QPointF(0, folder->height())).y() <= m_window->height() - 16);
     QVERIFY(folder->mapToScene(QPointF()).y() >= panel->y() + 16);
+    // The location shows once: the folder line, not a path and then the
+    // folder again.
+    const QString where = m_session->folder();
+    QVERIFY(!where.isEmpty());
+    QCOMPARE(folder->property("text").toString(), QStringLiteral("In ") + where);
+    int mentions = 0;
+    const auto visit = [&](auto&& self, QQuickItem* parent) -> void {
+      for (QQuickItem* child : parent->childItems()) {
+        if (child->isVisible() && child->property("text").toString().contains(where)) ++mentions;
+        self(self, child);
+      }
+    };
+    visit(visit, panel);
+    QCOMPARE(mentions, 1);
+    // The line is a button named for what it does, and the keyboard reaches it.
+    QAccessibleInterface* folderButton = QAccessible::queryAccessibleInterface(folder);
+    QVERIFY(folderButton);
+    QCOMPARE(folderButton->role(), QAccessible::Button);
+    QCOMPARE(folderButton->text(QAccessible::Name), QStringLiteral("Open folder ") + where);
+    QVERIFY(folder->activeFocusOnTab());
+    folder->forceActiveFocus(Qt::TabFocusReason);
+    QTRY_VERIFY(folder->hasActiveFocus());
+    QVERIFY(item(QStringLiteral("viewerInfoFolderFocus"))->isVisible());
+    // Dark over the picture like the toolbar, with light text, in this row's
+    // palette. The light row checks that the panel does not follow the
+    // theme's pale background.
+    QCOMPARE(theme.mode(), palette);
+    const QColor panelColour = panel->property("color").value<QColor>();
+    QVERIFY2(panelColour.lightnessF() < 0.2, qPrintable(panelColour.name()));
+    const QColor folderColour = folder->property("color").value<QColor>();
+    QVERIFY2(folderColour.lightnessF() > 0.6, qPrintable(folderColour.name()));
+    if (palette == QStringLiteral("light"))
+      QVERIFY(theme.background().lightnessF() > 0.6);
   }
 
   void picturesReloadAfterSavesAndKeepTheirViewWhenSiblingsChange() {

@@ -654,6 +654,22 @@ FocusScope {
         }
     }
 
+    // One rounded mask the size of a tile's picture, shared by every
+    // tile in a rounded theme instead of one offscreen copy per tile.
+    Rectangle {
+        id: tileMask
+        objectName: "captureTileMask"
+        visible: false
+        // A card is inset by half the spacing, and its picture by the
+        // frame's 1 px border.
+        width: Math.max(1, grid.cellWidth - 2 * Math.round(root.cellSpacing / 2) - 2)
+        height: Math.max(1, grid.cellHeight - 2 * Math.round(root.cellSpacing / 2) - 2)
+        radius: Math.max(0, Theme.cornerRadius - 1)
+        layer.enabled: Theme.cornerRadius > 0 && GraphicsInfo.api !== GraphicsInfo.Software
+                       && GraphicsInfo.api !== GraphicsInfo.Unknown
+        layer.smooth: true
+    }
+
     GridView {
         id: grid
         objectName: "flatGrid"
@@ -757,6 +773,7 @@ FocusScope {
                 id: card
                 anchors.fill: parent
                 anchors.margins: Math.round(root.cellSpacing / 2)
+                sharedMask: tileMask
 
                 path: root.sectioned ? "" : cell.path
                 fileName: cell.fileName
@@ -856,6 +873,7 @@ FocusScope {
         cellWidth: root.cellWidth
         cellHeight: grid.cellHeight
         cellSpacing: root.cellSpacing
+        tileMask: tileMask
         compact: root.compactTiles
         onVisibleChanged: Qt.callLater(root.updateDay)
         onStickyLabelChanged: root.updateDay()

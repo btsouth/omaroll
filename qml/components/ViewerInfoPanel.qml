@@ -3,7 +3,8 @@ import QtQuick.Controls.Basic
 
 // The viewer's details, on request: what the file is, when it was made, how
 // it was rated, and what the camera or encoder recorded. Hidden until asked
-// for, so the picture keeps the whole window.
+// for, so the picture keeps the whole window. It sits over the picture, so it
+// is dark in every theme like the toolbar and scrims (see Osd).
 Rectangle {
     id: root
 
@@ -33,9 +34,9 @@ Rectangle {
     implicitHeight: Math.min(content.implicitHeight + copyActions.implicitHeight + 40,
                              parent ? parent.height - 32 : 600)
     radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 4
-    color: root.shade(Theme.background, 0.92)
+    color: Osd.panelSolid
     border.width: 1
-    border.color: root.shade(Theme.foreground, 0.12)
+    border.color: Osd.border
 
     // Clicks and the wheel stay on the card rather than reaching the picture.
     MouseArea {
@@ -70,7 +71,7 @@ Rectangle {
                 font.family: Theme.fontFamily
                 font.pixelSize: 13
                 font.weight: Font.DemiBold
-                color: Theme.brightForeground
+                color: Osd.brightForeground
             }
 
             Text {
@@ -81,7 +82,7 @@ Rectangle {
                 }).join("  ·  ")
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
-                color: Theme.mutedText
+                color: Osd.mutedText
             }
 
             Text {
@@ -90,7 +91,7 @@ Rectangle {
                 text: root.dateLabel
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
-                color: Theme.mutedText
+                color: Osd.mutedText
             }
 
             Item { width: 1; height: 4 }
@@ -111,7 +112,7 @@ Rectangle {
                             required property int index
                             name: index < root.rating ? "star-filled" : "star"
                             size: 18
-                            color: index < root.rating ? Theme.yellow : Theme.mutedText
+                            color: index < root.rating ? Theme.yellow : Osd.mutedText
                             Accessible.role: Accessible.Button
                             Accessible.name: (index + 1) + (index === 0 ? " star" : " stars")
 
@@ -128,6 +129,7 @@ Rectangle {
                 PillButton {
                     objectName: "viewerInfoFavourite"
                     anchors.verticalCenter: parent.verticalCenter
+                    osd: true
                     label: root.favorite ? "Favourite" : "Add to favourites"
                     active: root.favorite
                     shortcut: "V"
@@ -143,7 +145,7 @@ Rectangle {
                 text: "Reading details…"
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
-                color: Theme.mutedText
+                color: Osd.mutedText
             }
 
             Repeater {
@@ -155,30 +157,57 @@ Rectangle {
                     elide: Text.ElideRight
                     font.family: Theme.fontFamily
                     font.pixelSize: 11
-                    color: Theme.foreground
+                    color: Osd.foreground
                 }
             }
 
             Item { width: 1; height: 4 }
 
-            // One line each, shortened in the middle so the file name and
-            // the top of the tree both stay; the whole path is in the tip,
-            // and Copy path below copies it.
+            // Where the file lives, once: the name is the title above, so
+            // this is its folder, shortened in the middle so both ends stay.
+            // The whole path is in the tip and Copy path below; a click shows
+            // the file in the file manager.
             Text {
-                objectName: "viewerInfoPath"
+                objectName: "viewerInfoFolder"
                 width: parent.width
-                text: "Path: " + root.filePath
+                text: "In " + root.folder
                 elide: Text.ElideMiddle
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
-                color: Theme.mutedText
-                Accessible.role: Accessible.StaticText
-                Accessible.name: "Path: " + root.filePath
+                font.underline: folderMouse.containsMouse || activeFocus
+                color: folderMouse.containsMouse || activeFocus ? Osd.accent : Osd.mutedText
+                activeFocusOnTab: true
+                Accessible.role: Accessible.Button
+                Accessible.name: "Open folder " + root.folder
+                Accessible.description: root.filePath
+                Accessible.onPressAction: root.folderRequested()
+                Keys.onReturnPressed: root.folderRequested()
+                Keys.onEnterPressed: root.folderRequested()
+                Keys.onSpacePressed: root.folderRequested()
 
-                HoverHandler { id: pathHover }
+                Rectangle {
+                    objectName: "viewerInfoFolderFocus"
+                    anchors.fill: parent
+                    anchors.margins: -2
+                    visible: parent.activeFocus
+                    color: "transparent"
+                    radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 3) : 2
+                    border.width: 1
+                    border.color: Osd.accent
+                }
+
+                MouseArea {
+                    id: folderMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.folderRequested()
+                }
                 ThemedToolTip {
-                    requested: pathHover.hovered && parent.truncated
-                    text: root.filePath
+                    requested: folderMouse.containsMouse
+                    keyboardRequested: parent.activeFocus && parent.Window.window
+                                       && parent.Window.window.keyboardNavigation === true
+                    text: root.filePath + "\nOpen containing folder"
                     delay: 500
                 }
             }
@@ -190,7 +219,7 @@ Rectangle {
                 elide: Text.ElideMiddle
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
-                color: Theme.mutedText
+                color: Osd.mutedText
                 Accessible.role: Accessible.StaticText
                 Accessible.name: "Target: " + root.resolvedPath
 
@@ -198,30 +227,6 @@ Rectangle {
                 ThemedToolTip {
                     requested: targetHover.hovered && parent.truncated
                     text: root.resolvedPath
-                    delay: 500
-                }
-            }
-            // Where the file lives. A click shows it in the file manager.
-            Text {
-                objectName: "viewerInfoFolder"
-                width: parent.width
-                text: root.folder
-                elide: Text.ElideMiddle
-                font.family: Theme.fontFamily
-                font.pixelSize: 11
-                font.underline: folderMouse.containsMouse
-                color: folderMouse.containsMouse ? Theme.accent : Theme.mutedText
-
-                MouseArea {
-                    id: folderMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.folderRequested()
-                }
-                ThemedToolTip {
-                    requested: folderMouse.containsMouse
-                    text: "Open containing folder"
                     delay: 500
                 }
             }
@@ -239,11 +244,13 @@ Rectangle {
 
         PillButton {
             objectName: "viewerInfoCopyPath"
+            osd: true
             label: "Copy path"
             onClicked: root.copyPathRequested()
         }
         PillButton {
             objectName: "viewerInfoCopyName"
+            osd: true
             label: "Copy file name"
             onClicked: root.copyNameRequested()
         }

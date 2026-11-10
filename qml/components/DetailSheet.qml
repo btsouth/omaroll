@@ -1808,25 +1808,38 @@ Item {
                 styleColor: "black"
             }
 
-            PillButton {
+            // Dark over the picture in every theme, like the viewer's arrows
+            // and the toolbar, and named for assistive technology by their
+            // tooltip rather than an arrow glyph.
+            IconButton {
+                objectName: "previewPrevious"
+                osd: true
+                raised: true
                 anchors.left: parent.left
                 anchors.leftMargin: 16
                 anchors.verticalCenter: parent.verticalCenter
                 visible: root.canNavigate
-                label: "←"
-                floating: true
+                implicitWidth: 40
+                implicitHeight: 40
+                icon: "chevron-left"
+                iconSize: 20
                 toolTip: "Previous"
                 shortcut: root.viewerShortcuts.previous.label
                 onClicked: root.requestNavigation(-1)
             }
 
-            PillButton {
+            IconButton {
+                objectName: "previewNext"
+                osd: true
+                raised: true
                 anchors.right: parent.right
                 anchors.rightMargin: 16
                 anchors.verticalCenter: parent.verticalCenter
                 visible: root.canNavigate
-                label: "→"
-                floating: true
+                implicitWidth: 40
+                implicitHeight: 40
+                icon: "chevron-right"
+                iconSize: 20
                 toolTip: "Next"
                 shortcut: root.viewerShortcuts.next.label
                 onClicked: root.requestNavigation(1)
@@ -2087,7 +2100,7 @@ Item {
                         visible: pdfPageInput.text === ""
                         text: "Page #"
                         font.family: Theme.fontFamily
-                        font.pixelSize: 10
+                        font.pixelSize: 11
                         color: Theme.mutedText
                     }
                 }
@@ -3049,7 +3062,7 @@ Item {
                     height: 24
                     text: section
                     font.family: Theme.fontFamily
-                    font.pixelSize: 10
+                    font.pixelSize: 11
                     color: Theme.mutedText
                     verticalAlignment: Text.AlignVCenter
                 }
@@ -3122,7 +3135,7 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter
                         text: row.modelData.shortcut
                         font.family: Theme.fontFamily
-                        font.pixelSize: 10
+                        font.pixelSize: 11
                         color: Theme.mutedText
                     }
 

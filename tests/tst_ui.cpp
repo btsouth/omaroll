@@ -81,6 +81,7 @@
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QQmlProperty>
 #include <QSGRendererInterface>
 #include <QPointer>
 #include <QScopeGuard>
@@ -398,17 +399,24 @@ private slots:
     QCOMPARE(caps.size(), 2);
     QCOMPARE(caps.at(0).toStringList(), (QStringList{QStringLiteral("Ctrl"), QStringLiteral("+")}));
     QCOMPARE(caps.at(1).toStringList(), (QStringList{QStringLiteral("Ctrl"), QStringLiteral("=")}));
-    // Four alternatives wrap inside their column instead of running past it.
-    QQuickItem* far = row(QStringLiteral("Extend the selection to the first / last tile or a page"));
-    QVERIFY(far);
-    QQuickItem* keys = find(far, [](QQuickItem* candidate) {
-      return candidate->objectName() == QStringLiteral("shortcutCaps");
-    });
-    QVERIFY(keys);
-    QTRY_VERIFY(keys->x() >= -0.5 && keys->x() + keys->width() <= far->width() + 0.5);
-    for (QQuickItem* alternative : keys->childItems()) {
-      if (alternative->width() > 0)
+    // Keys stay inside their column, and at 1280 px each row's caps sit on
+    // one line: no row's keys wrap onto a line that starts with "/".
+    for (const QString& label : {QStringLiteral("Extend to first / last tile"), QStringLiteral("Extend by a page"),
+                                 QStringLiteral("Extend the selection")}) {
+      QQuickItem* far = row(label);
+      QVERIFY2(far, qPrintable(label));
+      QQuickItem* keys = find(far, [](QQuickItem* candidate) {
+        return candidate->objectName() == QStringLiteral("shortcutCaps");
+      });
+      QVERIFY(keys);
+      QTRY_VERIFY(keys->x() >= -0.5 && keys->x() + keys->width() <= far->width() + 0.5);
+      qreal lineY = -1;
+      for (QQuickItem* alternative : keys->childItems()) {
+        if (alternative->width() <= 0) continue;
         QVERIFY2(alternative->x() + alternative->width() <= keys->width() + 0.5, "a key cap runs past its column");
+        if (lineY < 0) lineY = alternative->y();
+        QVERIFY2(qAbs(alternative->y() - lineY) < 0.5, qPrintable(label + QStringLiteral(": keys wrap")));
+      }
     }
     // The RAW rows moved to Actions in the library help.
     const QVariantList groups = help->property("groups").value<QJSValue>().toVariant().toList();
@@ -580,6 +588,66 @@ private slots:
     visit(visit, hints);
     QVERIFY(visible > 0);
     QVERIFY(visible < 8);
+  }
+
+  // Rounded themes mask the thumbnail on the GPU; square themes and the
+  // software renderer never do. Grid tiles share one mask.
+  void thumbnailMaskOnlyForRoundedThemesOnTheGpu() {
+    QQuickItem* grid = item("library");
+    QTRY_VERIFY(m_library->rowCount() > 0);
+    QQuickItem* card = nullptr;
+    QTRY_VERIFY((card = cardFor(pathAt(0))));
+    const auto wanted = [card](int radius, QSGRendererInterface::GraphicsApi api) {
+      QVariant result;
+      QMetaObject::invokeMethod(card, "thumbnailMaskWanted", Q_RETURN_ARG(QVariant, result),
+                                Q_ARG(QVariant, radius), Q_ARG(QVariant, int(api)));
+      return result.toBool();
+    };
+    QVERIFY(!wanted(0, QSGRendererInterface::OpenGL));
+    QVERIFY(!wanted(0, QSGRendererInterface::Software));
+    QVERIFY(!wanted(6, QSGRendererInterface::Software));
+    QVERIFY(!wanted(6, QSGRendererInterface::Unknown));
+    QVERIFY(wanted(6, QSGRendererInterface::OpenGL));
+    QVERIFY(wanted(6, QSGRendererInterface::Vulkan));
+
+    // What this window does, with this theme and renderer.
+    const bool gpu = m_window->rendererInterface()->graphicsApi() != QSGRendererInterface::Software;
+    const bool rounded = m_theme->cornerRadius() > 0;
+    QCOMPARE(card->property("roundedThumbnail").toBool(), gpu && rounded);
+    QQuickItem* mask = item("captureTileMask");
+    QCOMPARE(QQmlProperty(mask, QStringLiteral("layer.enabled")).read().toBool(), gpu && rounded);
+    QCOMPARE(card->property("thumbnailMaskSource").value<QQuickItem*>(), mask);
+    // The shared mask is the size of a tile's picture, inside its border.
+    QTRY_COMPARE(mask->width(), card->width() - 2);
+    QCOMPARE(mask->height(), card->height() - 2);
+    // Sectioned or flat, the tiles use the grid's one mask.
+    QVERIFY(grid->property("sectioned").isValid());
+  }
+
+  // The hints are about what applies now: the highlighted tile without a
+  // selection, the selection's own keys with one. Trim never shows for a
+  // selection of pictures.
+  void footerHintsFollowTheSelection() {
+    auto* hints = m_window->findChild<QQuickItem*>(QStringLiteral("footerHints"));
+    QQuickItem* grid = item("library");
+    QVERIFY(hints && grid);
+    const auto restore = qScopeGuard([&] { QMetaObject::invokeMethod(grid, "clearChecked"); });
+    QMetaObject::invokeMethod(grid, "clearChecked");
+    const auto shown = [&] { return hints->property("hints").value<QJSValue>().toVariant().toStringList(); };
+    QTRY_COMPARE(hints->property("selectedCount").toInt(), 0);
+    QVERIFY(shown().contains(QStringLiteral("Enter details")));
+    QVERIFY(!shown().join(' ').contains(QStringLiteral("trim")));
+    const QStringList paths = {m_library->pathAt(0), m_library->pathAt(1), m_library->pathAt(2)};
+    QVERIFY(QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, paths.at(0))));
+    QTRY_COMPARE(hints->property("selectedCount").toInt(), 1);
+    QVERIFY(shown().contains(QStringLiteral("Del trash")));
+    QVERIFY(shown().contains(QStringLiteral("Esc clear")));
+    QVERIFY(!shown().contains(QStringLiteral("Enter details")));
+    QVERIFY(QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, paths.at(1))));
+    QVERIFY(QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, paths.at(2))));
+    QTRY_COMPARE(hints->property("selectedCount").toInt(), 3);
+    QVERIFY(shown().contains(QStringLiteral("Ctrl+A all")));
+    QVERIFY(!shown().join(' ').contains(QStringLiteral("trim")));
   }
 
   void initTestCase() {
@@ -3422,6 +3490,42 @@ private slots:
     QCOMPARE(sheet->property("zoom").toDouble(), 1.0);
     QCOMPARE(sheet->property("panX").toDouble(), 0.0);
 
+    // The shared toolbar drives the same zoom: in, out, and Fit to reset.
+    // Only its zoom group shows; Compare has nothing to step through or turn.
+    const auto button = [&](const char* name) {
+      return find(sheet, [name](QQuickItem* candidate) {
+        return candidate->objectName() == QLatin1String(name);
+      });
+    };
+    QQuickItem* zoomIn = button("compareZoomIn");
+    QQuickItem* zoomOut = button("compareZoomOut");
+    QQuickItem* fit = button("compareFitToggle");
+    QVERIFY(zoomIn && zoomOut && fit);
+    for (const char* hidden : {"compareToolbarPrevious", "compareToolbarNext", "compareSlideshowButton",
+                               "compareRotateLeft", "compareRotateRight", "compareFlipHorizontal",
+                               "compareTrashButton"}) {
+      QQuickItem* control = button(hidden);
+      QVERIFY2(!control || !control->isVisible(), hidden);
+    }
+    QCOMPARE(fit->property("label").toString(), QStringLiteral("Fit"));
+    QVERIFY(fit->property("active").toBool());
+    // Apart, so two presses on one button never read as a double click.
+    const auto press = [&](QQuickItem* target) {
+      QTest::qWait(QGuiApplication::styleHints()->mouseDoubleClickInterval() + 50);
+      click(target);
+    };
+    press(zoomIn);
+    QTRY_VERIFY(qAbs(sheet->property("zoom").toDouble() - 1.25) < 0.001);
+    QTRY_VERIFY(!fit->property("active").toBool());
+    press(zoomIn);
+    QTRY_VERIFY(qAbs(sheet->property("zoom").toDouble() - 1.5625) < 0.001);
+    press(zoomOut);
+    QTRY_VERIFY(qAbs(sheet->property("zoom").toDouble() - 1.25) < 0.001);
+    press(fit);
+    QTRY_COMPARE(sheet->property("zoom").toDouble(), 1.0);
+    QCOMPARE(sheet->property("panX").toDouble(), 0.0);
+    QTRY_VERIFY(fit->property("active").toBool());
+
     invoke("dismissTopLayer");
     QTRY_VERIFY(!sheet->isVisible());
   }
@@ -5540,6 +5644,56 @@ private slots:
     m_library->setSortMode(0);
   }
 
+  // Switching Browse from Folders to a collection shows that collection's
+  // buttons, and a count changing under a focused segment leaves the focus
+  // where it was.
+  void libraryBrowserSegmentsShowCollectionActionsAndKeepFocus() {
+    const QString album = QStringLiteral("Browse segment album");
+    const QString tag = QStringLiteral("browse-segment-tag");
+    QVERIFY(m_settings->createAlbum(album));
+    QVERIFY(m_settings->createTag(tag));
+    QObject* browser = m_window->findChild<QObject*>(QStringLiteral("libraryBrowser"));
+    QVERIFY(browser);
+    const auto restore = qScopeGuard([&] {
+      QMetaObject::invokeMethod(browser, "close");
+      m_settings->deleteAlbum(album);
+      m_settings->deleteAlbum(album + QStringLiteral(" 2"));
+      m_settings->deleteTag(tag);
+    });
+    QMetaObject::invokeMethod(browser, "open");
+    QTRY_VERIFY(browser->property("visible").toBool());
+    QTRY_COMPARE(browser->property("section").toInt(), 0);
+    QQuickItem* actions = item("browseCollectionActions");
+    QVERIFY(!actions->isVisible());
+
+    const struct { int section; const char* button; } cases[] = {
+        {1, "browseNewAlbum"}, {3, "browseNewTag"}, {4, "browseSaveView"}};
+    for (const auto& entry : cases) {
+      // Back to Folders first, so each case starts from the hidden row.
+      clickPlaced(item("browseFacet-0"));
+      QTRY_COMPARE(browser->property("section").toInt(), 0);
+      QTRY_VERIFY(!actions->isVisible());
+      clickPlaced(item(QStringLiteral("browseFacet-%1").arg(entry.section)));
+      QTRY_COMPARE(browser->property("section").toInt(), entry.section);
+      QTRY_VERIFY2(actions->isVisible(), entry.button);
+      QTRY_VERIFY2(item(QLatin1String(entry.button))->isVisible(), entry.button);
+    }
+    // With an album chosen, rename and delete show too.
+    clickPlaced(item("browseFacet-1"));
+    QTRY_VERIFY(item("browseRenameChoice")->isVisible());
+    QVERIFY(item("browseDeleteChoice")->isVisible());
+
+    // Focus a segment from the keyboard's side, then change its count.
+    QQuickItem* albums = item("browseFacet-1");
+    albums->forceActiveFocus(Qt::TabFocusReason);
+    QTRY_VERIFY(albums->hasActiveFocus());
+    const int before = albums->property("count").toInt();
+    QVERIFY(m_settings->createAlbum(album + QStringLiteral(" 2")));
+    QTRY_COMPARE(albums->property("count").toInt(), before + 1);
+    QCOMPARE(item("browseFacet-1"), albums);
+    QVERIFY(albums->hasActiveFocus());
+  }
+
   void libraryBrowserFindsAndOpensAFolderFromTheKeyboard() {
     const QStringList folders = m_library->folders();
     QVERIFY(folders.size() >= 2);
@@ -5923,6 +6077,14 @@ private slots:
     QTRY_VERIFY(chips->isVisible());
     QTRY_VERIFY(shown(QStringLiteral("filterChip-folder")));
     QTRY_VERIFY(shown(QStringLiteral("filterChip-date")));
+    // The clear button sits inside its chip with room to spare on the right.
+    for (const QString& key : {QStringLiteral("folder"), QStringLiteral("date")}) {
+      QQuickItem* chip = item(QStringLiteral("filterChip-") + key);
+      QQuickItem* clear = item(QStringLiteral("filterChipClear-") + key);
+      const qreal right = clear->mapToItem(chip, QPointF(clear->width(), 0)).x();
+      QVERIFY2(right <= chip->width() - 6, qPrintable(QStringLiteral("%1 chip: clear ends at %2 of %3")
+                                                         .arg(key).arg(right).arg(chip->width())));
+    }
     click(item("filterChipClear-date"));
     QTRY_VERIFY(m_library->dateFrom().isEmpty());
     QCOMPARE(m_library->folderFilter(), QDir::cleanPath(folder));
@@ -7422,6 +7584,23 @@ private slots:
     QTRY_COMPARE(detail->property("path").toString(), second);
     QTRY_VERIFY(detail->property("canNavigate").toBool());
     QCOMPARE(detail->property("selectionLabel").toString(), QStringLiteral("1 of 3 selected files"));
+    // The preview's arrows are dark over the picture and named by what they
+    // do, not by an arrow glyph.
+    for (const auto& [name, label] : {std::pair{"previewPrevious", "Previous"}, std::pair{"previewNext", "Next"}}) {
+      QQuickItem* arrow = item(QLatin1String(name));
+      QTRY_VERIFY(arrow->isVisible());
+      QVERIFY(arrow->property("osd").toBool());
+      QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(arrow);
+      QVERIFY(accessible);
+      QCOMPARE(accessible->role(), QAccessible::Button);
+      QCOMPARE(accessible->text(QAccessible::Name), QLatin1String(label));
+    }
+    click(item("previewNext"));
+    QTRY_COMPARE(detail->property("path").toString(), first);
+    // Apart, so the second press is not read as a double click.
+    QTest::qWait(QGuiApplication::styleHints()->mouseDoubleClickInterval() + 50);
+    click(item("previewPrevious"));
+    QTRY_COMPARE(detail->property("path").toString(), second);
     QTRY_VERIFY_WITH_TIMEOUT(detail->property("stillReady").toBool(), 5000);
     for (const QString& expected : {first, third, second}) {
       QTest::keyClick(m_window, Qt::Key_Right);
