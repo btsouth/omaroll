@@ -312,8 +312,14 @@ ApplicationWindow {
         return Qt.rgba(base.r, base.g, base.b, amount)
     }
 
-    // A pale surround around the picture, where its own edges can vanish.
+    // The theme's surface is pale, as in Catppuccin Latte.
     readonly property bool lightSurround: Osd.luminance(Theme.surfaceBackground) > 0.4
+    // Behind a picture or video the surround is dark in every theme, like the
+    // toolbar and scrims: a pale letterbox fights the picture and is cut off
+    // by the dark top scrim. An empty or failed stage keeps the theme's
+    // surface, as the header does. The theme's alpha still applies.
+    readonly property bool darkBackdrop: root.lightSurround && root.stageShowsMedia
+    readonly property color backdropTint: root.darkBackdrop ? Osd.backdrop : Theme.surfaceBackground
 
     function say(message) {
         root.status = message
@@ -1421,10 +1427,12 @@ ApplicationWindow {
     Rectangle {
         anchors.fill: parent
         visible: root.fullScreen
-        color: Theme.surfaceBackground
+        color: root.backdropTint
     }
     Chrome {
+        objectName: "viewerBackdrop"
         anchors.fill: parent
+        tint: root.backdropTint
     }
 
     Item {
@@ -1488,15 +1496,18 @@ ApplicationWindow {
                     yScale: root.viewFlipVertical ? -1 : 1
                 }
 
-                // On a light theme's pale surround, a hairline and a soft
-                // shadow keep a white picture's edges visible.
+                // On a pale surround, a hairline and a soft shadow keep a
+                // white picture's edges visible. A light theme's surround is
+                // dark behind media now, so this is for a theme that changes
+                // that rule.
                 Rectangle {
                     objectName: "viewerPictureEdge"
                     anchors.centerIn: parent
                     width: stillLoader.width + 2
                     height: stillLoader.height + 2
                     rotation: root.viewRotation
-                    visible: root.stillReady && !root.imageError && root.lightSurround
+                    visible: root.stillReady && !root.imageError
+                             && Osd.luminance(root.backdropTint) > 0.4
                     color: "transparent"
                     border.width: 1
                     border.color: Qt.rgba(0, 0, 0, 0.16)

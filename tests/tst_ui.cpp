@@ -7280,6 +7280,23 @@ private slots:
     QTRY_COMPARE(detail->property("path").toString(), second);
     QTRY_VERIFY(detail->property("canNavigate").toBool());
     QCOMPARE(detail->property("selectionLabel").toString(), QStringLiteral("1 of 3 selected files"));
+    // The preview's arrows are dark over the picture and named by what they
+    // do, not by an arrow glyph.
+    for (const auto& [name, label] : {std::pair{"previewPrevious", "Previous"}, std::pair{"previewNext", "Next"}}) {
+      QQuickItem* arrow = item(QLatin1String(name));
+      QTRY_VERIFY(arrow->isVisible());
+      QVERIFY(arrow->property("osd").toBool());
+      QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(arrow);
+      QVERIFY(accessible);
+      QCOMPARE(accessible->role(), QAccessible::Button);
+      QCOMPARE(accessible->text(QAccessible::Name), QLatin1String(label));
+    }
+    click(item("previewNext"));
+    QTRY_COMPARE(detail->property("path").toString(), first);
+    // Apart, so the second press is not read as a double click.
+    QTest::qWait(QGuiApplication::styleHints()->mouseDoubleClickInterval() + 50);
+    click(item("previewPrevious"));
+    QTRY_COMPARE(detail->property("path").toString(), second);
     QTRY_VERIFY_WITH_TIMEOUT(detail->property("stillReady").toBool(), 5000);
     for (const QString& expected : {first, third, second}) {
       QTest::keyClick(m_window, Qt::Key_Right);

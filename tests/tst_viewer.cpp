@@ -757,9 +757,14 @@ private slots:
     QTRY_VERIFY(toolbar->isVisible());
     QCOMPARE(toolbar->property("color").value<QColor>(), panel);
     QVERIFY(item(QStringLiteral("viewerZoomIn"))->property("osd").toBool());
-    // A light theme's pale surround gets a hairline round the picture.
+    // Behind the picture the surround is dark in both palettes, so a light
+    // theme has no pale letterbox and needs no hairline round the picture.
     QTRY_VERIFY(prop("imageReady").toBool());
-    QCOMPARE(item(QStringLiteral("viewerPictureEdge"))->isVisible(), luminance(theme.surfaceBackground()) > 0.4);
+    QQuickItem* backdrop = item(QStringLiteral("viewerBackdrop"));
+    const QColor tint = backdrop->property("tint").value<QColor>();
+    QVERIFY2(luminance(tint) < 0.05, qPrintable(tint.name()));
+    if (palette == QStringLiteral("dark")) QCOMPARE(tint, theme.surfaceBackground());
+    QVERIFY(!item(QStringLiteral("viewerPictureEdge"))->isVisible());
   }
 
   void shortcutHelpFitsALaptopViewer_data() {
