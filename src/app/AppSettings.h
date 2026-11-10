@@ -98,6 +98,8 @@ class AppSettings final : public QObject {
                  NOTIFY rememberPlaybackSpeedChanged)
   Q_PROPERTY(qreal videoPlaybackRate READ videoPlaybackRate WRITE setVideoPlaybackRate
                  NOTIFY videoPlaybackRateChanged)
+  // Caption text size as a percentage of the default: 75, 100, 125, 150 or 200.
+  Q_PROPERTY(int captionScale READ captionScale WRITE setCaptionScale NOTIFY captionScaleChanged)
   Q_PROPERTY(QStringList albumNames READ albumNames NOTIFY albumsChanged)
   Q_PROPERTY(QStringList tagNames READ tagNames NOTIFY tagsChanged)
   Q_PROPERTY(
@@ -256,6 +258,9 @@ public:
   void setVideoMuted(bool value);
   [[nodiscard]] bool rememberPlaybackSpeed() const { return m_rememberPlaybackSpeed; }
   void setRememberPlaybackSpeed(bool value);
+  [[nodiscard]] int captionScale() const { return m_captionScale; }
+  void setCaptionScale(int percent);
+  static constexpr int kCaptionScales[] = {75, 100, 125, 150, 200};
   [[nodiscard]] qreal videoPlaybackRate() const { return m_videoPlaybackRate; }
   void setVideoPlaybackRate(qreal value);
 
@@ -409,6 +414,7 @@ signals:
   void videoVolumeChanged();
   void videoMutedChanged();
   void rememberPlaybackSpeedChanged();
+  void captionScaleChanged();
   void videoPlaybackRateChanged();
   void albumsChanged();
   void tagsChanged();
@@ -609,6 +615,7 @@ private:
   qreal m_videoVolume = 0.8;
   bool m_videoMuted = false;
   bool m_rememberPlaybackSpeed = false;
+  int m_captionScale = 100;
   qreal m_videoPlaybackRate = 1.0;
   // Resume spots, most recently touched first in m_videoRecency.
   QHash<QString, qint64> m_videoPositions;

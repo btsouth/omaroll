@@ -759,6 +759,22 @@ Item {
                 }
 
                 SettingRow {
+                    title: "Caption size"
+                    detail: "Subtitles in the viewer and the library preview."
+
+                    PillButton {
+                        objectName: "captionScaleButton"
+                        readonly property var scales: [75, 100, 125, 150, 200]
+                        readonly property var names: ["Small", "Normal", "Large", "Larger", "Largest"]
+                        accessibleName: "Caption size: " + label
+                        toolTip: "Click for the next size"
+                        anchors.verticalCenter: parent.verticalCenter
+                        label: names[Math.max(0, scales.indexOf(Settings.captionScale))]
+                        onClicked: Settings.captionScale = scales[(scales.indexOf(Settings.captionScale) + 1) % scales.length]
+                    }
+                }
+
+                SettingRow {
                     title: "Videos in slideshows"
                     detail: "Play each video through before moving to the next item."
                     toggle: slideshowVideosButton

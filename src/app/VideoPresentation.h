@@ -69,8 +69,15 @@ class VideoPresentation : public QQuickItem {
   Q_PROPERTY(QMediaPlayer* player READ player WRITE setPlayer NOTIFY playerChanged)
   // Why nothing can be shown, or empty. Cleared by reset().
   Q_PROPERTY(QString failure READ failure NOTIFY failureChanged)
+  // "PQ" or "HLG" for high dynamic range video that Qt draws without tone
+  // mapping, read off the first frame; empty otherwise. See hdrUnmapped().
+  Q_PROPERTY(QString hdr READ hdr NOTIFY hdrChanged)
   // Stalled play time allowed before a first frame; tests shorten it.
   Q_PROPERTY(int firstFrameTimeoutMs MEMBER m_firstFrameTimeoutMs)
+  // For diagnosis: whether a track change is being watched for a stall, and
+  // how many in-place seeks it has made since the last reset().
+  Q_PROPERTY(bool watchingStall READ watchingStall)
+  Q_PROPERTY(int stallResyncs READ stallResyncs)
 public:
   // How far a paused picture may be from the reported position before it is
   // treated as stale. Generous: audio and video positions differ a little.
@@ -107,6 +114,9 @@ public:
               m_frameEnd.store(frame.endTime(), std::memory_order_relaxed);
               m_frames.fetch_add(1, std::memory_order_release);
               if (!m_frameSeen.exchange(true)) {
+                const QVideoFrameFormat format = frame.surfaceFormat();
+                m_firstFrameHdr.store(hdrUnmapped(format.pixelFormat(), format.colorTransfer()),
+                                      std::memory_order_relaxed);
                 QMetaObject::invokeMethod(this, &VideoPresentation::markReady, Qt::QueuedConnection);
               }
             },
@@ -126,6 +136,19 @@ public:
   bool ready() const { return m_ready; }
   bool hasFrame() const { return m_hasFrame; }
   QString failure() const { return m_failure; }
+  bool watchingStall() const { return m_stallTimer.isActive(); }
+  int stallResyncs() const { return m_resyncCount; }
+  QString hdr() const { return m_hdr; }
+  // Qt 6.12 tone-maps PQ and HLG only for P010 and P016 frames, which come
+  // from hardware decoders (its nv12_bt2020_pq and _hlg shaders). Others,
+  // such as software-decoded 10-bit 4:2:0, are drawn as is: 0 for none, 1
+  // for PQ, 2 for HLG.
+  static int hdrUnmapped(QVideoFrameFormat::PixelFormat format, QVideoFrameFormat::ColorTransfer transfer) {
+    if (format == QVideoFrameFormat::Format_P010 || format == QVideoFrameFormat::Format_P016) return 0;
+    if (transfer == QVideoFrameFormat::ColorTransfer_ST2084) return 1;
+    if (transfer == QVideoFrameFormat::ColorTransfer_STD_B67) return 2;
+    return 0;
+  }
   QMediaPlayer* player() const { return m_player; }
   void setPlayer(QMediaPlayer* player) {
     if (m_player == player) return;
@@ -145,9 +168,11 @@ public:
   Q_INVOKABLE void reset() {
     m_frameSeen = false;
     m_ready = false;
+    setHdr({});
     m_stallTimer.stop();
     m_openTimer.stop();
     m_firstFrame.reset();
+    m_resyncCount = 0;
     m_noStreams.invalidate();
     m_input.setSubtitleText({});
     releaseHeap();
@@ -259,6 +284,7 @@ signals:
   void readyChanged();
   void playerChanged();
   void failureChanged();
+  void hdrChanged();
 private:
   void markReady() {
     // The scene graph can acquire its RHI after the player is attached.
@@ -269,6 +295,16 @@ private:
       // Frames are flowing: keep their buffers in the heap (PlaybackHeap.h).
       PlaybackHeap::hold();
       m_heapHeld = true;
+    }
+    switch (m_firstFrameHdr.load(std::memory_order_relaxed)) {
+    case 1:
+      setHdr(QStringLiteral("PQ"));
+      break;
+    case 2:
+      setHdr(QStringLiteral("HLG"));
+      break;
+    default:
+      setHdr({});
     }
     const bool changed = !m_ready || !m_hasFrame;
     m_ready = true;
@@ -320,10 +356,16 @@ private:
       return;
     }
     ++m_stallResyncs;
+    ++m_resyncCount;
     m_stallProgress = now;
     m_stallLimit = kResyncGraceMs;
     m_stallUntil = std::max(m_stallUntil, now + kResyncGraceMs + kStallMs * 2);
     resync();
+  }
+  void setHdr(const QString& value) {
+    if (m_hdr == value) return;
+    m_hdr = value;
+    emit hdrChanged();
   }
   void fail(const QString& reason) {
     m_openTimer.stop();
@@ -388,6 +430,7 @@ private:
   std::atomic<qint64> m_frameStart = -1;
   std::atomic<qint64> m_frameEnd = -1;
   std::atomic<quint64> m_frames = 0;
+  std::atomic_int m_firstFrameHdr = 0;
   QVideoSink m_input;
   QPointer<QVideoSink> m_output;
   QPointer<QMediaPlayer> m_player;
@@ -399,10 +442,12 @@ private:
   FirstFrameWatch m_firstFrame;
   int m_firstFrameTimeoutMs = kFirstFrameMs;
   QString m_failure;
+  QString m_hdr;
   qint64 m_stallUntil = 0;
   qint64 m_stallProgress = 0;
   qint64 m_stallLimit = 0;
   int m_stallResyncs = 0;
+  int m_resyncCount = 0;
   quint64 m_stallFrames = 0;
   bool m_ready = false;
   bool m_hasFrame = false;
