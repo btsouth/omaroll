@@ -15709,14 +15709,18 @@ private slots:
       load(settings);
       QCOMPARE(settings.tagsForPath(bird), QStringList{QStringLiteral("kestrel")});
       // Adding it again shows it, as a local tag too, and drops the row.
+      // Hidden everywhere, it is no tag until created again.
+      QVERIFY(!settings.tagNames().contains(QStringLiteral("wildlife")));
+      QVERIFY(settings.createTag(QStringLiteral("wildlife")));
       QVERIFY(settings.addTag(QStringLiteral("wildlife"), {bird}));
+      QCOMPARE(AppSettings::organizationSize(settings.organizationState()), 3);
       QVERIFY(settings.tagsForPath(bird).contains(QStringLiteral("wildlife")));
       // A tag that exists only in files gets its local key on adding.
       QVERIFY(settings.addTag(QStringLiteral("kestrel"), {trip}));
       QVERIFY(settings.tagPaths(QStringLiteral("kestrel")).contains(trip));
       QVERIFY(settings.createTag(QStringLiteral("Places/Japan")));
       QVERIFY(settings.addTag(QStringLiteral("Places/Japan"), {trip}));
-      QCOMPARE(settings.tagsForPath(trip), QStringList({QStringLiteral("kestrel"), QStringLiteral("Places/Japan")}));
+      QCOMPARE(settings.tagsForPath(trip), QStringList({QStringLiteral("Places/Japan"), QStringLiteral("kestrel")}));
     }
     {
       AppSettings settings;
