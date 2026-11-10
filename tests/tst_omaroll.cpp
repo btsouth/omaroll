@@ -29,6 +29,7 @@
 #include "library/CaptureRoles.h"
 #include "library/DuplicateIndex.h"
 #include "library/EmbeddedMetadata.h"
+#include <QtEndian>
 #include "library/MediaMetadataIndex.h"
 #include "library/MediaInspector.h"
 #include "library/SimilarityIndex.h"
@@ -591,6 +592,135 @@ QByteArray sidecarPacket(const QString& hierarchical, int rating, const QByteArr
               "</rdf:li></rdf:Alt></dc:description>";
   packet += "</rdf:Description></rdf:RDF></x:xmpmeta>";
   return packet;
+}
+
+// Builders for the embedded XMP and IPTC tests.
+QByteArray xmpDocument(const QByteArray& attributes, const QByteArray& body) {
+  return QByteArrayLiteral("<?xpacket begin=\"\xEF\xBB\xBF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n"
+                           "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">"
+                           "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">"
+                           "<rdf:Description rdf:about=\"\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" "
+                           "xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" "
+                           "xmlns:lr=\"http://ns.adobe.com/lightroom/1.0/\" "
+                           "xmlns:digiKam=\"http://www.digikam.org/ns/1.0/\" ") +
+         attributes + ">" + body +
+         QByteArrayLiteral("</rdf:Description></rdf:RDF></x:xmpmeta>\n<?xpacket end=\"w\"?>");
+}
+
+QByteArray rdfItems(const char* container, const QList<QByteArray>& items) {
+  QByteArray out = QByteArray("<rdf:") + container + ">";
+  for (const QByteArray& item : items) out += "<rdf:li>" + item + "</rdf:li>";
+  return out + "</rdf:" + container + ">";
+}
+
+QByteArray bigEndian16(int value) {
+  QByteArray out(2, '\0');
+  qToBigEndian<quint16>(quint16(value), out.data());
+  return out;
+}
+
+QByteArray bigEndian32(quint32 value) {
+  QByteArray out(4, '\0');
+  qToBigEndian<quint32>(value, out.data());
+  return out;
+}
+
+QByteArray iptcRecord(int record, int dataset, const QByteArray& value) {
+  return QByteArray(1, '\x1C') + char(record) + char(dataset) + bigEndian16(int(value.size())) + value;
+}
+
+// A Photoshop image resource block holding IPTC as resource 0x0404.
+QByteArray photoshopIptc(const QByteArray& iptc) {
+  QByteArray out = "8BIM" + bigEndian16(0x0404) + QByteArray(2, '\0') + bigEndian32(quint32(iptc.size())) + iptc;
+  if (iptc.size() % 2) out += '\0';
+  return out;
+}
+
+QByteArray jpegSegment(int marker, const QByteArray& data) {
+  return QByteArray(1, '\xFF') + char(marker) + bigEndian16(int(data.size()) + 2) + data;
+}
+
+QByteArray jpegXmpSegment(const QByteArray& xmp) {
+  return jpegSegment(0xE1, QByteArrayLiteral("http://ns.adobe.com/xap/1.0/\0") + xmp);
+}
+
+QByteArray jpegIptcSegment(const QByteArray& iptc) {
+  return jpegSegment(0xED, QByteArrayLiteral("Photoshop 3.0\0") + photoshopIptc(iptc));
+}
+
+QByteArray encodedImage(const char* format) {
+  QImage image(8, 8, QImage::Format_RGB32);
+  image.fill(Qt::darkCyan);
+  QByteArray bytes;
+  QBuffer buffer(&bytes);
+  buffer.open(QIODevice::WriteOnly);
+  image.save(&buffer, format);
+  return bytes;
+}
+
+// A real JPEG from Qt with |segments| spliced in after SOI.
+QByteArray jpegWith(const QByteArray& segments) {
+  QByteArray jpeg = encodedImage("JPEG");
+  jpeg.insert(2, segments);
+  return jpeg;
+}
+
+QByteArray pngChunk(const QByteArray& type, const QByteArray& data) {
+  return bigEndian32(quint32(data.size())) + type + data + QByteArray(4, '\0');
+}
+
+// A real PNG from Qt with an XMP iTXt chunk after IHDR.
+QByteArray pngWithXmp(const QByteArray& xmp, bool compressed) {
+  QByteArray png = encodedImage("PNG");
+  const QByteArray text = compressed ? qCompress(xmp).mid(4) : xmp;
+  const QByteArray data = QByteArrayLiteral("XML:com.adobe.xmp\0") + char(compressed ? 1 : 0) +
+                          QByteArrayLiteral("\0\0\0") + text;
+  png.insert(8 + 25, pngChunk("iTXt", data));
+  return png;
+}
+
+QByteArray webpWithXmp(const QByteArray& xmp) {
+  const auto chunk = [](const QByteArray& fourcc, const QByteArray& data) {
+    QByteArray size(4, '\0');
+    qToLittleEndian<quint32>(quint32(data.size()), size.data());
+    return fourcc + size + data + (data.size() % 2 ? QByteArray(1, '\0') : QByteArray());
+  };
+  const QByteArray body = "WEBP" + chunk("VP8X", QByteArray(10, '\0')) + chunk("XMP ", xmp);
+  QByteArray size(4, '\0');
+  qToLittleEndian<quint32>(quint32(body.size()), size.data());
+  return "RIFF" + size + body;
+}
+
+// A TIFF whose IFD0 holds only tag 700 (XMP) and tag 33723 (IPTC). The
+// big-endian one stores IPTC as LONGs, as Photoshop does.
+QByteArray tiffWith(bool big, const QByteArray& xmp, QByteArray iptc) {
+  const auto u16 = [big](int value) {
+    QByteArray out(2, '\0');
+    big ? qToBigEndian<quint16>(quint16(value), out.data()) : qToLittleEndian<quint16>(quint16(value), out.data());
+    return out;
+  };
+  const auto u32 = [big](quint32 value) {
+    QByteArray out(4, '\0');
+    big ? qToBigEndian<quint32>(value, out.data()) : qToLittleEndian<quint32>(value, out.data());
+    return out;
+  };
+  if (big) iptc += QByteArray((4 - iptc.size() % 4) % 4, '\0');
+  const quint32 xmpAt = 8 + 2 + 2 * 12 + 4;
+  const quint32 iptcAt = xmpAt + quint32(xmp.size()) + quint32(xmp.size() % 2);
+  QByteArray out = big ? QByteArrayLiteral("MM\0*") : QByteArrayLiteral("II*\0");
+  out += u32(8) + u16(2);
+  out += u16(700) + u16(7) + u32(quint32(xmp.size())) + u32(xmpAt);
+  out += u16(33723) + (big ? u16(4) + u32(quint32(iptc.size() / 4)) : u16(7) + u32(quint32(iptc.size())));
+  out += u32(iptcAt) + u32(0);
+  out += xmp;
+  if (xmp.size() % 2) out += '\0';
+  return out + iptc;
+}
+
+void writeBytes(const QString& path, const QByteArray& bytes) {
+  QFile file(path);
+  QVERIFY(file.open(QIODevice::WriteOnly));
+  QCOMPARE(file.write(bytes), bytes.size());
 }
 
 } // namespace
@@ -10558,6 +10688,299 @@ private slots:
     QCOMPARE(video.captured, QDateTime(QDate(2021, 8, 9), QTime(10, 11, 12)));
     QCOMPARE(video.camera, QStringLiteral("Apple iPhone 12"));
     QVERIFY(MediaMetadataIndex::parseVideoDetails("not json").camera.isEmpty());
+  }
+
+  // Keywords, rating and caption that other photo tools keep in XMP and IPTC.
+  void embeddedXmpReadsAttributeAndElementForms() {
+    EmbeddedMetadata::Fields fields = EmbeddedMetadata::parseXmp(xmpDocument("xmp:Rating=\"3\"", {}));
+    QVERIFY(fields.hasXmp);
+    QCOMPARE(fields.rating, 3);
+    fields = EmbeddedMetadata::parseXmp(xmpDocument({}, "<xmp:Rating>4</xmp:Rating>"));
+    QCOMPARE(fields.rating, 4);
+    // Namespaces count, not prefixes.
+    fields = EmbeddedMetadata::parseXmp(
+        "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">"
+        "<rdf:Description xmlns:a=\"http://ns.adobe.com/xap/1.0/\" xmlns:b=\"http://purl.org/dc/elements/1.1/\" "
+        "a:Rating=\"2\"><b:subject><rdf:Bag><rdf:li>Bird</rdf:li></rdf:Bag></b:subject></rdf:Description></rdf:RDF>");
+    QVERIFY(fields.hasXmp);
+    QCOMPARE(fields.rating, 2);
+    QCOMPARE(fields.keywords, QStringList{QStringLiteral("Bird")});
+    fields = EmbeddedMetadata::parseXmp(
+        "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">"
+        "<rdf:Description xmlns:xmp=\"http://example.com/not-xmp/\" xmp:Rating=\"2\"/></rdf:RDF>");
+    QVERIFY(fields.hasXmp);
+    QCOMPARE(fields.rating, 0);
+    // An empty packet is still XMP.
+    fields = EmbeddedMetadata::parseXmp(xmpDocument({}, {}));
+    QVERIFY(fields.hasXmp);
+    QVERIFY(fields.isEmpty());
+    // Trailing NULs after the packet do not cost it.
+    fields = EmbeddedMetadata::parseXmp(xmpDocument("xmp:Rating=\"1\"", {}) + QByteArray(16, '\0'));
+    QCOMPARE(fields.rating, 1);
+  }
+
+  void embeddedXmpListsAndDescriptions() {
+    EmbeddedMetadata::Fields fields = EmbeddedMetadata::parseXmp(xmpDocument(
+        {}, "<dc:subject>" + rdfItems("Seq", {"one", "two"}) + "</dc:subject>"
+            "<digiKam:TagsList>" + rdfItems("Alt", {"Alt/Tag"}) + "</digiKam:TagsList>"
+            "<dc:description><rdf:Alt><rdf:li xml:lang=\"de\">Hallo</rdf:li>"
+            "<rdf:li xml:lang=\"x-default\">  Hello there </rdf:li></rdf:Alt></dc:description>"));
+    QCOMPARE(fields.keywords, (QStringList{QStringLiteral("Alt/Tag"), QStringLiteral("one"),
+                                           QStringLiteral("two")}));
+    QCOMPARE(fields.description, QStringLiteral("Hello there"));
+    fields = EmbeddedMetadata::parseXmp(xmpDocument(
+        {}, "<dc:description><rdf:Alt><rdf:li xml:lang=\"de\">Hallo</rdf:li>"
+            "<rdf:li xml:lang=\"fr\">Salut</rdf:li></rdf:Alt></dc:description>"));
+    QCOMPARE(fields.description, QStringLiteral("Hallo"));
+    fields = EmbeddedMetadata::parseXmp(xmpDocument({}, "<dc:description>Plain text</dc:description>"));
+    QCOMPARE(fields.description, QStringLiteral("Plain text"));
+    fields = EmbeddedMetadata::parseXmp(
+        xmpDocument({}, "<dc:description>" + QByteArray(600, 'x') + "</dc:description>"));
+    QCOMPARE(fields.description.size(), EmbeddedMetadata::kMaximumDescriptionLength);
+  }
+
+  void embeddedXmpKeywordsNormalizeAndDedupe() {
+    const QByteArray body =
+        "<lr:hierarchicalSubject>" +
+        rdfItems("Bag", {"Animals|Birds|kestrel", "darktable|format|cr2", " Places | Japan ", "Music|AC/DC"}) +
+        "</lr:hierarchicalSubject><digiKam:TagsList>" +
+        rdfItems("Seq", {"People/Alice", "animals/birds/KESTREL", "darktable/history"}) +
+        "</digiKam:TagsList><dc:subject>" +
+        rdfItems("Bag", {"kestrel", "Birds", "japan", "sunset", "darktable|changed", "Sunset", "alice", " ",
+                         QByteArray(EmbeddedMetadata::kMaximumKeywordLength + 1, 'k')}) +
+        "</dc:subject>";
+    const EmbeddedMetadata::Fields fields = EmbeddedMetadata::parseXmp(xmpDocument({}, body));
+    // Hierarchical first, then digiKam's, then the flat ones no level repeats.
+    // A slash inside a Lightroom level nests, as it would in a typed tag.
+    QCOMPARE(fields.keywords, (QStringList{QStringLiteral("Animals/Birds/kestrel"), QStringLiteral("Places/Japan"),
+                                           QStringLiteral("Music/AC/DC"), QStringLiteral("People/Alice"),
+                                           QStringLiteral("sunset")}));
+  }
+
+  void embeddedXmpRatingEdgeCases() {
+    const QList<std::pair<QByteArray, int>> cases = {
+        {"-1", 0}, {"0", 0}, {"1", 1}, {"5", 5}, {"7", 0}, {"3.0", 3}, {"4.6", 5},
+        {"5.6", 0}, {"garbage", 0}, {"", 0}, {"nan", 0}, {"inf", 0}, {" 2 ", 2}};
+    for (const auto& [text, rating] : cases) {
+      QCOMPARE(EmbeddedMetadata::parseXmp(xmpDocument("xmp:Rating=\"" + text + "\"", {})).rating, rating);
+      QCOMPARE(EmbeddedMetadata::parseXmp(xmpDocument({}, "<xmp:Rating>" + text + "</xmp:Rating>")).rating,
+               rating);
+    }
+  }
+
+  void embeddedXmpRefusesDoctypesAndBrokenPackets() {
+    const EmbeddedMetadata::Fields none;
+    QCOMPARE(EmbeddedMetadata::parseXmp("<!DOCTYPE x [<!ENTITY a \"b\">]>" + xmpDocument("xmp:Rating=\"3\"", {})),
+             none);
+    QCOMPARE(EmbeddedMetadata::parseXmp(xmpDocument({}, "<xmp:Rating>&undeclared;</xmp:Rating>")), none);
+    QCOMPARE(EmbeddedMetadata::parseXmp(xmpDocument("xmp:Rating=\"3\"", {}).chopped(40)), none);
+    QCOMPARE(EmbeddedMetadata::parseXmp("<a><b>not rdf</b></a>"), none);
+    QCOMPARE(EmbeddedMetadata::parseXmp("not xml"), none);
+    QCOMPARE(EmbeddedMetadata::parseXmp({}), none);
+    // Predefined entities are fine.
+    QCOMPARE(EmbeddedMetadata::parseXmp(xmpDocument({}, "<dc:description>Fish &amp; chips</dc:description>"))
+                 .description,
+             QStringLiteral("Fish & chips"));
+  }
+
+  void embeddedIptcCharsets() {
+    QByteArray records = iptcRecord(2, 25, "Caf\xC3\xA9") + iptcRecord(2, 25, "Travel/Japan") +
+                         iptcRecord(2, 25, "cafÉ") + iptcRecord(2, 120, "  A caption  ");
+    EmbeddedMetadata::Fields fields = EmbeddedMetadata::parseIptc(records);
+    QVERIFY(!fields.hasXmp);
+    QCOMPARE(fields.keywords, (QStringList{QStringLiteral("Café"), QStringLiteral("Travel/Japan")}));
+    QCOMPARE(fields.description, QStringLiteral("A caption"));
+    // 1:90 says UTF-8.
+    fields = EmbeddedMetadata::parseIptc(iptcRecord(1, 90, "\x1B%G") + iptcRecord(2, 25, "\xC3\xBC" "ber"));
+    QCOMPARE(fields.keywords, QStringList{QStringLiteral("über")});
+    // Not UTF-8 anywhere: Latin-1, for every record.
+    fields = EmbeddedMetadata::parseIptc(iptcRecord(2, 25, "Caf\xE9") + iptcRecord(2, 25, "Caf\xC3\xA9 2") +
+                                         iptcRecord(2, 120, "Gr\xFC\xDF" "e"));
+    QCOMPARE(fields.keywords, (QStringList{QStringLiteral("Café"), QStringLiteral("CafÃ© 2")}));
+    QCOMPARE(fields.description, QStringLiteral("Grüße"));
+    // Extended lengths are read; a record past the end stops the walk.
+    records = QByteArray("\x1C\x02\x19\x80\x02\x00\x03", 7) + "abc" + iptcRecord(2, 25, "def");
+    QCOMPARE(EmbeddedMetadata::parseIptc(records).keywords, (QStringList{QStringLiteral("abc"), QStringLiteral("def")}));
+    QCOMPARE(EmbeddedMetadata::parseIptc(iptcRecord(2, 25, "ok") + iptcRecord(2, 25, "cut").chopped(1)).keywords,
+             QStringList{QStringLiteral("ok")});
+  }
+
+  void embeddedContainersFindTheirPackets() {
+    const QByteArray xmp = xmpDocument("xmp:Rating=\"4\"", {});
+    const QByteArray iptc = iptcRecord(2, 25, "Harbour") + iptcRecord(2, 120, "Boats");
+
+    // Exif and extended XMP segments come first and are passed over.
+    const QByteArray jpeg =
+        jpegWith(jpegSegment(0xE1, QByteArrayLiteral("Exif\0\0") + QByteArray(40, '\0')) +
+                 jpegSegment(0xE1, QByteArrayLiteral("http://ns.adobe.com/xmp/extension/\0") + "junk") +
+                 jpegXmpSegment(xmp) + jpegIptcSegment(iptc));
+    EmbeddedMetadata::Packets found = EmbeddedMetadata::jpegPackets(jpeg);
+    QCOMPARE(found.xmp, xmp);
+    QCOMPARE(found.iptc, iptc);
+    QCOMPARE(EmbeddedMetadata::packets(jpeg).xmp, xmp);
+    // A segment cut off by the end of what was read yields nothing past it.
+    const qsizetype xmpAt = jpeg.indexOf("http://ns.adobe.com/xap/1.0/");
+    QVERIFY(xmpAt > 0);
+    QVERIFY(EmbeddedMetadata::jpegPackets(jpeg.left(xmpAt + 100)).xmp.isEmpty());
+
+    for (const bool compressed : {false, true}) {
+      const QByteArray png = pngWithXmp(xmp, compressed);
+      QCOMPARE(EmbeddedMetadata::pngPackets(png).xmp, xmp);
+      QCOMPARE(EmbeddedMetadata::packets(png).xmp, xmp);
+    }
+
+    const QByteArray webp = webpWithXmp(xmp + ' ');
+    QCOMPARE(EmbeddedMetadata::webpPackets(webp).xmp, xmp + ' ');
+    QCOMPARE(EmbeddedMetadata::packets(webp).xmp, xmp + ' ');
+
+    for (const bool big : {false, true}) {
+      const QByteArray tiff = tiffWith(big, xmp, iptc);
+      found = EmbeddedMetadata::tiffPackets(tiff);
+      QCOMPARE(found.xmp, xmp);
+      QVERIFY(found.iptc.startsWith(iptc));
+      QCOMPARE(EmbeddedMetadata::parseIptc(found.iptc).keywords, QStringList{QStringLiteral("Harbour")});
+      QCOMPARE(EmbeddedMetadata::packets(tiff).xmp, xmp);
+    }
+    // Olympus' and Panasonic's variants of the TIFF header.
+    for (const QByteArray& magic : {QByteArrayLiteral("IIRO"), QByteArrayLiteral("IIU\0")}) {
+      QByteArray raw = tiffWith(false, xmp, iptc);
+      raw.replace(0, 4, magic);
+      QCOMPARE(EmbeddedMetadata::packets(raw).xmp, xmp);
+    }
+    QCOMPARE(EmbeddedMetadata::packets("plain text, not media").xmp, QByteArray());
+    QCOMPARE(EmbeddedMetadata::packets(encodedImage("BMP")).xmp, QByteArray());
+  }
+
+  void embeddedMetadataReadsEachContainerFile() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray xmp = xmpDocument("xmp:Rating=\"5\"", "<dc:subject>" + rdfItems("Bag", {"Kestrel"}) + "</dc:subject>");
+    const QByteArray iptc = iptcRecord(2, 25, "IptcOnly") + iptcRecord(2, 120, "From IPTC");
+    const auto expectXmp = [](const EmbeddedMetadata::Fields& fields, const char* name) {
+      QVERIFY2(fields.hasXmp, name);
+      QCOMPARE(fields.rating, 5);
+      QCOMPARE(fields.keywords, QStringList{QStringLiteral("Kestrel")});
+    };
+    const QList<std::pair<const char*, QByteArray>> files = {
+        {"photo.jpg", jpegWith(jpegXmpSegment(xmp) + jpegIptcSegment(iptc))},
+        {"photo.png", pngWithXmp(xmp, false)},
+        {"packed.png", pngWithXmp(xmp, true)},
+        {"photo.webp", webpWithXmp(xmp)},
+        {"photo.tif", tiffWith(false, xmp, iptc)},
+        {"photo.dng", tiffWith(true, xmp, iptc)}};
+    for (const auto& [name, bytes] : files) {
+      const QString path = dir.filePath(QLatin1String(name));
+      writeBytes(path, bytes);
+      const EmbeddedMetadata::Fields fields = EmbeddedMetadata::readFile(path);
+      expectXmp(fields, name);
+    }
+    // IPTC fills the caption XMP left empty, but not the keywords.
+    QCOMPARE(EmbeddedMetadata::readFile(dir.filePath(QStringLiteral("photo.jpg"))).description,
+             QStringLiteral("From IPTC"));
+    QCOMPARE(EmbeddedMetadata::readFile(dir.filePath(QStringLiteral("photo.dng"))).description,
+             QStringLiteral("From IPTC"));
+    // Without XMP, IPTC's keywords are the file's.
+    const QString iptcOnly = dir.filePath(QStringLiteral("iptc.jpg"));
+    writeBytes(iptcOnly, jpegWith(jpegIptcSegment(iptc)));
+    EmbeddedMetadata::Fields fields = EmbeddedMetadata::readFile(iptcOnly);
+    QVERIFY(!fields.hasXmp);
+    QCOMPARE(fields.keywords, QStringList{QStringLiteral("IptcOnly")});
+    // A packet bigger than one JPEG read still arrives whole.
+    const QByteArray padded = xmpDocument("xmp:Rating=\"2\"", {}) + QByteArray(60000, ' ');
+    const QString large = dir.filePath(QStringLiteral("large.jpg"));
+    writeBytes(large, jpegWith(jpegSegment(0xE1, QByteArray(65000, 'e')) + jpegXmpSegment(padded)));
+    QCOMPARE(EmbeddedMetadata::readFile(large).rating, 2);
+    // Videos and documents are not opened, whatever they hold.
+    const QString video = dir.filePath(QStringLiteral("clip.mp4"));
+    writeBytes(video, jpegWith(jpegXmpSegment(xmp)));
+    QCOMPARE(EmbeddedMetadata::readFile(video), EmbeddedMetadata::Fields{});
+    QCOMPARE(EmbeddedMetadata::readFile(dir.filePath(QStringLiteral("missing.jpg"))), EmbeddedMetadata::Fields{});
+  }
+
+  void embeddedMetadataPrefersTheSidecarFieldByField() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString photo = dir.filePath(QStringLiteral("photo.jpg"));
+    writeBytes(photo, jpegWith(jpegXmpSegment(xmpDocument(
+                          "xmp:Rating=\"2\"", "<dc:description>Embedded</dc:description><dc:subject>" +
+                                                  rdfItems("Bag", {"Own"}) + "</dc:subject>"))));
+    const QString sidecar = dir.filePath(QStringLiteral("photo.jpg.xmp"));
+    writeBytes(sidecar, xmpDocument("xmp:Rating=\"4\"", "<dc:subject>" + rdfItems("Bag", {"Side"}) + "</dc:subject>"));
+    EmbeddedMetadata::Fields fields = EmbeddedMetadata::read(photo, sidecar);
+    QVERIFY(fields.hasXmp);
+    QCOMPARE(fields.rating, 4);
+    QCOMPARE(fields.description, QStringLiteral("Embedded"));
+    QCOMPARE(fields.keywords, QStringList{QStringLiteral("Side")});
+    // A sidecar without keywords leaves the file's XMP keywords.
+    writeBytes(sidecar, xmpDocument("xmp:Rating=\"1\"", {}));
+    fields = EmbeddedMetadata::read(photo, sidecar);
+    QCOMPARE(fields.rating, 1);
+    QCOMPARE(fields.keywords, QStringList{QStringLiteral("Own")});
+
+    // IPTC keywords count only when no XMP exists anywhere.
+    const QString iptcPhoto = dir.filePath(QStringLiteral("iptc.jpg"));
+    writeBytes(iptcPhoto, jpegWith(jpegIptcSegment(iptcRecord(2, 25, "Old") + iptcRecord(2, 120, "Caption"))));
+    fields = EmbeddedMetadata::read(iptcPhoto, sidecar);
+    QVERIFY(fields.hasXmp);
+    QVERIFY(fields.keywords.isEmpty());
+    QCOMPARE(fields.description, QStringLiteral("Caption"));
+    fields = EmbeddedMetadata::read(iptcPhoto, {});
+    QVERIFY(!fields.hasXmp);
+    QCOMPARE(fields.keywords, QStringList{QStringLiteral("Old")});
+
+    // A video still gets its sidecar; a missing or oversized sidecar is none.
+    const QString video = dir.filePath(QStringLiteral("clip.mp4"));
+    writeBytes(video, QByteArray("not really a video"));
+    QCOMPARE(EmbeddedMetadata::read(video, sidecar).rating, 1);
+    QCOMPARE(EmbeddedMetadata::read(photo, dir.filePath(QStringLiteral("gone.xmp"))).rating, 2);
+    const QString huge = dir.filePath(QStringLiteral("huge.xmp"));
+    writeBytes(huge, xmpDocument("xmp:Rating=\"5\"", {}) + QByteArray(EmbeddedMetadata::kMaximumPacketBytes, ' '));
+    QCOMPARE(EmbeddedMetadata::read(photo, huge).rating, 2);
+  }
+
+  void embeddedSidecarNames() {
+    const QHash<QString, QString> darktable = {{QStringLiteral("img_1.cr2.xmp"), QStringLiteral("IMG_1.CR2.xmp")},
+                                               {QStringLiteral("img_1.xmp"), QStringLiteral("IMG_1.XMP")}};
+    // darktable's "<name>.<ext>.xmp" comes first.
+    QCOMPARE(EmbeddedMetadata::sidecarName(QStringLiteral("IMG_1.CR2"), true, true, darktable),
+             QStringLiteral("IMG_1.CR2.xmp"));
+    QCOMPARE(EmbeddedMetadata::sidecarName(QStringLiteral("img_1.cr2"), true, true, darktable),
+             QStringLiteral("IMG_1.CR2.xmp"));
+    const QHash<QString, QString> lightroom = {{QStringLiteral("img_1.xmp"), QStringLiteral("IMG_1.XMP")}};
+    // Lightroom's "<name>.xmp" goes to the raw of a RAW+JPEG pair, never the JPEG.
+    QCOMPARE(EmbeddedMetadata::sidecarName(QStringLiteral("IMG_1.CR2"), true, true, lightroom),
+             QStringLiteral("IMG_1.XMP"));
+    QVERIFY(EmbeddedMetadata::sidecarName(QStringLiteral("IMG_1.JPG"), false, true, lightroom).isEmpty());
+    QCOMPARE(EmbeddedMetadata::sidecarName(QStringLiteral("IMG_1.JPG"), false, false, lightroom),
+             QStringLiteral("IMG_1.XMP"));
+    // Only the last extension is the one replaced.
+    const QHash<QString, QString> dotted = {{QStringLiteral("trip.day 1.xmp"), QStringLiteral("trip.day 1.xmp")}};
+    QCOMPARE(EmbeddedMetadata::sidecarName(QStringLiteral("trip.day 1.png"), false, false, dotted),
+             QStringLiteral("trip.day 1.xmp"));
+    QVERIFY(EmbeddedMetadata::sidecarName(QStringLiteral("trip.png"), false, false, dotted).isEmpty());
+    QVERIFY(EmbeddedMetadata::sidecarName(QStringLiteral("IMG_1.xmp"), true, false, lightroom).isEmpty());
+    QVERIFY(EmbeddedMetadata::sidecarName(QStringLiteral("IMG_2.CR2"), true, false, lightroom).isEmpty());
+  }
+
+  void embeddedFindSidecarListsTheFolder() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    for (const char* name : {"solo.jpg", "SOLO.XMP", "pair.jpg", "pair.png", "pair.xmp", "shot.png",
+                             "shot.png.xmp", "shot.xmp", "IMG_7.CR2", "IMG_7.JPG", "IMG_7.xmp"}) {
+      writeBytes(dir.filePath(QLatin1String(name)), "x");
+    }
+    QCOMPARE(EmbeddedMetadata::findSidecar(dir.filePath(QStringLiteral("solo.jpg"))),
+             dir.filePath(QStringLiteral("SOLO.XMP")));
+    QVERIFY(EmbeddedMetadata::findSidecar(dir.filePath(QStringLiteral("pair.jpg"))).isEmpty());
+    QCOMPARE(EmbeddedMetadata::findSidecar(dir.filePath(QStringLiteral("shot.png"))),
+             dir.filePath(QStringLiteral("shot.png.xmp")));
+    QVERIFY(EmbeddedMetadata::findSidecar(dir.filePath(QStringLiteral("IMG_7.JPG"))).isEmpty());
+    // The raw takes the shared one when raws can be read here at all.
+    if (CameraRaw::isRaw(QStringLiteral("cr2"))) {
+      QCOMPARE(EmbeddedMetadata::findSidecar(dir.filePath(QStringLiteral("IMG_7.CR2"))),
+               dir.filePath(QStringLiteral("IMG_7.xmp")));
+    }
+    QVERIFY(EmbeddedMetadata::findSidecar(dir.filePath(QStringLiteral("SOLO.XMP"))).isEmpty());
   }
 
   void generalMediaDatesAreEnrichedOnceAndProducerDatesAlwaysWin() {

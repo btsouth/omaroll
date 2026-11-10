@@ -74,6 +74,8 @@ add_library(omaroll_core STATIC
   src/library/MediaInspector.h
   src/library/SimilarityIndex.cpp
   src/library/SimilarityIndex.h
+  src/library/EmbeddedMetadata.cpp
+  src/library/EmbeddedMetadata.h
   src/library/MediaMetadataIndex.cpp
   src/library/MediaMetadataIndex.h
   src/sources/CameraRaw.cpp
@@ -471,7 +473,7 @@ if(OMAROLL_FUZZ)
   target_compile_options(omaroll_core PRIVATE -fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
   target_link_options(omaroll_core INTERFACE -fsanitize=fuzzer-no-link,address,undefined)
   set(fuzz_kinds launch ipc matroska pdf image raw subtitles organization query storyboard doctext exifdate hyprland
-    jpegexif diagnosis hashcache webp mimedefaults)
+    jpegexif diagnosis hashcache webp mimedefaults xmp)
   set(kind 0)
   foreach(parser IN LISTS fuzz_kinds)
     math(EXPR kind "${kind} + 1")

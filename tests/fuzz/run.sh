@@ -9,7 +9,7 @@ build=${1:-build/fuzz}
 seconds=${2:-60}
 extra=${3:-}
 parsers=(launch ipc matroska pdf image raw subtitles organization query storyboard doctext exifdate hyprland
-  jpegexif diagnosis hashcache webp mimedefaults)
+  jpegexif diagnosis hashcache webp mimedefaults xmp)
 mkdir -p "$build/fuzz-results"
 # Leak checks stay on; only the documented external allocations are ignored.
 export LSAN_OPTIONS="suppressions=$PWD/tests/lsan.supp${LSAN_OPTIONS:+:$LSAN_OPTIONS}"
