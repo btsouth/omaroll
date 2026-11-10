@@ -14,12 +14,20 @@ frames. Reports therefore fail closed.
 
 A TSan CHECK failure ends the process, so it fails the run as well.
 
-Usage: tsan-triage.py <report files...>
+A run that matches far more known handoffs than usual fails too: a rule that
+became too broad could be hiding a real race among them. Runs on main in
+November 2026 matched 195 to 209. Raise MAX_KNOWN_HANDOFFS only for a reason,
+such as more tests in the TSan selection, and say so in the commit.
+
+Usage: tsan-triage.py [--max-known N] <report files...>
        tsan-triage.py --self-test
 """
 import re
 import sys
 from pathlib import Path
+
+# About 1.5 times the most a run has matched; see the docstring.
+MAX_KNOWN_HANDOFFS = 300
 
 # Qt internals whose races are Qt's own synchronization, invisible to TSan.
 # Each entry needs a report that shows it, and the reason it is not ours.
@@ -438,16 +446,21 @@ def reports(text):
             yield block.strip()
 
 
-def triage(paths):
+def triage(paths, max_known=MAX_KNOWN_HANDOFFS, verbose=True):
     ours, external = [], []
     for path in paths:
         for block in reports(Path(path).read_text(errors="replace")):
             (external if classify(block) == "external" else ours).append(block)
-    for block in external:
+    for block in external if verbose else []:
         print(f"external (known Qt handoff): {block.splitlines()[0]}")
     for block in ours:
         print("==================\n" + block)
-    print(f"tsan-triage: {len(ours)} report(s) to fix, {len(external)} known Qt handoff(s)")
+    print(f"tsan-triage: {len(ours)} report(s) to fix, {len(external)} known Qt handoff(s)"
+          f" (at most {max_known})")
+    if len(external) > max_known:
+        print(f"tsan-triage: {len(external)} known Qt handoffs is more than the {max_known} allowed."
+              " A rule may now match a real race; check what is new before raising the limit.")
+        return 1
     return 1 if ours else 0
 
 
@@ -462,10 +475,21 @@ def self_test():
             print(f"tsan-triage self-test: {fixture.name}: expected {expected}, got {got}")
             failures += 1
     print(f"tsan-triage self-test: {len(fixtures) - failures} of {len(fixtures)} fixtures sorted correctly")
+    # The limit on known handoffs fails a run over it, and only such a run.
+    external = [f for f in fixtures if f.name.startswith("external-")]
+    known = sum(1 for f in external for _ in reports(f.read_text()))
+    if (triage(external, max_known=known, verbose=False) != 0 or
+            triage(external, max_known=known - 1, verbose=False) != 1):
+        print("tsan-triage self-test: the known handoff limit did not hold")
+        failures += 1
     return 1 if failures or not fixtures else 0
 
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["--self-test"]:
         sys.exit(self_test())
-    sys.exit(triage(sys.argv[1:]))
+    args = sys.argv[1:]
+    limit = MAX_KNOWN_HANDOFFS
+    if args[:1] == ["--max-known"]:
+        limit, args = int(args[1]), args[2:]
+    sys.exit(triage(args, limit))

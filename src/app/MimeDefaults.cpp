@@ -12,7 +12,14 @@
 
 namespace {
 const QString desktop = QStringLiteral("io.github.tsouth89.omaroll.desktop");
+#ifdef OMAROLL_FUZZ
+bool (*fuzzXdgMime)(const QStringList &, QString *) = nullptr;
+#endif
 bool xdgMime(const QStringList &args, QString *output = nullptr) {
+#ifdef OMAROLL_FUZZ
+  if (fuzzXdgMime)
+    return fuzzXdgMime(args, output);
+#endif
   QProcess process;
   process.start(QStringLiteral("xdg-mime"), args);
   if (!process.waitForFinished(5000)) {
@@ -25,46 +32,80 @@ bool xdgMime(const QStringList &args, QString *output = nullptr) {
   return process.exitStatus() == QProcess::NormalExit &&
          process.exitCode() == 0;
 }
-// Rewrites one list file through MimeDefaults::withoutOmaroll.
-bool removeEntries(const QString &path, const QString &type,
+// A list is edited as text only when its bytes come back exactly: invalid
+// UTF-8 would be written back as replacement characters, and Qt drops a
+// leading byte-order mark.
+QString notExact(const QString &path) {
+  return path + QStringLiteral(" is not valid UTF-8 or starts with a byte-order mark, "
+                               "so Omaroll leaves it unchanged");
+}
+std::optional<QString> exactText(const QByteArray &bytes) {
+  QString text = QString::fromUtf8(bytes);
+  if (text.toUtf8() != bytes)
+    return std::nullopt;
+  return text;
+}
+// Rewrites one list file through MimeDefaults::withoutOmaroll. A list that
+// cannot be rewritten says why in |problem|.
+bool removeEntries(const QString &path, const QString &type, QString *problem,
                    const QString &original = {}, bool *restored = nullptr) {
   QFile input(path);
   if (!input.exists())
     return true;
-  if (!input.open(QIODevice::ReadOnly))
+  const auto unreadable = [&] {
+    *problem = QStringLiteral("could not read ") + path;
     return false;
+  };
+  if (!input.open(QIODevice::ReadOnly))
+    return unreadable();
   const QByteArray bytes = input.readAll();
   if (input.error() != QFileDevice::NoError || bytes.size() != input.size())
-    return false;
+    return unreadable();
   const QString before = QString::fromUtf8(bytes);
   input.close();
   const QString after = MimeDefaults::withoutOmaroll(before, type, original, restored);
   if (after == before)
     return true;
+  if (!exactText(bytes)) {
+    *problem = notExact(path);
+    return false;
+  }
   QSaveFile output(path);
   const auto written = after.toUtf8();
   return output.open(QIODevice::WriteOnly) &&
          output.write(written) == written.size() && output.commit();
 }
 // A list that is not there reads as empty. One that is there but cannot be
-// read whole reads as nothing at all, so no decision is made from it.
-std::optional<QString> readText(const QString &path) {
+// read whole, or not exactly, reads as nothing at all, so no decision is made
+// from it; |problem| says which.
+std::optional<QString> readText(const QString &path, QString *problem = nullptr) {
   QFile file(path);
   if (!file.exists())
     return QString();
-  if (!file.open(QIODevice::ReadOnly))
-    return std::nullopt;
-  const QByteArray bytes = file.readAll();
-  if (file.error() != QFileDevice::NoError || bytes.size() != file.size())
-    return std::nullopt;
-  return QString::fromUtf8(bytes);
+  QString why = QStringLiteral("could not read ") + path;
+  std::optional<QString> text;
+  if (file.open(QIODevice::ReadOnly)) {
+    const QByteArray bytes = file.readAll();
+    if (file.error() == QFileDevice::NoError && bytes.size() == file.size()) {
+      text = exactText(bytes);
+      why = notExact(path);
+    }
+  }
+  if (!text && problem)
+    *problem = why;
+  return text;
 }
 const QString kFileExisted = QStringLiteral("file/existed");
 const QString kFileSection = QStringLiteral("file/section");
 const QString kFileNewline = QStringLiteral("file/newline");
+// Sections as xdg-mime's awk reads them: a line starting with "[" starts
+// one, and one starting with "[Default Applications]" is the defaults.
+bool isDefaultsHeader(const QString &line) {
+  return line.startsWith(u"[Default Applications]");
+}
 bool hasDefaultsSection(const QString &text) {
   for (const auto &line : text.split(u'\n'))
-    if (line.trimmed() == u"[Default Applications]")
+    if (isDefaultsHeader(line))
       return true;
   return false;
 }
@@ -112,7 +153,11 @@ QString MimeDefaults::defaultLine(const QString &text, const QString &type) {
   bool inDefaults = false;
   for (const auto &line : text.split(u'\n')) {
     if (line.startsWith(u'[')) {
-      inDefaults = line.trimmed() == u"[Default Applications]";
+      // xdg-mime adds its line at the end of the first defaults section
+      // without one, so a line in a later section is never replaced.
+      if (inDefaults && !isDefaultsHeader(line))
+        return {};
+      inDefaults = isDefaultsHeader(line);
       continue;
     }
     // The line xdg-mime replaces in place: exactly "type=" at its start.
@@ -142,9 +187,9 @@ QString MimeDefaults::withoutOmaroll(const QString &text, const QString &type,
   for (qsizetype index = 0; index < lines.size();) {
     QString &line = lines[index];
     if (line.startsWith(u'[')) {
-      inDefaults = line.trimmed() == u"[Default Applications]";
+      inDefaults = isDefaultsHeader(line);
       // The user's exclusions keep Omaroll out of lower lists; they stay.
-      inRemoved = line.trimmed() == u"[Removed Associations]";
+      inRemoved = line.startsWith(u"[Removed Associations]");
       ++index;
       continue;
     }
@@ -313,6 +358,12 @@ QString MimeDefaults::recordPath() {
   return !QFile::exists(path) && QFile::exists(legacy) ? legacy : path;
 }
 
+#ifdef OMAROLL_FUZZ
+void MimeDefaults::setFuzzXdgMime(bool (*xdgMime)(const QStringList &, QString *)) {
+  fuzzXdgMime = xdgMime;
+}
+#endif
+
 QString MimeDefaults::summarize(bool unset, const QString &report, bool ok,
                                 const QString &group) {
   int changed = 0;
@@ -329,9 +380,13 @@ QString MimeDefaults::summarize(bool unset, const QString &report, bool ok,
     const auto dot = handler.lastIndexOf(u'.');
     return dot >= 0 && dot + 1 < handler.size() ? handler.mid(dot + 1) : handler;
   };
+  // Why the first failure happened, when the report says: "... (reason)".
+  QString reason;
   for (const auto &line : report.split(u'\n', Qt::SkipEmptyParts)) {
     if (line.startsWith(u"Could not") || line.startsWith(u"No matching")) {
       ++failed;
+      if (const auto open = line.indexOf(u" ("); reason.isEmpty() && open > 0 && line.endsWith(u')'))
+        reason = line.mid(open + 2, line.size() - open - 3);
       continue;
     }
     const auto colon = line.indexOf(u": ");
@@ -404,7 +459,9 @@ QString MimeDefaults::summarize(bool unset, const QString &report, bool ok,
     summary = summary.isEmpty() ? remains : summary + u' ' + remains;
   }
   if (failed > 0) {
-    const QString failure = QStringLiteral("%1 could not be changed.").arg(types(failed));
+    const QString failure = reason.isEmpty()
+                                ? QStringLiteral("%1 could not be changed.").arg(types(failed))
+                                : QStringLiteral("%1 could not be changed: %2.").arg(types(failed), reason);
     summary = summary.isEmpty() ? failure : summary + u' ' + failure;
   }
   if (summary.isEmpty())
@@ -440,10 +497,11 @@ MimeDefaults::Result MimeDefaults::run(bool unset, const QString &group) {
         continue;
       }
       // A list that cannot be read is left alone: nothing could be put back.
-      const std::optional<QString> read = readText(userList);
+      QString problem;
+      const std::optional<QString> read = readText(userList, &problem);
       if (!read) {
         ok = false;
-        report << "Could not set " + type + " (could not read " + userList + ")";
+        report << "Could not set " + type + " (" + problem + ")";
         continue;
       }
       const QString &before = *read;
@@ -498,13 +556,14 @@ MimeDefaults::Result MimeDefaults::run(bool unset, const QString &group) {
                                 .toLower()
                                 .split(u':', Qt::SkipEmptyParts);
       bool restoredLine = false;
+      QString problem;
       for (const auto &dir : dirs) {
         const QString list = dir + "/mimeapps.list";
-        removed &= removeEntries(list, type, list == userList ? original : QString(),
+        removed &= removeEntries(list, type, &problem, list == userList ? original : QString(),
                                  list == userList ? &restoredLine : nullptr);
-        removed &= removeEntries(dir + "/defaults.list", type);
+        removed &= removeEntries(dir + "/defaults.list", type, &problem);
         for (const auto &name : desktops)
-          removed &= removeEntries(dir + "/" + name + "-mimeapps.list", type);
+          removed &= removeEntries(dir + "/" + name + "-mimeapps.list", type, &problem);
       }
       // Written only when the user's own line did not come back and the
       // files do not already give that answer: a handler that came from a
@@ -528,7 +587,7 @@ MimeDefaults::Result MimeDefaults::run(bool unset, const QString &group) {
       }
       if (!removed) {
         ok = false;
-        report << "Could not unset " + type;
+        report << "Could not unset " + type + (problem.isEmpty() ? QString() : " (" + problem + ")");
         continue;
       }
       state.remove(type);

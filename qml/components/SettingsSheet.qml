@@ -759,22 +759,6 @@ Item {
                 }
 
                 SettingRow {
-                    title: "Caption size"
-                    detail: "Subtitles in the viewer and the library preview."
-
-                    PillButton {
-                        objectName: "captionScaleButton"
-                        readonly property var scales: [75, 100, 125, 150, 200]
-                        readonly property var names: ["Small", "Normal", "Large", "Larger", "Largest"]
-                        accessibleName: "Caption size: " + label
-                        toolTip: "Click for the next size"
-                        anchors.verticalCenter: parent.verticalCenter
-                        label: names[Math.max(0, scales.indexOf(Settings.captionScale))]
-                        onClicked: Settings.captionScale = scales[(scales.indexOf(Settings.captionScale) + 1) % scales.length]
-                    }
-                }
-
-                SettingRow {
                     title: "Videos in slideshows"
                     detail: "Play each video through before moving to the next item."
                     toggle: slideshowVideosButton
@@ -1244,6 +1228,9 @@ Item {
         id: restoreDialog
         title: "Restore Omaroll organization"
         fileMode: FileDialog.OpenFile
+        // Opens on the automatic backups: daily, weekly, before-change and
+        // before-restore copies, each named for when it was kept.
+        currentFolder: Settings.backupFolderUrl()
         nameFilters: ["Omaroll backup (*.json)"]
         onAccepted: {
             // Chosen, not applied: the restore waits for confirmation below.

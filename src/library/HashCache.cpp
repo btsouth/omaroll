@@ -47,7 +47,9 @@ Entries load(const QString& file, quint32 magic, quint16 version, qint64 maximum
     return {};
   }
   Entries entries;
-  entries.reserve(int(count));
+  // A count is only a claim: reserve no more than the file could hold.
+  constexpr qint64 kSmallestEntry = 4 + 2 + 8 + 8 + 4;
+  entries.reserve(int(qMin<qint64>(count, input.size() / kSmallestEntry)));
   for (quint32 index = 0; index < count; ++index) {
     if (cancel && (index % 256) == 0 && cancel->load()) {
       return {};

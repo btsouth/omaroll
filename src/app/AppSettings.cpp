@@ -41,6 +41,7 @@
 #include <functional>
 #include <mutex>
 #include <thread>
+#include <tuple>
 #include <limits>
 #include <memory>
 #include <cmath>
@@ -91,7 +92,6 @@ constexpr auto kLastVisit = "library/lastVisit";
 constexpr auto kVideoVolume = "playback/volume";
 constexpr auto kVideoMuted = "playback/muted";
 constexpr auto kRememberPlaybackSpeed = "playback/rememberSpeed";
-constexpr auto kCaptionScale = "playback/captionScale";
 constexpr auto kVideoPlaybackRate = "playback/rate";
 constexpr auto kVideoPositions = "playback/positionsV2";
 constexpr auto kVideoPositionRecency = "playback/positionRecencyV2";
@@ -363,12 +363,6 @@ AppSettings::AppSettings(QObject* parent)
   m_videoVolume = qBound(0.0, m_settings.value(kVideoVolume, 0.8).toDouble(), 1.0);
   m_videoMuted = m_settings.value(kVideoMuted, false).toBool();
   m_rememberPlaybackSpeed = m_settings.value(kRememberPlaybackSpeed, false).toBool();
-  {
-    const int scale = m_settings.value(kCaptionScale, 100).toInt();
-    if (std::find(std::begin(kCaptionScales), std::end(kCaptionScales), scale) != std::end(kCaptionScales)) {
-      m_captionScale = scale;
-    }
-  }
   const qreal savedRate = m_settings.value(kVideoPlaybackRate, 1.0).toDouble();
   m_videoPlaybackRate = std::isfinite(savedRate) ? qBound(0.25, savedRate, 4.0) : 1.0;
   const QVariantMap storedAlbums = m_settings.value(kAlbums).toMap();
@@ -861,16 +855,6 @@ void AppSettings::setRememberPlaybackSpeed(bool value) {
   m_rememberPlaybackSpeed = value;
   m_settings.setValue(kRememberPlaybackSpeed, value);
   emit rememberPlaybackSpeedChanged();
-}
-
-void AppSettings::setCaptionScale(int percent) {
-  if (std::find(std::begin(kCaptionScales), std::end(kCaptionScales), percent) == std::end(kCaptionScales)
-      || m_captionScale == percent) {
-    return;
-  }
-  m_captionScale = percent;
-  setValue(kCaptionScale, percent);
-  emit captionScaleChanged();
 }
 
 void AppSettings::setVideoPlaybackRate(qreal value) {
@@ -1569,6 +1553,12 @@ constexpr int kWeeklyBackups = 4;
 constexpr int kBeforeRestoreBackups = 4;
 constexpr auto kOwnerOnly = QFileDevice::ReadOwner | QFileDevice::WriteOwner;
 
+// Empty, or under half of a snapshot that held at least three more items.
+bool looksIncomplete(int loaded, int snapshot) {
+  if (snapshot <= 0) return false;
+  return loaded == 0 || (qint64(loaded) * 2 < snapshot && snapshot - loaded >= 3);
+}
+
 // Snapshots list the paths of organized files, so keep them private.
 bool prepareBackupDirectory(const QString& path) {
   if (!QDir().mkpath(path)) return false;
@@ -1588,8 +1578,11 @@ bool writeBackupFile(const QString& path, const QByteArray& payload) {
 }
 
 // daily-2026-11-08.json and weekly-2026-11-02.json carry their date.
+// before-change-2026-11-08.json too.
+constexpr QLatin1StringView kBeforeChange("before-change-");
 QDate backupDate(const QString& name) {
-  return QDate::fromString(name.mid(name.indexOf(QLatin1Char('-')) + 1, 10), Qt::ISODate);
+  const qsizetype at = name.startsWith(kBeforeChange) ? kBeforeChange.size() : name.indexOf(QLatin1Char('-')) + 1;
+  return QDate::fromString(name.mid(at, 10), Qt::ISODate);
 }
 
 // Times are UTC: local time takes glibc's time zone lock on the backup thread.
@@ -1651,6 +1644,13 @@ bool writeScheduledBackups(const QString& path, const QDate& date, const QByteAr
   }
   pruneBackups(dir, QStringLiteral("daily-*.json"), kDailyBackups, dayStart(date), daily, datedStamp);
   pruneBackups(dir, QStringLiteral("weekly-*.json"), kWeeklyBackups, dayStart(monday), weekly, datedStamp);
+  // Copies kept before a change live exactly as long as their day's daily,
+  // checked on every write rather than only when another copy is kept.
+  QSet<QDate> days;
+  for (const QString& name : dir.entryList({QStringLiteral("daily-*.json")}, QDir::Files)) days.insert(backupDate(name));
+  QDir copies(path);
+  for (const QString& name : copies.entryList({QStringLiteral("before-change-*.json")}, QDir::Files))
+    if (!days.contains(backupDate(name))) copies.remove(name);
   return true;
 }
 } // namespace
@@ -1658,6 +1658,10 @@ bool writeScheduledBackups(const QString& path, const QDate& date, const QByteAr
 QString AppSettings::backupDirectory() const {
   return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)
          + QStringLiteral("/omaroll/backups");
+}
+
+QUrl AppSettings::backupFolderUrl() const {
+  return QUrl::fromLocalFile(backupDirectory());
 }
 
 AppSettings::OrganizationState AppSettings::organizationState() const {
@@ -1681,14 +1685,6 @@ struct AppSettings::HealthReport {
   int snapshotSize = 0;
 };
 
-namespace {
-// Empty, or under half of a snapshot that held at least three more items.
-bool looksIncomplete(int loaded, int snapshot) {
-  if (snapshot <= 0) return false;
-  return loaded == 0 || (qint64(loaded) * 2 < snapshot && snapshot - loaded >= 3);
-}
-} // namespace
-
 // Albums and tags count once each and once per file in them, then every mark
 // and saved view: a rough size to compare a load with a snapshot.
 int AppSettings::organizationSize(const OrganizationState& state) {
@@ -1698,6 +1694,64 @@ int AppSettings::organizationSize(const OrganizationState& state) {
   size += state.favorites.size() + state.hidden.size() + state.ratings.size() + state.captions.size() +
           state.smartCollections.size();
   return int(qMin<qsizetype>(size, std::numeric_limits<int>::max()));
+}
+
+int AppSettings::snapshotSize(const QByteArray& payload) {
+  DecodedOrganization decoded;
+  if (!decodeOrganization(payload, decoded).isEmpty()) return -1;
+  return organizationSize({decoded.albums, decoded.tags, decoded.smartCollections, decoded.favorites,
+                           decoded.hidden, decoded.ratings, decoded.captions, decoded.markIdentities});
+}
+
+// A refresh follows the latest state, so the launch check compares with what
+// was last saved and a deliberate clear-out is not warned about. When that
+// state looks incomplete against the snapshot it replaces (a mass untag or
+// album delete by mistake), that snapshot is kept beside it first. Each day
+// keeps the fullest state it had, before-change-<day>.json, and, when it
+// differs, the state just before the latest drop, before-change-<day>-latest.json,
+// so work built after a deliberate clear-out is not lost to an older, larger
+// copy. Both are kept exactly as long as their day's daily.
+bool AppSettings::keepFullerSnapshot(const QString& path, const QDate& day, int replacing, bool replace) {
+  const QDir dir(path);
+  const auto daily = [&dir](const QDate& date) {
+    return dir.filePath(QStringLiteral("daily-%1.json").arg(date.toString(Qt::ISODate)));
+  };
+  const auto read = [](const QString& file) -> std::pair<QByteArray, int> {
+    QFile input(file);
+    if (input.size() > kMaximumOrganizationBytes || !input.open(QIODevice::ReadOnly)) return {{}, -1};
+    QByteArray bytes = input.read(kMaximumOrganizationBytes + 1);
+    const int size = snapshotSize(bytes);
+    return {size < 0 ? QByteArray() : bytes, size};
+  };
+  const bool exists = QFileInfo::exists(daily(day));
+  if (exists && !replace) return true; // Nothing is replaced.
+  auto [payload, held] = read(daily(day));
+  // The day's first snapshot, in a session left open past midnight, is
+  // checked against the newest earlier daily instead.
+  for (int back = 1; !exists && held < 0 && back <= kDailyBackups; ++back)
+    std::tie(payload, held) = read(daily(day.addDays(-back)));
+  if (!looksIncomplete(replacing, held)) return true;
+  const QString date = day.toString(Qt::ISODate);
+  const QString fullest = QStringLiteral("before-change-%1.json").arg(date);
+  const QString latest = QStringLiteral("before-change-%1-latest.json").arg(date);
+  const auto [kept, keptSize] = read(dir.filePath(fullest));
+  if (keptSize < held) {
+    if (!writeBackupFile(dir.filePath(fullest), payload)) return false;
+    QFile::remove(dir.filePath(latest)); // The fullest is also the latest now.
+  } else if (kept != payload) {
+    if (!writeBackupFile(dir.filePath(latest), payload)) return false;
+  } else {
+    QFile::remove(dir.filePath(latest));
+  }
+  // writeScheduledBackups prunes them with the dailies.
+  return true;
+}
+
+bool AppSettings::writeDailySnapshot(const QString& path, const QDate& day, const QByteArray& payload, int size,
+                                     bool replace) {
+  // Without the copy of a fuller snapshot, it is not replaced.
+  return prepareBackupDirectory(path) && keepFullerSnapshot(path, day, size, replace) &&
+         writeScheduledBackups(path, day, payload, replace);
 }
 
 void AppSettings::checkOrganizationHealth(bool existingProfile) {
@@ -1719,11 +1773,8 @@ void AppSettings::checkOrganizationHealth(bool existingProfile) {
       if (file.size() > kMaximumOrganizationBytes || !file.open(QIODevice::ReadOnly)) continue;
       // Checked as an import checks it: a header-only, cut or unreadable
       // snapshot is passed over for an older one that restores.
-      DecodedOrganization decoded;
-      if (!decodeOrganization(file.read(kMaximumOrganizationBytes + 1), decoded).isEmpty()) continue;
-      const int size = organizationSize({decoded.albums, decoded.tags, decoded.smartCollections,
-                                         decoded.favorites, decoded.hidden, decoded.ratings,
-                                         decoded.captions, decoded.markIdentities});
+      const int size = snapshotSize(file.read(kMaximumOrganizationBytes + 1));
+      if (size < 0) continue;
       std::lock_guard lock(report->mutex);
       report->snapshot = file.fileName();
       report->date = day;
@@ -1832,9 +1883,10 @@ void AppSettings::scheduleDailySnapshot(bool replace) {
   // Retried on the next start if the write fails, not on every save.
   m_snapshotDate = today;
   // Encoding is quick; the directory work and the synced writes are not.
-  m_backupWriter->post([path = backupDirectory(), today, payload = encodeOrganization(organizationState()), replace,
-                        failed = m_snapshotWriteFailed] {
-    if (!writeScheduledBackups(path, today, payload, replace)) failed->store(true);
+  const OrganizationState state = organizationState();
+  m_backupWriter->post([path = backupDirectory(), today, payload = encodeOrganization(state),
+                        size = organizationSize(state), replace, failed = m_snapshotWriteFailed] {
+    if (!writeDailySnapshot(path, today, payload, size, replace)) failed->store(true);
   });
 }
 
@@ -1866,36 +1918,43 @@ bool AppSettings::snapshotOrganization(const QDate& date, bool beforeRestore) {
   flushBackups();
   if (settingsStatus() != QSettings::NoError) return false;
   if (beforeRestore) return saveBeforeRestore(organizationState());
-  return writeScheduledBackups(backupDirectory(), date, encodeOrganization(organizationState()), false);
+  const OrganizationState state = organizationState();
+  return writeDailySnapshot(backupDirectory(), date, encodeOrganization(state), organizationSize(state), false);
 }
 
 bool AppSettings::canRestoreOrganization() const {
   return (settingsStatus() == QSettings::FormatError || m_organizationSuspect) &&
-         !QDir(backupDirectory()).entryList({QStringLiteral("daily-*.json"),
-                 QStringLiteral("weekly-*.json"), QStringLiteral("before-restore-*.json")}, QDir::Files).isEmpty();
+         !QDir(backupDirectory()).entryList({QStringLiteral("daily-*.json"), QStringLiteral("weekly-*.json"),
+                 QStringLiteral("before-change-*.json"), QStringLiteral("before-restore-*.json")}, QDir::Files).isEmpty();
 }
 
 QVariantMap AppSettings::restoreLastGoodBackup() {
   flushBackups();
   const QDir dir(backupDirectory());
-  // Newest date first, and a day's own snapshot before its week's copy. Dates
-  // after today come from a clock that ran ahead and go last.
+  // Newest date first. Within a day: its own snapshot, then the fuller one
+  // kept before a change that day, then its week's copy. Dates after today
+  // come from a clock that ran ahead and go last.
   const QDate today = QDate::currentDate();
   struct Candidate {
     QString name;
     QDate date;
-    bool daily;
+    int order;
     bool current;
   };
   QList<Candidate> candidates;
-  for (const QString& name : dir.entryList({QStringLiteral("daily-*.json"), QStringLiteral("weekly-*.json")}, QDir::Files)) {
+  for (const QString& name : dir.entryList({QStringLiteral("daily-*.json"), QStringLiteral("before-change-*.json"),
+                                            QStringLiteral("weekly-*.json")}, QDir::Files)) {
     const QDate date = backupDate(name);
-    candidates.append({name, date, name.startsWith(QLatin1String("daily-")), date.isValid() && date <= today});
+    // The state just before the latest drop, then the fullest of the day.
+    const int order = name.startsWith(QLatin1String("daily-")) ? 0
+                      : name.startsWith(kBeforeChange)        ? (name.endsWith(QLatin1String("-latest.json")) ? 1 : 2)
+                                                              : 3;
+    candidates.append({name, date, order, date.isValid() && date <= today});
   }
   std::stable_sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
     if (a.current != b.current) return a.current;
     if (a.date != b.date) return a.date > b.date;
-    return a.daily && !b.daily;
+    return a.order < b.order;
   });
   QStringList scheduled;
   for (const Candidate& candidate : std::as_const(candidates)) scheduled.append(candidate.name);
@@ -1908,13 +1967,15 @@ QVariantMap AppSettings::restoreLastGoodBackup() {
     if (!result.value(QStringLiteral("ok")).toBool()) continue;
     // A daily snapshot is named for its day. A weekly copy is named for its
     // Monday, so its own export time says when it was taken.
+    const bool beforeChange = name.startsWith(kBeforeChange);
     const QDateTime taken = QDateTime::fromString(result.value(QStringLiteral("exportedAt")).toString(), Qt::ISODate);
-    const QDate day = name.startsWith(QLatin1String("daily-")) || !taken.isValid()
+    const QDate day = name.startsWith(QLatin1String("daily-")) || beforeChange || !taken.isValid()
         ? backupDate(name) : taken.toLocalTime().date();
     if (day.isValid()) {
       result.insert(QStringLiteral("backupDate"), day);
       result.insert(QStringLiteral("message"), result.value(QStringLiteral("message")).toString()
-                        + QStringLiteral(" from the backup of ")
+                        + (beforeChange ? QStringLiteral(" from the backup kept before a change on ")
+                                        : QStringLiteral(" from the backup of "))
                         + QLocale().toString(day, QStringLiteral("d MMMM yyyy")));
     }
     return result;

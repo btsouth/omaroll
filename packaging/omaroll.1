@@ -70,7 +70,12 @@ and of the lists in
 app chosen after
 .B \-\-set\-default
 stays. Types with nothing of yours to put back keep their system default, and
-the summary counts them.
+the summary counts them. A list that is not valid UTF-8, or that starts with a
+byte-order mark, could not be written back byte for byte, so
+.B \-\-set\-default
+and
+.B \-\-unset\-default
+leave it unchanged and say so, naming the file.
 .TP
 .B \-\-install\-window\-rules
 Add Omaroll's Hyprland rules to

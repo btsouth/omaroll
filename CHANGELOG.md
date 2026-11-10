@@ -26,15 +26,7 @@
   restored file goes back to its place in the viewer. Undo restores only the
   file that was trashed and never overwrites a file that took its name.
 - Video details show HDR10, HLG and Dolby Vision.
-- Open in mpv continues from the current position, and pauses Omaroll's
-  player so the two don't play at once.
-- HDR10 and HLG videos that Qt draws without tone mapping (anything but a
-  hardware-decoded 10-bit frame) say so, with Open in mpv (`P`) beside it to
-  continue there at the same spot.
-- `Z` and `X` shift embedded text subtitles too, not only sidecar files, in the
-  viewer and the library preview, which now takes `Z` and `X` as well.
-  Picture-based tracks say they can't be shifted.
-- A **Caption size** setting, from 75% to 200%.
+- Open in mpv continues from the current position.
 - Optional background text indexing in Settings: once the library scan settles,
   picture text is read two to four at a time at low priority, only on mains
   power, with a screenshots-only option and a "Text indexed N of M" status.
@@ -206,6 +198,16 @@
   library stops at once.
 
 ### Fixed
+
+- A mass untag or album delete by mistake no longer leaves only the smaller
+  state in the backups, also when it happens in a session left open past
+  midnight. When a backup would shrink that far, the day's fullest state is
+  kept beside it as `before-change-<date>.json`, and the state just before
+  the latest drop as `before-change-<date>-latest.json` when that differs.
+  Restore last good backup falls back to them, and the Restore picker lists
+  them, since it now opens in the backups folder.
+- `--set-default` and `--unset-default` say when `mimeapps.list` is not
+  valid UTF-8 or starts with a byte-order mark, and leave it unchanged.
 
 - A picture whose contents are another format than its name (a 24-byte TIM
   file named `.png`, `.jpg` or `.tga`) no longer crashes Omaroll at every

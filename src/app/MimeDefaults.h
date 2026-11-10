@@ -53,6 +53,12 @@ public:
   // left in the old ~/.config/Omaroll is moved here first.
   static QString recordPath();
 
+#ifdef OMAROLL_FUZZ
+  // Replaces the xdg-mime process for every call, so a fuzzer can run the
+  // whole set and unset against its own model of xdg-mime.
+  static void setFuzzXdgMime(bool (*xdgMime)(const QStringList &args, QString *output));
+#endif
+
   bool known() const { return m_known; }
   bool imagesDefault() const { return m_imagesDefault; }
   bool videosDefault() const { return m_videosDefault; }

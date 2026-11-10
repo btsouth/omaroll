@@ -644,3 +644,11 @@ QVariantMap ImageEditor::exportImage(const QString& source, const QString& prefe
                                   .arg(QFileInfo(source).fileName())
                             : QString()}};
 }
+
+#ifdef OMAROLL_FUZZ
+// The WebP chunk walk and the foreign-EXIF check, on a file a fuzzer wrote.
+void fuzzWebp(const QString& path) {
+  (void)isLosslessWebp(path);
+  (void)hasForeignExif(path);
+}
+#endif

@@ -168,99 +168,18 @@ Item {
     property var subtitleFiles: []
     property string externalSubtitle: ""
     property int subtitleChoice: 0
-    // A timing nudge for subtitles. Positive shows the cue later. An embedded
-    // text track is shifted through a copy of it, read like a sidecar.
+    // A timing nudge for sidecar subtitles, which are the ones omaroll draws
+    // itself. Positive shows the cue later.
     property int subtitleOffsetMs: 0
-    // Kept here: Qt 6.12 does not notify a change of activeSubtitleTrack.
-    // The track belongs to the file it was chosen on: Main sets the next
-    // path before open() runs, and no binding may pair the two.
-    property int embeddedSubtitleTrack: -1
-    property string embeddedSubtitlePath: ""
-    readonly property int activeEmbeddedTrack: isVideo && embeddedSubtitlePath !== ""
-                                               && embeddedSubtitlePath === path
-                                               ? embeddedSubtitleTrack : -1
-    readonly property string embeddedSubtitleCopy: {
-        void Subtitles.revision
-        return subtitleOffsetMs !== 0 && activeEmbeddedTrack >= 0
-            ? Subtitles.embedded(embeddedSubtitlePath, activeEmbeddedTrack) : ""
-    }
     readonly property string externalCueText: {
         void Subtitles.revision
-        const cues = externalSubtitle !== "" ? externalSubtitle : embeddedSubtitleCopy
-        return cues !== "" && player
-        ? Subtitles.textAt(cues, Math.round(player.position) - root.subtitleOffsetMs)
+        return externalSubtitle !== "" && player
+        ? Subtitles.textAt(externalSubtitle, Math.round(player.position) - root.subtitleOffsetMs)
         : ""
     }
-    readonly property string subtitleOverlayText: externalSubtitle !== "" || embeddedSubtitleCopy !== ""
+    readonly property string subtitleOverlayText: externalSubtitle !== ""
         ? externalCueText
         : (root.presentation ? root.presentation.subtitleText : "")
-    // A picture-based track, no ffmpeg or a copy that stalled: the
-    // track can't be shifted, so take the delay back and say why.
-    readonly property string embeddedDelayProblem: {
-        void Subtitles.revision
-        return subtitleOffsetMs !== 0 && activeEmbeddedTrack >= 0
-            ? Subtitles.embeddedProblem(embeddedSubtitlePath, activeEmbeddedTrack) : ""
-    }
-    onEmbeddedDelayProblemChanged: {
-        if (embeddedDelayProblem === "") return
-        // After this binding settles: the reset changes what it reads.
-        const problem = embeddedDelayProblem
-        Qt.callLater(function () {
-            subtitleDelayPending = false
-            subtitleOffsetMs = 0
-            statusRequested(problem)
-        })
-    }
-    // The delay is said once the shifted cues are drawn, not while the
-    // track is still being copied.
-    property bool subtitleDelayPending: false
-    onEmbeddedSubtitleCopyChanged: {
-        if (embeddedSubtitleCopy === "" || !subtitleDelayPending) return
-        subtitleDelayPending = false
-        saySubtitleDelay()
-    }
-    function saySubtitleDelay() {
-        statusRequested("Subtitle delay " + (subtitleOffsetMs > 0 ? "+" : "")
-                        + (subtitleOffsetMs / 1000).toFixed(1) + " s")
-    }
-    // Z and X, and the Sub − and Sub + buttons, which show the delay in
-    // their own label and so say only what went wrong.
-    function adjustSubtitleOffset(amount, quiet) {
-        if (!isVideo) return
-        if (externalSubtitle === "" && activeEmbeddedTrack < 0) {
-            statusRequested("Turn on subtitles first")
-            return
-        }
-        if (externalSubtitle === "") {
-            // A copy that stalled is started again only here, on a key or
-            // button, before the delay changes, so bindings never see it.
-            Subtitles.retryEmbedded(embeddedSubtitlePath, activeEmbeddedTrack)
-            const problem = Subtitles.embeddedProblem(embeddedSubtitlePath, activeEmbeddedTrack)
-            if (problem !== "") {
-                statusRequested(problem)
-                return
-            }
-        }
-        subtitleOffsetMs = Math.max(-10000, Math.min(10000, subtitleOffsetMs + amount))
-        if (externalSubtitle === "" && subtitleOffsetMs !== 0 && embeddedSubtitleCopy === "") {
-            subtitleDelayPending = !quiet
-            statusRequested("Preparing subtitles…")
-            return
-        }
-        subtitleDelayPending = false
-        if (!quiet) saySubtitleDelay()
-    }
-    // Stops and deletes the copy of the track; the next file starts clean.
-    function forgetEmbeddedSubtitles() {
-        if (embeddedSubtitlePath !== "") Subtitles.releaseEmbedded(embeddedSubtitlePath)
-        embeddedSubtitlePath = ""
-        embeddedSubtitleTrack = -1
-        subtitleDelayPending = false
-    }
-    // mpv takes over at the current position: stop here so only one plays.
-    function pauseForHandoff() {
-        if (player && player.playbackState === MediaPlayer.PlayingState) player.pause()
-    }
     readonly property bool hasSubtitleChoices: (player && player.subtitleTracks.length > 0)
                                                || subtitleFiles.length > 0
     readonly property string subtitleChoiceLabel: {
@@ -475,7 +394,6 @@ Item {
         resumePending = true
         externalSubtitle = ""
         subtitleChoice = 0
-        forgetEmbeddedSubtitles()
         subtitleOffsetMs = 0
         subtitleFiles = Subtitles.files(path)
         const keepActionFocus = visible && actionNavigationActive
@@ -742,9 +660,6 @@ Item {
     }
 
     function setSubtitleTrack(index) {
-        if (index !== activeEmbeddedTrack) forgetEmbeddedSubtitles()
-        embeddedSubtitleTrack = index
-        embeddedSubtitlePath = index >= 0 ? path : ""
         if (player.activeSubtitleTrack === index) return
         player.activeSubtitleTrack = index
         if (presentation) presentation.trackChanged()
@@ -802,7 +717,6 @@ Item {
         // The selection belongs to the document that was open.
         pdfSelectMode = false
         PdfInfo.clearSelection()
-        forgetEmbeddedSubtitles()
         visible = false
     }
 
@@ -1057,8 +971,7 @@ Item {
             readonly property int rowChrome: 16 + 12 + 10 + 16
             readonly property real videoFooterHeight: 56
                 + (root.slideshowRunning ? 0 : (resumePrompt.visible ? resumePrompt.height + 10 : 0)
-                   + (topControlsPanel.stacked ? 44 : 0)
-                   + (hdrNotice.visible ? hdrNotice.height + 10 : 0))
+                   + (topControlsPanel.stacked ? 44 : 0))
 
             // Nothing here reads compactControls, which keeps it loop-free.
             Row {
@@ -1705,49 +1618,6 @@ Item {
                 }
             }
 
-            // Qt tone-maps PQ and HLG only in hardware-decoded P010 frames;
-            // mpv maps the rest. It takes its own band at the top of the
-            // footer, under the picture and its captions, and goes with the
-            // transport.
-            Rectangle {
-                id: hdrNotice
-                objectName: "detailHdrNotice"
-                readonly property string transfer: root.isVideo && !root.videoFailed && !!root.presentation
-                                                   ? root.presentation.hdr : ""
-                // Checked again for each HDR file: mpv may have been installed since.
-                readonly property bool canHandOff: { void hdrNotice.transfer; return Registry.available("play") }
-                readonly property string message: (hdrNotice.transfer === "PQ" ? "HDR10" : "HLG")
-                                                  + " video: colours aren't tone-mapped here"
-                readonly property bool shown: transfer !== "" && root.playbackError === "" && transport.visible
-                visible: shown
-                onShownChanged: if (shown && root.visible) Accessible.announce(hdrNotice.message
-                    + (hdrNotice.canHandOff ? ". P opens it in mpv" : ""), Accessible.Polite)
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.top: output.bottom
-                anchors.topMargin: 2
-                width: Math.min(hdrText.implicitWidth + 16, parent.width - 32)
-                height: hdrText.implicitHeight + 8
-                radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 6) : 3
-                color: Osd.panel
-                border.width: 1
-                border.color: Osd.border
-                Accessible.role: Accessible.AlertMessage
-                Accessible.name: hdrNotice.message
-
-                Text {
-                    id: hdrText
-                    objectName: "detailHdrNoticeText"
-                    anchors.centerIn: parent
-                    width: Math.min(implicitWidth, hdrNotice.parent.width - 48)
-                    elide: Text.ElideRight
-                    text: hdrNotice.message + (hdrNotice.canHandOff ? "  ·  P opens it in mpv" : "")
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 12
-                    color: Osd.foreground
-                    Accessible.ignored: true
-                }
-            }
-
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: transport.top
@@ -1801,7 +1671,7 @@ Item {
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.Wrap
                 font.family: Theme.fontFamily
-                font.pixelSize: Math.round(Math.max(16, Math.min(28, output.height / 24)) * Settings.captionScale / 100)
+                font.pixelSize: Math.max(16, Math.min(28, output.height / 24))
                 font.weight: Font.DemiBold
                 color: "white"
                 style: Text.Outline
@@ -2108,7 +1978,6 @@ Item {
 
             Rectangle {
                 id: topControlsPanel
-                objectName: "detailTopControls"
                 // A still's slideshow and full screen are on its toolbar.
                 visible: root.isVideo || root.slideshowRunning
                 readonly property bool stacked: root.isVideo && !root.slideshowRunning
@@ -2263,8 +2132,7 @@ Item {
                 // Whether a sidecar's timing nudge is on offer at all, apart
                 // from the room it gets: the top controls stack on this
                 // minimum, and the nudge's visibility follows that width.
-                readonly property bool subtitleOffsetOffered: (root.externalSubtitle !== ""
-                                                               || root.activeEmbeddedTrack >= 0)
+                readonly property bool subtitleOffsetOffered: root.externalSubtitle !== ""
                                                               && root.hasSubtitleChoices
                 // Measured from the parts, which keep their size while hidden,
                 // so the nudge's own visibility can depend on it. The clock
@@ -2424,14 +2292,14 @@ Item {
                     color: Osd.mutedText
                 }
 
-                // A timing nudge for the subtitles shown, which omaroll draws.
+                // A timing nudge for sidecar subtitles only, which omaroll draws.
                 // It sits between the clock and the track controls, and leaves
                 // with the CC button it belongs to, or before the scrub would
                 // shrink below its minimum, when the row runs short.
                 Row {
                     id: subtitleOffsetControls
                     objectName: "subtitleOffsetControls"
-                    visible: transport.subtitleOffsetOffered && subtitleButton.width > 0
+                    visible: root.externalSubtitle !== "" && subtitleButton.width > 0
                              && transport.width >= playButton.width + 14
                                 + transport.scrubMinimum + 14
                                 + transport.subtitleOffsetWidest + 8
@@ -2471,8 +2339,7 @@ Item {
                         label: "Sub −"
                         osd: true
                         toolTip: "Show subtitles earlier"
-                        shortcut: ShortcutCatalog.sequence("preview", "subtitle-offset")[0]
-                        onClicked: root.adjustSubtitleOffset(-500, true)
+                        onClicked: root.subtitleOffsetMs = Math.max(-10000, root.subtitleOffsetMs - 500)
                     }
                     PillButton {
                         id: subtitleLater
@@ -2480,8 +2347,7 @@ Item {
                         label: "Sub +"
                         osd: true
                         toolTip: "Show subtitles later"
-                        shortcut: ShortcutCatalog.sequence("preview", "subtitle-offset")[1]
-                        onClicked: root.adjustSubtitleOffset(500, true)
+                        onClicked: root.subtitleOffsetMs = Math.min(10000, root.subtitleOffsetMs + 500)
                     }
                 }
 
@@ -3465,13 +3331,6 @@ Item {
         }
         if (root.isVideo && (event.key === ShortcutCatalog.previewKeyCodes["Comma"] || event.key === ShortcutCatalog.previewKeyCodes["Period"])) {
             root.stepFrame(event.key === ShortcutCatalog.previewKeyCodes["Comma"] ? -1 : 1)
-            event.accepted = true
-            return
-        }
-        if (root.isVideo && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier))
-                && (event.key === ShortcutCatalog.previewKeyCodes["Z"]
-                    || event.key === ShortcutCatalog.previewKeyCodes["X"])) {
-            root.adjustSubtitleOffset(event.key === ShortcutCatalog.previewKeyCodes["Z"] ? -500 : 500, false)
             event.accepted = true
             return
         }
