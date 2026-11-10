@@ -91,6 +91,7 @@ constexpr auto kLastVisit = "library/lastVisit";
 constexpr auto kVideoVolume = "playback/volume";
 constexpr auto kVideoMuted = "playback/muted";
 constexpr auto kRememberPlaybackSpeed = "playback/rememberSpeed";
+constexpr auto kCaptionScale = "playback/captionScale";
 constexpr auto kVideoPlaybackRate = "playback/rate";
 constexpr auto kVideoPositions = "playback/positionsV2";
 constexpr auto kVideoPositionRecency = "playback/positionRecencyV2";
@@ -362,6 +363,12 @@ AppSettings::AppSettings(QObject* parent)
   m_videoVolume = qBound(0.0, m_settings.value(kVideoVolume, 0.8).toDouble(), 1.0);
   m_videoMuted = m_settings.value(kVideoMuted, false).toBool();
   m_rememberPlaybackSpeed = m_settings.value(kRememberPlaybackSpeed, false).toBool();
+  {
+    const int scale = m_settings.value(kCaptionScale, 100).toInt();
+    if (std::find(std::begin(kCaptionScales), std::end(kCaptionScales), scale) != std::end(kCaptionScales)) {
+      m_captionScale = scale;
+    }
+  }
   const qreal savedRate = m_settings.value(kVideoPlaybackRate, 1.0).toDouble();
   m_videoPlaybackRate = std::isfinite(savedRate) ? qBound(0.25, savedRate, 4.0) : 1.0;
   const QVariantMap storedAlbums = m_settings.value(kAlbums).toMap();
@@ -854,6 +861,16 @@ void AppSettings::setRememberPlaybackSpeed(bool value) {
   m_rememberPlaybackSpeed = value;
   m_settings.setValue(kRememberPlaybackSpeed, value);
   emit rememberPlaybackSpeedChanged();
+}
+
+void AppSettings::setCaptionScale(int percent) {
+  if (std::find(std::begin(kCaptionScales), std::end(kCaptionScales), percent) == std::end(kCaptionScales)
+      || m_captionScale == percent) {
+    return;
+  }
+  m_captionScale = percent;
+  setValue(kCaptionScale, percent);
+  emit captionScaleChanged();
 }
 
 void AppSettings::setVideoPlaybackRate(qreal value) {

@@ -26,7 +26,15 @@
   restored file goes back to its place in the viewer. Undo restores only the
   file that was trashed and never overwrites a file that took its name.
 - Video details show HDR10, HLG and Dolby Vision.
-- Open in mpv continues from the current position.
+- Open in mpv continues from the current position, and pauses Omaroll's
+  player so the two don't play at once.
+- HDR10 and HLG videos that Qt draws without tone mapping (anything but a
+  hardware-decoded 10-bit frame) say so, with Open in mpv (`P`) beside it to
+  continue there at the same spot.
+- `Z` and `X` shift embedded text subtitles too, not only sidecar files, in the
+  viewer and the library preview, which now takes `Z` and `X` as well.
+  Picture-based tracks say they can't be shifted.
+- A **Caption size** setting, from 75% to 200%.
 - Optional background text indexing in Settings: once the library scan settles,
   picture text is read two to four at a time at low priority, only on mains
   power, with a screenshots-only option and a "Text indexed N of M" status.
