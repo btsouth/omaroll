@@ -28,6 +28,7 @@
 #include "library/CaptureModel.h"
 #include "library/CaptureRoles.h"
 #include "library/DuplicateIndex.h"
+#include "library/EmbeddedMetadata.h"
 #include "library/MediaMetadataIndex.h"
 #include "library/MediaInspector.h"
 #include "library/SimilarityIndex.h"
@@ -546,6 +547,51 @@ private:
   QTemporaryDir m_dir;
   QList<QByteArray> m_saved;
 };
+
+// A small PNG to hang keywords from files on.
+QString embeddedFixture(const QTemporaryDir& dir, const QString& name) {
+  const QString path = dir.filePath(name);
+  QDir().mkpath(QFileInfo(path).absolutePath());
+  QImage image(6, 6, QImage::Format_RGB32);
+  image.fill(QColor::fromRgb(qHash(name)));
+  image.save(path, "PNG");
+  return path;
+}
+
+// Values the index would hand over for |path|, with the file's identity.
+AppSettings::EmbeddedUpdate embeddedUpdate(const QString& path, const QStringList& keywords, int rating = 0,
+                                           const QString& caption = {}) {
+  AppSettings::EmbeddedUpdate update;
+  update.path = path;
+  update.values.keywords = keywords;
+  update.values.rating = rating;
+  update.values.caption = caption;
+  struct stat status {};
+  if (::stat(QFile::encodeName(path).constData(), &status) == 0) {
+    update.values.bytes = status.st_size;
+    update.values.modified = QFileInfo(path).lastModified().toMSecsSinceEpoch();
+    update.values.device = status.st_dev;
+    update.values.inode = status.st_ino;
+  }
+  return update;
+}
+
+// An XMP sidecar as Lightroom writes one: a hierarchical keyword ("A|B"), a
+// rating and a description.
+QByteArray sidecarPacket(const QString& hierarchical, int rating, const QByteArray& description) {
+  QByteArray packet =
+      "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">"
+      "<rdf:Description rdf:about=\"\" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\""
+      " xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:lr=\"http://ns.adobe.com/lightroom/1.0/\"";
+  if (rating > 0) packet += " xmp:Rating=\"" + QByteArray::number(rating) + "\"";
+  packet += "><lr:hierarchicalSubject><rdf:Bag><rdf:li>" + hierarchical.toUtf8() +
+            "</rdf:li></rdf:Bag></lr:hierarchicalSubject>";
+  if (!description.isEmpty())
+    packet += "<dc:description><rdf:Alt><rdf:li xml:lang=\"x-default\">" + description +
+              "</rdf:li></rdf:Alt></dc:description>";
+  packet += "</rdf:Description></rdf:RDF></x:xmpmeta>";
+  return packet;
+}
 
 } // namespace
 
@@ -15107,6 +15153,653 @@ private slots:
     QVERIFY(registry.isNative(QStringLiteral("compare")));
     QVERIFY(registry.appliesTo(QStringLiteral("compare"), false));
     QVERIFY(!registry.appliesTo(QStringLiteral("compare"), true));
+  }
+
+  // Keywords, ratings and captions read from files form a layer under the
+  // local organization: merged into every reader, never stored as local
+  // values, and hidden or cleared only by rows kept in Omaroll's settings.
+  void keywordsFromFilesMergeWithLocalTags() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    const QString kestrel = embeddedFixture(dir, QStringLiteral("kestrel.png"));
+    const QString temple = embeddedFixture(dir, QStringLiteral("temple.png"));
+
+    AppSettings settings;
+    QVERIFY(settings.createTag(QStringLiteral("Animals")));
+    QSignalSpy tags(&settings, &AppSettings::tagsChanged);
+    QSignalSpy marks(&settings, &AppSettings::marksChanged);
+    settings.setEmbedded({embeddedUpdate(kestrel, {QStringLiteral("animals/Birds/kestrel"), QStringLiteral("wildlife")}, 4,
+                                         QStringLiteral("On a post")),
+                          embeddedUpdate(temple, {QStringLiteral("Places/Japan")})});
+    // One signal of each kind for the whole batch.
+    QCOMPARE(tags.size(), 1);
+    QCOMPARE(marks.size(), 1);
+    // Names merge ignoring case and the local spelling wins, level by level;
+    // the levels above a keyword exist, so the tree has no gaps.
+    const QStringList names = settings.tagNames();
+    for (const char* name : {"Animals", "Animals/Birds", "Animals/Birds/kestrel", "wildlife", "Places", "Places/Japan"})
+      QVERIFY2(names.contains(QString::fromLatin1(name)), name);
+    QVERIFY(!names.contains(QStringLiteral("animals")));
+    QCOMPARE(settings.tagsForPath(kestrel), QStringList({QStringLiteral("Animals/Birds/kestrel"), QStringLiteral("wildlife")}));
+    QCOMPARE(settings.tagPaths(QStringLiteral("Animals")), QStringList{kestrel});
+    QCOMPARE(settings.tagPaths(QStringLiteral("places")), QStringList{temple});
+    QCOMPARE(settings.tagItemCount(QStringLiteral("Places")), 1);
+    QCOMPARE(settings.tagsByPath().value(kestrel), settings.tagsForPath(kestrel));
+    QCOMPARE(settings.rating(kestrel), 4);
+    QCOMPARE(settings.caption(kestrel), QStringLiteral("On a post"));
+    QCOMPARE(settings.ratedCount(), 1);
+    // Nothing from the file is stored as a local value or counted by the
+    // launch check.
+    QCOMPARE(AppSettings::organizationSize(settings.organizationState()), 1);
+    QVERIFY(QSettings(settingsFile(), QSettings::IniFormat).value(QStringLiteral("library/ratings")).toStringList().isEmpty());
+
+    // A local value wins; clearing the file's value is kept here.
+    settings.setRating({kestrel}, 2);
+    QCOMPARE(settings.rating(kestrel), 2);
+    settings.setRating({kestrel}, 0);
+    QCOMPARE(settings.rating(kestrel), 0);
+    QCOMPARE(settings.ratedCount(), 0);
+    settings.setCaption(kestrel, QString());
+    QVERIFY(settings.caption(kestrel).isEmpty());
+    // Undo takes the cleared caption back exactly.
+    QVERIFY(settings.canUndo());
+    settings.undo();
+    QCOMPARE(settings.caption(kestrel), QStringLiteral("On a post"));
+    settings.setCaption(kestrel, QString());
+
+    {
+      AppSettings restarted;
+      restarted.setEmbedded({embeddedUpdate(kestrel, {QStringLiteral("wildlife")}, 4, QStringLiteral("On a post"))});
+      QCOMPARE(restarted.rating(kestrel), 0);
+      QVERIFY(restarted.caption(kestrel).isEmpty());
+      QCOMPARE(AppSettings::organizationSize(restarted.organizationState()), 3);
+      // A new local value drops the cleared row.
+      restarted.setRating({kestrel}, 3);
+      QCOMPARE(restarted.rating(kestrel), 3);
+      restarted.setRating({kestrel}, 0);
+      QCOMPARE(restarted.rating(kestrel), 0);
+      restarted.setCaption(kestrel, QStringLiteral("Mine"));
+      QCOMPARE(restarted.caption(kestrel), QStringLiteral("Mine"));
+      QCOMPARE(AppSettings::organizationSize(restarted.organizationState()), 3);
+    }
+
+    // The switch empties the layer and keeps what was hidden or cleared.
+    settings.setReadEmbeddedMetadata(false);
+    QVERIFY(!settings.tagNames().contains(QStringLiteral("wildlife")));
+    QCOMPARE(settings.tagsForPath(temple), QStringList());
+    settings.setEmbedded({embeddedUpdate(temple, {QStringLiteral("Places/Japan")})});
+    QCOMPARE(settings.tagsForPath(temple), QStringList());
+    QVERIFY(!AppSettings().readEmbeddedMetadata());
+    settings.setReadEmbeddedMetadata(true);
+    settings.setEmbedded({embeddedUpdate(temple, {QStringLiteral("Places/Japan")})});
+    QCOMPARE(settings.tagsForPath(temple), QStringList{QStringLiteral("Places/Japan")});
+
+    // A file that leaves the library takes its keywords with it.
+    settings.retainEmbedded({kestrel});
+    QVERIFY(!settings.tagNames().contains(QStringLiteral("Places")));
+
+    // A file the viewer read outside the library counts only for itself.
+    const QString outside = embeddedFixture(dir, QStringLiteral("outside.png"));
+    settings.noteEmbeddedRead(outside, {QStringLiteral("Loose")}, 5, QStringLiteral("Viewer only"));
+    QCOMPARE(settings.tagsForPath(outside), QStringList{QStringLiteral("Loose")});
+    QCOMPARE(settings.rating(outside), 5);
+    QVERIFY(!settings.tagNames().contains(QStringLiteral("Loose")));
+    QVERIFY(!settings.tagsByPath().contains(outside));
+    QCOMPARE(settings.ratedCount(), 0);
+  }
+
+  void removingAKeywordFromAFileIsKeptHere() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    const QString bird = embeddedFixture(dir, QStringLiteral("bird.png"));
+    const QString trip = embeddedFixture(dir, QStringLiteral("trip.png"));
+    const auto load = [&](AppSettings& settings) {
+      settings.setEmbedded({embeddedUpdate(bird, {QStringLiteral("wildlife"), QStringLiteral("kestrel")}),
+                            embeddedUpdate(trip, {QStringLiteral("Places/Japan"), QStringLiteral("Places")})});
+    };
+    const QByteArray before = fileHash(bird);
+    {
+      AppSettings settings;
+      load(settings);
+      // "Remove tag" while filtering: the file keeps its keyword, hidden here.
+      settings.removeTag(QStringLiteral("Wildlife"), {bird});
+      QCOMPARE(settings.tagsForPath(bird), QStringList{QStringLiteral("kestrel")});
+      QVERIFY(!settings.tagNames().contains(QStringLiteral("wildlife")));
+      QVERIFY(settings.tagPaths(QStringLiteral("wildlife")).isEmpty());
+      // Removing a parent hides everything nested under it on that file.
+      settings.removeTag(QStringLiteral("Places"), {trip});
+      QVERIFY(settings.tagsForPath(trip).isEmpty());
+      QVERIFY(!settings.tagNames().contains(QStringLiteral("Places/Japan")));
+      QCOMPARE(AppSettings::organizationSize(settings.organizationState()), 2);
+    }
+    QCOMPARE(fileHash(bird), before);
+    {
+      // Still hidden after a restart.
+      AppSettings settings;
+      load(settings);
+      QCOMPARE(settings.tagsForPath(bird), QStringList{QStringLiteral("kestrel")});
+      // Adding it again shows it, as a local tag too, and drops the row.
+      QVERIFY(settings.addTag(QStringLiteral("wildlife"), {bird}));
+      QVERIFY(settings.tagsForPath(bird).contains(QStringLiteral("wildlife")));
+      // A tag that exists only in files gets its local key on adding.
+      QVERIFY(settings.addTag(QStringLiteral("kestrel"), {trip}));
+      QVERIFY(settings.tagPaths(QStringLiteral("kestrel")).contains(trip));
+      QVERIFY(settings.createTag(QStringLiteral("Places/Japan")));
+      QVERIFY(settings.addTag(QStringLiteral("Places/Japan"), {trip}));
+      QCOMPARE(settings.tagsForPath(trip), QStringList({QStringLiteral("kestrel"), QStringLiteral("Places/Japan")}));
+    }
+    {
+      AppSettings settings;
+      load(settings);
+      QVERIFY(settings.tagsForPath(bird).contains(QStringLiteral("wildlife")));
+    }
+  }
+
+  void renamingAndDeletingKeywordsFromFiles() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    const QString first = embeddedFixture(dir, QStringLiteral("first.png"));
+    const QString second = embeddedFixture(dir, QStringLiteral("second.png"));
+    AppSettings settings;
+    settings.setEmbedded({embeddedUpdate(first, {QStringLiteral("Travel"), QStringLiteral("Travel/Japan")}),
+                          embeddedUpdate(second, {QStringLiteral("Travel/Japan/Tokyo"), QStringLiteral("Food")})});
+    QVariantMap view{{QStringLiteral("tag"), QStringLiteral("Travel/Japan")}};
+    QVERIFY(settings.saveSmartCollection(QStringLiteral("Japan"), view));
+
+    // A rename moves the keyword and everything under it: removal rows for
+    // the old name, local tags under the new one.
+    QVERIFY(settings.renameTag(QStringLiteral("Travel"), QStringLiteral("Trips")));
+    const QStringList names = settings.tagNames();
+    QVERIFY(names.contains(QStringLiteral("Trips/Japan/Tokyo")));
+    QVERIFY(!names.contains(QStringLiteral("Travel")));
+    QVERIFY(!names.contains(QStringLiteral("Travel/Japan")));
+    QCOMPARE(settings.tagsForPath(second), QStringList({QStringLiteral("Trips/Japan/Tokyo"), QStringLiteral("Food")}));
+    QCOMPARE(settings.tagPaths(QStringLiteral("Trips")), QStringList({first, second}));
+    QCOMPARE(settings.smartCollection(QStringLiteral("Japan")).value(QStringLiteral("tag")).toString(),
+             QStringLiteral("Trips/Japan"));
+    // A name that a keyword elsewhere still holds is a clash.
+    QVERIFY(!settings.renameTag(QStringLiteral("Trips"), QStringLiteral("food")));
+
+    // Deleting a keyword only in files hides it on every file that has it,
+    // and takes its saved views.
+    QVERIFY(settings.saveSmartCollection(QStringLiteral("Meals"), {{QStringLiteral("tag"), QStringLiteral("Food")}}));
+    QCOMPARE(settings.deleteTag(QStringLiteral("Food")), 1);
+    QVERIFY(!settings.tagNames().contains(QStringLiteral("Food")));
+    QCOMPARE(settings.tagsForPath(second), QStringList{QStringLiteral("Trips/Japan/Tokyo")});
+    settings.deleteTag(QStringLiteral("Trips"));
+    QVERIFY(settings.tagsForPath(first).isEmpty());
+    QVERIFY(settings.tagsForPath(second).isEmpty());
+    QCOMPARE(settings.deleteTag(QStringLiteral("Trips")), 0);
+  }
+
+  void hidingAKeywordAcrossManyFilesReadsNoFiles() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    AppSettings settings;
+    QList<AppSettings::EmbeddedUpdate> batch;
+    constexpr int kFiles = 10'000;
+    for (int index = 0; index < kFiles; ++index) {
+      AppSettings::EmbeddedUpdate update;
+      update.path = dir.filePath(QStringLiteral("missing %1.jpg").arg(index));
+      update.values.keywords = {QStringLiteral("Holiday"), QStringLiteral("Beach/Sand")};
+      update.values.bytes = 1000 + index;
+      update.values.modified = 1'700'000'000'000 + index;
+      update.values.device = 1;
+      update.values.inode = 10'000 + index;
+      batch.append(update);
+    }
+    settings.setEmbedded(batch);
+    QCOMPARE(settings.tagItemCount(QStringLiteral("Beach")), kFiles);
+    // Rows take the identity the index read the files with; nothing is read
+    // here, and the fingerprints follow from a worker.
+    QStringList reads;
+    AppSettings::s_fingerprintReadPaths = &reads;
+    QElapsedTimer timer;
+    timer.start();
+    settings.deleteTag(QStringLiteral("Holiday"));
+    settings.renameTag(QStringLiteral("Beach"), QStringLiteral("Coast"));
+    const qint64 elapsed = timer.elapsed();
+    AppSettings::s_fingerprintReadPaths = nullptr;
+    qInfo() << "PERF hide and rename a keyword on" << kFiles << "files ms" << elapsed;
+    QVERIFY(reads.isEmpty());
+    QVERIFY2(elapsed < 3000, qPrintable(QString::number(elapsed)));
+    QVERIFY(!settings.tagNames().contains(QStringLiteral("Holiday")));
+    QCOMPARE(settings.tagItemCount(QStringLiteral("Coast/Sand")), kFiles);
+    QCOMPARE(AppSettings::organizationSize(settings.organizationState()), 2 * kFiles + kFiles + 2);
+  }
+
+  void hiddenKeywordsFollowTheirFiles() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("library/sub"))));
+    const QString original = embeddedFixture(dir, QStringLiteral("library/shot.png"));
+    AppSettings settings;
+    settings.setEmbedded({embeddedUpdate(original, {QStringLiteral("Noise"), QStringLiteral("Keep")}, 5)});
+    settings.removeTag(QStringLiteral("Noise"), {original});
+    settings.setRating({original}, 0);
+    // Rows written from the index's identity get their fingerprint on a worker.
+    QVERIFY(settings.pendingFingerprints() > 0);
+    settings.waitForFingerprints();
+    QCOMPARE(settings.pendingFingerprints(), 0);
+
+    // Renamed in Omaroll: the rows and the values read from the file move.
+    const QString renamed = dir.filePath(QStringLiteral("library/renamed.png"));
+    QVERIFY(QFile::rename(original, renamed));
+    settings.relocatePath(original, renamed);
+    QCOMPARE(settings.tagsForPath(renamed), QStringList{QStringLiteral("Keep")});
+    settings.setEmbedded({embeddedUpdate(renamed, {QStringLiteral("Noise"), QStringLiteral("Keep")}, 5)});
+    QCOMPARE(settings.tagsForPath(renamed), QStringList{QStringLiteral("Keep")});
+    QCOMPARE(settings.rating(renamed), 0);
+    settings.waitForFingerprints();
+
+    // Moved outside Omaroll: the next scan's reconcile finds it by content.
+    const QString moved = dir.filePath(QStringLiteral("library/sub/moved.png"));
+    QVERIFY(QFile::rename(renamed, moved));
+    const auto records = CaptureScanner::scan({{dir.filePath(QStringLiteral("library")), 2, CaptureRecord::Picture,
+                                                CaptureRecord::Video}});
+    settings.reconcileTags(records);
+    settings.setEmbedded({embeddedUpdate(moved, {QStringLiteral("Noise"), QStringLiteral("Keep")}, 5)});
+    settings.retainEmbedded({moved});
+    QCOMPARE(settings.tagsForPath(moved), QStringList{QStringLiteral("Keep")});
+    QCOMPARE(settings.rating(moved), 0);
+    {
+      AppSettings restarted;
+      restarted.setEmbedded({embeddedUpdate(moved, {QStringLiteral("Noise"), QStringLiteral("Keep")}, 5)});
+      QCOMPARE(restarted.tagsForPath(moved), QStringList{QStringLiteral("Keep")});
+      QCOMPARE(restarted.rating(moved), 0);
+    }
+  }
+
+  void removalRowsTravelInBackups() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    const QString file = embeddedFixture(dir, QStringLiteral("photo.png"));
+    AppSettings settings;
+    QVERIFY(settings.createAlbum(QStringLiteral("Trip")));
+    QVERIFY(settings.addToAlbum(QStringLiteral("Trip"), {file}));
+    settings.setEmbedded({embeddedUpdate(file, {QStringLiteral("Noise"), QStringLiteral("Keep")}, 5, QStringLiteral("Words"))});
+    settings.removeTag(QStringLiteral("Noise"), {file});
+    settings.setRating({file}, 0);
+    settings.setCaption(file, QString());
+    settings.waitForFingerprints();
+
+    // Without its two new members, the file is exactly what the same state
+    // with nothing hidden encodes to: 1.18's format.
+    const AppSettings::OrganizationState state = settings.organizationState();
+    QCOMPARE(state.removedEmbeddedTags.size(), 1);
+    QCOMPARE(state.clearedEmbedded.keys(), QStringList({QStringLiteral("caption"), QStringLiteral("rating")}));
+    const QByteArray withRows = AppSettings::encodeOrganization(state);
+    AppSettings::OrganizationState plain = state;
+    plain.removedEmbeddedTags.clear();
+    plain.clearedEmbedded.clear();
+    QJsonObject stripped = QJsonDocument::fromJson(withRows).object();
+    QVERIFY(stripped.contains(QStringLiteral("removedEmbeddedTags")));
+    QVERIFY(stripped.contains(QStringLiteral("clearedEmbedded")));
+    stripped.remove(QStringLiteral("removedEmbeddedTags"));
+    stripped.remove(QStringLiteral("clearedEmbedded"));
+    const auto withoutStamp = [](QJsonObject object) {
+      object.remove(QStringLiteral("exportedAt"));
+      return QJsonDocument(object).toJson(QJsonDocument::Indented);
+    };
+    QCOMPARE(withoutStamp(stripped), withoutStamp(QJsonDocument::fromJson(AppSettings::encodeOrganization(plain)).object()));
+    // The launch check counts each row; the values from the file never.
+    QCOMPARE(AppSettings::snapshotSize(withRows), AppSettings::organizationSize(state));
+    QCOMPARE(AppSettings::snapshotSize(withRows), AppSettings::snapshotSize(AppSettings::encodeOrganization(plain)) + 3);
+
+    const QString backup = dir.filePath(QStringLiteral("backup.json"));
+    QVERIFY(settings.exportOrganization(backup).value(QStringLiteral("ok")).toBool());
+
+    // A 1.18 backup restores with no rows: what was hidden since shows again,
+    // and the message says so.
+    const QString old = dir.filePath(QStringLiteral("omaroll-1.18.json"));
+    QVERIFY(QFile::copy(QFINDTESTDATA("fixtures/organization-1.18.0.json"), old));
+    {
+      QFile fixture(old);
+      QVERIFY(fixture.open(QIODevice::ReadWrite));
+      QByteArray bytes = fixture.readAll();
+      bytes.replace("/FIXTURE/photo.png", file.toUtf8());
+      fixture.resize(0);
+      fixture.write(bytes);
+    }
+    const QVariantMap restored = settings.importOrganization(old);
+    QVERIFY2(restored.value(QStringLiteral("ok")).toBool(), qPrintable(restored.value(QStringLiteral("message")).toString()));
+    QVERIFY(restored.value(QStringLiteral("message")).toString().contains(QStringLiteral("hidden since this backup show again")));
+    QVERIFY(settings.organizationState().removedEmbeddedTags.isEmpty());
+    QVERIFY(settings.organizationState().clearedEmbedded.isEmpty());
+    QCOMPARE(settings.albumPaths(QStringLiteral("Old album")), QStringList{file});
+    QVERIFY(settings.tagsForPath(file).contains(QStringLiteral("Noise")));
+    QCOMPARE(settings.rating(file), 5);
+
+    // The branch's own backup brings the rows back.
+    QVERIFY(settings.importOrganization(backup).value(QStringLiteral("ok")).toBool());
+    QCOMPARE(settings.tagsForPath(file), QStringList{QStringLiteral("Keep")});
+    QCOMPARE(settings.rating(file), 0);
+    QVERIFY(settings.caption(file).isEmpty());
+    {
+      AppSettings restarted;
+      restarted.setEmbedded({embeddedUpdate(file, {QStringLiteral("Noise"), QStringLiteral("Keep")}, 5, QStringLiteral("Words"))});
+      QCOMPARE(restarted.tagsForPath(file), QStringList{QStringLiteral("Keep")});
+      QVERIFY(restarted.caption(file).isEmpty());
+    }
+
+    // Malformed new members refuse the whole file and change nothing.
+    QFile exported(backup);
+    QVERIFY(exported.open(QIODevice::ReadOnly));
+    const QJsonObject good = QJsonDocument::fromJson(exported.readAll()).object();
+    const auto refused = [&](const std::function<void(QJsonObject&)>& damage) {
+      QJsonObject bad = good;
+      damage(bad);
+      const QString path = dir.filePath(QStringLiteral("bad.json"));
+      QFile out(path);
+      if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+      out.write(QJsonDocument(bad).toJson());
+      out.close();
+      AppSettings::DecodedOrganization decoded;
+      return !settings.importOrganization(path).value(QStringLiteral("ok")).toBool() &&
+             !AppSettings::decodeOrganization(QJsonDocument(bad).toJson(), decoded).isEmpty();
+    };
+    QVERIFY(refused([](QJsonObject& root) { root.insert(QStringLiteral("removedEmbeddedTags"), QJsonArray()); }));
+    QVERIFY(refused([](QJsonObject& root) { root.insert(QStringLiteral("clearedEmbedded"), QStringLiteral("x")); }));
+    QVERIFY(refused([](QJsonObject& root) {
+      QJsonObject cleared = root.value(QStringLiteral("clearedEmbedded")).toObject();
+      cleared.insert(QStringLiteral("stars"), cleared.value(QStringLiteral("rating")));
+      root.insert(QStringLiteral("clearedEmbedded"), cleared);
+    }));
+    QVERIFY(refused([](QJsonObject& root) {
+      QJsonObject removed = root.value(QStringLiteral("removedEmbeddedTags")).toObject();
+      QJsonArray rows = removed.value(QStringLiteral("Noise")).toArray();
+      QJsonObject row = rows.first().toObject();
+      row.insert(QStringLiteral("fingerprint"), QStringLiteral("not base64!"));
+      rows[0] = row;
+      removed.insert(QStringLiteral("Noise"), rows);
+      root.insert(QStringLiteral("removedEmbeddedTags"), removed);
+    }));
+    QVERIFY(refused([](QJsonObject& root) {
+      QJsonObject removed = root.value(QStringLiteral("removedEmbeddedTags")).toObject();
+      removed.insert(QStringLiteral("Other"), QJsonArray{QJsonObject{{QStringLiteral("path"), QString()}}});
+      root.insert(QStringLiteral("removedEmbeddedTags"), removed);
+    }));
+    QCOMPARE(settings.tagsForPath(file), QStringList{QStringLiteral("Keep")});
+    QCOMPARE(settings.rating(file), 0);
+    // A name that normalizes to nothing is dropped after its rows check out,
+    // as tags are.
+    QJsonObject blank = good;
+    QJsonObject removed = blank.value(QStringLiteral("removedEmbeddedTags")).toObject();
+    removed.insert(QStringLiteral(" / "), removed.value(QStringLiteral("Noise")));
+    blank.insert(QStringLiteral("removedEmbeddedTags"), removed);
+    AppSettings::DecodedOrganization decoded;
+    QVERIFY(AppSettings::decodeOrganization(QJsonDocument(blank).toJson(), decoded).isEmpty());
+    QCOMPARE(decoded.removedEmbeddedTags.keys(), QStringList{QStringLiteral("Noise")});
+  }
+
+  void keywordsFromFilesAreReadOnceOffTheWindowThread() {
+    MetadataSandbox sandbox("records \"$@\"\nprintf 'image\\n' >> \"$OMAROLL_METADATA_LOG\"\n");
+    QVERIFY(sandbox.valid());
+    QTemporaryDir profileDir;
+    QVERIFY(profileDir.isValid());
+    const auto profile = scratchProfile(profileDir);
+    const QStringList paths = sandbox.addImages(40);
+    const QStringList trip = sandbox.addImages(4, QStringLiteral("trip"));
+    // darktable's sidecar names for half of them, Lightroom's for the trip.
+    for (int index = 0; index < paths.size(); index += 2)
+      writeSmallFile(paths.at(index) + QStringLiteral(".xmp"), sidecarPacket(QStringLiteral("Animals|Birds|kestrel"), 4, "Perched"));
+    for (const QString& path : trip)
+      writeSmallFile(QFileInfo(path).path() + QLatin1Char('/') + QFileInfo(path).completeBaseName() + QStringLiteral(".XMP"),
+                     sidecarPacket(QStringLiteral("Places|Lake"), 0, {}));
+    const int total = int(paths.size() + trip.size());
+
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QTRY_COMPARE_WITH_TIMEOUT(model.rowCount(), total, 5000);
+    QCOMPARE(QFileInfo(model.recordAt(model.rowOf(paths.at(0))).sidecarPath).fileName(),
+             QFileInfo(paths.at(0)).fileName() + QStringLiteral(".xmp"));
+    QVERIFY(model.recordAt(model.rowOf(paths.at(1))).sidecarPath.isEmpty());
+    const int reads = MediaMetadataIndex::s_embeddedReads.load();
+    const int windowReads = MediaMetadataIndex::s_embeddedReadsOnWindowThread.load();
+    QSignalSpy tags(&settings, &AppSettings::tagsChanged);
+    {
+      MediaMetadataIndex index(&model);
+      QTRY_VERIFY_WITH_TIMEOUT(settings.tagPaths(QStringLiteral("Animals/Birds/kestrel")).size() == 20 && !index.indexing(),
+                               10000);
+      // One read and one progress count per file, with the date probe.
+      QCOMPARE(index.total(), total);
+      QCOMPARE(MediaMetadataIndex::s_embeddedReads.load() - reads, total);
+      QCOMPARE(MediaMetadataIndex::s_embeddedReadsOnWindowThread.load(), windowReads);
+      QCOMPARE(sandbox.log().count("image\n"), 2);
+      QCOMPARE(settings.rating(paths.at(0)), 4);
+      QCOMPARE(settings.caption(paths.at(0)), QStringLiteral("Perched"));
+      QCOMPARE(model.recordAt(model.rowOf(paths.at(0))).rating, 4);
+      QCOMPARE(settings.tagPaths(QStringLiteral("Places/Lake")).size(), trip.size());
+      // Results reach the settings at most once a second.
+      QVERIFY2(tags.size() <= 3, qPrintable(QString::number(tags.size())));
+    }
+    QVERIFY(QFileInfo(MediaMetadataIndex::embeddedCachePath()).isFile());
+    QCOMPARE(QFileInfo(MediaMetadataIndex::embeddedCachePath()).permissions() &
+                 (QFileDevice::ReadGroup | QFileDevice::ReadOther), QFileDevice::Permissions());
+
+    {
+      // The next launch reads nothing again, and shows the keywords before
+      // its first scan lands.
+      AppSettings second;
+      CaptureModel fresh(&second);
+      MediaMetadataIndex cached(&fresh);
+      QVERIFY(fresh.rowCount() == 0);
+      QCOMPARE(second.tagPaths(QStringLiteral("Animals/Birds/kestrel")).size(), 20);
+      QTRY_COMPARE_WITH_TIMEOUT(fresh.rowCount(), total, 5000);
+      QTest::qWait(300);
+      QVERIFY(!cached.indexing());
+      QCOMPARE(MediaMetadataIndex::s_embeddedReads.load() - reads, total);
+
+      // An edited sidecar is read again on the next scan.
+      const QString sidecar = paths.at(0) + QStringLiteral(".xmp");
+      writeSmallFile(sidecar, sidecarPacket(QStringLiteral("Edited"), 2, "Changed"));
+      QFile touched(sidecar);
+      QVERIFY(touched.open(QIODevice::ReadWrite));
+      QVERIFY(touched.setFileTime(QDateTime::currentDateTime().addSecs(5), QFileDevice::FileModificationTime));
+      touched.close();
+      fresh.refresh();
+      QTRY_COMPARE_WITH_TIMEOUT(second.rating(paths.at(0)), 2, 5000);
+      QCOMPARE(second.tagsForPath(paths.at(0)), QStringList{QStringLiteral("Edited")});
+      QCOMPARE(MediaMetadataIndex::s_embeddedReads.load() - reads, total + 1);
+
+      // A folder that leaves the library takes its keywords along.
+      QVERIFY(QDir(sandbox.media() + QStringLiteral("/trip")).removeRecursively());
+      fresh.refresh();
+      QTRY_VERIFY_WITH_TIMEOUT(!second.tagNames().contains(QStringLiteral("Places/Lake")), 5000);
+    }
+    QCOMPARE(MediaMetadataIndex::s_embeddedReadsOnWindowThread.load(), windowReads);
+  }
+
+  void anOlderCacheReadsOnlyFileData() {
+    MetadataSandbox sandbox("records \"$@\"\nprintf 'image\\n' >> \"$OMAROLL_METADATA_LOG\"\n");
+    QVERIFY(sandbox.valid());
+    QTemporaryDir profileDir;
+    QVERIFY(profileDir.isValid());
+    const auto profile = scratchProfile(profileDir);
+    const QStringList paths = sandbox.addImages(6);
+    for (const QString& path : paths)
+      writeSmallFile(path + QStringLiteral(".xmp"), sidecarPacket(QStringLiteral("Upgrade"), 3, {}));
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    // Dates only, as an older Omaroll cached them.
+    settings.setReadEmbeddedMetadata(false);
+    CaptureModel model(&settings);
+    QTRY_COMPARE_WITH_TIMEOUT(model.rowCount(), paths.size(), 5000);
+    const int reads = MediaMetadataIndex::s_embeddedReads.load();
+    {
+      MediaMetadataIndex dates(&model);
+      QTRY_VERIFY_WITH_TIMEOUT(dates.completed() == paths.size() && !dates.indexing(), 5000);
+      QCOMPARE(MediaMetadataIndex::s_embeddedReads.load(), reads);
+      QVERIFY(settings.tagNames().isEmpty());
+    }
+    QCOMPARE(sandbox.log().count("image\n"), 1);
+    QFile::remove(MediaMetadataIndex::embeddedCachePath());
+    settings.setReadEmbeddedMetadata(true);
+    {
+      // Only the in-process reads are queued; ImageMagick does not run again.
+      QElapsedTimer timer;
+      timer.start();
+      MediaMetadataIndex upgraded(&model);
+      QTRY_VERIFY_WITH_TIMEOUT(settings.tagPaths(QStringLiteral("Upgrade")).size() == paths.size() && !upgraded.indexing(),
+                               5000);
+      qInfo() << "PERF re-read after cache upgrade ms" << timer.elapsed() << "files" << paths.size();
+      QCOMPARE(upgraded.total(), paths.size());
+      QCOMPARE(MediaMetadataIndex::s_embeddedReads.load() - reads, paths.size());
+      // Turning reading off empties the layer at once.
+      settings.setReadEmbeddedMetadata(false);
+      QVERIFY(settings.tagNames().isEmpty());
+      QCOMPARE(settings.rating(paths.first()), 0);
+    }
+    QCOMPARE(sandbox.log().count("image\n"), 1);
+  }
+
+  void embeddedCacheKeepsToItsCapAndNeverCrowdsDates() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray previousCache = qgetenv("XDG_CACHE_HOME");
+    const auto restore = qScopeGuard([&] { qputenv("XDG_CACHE_HOME", previousCache); });
+    QVERIFY(qputenv("XDG_CACHE_HOME", dir.filePath(QStringLiteral("cache")).toUtf8()));
+    EmbeddedMetadata::Fields fields;
+    for (int index = 0; index < EmbeddedMetadata::kMaximumKeywords; ++index)
+      fields.keywords.append(QStringLiteral("%1 ").arg(index, 3, 10, QLatin1Char('0')) + QString(116, u'k'));
+    fields.description = QString(500, u'd');
+    fields.rating = 5;
+    {
+      MediaMetadataIndex index(nullptr);
+      for (int index = 0; index < 50'000; ++index) {
+        index.insertEmbeddedForTesting(QStringLiteral("/library/photo %1.jpg").arg(index), fields);
+      }
+      index.saveCachesForTesting();
+      QVERIFY(QFileInfo(MediaMetadataIndex::cachePath()).isFile());
+      QVERIFY(QFileInfo(MediaMetadataIndex::embeddedCachePath()).isFile());
+      QVERIFY(QFileInfo(MediaMetadataIndex::embeddedCachePath()).size() <= MediaMetadataIndex::kMaximumEmbeddedCacheBytes);
+      QVERIFY(index.embeddedCacheSize() > 0 && index.embeddedCacheSize() < 50'000);
+    }
+    MediaMetadataIndex reloaded(nullptr);
+    QVERIFY(reloaded.embeddedCacheSize() > 0);
+  }
+
+  void sidecarsAreMatchedToTheirFiles() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray packet = sidecarPacket(QStringLiteral("x"), 1, {});
+    QImage image(4, 4, QImage::Format_RGB32);
+    image.fill(Qt::green);
+    QVERIFY(image.save(dir.filePath(QStringLiteral("pair.jpg")), "JPG"));
+    QVERIFY(image.save(dir.filePath(QStringLiteral("pair.png")), "PNG"));
+    writeSmallFile(dir.filePath(QStringLiteral("pair.xmp")), packet);
+    QVERIFY(image.save(dir.filePath(QStringLiteral("shot.png")), "PNG"));
+    writeSmallFile(dir.filePath(QStringLiteral("shot.PNG.XMP")), packet);
+    QVERIFY(image.save(dir.filePath(QStringLiteral("solo.jpg")), "JPG"));
+    writeSmallFile(dir.filePath(QStringLiteral("solo.xmp")), packet);
+    writeSmallFile(dir.filePath(QStringLiteral("clip.mp4")), "not really a video");
+    writeSmallFile(dir.filePath(QStringLiteral("clip.mp4.xmp")), packet);
+    const bool raws = CameraRaw::isRaw(QStringLiteral("cr2"));
+    if (raws) {
+      writeSmallFile(dir.filePath(QStringLiteral("IMG_1.CR2")), QByteArray(64, 'r'));
+      QVERIFY(image.save(dir.filePath(QStringLiteral("IMG_1.JPG")), "JPG"));
+      writeSmallFile(dir.filePath(QStringLiteral("IMG_1.xmp")), packet);
+    }
+    const auto records = CaptureScanner::scan({{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
+    const auto sidecar = [&](const QString& name) {
+      for (const CaptureRecord& record : records)
+        if (record.fileName == name) return QFileInfo(record.sidecarPath).fileName();
+      return QStringLiteral("missing");
+    };
+    // Two media files share "pair", so neither takes "pair.xmp".
+    QCOMPARE(sidecar(QStringLiteral("pair.jpg")), QString());
+    QCOMPARE(sidecar(QStringLiteral("pair.png")), QString());
+    QCOMPARE(sidecar(QStringLiteral("shot.png")), QStringLiteral("shot.PNG.XMP"));
+    QCOMPARE(sidecar(QStringLiteral("solo.jpg")), QStringLiteral("solo.xmp"));
+    QCOMPARE(sidecar(QStringLiteral("clip.mp4")), QStringLiteral("clip.mp4.xmp"));
+    for (const CaptureRecord& record : records) {
+      QVERIFY(!record.fileName.endsWith(QStringLiteral(".xmp"), Qt::CaseInsensitive));
+      if (!record.sidecarPath.isEmpty()) {
+        QVERIFY(record.sidecarBytes > 0);
+        QVERIFY(record.sidecarModified > 0);
+      }
+    }
+    if (raws) {
+      // The raw of a RAW+JPEG pair takes the Lightroom sidecar; the JPEG never does.
+      QCOMPARE(sidecar(QStringLiteral("IMG_1.CR2")), QStringLiteral("IMG_1.xmp"));
+      QCOMPARE(sidecar(QStringLiteral("IMG_1.JPG")), QString());
+    }
+    // An explicitly opened file finds its sidecar too.
+    const auto opened = CaptureScanner::scan({{dir.filePath(QStringLiteral("shot.png")), 1, CaptureRecord::Picture,
+                                               CaptureRecord::Video}});
+    QCOMPARE(opened.size(), 1);
+    QCOMPARE(QFileInfo(opened.first().sidecarPath).fileName(), QStringLiteral("shot.PNG.XMP"));
+  }
+
+  void sidecarsMoveWithTheirFileOnRenameAndTrash() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray packet = sidecarPacket(QStringLiteral("x"), 1, {});
+    QImage image(4, 4, QImage::Format_RGB32);
+    image.fill(Qt::blue);
+    const QString shot = dir.filePath(QStringLiteral("shot.png"));
+    QVERIFY(image.save(shot, "PNG"));
+    writeSmallFile(shot + QStringLiteral(".xmp"), packet);
+    const QString solo = dir.filePath(QStringLiteral("solo.jpg"));
+    QVERIFY(image.save(solo, "JPG"));
+    writeSmallFile(dir.filePath(QStringLiteral("solo.XMP")), packet);
+    const QString pairJpeg = dir.filePath(QStringLiteral("pair.jpg"));
+    QVERIFY(image.save(pairJpeg, "JPG"));
+    QVERIFY(image.save(dir.filePath(QStringLiteral("pair.png")), "PNG"));
+    writeSmallFile(dir.filePath(QStringLiteral("pair.xmp")), packet);
+    const QByteArray sidecarHash = fileHash(shot + QStringLiteral(".xmp"));
+
+    ActionLauncher launcher;
+    QCOMPARE(launcher.sidecarCount(shot), 1);
+    QCOMPARE(launcher.sidecarCount(pairJpeg), 0);
+    QVariantMap renamed = launcher.renameFile(shot, QStringLiteral("renamed"));
+    QVERIFY2(renamed.value(QStringLiteral("ok")).toBool(), qPrintable(renamed.value(QStringLiteral("error")).toString()));
+    QCOMPARE(renamed.value(QStringLiteral("sidecars")).toInt(), 1);
+    const QString moved = dir.filePath(QStringLiteral("renamed.png"));
+    QVERIFY(!QFileInfo::exists(shot + QStringLiteral(".xmp")));
+    // Moved, not rewritten.
+    QCOMPARE(fileHash(moved + QStringLiteral(".xmp")), sidecarHash);
+    QVERIFY(launcher.renameFile(solo, QStringLiteral("alone")).value(QStringLiteral("ok")).toBool());
+    QVERIFY(QFileInfo::exists(dir.filePath(QStringLiteral("alone.XMP"))));
+    // A sidecar shared by base name stays put.
+    QVERIFY(launcher.renameFile(pairJpeg, QStringLiteral("single")).value(QStringLiteral("ok")).toBool());
+    QVERIFY(QFileInfo::exists(dir.filePath(QStringLiteral("pair.xmp"))));
+    // A name its sidecar cannot take refuses the rename, and nothing moves.
+    writeSmallFile(dir.filePath(QStringLiteral("taken.png.xmp")), packet);
+    const QVariantMap refused = launcher.renameFile(moved, QStringLiteral("taken"));
+    QVERIFY(!refused.value(QStringLiteral("ok")).toBool());
+    QVERIFY(QFileInfo::exists(moved));
+    QVERIFY(QFileInfo::exists(moved + QStringLiteral(".xmp")));
+
+    if (CameraRaw::isRaw(QStringLiteral("cr2"))) {
+      const QString raw = dir.filePath(QStringLiteral("IMG_1.CR2"));
+      writeSmallFile(raw, QByteArray(64, 'r'));
+      QVERIFY(image.save(dir.filePath(QStringLiteral("IMG_1.JPG")), "JPG"));
+      writeSmallFile(dir.filePath(QStringLiteral("IMG_1.xmp")), packet);
+      QCOMPARE(launcher.sidecarCount(dir.filePath(QStringLiteral("IMG_1.JPG"))), 0);
+      QVERIFY(launcher.renameFile(raw, QStringLiteral("Trip")).value(QStringLiteral("ok")).toBool());
+      QVERIFY(QFileInfo::exists(dir.filePath(QStringLiteral("Trip.xmp"))));
+      QVERIFY(!QFileInfo::exists(dir.filePath(QStringLiteral("IMG_1.xmp"))));
+    }
+
+    // Trash takes the sidecar along, and undo brings both back.
+    AppSettings settings;
+    const QVariantMap record = launcher.trashCaptured(launcher.captureFileAction(moved, {}));
+    QVERIFY(!record.value(QStringLiteral("trashPath")).toString().isEmpty());
+    QCOMPARE(record.value(QStringLiteral("sidecars")).toList().size(), 1);
+    QVERIFY(!QFileInfo::exists(moved));
+    QVERIFY(!QFileInfo::exists(moved + QStringLiteral(".xmp")));
+    QVERIFY(settings.pushTrashUndo({record}) > 0);
+    settings.undo();
+    QVERIFY(QFileInfo::exists(moved));
+    QCOMPARE(fileHash(moved + QStringLiteral(".xmp")), sidecarHash);
   }
 
 private:

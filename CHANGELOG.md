@@ -4,6 +4,13 @@
 
 ### Added
 
+- Keywords, star ratings and descriptions other photo tools keep in a file's
+  XMP or IPTC data, or in a darktable, Lightroom or digiKam `.xmp` sidecar,
+  show as tags, stars and captions in Browse, search and the viewer.
+  Hierarchical keywords nest, darktable's own tags are left out, and local
+  edits win. Removing a keyword or clearing a rating is kept in Omaroll's
+  settings and backups; files and sidecars are never written. Renaming a file
+  or moving it to Trash takes its sidecar along, and undo brings both back.
 - The empty library offers Omaroll's Hyprland window rules once, with Install
   and Not now, and `--set-default` names the command until they are installed
   or turned down. Without them a stock Omarchy tiles and dims the viewer.

@@ -247,6 +247,12 @@ Every viewer shortcut is listed in [Shortcuts](docs/shortcuts.md#viewer), and
 - **Organize without changing originals.** Albums, nested tags, captions,
   favourites, ratings and saved searches live in Omaroll's settings. Undo marks
   and moves to Trash with Ctrl+Z, and back up or restore your organization from Settings.
+- **Keep what other photo tools wrote.** Keywords, star ratings and
+  descriptions in a file's XMP or IPTC data, or in a darktable, Lightroom or
+  digiKam `.xmp` sidecar, show as tags, stars and captions. Your own edits win,
+  and removing a keyword or clearing a rating is kept in Omaroll's settings:
+  the file and its sidecar are never written. Renaming a file or moving it to
+  Trash takes its sidecar along.
 - **Find words in pictures and PDFs.** One search box covers names, picture
   and PDF text, captions, tags, albums, folders and cameras, ignoring accents.
   Narrow it with `tag:`, `in:`, `camera:`, `type:` or `before:`, quote a
@@ -464,8 +470,14 @@ cannot spoil the shot. `man omaroll` lists every option with examples.
   whatever its age. A launch whose albums, tags and marks look far smaller than
   a backup from the past seven days offers that fuller backup once. In
   Settings, Restore last good backup takes the newest backup that reads, and
-  Restore lets you pick any backup file, starting in the backups folder. The thumbnail cache can be deleted and
-  regenerated.
+  Restore lets you pick any backup file, starting in the backups folder.
+  Keywords, ratings and descriptions read from files are not in backups, since
+  they are read again from the files; what you hid or cleared is. Restoring a
+  backup returns to its own state, so one made before you hid a keyword shows
+  it again. The thumbnail cache can be deleted and
+  regenerated. So can the metadata caches in `~/.cache/omaroll`
+  (`media-metadata.index` for dates and cameras, `embedded-v1.index` for
+  keywords from files).
 
 ## Development
 

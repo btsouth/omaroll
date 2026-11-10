@@ -77,6 +77,10 @@ def parser():
                          help="name entries as timestamped screenshots spread over about "
                               "three years, so date-sorted views have many day and month "
                               "sections (hardlinks share one mtime, so names carry the date)")
+    command.add_argument("--xmp-percent", type=int, default=0, metavar="P",
+                         help="give about P%% of the entries a darktable-style "
+                              "<name>.<ext>.xmp sidecar with keywords, a rating and a "
+                              "description (default: 0; range: 0..100)")
     return command
 
 
@@ -294,7 +298,35 @@ def dated_prefixes(file_count):
     return prefixes
 
 
-def populate_library(library, seeds, file_count, dated=False):
+# Keywords drawn for sidecars, hierarchical as Lightroom and darktable write them.
+SIDECAR_KEYWORDS = (
+    "Animals|Birds|kestrel", "Animals|Birds|heron", "Animals|Mammals|fox",
+    "Places|Japan|Kyoto", "Places|Iceland", "Places|Norway|Fjords",
+    "Events|Wedding", "Events|Birthday", "People|Family", "Food",
+)
+
+
+def sidecar_packet(index):
+    keywords = [SIDECAR_KEYWORDS[(index * step) % len(SIDECAR_KEYWORDS)] for step in (1, 3, 7)]
+    flat = sorted({part for keyword in keywords for part in keyword.split("|")})
+    items = "".join(f"<rdf:li>{keyword}</rdf:li>" for keyword in keywords)
+    subjects = "".join(f"<rdf:li>{word}</rdf:li>" for word in flat)
+    return (
+        '<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF '
+        'xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+        '<rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/" '
+        'xmlns:dc="http://purl.org/dc/elements/1.1/" '
+        'xmlns:lr="http://ns.adobe.com/lightroom/1.0/" '
+        f'xmp:Rating="{index % 6}">'
+        f"<dc:subject><rdf:Bag>{subjects}</rdf:Bag></dc:subject>"
+        f"<lr:hierarchicalSubject><rdf:Bag>{items}</rdf:Bag></lr:hierarchicalSubject>"
+        '<dc:description><rdf:Alt><rdf:li xml:lang="x-default">'
+        f"Generated fixture {index}</rdf:li></rdf:Alt></dc:description>"
+        "</rdf:Description></rdf:RDF></x:xmpmeta>\n"
+    )
+
+
+def populate_library(library, seeds, file_count, dated=False, xmp_percent=0):
     step = next(candidate for candidate in (7, 11, 17, 13, 5, 3, 2, 1)
                 if math.gcd(candidate, len(seeds)) == 1)
     order = [(index * step) % len(seeds) for index in range(len(seeds))]
@@ -302,6 +334,7 @@ def populate_library(library, seeds, file_count, dated=False):
     extension_counts = Counter()
     logical_bytes = 0
     prefixes = dated_prefixes(file_count) if dated else None
+    sidecars = 0
 
     for index in range(file_count):
         seed_index = order[index % len(order)]
@@ -322,12 +355,16 @@ def populate_library(library, seeds, file_count, dated=False):
         media_counts[seed["media_type"]] += 1
         extension_counts[seed["suffix"]] += 1
         logical_bytes += seed["bytes"]
+        # Spread through the library rather than in one block.
+        if (index * 37) % 100 < xmp_percent:
+            (library / (name + ".xmp")).write_text(sidecar_packet(index), encoding="utf-8")
+            sidecars += 1
 
-    return media_counts, extension_counts, logical_bytes
+    return media_counts, extension_counts, logical_bytes, sidecars
 
 
 def write_manifest(path, files, seeds, media_counts, extension_counts,
-                   logical_bytes, dated=False):
+                   logical_bytes, dated=False, sidecars=0):
     seed_bytes = sum(seed["bytes"] for seed in seeds)
     manifest = {
         "schema_version": 1,
@@ -347,6 +384,7 @@ def write_manifest(path, files, seeds, media_counts, extension_counts,
             "dated_names": dated,
             "logical_bytes": logical_bytes,
             "unique_seed_bytes": seed_bytes,
+            "xmp_sidecars": sidecars,
         },
         "file_counts": {
             "seeds": len(seeds),
@@ -370,8 +408,9 @@ def write_manifest(path, files, seeds, media_counts, extension_counts,
                 "measured application run and must not be included in timings."
             ),
             "mtime": (
-                "Library files are created only with os.link; no utime, copy2, "
-                "or post-link metadata write is performed."
+                "Library media files are created only with os.link; no utime, copy2, "
+                "or post-link metadata write is performed. XMP sidecars, when asked "
+                "for, are small regular files written beside them."
             ),
         },
     }
@@ -384,6 +423,8 @@ def main(argv=None):
     args = parser().parse_args(argv)
     if not 100 <= args.files <= 50000:
         parser().error("--files must be in the range 100..50000")
+    if not 0 <= args.xmp_percent <= 100:
+        parser().error("--xmp-percent must be in the range 0..100")
 
     output = validate_destination(args.output.expanduser())
     photos, copies = bundled_sources()
@@ -399,8 +440,8 @@ def main(argv=None):
         fail(f"cannot create fixture directories below {output}: {error}")
 
     seeds = make_seeds(magick, seeds_directory, photos, copies)
-    media_counts, extension_counts, logical_bytes = populate_library(
-        library, seeds, args.files, args.dated
+    media_counts, extension_counts, logical_bytes, sidecars = populate_library(
+        library, seeds, args.files, args.dated, args.xmp_percent
     )
     write_manifest(
         output / "manifest.json",
@@ -410,6 +451,7 @@ def main(argv=None):
         extension_counts,
         logical_bytes,
         args.dated,
+        sidecars,
     )
     print(
         f"created {args.files} hardlinked library files and {len(seeds)} seeds\n"
