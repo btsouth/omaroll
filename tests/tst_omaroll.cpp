@@ -15672,15 +15672,15 @@ private slots:
     fields.description = QString(500, u'd');
     fields.rating = 5;
     {
-      MediaMetadataIndex index(nullptr);
-      for (int index = 0; index < 50'000; ++index) {
-        index.insertEmbeddedForTesting(QStringLiteral("/library/photo %1.jpg").arg(index), fields);
+      MediaMetadataIndex cache(nullptr);
+      for (int file = 0; file < 50'000; ++file) {
+        cache.insertEmbeddedForTesting(QStringLiteral("/library/photo %1.jpg").arg(file), fields);
       }
-      index.saveCachesForTesting();
+      cache.saveCachesForTesting();
       QVERIFY(QFileInfo(MediaMetadataIndex::cachePath()).isFile());
       QVERIFY(QFileInfo(MediaMetadataIndex::embeddedCachePath()).isFile());
       QVERIFY(QFileInfo(MediaMetadataIndex::embeddedCachePath()).size() <= MediaMetadataIndex::kMaximumEmbeddedCacheBytes);
-      QVERIFY(index.embeddedCacheSize() > 0 && index.embeddedCacheSize() < 50'000);
+      QVERIFY(cache.embeddedCacheSize() > 0 && cache.embeddedCacheSize() < 50'000);
     }
     MediaMetadataIndex reloaded(nullptr);
     QVERIFY(reloaded.embeddedCacheSize() > 0);
