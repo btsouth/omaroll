@@ -8,6 +8,7 @@
 #include "sources/FileVersion.h"
 
 #include "library/CaptureRecord.h"
+#include "library/TagNames.h"
 
 #include <QCoreApplication>
 #include <QGuiApplication>
@@ -121,34 +122,9 @@ QString normalizedAlbumName(const QString& name) {
   return normalized.contains(QLatin1Char('/')) ? QString() : normalized;
 }
 
-// "travel / japan /" becomes "travel/japan". Empty segments are dropped, so
-// a stray slash cannot create a nameless level.
-QString normalizedTagName(const QString& name) {
-  QStringList segments;
-  for (const QString& part : name.split(QLatin1Char('/'))) {
-    const QString segment = part.simplified();
-    if (!segment.isEmpty()) {
-      segments.append(segment);
-    }
-  }
-  return segments.join(QLatin1Char('/')).left(80);
-}
-
-bool tagLessThan(const QString& first, const QString& second) {
-  const QStringList a = first.split(QLatin1Char('/'));
-  const QStringList b = second.split(QLatin1Char('/'));
-  for (qsizetype index = 0; index < qMin(a.size(), b.size()); ++index) {
-    if (const int order = a.at(index).compare(b.at(index), Qt::CaseInsensitive); order != 0) {
-      return order < 0;
-    }
-  }
-  return a.size() < b.size();
-}
-
-bool tagIsUnder(const QString& candidate, const QString& parent) {
-  return candidate.size() > parent.size() && candidate.startsWith(parent) &&
-         candidate.at(parent.size()) == QLatin1Char('/');
-}
+QString normalizedTagName(const QString& name) { return TagNames::normalized(name); }
+bool tagLessThan(const QString& first, const QString& second) { return TagNames::lessThan(first, second); }
+bool tagIsUnder(const QString& candidate, const QString& parent) { return TagNames::isUnder(candidate, parent); }
 
 QString identityVersionFor(const QString& path) {
   struct stat status {};
