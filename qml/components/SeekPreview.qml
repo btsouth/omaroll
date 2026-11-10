@@ -75,7 +75,7 @@ Rectangle {
                 anchors.centerIn: parent
                 text: root.frameLabel
                 font.family: Theme.fontFamily
-                font.pixelSize: 10
+                font.pixelSize: 11
                 color: "#ffffff"
             }
         }
