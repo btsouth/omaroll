@@ -38,6 +38,8 @@ case "$mode" in
     # thread starts, and TSan then aborts when a thread id is reused.)
     core='^(singleInstance|executableForwards|nativeClipboardFallback|externalSubtitles|subtitle|automaticOrganization|restoringABackup|resumeMigration|repairingDamagedSettings|organizationSnapshots|todaysSnapshot|launchWarns|launchDoesNot|keepingIncomplete'
     core+='|metadataProbes|metadataProgress|indexShutdown|imageDatesUseBoundedBatches'
+    # Keywords from files read on the probe pool, and removal rows fingerprinted on a worker.
+    core+='|keywordsFromFilesAreReadOnce|anOlderCacheReadsOnlyFileData|hiddenKeywordsFollowTheirFiles'
     core+='|localOcrSearch|sparseOcrRetry|clearingOcrSearch|backgroundTextIndex'
     core+='|exactDuplicateReview|visuallySimilar|similarPictures|similarSets|looseSimilarity|similarityAndDuplicateHashes)'
     search='^(pdfText|pdfReads|pdfIndexing|documentText|textProducers|rowsThatMove|snippetsOfLong|longTextSnippets)'
