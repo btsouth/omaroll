@@ -30,6 +30,11 @@ struct ViewerWindows::Viewer {
       session.setPairRawJpeg(settings->pairRawJpeg());
       QObject::connect(settings, &AppSettings::pairRawJpegChanged, &session,
                        [this, settings] { session.setPairRawJpeg(settings->pairRawJpeg()); });
+      // Keywords, stars and a caption from the shown file or its sidecar.
+      mediaInfo.setReadEmbedded(settings->readEmbeddedMetadata());
+      QObject::connect(settings, &AppSettings::readEmbeddedMetadataChanged, &mediaInfo,
+                       [this, settings] { mediaInfo.setReadEmbedded(settings->readEmbeddedMetadata()); });
+      QObject::connect(&mediaInfo, &MediaInspector::embeddedRead, settings, &AppSettings::noteEmbeddedRead);
     }
     context.setContextProperty(QStringLiteral("Session"), &session);
     context.setContextProperty(QStringLiteral("MediaInfo"), &mediaInfo);

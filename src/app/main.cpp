@@ -309,6 +309,14 @@ public:
     QObject::connect(&m_library, &CaptureFilterModel::showHiddenChanged, &settings,
                      [this, &settings] { settings.setShowHidden(m_library.showHidden()); });
 
+    // The preview reads the shown file's keywords, stars and caption again,
+    // so an edited sidecar shows without a rescan.
+    m_mediaInfo.setReadEmbedded(settings.readEmbeddedMetadata());
+    QObject::connect(&settings, &AppSettings::readEmbeddedMetadataChanged, &m_mediaInfo,
+                     [this, &settings] { m_mediaInfo.setReadEmbedded(settings.readEmbeddedMetadata()); });
+    QObject::connect(&m_mediaInfo, &MediaInspector::embeddedRead, &settings,
+                     &AppSettings::noteEmbeddedRead);
+
     m_folderTree.bind(&m_captures, &m_library);
     add(request);
 

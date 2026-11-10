@@ -90,6 +90,12 @@ public:
   // extension or overwrite another file. The map contains ok, path, fileName,
   // and an inline error suitable for the rename sheet.
   Q_INVOKABLE QVariantMap renameFile(const QString& path, const QString& baseName);
+  // The .xmp sidecars that rename and Trash move with |path|. For the
+  // confirmations, which say "and its sidecar".
+  Q_INVOKABLE [[nodiscard]] int sidecarCount(const QString& path) const {
+    return static_cast<int>(sidecarFiles(path).size());
+  }
+  [[nodiscard]] static QStringList sidecarFiles(const QString& path);
 
   // Launch and forget. Names the package in the failure when the program is
   // absent, so the message says what to install.

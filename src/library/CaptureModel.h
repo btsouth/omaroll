@@ -61,6 +61,9 @@ public:
   [[nodiscard]] QVariantList folderSources() const { return m_folderSources; }
   [[nodiscard]] QVariantList automaticFolders() const;
   Q_INVOKABLE [[nodiscard]] bool folderAvailable(const QString& path) const;
+  // The folders (and single files) scanned right now, canonical where they
+  // exist. Stats each root, so not for a hot path.
+  [[nodiscard]] QStringList rootPaths() const;
 
   // Direct access for the proxy's sort and filter, which would otherwise pay
   // for a QVariant per role per comparison across the whole library.

@@ -7,6 +7,8 @@
 #include "actions/OpenWithRequest.h"
 #include "app/VideoPlayback.h"
 #include "edit/ClipboardText.h"
+#include "sources/CameraRaw.h"
+#include "sources/CaptureScanner.h"
 #include "sources/FileVersion.h"
 
 #include <QClipboard>
@@ -674,13 +676,58 @@ bool ActionLauncher::moveToTrash(const QString& path) {
   return !trashFile(path).isEmpty();
 }
 
+namespace {
+// Moves |path| to the Trash, and then its .xmp sidecars, found before the
+// file moves. They count as the file's: the record holds theirs under
+// "sidecars", so undo puts them back together. Safe off the GUI thread.
+QVariantMap trashWithSidecars(const QString& path, QString* error = nullptr) {
+  const QStringList sidecars = ActionLauncher::sidecarFiles(path);
+  QVariantMap record = TrashRestore::moveToTrash(path, error);
+  if (record.isEmpty() || sidecars.isEmpty()) return record;
+  QVariantList moved;
+  for (const QString& sidecar : sidecars) {
+    const QVariantMap trashed = TrashRestore::moveToTrash(sidecar);
+    if (!trashed.isEmpty()) moved.append(trashed);
+  }
+  if (!moved.isEmpty()) record.insert(u"sidecars"_s, moved);
+  return record;
+}
+} // namespace
+
+QStringList ActionLauncher::sidecarFiles(const QString& path) {
+  // darktable's "<name>.<ext>.xmp", and Lightroom's "<name>.xmp" when the file
+  // is a raw or the only media file with that base name, so renaming the JPEG
+  // of a RAW+JPEG pair leaves the raw's sidecar alone. Names compare
+  // ignoring case.
+  const QFileInfo info(path);
+  const QString name = info.fileName();
+  if (name.isEmpty() || name.endsWith(u".xmp"_s, Qt::CaseInsensitive)) return {};
+  const QString base = info.completeBaseName();
+  const QDir folder = info.dir();
+  QStringList found;
+  QString lightroom;
+  bool shared = false;
+  for (const QString& entry : folder.entryList(QDir::Files | QDir::Hidden | QDir::System)) {
+    if (entry.endsWith(u".xmp"_s, Qt::CaseInsensitive)) {
+      const QString stem = entry.chopped(4);
+      if (stem.compare(name, Qt::CaseInsensitive) == 0) found.append(folder.filePath(entry));
+      else if (stem.compare(base, Qt::CaseInsensitive) == 0) lightroom = folder.filePath(entry);
+    } else if (entry != name && QFileInfo(entry).completeBaseName().compare(base, Qt::CaseInsensitive) == 0 &&
+               CaptureScanner::isSupported(QFileInfo(entry).suffix())) {
+      shared = true;
+    }
+  }
+  if (!lightroom.isEmpty() && (CameraRaw::isRaw(info.suffix()) || !shared)) found.append(lightroom);
+  return found;
+}
+
 QVariantMap ActionLauncher::trashFile(const QString& path) {
   if (!QFileInfo::exists(path)) {
     emit failed(u"That file is no longer there"_s);
     return {};
   }
   QString error;
-  QVariantMap record = TrashRestore::moveToTrash(path, &error);
+  QVariantMap record = trashWithSidecars(path, &error);
   if (record.isEmpty()) emit failed(error);
   return record;
 }
@@ -824,7 +871,7 @@ void ActionLauncher::trashOthers(
         movable = movable && copy.atEnd() && capturedFileMatches(keep) &&
                   capturedFileMatches(target);
       }
-      QVariantMap record = movable ? TrashRestore::moveToTrash(path) : QVariantMap();
+      QVariantMap record = movable ? trashWithSidecars(path) : QVariantMap();
       if (!record.isEmpty()) {
         ++moved;
         if (target.contains(u"viewedPath"_s)) record.insert(u"viewedPath"_s, target.value(u"viewedPath"_s));
@@ -949,11 +996,34 @@ QVariantMap ActionLauncher::renameFile(const QString& path, const QString& baseN
   if (!captured.isEmpty() && !capturedFileMatches(captured)) {
     return failure(u"That file changed or disappeared. Open Rename again"_s);
   }
+  // Its .xmp sidecars take the new name in the same step: "<name>.<ext>.xmp"
+  // follows the file name, "<name>.xmp" the base name. Their contents are not
+  // touched.
+  QList<QPair<QString, QString>> sidecars;
+  for (const QString& sidecar : sidecarFiles(source.absoluteFilePath())) {
+    const QString sidecarName = QFileInfo(sidecar).fileName();
+    const bool fullName = sidecarName.chopped(4).compare(source.fileName(), Qt::CaseInsensitive) == 0;
+    const QString renamed = source.dir().filePath((fullName ? fileName : name) + sidecarName.right(4));
+    if (QFileInfo::exists(renamed)) {
+      return failure(u"A sidecar named %1 already exists"_s.arg(QFileInfo(renamed).fileName()));
+    }
+    sidecars.append({sidecar, renamed});
+  }
   if (!QFile::rename(source.absoluteFilePath(), target)) {
     return failure(u"Could not rename this file"_s);
+  }
+  for (qsizetype at = 0; at < sidecars.size(); ++at) {
+    if (QFile::rename(sidecars.at(at).first, sidecars.at(at).second)) continue;
+    // Put everything back rather than leave a sidecar behind its file.
+    for (qsizetype back = at - 1; back >= 0; --back) {
+      (void)QFile::rename(sidecars.at(back).second, sidecars.at(back).first);
+    }
+    (void)QFile::rename(target, source.absoluteFilePath());
+    return failure(u"Could not rename this file's sidecar"_s);
   }
 
   return {{QStringLiteral("ok"), true},
           {QStringLiteral("path"), target},
-          {QStringLiteral("fileName"), fileName}};
+          {QStringLiteral("fileName"), fileName},
+          {QStringLiteral("sidecars"), static_cast<int>(sidecars.size())}};
 }

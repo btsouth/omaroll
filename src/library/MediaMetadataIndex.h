@@ -1,6 +1,7 @@
 #pragma once
 
 #include "library/CaptureModel.h"
+#include "library/EmbeddedMetadata.h"
 
 #include <QFutureWatcher>
 #include <QHash>
@@ -25,6 +26,12 @@
 // capture names always remain authoritative. Results, including "nothing
 // embedded", are cached by path and filesystem identity so an unchanged
 // library is not probed every launch.
+//
+// The same workers read keywords, a star rating and a description that other
+// photo tools keep in the file or an .xmp sidecar (EmbeddedMetadata), and hand
+// them to AppSettings as a read-only layer. That data has its own cache file,
+// keyed by the file's identity and its sidecar's stamp, so an unchanged file
+// is never read again and keyword data never crowds the date cache.
 class MediaMetadataIndex final : public QObject {
   Q_OBJECT
   Q_PROPERTY(bool indexing READ indexing NOTIFY indexingChanged)
@@ -51,6 +58,24 @@ public:
   [[nodiscard]] int total() const { return m_total; }
 
   [[nodiscard]] static QString cachePath();
+  // Keywords, ratings and descriptions read from files and sidecars.
+  [[nodiscard]] static QString embeddedCachePath();
+  // The embedded cache's own cap. Descriptions go first, then the entries
+  // seen longest ago.
+  static constexpr qint64 kMaximumEmbeddedCacheBytes = 64LL * 1024 * 1024;
+  // Results reach AppSettings at most this often while indexing.
+  static constexpr int kEmbeddedIntervalMs = 1000;
+  // In-process reads run in batches this size.
+  static constexpr int kEmbeddedBatchSize = 64;
+#ifdef OMAROLL_TESTING
+  // Reads of file data that ran on the window thread. Always zero.
+  static std::atomic<int> s_embeddedReadsOnWindowThread;
+  static std::atomic<int> s_embeddedReads;
+  // Fills the embedded cache without reading files, then saves both caches.
+  void insertEmbeddedForTesting(const QString& path, const EmbeddedMetadata::Fields& fields);
+  void saveCachesForTesting() { m_cacheDirty = true; m_embeddedDirty = true; saveCache(); }
+  [[nodiscard]] int embeddedCacheSize() const { return static_cast<int>(m_embedded.size()); }
+#endif
   // How many probes may run at once on this machine: 2 to 4.
   [[nodiscard]] static int maximumParallelProbes();
   // Progress is published at most this often while probes finish.
@@ -81,12 +106,34 @@ private:
     quint64 device = 0;
     quint64 inode = 0;
     bool raw = false;
+    // The date probe is needed, and the file's own data is still unread.
+    bool needsDate = true;
+    bool needsEmbedded = false;
+    QString sidecar;
+    qint64 sidecarModified = 0;
+    qint64 sidecarBytes = -1;
   };
 
   struct Probe;
   struct Parsed {
     QHash<int, Details> results;
     QSet<int> completed;
+    QHash<int, EmbeddedMetadata::Fields> embedded;
+  };
+
+  // What a file and its sidecar held, for the file and sidecar it was read
+  // from.
+  struct EmbeddedEntry {
+    qint64 modified = 0;
+    qint64 bytes = 0;
+    quint64 device = 0;
+    quint64 inode = 0;
+    QString sidecar;
+    qint64 sidecarModified = 0;
+    qint64 sidecarBytes = -1;
+    EmbeddedMetadata::Fields fields;
+    // When it was last read or matched, for the cache cap.
+    qint64 seen = 0;
   };
 
   struct Entry {
@@ -110,6 +157,15 @@ private:
                                                            QSet<int>* completed);
   void flushUpdates();
   void adopt(const Candidate& candidate, const Details& details);
+  void adoptEmbedded(const Candidate& candidate, const EmbeddedMetadata::Fields& fields);
+  void flushEmbedded();
+  // Hands cached values for files under the library's roots to AppSettings
+  // before the first scan lands, so a saved view on a keyword from a file is
+  // not cleared at launch.
+  void seedEmbedded();
+  [[nodiscard]] bool readsEmbedded() const;
+  [[nodiscard]] bool embeddedMatches(const EmbeddedEntry& entry, const CaptureRecord& record) const;
+  [[nodiscard]] bool embeddedStillCurrent(const Candidate& candidate) const;
   [[nodiscard]] static CaptureModel::MetadataUpdate updateFor(const Candidate& candidate,
                                                               const Details& details);
   void setIndexing(bool value);
@@ -117,8 +173,10 @@ private:
   void advanceProgress(int amount = 1);
   void publishProgress();
   void loadCache();
+  void loadEmbeddedCache();
   void scheduleSave();
   void saveCache();
+  void saveEmbeddedCache();
 
   CaptureModel* m_model = nullptr;
   QString m_imageProgram;
@@ -127,6 +185,10 @@ private:
   QList<Candidate> m_queue;
   QHash<QString, CaptureModel::MetadataUpdate> m_pendingUpdates;
   QHash<QString, QString> m_failed;
+  QHash<QString, EmbeddedEntry> m_embedded;
+  QHash<QString, EmbeddedEntry> m_pendingEmbedded;
+  QTimer m_embeddedTimer;
+  bool m_embeddedDirty = false;
   // Parsing and raw header reads run here, never on the window thread: a
   // slow disk or network share must not stall the window.
   QThreadPool m_pool;

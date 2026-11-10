@@ -29,7 +29,8 @@ struct Result {
 // Puts a file recorded by moveToTrash back where it was, and removes its
 // .trashinfo. Refuses, leaving everything as it is, when the trashed file is
 // gone or is a different file, or when something now occupies the original
-// path.
+// path. Records under "sidecars" (an .xmp trashed with its file) are put
+// back too once the file is.
 [[nodiscard]] Result restore(const QVariantMap& record);
 
 } // namespace TrashRestore

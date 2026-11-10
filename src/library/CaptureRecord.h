@@ -67,6 +67,12 @@ struct CaptureRecord {
   // the file themselves (tesseract, zbarimg, Pinta and the like) are not
   // offered for them.
   bool raw = false;
+  // The .xmp sidecar the scanner saw beside the file (darktable's
+  // "<name>.<ext>.xmp", or Lightroom's "<name>.xmp"), with its stamp, so an
+  // edited sidecar is read again. Empty when there is none.
+  QString sidecarPath;
+  qint64 sidecarModified = 0;
+  qint64 sidecarBytes = -1;
 
   [[nodiscard]] bool isVideo() const { return video; }
   [[nodiscard]] bool isDocument() const { return document || kind == Document; }

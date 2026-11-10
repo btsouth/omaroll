@@ -160,6 +160,9 @@ Result restore(const QVariantMap& record) {
   // The file is back; a stale .trashinfo would leave a ghost entry in the
   // file manager's Trash.
   QFile::remove(trashRoot + u"/info/"_s + trashName + u".trashinfo"_s);
+  // Its .xmp sidecars went to the Trash with it and come back with it. One
+  // that cannot is left in the Trash.
+  for (const QVariant& sidecar : record.value(u"sidecars"_s).toList()) (void)restore(sidecar.toMap());
   return {true, {}};
 }
 

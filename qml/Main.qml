@@ -652,7 +652,9 @@ ApplicationWindow {
         root.pendingDeleteTarget = target
         root.pendingDeleteBatch = []
         root.pendingDuplicateKeep = ({})
-        confirm.title = "Move this item to Trash?"
+        // An .xmp sidecar beside it goes to the Trash with it.
+        confirm.title = Actions.sidecarCount(target.path) > 0 ? "Move this item and its sidecar to Trash?"
+                                                              : "Move this item to Trash?"
         confirm.detail = target.path
         confirm.open()
     }

@@ -8,12 +8,15 @@ Item {
     property string renamedMediaPath: ""
     property string suffix: ""
     property string errorMessage: ""
+    // An .xmp sidecar beside the file takes the new name with it.
+    property bool hasSidecar: false
     signal renamed(string oldPath, string newPath, string fileName)
 
     function open(filePath, fileName, mediaPath) {
         capturedTarget = Actions.captureFileAction(filePath, mediaPath === undefined ? "" : mediaPath)
         if (capturedTarget.path === undefined) return
         path = filePath
+        hasSidecar = Actions.sidecarCount(filePath) > 0
         const dot = fileName.lastIndexOf(".")
         suffix = dot >= 0 ? fileName.substring(dot) : ""
         nameInput.text = dot >= 0 ? fileName.substring(0, dot) : fileName
@@ -89,7 +92,7 @@ Item {
             spacing: 12
 
             Text {
-                text: "Rename file"
+                text: root.hasSidecar ? "Rename file and its sidecar" : "Rename file"
                 font.family: Theme.fontFamily
                 font.pixelSize: 15
                 font.weight: Font.DemiBold
