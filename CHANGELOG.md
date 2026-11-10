@@ -130,6 +130,11 @@
 - The viewer's details are dark over the picture in light themes, like the
   toolbar, and show the file's folder once instead of the path and then the
   folder again.
+- In light themes the viewer's surround is dark behind a picture or video,
+  matching its toolbar and scrims, instead of a pale letterbox. An empty or
+  failed stage keeps the theme's colours.
+- The preview's Previous and Next arrows are dark over the picture like the
+  viewer's, and screen readers hear "Previous" and "Next" instead of arrows.
 - The header's Folders toggle is framed like Help and Settings and fills while
   the sidebar shows.
 - Library footer hints follow the selection: keys for the highlighted tile
