@@ -1320,6 +1320,9 @@ private slots:
         "[Removed Associations]\nimage/png=%1;\n[Added Associations]\nimage/png=%1;\n").arg(desktop);
     QCOMPARE(MimeDefaults::withoutOmaroll(removed, "image/png"),
              QStringLiteral("[Removed Associations]\nimage/png=%1;\n[Added Associations]\n").arg(desktop));
+    // Its header is read as xdg-mime reads headers, by how the line starts.
+    const QString commented = QStringLiteral("[Removed Associations] # mine\nimage/png=%1;\n").arg(desktop);
+    QCOMPARE(MimeDefaults::withoutOmaroll(commented, "image/png"), commented);
     // CRLF lists: Omaroll is found without a trailing semicolon, and the
     // lines that stay keep their carriage returns.
     const QString crlf = QStringLiteral(
@@ -1420,6 +1423,73 @@ private slots:
     // comes back, not just the app that answered.
     QTest::newRow("no final newline")
         << true << QByteArray("[Default Applications]\napplication/pdf=gone.desktop;evince.desktop;");
+    // xdg-mime adds its line to the first defaults section, so the user's
+    // line in a later one stays and is not put back a second time.
+    QTest::newRow("second defaults section")
+        << true << QByteArray("[Default Applications]\ntext/plain=nvim.desktop\n[Added Associations]\n"
+                              "text/plain=nvim.desktop;\n[Default Applications]\napplication/pdf=evince.desktop\n");
+    // xdg-mime takes any line starting with the header as the section.
+    QTest::newRow("header with a comment")
+        << true << QByteArray("[Default Applications] # mine\napplication/pdf=evince.desktop;\n");
+  }
+
+  // A list that is not UTF-8 could not be written back byte for byte, so
+  // --set-default leaves it alone and says so.
+  void mimeDefaultsLeaveAListThatIsNotUtf8Alone() {
+    QTemporaryDir dir;
+    const auto oldConfig = qgetenv("XDG_CONFIG_HOME");
+    const auto oldData = qgetenv("XDG_DATA_HOME");
+    const auto oldDesktop = qgetenv("XDG_CURRENT_DESKTOP");
+    const auto cleanup = qScopeGuard([&] {
+      for (const auto& pair : QList<QPair<const char*, QByteArray>>{
+             {"XDG_CONFIG_HOME", oldConfig}, {"XDG_DATA_HOME", oldData}, {"XDG_CURRENT_DESKTOP", oldDesktop}})
+        pair.second.isNull() ? qunsetenv(pair.first) : qputenv(pair.first, pair.second);
+    });
+    qputenv("XDG_CONFIG_HOME", dir.filePath("config").toUtf8());
+    qputenv("XDG_DATA_HOME", dir.filePath("data").toUtf8());
+    qputenv("XDG_CURRENT_DESKTOP", "");
+    QVERIFY(QDir().mkpath(dir.filePath("data/applications")));
+    QVERIFY(QDir().mkpath(dir.filePath("config")));
+    QVERIFY(QFile::copy(QFINDTESTDATA("../packaging/io.github.tsouth89.omaroll.desktop"),
+                        dir.filePath("data/applications/io.github.tsouth89.omaroll.desktop")));
+    QFile evince(dir.filePath("data/applications/evince.desktop"));
+    QVERIFY(evince.open(QIODevice::WriteOnly));
+    evince.write("[Desktop Entry]\nType=Application\nName=Evince\nExec=/usr/bin/true %f\n"
+                "MimeType=application/pdf;\n");
+    evince.close();
+    QFile list(dir.filePath("config/mimeapps.list"));
+    const QString why = list.fileName() + " is not valid UTF-8 or starts with a byte-order mark, "
+                                          "so Omaroll leaves it unchanged";
+    const auto write = [&list](const QByteArray& bytes) {
+      QVERIFY(list.open(QIODevice::WriteOnly));
+      QCOMPARE(list.write(bytes), bytes.size());
+      list.close();
+    };
+    const auto contents = [&list] {
+      list.open(QIODevice::ReadOnly);
+      const QByteArray bytes = list.readAll();
+      list.close();
+      return bytes;
+    };
+    MimeDefaults defaults;
+    for (const QByteArray& original : {QByteArray("# caf\xe9\n[Default Applications]\napplication/pdf=evince.desktop\n"),
+                                       QByteArray("\xEF\xBB\xBF[Default Applications]\napplication/pdf=evince.desktop\n")}) {
+      write(original);
+      const QString set = defaults.apply(false, "pdf");
+      QVERIFY(!defaults.succeeded());
+      QVERIFY2(set.contains("Could not set application/pdf (" + why + ")"), qPrintable(set));
+      QVERIFY2(MimeDefaults::summarize(false, set, false, "pdf").contains(why), qPrintable(set));
+      QCOMPARE(contents(), original);
+    }
+    // Unset says the same about a list that names Omaroll.
+    const QByteArray named = "# caf\xe9\n[Default Applications]\napplication/pdf=io.github.tsouth89.omaroll.desktop\n";
+    write(named);
+    const QString unset = defaults.apply(true, "pdf");
+    QVERIFY(!defaults.succeeded());
+    QVERIFY2(unset.contains("Could not unset application/pdf (" + why + ")"), qPrintable(unset));
+    QVERIFY2(MimeDefaults::summarize(true, unset, false, "pdf").contains("could not be changed: " + why),
+             qPrintable(unset));
+    QCOMPARE(contents(), named);
   }
 
   void mimeDefaultsCyclesRestoreEveryStartingFile() {
@@ -4353,6 +4423,330 @@ private slots:
     QVERIFY2(saved, "the refresh waited for the editing to stop");
   }
 
+  static QString beforeChangeSnapshot(const AppSettings& settings, const QDate& day = QDate::currentDate()) {
+    return QDir(settings.backupDirectory())
+        .filePath(QStringLiteral("before-change-%1.json").arg(day.toString(Qt::ISODate)));
+  }
+
+  static QString latestBeforeChange(const AppSettings& settings, const QDate& day = QDate::currentDate()) {
+    return QDir(settings.backupDirectory())
+        .filePath(QStringLiteral("before-change-%1-latest.json").arg(day.toString(Qt::ISODate)));
+  }
+
+  static void breakFile(const QString& path) {
+    QFile broken(path);
+    QVERIFY(broken.open(QIODevice::WriteOnly));
+    QVERIFY(broken.write("{broken") > 0);
+  }
+
+  // Cleared on purpose, then new work made and deleted by mistake: the new
+  // work is in the copy of the state just before that drop, even though the
+  // day's fullest copy is the older, larger state. Restore tries it first.
+  void todaysSnapshotKeepsWorkMadeAfterAClearOut() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto reset = scratchProfile(dir);
+    QStringList files;
+    for (int i = 0; i < 6; ++i) {
+      files.append(dir.filePath(QStringLiteral("w%1.jpg").arg(i)));
+      writeSmallFile(files.last(), QByteArray::number(i));
+    }
+    QString backups;
+    {
+      AppSettings settings;
+      settings.setFavorite(files, true);
+      settings.flushBackups();
+      const QByteArray fullest = readAllOf(todaysSnapshot(settings));
+      settings.setBackupRefreshDelay(10);
+      settings.setFavorite(files, false);
+      QTRY_VERIFY(!readAllOf(todaysSnapshot(settings)).contains("w5.jpg"));
+      for (int i = 0; i < 4; ++i) QVERIFY(settings.createAlbum(QStringLiteral("New %1").arg(i)));
+      QTRY_VERIFY(readAllOf(todaysSnapshot(settings)).contains("New 3"));
+      settings.flushBackups();
+      const QByteArray newWork = readAllOf(todaysSnapshot(settings));
+      for (int i = 0; i < 4; ++i) settings.deleteAlbum(QStringLiteral("New %1").arg(i));
+      QTRY_VERIFY(!readAllOf(todaysSnapshot(settings)).contains("New 3"));
+      settings.flushBackups();
+      QCOMPARE(readAllOf(beforeChangeSnapshot(settings)), fullest);
+      QCOMPARE(readAllOf(latestBeforeChange(settings)), newWork);
+      QVERIFY(!(QFileInfo(latestBeforeChange(settings)).permissions() &
+                (QFileDevice::ReadGroup | QFileDevice::ReadOther)));
+      backups = settings.backupDirectory();
+    }
+    const QDate today = QDate::currentDate();
+    const QString daily = QDir(backups).filePath(QStringLiteral("daily-%1.json").arg(today.toString(Qt::ISODate)));
+    breakFile(daily);
+    damage(settingsFile(), "[library]\nsortMode=3\n[truncated\n");
+    {
+      AppSettings settings;
+      const auto result = settings.restoreLastGoodBackup();
+      QVERIFY2(result.value(QStringLiteral("ok")).toBool(), qPrintable(result.value(QStringLiteral("message")).toString()));
+      QVERIFY2(result.value(QStringLiteral("message")).toString().contains(QStringLiteral("kept before a change")),
+               qPrintable(result.value(QStringLiteral("message")).toString()));
+      QVERIFY(settings.albumNames().contains(QStringLiteral("New 3")));
+      QVERIFY(!settings.isFavorite(files.first()));
+      settings.flushBackups();
+    }
+    // Without it, the day's fullest copy comes next, ahead of the week's.
+    breakFile(daily);
+    breakFile(QDir(backups).filePath(QStringLiteral("before-change-%1-latest.json").arg(today.toString(Qt::ISODate))));
+    damage(settingsFile(), "[library]\nsortMode=3\n[truncated\n");
+    AppSettings settings;
+    const auto result = settings.restoreLastGoodBackup();
+    QVERIFY2(result.value(QStringLiteral("message")).toString().contains(QStringLiteral("kept before a change")),
+             qPrintable(result.value(QStringLiteral("message")).toString()));
+    for (const QString& file : files) QVERIFY(settings.isFavorite(file));
+  }
+
+  // The day's first snapshot, in a session left open past midnight, is
+  // checked against the newest earlier daily, so a drop late in the evening
+  // keeps the fuller state too.
+  void todaysFirstSnapshotIsCheckedAgainstTheDayBefore() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto reset = scratchProfile(dir);
+    QStringList files;
+    for (int i = 0; i < 6; ++i) {
+      files.append(dir.filePath(QStringLiteral("m%1.jpg").arg(i)));
+      writeSmallFile(files.last(), QByteArray::number(i));
+    }
+    AppSettings settings;
+    settings.setFavorite(files, true);
+    settings.flushBackups();
+    const QByteArray evening = readAllOf(todaysSnapshot(settings));
+    const QDate today = QDate::currentDate();
+    // Tomorrow's first snapshot, as the date tests write it.
+    settings.setBackupRefreshDelay(60000);
+    settings.setBackupRefreshMaxWait(60000);
+    settings.setFavorite(files, false);
+    const QDate tomorrow = today.addDays(1);
+    QVERIFY(settings.snapshotOrganization(tomorrow));
+    QCOMPARE(readAllOf(beforeChangeSnapshot(settings, tomorrow)), evening);
+    QVERIFY(!readAllOf(QDir(settings.backupDirectory())
+                           .filePath(QStringLiteral("daily-%1.json").arg(tomorrow.toString(Qt::ISODate))))
+                 .contains("m5.jpg"));
+    // And through the scheduled path: today's daily is yesterday's now.
+    QDir backups(settings.backupDirectory());
+    for (const QString& name : backups.entryList({QStringLiteral("before-change-*.json")}, QDir::Files))
+      QVERIFY(backups.remove(name));
+    const QString yesterday = QStringLiteral("daily-%1.json").arg(today.addDays(-1).toString(Qt::ISODate));
+    backups.remove(yesterday);
+    QVERIFY(backups.rename(QFileInfo(todaysSnapshot(settings)).fileName(), yesterday));
+    settings.setBackupRefreshDelay(10);
+    settings.setBackupRefreshMaxWait(10);
+    QVERIFY(settings.createAlbum(QStringLiteral("Late")));
+    QTRY_VERIFY(QFileInfo::exists(todaysSnapshot(settings)));
+    settings.flushBackups();
+    QCOMPARE(readAllOf(beforeChangeSnapshot(settings)), evening);
+  }
+
+  // A small change refreshes today's snapshot in place and keeps nothing aside.
+  void todaysSnapshotRefreshReplacesItAfterASmallChange() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto reset = scratchProfile(dir);
+    QStringList files;
+    for (int i = 0; i < 6; ++i) {
+      files.append(dir.filePath(QStringLiteral("s%1.jpg").arg(i)));
+      writeSmallFile(files.last(), QByteArray::number(i));
+    }
+    AppSettings settings;
+    settings.setFavorite(files, true);
+    settings.flushBackups();
+    QVERIFY(readAllOf(todaysSnapshot(settings)).contains("s5.jpg"));
+    settings.setBackupRefreshDelay(10);
+    settings.setFavorite({files.last()}, false);
+    QTRY_VERIFY(!readAllOf(todaysSnapshot(settings)).contains("s5.jpg"));
+    settings.flushBackups();
+    QVERIFY(readAllOf(todaysSnapshot(settings)).contains("s4.jpg"));
+    QVERIFY(!QFileInfo::exists(beforeChangeSnapshot(settings)));
+  }
+
+  // A refresh that would leave today's snapshot far smaller (a mass untag or
+  // album delete by mistake) keeps the fuller one beside it first, and later
+  // drops that day never replace it with a smaller one. Copies follow the
+  // dailies' seven days.
+  void todaysSnapshotKeepsTheFullerOneBesideADrop() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto reset = scratchProfile(dir);
+    QStringList files;
+    for (int i = 0; i < 12; ++i) {
+      files.append(dir.filePath(QStringLiteral("d%1.jpg").arg(i)));
+      writeSmallFile(files.last(), QByteArray::number(i));
+    }
+    AppSettings settings;
+    const QList<QString> six = files.mid(0, 6);
+    settings.setFavorite(six, true);
+    QVERIFY(settings.createAlbum(QStringLiteral("Morning")));
+    settings.flushBackups();
+    const QByteArray morning = readAllOf(todaysSnapshot(settings));
+    QVERIFY(morning.contains("d5.jpg"));
+    // Copies live as long as their day's daily: those from more than a week
+    // ago, and one dated ahead with no daily, go with the next write.
+    const QDate today = QDate::currentDate();
+    for (int back = 1; back <= 9; ++back) {
+      writeSmallFile(beforeChangeSnapshot(settings, today.addDays(-back)), morning);
+      writeSmallFile(QDir(settings.backupDirectory())
+                         .filePath(QStringLiteral("daily-%1.json").arg(today.addDays(-back).toString(Qt::ISODate))),
+                     morning);
+    }
+    writeSmallFile(beforeChangeSnapshot(settings, today.addDays(400)), morning);
+
+    settings.setBackupRefreshDelay(10);
+    settings.setFavorite(six, false);
+    settings.deleteAlbum(QStringLiteral("Morning"));
+    QTRY_VERIFY(!readAllOf(todaysSnapshot(settings)).contains("d5.jpg"));
+    settings.flushBackups();
+    // Today's follows what is here, so the next launch does not warn about a
+    // clear-out the user meant.
+    QVERIFY(!readAllOf(todaysSnapshot(settings)).contains("Morning"));
+    QCOMPARE(readAllOf(beforeChangeSnapshot(settings)), morning);
+    QStringList expected;
+    for (int back = 6; back >= 0; --back)
+      expected.append(QStringLiteral("before-change-%1.json").arg(today.addDays(-back).toString(Qt::ISODate)));
+    const QDir backups(settings.backupDirectory());
+    QCOMPARE(backups.entryList({QStringLiteral("before-change-*.json")}, QDir::Files, QDir::Name), expected);
+    QCOMPARE(backups.entryList({QStringLiteral("daily-*.json")}, QDir::Files).size(), 7);
+
+    // A second drop from an already small state keeps the morning's copy.
+    settings.setFavorite({files.at(6)}, true);
+    settings.flushBackups();
+    QTRY_VERIFY(readAllOf(todaysSnapshot(settings)).contains("d6.jpg"));
+    const QByteArray small = readAllOf(todaysSnapshot(settings));
+    settings.setFavorite({files.at(6)}, false);
+    QTRY_VERIFY(!readAllOf(todaysSnapshot(settings)).contains("d6.jpg"));
+    settings.flushBackups();
+    QCOMPARE(readAllOf(beforeChangeSnapshot(settings)), morning);
+    // The state just before this drop is kept too, as it differs.
+    QCOMPARE(readAllOf(latestBeforeChange(settings)), small);
+
+    // A fuller state later that day replaces the copy when it drops in turn.
+    const QList<QString> all = files;
+    settings.setFavorite(all, true);
+    QTRY_VERIFY(readAllOf(todaysSnapshot(settings)).contains("d11.jpg"));
+    settings.flushBackups();
+    const QByteArray afternoon = readAllOf(todaysSnapshot(settings));
+    settings.setFavorite(all, false);
+    QTRY_VERIFY(!readAllOf(todaysSnapshot(settings)).contains("d11.jpg"));
+    settings.flushBackups();
+    QCOMPARE(readAllOf(beforeChangeSnapshot(settings)), afternoon);
+    // That was also the latest state before a drop, so one copy holds both.
+    QVERIFY(!QFileInfo::exists(latestBeforeChange(settings)));
+    QVERIFY(!(QFileInfo(beforeChangeSnapshot(settings)).permissions() &
+              (QFileDevice::ReadGroup | QFileDevice::ReadOther)));
+  }
+
+  // An ordinary refresh, with no drop, prunes copies whose day's daily is
+  // gone, so one kept weeks ago does not outlive it.
+  void todaysSnapshotPrunesCopiesWithTheirDailies() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto reset = scratchProfile(dir);
+    AppSettings settings;
+    QVERIFY(settings.createAlbum(QStringLiteral("Kept")));
+    settings.flushBackups();
+    const QDate today = QDate::currentDate();
+    QVERIFY(settings.snapshotOrganization(today.addDays(-3)));
+    const QByteArray copy = readAllOf(todaysSnapshot(settings));
+    QStringList kept;
+    for (int back : {0, 3, 2, 10, 30}) {
+      for (const QString& suffix : {QString(), QStringLiteral("-latest")}) {
+        const QString name =
+            QStringLiteral("before-change-%1%2.json").arg(today.addDays(-back).toString(Qt::ISODate), suffix);
+        writeSmallFile(QDir(settings.backupDirectory()).filePath(name), copy);
+        if (back == 0 || back == 3) kept.append(name);
+      }
+    }
+    kept.sort();
+    settings.setBackupRefreshDelay(10);
+    QVERIFY(settings.createAlbum(QStringLiteral("More")));
+    QVERIFY(settings.backupRefreshPending());
+    QTRY_VERIFY(!settings.backupRefreshPending());
+    settings.flushBackups();
+    QVERIFY(readAllOf(todaysSnapshot(settings)).contains("More"));
+    const QDir backups(settings.backupDirectory());
+    QStringList left = backups.entryList({QStringLiteral("before-change-*.json")}, QDir::Files);
+    left.sort();
+    QCOMPARE(left, kept);
+  }
+
+  // Without room for the copy aside, the fuller snapshot is not replaced.
+  void todaysSnapshotIsNotReplacedWhenTheFullerCopyCannotBeKept() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto reset = scratchProfile(dir);
+    QStringList files;
+    for (int i = 0; i < 6; ++i) {
+      files.append(dir.filePath(QStringLiteral("n%1.jpg").arg(i)));
+      writeSmallFile(files.last(), QByteArray::number(i));
+    }
+    AppSettings settings;
+    settings.setFavorite(files, true);
+    settings.flushBackups();
+    const QByteArray fuller = readAllOf(todaysSnapshot(settings));
+    // A folder where the copy goes cannot be written over, even as root.
+    QVERIFY(QDir().mkpath(beforeChangeSnapshot(settings) + QStringLiteral("/in-the-way")));
+    settings.setBackupRefreshDelay(10);
+    settings.setFavorite(files, false);
+    QVERIFY(settings.backupRefreshPending());
+    QTRY_VERIFY(!settings.backupRefreshPending());
+    settings.flushBackups();
+    QCOMPARE(readAllOf(todaysSnapshot(settings)), fuller);
+  }
+
+  // Restore reaches the copy kept before a change when today's snapshot does
+  // not read, and the Restore picker opens on the backups folder.
+  void restoringABackupOffersTheOneKeptBeforeAChange() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto reset = scratchProfile(dir);
+    QStringList files;
+    for (int i = 0; i < 6; ++i) {
+      files.append(dir.filePath(QStringLiteral("r%1.jpg").arg(i)));
+      writeSmallFile(files.last(), QByteArray::number(i));
+    }
+    QString backups;
+    {
+      AppSettings settings;
+      settings.setFavorite(files, true);
+      settings.flushBackups();
+      // Cleared by mistake; the exit's refresh keeps the fuller one aside.
+      settings.setFavorite(files, false);
+      backups = settings.backupDirectory();
+      QCOMPARE(settings.backupFolderUrl(), QUrl::fromLocalFile(backups));
+    }
+    const QDate today = QDate::currentDate();
+    const QDir folder(backups);
+    QVERIFY(folder.exists(QStringLiteral("before-change-%1.json").arg(today.toString(Qt::ISODate))));
+    // Today's daily follows what was last saved, so it is what a damaged
+    // launch restores first.
+    damage(settingsFile(), "[library]\nsortMode=3\n[truncated\n");
+    {
+      AppSettings settings;
+      QVERIFY(settings.canRestoreOrganization());
+      const auto result = settings.restoreLastGoodBackup();
+      QVERIFY2(result.value(QStringLiteral("ok")).toBool(), qPrintable(result.value(QStringLiteral("message")).toString()));
+      QVERIFY(!settings.isFavorite(files.first()));
+    }
+    // Once today's daily does not read, the fuller copy from before the
+    // change is next, ahead of the week's copy, which still reads.
+    const QString weekly = folder.filePath(
+        QStringLiteral("weekly-%1.json").arg(today.addDays(1 - today.dayOfWeek()).toString(Qt::ISODate)));
+    QVERIFY(QFileInfo::exists(weekly));
+    breakFile(folder.filePath(QStringLiteral("daily-%1.json").arg(today.toString(Qt::ISODate))));
+    damage(settingsFile(), "[library]\nsortMode=3\n[truncated\n");
+    AppSettings settings;
+    QVERIFY(settings.canRestoreOrganization());
+    const auto result = settings.restoreLastGoodBackup();
+    QVERIFY2(result.value(QStringLiteral("ok")).toBool(), qPrintable(result.value(QStringLiteral("message")).toString()));
+    QCOMPARE(result.value(QStringLiteral("backupDate")).toDate(), today);
+    QVERIFY2(result.value(QStringLiteral("message")).toString().contains(QStringLiteral("kept before a change")),
+             qPrintable(result.value(QStringLiteral("message")).toString()));
+    for (const QString& file : files) QVERIFY(settings.isFavorite(file));
+    QVERIFY(readAllOf(weekly).contains("omaroll.organization"));
+  }
+
   // Organization made after the day's first snapshot is in today's snapshot
   // once it settles, and at a clean exit, so a restore brings it back.
   // A refresh that fails while the backup folder can't be written is owed
@@ -4857,9 +5251,6 @@ private slots:
       QVERIFY(!settings.createAlbum(QStringLiteral("Cannot overwrite")));
       settings.setFavorite({QStringLiteral("/new.bmp")}, true);
       QVERIFY(!settings.organizationError().isEmpty());
-      // A preference changes for this session but isn't written over it.
-      settings.setCaptionScale(150);
-      QCOMPARE(settings.captionScale(), 150);
     }
     QVERIFY(file.open(QIODevice::ReadOnly));
     QCOMPARE(file.readAll(), damaged);

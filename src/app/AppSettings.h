@@ -98,8 +98,6 @@ class AppSettings final : public QObject {
                  NOTIFY rememberPlaybackSpeedChanged)
   Q_PROPERTY(qreal videoPlaybackRate READ videoPlaybackRate WRITE setVideoPlaybackRate
                  NOTIFY videoPlaybackRateChanged)
-  // Caption text size as a percentage of the default: 75, 100, 125, 150 or 200.
-  Q_PROPERTY(int captionScale READ captionScale WRITE setCaptionScale NOTIFY captionScaleChanged)
   Q_PROPERTY(QStringList albumNames READ albumNames NOTIFY albumsChanged)
   Q_PROPERTY(QStringList tagNames READ tagNames NOTIFY tagsChanged)
   Q_PROPERTY(
@@ -258,9 +256,6 @@ public:
   void setVideoMuted(bool value);
   [[nodiscard]] bool rememberPlaybackSpeed() const { return m_rememberPlaybackSpeed; }
   void setRememberPlaybackSpeed(bool value);
-  [[nodiscard]] int captionScale() const { return m_captionScale; }
-  void setCaptionScale(int percent);
-  static constexpr int kCaptionScales[] = {75, 100, 125, 150, 200};
   [[nodiscard]] qreal videoPlaybackRate() const { return m_videoPlaybackRate; }
   void setVideoPlaybackRate(qreal value);
 
@@ -333,7 +328,11 @@ public:
   // again. Tests shorten it.
   void setBackupRefreshDelay(int milliseconds) { m_snapshotRefreshDelay = milliseconds; }
   void setBackupRefreshMaxWait(int milliseconds) { m_snapshotMaxWait = milliseconds; }
+  // A refresh is waiting for changes to settle. Tests wait it out.
+  [[nodiscard]] bool backupRefreshPending() const { return m_snapshotRefresh.isActive(); }
   [[nodiscard]] QString backupDirectory() const;
+  // Where the Restore picker opens, so the automatic backups are listed.
+  Q_INVOKABLE [[nodiscard]] QUrl backupFolderUrl() const;
   Q_INVOKABLE [[nodiscard]] QVariantMap exportOrganization(const QString& path) const;
   // Restores by replacing the current organization. Callers should confirm
   // first; the original files on disk are untouched either way.
@@ -414,7 +413,6 @@ signals:
   void videoVolumeChanged();
   void videoMutedChanged();
   void rememberPlaybackSpeedChanged();
-  void captionScaleChanged();
   void videoPlaybackRateChanged();
   void albumsChanged();
   void tagsChanged();
@@ -497,6 +495,17 @@ private:
   void applyOrganizationHealth();
   [[nodiscard]] bool snapshotsHeld() const { return m_healthPending || m_organizationSuspect; }
   [[nodiscard]] static int organizationSize(const OrganizationState& state);
+  // The size of what a snapshot file restores, or -1 when an import would
+  // refuse it.
+  [[nodiscard]] static int snapshotSize(const QByteArray& payload);
+  // Before |day|'s snapshot in |path| is written over (|replace|), or first
+  // written, with a state of size |replacing| that looks incomplete against
+  // it or the newest earlier daily, keeps that snapshot as a before-change
+  // copy. False if the copy could not be written.
+  static bool keepFullerSnapshot(const QString& path, const QDate& day, int replacing, bool replace);
+  // keepFullerSnapshot, then the day's daily and weekly snapshots.
+  static bool writeDailySnapshot(const QString& path, const QDate& day, const QByteArray& payload, int size,
+                                 bool replace);
   // A backup file's contents, checked the way an import checks them. Pure,
   // so the launch check can run it on the backup thread.
   struct DecodedOrganization {
@@ -615,7 +624,6 @@ private:
   qreal m_videoVolume = 0.8;
   bool m_videoMuted = false;
   bool m_rememberPlaybackSpeed = false;
-  int m_captionScale = 100;
   qreal m_videoPlaybackRate = 1.0;
   // Resume spots, most recently touched first in m_videoRecency.
   QHash<QString, qint64> m_videoPositions;

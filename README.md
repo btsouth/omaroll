@@ -131,7 +131,9 @@ manager.
 Settings has the same choice as **Set as default** and **Restore previous
 apps**, and says how many types changed and which apps were replaced.
 Restoring puts your `mimeapps.list` back as it was, and types you had set
-nothing for keep their system default. `man omaroll` has the details.
+nothing for keep their system default. A `mimeapps.list` that is not valid
+UTF-8 or starts with a byte-order mark is left unchanged, and Omaroll says so.
+`man omaroll` has the details.
 
 To open a picture or video from a terminal:
 
@@ -140,18 +142,11 @@ omaroll photo.jpg
 omaroll clip.mp4
 ```
 
-Video captions use Omaroll's themed overlay for embedded tracks and sidecars,
-at the **Caption size** chosen in Settings. `Z` and `X` shift them half a second
-earlier or later; an embedded track is copied out with ffmpeg for that, so it
-has to be text rather than pictures.
+Video captions use Omaroll's themed overlay for embedded tracks and sidecars.
 The info panel identifies PQ/HDR10, HLG and Dolby Vision metadata when present;
-this describes the file, not a guarantee of HDR display output. Qt tone-maps
-HDR10 and HLG only in hardware-decoded 10-bit frames; when a video's frames
-arrive any other way, its colours are off, and a notice with the controls says
-so and offers Open in mpv, which maps them. Open in mpv continues at the
-current playback position and pauses Omaroll's player. When changing videos, a
-poster or the previous picture stays visible until the new clip's first decoded
-frame.
+this describes the file, not a guarantee of HDR display output. Open in mpv
+continues at the current playback position. When changing videos, a poster or
+the previous picture stays visible until the new clip's first decoded frame.
 
 Hovering the seek bar, in the viewer or the library preview, shows the time
 under the pointer and, above it, the nearest of up to 100 sampled keyframes, so
@@ -459,12 +454,17 @@ cannot spoil the shot. `man omaroll` lists every option with examples.
   also removes albums, tags, favorites and saved views. Back it up first if you
   want to keep them. Omaroll also keeps automatic backups of your organization
   in `~/.local/share/omaroll/backups` (7 daily, 4 weekly, readable only by you).
-  Today's is refreshed a few minutes after each change and at exit. A launch
-  that finds the settings file damaged offers the newest backup that reads,
+  Today's is refreshed a few minutes after each change and at exit. A refresh
+  that would leave it far smaller, or a day's first one in a session left open
+  past midnight, keeps what it replaces beside it: the day's fullest as
+  `before-change-<date>.json` and, when different, the state just before the
+  latest drop as `before-change-<date>-latest.json`, each kept as long as
+  that day's daily. A run of smaller deletes, each under half, is not caught.
+  A launch that finds the settings file damaged offers the newest backup that reads,
   whatever its age. A launch whose albums, tags and marks look far smaller than
   a backup from the past seven days offers that fuller backup once. In
   Settings, Restore last good backup takes the newest backup that reads, and
-  Restore lets you pick any backup file. The thumbnail cache can be deleted and
+  Restore lets you pick any backup file, starting in the backups folder. The thumbnail cache can be deleted and
   regenerated.
 
 ## Development

@@ -387,6 +387,11 @@ wrote, from `tests/fuzz/driver.cpp`, with ASan and UBSan:
 | `fuzz_doctext` | PDF text cache entries (`DocumentTextIndex`) |
 | `fuzz_exifdate` | the quick EXIF date reader, checked against the general one |
 | `fuzz_hyprland` | `hyprland.lua` install and removal of the window rules, and the screenshot key from the bindings |
+| `fuzz_jpegexif` | the EXIF/TIFF rewriter for saved JPEG copies (`JpegExif`): same length, and the carried-over segments read back the same |
+| `fuzz_diagnosis` | the JPEG segment and PNG chunk walk that finds cut-off files (`PictureDiagnosis::truncation`) |
+| `fuzz_hashcache` | hash cache files (`HashCache::load`), with a save and load round trip |
+| `fuzz_webp` | the WebP chunk walk in `ImageEditor` (lossless or not, EXIF present) |
+| `fuzz_mimedefaults` | `--set-default` then `--unset-default` on any `mimeapps.list`, with xdg-mime's awk edit modelled in process: two cycles leave it byte for byte as it was |
 
 `tests/fuzz/run.sh <build> <seconds> [corpus root]` runs each one from its
 seeds in `tests/fuzz/corpus/<harness>`, with a 10 second per-input timeout, a
@@ -461,8 +466,12 @@ first frames are in Qt, since Qt has no frame pointers and the caller's frame
 is often missing. A TSan abort fails the job, and so does a selected test that
 did not run. `tests/tsan-triage/` holds real reports for its self-test
 (`python3 tests/tsan-triage.py --self-test`, also a ctest test), including a
-race on a `QString` that two threads append to. `tests/tsan.supp` is empty of
-race suppressions. LeakSanitizer stays on in every suite; `tests/lsan.supp` lists
+race on a `QString` that two threads append to. The job also fails when a run
+matches more than `MAX_KNOWN_HANDOFFS` (300) known handoffs, about 1.5 times
+the 195 to 209 that runs on main matched in November 2026: a rule grown too
+broad could be passing a real race among them. Raise it only with a reason,
+such as new tests in the selection, after reading what the new matches are.
+`tests/tsan.supp` is empty of race suppressions. LeakSanitizer stays on in every suite; `tests/lsan.supp` lists
 only external process-lifetime allocations (the NVIDIA GL driver, FFmpeg's
 decoder setup). The coverage build uses `-fprofile-instr-generate
 -fcoverage-mapping`, prints an `llvm-cov report` summary to

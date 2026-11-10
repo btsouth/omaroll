@@ -1,0 +1,10 @@
+# my defaults
+[Default Applications]
+text/plain=nvim.desktop
+video/mp4=mpv.desktop;
+image/png=imv.desktop
+
+video/webm=mpv.desktop
+
+[Added Associations]
+video/mp4=mpv.desktop;

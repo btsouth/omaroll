@@ -278,11 +278,7 @@ ApplicationWindow {
             textReviewSheet.open(path, Captures.fileNameAt(row))
             return
         case "play":
-            // A launch that failed leaves the preview playing.
-            if (Registry.runBatchWith("play", {"seek": (Math.max(0, detail.visible && detail.path === path ? detail.playbackPosition : 0) / 1000).toFixed(3)}, [path])
-                    && detail.visible && detail.path === path) {
-                detail.pauseForHandoff()
-            }
+            Registry.runBatchWith("play", {"seek": (Math.max(0, detail.visible && detail.path === path ? detail.playbackPosition : 0) / 1000).toFixed(3)}, [path])
             return
         case "frame": {
             if (!detail.visible || detail.path !== path || !video) {

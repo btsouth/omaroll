@@ -7,7 +7,8 @@ case "$mode" in
   fuzz)
     cmake -S . -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DOMAROLL_FUZZ=ON
     cmake --build "$build" --parallel 4 --target fuzz_launch fuzz_ipc fuzz_matroska fuzz_pdf fuzz_image fuzz_raw fuzz_subtitles fuzz_organization \
-      fuzz_query fuzz_storyboard fuzz_doctext fuzz_exifdate fuzz_hyprland
+      fuzz_query fuzz_storyboard fuzz_doctext fuzz_exifdate fuzz_hyprland fuzz_jpegexif fuzz_diagnosis fuzz_hashcache \
+      fuzz_webp fuzz_mimedefaults
     bash tests/fuzz/run.sh "$build" "${2:-45}" "${3:-}"
     ;;
   tsan)
