@@ -52,7 +52,7 @@ ApplicationWindow {
     property bool slideshowRunning: false
     readonly property bool blockingActionOpen: actionMenu.visible || confirm.visible
                                               || permanentConfirm.visible || editorChooser.visible || shortcutHelp.visible
-                                              || renameSheet.visible
+                                              || renameSheet.visible || folderPicker.visible
     onBlockingActionOpenChanged: {
         if (root.blockingActionOpen) slideshowTimer.stop()
         else Qt.callLater(root.resumeSlideshow)
@@ -316,7 +316,7 @@ ApplicationWindow {
 
     readonly property bool choosingEditor: editorChooser.visible
     // A sheet with its own keys: the viewer's shortcuts wait until it closes.
-    readonly property bool sheetOpen: editorChooser.visible || renameSheet.visible
+    readonly property bool sheetOpen: editorChooser.visible || renameSheet.visible || folderPicker.visible
     function showShortcutHelp() { shortcutHelp.open() }
     function showActionMenu() { actionMenu.popup(stage, stage.width / 2, stage.height / 2) }
 
@@ -1050,6 +1050,10 @@ ApplicationWindow {
     // Trash.
     function requestTransfer(copy) {
         if (Session.path === "" || root.blockingActionOpen) return
+        if (root.transferringPaths.indexOf(Session.deletionPath) >= 0) {
+            root.say("That file is already being moved or copied")
+            return
+        }
         const target = Actions.captureFileAction(Session.deletionPath, Session.path)
         if (target.path === undefined) return
         target.viewedPath = Session.path
@@ -1062,26 +1066,57 @@ ApplicationWindow {
         folderPicker.open()
     }
 
-    // |folder| is a path or a file URL. False, said, when it was refused.
+    // |folder| is a path or a file URL. The move or copy runs on a worker
+    // and finishTransfer() takes it from there. The job's number, or 0 when
+    // it was refused at once, which is said.
+    property var transferJobs: ({})
+    property int transfersRunning: 0
+    // Files a move or copy is running for, which cannot be sent again yet.
+    property var transferringPaths: []
     function transferTo(target, folder, copy) {
-        const result = copy ? Actions.copyCapturedFile(target, folder)
-                            : Actions.moveCapturedFile(target, folder)
+        const started = Actions.startTransfer(target, folder, copy)
+        if (!started.ok) {
+            root.say(started.error)
+            return 0
+        }
+        const jobs = root.transferJobs
+        jobs[started.job] = true
+        root.transferJobs = jobs
+        root.transfersRunning++
+        root.transferringPaths = Actions.transferringPaths()
+        root.say((copy ? "Copying " : "Moving ") + root.fileNameOf(target.path) + "…")
+        return started.job
+    }
+
+    function finishTransfer(job, result) {
+        if (!root.transferJobs[job]) return
+        const jobs = root.transferJobs
+        delete jobs[job]
+        root.transferJobs = jobs
+        root.transfersRunning--
+        root.transferringPaths = Actions.transferringPaths()
         if (!result.ok) {
             root.say(result.error)
-            return false
+            return
         }
         const where = root.fileNameOf(result.folder) || result.folder
         const named = result.renamed ? " as " + result.fileName : ""
-        if (copy) {
+        if (result.copy) {
             root.say("Copied to " + where + named)
-            return true
+            return
         }
-        // The new place as the viewer and the library name it, which a
-        // folder reached through a link resolves.
-        Settings.relocatePath(target.viewedPath, result.mediaPath !== "" ? result.mediaPath : result.path)
-        Session.forget(target.viewedPath)
+        // Marks under the file's own path, which a folder reached through a
+        // link resolves, and under the folder entry too when that differs,
+        // as after a rename.
+        Settings.relocatePath(result.viewedPath, result.mediaPath !== "" ? result.mediaPath : result.path)
+        if (result.source !== result.viewedPath) Settings.relocatePath(result.source, result.path)
+        Session.forget(result.viewedPath)
         root.say("Moved to " + where + named)
-        return true
+    }
+
+    Connections {
+        target: Actions
+        function onTransferFinished(job, result) { root.finishTransfer(job, result) }
     }
 
     function setSort(order) {
@@ -1167,8 +1202,10 @@ ApplicationWindow {
         byId["copy-path"] = {id: "copy-path", label: "Copy path"}
         byId["copy-name"] = {id: "copy-name", label: "Copy file name"}
         byId["rename"] = {id: "rename", label: "Rename…"}
-        byId["move-to-folder"] = {id: "move-to-folder", label: "Move to folder…"}
-        byId["copy-to-folder"] = {id: "copy-to-folder", label: "Copy to folder…"}
+        // Not again while this file is still on its way.
+        const moving = root.transferringPaths.indexOf(Session.deletionPath) >= 0
+        byId["move-to-folder"] = {id: "move-to-folder", label: "Move to folder…", available: !moving}
+        byId["copy-to-folder"] = {id: "copy-to-folder", label: "Copy to folder…", available: !moving}
 
         const view = []
         if (video) {
@@ -2925,6 +2962,7 @@ ApplicationWindow {
             if (target.path !== undefined) root.transferTo(target, selectedFolder.toString(), folderPicker.copy)
         }
         onRejected: folderPicker.target = ({})
+        onVisibleChanged: if (!visible) keys.forceActiveFocus()
     }
 
     ConfirmSheet {

@@ -24,6 +24,7 @@
 #include "search/OcrIndex.h"
 #include "search/QrDetector.h"
 #include "subtitles/SubtitleIndex.h"
+#include "theme/CheckerProvider.h"
 #include "theme/OmarchyTheme.h"
 #include "thumbs/LargeImageProvider.h"
 #include "thumbs/Storyboard.h"
@@ -325,6 +326,7 @@ int main(int argc, char** argv) {
   engine.addImageProvider(EditProvider::kProviderId, edits);
   engine.addImageProvider(PdfProvider::kProviderId, pdfs);
   engine.addImageProvider(LargeImageProvider::kProviderId, large);
+  CheckerProvider::install(engine);
   Storyboard::install(engine);
   OmarchyTheme theme(profile.filePath(u"state"_s), profile.filePath(u"config"_s));
   AppSettings settings; ActionLauncher actions; ActionRegistry registry(&actions);

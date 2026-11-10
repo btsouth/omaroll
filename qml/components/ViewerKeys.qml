@@ -175,11 +175,11 @@ Item {
                 Session.openInLibrary()
                 break
             case ShortcutCatalog.quickKeys.Delete:
-                if (shift) {
-                    if (!event.isAutoRepeat) viewer.requestPermanentDelete()
-                } else {
-                    viewer.requestTrash()
-                }
+                // One file a press: a held key would otherwise trash a run
+                // of them, with no question in between when Settings skips it.
+                if (event.isAutoRepeat) break
+                if (shift) viewer.requestPermanentDelete()
+                else viewer.requestTrash()
                 break
             case ShortcutCatalog.quickKeys.V:
                 if (shift && !video) viewer.flip(false)

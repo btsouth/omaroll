@@ -18,6 +18,7 @@
   viewer, as in the library preview, with a setting for both.
 - **Move to Trash without asking** in Settings, off by default. Delete then
   moves to Trash at once in the library and the viewer, and Undo still works.
+  Holding Delete moves one file, not one per key repeat.
 
 - The empty library offers Omaroll's Hyprland window rules once, with Install
   and Not now, and `--set-default` names the command until they are installed

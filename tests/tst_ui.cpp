@@ -38,6 +38,7 @@
 #include "search/SearchQuery.h"
 #include "subtitles/SubtitleIndex.h"
 #include "search/QrDetector.h"
+#include "theme/CheckerProvider.h"
 #include "theme/OmarchyTheme.h"
 #include "sources/CameraRaw.h"
 #include "sources/DecodeJournal.h"
@@ -792,6 +793,7 @@ private slots:
     m_engine->addImageProvider(QLatin1String(EditProvider::kProviderId), m_edits);
     m_engine->addImageProvider(QLatin1String(PdfProvider::kProviderId), m_pdfs);
     m_engine->addImageProvider(QLatin1String(RawImageProvider::kProviderId), m_raws);
+    CheckerProvider::install(*m_engine);
     Storyboard::install(*m_engine);
 
     QQmlContext* context = m_engine->rootContext();
@@ -8001,6 +8003,21 @@ private slots:
     QVERIFY(!item("confirm")->isVisible());
     QTRY_VERIFY(!QFileInfo::exists(first));
     QTRY_VERIFY(undo->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Z, Qt::ControlModifier);
+    QTRY_VERIFY(QFileInfo::exists(first));
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(first) >= 0, 10000);
+    // A held Delete is one press: its repeats trash nothing more.
+    grid->setProperty("currentIndex", m_library->rowOf(first));
+    for (int i = 0; i < 5; ++i) {
+      QKeyEvent repeat(QEvent::KeyPress, Qt::Key_Delete, Qt::NoModifier, QString(), true);
+      QCoreApplication::sendEvent(m_window, &repeat);
+    }
+    QTest::qWait(200);
+    QVERIFY(QFileInfo::exists(first));
+    QVERIFY(QFileInfo::exists(second));
+    // The same key, pressed rather than repeated, reaches the grid.
+    QTest::keyClick(m_window, Qt::Key_Delete);
+    QTRY_VERIFY(!QFileInfo::exists(first));
     QTest::keyClick(m_window, Qt::Key_Z, Qt::ControlModifier);
     QTRY_VERIFY(QFileInfo::exists(first));
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(first) >= 0, 10000);

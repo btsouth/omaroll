@@ -1,8 +1,9 @@
 import QtQuick
 
 // A checkerboard in the theme's colours, behind a picture with transparency.
-// One small tile, drawn as an SVG with the two colours and repeated, so a
-// large or zoomed picture costs a single texture.
+// One small tile, drawn by the checker provider and repeated, so a large or
+// zoomed picture costs a single texture. The provider answers at once on this
+// thread: no image reader is left working when the window closes.
 Image {
     id: root
 
@@ -17,7 +18,7 @@ Image {
         const part = function (value) {
             return ("0" + Math.round(Math.max(0, Math.min(1, value)) * 255).toString(16)).slice(-2)
         }
-        return "#" + part(color.r) + part(color.g) + part(color.b)
+        return part(color.r) + part(color.g) + part(color.b)
     }
     readonly property color second: Qt.rgba(base.r + (tint.r - base.r) * tintAmount,
                                             base.g + (tint.g - base.g) * tintAmount,
@@ -27,13 +28,5 @@ Image {
     smooth: false
     asynchronous: false
     cache: true
-    source: {
-        const size = root.cell * 2
-        const svg = "<svg xmlns='http://www.w3.org/2000/svg' width='" + size + "' height='" + size + "'>"
-                  + "<rect width='" + size + "' height='" + size + "' fill='" + root.hex(root.base) + "'/>"
-                  + "<rect width='" + root.cell + "' height='" + root.cell + "' fill='" + root.hex(root.second) + "'/>"
-                  + "<rect x='" + root.cell + "' y='" + root.cell + "' width='" + root.cell + "' height='"
-                  + root.cell + "' fill='" + root.hex(root.second) + "'/></svg>"
-        return "data:image/svg+xml," + encodeURIComponent(svg)
-    }
+    source: "image://checker/" + root.hex(root.base) + "/" + root.hex(root.second) + "/" + root.cell
 }

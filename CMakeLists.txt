@@ -153,6 +153,8 @@ add_library(omaroll_core STATIC
   src/thumbs/ThumbnailCache.h
   src/thumbs/ThumbnailProvider.cpp
   src/thumbs/ThumbnailProvider.h
+  src/theme/CheckerProvider.cpp
+  src/theme/CheckerProvider.h
   src/theme/OmarchyTheme.cpp
   src/theme/OmarchyTheme.h
   src/viewer/HyprlandPlacement.cpp

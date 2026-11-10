@@ -4,6 +4,8 @@
 #include <QString>
 #include <QStringList>
 
+#include <atomic>
+
 // The orders the quick viewer can step through a folder in. Every order
 // starts from the natural name order, so files that tie (the same size, no
 // date) stay in the order a file manager shows them.
@@ -17,7 +19,13 @@ namespace ViewerSort {
 // When the file was taken: an Omarchy capture's timestamped name, a JPEG's
 // or camera raw's EXIF date, or else the file's modified time. Reads at most
 // the start of the file; never decodes.
+// Remembered per path until the file's size or modified time changes.
 [[nodiscard]] QDateTime dateTaken(const QString& path);
+// The EXIF or raw date alone, read from the file every time; invalid when
+// it has none.
+[[nodiscard]] QDateTime readDateTaken(const QString& path);
+// How many files readDateTaken() has read, for tests.
+extern std::atomic<quint64> readCount;
 
 // |names| (already in name order) in |order|, oldest or smallest first, or
 // the other way round when |reversed|. Reads file metadata, so call it on a

@@ -3363,6 +3363,11 @@ Item {
         if (label === "") {
             return
         }
+        // A held Del moves one file, not every file it repeats onto.
+        if (label === "Del" && event.isAutoRepeat) {
+            event.accepted = true
+            return
+        }
         for (const row of actions.model) {
             if (row.shortcut === label && row.available) {
                 root.invokeAction(row.id)

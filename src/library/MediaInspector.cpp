@@ -458,5 +458,9 @@ QStringList MediaInspector::parseVideo(const QByteArray& output, const QString& 
       lines.append(audioLine);
     }
   }
+  const QString location = videoCoordinates(output);
+  if (!location.isEmpty()) {
+    lines.append(QStringLiteral("Location  ·  ") + location);
+  }
   return lines;
 }

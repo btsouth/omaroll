@@ -24,6 +24,7 @@
 #include "sources/ImageBudget.h"
 #include "subtitles/SubtitleIndex.h"
 #include "sources/CameraRaw.h"
+#include "theme/CheckerProvider.h"
 #include "theme/OmarchyTheme.h"
 #include "thumbs/LargeImageProvider.h"
 #include "thumbs/RawImageProvider.h"
@@ -275,6 +276,7 @@ private slots:
     m_large = new LargeImageProvider;
     m_engine->addImageProvider(QLatin1String(LargeImageProvider::kProviderId), m_large);
     Storyboard::install(*m_engine);
+    CheckerProvider::install(*m_engine);
 
     QQmlContext* shared = m_engine->rootContext();
     shared->setContextProperty(QStringLiteral("Theme"), m_theme);
@@ -6355,6 +6357,15 @@ private slots:
       return qAbs(middle - list->width() / 2) <= 1;
     };
 
+    // Turned on after the folder is already open, at its 17th file.
+    m_settings->setViewerFilmstrip(false);
+    open({files.at(16)});
+    QTRY_COMPARE(m_session->count(), 20);
+    QTRY_COMPARE(m_session->index(), 16);
+    QVERIFY(!item(QStringLiteral("viewerFilmstrip"))->isVisible());
+    m_settings->setViewerFilmstrip(true);
+    QTRY_VERIFY(item(QStringLiteral("viewerFilmstrip"))->isVisible());
+    QTRY_VERIFY(centred(16));
     // Opened at the 14th of 20, as from the file manager.
     open({files.at(13)});
     QTRY_COMPARE(m_session->count(), 20);
@@ -6576,12 +6587,20 @@ private slots:
       captured.insert(QStringLiteral("viewedPath"), path);
       return captured;
     };
-    QVariant moved;
-    QVERIFY(QMetaObject::invokeMethod(m_window, "transferTo", Q_RETURN_ARG(QVariant, moved),
-                                      Q_ARG(QVariant, target(second)),
-                                      Q_ARG(QVariant, QUrl::fromLocalFile(destination).toString()),
-                                      Q_ARG(QVariant, false)));
-    QVERIFY(moved.toBool());
+    // Started on a worker; true once it lands, false when it was refused.
+    const auto transfer = [&](const QVariantMap& captured, const QString& folder, bool copy) {
+      QSignalSpy finished(m_actions, &ActionLauncher::transferFinished);
+      QVariant job;
+      if (!QMetaObject::invokeMethod(m_window, "transferTo", Q_RETURN_ARG(QVariant, job),
+                                     Q_ARG(QVariant, captured), Q_ARG(QVariant, folder),
+                                     Q_ARG(QVariant, copy)) || job.toInt() == 0) {
+        return false;
+      }
+      if (!finished.wait(10000) && finished.isEmpty()) return false;
+      const QVariantMap result = finished.first().at(1).toMap();
+      return finished.first().at(0).toInt() == job.toInt() && result.value(QStringLiteral("ok")).toBool();
+    };
+    QVERIFY(transfer(target(second), QUrl::fromLocalFile(destination).toString(), false));
     QVERIFY(!QFile::exists(second));
     QCOMPARE(digest(arrived), moving);
     QCOMPARE(digest(destination + QStringLiteral("/b.jpg")), occupant);
@@ -6592,37 +6611,23 @@ private slots:
     QVERIFY(!m_settings->isFavorite(second));
 
     // Copy: the file stays, in the window and the folder.
-    QVariant copied;
-    QVERIFY(QMetaObject::invokeMethod(m_window, "transferTo", Q_RETURN_ARG(QVariant, copied),
-                                      Q_ARG(QVariant, target(third)), Q_ARG(QVariant, destination),
-                                      Q_ARG(QVariant, true)));
-    QVERIFY(copied.toBool());
+    QVERIFY(transfer(target(third), destination, true));
     QVERIFY(QFile::exists(third));
     QCOMPARE(digest(destination + QStringLiteral("/c.jpg")), digest(third));
     QCOMPARE(prop("status").toString(), QStringLiteral("Copied to to"));
     QCOMPARE(m_session->path(), third);
     // Again into the same folder, and into its own: a second name each time.
-    QVERIFY(QMetaObject::invokeMethod(m_window, "transferTo", Q_RETURN_ARG(QVariant, copied),
-                                      Q_ARG(QVariant, target(third)), Q_ARG(QVariant, destination),
-                                      Q_ARG(QVariant, true)));
+    QVERIFY(transfer(target(third), destination, true));
     QVERIFY(QFile::exists(destination + QStringLiteral("/c (2).jpg")));
-    QVERIFY(QMetaObject::invokeMethod(m_window, "transferTo", Q_RETURN_ARG(QVariant, copied),
-                                      Q_ARG(QVariant, target(third)), Q_ARG(QVariant, source),
-                                      Q_ARG(QVariant, true)));
+    QVERIFY(transfer(target(third), source, true));
     QVERIFY(QFile::exists(source + QStringLiteral("/c (2).jpg")));
     QCOMPARE(digest(source + QStringLiteral("/c (2).jpg")), digest(third));
 
     // A move into the folder it is already in, or into one that is not
     // there, is refused and changes nothing.
-    QVERIFY(QMetaObject::invokeMethod(m_window, "transferTo", Q_RETURN_ARG(QVariant, moved),
-                                      Q_ARG(QVariant, target(third)), Q_ARG(QVariant, source),
-                                      Q_ARG(QVariant, false)));
-    QVERIFY(!moved.toBool());
+    QVERIFY(!transfer(target(third), source, false));
     QCOMPARE(prop("status").toString(), QStringLiteral("The file is already in that folder"));
-    QVERIFY(QMetaObject::invokeMethod(m_window, "transferTo", Q_RETURN_ARG(QVariant, moved),
-                                      Q_ARG(QVariant, target(third)), Q_ARG(QVariant, dir.filePath(QStringLiteral("gone"))),
-                                      Q_ARG(QVariant, false)));
-    QVERIFY(!moved.toBool());
+    QVERIFY(!transfer(target(third), dir.filePath(QStringLiteral("gone")), false));
     QVERIFY(QFile::exists(third));
     // A file changed after it was chosen is not moved.
     const QVariantMap stale = target(third);
@@ -6631,10 +6636,7 @@ private slots:
       QVERIFY(file.open(QIODevice::Append));
       file.write("changed");
     }
-    QVERIFY(QMetaObject::invokeMethod(m_window, "transferTo", Q_RETURN_ARG(QVariant, moved),
-                                      Q_ARG(QVariant, stale), Q_ARG(QVariant, destination),
-                                      Q_ARG(QVariant, false)));
-    QVERIFY(!moved.toBool());
+    QVERIFY(!transfer(stale, destination, false));
     QVERIFY(QFile::exists(third));
     QVERIFY(!QFile::exists(destination + QStringLiteral("/c (3).jpg")));
 
@@ -6644,10 +6646,7 @@ private slots:
     QVariantMap linked = m_actions->captureFileAction(link, third);
     QVERIFY(!linked.isEmpty());
     linked.insert(QStringLiteral("viewedPath"), third);
-    QVERIFY(QMetaObject::invokeMethod(m_window, "transferTo", Q_RETURN_ARG(QVariant, moved),
-                                      Q_ARG(QVariant, linked), Q_ARG(QVariant, destination),
-                                      Q_ARG(QVariant, false)));
-    QVERIFY(!moved.toBool());
+    QVERIFY(!transfer(linked, destination, false));
     QVERIFY(QFileInfo(link).isSymLink());
     QVERIFY(!QFileInfo::exists(destination + QStringLiteral("/link.jpg")));
 
@@ -6658,6 +6657,137 @@ private slots:
     QVERIFY(edit.contains(QStringLiteral("rename")));
     QVERIFY(edit.contains(QStringLiteral("move-to-folder")));
     QVERIFY(edit.contains(QStringLiteral("copy-to-folder")));
+  }
+
+  // A move or copy runs on a worker: the call returns at once, the window
+  // says it is busy and refuses the same file again, and the result lands.
+  void aLargeTransferRunsOffTheWindowThread() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString destination = dir.filePath(QStringLiteral("to"));
+    QVERIFY(QDir().mkpath(destination));
+    const QString big = dir.filePath(QStringLiteral("big.png"));
+    const QString other = dir.filePath(QStringLiteral("other.jpg"));
+    QImage picture(64, 64, QImage::Format_RGB32);
+    picture.fill(Qt::darkCyan);
+    QVERIFY(picture.save(big));
+    {
+      // A valid PNG with 48 MiB after its end, which readers ignore.
+      QFile file(big);
+      QVERIFY(file.open(QIODevice::Append));
+      const QByteArray block(1024 * 1024, '\x5a');
+      for (int i = 0; i < 48; ++i) QCOMPARE(file.write(block), block.size());
+    }
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), other));
+    const QByteArray bytes = digest(big);
+    open({big});
+    QTRY_COMPARE(m_session->count(), 2);
+    QTRY_COMPARE(m_session->path(), big);
+
+    QSignalSpy finished(m_actions, &ActionLauncher::transferFinished);
+    QVariantMap captured = m_actions->captureFileAction(big, big);
+    captured.insert(QStringLiteral("viewedPath"), big);
+    QVariant job;
+    QVERIFY(QMetaObject::invokeMethod(m_window, "transferTo", Q_RETURN_ARG(QVariant, job),
+                                      Q_ARG(QVariant, captured), Q_ARG(QVariant, destination),
+                                      Q_ARG(QVariant, false)));
+    QVERIFY(job.toInt() > 0);
+    // Returned before the worker could report, with the window busy.
+    QCOMPARE(finished.size(), 0);
+    QCOMPARE(prop("transfersRunning").toInt(), 1);
+    QCOMPARE(prop("status").toString(), QStringLiteral("Moving big.png…"));
+    QVERIFY(m_actions->transferringPaths().contains(big));
+    // The same file cannot be sent again meanwhile, from the menu or a call.
+    QVariant again;
+    QVERIFY(QMetaObject::invokeMethod(m_window, "transferTo", Q_RETURN_ARG(QVariant, again),
+                                      Q_ARG(QVariant, captured), Q_ARG(QVariant, destination),
+                                      Q_ARG(QVariant, true)));
+    QCOMPARE(again.toInt(), 0);
+    QCOMPARE(prop("status").toString(), QStringLiteral("That file is already being moved or copied"));
+    bool offered = true;
+    for (const QVariant& row : m_window->property("menuGroups").value<QJSValue>().toVariant().toMap()
+                                   .value(QStringLiteral("edit")).toList()) {
+      if (row.toMap().value(QStringLiteral("id")) == QStringLiteral("move-to-folder"))
+        offered = row.toMap().value(QStringLiteral("available"), true).toBool();
+    }
+    QVERIFY(!offered || finished.size() > 0);
+
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 20000);
+    QCOMPARE(finished.first().at(0).toInt(), job.toInt());
+    QVERIFY(finished.first().at(1).toMap().value(QStringLiteral("ok")).toBool());
+    QCOMPARE(prop("transfersRunning").toInt(), 0);
+    QVERIFY(!QFile::exists(big));
+    QCOMPARE(digest(destination + QStringLiteral("/big.png")), bytes);
+    QTRY_COMPARE(m_session->path(), other);
+    QCOMPARE(prop("status").toString(), QStringLiteral("Moved to to"));
+  }
+
+  // A held Delete trashes one file, not every file it repeats onto, with or
+  // without the question.
+  void aHeldDeleteTrashesOneFile() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QStringList files;
+    for (const auto& name : {QStringLiteral("a.jpg"), QStringLiteral("b.jpg"), QStringLiteral("c.jpg"),
+                             QStringLiteral("d.jpg")}) {
+      files.append(dir.filePath(name));
+      QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), files.last()));
+    }
+    m_settings->setTrashWithoutAsking(true);
+    const auto restore = qScopeGuard([this] { m_settings->setTrashWithoutAsking(false); });
+    open({files.at(0)});
+    QTRY_COMPARE(m_session->count(), 4);
+    const auto press = [this](bool repeat, Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
+      QKeyEvent down(QEvent::KeyPress, Qt::Key_Delete, modifiers, QString(), repeat);
+      QCoreApplication::sendEvent(m_window, &down);
+    };
+    press(false);
+    QTRY_VERIFY(!QFile::exists(files.at(0)));
+    QTRY_COMPARE(m_session->path(), files.at(1));
+    // The key held down: every repeat is ignored.
+    for (int i = 0; i < 5; ++i) press(true);
+    QTest::qWait(200);
+    QVERIFY(QFile::exists(files.at(1)));
+    QCOMPARE(m_session->count(), 3);
+    // Shift+Delete repeats are ignored too.
+    for (int i = 0; i < 3; ++i) press(true, Qt::ShiftModifier);
+    QVERIFY(!item(QStringLiteral("viewerPermanentConfirm"))->isVisible());
+    QVERIFY(QFile::exists(files.at(1)));
+    // With the question on, a repeat does not bring it up either.
+    m_settings->setTrashWithoutAsking(false);
+    press(true);
+    QVERIFY(!item(QStringLiteral("viewerConfirm"))->isVisible());
+  }
+
+  // While the folder picker is up, the viewer's keys and the slideshow wait.
+  void theFolderPickerHoldsTheViewer() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString first = dir.filePath(QStringLiteral("a.jpg"));
+    const QString second = dir.filePath(QStringLiteral("b.jpg"));
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), first));
+    QVERIFY(QFile::copy(media(QStringLiteral("shot 2.jpg")), second));
+    open({first});
+    QTRY_COMPARE(m_session->count(), 2);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "perform", Q_ARG(QVariant, QStringLiteral("move-to-folder"))));
+    QObject* picker = m_window->findChild<QObject*>(QStringLiteral("viewerFolderPicker"));
+    QVERIFY(picker);
+    QTRY_VERIFY(picker->property("visible").toBool());
+    QVERIFY(prop("blockingActionOpen").toBool());
+    QVERIFY(prop("sheetOpen").toBool());
+    QVERIFY(QMetaObject::invokeMethod(item(QStringLiteral("viewerKeys")), "forceActiveFocus"));
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QCOMPARE(m_session->path(), first);
+    QVERIFY(QMetaObject::invokeMethod(picker, "reject"));
+    QTRY_VERIFY(!picker->property("visible").toBool());
+    QVERIFY(!prop("blockingActionOpen").toBool());
+    QVERIFY(QFile::exists(first));
+    // The dialog may have been a window of its own; the compositor hands
+    // activation back, which this headless test does itself.
+    m_window->requestActivate();
+    QTRY_VERIFY(item(QStringLiteral("viewerKeys"))->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTRY_COMPARE(m_session->path(), second);
   }
 
   // With the switch on, Delete moves to Trash at once, and Undo still puts
@@ -6762,6 +6892,9 @@ private slots:
     QTRY_VERIFY(board->isVisible());
     QTRY_COMPARE(board->property("status").toInt(), 1);
     QCOMPARE(board->property("fillMode").toInt(), 3); // Image.Tile
+    // Drawn by the checker provider, never an SVG on the reader thread.
+    QVERIFY(board->property("source").toUrl().toString().startsWith(QStringLiteral("image://checker/")));
+    QVERIFY(!board->property("asynchronous").toBool());
     QCOMPARE(board->property("base").value<QColor>(), m_theme->surfaceBackground());
     // Two colours, eight logical pixels a square, across the picture.
     m_window->setProperty("chromeTimeout", 50);
