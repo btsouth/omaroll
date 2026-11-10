@@ -5999,14 +5999,19 @@ private slots:
     auto* popup = m_window->findChild<QObject*>(QStringLiteral("searchSuggestions"));
     QVERIFY(popup);
     QQuickItem* grid = item("library");
+    const int sortMode = m_library->sortMode();
     const auto restore = qScopeGuard([&] {
       search->setProperty("text", QString());
       m_library->setSearchText(QString());
+      m_library->setSortMode(sortMode);
       QMetaObject::invokeMethod(grid, "scrollTo", Q_ARG(QVariant, 0.0));
     });
-    // Date sorts open with a day header right under the suggestions; scroll
-    // it away so tiles lie there, as they do in the flat grid.
-    QMetaObject::invokeMethod(grid, "scrollTo", Q_ARG(QVariant, 40.0));
+    // In a date sort what lies under the suggestions depends on the day the
+    // test runs: the fixtures can split into several days, with headers and
+    // short rows there. The flat grid always has tiles under them.
+    m_library->setSortMode(CaptureFilterModel::NameAscending);
+    QTRY_VERIFY(item("flatGrid")->isVisible());
+    QMetaObject::invokeMethod(grid, "scrollTo", Q_ARG(QVariant, 0.0));
     QTest::qWait(50);
     QTest::keyClick(m_window, Qt::Key_Slash);
     QTRY_VERIFY(search->hasActiveFocus());
