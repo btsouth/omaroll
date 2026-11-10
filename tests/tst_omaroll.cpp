@@ -10798,6 +10798,11 @@ private slots:
                                          iptcRecord(2, 120, "Gr\xFC\xDF" "e"));
     QCOMPARE(fields.keywords, (QStringList{QStringLiteral("Café"), QStringLiteral("CafÃ© 2")}));
     QCOMPARE(fields.description, QStringLiteral("Grüße"));
+    // A sequence cut at the end, an overlong form and a surrogate are not UTF-8.
+    QCOMPARE(EmbeddedMetadata::parseIptc(iptcRecord(2, 25, "ab\xC3")).keywords, QStringList{QStringLiteral("abÃ")});
+    QCOMPARE(EmbeddedMetadata::parseIptc(iptcRecord(2, 25, "\xC0\xAF")).keywords, QStringList{QStringLiteral("À¯")});
+    QCOMPARE(EmbeddedMetadata::parseIptc(iptcRecord(2, 25, "\xED\xA0\x80")).keywords.size(), 1);
+    QVERIFY(!EmbeddedMetadata::parseIptc(iptcRecord(2, 25, "\xED\xA0\x80")).keywords.first().contains(QChar(0xFFFD)));
     // Extended lengths are read; a record past the end stops the walk.
     records = QByteArray("\x1C\x02\x19\x80\x02\x00\x03", 7) + "abc" + iptcRecord(2, 25, "def");
     QCOMPARE(EmbeddedMetadata::parseIptc(records).keywords, (QStringList{QStringLiteral("abc"), QStringLiteral("def")}));

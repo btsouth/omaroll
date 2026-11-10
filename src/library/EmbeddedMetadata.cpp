@@ -8,10 +8,10 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QSet>
-#include <QStringDecoder>
 #include <QXmlStreamReader>
 #include <QtEndian>
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <vector>
@@ -344,6 +344,35 @@ int ratingFrom(const QString& text) {
 
 QString descriptionFrom(const QString& text) { return text.trimmed().left(kMaximumDescriptionLength); }
 
+// Well-formed UTF-8: no stray continuation bytes, overlong forms, surrogates
+// or code points past U+10FFFF. (QStringDecoder replaces such bytes without
+// reporting an error.)
+bool validUtf8(const QByteArray& bytes) {
+  const qsizetype size = bytes.size();
+  for (qsizetype at = 0; at < size;) {
+    const quint8 lead = quint8(bytes.at(at));
+    if (lead < 0x80) {
+      ++at;
+      continue;
+    }
+    // Continuation bytes after the lead, and the smallest code point that
+    // needs that many.
+    const int extra = (lead & 0xE0) == 0xC0 ? 1 : (lead & 0xF0) == 0xE0 ? 2 : (lead & 0xF8) == 0xF0 ? 3 : 0;
+    if (extra == 0) return false;
+    const quint32 minimum = extra == 1 ? 0x80 : extra == 2 ? 0x800 : 0x10000;
+    quint32 point = lead & (0x7F >> (extra + 1));
+    if (extra > size - 1 - at) return false;
+    for (int index = 1; index <= extra; ++index) {
+      const quint8 next = quint8(bytes.at(at + index));
+      if ((next & 0xC0) != 0x80) return false;
+      point = point << 6 | (next & 0x3F);
+    }
+    if (point < minimum || point > 0x10FFFF || (point >= 0xD800 && point <= 0xDFFF)) return false;
+    at += 1 + extra;
+  }
+  return true;
+}
+
 } // namespace
 
 Fields parseXmp(const QByteArray& packet) {
@@ -502,14 +531,7 @@ Fields parseIptc(const QByteArray& records) {
     at = data + length;
   }
   if (!utf8) {
-    utf8 = true;
-    QStringDecoder decoder(QStringDecoder::Utf8, QStringDecoder::Flag::Stateless);
-    for (const QByteArray& value : std::as_const(keywords)) {
-      (void)decoder.decode(value);
-      if (decoder.hasError()) break;
-    }
-    if (!decoder.hasError()) (void)decoder.decode(caption);
-    utf8 = !decoder.hasError();
+    utf8 = validUtf8(caption) && std::all_of(keywords.cbegin(), keywords.cend(), validUtf8);
   }
   const auto decode = [utf8](const QByteArray& bytes) {
     return utf8 ? QString::fromUtf8(bytes) : QString::fromLatin1(bytes);
