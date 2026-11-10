@@ -82,14 +82,15 @@ private:
   qint64 m_budget = kFileReadBudget;
 };
 
+// Callers check the bounds first; these check again, so no read can pass them.
 quint16 be16(const QByteArray& bytes, qsizetype at) {
-  return qFromBigEndian<quint16>(bytes.constData() + at);
+  return at >= 0 && at + 2 <= bytes.size() ? qFromBigEndian<quint16>(bytes.constData() + at) : 0;
 }
 quint32 be32(const QByteArray& bytes, qsizetype at) {
-  return qFromBigEndian<quint32>(bytes.constData() + at);
+  return at >= 0 && at + 4 <= bytes.size() ? qFromBigEndian<quint32>(bytes.constData() + at) : 0;
 }
 quint32 le32(const QByteArray& bytes, qsizetype at) {
-  return qFromLittleEndian<quint32>(bytes.constData() + at);
+  return at >= 0 && at + 4 <= bytes.size() ? qFromLittleEndian<quint32>(bytes.constData() + at) : 0;
 }
 
 // Photoshop image resources: "8BIM", a 2-byte id, a Pascal name padded to an
@@ -640,7 +641,9 @@ QString findSidecar(const QString& path) {
   for (const QString& entry : entries) {
     if (isXmpName(entry)) {
       sidecars.insert(entry.toLower(), entry);
-    } else if (entry != fileName && completeBaseName(entry).toLower() == base) {
+    } else if (entry != fileName && completeBaseName(entry).toLower() == base &&
+               CaptureScanner::isSupported(QFileInfo(entry).suffix())) {
+      // Only another media file shares the base name, as the scanner sees it.
       shared = true;
     }
   }
