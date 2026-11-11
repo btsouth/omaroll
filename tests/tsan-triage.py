@@ -282,7 +282,11 @@ def qt_owned_memory(stacks):
     - QThreadPool's queue and the runnables QtGui makes for its own threaded
       image work, freed by a pooled thread inside libQt6Core;
     - Qt Core's own calls into libc (strdup and free while handling the local
-      time zone)."""
+      time zone). libc's time zone code keeps its TZ string in a block it
+      strdups and frees itself, under its own lock. Qt has no frame
+      pointers, so one side can lose its Qt frame and show the code of ours
+      that called Qt instead; that passes only for a block libc's strdup
+      made, with the other side still called straight from libQt6Core."""
     if len(stacks) != 2:
         return False
     for freeing, allocating in (stacks, stacks[::-1]):
@@ -302,9 +306,12 @@ def qt_owned_memory(stacks):
                 or allocator[1].startswith("libQt6Gui")):
             return True
         if freer[1].startswith("libc.so") and allocator[1].startswith("libc.so") and \
-                len(freed) > 2 and len(made) > 2 and \
-                freed[2][1].startswith("libQt6Core") and made[2][1].startswith("libQt6Core"):
-            return True
+                len(freed) > 2 and len(made) > 2:
+            from_qt = [freed[2][1].startswith("libQt6Core"), made[2][1].startswith("libQt6Core")]
+            if all(from_qt):
+                return True
+            if any(from_qt) and allocator[0] == "strdup":
+                return True
     return False
 
 
