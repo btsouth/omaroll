@@ -50,10 +50,12 @@
 #include "sources/CaptureLocations.h"
 #include "sources/CaptureScanner.h"
 #include "sources/FileVersion.h"
+#include "theme/CheckerProvider.h"
 #include "theme/OmarchyTheme.h"
 #include "thumbs/ThumbnailCache.h"
 #include "viewer/HyprlandPlacement.h"
 #include "viewer/ViewerSession.h"
+#include "viewer/ViewerSort.h"
 
 #include <QClipboard>
 #include <QColorSpace>
@@ -14673,6 +14675,287 @@ private slots:
 
   // Damaged EXIF is left alone: every truncation and a wild offset read
   // nothing outside the segment.
+  // The date a JPEG was taken, read from its EXIF without decoding:
+  // DateTimeOriginal, and nothing from a JPEG without EXIF.
+  void jpegExifReadsTheDateTaken() {
+    QByteArray plain;
+    {
+      QBuffer buffer(&plain);
+      QVERIFY(buffer.open(QIODevice::WriteOnly));
+      QVERIFY(asymmetricGrey(QSize(16, 16)).save(&buffer, "JPEG"));
+    }
+    QVERIFY(!JpegExif::dateTaken(plain).isValid());
+    const QByteArray tagged = withCameraExif(plain, 1, QSize(16, 16));
+    QCOMPARE(JpegExif::dateTaken(tagged), QDateTime(QDate(2026, 11, 8), QTime(12, 34, 56)));
+    // Only the start of the file is needed.
+    QCOMPARE(JpegExif::dateTaken(tagged.left(200)), QDateTime(QDate(2026, 11, 8), QTime(12, 34, 56)));
+    QByteArray garbled = tagged;
+    garbled.replace(QByteArray("2026:11:08 12:34:56"), QByteArray("not a date at all!!"));
+    QVERIFY(!JpegExif::dateTaken(garbled).isValid());
+  }
+
+  // The viewer's folder orders: by name, the date taken (EXIF, then a
+  // capture's timestamped name, then the modified time), modified and size,
+  // each reversible, ties kept in name order.
+  void viewerSortOrdersAFolder() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QByteArray plain;
+    {
+      QBuffer buffer(&plain);
+      QVERIFY(buffer.open(QIODevice::WriteOnly));
+      QVERIFY(asymmetricGrey(QSize(16, 16)).save(&buffer, "JPEG"));
+    }
+    const QByteArray taken2026 = withCameraExif(plain, 1, QSize(16, 16));
+    QByteArray taken2020 = taken2026;
+    taken2020.replace(QByteArray("2026:11:08 12:34:56"), QByteArray("2020:01:02 03:04:05"));
+    const QString a = dir.filePath(QStringLiteral("a.jpg"));
+    const QString b = dir.filePath(QStringLiteral("b.jpg"));
+    const QString c = dir.filePath(QStringLiteral("c.png"));
+    const QString d = dir.filePath(QStringLiteral("screenshot-2019-05-06_07-08-09.png"));
+    const QString e = dir.filePath(QStringLiteral("e.png"));
+    const auto write = [](const QString& path, const QByteArray& bytes) {
+      QFile file(path);
+      return file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size();
+    };
+    QVERIFY(write(a, taken2026));
+    QVERIFY(write(b, taken2020 + QByteArray(100, '\0')));
+    // Three pictures of one size, smaller than either JPEG.
+    QImage dot(1, 1, QImage::Format_RGB32);
+    dot.fill(Qt::red);
+    for (const QString& path : {c, d, e}) QVERIFY(dot.save(path));
+    QVERIFY(QFileInfo(c).size() < QFileInfo(a).size());
+    const QDateTime base(QDate(2023, 6, 1), QTime(12, 0));
+    for (const auto& [path, days] : {std::pair{a, 1}, std::pair{b, 5}, std::pair{c, 2}, std::pair{d, 4}, std::pair{e, 2}}) {
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::ReadWrite));
+      QVERIFY(file.setFileTime(base.addDays(days), QFileDevice::FileModificationTime));
+    }
+    QCOMPARE(ViewerSort::dateTaken(a), QDateTime(QDate(2026, 11, 8), QTime(12, 34, 56)));
+    QCOMPARE(ViewerSort::dateTaken(d), QDateTime(QDate(2019, 5, 6), QTime(7, 8, 9)));
+    QCOMPARE(ViewerSort::dateTaken(c), base.addDays(2));
+
+    const QStringList names = ViewerSession::siblings(dir.path());
+    QCOMPARE(names, (QStringList{a, b, c, e, d}));
+    QCOMPARE(ViewerSort::sorted(names, QStringLiteral("name"), false), names);
+    QCOMPARE(ViewerSort::sorted(names, QStringLiteral("name"), true), (QStringList{d, e, c, b, a}));
+    // The capture name, then EXIF, then the modified time for the rest.
+    QCOMPARE(ViewerSort::sorted(names, QStringLiteral("taken"), false), (QStringList{d, b, c, e, a}));
+    QCOMPARE(ViewerSort::sorted(names, QStringLiteral("modified"), false), (QStringList{a, c, e, d, b}));
+    QCOMPARE(ViewerSort::sorted(names, QStringLiteral("modified"), true), (QStringList{b, d, e, c, a}));
+    QCOMPARE(ViewerSort::sorted(names, QStringLiteral("size"), false), (QStringList{c, e, d, a, b}));
+    QCOMPARE(ViewerSession::siblings(dir.path(), {}, nullptr, QStringLiteral("size"), true),
+             (QStringList{b, a, d, e, c}));
+
+    // A session lists the folder in its order and keeps the opened file.
+    ViewerSession session;
+    session.setSortOrder(QStringLiteral("size"));
+    session.open({e});
+    QTRY_COMPARE(session.sequence(), (QStringList{c, e, d, a, b}));
+    QCOMPARE(session.path(), e);
+    session.setSortOrder(QStringLiteral("nonsense"));
+    QCOMPARE(session.sortOrder(), QStringLiteral("size"));
+    session.setSortReversed(true);
+    QTRY_COMPARE(session.sequence(), (QStringList{b, a, d, e, c}));
+    QCOMPARE(session.path(), e);
+    QVERIFY(session.step(1));
+    QCOMPARE(session.path(), c);
+  }
+
+  // Moving a file never replaces another, whichever way the filesystem lets
+  // it move: renameat2, a hard link, or (another device, FUSE, gvfs) a copy
+  // and the original removed, keeping a read-only file's mode and time.
+  // A rename in place on a mount without RENAME_NOREPLACE or hard links
+  // renames rather than copying on the GUI thread, and still refuses a
+  // taken name.
+  void renameInPlaceWithoutLinksRenamesInsteadOfCopying() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString from = dir.filePath(QStringLiteral("from.jpg"));
+    const QString to = dir.filePath(QStringLiteral("to.jpg"));
+    const QString taken = dir.filePath(QStringLiteral("taken.jpg"));
+    for (const QString& path : {from, taken}) {
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write(path == from ? QByteArray("picture") : QByteArray("occupant"));
+    }
+    struct stat before {};
+    QVERIFY(::stat(QFile::encodeName(from).constData(), &before) == 0);
+    ActionLauncher::setRelocationFaultsForTesting(ActionLauncher::FaultNoReplace | ActionLauncher::FaultNoLink |
+                                                  ActionLauncher::FaultKeepOriginal);
+    const auto restore = qScopeGuard([] { ActionLauncher::setRelocationFaultsForTesting(0); });
+
+    QVERIFY(!ActionLauncher::relocateEntry(from, taken, false));
+    QCOMPARE(readBytes(taken), QByteArray("occupant"));
+    // FaultKeepOriginal would fail a copy; a rename does not remove anything.
+    QVERIFY(ActionLauncher::relocateEntry(from, to, false));
+    QVERIFY(!QFileInfo::exists(from));
+    struct stat after {};
+    QVERIFY(::stat(QFile::encodeName(to).constData(), &after) == 0);
+    QCOMPARE(after.st_ino, before.st_ino);
+  }
+
+  void relocationNeverReplacesAndKeepsTheFileWhicheverWayItMoves_data() {
+    QTest::addColumn<int>("faults");
+    QTest::newRow("rename") << 0;
+    QTest::newRow("link") << int(ActionLauncher::FaultNoReplace);
+    QTest::newRow("copy-without-links") << int(ActionLauncher::FaultNoReplace | ActionLauncher::FaultNoLink);
+    QTest::newRow("cross-device") << int(ActionLauncher::FaultCrossDevice);
+  }
+
+  void relocationNeverReplacesAndKeepsTheFileWhicheverWayItMoves() {
+    QFETCH(int, faults);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString from = dir.filePath(QStringLiteral("from.jpg"));
+    const QString to = dir.filePath(QStringLiteral("to.jpg"));
+    const QString taken = dir.filePath(QStringLiteral("taken.jpg"));
+    const QByteArray bytes = QByteArray(300000, 'x') + "end";
+    for (const QString& path : {from, taken}) {
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write(path == from ? bytes : QByteArray("occupant"));
+    }
+    const QDateTime modified(QDate(2021, 4, 5), QTime(6, 7, 8));
+    {
+      QFile file(from);
+      QVERIFY(file.open(QIODevice::ReadWrite));
+      QVERIFY(file.setFileTime(modified, QFileDevice::FileModificationTime));
+    }
+    QVERIFY(::chmod(QFile::encodeName(from).constData(), 0444) == 0);
+    ActionLauncher::setRelocationFaultsForTesting(faults);
+    const auto restore = qScopeGuard([] { ActionLauncher::setRelocationFaultsForTesting(0); });
+
+    // A taken name is refused, both files as they were.
+    QVERIFY(!ActionLauncher::relocateEntry(from, taken));
+    QCOMPARE(readBytes(from), bytes);
+    QCOMPARE(readBytes(taken), QByteArray("occupant"));
+
+    QVERIFY(ActionLauncher::relocateEntry(from, to));
+    QVERIFY(!QFileInfo::exists(from));
+    QCOMPARE(readBytes(to), bytes);
+    QCOMPARE(QFileInfo(to).lastModified(), modified);
+    struct stat moved {};
+    QVERIFY(::stat(QFile::encodeName(to).constData(), &moved) == 0);
+    QCOMPARE(int(moved.st_mode & 0777), 0444);
+  }
+
+  // A copy whose original cannot be removed is taken back: one file, the
+  // original, and nothing half-moved left behind.
+  void aFailedRemoveAfterACopyLeavesOnlyTheOriginal() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString from = dir.filePath(QStringLiteral("from.png"));
+    const QString to = dir.filePath(QStringLiteral("to.png"));
+    {
+      QFile file(from);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write(QByteArray(5000, 'p'));
+    }
+    ActionLauncher::setRelocationFaultsForTesting(ActionLauncher::FaultCrossDevice | ActionLauncher::FaultKeepOriginal);
+    const auto restore = qScopeGuard([] { ActionLauncher::setRelocationFaultsForTesting(0); });
+    QVERIFY(!ActionLauncher::relocateEntry(from, to));
+    QCOMPARE(readBytes(from), QByteArray(5000, 'p'));
+    QVERIFY(!QFileInfo::exists(to));
+    // A link is never copied in place of moving it.
+    ActionLauncher::setRelocationFaultsForTesting(ActionLauncher::FaultCrossDevice);
+    const QString link = dir.filePath(QStringLiteral("link.png"));
+    QVERIFY(QFile::link(from, link));
+    QVERIFY(!ActionLauncher::relocateEntry(link, to));
+    QVERIFY(QFileInfo(link).isSymLink());
+    QVERIFY(!QFileInfo::exists(to));
+  }
+
+  // The checkerboard tile: two colours, a cell a side, the same square in
+  // opposite corners, from the provider's URL or straight from tile().
+  void checkerTileHasTwoColoursInOppositeCorners() {
+    CheckerProvider provider;
+    QSize size;
+    const QImage image = provider.requestImage(QStringLiteral("202020/404040/8"), &size, {});
+    QCOMPARE(size, QSize(16, 16));
+    QCOMPARE(image.size(), QSize(16, 16));
+    QCOMPARE(image.pixelColor(0, 0), QColor(0x40, 0x40, 0x40));
+    QCOMPARE(image.pixelColor(15, 15), QColor(0x40, 0x40, 0x40));
+    QCOMPARE(image.pixelColor(8, 0), QColor(0x20, 0x20, 0x20));
+    QCOMPARE(image.pixelColor(0, 8), QColor(0x20, 0x20, 0x20));
+    QCOMPARE(image.pixelColor(7, 7), QColor(0x40, 0x40, 0x40));
+    // Nonsense is still a tile rather than nothing.
+    QCOMPARE(provider.requestImage(QStringLiteral("nope"), &size, {}).size(), QSize(16, 16));
+    QCOMPARE(CheckerProvider::tile(Qt::white, Qt::black, 1000).size(), QSize(128, 128));
+  }
+
+  // A JPEG's date is read once, until its size or modified time changes.
+  void dateTakenIsReadOncePerVersion() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QByteArray plain;
+    {
+      QBuffer buffer(&plain);
+      QVERIFY(buffer.open(QIODevice::WriteOnly));
+      QVERIFY(asymmetricGrey(QSize(16, 16)).save(&buffer, "JPEG"));
+    }
+    const QByteArray first = withCameraExif(plain, 1, QSize(16, 16));
+    QByteArray second = first;
+    second.replace(QByteArray("2026:11:08 12:34:56"), QByteArray("2001:02:03 04:05:06"));
+    const QString path = dir.filePath(QStringLiteral("photo.jpg"));
+    const QDateTime stamp(QDate(2024, 1, 1), QTime(9, 0));
+    const auto write = [&](const QByteArray& bytes, const QDateTime& when) {
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+      file.write(bytes);
+      // Written out first, or closing would move the time on again.
+      QVERIFY(file.flush());
+      QVERIFY(file.setFileTime(when, QFileDevice::FileModificationTime));
+    };
+    write(first, stamp);
+    const quint64 before = ViewerSort::readCount.load();
+    QCOMPARE(ViewerSort::dateTaken(path), QDateTime(QDate(2026, 11, 8), QTime(12, 34, 56)));
+    QCOMPARE(ViewerSort::readCount.load(), before + 1);
+    for (int i = 0; i < 3; ++i) (void)ViewerSort::dateTaken(path);
+    QCOMPARE(ViewerSort::readCount.load(), before + 1);
+    // Same size and time: still the remembered date, nothing read.
+    write(second, stamp);
+    QCOMPARE(ViewerSort::dateTaken(path), QDateTime(QDate(2026, 11, 8), QTime(12, 34, 56)));
+    QCOMPARE(ViewerSort::readCount.load(), before + 1);
+    // A new modified time is a new version.
+    write(second, stamp.addSecs(60));
+    QCOMPARE(ViewerSort::dateTaken(path), QDateTime(QDate(2001, 2, 3), QTime(4, 5, 6)));
+    QCOMPARE(ViewerSort::readCount.load(), before + 2);
+  }
+
+  // Coordinates from ImageMagick's EXIF fields and ffprobe's ISO 6709 tag,
+  // as decimal "latitude, longitude", with a line in the details.
+  void mediaDetailsReadTheLocation() {
+    const QByteArray north = "JPEG\n\n\n\n\n\n\n\n\n\n8\nsRGB\n"
+                             "47/1, 36/1, 2232/100\nN\n122/1, 19/1, 5556/100\nW\n";
+    QCOMPARE(MediaInspector::imageCoordinates(north), QStringLiteral("47.6062, -122.3321"));
+    QVERIFY(MediaInspector::parseImage(north).contains(QStringLiteral("Location  ·  47.6062, -122.3321")));
+    const QByteArray south = "JPEG\n\n\n\n\n\n\n\n\n\n8\nsRGB\n33/1,52/1,0/1\nS\n151/1,12/1,36/1\nE\n";
+    QCOMPARE(MediaInspector::imageCoordinates(south), QStringLiteral("-33.866667, 151.21"));
+    // No fix, no fields, or nonsense: nothing.
+    QVERIFY(MediaInspector::imageCoordinates("JPEG\n\n\n\n\n\n\n\n\n\n8\nsRGB\n0/1, 0/1, 0/1\nN\n0/1, 0/1, 0/1\nE\n").isEmpty());
+    QVERIFY(MediaInspector::imageCoordinates("JPEG\n2020:05:06 07:08:09\n").isEmpty());
+    QVERIFY(MediaInspector::imageCoordinates("JPEG\n\n\n\n\n\n\n\n\n\n8\nsRGB\n95/1\nN\n10/1\nE\n").isEmpty());
+    QVERIFY(MediaInspector::imageCoordinates("JPEG\n\n\n\n\n\n\n\n\n\n8\nsRGB\nfar\nN\naway\nE\n").isEmpty());
+    for (const QString& line : MediaInspector::parseImage("JPEG\n2020:05:06 07:08:09\n"))
+      QVERIFY(!line.startsWith(QStringLiteral("Location")));
+
+    QCOMPARE(MediaInspector::videoCoordinates(R"({"format":{"tags":{"location":"+47.6062-122.3321/"}}})"),
+             QStringLiteral("47.6062, -122.3321"));
+    // Videos get the same line in their details.
+    QVERIFY(MediaInspector::parseVideo(R"({"streams":[{"codec_type":"video","codec_name":"h264"}],
+                                           "format":{"tags":{"location":"+47.6062-122.3321/"}}})",
+                                       QStringLiteral("mp4"))
+                .contains(QStringLiteral("Location  ·  47.6062, -122.3321")));
+    QCOMPARE(MediaInspector::videoCoordinates(
+                 R"({"format":{"tags":{"com.apple.quicktime.location.ISO6709":"-33.8667+151.2100+012.000/"}}})"),
+             QStringLiteral("-33.8667, 151.21"));
+    QVERIFY(MediaInspector::videoCoordinates(R"({"format":{"tags":{}}})").isEmpty());
+    QVERIFY(MediaInspector::videoCoordinates("not json").isEmpty());
+    QCOMPARE(MediaInspector::coordinateText(0.5, -0.0), QStringLiteral("0.5, 0"));
+    QVERIFY(MediaInspector::coordinateText(91, 0).isEmpty());
+  }
+
   void jpegExifToleratesDamagedSegments() {
     QByteArray plain;
     {
@@ -14684,6 +14967,7 @@ private slots:
     for (qsizetype length = 0; length <= tagged.size(); ++length) {
       QByteArray cut = tagged.left(length);
       JpegExif::normalize(cut, QSize(16, 16));
+      (void)JpegExif::dateTaken(cut);
       (void)JpegExif::metadataSegments(cut);
       (void)JpegExif::withSegments(cut, QByteArray("\xFF\xFE\x00\x04hi", 6));
     }

@@ -1,5 +1,8 @@
 #include "edit/JpegExif.h"
 
+#include <QDateTime>
+
+#include <algorithm>
 #include <functional>
 
 namespace {
@@ -55,6 +58,9 @@ public:
   [[nodiscard]] bool fits(qint64 offset, qint64 size) const {
     return offset >= 0 && size >= 0 && offset + size <= m_length;
   }
+  [[nodiscard]] QByteArray bytes(qint64 offset, qint64 size) const {
+    return fits(offset, size) ? m_data.mid(m_base + offset, size) : QByteArray();
+  }
 
   [[nodiscard]] quint32 read16(qint64 offset) const {
     if (!fits(offset, 2)) return 0;
@@ -102,6 +108,7 @@ private:
   bool m_valid = false;
 };
 
+constexpr quint32 kAscii = 2;
 constexpr quint32 kShort = 3;
 constexpr quint32 kLong = 4;
 
@@ -140,6 +147,43 @@ bool normalize(QByteArray& jpeg, const QSize& size) {
     });
   }
   return true;
+}
+
+QDateTime dateTaken(const QByteArray& jpeg) {
+  QByteArray data = jpeg; // shared until written, and Tiff only reads here
+  QDateTime taken;
+  forEachSegment(data, [&](qsizetype, int marker, qsizetype payload, qsizetype payloadLength) {
+    if (marker != kApp1 || payloadLength <= 6 || data.mid(payload, 6) != QByteArray("Exif\0\0", 6)) {
+      return true;
+    }
+    Tiff tiff(data, payload + 6, payloadLength - 6);
+    if (!tiff.valid()) return false;
+    const auto text = [&tiff](qint64 entry, quint32 type) {
+      if (type != kAscii) return QDateTime();
+      const qint64 count = tiff.read32(entry + 4);
+      const qint64 at = count <= 4 ? entry + 8 : tiff.read32(entry + 8);
+      const QByteArray value = tiff.bytes(at, std::min<qint64>(count, 19));
+      QDateTime date = QDateTime::fromString(QString::fromLatin1(value), QStringLiteral("yyyy:MM:dd HH:mm:ss"));
+      return date;
+    };
+    qint64 exifIfd = -1;
+    QDateTime modified;
+    tiff.forEachEntry(tiff.read32(4), [&](qint64 entry, quint32 tag, quint32 type) {
+      if (tag == 0x8769 && type == kLong) exifIfd = tiff.read32(entry + 8);
+      if (tag == 0x0132) modified = text(entry, type);
+    });
+    QDateTime original;
+    QDateTime digitized;
+    if (exifIfd > 0) {
+      tiff.forEachEntry(exifIfd, [&](qint64 entry, quint32 tag, quint32 type) {
+        if (tag == 0x9003) original = text(entry, type);
+        if (tag == 0x9004) digitized = text(entry, type);
+      });
+    }
+    taken = original.isValid() ? original : digitized.isValid() ? digitized : modified;
+    return false;
+  });
+  return taken;
 }
 
 QByteArray metadataSegments(const QByteArray& jpeg) {

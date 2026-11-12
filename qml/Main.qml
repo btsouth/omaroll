@@ -652,6 +652,11 @@ ApplicationWindow {
         root.pendingDeleteTarget = target
         root.pendingDeleteBatch = []
         root.pendingDuplicateKeep = ({})
+        // Undo brings it back, so the question can be skipped.
+        if (Settings.trashWithoutAsking) {
+            root.trashPending()
+            return
+        }
         confirm.title = "Move this item to Trash?"
         confirm.detail = target.path
         confirm.open()
@@ -668,6 +673,11 @@ ApplicationWindow {
         root.pendingDeleteTarget = ({})
         root.pendingDeleteBatch = targets
         root.pendingDuplicateKeep = ({})
+        // Only plain Delete skips the question; "keep one" still asks.
+        if (Settings.trashWithoutAsking && title === undefined) {
+            root.trashPending()
+            return
+        }
         confirm.title = title === undefined
                         ? "Move " + paths.length + " items to Trash?" : title
         confirm.detail = detail === undefined
@@ -2140,45 +2150,49 @@ ApplicationWindow {
         id: confirm
         objectName: "confirm"
         confirmLabel: "Move to Trash"
-        onAccepted: {
-            if (root.pendingDuplicateKeep.path !== undefined) {
-                Actions.moveDuplicateCopiesToTrash(root.pendingDuplicateKeep, root.pendingDeleteBatch)
-                root.say("Checking exact copies before moving them")
-            } else if (root.pendingDeleteBatch.length > 0) {
-                const records = []
-                const failed = []
-                for (const target of root.pendingDeleteBatch) {
-                    const record = Actions.trashCaptured(target)
-                    if (record.path !== undefined) records.push(record)
-                    else failed.push(target.viewedPath)
-                }
-                const moved = records.length
-                // The whole batch is one step, so one Undo puts it all back.
-                const undoId = Settings.pushTrashUndo(records, null)
-                if (moved > 0) {
-                    root.sayUndoable(moved === root.pendingDeleteBatch.length
-                             ? "Moved " + moved + (moved === 1 ? " item" : " items") + " to Trash"
-                             : "Moved " + moved + " of " + root.pendingDeleteBatch.length + " items to Trash",
-                             undoId)
-                }
-                library.clearChecked()
-                for (const path of failed) library.toggleChecked(path)
-                if (failed.length > 0) root.sayUndoable("Moved " + moved + " of " + root.pendingDeleteBatch.length
-                                              + " items to Trash; " + failed.length + " could not be moved",
-                                              undoId)
-                Library.refresh()
-            } else {
-                const record = Actions.trashCaptured(root.pendingDeleteTarget)
-                if (record.path !== undefined) {
-                    root.sayUndoable("Moved to Trash", Settings.pushTrashUndo([record], null))
-                    Library.refresh()
-                }
-            }
-            root.pendingDeleteTarget = ({})
-            root.pendingDeleteBatch = []
-            root.pendingDuplicateKeep = ({})
-        }
+        onAccepted: root.trashPending()
         onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
+    }
+
+    // Moves what the Trash prompt was asked about, once it is confirmed or
+    // when Settings says not to ask.
+    function trashPending() {
+        if (root.pendingDuplicateKeep.path !== undefined) {
+            Actions.moveDuplicateCopiesToTrash(root.pendingDuplicateKeep, root.pendingDeleteBatch)
+            root.say("Checking exact copies before moving them")
+        } else if (root.pendingDeleteBatch.length > 0) {
+            const records = []
+            const failed = []
+            for (const target of root.pendingDeleteBatch) {
+                const record = Actions.trashCaptured(target)
+                if (record.path !== undefined) records.push(record)
+                else failed.push(target.viewedPath)
+            }
+            const moved = records.length
+            // The whole batch is one step, so one Undo puts it all back.
+            const undoId = Settings.pushTrashUndo(records, null)
+            if (moved > 0) {
+                root.sayUndoable(moved === root.pendingDeleteBatch.length
+                         ? "Moved " + moved + (moved === 1 ? " item" : " items") + " to Trash"
+                         : "Moved " + moved + " of " + root.pendingDeleteBatch.length + " items to Trash",
+                         undoId)
+            }
+            library.clearChecked()
+            for (const path of failed) library.toggleChecked(path)
+            if (failed.length > 0) root.sayUndoable("Moved " + moved + " of " + root.pendingDeleteBatch.length
+                                          + " items to Trash; " + failed.length + " could not be moved",
+                                          undoId)
+            Library.refresh()
+        } else {
+            const record = Actions.trashCaptured(root.pendingDeleteTarget)
+            if (record.path !== undefined) {
+                root.sayUndoable("Moved to Trash", Settings.pushTrashUndo([record], null))
+                Library.refresh()
+            }
+        }
+        root.pendingDeleteTarget = ({})
+        root.pendingDeleteBatch = []
+        root.pendingDuplicateKeep = ({})
     }
 
     ConfirmSheet {

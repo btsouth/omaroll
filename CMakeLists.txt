@@ -153,6 +153,8 @@ add_library(omaroll_core STATIC
   src/thumbs/ThumbnailCache.h
   src/thumbs/ThumbnailProvider.cpp
   src/thumbs/ThumbnailProvider.h
+  src/theme/CheckerProvider.cpp
+  src/theme/CheckerProvider.h
   src/theme/OmarchyTheme.cpp
   src/theme/OmarchyTheme.h
   src/viewer/HyprlandPlacement.cpp
@@ -163,6 +165,8 @@ add_library(omaroll_core STATIC
   src/viewer/PictureDiagnosis.h
   src/viewer/ViewerSession.cpp
   src/viewer/ViewerSession.h
+  src/viewer/ViewerSort.cpp
+  src/viewer/ViewerSort.h
   src/viewer/ViewerWindows.cpp
   src/viewer/ViewerWindows.h
 )
@@ -222,6 +226,7 @@ set(OMAROLL_QML_FILES
   qml/components/ActionMenu.qml
   qml/components/CaptureCard.qml
   qml/components/CaptureGrid.qml
+  qml/components/Checkerboard.qml
   qml/components/DayHeader.qml
   qml/components/Chrome.qml
   qml/components/ActiveFilterChips.qml

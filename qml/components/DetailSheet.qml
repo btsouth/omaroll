@@ -1093,7 +1093,7 @@ Item {
                     x: (stillViewport.contentWidth - width) / 2
                     y: (stillViewport.contentHeight - height) / 2
 
-                    Image {
+                    Checkerboard {
                         id: transparencyGrid
                         objectName: "transparencyGrid"
                         anchors.centerIn: parent
@@ -1102,10 +1102,7 @@ Item {
                         height: stillViewport.sourceHeight * stillViewport.fittedScale
                                 * root.imageZoom
                         rotation: root.imageRotation
-                        visible: !root.isDocument
-                        fillMode: Image.Tile
-                        smooth: false
-                        source: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAQMAAAAlPW0iAAAABlBMVEVFUExmZmbID7WAAAAAEElEQVQI12NgYGQgHv3/BwAEowINzPTc0QAAAABJRU5ErkJggg=="
+                        visible: !root.isDocument && Settings.transparencyCheckerboard
                     }
 
                     // A document's page is paper, not a transparent surface:
@@ -3364,6 +3361,11 @@ Item {
         }
         const label = root.shortcutLabel(event)
         if (label === "") {
+            return
+        }
+        // A held Del moves one file, not every file it repeats onto.
+        if (label === "Del" && event.isAutoRepeat) {
+            event.accepted = true
             return
         }
         for (const row of actions.model) {

@@ -73,6 +73,36 @@ public:
   // plus the target's viewedPath. Empty, with failed() emitted, when refused.
   Q_INVOKABLE QVariantMap trashCaptured(const QVariantMap& target);
   Q_INVOKABLE QVariantMap renameCapturedFile(const QVariantMap& target, const QString& baseName);
+  // Moves (or copies) a captured file into |folder| on a worker, under its
+  // own name or the first free "name (2).ext" when that is taken. Never
+  // overwrites. {ok: true, job} once started, then transferFinished(job,
+  // result) with {ok, path, fileName, folder, mediaPath, renamed, copy,
+  // source, viewedPath} or {ok: false, error}. A refusal that needs no work
+  // (folder gone, file changed, already being moved) is {ok: false, error}
+  // at once.
+  Q_INVOKABLE QVariantMap startTransfer(const QVariantMap& target, const QString& folder, bool copy);
+  // Every file a transfer is running for, by its captured path.
+  Q_INVOKABLE [[nodiscard]] QStringList transferringPaths() const { return m_transferring.values(); }
+  // The transfer itself, on the calling thread.
+  [[nodiscard]] static QVariantMap transferCapturedFile(const QVariantMap& target, const QString& folder,
+                                                        bool copy);
+  // The one place a file changes its path, for rename and move alike, so
+  // whatever travels with a file travels the same way for both. Never
+  // replaces an existing |to|: renameat2 without replacing, else a hard link,
+  // else (another device, FUSE, gvfs) an exclusive copy and the original
+  // removed, keeping its permissions and modified time. Without |allowCopy|
+  // (a rename in place, on the GUI thread) a mount that neither renames
+  // without replacing nor links gets a plain rename after a check instead.
+  [[nodiscard]] static bool relocateEntry(const QString& from, const QString& to,
+                                          bool allowCopy = true);
+  // For tests: make relocateEntry take its later paths.
+  enum RelocationFault {
+    FaultCrossDevice = 1,  // rename says EXDEV
+    FaultNoReplace = 2,    // rename says EINVAL (no RENAME_NOREPLACE)
+    FaultNoLink = 4,       // hard links are refused
+    FaultKeepOriginal = 8, // the original cannot be removed after a copy
+  };
+  static void setRelocationFaultsForTesting(int faults);
   Q_INVOKABLE void moveDuplicateCopiesToTrash(const QVariantMap& keep, const QVariantList& copies);
   // Keep one picture and move the other captured targets to Trash, on a
   // worker. Skips any that changed, and the kept file reached by another path.
@@ -171,6 +201,8 @@ signals:
   // trashed holds one undo record per moved copy, as trashCaptured returns.
   void duplicateCleanupFinished(int moved, const QStringList& skipped, const QVariantList& trashed);
   void keepOneFinished(int moved, const QStringList& skipped, const QVariantList& trashed);
+  void transferFinished(int job, const QVariantMap& result);
+  void transferringChanged();
 
 private:
   [[nodiscard]] static bool capturedFileMatches(const QVariantMap& target);
@@ -179,6 +211,9 @@ private:
                    std::function<void(int, const QStringList&, const QVariantList&)> done);
   QVariantMap trashFile(const QString& path);
   QVariantMap renameFile(const QString& path, const QString& baseName, const QVariantMap& target);
+  [[nodiscard]] static QVariantMap checkTransfer(const QVariantMap& target, const QString& folder, bool copy);
+  QSet<QString> m_transferring;
+  int m_transferJob = 0;
   [[nodiscard]] QString locate(const QString& program, const QString& packageHint);
   bool copyText(const QString& text, bool sensitive, const QString& mimeType = {});
   bool startSubmission(const QString& program, const QStringList& arguments,
