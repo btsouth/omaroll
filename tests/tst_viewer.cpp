@@ -6504,14 +6504,20 @@ private slots:
     open({media(QStringLiteral("Shot 1.jpg"))});
     QTRY_VERIFY(prop("imageReady").toBool());
     QObject* menu = m_window->findChild<QObject*>(QStringLiteral("viewerMenu"));
-    QQuickItem* sheet = item(QStringLiteral("viewerRenameSheet"));
-    QTest::mouseClick(m_window, Qt::RightButton, Qt::NoModifier, QPoint(m_window->width() / 2, m_window->height() / 2));
-    QTRY_VERIFY(menu->property("visible").toBool());
-    QVERIFY(QMetaObject::invokeMethod(m_window, "performMenuAction", Q_ARG(QVariant, QStringLiteral("rename"))));
-    QTRY_VERIFY(!menu->property("visible").toBool());
-    QTRY_VERIFY(sheet->isVisible());
-    QTest::keyClick(m_window, Qt::Key_Escape);
-    QTRY_VERIFY(!sheet->isVisible());
+    QObject* sheet = m_window->findChild<QObject*>(QStringLiteral("viewerRenameSheet"));
+    QObject* picker = m_window->findChild<QObject*>(QStringLiteral("viewerFolderPicker"));
+    QVERIFY(sheet && picker);
+    for (const QString& id : {QStringLiteral("rename"), QStringLiteral("move-to-folder"),
+                              QStringLiteral("copy-to-folder")}) {
+      QMetaObject::invokeMethod(m_window, "showActionMenu");
+      QTRY_VERIFY(menu->property("visible").toBool());
+      QVERIFY2(QMetaObject::invokeMethod(menuRow(id), "click"), qPrintable(id));
+      QTRY_VERIFY2(!menu->property("visible").toBool(), qPrintable(id));
+      QObject* opened = id == QStringLiteral("rename") ? sheet : picker;
+      QTRY_VERIFY2(opened->property("visible").toBool(), qPrintable(id));
+      QVERIFY(QMetaObject::invokeMethod(opened, id == QStringLiteral("rename") ? "close" : "reject"));
+      QTRY_VERIFY2(!opened->property("visible").toBool(), qPrintable(id));
+    }
   }
 
   void renameKeepsTheFileOpenAndRefusesATakenName() {
