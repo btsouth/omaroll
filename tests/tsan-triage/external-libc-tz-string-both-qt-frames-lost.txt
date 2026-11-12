@@ -1,0 +1,57 @@
+libc's time zone code (tzset_internal) freeing its TZ string on a pooled
+scan and the main thread's earlier strdup of it, both under libc's own
+tzset lock. Qt calls tzset for each local time while TZ is unset (the scan's
+QFileInfo::lastModified, the health check's QDate::currentDate), and libc
+then frees and strdups the string every time. Neither Qt nor libc has frame
+pointers, so both sides lost their Qt frames and show only our caller.
+libc.so.6+0xd9731 in this glibc build is the free(old_tz) right before
+old_tz = strdup(...). Seen in CI on #184 (run 43025856627).
+==================
+WARNING: ThreadSanitizer: data race (pid=3068)
+  Write of size 8 at 0x720400000bb0 by thread T3:
+    #0 free <null> (omaroll_tests+0xb0132) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #1 <null> <null> (libc.so.6+0xd9736) (BuildId: d320029ad1a23be2f4bce117fd321cbd23a2014b)
+    #2 CaptureScanner::scan(QList<CaptureScanner::Root> const&, std::atomic<bool> const*, QList<QString>*) /__w/omaroll/omaroll/src/sources/CaptureScanner.cpp:463:33 (omaroll_tests+0x897323) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #3 CaptureModel::startScan()::$_0::operator()() const /__w/omaroll/omaroll/src/library/CaptureModel.cpp:637:22 (omaroll_tests+0x6dd6dc) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #4 CaptureModel::ScanResult std::__invoke_impl<CaptureModel::ScanResult, CaptureModel::startScan()::$_0&>(std::__invoke_other, CaptureModel::startScan()::$_0&) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/invoke.h:63:14 (omaroll_tests+0x6dc795) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #5 std::__invoke_result<CaptureModel::startScan()::$_0&>::type std::__invoke<CaptureModel::startScan()::$_0&>(CaptureModel::startScan()::$_0&) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/invoke.h:98:14 (omaroll_tests+0x6dc735) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #6 std::invoke_result<CaptureModel::startScan()::$_0&>::type std::invoke<CaptureModel::startScan()::$_0&>(CaptureModel::startScan()::$_0&) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/functional:126:14 (omaroll_tests+0x6dc6d5) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #7 QtConcurrent::StoredFunctionCall<CaptureModel::startScan()::$_0>::runFunctor()::'lambda'(CaptureModel::startScan()::$_0)::operator()(CaptureModel::startScan()::$_0) const /usr/include/qt6/QtConcurrent/qtconcurrentstoredfunctioncall.h:117:20 (omaroll_tests+0x6dc66d) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #8 CaptureModel::ScanResult std::__invoke_impl<CaptureModel::ScanResult, QtConcurrent::StoredFunctionCall<CaptureModel::startScan()::$_0>::runFunctor()::'lambda'(CaptureModel::startScan()::$_0) const&, CaptureModel::startScan()::$_0>(std::__invoke_other, QtConcurrent::StoredFunctionCall<CaptureModel::startScan()::$_0>::runFunctor()::'lambda'(CaptureModel::startScan()::$_0) const&, CaptureModel::startScan()::$_0&&) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/invoke.h:63:14 (omaroll_tests+0x6dc5b0) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #9 std::__invoke_result<QtConcurrent::StoredFunctionCall<CaptureModel::startScan()::$_0>::runFunctor()::'lambda'(CaptureModel::startScan()::$_0) const&, CaptureModel::startScan()::$_0>::type std::__invoke<QtConcurrent::StoredFunctionCall<CaptureModel::startScan()::$_0>::runFunctor()::'lambda'(CaptureModel::startScan()::$_0) const&, CaptureModel::startScan()::$_0>(QtConcurrent::StoredFunctionCall<CaptureModel::startScan()::$_0>::runFunctor()::'lambda'(CaptureModel::startScan()::$_0) const&, CaptureModel::startScan()::$_0&&) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/bits/invoke.h:98:14 (omaroll_tests+0x6dc4b5) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #10 decltype(auto) std::__apply_impl<QtConcurrent::StoredFunctionCall<CaptureModel::startScan()::$_0>::runFunctor()::'lambda'(CaptureModel::startScan()::$_0) const&, std::tuple<CaptureModel::startScan()::$_0>, 0ul>(QtConcurrent::StoredFunctionCall<CaptureModel::startScan()::$_0>::runFunctor()::'lambda'(CaptureModel::startScan()::$_0) const&, std::tuple<CaptureModel::startScan()::$_0>&&, std::integer_sequence<unsigned long, 0ul>) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/tuple:2978:14 (omaroll_tests+0x6dc449) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #11 decltype(auto) std::apply<QtConcurrent::StoredFunctionCall<CaptureModel::startScan()::$_0>::runFunctor()::'lambda'(CaptureModel::startScan()::$_0) const&, std::tuple<CaptureModel::startScan()::$_0>>(QtConcurrent::StoredFunctionCall<CaptureModel::startScan()::$_0>::runFunctor()::'lambda'(CaptureModel::startScan()::$_0) const&, std::tuple<CaptureModel::startScan()::$_0>&&) /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/tuple:2993:14 (omaroll_tests+0x6dc3c5) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #12 QtConcurrent::StoredFunctionCall<CaptureModel::startScan()::$_0>::runFunctor() /usr/include/qt6/QtConcurrent/qtconcurrentstoredfunctioncall.h:123:27 (omaroll_tests+0x6dc218) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #13 QtConcurrent::RunFunctionTaskBase<CaptureModel::ScanResult>::run() /usr/include/qt6/QtConcurrent/qtconcurrentrunbase.h:84:13 (omaroll_tests+0x6ee452) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #14 <null> <null> (libQt6Core.so.6+0x2c1904) (BuildId: 2175cfb766936746d5af2587cb5cb79af45edd66)
+
+  Previous write of size 8 at 0x720400000bb0 by main thread:
+    #0 malloc <null> (omaroll_tests+0xaf5d5) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #1 strdup <null> (libc.so.6+0xaf33f) (BuildId: d320029ad1a23be2f4bce117fd321cbd23a2014b)
+    #2 AppSettings::applyOrganizationHealth() /__w/omaroll/omaroll/src/app/AppSettings.cpp:2243:30 (omaroll_tests+0x593215) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #3 QtPrivate::FunctorCall<std::integer_sequence<unsigned long>, QtPrivate::List<>, void, void (AppSettings::*)()>::call(void (AppSettings::*)(), AppSettings*, void**)::'lambda'()::operator()() const /usr/include/qt6/QtCore/qobjectdefs_impl.h:128:24 (omaroll_tests+0x6459ea) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #4 void QtPrivate::FunctorCallBase::call_internal<void, QtPrivate::FunctorCall<std::integer_sequence<unsigned long>, QtPrivate::List<>, void, void (AppSettings::*)()>::call(void (AppSettings::*)(), AppSettings*, void**)::'lambda'()>(void**, QtPrivate::FunctorCall<std::integer_sequence<unsigned long>, QtPrivate::List<>, void, void (AppSettings::*)()>::call(void (AppSettings::*)(), AppSettings*, void**)::'lambda'()&&) /usr/include/qt6/QtCore/qobjectdefs_impl.h:66:17 (omaroll_tests+0x645881) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #5 QtPrivate::FunctorCall<std::integer_sequence<unsigned long>, QtPrivate::List<>, void, void (AppSettings::*)()>::call(void (AppSettings::*)(), AppSettings*, void**) /usr/include/qt6/QtCore/qobjectdefs_impl.h:127:13 (omaroll_tests+0x6456e1) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #6 void QtPrivate::FunctionPointer<void (AppSettings::*)()>::call<QtPrivate::List<>, void>(void (AppSettings::*)(), AppSettings*, void**) /usr/include/qt6/QtCore/qobjectdefs_impl.h:175:13 (omaroll_tests+0x6455c5) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #7 QtPrivate::QCallableObject<void (AppSettings::*)(), QtPrivate::List<>, void>::impl(int, QtPrivate::QSlotObjectBase*, QObject*, void**, bool*) /usr/include/qt6/QtCore/qobjectdefs_impl.h:546:21 (omaroll_tests+0x645434) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #8 <null> <null> (libQt6Core.so.6+0x1f6cc7) (BuildId: 2175cfb766936746d5af2587cb5cb79af45edd66)
+    #9 OmarollTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /__w/omaroll/omaroll/build/tsan/omaroll_tests_autogen/include/tst_omaroll.moc:1640:23 (omaroll_tests+0x13c157) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #10 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0) (BuildId: 2175cfb766936746d5af2587cb5cb79af45edd66)
+    #11 <null> <null> (libc.so.6+0x27780) (BuildId: d320029ad1a23be2f4bce117fd321cbd23a2014b)
+
+  Thread T3 'Thread (pooled)' (tid=3072, running) created by main thread at:
+    #0 pthread_create <null> (omaroll_tests+0xb19de) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #1 QThread::start(QThread::Priority) <null> (libQt6Core.so.6+0x3765f4) (BuildId: 2175cfb766936746d5af2587cb5cb79af45edd66)
+    #2 QtConcurrent::NonPromiseTaskResolver<CaptureModel::startScan()::$_0>::run(std::tuple<CaptureModel::startScan()::$_0>&&, QtConcurrent::TaskStartParameters const&) /usr/include/qt6/QtConcurrent/qtconcurrentstoredfunctioncall.h:180:19 (omaroll_tests+0x6dbdf8) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #3 auto QtConcurrent::run<CaptureModel::startScan()::$_0>(QThreadPool*, CaptureModel::startScan()::$_0&&) /usr/include/qt6/QtConcurrent/qtconcurrentrun.h:48:12 (omaroll_tests+0x6dbcc1) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #4 auto QtConcurrent::run<CaptureModel::startScan()::$_0>(CaptureModel::startScan()::$_0&&) /usr/include/qt6/QtConcurrent/qtconcurrentrun.h:65:12 (omaroll_tests+0x6d3cc8) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #5 CaptureModel::startScan() /__w/omaroll/omaroll/src/library/CaptureModel.cpp:608:27 (omaroll_tests+0x6d3adf) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #6 CaptureModel::refresh() /__w/omaroll/omaroll/src/library/CaptureModel.cpp:597:3 (omaroll_tests+0x6ca93c) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #7 CaptureModel::CaptureModel(AppSettings*, QObject*) /__w/omaroll/omaroll/src/library/CaptureModel.cpp:125:3 (omaroll_tests+0x6ca71f) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #8 OmarollTest::keywordsFromFilesAreReadOnceOffTheWindowThread() /__w/omaroll/omaroll/tests/tst_omaroll.cpp:15991:18 (omaroll_tests+0x3f4c43) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #9 OmarollTest::qt_static_metacall(QObject*, QMetaObject::Call, int, void**) /__w/omaroll/omaroll/build/tsan/omaroll_tests_autogen/include/tst_omaroll.moc:1640:23 (omaroll_tests+0x13c157) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c)
+    #10 QMetaMethodInvoker::invokeImpl(QMetaMethod, void*, Qt::ConnectionType, long long, void const* const*, char const* const*, QtPrivate::QMetaTypeInterface const* const*) <null> (libQt6Core.so.6+0x1a23a0) (BuildId: 2175cfb766936746d5af2587cb5cb79af45edd66)
+    #11 <null> <null> (libc.so.6+0x27780) (BuildId: d320029ad1a23be2f4bce117fd321cbd23a2014b)
+
+SUMMARY: ThreadSanitizer: data race (/__w/omaroll/omaroll/build/tsan/omaroll_tests+0xb0132) (BuildId: df7e491377573d557206f241f51ddf3279b8fb5c) in free
+==================

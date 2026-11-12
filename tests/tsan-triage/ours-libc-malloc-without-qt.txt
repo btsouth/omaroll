@@ -1,5 +1,6 @@
-libc strdup and free on one block from two threads with no Qt frame on
-either side. Nothing shows Qt's time zone code made either call, so it
+A block libc allocated and freed itself, inside functions it does not
+export, on two threads with no Qt frame on either side and no strdup to
+show it is libc's private string. Nothing shows whose call it was, so it
 stays ours.
 ==================
 WARNING: ThreadSanitizer: data race (pid=69)
@@ -25,7 +26,7 @@ WARNING: ThreadSanitizer: data race (pid=69)
 
   Previous write of size 8 at 0x720400000bb0 by thread T5:
     #0 malloc <null> (omaroll_tests+0xaf5d5) (BuildId: f685c1cdfe10d449a1b472a1a0219a712795776c)
-    #1 strdup <null> (libc.so.6+0xaf33f) (BuildId: d320029ad1a23be2f4bce117fd321cbd23a2014b)
+    #1 <null> <null> (libc.so.6+0xaf33f) (BuildId: d320029ad1a23be2f4bce117fd321cbd23a2014b)
     #2 MediaMetadataIndex::loadCache() /__w/omaroll/omaroll/src/library/MediaMetadataIndex.cpp:250:5 (omaroll_tests+0x83fa00) (BuildId: 431db715687f9ab0ce66ba4379d344d7b672b510)
     #3 MediaMetadataIndex::parseImageDate(QByteArray const&) /__w/omaroll/omaroll/src/library/MediaMetadataIndex.cpp:334:30 (omaroll_tests+0x8455f2) (BuildId: f685c1cdfe10d449a1b472a1a0219a712795776c)
     #4 MediaMetadataIndex::parseImageDetails(QByteArray const&) /__w/omaroll/omaroll/src/library/MediaMetadataIndex.cpp:357:22 (omaroll_tests+0x845be6) (BuildId: f685c1cdfe10d449a1b472a1a0219a712795776c)

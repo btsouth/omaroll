@@ -282,11 +282,17 @@ def qt_owned_memory(stacks):
     - QThreadPool's queue and the runnables QtGui makes for its own threaded
       image work, freed by a pooled thread inside libQt6Core;
     - Qt Core's own calls into libc (strdup and free while handling the local
-      time zone). libc's time zone code keeps its TZ string in a block it
-      strdups and frees itself, under its own lock. Qt has no frame
-      pointers, so one side can lose its Qt frame and show the code of ours
-      that called Qt instead; that passes only for a block libc's strdup
-      made, with the other side still called straight from libQt6Core."""
+      time zone), and libc's own strdup blocks. libc's time zone code
+      (tzset_internal) frees its TZ string and strdups a new one under its
+      own lock each time Qt asks for local time while TZ is unset. Qt and
+      libc have no frame pointers, so either side or both can lose the Qt
+      frames and show the code of ours that called Qt instead. A block made
+      by libc's own strdup and freed by a libc function it does not export
+      is libc's private state: our strdup is TSan's interceptor in our
+      binary, and our free is called from our frames. A free from an
+      exported libc call (freeaddrinfo of what getaddrinfo strdup'd) may be
+      ours racing on a shared result, and any other libc pair, so those
+      still need Qt Core on both sides."""
     if len(stacks) != 2:
         return False
     for freeing, allocating in (stacks, stacks[::-1]):
@@ -307,10 +313,9 @@ def qt_owned_memory(stacks):
             return True
         if freer[1].startswith("libc.so") and allocator[1].startswith("libc.so") and \
                 len(freed) > 2 and len(made) > 2:
-            from_qt = [freed[2][1].startswith("libQt6Core"), made[2][1].startswith("libQt6Core")]
-            if all(from_qt):
+            if allocator[0] == "strdup" and freer[0] == "<null>":
                 return True
-            if any(from_qt) and allocator[0] == "strdup":
+            if freed[2][1].startswith("libQt6Core") and made[2][1].startswith("libQt6Core"):
                 return True
     return False
 
