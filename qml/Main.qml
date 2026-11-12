@@ -1755,7 +1755,8 @@ ApplicationWindow {
         anchors.centerIn: library
         width: Math.min(440, library.width - 40)
         spacing: 10
-        visible: Captures.count === 0 && !Library.scanning && !TextIndex.indexing
+        visible: Captures.count === 0 && !Library.scanning
+                 && !(TextIndex.indexing && Captures.searchReadsText)
                  && !(typeof DocumentText !== "undefined" && DocumentText.indexing
                       && Captures.searchReadsText)
                  && !(Captures.duplicatesOnly && Duplicates.scanning)

@@ -1067,6 +1067,10 @@ void CaptureFilterModel::findSimilar(const QString& path) {
 void CaptureFilterModel::restoreScope() {
   const Scope scope = *m_savedScope;
   m_savedScope.reset();
+  // Typing during the review is dropped, not applied over the saved search
+  // when its delay runs out; the field shows the saved search again.
+  const bool typing = m_searchTimer.isActive();
+  m_searchTimer.stop();
   beginFilterUpdate();
   applyScope(scope);
   m_duplicatesOnly = scope.duplicates;
@@ -1076,6 +1080,7 @@ void CaptureFilterModel::restoreScope() {
   rebuildDuplicateOrdinals();
   invalidate();
   emitScopeChanged();
+  if (typing) emit searchTextChanged();
 }
 
 // Between beginFilterUpdate() and endFilterUpdate().

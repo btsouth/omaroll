@@ -6550,8 +6550,14 @@ private slots:
     restored("Back button");
     // And so does the chip's clear button, through similarOnly.
     findSimilar();
+    // Typing still waiting on its delay is dropped, not applied over the
+    // restored search.
+    m_library->queueSearchText(QStringLiteral("zzz"));
     m_library->setSimilarOnly(false);
     restored("chip");
+    QTest::qWait(300);
+    QVERIFY(m_library->searchText().isEmpty());
+    QVERIFY(m_library->favoritesOnly());
     // Show all (Open folder, a reveal) leaves the review for all media, not
     // for the scope it saved.
     findSimilar();
