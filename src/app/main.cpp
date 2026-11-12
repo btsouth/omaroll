@@ -305,8 +305,12 @@ public:
                      [this, &settings] { m_library.setPairRawJpeg(settings.pairRawJpeg()); });
     QObject::connect(&m_library, &CaptureFilterModel::sortModeChanged, &settings,
                      [this, &settings] { settings.setSortMode(m_library.sortMode()); });
+    // Find similar clears the kind for a while; the user's choice is the one
+    // it puts back, so only that is kept.
     QObject::connect(&m_library, &CaptureFilterModel::kindFilterChanged, &settings,
-                     [this, &settings] { settings.setKindFilter(m_library.kindFilter()); });
+                     [this, &settings] {
+                       if (!m_library.findingSimilar()) settings.setKindFilter(m_library.kindFilter());
+                     });
     QObject::connect(&m_library, &CaptureFilterModel::showHiddenChanged, &settings,
                      [this, &settings] { settings.setShowHidden(m_library.showHidden()); });
 
@@ -836,9 +840,14 @@ int main(int argc, char* argv[]) {
   // A viewer hands a file to the library, then steps aside. The library is
   // up before the viewer closes, so closing it never ends the app.
   QObject::connect(&viewers, &ViewerWindows::libraryRequested, &application,
-                   [&](const QString& path, QQuickWindow* viewer) {
+                   [&](const QString& path, QQuickWindow* viewer, bool similar) {
                      const OpenRequest opened = OpenRequest::fromPaths({path});
                      if (QQuickWindow* library = openLibrary(opened)) {
+                       if (similar) {
+                         QMetaObject::invokeMethod(
+                             library, "findSimilar",
+                             Q_ARG(QVariant, opened.files.value(0, path)));
+                       }
                        library->raise();
                        library->requestActivate();
                        viewer->close();

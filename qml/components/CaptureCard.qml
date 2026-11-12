@@ -35,10 +35,20 @@ Item {
     property bool checked: false
     property bool selectionMode: false
     property string ocrSnippet: ""
+    // Where the file is, its folders and name, shown while reviewing sets:
+    // copies look the same, so this is what tells them apart.
+    property string folderLabel: ""
+    // A similar set's looser member: it matches one picture of the set
+    // rather than every one, as the first frame of a burst does.
+    property bool looserMatch: false
     property string caption: ""
     // The camera format of a RAW file, so it reads apart from the JPEG the
     // camera wrote beside it.
     property string rawFormat: ""
+    // The one line of text over the strip: a search match first, then the
+    // folder in a review, then the caption.
+    readonly property string noteText: ocrSnippet !== "" ? ocrSnippet
+                                       : folderLabel !== "" ? folderLabel : caption
     property bool thumbnailReady: false
     property bool thumbnailLayoutReady: false
     property string readyPath: ""
@@ -55,7 +65,8 @@ Item {
     // A tile in a hidden or recycled row is not read out.
     Accessible.ignored: !root.visible
     Accessible.role: Accessible.ListItem
-    Accessible.name: [fileName, kindLabel, dateLabel, timeLabel].filter(function(value) { return value !== "" }).join(", ")
+    Accessible.name: [fileName, kindLabel, dateLabel, timeLabel, folderLabel,
+                      looserMatch ? "looser match" : ""].filter(function(value) { return value !== "" }).join(", ")
     Accessible.description: thumbnailFailed ? "Preview unavailable" : ""
     Accessible.selected: selected
     Accessible.selectable: true
@@ -312,7 +323,7 @@ Item {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             // The text's own height, plus a short fade above the top line.
-            readonly property real textHeight: (root.ocrSnippet !== "" || root.caption !== "" ? 66 : 46)
+            readonly property real textHeight: (root.noteText !== "" ? 66 : 46)
                                                + (Settings.showGridFilenames ? 20 : 0)
             readonly property real fade: 14
             height: textHeight + fade
@@ -328,24 +339,57 @@ Item {
             }
         }
 
-        Text {
-            objectName: "captureSnippetLabel"
+        // A match far into the text would be cut off by eliding at the end,
+        // so a long snippet is placed with the match in the middle of the
+        // line and clipped at both ends.
+        Item {
+            id: noteLine
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: metadataRow.top
             anchors.leftMargin: 8
             anchors.rightMargin: 8
             anchors.bottomMargin: 2
+            height: noteLabel.implicitHeight
+            clip: noteLabel.centred
             // A search match outranks the caption on the one line there is.
             // It shows before the thumbnail does: the text is why this tile
             // matched, and a slow or failed decode must not hide it.
-            visible: root.ocrSnippet !== "" || root.caption !== ""
-            text: root.ocrSnippet !== "" ? root.ocrSnippet : root.caption
-            elide: Text.ElideRight
-            font.family: Theme.fontFamily
-            font.pixelSize: 11
-            color: root.thumbnailReady ? "#ffffff" : Theme.foreground
-            opacity: 0.90
+            visible: root.noteText !== ""
+            // [start, length] of the search term in the snippet, if found.
+            readonly property var match: root.ocrSnippet !== "" && typeof Captures !== "undefined"
+                                         ? Captures.snippetMatch(root.ocrSnippet) : []
+
+            TextMetrics {
+                id: beforeMatch
+                font: noteLabel.font
+                text: noteLine.match.length === 2 ? root.ocrSnippet.substring(0, noteLine.match[0]) : ""
+            }
+            TextMetrics {
+                id: matchText
+                font: noteLabel.font
+                text: noteLine.match.length === 2
+                      ? root.ocrSnippet.substr(noteLine.match[0], noteLine.match[1]) : ""
+            }
+
+            Text {
+                id: noteLabel
+                objectName: "captureSnippetLabel"
+                readonly property bool centred: noteLine.match.length === 2
+                                                && implicitWidth > noteLine.width
+                width: centred ? implicitWidth : noteLine.width
+                x: centred ? Math.max(noteLine.width - implicitWidth,
+                                      Math.min(0, noteLine.width / 2 - beforeMatch.advanceWidth
+                                                  - matchText.advanceWidth / 2))
+                           : 0
+                text: root.noteText
+                elide: centred ? Text.ElideNone
+                       : root.ocrSnippet === "" && root.folderLabel !== "" ? Text.ElideLeft : Text.ElideRight
+                font.family: Theme.fontFamily
+                font.pixelSize: 11
+                color: root.thumbnailReady ? "#ffffff" : Theme.foreground
+                opacity: 0.90
+            }
         }
 
         Text {
@@ -353,7 +397,7 @@ Item {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: metadataRow.top
-            anchors.bottomMargin: root.ocrSnippet !== "" || root.caption !== "" ? 24 : 2
+            anchors.bottomMargin: root.noteText !== "" ? 24 : 2
             anchors.leftMargin: 8
             anchors.rightMargin: 8
             visible: Settings.showGridFilenames
@@ -433,6 +477,57 @@ Item {
                 id: rawLabel
                 anchors.centerIn: parent
                 text: root.rawFormat
+                font.family: Theme.fontFamily
+                font.pixelSize: 11
+                font.weight: Font.DemiBold
+                color: "#ffffff"
+            }
+        }
+
+        Rectangle {
+            objectName: "looserMatchBadge"
+            anchors.top: parent.top
+            anchors.topMargin: root.rawFormat !== "" ? 34 : 8
+            anchors.right: parent.right
+            anchors.rightMargin: 8
+            visible: root.looserMatch
+            width: looserLabel.implicitWidth + 12
+            height: looserLabel.implicitHeight + 6
+            radius: 3
+            color: Qt.rgba(0, 0, 0, 0.55)
+
+            Text {
+                id: looserLabel
+                anchors.centerIn: parent
+                text: "Looser match"
+                font.family: Theme.fontFamily
+                font.pixelSize: 11
+                color: "#ffffff"
+            }
+            ThemedToolTip {
+                owner: parent
+                requested: looserHover.hovered
+                text: "Matches one picture in this set, not all of them"
+                delay: 500
+            }
+            HoverHandler { id: looserHover }
+        }
+
+        Rectangle {
+            objectName: "pdfBadge"
+            anchors.top: parent.top
+            anchors.right: parent.right
+            anchors.margins: 8
+            visible: root.isDocument
+            width: pdfLabel.implicitWidth + 12
+            height: pdfLabel.implicitHeight + 6
+            radius: 3
+            color: Qt.rgba(0, 0, 0, 0.55)
+
+            Text {
+                id: pdfLabel
+                anchors.centerIn: parent
+                text: "PDF"
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
                 font.weight: Font.DemiBold

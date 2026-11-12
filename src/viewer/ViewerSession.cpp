@@ -716,6 +716,10 @@ void ViewerSession::openInLibrary() {
   }
 }
 
+void ViewerSession::findSimilarInLibrary() {
+  if (!path().isEmpty() && !isVideo()) emit similarRequested(path());
+}
+
 bool ViewerSession::isViewable(const QString& path) {
   const QString suffix = CaptureScanner::mediaSuffix(path);
   return CaptureScanner::isImage(suffix) || CaptureScanner::isVideo(suffix);

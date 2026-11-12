@@ -1262,6 +1262,7 @@ ApplicationWindow {
         const edit = root.orderedRows(root.editOrder, byId)
 
         const top = [{id: "library", label: "Open in library"}]
+        if (!Session.isVideo) top.push({id: "similar", label: "Find similar in library"})
         if (Session.companionPath !== "") {
             top.push({id: "companion", label: Session.isRaw ? "View JPEG companion" : "View RAW companion"})
         }
@@ -1371,6 +1372,9 @@ ApplicationWindow {
             return
         case "library":
             Session.openInLibrary()
+            return
+        case "similar":
+            Session.findSimilarInLibrary()
             return
         case "rotate":
             root.rotate(true)

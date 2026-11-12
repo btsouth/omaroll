@@ -4,6 +4,7 @@
 #include <QFutureWatcher>
 #include <QHash>
 #include <QObject>
+#include <QSet>
 #include <QStringList>
 #include <QTimer>
 
@@ -21,7 +22,10 @@ class CaptureModel;
 // different text. Low-colour, mostly flat pictures (terminals, documents,
 // chat windows) need a much closer match, and when both have indexed text
 // that text must agree. Sets use complete linkage: a picture joins a set only
-// when it matches every member, so A~B and B~C never put A with C.
+// when it matches every member, so A~B and B~C never put A with C. A picture
+// that linkage leaves alone, such as the first or last frame of a burst, then
+// joins at Normal as a looser member when it matches one member and is within
+// Loose of all of them.
 // Near-identical copies collapse first and each picture is compared with a
 // bounded number of others, so time and memory stay linear in the library.
 //
@@ -60,6 +64,11 @@ public:
   // Every path in this picture's similar set, itself included, sorted. Empty
   // when it is not part of a set.
   Q_INVOKABLE [[nodiscard]] QStringList groupPaths(const QString& path) const;
+  // Whether this picture joined its set as a looser member: it matches one
+  // picture of it rather than all (see group()).
+  Q_INVOKABLE [[nodiscard]] bool isLooser(const QString& path) const {
+    return m_looser.contains(path);
+  }
 
   void requestStop();
   void setActive(bool active);
@@ -118,12 +127,14 @@ public:
                                     const QStringList& leftWords,
                                     const QStringList& rightWords, int strictness,
                                     double* score = nullptr);
-  // Sets of indexes into `signatures`, each of two or more pictures that all
-  // match one another. `words` is parallel to `signatures`. A set flag stops
-  // early and returns nothing.
+  // Sets of indexes into `signatures`, sorted, each of two or more pictures
+  // that all match one another, plus any looser members. `words` is parallel
+  // to `signatures`. `looser`, when given, gets each set's looser members,
+  // parallel to the sets. A set flag stops early and returns nothing.
   [[nodiscard]] static QList<QList<int>> group(const QList<Signature>& signatures,
                                                const QList<QStringList>& words, int strictness,
-                                               const std::atomic_bool* cancel = nullptr);
+                                               const std::atomic_bool* cancel = nullptr,
+                                               QList<QList<int>>* looser = nullptr);
   [[nodiscard]] static Signature signatureOf(const QString& path,
                                              const std::atomic_bool* cancel = nullptr);
   [[nodiscard]] static QStringList wordsOf(const QString& text);
@@ -132,6 +143,7 @@ private:
   struct Result {
     quint64 generation = 0;
     QHash<QString, QString> groups;
+    QSet<QString> looser;
     QHash<QString, Signature> cache;
     int decoded = 0;
     bool complete = false;
@@ -153,6 +165,7 @@ private:
   std::shared_ptr<std::atomic_bool> m_cancel;
   QHash<QString, Signature> m_cache;
   QHash<QString, QString> m_groups;
+  QSet<QString> m_looser;
   QHash<QString, QStringList> m_words;
   quint64 m_generation = 0;
   int m_strictness = Normal;

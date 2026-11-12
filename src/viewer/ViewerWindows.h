@@ -55,7 +55,8 @@ public:
 
 signals:
   // The source entry chosen by the user, before media-path resolution.
-  void libraryRequested(const QString& path, QQuickWindow* viewer);
+  // |similar|: open it on that picture's similar set.
+  void libraryRequested(const QString& path, QQuickWindow* viewer, bool similar);
 
 private:
   struct Viewer;
