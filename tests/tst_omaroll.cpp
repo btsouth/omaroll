@@ -15106,6 +15106,11 @@ private slots:
     QVERIFY(!ActionLauncher::relocateEntry(from, to));
     QCOMPARE(readBytes(from), QByteArray(5000, 'p'));
     QVERIFY(!QFileInfo::exists(to));
+    // So is one whose new folder cannot be synced, before the original goes.
+    ActionLauncher::setRelocationFaultsForTesting(ActionLauncher::FaultCrossDevice | ActionLauncher::FaultNoFolderSync);
+    QVERIFY(!ActionLauncher::relocateEntry(from, to));
+    QCOMPARE(readBytes(from), QByteArray(5000, 'p'));
+    QVERIFY(!QFileInfo::exists(to));
     // A link is never copied in place of moving it.
     ActionLauncher::setRelocationFaultsForTesting(ActionLauncher::FaultCrossDevice);
     const QString link = dir.filePath(QStringLiteral("link.png"));

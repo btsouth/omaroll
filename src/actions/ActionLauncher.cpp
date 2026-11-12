@@ -798,12 +798,29 @@ bool exclusiveCopy(const QString& from, const QString& to, bool keepTime) {
 // The last way to move a file where the filesystem neither renames without
 // replacing nor links (another device, or a FUSE or gvfs mount): an
 // exclusive copy, then the original removed, or the copy if that fails.
+// Puts the copy's name in |to|'s folder on the device, so a crash right
+// after the original is removed still finds the file by one of its names.
+// A filesystem that cannot sync a folder (some FUSE mounts) says so with
+// EINVAL or EOPNOTSUPP, which is taken as done.
+bool syncParentFolder(const QString& to) {
+  const QByteArray folder = QFile::encodeName(QFileInfo(to).absolutePath());
+  const int fd = ::open(folder.constData(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  if (fd < 0) return false;
+  const bool synced = ::fsync(fd) == 0 || errno == EINVAL || errno == EOPNOTSUPP;
+  ::close(fd);
+  return synced;
+}
+
 bool copyThenRemove(const QString& from, const QString& to) {
   struct stat entry {};
   if (::lstat(QFile::encodeName(from).constData(), &entry) != 0 || !S_ISREG(entry.st_mode)) {
     return false;
   }
   if (!exclusiveCopy(from, to, true)) return false;
+  if ((relocationFaults.load() & ActionLauncher::FaultNoFolderSync) || !syncParentFolder(to)) {
+    QFile::remove(to);
+    return false;
+  }
   const bool removed = !(relocationFaults.load() & ActionLauncher::FaultKeepOriginal) && QFile::remove(from);
   if (removed) return true;
   QFile::remove(to);

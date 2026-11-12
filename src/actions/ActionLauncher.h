@@ -101,6 +101,7 @@ public:
     FaultNoReplace = 2,    // rename says EINVAL (no RENAME_NOREPLACE)
     FaultNoLink = 4,       // hard links are refused
     FaultKeepOriginal = 8, // the original cannot be removed after a copy
+    FaultNoFolderSync = 16, // the copy's folder cannot be synced
   };
   static void setRelocationFaultsForTesting(int faults);
   Q_INVOKABLE void moveDuplicateCopiesToTrash(const QVariantMap& keep, const QVariantList& copies);
