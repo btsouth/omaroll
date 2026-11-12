@@ -6552,8 +6552,14 @@ private slots:
     findSimilar();
     m_library->setSimilarOnly(false);
     restored("chip");
-    m_library->setFavoritesOnly(false);
-    m_library->setFolderFilter(QString());
+    // Show all (Open folder, a reveal) leaves the review for all media, not
+    // for the scope it saved.
+    findSimilar();
+    QVERIFY(QMetaObject::invokeMethod(m_window, "showAllMedia", Q_ARG(QVariant, QVariant())));
+    QTRY_VERIFY(!m_library->similarOnly());
+    QVERIFY(!m_library->favoritesOnly());
+    QVERIFY(m_library->folderFilter().isEmpty());
+    QVERIFY(m_library->searchText().isEmpty());
     QTRY_VERIFY(m_library->count() > 2);
     QTRY_VERIFY(item("library")->property("layoutReady").toBool());
   }

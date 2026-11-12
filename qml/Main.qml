@@ -447,11 +447,13 @@ ApplicationWindow {
     property string pendingRenamedCheck: ""
     function showAllMedia(folder) {
         Captures.setExplicitPaths([])
+        // Leave a Find similar review first: leaving puts its saved scope
+        // back, which the lines below then clear.
+        Captures.similarOnly = false
+        Captures.duplicatesOnly = false
         Captures.kindFilter = filters.kindAll
         Captures.searchText = ""
         Captures.favoritesOnly = false
-        Captures.duplicatesOnly = false
-        Captures.similarOnly = false
         Captures.clearDateRange()
         Captures.setTagFilter("", [])
         Captures.cameraFilter = ""
