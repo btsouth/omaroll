@@ -215,7 +215,8 @@ private:
   [[nodiscard]] static bool sameCapturedEntry(const QVariantMap& left, const QVariantMap& right);
   void trashOthers(const QVariantMap& keep, const QVariantList& others, bool identicalOnly,
                    std::function<void(int, const QStringList&, const QVariantList&)> done);
-  QVariantMap trashFile(const QString& path);
+  // The user's Trash takes the file's .xmp sidecars along.
+  QVariantMap trashFile(const QString& path, bool withSidecars = true);
   QVariantMap renameFile(const QString& path, const QString& baseName, const QVariantMap& target);
   [[nodiscard]] static QVariantMap checkTransfer(const QVariantMap& target, const QString& folder, bool copy);
   QSet<QString> m_transferring;

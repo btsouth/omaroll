@@ -675,7 +675,8 @@ bool ActionLauncher::open(const QString& path) {
 }
 
 bool ActionLauncher::moveToTrash(const QString& path) {
-  return !trashFile(path).isEmpty();
+  // An incomplete export output: only the file itself goes.
+  return !trashFile(path, false).isEmpty();
 }
 
 namespace {
@@ -723,13 +724,13 @@ QStringList ActionLauncher::sidecarFiles(const QString& path) {
   return found;
 }
 
-QVariantMap ActionLauncher::trashFile(const QString& path) {
+QVariantMap ActionLauncher::trashFile(const QString& path, bool withSidecars) {
   if (!QFileInfo::exists(path)) {
     emit failed(u"That file is no longer there"_s);
     return {};
   }
   QString error;
-  QVariantMap record = trashWithSidecars(path, &error);
+  QVariantMap record = withSidecars ? trashWithSidecars(path, &error) : TrashRestore::moveToTrash(path, &error);
   if (record.isEmpty()) emit failed(error);
   return record;
 }

@@ -34,6 +34,8 @@ constexpr int kMaximumResources = 1000;
 // header claims, and deflate expands at most about 1032 to 1. A compressed
 // packet is therefore refused above 32 KiB, which holds well over 100 KiB of
 // real XMP and bounds a zlib bomb to about 33 MiB before it is thrown away.
+// Capping the output itself would need zlib's own streaming API, a library
+// Omaroll does not link; bounded memory is what matters here.
 constexpr qsizetype kMaximumCompressedPacket = 32 * 1024;
 // All the bytes readFile may read from one file.
 constexpr qint64 kFileReadBudget = 3 * kMaximumPacketBytes + 256 * 1024;
