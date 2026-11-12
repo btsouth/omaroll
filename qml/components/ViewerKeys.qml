@@ -8,7 +8,7 @@ Item {
 
     Keys.onPressed: function (event) {
         if (event.key === ShortcutCatalog.quickKeys.Tab || event.key === ShortcutCatalog.quickKeys.Backtab) viewer.keyboardNavigation = true
-        if (viewer.choosingEditor) {
+        if (viewer.sheetOpen) {
             event.accepted = false
             return
         }
@@ -91,8 +91,11 @@ Item {
                 break
             case ShortcutCatalog.quickKeys.Comma:
             case ShortcutCatalog.quickKeys.Period:
-                if (video) viewer.stepFrame(event.key === ShortcutCatalog.quickKeys.Comma ? -1 : 1)
+                if (video || Session.isAnimated) viewer.stepFrame(event.key === ShortcutCatalog.quickKeys.Comma ? -1 : 1)
                 else handled = false
+                break
+            case ShortcutCatalog.quickKeys.N:
+                if (!event.isAutoRepeat) viewer.requestRename()
                 break
             case ShortcutCatalog.quickKeys.Up:
             case ShortcutCatalog.quickKeys.Down:
@@ -172,11 +175,11 @@ Item {
                 Session.openInLibrary()
                 break
             case ShortcutCatalog.quickKeys.Delete:
-                if (shift) {
-                    if (!event.isAutoRepeat) viewer.requestPermanentDelete()
-                } else {
-                    viewer.requestTrash()
-                }
+                // One file a press: a held key would otherwise trash a run
+                // of them, with no question in between when Settings skips it.
+                if (event.isAutoRepeat) break
+                if (shift) viewer.requestPermanentDelete()
+                else viewer.requestTrash()
                 break
             case ShortcutCatalog.quickKeys.V:
                 if (shift && !video) viewer.flip(false)

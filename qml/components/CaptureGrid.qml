@@ -407,6 +407,11 @@ FocusScope {
                 event.accepted = true
                 return
             }
+            // One press, one Trash: a held key must not trash a run of files.
+            if (event.isAutoRepeat) {
+                event.accepted = true
+                return
+            }
             if (current >= 0) {
                 root.deleteRequested(Captures.pathAt(current))
                 event.accepted = true

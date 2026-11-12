@@ -9,6 +9,7 @@
 #include <QJsonObject>
 #include <QLocale>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QtConcurrent>
 #include <QTimer>
@@ -68,6 +69,21 @@ QString codecLabel(QString codec) {
   return codec.toUpper();
 }
 
+// An EXIF GPS degrees, minutes, seconds triple: "47/1, 36/1, 2232/100".
+double degrees(const QString& value, bool* okay) {
+  const QStringList parts = value.split(QLatin1Char(','), Qt::SkipEmptyParts);
+  *okay = !parts.isEmpty() && parts.size() <= 3;
+  double result = 0;
+  double unit = 1;
+  for (const QString& part : parts) {
+    bool valid = false;
+    result += number(part, &valid) / unit;
+    *okay = *okay && valid;
+    unit *= 60;
+  }
+  return result;
+}
+
 QString joined(const QStringList& parts) {
   QStringList kept;
   for (const QString& part : parts) {
@@ -117,9 +133,10 @@ void MediaInspector::inspect(const QString& path, bool video) {
   ++m_generation;
   cancelCurrent();
 
-  const bool changed = m_path != path || !m_lines.isEmpty();
+  const bool changed = m_path != path || !m_lines.isEmpty() || !m_coordinates.isEmpty();
   m_path = path;
   m_lines.clear();
+  m_coordinates.clear();
   if (changed) {
     emit detailsChanged();
   }
@@ -164,8 +181,9 @@ void MediaInspector::inspect(const QString& path, bool video) {
             if (current) {
               m_process = nullptr;
               if (status == QProcess::NormalExit && exitCode == 0) {
-                m_lines = video ? parseVideo(process->readAllStandardOutput(), suffix)
-                                : parseImage(process->readAllStandardOutput());
+                const QByteArray output = process->readAllStandardOutput();
+                m_lines = video ? parseVideo(output, suffix) : parseImage(output);
+                m_coordinates = video ? videoCoordinates(output) : imageCoordinates(output);
                 emit detailsChanged();
               }
               setLoading(false);
@@ -186,7 +204,8 @@ void MediaInspector::inspect(const QString& path, bool video) {
     process->start(program,
                    {QStringLiteral("-v"), QStringLiteral("error"),
                     QStringLiteral("-show_entries"),
-                    QStringLiteral("format=format_name,bit_rate:stream="
+                    QStringLiteral("format=format_name,bit_rate:format_tags=location,"
+                                   "com.apple.quicktime.location.ISO6709:stream="
                                    "codec_type,codec_name,profile,pix_fmt,"
                                    "r_frame_rate,bit_rate,sample_rate,channel_layout,"
                                    "color_transfer,color_primaries:stream_side_data"),
@@ -198,7 +217,8 @@ void MediaInspector::inspect(const QString& path, bool video) {
         "%m\n%[EXIF:DateTimeOriginal]\n%[EXIF:DateTimeDigitized]\n"
         "%[EXIF:Make]\n%[EXIF:Model]\n%[EXIF:LensModel]\n"
         "%[EXIF:FNumber]\n%[EXIF:ExposureTime]\n%[EXIF:ISOSpeedRatings]\n"
-        "%[EXIF:FocalLength]\n%z\n%[colorspace]\n");
+        "%[EXIF:FocalLength]\n%z\n%[colorspace]\n"
+        "%[EXIF:GPSLatitude]\n%[EXIF:GPSLatitudeRef]\n%[EXIF:GPSLongitude]\n%[EXIF:GPSLongitudeRef]\n");
     process->start(program, {QStringLiteral("identify"), QStringLiteral("-ping"),
                              QStringLiteral("-quiet"),
                              QStringLiteral("-format"), format, path});
@@ -276,7 +296,60 @@ QStringList MediaInspector::parseImage(const QByteArray& output) {
   if (!exposure.isEmpty()) {
     lines.append(exposure.join(QStringLiteral("  ·  ")));
   }
+  const QString location = imageCoordinates(output);
+  if (!location.isEmpty()) {
+    lines.append(QStringLiteral("Location  ·  ") + location);
+  }
   return lines;
+}
+
+QString MediaInspector::coordinateText(double latitude, double longitude) {
+  if (!std::isfinite(latitude) || !std::isfinite(longitude) || std::abs(latitude) > 90 ||
+      std::abs(longitude) > 180) {
+    return {};
+  }
+  const auto text = [](double value) {
+    QString result = QLocale::c().toString(value, 'f', 6);
+    while (result.endsWith(QLatin1Char('0'))) result.chop(1);
+    if (result.endsWith(QLatin1Char('.'))) result.chop(1);
+    return result == QStringLiteral("-0") ? QStringLiteral("0") : result;
+  };
+  return text(latitude) + QStringLiteral(", ") + text(longitude);
+}
+
+QString MediaInspector::imageCoordinates(const QByteArray& output) {
+  const QStringList fields =
+      QString::fromUtf8(output).split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+  bool latitudeOkay = false;
+  bool longitudeOkay = false;
+  double latitude = degrees(present(fields.value(12)), &latitudeOkay);
+  double longitude = degrees(present(fields.value(14)), &longitudeOkay);
+  if (!latitudeOkay || !longitudeOkay) return {};
+  // A camera with no fix may still write zeroes.
+  if (latitude == 0 && longitude == 0) return {};
+  if (present(fields.value(13)).startsWith(QLatin1Char('S'), Qt::CaseInsensitive)) latitude = -latitude;
+  if (present(fields.value(15)).startsWith(QLatin1Char('W'), Qt::CaseInsensitive)) longitude = -longitude;
+  return coordinateText(latitude, longitude);
+}
+
+QString MediaInspector::videoCoordinates(const QByteArray& output) {
+  const QJsonObject tags = QJsonDocument::fromJson(output)
+                               .object()
+                               .value(QStringLiteral("format"))
+                               .toObject()
+                               .value(QStringLiteral("tags"))
+                               .toObject();
+  QString location = tags.value(QStringLiteral("location")).toString();
+  if (location.isEmpty()) location = tags.value(QStringLiteral("com.apple.quicktime.location.ISO6709")).toString();
+  // ISO 6709, as phones write it: "+47.6062-122.3321+012.3/".
+  static const QRegularExpression iso6709(
+      QStringLiteral("^([+-]\\d+(?:\\.\\d+)?)([+-]\\d+(?:\\.\\d+)?)"));
+  const QRegularExpressionMatch match = iso6709.match(location.trimmed());
+  if (!match.hasMatch()) return {};
+  const double latitude = match.captured(1).toDouble();
+  const double longitude = match.captured(2).toDouble();
+  if (latitude == 0 && longitude == 0) return {};
+  return coordinateText(latitude, longitude);
 }
 
 QStringList MediaInspector::describeRaw(const QString& path) {
@@ -384,6 +457,10 @@ QStringList MediaInspector::parseVideo(const QByteArray& output, const QString& 
     if (!audioLine.isEmpty()) {
       lines.append(audioLine);
     }
+  }
+  const QString location = videoCoordinates(output);
+  if (!location.isEmpty()) {
+    lines.append(QStringLiteral("Location  ·  ") + location);
   }
   return lines;
 }

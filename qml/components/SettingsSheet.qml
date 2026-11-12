@@ -643,6 +643,22 @@ Item {
                 }
 
                 SettingRow {
+                    title: "Move to Trash without asking"
+                    detail: "Delete moves files to Trash at once, in the library and the viewer. "
+                            + "Undo puts them back."
+                    toggle: trashWithoutAskingSwitch
+
+                    SettingSwitch {
+                        id: trashWithoutAskingSwitch
+                        objectName: "trashWithoutAsking"
+                        accessibleName: "Move to Trash without asking"
+                        anchors.verticalCenter: parent.verticalCenter
+                        checked: Settings.trashWithoutAsking
+                        onToggled: Settings.trashWithoutAsking = !Settings.trashWithoutAsking
+                    }
+                }
+
+                SettingRow {
                     title: "Confirm permanent deletion"
                     detail: "Shift+Delete skips Trash and cannot be undone. Off deletes immediately. "
                             + "Regular Delete still uses Trash."
@@ -692,6 +708,21 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter
                         checked: Settings.enlargeSmallPictures
                         onToggled: Settings.enlargeSmallPictures = !Settings.enlargeSmallPictures
+                    }
+                }
+
+                SettingRow {
+                    title: "Checkerboard behind transparency"
+                    detail: "Shows the see-through parts of a picture. Off shows them on the plain background."
+                    toggle: checkerboardSwitch
+
+                    SettingSwitch {
+                        id: checkerboardSwitch
+                        objectName: "transparencyCheckerboard"
+                        accessibleName: "Checkerboard behind transparency"
+                        anchors.verticalCenter: parent.verticalCenter
+                        checked: Settings.transparencyCheckerboard
+                        onToggled: Settings.transparencyCheckerboard = !Settings.transparencyCheckerboard
                     }
                 }
 

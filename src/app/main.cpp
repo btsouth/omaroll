@@ -35,6 +35,7 @@
 #include "subtitles/SubtitleIndex.h"
 #include "sources/CaptureScanner.h"
 #include "sources/DecodeJournal.h"
+#include "theme/CheckerProvider.h"
 #include "theme/OmarchyTheme.h"
 #include "sources/ImageBudget.h"
 #include "thumbs/LargeImageProvider.h"
@@ -780,6 +781,7 @@ int main(int argc, char* argv[]) {
   engine.addImageProvider(QLatin1String(RawImageProvider::kProviderId), rawProvider);
   engine.addImageProvider(QLatin1String(LargeImageProvider::kProviderId), largeProvider);
   Storyboard::install(engine);
+  CheckerProvider::install(engine);
   // Every window shares these. Each window's own services live in its context.
   engine.rootContext()->setContextProperty(QStringLiteral("Theme"), &theme);
   engine.rootContext()->setContextProperty(QStringLiteral("Actions"), &actions);

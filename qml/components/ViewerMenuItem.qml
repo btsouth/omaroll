@@ -6,8 +6,9 @@ import QtQuick.Controls.Basic
 MenuItem {
     id: entry
 
-    // {id, label, available, hint} or {separator: true}. A submenu's row has
-    // none of it and takes its name from the submenu.
+    // {id, label, available, hint, checked} or {separator: true}. A submenu's
+    // row has none of it and takes its name from the submenu. A row with
+    // |checked| is a choice, ticked when it is the one in use.
     property var row: ({})
     readonly property bool separator: row.separator === true
     readonly property bool needsTool: row.available === false && !!row.hint
@@ -30,6 +31,12 @@ MenuItem {
     Accessible.role: separator ? Accessible.Separator : Accessible.MenuItem
     Accessible.ignored: separator
     enabled: !separator && row.available !== false
+    // Drawn from the row rather than checkable, which would untick a choice
+    // picked again.
+    readonly property bool choice: row.checked !== undefined
+    readonly property bool chosen: row.checked === true
+    Accessible.checkable: choice
+    Accessible.checked: chosen
     height: separator ? 9 : needsTool ? 46 : 30
     opacity: enabled || separator ? 1 : 0.55
     arrow: null
@@ -43,10 +50,21 @@ MenuItem {
             height: 1
             color: entry.shade(Theme.foreground, 0.12)
         }
+        Icon {
+            id: tick
+            objectName: entry.objectName + "Tick"
+            visible: entry.chosen
+            anchors.left: parent.left
+            anchors.leftMargin: 8
+            anchors.verticalCenter: parent.verticalCenter
+            name: "check"
+            size: 14
+            color: entry.highlighted ? Theme.brightForeground : Theme.accent
+        }
         Text {
             visible: !entry.separator
             anchors.left: parent.left
-            anchors.leftMargin: 12
+            anchors.leftMargin: entry.choice ? 28 : 12
             anchors.right: shortcutLabel.visible ? shortcutLabel.left
                            : submenuArrow.visible ? submenuArrow.left : parent.right
             anchors.rightMargin: shortcutLabel.visible || submenuArrow.visible ? 8 : 12
