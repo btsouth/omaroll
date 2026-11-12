@@ -1324,8 +1324,11 @@ ApplicationWindow {
     }
     function rebuildActionMenu() { root.rebuildMenu(actionMenu) }
 
+    // The action runs once the menu has closed: rename, move and copy open
+    // their own sheet or picker, which wait while the menu is up.
+    property string pendingMenuAction: ""
     function performMenuAction(id) {
-        root.perform(id)
+        root.pendingMenuAction = id
         actionMenu.close()
     }
 
@@ -2850,7 +2853,12 @@ ApplicationWindow {
         readonly property var entries: root.menuEntries()
         onRowsChanged: root.rebuildMenu(actionMenu)
         Component.onCompleted: root.rebuildMenu(actionMenu)
-        onClosed: if (!shortcutHelp.visible) keys.forceActiveFocus()
+        onClosed: {
+            if (!shortcutHelp.visible) keys.forceActiveFocus()
+            const id = root.pendingMenuAction
+            root.pendingMenuAction = ""
+            if (id !== "") root.perform(id)
+        }
         // The row that opens a submenu.
         delegate: ViewerMenuItem {}
     }

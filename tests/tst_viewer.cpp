@@ -6498,6 +6498,22 @@ private slots:
 
   // N renames in place with the library's sheet: the file stays on screen
   // under its new name and keeps its favourite. A taken name is refused.
+  // Menu rows that open a sheet or picker run once the menu is gone, so
+  // Rename, Move to folder and Copy to folder open from the menu too.
+  void menuActionsThatOpenASheetRunAfterTheMenuCloses() {
+    open({media(QStringLiteral("Shot 1.jpg"))});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("viewerMenu"));
+    QQuickItem* sheet = item(QStringLiteral("viewerRenameSheet"));
+    QTest::mouseClick(m_window, Qt::RightButton, Qt::NoModifier, QPoint(m_window->width() / 2, m_window->height() / 2));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QVERIFY(QMetaObject::invokeMethod(m_window, "performMenuAction", Q_ARG(QVariant, QStringLiteral("rename"))));
+    QTRY_VERIFY(!menu->property("visible").toBool());
+    QTRY_VERIFY(sheet->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!sheet->isVisible());
+  }
+
   void renameKeepsTheFileOpenAndRefusesATakenName() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
