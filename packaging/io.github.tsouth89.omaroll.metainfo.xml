@@ -55,16 +55,17 @@
     </screenshot>
   </screenshots>
   <releases>
-    <release version="1.19.0" date="2026-11-09">
+    <release version="1.19.0" date="2026-11-12">
       <description>
-        <p>A redesigned library and viewer, sections by date, and clear help when something goes wrong.</p>
+        <p>A redesigned library and viewer, sections by date, tags and ratings from other photo tools, and clear help when something goes wrong.</p>
         <ul>
           <li>Date sections, file-manager selection, combined filters and search fields such as tag:, camera: and in:</li>
+          <li>Sort, rename, move and copy in the viewer, frame stepping for GIF and WebP, and where a photo was taken</li>
+          <li>Keywords, ratings and captions from XMP, IPTC and .xmp sidecars from darktable, Lightroom or digiKam</li>
+          <li>Duplicates and similar pictures reviewed in sets, Find similar, and Did you mean when a search finds nothing</li>
           <li>Seek-bar previews, HDR details, Open in mpv at the current position and --start for videos</li>
-          <li>Undo for Trash, automatic backups of your organization and Save rotated copy in the viewer</li>
-          <li>Settings in sections, shortcut help on ? and F1, and Copy diagnostics in About</li>
-          <li>omaroll --set-default and --unset-default, Hyprland window rules and a man page</li>
-          <li>Faster first frames and grids, and about half the CPU for 4K playback</li>
+          <li>Undo for Trash, automatic backups of your organization, and settings in sections with shortcut help on ? and F1</li>
+          <li>omaroll --set-default, Hyprland window rules, and about half the CPU for 4K playback</li>
         </ul>
       </description>
     </release>

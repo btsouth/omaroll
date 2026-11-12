@@ -17,7 +17,7 @@ body:
     attributes:
       label: Omaroll version
       description: Skip this if you pasted diagnostics. `omaroll --version` prints it.
-      placeholder: 1.18.0
+      placeholder: 1.19.0
   - type: input
     id: system
     attributes:

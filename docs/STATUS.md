@@ -2,14 +2,23 @@
 
 ## Latest release
 
-[Omaroll 1.18.0](https://github.com/btsouth/omaroll/releases/tag/v1.18.0), dated
-15 October 2026. See the [changelog](../CHANGELOG.md#1180) for what it includes.
+[Omaroll 1.19.0](https://github.com/btsouth/omaroll/releases/tag/v1.19.0), dated
+12 November 2026. See the [changelog](../CHANGELOG.md#1190) for what it includes.
 
 The release provides x86_64 and aarch64 Arch packages, a source archive and
 PKGBUILD, with checksums and signed build provenance. Installation and
 verification commands are in the [README](../README.md#install-or-update).
 
 ## Current work
+
+Version 1.19.0 redesigns the library and viewer: date sections, file-manager
+selection, search fields and combined filters, sort, rename, move and copy in
+the viewer, undo for Trash and automatic backups of your organization. It reads
+keywords, ratings and captions from XMP, IPTC and `.xmp` sidecars without
+writing them, reviews duplicates and similar pictures in sets, and uses about
+half the CPU it did for 4K playback with hardware decoding. It was built and
+tested in CI and in local containers, including the sanitizer build and the
+OpenGL renders.
 
 Version 1.18.0 adds frame stepping, names audio and subtitle tracks by their
 language, and brings deep zoom for very large JPEGs to the library's preview

@@ -90,10 +90,10 @@ hand, run the same command to start getting updates.
 To install one release without adding the repository:
 
 ```bash
-curl -fLO https://github.com/btsouth/omaroll/releases/download/v1.18.0/omaroll-1.18.0-1-x86_64.pkg.tar.zst \
-     -fLO https://github.com/btsouth/omaroll/releases/download/v1.18.0/SHA256SUMS
+curl -fLO https://github.com/btsouth/omaroll/releases/download/v1.19.0/omaroll-1.19.0-1-x86_64.pkg.tar.zst \
+     -fLO https://github.com/btsouth/omaroll/releases/download/v1.19.0/SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
-sudo pacman -U ./omaroll-1.18.0-1-x86_64.pkg.tar.zst
+sudo pacman -U ./omaroll-1.19.0-1-x86_64.pkg.tar.zst
 ```
 
 On ARM, replace `x86_64` with `aarch64` in the package name.
@@ -111,7 +111,7 @@ source build, see [Development](#development).
 The release includes build provenance. To verify the package with GitHub CLI:
 
 ```bash
-gh attestation verify omaroll-1.18.0-1-x86_64.pkg.tar.zst --repo btsouth/omaroll
+gh attestation verify omaroll-1.19.0-1-x86_64.pkg.tar.zst --repo btsouth/omaroll
 ```
 
 ## Open files
