@@ -7,6 +7,7 @@
 #include "actions/OpenWithRequest.h"
 #include "app/VideoPlayback.h"
 #include "edit/ClipboardText.h"
+#include "library/EmbeddedMetadata.h"
 #include "sources/CameraRaw.h"
 #include "sources/CaptureScanner.h"
 #include "sources/FileVersion.h"
@@ -697,6 +698,24 @@ QVariantMap trashWithSidecars(const QString& path, const QStringList& sidecars, 
 }
 } // namespace
 
+void ActionLauncher::findSidecarLater(const QString& path) {
+  if (path.isEmpty()) return;
+  QtConcurrent::run([path] { return EmbeddedMetadata::findSidecar(path); })
+      .then(this, [this, path](const QString& sidecar) { noteSidecar(path, sidecar); });
+}
+
+void ActionLauncher::noteSidecar(const QString& path, const QString& sidecar) {
+  if (path.isEmpty()) return;
+  m_knownSidecarOrder.removeOne(path);
+  if (sidecar.isEmpty()) {
+    m_knownSidecars.remove(path);
+    return;
+  }
+  m_knownSidecars.insert(path, sidecar);
+  m_knownSidecarOrder.append(path);
+  while (m_knownSidecarOrder.size() > 32) m_knownSidecars.remove(m_knownSidecarOrder.takeFirst());
+}
+
 QStringList ActionLauncher::sidecarFiles(const QString& path) const {
   const QFileInfo info(path);
   const QString name = info.fileName();
@@ -716,6 +735,7 @@ QStringList ActionLauncher::sidecarFiles(const QString& path) const {
   if (m_sidecarLookup) {
     if (const QString recorded = m_sidecarLookup(path); !recorded.isEmpty()) take(recorded);
   }
+  if (const QString noted = m_knownSidecars.value(path); !noted.isEmpty()) take(noted);
   take(folder + name + u".xmp"_s);
   take(folder + name + u".XMP"_s);
   if (CameraRaw::isRaw(info.suffix())) {
@@ -949,7 +969,7 @@ QVariantMap ActionLauncher::checkTransfer(const QVariantMap& target, const QStri
 }
 
 QVariantMap ActionLauncher::transferCapturedFile(const QVariantMap& target, const QString& folder,
-                                                 bool copy) {
+                                                 bool copy, const QStringList& sidecars) {
   const QVariantMap checked = checkTransfer(target, folder, copy);
   if (!checked.value(u"ok"_s).toBool()) return checked;
   const auto failure = [](const QString& message) {
@@ -975,12 +995,38 @@ QVariantMap ActionLauncher::transferCapturedFile(const QVariantMap& target, cons
       if (QFileInfo(path).exists() || QFileInfo(path).isSymLink()) continue; // taken just now
       return failure(copy ? u"Could not copy this file there"_s : u"Could not move this file there"_s);
     }
+    // Its sidecars follow under the name the file took: "<name>.<ext>.xmp"
+    // the file name, "<name>.xmp" the base name. One that cannot go stays
+    // where it is; the file has already moved and is not put back for it.
+    int carried = 0;
+    QString stayed;
+    for (const QString& sidecar : sidecars) {
+      const QString sidecarName = QFileInfo(sidecar).fileName();
+      const bool fullName = sidecarName.chopped(4).compare(source.fileName(), Qt::CaseInsensitive) == 0;
+      const QString stem = fullName ? fileName : QFileInfo(fileName).completeBaseName();
+      const QString destination = directory.filePath(stem + sidecarName.right(4));
+      const QFileInfo existing(destination);
+      bool moved = false;
+      if (!existing.exists() && !existing.isSymLink()) {
+        moved = copy ? exclusiveCopy(sidecar, destination, true) : relocateEntry(sidecar, destination);
+      }
+      if (moved) {
+        ++carried;
+      } else if (stayed.isEmpty()) {
+        const QString verb = copy ? u"was not copied"_s : u"stayed"_s;
+        stayed = existing.exists() || existing.isSymLink()
+                     ? u"Its sidecar %1 because %2 is already there"_s.arg(verb, existing.fileName())
+                     : u"Its sidecar %1: could not %2 it"_s.arg(verb, copy ? u"copy"_s : u"move"_s);
+      }
+    }
     return {{u"ok"_s, true},
             {u"path"_s, path},
             {u"fileName"_s, fileName},
             {u"folder"_s, directory.absolutePath()},
             {u"mediaPath"_s, QFileInfo(path).canonicalFilePath()},
-            {u"renamed"_s, attempt > 1}};
+            {u"renamed"_s, attempt > 1},
+            {u"sidecars"_s, carried},
+            {u"sidecarNote"_s, stayed}};
   }
   return failure(u"Too many files with that name are already there"_s);
 }
@@ -1007,9 +1053,10 @@ QVariantMap ActionLauncher::startTransfer(const QVariantMap& target, const QStri
     emit transferringChanged();
     emit transferFinished(job, result);
   });
-  // A large file on a slow or network disk takes a while; the window stays live.
-  watcher->setFuture(QtConcurrent::run([target, folder, copy] {
-    return transferCapturedFile(target, folder, copy);
+  // A large file on a slow or network disk takes a while; the window stays
+  // live. Its sidecars are found here, without listing the folder.
+  watcher->setFuture(QtConcurrent::run([target, folder, copy, sidecars = sidecarFiles(source)] {
+    return transferCapturedFile(target, folder, copy, sidecars);
   }));
   return {{u"ok"_s, true}, {u"job"_s, job}};
 }

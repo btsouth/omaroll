@@ -77,6 +77,14 @@ public:
   void insertEmbeddedForTesting(const QString& path, const EmbeddedMetadata::Fields& fields);
   void saveCachesForTesting() { m_cacheDirty = true; m_embeddedDirty = true; saveCache(); }
   [[nodiscard]] int embeddedCacheSize() const { return static_cast<int>(m_embedded.size()); }
+  // A read that finished for |path| and waits for the next delivery, then
+  // the sync a scan starts.
+  void adoptEmbeddedForTesting(const QString& path, const EmbeddedMetadata::Fields& fields) {
+    Candidate candidate;
+    candidate.path = path;
+    adoptEmbedded(candidate, fields);
+  }
+  void syncForTesting() { sync(); }
   // Marks one cached file as the cap trims it on disk.
   void markEmbeddedPartialForTesting(const QString& path) {
     if (const auto it = m_embedded.find(path); it != m_embedded.end()) {

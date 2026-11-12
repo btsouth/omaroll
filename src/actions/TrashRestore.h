@@ -24,13 +24,17 @@ struct Result {
   // Refused for a reason the user can fix (the name is taken, the folder is
   // gone), so the undo is worth offering again.
   bool retryable = false;
+  // The file came back but one of its sidecars did not, and stays in the
+  // Trash: "its sidecar stayed in Trash because <name> exists".
+  QString sidecarNote;
 };
 
 // Puts a file recorded by moveToTrash back where it was, and removes its
 // .trashinfo. Refuses, leaving everything as it is, when the trashed file is
 // gone or is a different file, or when something now occupies the original
 // path. Records under "sidecars" (an .xmp trashed with its file) are put
-// back too once the file is.
+// back too once the file is; one that cannot be stays in the Trash and is
+// named in sidecarNote.
 [[nodiscard]] Result restore(const QVariantMap& record);
 
 } // namespace TrashRestore

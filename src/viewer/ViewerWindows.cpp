@@ -1,5 +1,7 @@
 #include "viewer/ViewerWindows.h"
 
+#include "actions/ActionLauncher.h"
+
 #include "library/MediaInspector.h"
 #include "app/AppSettings.h"
 #include "subtitles/SubtitleIndex.h"
@@ -35,6 +37,13 @@ struct ViewerWindows::Viewer {
       QObject::connect(settings, &AppSettings::readEmbeddedMetadataChanged, &mediaInfo,
                        [this, settings] { mediaInfo.setReadEmbedded(settings->readEmbeddedMetadata()); });
       QObject::connect(&mediaInfo, &MediaInspector::embeddedRead, settings, &AppSettings::noteEmbeddedRead);
+    }
+    // A file opened from the file manager has no scan behind it: its sidecar
+    // is found on a worker as it is shown, for Rename, Trash and Move.
+    if (auto* actions = qobject_cast<ActionLauncher*>(
+            engine.rootContext()->contextProperty(QStringLiteral("Actions")).value<QObject*>())) {
+      QObject::connect(&session, &ViewerSession::deletionPathChanged, actions,
+                       [this, actions] { actions->findSidecarLater(session.deletionPath()); });
     }
     context.setContextProperty(QStringLiteral("Session"), &session);
     context.setContextProperty(QStringLiteral("MediaInfo"), &mediaInfo);

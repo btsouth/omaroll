@@ -161,9 +161,17 @@ Result restore(const QVariantMap& record) {
   // file manager's Trash.
   QFile::remove(trashRoot + u"/info/"_s + trashName + u".trashinfo"_s);
   // Its .xmp sidecars went to the Trash with it and come back with it. One
-  // that cannot is left in the Trash.
-  for (const QVariant& sidecar : record.value(u"sidecars"_s).toList()) (void)restore(sidecar.toMap());
-  return {true, {}};
+  // that cannot is left in the Trash, and the result says so.
+  Result result{true, {}};
+  for (const QVariant& value : record.value(u"sidecars"_s).toList()) {
+    const QVariantMap sidecar = value.toMap();
+    if (restore(sidecar).ok || !result.sidecarNote.isEmpty()) continue;
+    const QFileInfo taken(sidecar.value(u"path"_s).toString());
+    result.sidecarNote = taken.exists() || taken.isSymLink()
+                             ? u"its sidecar stayed in Trash because %1 exists"_s.arg(taken.fileName())
+                             : u"its sidecar could not be restored and is still in the Trash"_s;
+  }
+  return result;
 }
 
 } // namespace TrashRestore

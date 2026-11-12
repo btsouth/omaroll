@@ -1107,7 +1107,9 @@ ApplicationWindow {
             return
         }
         const where = root.fileNameOf(result.folder) || result.folder
-        const named = result.renamed ? " as " + result.fileName : ""
+        // A sidecar that could not follow is said after the file's own line.
+        const named = (result.renamed ? " as " + result.fileName : "")
+                + (result.sidecarNote ? ". " + result.sidecarNote : "")
         if (result.copy) {
             root.say("Copied to " + where + named)
             return

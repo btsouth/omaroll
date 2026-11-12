@@ -16829,6 +16829,18 @@ private slots:
     QCOMPARE(launcher.sidecarCount(shot), 1);
     QCOMPARE(launcher.sidecarCount(solo), 0);
     QCOMPARE(launcher.sidecarCount(pairJpeg), 0);
+    // A file no scan has seen, as in a viewer opened from the file manager,
+    // gets its sidecar from a worker.
+    {
+      ActionLauncher viewerOnly;
+      QCOMPARE(viewerOnly.sidecarCount(solo), 0);
+      viewerOnly.findSidecarLater(solo);
+      QTRY_COMPARE(viewerOnly.sidecarCount(solo), 1);
+      viewerOnly.findSidecarLater(pairJpeg);
+      viewerOnly.findSidecarLater(shot);
+      QTRY_COMPARE(viewerOnly.sidecarCount(shot), 1);
+      QCOMPARE(viewerOnly.sidecarCount(pairJpeg), 0);
+    }
     // The library hands over what its scan recorded, by the scanner's rule.
     launcher.setSidecarLookup([](const QString& path) { return EmbeddedMetadata::findSidecar(path); });
     QCOMPARE(launcher.sidecarCount(shot), 1);
@@ -16875,6 +16887,111 @@ private slots:
     settings.undo();
     QVERIFY(QFileInfo::exists(moved));
     QCOMPARE(fileHash(moved + QStringLiteral(".xmp")), sidecarHash);
+
+    // A sidecar whose name was taken meanwhile stays in the Trash, and the
+    // undo says so rather than claiming a full restore.
+    const QVariantMap again = launcher.trashCaptured(launcher.captureFileAction(moved, {}));
+    QCOMPARE(again.value(QStringLiteral("sidecars")).toList().size(), 1);
+    writeSmallFile(moved + QStringLiteral(".xmp"), "someone else's");
+    QVERIFY(settings.pushTrashUndo({again}) > 0);
+    QCOMPARE(settings.undo(),
+             QStringLiteral("Restored renamed.png; its sidecar stayed in Trash because renamed.png.xmp exists"));
+    QVERIFY(QFileInfo::exists(moved));
+    QCOMPARE(fileHash(moved + QStringLiteral(".xmp")), QCryptographicHash::hash("someone else's", QCryptographicHash::Sha256));
+    QVERIFY(QFileInfo::exists(again.value(QStringLiteral("sidecars")).toList().first().toMap()
+                                  .value(QStringLiteral("trashPath")).toString()));
+  }
+
+  void movingAndCopyingToAFolderTakeTheSidecar() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString from = dir.filePath(QStringLiteral("from"));
+    const QString to = dir.filePath(QStringLiteral("to"));
+    QVERIFY(QDir().mkpath(from) && QDir().mkpath(to));
+    const QByteArray packet = sidecarPacket(QStringLiteral("x"), 1, {});
+    QImage image(4, 4, QImage::Format_RGB32);
+    image.fill(Qt::red);
+    ActionLauncher launcher;
+    const auto transfer = [&](const QString& path, bool copy) {
+      QVariantMap target = launcher.captureFileAction(path, {});
+      return ActionLauncher::transferCapturedFile(target, to, copy, launcher.sidecarFiles(path));
+    };
+
+    // Moved with its file, and renamed with it when the file takes "(2)".
+    const QString shot = from + QStringLiteral("/shot.png");
+    QVERIFY(image.save(shot, "PNG"));
+    writeSmallFile(shot + QStringLiteral(".xmp"), packet);
+    QVERIFY(image.save(to + QStringLiteral("/shot.png"), "PNG"));
+    QVariantMap result = transfer(shot, false);
+    QVERIFY(result.value(QStringLiteral("ok")).toBool());
+    QCOMPARE(result.value(QStringLiteral("fileName")).toString(), QStringLiteral("shot (2).png"));
+    QCOMPARE(result.value(QStringLiteral("sidecars")).toInt(), 1);
+    QVERIFY(result.value(QStringLiteral("sidecarNote")).toString().isEmpty());
+    QVERIFY(QFileInfo::exists(to + QStringLiteral("/shot (2).png.xmp")));
+    QVERIFY(!QFileInfo::exists(shot + QStringLiteral(".xmp")));
+
+    // A sidecar whose name is taken there stays; the file moves anyway.
+    const QString kept = from + QStringLiteral("/kept.png");
+    QVERIFY(image.save(kept, "PNG"));
+    writeSmallFile(kept + QStringLiteral(".xmp"), packet);
+    writeSmallFile(to + QStringLiteral("/kept.png.xmp"), "theirs");
+    result = transfer(kept, false);
+    QVERIFY(result.value(QStringLiteral("ok")).toBool());
+    QVERIFY(QFileInfo::exists(to + QStringLiteral("/kept.png")));
+    QCOMPARE(result.value(QStringLiteral("sidecars")).toInt(), 0);
+    QCOMPARE(result.value(QStringLiteral("sidecarNote")).toString(),
+             QStringLiteral("Its sidecar stayed because kept.png.xmp is already there"));
+    QVERIFY(QFileInfo::exists(kept + QStringLiteral(".xmp")));
+    QCOMPARE(fileHash(to + QStringLiteral("/kept.png.xmp")), QCryptographicHash::hash("theirs", QCryptographicHash::Sha256));
+
+    // A copy copies it, and leaves the original where it was.
+    const QString copied = from + QStringLiteral("/copied.png");
+    QVERIFY(image.save(copied, "PNG"));
+    writeSmallFile(copied + QStringLiteral(".xmp"), packet);
+    result = transfer(copied, true);
+    QVERIFY(result.value(QStringLiteral("ok")).toBool());
+    QCOMPARE(result.value(QStringLiteral("sidecars")).toInt(), 1);
+    QCOMPARE(fileHash(to + QStringLiteral("/copied.png.xmp")), fileHash(copied + QStringLiteral(".xmp")));
+
+    // A raw's Lightroom sidecar follows the base name.
+    if (CameraRaw::isRaw(QStringLiteral("cr2"))) {
+      const QString raw = from + QStringLiteral("/IMG_7.CR2");
+      writeSmallFile(raw, QByteArray(64, 'r'));
+      writeSmallFile(from + QStringLiteral("/IMG_7.xmp"), packet);
+      writeSmallFile(to + QStringLiteral("/IMG_7.CR2"), QByteArray(64, 'o'));
+      result = transfer(raw, false);
+      QVERIFY(result.value(QStringLiteral("ok")).toBool());
+      QCOMPARE(result.value(QStringLiteral("sidecars")).toInt(), 1);
+      QVERIFY(QFileInfo::exists(to + QStringLiteral("/IMG_7 (2).xmp")));
+    }
+  }
+
+  void readsForFilesThatLeftAreNotDelivered() {
+    MetadataSandbox sandbox("records \"$@\"\nprintf 'image\\n' >> \"$OMAROLL_METADATA_LOG\"\n");
+    QVERIFY(sandbox.valid());
+    QTemporaryDir profileDir;
+    QVERIFY(profileDir.isValid());
+    const auto profile = scratchProfile(profileDir);
+    const QStringList paths = sandbox.addImages(2);
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QTRY_COMPARE_WITH_TIMEOUT(model.rowCount(), paths.size(), 5000);
+    MediaMetadataIndex index(&model);
+    QTRY_VERIFY_WITH_TIMEOUT(!index.indexing(), 5000);
+    // Two reads finished and wait for delivery; one file is no longer in the
+    // library when the scan's sync runs.
+    EmbeddedMetadata::Fields ghost;
+    ghost.keywords = {QStringLiteral("Ghost")};
+    ghost.rating = 5;
+    EmbeddedMetadata::Fields here;
+    here.keywords = {QStringLiteral("Here")};
+    index.adoptEmbeddedForTesting(paths.at(0) + QStringLiteral(".gone.png"), ghost);
+    index.adoptEmbeddedForTesting(paths.at(1), here);
+    index.syncForTesting();
+    QVERIFY(!settings.tagNames().contains(QStringLiteral("Ghost")));
+    QCOMPARE(settings.rating(paths.at(0) + QStringLiteral(".gone.png")), 0);
+    QCOMPARE(settings.tagsForPath(paths.at(1)), QStringList{QStringLiteral("Here")});
   }
 
 private:

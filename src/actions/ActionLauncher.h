@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QObject>
 #include <QDBusConnection>
 #include <QSet>
@@ -77,15 +78,18 @@ public:
   // own name or the first free "name (2).ext" when that is taken. Never
   // overwrites. {ok: true, job} once started, then transferFinished(job,
   // result) with {ok, path, fileName, folder, mediaPath, renamed, copy,
-  // source, viewedPath} or {ok: false, error}. A refusal that needs no work
-  // (folder gone, file changed, already being moved) is {ok: false, error}
-  // at once.
+  // source, viewedPath, sidecars, sidecarNote} or {ok: false, error}. A
+  // refusal that needs no work (folder gone, file changed, already being
+  // moved) is {ok: false, error} at once. The file's .xmp sidecars go with
+  // it, renamed with it; one whose name is taken there stays, the file goes
+  // anyway, and sidecarNote says so.
   Q_INVOKABLE QVariantMap startTransfer(const QVariantMap& target, const QString& folder, bool copy);
   // Every file a transfer is running for, by its captured path.
   Q_INVOKABLE [[nodiscard]] QStringList transferringPaths() const { return m_transferring.values(); }
-  // The transfer itself, on the calling thread.
+  // The transfer itself, on the calling thread, with the |sidecars| found
+  // on the window thread.
   [[nodiscard]] static QVariantMap transferCapturedFile(const QVariantMap& target, const QString& folder,
-                                                        bool copy);
+                                                        bool copy, const QStringList& sidecars = {});
   // The one place a file changes its path, for rename and move alike, so
   // whatever travels with a file travels the same way for both. Never
   // replaces an existing |to|: renameat2 without replacing, else a hard link,
@@ -138,6 +142,11 @@ public:
   void setSidecarLookup(std::function<QString(const QString&)> lookup) {
     m_sidecarLookup = std::move(lookup);
   }
+  // For a file the library has not scanned, such as one a viewer opened
+  // from the file manager: finds its sidecar on a worker, listing the folder
+  // there, and keeps it for sidecarFiles. The last few are kept.
+  void findSidecarLater(const QString& path);
+  void noteSidecar(const QString& path, const QString& sidecar);
 
   // Launch and forget. Names the package in the failure when the program is
   // absent, so the message says what to install.
@@ -255,4 +264,6 @@ private:
   // The wl-copy of the latest image copy, while it runs.
   QPointer<QProcess> m_copyProcess;
   std::function<QString(const QString&)> m_sidecarLookup;
+  QHash<QString, QString> m_knownSidecars;
+  QStringList m_knownSidecarOrder;
 };

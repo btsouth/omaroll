@@ -542,8 +542,11 @@ void MediaMetadataIndex::sync() {
   }
   if (!m_pendingUpdates.isEmpty() && !m_updateTimer.isActive()) m_updateTimer.start();
   if (embedded) {
-    // Values for files that left the library go, then the cached ones for
-    // what is here arrive in one batch.
+    // Values for files that left the library go, and so do reads still
+    // waiting for the next delivery, then the cached ones for what is here
+    // arrive in one batch. Startup seeding delivers on its own, before any
+    // scan, so it never waits here.
+    m_pendingEmbedded.removeIf([&live](const auto& pending) { return !live.contains(pending.key()); });
     m_model->settings()->retainEmbedded(live);
     flushEmbedded();
   }

@@ -3357,10 +3357,12 @@ QString AppSettings::undo() {
     QVariantList restored;
     QVariantList retry;
     QStringList problems;
+    QStringList sidecarNotes;
     for (const QVariant& value : std::as_const(step.trashed)) {
       const TrashRestore::Result result = TrashRestore::restore(value.toMap());
       if (result.ok) {
         restored.append(value);
+        if (!result.sidecarNote.isEmpty()) sidecarNotes.append(result.sidecarNote);
       } else {
         problems.append(result.message);
         if (result.retryable) retry.append(value);
@@ -3379,9 +3381,16 @@ QString AppSettings::undo() {
     if (!restored.isEmpty()) emit trashRestored(restored, step.origin.data());
     const qsizetype total = step.trashed.size();
     if (problems.isEmpty()) {
-      return total == 1 ? QStringLiteral("Restored %1").arg(QFileInfo(
-                              restored.first().toMap().value(QStringLiteral("path")).toString()).fileName())
-                        : QStringLiteral("Restored %1 items").arg(total);
+      // A file back without its sidecar is not a full restore.
+      const QString sidecars = sidecarNotes.isEmpty() ? QString()
+                               : total == 1          ? QStringLiteral("; ") + sidecarNotes.first()
+                               : sidecarNotes.size() == 1
+                                   ? QStringLiteral("; a sidecar stayed in Trash")
+                                   : QStringLiteral("; %1 sidecars stayed in Trash").arg(sidecarNotes.size());
+      return (total == 1 ? QStringLiteral("Restored %1").arg(QFileInfo(
+                               restored.first().toMap().value(QStringLiteral("path")).toString()).fileName())
+                         : QStringLiteral("Restored %1 items").arg(total)) +
+             sidecars;
     }
     if (total == 1) return problems.first();
     if (restored.isEmpty()) {
