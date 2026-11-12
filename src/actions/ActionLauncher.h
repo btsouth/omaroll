@@ -90,8 +90,11 @@ public:
   // whatever travels with a file travels the same way for both. Never
   // replaces an existing |to|: renameat2 without replacing, else a hard link,
   // else (another device, FUSE, gvfs) an exclusive copy and the original
-  // removed, keeping its permissions and modified time.
-  [[nodiscard]] static bool relocateEntry(const QString& from, const QString& to);
+  // removed, keeping its permissions and modified time. Without |allowCopy|
+  // (a rename in place, on the GUI thread) a mount that neither renames
+  // without replacing nor links gets a plain rename after a check instead.
+  [[nodiscard]] static bool relocateEntry(const QString& from, const QString& to,
+                                          bool allowCopy = true);
   // For tests: make relocateEntry take its later paths.
   enum RelocationFault {
     FaultCrossDevice = 1,  // rename says EXDEV

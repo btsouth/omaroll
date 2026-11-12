@@ -14765,6 +14765,36 @@ private slots:
   // Moving a file never replaces another, whichever way the filesystem lets
   // it move: renameat2, a hard link, or (another device, FUSE, gvfs) a copy
   // and the original removed, keeping a read-only file's mode and time.
+  // A rename in place on a mount without RENAME_NOREPLACE or hard links
+  // renames rather than copying on the GUI thread, and still refuses a
+  // taken name.
+  void renameInPlaceWithoutLinksRenamesInsteadOfCopying() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString from = dir.filePath(QStringLiteral("from.jpg"));
+    const QString to = dir.filePath(QStringLiteral("to.jpg"));
+    const QString taken = dir.filePath(QStringLiteral("taken.jpg"));
+    for (const QString& path : {from, taken}) {
+      QFile file(path);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write(path == from ? QByteArray("picture") : QByteArray("occupant"));
+    }
+    struct stat before {};
+    QVERIFY(::stat(QFile::encodeName(from).constData(), &before) == 0);
+    ActionLauncher::setRelocationFaultsForTesting(ActionLauncher::FaultNoReplace | ActionLauncher::FaultNoLink |
+                                                  ActionLauncher::FaultKeepOriginal);
+    const auto restore = qScopeGuard([] { ActionLauncher::setRelocationFaultsForTesting(0); });
+
+    QVERIFY(!ActionLauncher::relocateEntry(from, taken, false));
+    QCOMPARE(readBytes(taken), QByteArray("occupant"));
+    // FaultKeepOriginal would fail a copy; a rename does not remove anything.
+    QVERIFY(ActionLauncher::relocateEntry(from, to, false));
+    QVERIFY(!QFileInfo::exists(from));
+    struct stat after {};
+    QVERIFY(::stat(QFile::encodeName(to).constData(), &after) == 0);
+    QCOMPARE(after.st_ino, before.st_ino);
+  }
+
   void relocationNeverReplacesAndKeepsTheFileWhicheverWayItMoves_data() {
     QTest::addColumn<int>("faults");
     QTest::newRow("rename") << 0;

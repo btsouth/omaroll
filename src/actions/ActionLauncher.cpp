@@ -777,7 +777,9 @@ bool exclusiveCopy(const QString& from, const QString& to, bool keepTime) {
     written += chunk.size();
     if (chunk.isEmpty()) break;
   }
-  okay = okay && out.flush() && written == original.st_size;
+  // On the device before a move removes the original, which may be the
+  // only other copy (a USB drive pulled right after).
+  okay = okay && out.flush() && ::fsync(out.handle()) == 0 && written == original.st_size;
   out.close();
   okay = okay && QFileInfo(to).size() == original.st_size;
   if (okay) {
@@ -811,7 +813,7 @@ bool copyThenRemove(const QString& from, const QString& to) {
 
 void ActionLauncher::setRelocationFaultsForTesting(int faults) { relocationFaults.store(faults); }
 
-bool ActionLauncher::relocateEntry(const QString& from, const QString& to) {
+bool ActionLauncher::relocateEntry(const QString& from, const QString& to, bool allowCopy) {
   const QByteArray source = QFile::encodeName(from);
   const QByteArray target = QFile::encodeName(to);
   const int faults = relocationFaults.load();
@@ -840,6 +842,13 @@ bool ActionLauncher::relocateEntry(const QString& from, const QString& to) {
       linkError = errno;
     }
     if (linkError == EEXIST) return false;
+    if (!allowCopy) {
+      // A rename in the same folder: a copy here would hold the window for
+      // a large video. The gap between this check and the rename is the
+      // same one QFile::rename has.
+      if (QFileInfo::exists(to)) return false;
+      return ::rename(source.constData(), target.constData()) == 0;
+    }
     // Nor hard links (FUSE, gvfs): a copy that never replaces a file.
     return copyThenRemove(from, to);
   }
@@ -1136,7 +1145,7 @@ QVariantMap ActionLauncher::renameFile(const QString& path, const QString& baseN
   if (!captured.isEmpty() && !capturedFileMatches(captured)) {
     return failure(u"That file changed or disappeared. Open Rename again"_s);
   }
-  if (!relocateEntry(source.absoluteFilePath(), target)) {
+  if (!relocateEntry(source.absoluteFilePath(), target, false)) {
     return failure(u"Could not rename this file"_s);
   }
 

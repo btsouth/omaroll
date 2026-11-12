@@ -992,11 +992,20 @@ ApplicationWindow {
                  ? "Rated " + "★".repeat(stars) : "Rating cleared"))
     }
 
+    // A file a move or copy is running for keeps its name and place until
+    // the job ends, which is said.
+    function refuseWhileTransferring() {
+        if (root.transferringPaths.indexOf(Session.deletionPath) < 0) return false
+        root.say("That file is already being moved or copied")
+        return true
+    }
+
     function requestTrash() {
         if (Session.path === "") {
             return
         }
         if (confirm.visible || permanentConfirm.visible || editorChooser.visible) return
+        if (root.refuseWhileTransferring()) return
         // Bind the prompt to this file as it is now. A file swapped in under
         // the same name, or a symlink pointed elsewhere, while the prompt is
         // up is refused rather than trashed in its place.
@@ -1032,6 +1041,7 @@ ApplicationWindow {
     // under its new name, and its favourite, rating, albums and tags follow.
     function requestRename() {
         if (Session.path === "" || root.blockingActionOpen) return
+        if (root.refuseWhileTransferring()) return
         renameSheet.viewedPath = Session.path
         renameSheet.open(Session.deletionPath, root.fileNameOf(Session.deletionPath), Session.path)
     }
@@ -1050,10 +1060,7 @@ ApplicationWindow {
     // Trash.
     function requestTransfer(copy) {
         if (Session.path === "" || root.blockingActionOpen) return
-        if (root.transferringPaths.indexOf(Session.deletionPath) >= 0) {
-            root.say("That file is already being moved or copied")
-            return
-        }
+        if (root.refuseWhileTransferring()) return
         const target = Actions.captureFileAction(Session.deletionPath, Session.path)
         if (target.path === undefined) return
         target.viewedPath = Session.path
@@ -1127,6 +1134,7 @@ ApplicationWindow {
     function requestPermanentDelete() {
         if (Session.path === "" || confirm.visible || permanentConfirm.visible || actionMenu.visible
                 || editorChooser.visible) return
+        if (root.refuseWhileTransferring()) return
         const entry = Session.deletionPath
         const viewedPath = Session.path
         const target = Actions.capturePermanentDelete(entry, viewedPath)
