@@ -16366,7 +16366,14 @@ private slots:
     AppSettings::s_fingerprintReadPaths = nullptr;
     qInfo() << "PERF delete a keyword on" << kFiles << "files ms" << deleted << "then rename ms" << elapsed - deleted;
     QVERIFY(reads.isEmpty());
-    QVERIFY2(elapsed < 3000, qPrintable(QString::number(elapsed)));
+    // A quadratic walk takes far longer than either budget; the Debug ASan
+    // build runs this about fifteen times slower than Release.
+#if defined(__SANITIZE_ADDRESS__)
+    constexpr qint64 kBudgetMs = 15000;
+#else
+    constexpr qint64 kBudgetMs = 3000;
+#endif
+    QVERIFY2(elapsed < kBudgetMs, qPrintable(QString::number(elapsed)));
     QVERIFY(!settings.tagNames().contains(QStringLiteral("Holiday")));
     QCOMPARE(settings.tagItemCount(QStringLiteral("Coast/Sand")), kFiles);
     QCOMPARE(AppSettings::organizationSize(settings.organizationState()), 2 * kFiles + kFiles + 2);
