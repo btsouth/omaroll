@@ -17022,12 +17022,16 @@ private slots:
     QCOMPARE(result.value(QStringLiteral("sidecars")).toInt(), 1);
     QCOMPARE(fileHash(to + QStringLiteral("/copied.png.xmp")), fileHash(copied + QStringLiteral(".xmp")));
 
-    // A raw's Lightroom sidecar follows the base name.
+    // A raw's Lightroom sidecar follows the base name. Who owns "<name>.xmp"
+    // takes a folder listing, so it comes from the scan or, as here, a worker.
     if (CameraRaw::isRaw(QStringLiteral("cr2"))) {
       const QString raw = from + QStringLiteral("/IMG_7.CR2");
       writeSmallFile(raw, QByteArray(64, 'r'));
       writeSmallFile(from + QStringLiteral("/IMG_7.xmp"), packet);
       writeSmallFile(to + QStringLiteral("/IMG_7.CR2"), QByteArray(64, 'o'));
+      QCOMPARE(launcher.sidecarCount(raw), 0);
+      launcher.findSidecarLater(raw);
+      QTRY_COMPARE(launcher.sidecarCount(raw), 1);
       result = transfer(raw, false);
       QVERIFY(result.value(QStringLiteral("ok")).toBool());
       QCOMPARE(result.value(QStringLiteral("sidecars")).toInt(), 1);
