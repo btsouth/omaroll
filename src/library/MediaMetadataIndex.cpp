@@ -473,12 +473,16 @@ void MediaMetadataIndex::sync() {
         continue;
       }
 
-      Candidate candidate {record.path,      record.modified, record.bytes,
-                           record.isVideo(), record.device,   record.inode,
-                           record.isRaw()};
-      candidate.sidecar = record.sidecarPath;
-      candidate.sidecarModified = record.sidecarModified;
-      candidate.sidecarBytes = record.sidecarBytes;
+      Candidate candidate {.path = record.path,
+                           .modified = record.modified,
+                           .bytes = record.bytes,
+                           .video = record.isVideo(),
+                           .device = record.device,
+                           .inode = record.inode,
+                           .raw = record.isRaw(),
+                           .sidecar = record.sidecarPath,
+                           .sidecarModified = record.sidecarModified,
+                           .sidecarBytes = record.sidecarBytes};
 
       // Keywords, rating and description: read once per file and sidecar
       // version. A video has only its sidecar.

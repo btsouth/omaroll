@@ -3776,8 +3776,8 @@ void AppSettings::scheduleFingerprints() {
   }
   if (running || batch.isEmpty()) return;
   if (!m_fingerprintWatcher) {
-    m_fingerprintWatcher = new QFutureWatcher<QList<std::pair<QString, QString>>>(this);
-    connect(m_fingerprintWatcher, &QFutureWatcher<QList<std::pair<QString, QString>>>::finished, this, [this] {
+    m_fingerprintWatcher = new QFutureWatcher<QList<std::pair<QString, QByteArray>>>(this);
+    connect(m_fingerprintWatcher, &QFutureWatcher<QList<std::pair<QString, QByteArray>>>::finished, this, [this] {
       for (const auto& [identity, fingerprint] : m_fingerprintWatcher->result())
         m_fingerprints.insert(identity, fingerprint);
       // Fills the rows from what was read, and starts the next batch.
@@ -3787,13 +3787,13 @@ void AppSettings::scheduleFingerprints() {
   // The worker reads only its own copies. Only a file that still has the
   // identity its row was written with gives the row its fingerprint.
   m_fingerprintWatcher->setFuture(QtConcurrent::run([batch] {
-    QList<std::pair<QString, QString>> read;
+    QList<std::pair<QString, QByteArray>> read;
     read.reserve(batch.size());
     for (const AlbumEntry& entry : batch) {
       const AlbumEntry current = identityFor(entry.path);
       const bool same = current.resolved && current.bytes == entry.bytes && current.modified == entry.modified &&
                         current.device == entry.device && current.inode == entry.inode;
-      read.append({fingerprintIdentity(entry), same ? current.fingerprint : QString()});
+      read.append({fingerprintIdentity(entry), same ? current.fingerprint : QByteArray()});
     }
     return read;
   }));

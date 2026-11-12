@@ -749,12 +749,12 @@ private:
   // Fills in the content fingerprint of rows written from the scanner's
   // identity, on a worker, a batch at a time.
   // The worker answers with {identity, fingerprint} pairs.
-  QFutureWatcher<QList<std::pair<QString, QString>>>* m_fingerprintWatcher = nullptr;
+  QFutureWatcher<QList<std::pair<QString, QByteArray>>>* m_fingerprintWatcher = nullptr;
   // What the worker read, by path and identity: the fingerprint, or empty
   // when the file had changed. A row written again for the same identity, or
   // put back by undo, takes it without another read, and a file that changed
   // is not read again on every pass.
-  QHash<QString, QString> m_fingerprints;
+  QHash<QString, QByteArray> m_fingerprints;
 
   [[nodiscard]] const EmbeddedValues* embeddedFor(const QString& path) const;
   [[nodiscard]] QStringList effectiveKeywords(const QString& path, const QStringList& keywords) const;
