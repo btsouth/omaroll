@@ -132,10 +132,10 @@ public:
   }
   // Never lists the folder, since it runs on the window thread for every
   // confirmation and a folder can be huge or on a network share: the
-  // sidecar the scan recorded for the file, plus the exact names a sidecar
-  // takes ("<name>.<ext>.xmp", and "<name>.xmp" for a camera raw), checked
-  // by stat. A non-raw file's "<name>.xmp" counts only through the scan,
-  // which knows whether another file shares that base name.
+  // sidecar the scan recorded for the file, or that findSidecarLater found,
+  // plus "<name>.<ext>.xmp" checked by stat. "<name>.xmp" counts only
+  // through those two, which know whether another file shares that base
+  // name and so owns it too.
   [[nodiscard]] QStringList sidecarFiles(const QString& path) const;
   // The scan's sidecar for a library file, empty for none or for a file
   // outside the library. Set by the library window; window thread only.

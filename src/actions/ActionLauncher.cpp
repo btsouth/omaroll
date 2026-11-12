@@ -738,11 +738,6 @@ QStringList ActionLauncher::sidecarFiles(const QString& path) const {
   if (const QString noted = m_knownSidecars.value(path); !noted.isEmpty()) take(noted);
   take(folder + name + u".xmp"_s);
   take(folder + name + u".XMP"_s);
-  if (CameraRaw::isRaw(info.suffix())) {
-    const QString base = info.completeBaseName();
-    take(folder + base + u".xmp"_s);
-    take(folder + base + u".XMP"_s);
-  }
   return found;
 }
 

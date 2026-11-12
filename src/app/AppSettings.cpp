@@ -1532,7 +1532,10 @@ bool AppSettings::addRows(QMap<QString, QList<AlbumEntry>>& rows, const QString&
   for (auto it = rows.cbegin(); it != rows.cend(); ++it) {
     if (TagNames::folded(it.key()) != folded) continue;
     key = it.key();
-    for (const AlbumEntry& entry : it.value()) present.insert(entry.path);
+    // A row that lost its file (replaced at the same path) no longer hides
+    // anything there, so it does not stop a row for the file there now.
+    for (const AlbumEntry& entry : it.value())
+      if (entry.resolved) present.insert(entry.path);
   }
   bool changed = false;
   QList<AlbumEntry>& target = rows[key];
@@ -3699,8 +3702,10 @@ void AppSettings::retainEmbedded(const QSet<QString>& livePaths) {
       continue;
     }
     const QString path = it.key();
-    const bool shownValue = !m_ratings.contains(path) && !m_captions.contains(path) &&
-                            (it->rating > 0 || !it->caption.isEmpty());
+    // Rating and caption are shown, and counted, each on its own.
+    const bool shownValue =
+        (it->rating > 0 && !m_ratings.contains(path) && !m_clearedRatings.contains(path)) ||
+        (!it->caption.isEmpty() && !m_captions.contains(path) && !m_clearedCaptions.contains(path));
     it = m_embedded.erase(it);
     tags = tags || m_embeddedEffective.contains(path);
     marks = marks || shownValue;

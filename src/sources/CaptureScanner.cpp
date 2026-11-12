@@ -412,6 +412,8 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots, const std::a
       // .xmp sidecars in this folder, from the same listing, so finding them
       // costs no extra syscalls. Matched to their media below.
       QHash<QString, QFileInfo> sidecars;
+      QHash<QString, int> baseNames;
+      QHash<QString, int> rawBaseNames;
       const qsizetype firstRecord = records.size();
 
       for (const QFileInfo& entry : entries) {
@@ -444,6 +446,13 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots, const std::a
         const bool document = isDocument(suffix);
         if (!image && !video && !document) {
           continue;
+        }
+        // Who could own "<name>.xmp", counted from the listing, so a file
+        // already brought in by another root still counts.
+        if (!explicitFile) {
+          const QString base = entry.completeBaseName().toLower();
+          ++baseNames[base];
+          if (image && CameraRaw::isRaw(suffix)) ++rawBaseNames[base];
         }
 
         // The directory is already canonical, so only a symlink needs the
@@ -517,19 +526,16 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots, const std::a
           }
         }
       } else if (!sidecars.isEmpty()) {
-        // "<name>.xmp" belongs to a raw, or to the only media file with that
-        // base name, so a RAW+JPEG pair's JPEG never takes the raw's sidecar.
-        QHash<QString, int> baseNames;
-        for (qsizetype at = firstRecord; at < records.size(); ++at) {
-          ++baseNames[QFileInfo(records.at(at).fileName).completeBaseName().toLower()];
-        }
+        // "<name>.xmp" belongs to the only raw with that base name, or to the
+        // only media file with it, so a RAW+JPEG pair's JPEG never takes the
+        // raw's sidecar and two raws never share one.
         QHash<QString, QString> names;
         for (auto it = sidecars.cbegin(); it != sidecars.cend(); ++it) names.insert(it.key(), it->fileName());
         for (qsizetype at = firstRecord; at < records.size(); ++at) {
           CaptureRecord& record = records[at];
           const QString base = QFileInfo(record.fileName).completeBaseName().toLower();
-          const QString sidecar = EmbeddedMetadata::sidecarName(record.fileName, record.raw,
-                                                                baseNames.value(base) > 1, names);
+          const int owners = (record.raw ? rawBaseNames : baseNames).value(base);
+          const QString sidecar = EmbeddedMetadata::sidecarName(record.fileName, record.raw, owners > 1, names);
           if (sidecar.isEmpty()) continue;
           const QFileInfo& info = sidecars[sidecar.toLower()];
           record.sidecarPath = directory + QLatin1Char('/') + sidecar;

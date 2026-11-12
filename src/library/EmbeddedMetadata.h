@@ -94,10 +94,11 @@ struct Packets {
 
 // The sidecar for |fileName| among the .xmp files in its folder, keyed by
 // their lowercased names. "<name>.<ext>.xmp" (darktable) first, then
-// "<name>.xmp" (Lightroom, digiKam), but that one only for a camera raw or
-// when no other media file in the folder shares the base name, so a
-// RAW+JPEG pair's JPEG never takes the raw's sidecar. Names match ignoring
-// case. Returns the sidecar's actual file name, or empty.
+// "<name>.xmp" (Lightroom, digiKam), but that one only when
+// |baseNameShared| is false: for a camera raw, no other raw shares the base
+// name; for anything else, no other media file does. So a RAW+JPEG pair's
+// JPEG never takes the raw's sidecar, and two raws never share one. Names
+// match ignoring case. Returns the sidecar's actual file name, or empty.
 [[nodiscard]] QString sidecarName(const QString& fileName, bool raw, bool baseNameShared,
                                   const QHash<QString, QString>& sidecarsByLowerName);
 

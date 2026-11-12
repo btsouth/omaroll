@@ -625,7 +625,10 @@ QString sidecarName(const QString& fileName, bool raw, bool baseNameShared,
   if (fileName.isEmpty() || isXmpName(fileName)) return {};
   const QString full = sidecarsByLowerName.value(fileName.toLower() + QStringLiteral(".xmp"));
   if (!full.isEmpty()) return full;
-  if (!raw && baseNameShared) return {};
+  // Shared means another file could own it: another raw for a raw (RAW+JPEG
+  // pairs give it to the raw), any other media file for anything else.
+  (void)raw;
+  if (baseNameShared) return {};
   const QString base = completeBaseName(fileName);
   if (base == fileName) return {};
   return sidecarsByLowerName.value(base.toLower() + QStringLiteral(".xmp"));
@@ -638,19 +641,23 @@ QString findSidecar(const QString& path) {
   const QDir dir = info.absoluteDir();
   const QStringList entries = dir.entryList(QDir::Files | QDir::Hidden | QDir::NoDotAndDotDot);
   const QString base = completeBaseName(fileName).toLower();
+  const bool raw = CameraRaw::isRaw(info.suffix());
   QHash<QString, QString> sidecars;
   bool shared = false;
   for (const QString& entry : entries) {
     if (isXmpName(entry)) {
       sidecars.insert(entry.toLower(), entry);
-    } else if (entry != fileName && completeBaseName(entry).toLower() == base &&
-               CaptureScanner::isSupported(QFileInfo(entry).suffix())) {
-      // Only another media file shares the base name, as the scanner sees it.
-      shared = true;
+    } else if (entry != fileName && completeBaseName(entry).toLower() == base) {
+      // Another owner, as the scanner counts them: another raw for a raw;
+      // for anything else any media file, and a file with no extension too,
+      // which the scanner may take for media by its content.
+      const QString suffix = QFileInfo(entry).suffix();
+      shared = shared || (raw ? CameraRaw::isRaw(suffix)
+                              : suffix.isEmpty() || CaptureScanner::isSupported(suffix));
     }
   }
   if (sidecars.isEmpty()) return {};
-  const QString name = sidecarName(fileName, CameraRaw::isRaw(info.suffix()), shared, sidecars);
+  const QString name = sidecarName(fileName, raw, shared, sidecars);
   return name.isEmpty() ? QString() : dir.absoluteFilePath(name);
 }
 

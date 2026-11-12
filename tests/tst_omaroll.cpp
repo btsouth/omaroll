@@ -11203,9 +11203,11 @@ private slots:
     QCOMPARE(EmbeddedMetadata::sidecarName(QStringLiteral("img_1.cr2"), true, true, darktable),
              QStringLiteral("IMG_1.CR2.xmp"));
     const QHash<QString, QString> lightroom = {{QStringLiteral("img_1.xmp"), QStringLiteral("IMG_1.XMP")}};
-    // Lightroom's "<name>.xmp" goes to the raw of a RAW+JPEG pair, never the JPEG.
-    QCOMPARE(EmbeddedMetadata::sidecarName(QStringLiteral("IMG_1.CR2"), true, true, lightroom),
+    // Lightroom's "<name>.xmp" goes to the raw of a RAW+JPEG pair (no other
+    // raw shares the name), never the JPEG, and to neither of two raws.
+    QCOMPARE(EmbeddedMetadata::sidecarName(QStringLiteral("IMG_1.CR2"), true, false, lightroom),
              QStringLiteral("IMG_1.XMP"));
+    QVERIFY(EmbeddedMetadata::sidecarName(QStringLiteral("IMG_1.CR2"), true, true, lightroom).isEmpty());
     QVERIFY(EmbeddedMetadata::sidecarName(QStringLiteral("IMG_1.JPG"), false, true, lightroom).isEmpty());
     QCOMPARE(EmbeddedMetadata::sidecarName(QStringLiteral("IMG_1.JPG"), false, false, lightroom),
              QStringLiteral("IMG_1.XMP"));
@@ -16370,6 +16372,51 @@ private slots:
     QCOMPARE(AppSettings::organizationSize(settings.organizationState()), 2 * kFiles + kFiles + 2);
   }
 
+  void aFileReplacedAtItsPathCanBeHiddenAgain() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("library"))));
+    const QString file = embeddedFixture(dir, QStringLiteral("library/shot.png"));
+    AppSettings settings;
+    settings.setEmbedded({embeddedUpdate(file, {QStringLiteral("Noise")}, 4)});
+    settings.removeTag(QStringLiteral("Noise"), {file});
+    settings.setRating({file}, 0);
+    settings.waitForFingerprints();
+    // Another file now at that path, with other bytes: the rows can't be
+    // sure it is theirs, so its keyword and rating show.
+    const QString replacement = dir.filePath(QStringLiteral("replacement.png"));
+    writeSmallFile(replacement, QByteArray(300, 'z'));
+    QVERIFY(QFile::remove(file));
+    QVERIFY(QFile::rename(replacement, file));
+    settings.reconcileTags(CaptureScanner::scan({{dir.filePath(QStringLiteral("library")), 1, CaptureRecord::Picture,
+                                                  CaptureRecord::Video}}));
+    settings.setEmbedded({embeddedUpdate(file, {QStringLiteral("Noise")}, 4)});
+    QCOMPARE(settings.tagsForPath(file), QStringList{QStringLiteral("Noise")});
+    QCOMPARE(settings.rating(file), 4);
+    // Hiding them again works, for the file there now.
+    settings.removeTag(QStringLiteral("Noise"), {file});
+    QVERIFY(settings.tagsForPath(file).isEmpty());
+    settings.setRating({file}, 0);
+    QCOMPARE(settings.rating(file), 0);
+  }
+
+  void aFileLeavingTheLibraryUpdatesCountsWithLocalMarks() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    const QString file = embeddedFixture(dir, QStringLiteral("shot.png"));
+    AppSettings settings;
+    // A local caption, and a rating only from the file.
+    settings.setCaption(file, QStringLiteral("Mine"));
+    settings.setEmbedded({embeddedUpdate(file, {}, 3)});
+    QCOMPARE(settings.ratedCount(), 1);
+    QSignalSpy marks(&settings, &AppSettings::marksChanged);
+    settings.retainEmbedded({});
+    QCOMPARE(settings.ratedCount(), 0);
+    QCOMPARE(marks.size(), 1);
+  }
+
   void clearedValuesGetFingerprintsThroughUndo() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -16773,7 +16820,13 @@ private slots:
       writeSmallFile(dir.filePath(QStringLiteral("IMG_1.CR2")), QByteArray(64, 'r'));
       QVERIFY(image.save(dir.filePath(QStringLiteral("IMG_1.JPG")), "JPG"));
       writeSmallFile(dir.filePath(QStringLiteral("IMG_1.xmp")), packet);
+      writeSmallFile(dir.filePath(QStringLiteral("IMG_2.CR2")), QByteArray(64, 'r'));
+      writeSmallFile(dir.filePath(QStringLiteral("IMG_2.NEF")), QByteArray(64, 'n'));
+      writeSmallFile(dir.filePath(QStringLiteral("IMG_2.xmp")), packet);
     }
+    QVERIFY(image.save(dir.filePath(QStringLiteral("loose.jpg")), "JPG"));
+    QVERIFY(image.save(dir.filePath(QStringLiteral("loose")), "PNG"));
+    writeSmallFile(dir.filePath(QStringLiteral("loose.xmp")), packet);
     const auto records = CaptureScanner::scan({{dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
     const auto sidecar = [&](const QString& name) {
       for (const CaptureRecord& record : records)
@@ -16797,7 +16850,23 @@ private slots:
       // The raw of a RAW+JPEG pair takes the Lightroom sidecar; the JPEG never does.
       QCOMPARE(sidecar(QStringLiteral("IMG_1.CR2")), QStringLiteral("IMG_1.xmp"));
       QCOMPARE(sidecar(QStringLiteral("IMG_1.JPG")), QString());
+      // Two raws with one base name: neither takes it, so renaming or
+      // trashing one never carries off the other's.
+      if (CameraRaw::isRaw(QStringLiteral("nef"))) {
+        QCOMPARE(sidecar(QStringLiteral("IMG_2.CR2")), QString());
+        QCOMPARE(sidecar(QStringLiteral("IMG_2.NEF")), QString());
+        QCOMPARE(EmbeddedMetadata::findSidecar(dir.filePath(QStringLiteral("IMG_2.CR2"))), QString());
+      }
+      // The raw scanned first as an opened file still counts in its folder.
+      const auto twice = CaptureScanner::scan({{dir.filePath(QStringLiteral("IMG_1.CR2")), 1, CaptureRecord::Picture,
+                                                CaptureRecord::Video},
+                                               {dir.path(), 1, CaptureRecord::Picture, CaptureRecord::Video}});
+      for (const CaptureRecord& record : twice) {
+        if (record.fileName == QStringLiteral("IMG_1.JPG")) QVERIFY(record.sidecarPath.isEmpty());
+      }
     }
+    // A picture with no extension shares the base name too.
+    QCOMPARE(EmbeddedMetadata::findSidecar(dir.filePath(QStringLiteral("loose.jpg"))), QString());
     // An explicitly opened file finds its sidecar too.
     const auto opened = CaptureScanner::scan({{dir.filePath(QStringLiteral("shot.png")), 1, CaptureRecord::Picture,
                                                CaptureRecord::Video}});
