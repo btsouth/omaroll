@@ -1,9 +1,9 @@
 import QtQuick
 import QtQuick.Controls.Basic
 
-// The library itself: a recycling grid, newest first. Date sorts and similar
-// sets show sections, laid out by ReviewSetsView; name, size and rating sorts
-// are one flat GridView.
+// The library itself: a recycling grid, newest first. Date sorts and review
+// sets (similar pictures, exact duplicates) show sections, laid out by
+// ReviewSetsView; name, size and rating sorts are one flat GridView.
 //
 // Both views recycle delegates, so the cost of scrolling is set by what is on
 // screen rather than by how large the library is.
@@ -41,8 +41,8 @@ FocusScope {
     property bool currentPicked: false
     // True while a re-sort happens with the flat grid at its top.
     property bool layoutAtTop: false
-    // Date sorts show a section per day or month, similar pictures one per
-    // set. The sections lay out Captures' own rows, so only for that model.
+    // Date sorts show a section per day or month, review sets one per set.
+    // The sections lay out Captures' own rows, so only for that model.
     readonly property var sectionModel: Captures.sectionRows
     readonly property bool sectioned: root.model === Captures && sectionModel.mode !== 0
     // The two smallest tile sizes group by month: a day header over every
@@ -404,6 +404,11 @@ FocusScope {
             // Shift+Delete belongs to the non-repeating permanent-delete
             // shortcut. A repeat rejected there must not turn into Trash.
             if (extending) {
+                event.accepted = true
+                return
+            }
+            // One press, one Trash: a held key must not trash a run of files.
+            if (event.isAutoRepeat) {
                 event.accepted = true
                 return
             }

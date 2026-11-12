@@ -29,7 +29,7 @@ The viewer opens when you double-click a picture or video, or run
 | `Space` · `K` | Play · pause a video or animation |
 | click a video | Play · pause |
 | `J` `L` · `↑` `↓` · `M` | Seek ten seconds · volume · mute |
-| `,` `.` | Step one frame back · forward, pausing first |
+| `,` `.` | Step one frame back · forward in a video, GIF or WebP, pausing first |
 | `[` `]` · `Backspace` · `C` | Speed · normal speed · cycle subtitles |
 | `Shift+L` | Loop video on or off; slideshows still advance |
 | `Shift+A` | Cycle audio tracks when more than one is available |
@@ -44,7 +44,8 @@ The viewer opens when you double-click a picture or video, or run
 | `?` · `F1` | Show or hide the grouped shortcut help |
 | `Y` · `S` · `A` | Copy · send · annotate |
 | `T` · `G` · `P` | Trim · save the current frame · open in mpv |
-| `Del` | Move to Trash, with confirm; Undo on the notice or `Ctrl+Z` puts it back |
+| `N` | Rename, keeping the extension; favourites, ratings, albums and tags follow |
+| `Del` | Move to Trash, with confirm unless **Move to Trash without asking** is on; Undo on the notice or `Ctrl+Z` puts it back |
 | `Shift+Del` | Delete permanently, with confirmation on by default |
 | right click · menu button | Everything else that suits the file, under View, Share and Edit |
 | `Enter` · grid button | Open the file in the library |
@@ -52,9 +53,20 @@ The viewer opens when you double-click a picture or video, or run
 
 In both image viewers, `1` goes to actual size from a custom zoom. Press it
 again at actual size to fit the image. The quick viewer menu's View submenu
-also offers Fit without enlarging, and Share has Copy file name. In a short
+also offers Fit without enlarging and a Sort submenu: name, date taken,
+date modified or size, and Reverse order, remembered for every folder (a
+selection of files keeps the order it was opened in). Date taken comes from
+a JPEG's or camera raw's EXIF, or a capture's timestamped name, and falls back
+to the modified time. Edit has Rename, Move to folder and Copy to folder; a
+name already in the chosen folder is never replaced, the file arrives as
+"name (2)" instead, and after a move the next file is shown. Share has Copy
+file name. Details shows where a picture or video was taken when the file
+records it, with Copy location for the decimal coordinates. In a short
 window the menu scrolls with the wheel or the arrow keys. Turn off **Enlarge small pictures to fit**
-in Settings to show small pictures at 100% when fitted.
+in Settings to show small pictures at 100% when fitted. Past 200% pixels
+are drawn as sharp squares rather than blended. Transparent parts of a
+picture show on a checkerboard in the theme's colours, in both viewers;
+Settings turns it off.
 
 Settings offers **Remember playback speed**, off by default. When enabled,
 the last speed chosen in the quick viewer applies to newly opened videos.

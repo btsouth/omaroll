@@ -17,8 +17,8 @@ class CaptureFilterModel;
 //
 // Sections follow the view's order: in a date sort, one per day, or one per
 // month when tiles are compact or the month's days hold less than half a row
-// each on average; while reviewing similar pictures, one per set. Other sorts
-// have no sections.
+// each on average; while reviewing similar pictures or exact duplicates, one
+// per set. Other sorts have no sections.
 //
 // Rows are rebuilt on the next event-loop turn after the library changes.
 // Rows are matched by section and place within it, so a capture added to or

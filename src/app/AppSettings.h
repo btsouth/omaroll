@@ -81,6 +81,9 @@ class AppSettings final : public QObject {
                  slideshowVideosChanged)
   Q_PROPERTY(bool confirmPermanentDelete READ confirmPermanentDelete WRITE setConfirmPermanentDelete NOTIFY
                  confirmPermanentDeleteChanged)
+  // Delete moves to Trash at once, with Undo, instead of asking first.
+  Q_PROPERTY(bool trashWithoutAsking READ trashWithoutAsking WRITE setTrashWithoutAsking NOTIFY
+                 trashWithoutAskingChanged)
   // Slideshow timing and order.
   Q_PROPERTY(int slideshowIntervalSeconds READ slideshowIntervalSeconds WRITE
                  setSlideshowIntervalSeconds NOTIFY slideshowIntervalSecondsChanged)
@@ -92,6 +95,13 @@ class AppSettings final : public QObject {
                  viewerFilmstripChanged)
   Q_PROPERTY(bool enlargeSmallPictures READ enlargeSmallPictures WRITE setEnlargeSmallPictures NOTIFY
                  enlargeSmallPicturesChanged)
+  // The quick viewer's folder order: "name", "taken", "modified" or "size".
+  Q_PROPERTY(QString viewerSort READ viewerSort WRITE setViewerSort NOTIFY viewerSortChanged)
+  Q_PROPERTY(bool viewerSortReversed READ viewerSortReversed WRITE setViewerSortReversed NOTIFY
+                 viewerSortReversedChanged)
+  // A checkerboard behind pictures with transparency, in both viewers.
+  Q_PROPERTY(bool transparencyCheckerboard READ transparencyCheckerboard WRITE
+                 setTransparencyCheckerboard NOTIFY transparencyCheckerboardChanged)
   // Video playback preferences, remembered across files and sessions.
   Q_PROPERTY(qreal videoVolume READ videoVolume WRITE setVideoVolume NOTIFY videoVolumeChanged)
   Q_PROPERTY(bool videoMuted READ videoMuted WRITE setVideoMuted NOTIFY videoMutedChanged)
@@ -236,6 +246,8 @@ public:
   void setSlideshowVideos(bool value);
   [[nodiscard]] bool confirmPermanentDelete() const { return m_confirmPermanentDelete; }
   void setConfirmPermanentDelete(bool value);
+  [[nodiscard]] bool trashWithoutAsking() const { return m_trashWithoutAsking; }
+  void setTrashWithoutAsking(bool value);
   [[nodiscard]] int slideshowIntervalSeconds() const { return m_slideshowIntervalSeconds; }
   void setSlideshowIntervalSeconds(int seconds);
   [[nodiscard]] bool slideshowShuffle() const { return m_slideshowShuffle; }
@@ -244,6 +256,12 @@ public:
   void setViewerFilmstrip(bool value);
   [[nodiscard]] bool enlargeSmallPictures() const { return m_enlargeSmallPictures; }
   void setEnlargeSmallPictures(bool value);
+  [[nodiscard]] QString viewerSort() const { return m_viewerSort; }
+  void setViewerSort(const QString& value);
+  [[nodiscard]] bool viewerSortReversed() const { return m_viewerSortReversed; }
+  void setViewerSortReversed(bool value);
+  [[nodiscard]] bool transparencyCheckerboard() const { return m_transparencyCheckerboard; }
+  void setTransparencyCheckerboard(bool value);
 
   // Where a video was last left, in milliseconds. Zero means no saved spot.
   // Entries are pruned so a long-lived library does not grow forever.
@@ -454,10 +472,14 @@ signals:
   void previewHeightChanged();
   void slideshowVideosChanged();
   void confirmPermanentDeleteChanged();
+  void trashWithoutAskingChanged();
   void slideshowIntervalSecondsChanged();
   void slideshowShuffleChanged();
   void viewerFilmstripChanged();
   void enlargeSmallPicturesChanged();
+  void viewerSortChanged();
+  void viewerSortReversedChanged();
+  void transparencyCheckerboardChanged();
   void videoVolumeChanged();
   void videoMutedChanged();
   void rememberPlaybackSpeedChanged();
@@ -686,6 +708,10 @@ private:
   bool m_slideshowShuffle = false;
   bool m_viewerFilmstrip = false;
   bool m_enlargeSmallPictures = true;
+  QString m_viewerSort = QStringLiteral("name");
+  bool m_viewerSortReversed = false;
+  bool m_transparencyCheckerboard = true;
+  bool m_trashWithoutAsking = false;
   qreal m_videoVolume = 0.8;
   bool m_videoMuted = false;
   bool m_rememberPlaybackSpeed = false;

@@ -8,6 +8,7 @@
 #include "sources/FileVersion.h"
 #include "sources/ThumbnailSource.h"
 #include "viewer/PictureDiagnosis.h"
+#include "viewer/ViewerSort.h"
 #include "sources/DecodeJournal.h"
 #include "sources/PinnedImageReader.h"
 
@@ -371,6 +372,21 @@ void ViewerSession::setPairRawJpeg(bool value) {
   emit pairRawJpegChanged();
 }
 
+void ViewerSession::setSortOrder(const QString& order) {
+  if (!ViewerSort::isKnown(order) || m_sortOrder == order) return;
+  m_sortOrder = order;
+  emit sortChanged();
+  // Relisted in the new order; the file on screen stays the current one.
+  if (!m_selection) startListing();
+}
+
+void ViewerSession::setSortReversed(bool reversed) {
+  if (m_sortReversed == reversed) return;
+  m_sortReversed = reversed;
+  emit sortChanged();
+  if (!m_selection) startListing();
+}
+
 bool ViewerSession::switchCompanion() {
   const QString companion = companionPath();
   if (companion.isEmpty()) return false;
@@ -526,6 +542,39 @@ void ViewerSession::forget(const QString& path) {
   if (m_selection) watchSelectionFolders();
 }
 
+void ViewerSession::renamed(const QString& from, const QString& to, const QString& entry) {
+  if (from.isEmpty() || to.isEmpty() || !m_paths.contains(from)) return;
+  const QString current = path() == from ? to : path();
+  const auto swap = [&](QStringList& list) {
+    for (QString& item : list) {
+      if (item == from) item = to;
+    }
+  };
+  if (m_opened == from) m_opened = to;
+  if (m_startPath == from) m_startPath = to;
+  m_explicitEntryPaths.remove(from);
+  m_deletionPaths.remove(from);
+  if (!entry.isEmpty() && entry != to) {
+    (m_selection ? m_explicitEntryPaths : m_deletionPaths).insert(to, entry);
+  }
+  if (const QString companion = m_companions.take(from); !companion.isEmpty()) {
+    m_companions.insert(to, companion);
+    m_companions.insert(companion, to);
+  }
+  QStringList paths = m_paths;
+  swap(paths);
+  if (m_selection) {
+    setSequence(paths, int(paths.indexOf(current)));
+    watchSelectionFolders();
+    return;
+  }
+  ++m_generation; // A listing started before the rename names the old file.
+  swap(m_folderPaths);
+  rebuildFolderSequence(current);
+  // The listing puts it in its place in the folder's order.
+  startListing();
+}
+
 bool ViewerSession::restore(const QString& path, const QString& entry, int index, int serial) {
   if (serial != m_openSerial || m_paths.isEmpty() || path.isEmpty() || m_paths.contains(path) ||
       !QFileInfo(path).isFile()) {
@@ -667,6 +716,10 @@ void ViewerSession::openInLibrary() {
   }
 }
 
+void ViewerSession::findSimilarInLibrary() {
+  if (!path().isEmpty() && !isVideo()) emit similarRequested(path());
+}
+
 bool ViewerSession::isViewable(const QString& path) {
   const QString suffix = CaptureScanner::mediaSuffix(path);
   return CaptureScanner::isImage(suffix) || CaptureScanner::isVideo(suffix);
@@ -728,6 +781,12 @@ QStringList ViewerSession::siblings(const QString& folder, const QString& keep,
     }
   }
   return paths;
+}
+
+QStringList ViewerSession::siblings(const QString& folder, const QString& keep,
+                                   QHash<QString, QString>* entryPaths, const QString& order,
+                                   bool reversed) {
+  return ViewerSort::sorted(siblings(folder, keep, entryPaths), order, reversed);
 }
 
 QSize ViewerSession::preferredWindowSize(const QSize& available) {
@@ -960,11 +1019,13 @@ void ViewerSession::startListing() {
   const QString keep = m_opened;
   const quint64 generation = m_generation;
   const quint64 request = m_listingRequest;
-  m_listing.setFuture(QtConcurrent::run([folder, keep, generation, request] {
+  const QString order = m_sortOrder;
+  const bool reversed = m_sortReversed;
+  m_listing.setFuture(QtConcurrent::run([folder, keep, generation, request, order, reversed] {
     ListingResult result;
     result.generation = generation;
     result.request = request;
-    result.paths = siblings(folder, keep, &result.entryPaths);
+    result.paths = siblings(folder, keep, &result.entryPaths, order, reversed);
     result.companions = RawJpegPairs::find(result.paths);
     return result;
   }));

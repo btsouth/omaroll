@@ -38,6 +38,7 @@
 #include "search/SearchQuery.h"
 #include "subtitles/SubtitleIndex.h"
 #include "search/QrDetector.h"
+#include "theme/CheckerProvider.h"
 #include "theme/OmarchyTheme.h"
 #include "sources/CameraRaw.h"
 #include "sources/DecodeJournal.h"
@@ -792,6 +793,7 @@ private slots:
     m_engine->addImageProvider(QLatin1String(EditProvider::kProviderId), m_edits);
     m_engine->addImageProvider(QLatin1String(PdfProvider::kProviderId), m_pdfs);
     m_engine->addImageProvider(QLatin1String(RawImageProvider::kProviderId), m_raws);
+    CheckerProvider::install(*m_engine);
     Storyboard::install(*m_engine);
 
     QQmlContext* context = m_engine->rootContext();
@@ -3027,6 +3029,27 @@ private slots:
     QCOMPARE(placeholder->property("text").toString(), QStringLiteral("Preview unavailable"));
     object->setProperty("path", QString());
     QTRY_VERIFY(!object->property("thumbnailFailed").toBool());
+  }
+
+  // A similar set's looser member says so on its tile, to sight and to
+  // assistive technology.
+  void looserMembersAreMarkedOnTheirTiles() {
+    QQmlComponent component(m_engine);
+    component.setData(R"QML(
+      import QtQuick
+      import Omaroll
+      CaptureCard { width: 240; height: 160; fileName: "burst-1.jpg" }
+    )QML", QUrl());
+    std::unique_ptr<QObject> object(component.create());
+    QVERIFY2(object, qPrintable(component.errorString()));
+    auto* badge = object->findChild<QQuickItem*>(QStringLiteral("looserMatchBadge"));
+    QVERIFY(badge);
+    QVERIFY(!badge->isVisible());
+    object->setProperty("looserMatch", true);
+    QVERIFY(badge->isVisible());
+    auto* card = qobject_cast<QQuickItem*>(object.get());
+    QVERIFY(QAccessible::queryAccessibleInterface(card));
+    QVERIFY(QAccessible::queryAccessibleInterface(card)->text(QAccessible::Name).contains(QStringLiteral("looser match")));
   }
 
   void failedTrashTargetsRemainChecked() {
@@ -6055,6 +6078,21 @@ private slots:
     QCOMPARE(m_library->folderFilter(), folder);
     m_library->setFolderFilter(QString());
 
+    // A typo offers the close word the library knows, as the first action.
+    m_library->setSearchText(QStringLiteral("alpien"));
+    QTRY_COMPARE(m_library->count(), 0);
+    QTRY_COMPARE(m_library->didYouMean(), QStringLiteral("alpine"));
+    QTRY_VERIFY(named(QStringLiteral("emptyAction_did-you-mean")));
+    QCOMPARE(named(QStringLiteral("emptyAction_did-you-mean"))->property("label").toString(),
+             QStringLiteral("Did you mean \u201calpine\u201d?"));
+    const QString searchDetail = item(QStringLiteral("libraryEmptyDetail"))->property("text").toString();
+    QVERIFY2(searchDetail.contains(QStringLiteral("tags, albums, folders")), qPrintable(searchDetail));
+    QVERIFY(clickAction(QStringLiteral("emptyAction_did-you-mean")));
+    QTRY_COMPARE(m_library->searchText(), QStringLiteral("alpine"));
+    QTRY_VERIFY(m_library->count() > 0);
+    m_library->setSearchText(QString());
+    QTRY_VERIFY(m_library->count() > 0);
+
     // Filters, and a search on top of them, clear together.
     m_library->setCameraFilter(QStringLiteral("No Such Camera"));
     m_library->setSearchText(QStringLiteral("alpine"));
@@ -6424,6 +6462,21 @@ private slots:
     QCOMPARE(m_library->gridLabelAt(0), QStringLiteral("Exact match 1 of 1"));
     QVERIFY(QFileInfo::exists(m_library->pathAt(0)));
     QVERIFY(QFileInfo::exists(m_library->pathAt(1)));
+    // Sectioned per set like similar pictures, with each copy's folder.
+    QTRY_VERIFY(find(m_window->contentItem(), [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("reviewSetHeader") && candidate->isVisible()
+             && candidate->property("text").toString() == QStringLiteral("Exact match 1");
+    }));
+    QTRY_VERIFY(find(m_window->contentItem(), [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("reviewSummary") && candidate->isVisible()
+             && candidate->property("text").toString().startsWith(QStringLiteral("1 set of exact copies"));
+    }));
+    const QFileInfo copy(m_library->pathAt(0));
+    const QString where = copy.dir().dirName() + u'/' + copy.fileName();
+    QTRY_VERIFY(find(m_window->contentItem(), [&where](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("captureSnippetLabel") && candidate->isVisible()
+             && candidate->property("text").toString().endsWith(where);
+    }));
     QQuickItem* keep = pill(m_window->contentItem(), QStringLiteral("Keep selected"));
     QVERIFY(keep);
     clickPlaced(keep);
@@ -6442,6 +6495,113 @@ private slots:
     // so its saved selection cannot land in the following scenario.
     QTRY_VERIFY(!m_window->findChild<QObject*>(QStringLiteral("gridRelayoutTimer"))->property("running").toBool());
     QTRY_VERIFY(item("library")->property("layoutReady").toBool());
+  }
+
+  // Find similar, from a picture's menu: the similar review on its set alone.
+  void findSimilarOpensThePicturesSet() {
+    m_library->setDuplicatesOnly(false);
+    QTRY_VERIFY(!m_library->duplicatesOnly());
+    QString dawn;
+    for (int row = 0; row < m_library->count(); ++row) {
+      if (m_library->fileNameAt(row) == QStringLiteral("alpine-dawn.jpg")) dawn = m_library->pathAt(row);
+    }
+    QVERIFY(!dawn.isEmpty());
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("libraryContextMenu"));
+    QVERIFY(menu);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "prepareContextMenu",
+                                      Q_ARG(QVariant, QVariant(QStringList{dawn}))));
+    const QVariantList entries = menu->property("entries").value<QJSValue>().toVariant().toList();
+    QVERIFY(std::any_of(entries.cbegin(), entries.cend(), [](const QVariant& entry) {
+      return entry.toMap().value(QStringLiteral("id")).toString() == QStringLiteral("similar");
+    }));
+    // A narrowed view does not split the set, and comes back afterwards.
+    const QString folder = QFileInfo(dawn).absolutePath();
+    m_library->setFolderFilter(folder);
+    m_library->setFavoritesOnly(true);
+    const auto findSimilar = [&] {
+      QVERIFY(QMetaObject::invokeMethod(m_window, "perform", Q_ARG(QVariant, QStringLiteral("similar")),
+                                        Q_ARG(QVariant, dawn), Q_ARG(QVariant, false)));
+      QTRY_VERIFY(m_library->similarOnly());
+      QVERIFY(m_library->findingSimilar());
+      QCOMPARE(m_library->similarTo(), dawn);
+      QVERIFY(!m_library->favoritesOnly());
+      QVERIFY(m_library->folderFilter().isEmpty());
+      QTRY_VERIFY_WITH_TIMEOUT(!m_similarities->scanning() && m_library->count() == 2, 15000);
+      QVERIFY(m_library->rowOf(dawn) >= 0);
+    };
+    const auto restored = [&](const char* how) {
+      QTRY_VERIFY2(!m_library->similarOnly(), how);
+      QVERIFY(!m_library->findingSimilar());
+      QVERIFY(m_library->similarTo().isEmpty());
+      QVERIFY(m_library->favoritesOnly());
+      QCOMPARE(m_library->folderFilter(), folder);
+    };
+    findSimilar();
+    QTRY_VERIFY(find(m_window->contentItem(), [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("reviewSummary") && candidate->isVisible()
+             && candidate->property("text").toString().startsWith(QStringLiteral("Pictures like alpine-dawn.jpg"));
+    }));
+    // Escape leaves the review rather than closing the window.
+    item("library")->forceActiveFocus();
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    restored("Escape");
+    QVERIFY(m_window->isVisible());
+    // So does the mouse's Back button.
+    findSimilar();
+    QTest::mouseClick(m_window, Qt::BackButton, Qt::NoModifier, centre(item("library")));
+    restored("Back button");
+    // And so does the chip's clear button, through similarOnly.
+    findSimilar();
+    // Typing still waiting on its delay is dropped, not applied over the
+    // restored search.
+    m_library->queueSearchText(QStringLiteral("zzz"));
+    m_library->setSimilarOnly(false);
+    restored("chip");
+    QTest::qWait(300);
+    QVERIFY(m_library->searchText().isEmpty());
+    QVERIFY(m_library->favoritesOnly());
+    // Show all (Open folder, a reveal) leaves the review for all media, not
+    // for the scope it saved.
+    findSimilar();
+    QVERIFY(QMetaObject::invokeMethod(m_window, "showAllMedia", Q_ARG(QVariant, QVariant())));
+    QTRY_VERIFY(!m_library->similarOnly());
+    QVERIFY(!m_library->favoritesOnly());
+    QVERIFY(m_library->folderFilter().isEmpty());
+    QVERIFY(m_library->searchText().isEmpty());
+    QTRY_VERIFY(m_library->count() > 2);
+    QTRY_VERIFY(item("library")->property("layoutReady").toBool());
+  }
+
+  // The text notice's settings link works from the keyboard: Tab reaches
+  // it, it shows a ring, and Enter and Space open the settings.
+  void textNoticeSettingsLinkTakesTheKeyboard() {
+    QQmlComponent component(m_engine);
+    component.setData(R"QML(
+      import QtQuick
+      import Omaroll
+      TextSearchNotice { visible: true }
+    )QML", QUrl());
+    std::unique_ptr<QObject> object(component.create());
+    QVERIFY2(object, qPrintable(component.errorString()));
+    auto* notice = qobject_cast<QQuickItem*>(object.get());
+    QVERIFY(notice);
+    notice->setParentItem(m_window->contentItem());
+    notice->setZ(100);
+    QSignalSpy requested(notice, SIGNAL(settingsRequested()));
+    auto* link = notice->findChild<QQuickItem*>(QStringLiteral("textSearchSettingsLink"));
+    auto* ring = notice->findChild<QQuickItem*>(QStringLiteral("textSearchSettingsFocusRing"));
+    QVERIFY(link && ring);
+    QVERIFY(link->activeFocusOnTab());
+    QVERIFY(!ring->isVisible());
+    link->forceActiveFocus(Qt::TabFocusReason);
+    QTRY_VERIFY(link->hasActiveFocus());
+    QVERIFY(ring->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_COMPARE(requested.count(), 1);
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTRY_COMPARE(requested.count(), 2);
+    object.reset();
+    item("library")->forceActiveFocus();
   }
 
   void browseQuickDatesApplyTheExpectedRanges() {
@@ -7989,6 +8149,44 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_Z, Qt::ControlModifier);
     QTRY_VERIFY(QFileInfo::exists(copy));
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(copy) >= 0, 10000);
+    m_library->setDuplicatesOnly(false);
+
+    // "Move to Trash without asking": Delete moves at once, Undo still works.
+    QVERIFY(!m_settings->trashWithoutAsking());
+    m_settings->setTrashWithoutAsking(true);
+    const auto asking = qScopeGuard([this] { m_settings->setTrashWithoutAsking(false); });
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(first) >= 0, 10000);
+    grid->setProperty("currentIndex", m_library->rowOf(first));
+    QTest::keyClick(m_window, Qt::Key_Delete);
+    QVERIFY(!item("confirm")->isVisible());
+    QTRY_VERIFY(!QFileInfo::exists(first));
+    QTRY_VERIFY(undo->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Z, Qt::ControlModifier);
+    QTRY_VERIFY(QFileInfo::exists(first));
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(first) >= 0, 10000);
+    // A held Delete is one press: its repeats trash nothing more.
+    grid->setProperty("currentIndex", m_library->rowOf(first));
+    for (int i = 0; i < 5; ++i) {
+      QKeyEvent repeat(QEvent::KeyPress, Qt::Key_Delete, Qt::NoModifier, QString(), true);
+      QCoreApplication::sendEvent(m_window, &repeat);
+    }
+    QTest::qWait(200);
+    QVERIFY(QFileInfo::exists(first));
+    QVERIFY(QFileInfo::exists(second));
+    // The same key, pressed rather than repeated, reaches the grid.
+    QTest::keyClick(m_window, Qt::Key_Delete);
+    QTRY_VERIFY(!QFileInfo::exists(first));
+    QTest::keyClick(m_window, Qt::Key_Z, Qt::ControlModifier);
+    QTRY_VERIFY(QFileInfo::exists(first));
+    QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(first) >= 0, 10000);
+    // Keeping one of a set still asks first.
+    QVERIFY(QMetaObject::invokeMethod(m_window, "requestDeleteBatch",
+                                    Q_ARG(QVariant, QVariant(QStringList{second})),
+                                    Q_ARG(QVariant, QStringLiteral("Keep one?")), Q_ARG(QVariant, QVariant())));
+    QTRY_VERIFY(item("confirm")->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!item("confirm")->isVisible());
+    QVERIFY(QFileInfo::exists(second));
   }
 
   // Similar sets show as sections; Compare lists the facts for choosing a

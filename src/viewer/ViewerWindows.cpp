@@ -188,7 +188,11 @@ ViewerWindows::Viewer* ViewerWindows::create() {
   created->connections = {
       connect(&created->session, &ViewerSession::libraryRequested, this,
               [this, created, window](const QString&) {
-                emit libraryRequested(created->session.deletionPath(), window);
+                emit libraryRequested(created->session.deletionPath(), window, false);
+              }),
+      connect(&created->session, &ViewerSession::similarRequested, this,
+              [this, created, window](const QString&) {
+                emit libraryRequested(created->session.deletionPath(), window, true);
               }),
       // Stepping onto or off a video moves the sound.
       connect(&created->session, &ViewerSession::currentChanged, this,

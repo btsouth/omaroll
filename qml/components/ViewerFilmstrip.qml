@@ -36,6 +36,32 @@ Rectangle {
 
     HoverHandler { id: hover }
 
+    // Puts the open file in the middle of the strip, or as near as the ends
+    // allow: when it opens, appears, resizes or is given another folder at
+    // once, and gliding there as the arrows step through the folder.
+    function centre(glide) {
+        if (!root.visible || root.currentIndex < 0 || root.currentIndex >= list.count) return
+        glideAnimation.stop()
+        const from = list.contentX
+        list.positionViewAtIndex(root.currentIndex, ListView.Center)
+        const to = list.contentX
+        if (!glide || Math.abs(to - from) > list.width * 2) return
+        list.contentX = from
+        glideAnimation.to = to
+        glideAnimation.start()
+    }
+    onCurrentIndexChanged: root.centre(true)
+    onVisibleChanged: if (root.visible) Qt.callLater(root.centre, false)
+    onCountChanged: Qt.callLater(root.centre, false)
+
+    NumberAnimation {
+        id: glideAnimation
+        target: list
+        property: "contentX"
+        duration: 160
+        easing.type: Easing.OutQuad
+    }
+
     // A press between the tiles stays on the strip.
     MouseArea {
         anchors.fill: parent
@@ -52,13 +78,9 @@ Rectangle {
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         model: root.visible ? root.count : 0
-        currentIndex: root.currentIndex
-        // Keeps the open file centred, gliding rather than jumping as the
-        // arrows move through the folder.
-        highlightRangeMode: ListView.ApplyRange
-        preferredHighlightBegin: (width - root.tileWidth) / 2
-        preferredHighlightEnd: (width + root.tileWidth) / 2
-        highlightMoveDuration: 160
+        // The open file is centred by centre() below, not by the list's own
+        // current item: a new model put that back on the first tile.
+        highlightFollowsCurrentItem: false
         // A long folder builds only the tiles in view, plus a few either side.
         cacheBuffer: root.tileWidth * 4
         activeFocusOnTab: true
@@ -72,6 +94,7 @@ Rectangle {
                 root.focusIndex = -1
             }
         }
+        onWidthChanged: root.centre(false)
         function moveRing(index) {
             root.focusIndex = Math.max(0, Math.min(root.count - 1, index))
             list.positionViewAtIndex(root.focusIndex, ListView.Contain)

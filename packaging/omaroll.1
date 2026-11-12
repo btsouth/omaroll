@@ -6,7 +6,9 @@ omaroll \- photo, video and PDF viewer and library for Omarchy
 [\fIoptions\fR] [\fIfile\fR ... | \fIfolder\fR]
 .SH DESCRIPTION
 Pictures and videos open in the viewer, which steps through the rest of their
-folder in name order. Multiple files open as a selection in the supplied order.
+folder in name order, or the order chosen under View, Sort (date taken, date
+modified or size, and reversed). Multiple files open as a selection in the
+supplied order.
 A folder, a PDF, or no argument at all opens the library. Use
 .B \-\-
 before filenames that begin with a dash.
@@ -17,8 +19,9 @@ or
 .B F1
 in the library or the viewer, with no sheet or menu open, for the shortcuts
 that apply there.
-Omaroll never moves, copies or changes your files unless you ask it to rename
-them, move them to Trash or save a corrected copy. The exception is
+Omaroll never moves, copies or changes your files unless you ask it to rename,
+move or copy them, move them to Trash or save a corrected copy. A move or copy
+never replaces a file already there. The exception is
 .BR Shift+Delete ,
 which deletes permanently. It asks first, unless that confirmation is turned
 off in Settings.

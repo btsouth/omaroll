@@ -19,12 +19,15 @@ Rectangle {
     property bool favorite: false
     property var lines: []
     property bool loading: false
+    // "latitude, longitude" when the file says where it was taken.
+    property string coordinates: ""
 
     signal rateRequested(int stars)
     signal favoriteToggled()
     signal folderRequested()
     signal copyPathRequested()
     signal copyNameRequested()
+    signal copyLocationRequested()
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
@@ -253,6 +256,13 @@ Rectangle {
             osd: true
             label: "Copy file name"
             onClicked: root.copyNameRequested()
+        }
+        PillButton {
+            objectName: "viewerInfoCopyLocation"
+            visible: root.coordinates !== ""
+            label: "Copy location"
+            toolTip: root.coordinates
+            onClicked: root.copyLocationRequested()
         }
     }
 }

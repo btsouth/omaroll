@@ -65,7 +65,7 @@ FocusScope {
 
     // Exact geometry from the rows: the list's own contentHeight is an
     // estimate while header and tile rows of different heights are unseen.
-    // Only similar sets have the summary. ListView deletes its old header
+    // Only review sets have the summary. ListView deletes its old header
     // item without saying so, so headerItem alone can outlive it.
     readonly property real summaryHeight: root.reviewMode && list.headerItem ? list.headerItem.height : 0
     readonly property real exactHeight: {
@@ -356,6 +356,14 @@ FocusScope {
         }
     }
 
+    // The end of a path, the last two folders and the name, which tells
+    // copies of one picture apart whether they differ by folder or by name:
+    // "Pictures/iceland/glacier.jpg" rather than the whole path.
+    function folderOf(path) {
+        const parts = path.split("/").filter(function (part) { return part !== "" })
+        return parts.slice(Math.max(0, parts.length - 3)).join("/")
+    }
+
     Component {
         id: reviewSummary
         Item {
@@ -367,16 +375,24 @@ FocusScope {
                 anchors.left: parent.left
                 anchors.leftMargin: Math.round(root.cellSpacing / 2)
                 anchors.verticalCenter: parent.verticalCenter
-                width: Math.min(implicitWidth, parent.width - picker.width - 24)
+                objectName: "reviewSummary"
+                width: Math.min(implicitWidth, parent.width - (picker.visible ? picker.width : 0) - 24)
                 elide: Text.ElideRight
-                text: root.setCount + (root.setCount === 1 ? " similar set" : " similar sets")
-                      + " · review before removing anything"
+                text: Captures.duplicatesOnly
+                      ? root.setCount + (root.setCount === 1 ? " set of exact copies" : " sets of exact copies")
+                        + " · review before removing anything"
+                      : Captures.similarTo !== ""
+                      ? "Pictures like " + Captures.similarTo.substring(Captures.similarTo.lastIndexOf("/") + 1)
+                        + " · review before removing anything"
+                      : root.setCount + (root.setCount === 1 ? " similar set" : " similar sets")
+                        + " · review before removing anything"
                 font.family: Theme.fontFamily
                 font.pixelSize: 12
                 color: Theme.mutedText
             }
             SimilarStrictnessPicker {
                 id: picker
+                visible: Captures.similarOnly
                 anchors.right: parent.right
                 anchors.rightMargin: Math.round(root.cellSpacing / 2)
                 anchors.verticalCenter: parent.verticalCenter
@@ -386,8 +402,8 @@ FocusScope {
 
     Component {
         id: headerDelegate
-        // A section header: its name and size, and Compare for a similar set
-        // or Select for a day or month.
+        // A section header: its name and size, and Compare for a similar or
+        // duplicate set, or Select for a day or month.
         Item {
             id: rowItem
             required property int index
@@ -616,6 +632,10 @@ FocusScope {
                             rating: cell.tile.rating || 0
                             hiddenMark: cell.tile.hidden === true
                             ocrSnippet: cell.tile.ocrSnippet || ""
+                            folderLabel: root.reviewMode ? root.folderOf(cell.path) : ""
+                            looserMatch: root.reviewMode && Captures.similarOnly
+                                         && typeof Similarities !== "undefined"
+                                         && (Similarities.groupCount, Similarities.isLooser(cell.path))
                             caption: cell.tile.caption || ""
                             rawFormat: cell.tile.rawFormat || ""
                             selected: !!root.host && root.host.currentIndex === cell.row

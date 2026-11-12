@@ -127,8 +127,9 @@ void SectionRows::setCompact(bool compact) {
 }
 
 int SectionRows::mode() const {
-  if (m_source->similarOnly()) return ReviewSections;
-  if (m_source->duplicatesOnly()) return NoSections;
+  // Exact duplicates are sectioned like similar sets: identical tiles
+  // need a boundary to show where one set of copies ends.
+  if (m_source->similarOnly() || m_source->duplicatesOnly()) return ReviewSections;
   const int sort = m_source->sortMode();
   return sort == CaptureFilterModel::NewestFirst || sort == CaptureFilterModel::OldestFirst
              ? DateSections

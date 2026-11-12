@@ -1,5 +1,6 @@
 #include "app/AppSettings.h"
 #include "app/StartupTrace.h"
+#include "viewer/ViewerSort.h"
 #include "actions/TrashRestore.h"
 #include "app/Diagnostics.h"
 #include "app/HyprlandSetup.h"
@@ -86,6 +87,10 @@ constexpr auto kConfirmPermanentDelete = "actions/confirmPermanentDelete";
 constexpr auto kSlideshowInterval = "slideshow/intervalSeconds";
 constexpr auto kSlideshowShuffle = "slideshow/shuffle";
 constexpr auto kEnlargeSmallPictures = "viewer/enlargeSmallPictures";
+constexpr auto kViewerSort = "viewer/sort";
+constexpr auto kViewerSortReversed = "viewer/sortReversed";
+constexpr auto kTransparencyCheckerboard = "viewer/transparencyCheckerboard";
+constexpr auto kTrashWithoutAsking = "actions/trashWithoutAsking";
 constexpr auto kViewerFilmstrip = "viewer/filmstrip";
 constexpr auto kAlbums = "library/albums";
 constexpr auto kTags = "library/tags";
@@ -354,6 +359,11 @@ AppSettings::AppSettings(QObject* parent)
   m_slideshowIntervalSeconds = qBound(2, m_settings.value(kSlideshowInterval, 4).toInt(), 20);
   m_slideshowShuffle = m_settings.value(kSlideshowShuffle, false).toBool();
   m_enlargeSmallPictures = m_settings.value(kEnlargeSmallPictures, true).toBool();
+  m_viewerSort = m_settings.value(kViewerSort, QStringLiteral("name")).toString();
+  if (!ViewerSort::isKnown(m_viewerSort)) m_viewerSort = QStringLiteral("name");
+  m_viewerSortReversed = m_settings.value(kViewerSortReversed, false).toBool();
+  m_transparencyCheckerboard = m_settings.value(kTransparencyCheckerboard, true).toBool();
+  m_trashWithoutAsking = m_settings.value(kTrashWithoutAsking, false).toBool();
   m_viewerFilmstrip = m_settings.value(kViewerFilmstrip, false).toBool();
   m_videoVolume = qBound(0.0, m_settings.value(kVideoVolume, 0.8).toDouble(), 1.0);
   m_videoMuted = m_settings.value(kVideoMuted, false).toBool();
@@ -751,6 +761,34 @@ void AppSettings::setSlideshowIntervalSeconds(int seconds) {
   m_slideshowIntervalSeconds = bounded;
   setValue(kSlideshowInterval, bounded);
   emit slideshowIntervalSecondsChanged();
+}
+
+void AppSettings::setTrashWithoutAsking(bool value) {
+  if (m_trashWithoutAsking == value) return;
+  m_trashWithoutAsking = value;
+  setValue(kTrashWithoutAsking, value);
+  emit trashWithoutAskingChanged();
+}
+
+void AppSettings::setViewerSort(const QString& value) {
+  if (!ViewerSort::isKnown(value) || m_viewerSort == value) return;
+  m_viewerSort = value;
+  setValue(kViewerSort, value);
+  emit viewerSortChanged();
+}
+
+void AppSettings::setViewerSortReversed(bool value) {
+  if (m_viewerSortReversed == value) return;
+  m_viewerSortReversed = value;
+  setValue(kViewerSortReversed, value);
+  emit viewerSortReversedChanged();
+}
+
+void AppSettings::setTransparencyCheckerboard(bool value) {
+  if (m_transparencyCheckerboard == value) return;
+  m_transparencyCheckerboard = value;
+  setValue(kTransparencyCheckerboard, value);
+  emit transparencyCheckerboardChanged();
 }
 
 void AppSettings::setEnlargeSmallPictures(bool value) {

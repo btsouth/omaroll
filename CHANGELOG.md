@@ -11,6 +11,21 @@
   edits win. Removing a keyword or clearing a rating is kept in Omaroll's
   settings and backups; files and sidecars are never written. Renaming a file
   or moving it to Trash takes its sidecar along, and undo brings both back.
+- Sort in the viewer's View menu: name, date taken, date modified or size, and
+  Reverse order, remembered across launches. Stepping and the filmstrip follow
+  it and the open file stays open. A selection of files keeps its own order.
+- Rename (`N`), Move to folder and Copy to folder in the viewer. A file never
+  replaces one already in the folder; it arrives as "name (2)". After a move
+  the next file is shown, and favourites, ratings, albums and tags go with it.
+- `,` and `.` step a paused GIF or animated WebP frame by frame.
+- The viewer's details show where a photo or video was taken when the file
+  says, with Copy location for the decimal coordinates. Nothing is looked up
+  online.
+- A checkerboard in the theme's colours behind transparent pictures in the
+  viewer, as in the library preview, with a setting for both.
+- **Move to Trash without asking** in Settings, off by default. Delete then
+  moves to Trash at once in the library and the viewer, and Undo still works.
+  Holding Delete moves one file, not one per key repeat.
 - The empty library offers Omaroll's Hyprland window rules once, with Install
   and Not now, and `--set-default` names the command until they are installed
   or turned down. Without them a stock Omarchy tiles and dims the viewer.
@@ -124,8 +139,34 @@
 - **Open Library** on Omaroll's launcher entry.
 - `Ctrl+Up` and `Ctrl+Down` in the library jump to the previous or next day
   or month section.
+- **Find similar pictures** in a picture's menu, in the grid, the preview and
+  the viewer, opens the similar review on that picture's whole set, or says
+  nothing similar was found. The kind, favourites, rating, folder, search and
+  other choices are set aside meanwhile and come back when you leave the
+  review with its chip, `Esc` or the mouse's Back button.
+- A search that finds nothing offers **Did you mean** with a close word from
+  the library's names, folders, tags, albums, cameras, captions and text, so
+  `invoce` offers `invoice`. It tries again as more text is read, and offers
+  nothing from hidden files unless they are shown.
+- PDF tiles carry a PDF badge.
 
 ### Changed
+
+- Exact duplicates are reviewed in sections, one per set, with Compare, and
+  review tiles show the end of their path, folders and name, so identical
+  copies can be told apart.
+- At Normal, the first and last frames of a burst join its similar set as
+  looser members, marked "Looser match": a picture left on its own joins a
+  set when it matches one picture of it and is within Loose of every picture
+  in it. Strict and Loose sets are as before.
+- While picture or PDF text is still being read, an empty search says so
+  instead of showing a blank grid, and the empty search state names
+  everything search looks at, how many pictures are still unread and links
+  to the text settings. So does the incomplete text notice, from the
+  keyboard too. A search of fields alone, such as `type:video`, does not wait
+  on text.
+- A text match far into a picture's or PDF's text is shown with the matching
+  word in the middle of the tile's line instead of cut off at the end.
 
 - Rounded themes round the thumbnails too: the picture and its caption fade
   are clipped to the tile's corners instead of poking out past the ring.
@@ -215,6 +256,13 @@
   them, since it now opens in the backups folder.
 - `--set-default` and `--unset-default` say when `mimeapps.list` is not
   valid UTF-8 or starts with a byte-order mark, and leave it unchanged.
+- A review set that another filter leaves with one picture, such as a folder
+  holding one of two copies, is left out instead of showing "Similar set 2 ·
+  1 item" with a Compare button that has nothing to compare.
+- The viewer's filmstrip keeps the open file in view and in the middle. In a
+  folder of more than about ten files it used to show the wrong stretch of it.
+- Pictures enlarged past 200% are drawn with sharp pixels even when fitted, so
+  a small picture no longer looks blurred.
 
 - A picture whose contents are another format than its name (a 24-byte TIM
   file named `.png`, `.jpg` or `.tga`) no longer crashes Omaroll at every

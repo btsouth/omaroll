@@ -69,6 +69,10 @@ class ViewerSession final : public QObject {
   Q_PROPERTY(quint64 sequenceRevision READ sequenceRevision NOTIFY sequenceRevisionChanged)
   Q_PROPERTY(bool selection READ selection NOTIFY sequenceChanged)
   Q_PROPERTY(bool pairRawJpeg READ pairRawJpeg WRITE setPairRawJpeg NOTIFY pairRawJpegChanged)
+  // The folder's order (ViewerSort): "name", "taken", "modified" or "size".
+  // An explicit selection keeps the order it was handed over in.
+  Q_PROPERTY(QString sortOrder READ sortOrder WRITE setSortOrder NOTIFY sortChanged)
+  Q_PROPERTY(bool sortReversed READ sortReversed WRITE setSortReversed NOTIFY sortChanged)
   Q_PROPERTY(QString companionPath READ companionPath NOTIFY companionPathChanged)
   Q_PROPERTY(QUrl nextPreloadUrl READ nextPreloadUrl NOTIFY preloadsChanged)
   Q_PROPERTY(QUrl previousPreloadUrl READ previousPreloadUrl NOTIFY preloadsChanged)
@@ -117,6 +121,10 @@ public:
   [[nodiscard]] bool selection() const { return m_selection; }
   [[nodiscard]] bool pairRawJpeg() const { return m_pairRawJpeg; }
   void setPairRawJpeg(bool value);
+  [[nodiscard]] QString sortOrder() const { return m_sortOrder; }
+  void setSortOrder(const QString& order);
+  [[nodiscard]] bool sortReversed() const { return m_sortReversed; }
+  void setSortReversed(bool reversed);
   [[nodiscard]] QString companionPath() const;
   Q_INVOKABLE bool switchCompanion();
   // Every file this viewer steps through, in order.
@@ -161,6 +169,10 @@ public:
   // A file this window just moved to the Trash. The next one takes its place,
   // or the previous one at the end; an empty sequence emits emptied().
   Q_INVOKABLE void forget(const QString& path);
+  // A file this window renamed in place: |from| (a sequence path) is now
+  // |to|, reached through |entry| when that differs (a renamed link). It
+  // stays the current file, if it was, at its place in the new order.
+  Q_INVOKABLE void renamed(const QString& from, const QString& to, const QString& entry);
   // Changes whenever open() or clear() starts another set of files.
   Q_INVOKABLE [[nodiscard]] int openSerial() const { return m_openSerial; }
   // Undo of forget(): a file put back from the Trash returns at |index| and
@@ -185,6 +197,8 @@ public:
 
   // Hands the current file to the library window.
   Q_INVOKABLE void openInLibrary();
+  // The same, with the library showing the current picture's similar set.
+  Q_INVOKABLE void findSimilarInLibrary();
 
   // True when every file can be shown here. PDFs and folders belong to the
   // library, which has the document controls and the grid.
@@ -195,6 +209,10 @@ public:
   // out, except |keep|, which is always listed: it is the file the user opened.
   [[nodiscard]] static QStringList siblings(const QString& folder, const QString& keep = {},
                                            QHash<QString, QString>* entryPaths = nullptr);
+  // The same in a ViewerSort order.
+  [[nodiscard]] static QStringList siblings(const QString& folder, const QString& keep,
+                                           QHash<QString, QString>* entryPaths,
+                                           const QString& order, bool reversed);
 
   // The viewer's window in logical pixels: most of |available|, landscape,
   // the same for every file, with each picture fitted inside it.
@@ -210,9 +228,11 @@ signals:
   void sequenceRevisionChanged();
   void preloadsChanged();
   void pairRawJpegChanged();
+  void sortChanged();
   void companionPathChanged();
   void emptied();
   void libraryRequested(const QString& path);
+  void similarRequested(const QString& path);
   void startPositionChanged();
 
 private:
@@ -276,6 +296,8 @@ private:
   QStringList m_folderPaths;
   RawJpegPairs::Companions m_companions;
   bool m_pairRawJpeg = true;
+  QString m_sortOrder = QStringLiteral("name");
+  bool m_sortReversed = false;
   quint64 m_sequenceRevision = 0;
   int m_index = -1;
   int m_openSerial = 0;

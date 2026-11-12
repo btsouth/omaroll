@@ -60,7 +60,10 @@ Flow {
         if (Captures.duplicatesOnly)
             list.push({key: "duplicates", kind: "Review", label: "Exact duplicates"})
         if (Captures.similarOnly)
-            list.push({key: "similar", kind: "Review", label: "Similar pictures"})
+            list.push(Captures.similarTo !== ""
+                      ? {key: "similar", kind: "Review", label: "Similar to " + folderName(Captures.similarTo),
+                         tip: Captures.similarTo}
+                      : {key: "similar", kind: "Review", label: "Similar pictures"})
         if (Captures.folderFilter !== "")
             list.push({key: "folder", kind: "Folder", label: folderName(Captures.folderFilter),
                        tip: Captures.folderFilter})

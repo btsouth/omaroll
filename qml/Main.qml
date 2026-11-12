@@ -250,6 +250,9 @@ ApplicationWindow {
             batchSheet.open(checked)
             return
         }
+        case "similar":
+            root.findSimilar(path)
+            return
         case "compare": {
             const targets = targetPaths !== undefined ? targetPaths
                             : library.checkedCount > 1 ? library.checkedPaths() : []
@@ -444,11 +447,13 @@ ApplicationWindow {
     property string pendingRenamedCheck: ""
     function showAllMedia(folder) {
         Captures.setExplicitPaths([])
+        // Leave a Find similar review first: leaving puts its saved scope
+        // back, which the lines below then clear.
+        Captures.similarOnly = false
+        Captures.duplicatesOnly = false
         Captures.kindFilter = filters.kindAll
         Captures.searchText = ""
         Captures.favoritesOnly = false
-        Captures.duplicatesOnly = false
-        Captures.similarOnly = false
         Captures.clearDateRange()
         Captures.setTagFilter("", [])
         Captures.cameraFilter = ""
@@ -481,6 +486,16 @@ ApplicationWindow {
         }
         root.pendingInitialPath = paths[0]
         root.finishPendingOpen()
+    }
+    // Find similar, from the grid, the preview or a viewer: the similar
+    // review narrowed to this picture's set. The view is put aside first, so
+    // a kind, favourites, folder or search cannot split the set; leaving the
+    // review (its chip, Escape or the mouse's Back button) puts it back.
+    function findSimilar(path) {
+        root.pendingInitialPath = ""
+        if (detail.visible) detail.close()
+        Captures.findSimilar(path)
+        library.forceActiveFocus()
     }
     function finishPendingOpen() {
         const row = Captures.rowOf(root.pendingInitialPath)
@@ -652,6 +667,11 @@ ApplicationWindow {
         root.pendingDeleteTarget = target
         root.pendingDeleteBatch = []
         root.pendingDuplicateKeep = ({})
+        // Undo brings it back, so the question can be skipped.
+        if (Settings.trashWithoutAsking) {
+            root.trashPending()
+            return
+        }
         // An .xmp sidecar beside it goes to the Trash with it.
         confirm.title = Actions.sidecarCount(target.path) > 0 ? "Move this item and its sidecar to Trash?"
                                                               : "Move this item to Trash?"
@@ -670,6 +690,11 @@ ApplicationWindow {
         root.pendingDeleteTarget = ({})
         root.pendingDeleteBatch = targets
         root.pendingDuplicateKeep = ({})
+        // Only plain Delete skips the question; "keep one" still asks.
+        if (Settings.trashWithoutAsking && title === undefined) {
+            root.trashPending()
+            return
+        }
         confirm.title = title === undefined
                         ? "Move " + paths.length + " items to Trash?" : title
         confirm.detail = detail === undefined
@@ -1243,7 +1268,22 @@ ApplicationWindow {
         onVisibleChanged: if (!visible && activeFocus) library.forceActiveFocus()
     }
 
+    // The mouse's Back button leaves a Find similar review, over the grid or
+    // its empty state. The handler takes only that button, so every other
+    // press goes through to the grid below.
+    Item {
+        anchors.fill: library
+        z: 1
+        TapHandler {
+            objectName: "findSimilarBack"
+            acceptedButtons: Qt.BackButton
+            enabled: Captures.findingSimilar && !root.anySheetOpen
+            onTapped: Captures.similarOnly = false
+        }
+    }
+
     TextSearchNotice {
+        onSettingsRequested: settingsSheet.openSection("search")
         anchors.bottom: library.bottom
         anchors.horizontalCenter: library.horizontalCenter
         anchors.bottomMargin: 10
@@ -1594,16 +1634,19 @@ ApplicationWindow {
                      detail: "Files are compared by content. Nothing is removed automatically.",
                      actions: ["show-all"] }
         }
+        if (reason === "similar" && Captures.similarTo !== "") {
+            return { title: "No similar pictures found",
+                     detail: "Nothing else in the library looks like "
+                             + Captures.similarTo.substring(Captures.similarTo.lastIndexOf("/") + 1)
+                             + (Similarities.strictness < 2 ? ". Loose strictness finds more." : "."),
+                     actions: ["show-all"] }
+        }
         if (reason === "similar") {
             return { title: "No similar pictures",
                      detail: "Pictures are compared visually. Review every suggestion before removing anything.",
                      actions: ["show-all"] }
         }
-        if (reason === "search") {
-            return { title: "Nothing matches \u201c" + Captures.appliedSearchText.trim() + "\u201d" + where,
-                     detail: "Search looks at file names, captions and text found in pictures.",
-                     actions: ["clear-search"] }
-        }
+        if (reason === "search") return root.searchEmptyState(where)
         if (reason === "filters") {
             const parts = []
             if (Captures.kindFilter !== filters.kindAll && kinds[Captures.kindFilter])
@@ -1645,8 +1688,30 @@ ApplicationWindow {
                  actions: [] }
     }
 
+    // An empty search: what search looks at, a close word from the library
+    // when there is one, and the text setting while pictures' text is off
+    // or not all read, since a missing match may only be unread.
+    function searchEmptyState(where) {
+        const actions = Captures.didYouMean !== "" ? ["did-you-mean", "clear-search"] : ["clear-search"]
+        const unread = TextIndex.available ? TextIndex.unreadCount : 0
+        if (unread > 0) actions.push("text-settings")
+        return { title: "Nothing matches \u201c" + Captures.appliedSearchText.trim() + "\u201d" + where,
+                 detail: "Search looks at names, tags, albums, folders, cameras, captions and the text in "
+                         + "pictures and PDFs."
+                         + (!TextIndex.available ? " Text in pictures is not searched without Tesseract."
+                            : unread > 0 ? " The text in " + unread + (unread === 1 ? " picture" : " pictures")
+                                           + " has not been read yet." : ""),
+                 actions: actions }
+    }
+
     function emptyAction(id) {
         switch (id) {
+        case "did-you-mean":
+            Captures.searchText = Captures.didYouMean
+            break
+        case "text-settings":
+            settingsSheet.openSection("search")
+            return
         case "clear-search":
             Captures.searchText = ""
             break
@@ -1681,13 +1746,31 @@ ApplicationWindow {
         waiting: Captures.sourceCount === 0 && Library.scanning
     }
 
+    // A search with nothing yet while text is still being read is not a
+    // final answer, so it says so rather than look like one.
+    LoadingState {
+        objectName: "searchReadingState"
+        anchors.centerIn: library
+        width: Math.min(440, library.width - 40)
+        readonly property bool documents: typeof DocumentText !== "undefined" && DocumentText.indexing
+        waiting: Captures.count === 0 && !Library.scanning && Captures.searchReadsText
+                 && (TextIndex.indexing || documents)
+        text: "No matches yet. " + (TextIndex.indexing && TextIndex.total > 0
+                                   ? "Reading the text in pictures, " + TextIndex.completed + " of "
+                                     + TextIndex.total + "…"
+                                   : "Reading the text in PDFs…")
+    }
+
     Column {
         id: emptyState
         objectName: "libraryEmptyState"
         anchors.centerIn: library
         width: Math.min(440, library.width - 40)
         spacing: 10
-        visible: Captures.count === 0 && !Library.scanning && !TextIndex.indexing
+        visible: Captures.count === 0 && !Library.scanning
+                 && !(TextIndex.indexing && Captures.searchReadsText)
+                 && !(typeof DocumentText !== "undefined" && DocumentText.indexing
+                      && Captures.searchReadsText)
                  && !(Captures.duplicatesOnly && Duplicates.scanning)
                  && !(Captures.similarOnly && Similarities.scanning)
         readonly property string reason: visible ? Captures.emptyReason : ""
@@ -1767,7 +1850,9 @@ ApplicationWindow {
                     // Off behind a sheet: a sheet button over one must not press it too.
                     enabled: !root.anySheetOpen && (modelData !== "set-default" || !MimeDefaults.busy)
                     active: index === 0
-                    label: ({ "clear-search": "Clear search", "clear-filters": "Clear filters",
+                    label: ({ "did-you-mean": "Did you mean \u201c" + Captures.didYouMean + "\u201d?",
+                              "text-settings": "Text search settings",
+                              "clear-search": "Clear search", "clear-filters": "Clear filters",
                               "show-all": "Show the whole library", "add-folder": "Add folder",
                               "open-file": "Open file", "demo": "Try the demo library",
                               "set-default": MimeDefaults.busy ? "Setting as default…"
@@ -2142,45 +2227,49 @@ ApplicationWindow {
         id: confirm
         objectName: "confirm"
         confirmLabel: "Move to Trash"
-        onAccepted: {
-            if (root.pendingDuplicateKeep.path !== undefined) {
-                Actions.moveDuplicateCopiesToTrash(root.pendingDuplicateKeep, root.pendingDeleteBatch)
-                root.say("Checking exact copies before moving them")
-            } else if (root.pendingDeleteBatch.length > 0) {
-                const records = []
-                const failed = []
-                for (const target of root.pendingDeleteBatch) {
-                    const record = Actions.trashCaptured(target)
-                    if (record.path !== undefined) records.push(record)
-                    else failed.push(target.viewedPath)
-                }
-                const moved = records.length
-                // The whole batch is one step, so one Undo puts it all back.
-                const undoId = Settings.pushTrashUndo(records, null)
-                if (moved > 0) {
-                    root.sayUndoable(moved === root.pendingDeleteBatch.length
-                             ? "Moved " + moved + (moved === 1 ? " item" : " items") + " to Trash"
-                             : "Moved " + moved + " of " + root.pendingDeleteBatch.length + " items to Trash",
-                             undoId)
-                }
-                library.clearChecked()
-                for (const path of failed) library.toggleChecked(path)
-                if (failed.length > 0) root.sayUndoable("Moved " + moved + " of " + root.pendingDeleteBatch.length
-                                              + " items to Trash; " + failed.length + " could not be moved",
-                                              undoId)
-                Library.refresh()
-            } else {
-                const record = Actions.trashCaptured(root.pendingDeleteTarget)
-                if (record.path !== undefined) {
-                    root.sayUndoable("Moved to Trash", Settings.pushTrashUndo([record], null))
-                    Library.refresh()
-                }
-            }
-            root.pendingDeleteTarget = ({})
-            root.pendingDeleteBatch = []
-            root.pendingDuplicateKeep = ({})
-        }
+        onAccepted: root.trashPending()
         onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
+    }
+
+    // Moves what the Trash prompt was asked about, once it is confirmed or
+    // when Settings says not to ask.
+    function trashPending() {
+        if (root.pendingDuplicateKeep.path !== undefined) {
+            Actions.moveDuplicateCopiesToTrash(root.pendingDuplicateKeep, root.pendingDeleteBatch)
+            root.say("Checking exact copies before moving them")
+        } else if (root.pendingDeleteBatch.length > 0) {
+            const records = []
+            const failed = []
+            for (const target of root.pendingDeleteBatch) {
+                const record = Actions.trashCaptured(target)
+                if (record.path !== undefined) records.push(record)
+                else failed.push(target.viewedPath)
+            }
+            const moved = records.length
+            // The whole batch is one step, so one Undo puts it all back.
+            const undoId = Settings.pushTrashUndo(records, null)
+            if (moved > 0) {
+                root.sayUndoable(moved === root.pendingDeleteBatch.length
+                         ? "Moved " + moved + (moved === 1 ? " item" : " items") + " to Trash"
+                         : "Moved " + moved + " of " + root.pendingDeleteBatch.length + " items to Trash",
+                         undoId)
+            }
+            library.clearChecked()
+            for (const path of failed) library.toggleChecked(path)
+            if (failed.length > 0) root.sayUndoable("Moved " + moved + " of " + root.pendingDeleteBatch.length
+                                          + " items to Trash; " + failed.length + " could not be moved",
+                                          undoId)
+            Library.refresh()
+        } else {
+            const record = Actions.trashCaptured(root.pendingDeleteTarget)
+            if (record.path !== undefined) {
+                root.sayUndoable("Moved to Trash", Settings.pushTrashUndo([record], null))
+                Library.refresh()
+            }
+        }
+        root.pendingDeleteTarget = ({})
+        root.pendingDeleteBatch = []
+        root.pendingDuplicateKeep = ({})
     }
 
     ConfirmSheet {
@@ -2645,6 +2734,8 @@ ApplicationWindow {
                 root.dismissTopLayer()
             } else if (library.checkedCount > 0) {
                 library.clearChecked()
+            } else if (Captures.findingSimilar) {
+                Captures.similarOnly = false
             } else {
                 root.close()
             }

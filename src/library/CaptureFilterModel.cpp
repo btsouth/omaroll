@@ -64,7 +64,9 @@ CaptureFilterModel::CaptureFilterModel(QObject* parent) : QSortFilterProxyModel(
   connect(&m_duplicateOrderTimer, &QTimer::timeout, this, [this] {
     if (!m_duplicateGroups.isEmpty() || !m_similarGroups.isEmpty()) {
       rebuildDuplicateOrdinals();
+      rebuildLoneReviewPaths();
       invalidate();
+      emit countChanged();
     }
   });
 
@@ -85,6 +87,60 @@ CaptureFilterModel::CaptureFilterModel(QObject* parent) : QSortFilterProxyModel(
     m_folderKeys.clear();
   });
 
+  // A search that shows nothing gets a suggestion shortly after it lands,
+  // and again if it comes to show nothing later, as when a scan finishes,
+  // or when new words arrive (vocabularyChanged()).
+  m_spellingTimer.setSingleShot(true);
+  connect(&m_spellingTimer, &QTimer::timeout, this, &CaptureFilterModel::startSpelling);
+  connect(this, &CaptureFilterModel::countChanged, this, [this] {
+    if (!m_query.isEmpty() && rowCount() == 0 &&
+        (m_spellingFor != m_searchText || m_spellingVersion != m_vocabularyVersion)) {
+      m_spellingTimer.start(120);
+    }
+  });
+  connect(&m_spellingWatcher, &QFutureWatcher<QString>::finished, this, [this] {
+    if (m_spellingWatcher.isCanceled()) return;
+    const QString suggestion = m_spellingWatcher.result();
+    if (m_spellingFor != m_searchText || suggestion == m_didYouMean) return;
+    m_didYouMean = suggestion;
+    emit didYouMeanChanged();
+  });
+  addTermSource([this](SpellingSuggestions::Texts* texts) {
+    if (m_settings) {
+      texts->plain.append(m_settings->tagNames());
+      texts->plain.append(m_settings->albumNames());
+    }
+    if (!sourceModel()) return;
+    QSet<QString> folders;
+    // Nothing of a hidden file is offered, its text included, unless hidden
+    // files are shown.
+    QSet<QString> hidden;
+    for (int row = 0; row < sourceModel()->rowCount(); ++row) {
+      const CaptureRecord& record = sourceRecord(row);
+      if (record.hidden && !m_showHidden) {
+        hidden.insert(record.path);
+        continue;
+      }
+      texts->plain.append(record.fileName);
+      if (!record.caption.isEmpty()) texts->plain.append(record.caption);
+      if (!record.camera.isEmpty()) texts->plain.append(record.camera);
+      if (!record.lens.isEmpty()) texts->plain.append(record.lens);
+      // The folder and the one above it name a place or an event; the
+      // rest of the path is the same for most of the library.
+      const qsizetype end = record.path.lastIndexOf(u'/');
+      const qsizetype start = end > 0 ? record.path.lastIndexOf(u'/', end - 1) : -1;
+      const qsizetype top = start > 0 ? record.path.lastIndexOf(u'/', start - 1) : -1;
+      if (end > 0) folders.insert(record.path.mid(top + 1, end - top - 1));
+    }
+    texts->plain.append(QStringList(folders.cbegin(), folders.cend()));
+    for (auto it = m_text.cbegin(); it != m_text.cend(); ++it) {
+      if (!hidden.contains(it.key())) texts->folded.append(it->folded);
+    }
+    for (auto it = m_documentText.cbegin(); it != m_documentText.cend(); ++it) {
+      if (!hidden.contains(it.key())) texts->folded.append(it->text.folded);
+    }
+  });
+
   m_ocrFilterTimer.setSingleShot(true);
   m_ocrFilterTimer.setInterval(60);
   connect(&m_ocrFilterTimer, &QTimer::timeout, this, [this] {
@@ -102,6 +158,43 @@ CaptureFilterModel::~CaptureFilterModel() {
   // outliving the loader's owner.
   m_storedCancel->store(true);
   m_storedWatcher.waitForFinished();
+  m_spellingCancel->store(true);
+  m_spellingWatcher.waitForFinished();
+}
+
+void CaptureFilterModel::addTermSource(TermSource source) {
+  m_termSources.push_back(std::move(source));
+}
+
+void CaptureFilterModel::vocabularyChanged() {
+  ++m_vocabularyVersion;
+  // Only a search already answered needs asking again. Indexing delivers
+  // words one file at a time, so it waits a second and is not pushed back
+  // by every one.
+  if (!m_query.isEmpty() && m_spellingFor == m_searchText && !m_spellingTimer.isActive()) {
+    m_spellingTimer.start(1000);
+  }
+}
+
+void CaptureFilterModel::startSpelling() {
+  if (m_query.isEmpty() || rowCount() > 0 || m_duplicatesOnly || m_similarOnly) return;
+  if (m_spellingFor == m_searchText && m_spellingVersion == m_vocabularyVersion) return;
+  if (m_spellingWatcher.isRunning()) {
+    // One at a time; the newest search runs once this one stops.
+    m_spellingCancel->store(true);
+    m_spellingTimer.start(120);
+    return;
+  }
+  m_spellingFor = m_searchText;
+  m_spellingVersion = m_vocabularyVersion;
+  SpellingSuggestions::Texts texts;
+  for (const TermSource& source : m_termSources) source(&texts);
+  m_spellingCancel = std::make_shared<std::atomic_bool>(false);
+  m_spellingWatcher.setFuture(
+      QtConcurrent::run([texts = std::move(texts), query = m_searchText, cancel = m_spellingCancel] {
+        const auto vocabulary = SpellingSuggestions::vocabularyOf(texts, cancel.get());
+        return cancel->load() ? QString() : SpellingSuggestions::suggest(query, vocabulary);
+      }));
 }
 
 void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
@@ -148,6 +241,20 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
         if (!metadataOnly || !m_cameraFilter.isEmpty() || !m_lensFilter.isEmpty() ||
             m_dateFrom.isValid() || m_dateTo.isValid() || !m_query.isEmpty()) {
           pairingChanged();
+        }
+      }));
+  // Names, folders, captions and cameras are words "Did you mean" offers.
+  const auto wordsChanged = [this] { vocabularyChanged(); };
+  m_sourceConnections.append(connect(model, &QAbstractItemModel::rowsInserted, this, wordsChanged));
+  m_sourceConnections.append(connect(model, &QAbstractItemModel::rowsRemoved, this, wordsChanged));
+  m_sourceConnections.append(connect(model, &QAbstractItemModel::modelReset, this, wordsChanged));
+  m_sourceConnections.append(connect(model, &QAbstractItemModel::dataChanged, this,
+      [this](const QModelIndex&, const QModelIndex&, const QList<int>& roles) {
+        if (roles.isEmpty() || roles.contains(CaptureRoles::PathRole) ||
+            roles.contains(CaptureRoles::FileNameRole) || roles.contains(CaptureRoles::CaptionRole) ||
+            roles.contains(CaptureRoles::CameraRole) || roles.contains(CaptureRoles::LensRole) ||
+            roles.contains(CaptureRoles::HiddenRole)) {
+          vocabularyChanged();
         }
       }));
   if (auto* captures = qobject_cast<CaptureModel*>(model)) {
@@ -280,8 +387,28 @@ bool CaptureFilterModel::manyRowsChange() {
   return changed > kIncrementalChanges;
 }
 
+void CaptureFilterModel::rebuildLoneReviewPaths() {
+  m_loneReviewPaths.clear();
+  m_acceptedValid = false;
+  if ((!m_duplicatesOnly && !m_similarOnly) || !sourceModel()) return;
+  const QHash<QString, QString>& groups = m_similarOnly ? m_similarGroups : m_duplicateGroups;
+  QHash<QString, int> shown;
+  QList<int> rows;
+  for (int row = 0; row < sourceModel()->rowCount(); ++row) {
+    const CaptureRecord& record = sourceRecord(row);
+    if (!matchesFilters(row, record)) continue;
+    ++shown[groups.value(record.path)];
+    rows.append(row);
+  }
+  for (int row : std::as_const(rows)) {
+    const QString& path = sourceRecord(row).path;
+    if (shown.value(groups.value(path)) < 2) m_loneReviewPaths.insert(path);
+  }
+}
+
 void CaptureFilterModel::rebuildPairing() {
   m_groupedOutPaths.clear();
+  rebuildLoneReviewPaths();
   if (!m_pairRawJpeg || m_duplicatesOnly || m_similarOnly || !sourceModel()) return;
   // Two source passes per filter/scan batch, then constant-time row decisions.
   QSet<QString> eligible;
@@ -787,6 +914,8 @@ void CaptureFilterModel::applyView(const QString& name, const QVariantMap& view,
   }
   m_duplicatesOnly = false;
   m_similarOnly = false;
+  m_similarTo.clear();
+  m_savedScope.reset();
   m_smartCollectionFilter = name;
   endFilterUpdate();
   invalidate();
@@ -823,6 +952,7 @@ void CaptureFilterModel::setShowHidden(bool value) {
   beginFilterUpdate();
   m_showHidden = value;
   endFilterUpdate();
+  vocabularyChanged();
   clearSmartCollection();
   emit showHiddenChanged();
   emit countChanged();
@@ -836,6 +966,8 @@ void CaptureFilterModel::setDuplicatesOnly(bool value) {
   m_duplicatesOnly = value;
   if (value) {
     m_similarOnly = false;
+    m_similarTo.clear();
+    m_savedScope.reset();
   }
   endFilterUpdate();
   rebuildDuplicateOrdinals();
@@ -852,10 +984,16 @@ void CaptureFilterModel::setSimilarOnly(bool value) {
   if (m_similarOnly == value) {
     return;
   }
+  if (!value && m_savedScope) {
+    restoreScope();
+    return;
+  }
   beginFilterUpdate();
   m_similarOnly = value;
   if (value) {
     m_duplicatesOnly = false;
+  } else {
+    m_similarTo.clear();
   }
   endFilterUpdate();
   rebuildDuplicateOrdinals();
@@ -879,6 +1017,110 @@ void CaptureFilterModel::setDuplicateGroups(const QHash<QString, QString>& group
   rebuildDuplicateOrdinals();
   endFilterUpdate();
   invalidate();
+  emit countChanged();
+}
+
+void CaptureFilterModel::setSimilarTo(const QString& path) {
+  if (!path.isEmpty()) {
+    findSimilar(path);
+  } else if (m_savedScope) {
+    setSimilarOnly(false);
+  }
+}
+
+void CaptureFilterModel::findSimilar(const QString& path) {
+  if (path.isEmpty()) return;
+  commitPendingSearch();
+  if (!m_savedScope) {
+    Scope scope;
+    scope.search = m_searchText;
+    scope.kind = m_kindFilter;
+    scope.favorites = m_favoritesOnly;
+    scope.rating = m_minimumRating;
+    scope.duplicates = m_duplicatesOnly;
+    scope.folder = m_folderFilter;
+    scope.album = m_albumFilter;
+    scope.albumPaths = m_albumPaths;
+    scope.tag = m_tagFilter;
+    scope.tagPaths = m_tagPaths;
+    scope.camera = m_cameraFilter;
+    scope.lens = m_lensFilter;
+    scope.dateFrom = m_dateFrom;
+    scope.dateTo = m_dateTo;
+    scope.dateField = m_dateField;
+    scope.modifiedAfter = m_modifiedAfter;
+    scope.modifiedAfterMs = m_modifiedAfterMs;
+    scope.smartCollection = m_smartCollectionFilter;
+    m_savedScope = scope;
+  }
+  beginFilterUpdate();
+  applyScope(Scope{});
+  m_duplicatesOnly = false;
+  m_similarOnly = true;
+  m_similarTo = path;
+  endFilterUpdate();
+  rebuildDuplicateOrdinals();
+  invalidate();
+  emitScopeChanged();
+}
+
+void CaptureFilterModel::restoreScope() {
+  const Scope scope = *m_savedScope;
+  m_savedScope.reset();
+  // Typing during the review is dropped, not applied over the saved search
+  // when its delay runs out; the field shows the saved search again.
+  const bool typing = m_searchTimer.isActive();
+  m_searchTimer.stop();
+  beginFilterUpdate();
+  applyScope(scope);
+  m_duplicatesOnly = scope.duplicates;
+  m_similarOnly = false;
+  m_similarTo.clear();
+  endFilterUpdate();
+  rebuildDuplicateOrdinals();
+  invalidate();
+  emitScopeChanged();
+  if (typing) emit searchTextChanged();
+}
+
+// Between beginFilterUpdate() and endFilterUpdate().
+void CaptureFilterModel::applyScope(const Scope& scope) {
+  m_kindFilter = scope.kind;
+  m_favoritesOnly = scope.favorites;
+  m_minimumRating = scope.rating;
+  m_folderFilter = scope.folder;
+  m_albumFilter = scope.album;
+  m_albumPaths = scope.albumPaths;
+  m_tagFilter = scope.tag;
+  m_tagPaths = scope.tagPaths;
+  m_cameraFilter = scope.camera;
+  m_lensFilter = scope.lens;
+  m_dateFrom = scope.dateFrom;
+  m_dateTo = scope.dateTo;
+  m_dateField = scope.dateField;
+  m_modifiedAfter = scope.modifiedAfter;
+  m_modifiedAfterMs = scope.modifiedAfterMs;
+  m_smartCollectionFilter = scope.smartCollection;
+  if (m_searchText != scope.search) applySearchText(scope.search);
+}
+
+void CaptureFilterModel::emitScopeChanged() {
+  if (rowCount() > 0) {
+    emit dataChanged(index(0, 0), index(rowCount() - 1, 0), {CaptureRoles::OcrSnippetRole});
+  }
+  emit searchTextChanged();
+  emit kindFilterChanged();
+  emit favoritesOnlyChanged();
+  emit minimumRatingChanged();
+  emit folderFilterChanged();
+  emit albumFilterChanged();
+  emit tagFilterChanged();
+  emit cameraFilterChanged();
+  emit lensFilterChanged();
+  emit dateRangeChanged();
+  emit smartCollectionFilterChanged();
+  emit duplicatesOnlyChanged();
+  emit similarOnlyChanged();
   emit countChanged();
 }
 
@@ -1025,6 +1267,27 @@ QString CaptureFilterModel::ocrSnippetAt(int row) const {
   return data(index(row, 0), CaptureRoles::OcrSnippetRole).toString();
 }
 
+QVariantList CaptureFilterModel::snippetMatch(const QString& snippet) const {
+  if (snippet.isEmpty() || m_searchTerms.isEmpty()) return {};
+  QList<qsizetype> sources;
+  const QString folded = SearchText::fold(snippet, &sources);
+  for (const QString& term : m_searchTerms) {
+    if (term.isEmpty()) continue;
+    const qsizetype found = folded.indexOf(term);
+    if (found < 0) continue;
+    const qsizetype last = found + term.size() - 1;
+    const qsizetype start = found < sources.size() ? sources.at(found) : found;
+    qsizetype end = std::min(snippet.size(), last < sources.size() ? sources.at(last) + 1 : last + 1);
+    // The match's last character whole, both halves of a surrogate pair.
+    if (end < snippet.size() && snippet.at(end - 1).isHighSurrogate() &&
+        snippet.at(end).isLowSurrogate()) {
+      ++end;
+    }
+    return {int(start), int(std::max<qsizetype>(1, end - start))};
+  }
+  return {};
+}
+
 QVariant CaptureFilterModel::data(const QModelIndex& proxyIndex, int role) const {
   if (role == CaptureRoles::RawFormatRole && proxyIndex.isValid()) {
     const CaptureRecord& record = sourceRecord(mapToSource(proxyIndex).row());
@@ -1067,6 +1330,7 @@ void CaptureFilterModel::setOcrText(const QString& path, const QString& text) {
     m_text.insert(path, SearchText::FoldedText::make(text));
   }
   ++m_textVersion;
+  vocabularyChanged();
   if (m_query.hasText()) {
     m_ocrFilterTimer.start();
   }
@@ -1100,6 +1364,7 @@ void CaptureFilterModel::setDocumentText(const QString& path, const QString& tex
     trimDocumentText();
   }
   ++m_textVersion;
+  vocabularyChanged();
   if (m_query.hasText()) {
     m_ocrFilterTimer.start();
   }
@@ -1460,7 +1725,8 @@ bool CaptureFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex& sour
     return m_accepted[sourceRow];
   }
   const CaptureRecord& record = sourceRecord(sourceRow);
-  return !m_groupedOutPaths.contains(record.path) && matchesFilters(sourceRow, record);
+  return !m_groupedOutPaths.contains(record.path) && !m_loneReviewPaths.contains(record.path) &&
+         matchesFilters(sourceRow, record);
 }
 
 bool CaptureFilterModel::matchesFilters(int sourceRow, const CaptureRecord& record,
@@ -1472,6 +1738,10 @@ bool CaptureFilterModel::matchesFilters(int sourceRow, const CaptureRecord& reco
     return false;
   }
   if (m_similarOnly && !m_similarGroups.contains(record.path)) {
+    return false;
+  }
+  if (m_similarOnly && !m_similarTo.isEmpty() &&
+      m_similarGroups.value(record.path) != m_similarGroups.value(m_similarTo)) {
     return false;
   }
   const bool refine = (relax & RelaxRefinements) == 0;
@@ -1580,6 +1850,8 @@ void CaptureFilterModel::clearFacets(bool includeSearch) {
   beginFilterUpdate();
   m_duplicatesOnly = false;
   m_similarOnly = false;
+  m_similarTo.clear();
+  m_savedScope.reset();
   m_folderFilter.clear();
   m_albumFilter.clear();
   m_albumPaths.clear();
@@ -1635,6 +1907,13 @@ bool CaptureFilterModel::lessThan(const QModelIndex& left, const QModelIndex& ri
 
 void CaptureFilterModel::applySearchText(const QString& text) {
   m_searchText = text;
+  if (!m_didYouMean.isEmpty()) {
+    m_didYouMean.clear();
+    emit didYouMeanChanged();
+  }
+  m_spellingFor.clear();
+  m_spellingCancel->store(true);
+  m_spellingTimer.stop();
   m_query = SearchQuery::parse(text);
   m_searchTerms = m_query.textValues();
   resetStoredMatches();
@@ -1668,6 +1947,7 @@ void CaptureFilterModel::reloadOrganization() {
   m_tagText = std::move(tags);
   m_albumText = std::move(albums);
   ++m_organizationVersion;
+  vocabularyChanged();
   if (m_query.isEmpty() || !sourceModel()) return;
   beginFilterUpdate();
   endFilterUpdate();
