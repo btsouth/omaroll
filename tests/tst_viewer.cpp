@@ -6498,6 +6498,28 @@ private slots:
 
   // N renames in place with the library's sheet: the file stays on screen
   // under its new name and keeps its favourite. A taken name is refused.
+  // Menu rows that open a sheet or picker run once the menu is gone, so
+  // Rename, Move to folder and Copy to folder open from the menu too.
+  void menuActionsThatOpenASheetRunAfterTheMenuCloses() {
+    open({media(QStringLiteral("Shot 1.jpg"))});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("viewerMenu"));
+    QObject* sheet = m_window->findChild<QObject*>(QStringLiteral("viewerRenameSheet"));
+    QObject* picker = m_window->findChild<QObject*>(QStringLiteral("viewerFolderPicker"));
+    QVERIFY(sheet && picker);
+    for (const QString& id : {QStringLiteral("rename"), QStringLiteral("move-to-folder"),
+                              QStringLiteral("copy-to-folder")}) {
+      QMetaObject::invokeMethod(m_window, "showActionMenu");
+      QTRY_VERIFY(menu->property("visible").toBool());
+      QVERIFY2(QMetaObject::invokeMethod(menuRow(id), "click"), qPrintable(id));
+      QTRY_VERIFY2(!menu->property("visible").toBool(), qPrintable(id));
+      QObject* opened = id == QStringLiteral("rename") ? sheet : picker;
+      QTRY_VERIFY2(opened->property("visible").toBool(), qPrintable(id));
+      QVERIFY(QMetaObject::invokeMethod(opened, id == QStringLiteral("rename") ? "close" : "reject"));
+      QTRY_VERIFY2(!opened->property("visible").toBool(), qPrintable(id));
+    }
+  }
+
   void renameKeepsTheFileOpenAndRefusesATakenName() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
