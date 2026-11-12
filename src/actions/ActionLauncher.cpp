@@ -817,7 +817,7 @@ bool copyThenRemove(const QString& from, const QString& to) {
     return false;
   }
   if (!exclusiveCopy(from, to, true)) return false;
-  if (!syncParentFolder(to)) {
+  if ((relocationFaults.load() & ActionLauncher::FaultNoFolderSync) || !syncParentFolder(to)) {
     QFile::remove(to);
     return false;
   }
