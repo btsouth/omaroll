@@ -16326,10 +16326,11 @@ private slots:
     QElapsedTimer timer;
     timer.start();
     settings.deleteTag(QStringLiteral("Holiday"));
+    const qint64 deleted = timer.elapsed();
     settings.renameTag(QStringLiteral("Beach"), QStringLiteral("Coast"));
     const qint64 elapsed = timer.elapsed();
     AppSettings::s_fingerprintReadPaths = nullptr;
-    qInfo() << "PERF hide and rename a keyword on" << kFiles << "files ms" << elapsed;
+    qInfo() << "PERF delete a keyword on" << kFiles << "files ms" << deleted << "then rename ms" << elapsed - deleted;
     QVERIFY(reads.isEmpty());
     QVERIFY2(elapsed < 3000, qPrintable(QString::number(elapsed)));
     QVERIFY(!settings.tagNames().contains(QStringLiteral("Holiday")));
