@@ -7,6 +7,9 @@
 #include "actions/OpenWithRequest.h"
 #include "app/VideoPlayback.h"
 #include "edit/ClipboardText.h"
+#include "library/EmbeddedMetadata.h"
+#include "sources/CameraRaw.h"
+#include "sources/CaptureScanner.h"
 #include "sources/FileVersion.h"
 
 #include <QClipboard>
@@ -673,16 +676,79 @@ bool ActionLauncher::open(const QString& path) {
 }
 
 bool ActionLauncher::moveToTrash(const QString& path) {
-  return !trashFile(path).isEmpty();
+  // An incomplete export output: only the file itself goes.
+  return !trashFile(path, false).isEmpty();
 }
 
-QVariantMap ActionLauncher::trashFile(const QString& path) {
+namespace {
+// Moves |path| to the Trash, and then its .xmp |sidecars|, found on the
+// window thread before the file moves. They count as the file's: the record
+// holds theirs under "sidecars", so undo puts them back together. Safe off
+// the window thread.
+QVariantMap trashWithSidecars(const QString& path, const QStringList& sidecars, QString* error = nullptr) {
+  QVariantMap record = TrashRestore::moveToTrash(path, error);
+  if (record.isEmpty() || sidecars.isEmpty()) return record;
+  QVariantList moved;
+  for (const QString& sidecar : sidecars) {
+    const QVariantMap trashed = TrashRestore::moveToTrash(sidecar);
+    if (!trashed.isEmpty()) moved.append(trashed);
+  }
+  if (!moved.isEmpty()) record.insert(u"sidecars"_s, moved);
+  return record;
+}
+} // namespace
+
+void ActionLauncher::findSidecarLater(const QString& path) {
+  if (path.isEmpty()) return;
+  QtConcurrent::run([path] { return EmbeddedMetadata::findSidecar(path); })
+      .then(this, [this, path](const QString& sidecar) { noteSidecar(path, sidecar); });
+}
+
+void ActionLauncher::noteSidecar(const QString& path, const QString& sidecar) {
+  if (path.isEmpty()) return;
+  m_knownSidecarOrder.removeOne(path);
+  if (sidecar.isEmpty()) {
+    m_knownSidecars.remove(path);
+    return;
+  }
+  m_knownSidecars.insert(path, sidecar);
+  m_knownSidecarOrder.append(path);
+  while (m_knownSidecarOrder.size() > 32) m_knownSidecars.remove(m_knownSidecarOrder.takeFirst());
+}
+
+QStringList ActionLauncher::sidecarFiles(const QString& path) const {
+  const QFileInfo info(path);
+  const QString name = info.fileName();
+  if (name.isEmpty() || name.endsWith(u".xmp"_s, Qt::CaseInsensitive)) return {};
+  const QString folder = info.absolutePath() + QLatin1Char('/');
+  QStringList found;
+  QSet<QString> seen;
+  const auto take = [&](const QString& candidate) {
+    const QFileInfo sidecar(candidate);
+    if (!sidecar.isFile()) return;
+    // One file under two spellings on a case-insensitive filesystem.
+    const QString canonical = sidecar.canonicalFilePath();
+    if (seen.contains(canonical)) return;
+    seen.insert(canonical);
+    found.append(sidecar.absoluteFilePath());
+  };
+  if (m_sidecarLookup) {
+    if (const QString recorded = m_sidecarLookup(path); !recorded.isEmpty()) take(recorded);
+  }
+  if (const QString noted = m_knownSidecars.value(path); !noted.isEmpty()) take(noted);
+  take(folder + name + u".xmp"_s);
+  take(folder + name + u".XMP"_s);
+  return found;
+}
+
+QVariantMap ActionLauncher::trashFile(const QString& path, bool withSidecars) {
   if (!QFileInfo::exists(path)) {
     emit failed(u"That file is no longer there"_s);
     return {};
   }
   QString error;
-  QVariantMap record = TrashRestore::moveToTrash(path, &error);
+  QVariantMap record = withSidecars ? trashWithSidecars(path, sidecarFiles(path), &error)
+                                     : TrashRestore::moveToTrash(path, &error);
   if (record.isEmpty()) emit failed(error);
   return record;
 }
@@ -898,7 +964,7 @@ QVariantMap ActionLauncher::checkTransfer(const QVariantMap& target, const QStri
 }
 
 QVariantMap ActionLauncher::transferCapturedFile(const QVariantMap& target, const QString& folder,
-                                                 bool copy) {
+                                                 bool copy, const QStringList& sidecars) {
   const QVariantMap checked = checkTransfer(target, folder, copy);
   if (!checked.value(u"ok"_s).toBool()) return checked;
   const auto failure = [](const QString& message) {
@@ -924,12 +990,38 @@ QVariantMap ActionLauncher::transferCapturedFile(const QVariantMap& target, cons
       if (QFileInfo(path).exists() || QFileInfo(path).isSymLink()) continue; // taken just now
       return failure(copy ? u"Could not copy this file there"_s : u"Could not move this file there"_s);
     }
+    // Its sidecars follow under the name the file took: "<name>.<ext>.xmp"
+    // the file name, "<name>.xmp" the base name. One that cannot go stays
+    // where it is; the file has already moved and is not put back for it.
+    int carried = 0;
+    QString stayed;
+    for (const QString& sidecar : sidecars) {
+      const QString sidecarName = QFileInfo(sidecar).fileName();
+      const bool fullName = sidecarName.chopped(4).compare(source.fileName(), Qt::CaseInsensitive) == 0;
+      const QString stem = fullName ? fileName : QFileInfo(fileName).completeBaseName();
+      const QString destination = directory.filePath(stem + sidecarName.right(4));
+      const QFileInfo existing(destination);
+      bool moved = false;
+      if (!existing.exists() && !existing.isSymLink()) {
+        moved = copy ? exclusiveCopy(sidecar, destination, true) : relocateEntry(sidecar, destination);
+      }
+      if (moved) {
+        ++carried;
+      } else if (stayed.isEmpty()) {
+        const QString verb = copy ? u"was not copied"_s : u"stayed"_s;
+        stayed = existing.exists() || existing.isSymLink()
+                     ? u"Its sidecar %1 because %2 is already there"_s.arg(verb, existing.fileName())
+                     : u"Its sidecar %1: could not %2 it"_s.arg(verb, copy ? u"copy"_s : u"move"_s);
+      }
+    }
     return {{u"ok"_s, true},
             {u"path"_s, path},
             {u"fileName"_s, fileName},
             {u"folder"_s, directory.absolutePath()},
             {u"mediaPath"_s, QFileInfo(path).canonicalFilePath()},
-            {u"renamed"_s, attempt > 1}};
+            {u"renamed"_s, attempt > 1},
+            {u"sidecars"_s, carried},
+            {u"sidecarNote"_s, stayed}};
   }
   return failure(u"Too many files with that name are already there"_s);
 }
@@ -956,9 +1048,10 @@ QVariantMap ActionLauncher::startTransfer(const QVariantMap& target, const QStri
     emit transferringChanged();
     emit transferFinished(job, result);
   });
-  // A large file on a slow or network disk takes a while; the window stays live.
-  watcher->setFuture(QtConcurrent::run([target, folder, copy] {
-    return transferCapturedFile(target, folder, copy);
+  // A large file on a slow or network disk takes a while; the window stays
+  // live. Its sidecars are found here, without listing the folder.
+  watcher->setFuture(QtConcurrent::run([target, folder, copy, sidecars = sidecarFiles(source)] {
+    return transferCapturedFile(target, folder, copy, sidecars);
   }));
   return {{u"ok"_s, true}, {u"job"_s, job}};
 }
@@ -1011,7 +1104,12 @@ void ActionLauncher::trashOthers(
     done(result.value(u"moved"_s).toInt(), result.value(u"skipped"_s).toStringList(),
          result.value(u"trashed"_s).toList());
   });
-  watcher->setFuture(QtConcurrent::run([keep, others, identicalOnly] {
+  QHash<QString, QStringList> sidecars;
+  for (const QVariant& value : others) {
+    const QString path = value.toMap().value(u"path"_s).toString();
+    if (const QStringList found = sidecarFiles(path); !found.isEmpty()) sidecars.insert(path, found);
+  }
+  watcher->setFuture(QtConcurrent::run([keep, others, identicalOnly, sidecars] {
     int moved = 0;
     QStringList skipped;
     QVariantList trashed;
@@ -1037,7 +1135,7 @@ void ActionLauncher::trashOthers(
         movable = movable && copy.atEnd() && capturedFileMatches(keep) &&
                   capturedFileMatches(target);
       }
-      QVariantMap record = movable ? TrashRestore::moveToTrash(path) : QVariantMap();
+      QVariantMap record = movable ? trashWithSidecars(path, sidecars.value(path)) : QVariantMap();
       if (!record.isEmpty()) {
         ++moved;
         if (target.contains(u"viewedPath"_s)) record.insert(u"viewedPath"_s, target.value(u"viewedPath"_s));
@@ -1162,11 +1260,34 @@ QVariantMap ActionLauncher::renameFile(const QString& path, const QString& baseN
   if (!captured.isEmpty() && !capturedFileMatches(captured)) {
     return failure(u"That file changed or disappeared. Open Rename again"_s);
   }
+  // Its .xmp sidecars take the new name in the same step: "<name>.<ext>.xmp"
+  // follows the file name, "<name>.xmp" the base name. Their contents are not
+  // touched.
+  QList<QPair<QString, QString>> sidecars;
+  for (const QString& sidecar : sidecarFiles(source.absoluteFilePath())) {
+    const QString sidecarName = QFileInfo(sidecar).fileName();
+    const bool fullName = sidecarName.chopped(4).compare(source.fileName(), Qt::CaseInsensitive) == 0;
+    const QString renamed = source.dir().filePath((fullName ? fileName : name) + sidecarName.right(4));
+    if (QFileInfo::exists(renamed)) {
+      return failure(u"A sidecar named %1 already exists"_s.arg(QFileInfo(renamed).fileName()));
+    }
+    sidecars.append({sidecar, renamed});
+  }
   if (!relocateEntry(source.absoluteFilePath(), target, false)) {
     return failure(u"Could not rename this file"_s);
+  }
+  for (qsizetype at = 0; at < sidecars.size(); ++at) {
+    if (relocateEntry(sidecars.at(at).first, sidecars.at(at).second, false)) continue;
+    // Put everything back rather than leave a sidecar behind its file.
+    for (qsizetype back = at - 1; back >= 0; --back) {
+      (void)relocateEntry(sidecars.at(back).second, sidecars.at(back).first, false);
+    }
+    (void)relocateEntry(target, source.absoluteFilePath(), false);
+    return failure(u"Could not rename this file's sidecar"_s);
   }
 
   return {{QStringLiteral("ok"), true},
           {QStringLiteral("path"), target},
-          {QStringLiteral("fileName"), fileName}};
+          {QStringLiteral("fileName"), fileName},
+          {QStringLiteral("sidecars"), static_cast<int>(sidecars.size())}};
 }

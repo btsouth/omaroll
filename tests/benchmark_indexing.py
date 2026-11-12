@@ -28,13 +28,15 @@ def cpu_seconds(stat):
     return (int(fields[11]) + int(fields[12])) / os.sysconf("SC_CLK_TCK")
 
 
-def sample(binary, library, timeout, gpu=False):
+def sample(binary, library, timeout, gpu=False, cache=None):
     with tempfile.TemporaryDirectory(prefix="omaroll-indexing-") as root:
         scratch = Path(root)
         (scratch / "empty").mkdir()
         env = dict(os.environ)
         for name in ("HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"):
             env[name] = str(scratch / name)
+        if cache is not None:
+            env["XDG_CACHE_HOME"] = str(cache)
         for name in ("XDG_PICTURES_DIR", "OMARCHY_SCREENSHOT_DIR", "XDG_VIDEOS_DIR",
                      "XDG_DOWNLOAD_DIR", "OMARCHY_SCREENRECORD_DIR"):
             env[name] = str(scratch / "empty")
@@ -99,11 +101,17 @@ def main():
     parser.add_argument("binary", type=Path)
     parser.add_argument("--library", type=Path, help="Existing disposable media folder, read only")
     parser.add_argument("--files", type=int, default=10000, help="Size of the generated library")
+    parser.add_argument("--xmp-percent", type=int, default=30,
+                        help="Share of generated files given an XMP sidecar with keywords (default 30)")
     parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--gpu", action="store_true",
                         help="Open a real window on the session's display and GPU; only inside a "
                              "disposable desktop such as omabox, never the active one")
     parser.add_argument("--timeout", type=float, default=600, help="Seconds allowed for one indexing pass")
+    parser.add_argument("--cache", type=Path,
+                        help="Keep the metadata caches in this disposable folder between runs and "
+                             "invocations, to time a pass over a library indexed before (for "
+                             "instance by an older build)")
     parser.add_argument("--max-gui-seconds", type=float,
                         help="Fail when the window thread spends more CPU than this while indexing (median)")
     parser.add_argument("--max-gui-percent", type=float,
@@ -117,17 +125,22 @@ def main():
             if not 1 <= args.files <= 50000:
                 parser.error("--files must be 1..50000")
             subprocess.run([sys.executable, str(Path(__file__).parent / "make-performance-fixtures.py"),
-                            str(Path(root) / "fixtures"), "--files", str(args.files)],
+                            str(Path(root) / "fixtures"), "--files", str(args.files),
+                            "--xmp-percent", str(args.xmp_percent)],
                            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             library = Path(root) / "fixtures/library"
         elif not library.is_dir():
             parser.error("--library must be an existing folder")
-        files = sum(1 for path in library.rglob("*") if path.is_file())
-        results = [sample(args.binary.resolve(), library.resolve(), args.timeout, args.gpu)
+        files = sum(1 for path in library.rglob("*") if path.is_file() and path.suffix.lower() != ".xmp")
+        sidecars = sum(1 for path in library.rglob("*.xmp") if path.is_file())
+        if args.cache is not None:
+            args.cache.mkdir(parents=True, exist_ok=True)
+        results = [sample(args.binary.resolve(), library.resolve(), args.timeout, args.gpu,
+                          args.cache.resolve() if args.cache else None)
                    for _ in range(args.runs)]
     gui = sorted(result["gui_thread_cpu_seconds"] for result in results)[len(results) // 2]
     share = sorted(result["gui_thread_percent_one_core"] for result in results)[len(results) // 2]
-    print(json.dumps(dict(files=files, median_gui_thread_cpu_seconds=gui,
+    print(json.dumps(dict(files=files, xmp_sidecars=sidecars, median_gui_thread_cpu_seconds=gui,
                           median_gui_thread_percent_one_core=share, runs=results), indent=2))
     print(f"benchmark_indexing: {files} files, window thread {gui} s of CPU, {share}% of one core, "
           f"while indexing (median of {len(results)})", file=sys.stderr)

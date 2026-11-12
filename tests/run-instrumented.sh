@@ -8,7 +8,7 @@ case "$mode" in
     cmake -S . -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DOMAROLL_FUZZ=ON
     cmake --build "$build" --parallel 4 --target fuzz_launch fuzz_ipc fuzz_matroska fuzz_pdf fuzz_image fuzz_raw fuzz_subtitles fuzz_organization \
       fuzz_query fuzz_storyboard fuzz_doctext fuzz_exifdate fuzz_hyprland fuzz_jpegexif fuzz_diagnosis fuzz_hashcache \
-      fuzz_webp fuzz_mimedefaults
+      fuzz_webp fuzz_mimedefaults fuzz_xmp
     bash tests/fuzz/run.sh "$build" "${2:-45}" "${3:-}"
     ;;
   tsan)
@@ -38,6 +38,8 @@ case "$mode" in
     # thread starts, and TSan then aborts when a thread id is reused.)
     core='^(singleInstance|executableForwards|nativeClipboardFallback|externalSubtitles|subtitle|automaticOrganization|restoringABackup|resumeMigration|repairingDamagedSettings|organizationSnapshots|todaysSnapshot|launchWarns|launchDoesNot|keepingIncomplete'
     core+='|metadataProbes|metadataProgress|indexShutdown|imageDatesUseBoundedBatches'
+    # Keywords from files read on the probe pool, and removal rows fingerprinted on a worker.
+    core+='|keywordsFromFilesAreReadOnce|anOlderCacheReadsOnlyFileData|hiddenKeywordsFollowTheirFiles'
     core+='|localOcrSearch|sparseOcrRetry|clearingOcrSearch|backgroundTextIndex'
     core+='|exactDuplicateReview|visuallySimilar|similarPictures|similarSets|looseSimilarity|similarityAndDuplicateHashes)'
     search='^(pdfText|pdfReads|pdfIndexing|documentText|textProducers|rowsThatMove|snippetsOfLong|longTextSnippets)'

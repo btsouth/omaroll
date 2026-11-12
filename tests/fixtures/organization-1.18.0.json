@@ -1,0 +1,33 @@
+{
+    "albums": {
+        "Old album": [
+            {
+                "bytes": 0,
+                "device": "0",
+                "fingerprint": "",
+                "inode": "0",
+                "modified": 0,
+                "path": "/FIXTURE/photo.png"
+            }
+        ]
+    },
+    "captions": {
+    },
+    "exportedAt": "2026-11-01T09:00:00Z",
+    "favorites": [
+    ],
+    "format": "omaroll.organization",
+    "hidden": [
+    ],
+    "markIdentities": {
+    },
+    "ratings": {
+    },
+    "smartCollections": {
+    },
+    "tags": {
+        "Old tag": [
+        ]
+    },
+    "version": 1
+}

@@ -3,6 +3,7 @@
 #include "app/HyprlandSetup.h"
 #include "app/MimeDefaults.h"
 #include "edit/JpegExif.h"
+#include "library/EmbeddedMetadata.h"
 #include "library/HashCache.h"
 #include "viewer/PictureDiagnosis.h"
 #include "app/SingleInstance.h"
@@ -313,6 +314,29 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     }
   }
   QDir(config).removeRecursively();
+#elif FUZZ_KIND == 19
+  // Keywords, rating and caption from XMP and IPTC: every container walker,
+  // then the packet parsers on the whole input and on what the walkers found.
+  // The limits hold whatever the input.
+  const auto check = [](const EmbeddedMetadata::Fields& fields) {
+    if (fields.keywords.size() > EmbeddedMetadata::kMaximumKeywords ||
+        fields.description.size() > EmbeddedMetadata::kMaximumDescriptionLength || fields.rating < 0 ||
+        fields.rating > 5)
+      std::abort();
+    for (const QString& keyword : fields.keywords)
+      if (keyword.isEmpty()) std::abort();
+  };
+  const EmbeddedMetadata::Packets walked[] = {
+      EmbeddedMetadata::jpegPackets(bytes), EmbeddedMetadata::pngPackets(bytes),
+      EmbeddedMetadata::webpPackets(bytes), EmbeddedMetadata::tiffPackets(bytes),
+      EmbeddedMetadata::packets(bytes)};
+  check(EmbeddedMetadata::parseXmp(bytes));
+  check(EmbeddedMetadata::parseIptc(bytes));
+  for (const EmbeddedMetadata::Packets& found : walked) {
+    if (found.xmp.size() > bytes.size() * 1100 || found.iptc.size() > bytes.size()) std::abort();
+    if (!found.xmp.isEmpty()) check(EmbeddedMetadata::parseXmp(found.xmp));
+    if (!found.iptc.isEmpty()) check(EmbeddedMetadata::parseIptc(found.iptc));
+  }
 #else
   const QString path = env.dir.filePath(QStringLiteral("input.raw"));
   QFile file(path);

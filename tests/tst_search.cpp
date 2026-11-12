@@ -1639,6 +1639,43 @@ private slots:
     }
   }
 
+  void keywordsFromFilesAreSearchedLikeTags() {
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    QTRY_VERIFY(!model.scanning());
+    model.setRecordsForTesting(library());
+    CaptureFilterModel proxy;
+    proxy.setSourceModel(&model);
+    const QString waterfall = path("Iceland/waterfall.jpg");
+    AppSettings::EmbeddedUpdate update;
+    update.path = waterfall;
+    update.values.keywords = {QStringLiteral("Animals/Birds/kestrel"), QStringLiteral("wildlife")};
+    update.values.caption = QStringLiteral("Seen at dawn");
+    update.values.rating = 3;
+    settings.setEmbedded({update});
+    const auto found = [&](const QString& query) {
+      proxy.setSearchText(query);
+      return names(proxy);
+    };
+    QTRY_COMPARE(found(QStringLiteral("kestrel")), QStringList{QStringLiteral("waterfall.jpg")});
+    QCOMPARE(found(QStringLiteral("tag:wildlife")), QStringList{QStringLiteral("waterfall.jpg")});
+    QCOMPARE(found(QStringLiteral("tag:birds")), QStringList{QStringLiteral("waterfall.jpg")});
+    QCOMPARE(found(QStringLiteral("dawn")), QStringList{QStringLiteral("waterfall.jpg")});
+    QCOMPARE(model.recordAt(model.rowOf(waterfall)).rating, 3);
+    // tag: suggestions come from the same names.
+    QStringList inserts;
+    for (const QVariant& row : proxy.searchSuggestions(QStringLiteral("tag:kes"), 7))
+      inserts.append(row.toMap().value(QStringLiteral("insert")).toString());
+    QCOMPARE(inserts, QStringList{QStringLiteral("tag:Animals/Birds/kestrel")});
+    // A keyword removed here no longer matches, though the file still has it.
+    proxy.setSearchText(QStringLiteral("tag:wildlife"));
+    settings.removeTag(QStringLiteral("wildlife"), {waterfall});
+    QTRY_COMPARE(proxy.count(), 0);
+    QCOMPARE(found(QStringLiteral("wildlife")), QStringList());
+    QCOMPARE(found(QStringLiteral("kestrel")), QStringList{QStringLiteral("waterfall.jpg")});
+  }
+
 private:
   QString path(const char* relative) const {
     return m_files + QLatin1Char('/') + QString::fromUtf8(relative);

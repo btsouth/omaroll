@@ -194,6 +194,17 @@ QList<CaptureScanner::Root> CaptureModel::roots() const {
   return list;
 }
 
+QStringList CaptureModel::rootPaths() const {
+  QStringList paths;
+  for (const CaptureScanner::Root& root : roots()) {
+    const QFileInfo info(root.path);
+    const QString canonical = info.canonicalFilePath();
+    const QString path = canonical.isEmpty() ? QDir::cleanPath(info.absoluteFilePath()) : canonical;
+    if (!path.isEmpty() && !paths.contains(path)) paths.append(path);
+  }
+  return paths;
+}
+
 QVariantList CaptureModel::automaticFolders() const {
   struct Source {
     QString label;
@@ -764,7 +775,10 @@ void CaptureModel::adoptResults(ScanResult result) {
           record.raw == fresh.raw && record.companionPath == fresh.companionPath &&
           record.captured == fresh.captured &&
           record.hasProducerTimestamp == fresh.hasProducerTimestamp &&
-          record.favorite == fresh.favorite && record.hidden == fresh.hidden) {
+          record.favorite == fresh.favorite && record.hidden == fresh.hidden &&
+          record.sidecarPath == fresh.sidecarPath &&
+          record.sidecarModified == fresh.sidecarModified &&
+          record.sidecarBytes == fresh.sidecarBytes) {
         continue;
       }
       record = fresh;

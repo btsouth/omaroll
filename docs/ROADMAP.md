@@ -40,8 +40,10 @@ Shipped work is in the [changelog](../CHANGELOG.md).
 
 Considered for 1.8.0 and left out; revisit only with a fresh decision:
 
-- **XMP sidecars.** The versioned JSON backup already covers portability, and
-  writing sidecars would go against the read-only organization policy.
+- **Writing XMP sidecars.** Keywords, ratings and descriptions in XMP, IPTC
+  and `.xmp` sidecars are read; writing them back would go against the
+  read-only organization policy, and the versioned JSON backup already covers
+  portability.
 - **Video chapters, play queue and loop.** The viewer plays video; these
   additional controls are outside the current scope.
 - **Subtitle styling and a separate track picker.** Tracks are already named

@@ -31,6 +31,9 @@ public:
   [[nodiscard]] QString coordinates() const { return m_coordinates; }
 
   Q_INVOKABLE void inspect(const QString& path, bool video);
+  // Whether inspect also reads the file's keywords, rating and description
+  // (embeddedRead). Follows AppSettings::readEmbeddedMetadata.
+  void setReadEmbedded(bool value) { m_readEmbedded = value; }
 
   // Kept pure so unusual producer output can be covered without starting a
   // process in every parser test.
@@ -51,6 +54,9 @@ public:
 signals:
   void detailsChanged();
   void loadingChanged();
+  // What the inspected file and its sidecar hold, read on a worker.
+  void embeddedRead(const QString& path, const QStringList& keywords, int rating,
+                    const QString& description);
 
 private:
   void cancelCurrent();
@@ -62,4 +68,5 @@ private:
   QPointer<QProcess> m_process;
   quint64 m_generation = 0;
   bool m_loading = false;
+  bool m_readEmbedded = true;
 };

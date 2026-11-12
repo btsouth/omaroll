@@ -314,6 +314,14 @@ public:
     QObject::connect(&m_library, &CaptureFilterModel::showHiddenChanged, &settings,
                      [this, &settings] { settings.setShowHidden(m_library.showHidden()); });
 
+    // The preview reads the shown file's keywords, stars and caption again,
+    // so an edited sidecar shows without a rescan.
+    m_mediaInfo.setReadEmbedded(settings.readEmbeddedMetadata());
+    QObject::connect(&settings, &AppSettings::readEmbeddedMetadataChanged, &m_mediaInfo,
+                     [this, &settings] { m_mediaInfo.setReadEmbedded(settings.readEmbeddedMetadata()); });
+    QObject::connect(&m_mediaInfo, &MediaInspector::embeddedRead, &settings,
+                     &AppSettings::noteEmbeddedRead);
+
     m_folderTree.bind(&m_captures, &m_library);
     add(request);
 
@@ -324,6 +332,13 @@ public:
                      &CaptureModel::holdPath);
     QObject::connect(&actions, &ActionLauncher::outputSettled, &m_captures,
                      &CaptureModel::releasePath);
+    // Rename and Trash take the sidecar the scan recorded, without listing
+    // the folder on the window thread.
+    actions.setSidecarLookup([this](const QString& path) {
+      const int row = m_captures.rowOf(path);
+      return row < 0 ? QString() : m_captures.recordAt(row).sidecarPath;
+    });
+    m_actions = &actions;
 
     m_context.setContextProperty(QStringLiteral("FolderTree"), &m_folderTree);
     m_context.setContextProperty(QStringLiteral("Captures"), &m_library);
@@ -345,6 +360,9 @@ public:
     m_window = createWindow(engine, m_context, "Main", m_root);
   }
 
+  ~LibraryWindow() {
+    if (m_actions) m_actions->setSidecarLookup({});
+  }
   void requestStop() {
     m_captures.requestStop();
     m_mediaMetadata.requestStop();
@@ -389,6 +407,7 @@ private:
     }
   }
 
+  ActionLauncher* m_actions = nullptr;
   CaptureModel m_captures;
   MediaMetadataIndex m_mediaMetadata;
   CaptureFilterModel m_library;

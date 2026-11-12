@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QObject>
 #include <QDBusConnection>
 #include <QSet>
@@ -77,15 +78,18 @@ public:
   // own name or the first free "name (2).ext" when that is taken. Never
   // overwrites. {ok: true, job} once started, then transferFinished(job,
   // result) with {ok, path, fileName, folder, mediaPath, renamed, copy,
-  // source, viewedPath} or {ok: false, error}. A refusal that needs no work
-  // (folder gone, file changed, already being moved) is {ok: false, error}
-  // at once.
+  // source, viewedPath, sidecars, sidecarNote} or {ok: false, error}. A
+  // refusal that needs no work (folder gone, file changed, already being
+  // moved) is {ok: false, error} at once. The file's .xmp sidecars go with
+  // it, renamed with it; one whose name is taken there stays, the file goes
+  // anyway, and sidecarNote says so.
   Q_INVOKABLE QVariantMap startTransfer(const QVariantMap& target, const QString& folder, bool copy);
   // Every file a transfer is running for, by its captured path.
   Q_INVOKABLE [[nodiscard]] QStringList transferringPaths() const { return m_transferring.values(); }
-  // The transfer itself, on the calling thread.
+  // The transfer itself, on the calling thread, with the |sidecars| found
+  // on the window thread.
   [[nodiscard]] static QVariantMap transferCapturedFile(const QVariantMap& target, const QString& folder,
-                                                        bool copy);
+                                                        bool copy, const QStringList& sidecars = {});
   // The one place a file changes its path, for rename and move alike, so
   // whatever travels with a file travels the same way for both. Never
   // replaces an existing |to|: renameat2 without replacing, else a hard link,
@@ -121,6 +125,28 @@ public:
   // extension or overwrite another file. The map contains ok, path, fileName,
   // and an inline error suitable for the rename sheet.
   Q_INVOKABLE QVariantMap renameFile(const QString& path, const QString& baseName);
+  // The .xmp sidecars that rename and Trash move with |path|. For the
+  // confirmations, which say "and its sidecar".
+  Q_INVOKABLE [[nodiscard]] int sidecarCount(const QString& path) const {
+    return static_cast<int>(sidecarFiles(path).size());
+  }
+  // Never lists the folder, since it runs on the window thread for every
+  // confirmation and a folder can be huge or on a network share: the
+  // sidecar the scan recorded for the file, or that findSidecarLater found,
+  // plus "<name>.<ext>.xmp" checked by stat. "<name>.xmp" counts only
+  // through those two, which know whether another file shares that base
+  // name and so owns it too.
+  [[nodiscard]] QStringList sidecarFiles(const QString& path) const;
+  // The scan's sidecar for a library file, empty for none or for a file
+  // outside the library. Set by the library window; window thread only.
+  void setSidecarLookup(std::function<QString(const QString&)> lookup) {
+    m_sidecarLookup = std::move(lookup);
+  }
+  // For a file the library has not scanned, such as one a viewer opened
+  // from the file manager: finds its sidecar on a worker, listing the folder
+  // there, and keeps it for sidecarFiles. The last few are kept.
+  void findSidecarLater(const QString& path);
+  void noteSidecar(const QString& path, const QString& sidecar);
 
   // Launch and forget. Names the package in the failure when the program is
   // absent, so the message says what to install.
@@ -210,7 +236,8 @@ private:
   [[nodiscard]] static bool sameCapturedEntry(const QVariantMap& left, const QVariantMap& right);
   void trashOthers(const QVariantMap& keep, const QVariantList& others, bool identicalOnly,
                    std::function<void(int, const QStringList&, const QVariantList&)> done);
-  QVariantMap trashFile(const QString& path);
+  // The user's Trash takes the file's .xmp sidecars along.
+  QVariantMap trashFile(const QString& path, bool withSidecars = true);
   QVariantMap renameFile(const QString& path, const QString& baseName, const QVariantMap& target);
   [[nodiscard]] static QVariantMap checkTransfer(const QVariantMap& target, const QString& folder, bool copy);
   QSet<QString> m_transferring;
@@ -236,4 +263,7 @@ private:
   QPointer<QProcess> m_copyHelper;
   // The wl-copy of the latest image copy, while it runs.
   QPointer<QProcess> m_copyProcess;
+  std::function<QString(const QString&)> m_sidecarLookup;
+  QHash<QString, QString> m_knownSidecars;
+  QStringList m_knownSidecarOrder;
 };

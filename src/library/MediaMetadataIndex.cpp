@@ -1,10 +1,13 @@
 #include "library/MediaMetadataIndex.h"
+#include "app/AppSettings.h"
 #include "app/StartupTrace.h"
 #include "app/TsanHandoff.h"
 
 #include "sources/CameraRaw.h"
 
 #include <QDataStream>
+#include <QDateTime>
+#include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -34,6 +37,10 @@ constexpr int kImageBatchTimeoutMs = 30'000;
 constexpr int kVideoProbeTimeoutMs = 5000;
 constexpr auto kImageRecordPrefix = "\x1e"
                                     "OMAROLL_DATE:";
+// The embedded cache: keywords, rating and description per file.
+constexpr quint32 kEmbeddedMagic = 0x4f4d4531; // OME1
+constexpr quint16 kEmbeddedVersion = 2;
+constexpr quint32 kMaximumEmbeddedEntries = 400'000;
 
 QString cacheHome() {
   const QString configured = qEnvironmentVariable("XDG_CACHE_HOME");
@@ -118,10 +125,39 @@ QString identityKey(qint64 modified, qint64 bytes, quint64 device, quint64 inode
   return QStringLiteral("%1:%2:%3:%4").arg(modified).arg(bytes).arg(device).arg(inode);
 }
 
+// Keywords, a rating and a description from a file and its sidecar. Counted
+// for tests, and always off the window thread.
+EmbeddedMetadata::Fields readEmbedded(const QString& path, const QString& sidecar) {
+#ifdef OMAROLL_TESTING
+  MediaMetadataIndex::s_embeddedReads.fetch_add(1);
+  if (QThread::isMainThread()) MediaMetadataIndex::s_embeddedReadsOnWindowThread.fetch_add(1);
+#endif
+  return EmbeddedMetadata::read(path, sidecar);
+}
+
+// The per-file limits of the embedded cache.
+EmbeddedMetadata::Fields bounded(EmbeddedMetadata::Fields fields) {
+  if (fields.keywords.size() > EmbeddedMetadata::kMaximumKeywords)
+    fields.keywords = fields.keywords.first(EmbeddedMetadata::kMaximumKeywords);
+  fields.keywords.removeIf([](const QString& keyword) {
+    return keyword.isEmpty() || keyword.size() > EmbeddedMetadata::kMaximumKeywordLength;
+  });
+  fields.description = fields.description.left(2000);
+  if (fields.rating < 0 || fields.rating > 5) fields.rating = 0;
+  return fields;
+}
+
 } // namespace
 
+#ifdef OMAROLL_TESTING
+std::atomic<int> MediaMetadataIndex::s_embeddedReadsOnWindowThread{0};
+std::atomic<int> MediaMetadataIndex::s_embeddedReads{0};
+#endif
+
 struct MediaMetadataIndex::Probe {
-  enum class Kind { Image, Video, Raw };
+  // Embedded reads only a file's own data, in-process: for files whose date
+  // is already known, whose sidecar changed, or without ImageMagick.
+  enum class Kind { Image, Video, Raw, Embedded };
   QList<Candidate> batch;
   Kind kind = Kind::Image;
   // Removed from the library while running: the result is discarded and the
@@ -131,6 +167,10 @@ struct MediaMetadataIndex::Probe {
   std::shared_ptr<std::atomic_bool> stop = std::make_shared<std::atomic_bool>(false);
   bool parsing = false;
   bool finished = false;
+  // Index in the batch, path and sidecar of each file whose own data is read
+  // by this probe's worker. Shared read-only with it.
+  std::shared_ptr<const QList<std::tuple<int, QString, QString>>> embeddedJobs =
+      std::make_shared<const QList<std::tuple<int, QString, QString>>>();
   std::unique_ptr<QProcess> process;
   QTimer timeout;
   QFutureWatcher<Parsed> parse;
@@ -201,6 +241,22 @@ MediaMetadataIndex::MediaMetadataIndex(CaptureModel* model, QObject* parent)
       m_imageProgram(QStandardPaths::findExecutable(QStringLiteral("magick"))),
       m_videoProgram(QStandardPaths::findExecutable(QStringLiteral("ffprobe"))) {
   loadCache();
+  loadEmbeddedCache();
+
+  m_embeddedTimer.setSingleShot(true);
+  m_embeddedTimer.setInterval(kEmbeddedIntervalMs);
+  connect(&m_embeddedTimer, &QTimer::timeout, this, &MediaMetadataIndex::flushEmbedded);
+  if (AppSettings* settings = m_model ? m_model->settings() : nullptr) {
+    connect(settings, &AppSettings::readEmbeddedMetadataChanged, this, [this, settings] {
+      if (!settings->readEmbeddedMetadata()) {
+        m_pendingEmbedded.clear();
+        return;
+      }
+      seedEmbedded();
+      m_syncTimer.start();
+    });
+    seedEmbedded();
+  }
 
   m_parallel = maximumParallelProbes();
   m_pool.setMaxThreadCount(m_parallel);
@@ -241,7 +297,7 @@ MediaMetadataIndex::~MediaMetadataIndex() {
   }
   // Parsing captures only its own copies; raw reads stop at the next file.
   m_pool.waitForDone();
-  if (m_cacheDirty) {
+  if (m_cacheDirty || m_embeddedDirty) {
     saveCache();
   }
 }
@@ -252,6 +308,7 @@ void MediaMetadataIndex::requestStop() {
   m_updateTimer.stop();
   m_saveTimer.stop();
   m_progressTimer.stop();
+  m_embeddedTimer.stop();
   m_queue.clear();
   for (const auto& probe : m_probes) {
     probe->timeout.stop();
@@ -265,6 +322,10 @@ void MediaMetadataIndex::requestStop() {
 
 QString MediaMetadataIndex::cachePath() {
   return cacheHome() + QStringLiteral("/omaroll/media-metadata.index");
+}
+
+QString MediaMetadataIndex::embeddedCachePath() {
+  return cacheHome() + QStringLiteral("/omaroll/embedded-v1.index");
 }
 
 QDateTime MediaMetadataIndex::parseImageDate(const QByteArray& output) {
@@ -378,59 +439,121 @@ CaptureModel::MetadataUpdate MediaMetadataIndex::updateFor(const Candidate& cand
           candidate.device, candidate.inode,    details.camera,  details.lens};
 }
 
+bool MediaMetadataIndex::readsEmbedded() const {
+  const AppSettings* settings = m_model ? m_model->settings() : nullptr;
+  return settings && settings->readEmbeddedMetadata();
+}
+
+bool MediaMetadataIndex::embeddedMatches(const EmbeddedEntry& entry, const CaptureRecord& record) const {
+  return entry.modified == record.modified && entry.bytes == record.bytes &&
+         entry.device == record.device && entry.inode == record.inode &&
+         entry.sidecar == record.sidecarPath && entry.sidecarModified == record.sidecarModified &&
+         entry.sidecarBytes == record.sidecarBytes && !entry.partial;
+}
+
 void MediaMetadataIndex::sync() {
   if (m_stopping->load() || !m_model) {
     return;
   }
 
+  const bool embedded = readsEmbedded();
+  const qint64 now = QDateTime::currentMSecsSinceEpoch();
   QList<CaptureModel::MetadataUpdate> cachedUpdates;
+  QList<Candidate> embeddedOnly;
+  QSet<QString> live;
+  live.reserve(m_model->rowCount());
   m_queue.clear();
   // Group images so one ImageMagick process can inspect a bounded batch.
   // Each group remains newest-first in the model's scan order.
   for (const bool videos : {false, true}) {
     for (int row = 0; row < m_model->rowCount(); ++row) {
       const CaptureRecord& record = m_model->recordAt(row);
-      if (record.isDocument() || record.isVideo() != videos || record.hasProducerTimestamp ||
-          (videos ? m_videoProgram.isEmpty() : m_imageProgram.isEmpty() && !record.isRaw())) {
+      if (!videos) live.insert(record.path);
+      if (record.isDocument() || record.isVideo() != videos || record.hasProducerTimestamp) {
         continue;
       }
 
-      const Candidate candidate {record.path,      record.modified, record.bytes,
-                                 record.isVideo(), record.device,   record.inode,
-                                 record.isRaw()};
-      const auto known = m_entries.constFind(record.path);
-      if (known != m_entries.cend() && known->modified == record.modified &&
-          known->bytes == record.bytes && known->device == record.device &&
-          known->inode == record.inode) {
-        if (known->details != Details {}) {
-          cachedUpdates.append(updateFor(candidate, known->details));
+      Candidate candidate {.path = record.path,
+                           .modified = record.modified,
+                           .bytes = record.bytes,
+                           .video = record.isVideo(),
+                           .device = record.device,
+                           .inode = record.inode,
+                           .raw = record.isRaw(),
+                           .sidecar = record.sidecarPath,
+                           .sidecarModified = record.sidecarModified,
+                           .sidecarBytes = record.sidecarBytes};
+
+      // Keywords, rating and description: read once per file and sidecar
+      // version. A video has only its sidecar.
+      bool needsEmbedded = false;
+      if (embedded) {
+        const auto known = m_embedded.find(record.path);
+        if (known != m_embedded.end() && embeddedMatches(*known, record)) {
+          known->seen = now;
+          if (!known->fields.isEmpty()) m_pendingEmbedded.insert(record.path, *known);
+        } else if (record.isVideo() && record.sidecarPath.isEmpty()) {
+          if (known != m_embedded.end()) {
+            // Its sidecar went away.
+            EmbeddedEntry gone = *known;
+            gone.fields = {};
+            m_embedded.erase(known);
+            m_embeddedDirty = true;
+            m_pendingEmbedded.insert(record.path, gone);
+          }
+        } else {
+          needsEmbedded = true;
         }
-        continue;
-      }
-      if (known != m_entries.cend()) {
-        m_entries.erase(known);
-        m_cacheDirty = true;
       }
 
-      const auto failed = m_failed.constFind(record.path);
-      if ((failed != m_failed.cend() &&
-           failed.value() ==
-               identityKey(record.modified, record.bytes, record.device, record.inode)) ||
-          isCurrent(candidate)) {
-        continue;
+      bool needsDate = false;
+      if (videos ? !m_videoProgram.isEmpty() : !m_imageProgram.isEmpty() || record.isRaw()) {
+        const auto known = m_entries.constFind(record.path);
+        if (known != m_entries.cend() && known->modified == record.modified &&
+            known->bytes == record.bytes && known->device == record.device &&
+            known->inode == record.inode) {
+          if (known->details != Details {}) {
+            cachedUpdates.append(updateFor(candidate, known->details));
+          }
+        } else {
+          if (known != m_entries.cend()) {
+            m_entries.erase(known);
+            m_cacheDirty = true;
+          }
+          const auto failed = m_failed.constFind(record.path);
+          needsDate = failed == m_failed.cend() ||
+                      failed.value() !=
+                          identityKey(record.modified, record.bytes, record.device, record.inode);
+        }
       }
-      m_queue.append(candidate);
+
+      if (!needsDate && !needsEmbedded) continue;
+      candidate.needsDate = needsDate;
+      candidate.needsEmbedded = needsEmbedded;
+      if (isCurrent(candidate)) continue;
+      // A file whose date is known only needs its own data read, in-process.
+      (needsDate ? m_queue : embeddedOnly).append(candidate);
     }
   }
+  m_queue.append(embeddedOnly);
 
   for (const CaptureModel::MetadataUpdate& update : std::as_const(cachedUpdates)) {
     m_pendingUpdates.insert(update.path, update);
   }
   if (!m_pendingUpdates.isEmpty() && !m_updateTimer.isActive()) m_updateTimer.start();
+  if (embedded) {
+    // Values for files that left the library go, and so do reads still
+    // waiting for the next delivery, then the cached ones for what is here
+    // arrive in one batch. Startup seeding delivers on its own, before any
+    // scan, so it never waits here.
+    m_pendingEmbedded.removeIf([&live](const auto& pending) { return !live.contains(pending.key()); });
+    m_model->settings()->retainEmbedded(live);
+    flushEmbedded();
+  }
   cancelStaleProbes();
   resetProgress(static_cast<int>(m_queue.size()) + inFlightCount());
   setIndexing(inFlightCount() > 0 || !m_queue.isEmpty());
-  if (m_cacheDirty) {
+  if (m_cacheDirty || m_embeddedDirty) {
     scheduleSave();
   }
   processNext();
@@ -443,6 +566,7 @@ void MediaMetadataIndex::processNext() {
   }
   if (m_probes.empty() && m_queue.isEmpty()) {
     flushUpdates();
+    flushEmbedded();
     setIndexing(false);
     if (std::exchange(m_progressPending, false)) publishProgress();
   }
@@ -465,11 +589,23 @@ bool MediaMetadataIndex::startProbe() {
   // A copy: the batch grows below.
   const Candidate first = batch.first();
   auto probe = std::make_unique<Probe>();
-  probe->kind = first.raw ? Probe::Kind::Raw : first.video ? Probe::Kind::Video : Probe::Kind::Image;
-  if (probe->kind != Probe::Kind::Video) {
+  probe->kind = !first.needsDate ? Probe::Kind::Embedded
+                : first.raw      ? Probe::Kind::Raw
+                : first.video    ? Probe::Kind::Video
+                                 : Probe::Kind::Image;
+  if (probe->kind == Probe::Kind::Embedded) {
+    while (batch.size() < kEmbeddedBatchSize && !m_queue.isEmpty() && !m_queue.first().needsDate) {
+      const Candidate candidate = m_queue.takeFirst();
+      if (stillCurrent(candidate)) {
+        batch.append(candidate);
+      } else {
+        advanceProgress();
+      }
+    }
+  } else if (probe->kind != Probe::Kind::Video) {
     // Raws are a few header reads each; images share one ImageMagick run.
     while (batch.size() < kImageBatchSize && !m_queue.isEmpty() && !m_queue.first().video &&
-           m_queue.first().raw == first.raw) {
+           m_queue.first().needsDate && m_queue.first().raw == first.raw) {
       const Candidate candidate = m_queue.takeFirst();
       if (stillCurrent(candidate)) {
         batch.append(candidate);
@@ -487,18 +623,35 @@ bool MediaMetadataIndex::startProbe() {
         Qt::QueuedConnection);
   });
 
-  if (raw->kind == Probe::Kind::Raw) {
+  // What each file's worker reads besides its date: its own keywords,
+  // rating and description, and its sidecar's.
+  {
+    QList<std::tuple<int, QString, QString>> jobs;
+    for (int index = 0; index < raw->batch.size(); ++index) {
+      const Candidate& candidate = raw->batch.at(index);
+      if (candidate.needsEmbedded) jobs.append({index, candidate.path, candidate.sidecar});
+    }
+    raw->embeddedJobs = std::make_shared<const QList<std::tuple<int, QString, QString>>>(std::move(jobs));
+  }
+
+  if (raw->kind == Probe::Kind::Raw || raw->kind == Probe::Kind::Embedded) {
     QStringList paths;
     for (const Candidate& candidate : std::as_const(raw->batch)) paths.append(candidate.path);
     const auto stopping = m_stopping;
     const auto stop = raw->stop;
-    raw->parse.setFuture(QtConcurrent::run(&m_pool, [paths, stopping, stop] {
+    const bool dates = raw->kind == Probe::Kind::Raw;
+    const auto jobs = raw->embeddedJobs;
+    raw->parse.setFuture(QtConcurrent::run(&m_pool, [paths, stopping, stop, dates, jobs] {
       lowerThisThread();
       Parsed parsed;
-      for (int index = 0; index < paths.size(); ++index) {
+      for (int index = 0; dates && index < paths.size(); ++index) {
         if (stopping->load() || stop->load()) break;
         parsed.results.insert(index, rawDetails(paths.at(index)));
         parsed.completed.insert(index);
+      }
+      for (const auto& [index, path, sidecar] : *jobs) {
+        if (stopping->load() || stop->load()) break;
+        parsed.embedded.insert(index, bounded(readEmbedded(path, sidecar)));
       }
       return parsed;
     }));
@@ -562,9 +715,12 @@ void MediaMetadataIndex::processFinished(Probe* probe, bool successful) {
     return;
   }
   const bool video = probe->kind == Probe::Kind::Video;
+  const auto jobs = probe->embeddedJobs;
+  const auto stopping = m_stopping;
+  const auto stop = probe->stop;
   // Only the copy of the output crosses to the worker.
   tsan::handOver(output.constData());
-  probe->parse.setFuture(QtConcurrent::run(&m_pool, [output, video, successful] {
+  probe->parse.setFuture(QtConcurrent::run(&m_pool, [output, video, successful, jobs, stopping, stop] {
     tsan::takeOver(output.constData());
     lowerThisThread();
     Parsed parsed;
@@ -576,6 +732,11 @@ void MediaMetadataIndex::processFinished(Probe* probe, bool successful) {
     } else {
       // A batch can fail as a whole and still have read most of its files.
       parsed.results = parseImageBatch(output, &parsed.completed);
+    }
+    // A file ImageMagick could not read still has its own data read here.
+    for (const auto& [index, path, sidecar] : *jobs) {
+      if (stopping->load() || stop->load()) break;
+      parsed.embedded.insert(index, bounded(readEmbedded(path, sidecar)));
     }
     return parsed;
   }));
@@ -592,11 +753,17 @@ void MediaMetadataIndex::finishProbe(Probe* probe, const Parsed& parsed) {
       if (!stillCurrent(candidate)) {
         continue;
       }
-      if (parsed.completed.contains(index)) {
+      if (probe->kind == Probe::Kind::Embedded) {
+        // No date was asked of this probe.
+      } else if (parsed.completed.contains(index)) {
         adopt(candidate, parsed.results.value(index));
       } else if (probe->kind != Probe::Kind::Raw) {
         m_failed.insert(candidate.path, identityKey(candidate.modified, candidate.bytes,
                                                     candidate.device, candidate.inode));
+      }
+      if (candidate.needsEmbedded && parsed.embedded.contains(index) &&
+          embeddedStillCurrent(candidate)) {
+        adoptEmbedded(candidate, parsed.embedded.value(index));
       }
     }
     advanceProgress(static_cast<int>(probe->batch.size()));
@@ -634,9 +801,15 @@ bool MediaMetadataIndex::isCurrent(const Candidate& candidate) const {
   for (const auto& probe : m_probes) {
     if (probe->cancelled || probe->finished) continue;
     for (const Candidate& current : probe->batch) {
+      // In flight already, reading at least what is needed now.
       if (current.path == candidate.path && current.modified == candidate.modified &&
           current.bytes == candidate.bytes && current.device == candidate.device &&
-          current.inode == candidate.inode && current.video == candidate.video) {
+          current.inode == candidate.inode && current.video == candidate.video &&
+          (current.needsDate || !candidate.needsDate) &&
+          (!candidate.needsEmbedded ||
+           (current.needsEmbedded && current.sidecar == candidate.sidecar &&
+            current.sidecarModified == candidate.sidecarModified &&
+            current.sidecarBytes == candidate.sidecarBytes))) {
         return true;
       }
     }
@@ -656,6 +829,62 @@ bool MediaMetadataIndex::stillCurrent(const Candidate& candidate) const {
   return !record.hasProducerTimestamp && record.modified == candidate.modified &&
          record.bytes == candidate.bytes && record.isVideo() == candidate.video &&
          record.device == candidate.device && record.inode == candidate.inode;
+}
+
+bool MediaMetadataIndex::embeddedStillCurrent(const Candidate& candidate) const {
+  if (!stillCurrent(candidate)) return false;
+  const CaptureRecord& record = m_model->recordAt(m_model->rowOf(candidate.path));
+  return record.sidecarPath == candidate.sidecar && record.sidecarModified == candidate.sidecarModified &&
+         record.sidecarBytes == candidate.sidecarBytes;
+}
+
+void MediaMetadataIndex::adoptEmbedded(const Candidate& candidate, const EmbeddedMetadata::Fields& fields) {
+  EmbeddedEntry entry {candidate.modified, candidate.bytes,           candidate.device,
+                       candidate.inode,    candidate.sidecar,         candidate.sidecarModified,
+                       candidate.sidecarBytes, fields, QDateTime::currentMSecsSinceEpoch()};
+  m_embedded.insert(candidate.path, entry);
+  m_embeddedDirty = true;
+  scheduleSave();
+  if (!readsEmbedded()) return;
+  // Delivered at most once a second while indexing, and once more at the end.
+  m_pendingEmbedded.insert(candidate.path, entry);
+  if (!m_embeddedTimer.isActive()) m_embeddedTimer.start();
+}
+
+void MediaMetadataIndex::flushEmbedded() {
+  m_embeddedTimer.stop();
+  const auto pending = std::exchange(m_pendingEmbedded, {});
+  AppSettings* settings = m_model ? m_model->settings() : nullptr;
+  if (pending.isEmpty() || !settings || !settings->readEmbeddedMetadata()) return;
+  QList<AppSettings::EmbeddedUpdate> batch;
+  batch.reserve(pending.size());
+  for (auto it = pending.cbegin(); it != pending.cend(); ++it) {
+    const EmbeddedEntry& entry = it.value();
+    batch.append({it.key(),
+                  {entry.fields.keywords, entry.fields.rating, entry.fields.description, entry.bytes,
+                   entry.modified, entry.device, entry.inode}});
+  }
+  settings->setEmbedded(batch);
+}
+
+void MediaMetadataIndex::seedEmbedded() {
+  if (!readsEmbedded() || m_embedded.isEmpty()) return;
+  // Only files under the folders scanned now; the first scan then keeps
+  // what is still there and the index reads what changed.
+  QStringList roots = m_model->rootPaths();
+  for (QString& root : roots) {
+    if (!root.endsWith(QLatin1Char('/'))) root.append(QLatin1Char('/'));
+  }
+  for (auto it = m_embedded.cbegin(); it != m_embedded.cend(); ++it) {
+    if (it->fields.isEmpty()) continue;
+    const QString& path = it.key();
+    if (std::any_of(roots.cbegin(), roots.cend(), [&path](const QString& root) {
+          return path.startsWith(root) || path + QLatin1Char('/') == root;
+        })) {
+      m_pendingEmbedded.insert(path, it.value());
+    }
+  }
+  flushEmbedded();
 }
 
 void MediaMetadataIndex::adopt(const Candidate& candidate, const Details& details) {
@@ -750,6 +979,130 @@ void MediaMetadataIndex::loadCache() {
   }
 }
 
+void MediaMetadataIndex::loadEmbeddedCache() {
+  QFile file(embeddedCachePath());
+  if (!file.open(QIODevice::ReadOnly) || file.size() > kMaximumEmbeddedCacheBytes) {
+    return;
+  }
+  QDataStream stream(&file);
+  stream.setVersion(QDataStream::Qt_6_0);
+  quint32 magic = 0;
+  quint16 version = 0;
+  quint32 count = 0;
+  stream >> magic >> version >> count;
+  if (magic != kEmbeddedMagic || version != kEmbeddedVersion || count > kMaximumEmbeddedEntries) {
+    return;
+  }
+  QHash<QString, EmbeddedEntry> loaded;
+  loaded.reserve(count);
+  for (quint32 index = 0; index < count; ++index) {
+    QString path;
+    EmbeddedEntry entry;
+    qint8 rating = 0;
+    stream >> path >> entry.modified >> entry.bytes >> entry.device >> entry.inode >> entry.sidecar >>
+        entry.sidecarModified >> entry.sidecarBytes >> entry.fields.keywords >> rating >>
+        entry.fields.description >> entry.fields.hasXmp >> entry.seen >> entry.partial;
+    if (stream.status() != QDataStream::Ok || path.isEmpty()) {
+      return;
+    }
+    entry.fields.rating = rating;
+    entry.fields = bounded(entry.fields);
+    loaded.insert(path, entry);
+  }
+  if (stream.atEnd()) {
+    m_embedded = std::move(loaded);
+  }
+}
+
+void MediaMetadataIndex::saveEmbeddedCache() {
+  const auto entryBytes = [](const QString& path, const EmbeddedEntry& entry, bool description) {
+    // UTF-16 strings with their lengths, the fixed fields and framing.
+    qint64 bytes = 96 + qint64(path.size() + entry.sidecar.size()) * 2 + 8;
+    for (const QString& keyword : entry.fields.keywords) bytes += 4 + qint64(keyword.size()) * 2;
+    if (description) bytes += qint64(entry.fields.description.size()) * 2;
+    return bytes;
+  };
+  // Oldest seen first, so the cap drops what has been away longest.
+  QList<std::pair<qint64, QString>> seen;
+  seen.reserve(m_embedded.size());
+  for (auto it = m_embedded.cbegin(); it != m_embedded.cend(); ++it) seen.append({it->seen, it.key()});
+  std::sort(seen.begin(), seen.end());
+  QStringList bySeen;
+  bySeen.reserve(seen.size());
+  for (const auto& entry : std::as_const(seen)) bySeen.append(entry.second);
+  qint64 total = 64;
+  for (auto it = m_embedded.cbegin(); it != m_embedded.cend(); ++it) total += entryBytes(it.key(), *it, true);
+  int droppedDescriptions = 0;
+  int droppedEntries = 0;
+  // Only the file is trimmed. What is in memory stays whole: a trimmed entry
+  // still matches its file, so dropping its description here would lose the
+  // caption until the file changed. On disk it is marked partial and read
+  // again on the next start.
+  QHash<QString, EmbeddedEntry> kept = m_embedded;
+  // Over the cap: descriptions go first, then whole entries, oldest seen
+  // first each time. The date cache is a separate file and never waits on this.
+  for (qsizetype at = 0; total > kMaximumEmbeddedCacheBytes && at < bySeen.size(); ++at) {
+    EmbeddedEntry& entry = kept[bySeen.at(at)];
+    if (entry.fields.description.isEmpty()) continue;
+    total -= qint64(entry.fields.description.size()) * 2;
+    entry.fields.description.clear();
+    entry.partial = true;
+    ++droppedDescriptions;
+  }
+  for (qsizetype at = 0; (total > kMaximumEmbeddedCacheBytes || kept.size() > qsizetype(kMaximumEmbeddedEntries)) &&
+                         at < bySeen.size();
+       ++at) {
+    const auto found = kept.constFind(bySeen.at(at));
+    total -= entryBytes(found.key(), *found, false);
+    kept.erase(found);
+    ++droppedEntries;
+  }
+  if (droppedDescriptions > 0 || droppedEntries > 0) {
+    qDebug().noquote() << QStringLiteral("Embedded metadata cache over %1 MiB: left out %2 descriptions and %3 files")
+                              .arg(kMaximumEmbeddedCacheBytes / (1024 * 1024))
+                              .arg(droppedDescriptions)
+                              .arg(droppedEntries);
+  }
+
+  const QString path = embeddedCachePath();
+  if (!QDir().mkpath(QFileInfo(path).absolutePath())) {
+    return;
+  }
+  QFile::setPermissions(QFileInfo(path).absolutePath(),
+                        QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+  QSaveFile file(path);
+  if (!file.open(QIODevice::WriteOnly)) {
+    return;
+  }
+  QDataStream stream(&file);
+  stream.setVersion(QDataStream::Qt_6_0);
+  stream << kEmbeddedMagic << kEmbeddedVersion << static_cast<quint32>(kept.size());
+  for (auto it = kept.cbegin(); it != kept.cend(); ++it) {
+    const EmbeddedEntry& entry = it.value();
+    stream << it.key() << entry.modified << entry.bytes << entry.device << entry.inode << entry.sidecar
+           << entry.sidecarModified << entry.sidecarBytes << entry.fields.keywords
+           << static_cast<qint8>(entry.fields.rating) << entry.fields.description << entry.fields.hasXmp
+           << entry.seen << entry.partial;
+  }
+  if (stream.status() == QDataStream::Ok && file.size() <= kMaximumEmbeddedCacheBytes && file.commit()) {
+    QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    m_embeddedDirty = false;
+  } else {
+    file.cancelWriting();
+  }
+}
+
+#ifdef OMAROLL_TESTING
+void MediaMetadataIndex::insertEmbeddedForTesting(const QString& path, const EmbeddedMetadata::Fields& fields) {
+  static qint64 seen = 0;
+  EmbeddedEntry entry;
+  entry.fields = fields;
+  entry.seen = ++seen;
+  m_embedded.insert(path, entry);
+  m_embeddedDirty = true;
+}
+#endif
+
 void MediaMetadataIndex::scheduleSave() {
   if (!m_saveTimer.isActive()) {
     m_saveTimer.start();
@@ -757,6 +1110,8 @@ void MediaMetadataIndex::scheduleSave() {
 }
 
 void MediaMetadataIndex::saveCache() {
+  // Two files: keyword data never takes room from dates.
+  if (m_embeddedDirty) saveEmbeddedCache();
   if (!m_cacheDirty) {
     return;
   }

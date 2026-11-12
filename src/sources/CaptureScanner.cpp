@@ -1,6 +1,8 @@
 #include "sources/CaptureScanner.h"
 #include "sources/ThumbnailSource.h"
 
+#include "library/EmbeddedMetadata.h"
+
 #include "sources/CameraRaw.h"
 #include "sources/DecodeJournal.h"
 #include "sources/PinnedImageReader.h"
@@ -407,9 +409,20 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots, const std::a
       const QFileInfoList entries = explicitFile
           ? QFileInfoList{rootInfo}
           : dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot, QDir::NoSort);
+      // .xmp sidecars in this folder, from the same listing, so finding them
+      // costs no extra syscalls. Matched to their media below.
+      QHash<QString, QFileInfo> sidecars;
+      QHash<QString, int> baseNames;
+      QHash<QString, int> rawBaseNames;
+      const qsizetype firstRecord = records.size();
 
       for (const QFileInfo& entry : entries) {
         const QString name = entry.fileName();
+        if (!explicitFile && !entry.isDir() && name.endsWith(u".xmp", Qt::CaseInsensitive) &&
+            !name.startsWith(QLatin1Char('.'))) {
+          sidecars.insert(name.toLower(), entry);
+          continue;
+        }
 
         if (entry.isDir()) {
           if (depth < root.maxDepth && !isSkippedDirectory(name)) {
@@ -433,6 +446,13 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots, const std::a
         const bool document = isDocument(suffix);
         if (!image && !video && !document) {
           continue;
+        }
+        // Who could own "<name>.xmp", counted from the listing, so a file
+        // already brought in by another root still counts.
+        if (!explicitFile) {
+          const QString base = entry.completeBaseName().toLower();
+          ++baseNames[base];
+          if (image && CameraRaw::isRaw(suffix)) ++rawBaseNames[base];
         }
 
         // The directory is already canonical, so only a symlink needs the
@@ -492,6 +512,36 @@ QList<CaptureRecord> CaptureScanner::scan(const QList<Root>& roots, const std::a
         }
 
         records.append(record);
+      }
+
+      if (explicitFile) {
+        if (records.size() > firstRecord) {
+          CaptureRecord& record = records.last();
+          const QString sidecar = EmbeddedMetadata::findSidecar(record.entryPath);
+          if (!sidecar.isEmpty()) {
+            const QFileInfo info(sidecar);
+            record.sidecarPath = info.absoluteFilePath();
+            record.sidecarModified = info.lastModified().toMSecsSinceEpoch();
+            record.sidecarBytes = info.size();
+          }
+        }
+      } else if (!sidecars.isEmpty()) {
+        // "<name>.xmp" belongs to the only raw with that base name, or to the
+        // only media file with it, so a RAW+JPEG pair's JPEG never takes the
+        // raw's sidecar and two raws never share one.
+        QHash<QString, QString> names;
+        for (auto it = sidecars.cbegin(); it != sidecars.cend(); ++it) names.insert(it.key(), it->fileName());
+        for (qsizetype at = firstRecord; at < records.size(); ++at) {
+          CaptureRecord& record = records[at];
+          const QString base = QFileInfo(record.fileName).completeBaseName().toLower();
+          const int owners = (record.raw ? rawBaseNames : baseNames).value(base);
+          const QString sidecar = EmbeddedMetadata::sidecarName(record.fileName, record.raw, owners > 1, names);
+          if (sidecar.isEmpty()) continue;
+          const QFileInfo& info = sidecars[sidecar.toLower()];
+          record.sidecarPath = directory + QLatin1Char('/') + sidecar;
+          record.sidecarModified = info.lastModified().toMSecsSinceEpoch();
+          record.sidecarBytes = info.size();
+        }
       }
     }
   }

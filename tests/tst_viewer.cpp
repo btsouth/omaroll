@@ -6661,6 +6661,48 @@ private slots:
 
   // A move or copy runs on a worker: the call returns at once, the window
   // says it is busy and refuses the same file again, and the result lands.
+  // Opened from the file manager, with no library scan: the viewer finds
+  // the JPEG's Lightroom-style sidecar on a worker, and Move takes it along.
+  void aViewerFromTheFileManagerMovesTheSidecarAlong() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(QStringLiteral("from"));
+    const QString destination = dir.filePath(QStringLiteral("to"));
+    QVERIFY(QDir().mkpath(source));
+    QVERIFY(QDir().mkpath(destination));
+    const QString solo = source + QStringLiteral("/solo.jpg");
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), solo));
+    // Another picture keeps the window open after the move.
+    QVERIFY(QFile::copy(media(QStringLiteral("shot 2.jpg")), source + QStringLiteral("/other.jpg")));
+    {
+      QFile sidecar(source + QStringLiteral("/solo.xmp"));
+      QVERIFY(sidecar.open(QIODevice::WriteOnly));
+      sidecar.write("<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"/>");
+    }
+    ViewerWindows viewers(*m_engine);
+    viewers.setPlacementQuery([](QObject*, HyprlandPlacement::Reply reply) { reply({}); });
+    QQuickWindow* window = viewers.open({solo});
+    QVERIFY(window);
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    QTRY_COMPARE(m_actions->sidecarCount(solo), 1);
+
+    QVariantMap captured = m_actions->captureFileAction(solo, solo);
+    captured.insert(QStringLiteral("viewedPath"), solo);
+    QSignalSpy finished(m_actions, &ActionLauncher::transferFinished);
+    QVariant job;
+    QVERIFY(QMetaObject::invokeMethod(window, "transferTo", Q_RETURN_ARG(QVariant, job),
+                                      Q_ARG(QVariant, captured), Q_ARG(QVariant, destination),
+                                      Q_ARG(QVariant, false)));
+    QVERIFY(job.toInt() > 0);
+    QVERIFY(finished.wait(10000) || !finished.isEmpty());
+    QVERIFY(finished.first().at(1).toMap().value(QStringLiteral("ok")).toBool());
+    QVERIFY(QFile::exists(destination + QStringLiteral("/solo.jpg")));
+    QVERIFY(QFile::exists(destination + QStringLiteral("/solo.xmp")));
+    QVERIFY(!QFile::exists(source + QStringLiteral("/solo.xmp")));
+    QCOMPARE(window->property("status").toString(), QStringLiteral("Moved to to"));
+    window->close();
+  }
+
   void aLargeTransferRunsOffTheWindowThread() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

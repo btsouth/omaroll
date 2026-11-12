@@ -9,6 +9,8 @@
 #include "sources/FileVersion.h"
 
 #include "library/CaptureRecord.h"
+#include "library/TagNames.h"
+#include "library/EmbeddedMetadata.h"
 
 #include <QCoreApplication>
 #include <QGuiApplication>
@@ -92,6 +94,16 @@ constexpr auto kTrashWithoutAsking = "actions/trashWithoutAsking";
 constexpr auto kViewerFilmstrip = "viewer/filmstrip";
 constexpr auto kAlbums = "library/albums";
 constexpr auto kTags = "library/tags";
+// Keywords from files hidden here, and file ratings or captions cleared here.
+// Kept in Omaroll's settings, never written to the files.
+constexpr auto kRemovedEmbeddedTags = "library/removedEmbeddedTags";
+constexpr auto kClearedEmbedded = "library/clearedEmbedded";
+constexpr auto kReadEmbedded = "library/readEmbedded";
+const QString kClearedRating = QStringLiteral("rating");
+const QString kClearedCaption = QStringLiteral("caption");
+// Files outside the library whose values the viewer read.
+constexpr int kMaximumTransientEmbedded = 32;
+constexpr int kFingerprintBatch = 256;
 constexpr auto kSmartCollections = "library/smartCollections";
 constexpr auto kLastVisit = "library/lastVisit";
 constexpr auto kVideoVolume = "playback/volume";
@@ -126,33 +138,16 @@ QString normalizedAlbumName(const QString& name) {
   return normalized.contains(QLatin1Char('/')) ? QString() : normalized;
 }
 
-// "travel / japan /" becomes "travel/japan". Empty segments are dropped, so
-// a stray slash cannot create a nameless level.
-QString normalizedTagName(const QString& name) {
-  QStringList segments;
-  for (const QString& part : name.split(QLatin1Char('/'))) {
-    const QString segment = part.simplified();
-    if (!segment.isEmpty()) {
-      segments.append(segment);
-    }
-  }
-  return segments.join(QLatin1Char('/')).left(80);
+QString normalizedTagName(const QString& name) { return TagNames::normalized(name); }
+bool tagLessThan(const QString& first, const QString& second) { return TagNames::lessThan(first, second); }
+bool tagIsUnder(const QString& candidate, const QString& parent) { return TagNames::isUnder(candidate, parent); }
+// clearedEmbedded holds exactly these two keys.
+QString clearedKey(const QString& name) {
+  return name == kClearedRating || name == kClearedCaption ? name : QString();
 }
-
-bool tagLessThan(const QString& first, const QString& second) {
-  const QStringList a = first.split(QLatin1Char('/'));
-  const QStringList b = second.split(QLatin1Char('/'));
-  for (qsizetype index = 0; index < qMin(a.size(), b.size()); ++index) {
-    if (const int order = a.at(index).compare(b.at(index), Qt::CaseInsensitive); order != 0) {
-      return order < 0;
-    }
-  }
-  return a.size() < b.size();
-}
-
-bool tagIsUnder(const QString& candidate, const QString& parent) {
-  return candidate.size() > parent.size() && candidate.startsWith(parent) &&
-         candidate.at(parent.size()) == QLatin1Char('/');
+// The same name, or one nested under it, compared case-folded.
+bool foldedAtOrUnder(const QString& folded, const QString& parent) {
+  return folded == parent || TagNames::isUnder(folded, parent);
 }
 
 QString identityVersionFor(const QString& path) {
@@ -418,6 +413,11 @@ AppSettings::AppSettings(QObject* parent)
   };
   restoreCollections(storedAlbums, m_albums, normalizedAlbumName);
   restoreCollections(m_settings.value(kTags).toMap(), m_tags, normalizedTagName);
+  restoreCollections(m_settings.value(kRemovedEmbeddedTags).toMap(), m_removedEmbeddedTags,
+                     normalizedTagName);
+  restoreCollections(m_settings.value(kClearedEmbedded).toMap(), m_clearedEmbedded, clearedKey);
+  m_readEmbedded = m_settings.value(kReadEmbedded, true).toBool();
+  rebuildRemovalIndex();
 
   const QVariantMap storedSmart = m_settings.value(kSmartCollections).toMap();
   for (auto it = storedSmart.cbegin(); it != storedSmart.cend(); ++it) {
@@ -967,10 +967,41 @@ void AppSettings::relocatePath(const QString& oldPath, const QString& newPath) {
       }
     }
   }
-  if (tagsChangedValue) {
-    persistTags();
-    emit tagsChanged();
+  if (tagsChangedValue) persistTags();
+
+  // Hidden keywords and cleared values follow the file too, and so do the
+  // values read from it: its sidecar moved with it.
+  bool removalsChanged = false;
+  AlbumEntry moved;
+  for (auto* rows : {&m_removedEmbeddedTags, &m_clearedEmbedded}) {
+    for (auto it = rows->begin(); it != rows->end(); ++it) {
+      for (AlbumEntry& entry : it.value()) {
+        if (entry.path != oldPath) continue;
+        if (moved.path.isEmpty()) moved = identityFor(newPath);
+        entry = moved;
+        removalsChanged = true;
+      }
+    }
   }
+  bool embeddedMoved = false;
+  if (auto values = m_embedded.find(oldPath); values != m_embedded.end()) {
+    EmbeddedValues kept = values.value();
+    m_embedded.erase(values);
+    kept.bytes = -1; // Read again by the index; rows meanwhile read the file.
+    m_embedded.insert(newPath, kept);
+    m_embeddedLive.insert(newPath);
+    embeddedMoved = true;
+  }
+  if (removalsChanged) {
+    persistRemovals();
+    rebuildRemovalIndex();
+  }
+  if (removalsChanged || embeddedMoved) {
+    indexEmbedded(oldPath);
+    indexEmbedded(newPath);
+  }
+  if (tagsChangedValue || removalsChanged || embeddedMoved) emit tagsChanged();
+  if (removalsChanged || embeddedMoved) emit marksChanged();
   m_deferOrganizationSync = false;
   syncOrganization();
 }
@@ -1159,8 +1190,52 @@ void AppSettings::removeUnavailableFromAlbum(const QString& name) {
   }
 }
 
+QHash<QString, QString> AppSettings::localTagsByFold() const {
+  QHash<QString, QString> byFold;
+  byFold.reserve(m_tags.size());
+  for (auto it = m_tags.cbegin(); it != m_tags.cend(); ++it) byFold.insert(TagNames::folded(it.key()), it.key());
+  return byFold;
+}
+
+QString AppSettings::displayTag(const QString& keyword, const QHash<QString, QString>& localByFold) const {
+  // Level by level: a local tag's spelling, else the spelling of a keyword
+  // from files that names that level, else the keyword's own.
+  QString result;
+  for (const QString& segment : keyword.split(QLatin1Char('/'))) {
+    const QString candidate = result.isEmpty() ? segment : result + QLatin1Char('/') + segment;
+    const QString folded = TagNames::folded(candidate);
+    if (const auto local = localByFold.constFind(folded); local != localByFold.cend()) {
+      result = local.value();
+    } else if (const auto spelled = m_embeddedSpelling.constFind(folded);
+               spelled != m_embeddedSpelling.cend()) {
+      result = result.isEmpty() ? spelled.value()
+                                : result + QLatin1Char('/') + spelled->section(QLatin1Char('/'), -1);
+    } else {
+      result = candidate;
+    }
+  }
+  return result;
+}
+
 QStringList AppSettings::tagNames() const {
   QStringList names = m_tags.keys();
+  if (!m_embeddedTagIndex.isEmpty()) {
+    const QHash<QString, QString> local = localTagsByFold();
+    QSet<QString> present(local.keyBegin(), local.keyEnd());
+    for (auto it = m_embeddedTagIndex.cbegin(); it != m_embeddedTagIndex.cend(); ++it) {
+      if (present.contains(it.key())) continue;
+      // Ancestors too, so the tree in Browse has no gaps.
+      const QStringList segments = displayTag(m_embeddedSpelling.value(it.key()), local).split(QLatin1Char('/'));
+      for (qsizetype depth = 1; depth <= segments.size(); ++depth) {
+        const QString level = segments.first(depth).join(QLatin1Char('/'));
+        const QString folded = TagNames::folded(level);
+        if (!present.contains(folded)) {
+          present.insert(folded);
+          names.append(level);
+        }
+      }
+    }
+  }
   std::sort(names.begin(), names.end(), tagLessThan);
   return names;
 }
@@ -1182,6 +1257,18 @@ QStringList AppSettings::tagPaths(const QString& name) const {
       collect(it.value());
     }
   }
+  if (!m_embeddedTagIndex.isEmpty() && !name.isEmpty()) {
+    const QString folded = TagNames::folded(name);
+    for (auto it = m_embeddedTagIndex.cbegin(); it != m_embeddedTagIndex.cend(); ++it) {
+      if (!foldedAtOrUnder(it.key(), folded)) continue;
+      for (const QString& path : it.value()) {
+        if (!seen.contains(path)) {
+          paths.append(path);
+          seen.insert(path);
+        }
+      }
+    }
+  }
   return paths;
 }
 
@@ -1195,6 +1282,21 @@ QStringList AppSettings::tagsForPath(const QString& path) const {
       }
     }
   }
+  const EmbeddedValues* values = embeddedFor(path);
+  if (!values) return tags;
+  const QStringList kept = m_embedded.contains(path) ? m_embeddedEffective.value(path)
+                                                     : effectiveKeywords(path, values->keywords);
+  if (kept.isEmpty()) return tags;
+  const QHash<QString, QString> local = localTagsByFold();
+  QSet<QString> present;
+  for (const QString& tag : std::as_const(tags)) present.insert(TagNames::folded(tag));
+  for (const QString& keyword : kept) {
+    const QString display = displayTag(keyword, local);
+    if (!present.contains(TagNames::folded(display))) {
+      present.insert(TagNames::folded(display));
+      tags.append(display);
+    }
+  }
   return tags;
 }
 
@@ -1203,6 +1305,25 @@ QHash<QString, QStringList> AppSettings::tagsByPath() const {
   for (auto it = m_tags.cbegin(); it != m_tags.cend(); ++it) {
     for (const AlbumEntry& entry : it.value()) {
       if (entry.resolved) byPath[entry.path].append(it.key());
+    }
+  }
+  if (m_embeddedEffective.isEmpty()) return byPath;
+  const QHash<QString, QString> local = localTagsByFold();
+  QHash<QString, QString> displayed;
+  for (auto it = m_embeddedEffective.cbegin(); it != m_embeddedEffective.cend(); ++it) {
+    QStringList& names = byPath[it.key()];
+    for (const QString& keyword : it.value()) {
+      const QString folded = TagNames::folded(keyword);
+      auto display = displayed.constFind(folded);
+      if (display == displayed.cend()) display = displayed.insert(folded, displayTag(keyword, local));
+      bool present = false;
+      for (const QString& name : std::as_const(names)) {
+        if (name.compare(display.value(), Qt::CaseInsensitive) == 0) {
+          present = true;
+          break;
+        }
+      }
+      if (!present) names.append(display.value());
     }
   }
   return byPath;
@@ -1233,7 +1354,8 @@ bool AppSettings::createTag(const QString& name) {
     }
   }
   // Every ancestor exists too, so the tree in Browse has no gaps and a
-  // parent can be chosen to see everything under it.
+  // parent can be chosen to see everything under it. A name that exists so
+  // far only as a keyword from files gets its local key here.
   const QStringList segments = normalized.split(QLatin1Char('/'));
   for (qsizetype depth = 1; depth <= segments.size(); ++depth) {
     const QString level = segments.first(depth).join(QLatin1Char('/'));
@@ -1253,6 +1375,194 @@ bool AppSettings::createTag(const QString& name) {
   return m_organizationError.isEmpty();
 }
 
+QString AppSettings::ensureTagKeys(const QString& normalized) {
+  const QStringList segments = normalized.split(QLatin1Char('/'));
+  QString spelled;
+  for (qsizetype depth = 1; depth <= segments.size(); ++depth) {
+    const QString level = (spelled.isEmpty() ? QString() : spelled + QLatin1Char('/')) + segments.at(depth - 1);
+    QString present;
+    for (const QString& existing : m_tags.keys()) {
+      if (existing.compare(level, Qt::CaseInsensitive) == 0) {
+        present = existing;
+        break;
+      }
+    }
+    if (present.isEmpty()) {
+      m_tags.insert(level, {});
+      present = level;
+    }
+    spelled = present;
+  }
+  return spelled;
+}
+
+const AppSettings::EmbeddedValues* AppSettings::embeddedFor(const QString& path) const {
+  if (const auto it = m_embedded.constFind(path); it != m_embedded.cend()) return &it.value();
+  if (const auto it = m_transientEmbedded.constFind(path); it != m_transientEmbedded.cend())
+    return &it.value();
+  return nullptr;
+}
+
+QStringList AppSettings::effectiveKeywords(const QString& path, const QStringList& keywords) const {
+  const auto removed = m_removedByPath.constFind(path);
+  if (removed == m_removedByPath.cend()) return keywords;
+  QStringList kept;
+  for (const QString& keyword : keywords) {
+    const QString folded = TagNames::folded(keyword);
+    // A removal hides the keyword and everything nested under it.
+    const bool hidden = std::any_of(removed->cbegin(), removed->cend(), [&](const QString& name) {
+      return foldedAtOrUnder(folded, name);
+    });
+    if (!hidden) kept.append(keyword);
+  }
+  return kept;
+}
+
+void AppSettings::indexEmbedded(const QString& path) {
+  for (const QString& keyword : m_embeddedEffective.take(path)) {
+    const QString folded = TagNames::folded(keyword);
+    if (auto it = m_embeddedTagIndex.find(folded); it != m_embeddedTagIndex.end()) {
+      it->remove(path);
+      if (it->isEmpty()) {
+        m_embeddedTagIndex.erase(it);
+        m_embeddedSpelling.remove(folded);
+      }
+    }
+  }
+  const auto values = m_embedded.constFind(path);
+  if (values == m_embedded.cend()) return;
+  const QStringList kept = effectiveKeywords(path, values->keywords);
+  if (kept.isEmpty()) return;
+  for (const QString& keyword : kept) {
+    const QString folded = TagNames::folded(keyword);
+    m_embeddedTagIndex[folded].insert(path);
+    if (!m_embeddedSpelling.contains(folded)) m_embeddedSpelling.insert(folded, keyword);
+  }
+  m_embeddedEffective.insert(path, kept);
+}
+
+void AppSettings::rebuildEmbeddedIndex() {
+  m_embeddedEffective.clear();
+  m_embeddedTagIndex.clear();
+  m_embeddedSpelling.clear();
+  for (auto it = m_embedded.cbegin(); it != m_embedded.cend(); ++it) indexEmbedded(it.key());
+}
+
+void AppSettings::rebuildRemovalIndex() {
+  m_removedByPath.clear();
+  for (auto it = m_removedEmbeddedTags.cbegin(); it != m_removedEmbeddedTags.cend(); ++it) {
+    const QString folded = TagNames::folded(it.key());
+    for (const AlbumEntry& entry : it.value()) {
+      if (!entry.resolved) continue;
+      QStringList& names = m_removedByPath[entry.path];
+      if (!names.contains(folded)) names.append(folded);
+    }
+  }
+  const auto paths = [this](const QString& key) {
+    QSet<QString> set;
+    for (const AlbumEntry& entry : m_clearedEmbedded.value(key))
+      if (entry.resolved) set.insert(entry.path);
+    return set;
+  };
+  m_clearedRatings = paths(kClearedRating);
+  m_clearedCaptions = paths(kClearedCaption);
+}
+
+QStringList AppSettings::visibleKeywords(const QString& path) const {
+  // A keyword already hidden on this file is not there for a rename, delete
+  // or remove to act on; acting on it would bring it back.
+  if (m_embedded.contains(path)) return m_embeddedEffective.value(path);
+  const auto transient = m_transientEmbedded.constFind(path);
+  if (transient == m_transientEmbedded.cend()) return {};
+  return effectiveKeywords(path, transient->keywords);
+}
+
+QStringList AppSettings::embeddedKeywordsUnder(const QString& path, const QString& name) const {
+  QStringList found;
+  if (name.isEmpty()) return found;
+  const QString folded = TagNames::folded(name);
+  for (const QString& keyword : visibleKeywords(path)) {
+    if (foldedAtOrUnder(TagNames::folded(keyword), folded)) found.append(keyword);
+  }
+  return found;
+}
+
+QStringList AppSettings::embeddedCarriers(const QString& name) const {
+  QStringList carriers;
+  if (name.isEmpty()) return carriers;
+  const QString folded = TagNames::folded(name);
+  const auto carries = [&](const QStringList& keywords) {
+    return std::any_of(keywords.cbegin(), keywords.cend(), [&](const QString& keyword) {
+      return foldedAtOrUnder(TagNames::folded(keyword), folded);
+    });
+  };
+  for (auto it = m_embeddedEffective.cbegin(); it != m_embeddedEffective.cend(); ++it) {
+    if (carries(it.value())) carriers.append(it.key());
+  }
+  for (auto it = m_transientEmbedded.cbegin(); it != m_transientEmbedded.cend(); ++it) {
+    if (!m_embedded.contains(it.key()) && carries(effectiveKeywords(it.key(), it->keywords)))
+      carriers.append(it.key());
+  }
+  return carriers;
+}
+
+AppSettings::AlbumEntry AppSettings::rowFor(const QString& path) const {
+  // The identity the index read the file with: no file read here, so hiding
+  // a keyword across thousands of files stays off the disk. The fingerprint
+  // follows from a worker.
+  if (const EmbeddedValues* values = embeddedFor(path); values && values->bytes >= 0) {
+    AlbumEntry entry;
+    entry.path = path;
+    entry.bytes = values->bytes;
+    entry.modified = values->modified;
+    entry.device = values->device;
+    entry.inode = values->inode;
+    entry.resolved = true;
+    return entry;
+  }
+  return identityFor(path);
+}
+
+bool AppSettings::addRows(QMap<QString, QList<AlbumEntry>>& rows, const QString& name,
+                          const QList<AlbumEntry>& added) {
+  if (name.isEmpty() || added.isEmpty()) return false;
+  const QString folded = TagNames::folded(name);
+  QSet<QString> present;
+  QString key = name;
+  for (auto it = rows.cbegin(); it != rows.cend(); ++it) {
+    if (TagNames::folded(it.key()) != folded) continue;
+    key = it.key();
+    // A row that lost its file (replaced at the same path) no longer hides
+    // anything there, so it does not stop a row for the file there now.
+    for (const AlbumEntry& entry : it.value())
+      if (entry.resolved) present.insert(entry.path);
+  }
+  bool changed = false;
+  QList<AlbumEntry>& target = rows[key];
+  for (const AlbumEntry& entry : added) {
+    if (entry.path.isEmpty() || present.contains(entry.path)) continue;
+    present.insert(entry.path);
+    target.append(entry);
+    changed = true;
+  }
+  if (target.isEmpty()) rows.remove(key);
+  return changed;
+}
+
+bool AppSettings::dropRows(QMap<QString, QList<AlbumEntry>>& rows, const QString& name,
+                           const QString& path) {
+  const QString folded = TagNames::folded(name);
+  bool changed = false;
+  for (auto it = rows.begin(); it != rows.end();) {
+    if (TagNames::folded(it.key()) == folded &&
+        it->removeIf([&path](const AlbumEntry& entry) { return entry.path == path; }) > 0) {
+      changed = true;
+    }
+    it = it->isEmpty() ? rows.erase(it) : std::next(it);
+  }
+  return changed;
+}
+
 int AppSettings::deleteTag(const QString& name) {
   int removed = m_tags.remove(name);
   for (const QString& existing : m_tags.keys()) {
@@ -1260,33 +1570,56 @@ int AppSettings::deleteTag(const QString& name) {
       removed += m_tags.remove(existing);
     }
   }
-  if (removed == 0) {
+  // Every file carrying the keyword, or one nested under it, keeps it hidden
+  // here. The files themselves are not changed.
+  const QStringList carriers = embeddedCarriers(name);
+  QList<AlbumEntry> rows;
+  rows.reserve(carriers.size());
+  for (const QString& path : carriers) rows.append(rowFor(path));
+  const bool hidden = addRows(m_removedEmbeddedTags, name, rows);
+  if (removed == 0 && !hidden) {
     return 0;
   }
   const int views = removeViewsNaming(QStringLiteral("tag"), [&name](const QString& tag) {
     return tag == name || tagIsUnder(tag, name);
   });
   m_deferOrganizationSync = true;
-  persistTags();
+  if (removed > 0) persistTags();
+  if (hidden) persistRemovals();
   if (views > 0) {
     persistSmartCollections();
     emit smartCollectionsChanged();
   }
   m_deferOrganizationSync = false;
   syncOrganization();
+  if (hidden) {
+    rebuildRemovalIndex();
+    for (const QString& path : carriers) indexEmbedded(path);
+    scheduleFingerprints();
+  }
   emit tagsChanged();
   return views;
 }
 
 bool AppSettings::renameTag(const QString& oldName, const QString& newName) {
   const QString target = normalizedTagName(newName);
-  if (target.isEmpty() || target == oldName || !m_tags.contains(oldName)) {
+  if (target.isEmpty() || target == oldName) {
     return false;
   }
   // Renaming a tag into its own subtree would make the move ambiguous.
   if (tagIsUnder(target, oldName)) {
     return false;
   }
+  // Files that carry the keyword, or one under it, get a removal row for the
+  // old name and local tags under the new one, so the file is unchanged and
+  // the rename still shows.
+  const QStringList carriers = embeddedCarriers(oldName);
+  const qsizetype oldDepth = oldName.split(QLatin1Char('/')).size();
+  const auto renamed = [&](const QString& keyword) {
+    const QStringList segments = keyword.split(QLatin1Char('/'));
+    return segments.size() > oldDepth ? target + QLatin1Char('/') + segments.mid(oldDepth).join(QLatin1Char('/'))
+                                      : target;
+  };
 
   QList<QPair<QString, QString>> moves;
   QSet<QString> sources;
@@ -1299,18 +1632,25 @@ bool AppSettings::renameTag(const QString& oldName, const QString& newName) {
       sources.insert(key);
     }
   }
-  if (moves.isEmpty()) {
+  QHash<QString, QList<QString>> fileMoves; // new name to the files that get it
+  for (const QString& path : carriers) {
+    for (const QString& keyword : embeddedKeywordsUnder(path, oldName)) {
+      fileMoves[renamed(keyword)].append(path);
+    }
+  }
+  if (moves.isEmpty() && fileMoves.isEmpty()) {
     return false;
   }
 
   // A new name must not land on a tag that is staying where it is, or the
-  // rename would silently swallow it.
+  // rename would silently swallow it. Keywords from files count too.
   QSet<QString> targetsLower;
-  for (const auto& move : moves) {
-    targetsLower.insert(move.second.toLower());
-  }
-  for (const QString& key : m_tags.keys()) {
-    if (!sources.contains(key) && targetsLower.contains(key.toLower())) {
+  for (const auto& move : moves) targetsLower.insert(move.second.toLower());
+  for (auto it = fileMoves.cbegin(); it != fileMoves.cend(); ++it) targetsLower.insert(it.key().toLower());
+  const QString oldFolded = TagNames::folded(oldName);
+  for (const QString& key : tagNames()) {
+    if (!sources.contains(key) && !foldedAtOrUnder(TagNames::folded(key), oldFolded) &&
+        targetsLower.contains(key.toLower())) {
       return false;
     }
   }
@@ -1331,6 +1671,20 @@ bool AppSettings::renameTag(const QString& oldName, const QString& newName) {
   for (auto it = moved.cbegin(); it != moved.cend(); ++it) {
     m_tags.insert(it.key(), it.value());
   }
+  QList<AlbumEntry> hiddenRows;
+  for (auto it = fileMoves.cbegin(); it != fileMoves.cend(); ++it) {
+    const QString key = ensureTagKeys(it.key());
+    QList<AlbumEntry>& entries = m_tags[key];
+    QSet<QString> present;
+    for (const AlbumEntry& entry : std::as_const(entries)) present.insert(entry.path);
+    for (const QString& path : it.value()) {
+      if (present.contains(path)) continue;
+      present.insert(path);
+      entries.append(rowFor(path));
+    }
+  }
+  for (const QString& path : carriers) hiddenRows.append(rowFor(path));
+  const bool hidden = addRows(m_removedEmbeddedTags, oldName, hiddenRows);
   // Saved views hold the tag by name, so a rename has to follow it or the
   // view reopens onto an empty tag.
   bool viewsChanged = false;
@@ -1346,23 +1700,37 @@ bool AppSettings::renameTag(const QString& oldName, const QString& newName) {
   }
   m_deferOrganizationSync = true;
   persistTags();
+  if (hidden) persistRemovals();
   if (viewsChanged) {
     persistSmartCollections();
     emit smartCollectionsChanged();
   }
   m_deferOrganizationSync = false;
   syncOrganization();
+  if (hidden) {
+    rebuildRemovalIndex();
+    for (const QString& path : carriers) indexEmbedded(path);
+  }
+  if (!carriers.isEmpty()) scheduleFingerprints();
   emit tagsChanged();
   return m_organizationError.isEmpty();
 }
 
 bool AppSettings::addTag(const QString& name, const QStringList& paths) {
   auto it = m_tags.find(name);
+  bool created = false;
   if (it == m_tags.end()) {
-    return false;
+    // A tag that exists so far only as a keyword from files gets its local
+    // key first.
+    if (!tagNames().contains(name)) return false;
+    it = m_tags.find(ensureTagKeys(name));
+    created = true;
   }
   bool changed = false;
+  bool shown = false;
   for (const QString& path : paths) {
+    // Adding a tag again undoes hiding it on that file.
+    shown = dropRows(m_removedEmbeddedTags, name, path) || shown;
     bool present = false;
     for (const AlbumEntry& entry : std::as_const(*it)) {
       if (entry.path == path && entry.resolved) {
@@ -1378,29 +1746,56 @@ bool AppSettings::addTag(const QString& name, const QStringList& paths) {
       }
     }
   }
-  if (changed) {
-    persistTags();
+  if (changed || created || shown) {
+    m_deferOrganizationSync = true;
+    if (changed || created) persistTags();
+    if (shown) persistRemovals();
+    m_deferOrganizationSync = false;
+    syncOrganization();
+    if (shown) {
+      rebuildRemovalIndex();
+      for (const QString& path : paths) indexEmbedded(path);
+    }
     emit tagsChanged();
   }
-  return changed && m_organizationError.isEmpty();
+  return (changed || shown) && m_organizationError.isEmpty();
 }
 
 void AppSettings::removeTag(const QString& name, const QStringList& paths) {
-  auto it = m_tags.find(name);
-  if (it == m_tags.end()) {
-    return;
-  }
   bool changed = false;
-  for (qsizetype index = it->size() - 1; index >= 0; --index) {
-    if (paths.contains(it->at(index).path)) {
-      it->removeAt(index);
-      changed = true;
+  if (auto it = m_tags.find(name); it != m_tags.end()) {
+    for (qsizetype index = it->size() - 1; index >= 0; --index) {
+      if (paths.contains(it->at(index).path)) {
+        it->removeAt(index);
+        changed = true;
+      }
     }
   }
-  if (changed) {
-    persistTags();
-    emit tagsChanged();
+  // A file whose own keywords carry the tag, or one nested under it, keeps
+  // it hidden here instead. Its file is not changed.
+  QList<AlbumEntry> rows;
+  QStringList carriers;
+  for (const QString& path : paths) {
+    if (!embeddedKeywordsUnder(path, name).isEmpty()) {
+      rows.append(rowFor(path));
+      carriers.append(path);
+    }
   }
+  const bool hidden = addRows(m_removedEmbeddedTags, name, rows);
+  if (!changed && !hidden) return;
+  m_deferOrganizationSync = true;
+  if (changed) persistTags();
+  if (hidden) persistRemovals();
+  m_deferOrganizationSync = false;
+  syncOrganization();
+  if (hidden) {
+    rebuildRemovalIndex();
+    for (const QString& path : std::as_const(carriers)) {
+      indexEmbedded(path);
+    }
+    scheduleFingerprints();
+  }
+  emit tagsChanged();
 }
 
 QStringList AppSettings::smartCollectionNames() const {
@@ -1437,9 +1832,10 @@ void AppSettings::deleteSmartCollection(const QString& name) {
   emit smartCollectionsChanged();
 }
 
-bool AppSettings::reconcileCollectionMap(QMap<QString, QList<AlbumEntry>>& collections,
-                                         const QList<CaptureRecord>& records) {
-  if (collections.isEmpty()) return false;
+QList<bool> AppSettings::reconcileCollectionMaps(const QList<QMap<QString, QList<AlbumEntry>>*>& maps,
+                                                const QList<CaptureRecord>& records) {
+  QList<bool> changed(maps.size(), false);
+  if (std::all_of(maps.cbegin(), maps.cend(), [](const auto* map) { return map->isEmpty(); })) return changed;
   struct Candidate {
     QString path;
     qint64 bytes = 0;
@@ -1473,15 +1869,27 @@ bool AppSettings::reconcileCollectionMap(QMap<QString, QList<AlbumEntry>>& colle
     candidates.append({record.path, record.bytes, record.modified, device, inode});
   }
 
+  for (qsizetype map = 0; map < maps.size(); ++map) {
   bool persistedChange = false;
   bool resolutionChange = false;
-  for (auto collection = collections.begin(); collection != collections.end(); ++collection) {
+  for (auto collection = maps.at(map)->begin(); collection != maps.at(map)->end(); ++collection) {
     for (AlbumEntry& entry : collection.value()) {
       const bool wasResolved = entry.resolved;
       entry.resolved = false;
 
-      const bool livePath = byPath.contains(entry.path);
+      const auto live = byPath.constFind(entry.path);
+      const bool livePath = live != byPath.cend();
       if (livePath) {
+        // The scanner's own identity for the file, gathered off the window
+        // thread, settles an unchanged entry without another stat.
+        const Candidate& scanned = candidates.at(live.value());
+        if (scanned.device != 0 && scanned.inode != 0 && entry.device == scanned.device &&
+            entry.inode == scanned.inode && entry.bytes == scanned.bytes &&
+            entry.modified == scanned.modified) {
+          entry.resolved = true;
+          resolutionChange = resolutionChange || !wasResolved;
+          continue;
+        }
         const QFileInfo info(entry.path);
         struct stat status {};
         if (info.isFile() && info.isReadable() &&
@@ -1568,7 +1976,9 @@ bool AppSettings::reconcileCollectionMap(QMap<QString, QList<AlbumEntry>>& colle
       resolutionChange = resolutionChange || wasResolved != entry.resolved;
     }
   }
-  return persistedChange || resolutionChange;
+  changed[map] = persistedChange || resolutionChange;
+  }
+  return changed;
 }
 
 void AppSettings::reconcileAlbums(const QList<CaptureRecord>& records) {
@@ -1579,10 +1989,25 @@ void AppSettings::reconcileAlbums(const QList<CaptureRecord>& records) {
 }
 
 void AppSettings::reconcileTags(const QList<CaptureRecord>& records) {
-  if (reconcileCollectionMap(m_tags, records)) {
-    persistTags();
-    emit tagsChanged();
+  // Hidden keywords and cleared values follow files moved outside Omaroll the
+  // way tags do, in the same pass over the scan.
+  const QList<bool> changed =
+      reconcileCollectionMaps({&m_tags, &m_removedEmbeddedTags, &m_clearedEmbedded}, records);
+  const bool removals = changed.at(1) || changed.at(2);
+  // Rows written from a scanner identity, in this session or an earlier one.
+  scheduleFingerprints();
+  if (!changed.at(0) && !removals) return;
+  m_deferOrganizationSync = true;
+  if (changed.at(0)) persistTags();
+  if (removals) persistRemovals();
+  m_deferOrganizationSync = false;
+  syncOrganization();
+  if (removals) {
+    rebuildRemovalIndex();
+    rebuildEmbeddedIndex();
   }
+  if (changed.at(0) || changed.at(1)) emit tagsChanged();
+  if (changed.at(2)) emit marksChanged();
 }
 
 namespace {
@@ -1704,7 +2129,7 @@ QUrl AppSettings::backupFolderUrl() const {
 
 AppSettings::OrganizationState AppSettings::organizationState() const {
   return {m_albums, m_tags, m_smartCollections, m_favorites, m_hidden, m_ratings, m_captions,
-          m_markIdentities};
+          m_markIdentities, m_removedEmbeddedTags, m_clearedEmbedded};
 }
 
 void AppSettings::flushBackups() {
@@ -1731,6 +2156,11 @@ int AppSettings::organizationSize(const OrganizationState& state) {
     for (const auto& entries : *collections) size += 1 + entries.size();
   size += state.favorites.size() + state.hidden.size() + state.ratings.size() + state.captions.size() +
           state.smartCollections.size();
+  // One per removal row. Values read from files never count: they are read
+  // again, so a launch before the index runs, with a drive unplugged or with
+  // reading turned off cannot look incomplete.
+  for (const auto* rows : {&state.removedEmbeddedTags, &state.clearedEmbedded})
+    for (const auto& entries : *rows) size += entries.size();
   return int(qMin<qsizetype>(size, std::numeric_limits<int>::max()));
 }
 
@@ -1738,7 +2168,8 @@ int AppSettings::snapshotSize(const QByteArray& payload) {
   DecodedOrganization decoded;
   if (!decodeOrganization(payload, decoded).isEmpty()) return -1;
   return organizationSize({decoded.albums, decoded.tags, decoded.smartCollections, decoded.favorites,
-                           decoded.hidden, decoded.ratings, decoded.captions, decoded.markIdentities});
+                           decoded.hidden, decoded.ratings, decoded.captions, decoded.markIdentities,
+                           decoded.removedEmbeddedTags, decoded.clearedEmbedded});
 }
 
 // A refresh follows the latest state, so the launch check compares with what
@@ -2098,6 +2529,14 @@ QByteArray AppSettings::encodeOrganization(const OrganizationState& state) {
   }
   root.insert(QStringLiteral("smartCollections"), QJsonObject::fromVariantMap(smart));
 
+  // Optional, and only written with rows: 1.18 checks only its own members,
+  // so it still imports this file and loses only what it cannot use. The
+  // rows carry their own identities; markIdentities is left as it was.
+  if (!state.removedEmbeddedTags.isEmpty())
+    root.insert(QStringLiteral("removedEmbeddedTags"), encodeEntries(state.removedEmbeddedTags));
+  if (!state.clearedEmbedded.isEmpty())
+    root.insert(QStringLiteral("clearedEmbedded"), encodeEntries(state.clearedEmbedded));
+
   return QJsonDocument(root).toJson(QJsonDocument::Indented);
 }
 
@@ -2321,8 +2760,26 @@ QVariantMap AppSettings::decodeOrganization(const QByteArray& payload, DecodedOr
     }
   }
 
+  // Optional too, and as strict as tags when present: a bad member refuses
+  // the whole file. clearedEmbedded holds only "rating" and "caption".
+  QMap<QString, QList<AlbumEntry>> removedEmbeddedTags;
+  if (root.contains(QStringLiteral("removedEmbeddedTags")) &&
+      (!memberIs("removedEmbeddedTags", QJsonValue::Object) ||
+       !decodeEntries(root.value(QStringLiteral("removedEmbeddedTags")).toObject(), normalizedTagName,
+                      removedEmbeddedTags)))
+    return invalidBackup();
+  QMap<QString, QList<AlbumEntry>> clearedEmbedded;
+  if (root.contains(QStringLiteral("clearedEmbedded"))) {
+    if (!memberIs("clearedEmbedded", QJsonValue::Object)) return invalidBackup();
+    const QJsonObject cleared = root.value(QStringLiteral("clearedEmbedded")).toObject();
+    for (auto it = cleared.begin(); it != cleared.end(); ++it)
+      if (clearedKey(it.key()).isEmpty()) return invalidBackup();
+    if (!decodeEntries(cleared, clearedKey, clearedEmbedded)) return invalidBackup();
+  }
+
   out = {exportedAt, std::move(albums), std::move(tags), std::move(favorites), std::move(hidden),
-         std::move(ratings), std::move(captions), std::move(smartCollections), std::move(markIdentities)};
+         std::move(ratings), std::move(captions), std::move(smartCollections), std::move(markIdentities),
+         std::move(removedEmbeddedTags), std::move(clearedEmbedded)};
   return {};
 }
 
@@ -2352,6 +2809,10 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
   auto captions = std::move(decoded.captions);
   auto smartCollections = std::move(decoded.smartCollections);
   auto markIdentities = std::move(decoded.markIdentities);
+  // A restore returns to the backup's own removal rows, so a backup made
+  // before a keyword was hidden shows it again.
+  auto removedEmbeddedTags = std::move(decoded.removedEmbeddedTags);
+  auto clearedEmbedded = std::move(decoded.clearedEmbedded);
 
   // An entry whose file is present right now shows up immediately; the next
   // scan repairs anything that moved. The stored identity is kept so a move
@@ -2368,6 +2829,8 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
   };
   resolvePresent(albums);
   resolvePresent(tags);
+  resolvePresent(removedEmbeddedTags);
+  resolvePresent(clearedEmbedded);
 
   // The backup was valid; saving it failed.
   const auto failed = [](const QString& message) -> QVariantMap {
@@ -2416,7 +2879,10 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
   const auto oldAlbums = m_albums;
   const auto oldTags = m_tags;
   const auto oldViews = m_smartCollections;
-  const MarksSnapshot oldMarks{m_favorites, m_hidden, m_ratings, m_captions, m_markIdentities};
+  const MarksSnapshot oldMarks{m_favorites, m_hidden, m_ratings, m_captions, m_markIdentities, m_clearedEmbedded};
+  const auto oldRemoved = m_removedEmbeddedTags;
+  qsizetype hiddenBefore = 0;
+  for (const auto& rows : std::as_const(m_removedEmbeddedTags)) hiddenBefore += rows.size();
   m_albums = std::move(albums);
   m_tags = std::move(tags);
   m_smartCollections = std::move(smartCollections);
@@ -2425,6 +2891,8 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
   m_ratings = std::move(ratings);
   m_captions = std::move(captions);
   m_markIdentities = std::move(markIdentities);
+  m_removedEmbeddedTags = std::move(removedEmbeddedTags);
+  m_clearedEmbedded = std::move(clearedEmbedded);
 
   m_restoring = true;
   const auto restoring = qScopeGuard([this] { m_restoring = false; });
@@ -2433,6 +2901,7 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
   persistTags();
   persistSmartCollections();
   persistMarks();
+  persistRemovals();
   m_deferOrganizationSync = false;
   const bool saved = syncOrganization();
   if (!saved || !commitRepair()) {
@@ -2452,12 +2921,15 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
     m_ratings = oldMarks.ratings;
     m_captions = oldMarks.captions;
     m_markIdentities = oldMarks.identities;
+    m_clearedEmbedded = oldMarks.clearedEmbedded;
+    m_removedEmbeddedTags = oldRemoved;
     // Replace pending failed values too, so a later flush cannot restore them.
     m_deferOrganizationSync = true;
     persistAlbums();
     persistTags();
     persistSmartCollections();
     persistMarks();
+    persistRemovals();
     m_deferOrganizationSync = false;
     syncOrganization();
     return failed(error);
@@ -2476,12 +2948,16 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
   m_snapshotRefresh.stop();
   scheduleDailySnapshot(true);
   clearMarksUndo();
+  rebuildRemovalIndex();
+  rebuildEmbeddedIndex();
   emit albumsChanged();
   emit tagsChanged();
   emit smartCollectionsChanged();
   emit marksChanged();
 
   const int marks = m_favorites.size() + m_hidden.size() + m_ratings.size() + m_captions.size();
+  qsizetype hiddenAfter = 0;
+  for (const auto& rows : std::as_const(m_removedEmbeddedTags)) hiddenAfter += rows.size();
   QVariantMap result;
   result.insert(QStringLiteral("ok"), true);
   result.insert(QStringLiteral("message"),
@@ -2491,7 +2967,12 @@ QVariantMap AppSettings::importOrganization(const QString& path) {
                     .arg(m_tags.size())
                     .arg(m_tags.size() == 1 ? QString() : QStringLiteral("s"))
                     .arg(marks)
-                    .arg(marks == 1 ? QString() : QStringLiteral("s")));
+                    .arg(marks == 1 ? QString() : QStringLiteral("s"))
+                    // Keywords read from files are not in backups. Those
+                    // hidden after this backup was made show again.
+                    + (hiddenAfter < hiddenBefore
+                           ? QStringLiteral(". Keywords from files hidden since this backup show again")
+                           : QString()));
   result.insert(QStringLiteral("albums"), m_albums.size());
   result.insert(QStringLiteral("tags"), m_tags.size());
   result.insert(QStringLiteral("marks"), marks);
@@ -2539,6 +3020,40 @@ void AppSettings::persistTags() {
   syncOrganization();
 }
 
+void AppSettings::persistRemovals() {
+  const auto stored = [](const QMap<QString, QList<AlbumEntry>>& collections) {
+    QVariantMap out;
+    for (auto it = collections.cbegin(); it != collections.cend(); ++it) {
+      QVariantList entries;
+      for (const AlbumEntry& entry : it.value()) {
+        QVariantMap row;
+        row.insert(QStringLiteral("path"), entry.path);
+        row.insert(QStringLiteral("bytes"), entry.bytes);
+        row.insert(QStringLiteral("modified"), entry.modified);
+        row.insert(QStringLiteral("fingerprint"), entry.fingerprint);
+        row.insert(QStringLiteral("device"), QString::number(entry.device));
+        row.insert(QStringLiteral("inode"), QString::number(entry.inode));
+        entries.append(row);
+      }
+      out.insert(it.key(), entries);
+    }
+    return out;
+  };
+  // New keys: 1.18 ignores them, and QSettings keeps them when it saves.
+  const bool deferred = m_deferOrganizationSync;
+  m_deferOrganizationSync = true;
+  for (const auto& [key, rows] : {std::pair{kRemovedEmbeddedTags, &m_removedEmbeddedTags},
+                                  std::pair{kClearedEmbedded, &m_clearedEmbedded}}) {
+    if (!rows->isEmpty()) {
+      setValue(key, stored(*rows));
+    } else if (settingsStatus() != QSettings::FormatError && m_settings.contains(key)) {
+      m_settings.remove(key);
+    }
+  }
+  m_deferOrganizationSync = deferred;
+  syncOrganization();
+}
+
 void AppSettings::persistSmartCollections() {
   QVariantMap stored;
   for (auto it = m_smartCollections.cbegin(); it != m_smartCollections.cend(); ++it) {
@@ -2564,51 +3079,102 @@ void AppSettings::toggleFavorite(const QString& path) {
   emit marksChanged();
 }
 
-int AppSettings::rating(const QString& path) const { return m_ratings.value(path, 0); }
+int AppSettings::embeddedRating(const QString& path) const {
+  const EmbeddedValues* values = embeddedFor(path);
+  return values ? values->rating : 0;
+}
+
+QString AppSettings::embeddedCaption(const QString& path) const {
+  const EmbeddedValues* values = embeddedFor(path);
+  return values ? values->caption : QString();
+}
+
+int AppSettings::rating(const QString& path) const {
+  if (const auto local = m_ratings.constFind(path); local != m_ratings.cend()) return local.value();
+  return m_clearedRatings.contains(path) ? 0 : embeddedRating(path);
+}
+
+int AppSettings::ratedCount() const {
+  qsizetype count = m_ratings.size();
+  for (auto it = m_embedded.cbegin(); it != m_embedded.cend(); ++it) {
+    if (it->rating > 0 && !m_ratings.contains(it.key()) && !m_clearedRatings.contains(it.key())) ++count;
+  }
+  return static_cast<int>(count);
+}
 
 void AppSettings::setRating(const QStringList& paths, int rating) {
   const int stars = qBound(0, rating, kMaximumRating);
   pushMarksUndo();
   bool changed = false;
+  bool cleared = false;
   for (const QString& path : paths) {
     if (path.isEmpty()) {
       continue;
     }
     if (stars == 0) {
       changed = m_ratings.remove(path) > 0 || changed;
-    } else if (m_ratings.value(path, 0) != stars) {
-      m_ratings.insert(path, stars);
-      changed = true;
+      // Clearing a rating the file states is kept here, not in the file.
+      if (embeddedRating(path) > 0) cleared = addRows(m_clearedEmbedded, kClearedRating, {rowFor(path)}) || cleared;
+    } else {
+      if (m_ratings.value(path, 0) != stars) {
+        m_ratings.insert(path, stars);
+        changed = true;
+      }
+      cleared = dropRows(m_clearedEmbedded, kClearedRating, path) || cleared;
     }
   }
-  if (!changed) {
+  if (!changed && !cleared) {
     return;
   }
   for (const QString& path : paths) {
     refreshMarkIdentity(path);
   }
+  const bool deferred = m_deferOrganizationSync;
+  m_deferOrganizationSync = true;
   persistMarks();
+  if (cleared) persistRemovals();
+  m_deferOrganizationSync = deferred;
+  syncOrganization();
+  if (cleared) {
+    rebuildRemovalIndex();
+    scheduleFingerprints();
+  }
   emit marksChanged();
 }
 
-QString AppSettings::caption(const QString& path) const { return m_captions.value(path); }
+QString AppSettings::caption(const QString& path) const {
+  if (const auto local = m_captions.constFind(path); local != m_captions.cend()) return local.value();
+  return m_clearedCaptions.contains(path) ? QString() : embeddedCaption(path);
+}
 
 void AppSettings::setCaption(const QString& path, const QString& text) {
   if (path.isEmpty()) {
     return;
   }
   const QString clean = text.trimmed().left(kMaximumCaptionLength);
-  if (m_captions.value(path) == clean) {
+  if (caption(path) == clean) {
     return;
   }
   pushMarksUndo();
+  bool cleared = false;
   if (clean.isEmpty()) {
     m_captions.remove(path);
+    if (!embeddedCaption(path).isEmpty()) cleared = addRows(m_clearedEmbedded, kClearedCaption, {rowFor(path)});
   } else {
     m_captions.insert(path, clean);
+    cleared = dropRows(m_clearedEmbedded, kClearedCaption, path);
   }
   refreshMarkIdentity(path);
+  const bool deferred = m_deferOrganizationSync;
+  m_deferOrganizationSync = true;
   persistMarks();
+  if (cleared) persistRemovals();
+  m_deferOrganizationSync = deferred;
+  syncOrganization();
+  if (cleared) {
+    rebuildRemovalIndex();
+    scheduleFingerprints();
+  }
   emit marksChanged();
 }
 
@@ -2769,6 +3335,7 @@ void AppSettings::pushMarksUndo() {
   step.marks.ratings = m_ratings;
   step.marks.captions = m_captions;
   step.marks.identities = m_markIdentities;
+  step.marks.clearedEmbedded = m_clearedEmbedded;
   pushUndoStep(std::move(step));
 }
 
@@ -2793,10 +3360,12 @@ QString AppSettings::undo() {
     QVariantList restored;
     QVariantList retry;
     QStringList problems;
+    QStringList sidecarNotes;
     for (const QVariant& value : std::as_const(step.trashed)) {
       const TrashRestore::Result result = TrashRestore::restore(value.toMap());
       if (result.ok) {
         restored.append(value);
+        if (!result.sidecarNote.isEmpty()) sidecarNotes.append(result.sidecarNote);
       } else {
         problems.append(result.message);
         if (result.retryable) retry.append(value);
@@ -2815,9 +3384,16 @@ QString AppSettings::undo() {
     if (!restored.isEmpty()) emit trashRestored(restored, step.origin.data());
     const qsizetype total = step.trashed.size();
     if (problems.isEmpty()) {
-      return total == 1 ? QStringLiteral("Restored %1").arg(QFileInfo(
-                              restored.first().toMap().value(QStringLiteral("path")).toString()).fileName())
-                        : QStringLiteral("Restored %1 items").arg(total);
+      // A file back without its sidecar is not a full restore.
+      const QString sidecars = sidecarNotes.isEmpty() ? QString()
+                               : total == 1          ? QStringLiteral("; ") + sidecarNotes.first()
+                               : sidecarNotes.size() == 1
+                                   ? QStringLiteral("; a sidecar stayed in Trash")
+                                   : QStringLiteral("; %1 sidecars stayed in Trash").arg(sidecarNotes.size());
+      return (total == 1 ? QStringLiteral("Restored %1").arg(QFileInfo(
+                               restored.first().toMap().value(QStringLiteral("path")).toString()).fileName())
+                         : QStringLiteral("Restored %1 items").arg(total)) +
+             sidecars;
     }
     if (total == 1) return problems.first();
     if (restored.isEmpty()) {
@@ -2833,7 +3409,17 @@ QString AppSettings::undo() {
   m_ratings = std::move(snapshot.ratings);
   m_captions = std::move(snapshot.captions);
   m_markIdentities = std::move(snapshot.identities);
+  const bool clearedChanged = m_clearedEmbedded != snapshot.clearedEmbedded;
+  m_clearedEmbedded = std::move(snapshot.clearedEmbedded);
+  m_deferOrganizationSync = true;
   persistMarks();
+  if (clearedChanged) persistRemovals();
+  m_deferOrganizationSync = false;
+  syncOrganization();
+  if (clearedChanged) {
+    rebuildRemovalIndex();
+    scheduleFingerprints();
+  }
   emit marksChanged();
   m_undoing = false;
   emit undoChanged();
@@ -3047,6 +3633,202 @@ void AppSettings::reconcileMarks(const QList<CaptureRecord>& records) {
   clearMarksUndo();
   persistMarks();
   emit marksChanged();
+}
+
+void AppSettings::setReadEmbeddedMetadata(bool value) {
+  if (m_readEmbedded == value) return;
+  m_readEmbedded = value;
+  setValue(kReadEmbedded, value);
+  if (!value) {
+    // What was hidden stays hidden; only the layer read from files goes.
+    const bool had = !m_embedded.isEmpty() || !m_transientEmbedded.isEmpty();
+    m_embedded.clear();
+    m_transientEmbedded.clear();
+    m_transientOrder.clear();
+    rebuildEmbeddedIndex();
+    if (had) {
+      emit tagsChanged();
+      emit marksChanged();
+    }
+  }
+  emit readEmbeddedMetadataChanged();
+}
+
+namespace {
+AppSettings::EmbeddedValues boundedValues(AppSettings::EmbeddedValues values) {
+  if (values.keywords.size() > EmbeddedMetadata::kMaximumKeywords)
+    values.keywords = values.keywords.first(EmbeddedMetadata::kMaximumKeywords);
+  values.keywords.removeIf([](const QString& keyword) {
+    return keyword.isEmpty() || keyword.size() > EmbeddedMetadata::kMaximumKeywordLength;
+  });
+  if (values.rating < 0 || values.rating > kMaximumRating) values.rating = 0;
+  values.caption = values.caption.trimmed().left(kMaximumCaptionLength);
+  return values;
+}
+} // namespace
+
+void AppSettings::setEmbedded(const QList<EmbeddedUpdate>& batch) {
+  if (!m_readEmbedded || batch.isEmpty()) return;
+  bool tags = false;
+  bool marks = false;
+  for (const EmbeddedUpdate& update : batch) {
+    if (update.path.isEmpty()) continue;
+    const int ratingBefore = rating(update.path);
+    const QString captionBefore = caption(update.path);
+    const QStringList before = m_embeddedEffective.value(update.path);
+    const bool wasTransient = m_transientEmbedded.remove(update.path) > 0;
+    if (wasTransient) m_transientOrder.removeOne(update.path);
+    const EmbeddedValues values = boundedValues(update.values);
+    if (values.isEmpty()) {
+      m_embedded.remove(update.path);
+    } else {
+      m_embedded.insert(update.path, values);
+    }
+    indexEmbedded(update.path);
+    tags = tags || wasTransient || m_embeddedEffective.value(update.path) != before;
+    marks = marks || rating(update.path) != ratingBefore || caption(update.path) != captionBefore;
+  }
+  if (tags) emit tagsChanged();
+  if (marks) emit marksChanged();
+}
+
+void AppSettings::retainEmbedded(const QSet<QString>& livePaths) {
+  m_embeddedLive = livePaths;
+  bool tags = false;
+  bool marks = false;
+  for (auto it = m_embedded.begin(); it != m_embedded.end();) {
+    if (livePaths.contains(it.key())) {
+      ++it;
+      continue;
+    }
+    const QString path = it.key();
+    // Rating and caption are shown, and counted, each on its own.
+    const bool shownValue =
+        (it->rating > 0 && !m_ratings.contains(path) && !m_clearedRatings.contains(path)) ||
+        (!it->caption.isEmpty() && !m_captions.contains(path) && !m_clearedCaptions.contains(path));
+    it = m_embedded.erase(it);
+    tags = tags || m_embeddedEffective.contains(path);
+    marks = marks || shownValue;
+    indexEmbedded(path);
+  }
+  if (tags) emit tagsChanged();
+  if (marks) emit marksChanged();
+}
+
+void AppSettings::noteEmbeddedRead(const QString& path, const QStringList& keywords, int stars,
+                                   const QString& text) {
+  if (!m_readEmbedded || path.isEmpty()) return;
+  EmbeddedValues values = boundedValues({keywords, stars, text});
+  if (const auto known = m_embedded.constFind(path); known != m_embedded.cend()) {
+    values.bytes = known->bytes;
+    values.modified = known->modified;
+    values.device = known->device;
+    values.inode = known->inode;
+  }
+  if (m_embedded.contains(path) || m_embeddedLive.contains(path)) {
+    setEmbedded({{path, values}});
+    return;
+  }
+  const QStringList tagsBefore = tagsForPath(path);
+  const int ratingBefore = rating(path);
+  const QString captionBefore = caption(path);
+  m_transientOrder.removeOne(path);
+  if (values.isEmpty()) {
+    m_transientEmbedded.remove(path);
+  } else {
+    m_transientEmbedded.insert(path, values);
+    m_transientOrder.append(path);
+    while (m_transientOrder.size() > kMaximumTransientEmbedded)
+      m_transientEmbedded.remove(m_transientOrder.takeFirst());
+  }
+  if (tagsForPath(path) != tagsBefore) emit tagsChanged();
+  if (rating(path) != ratingBefore || caption(path) != captionBefore) emit marksChanged();
+}
+
+namespace {
+// A row's file identity. A template, since AlbumEntry is private.
+template <typename Entry>
+QString fingerprintIdentity(const Entry& entry) {
+  return QStringLiteral("%1:%2:%3:%4:%5").arg(entry.path).arg(entry.bytes).arg(entry.modified)
+      .arg(entry.device).arg(entry.inode);
+}
+} // namespace
+
+void AppSettings::scheduleFingerprints() {
+  const bool running = m_fingerprintWatcher && m_fingerprintWatcher->isRunning();
+  // A row whose identity was read before takes that fingerprint now; the
+  // rest go to the worker, a batch at a time.
+  bool tagsFilled = false;
+  bool removalsFilled = false;
+  QList<AlbumEntry> batch;
+  QSet<QString> queued;
+  for (auto* rows : {&m_tags, &m_removedEmbeddedTags, &m_clearedEmbedded}) {
+    for (auto& entries : *rows) {
+      for (AlbumEntry& entry : entries) {
+        if (!entry.fingerprint.isEmpty() || !entry.resolved || entry.bytes < 0) continue;
+        const QString identity = fingerprintIdentity(entry);
+        if (const auto known = m_fingerprints.constFind(identity); known != m_fingerprints.cend()) {
+          if (!known->isEmpty()) {
+            entry.fingerprint = *known;
+            (rows == &m_tags ? tagsFilled : removalsFilled) = true;
+          }
+          continue;
+        }
+        if (running || batch.size() >= kFingerprintBatch || queued.contains(identity)) continue;
+        queued.insert(identity);
+        batch.append(entry);
+      }
+    }
+  }
+  if (tagsFilled || removalsFilled) {
+    const bool deferred = m_deferOrganizationSync;
+    m_deferOrganizationSync = true;
+    if (tagsFilled) persistTags();
+    if (removalsFilled) persistRemovals();
+    m_deferOrganizationSync = deferred;
+    syncOrganization();
+  }
+  if (running || batch.isEmpty()) return;
+  if (!m_fingerprintWatcher) {
+    m_fingerprintWatcher = new QFutureWatcher<QList<std::pair<QString, QByteArray>>>(this);
+    connect(m_fingerprintWatcher, &QFutureWatcher<QList<std::pair<QString, QByteArray>>>::finished, this, [this] {
+      for (const auto& [identity, fingerprint] : m_fingerprintWatcher->result())
+        m_fingerprints.insert(identity, fingerprint);
+      // Fills the rows from what was read, and starts the next batch.
+      scheduleFingerprints();
+    });
+  }
+  // The worker reads only its own copies. Only a file that still has the
+  // identity its row was written with gives the row its fingerprint.
+  m_fingerprintWatcher->setFuture(QtConcurrent::run([batch] {
+    QList<std::pair<QString, QByteArray>> read;
+    read.reserve(batch.size());
+    for (const AlbumEntry& entry : batch) {
+      const AlbumEntry current = identityFor(entry.path);
+      const bool same = current.resolved && current.bytes == entry.bytes && current.modified == entry.modified &&
+                        current.device == entry.device && current.inode == entry.inode;
+      read.append({fingerprintIdentity(entry), same ? current.fingerprint : QByteArray()});
+    }
+    return read;
+  }));
+}
+
+int AppSettings::pendingFingerprints() const {
+  int pending = 0;
+  for (const auto* rows : {&m_tags, &m_removedEmbeddedTags, &m_clearedEmbedded})
+    for (const auto& entries : *rows)
+      for (const AlbumEntry& entry : entries)
+        pending += entry.fingerprint.isEmpty() && entry.resolved && entry.bytes >= 0 ? 1 : 0;
+  return pending;
+}
+
+void AppSettings::waitForFingerprints() {
+  if (!m_fingerprintWatcher) return;
+  // Each finished batch schedules the next.
+  do {
+    m_fingerprintWatcher->waitForFinished();
+    QCoreApplication::processEvents();
+  } while (m_fingerprintWatcher->isRunning());
 }
 
 QObject* AppSettings::videoPresentation(QObject* object) const {

@@ -74,6 +74,8 @@ add_library(omaroll_core STATIC
   src/library/MediaInspector.h
   src/library/SimilarityIndex.cpp
   src/library/SimilarityIndex.h
+  src/library/EmbeddedMetadata.cpp
+  src/library/EmbeddedMetadata.h
   src/library/MediaMetadataIndex.cpp
   src/library/MediaMetadataIndex.h
   src/sources/CameraRaw.cpp
@@ -356,7 +358,7 @@ if(BUILD_TESTING)
   target_link_libraries(omaroll_benchmark_library PRIVATE omaroll_core)
   add_executable(omaroll_benchmark_storyboard EXCLUDE_FROM_ALL tests/benchmark_storyboard.cpp)
   target_link_libraries(omaroll_benchmark_storyboard PRIVATE omaroll_core)
-  qt_add_executable(omaroll_tests tests/tst_omaroll.cpp)
+  qt_add_executable(omaroll_tests tests/tst_omaroll.cpp tests/tsan_thread_join.cpp)
   target_link_libraries(omaroll_tests PRIVATE omaroll_core Qt6::Test)
   add_test(NAME omaroll_tests COMMAND omaroll_tests)
   add_test(NAME omaroll_version COMMAND omaroll --version)
@@ -384,7 +386,7 @@ if(BUILD_TESTING)
   qt_add_executable(omaroll_companion_tests tests/tst_companions.cpp)
   target_link_libraries(omaroll_companion_tests PRIVATE omaroll_core Qt6::Test)
   add_test(NAME omaroll_companion_tests COMMAND omaroll_companion_tests)
-  qt_add_executable(omaroll_search_tests tests/tst_search.cpp)
+  qt_add_executable(omaroll_search_tests tests/tst_search.cpp tests/tsan_thread_join.cpp)
   target_link_libraries(omaroll_search_tests PRIVATE omaroll_core Qt6::Test)
   add_test(NAME omaroll_search_tests COMMAND omaroll_search_tests)
   # Times a 50k-item search, so it runs alone rather than beside the UI suites.
@@ -403,7 +405,7 @@ if(BUILD_TESTING)
   set_tests_properties(omaroll_large_image_tests PROPERTIES ENVIRONMENT
     "${omaroll_test_environment};LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp")
 
-  qt_add_executable(omaroll_storyboard_tests tests/tst_storyboard.cpp)
+  qt_add_executable(omaroll_storyboard_tests tests/tst_storyboard.cpp tests/tsan_thread_join.cpp)
   target_link_libraries(omaroll_storyboard_tests PRIVATE omaroll_core Qt6::Test)
   add_test(NAME omaroll_storyboard_tests COMMAND omaroll_storyboard_tests)
   set_tests_properties(omaroll_storyboard_tests PROPERTIES ENVIRONMENT
@@ -478,7 +480,7 @@ if(OMAROLL_FUZZ)
   target_compile_options(omaroll_core PRIVATE -fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
   target_link_options(omaroll_core INTERFACE -fsanitize=fuzzer-no-link,address,undefined)
   set(fuzz_kinds launch ipc matroska pdf image raw subtitles organization query storyboard doctext exifdate hyprland
-    jpegexif diagnosis hashcache webp mimedefaults)
+    jpegexif diagnosis hashcache webp mimedefaults xmp)
   set(kind 0)
   foreach(parser IN LISTS fuzz_kinds)
     math(EXPR kind "${kind} + 1")

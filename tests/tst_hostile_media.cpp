@@ -12,6 +12,7 @@
 // Its own process, like tst_large_images: the image budget and Qt's allocation
 // limit are process-wide.
 
+#include "library/EmbeddedMetadata.h"
 #include "library/MediaInspector.h"
 #include "pdf/PdfSupport.h"
 #include "sources/CaptureScanner.h"
@@ -27,6 +28,7 @@
 #include <QAudioOutput>
 #include <QBuffer>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -39,6 +41,7 @@
 #include <QSemaphore>
 #include <QSignalSpy>
 #include <QThreadPool>
+#include <QtEndian>
 #include <QTemporaryDir>
 #include <QtTest>
 
@@ -1110,6 +1113,122 @@ private slots:
     truncated.play();
     QTest::qWait(500);
     truncated.stop();
+  }
+
+  // XMP and IPTC from a hostile file: every reader returns quickly with
+  // little or nothing, whatever the lengths, entities, nesting or zlib claim.
+  void embeddedMetadataSurvivesHostilePackets() {
+    QElapsedTimer timer;
+    timer.start();
+    const QByteArray rdf = "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\" "
+                           "xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\">";
+    // Billion laughs: refused at the DOCTYPE, before any entity is used.
+    QByteArray laughs = "<?xml version=\"1.0\"?><!DOCTYPE lolz [<!ENTITY lol \"lol\">";
+    for (int level = 1; level <= 9; ++level) {
+      laughs += QByteArray("<!ENTITY lol") + QByteArray::number(level) + " \"" +
+                QByteArray("&lol").append(level > 1 ? QByteArray::number(level - 1) : QByteArray()).append(';').repeated(10) +
+                "\">";
+    }
+    laughs += "]>" + rdf + "<rdf:Description><dc:description>&lol9;</dc:description></rdf:Description></rdf:RDF>";
+    QCOMPARE(EmbeddedMetadata::parseXmp(laughs), EmbeddedMetadata::Fields{});
+
+    // Ten thousand levels deep.
+    QByteArray deep = rdf + QByteArray("<rdf:Description>").repeated(10000) +
+                      QByteArray("</rdf:Description>").repeated(10000) + "</rdf:RDF>";
+    QCOMPARE(EmbeddedMetadata::parseXmp(deep), EmbeddedMetadata::Fields{});
+
+    // Ten thousand keywords: the first 200 are kept.
+    QByteArray many = rdf + "<rdf:Description><dc:subject><rdf:Bag>";
+    for (int index = 0; index < 10000; ++index) many += "<rdf:li>k" + QByteArray::number(index) + "</rdf:li>";
+    many += "</rdf:Bag></dc:subject></rdf:Description></rdf:RDF>";
+    const EmbeddedMetadata::Fields capped = EmbeddedMetadata::parseXmp(many);
+    QCOMPARE(capped.keywords.size(), EmbeddedMetadata::kMaximumKeywords);
+    QCOMPARE(capped.keywords.first(), QStringLiteral("k0"));
+
+    // A packet over the limit is not parsed at all.
+    QByteArray oversized = rdf + "<rdf:Description xmp:Rating=\"5\"/></rdf:RDF>";
+    oversized += QByteArray(EmbeddedMetadata::kMaximumPacketBytes, ' ');
+    QCOMPARE(EmbeddedMetadata::parseXmp(oversized), EmbeddedMetadata::Fields{});
+
+    // Invalid UTF-8 in XMP is no XMP; in IPTC it is read as Latin-1.
+    QCOMPARE(EmbeddedMetadata::parseXmp(rdf + "<rdf:Description><dc:description>\xC3\x28\xFF</dc:description>"
+                                               "</rdf:Description></rdf:RDF>"),
+             EmbeddedMetadata::Fields{});
+    QByteArray iptc = QByteArray("\x1C\x02\x19\x00\x03\xC3\x28\xFF", 8);
+    QCOMPARE(EmbeddedMetadata::parseIptc(iptc).keywords, QStringList{QStringLiteral("Ã(ÿ")});
+    // Record lengths past the end, or an extended length of absurd size.
+    QVERIFY(EmbeddedMetadata::parseIptc(QByteArray("\x1C\x02\x19\xFF\xF0x", 6)).isEmpty());
+    QVERIFY(EmbeddedMetadata::parseIptc(QByteArray("\x1C\x02\x19\x80\x04\xFF\xFF\xFF\xFFx", 10)).isEmpty());
+    QVERIFY(EmbeddedMetadata::parseIptc(QByteArray("\x1C\x02\x19\xFF\xFF", 5)).isEmpty());
+    QVERIFY(timer.elapsed() < 10000);
+  }
+
+  void embeddedMetadataContainersStayInBounds() {
+    QElapsedTimer timer;
+    timer.start();
+    // JPEG segments that claim the maximum length over and over, and one cut
+    // off by the end of the read.
+    QByteArray jpeg("\xFF\xD8", 2);
+    for (int index = 0; index < 64; ++index) jpeg += QByteArray("\xFF\xE1\xFF\xFF", 4) + QByteArray(100, 'a');
+    QVERIFY(EmbeddedMetadata::jpegPackets(jpeg).xmp.isEmpty());
+    const QByteArray cut =
+        QByteArray("\xFF\xD8\xFF\xE1\xFF\xFF", 6) + QByteArrayLiteral("http://ns.adobe.com/xap/1.0/\0") + "<x";
+    QVERIFY(EmbeddedMetadata::jpegPackets(cut).xmp.isEmpty());
+    QVERIFY(EmbeddedMetadata::packets(QByteArray("\xFF\xD8\xFF", 3)).xmp.isEmpty());
+    // An APP13 whose resource sizes lie.
+    const QByteArray irb = QByteArrayLiteral("Photoshop 3.0\0") + "8BIM" + QByteArray("\x04\x04\xFF\x00", 4) +
+                           QByteArray("\xFF\xFF\xFF\xF0", 4) + "abc";
+    QByteArray app13("\xFF\xD8\xFF\xED", 4);
+    app13 += char((irb.size() + 2) >> 8);
+    app13 += char((irb.size() + 2) & 0xFF);
+    QVERIFY(EmbeddedMetadata::jpegPackets(app13 + irb).iptc.isEmpty());
+
+    // A zlib bomb in a PNG iTXt chunk: 64 MiB of spaces in about 64 KiB.
+    const QByteArray bomb = qCompress(QByteArray(64 * 1024 * 1024, ' '), 9).mid(4);
+    QByteArray text = QByteArrayLiteral("XML:com.adobe.xmp\0\x01\0\0\0") + bomb;
+    QByteArray png = QByteArrayLiteral("\x89PNG\r\n\x1a\n");
+    png += char(text.size() >> 24);
+    png += char((text.size() >> 16) & 0xFF);
+    png += char((text.size() >> 8) & 0xFF);
+    png += char(text.size() & 0xFF);
+    png += "iTXt" + text + QByteArray(4, '\0');
+    QVERIFY(EmbeddedMetadata::pngPackets(png).xmp.isEmpty());
+    // A smaller one that still expands past the packet limit.
+    const QByteArray small = qCompress(QByteArray(8 * 1024 * 1024, ' '), 9).mid(4);
+    QVERIFY(small.size() < 32 * 1024);
+    text = QByteArrayLiteral("XML:com.adobe.xmp\0\x01\0\0\0") + small;
+    png = QByteArrayLiteral("\x89PNG\r\n\x1a\n") + QByteArray(4, '\0') + "iTXt" + text + QByteArray(4, '\0');
+    qToBigEndian<quint32>(quint32(text.size()), png.data() + 8);
+    QVERIFY(EmbeddedMetadata::pngPackets(png).xmp.isEmpty());
+    // Chunk lengths beyond the data.
+    QVERIFY(EmbeddedMetadata::pngPackets(QByteArrayLiteral("\x89PNG\r\n\x1a\n\x7F\xFF\xFF\xFFiTXtXML")).xmp.isEmpty());
+    QVERIFY(EmbeddedMetadata::webpPackets(QByteArrayLiteral("RIFF\0\0\0\0WEBPXMP \xFF\xFF\xFF\x7F<x")).xmp.isEmpty());
+    QVERIFY(EmbeddedMetadata::webpPackets(QByteArrayLiteral("RIFF\0\0\0\0WEBPVP8 \xFF\xFF\xFF\xFF")).xmp.isEmpty());
+
+    // TIFF: an IFD past the end, a huge entry count, values out of range.
+    QVERIFY(EmbeddedMetadata::tiffPackets(QByteArrayLiteral("II*\0\xFF\xFF\xFF\xFF")).xmp.isEmpty());
+    QVERIFY(EmbeddedMetadata::tiffPackets(QByteArrayLiteral("II*\0\x08\0\0\0\xFF\xFF")).xmp.isEmpty());
+    QByteArray tiff = QByteArrayLiteral("MM\0*\0\0\0\x08\0\x02");
+    tiff += QByteArrayLiteral("\x02\xBC\0\x07\xFF\xFF\xFF\xFF\0\0\0\x08");   // 700, 4 GiB
+    tiff += QByteArrayLiteral("\x83\xBB\0\x04\x3F\xFF\xFF\xFF\0\0\0\x08");   // 33723, count x 4 overflows 32 bits
+    tiff += QByteArrayLiteral("\0\0\0\0");
+    EmbeddedMetadata::Packets found = EmbeddedMetadata::tiffPackets(tiff);
+    QVERIFY(found.xmp.isEmpty());
+    QVERIFY(found.iptc.isEmpty());
+    tiff = QByteArrayLiteral("II*\0\x08\0\0\0\x01\0\xBC\x02\x07\0\x00\x01\0\0\xF0\xFF\xFF\xFF\0\0\0\0");
+    QVERIFY(EmbeddedMetadata::tiffPackets(tiff).xmp.isEmpty());
+
+    // Through the file readers too, which seek rather than trust.
+    for (const auto& [name, bytes] : {std::pair{"lying.jpg", jpeg}, std::pair{"bomb.png", png},
+                                      std::pair{"lying.tif", tiff}, std::pair{"cut.jpg", cut}}) {
+      QFile file(m_dir.filePath(QStringLiteral("embedded-") + QLatin1String(name)));
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      QCOMPARE(file.write(bytes), bytes.size());
+      file.close();
+      QVERIFY(EmbeddedMetadata::readFile(file.fileName()).isEmpty());
+      QVERIFY(EmbeddedMetadata::read(file.fileName(), file.fileName()).isEmpty());
+    }
+    QVERIFY(timer.elapsed() < 20000);
   }
 
 private:

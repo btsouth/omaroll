@@ -14,6 +14,7 @@
 #include <QSettings>
 #include <QStringList>
 #include <QElapsedTimer>
+#include <QFutureWatcher>
 #include <QTimer>
 #include <QUrl>
 #include <QVariantMap>
@@ -110,6 +111,11 @@ class AppSettings final : public QObject {
                  NOTIFY videoPlaybackRateChanged)
   Q_PROPERTY(QStringList albumNames READ albumNames NOTIFY albumsChanged)
   Q_PROPERTY(QStringList tagNames READ tagNames NOTIFY tagsChanged)
+  // Keywords, star ratings and descriptions other photo tools keep in files
+  // and .xmp sidecars are shown as tags, stars and captions. Read only: Omaroll
+  // never writes them. Off empties that layer and keeps what was hidden.
+  Q_PROPERTY(bool readEmbeddedMetadata READ readEmbeddedMetadata WRITE setReadEmbeddedMetadata
+                 NOTIFY readEmbeddedMetadataChanged)
   Q_PROPERTY(
       QStringList smartCollectionNames READ smartCollectionNames NOTIFY smartCollectionsChanged)
   Q_PROPERTY(QString previousVisit READ previousVisit CONSTANT)
@@ -295,6 +301,13 @@ public:
 
   // Tags nest with a slash: "Travel/Japan" sits under "Travel". Names come
   // back in tree order, and a parent's paths include every descendant's.
+  //
+  // Every reader below returns local tags merged with keywords read from the
+  // files (setEmbedded), less those removed here: a removal is kept in
+  // Omaroll's own settings, never in the file. Names merge ignoring case, and
+  // a local tag's spelling wins. Ratings and captions are the local value if
+  // there is one, else nothing if the user cleared the file's value, else the
+  // file's.
   [[nodiscard]] QStringList tagNames() const;
   Q_INVOKABLE [[nodiscard]] QStringList tagPaths(const QString& name) const;
   Q_INVOKABLE [[nodiscard]] QStringList tagsForPath(const QString& path) const;
@@ -312,6 +325,41 @@ public:
   Q_INVOKABLE bool addTag(const QString& name, const QStringList& paths);
   Q_INVOKABLE void removeTag(const QString& name, const QStringList& paths);
   void reconcileTags(const QList<CaptureRecord>& records);
+
+  [[nodiscard]] bool readEmbeddedMetadata() const { return m_readEmbedded; }
+  void setReadEmbeddedMetadata(bool value);
+  // What one file and its sidecar hold, and the file's identity when it was
+  // read, so hiding a keyword across many files needs no file reads here.
+  struct EmbeddedValues {
+    QStringList keywords;
+    int rating = 0;
+    QString caption;
+    qint64 bytes = -1;
+    qint64 modified = 0;
+    quint64 device = 0;
+    quint64 inode = 0;
+    [[nodiscard]] bool isEmpty() const {
+      return keywords.isEmpty() && rating == 0 && caption.isEmpty();
+    }
+  };
+  struct EmbeddedUpdate {
+    QString path;
+    EmbeddedValues values;
+  };
+  // Values for library files, from the metadata index. One tagsChanged and one
+  // marksChanged at most per batch. Empty values forget the file.
+  void setEmbedded(const QList<EmbeddedUpdate>& batch);
+  // Forgets values for files no longer in the library.
+  void retainEmbedded(const QSet<QString>& livePaths);
+  // Values the viewer read for the file it shows. A library file's values are
+  // updated; any other file's are kept in a small transient set that only
+  // per-file reads use, never Browse, counts or search.
+  void noteEmbeddedRead(const QString& path, const QStringList& keywords, int rating,
+                        const QString& caption);
+  // How many removal rows still wait for their content fingerprint, filled in
+  // on a worker after a bulk edit. For tests.
+  [[nodiscard]] int pendingFingerprints() const;
+  void waitForFingerprints();
 
   // Repoints favourites, hidden, ratings and captions when their file was
   // moved or renamed outside Omaroll, matching the same inode/device size or
@@ -382,7 +430,7 @@ public:
   // Stars, 1 to 5. Zero is unrated and is not stored.
   Q_INVOKABLE [[nodiscard]] int rating(const QString& path) const;
   Q_INVOKABLE void setRating(const QStringList& paths, int rating);
-  [[nodiscard]] int ratedCount() const { return static_cast<int>(m_ratings.size()); }
+  [[nodiscard]] int ratedCount() const;
   // A short free-text caption. Searched with filenames and picture text.
   // Empty removes the entry.
   Q_INVOKABLE [[nodiscard]] QString caption(const QString& path) const;
@@ -438,6 +486,7 @@ signals:
   void videoPlaybackRateChanged();
   void albumsChanged();
   void tagsChanged();
+  void readEmbeddedMetadataChanged();
   void smartCollectionsChanged();
   // One signal for "a mark changed", so the model can refresh its flags without
   // caring which one it was.
@@ -466,11 +515,14 @@ private:
     quint64 device = 0;
     quint64 inode = 0;
     bool resolved = false;
+    bool operator==(const AlbumEntry& other) const = default;
   };
 
   void persistMarks();
   void persistAlbums();
   void persistTags();
+  // Hidden keywords and cleared ratings or captions from files.
+  void persistRemovals();
   void persistSmartCollections();
   // Removes the saved views whose |key| ("album" or "tag") matches.
   int removeViewsNaming(const QString& key, const std::function<bool(const QString&)>& matches);
@@ -485,8 +537,14 @@ private:
   // mark can be found again after an external move.
   void refreshMarkIdentity(const QString& path);
   [[nodiscard]] bool pathHasMark(const QString& path) const;
+  // Reconciles several collection maps in one pass over the scan. Returns
+  // which of them changed, in order.
+  QList<bool> reconcileCollectionMaps(const QList<QMap<QString, QList<AlbumEntry>>*>& maps,
+                                      const QList<CaptureRecord>& records);
   bool reconcileCollectionMap(QMap<QString, QList<AlbumEntry>>& collections,
-                              const QList<CaptureRecord>& records);
+                              const QList<CaptureRecord>& records) {
+    return reconcileCollectionMaps({&collections}, records).value(0);
+  }
   [[nodiscard]] static bool relocationAvailable(const AlbumEntry& entry);
   [[nodiscard]] static AlbumEntry identityFor(const QString& path);
 
@@ -500,6 +558,10 @@ private:
     QHash<QString, int> ratings;
     QHash<QString, QString> captions;
     QHash<QString, AlbumEntry> markIdentities;
+    // Optional backup members, written only when there are rows, so a
+    // profile that never hid a keyword exports exactly what 1.18 did.
+    QMap<QString, QList<AlbumEntry>> removedEmbeddedTags;
+    QMap<QString, QList<AlbumEntry>> clearedEmbedded;
   };
   [[nodiscard]] OrganizationState organizationState() const;
   [[nodiscard]] static QByteArray encodeOrganization(const OrganizationState& state);
@@ -540,6 +602,8 @@ private:
     QHash<QString, QString> captions;
     QMap<QString, QVariantMap> smartCollections;
     QHash<QString, AlbumEntry> markIdentities;
+    QMap<QString, QList<AlbumEntry>> removedEmbeddedTags;
+    QMap<QString, QList<AlbumEntry>> clearedEmbedded;
   };
   // Empty when |payload| decodes; otherwise {ok: false, message}.
   [[nodiscard]] static QVariantMap decodeOrganization(const QByteArray& payload, DecodedOrganization& out);
@@ -603,6 +667,7 @@ private:
     QHash<QString, int> ratings;
     QHash<QString, QString> captions;
     QHash<QString, AlbumEntry> identities;
+    QMap<QString, QList<AlbumEntry>> clearedEmbedded;
   };
   struct UndoStep {
     int id = 0;
@@ -658,4 +723,63 @@ private:
   QMap<QString, QList<AlbumEntry>> m_tags;
   QMap<QString, QVariantMap> m_smartCollections;
   QString m_previousVisit;
+
+  // The layer read from files. Never persisted, backed up or counted by the
+  // health check; the metadata index reads it again.
+  bool m_readEmbedded = true;
+  QHash<QString, EmbeddedValues> m_embedded;
+  QSet<QString> m_embeddedLive;
+  QHash<QString, EmbeddedValues> m_transientEmbedded;
+  QStringList m_transientOrder;
+  // Per file, its keywords less those hidden here; and each such keyword,
+  // case-folded, to the files that carry it, so tagPaths and counts stay
+  // cheap. The first spelling seen is kept for keywords no local tag names.
+  QHash<QString, QStringList> m_embeddedEffective;
+  QHash<QString, QSet<QString>> m_embeddedTagIndex;
+  QHash<QString, QString> m_embeddedSpelling;
+  // Removal rows, the same shape as tags: a hidden keyword's name (which
+  // also hides everything nested under it) to the files it is hidden on;
+  // and "rating" or "caption" to the files whose value from the file was
+  // cleared. Indexed by path below, from resolved rows only.
+  QMap<QString, QList<AlbumEntry>> m_removedEmbeddedTags;
+  QMap<QString, QList<AlbumEntry>> m_clearedEmbedded;
+  QHash<QString, QStringList> m_removedByPath;
+  QSet<QString> m_clearedRatings;
+  QSet<QString> m_clearedCaptions;
+  // Fills in the content fingerprint of rows written from the scanner's
+  // identity, on a worker, a batch at a time.
+  // The worker answers with {identity, fingerprint} pairs.
+  QFutureWatcher<QList<std::pair<QString, QByteArray>>>* m_fingerprintWatcher = nullptr;
+  // What the worker read, by path and identity: the fingerprint, or empty
+  // when the file had changed. A row written again for the same identity, or
+  // put back by undo, takes it without another read, and a file that changed
+  // is not read again on every pass.
+  QHash<QString, QByteArray> m_fingerprints;
+
+  [[nodiscard]] const EmbeddedValues* embeddedFor(const QString& path) const;
+  [[nodiscard]] QStringList effectiveKeywords(const QString& path, const QStringList& keywords) const;
+  void indexEmbedded(const QString& path);
+  void rebuildRemovalIndex();
+  void rebuildEmbeddedIndex();
+  // The local spelling of a keyword, level by level, where a local tag
+  // exists; otherwise the file's own.
+  [[nodiscard]] QString displayTag(const QString& folded,
+                                   const QHash<QString, QString>& localByFold) const;
+  [[nodiscard]] QHash<QString, QString> localTagsByFold() const;
+  // Files whose own keywords hold |name| or something nested under it.
+  [[nodiscard]] QStringList visibleKeywords(const QString& path) const;
+  [[nodiscard]] QStringList embeddedCarriers(const QString& name) const;
+  [[nodiscard]] QStringList embeddedKeywordsUnder(const QString& path, const QString& name) const;
+  [[nodiscard]] AlbumEntry rowFor(const QString& path) const;
+  // Makes every level of a normalized tag a local key, keeping the spelling
+  // of levels that exist ignoring case. Returns the leaf's key.
+  QString ensureTagKeys(const QString& normalized);
+  // Adds removal rows, skipping paths that already have one for the name
+  // (ignoring case). True when it added any.
+  static bool addRows(QMap<QString, QList<AlbumEntry>>& rows, const QString& name,
+                      const QList<AlbumEntry>& added);
+  static bool dropRows(QMap<QString, QList<AlbumEntry>>& rows, const QString& name, const QString& path);
+  void scheduleFingerprints();
+  [[nodiscard]] int embeddedRating(const QString& path) const;
+  [[nodiscard]] QString embeddedCaption(const QString& path) const;
 };

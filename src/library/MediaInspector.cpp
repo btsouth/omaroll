@@ -1,4 +1,5 @@
 #include "library/MediaInspector.h"
+#include "library/EmbeddedMetadata.h"
 #include "sources/CameraRaw.h"
 #include "sources/CaptureScanner.h"
 
@@ -144,6 +145,17 @@ void MediaInspector::inspect(const QString& path, bool video) {
   if (path.isEmpty() || !QFileInfo(path).isFile()) {
     setLoading(false);
     return;
+  }
+
+  // Keywords, rating and description from the file and its sidecar, read
+  // again on every open, so a sidecar edited in place shows without a rescan.
+  if (m_readEmbedded && !CaptureScanner::isDocument(QFileInfo(path).suffix())) {
+    const quint64 generation = m_generation;
+    QtConcurrent::run([path] { return EmbeddedMetadata::read(path, EmbeddedMetadata::findSidecar(path)); })
+        .then(this, [this, generation, path](const EmbeddedMetadata::Fields& fields) {
+          if (generation != m_generation) return;
+          emit embeddedRead(path, fields.keywords, fields.rating, fields.description);
+        });
   }
 
   if (!video && CameraRaw::isRawFile(path)) {
