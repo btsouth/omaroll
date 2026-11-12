@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 1.19.0
+
+A redesigned library and viewer, with date sections, file-manager selection,
+richer search, and sort, rename, move and copy in the viewer. Omaroll now
+reads tags and ratings from other photo tools, undoes Trash and backs up your
+albums, tags and ratings every day.
 
 ### Added
 
@@ -363,6 +368,8 @@
   empty stage.
 - A subtitle file with an absurdly large timestamp no longer overflows while
   it's read; that cue is skipped.
+
+[Install or update](https://github.com/btsouth/omaroll#install-or-update).
 
 ## 1.18.0
 
