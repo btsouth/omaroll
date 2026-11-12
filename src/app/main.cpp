@@ -363,9 +363,6 @@ public:
   ~LibraryWindow() {
     if (m_actions) m_actions->setSidecarLookup({});
   }
-  LibraryWindow(const LibraryWindow&) = delete;
-  LibraryWindow& operator=(const LibraryWindow&) = delete;
-
   void requestStop() {
     m_captures.requestStop();
     m_mediaMetadata.requestStop();
