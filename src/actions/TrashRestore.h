@@ -26,7 +26,7 @@ struct Result {
   bool retryable = false;
   // The file came back but one of its sidecars did not, and stays in the
   // Trash: "its sidecar stayed in Trash because <name> exists".
-  QString sidecarNote;
+  QString sidecarNote = QString();
 };
 
 // Puts a file recorded by moveToTrash back where it was, and removes its
