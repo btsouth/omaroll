@@ -16740,8 +16740,9 @@ private slots:
     }
     MediaMetadataIndex reloaded(nullptr);
     QVERIFY(reloaded.embeddedCacheSize() > 0 && reloaded.embeddedCacheSize() < 50'000);
-    // An entry saved without its description is read again when next seen;
-    // the newest kept theirs.
+    // An entry saved without its description is read again when next seen.
+    // This fixture is far over the cap, so every kept entry lost its
+    // description before any entry was dropped.
     int partial = 0;
     for (int file = 0; file < 50'000; ++file) {
       const auto entry = reloaded.embeddedEntryForTesting(QStringLiteral("/library/photo %1.jpg").arg(file));
@@ -16749,10 +16750,7 @@ private slots:
       QCOMPARE(entry->second, entry->first.isEmpty());
       partial += entry->second ? 1 : 0;
     }
-    QVERIFY(partial > 0);
-    const auto newest = reloaded.embeddedEntryForTesting(QStringLiteral("/library/photo 49999.jpg"));
-    QVERIFY(newest.has_value());
-    QCOMPARE(newest->first, fields.description);
+    QCOMPARE(partial, reloaded.embeddedCacheSize());
   }
 
   void sidecarsAreMatchedToTheirFiles() {
