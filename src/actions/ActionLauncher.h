@@ -126,7 +126,18 @@ public:
   Q_INVOKABLE [[nodiscard]] int sidecarCount(const QString& path) const {
     return static_cast<int>(sidecarFiles(path).size());
   }
-  [[nodiscard]] static QStringList sidecarFiles(const QString& path);
+  // Never lists the folder, since it runs on the window thread for every
+  // confirmation and a folder can be huge or on a network share: the
+  // sidecar the scan recorded for the file, plus the exact names a sidecar
+  // takes ("<name>.<ext>.xmp", and "<name>.xmp" for a camera raw), checked
+  // by stat. A non-raw file's "<name>.xmp" counts only through the scan,
+  // which knows whether another file shares that base name.
+  [[nodiscard]] QStringList sidecarFiles(const QString& path) const;
+  // The scan's sidecar for a library file, empty for none or for a file
+  // outside the library. Set by the library window; window thread only.
+  void setSidecarLookup(std::function<QString(const QString&)> lookup) {
+    m_sidecarLookup = std::move(lookup);
+  }
 
   // Launch and forget. Names the package in the failure when the program is
   // absent, so the message says what to install.
@@ -243,4 +254,5 @@ private:
   QPointer<QProcess> m_copyHelper;
   // The wl-copy of the latest image copy, while it runs.
   QPointer<QProcess> m_copyProcess;
+  std::function<QString(const QString&)> m_sidecarLookup;
 };

@@ -332,6 +332,13 @@ public:
                      &CaptureModel::holdPath);
     QObject::connect(&actions, &ActionLauncher::outputSettled, &m_captures,
                      &CaptureModel::releasePath);
+    // Rename and Trash take the sidecar the scan recorded, without listing
+    // the folder on the window thread.
+    actions.setSidecarLookup([this](const QString& path) {
+      const int row = m_captures.rowOf(path);
+      return row < 0 ? QString() : m_captures.recordAt(row).sidecarPath;
+    });
+    m_actions = &actions;
 
     m_context.setContextProperty(QStringLiteral("FolderTree"), &m_folderTree);
     m_context.setContextProperty(QStringLiteral("Captures"), &m_library);
@@ -352,6 +359,12 @@ public:
     m_context.setContextProperty(QStringLiteral("InitialFolderPath"), request.folder);
     m_window = createWindow(engine, m_context, "Main", m_root);
   }
+
+  ~LibraryWindow() {
+    if (m_actions) m_actions->setSidecarLookup({});
+  }
+  LibraryWindow(const LibraryWindow&) = delete;
+  LibraryWindow& operator=(const LibraryWindow&) = delete;
 
   void requestStop() {
     m_captures.requestStop();
@@ -397,6 +410,7 @@ private:
     }
   }
 
+  ActionLauncher* m_actions = nullptr;
   CaptureModel m_captures;
   MediaMetadataIndex m_mediaMetadata;
   CaptureFilterModel m_library;

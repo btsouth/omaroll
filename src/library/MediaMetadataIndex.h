@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include "library/CaptureModel.h"
 #include "library/EmbeddedMetadata.h"
 
@@ -75,6 +77,19 @@ public:
   void insertEmbeddedForTesting(const QString& path, const EmbeddedMetadata::Fields& fields);
   void saveCachesForTesting() { m_cacheDirty = true; m_embeddedDirty = true; saveCache(); }
   [[nodiscard]] int embeddedCacheSize() const { return static_cast<int>(m_embedded.size()); }
+  // Marks one cached file as the cap trims it on disk.
+  void markEmbeddedPartialForTesting(const QString& path) {
+    if (const auto it = m_embedded.find(path); it != m_embedded.end()) {
+      it->partial = true;
+      m_embeddedDirty = true;
+    }
+  }
+  // Description and the read-again flag of one cached file, or nullopt.
+  [[nodiscard]] std::optional<std::pair<QString, bool>> embeddedEntryForTesting(const QString& path) const {
+    const auto it = m_embedded.constFind(path);
+    if (it == m_embedded.cend()) return std::nullopt;
+    return std::pair{it->fields.description, it->partial};
+  }
 #endif
   // How many probes may run at once on this machine: 2 to 4.
   [[nodiscard]] static int maximumParallelProbes();
@@ -134,6 +149,10 @@ private:
     EmbeddedMetadata::Fields fields;
     // When it was last read or matched, for the cache cap.
     qint64 seen = 0;
+    // Loaded with its description left out to keep the cache under its cap:
+    // its keywords seed the library, and the file is read again when next
+    // seen so the description comes back.
+    bool partial = false;
   };
 
   struct Entry {

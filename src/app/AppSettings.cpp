@@ -1468,12 +1468,20 @@ void AppSettings::rebuildRemovalIndex() {
   m_clearedCaptions = paths(kClearedCaption);
 }
 
+QStringList AppSettings::visibleKeywords(const QString& path) const {
+  // A keyword already hidden on this file is not there for a rename, delete
+  // or remove to act on; acting on it would bring it back.
+  if (m_embedded.contains(path)) return m_embeddedEffective.value(path);
+  const auto transient = m_transientEmbedded.constFind(path);
+  if (transient == m_transientEmbedded.cend()) return {};
+  return effectiveKeywords(path, transient->keywords);
+}
+
 QStringList AppSettings::embeddedKeywordsUnder(const QString& path, const QString& name) const {
   QStringList found;
-  const EmbeddedValues* values = embeddedFor(path);
-  if (!values || name.isEmpty()) return found;
+  if (name.isEmpty()) return found;
   const QString folded = TagNames::folded(name);
-  for (const QString& keyword : values->keywords) {
+  for (const QString& keyword : visibleKeywords(path)) {
     if (foldedAtOrUnder(TagNames::folded(keyword), folded)) found.append(keyword);
   }
   return found;
@@ -1483,14 +1491,17 @@ QStringList AppSettings::embeddedCarriers(const QString& name) const {
   QStringList carriers;
   if (name.isEmpty()) return carriers;
   const QString folded = TagNames::folded(name);
-  for (const auto* layer : {&m_embedded, &m_transientEmbedded}) {
-    for (auto it = layer->cbegin(); it != layer->cend(); ++it) {
-      if (std::any_of(it->keywords.cbegin(), it->keywords.cend(), [&](const QString& keyword) {
-            return foldedAtOrUnder(TagNames::folded(keyword), folded);
-          }) && !carriers.contains(it.key())) {
-        carriers.append(it.key());
-      }
-    }
+  const auto carries = [&](const QStringList& keywords) {
+    return std::any_of(keywords.cbegin(), keywords.cend(), [&](const QString& keyword) {
+      return foldedAtOrUnder(TagNames::folded(keyword), folded);
+    });
+  };
+  for (auto it = m_embeddedEffective.cbegin(); it != m_embeddedEffective.cend(); ++it) {
+    if (carries(it.value())) carriers.append(it.key());
+  }
+  for (auto it = m_transientEmbedded.cbegin(); it != m_transientEmbedded.cend(); ++it) {
+    if (!m_embedded.contains(it.key()) && carries(effectiveKeywords(it.key(), it->keywords)))
+      carriers.append(it.key());
   }
   return carriers;
 }
@@ -3121,7 +3132,10 @@ void AppSettings::setRating(const QStringList& paths, int rating) {
   if (cleared) persistRemovals();
   m_deferOrganizationSync = deferred;
   syncOrganization();
-  if (cleared) rebuildRemovalIndex();
+  if (cleared) {
+    rebuildRemovalIndex();
+    scheduleFingerprints();
+  }
   emit marksChanged();
 }
 
@@ -3154,7 +3168,10 @@ void AppSettings::setCaption(const QString& path, const QString& text) {
   if (cleared) persistRemovals();
   m_deferOrganizationSync = deferred;
   syncOrganization();
-  if (cleared) rebuildRemovalIndex();
+  if (cleared) {
+    rebuildRemovalIndex();
+    scheduleFingerprints();
+  }
   emit marksChanged();
 }
 
@@ -3387,7 +3404,10 @@ QString AppSettings::undo() {
   if (clearedChanged) persistRemovals();
   m_deferOrganizationSync = false;
   syncOrganization();
-  if (clearedChanged) rebuildRemovalIndex();
+  if (clearedChanged) {
+    rebuildRemovalIndex();
+    scheduleFingerprints();
+  }
   emit marksChanged();
   m_undoing = false;
   emit undoChanged();
@@ -3711,66 +3731,69 @@ void AppSettings::noteEmbeddedRead(const QString& path, const QStringList& keywo
   if (rating(path) != ratingBefore || caption(path) != captionBefore) emit marksChanged();
 }
 
+namespace {
+// A row's file identity. A template, since AlbumEntry is private.
+template <typename Entry>
+QString fingerprintIdentity(const Entry& entry) {
+  return QStringLiteral("%1:%2:%3:%4:%5").arg(entry.path).arg(entry.bytes).arg(entry.modified)
+      .arg(entry.device).arg(entry.inode);
+}
+} // namespace
+
 void AppSettings::scheduleFingerprints() {
-  if (m_fingerprintWatcher && m_fingerprintWatcher->isRunning()) return;
-  const auto key = [](const AlbumEntry& entry) {
-    return QStringLiteral("%1:%2:%3:%4:%5").arg(entry.path).arg(entry.bytes).arg(entry.modified)
-        .arg(entry.device).arg(entry.inode);
-  };
+  const bool running = m_fingerprintWatcher && m_fingerprintWatcher->isRunning();
+  // A row whose identity was read before takes that fingerprint now; the
+  // rest go to the worker, a batch at a time.
+  bool tagsFilled = false;
+  bool removalsFilled = false;
   QList<AlbumEntry> batch;
   QSet<QString> queued;
-  for (const auto* rows : {&m_tags, &m_removedEmbeddedTags, &m_clearedEmbedded}) {
-    for (const auto& entries : *rows) {
-      for (const AlbumEntry& entry : entries) {
-        if (batch.size() >= kFingerprintBatch) break;
+  for (auto* rows : {&m_tags, &m_removedEmbeddedTags, &m_clearedEmbedded}) {
+    for (auto& entries : *rows) {
+      for (AlbumEntry& entry : entries) {
         if (!entry.fingerprint.isEmpty() || !entry.resolved || entry.bytes < 0) continue;
-        const QString identity = key(entry);
-        if (m_fingerprintTried.contains(identity) || queued.contains(identity)) continue;
+        const QString identity = fingerprintIdentity(entry);
+        if (const auto known = m_fingerprints.constFind(identity); known != m_fingerprints.cend()) {
+          if (!known->isEmpty()) {
+            entry.fingerprint = *known;
+            (rows == &m_tags ? tagsFilled : removalsFilled) = true;
+          }
+          continue;
+        }
+        if (running || batch.size() >= kFingerprintBatch || queued.contains(identity)) continue;
         queued.insert(identity);
         batch.append(entry);
       }
     }
   }
-  if (batch.isEmpty()) return;
-  m_fingerprintTried.unite(queued);
+  if (tagsFilled || removalsFilled) {
+    const bool deferred = m_deferOrganizationSync;
+    m_deferOrganizationSync = true;
+    if (tagsFilled) persistTags();
+    if (removalsFilled) persistRemovals();
+    m_deferOrganizationSync = deferred;
+    syncOrganization();
+  }
+  if (running || batch.isEmpty()) return;
   if (!m_fingerprintWatcher) {
-    m_fingerprintWatcher = new QFutureWatcher<QList<AlbumEntry>>(this);
-    connect(m_fingerprintWatcher, &QFutureWatcher<QList<AlbumEntry>>::finished, this, [this] {
-      // Only a row whose file still has the identity it was written with
-      // takes the fingerprint.
-      QHash<QString, AlbumEntry> read;
-      for (const AlbumEntry& entry : m_fingerprintWatcher->result()) read.insert(entry.path, entry);
-      bool tags = false;
-      bool removals = false;
-      for (auto* rows : {&m_tags, &m_removedEmbeddedTags, &m_clearedEmbedded}) {
-        for (auto& entries : *rows) {
-          for (AlbumEntry& entry : entries) {
-            const auto current = read.constFind(entry.path);
-            if (!entry.fingerprint.isEmpty() || current == read.cend() || current->bytes != entry.bytes ||
-                current->modified != entry.modified || current->device != entry.device ||
-                current->inode != entry.inode)
-              continue;
-            entry.fingerprint = current->fingerprint;
-            (rows == &m_tags ? tags : removals) = true;
-          }
-        }
-      }
-      if (tags || removals) {
-        m_deferOrganizationSync = true;
-        if (tags) persistTags();
-        if (removals) persistRemovals();
-        m_deferOrganizationSync = false;
-        syncOrganization();
-      }
+    m_fingerprintWatcher = new QFutureWatcher<QList<std::pair<QString, QString>>>(this);
+    connect(m_fingerprintWatcher, &QFutureWatcher<QList<std::pair<QString, QString>>>::finished, this, [this] {
+      for (const auto& [identity, fingerprint] : m_fingerprintWatcher->result())
+        m_fingerprints.insert(identity, fingerprint);
+      // Fills the rows from what was read, and starts the next batch.
       scheduleFingerprints();
     });
   }
-  // The worker reads only its own copies.
+  // The worker reads only its own copies. Only a file that still has the
+  // identity its row was written with gives the row its fingerprint.
   m_fingerprintWatcher->setFuture(QtConcurrent::run([batch] {
-    QList<AlbumEntry> read;
+    QList<std::pair<QString, QString>> read;
+    read.reserve(batch.size());
     for (const AlbumEntry& entry : batch) {
       const AlbumEntry current = identityFor(entry.path);
-      if (current.resolved) read.append(current);
+      const bool same = current.resolved && current.bytes == entry.bytes && current.modified == entry.modified &&
+                        current.device == entry.device && current.inode == entry.inode;
+      read.append({fingerprintIdentity(entry), same ? current.fingerprint : QString()});
     }
     return read;
   }));

@@ -680,11 +680,11 @@ bool ActionLauncher::moveToTrash(const QString& path) {
 }
 
 namespace {
-// Moves |path| to the Trash, and then its .xmp sidecars, found before the
-// file moves. They count as the file's: the record holds theirs under
-// "sidecars", so undo puts them back together. Safe off the GUI thread.
-QVariantMap trashWithSidecars(const QString& path, QString* error = nullptr) {
-  const QStringList sidecars = ActionLauncher::sidecarFiles(path);
+// Moves |path| to the Trash, and then its .xmp |sidecars|, found on the
+// window thread before the file moves. They count as the file's: the record
+// holds theirs under "sidecars", so undo puts them back together. Safe off
+// the window thread.
+QVariantMap trashWithSidecars(const QString& path, const QStringList& sidecars, QString* error = nullptr) {
   QVariantMap record = TrashRestore::moveToTrash(path, error);
   if (record.isEmpty() || sidecars.isEmpty()) return record;
   QVariantList moved;
@@ -697,30 +697,32 @@ QVariantMap trashWithSidecars(const QString& path, QString* error = nullptr) {
 }
 } // namespace
 
-QStringList ActionLauncher::sidecarFiles(const QString& path) {
-  // darktable's "<name>.<ext>.xmp", and Lightroom's "<name>.xmp" when the file
-  // is a raw or the only media file with that base name, so renaming the JPEG
-  // of a RAW+JPEG pair leaves the raw's sidecar alone. Names compare
-  // ignoring case.
+QStringList ActionLauncher::sidecarFiles(const QString& path) const {
   const QFileInfo info(path);
   const QString name = info.fileName();
   if (name.isEmpty() || name.endsWith(u".xmp"_s, Qt::CaseInsensitive)) return {};
-  const QString base = info.completeBaseName();
-  const QDir folder = info.dir();
+  const QString folder = info.absolutePath() + QLatin1Char('/');
   QStringList found;
-  QString lightroom;
-  bool shared = false;
-  for (const QString& entry : folder.entryList(QDir::Files | QDir::Hidden | QDir::System)) {
-    if (entry.endsWith(u".xmp"_s, Qt::CaseInsensitive)) {
-      const QString stem = entry.chopped(4);
-      if (stem.compare(name, Qt::CaseInsensitive) == 0) found.append(folder.filePath(entry));
-      else if (stem.compare(base, Qt::CaseInsensitive) == 0) lightroom = folder.filePath(entry);
-    } else if (entry != name && QFileInfo(entry).completeBaseName().compare(base, Qt::CaseInsensitive) == 0 &&
-               CaptureScanner::isSupported(QFileInfo(entry).suffix())) {
-      shared = true;
-    }
+  QSet<QString> seen;
+  const auto take = [&](const QString& candidate) {
+    const QFileInfo sidecar(candidate);
+    if (!sidecar.isFile()) return;
+    // One file under two spellings on a case-insensitive filesystem.
+    const QString canonical = sidecar.canonicalFilePath();
+    if (seen.contains(canonical)) return;
+    seen.insert(canonical);
+    found.append(sidecar.absoluteFilePath());
+  };
+  if (m_sidecarLookup) {
+    if (const QString recorded = m_sidecarLookup(path); !recorded.isEmpty()) take(recorded);
   }
-  if (!lightroom.isEmpty() && (CameraRaw::isRaw(info.suffix()) || !shared)) found.append(lightroom);
+  take(folder + name + u".xmp"_s);
+  take(folder + name + u".XMP"_s);
+  if (CameraRaw::isRaw(info.suffix())) {
+    const QString base = info.completeBaseName();
+    take(folder + base + u".xmp"_s);
+    take(folder + base + u".XMP"_s);
+  }
   return found;
 }
 
@@ -730,7 +732,8 @@ QVariantMap ActionLauncher::trashFile(const QString& path, bool withSidecars) {
     return {};
   }
   QString error;
-  QVariantMap record = withSidecars ? trashWithSidecars(path, &error) : TrashRestore::moveToTrash(path, &error);
+  QVariantMap record = withSidecars ? trashWithSidecars(path, sidecarFiles(path), &error)
+                                     : TrashRestore::moveToTrash(path, &error);
   if (record.isEmpty()) emit failed(error);
   return record;
 }
@@ -1059,7 +1062,12 @@ void ActionLauncher::trashOthers(
     done(result.value(u"moved"_s).toInt(), result.value(u"skipped"_s).toStringList(),
          result.value(u"trashed"_s).toList());
   });
-  watcher->setFuture(QtConcurrent::run([keep, others, identicalOnly] {
+  QHash<QString, QStringList> sidecars;
+  for (const QVariant& value : others) {
+    const QString path = value.toMap().value(u"path"_s).toString();
+    if (const QStringList found = sidecarFiles(path); !found.isEmpty()) sidecars.insert(path, found);
+  }
+  watcher->setFuture(QtConcurrent::run([keep, others, identicalOnly, sidecars] {
     int moved = 0;
     QStringList skipped;
     QVariantList trashed;
@@ -1085,7 +1093,7 @@ void ActionLauncher::trashOthers(
         movable = movable && copy.atEnd() && capturedFileMatches(keep) &&
                   capturedFileMatches(target);
       }
-      QVariantMap record = movable ? trashWithSidecars(path) : QVariantMap();
+      QVariantMap record = movable ? trashWithSidecars(path, sidecars.value(path)) : QVariantMap();
       if (!record.isEmpty()) {
         ++moved;
         if (target.contains(u"viewedPath"_s)) record.insert(u"viewedPath"_s, target.value(u"viewedPath"_s));

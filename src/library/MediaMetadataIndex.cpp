@@ -39,7 +39,7 @@ constexpr auto kImageRecordPrefix = "\x1e"
                                     "OMAROLL_DATE:";
 // The embedded cache: keywords, rating and description per file.
 constexpr quint32 kEmbeddedMagic = 0x4f4d4531; // OME1
-constexpr quint16 kEmbeddedVersion = 1;
+constexpr quint16 kEmbeddedVersion = 2;
 constexpr quint32 kMaximumEmbeddedEntries = 400'000;
 
 QString cacheHome() {
@@ -448,7 +448,7 @@ bool MediaMetadataIndex::embeddedMatches(const EmbeddedEntry& entry, const Captu
   return entry.modified == record.modified && entry.bytes == record.bytes &&
          entry.device == record.device && entry.inode == record.inode &&
          entry.sidecar == record.sidecarPath && entry.sidecarModified == record.sidecarModified &&
-         entry.sidecarBytes == record.sidecarBytes;
+         entry.sidecarBytes == record.sidecarBytes && !entry.partial;
 }
 
 void MediaMetadataIndex::sync() {
@@ -994,7 +994,7 @@ void MediaMetadataIndex::loadEmbeddedCache() {
     qint8 rating = 0;
     stream >> path >> entry.modified >> entry.bytes >> entry.device >> entry.inode >> entry.sidecar >>
         entry.sidecarModified >> entry.sidecarBytes >> entry.fields.keywords >> rating >>
-        entry.fields.description >> entry.fields.hasXmp >> entry.seen;
+        entry.fields.description >> entry.fields.hasXmp >> entry.seen >> entry.partial;
     if (stream.status() != QDataStream::Ok || path.isEmpty()) {
       return;
     }
@@ -1027,6 +1027,10 @@ void MediaMetadataIndex::saveEmbeddedCache() {
   for (auto it = m_embedded.cbegin(); it != m_embedded.cend(); ++it) total += entryBytes(it.key(), *it, true);
   int droppedDescriptions = 0;
   int droppedEntries = 0;
+  // Only the file is trimmed. What is in memory stays whole: a trimmed entry
+  // still matches its file, so dropping its description here would lose the
+  // caption until the file changed. On disk it is marked partial and read
+  // again on the next start.
   QHash<QString, EmbeddedEntry> kept = m_embedded;
   // Over the cap: descriptions go first, then whole entries, oldest seen
   // first each time. The date cache is a separate file and never waits on this.
@@ -1035,6 +1039,7 @@ void MediaMetadataIndex::saveEmbeddedCache() {
     if (entry.fields.description.isEmpty()) continue;
     total -= qint64(entry.fields.description.size()) * 2;
     entry.fields.description.clear();
+    entry.partial = true;
     ++droppedDescriptions;
   }
   for (qsizetype at = 0; (total > kMaximumEmbeddedCacheBytes || kept.size() > qsizetype(kMaximumEmbeddedEntries)) &&
@@ -1070,11 +1075,10 @@ void MediaMetadataIndex::saveEmbeddedCache() {
     stream << it.key() << entry.modified << entry.bytes << entry.device << entry.inode << entry.sidecar
            << entry.sidecarModified << entry.sidecarBytes << entry.fields.keywords
            << static_cast<qint8>(entry.fields.rating) << entry.fields.description << entry.fields.hasXmp
-           << entry.seen;
+           << entry.seen << entry.partial;
   }
   if (stream.status() == QDataStream::Ok && file.size() <= kMaximumEmbeddedCacheBytes && file.commit()) {
     QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-    m_embedded = std::move(kept);
     m_embeddedDirty = false;
   } else {
     file.cancelWriting();

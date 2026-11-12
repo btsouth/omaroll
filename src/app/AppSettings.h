@@ -748,10 +748,13 @@ private:
   QSet<QString> m_clearedCaptions;
   // Fills in the content fingerprint of rows written from the scanner's
   // identity, on a worker, a batch at a time.
-  QFutureWatcher<QList<AlbumEntry>>* m_fingerprintWatcher = nullptr;
-  // Rows a worker already tried, by path and identity, so a file that
-  // changed is not read again on every pass.
-  QSet<QString> m_fingerprintTried;
+  // The worker answers with {identity, fingerprint} pairs.
+  QFutureWatcher<QList<std::pair<QString, QString>>>* m_fingerprintWatcher = nullptr;
+  // What the worker read, by path and identity: the fingerprint, or empty
+  // when the file had changed. A row written again for the same identity, or
+  // put back by undo, takes it without another read, and a file that changed
+  // is not read again on every pass.
+  QHash<QString, QString> m_fingerprints;
 
   [[nodiscard]] const EmbeddedValues* embeddedFor(const QString& path) const;
   [[nodiscard]] QStringList effectiveKeywords(const QString& path, const QStringList& keywords) const;
@@ -764,6 +767,7 @@ private:
                                    const QHash<QString, QString>& localByFold) const;
   [[nodiscard]] QHash<QString, QString> localTagsByFold() const;
   // Files whose own keywords hold |name| or something nested under it.
+  [[nodiscard]] QStringList visibleKeywords(const QString& path) const;
   [[nodiscard]] QStringList embeddedCarriers(const QString& name) const;
   [[nodiscard]] QStringList embeddedKeywordsUnder(const QString& path, const QString& name) const;
   [[nodiscard]] AlbumEntry rowFor(const QString& path) const;

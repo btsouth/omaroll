@@ -16303,6 +16303,33 @@ private slots:
     QVERIFY(settings.tagsForPath(first).isEmpty());
     QVERIFY(settings.tagsForPath(second).isEmpty());
     QCOMPARE(settings.deleteTag(QStringLiteral("Trips")), 0);
+
+    // A keyword already hidden on a file stays hidden through a rename: the
+    // file gets no local tag under the new name.
+    const QString hid = embeddedFixture(dir, QStringLiteral("hid.png"));
+    const QString kept = embeddedFixture(dir, QStringLiteral("kept.png"));
+    const QString hidParent = embeddedFixture(dir, QStringLiteral("hid-parent.png"));
+    const QString keptNested = embeddedFixture(dir, QStringLiteral("kept-nested.png"));
+    settings.setEmbedded({embeddedUpdate(hid, {QStringLiteral("Holiday"), QStringLiteral("Holiday/Rome")}),
+                          embeddedUpdate(kept, {QStringLiteral("Holiday")}),
+                          embeddedUpdate(hidParent, {QStringLiteral("Places/Japan")}),
+                          embeddedUpdate(keptNested, {QStringLiteral("Places/Japan")})});
+    settings.removeTag(QStringLiteral("Holiday"), {hid});
+    QVERIFY(settings.tagsForPath(hid).isEmpty());
+    QVERIFY(settings.renameTag(QStringLiteral("Holiday"), QStringLiteral("Vacation")));
+    QVERIFY(settings.tagsForPath(hid).isEmpty());
+    QCOMPARE(settings.tagsForPath(kept), QStringList{QStringLiteral("Vacation")});
+    QCOMPARE(settings.tagPaths(QStringLiteral("Vacation")), QStringList{kept});
+    // Nested: a hidden parent hides the child, so renaming the child skips it.
+    settings.removeTag(QStringLiteral("Places"), {hidParent});
+    QVERIFY(settings.renameTag(QStringLiteral("Places/Japan"), QStringLiteral("Asia/Japan")));
+    QVERIFY(settings.tagsForPath(hidParent).isEmpty());
+    QCOMPARE(settings.tagsForPath(keptNested), QStringList{QStringLiteral("Asia/Japan")});
+    QCOMPARE(settings.tagPaths(QStringLiteral("Asia/Japan")), QStringList{keptNested});
+    // The old name is hidden wherever it was, so deleting it changes nothing.
+    const int rows = AppSettings::organizationSize(settings.organizationState());
+    QCOMPARE(settings.deleteTag(QStringLiteral("Holiday")), 0);
+    QCOMPARE(AppSettings::organizationSize(settings.organizationState()), rows);
   }
 
   void hidingAKeywordAcrossManyFilesReadsNoFiles() {
@@ -16341,6 +16368,41 @@ private slots:
     QVERIFY(!settings.tagNames().contains(QStringLiteral("Holiday")));
     QCOMPARE(settings.tagItemCount(QStringLiteral("Coast/Sand")), kFiles);
     QCOMPARE(AppSettings::organizationSize(settings.organizationState()), 2 * kFiles + kFiles + 2);
+  }
+
+  void clearedValuesGetFingerprintsThroughUndo() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    const QString shot = embeddedFixture(dir, QStringLiteral("shot.png"));
+    AppSettings settings;
+    settings.setEmbedded({embeddedUpdate(shot, {}, 4, QStringLiteral("From the camera"))});
+    // Clearing a rating alone starts the fingerprint worker.
+    settings.setRating({shot}, 0);
+    QCOMPARE(settings.pendingFingerprints(), 1);
+    // Clearing the caption too, before the worker is back: this undo step's
+    // snapshot holds the rating row without its fingerprint.
+    settings.setCaption(shot, {});
+    QCOMPARE(settings.pendingFingerprints(), 2);
+    settings.waitForFingerprints();
+    QCOMPARE(settings.pendingFingerprints(), 0);
+    QCOMPARE(settings.undo(), QStringLiteral("Undone"));
+    QCOMPARE(settings.caption(shot), QStringLiteral("From the camera"));
+    QCOMPARE(settings.rating(shot), 0);
+    // The restored row takes the fingerprint already read, without a read.
+    QCOMPARE(settings.pendingFingerprints(), 0);
+    // So does a row written again for the same file.
+    settings.setRating({shot}, 3);
+    settings.setRating({shot}, 0);
+    QCOMPARE(settings.pendingFingerprints(), 0);
+    // A changed file gets a new row, read again.
+    writeSmallFile(shot, QByteArray(32, 'x'));
+    settings.setEmbedded({embeddedUpdate(shot, {}, 4, QStringLiteral("From the camera"))});
+    settings.setRating({shot}, 5);
+    settings.setRating({shot}, 0);
+    QCOMPARE(settings.pendingFingerprints(), 1);
+    settings.waitForFingerprints();
+    QCOMPARE(settings.pendingFingerprints(), 0);
   }
 
   void hiddenKeywordsFollowTheirFiles() {
@@ -16584,6 +16646,23 @@ private slots:
       QVERIFY(QDir(sandbox.media() + QStringLiteral("/trip")).removeRecursively());
       fresh.refresh();
       QTRY_VERIFY_WITH_TIMEOUT(!second.tagNames().contains(QStringLiteral("Places/Lake")), 5000);
+      // Saved without its description to keep the cache under its cap.
+      cached.markEmbeddedPartialForTesting(paths.at(0));
+      cached.saveCachesForTesting();
+    }
+    {
+      // That file is read again on the next launch, so its caption returns;
+      // the rest still come from the cache.
+      const int before = MediaMetadataIndex::s_embeddedReads.load();
+      AppSettings third;
+      CaptureModel again(&third);
+      MediaMetadataIndex reread(&again);
+      QTRY_VERIFY_WITH_TIMEOUT(again.rowCount() > 0 && MediaMetadataIndex::s_embeddedReads.load() == before + 1 &&
+                                   !reread.indexing(),
+                               5000);
+      QTRY_COMPARE_WITH_TIMEOUT(third.caption(paths.at(0)), QStringLiteral("Changed"), 5000);
+      QTest::qWait(300);
+      QCOMPARE(MediaMetadataIndex::s_embeddedReads.load(), before + 1);
     }
     QCOMPARE(MediaMetadataIndex::s_embeddedReadsOnWindowThread.load(), windowReads);
   }
@@ -16651,10 +16730,29 @@ private slots:
       QVERIFY(QFileInfo(MediaMetadataIndex::cachePath()).isFile());
       QVERIFY(QFileInfo(MediaMetadataIndex::embeddedCachePath()).isFile());
       QVERIFY(QFileInfo(MediaMetadataIndex::embeddedCachePath()).size() <= MediaMetadataIndex::kMaximumEmbeddedCacheBytes);
-      QVERIFY(cache.embeddedCacheSize() > 0 && cache.embeddedCacheSize() < 50'000);
+      // Only the file is trimmed: what is in memory keeps every entry and
+      // every description, so no caption goes missing this session.
+      QCOMPARE(cache.embeddedCacheSize(), 50'000);
+      const auto oldest = cache.embeddedEntryForTesting(QStringLiteral("/library/photo 0.jpg"));
+      QVERIFY(oldest.has_value());
+      QCOMPARE(oldest->first, fields.description);
+      QVERIFY(!oldest->second);
     }
     MediaMetadataIndex reloaded(nullptr);
-    QVERIFY(reloaded.embeddedCacheSize() > 0);
+    QVERIFY(reloaded.embeddedCacheSize() > 0 && reloaded.embeddedCacheSize() < 50'000);
+    // An entry saved without its description is read again when next seen;
+    // the newest kept theirs.
+    int partial = 0;
+    for (int file = 0; file < 50'000; ++file) {
+      const auto entry = reloaded.embeddedEntryForTesting(QStringLiteral("/library/photo %1.jpg").arg(file));
+      if (!entry) continue;
+      QCOMPARE(entry->second, entry->first.isEmpty());
+      partial += entry->second ? 1 : 0;
+    }
+    QVERIFY(partial > 0);
+    const auto newest = reloaded.embeddedEntryForTesting(QStringLiteral("/library/photo 49999.jpg"));
+    QVERIFY(newest.has_value());
+    QCOMPARE(newest->first, fields.description);
   }
 
   void sidecarsAreMatchedToTheirFiles() {
@@ -16728,7 +16826,15 @@ private slots:
     const QByteArray sidecarHash = fileHash(shot + QStringLiteral(".xmp"));
 
     ActionLauncher launcher;
+    // Without a scan, only the exact names count: a JPEG's "<name>.xmp" may
+    // be another file's, and finding out would mean listing the folder.
     QCOMPARE(launcher.sidecarCount(shot), 1);
+    QCOMPARE(launcher.sidecarCount(solo), 0);
+    QCOMPARE(launcher.sidecarCount(pairJpeg), 0);
+    // The library hands over what its scan recorded, by the scanner's rule.
+    launcher.setSidecarLookup([](const QString& path) { return EmbeddedMetadata::findSidecar(path); });
+    QCOMPARE(launcher.sidecarCount(shot), 1);
+    QCOMPARE(launcher.sidecarCount(solo), 1);
     QCOMPARE(launcher.sidecarCount(pairJpeg), 0);
     QVariantMap renamed = launcher.renameFile(shot, QStringLiteral("renamed"));
     QVERIFY2(renamed.value(QStringLiteral("ok")).toBool(), qPrintable(renamed.value(QStringLiteral("error")).toString()));
