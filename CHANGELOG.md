@@ -21,13 +21,17 @@
   small window, and says when a section has nothing in it yet. A day's item
   count lines up under its name.
 - Menus are solid in every theme, the arrow keys show which row they are on
-  in every menu, and the folder sidebar's menu looks like the others.
+  in every menu, and the folder sidebar's menu looks like the others. The
+  Albums and tags menu no longer leaves a gap before "+ New tag".
 - A video's audio track button names the track in use, instead of Audio 0,
   and follows a switch. Its Fullscreen button matches the dark transport in
   the light theme.
 - The Folders button shows whether the sidebar is on screen, and in a window
   too narrow for it says so rather than changing the setting unseen.
-- Long tooltips wrap instead of running across the window.
+- Long tooltips wrap instead of running across the window, and the search
+  tip keeps its examples, such as `-word`, whole on one line.
+- The Trash question for a selection, and in the quick viewer, says when
+  .xmp sidecars go to the Trash too.
 - The pinned folders strip sits on the library's margin and shows a scroll
   bar only when the pins overflow.
 - The Straighten slider and the compare details bar are drawn like the rest
