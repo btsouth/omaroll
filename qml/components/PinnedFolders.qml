@@ -45,10 +45,9 @@ Rectangle {
         ScrollBar.horizontal: ScrollBar {
             objectName: "pinnedFoldersScrollBar"
             parent: root
-            anchors.left: list.left
-            anchors.right: list.right
-            anchors.bottom: root.bottom
-            anchors.bottomMargin: 1
+            x: list.x
+            y: root.height - height - 1
+            width: list.width
             policy: ScrollBar.AsNeeded
             visible: list.contentWidth > list.width + 1
             padding: 0
