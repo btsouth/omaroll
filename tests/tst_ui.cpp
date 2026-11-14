@@ -7595,6 +7595,33 @@ private slots:
       QTRY_COMPARE(detail->property("pdfPage").toInt(), 2);
       QVERIFY(QMetaObject::invokeMethod(detail, "stepPdfMatch", Q_ARG(QVariant, 1)));
       QTRY_COMPARE(detail->property("pdfPage").toInt(), 1);
+      // The match is marked on the page in view, not only counted.
+      QTRY_COMPARE_WITH_TIMEOUT(m_pdfInfo->matchPage(), 1, 8000);
+      QVERIFY(!m_pdfInfo->matchRects().isEmpty());
+      QTRY_VERIFY(find(detail, [](QQuickItem* candidate) {
+        return candidate->objectName() == QStringLiteral("pdfMatchMark") && candidate->isVisible()
+               && candidate->width() > 0;
+      }) != nullptr);
+      QVERIFY(QMetaObject::invokeMethod(detail, "stepPdfMatch", Q_ARG(QVariant, 1)));
+      QTRY_COMPARE_WITH_TIMEOUT(m_pdfInfo->matchPage(), 2, 8000);
+      // A new search drops the marks of the old one.
+      search->setProperty("text", QStringLiteral("zzzz-not-in-it"));
+      QVERIFY(QMetaObject::invokeMethod(detail, "findInPdf"));
+      QTRY_VERIFY(m_pdfInfo->matchRects().isEmpty());
+      QCOMPARE(m_pdfInfo->matchPage(), 0);
+    }
+
+    // The find and page rows sit on one themed, nearly opaque panel rather
+    // than straight on the white page.
+    QQuickItem* panel = item("pdfControlsPanel");
+    QVERIFY(panel->isVisible());
+    QCOMPARE(panel->property("color").value<QColor>().alphaF(), 1.0);
+    const QRectF panelBox = panel->mapRectToScene(panel->boundingRect());
+    for (const char* rowName : {"pdfSearchRow", "pdfPageRow"}) {
+      QQuickItem* row = item(rowName);
+      if (!row->isVisible()) continue;
+      const QRectF rowBox = row->mapRectToScene(row->boundingRect());
+      QVERIFY2(panelBox.contains(rowBox), rowName);
     }
 
     // Copy page text reports an outcome; whether the text extracts depends on

@@ -296,4 +296,35 @@ QList<QRectF> wordLines(const PdfPageText& page, const QList<int>& indexes) {
   return lines;
 }
 
+QList<QList<int>> wordsMatching(const PdfPageText& page, const QString& query) {
+  QList<QList<int>> found;
+  const QString needle = normalized(query).toCaseFolded();
+  if (needle.isEmpty() || page.words.isEmpty()) return found;
+  // The words joined by single spaces, each folded on its own so the offsets
+  // stay its own even where folding changes a word's length.
+  QString text;
+  QList<qsizetype> starts;
+  starts.reserve(page.words.size());
+  for (const PdfWord& word : page.words) {
+    if (!text.isEmpty()) text += QLatin1Char(' ');
+    starts.append(text.size());
+    text += normalized(word.text).toCaseFolded();
+  }
+  qsizetype from = 0;
+  while (true) {
+    const qsizetype at = text.indexOf(needle, from);
+    if (at < 0) break;
+    const qsizetype end = at + needle.size();
+    QList<int> words;
+    for (qsizetype index = 0; index < starts.size(); ++index) {
+      const qsizetype wordEnd =
+          index + 1 < starts.size() ? starts.at(index + 1) - 1 : text.size();
+      if (starts.at(index) < end && wordEnd > at) words.append(static_cast<int>(index));
+    }
+    if (!words.isEmpty()) found.append(words);
+    from = end;
+  }
+  return found;
+}
+
 } // namespace PdfSupport

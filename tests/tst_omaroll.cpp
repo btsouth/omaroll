@@ -7601,6 +7601,21 @@ private slots:
     QVERIFY(PdfSupport::wordLines(page, {}).isEmpty());
   }
 
+  // Find marks the words a query covers, as findPages matches it: any case,
+  // part of a word, and across words and lines.
+  void pdfFindMarksTheWordsOfEachMatch() {
+    const PdfSupport::PdfPageText page = twoLinePage();
+    QCOMPARE(PdfSupport::wordsMatching(page, QStringLiteral("TOTAL")), QList<QList<int>>({{1}}));
+    QCOMPARE(PdfSupport::wordsMatching(page, QStringLiteral("ai")), QList<QList<int>>({{2}}));
+    QCOMPARE(PdfSupport::wordsMatching(page, QStringLiteral("total  paid")), QList<QList<int>>({{1, 2}}));
+    QCOMPARE(PdfSupport::wordsMatching(page, QStringLiteral("to")), QList<QList<int>>({{1}, {3}}));
+    QVERIFY(PdfSupport::wordsMatching(page, QStringLiteral("missing")).isEmpty());
+    QVERIFY(PdfSupport::wordsMatching(page, QStringLiteral("  ")).isEmpty());
+    QVERIFY(PdfSupport::wordsMatching({}, QStringLiteral("paid")).isEmpty());
+    // A match across two lines is marked on both.
+    QCOMPARE(PdfSupport::wordLines(page, {1, 2}).size(), 2);
+  }
+
   void pdfSelectionKeepsLinesApartWhenTheGapIsReal() {
     PdfSupport::PdfPageText page;
     page.pageSize = QSizeF(600, 800);

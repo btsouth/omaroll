@@ -61,4 +61,9 @@ struct PdfPageText {
 // highlight drawn over the page.
 [[nodiscard]] QList<QRectF> wordLines(const PdfPageText& page, const QList<int>& indexes);
 
+// Where query occurs on the page, matched as findPages() matches it (ignoring
+// case and runs of whitespace, so across words and lines): the words of each
+// occurrence, in reading order.
+[[nodiscard]] QList<QList<int>> wordsMatching(const PdfPageText& page, const QString& query);
+
 } // namespace PdfSupport

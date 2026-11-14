@@ -1728,6 +1728,8 @@ Item {
                     } else {
                         root.pdfMatchIndex = 0
                     }
+                    // Marked on the page even when it was already showing.
+                    PdfInfo.showMatches(root.pdfPage)
                 }
                 function onSearchFailed(message) {
                     root.statusRequested(message)
@@ -1761,6 +1763,8 @@ Item {
                     if (root.isDocument && !root.pdfFitWidth) {
                         PdfInfo.clearSelection()
                     }
+                    // The query is marked on the page in view.
+                    if (root.isDocument) PdfInfo.showMatches(root.pdfPage)
                 }
                 function onPdfFitWidthChanged() {
                     if (root.isDocument && root.pdfFitWidth) {
@@ -1769,8 +1773,34 @@ Item {
                 }
             }
 
+            // The find and page rows sit over the page, which is usually
+            // white: they get the same themed panel as the other controls
+            // over media, but opaque: the page's text under a see-through
+            // panel shows between the controls on a light theme.
+            Rectangle {
+                objectName: "pdfControlsPanel"
+                visible: pdfPageRow.visible
+                readonly property Item topRow: pdfSearchRow.visible ? pdfSearchRow : pdfPageRow
+                x: Math.min(topRow.x, pdfPageRow.x) - 8
+                y: topRow.y - 6
+                width: Math.max(topRow.width, pdfPageRow.width) + 16
+                height: pdfPageRow.y + pdfPageRow.height + 6 - y
+                radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 4
+                color: Qt.rgba(Theme.darkerBackground.r, Theme.darkerBackground.g,
+                               Theme.darkerBackground.b, 1)
+                border.width: 1
+                border.color: Qt.rgba(Theme.foreground.r, Theme.foreground.g,
+                                      Theme.foreground.b, 0.16)
+                // A press in a gap between controls stays off the page.
+                MouseArea {
+                    anchors.fill: parent
+                    acceptedButtons: Qt.AllButtons
+                }
+            }
+
             // PDF text search. Page navigation stays in the row below it.
             Row {
+                id: pdfSearchRow
                 objectName: "pdfSearchRow"
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: parent.bottom
@@ -1869,6 +1899,7 @@ Item {
             }
 
             Row {
+                id: pdfPageRow
                 objectName: "pdfPageRow"
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: parent.bottom
