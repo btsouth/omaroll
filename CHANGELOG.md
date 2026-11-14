@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- The sort menu, and the kind menu in narrow windows, no longer draw a tick
+  over the current choice's label.
+
 ## 1.19.0
 
 A redesigned library and viewer, with date sections, file-manager selection,
