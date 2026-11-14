@@ -86,7 +86,7 @@ private:
   void stopProcess(QProcess& process, QTimer& timer);
   bool currentVersion();
   void searchText();
-  void startPageWords(int page);
+  void startPageWords(int page, bool forSelection);
   void applyPendingSelection();
   void applyMatches();
   void setMatchRects(int page, const QVariantList& rects);
