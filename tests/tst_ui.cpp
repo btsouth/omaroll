@@ -8131,6 +8131,41 @@ private slots:
     QMetaObject::invokeMethod(item("library"), "clearChecked");
   }
 
+  // The Trash question says when .xmp sidecars go along, for one file and
+  // for a selection.
+  void trashPromptsNameTheSidecarsThatGoAlong() {
+    const QString first = pathAt(0), second = pathAt(1);
+    const QString sidecar = first + QStringLiteral(".xmp");
+    {
+      QFile file(sidecar);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"/>");
+    }
+    QQuickItem* confirm = item("confirm");
+    const auto cleanup = qScopeGuard([&] {
+      QMetaObject::invokeMethod(confirm, "close");
+      QFile::remove(sidecar);
+    });
+    QVERIFY(QMetaObject::invokeMethod(m_window, "requestDelete", Q_ARG(QVariant, first)));
+    QTRY_VERIFY(confirm->isVisible());
+    QCOMPARE(confirm->property("title").toString(), QStringLiteral("Move this item and its sidecar to Trash?"));
+    QVERIFY(QMetaObject::invokeMethod(confirm, "close"));
+    QTRY_VERIFY(!confirm->isVisible());
+    QVERIFY(QMetaObject::invokeMethod(m_window, "requestDeleteBatch",
+                                    Q_ARG(QVariant, QVariant(QStringList{first, second})),
+                                    Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant())));
+    QTRY_VERIFY(confirm->isVisible());
+    QCOMPARE(confirm->property("title").toString(), QStringLiteral("Move 2 items and a sidecar to Trash?"));
+    QVERIFY(QMetaObject::invokeMethod(confirm, "close"));
+    QTRY_VERIFY(!confirm->isVisible());
+    QFile::remove(sidecar);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "requestDeleteBatch",
+                                    Q_ARG(QVariant, QVariant(QStringList{first, second})),
+                                    Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant())));
+    QTRY_VERIFY(confirm->isVisible());
+    QCOMPARE(confirm->property("title").toString(), QStringLiteral("Move 2 items to Trash?"));
+  }
+
   void keepingOneExactDuplicateMovesOnlyTheOtherCopyToTrash() {
     QVERIFY(QFileInfo::exists(m_oddPath));
     m_library->setDuplicatesOnly(true);

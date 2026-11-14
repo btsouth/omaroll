@@ -705,8 +705,17 @@ ApplicationWindow {
             root.trashPending()
             return
         }
+        // The .xmp sidecars that go with them, from the same lookup Trash
+        // makes for each file.
+        let sidecars = 0
+        if (title === undefined) {
+            for (const target of targets) sidecars += Actions.sidecarCount(target.path)
+        }
         confirm.title = title === undefined
-                        ? "Move " + paths.length + " items to Trash?" : title
+                        ? "Move " + paths.length + " items"
+                          + (sidecars > 0 ? " and " + (sidecars === 1 ? "a sidecar" : sidecars + " sidecars") : "")
+                          + " to Trash?"
+                        : title
         confirm.detail = detail === undefined
                          ? paths.length + " files. They stay recoverable from your file manager."
                          : detail

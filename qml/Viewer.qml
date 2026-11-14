@@ -1022,6 +1022,9 @@ ApplicationWindow {
         confirm.serial = Session.openSerial()
         confirm.path = target.path
         confirm.viewedPath = Session.path
+        // An .xmp sidecar beside it goes to the Trash with it.
+        confirm.title = Actions.sidecarCount(target.path) > 0 ? "Move this item and its sidecar to Trash?"
+                                                              : "Move this item to Trash?"
         confirm.detail = confirm.path
         confirm.open()
     }

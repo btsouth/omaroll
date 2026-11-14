@@ -6774,6 +6774,14 @@ private slots:
     QVERIFY(window);
     QVERIFY(QTest::qWaitForWindowExposed(window));
     QTRY_COMPARE(m_actions->sidecarCount(solo), 1);
+    // The Trash question says the sidecar goes too.
+    QVERIFY(QMetaObject::invokeMethod(window, "requestTrash"));
+    auto* confirm = window->findChild<QQuickItem*>(QStringLiteral("viewerConfirm"));
+    QVERIFY(confirm);
+    QTRY_VERIFY(confirm->isVisible());
+    QCOMPARE(confirm->property("title").toString(), QStringLiteral("Move this item and its sidecar to Trash?"));
+    QVERIFY(QMetaObject::invokeMethod(confirm, "close"));
+    QTRY_VERIFY(!confirm->isVisible());
 
     QVariantMap captured = m_actions->captureFileAction(solo, solo);
     captured.insert(QStringLiteral("viewedPath"), solo);
