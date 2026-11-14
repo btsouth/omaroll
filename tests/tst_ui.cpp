@@ -5138,6 +5138,32 @@ private slots:
     QMetaObject::invokeMethod(menu, "close");
   }
 
+  void albumMenuFromTheHeaderActionsOpensUnderTheButton() {
+    QQuickItem* grid = item("library");
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("libraryContextMenu"));
+    QObject* albums = m_window->findChild<QObject*>(QStringLiteral("albumActionMenu"));
+    QVERIFY(menu && albums);
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, pathAt(0)));
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, pathAt(1)));
+    const auto cleanup = qScopeGuard([&] {
+      QMetaObject::invokeMethod(albums, "close");
+      QMetaObject::invokeMethod(menu, "close");
+      QMetaObject::invokeMethod(grid, "clearChecked");
+    });
+    QQuickItem* button = item("selectionActionsButton");
+    QTRY_VERIFY(button->isVisible());
+    waitForLayout();
+    click(button);
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QMetaObject::invokeMethod(menu, "triggered", Q_ARG(QString, QStringLiteral("organize")));
+    QTRY_VERIFY(albums->property("visible").toBool());
+    const QPointF below = button->mapToItem(m_window->contentItem(), QPointF(0, button->height()));
+    // Relative to the button, the old code dropped it in the window's corner.
+    QVERIFY2(albums->property("y").toReal() >= below.y(),
+             qPrintable(QString::number(albums->property("y").toReal())));
+    QVERIFY(albums->property("x").toReal() > below.x() - 300);
+  }
+
   void compareAppearsForImageSelectionsAndUsesTheCapturedPair() {
     QStringList images;
     QString video;

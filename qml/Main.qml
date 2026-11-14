@@ -216,7 +216,7 @@ ApplicationWindow {
             return
         case "organize":
             albumActionMenu.targetPaths = [path]
-            albumActionMenu.popup(root.contentItem, contextMenu.x, contextMenu.y)
+            root.popupAlbumMenuAtContextMenu()
             return
         case "companion": {
             const companion = Captures.companionPathAt(row)
@@ -1443,12 +1443,20 @@ ApplicationWindow {
         contextMenu.popup(root.contentItem, x, y)
     }
 
+    // The context menu's x and y are relative to whatever it popped up from,
+    // which is the Actions button when opened from the header.
+    function popupAlbumMenuAtContextMenu() {
+        const from = contextMenu.parent || root.contentItem
+        const point = from.mapToItem(root.contentItem, contextMenu.x, contextMenu.y)
+        albumActionMenu.popup(root.contentItem, point.x, point.y)
+    }
+
     function performContextAction(id, paths, batch) {
         if (!batch && paths.length === 1) { root.performForTargets(id, paths[0], undefined, paths); return }
         switch (id) {
         case "organize":
             albumActionMenu.targetPaths = paths.slice()
-            albumActionMenu.popup(root.contentItem, contextMenu.x, contextMenu.y); break
+            root.popupAlbumMenuAtContextMenu(); break
         case "copy": Actions.copyUris(paths); break
         case "print": Registry.runBatch("print", paths); break
         case "send": Registry.runBatch("send", paths); break
