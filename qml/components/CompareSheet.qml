@@ -33,7 +33,7 @@ Item {
     }
     // Under each picture, so the picture's own centre sits this much higher
     // than its cell's.
-    readonly property int factsHeight: 56
+    readonly property int factsHeight: 68
 
     // A keep-one cleanup finished: what to report and its undo step, if any.
     signal finished(string message, int undoId)
@@ -407,7 +407,7 @@ Item {
                                 anchors.verticalCenter: parent.verticalCenter
                                 anchors.leftMargin: 8
                                 anchors.rightMargin: 8
-                                spacing: 1
+                                spacing: 2
 
                                 Row {
                                     width: parent.width

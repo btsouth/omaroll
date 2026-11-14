@@ -7372,11 +7372,23 @@ private slots:
     QCOMPARE(sheet->property("path").toString(), path);
     QCOMPARE(sheet->property("suffix").toString(), QStringLiteral(".") + QFileInfo(path).suffix());
 
+    // As much room under the buttons as over the title, with or without
+    // a message.
+    QQuickItem* panel = item("renamePanel");
+    QQuickItem* renameButton = pill(sheet, QStringLiteral("Rename"));
+    const auto bottomRoom = [&] {
+      return panel->height() - renameButton->mapToItem(panel, QPointF(0, renameButton->height())).y();
+    };
+    QTRY_COMPARE(bottomRoom(), 22.0);
+    const qreal plainHeight = panel->height();
     QQuickItem* input = item("renameInput");
     input->setProperty("text", QString());
     click(pill(sheet, QStringLiteral("Rename")));
     QVERIFY(sheet->isVisible());
     QVERIFY(!sheet->property("errorMessage").toString().isEmpty());
+    QVERIFY(item("renamePanelMessage")->isVisible());
+    QTRY_VERIFY(panel->height() > plainHeight);
+    QTRY_COMPARE(bottomRoom(), 22.0);
 
     const QString base = QStringLiteral("renamed through sheet");
     input->setProperty("text", base);
@@ -8456,6 +8468,17 @@ private slots:
     QVERIFY2(factLine(small).startsWith(QStringLiteral("480 × 320  ·  ")), qPrintable(factLine(small)));
     QCOMPARE(compare->property("facts").value<QJSValue>().property(small).property("folder").toString(),
              dir.path());
+    // The three fact lines keep some room above and below inside their bar.
+    QQuickItem* facts = nullptr;
+    QTRY_VERIFY((facts = find(compare, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("compareFacts") && candidate->isVisible();
+    })) != nullptr);
+    QQuickItem* lines = find(facts, [](QQuickItem* candidate) {
+      return candidate->inherits("QQuickColumn");
+    });
+    QVERIFY(lines);
+    QVERIFY2(lines->y() >= 6 && facts->height() - lines->y() - lines->height() >= 6,
+             qPrintable(QStringLiteral("%1 %2 %3").arg(lines->y()).arg(lines->height()).arg(facts->height())));
 
     QVERIFY(QMetaObject::invokeMethod(compare, "requestKeep", Q_ARG(QVariant, large)));
     QQuickItem* confirm = item("compareKeepConfirm");

@@ -113,7 +113,10 @@ Item {
     Rectangle {
         anchors.centerIn: parent
         width: Math.min(420, root.width - 60)
-        height: 190
+        objectName: "collectionNamePanel"
+        // Sized to what it holds, so the space under the buttons matches
+        // the space over the title, with or without a message.
+        height: form.implicitHeight + 2 * form.anchors.margins
         radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 4
         color: root.shade(Theme.background, 0.98)
         border.width: 1
@@ -127,7 +130,10 @@ Item {
         }
 
         Column {
-            anchors.fill: parent
+            id: form
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
             anchors.margins: 22
             spacing: 12
 
@@ -184,19 +190,20 @@ Item {
                 }
             }
 
-            Row {
+            Text {
+                objectName: "collectionNamePanelMessage"
                 width: parent.width
-                spacing: 8
+                visible: text !== ""
+                text: root.errorMessage
+                wrapMode: Text.WordWrap
+                font.family: Theme.fontFamily
+                font.pixelSize: 11
+                color: Theme.red
+            }
 
-                Text {
-                    width: parent.width - cancelButton.width - createButton.width - 16
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: root.errorMessage
-                    elide: Text.ElideRight
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 11
-                    color: Theme.red
-                }
+            Row {
+                anchors.right: parent.right
+                spacing: 8
 
                 PillButton {
                     id: cancelButton
