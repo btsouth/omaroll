@@ -351,7 +351,8 @@ FocusScope {
                 width: parent.width
                 height: Math.min(controlsColumn.implicitHeight,
                                  Math.max(0, parent.height - root.minimumChoicesHeight
-                                             - searchBox.height - 2 * parent.spacing))
+                                             - facetGroup.height - searchBox.height
+                                             - 3 * parent.spacing))
                 contentWidth: width
                 contentHeight: controlsColumn.implicitHeight
                 clip: true
@@ -560,162 +561,165 @@ FocusScope {
                             color: Theme.mutedText
                         }
                     }
+                }
+            }
 
-                    Column {
-                        objectName: "browseGroupFacets"
-                        width: parent.width
-                        spacing: 6
+            // Outside the scrolling controls so the section tabs stay in view
+            // however small the window is.
+            Column {
+                id: facetGroup
+                objectName: "browseGroupFacets"
+                y: controlsFlickable.height + (controlsFlickable.height > 0 ? contentArea.spacing : 0)
+                width: parent.width
+                spacing: 6
 
-                        GroupTitle { text: "Browse by" }
+                GroupTitle { text: "Browse by" }
 
-                        // One segmented control, like the kinds in the library
-                        // header. The counts go first when the row is short of
-                        // room, so the names never clip.
-                        Item {
-                            id: facetHolder
-                            width: parent.width
-                            height: facetFrame.height
-                            // A fixed set of segments, so a count that changes
-                            // updates one label instead of rebuilding the row
-                            // (and taking keyboard focus out of it).
-                            readonly property var sections: [0, 1, 2, 3, 5, 4]
-                            readonly property var labels: ["Folders", "Albums", "Dates", "Tags", "Cameras", "Smart"]
-                            function count(index) {
-                                switch (sections[index]) {
-                                case 0: return Captures.folders.length
-                                case 1: return Settings.albumNames.length
-                                case 2: return Captures.dateBuckets.length
-                                case 3: return Settings.tagNames.length
-                                case 5: return Captures.cameras.length
-                                default: return Settings.smartCollectionNames.length
-                                }
-                            }
-                            // Only a library with photos from a real camera earns
-                            // Cameras; a screenshot library never sees it.
-                            function shown(index) {
-                                return sections[index] !== 5 || root.hasCameras || root.section === 5
-                            }
-                            // Measured with the counts, off screen, so the choice
-                            // cannot feed back on itself.
-                            readonly property bool countsShown: countedFacets.implicitWidth <= width
-
-                            Row {
-                                id: countedFacets
-                                visible: false
-                                Repeater {
-                                    model: 6
-                                    PillButton {
-                                        required property int index
-                                        visible: facetHolder.shown(index)
-                                        segment: true
-                                        label: facetHolder.labels[index]
-                                        badge: facetHolder.count(index)
-                                    }
-                                }
-                            }
-
-                            Rectangle {
-                                id: facetFrame
-                                objectName: "browseFacetSegments"
-                                width: Math.min(parent.width, facetSegments.implicitWidth)
-                                height: 26
-                                radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
-                                color: root.shade(Theme.foreground, 0.04)
-                                border.width: 1
-                                border.color: root.shade(Theme.foreground, 0.12)
-
-                                Row {
-                                    id: facetSegments
-                                    anchors.verticalCenter: parent.verticalCenter
-
-                                    Repeater {
-                                        model: 6
-
-                                        PillButton {
-                                            required property int index
-                                            readonly property int section: facetHolder.sections[index]
-                                            readonly property int count: facetHolder.count(index)
-                                            objectName: "browseFacet-" + section
-                                            visible: facetHolder.shown(index)
-                                            segment: true
-                                            checkable: true
-                                            label: facetHolder.labels[index]
-                                            badge: facetHolder.countsShown ? count : -1
-                                            accessibleName: label + ", " + root.formatCount(count)
-                                            active: root.section === section
-                                            onClicked: {
-                                                root.section = section
-                                                folderSearch.forceActiveFocus()
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                // One segmented control, like the kinds in the library
+                // header. The counts go first when the row is short of
+                // room, so the names never clip.
+                Item {
+                    id: facetHolder
+                    width: parent.width
+                    height: facetFrame.height
+                    // A fixed set of segments, so a count that changes
+                    // updates one label instead of rebuilding the row
+                    // (and taking keyboard focus out of it).
+                    readonly property var sections: [0, 1, 2, 3, 5, 4]
+                    readonly property var labels: ["Folders", "Albums", "Dates", "Tags", "Cameras", "Smart"]
+                    function count(index) {
+                        switch (sections[index]) {
+                        case 0: return Captures.folders.length
+                        case 1: return Settings.albumNames.length
+                        case 2: return Captures.dateBuckets.length
+                        case 3: return Settings.tagNames.length
+                        case 5: return Captures.cameras.length
+                        default: return Settings.smartCollectionNames.length
                         }
+                    }
+                    // Only a library with photos from a real camera earns
+                    // Cameras; a screenshot library never sees it.
+                    function shown(index) {
+                        return sections[index] !== 5 || root.hasCameras || root.section === 5
+                    }
+                    // Measured with the counts, off screen, so the choice
+                    // cannot feed back on itself.
+                    readonly property bool countsShown: countedFacets.implicitWidth <= width
 
-                        Flow {
-                            width: parent.width
-                            spacing: 7
-                            objectName: "browseCollectionActions"
-                            // From the section itself: the buttons inside are
-                            // hidden while this row is, so their visibility
-                            // cannot decide it.
-                            visible: root.section === 1 || root.section === 3 || root.section === 4
-
+                    Row {
+                        id: countedFacets
+                        visible: false
+                        Repeater {
+                            model: 6
                             PillButton {
-                                id: newAlbum
-                                objectName: "browseNewAlbum"
-                                visible: root.section === 1
-                                label: "+ New album"
-                                onClicked: {
-                                    root.close()
-                                    root.createAlbumRequested()
-                                }
-                            }
-                            PillButton {
-                                id: newTag
-                                objectName: "browseNewTag"
-                                visible: root.section === 3
-                                label: "+ New tag"
-                                onClicked: { root.close(); root.createTagRequested() }
-                            }
-                            PillButton {
-                                id: saveView
-                                objectName: "browseSaveView"
-                                visible: root.section === 4
-                                label: "+ Save view"
-                                onClicked: { root.close(); root.saveSmartCollectionRequested() }
-                            }
-                            PillButton {
-                                id: renameChoice
-                                objectName: "browseRenameChoice"
-                                visible: (root.section === 1 || root.section === 3) && choices.currentIndex >= 0
-                                label: "Rename selected"
-                                toolTip: root.section === 3
-                                         ? "Rename this tag and any tags nested under it."
-                                         : "Rename this album. Its membership is kept."
-                                onClicked: root.renameCurrentChoice()
-                            }
-                            PillButton {
-                                id: deleteChoice
-                                objectName: "browseDeleteChoice"
-                                visible: (root.section === 1 || root.section === 3 || root.section === 4)
-                                         && choices.currentIndex >= 0
-                                label: "Delete selected"
-                                toolTip: root.section === 3
-                                         ? "Remove this tag and any tags nested under it. Files are not deleted."
-                                         : "Remove this collection. Files are not deleted."
-                                onClicked: root.deleteCurrentChoice()
+                                required property int index
+                                visible: facetHolder.shown(index)
+                                segment: true
+                                label: facetHolder.labels[index]
+                                badge: facetHolder.count(index)
                             }
                         }
                     }
 
+                    Rectangle {
+                        id: facetFrame
+                        objectName: "browseFacetSegments"
+                        width: Math.min(parent.width, facetSegments.implicitWidth)
+                        height: 26
+                        radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
+                        color: root.shade(Theme.foreground, 0.04)
+                        border.width: 1
+                        border.color: root.shade(Theme.foreground, 0.12)
+
+                        Row {
+                            id: facetSegments
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            Repeater {
+                                model: 6
+
+                                PillButton {
+                                    required property int index
+                                    readonly property int section: facetHolder.sections[index]
+                                    readonly property int count: facetHolder.count(index)
+                                    objectName: "browseFacet-" + section
+                                    visible: facetHolder.shown(index)
+                                    segment: true
+                                    checkable: true
+                                    label: facetHolder.labels[index]
+                                    badge: facetHolder.countsShown ? count : -1
+                                    accessibleName: label + ", " + root.formatCount(count)
+                                    active: root.section === section
+                                    onClicked: {
+                                        root.section = section
+                                        folderSearch.forceActiveFocus()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Flow {
+                    width: parent.width
+                    spacing: 7
+                    objectName: "browseCollectionActions"
+                    // From the section itself: the buttons inside are
+                    // hidden while this row is, so their visibility
+                    // cannot decide it.
+                    visible: root.section === 1 || root.section === 3 || root.section === 4
+
+                    PillButton {
+                        id: newAlbum
+                        objectName: "browseNewAlbum"
+                        visible: root.section === 1
+                        label: "+ New album"
+                        onClicked: {
+                            root.close()
+                            root.createAlbumRequested()
+                        }
+                    }
+                    PillButton {
+                        id: newTag
+                        objectName: "browseNewTag"
+                        visible: root.section === 3
+                        label: "+ New tag"
+                        onClicked: { root.close(); root.createTagRequested() }
+                    }
+                    PillButton {
+                        id: saveView
+                        objectName: "browseSaveView"
+                        visible: root.section === 4
+                        label: "+ Save view"
+                        onClicked: { root.close(); root.saveSmartCollectionRequested() }
+                    }
+                    PillButton {
+                        id: renameChoice
+                        objectName: "browseRenameChoice"
+                        visible: (root.section === 1 || root.section === 3) && choices.currentIndex >= 0
+                        label: "Rename selected"
+                        toolTip: root.section === 3
+                                 ? "Rename this tag and any tags nested under it."
+                                 : "Rename this album. Its membership is kept."
+                        onClicked: root.renameCurrentChoice()
+                    }
+                    PillButton {
+                        id: deleteChoice
+                        objectName: "browseDeleteChoice"
+                        visible: (root.section === 1 || root.section === 3 || root.section === 4)
+                                 && choices.currentIndex >= 0
+                        label: "Delete selected"
+                        toolTip: root.section === 3
+                                 ? "Remove this tag and any tags nested under it. Files are not deleted."
+                                 : "Remove this collection. Files are not deleted."
+                        onClicked: root.deleteCurrentChoice()
+                    }
                 }
             }
 
             Rectangle {
                 id: searchBox
-                y: controlsFlickable.height + contentArea.spacing
+                y: facetGroup.y + facetGroup.height + contentArea.spacing
                 width: parent.width
                 height: 34
                 radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3

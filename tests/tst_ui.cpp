@@ -5536,10 +5536,24 @@ private slots:
     QTRY_VERIFY(search->mapToScene(QPointF()).y() + search->height() <= m_window->height());
     QQuickItem* addFolder = item("browseAddFolder");
     QVERIFY(addFolder->x() + addFolder->width() <= addFolder->parentItem()->width());
-    QTest::keyClick(m_window, Qt::Key_Tab, Qt::ShiftModifier);
+    // The section tabs sit outside the scrolling controls, wholly in view
+    // between them and the search box.
+    QQuickItem* facets = item("browseFacetSegments");
+    QTRY_VERIFY(facets->isVisible());
+    const qreal facetsTop = facets->mapToScene(QPointF()).y();
+    QVERIFY(facetsTop >= controls->mapToScene(QPointF(0, controls->height())).y());
+    QVERIFY(facetsTop + facets->height() <= search->mapToScene(QPointF()).y());
+    // Shift+Tab back past the tabs into the scrolling controls.
+    const auto insideControls = [&](QQuickItem* candidate) {
+      for (QQuickItem* up = candidate; up; up = up->parentItem())
+        if (up == controls) return true;
+      return false;
+    };
+    for (int step = 0; step < 12 && !insideControls(m_window->activeFocusItem()); ++step)
+      QTest::keyClick(m_window, Qt::Key_Tab, Qt::ShiftModifier);
     QTRY_VERIFY(m_window->activeFocusItem() != search);
     QQuickItem* focused = m_window->activeFocusItem();
-    QVERIFY(focused);
+    QVERIFY(focused && insideControls(focused));
     QTRY_VERIFY(focused->mapToItem(controls, QPointF()).y() >= 0);
     QTRY_VERIFY(focused->mapToItem(controls, QPointF()).y() + focused->height()
                 <= controls->height());
