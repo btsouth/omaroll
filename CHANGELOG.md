@@ -15,6 +15,24 @@
   reads as five videos.
 - The sort menu, and the kind menu in narrow windows, no longer draw a tick
   over the current choice's label.
+- Albums and tags from the header's Actions menu opens under the button
+  instead of in the window's top left corner.
+- Browse keeps its Folders, Albums, Dates, Tags and Smart tabs in view in a
+  small window, and says when a section has nothing in it yet. A day's item
+  count lines up under its name.
+- Menus are solid in every theme, the arrow keys show which row they are on
+  in every menu, and the folder sidebar's menu looks like the others.
+- A video's audio track button names the track in use, instead of Audio 0,
+  and follows a switch. Its Fullscreen button matches the dark transport in
+  the light theme.
+- The Folders button shows whether the sidebar is on screen, and in a window
+  too narrow for it says so rather than changing the setting unseen.
+- Long tooltips wrap instead of running across the window.
+- The pinned folders strip sits on the library's margin and shows a scroll
+  bar only when the pins overflow.
+- The Straighten slider and the compare details bar are drawn like the rest
+  of the app, and the rename and new album sheets fit their content.
+- A viewer submenu row's arrow points the way the submenu opens.
 
 ## 1.19.0
 
