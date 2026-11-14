@@ -783,16 +783,27 @@ FocusScope {
                 model: root.filteredChoices
                 ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
+                // A search that finds nothing, or a section with nothing in
+                // it yet, says so rather than leaving a blank list.
                 header: Text {
+                    objectName: "libraryChoicesEmpty"
                     width: choices.width
                     height: visible ? 48 : 0
-                    visible: root.query !== "" && choices.count === 0
-                    text: root.section === 0 ? "No matching folders"
-                          : root.section === 1 ? "No matching albums"
-                          : root.section === 2 ? "No matching dates"
-                          : root.section === 3 ? "No matching tags"
-                          : root.section === 5 ? "No matching cameras or lenses"
-                                               : "No matching smart collections"
+                    visible: choices.count === 0
+                    text: root.query !== ""
+                          ? (root.section === 0 ? "No matching folders"
+                             : root.section === 1 ? "No matching albums"
+                             : root.section === 2 ? "No matching dates"
+                             : root.section === 3 ? "No matching tags"
+                             : root.section === 5 ? "No matching cameras or lenses"
+                                                  : "No matching smart collections")
+                          : (root.section === 0 ? "No folders yet"
+                             : root.section === 1 ? "No albums yet"
+                             : root.section === 2 ? "No dates yet"
+                             : root.section === 3 ? "No tags yet"
+                             : root.section === 5 ? "No cameras yet"
+                                                  : "No smart collections yet")
+                    wrapMode: Text.WordWrap
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                     font.family: Theme.fontFamily
@@ -839,6 +850,10 @@ FocusScope {
                     Accessible.selected: selectedChoice
                     Accessible.focused: ListView.isCurrentItem && choices.activeFocus
                     Accessible.onPressAction: root.openChoice(choiceRow.index)
+                    // A day under its month, or a tag under its parent, with
+                    // both lines indented together.
+                    readonly property real indent: dateChoice && modelData.type === "day"
+                                                   ? 18 : 18 * tagDepth
                     width: choices.width - 10
                     height: 48
                     radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
@@ -854,11 +869,11 @@ FocusScope {
                         spacing: 2
 
                         Text {
+                            objectName: "browseChoiceTitle"
                             width: parent.width
                             text: root.section === 0 ? root.nameForPath(choiceRow.value)
                                                      : choiceRow.choiceLabel
-                            leftPadding: choiceRow.dateChoice && choiceRow.modelData.type === "day"
-                                         ? 18 : 18 * choiceRow.tagDepth
+                            leftPadding: choiceRow.indent
                             elide: Text.ElideRight
                             font.family: Theme.fontFamily
                             font.pixelSize: 11
@@ -867,8 +882,9 @@ FocusScope {
                         }
 
                         Text {
+                            objectName: "browseChoiceDetail"
                             width: parent.width
-                            leftPadding: 18 * choiceRow.tagDepth
+                            leftPadding: choiceRow.indent
                             text: root.section === 0
                                   ? root.contextForPath(choiceRow.value) + "  ·  "
                                     + root.formatCount(choiceRow.itemCount)

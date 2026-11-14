@@ -5426,6 +5426,40 @@ private slots:
   // Switching Browse from Folders to a collection shows that collection's
   // buttons, and a count changing under a focused segment leaves the focus
   // where it was.
+  // An empty section says so, and a day under its month indents both its
+  // lines together.
+  void libraryBrowserEmptySectionsAndDayRows() {
+    QObject* browser = m_window->findChild<QObject*>(QStringLiteral("libraryBrowser"));
+    QVERIFY(browser);
+    const auto restore = qScopeGuard([&] { QMetaObject::invokeMethod(browser, "close"); });
+    QMetaObject::invokeMethod(browser, "open");
+    QTRY_VERIFY(browser->property("visible").toBool());
+    QQuickItem* empty = item("libraryChoicesEmpty");
+    QVERIFY(m_settings->smartCollectionNames().isEmpty());
+    browser->setProperty("section", 4);
+    QTRY_VERIFY(empty->isVisible());
+    QCOMPARE(empty->property("text").toString(), QStringLiteral("No smart collections yet"));
+    if (m_settings->albumNames().isEmpty()) {
+      browser->setProperty("section", 1);
+      QTRY_COMPARE(empty->property("text").toString(), QStringLiteral("No albums yet"));
+      QVERIFY(empty->isVisible());
+    }
+
+    browser->setProperty("section", 2);
+    QTRY_VERIFY(!empty->isVisible());
+    QQuickItem* choices = item("libraryChoices");
+    QQuickItem* dayTitle = nullptr;
+    QTRY_VERIFY((dayTitle = find(choices, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("browseChoiceTitle") && candidate->isVisible() &&
+             candidate->property("leftPadding").toReal() > 0;
+    })) != nullptr);
+    QQuickItem* dayDetail = find(dayTitle->parentItem(), [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("browseChoiceDetail");
+    });
+    QVERIFY(dayDetail);
+    QCOMPARE(dayDetail->property("leftPadding").toReal(), dayTitle->property("leftPadding").toReal());
+  }
+
   void libraryBrowserSegmentsShowCollectionActionsAndKeepFocus() {
     const QString album = QStringLiteral("Browse segment album");
     const QString tag = QStringLiteral("browse-segment-tag");
