@@ -1236,7 +1236,8 @@ ApplicationWindow {
             objectName: "pinnedFolders"
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors.rightMargin: 12
+            anchors.leftMargin: 20
+            anchors.rightMargin: 20
             height: parent.height
             onChosen: function(path) { root.openFolder(path) }
         }

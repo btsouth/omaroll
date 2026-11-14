@@ -39,8 +39,19 @@ Rectangle {
         boundsBehavior: Flickable.StopAtBounds
         model: Settings.pinnedFolders
 
+        // Only when the pins overflow, and in the strip's bottom margin
+        // rather than across the chips. The stock style hides an idle bar
+        // from its own content item, which this one replaces.
         ScrollBar.horizontal: ScrollBar {
+            objectName: "pinnedFoldersScrollBar"
+            parent: root
+            anchors.left: list.left
+            anchors.right: list.right
+            anchors.bottom: root.bottom
+            anchors.bottomMargin: 1
             policy: ScrollBar.AsNeeded
+            visible: list.contentWidth > list.width + 1
+            padding: 0
             contentItem: Rectangle {
                 implicitHeight: 3
                 radius: height / 2

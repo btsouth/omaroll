@@ -9219,6 +9219,10 @@ private slots:
     QVERIFY(m_settings->pinFolderPath(QFileInfo(m_oddPath).absolutePath()));
     QQuickItem* pins = item("pinnedFolders");
     QTRY_VERIFY(pins->isVisible());
+    // On the 20 px gutter, and no scroll bar for a pin that fits.
+    QCOMPARE(pins->mapToScene(QPointF()).x(), 20.0);
+    QCOMPARE(m_window->width() - (pins->mapToScene(QPointF()).x() + pins->width()), 20.0);
+    QVERIFY(!item("pinnedFoldersScrollBar")->isVisible());
     const QString folder = m_settings->pinnedFolders().first();
     QVERIFY(QMetaObject::invokeMethod(pins, "chosen", Q_ARG(QString, folder)));
     QCOMPARE(m_library->folderFilter(), folder);
