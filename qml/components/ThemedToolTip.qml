@@ -57,7 +57,9 @@ ToolTip {
             text: tip.text
             font: tip.font
             color: Theme.foreground
-            wrapMode: Text.WordWrap
+            // At spaces first; a long file name with none breaks where it
+            // must rather than run out of the box.
+            wrapMode: Text.Wrap
         }
         Rectangle {
             id: keyCap

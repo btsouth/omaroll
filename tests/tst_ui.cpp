@@ -6978,7 +6978,9 @@ private slots:
     for (int width = 160; width <= 420; width += 4) {
       QTextLayout layout(text, font);
       QTextOption option;
-      option.setWrapMode(QTextOption::WordWrap);
+      // As Text.Wrap lays it out: at spaces, and mid-word only for a word
+      // longer than the line.
+      option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
       layout.setTextOption(option);
       layout.beginLayout();
       QStringList lines;
@@ -6988,12 +6990,48 @@ private slots:
       }
       layout.endLayout();
       for (const QString& line : lines) {
-        QVERIFY2(!line.endsWith(u'-') && !line.endsWith(QStringLiteral("-⁠")),
+        QVERIFY2(!line.endsWith(u'-') && !line.endsWith(QStringLiteral("-\u2060")),
                  qPrintable(QStringLiteral("%1: %2").arg(width).arg(lines.join(u'|'))));
         QVERIFY2(!line.endsWith(QStringLiteral("\"quote")) && !line.startsWith(QStringLiteral("phrase\"")),
                  qPrintable(QStringLiteral("%1: %2").arg(width).arg(lines.join(u'|'))));
       }
     }
+
+    // A long file name has no spaces to wrap at. It breaks where it must
+    // and stays inside the box instead of running past it.
+    QQmlComponent component(m_engine);
+    component.setData(R"QML(
+      import QtQuick
+      import Omaroll
+      Item {
+        width: 300
+        height: 40
+        ThemedToolTip {
+          objectName: "longNameTip"
+          text: "screenshot-2026-11-14_13-45-02-a-very-long-file-name-without-any-spaces-at-all-from-the-summer-trip.png"
+          requested: true
+          delay: 0
+        }
+      }
+    )QML", QUrl());
+    std::unique_ptr<QObject> holder(component.create());
+    QVERIFY2(holder, qPrintable(component.errorString()));
+    auto* host = qobject_cast<QQuickItem*>(holder.get());
+    host->setParentItem(m_window->contentItem());
+    QObject* nameTip = holder->findChild<QObject*>(QStringLiteral("longNameTip"));
+    QVERIFY(nameTip);
+    QTRY_VERIFY(nameTip->property("visible").toBool());
+    QVERIFY(nameTip->property("width").toReal() <= 420);
+    auto* nameContent = nameTip->property("contentItem").value<QQuickItem*>();
+    QQuickItem* nameText = find(nameContent, [](QQuickItem* candidate) {
+      return candidate->inherits("QQuickText") && candidate->property("text").toString().startsWith(u"screenshot");
+    });
+    QVERIFY(nameText);
+    QTRY_VERIFY(nameText->property("lineCount").toInt() > 1);
+    QVERIFY2(nameText->property("contentWidth").toReal() <= nameText->width() + 0.5,
+             qPrintable(QStringLiteral("%1 > %2").arg(nameText->property("contentWidth").toReal())
+                            .arg(nameText->width())));
+    QMetaObject::invokeMethod(nameTip, "close");
   }
 
   // The themed tooltip a button or row owns.
