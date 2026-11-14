@@ -5400,6 +5400,19 @@ private slots:
     QVERIFY(oldestRow && oldestRow->inherits("QQuickMenuItem"));
     QVERIFY(!oldestRow->property("indicator").value<QQuickItem*>());
     QVERIFY(!oldestRow->property("checked").toBool());
+    // The arrow keys move a visible highlight, not only the pointer.
+    QTest::keyClick(m_window, Qt::Key_Down);
+    QQuickItem* highlighted = nullptr;
+    QTRY_VERIFY((highlighted = find(m_window->contentItem(), [](QQuickItem* candidate) {
+      return candidate->inherits("QQuickMenuItem") && candidate->isVisible() &&
+             candidate->property("highlighted").toBool();
+    })) != nullptr);
+    auto* wash = highlighted->property("background").value<QQuickItem*>();
+    QVERIFY(wash && wash->property("color").value<QColor>().alpha() > 0);
+    // Opaque, so nothing under the menu shows through.
+    auto* panel = sortMenu->property("background").value<QQuickItem*>();
+    QVERIFY(panel);
+    QCOMPARE(panel->property("color").value<QColor>().alpha(), 255);
     click(oldest);
     QTRY_COMPARE(m_library->sortMode(), 1);
     QTRY_VERIFY(!sortMenu->property("visible").toBool());

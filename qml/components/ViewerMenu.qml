@@ -116,7 +116,7 @@ Menu {
             z: 2
             visible: list.interactive && !list.atYBeginning
             gradient: Gradient {
-                GradientStop { position: 0.0; color: menu.shade(Theme.background, 0.97) }
+                GradientStop { position: 0.0; color: Theme.background }
                 GradientStop { position: 1.0; color: menu.shade(Theme.background, 0) }
             }
         }
@@ -130,14 +130,14 @@ Menu {
             visible: list.interactive && !list.atYEnd
             gradient: Gradient {
                 GradientStop { position: 0.0; color: menu.shade(Theme.background, 0) }
-                GradientStop { position: 1.0; color: menu.shade(Theme.background, 0.97) }
+                GradientStop { position: 1.0; color: Theme.background }
             }
         }
     }
 
     background: Rectangle {
         implicitWidth: 236
-        color: menu.shade(Theme.background, 0.97)
+        color: Theme.background
         border.width: 1
         border.color: menu.shade(Theme.foreground, 0.16)
         radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3

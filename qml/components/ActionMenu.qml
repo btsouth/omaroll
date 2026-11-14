@@ -29,7 +29,7 @@ Menu {
 
     background: Rectangle {
         implicitWidth: 232
-        color: root.shade(Theme.background, 0.97)
+        color: Theme.background
         border.width: 1
         border.color: root.shade(Theme.foreground, 0.16)
         radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3

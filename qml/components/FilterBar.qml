@@ -442,7 +442,7 @@ Item {
 
         background: Rectangle {
             implicitWidth: 170
-            color: root.shade(Theme.background, 0.97)
+            color: Theme.background
             border.width: 1
             border.color: root.shade(Theme.foreground, 0.16)
             radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
@@ -489,7 +489,8 @@ Item {
                 }
 
                 background: Rectangle {
-                    color: kindRow.hovered ? root.shade(Theme.foreground, 0.08) : "transparent"
+                    color: kindRow.highlighted ? root.shade(Theme.foreground, 0.09) : "transparent"
+                    radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 3) : 0
                 }
 
                 onTriggered: Captures.kindFilter = kindRow.modelData.kind
@@ -507,7 +508,7 @@ Item {
 
         background: Rectangle {
             implicitWidth: 150
-            color: root.shade(Theme.background, 0.97)
+            color: Theme.background
             border.width: 1
             border.color: root.shade(Theme.foreground, 0.16)
             radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
@@ -540,7 +541,8 @@ Item {
                 }
 
                 background: Rectangle {
-                    color: sortRow.hovered ? root.shade(Theme.foreground, 0.08) : "transparent"
+                    color: sortRow.highlighted ? root.shade(Theme.foreground, 0.09) : "transparent"
+                    radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 3) : 0
                 }
 
                 onTriggered: Captures.sortMode = sortRow.index

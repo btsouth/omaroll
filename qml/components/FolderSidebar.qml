@@ -345,24 +345,32 @@ FocusScope {
         id: folderMenu
         objectName: "sidebarFolderMenu"
         property string path: ""
-        width: 220
+        // Modal, undimmed, and drawn like the app's other menus.
+        modal: true
+        dim: false
         background: Rectangle {
+            implicitWidth: 220
             color: Theme.background
-            border.color: root.shade(Theme.foreground, 0.18)
-            radius: Math.min(8, Theme.cornerRadius)
+            border.width: 1
+            border.color: root.shade(Theme.foreground, 0.16)
+            radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
         }
         delegate: MenuItem {
             id: menuItem
-            implicitHeight: 36
+            height: 30
             contentItem: Text {
                 text: menuItem.text
-                color: Theme.foreground
+                color: menuItem.highlighted ? Theme.brightForeground : Theme.foreground
                 font.family: Theme.fontFamily
                 font.pixelSize: 12
                 verticalAlignment: Text.AlignVCenter
+                leftPadding: 12
+                rightPadding: 12
+                elide: Text.ElideRight
             }
             background: Rectangle {
-                color: menuItem.highlighted ? root.shade(Theme.accent, 0.2) : "transparent"
+                color: menuItem.highlighted ? root.shade(Theme.foreground, 0.09) : "transparent"
+                radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 3) : 0
             }
         }
         Action {
