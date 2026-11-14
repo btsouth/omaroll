@@ -13,6 +13,8 @@
   the player names them.
 - Tooltips draw a button's key as a key, so "Videos" with its `5` no longer
   reads as five videos.
+- The sort menu, and the kind menu in narrow windows, no longer draw a tick
+  over the current choice's label.
 
 ## 1.19.0
 

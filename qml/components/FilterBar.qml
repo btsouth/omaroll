@@ -459,8 +459,12 @@ Item {
                 height: 30
                 text: modelData.label
                 Accessible.name: text
-                checkable: true
-                checked: current
+                // The row's colour and weight mark the choice. Not checkable:
+                // the style's tick would sit on the label, and picking the
+                // current row again would untick it.
+                Accessible.checkable: true
+                Accessible.checked: current
+                indicator: null
 
                 contentItem: Item {
                     Text {
@@ -520,8 +524,10 @@ Item {
                 height: 30
                 text: modelData
                 Accessible.name: text
-                checkable: true
-                checked: Captures.sortMode === index
+                // As in the kind menu: marked by colour and weight, no tick.
+                Accessible.checkable: true
+                Accessible.checked: Captures.sortMode === index
+                indicator: null
 
                 contentItem: Text {
                     text: sortRow.modelData

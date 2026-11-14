@@ -5361,6 +5361,11 @@ private slots:
              candidate->isVisible() && candidate->width() > 0 && candidate->inherits("QQuickText");
     });
     QVERIFY(oldest);
+    // The rows mark the choice themselves: no style tick drawn over the label.
+    QQuickItem* oldestRow = oldest->parentItem();
+    QVERIFY(oldestRow && oldestRow->inherits("QQuickMenuItem"));
+    QVERIFY(!oldestRow->property("indicator").value<QQuickItem*>());
+    QVERIFY(!oldestRow->property("checked").toBool());
     click(oldest);
     QTRY_COMPARE(m_library->sortMode(), 1);
     QTRY_VERIFY(!sortMenu->property("visible").toBool());
