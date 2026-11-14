@@ -43,6 +43,10 @@ Menu {
         menu.rightMargin = right
     }
     onAboutToShow: followCascade()
+    // A margin worked out for another window width or another place of the
+    // parent would squeeze the submenu, so it is redone while open and
+    // dropped on close.
+    onClosed: menu.rightMargin = 8
 
     // An item, not a separate window: a window menu is placed by the
     // compositor and was left running off the bottom of a short window.
@@ -141,5 +145,15 @@ Menu {
         border.width: 1
         border.color: menu.shade(Theme.foreground, 0.16)
         radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
+
+        Connections {
+            target: menu.visible && menu.parentViewerMenu ? menu.hostWindow : null
+            function onWidthChanged() { menu.followCascade() }
+        }
+        Connections {
+            target: menu.visible ? menu.parentViewerMenu : null
+            function onXChanged() { menu.followCascade() }
+            function onCascadedLeftChanged() { menu.followCascade() }
+        }
     }
 }

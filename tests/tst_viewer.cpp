@@ -2241,6 +2241,31 @@ private slots:
     QTRY_VERIFY(menu->property("visible").toBool());
     QTest::qWait(50);
     check(false);
+
+    // Narrowed while Sort is open on the left: its margin is worked out
+    // again, so it keeps its width instead of being squeezed.
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openViewForRender", Q_ARG(QVariant, QStringLiteral("viewer-menu"))));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QTest::qWait(50);
+    openRow(QStringLiteral("viewerMenu_group-view"), viewMenu);
+    openRow(QStringLiteral("viewerMenu_group-sort"), sortMenu);
+    const qreal sortWidth = bounds(sortMenu).width();
+    m_window->resize(700, 820);
+    QTRY_COMPARE(m_window->width(), 700);
+    QTest::qWait(100);
+    if (sortMenu->property("visible").toBool()) {
+      const QRectF sort = bounds(sortMenu);
+      QVERIFY2(sort.width() >= sortWidth - 1,
+               qPrintable(QStringLiteral("%1 < %2").arg(sort.width()).arg(sortWidth)));
+      QVERIFY(sort.left() >= 0 && sort.right() <= m_window->width());
+    }
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!menu->property("visible").toBool());
+    // Closed, the margin goes back to the window's own.
+    QCOMPARE(sortMenu->property("rightMargin").toReal(), 8.0);
+    m_window->resize(1280, 820);
   }
 
   // The file goes out as the same text/uri-list and text/plain a library
