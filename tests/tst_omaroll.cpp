@@ -7654,6 +7654,66 @@ private slots:
     QVERIFY(PdfSupport::wordsMatching({}, QStringLiteral("paid")).isEmpty());
     // A match across two lines is marked on both.
     QCOMPARE(PdfSupport::wordLines(page, {1, 2}).size(), 2);
+    // A match spanning several words marks each of them, from a partial
+    // first word to a partial last one.
+    QCOMPARE(PdfSupport::wordsMatching(page, QStringLiteral("ice total paid to")),
+             QList<QList<int>>({{0, 1, 2, 3}}));
+    QCOMPARE(PdfSupport::wordsMatching(page, QStringLiteral("l pa")), QList<QList<int>>({{1, 2}}));
+  }
+
+  // Many matches on a big page: each match's words are found directly, and
+  // the result is the same as checking every word against every match.
+  void pdfFindMarksManyMatchesOnALargePage() {
+    const auto makePage = [](int count) {
+      PdfSupport::PdfPageText page;
+      page.pageSize = QSizeF(600, 800);
+      const QStringList texts = {QStringLiteral("a"), QStringLiteral("banana"), QStringLiteral("cab"),
+                                 QStringLiteral(""), QStringLiteral("Aa"), QStringLiteral("x")};
+      for (int index = 0; index < count; ++index) {
+        PdfSupport::PdfWord word;
+        word.box = QRectF(10 + (index % 50) * 11, 10 + (index / 50) % 70 * 11, 10, 10);
+        word.text = texts.at(index % texts.size());
+        page.words.append(word);
+      }
+      return page;
+    };
+    const PdfSupport::PdfPageText large = makePage(40'000);
+    const PdfSupport::PdfPageText page = makePage(1'200);
+    // Every word against every match, as the search did before.
+    const auto reference = [&page](const QString& query) {
+      QList<QList<int>> found;
+      const QString needle = query.simplified().toCaseFolded();
+      QString text;
+      QList<qsizetype> starts;
+      for (const PdfSupport::PdfWord& word : page.words) {
+        if (!text.isEmpty()) text += QLatin1Char(' ');
+        starts.append(text.size());
+        text += word.text.simplified().toCaseFolded();
+      }
+      for (qsizetype from = 0;;) {
+        const qsizetype at = text.indexOf(needle, from);
+        if (at < 0) break;
+        const qsizetype end = at + needle.size();
+        QList<int> words;
+        for (qsizetype index = 0; index < starts.size(); ++index) {
+          const qsizetype wordEnd = index + 1 < starts.size() ? starts.at(index + 1) - 1 : text.size();
+          if (starts.at(index) < end && wordEnd > at) words.append(static_cast<int>(index));
+        }
+        if (!words.isEmpty()) found.append(words);
+        from = end;
+      }
+      return found;
+    };
+    QElapsedTimer timer;
+    timer.start();
+    const QList<QList<int>> many = PdfSupport::wordsMatching(large, QStringLiteral("a"));
+    QVERIFY(many.size() > 40'000);
+    QVERIFY2(timer.elapsed() < 5000, qPrintable(QString::number(timer.elapsed())));
+    // The reference is quadratic, so it is compared on a smaller page.
+    for (const QString& query : {QStringLiteral("a"), QStringLiteral("ana"), QStringLiteral("a  b"), QStringLiteral("x a"),
+                                 QStringLiteral("cab  aa x a banana"), QStringLiteral("b c")}) {
+      QCOMPARE(PdfSupport::wordsMatching(page, query), reference(query));
+    }
   }
 
   void pdfSelectionKeepsLinesApartWhenTheGapIsReal() {

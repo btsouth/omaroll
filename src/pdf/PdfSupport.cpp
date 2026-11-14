@@ -7,6 +7,7 @@
 #include <QTemporaryDir>
 #include <QXmlStreamReader>
 
+#include <algorithm>
 #include <cmath>
 #include <sys/resource.h>
 
@@ -315,11 +316,18 @@ QList<QList<int>> wordsMatching(const PdfPageText& page, const QString& query) {
     const qsizetype at = text.indexOf(needle, from);
     if (at < 0) break;
     const qsizetype end = at + needle.size();
+    const auto wordEnd = [&](qsizetype index) {
+      return index + 1 < starts.size() ? starts.at(index + 1) - 1 : text.size();
+    };
+    // The last word starting at or before the match, or the next one when
+    // the match starts on the space after it; then each word until one
+    // starts past the match.
+    qsizetype index = std::upper_bound(starts.cbegin(), starts.cend(), at) - starts.cbegin() - 1;
+    if (index < 0) index = 0;
+    if (wordEnd(index) <= at) ++index;
     QList<int> words;
-    for (qsizetype index = 0; index < starts.size(); ++index) {
-      const qsizetype wordEnd =
-          index + 1 < starts.size() ? starts.at(index + 1) - 1 : text.size();
-      if (starts.at(index) < end && wordEnd > at) words.append(static_cast<int>(index));
+    for (; index < starts.size() && starts.at(index) < end; ++index) {
+      words.append(static_cast<int>(index));
     }
     if (!words.isEmpty()) found.append(words);
     from = end;
