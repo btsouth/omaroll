@@ -70,7 +70,17 @@ ApplicationWindow {
                                       || launchRestore.visible
     readonly property bool anySheetOpen: modalOpen || detail.visible
     // A popup menu is up; the press that closes it must not also land under it.
-    readonly property bool folderSidebarVisible: Settings.showFolderSidebar && width >= 760
+    readonly property bool folderSidebarFits: width >= 760
+    readonly property bool folderSidebarVisible: Settings.showFolderSidebar && folderSidebarFits
+    // Below the sidebar's width the choice is kept for a wider window, and
+    // the button and F9 say why nothing appears rather than flip it unseen.
+    function toggleFolderSidebar() {
+        if (!root.folderSidebarFits) {
+            root.say("Widen the window to show the folder sidebar")
+            return
+        }
+        Settings.showFolderSidebar = !Settings.showFolderSidebar
+    }
     readonly property bool popupOpen: folderSidebar.menuOpen || filters.menuOpen || albumActionMenu.visible || contextMenu.visible || detail.contextMenuOpen
     // A menu takes the keyboard while it is up and does not give it back to
     // the grid on its own, which left the arrow keys dead until a tile was
@@ -1060,10 +1070,11 @@ ApplicationWindow {
                 accessibleName: "Folder sidebar"
                 checkable: true
                 enabled: !root.popupOpen
-                toolTip: "Toggle folder sidebar"
+                toolTip: root.folderSidebarFits ? "Toggle folder sidebar"
+                                                : "The window is too narrow for the folder sidebar"
                 shortcut: "F9"
-                active: Settings.showFolderSidebar
-                onClicked: Settings.showFolderSidebar = !Settings.showFolderSidebar
+                active: root.folderSidebarVisible
+                onClicked: root.toggleFolderSidebar()
             }
             PillButton {
                 id: selectionActions
@@ -2706,7 +2717,7 @@ ApplicationWindow {
         sequences: ShortcutCatalog.sequence("library", "folders")
         autoRepeat: false
         enabled: !root.anySheetOpen && !root.popupOpen && !filters.searchActive
-        onActivated: Settings.showFolderSidebar = !Settings.showFolderSidebar
+        onActivated: root.toggleFolderSidebar()
     }
     // Tile size, the way every browser and file manager does it.
     Shortcut {

@@ -8930,7 +8930,16 @@ private slots:
     m_window->resize(560, 420);
     QTRY_VERIFY(!item("folderSidebar")->isVisible());
     QVERIFY(AppSettings().showFolderSidebar());
+    // The button shows what is on screen and says why, and neither it nor
+    // F9 flips the kept choice while nothing could appear.
+    QQuickItem* toggle = item("folderSidebarToggle");
+    QVERIFY(!toggle->property("active").toBool());
+    QVERIFY(toggle->property("toolTip").toString().contains(QStringLiteral("too narrow")));
+    QTest::keyClick(m_window, Qt::Key_F9);
+    QVERIFY(m_settings->showFolderSidebar());
+    QTRY_VERIFY(item("footerStatus")->property("text").toString().contains(QStringLiteral("Widen")));
     m_window->resize(760, 600);
+    QTRY_VERIFY(toggle->property("active").toBool());
     QTRY_VERIFY(item("folderSidebar")->isVisible());
     QVERIFY(item("library")->width() > 450);
   }
