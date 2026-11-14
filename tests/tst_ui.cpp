@@ -5043,6 +5043,9 @@ private slots:
     QVERIFY(!item("audioTrackButton")->isVisible());
     QVERIFY(!item("subtitleButton")->isVisible());
     QVERIFY(!detail->property("playbackMuted").toBool());
+    // Full screen beside the transport is drawn like the transport.
+    QVERIFY(item("previewFullscreenPill")->property("osd").toBool());
+    QVERIFY(item("previewTopControlsPanel")->property("osd").toBool());
 
     // A control collapsed for want of a second audio track or a subtitle must
     // not leave its label drawn over the clock.

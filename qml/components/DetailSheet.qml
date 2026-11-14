@@ -2025,11 +2025,18 @@ Item {
                 width: topControls.implicitWidth + 10
                 height: topControls.implicitHeight + 10
                 radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 4
-                color: Qt.rgba(Theme.darkerBackground.r, Theme.darkerBackground.g,
-                               Theme.darkerBackground.b, 0.70)
+                // Beside a video's transport it is drawn the same way, so the
+                // light theme does not leave a pale, disabled looking pill
+                // next to the dark bar.
+                objectName: "previewTopControlsPanel"
+                readonly property bool osd: root.isVideo
+                color: osd ? Osd.panel
+                           : Qt.rgba(Theme.darkerBackground.r, Theme.darkerBackground.g,
+                                     Theme.darkerBackground.b, 0.70)
                 border.width: 1
-                border.color: Qt.rgba(Theme.foreground.r, Theme.foreground.g,
-                                      Theme.foreground.b, 0.16)
+                border.color: osd ? Osd.border
+                                  : Qt.rgba(Theme.foreground.r, Theme.foreground.g,
+                                            Theme.foreground.b, 0.16)
 
                 Row {
                     id: topControls
@@ -2038,6 +2045,7 @@ Item {
 
                     PillButton {
                         objectName: "viewerSlideshowButton"
+                        osd: topControlsPanel.osd
                         visible: !root.isVideo || root.slideshowRunning
                         enabled: root.canNavigate
                         label: root.compactControls
@@ -2049,6 +2057,8 @@ Item {
                         onClicked: root.setSlideshow(!root.slideshowRunning)
                     }
                     PillButton {
+                        objectName: "previewFullscreenPill"
+                        osd: topControlsPanel.osd
                         visible: root.isVideo || root.slideshowRunning
                         label: root.fullScreen ? "↙" : (root.compactControls ? "⛶" : "Fullscreen")
                         toolTip: root.fullScreen ? "Exit fullscreen"
