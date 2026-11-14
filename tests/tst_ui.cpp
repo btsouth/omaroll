@@ -89,6 +89,7 @@
 #include <QSettings>
 #include <QElapsedTimer>
 #include <QSet>
+#include <QTextLayout>
 #include <QStandardPaths>
 #include <QStyleHints>
 #include <QTemporaryDir>
@@ -6970,6 +6971,29 @@ private slots:
     QVERIFY(content);
     // Wrapped onto several lines rather than one long one.
     QVERIFY(content->height() > 2 * tip->property("font").value<QFont>().pixelSize());
+    // At any width, the examples stay whole: no line ends on the minus of
+    // -word or splits the quoted phrase.
+    const QString text = tip->property("text").toString();
+    const QFont font = tip->property("font").value<QFont>();
+    for (int width = 160; width <= 420; width += 4) {
+      QTextLayout layout(text, font);
+      QTextOption option;
+      option.setWrapMode(QTextOption::WordWrap);
+      layout.setTextOption(option);
+      layout.beginLayout();
+      QStringList lines;
+      for (QTextLine line = layout.createLine(); line.isValid(); line = layout.createLine()) {
+        line.setLineWidth(width);
+        lines.append(text.mid(line.textStart(), line.textLength()).trimmed());
+      }
+      layout.endLayout();
+      for (const QString& line : lines) {
+        QVERIFY2(!line.endsWith(u'-') && !line.endsWith(QStringLiteral("-⁠")),
+                 qPrintable(QStringLiteral("%1: %2").arg(width).arg(lines.join(u'|'))));
+        QVERIFY2(!line.endsWith(QStringLiteral("\"quote")) && !line.startsWith(QStringLiteral("phrase\"")),
+                 qPrintable(QStringLiteral("%1: %2").arg(width).arg(lines.join(u'|'))));
+      }
+    }
   }
 
   // The themed tooltip a button or row owns.

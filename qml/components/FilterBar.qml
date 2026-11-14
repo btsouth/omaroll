@@ -365,11 +365,15 @@ Item {
         }
 
         HoverHandler { id: searchHover; cursorShape: Qt.IBeamCursor }
+        // The examples are kept whole when the tip wraps: a word joiner
+        // holds the minus to its word, and no-break spaces hold the quoted
+        // phrase together.
         ThemedToolTip {
+            objectName: "searchToolTip"
             requested: searchHover.hovered && !search.activeFocus
             text: "Search names, text, tags, albums, folders and cameras. "
                   + "Narrow with tag:, album:, in:, camera:, lens:, type:, before: and after:, "
-                  + "\"quote a phrase\" or leave out a -word."
+                  + "\"quote a phrase\" or leave out a -⁠word."
         }
 
         SearchSuggestions {
