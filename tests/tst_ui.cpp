@@ -9527,8 +9527,15 @@ private slots:
     const auto detachAudio = qScopeGuard([&] { player->setAudioBufferOutput(nullptr); });
     QTRY_VERIFY(frequency > 350 && frequency < 530);
     const int audioTrack = player->activeAudioTrack();
-    click(item("audioTrackButton"));
+    // The backend does not signal track changes; the label must still name
+    // a real track, before and after a switch.
+    QQuickItem* audioButton = item("audioTrackButton");
+    QCOMPARE(audioButton->property("label").toString(),
+             QStringLiteral("Audio %1").arg(std::max(0, audioTrack) + 1));
+    click(audioButton);
     QTRY_COMPARE(player->activeAudioTrack(), (audioTrack + 1) % 2);
+    QCOMPARE(audioButton->property("label").toString(),
+             QStringLiteral("Audio %1").arg(player->activeAudioTrack() + 1));
     QTRY_VERIFY(frequency > 760 && frequency < 1000);
     const int subtitleTrack = player->activeSubtitleTrack();
     click(item("subtitleButton"));

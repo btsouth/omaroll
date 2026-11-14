@@ -168,6 +168,10 @@ Item {
     property var subtitleFiles: []
     property string externalSubtitle: ""
     property int subtitleChoice: 0
+    // The audio track in use, kept here: the ffmpeg backend does not signal
+    // a track change, so a binding on the player's own index stays at the -1
+    // it read before the file loaded ("Audio 0").
+    property int audioTrackChoice: 0
     // A timing nudge for sidecar subtitles, which are the ones omaroll draws
     // itself. Positive shows the cue later.
     property int subtitleOffsetMs: 0
@@ -394,6 +398,7 @@ Item {
         resumePending = true
         externalSubtitle = ""
         subtitleChoice = 0
+        audioTrackChoice = 0
         subtitleOffsetMs = 0
         subtitleFiles = Subtitles.files(path)
         const keepActionFocus = visible && actionNavigationActive
@@ -668,7 +673,9 @@ Item {
     function cycleAudioTrack() {
         const count = player.audioTracks.length
         if (count > 1) {
-            player.activeAudioTrack = (player.activeAudioTrack + 1) % count
+            const next = (Math.max(0, player.activeAudioTrack) + 1) % count
+            player.activeAudioTrack = next
+            audioTrackChoice = player.activeAudioTrack >= 0 ? player.activeAudioTrack : next
             if (presentation) presentation.trackChanged()
         }
     }
@@ -1548,6 +1555,7 @@ Item {
                                 Settings.setVideoPosition(root.path, Math.round(position), mediaPlayer.resumeIdentity)
                             }
                         }
+                        onTracksChanged: root.audioTrackChoice = Math.max(0, mediaPlayer.activeAudioTrack)
                         onMediaStatusChanged: {
                             if (mediaStatus === MediaPlayer.LoadedMedia && root.isVideo
                                     && root.resumePending && !root.slideshowRunning) {
@@ -2411,7 +2419,7 @@ Item {
                         height: 30
                         anchors.left: parent.left
                         anchors.verticalCenter: parent.verticalCenter
-                        label: "Audio " + (player ? player.activeAudioTrack + 1 : 1)
+                        label: "Audio " + (root.audioTrackChoice + 1)
                         toolTip: "Switch audio track"
                         onClicked: root.cycleAudioTrack()
                     }
