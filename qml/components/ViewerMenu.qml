@@ -16,10 +16,33 @@ Menu {
     property var hostWindow: null
     // What rebuildMenu() last built, for a menu put together by hand.
     property string builtRows: ""
+    // The menu this one opens from, for a submenu.
+    property var parentViewerMenu: null
+    // Whether it opened on the left of the row that opened it. Its x is
+    // relative to that row.
+    readonly property bool cascadedLeft: parentViewerMenu !== null && x < 0
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
     }
+
+    // A submenu opens to the right of its row and flips left only at the
+    // window's edge. A submenu of one that already flipped would then open
+    // back over the menu it came from, so while there is room on the left
+    // the window's right edge is moved in to where its parent starts, and
+    // Qt flips it left as it does at the edge. (Its position cannot be set
+    // directly: Qt places a cascading submenu again on every change.)
+    function followCascade() {
+        let right = 8
+        const from = menu.parentViewerMenu
+        if (from && from.cascadedLeft && from.background && menu.hostWindow) {
+            const start = from.background.mapToItem(null, 0, 0).x
+            if (start - menu.width + menu.overlap >= 8)
+                right = Math.max(8, menu.hostWindow.width - start - menu.overlap)
+        }
+        menu.rightMargin = right
+    }
+    onAboutToShow: followCascade()
 
     // An item, not a separate window: a window menu is placed by the
     // compositor and was left running off the bottom of a short window.
