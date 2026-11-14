@@ -25,6 +25,10 @@ class PdfInspector final : public QObject {
   Q_PROPERTY(int selectionPage READ selectionPage NOTIFY selectionChanged)
   Q_PROPERTY(bool hasSelection READ hasSelection NOTIFY selectionChanged)
   Q_PROPERTY(QVariantList selectionRects READ selectionRects NOTIFY selectionChanged)
+  // Where the search query is on matchPage, one normalized rectangle per line
+  // of each occurrence, for the highlight on that page.
+  Q_PROPERTY(int matchPage READ matchPage NOTIFY matchRectsChanged)
+  Q_PROPERTY(QVariantList matchRects READ matchRects NOTIFY matchRectsChanged)
 
 public:
   explicit PdfInspector(QObject* parent = nullptr);
@@ -41,11 +45,16 @@ public:
   [[nodiscard]] bool hasSelection() const { return !m_selectionText.isEmpty(); }
   [[nodiscard]] QVariantList selectionRects() const { return m_selectionRects; }
   [[nodiscard]] QString selectionText() const { return m_selectionText; }
+  [[nodiscard]] int matchPage() const { return m_matchPage; }
+  [[nodiscard]] QVariantList matchRects() const { return m_matchRects; }
   Q_INVOKABLE void inspect(const QString& path);
   Q_INVOKABLE void clear();
   // Searches the inspected document with pdftotext, asynchronously.
   Q_INVOKABLE void find(const QString& query);
   Q_INVOKABLE void clearSearch();
+  // Marks where the query is on page, one of the matching pages; any other
+  // page clears the marks. The words arrive asynchronously on first use.
+  Q_INVOKABLE void showMatches(int page);
   // Extracts one page's text and copies it to the clipboard.
   Q_INVOKABLE void copyPageText(int page);
   // Marks the part of a page the reader dragged over, in page coordinates
@@ -63,6 +72,7 @@ signals:
   void textCopied(int page);
   void textCopyFailed(const QString& message);
   void selectionChanged();
+  void matchRectsChanged();
   void selectionCopied(int words);
   void selectionFailed(const QString& message);
 
@@ -76,8 +86,10 @@ private:
   void stopProcess(QProcess& process, QTimer& timer);
   bool currentVersion();
   void searchText();
-  void startPageWords(int page);
+  void startPageWords(int page, bool forSelection);
   void applyPendingSelection();
+  void applyMatches();
+  void setMatchRects(int page, const QVariantList& rects);
   void resetPageWords();
 
   QProcess m_process;
@@ -121,4 +133,8 @@ private:
   QList<int> m_selectionIndexes;
   QVariantList m_selectionRects;
   QString m_selectionText;
+  int m_matchWantedPage = 0;
+  quint64 m_matchRequest = 0;
+  int m_matchPage = 0;
+  QVariantList m_matchRects;
 };

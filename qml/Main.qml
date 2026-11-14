@@ -70,7 +70,17 @@ ApplicationWindow {
                                       || launchRestore.visible
     readonly property bool anySheetOpen: modalOpen || detail.visible
     // A popup menu is up; the press that closes it must not also land under it.
-    readonly property bool folderSidebarVisible: Settings.showFolderSidebar && width >= 760
+    readonly property bool folderSidebarFits: width >= 760
+    readonly property bool folderSidebarVisible: Settings.showFolderSidebar && folderSidebarFits
+    // Below the sidebar's width the choice is kept for a wider window, and
+    // the button and F9 say why nothing appears rather than flip it unseen.
+    function toggleFolderSidebar() {
+        if (!root.folderSidebarFits) {
+            root.say("Widen the window to show the folder sidebar")
+            return
+        }
+        Settings.showFolderSidebar = !Settings.showFolderSidebar
+    }
     readonly property bool popupOpen: folderSidebar.menuOpen || filters.menuOpen || albumActionMenu.visible || contextMenu.visible || detail.contextMenuOpen
     // A menu takes the keyboard while it is up and does not give it back to
     // the grid on its own, which left the arrow keys dead until a tile was
@@ -216,7 +226,7 @@ ApplicationWindow {
             return
         case "organize":
             albumActionMenu.targetPaths = [path]
-            albumActionMenu.popup(root.contentItem, contextMenu.x, contextMenu.y)
+            root.popupAlbumMenuAtContextMenu()
             return
         case "companion": {
             const companion = Captures.companionPathAt(row)
@@ -695,8 +705,17 @@ ApplicationWindow {
             root.trashPending()
             return
         }
+        // The .xmp sidecars that go with them, from the same lookup Trash
+        // makes for each file.
+        let sidecars = 0
+        if (title === undefined) {
+            for (const target of targets) sidecars += Actions.sidecarCount(target.path)
+        }
         confirm.title = title === undefined
-                        ? "Move " + paths.length + " items to Trash?" : title
+                        ? "Move " + paths.length + " items"
+                          + (sidecars > 0 ? " and " + (sidecars === 1 ? "a sidecar" : sidecars + " sidecars") : "")
+                          + " to Trash?"
+                        : title
         confirm.detail = detail === undefined
                          ? paths.length + " files. They stay recoverable from your file manager."
                          : detail
@@ -1060,10 +1079,11 @@ ApplicationWindow {
                 accessibleName: "Folder sidebar"
                 checkable: true
                 enabled: !root.popupOpen
-                toolTip: "Toggle folder sidebar"
+                toolTip: root.folderSidebarFits ? "Toggle folder sidebar"
+                                                : "The window is too narrow for the folder sidebar"
                 shortcut: "F9"
-                active: Settings.showFolderSidebar
-                onClicked: Settings.showFolderSidebar = !Settings.showFolderSidebar
+                active: root.folderSidebarVisible
+                onClicked: root.toggleFolderSidebar()
             }
             PillButton {
                 id: selectionActions
@@ -1236,7 +1256,8 @@ ApplicationWindow {
             objectName: "pinnedFolders"
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors.rightMargin: 12
+            anchors.leftMargin: 20
+            anchors.rightMargin: 20
             height: parent.height
             onChosen: function(path) { root.openFolder(path) }
         }
@@ -1443,12 +1464,20 @@ ApplicationWindow {
         contextMenu.popup(root.contentItem, x, y)
     }
 
+    // The context menu's x and y are relative to whatever it popped up from,
+    // which is the Actions button when opened from the header.
+    function popupAlbumMenuAtContextMenu() {
+        const from = contextMenu.parent || root.contentItem
+        const point = from.mapToItem(root.contentItem, contextMenu.x, contextMenu.y)
+        albumActionMenu.popup(root.contentItem, point.x, point.y)
+    }
+
     function performContextAction(id, paths, batch) {
         if (!batch && paths.length === 1) { root.performForTargets(id, paths[0], undefined, paths); return }
         switch (id) {
         case "organize":
             albumActionMenu.targetPaths = paths.slice()
-            albumActionMenu.popup(root.contentItem, contextMenu.x, contextMenu.y); break
+            root.popupAlbumMenuAtContextMenu(); break
         case "copy": Actions.copyUris(paths); break
         case "print": Registry.runBatch("print", paths); break
         case "send": Registry.runBatch("send", paths); break
@@ -2697,7 +2726,7 @@ ApplicationWindow {
         sequences: ShortcutCatalog.sequence("library", "folders")
         autoRepeat: false
         enabled: !root.anySheetOpen && !root.popupOpen && !filters.searchActive
-        onActivated: Settings.showFolderSidebar = !Settings.showFolderSidebar
+        onActivated: root.toggleFolderSidebar()
     }
     // Tile size, the way every browser and file manager does it.
     Shortcut {

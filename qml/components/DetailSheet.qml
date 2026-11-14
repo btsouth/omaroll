@@ -168,6 +168,10 @@ Item {
     property var subtitleFiles: []
     property string externalSubtitle: ""
     property int subtitleChoice: 0
+    // The audio track in use, kept here: the ffmpeg backend does not signal
+    // a track change, so a binding on the player's own index stays at the -1
+    // it read before the file loaded ("Audio 0").
+    property int audioTrackChoice: 0
     // A timing nudge for sidecar subtitles, which are the ones omaroll draws
     // itself. Positive shows the cue later.
     property int subtitleOffsetMs: 0
@@ -394,6 +398,7 @@ Item {
         resumePending = true
         externalSubtitle = ""
         subtitleChoice = 0
+        audioTrackChoice = 0
         subtitleOffsetMs = 0
         subtitleFiles = Subtitles.files(path)
         const keepActionFocus = visible && actionNavigationActive
@@ -668,7 +673,9 @@ Item {
     function cycleAudioTrack() {
         const count = player.audioTracks.length
         if (count > 1) {
-            player.activeAudioTrack = (player.activeAudioTrack + 1) % count
+            const next = (Math.max(0, player.activeAudioTrack) + 1) % count
+            player.activeAudioTrack = next
+            audioTrackChoice = player.activeAudioTrack >= 0 ? player.activeAudioTrack : next
             if (presentation) presentation.trackChanged()
         }
     }
@@ -1548,6 +1555,7 @@ Item {
                                 Settings.setVideoPosition(root.path, Math.round(position), mediaPlayer.resumeIdentity)
                             }
                         }
+                        onTracksChanged: root.audioTrackChoice = Math.max(0, mediaPlayer.activeAudioTrack)
                         onMediaStatusChanged: {
                             if (mediaStatus === MediaPlayer.LoadedMedia && root.isVideo
                                     && root.resumePending && !root.slideshowRunning) {
@@ -1728,6 +1736,8 @@ Item {
                     } else {
                         root.pdfMatchIndex = 0
                     }
+                    // Marked on the page even when it was already showing.
+                    PdfInfo.showMatches(root.pdfPage)
                 }
                 function onSearchFailed(message) {
                     root.statusRequested(message)
@@ -1761,6 +1771,8 @@ Item {
                     if (root.isDocument && !root.pdfFitWidth) {
                         PdfInfo.clearSelection()
                     }
+                    // The query is marked on the page in view.
+                    if (root.isDocument) PdfInfo.showMatches(root.pdfPage)
                 }
                 function onPdfFitWidthChanged() {
                     if (root.isDocument && root.pdfFitWidth) {
@@ -1769,8 +1781,34 @@ Item {
                 }
             }
 
+            // The find and page rows sit over the page, which is usually
+            // white: they get the same themed panel as the other controls
+            // over media, but opaque: the page's text under a see-through
+            // panel shows between the controls on a light theme.
+            Rectangle {
+                objectName: "pdfControlsPanel"
+                visible: pdfPageRow.visible
+                readonly property Item topRow: pdfSearchRow.visible ? pdfSearchRow : pdfPageRow
+                x: Math.min(topRow.x, pdfPageRow.x) - 8
+                y: topRow.y - 6
+                width: Math.max(topRow.width, pdfPageRow.width) + 16
+                height: pdfPageRow.y + pdfPageRow.height + 6 - y
+                radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 4
+                color: Qt.rgba(Theme.darkerBackground.r, Theme.darkerBackground.g,
+                               Theme.darkerBackground.b, 1)
+                border.width: 1
+                border.color: Qt.rgba(Theme.foreground.r, Theme.foreground.g,
+                                      Theme.foreground.b, 0.16)
+                // A press in a gap between controls stays off the page.
+                MouseArea {
+                    anchors.fill: parent
+                    acceptedButtons: Qt.AllButtons
+                }
+            }
+
             // PDF text search. Page navigation stays in the row below it.
             Row {
+                id: pdfSearchRow
                 objectName: "pdfSearchRow"
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: parent.bottom
@@ -1869,6 +1907,7 @@ Item {
             }
 
             Row {
+                id: pdfPageRow
                 objectName: "pdfPageRow"
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: parent.bottom
@@ -1986,11 +2025,18 @@ Item {
                 width: topControls.implicitWidth + 10
                 height: topControls.implicitHeight + 10
                 radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 4
-                color: Qt.rgba(Theme.darkerBackground.r, Theme.darkerBackground.g,
-                               Theme.darkerBackground.b, 0.70)
+                // Beside a video's transport it is drawn the same way, so the
+                // light theme does not leave a pale, disabled looking pill
+                // next to the dark bar.
+                objectName: "previewTopControlsPanel"
+                readonly property bool osd: root.isVideo
+                color: osd ? Osd.panel
+                           : Qt.rgba(Theme.darkerBackground.r, Theme.darkerBackground.g,
+                                     Theme.darkerBackground.b, 0.70)
                 border.width: 1
-                border.color: Qt.rgba(Theme.foreground.r, Theme.foreground.g,
-                                      Theme.foreground.b, 0.16)
+                border.color: osd ? Osd.border
+                                  : Qt.rgba(Theme.foreground.r, Theme.foreground.g,
+                                            Theme.foreground.b, 0.16)
 
                 Row {
                     id: topControls
@@ -1999,6 +2045,7 @@ Item {
 
                     PillButton {
                         objectName: "viewerSlideshowButton"
+                        osd: topControlsPanel.osd
                         visible: !root.isVideo || root.slideshowRunning
                         enabled: root.canNavigate
                         label: root.compactControls
@@ -2010,6 +2057,8 @@ Item {
                         onClicked: root.setSlideshow(!root.slideshowRunning)
                     }
                     PillButton {
+                        objectName: "previewFullscreenPill"
+                        osd: topControlsPanel.osd
                         visible: root.isVideo || root.slideshowRunning
                         label: root.fullScreen ? "↙" : (root.compactControls ? "⛶" : "Fullscreen")
                         toolTip: root.fullScreen ? "Exit fullscreen"
@@ -2380,7 +2429,7 @@ Item {
                         height: 30
                         anchors.left: parent.left
                         anchors.verticalCenter: parent.verticalCenter
-                        label: "Audio " + (player ? player.activeAudioTrack + 1 : 1)
+                        label: "Audio " + (root.audioTrackChoice + 1)
                         toolTip: "Switch audio track"
                         onClicked: root.cycleAudioTrack()
                     }
@@ -2948,10 +2997,7 @@ Item {
                     readonly property string displayLabel: modelData.id === "play"
                                                            ? "Open in mpv" : modelData.label
                     readonly property string shortcut: modelData.shortcut
-                    readonly property string toolTipText: modelData.shortcut !== ""
-                                                           ? row.displayLabel + "  ·  "
-                                                             + modelData.shortcut
-                                                           : row.displayLabel
+                    readonly property string toolTipText: row.displayLabel
 
                     Accessible.role: Accessible.Button
                     Accessible.name: row.displayLabel
@@ -3010,6 +3056,7 @@ Item {
                     ThemedToolTip {
                         requested: rowHover.hovered && row.toolTipText !== ""
                         text: row.toolTipText
+                        shortcut: row.shortcut
                         delay: 500
                     }
 

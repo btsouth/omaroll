@@ -7,6 +7,7 @@
 #include <QTemporaryDir>
 #include <QXmlStreamReader>
 
+#include <algorithm>
 #include <cmath>
 #include <sys/resource.h>
 
@@ -294,6 +295,44 @@ QList<QRectF> wordLines(const PdfPageText& page, const QList<int>& indexes) {
                         box.height() / page.pageSize.height()));
   }
   return lines;
+}
+
+QList<QList<int>> wordsMatching(const PdfPageText& page, const QString& query) {
+  QList<QList<int>> found;
+  const QString needle = normalized(query).toCaseFolded();
+  if (needle.isEmpty() || page.words.isEmpty()) return found;
+  // The words joined by single spaces, each folded on its own so the offsets
+  // stay its own even where folding changes a word's length.
+  QString text;
+  QList<qsizetype> starts;
+  starts.reserve(page.words.size());
+  for (const PdfWord& word : page.words) {
+    if (!text.isEmpty()) text += QLatin1Char(' ');
+    starts.append(text.size());
+    text += normalized(word.text).toCaseFolded();
+  }
+  qsizetype from = 0;
+  while (true) {
+    const qsizetype at = text.indexOf(needle, from);
+    if (at < 0) break;
+    const qsizetype end = at + needle.size();
+    const auto wordEnd = [&](qsizetype index) {
+      return index + 1 < starts.size() ? starts.at(index + 1) - 1 : text.size();
+    };
+    // The last word starting at or before the match, or the next one when
+    // the match starts on the space after it; then each word until one
+    // starts past the match.
+    qsizetype index = std::upper_bound(starts.cbegin(), starts.cend(), at) - starts.cbegin() - 1;
+    if (index < 0) index = 0;
+    if (wordEnd(index) <= at) ++index;
+    QList<int> words;
+    for (; index < starts.size() && starts.at(index) < end; ++index) {
+      words.append(static_cast<int>(index));
+    }
+    if (!words.isEmpty()) found.append(words);
+    from = end;
+  }
+  return found;
 }
 
 } // namespace PdfSupport

@@ -2176,6 +2176,98 @@ private slots:
     QTRY_VERIFY(!menu->property("visible").toBool());
   }
 
+  // View > Sort opens beside View on the side away from the top menu, never
+  // over it: to the right from a menu near the left edge, and to the left
+  // when the top menu sits at the right edge and View has already flipped.
+  void viewerSubmenusCascadeAwayFromTheTopMenu() {
+    // One file, so its folder is the sequence and can be sorted.
+    open({media(QStringLiteral("Shot 1.jpg"))});
+    QTRY_VERIFY(m_session->count() > 1);
+    QTRY_VERIFY(prop("imageReady").toBool());
+    m_window->resize(1280, 820);
+    QTRY_COMPARE(m_window->width(), 1280);
+    auto* menu = m_window->findChild<QObject*>(QStringLiteral("viewerMenu"));
+    auto* viewMenu = m_window->findChild<QObject*>(QStringLiteral("viewerSubmenu_view"));
+    auto* sortMenu = m_window->findChild<QObject*>(QStringLiteral("viewerSubmenu_sort"));
+    QVERIFY(menu && viewMenu && sortMenu);
+    const auto bounds = [](QObject* popup) {
+      auto* box = popup->property("background").value<QQuickItem*>();
+      return box->mapRectToScene(box->boundingRect());
+    };
+    const auto openRow = [&](const QString& name, QObject* submenu) {
+      QQuickItem* row = item(name);
+      QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, centre(row));
+      QTRY_VERIFY(submenu->property("visible").toBool());
+      QTest::qWait(50);
+    };
+    const auto check = [&](bool leftward) {
+      openRow(QStringLiteral("viewerMenu_group-view"), viewMenu);
+      openRow(QStringLiteral("viewerMenu_group-sort"), sortMenu);
+      const QRectF top = bounds(menu);
+      const QRectF view = bounds(viewMenu);
+      const QRectF sort = bounds(sortMenu);
+      const auto overlap = [](const QRectF& a, const QRectF& b) {
+        return std::min(a.right(), b.right()) - std::max(a.left(), b.left());
+      };
+      // The few pixels of Menu.overlap are fine; a whole menu over another is not.
+      QVERIFY2(overlap(sort, top) <= 8,
+               qPrintable(QStringLiteral("sort %1..%2 top %3..%4").arg(sort.left()).arg(sort.right())
+                              .arg(top.left()).arg(top.right())));
+      QVERIFY(overlap(view, top) <= 8);
+      QVERIFY(sort.left() >= 0 && sort.right() <= m_window->width());
+      QCOMPARE(sort.center().x() < view.center().x(), leftward);
+      QCOMPARE(view.center().x() < top.center().x(), leftward);
+      // The rows' chevrons point the way their submenus went.
+      QCOMPARE(item(QStringLiteral("viewerMenu_group-viewArrow"))->property("pointsLeft").toBool(), leftward);
+      QCOMPARE(item(QStringLiteral("viewerMenu_group-sortArrow"))->property("pointsLeft").toBool(), leftward);
+      QTest::keyClick(m_window, Qt::Key_Escape);
+      QTest::keyClick(m_window, Qt::Key_Escape);
+      QTest::keyClick(m_window, Qt::Key_Escape);
+      QTRY_VERIFY(!menu->property("visible").toBool());
+    };
+
+    // From the toolbar's More button, at the top right.
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openViewForRender", Q_ARG(QVariant, QStringLiteral("viewer-menu"))));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QTest::qWait(50);
+    check(true);
+    // Opened again from the right edge: the same, not a stale position.
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openViewForRender", Q_ARG(QVariant, QStringLiteral("viewer-menu"))));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QTest::qWait(50);
+    check(true);
+    // From the left: both open to the right.
+    QTest::mouseClick(m_window, Qt::RightButton, Qt::NoModifier, QPoint(40, 120));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QTest::qWait(50);
+    check(false);
+
+    // Narrowed while Sort is open on the left: its margin is worked out
+    // again, so it keeps its width instead of being squeezed.
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openViewForRender", Q_ARG(QVariant, QStringLiteral("viewer-menu"))));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QTest::qWait(50);
+    openRow(QStringLiteral("viewerMenu_group-view"), viewMenu);
+    openRow(QStringLiteral("viewerMenu_group-sort"), sortMenu);
+    const qreal sortWidth = bounds(sortMenu).width();
+    m_window->resize(700, 820);
+    QTRY_COMPARE(m_window->width(), 700);
+    QTest::qWait(100);
+    if (sortMenu->property("visible").toBool()) {
+      const QRectF sort = bounds(sortMenu);
+      QVERIFY2(sort.width() >= sortWidth - 1,
+               qPrintable(QStringLiteral("%1 < %2").arg(sort.width()).arg(sortWidth)));
+      QVERIFY(sort.left() >= 0 && sort.right() <= m_window->width());
+    }
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!menu->property("visible").toBool());
+    // Closed, the margin goes back to the window's own.
+    QCOMPARE(sortMenu->property("rightMargin").toReal(), 8.0);
+    m_window->resize(1280, 820);
+  }
+
   // The file goes out as the same text/uri-list and text/plain a library
   // tile carries, from a Ctrl+drag on the picture or a drag on its name.
   void dragOutCarriesWhatALibraryTileCarries() {
@@ -6707,6 +6799,14 @@ private slots:
     QVERIFY(window);
     QVERIFY(QTest::qWaitForWindowExposed(window));
     QTRY_COMPARE(m_actions->sidecarCount(solo), 1);
+    // The Trash question says the sidecar goes too.
+    QVERIFY(QMetaObject::invokeMethod(window, "requestTrash"));
+    auto* confirm = window->findChild<QQuickItem*>(QStringLiteral("viewerConfirm"));
+    QVERIFY(confirm);
+    QTRY_VERIFY(confirm->isVisible());
+    QCOMPARE(confirm->property("title").toString(), QStringLiteral("Move this item and its sidecar to Trash?"));
+    QVERIFY(QMetaObject::invokeMethod(confirm, "close"));
+    QTRY_VERIFY(!confirm->isVisible());
 
     QVariantMap captured = m_actions->captureFileAction(solo, solo);
     captured.insert(QStringLiteral("viewedPath"), solo);

@@ -365,11 +365,15 @@ Item {
         }
 
         HoverHandler { id: searchHover; cursorShape: Qt.IBeamCursor }
+        // The examples are kept whole when the tip wraps: a word joiner
+        // holds the minus to its word, and no-break spaces hold the quoted
+        // phrase together.
         ThemedToolTip {
+            objectName: "searchToolTip"
             requested: searchHover.hovered && !search.activeFocus
             text: "Search names, text, tags, albums, folders and cameras. "
                   + "Narrow with tag:, album:, in:, camera:, lens:, type:, before: and after:, "
-                  + "\"quote a phrase\" or leave out a -word."
+                  + "\"quote a phrase\" or leave out a -⁠word."
         }
 
         SearchSuggestions {
@@ -442,7 +446,7 @@ Item {
 
         background: Rectangle {
             implicitWidth: 170
-            color: root.shade(Theme.background, 0.97)
+            color: Theme.background
             border.width: 1
             border.color: root.shade(Theme.foreground, 0.16)
             radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
@@ -489,7 +493,8 @@ Item {
                 }
 
                 background: Rectangle {
-                    color: kindRow.hovered ? root.shade(Theme.foreground, 0.08) : "transparent"
+                    color: kindRow.highlighted ? root.shade(Theme.foreground, 0.09) : "transparent"
+                    radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 3) : 0
                 }
 
                 onTriggered: Captures.kindFilter = kindRow.modelData.kind
@@ -507,7 +512,7 @@ Item {
 
         background: Rectangle {
             implicitWidth: 150
-            color: root.shade(Theme.background, 0.97)
+            color: Theme.background
             border.width: 1
             border.color: root.shade(Theme.foreground, 0.16)
             radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
@@ -540,7 +545,8 @@ Item {
                 }
 
                 background: Rectangle {
-                    color: sortRow.hovered ? root.shade(Theme.foreground, 0.08) : "transparent"
+                    color: sortRow.highlighted ? root.shade(Theme.foreground, 0.09) : "transparent"
+                    radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 3) : 0
                 }
 
                 onTriggered: Captures.sortMode = sortRow.index

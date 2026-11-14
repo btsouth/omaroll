@@ -70,6 +70,21 @@ QString codecLabel(QString codec) {
   return codec.toUpper();
 }
 
+// A track's language as the player names it: Qt reads the same ISO 639 tag
+// and shows QLocale's name for it. Empty when untagged or undetermined.
+QString trackLanguage(const QJsonObject& stream) {
+  const QString code =
+      stream.value(QStringLiteral("tags")).toObject().value(QStringLiteral("language")).toString().trimmed();
+  if (code.isEmpty()) return {};
+  const QLocale::Language language = QLocale::codeToLanguage(code, QLocale::AnyLanguageCode);
+  if (language == QLocale::AnyLanguage || language == QLocale::C) return {};
+  return QLocale::languageToString(language);
+}
+
+QString trackTitle(const QJsonObject& stream) {
+  return stream.value(QStringLiteral("tags")).toObject().value(QStringLiteral("title")).toString().trimmed();
+}
+
 // An EXIF GPS degrees, minutes, seconds triple: "47/1, 36/1, 2232/100".
 double degrees(const QString& value, bool* okay) {
   const QStringList parts = value.split(QLatin1Char(','), Qt::SkipEmptyParts);
@@ -220,7 +235,8 @@ void MediaInspector::inspect(const QString& path, bool video) {
                                    "com.apple.quicktime.location.ISO6709:stream="
                                    "codec_type,codec_name,profile,pix_fmt,"
                                    "r_frame_rate,bit_rate,sample_rate,channel_layout,"
-                                   "color_transfer,color_primaries:stream_side_data"),
+                                   "color_transfer,color_primaries:stream_tags=language,title:"
+                                   "stream_side_data"),
                     QStringLiteral("-of"), QStringLiteral("json"), path});
   } else {
     // Fixed fields and fixed order make this independent of locale and of the
@@ -397,14 +413,17 @@ QStringList MediaInspector::parseVideo(const QByteArray& output, const QString& 
   const QJsonObject root = document.object();
   const QJsonObject format = root.value(QStringLiteral("format")).toObject();
   QJsonObject video;
-  QJsonObject audio;
+  QList<QJsonObject> audios;
+  QList<QJsonObject> subtitles;
   for (const QJsonValue& value : root.value(QStringLiteral("streams")).toArray()) {
     const QJsonObject stream = value.toObject();
     const QString type = stream.value(QStringLiteral("codec_type")).toString();
     if (type == QStringLiteral("video") && video.isEmpty()) {
       video = stream;
-    } else if (type == QStringLiteral("audio") && audio.isEmpty()) {
-      audio = stream;
+    } else if (type == QStringLiteral("audio")) {
+      audios.append(stream);
+    } else if (type == QStringLiteral("subtitle")) {
+      subtitles.append(stream);
     }
   }
 
@@ -456,19 +475,35 @@ QStringList MediaInspector::parseVideo(const QByteArray& output, const QString& 
     lines.append(rate.join(QStringLiteral("  ·  ")));
   }
 
-  if (!audio.isEmpty()) {
+  // Every audio track, named as the player's track switch names it: its
+  // title, else its language. Several are numbered in the player's order.
+  for (qsizetype i = 0; i < audios.size(); ++i) {
+    const QJsonObject& audio = audios.at(i);
     QString sampleRate;
     const double samples =
         audio.value(QStringLiteral("sample_rate")).toString().toDouble(&okay);
     if (okay && samples > 0) {
       sampleRate = compactNumber(samples / 1000.0) + QStringLiteral(" kHz");
     }
+    const QString title = trackTitle(audio);
     const QString audioLine = joined(
-        {codecLabel(audio.value(QStringLiteral("codec_name")).toString()),
+        {audios.size() > 1 ? QStringLiteral("Audio %1").arg(i + 1) : QString(),
+         title.isEmpty() ? trackLanguage(audio) : title,
+         codecLabel(audio.value(QStringLiteral("codec_name")).toString()),
          present(audio.value(QStringLiteral("channel_layout")).toString()), sampleRate});
     if (!audioLine.isEmpty()) {
       lines.append(audioLine);
     }
+  }
+  // The embedded subtitles, as the subtitle switch lists them: the language,
+  // else the track's number.
+  if (!subtitles.isEmpty()) {
+    QStringList names;
+    for (qsizetype i = 0; i < subtitles.size(); ++i) {
+      const QString language = trackLanguage(subtitles.at(i));
+      names.append(language.isEmpty() ? QStringLiteral("Track %1").arg(i + 1) : language);
+    }
+    lines.append(QStringLiteral("Subtitles  ·  ") + names.join(QStringLiteral(", ")));
   }
   const QString location = videoCoordinates(output);
   if (!location.isEmpty()) {

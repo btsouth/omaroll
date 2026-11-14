@@ -104,11 +104,18 @@ MenuItem {
         }
         Icon {
             id: submenuArrow
+            objectName: entry.objectName + "Arrow"
             visible: !!entry.subMenu
             anchors.right: parent.right
             anchors.rightMargin: 8
             anchors.verticalCenter: parent.verticalCenter
-            name: "chevron-right"
+            // Towards the side the submenu opens on: its own side while it
+            // is up, and before that the side this menu cascaded to.
+            readonly property bool pointsLeft: !!entry.subMenu
+                                               && (entry.subMenu.visible
+                                                   ? entry.subMenu.cascadedLeft === true
+                                                   : !!entry.menu && entry.menu.cascadedLeft === true)
+            name: pointsLeft ? "chevron-left" : "chevron-right"
             size: 14
             color: entry.highlighted ? Theme.brightForeground : Theme.mutedText
         }

@@ -1022,6 +1022,9 @@ ApplicationWindow {
         confirm.serial = Session.openSerial()
         confirm.path = target.path
         confirm.viewedPath = Session.path
+        // An .xmp sidecar beside it goes to the Trash with it.
+        confirm.title = Actions.sidecarCount(target.path) > 0 ? "Move this item and its sidecar to Trash?"
+                                                              : "Move this item to Trash?"
         confirm.detail = confirm.path
         confirm.open()
     }
@@ -2868,6 +2871,7 @@ ApplicationWindow {
         id: viewMenu
         objectName: "viewerSubmenu_view"
         groupId: "view"
+        parentViewerMenu: actionMenu
         title: "View"
         hostWindow: root
         rows: root.menuGroups.view
@@ -2879,6 +2883,7 @@ ApplicationWindow {
         id: sortMenu
         objectName: "viewerSubmenu_sort"
         groupId: "sort"
+        parentViewerMenu: viewMenu
         title: "Sort"
         hostWindow: root
         rows: root.menuGroups.sort
@@ -2895,6 +2900,7 @@ ApplicationWindow {
         id: shareMenu
         objectName: "viewerSubmenu_share"
         groupId: "share"
+        parentViewerMenu: actionMenu
         title: "Share"
         hostWindow: root
         rows: root.menuGroups.share
@@ -2911,6 +2917,7 @@ ApplicationWindow {
         id: editMenu
         objectName: "viewerSubmenu_edit"
         groupId: "edit"
+        parentViewerMenu: actionMenu
         title: "Edit"
         hostWindow: root
         rows: root.menuGroups.edit

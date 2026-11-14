@@ -690,6 +690,49 @@ Item {
                         stepSize: 0.5
                         value: root.straighten
                         onMoved: root.straighten = value
+                        // Themed like the viewer's seek bar; the fill runs
+                        // from level to the angle.
+                        background: Rectangle {
+                            objectName: "straightenTrack"
+                            x: straightenSlider.leftPadding
+                            y: straightenSlider.topPadding + straightenSlider.availableHeight / 2 - height / 2
+                            width: straightenSlider.availableWidth
+                            height: straightenSlider.hovered || straightenSlider.pressed ? 5 : 3
+                            radius: height / 2
+                            color: root.shade(Theme.foreground, 0.16)
+
+                            Rectangle {
+                                objectName: "straightenFill"
+                                readonly property real centre: parent.width / 2
+                                readonly property real at: straightenSlider.visualPosition * parent.width
+                                x: Math.min(centre, at)
+                                width: Math.abs(at - centre)
+                                height: parent.height
+                                radius: parent.radius
+                                color: Theme.accent
+                            }
+                        }
+                        handle: Rectangle {
+                            x: straightenSlider.leftPadding + straightenSlider.visualPosition
+                               * (straightenSlider.availableWidth - width)
+                            y: straightenSlider.topPadding + straightenSlider.availableHeight / 2 - height / 2
+                            width: 12
+                            height: 12
+                            radius: 6
+                            color: Theme.background
+                            border.width: 2
+                            border.color: Theme.accent
+                            Rectangle {
+                                visible: straightenSlider.visualFocus
+                                anchors.centerIn: parent
+                                width: parent.width + 6
+                                height: width
+                                radius: width / 2
+                                color: "transparent"
+                                border.width: 2
+                                border.color: Theme.accent
+                            }
+                        }
                     }
                     Text {
                         anchors.verticalCenter: parent.verticalCenter

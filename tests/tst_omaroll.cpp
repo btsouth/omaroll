@@ -7339,6 +7339,47 @@ private slots:
     QCOMPARE(inspector.selectionText(), oldText);
   }
 
+  // Search marks and a selection on different pages share one word reader.
+  // Neither may leave the other waiting for good. Marks wanted on page 1
+  // while a selection's words load on page 2: the marks' read follows, and
+  // the page 2 selection still arrives.
+  void pdfSelectionOnAnotherPageSurvivesTheSearchMarksRead() {
+    if (!PdfSupport::available() || !PdfSupport::textAvailable()) {
+      QSKIP("Poppler is not installed");
+    }
+    PdfInspector inspector;
+    QSignalSpy failed(&inspector, &PdfInspector::selectionFailed);
+    inspector.inspect(QFINDTESTDATA("fixtures/pdf/letter-pages.pdf"));
+    QTRY_COMPARE(inspector.pageCount(), 2);
+    inspector.find(QStringLiteral("o"));
+    QTRY_COMPARE(inspector.matches(), QVariantList({1, 2}));
+    inspector.updateSelection(2, 0, 0, 1, 1);
+    inspector.showMatches(1);
+    QTRY_VERIFY(inspector.matchPage() == 1 && !inspector.matchRects().isEmpty());
+    QTRY_VERIFY(inspector.hasSelection());
+    QCOMPARE(inspector.selectionPage(), 2);
+    QVERIFY(inspector.selectionText().contains(QStringLiteral("Second page")));
+    QVERIFY(failed.isEmpty());
+  }
+
+  // Marks wanted on page 2 wait for a selection read of page 1; leaving the
+  // selection cancels that read and the marks are read after all.
+  void pdfSearchMarksStillArriveAfterTheSelectionIsDropped() {
+    if (!PdfSupport::available() || !PdfSupport::textAvailable()) {
+      QSKIP("Poppler is not installed");
+    }
+    PdfInspector inspector;
+    inspector.inspect(QFINDTESTDATA("fixtures/pdf/letter-pages.pdf"));
+    QTRY_COMPARE(inspector.pageCount(), 2);
+    inspector.find(QStringLiteral("o"));
+    QTRY_COMPARE(inspector.matches(), QVariantList({1, 2}));
+    inspector.updateSelection(1, 0, 0, 1, 1);
+    inspector.showMatches(2);
+    inspector.clearSelection();
+    QTRY_VERIFY(inspector.matchPage() == 2 && !inspector.matchRects().isEmpty());
+    QVERIFY(!inspector.hasSelection());
+  }
+
   void pdfTallPageHasBoundedRaster() {
     if (!PdfSupport::available() || !PdfSupport::textAvailable()) {
       QSKIP("Poppler is not installed");
@@ -7599,6 +7640,81 @@ private slots:
     QCOMPARE(lines.at(0), QRectF(100.0 / 600, 100.0 / 800, 104.0 / 600, 10.0 / 800));
     QCOMPARE(lines.at(1), QRectF(100.0 / 600, 120.0 / 800, 84.0 / 600, 10.0 / 800));
     QVERIFY(PdfSupport::wordLines(page, {}).isEmpty());
+  }
+
+  // Find marks the words a query covers, as findPages matches it: any case,
+  // part of a word, and across words and lines.
+  void pdfFindMarksTheWordsOfEachMatch() {
+    const PdfSupport::PdfPageText page = twoLinePage();
+    QCOMPARE(PdfSupport::wordsMatching(page, QStringLiteral("TOTAL")), QList<QList<int>>({{1}}));
+    QCOMPARE(PdfSupport::wordsMatching(page, QStringLiteral("ai")), QList<QList<int>>({{2}}));
+    QCOMPARE(PdfSupport::wordsMatching(page, QStringLiteral("total  paid")), QList<QList<int>>({{1, 2}}));
+    QCOMPARE(PdfSupport::wordsMatching(page, QStringLiteral("to")), QList<QList<int>>({{1}, {3}}));
+    QVERIFY(PdfSupport::wordsMatching(page, QStringLiteral("missing")).isEmpty());
+    QVERIFY(PdfSupport::wordsMatching(page, QStringLiteral("  ")).isEmpty());
+    QVERIFY(PdfSupport::wordsMatching({}, QStringLiteral("paid")).isEmpty());
+    // A match across two lines is marked on both.
+    QCOMPARE(PdfSupport::wordLines(page, {1, 2}).size(), 2);
+    // A match spanning several words marks each of them, from a partial
+    // first word to a partial last one.
+    QCOMPARE(PdfSupport::wordsMatching(page, QStringLiteral("ice total paid to")),
+             QList<QList<int>>({{0, 1, 2, 3}}));
+    QCOMPARE(PdfSupport::wordsMatching(page, QStringLiteral("l pa")), QList<QList<int>>({{1, 2}}));
+  }
+
+  // Many matches on a big page: each match's words are found directly, and
+  // the result is the same as checking every word against every match.
+  void pdfFindMarksManyMatchesOnALargePage() {
+    const auto makePage = [](int count) {
+      PdfSupport::PdfPageText page;
+      page.pageSize = QSizeF(600, 800);
+      const QStringList texts = {QStringLiteral("a"), QStringLiteral("banana"), QStringLiteral("cab"),
+                                 QStringLiteral(""), QStringLiteral("Aa"), QStringLiteral("x")};
+      for (int index = 0; index < count; ++index) {
+        PdfSupport::PdfWord word;
+        word.box = QRectF(10 + (index % 50) * 11, 10 + (index / 50) % 70 * 11, 10, 10);
+        word.text = texts.at(index % texts.size());
+        page.words.append(word);
+      }
+      return page;
+    };
+    const PdfSupport::PdfPageText large = makePage(40'000);
+    const PdfSupport::PdfPageText page = makePage(1'200);
+    // Every word against every match, as the search did before.
+    const auto reference = [&page](const QString& query) {
+      QList<QList<int>> found;
+      const QString needle = query.simplified().toCaseFolded();
+      QString text;
+      QList<qsizetype> starts;
+      for (const PdfSupport::PdfWord& word : page.words) {
+        if (!text.isEmpty()) text += QLatin1Char(' ');
+        starts.append(text.size());
+        text += word.text.simplified().toCaseFolded();
+      }
+      for (qsizetype from = 0;;) {
+        const qsizetype at = text.indexOf(needle, from);
+        if (at < 0) break;
+        const qsizetype end = at + needle.size();
+        QList<int> words;
+        for (qsizetype index = 0; index < starts.size(); ++index) {
+          const qsizetype wordEnd = index + 1 < starts.size() ? starts.at(index + 1) - 1 : text.size();
+          if (starts.at(index) < end && wordEnd > at) words.append(static_cast<int>(index));
+        }
+        if (!words.isEmpty()) found.append(words);
+        from = end;
+      }
+      return found;
+    };
+    QElapsedTimer timer;
+    timer.start();
+    const QList<QList<int>> many = PdfSupport::wordsMatching(large, QStringLiteral("a"));
+    QVERIFY(many.size() > 40'000);
+    QVERIFY2(timer.elapsed() < 5000, qPrintable(QString::number(timer.elapsed())));
+    // The reference is quadratic, so it is compared on a smaller page.
+    for (const QString& query : {QStringLiteral("a"), QStringLiteral("ana"), QStringLiteral("a  b"), QStringLiteral("x a"),
+                                 QStringLiteral("cab  aa x a banana"), QStringLiteral("b c")}) {
+      QCOMPARE(PdfSupport::wordsMatching(page, query), reference(query));
+    }
   }
 
   void pdfSelectionKeepsLinesApartWhenTheGapIsReal() {
@@ -10890,6 +11006,32 @@ private slots:
     QCOMPARE(videoLines.value(0), QStringLiteral("MP4  ·  H.264  ·  High  ·  yuv420p"));
     QCOMPARE(videoLines.value(1), QStringLiteral("29.97 fps  ·  3.6 Mbps"));
     QCOMPARE(videoLines.value(2), QStringLiteral("AAC  ·  stereo  ·  48 kHz"));
+    QCOMPARE(videoLines.size(), 3);
+
+    // Every audio track and the subtitles, named as the player names them.
+    const QByteArray tracks = R"({
+      "streams": [
+        {"codec_type":"video","codec_name":"h264"},
+        {"codec_type":"audio","codec_name":"aac","sample_rate":"48000",
+         "channel_layout":"stereo","tags":{"language":"eng"}},
+        {"codec_type":"audio","codec_name":"opus","sample_rate":"48000",
+         "channel_layout":"mono","tags":{"language":"ger","title":"Commentary"}},
+        {"codec_type":"audio","codec_name":"aac","tags":{"language":"und"}},
+        {"codec_type":"subtitle","codec_name":"mov_text","tags":{"language":"fre"}},
+        {"codec_type":"subtitle","codec_name":"subrip"}
+      ],
+      "format": {"format_name":"matroska,webm"}
+    })";
+    const QStringList trackLines = MediaInspector::parseVideo(tracks, QStringLiteral("mkv"));
+    QVERIFY2(trackLines.contains(QStringLiteral("Audio 1  ·  English  ·  AAC  ·  stereo  ·  48 kHz")),
+             qPrintable(trackLines.join(u'|')));
+    QVERIFY(trackLines.contains(QStringLiteral("Audio 2  ·  Commentary  ·  Opus  ·  mono  ·  48 kHz")));
+    QVERIFY(trackLines.contains(QStringLiteral("Audio 3  ·  AAC")));
+    QVERIFY(trackLines.contains(QStringLiteral("Subtitles  ·  French, Track 2")));
+    // One tagged track keeps the plain line, with its language.
+    const QByteArray one = R"({"streams":[{"codec_type":"audio","codec_name":"aac",
+      "tags":{"language":"spa"}}],"format":{}})";
+    QCOMPARE(MediaInspector::parseVideo(one, QStringLiteral("mp4")).value(1), QStringLiteral("Spanish  ·  AAC"));
   }
 
   void embeddedMediaDatesParseWithoutChangingWallClockPhotoTime() {

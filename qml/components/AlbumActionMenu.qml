@@ -19,7 +19,7 @@ Menu {
 
     background: Rectangle {
         implicitWidth: 220
-        color: host.shade(Theme.background, 0.97)
+        color: Theme.background
         border.width: 1
         border.color: host.shade(Theme.foreground, 0.16)
         radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
@@ -41,8 +41,9 @@ Menu {
             leftPadding: 12
         }
         background: Rectangle {
-            color: removeFromAlbumRow.hovered
-                   ? host.shade(Theme.foreground, 0.08) : "transparent"
+            color: removeFromAlbumRow.highlighted
+                   ? host.shade(Theme.foreground, 0.09) : "transparent"
+            radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 3) : 0
         }
         onTriggered: {
             const paths = menu.targetPaths
@@ -71,8 +72,9 @@ Menu {
                 leftPadding: 12
             }
             background: Rectangle {
-                color: addAlbumRow.hovered
-                       ? host.shade(Theme.foreground, 0.08) : "transparent"
+                color: addAlbumRow.highlighted
+                       ? host.shade(Theme.foreground, 0.09) : "transparent"
+                radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 3) : 0
             }
             onTriggered: {
                 const paths = menu.targetPaths
@@ -85,6 +87,7 @@ Menu {
 
     MenuItem {
         id: newAlbumRow
+        objectName: "albumMenuNewAlbum"
         text: "+ New album"
         Accessible.name: text
         height: 30
@@ -97,14 +100,19 @@ Menu {
             leftPadding: 12
         }
         background: Rectangle {
-            color: newAlbumRow.hovered
-                   ? host.shade(Theme.foreground, 0.08) : "transparent"
+            color: newAlbumRow.highlighted
+                   ? host.shade(Theme.foreground, 0.09) : "transparent"
+            radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 3) : 0
         }
         onTriggered: nameSheet.open(menu.targetPaths)
     }
 
+    // A hidden row still takes its height in the menu's list, so each one
+    // collapses to nothing while hidden.
     MenuSeparator {
+        objectName: "albumMenuTagSeparator"
         visible: Settings.tagNames.length > 0 || Captures.tagFilter !== ""
+        height: visible ? implicitHeight : 0
     }
 
     MenuItem {
@@ -123,8 +131,9 @@ Menu {
             leftPadding: 12
         }
         background: Rectangle {
-            color: removeTagRow.hovered
-                   ? host.shade(Theme.foreground, 0.08) : "transparent"
+            color: removeTagRow.highlighted
+                   ? host.shade(Theme.foreground, 0.09) : "transparent"
+            radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 3) : 0
         }
         onTriggered: {
             const paths = menu.targetPaths
@@ -154,8 +163,9 @@ Menu {
                 leftPadding: 12
             }
             background: Rectangle {
-                color: addTagRow.hovered
-                       ? host.shade(Theme.foreground, 0.08) : "transparent"
+                color: addTagRow.highlighted
+                       ? host.shade(Theme.foreground, 0.09) : "transparent"
+                radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 3) : 0
             }
             onTriggered: {
                 const paths = menu.targetPaths
@@ -168,6 +178,7 @@ Menu {
 
     MenuItem {
         id: newTagRow
+        objectName: "albumMenuNewTag"
         text: "+ New tag"
         Accessible.name: text
         height: 30
@@ -180,8 +191,9 @@ Menu {
             leftPadding: 12
         }
         background: Rectangle {
-            color: newTagRow.hovered
-                   ? host.shade(Theme.foreground, 0.08) : "transparent"
+            color: newTagRow.highlighted
+                   ? host.shade(Theme.foreground, 0.09) : "transparent"
+            radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 3) : 0
         }
         onTriggered: nameSheet.open(menu.targetPaths, "tag")
     }

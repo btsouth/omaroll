@@ -161,6 +161,7 @@ PdfInspector::PdfInspector(QObject* parent) : QObject(parent) {
                 emit selectionFailed(QStringLiteral("Malformed PDF text coordinates"));
               }
               applyPendingSelection();
+              applyMatches();
             });
             watcher->setFuture(QtConcurrent::run([bytes] { return PdfSupport::parsePageWords(bytes); }));
           });
@@ -314,6 +315,9 @@ void PdfInspector::find(const QString& query) {
   if (!currentVersion()) return;
   ++m_searchRequest;
   m_query = query.simplified();
+  m_matchWantedPage = 0;
+  ++m_matchRequest;
+  setMatchRects(0, {});
   m_matches.clear();
   emit matchesChanged();
   if (m_query.isEmpty() || m_pageCount <= 0) return;
@@ -340,10 +344,71 @@ void PdfInspector::clearSearch() {
   stopProcess(m_searchProcess, m_searchTimeout);
   m_extracting = false;
   m_query.clear();
+  m_matchWantedPage = 0;
+  ++m_matchRequest;
+  setMatchRects(0, {});
   if (!m_matches.isEmpty()) {
     m_matches.clear();
     emit matchesChanged();
   }
+}
+
+void PdfInspector::setMatchRects(int page, const QVariantList& rects) {
+  if (page == m_matchPage && rects == m_matchRects) return;
+  m_matchPage = page;
+  m_matchRects = rects;
+  emit matchRectsChanged();
+}
+
+void PdfInspector::showMatches(int page) {
+  if (!m_path.isEmpty() && !currentVersion()) return;
+  if (m_query.isEmpty() || !m_matches.contains(page) || !PdfSupport::textAvailable()) {
+    m_matchWantedPage = 0;
+    ++m_matchRequest;
+    setMatchRects(0, {});
+    return;
+  }
+  if (m_matchWantedPage == page && (m_matchPage == page || m_wordsPage == page)) return;
+  m_matchWantedPage = page;
+  if (m_matchPage != page) setMatchRects(0, {});
+  if (m_wordsLoadedPage == page) {
+    applyMatches();
+  } else if (m_wordsPage == 0 || m_wordsPage != m_pendingPage) {
+    // A read for a selection in progress finishes first; the marks follow it.
+    startPageWords(page, false);
+  }
+}
+
+// The marks for the wanted page, once its words are in. The words read for a
+// selection on another page are followed by a read of this one.
+void PdfInspector::applyMatches() {
+  const int page = m_matchWantedPage;
+  if (page < 1 || m_query.isEmpty()) return;
+  if (m_wordsLoadedPage != page) {
+    // Another page's words just came in. A page whose words could not be
+    // read leaves none loaded and is not read again in a loop.
+    if (m_wordsPage == 0 && m_wordsLoadedPage != 0) startPageWords(page, false);
+    return;
+  }
+  const quint64 generation = m_generation;
+  const quint64 request = ++m_matchRequest;
+  const auto words = m_pageWords;
+  const QString query = m_query;
+  auto* watcher = new QFutureWatcher<QVariantList>(this);
+  connect(watcher, &QFutureWatcher<QVariantList>::finished, this,
+          [this, watcher, generation, request, page] {
+    const QVariantList rects = watcher->result();
+    watcher->deleteLater();
+    if (generation != m_generation || request != m_matchRequest || page != m_matchWantedPage) return;
+    setMatchRects(page, rects);
+  });
+  watcher->setFuture(QtConcurrent::run([words, query] {
+    QVariantList rects;
+    for (const QList<int>& occurrence : PdfSupport::wordsMatching(words, query)) {
+      for (const QRectF& line : PdfSupport::wordLines(words, occurrence)) rects.append(line);
+    }
+    return rects;
+  }));
 }
 
 void PdfInspector::copyPageText(int page) {
@@ -363,8 +428,11 @@ void PdfInspector::copyPageText(int page) {
   m_textTimeout.start();
 }
 
-void PdfInspector::startPageWords(int page) {
-  ++m_selectionRequest;
+void PdfInspector::startPageWords(int page, bool forSelection) {
+  // A new selection read supersedes a selection still in the worker. A read
+  // for the search marks does not: a selection computed from the words just
+  // read must still arrive.
+  if (forSelection) ++m_selectionRequest;
   stopProcess(m_wordsProcess, m_wordsTimeout);
   ++m_wordsRequest;
   m_wordsOutput = {};
@@ -439,15 +507,24 @@ void PdfInspector::updateSelection(int page, qreal left, qreal top, qreal right,
     return;
   }
   if (m_wordsPage != page) {
-    startPageWords(page);
+    startPageWords(page, true);
   }
 }
 
 void PdfInspector::clearSelection() {
-  ++m_wordsRequest;
   ++m_selectionRequest;
-  stopProcess(m_wordsProcess, m_wordsTimeout);
-  m_wordsPage = 0;
+  // A read of the page the search marks wait for carries on.
+  if (m_wordsPage == 0 || m_wordsPage != m_matchWantedPage) {
+    const bool cancelled = m_wordsPage != 0;
+    ++m_wordsRequest;
+    stopProcess(m_wordsProcess, m_wordsTimeout);
+    m_wordsPage = 0;
+    // The search marks waited for the cancelled read; read their page now.
+    if (cancelled && m_matchWantedPage > 0 && !m_query.isEmpty() &&
+        m_wordsLoadedPage != m_matchWantedPage) {
+      startPageWords(m_matchWantedPage, false);
+    }
+  }
   m_pendingPage = 0;
   m_pendingArea = QRectF();
   const bool had = !m_selectionText.isEmpty() || !m_selectionRects.isEmpty() ||

@@ -89,6 +89,7 @@
 #include <QSettings>
 #include <QElapsedTimer>
 #include <QSet>
+#include <QTextLayout>
 #include <QStandardPaths>
 #include <QStyleHints>
 #include <QTemporaryDir>
@@ -3690,9 +3691,17 @@ private slots:
 
     QQuickItem* slider = item("straightenSlider");
     QVERIFY(slider);
+    // The app's own track and accent fill, not the stock control.
+    auto* track = slider->property("background").value<QQuickItem*>();
+    QVERIFY(track);
+    QCOMPARE(track->objectName(), QStringLiteral("straightenTrack"));
     slider->setProperty("value", 7.5);
     QVERIFY(QMetaObject::invokeMethod(slider, "moved"));
     QCOMPARE(sheet->property("straighten").toDouble(), 7.5);
+    QQuickItem* fill = track->findChild<QQuickItem*>(QStringLiteral("straightenFill"));
+    QVERIFY(fill);
+    QTRY_VERIFY(fill->width() > track->width() / 4 - 1);
+    QVERIFY(fill->x() >= track->width() / 2 - 1);
     // The preview id carries the angle in tenths of a degree.
     QVERIFY(item("correctionPreview")->property("source").toUrl().toString().contains(".75"));
 
@@ -5035,6 +5044,9 @@ private slots:
     QVERIFY(!item("audioTrackButton")->isVisible());
     QVERIFY(!item("subtitleButton")->isVisible());
     QVERIFY(!detail->property("playbackMuted").toBool());
+    // Full screen beside the transport is drawn like the transport.
+    QVERIFY(item("previewFullscreenPill")->property("osd").toBool());
+    QVERIFY(item("previewTopControlsPanel")->property("osd").toBool());
 
     // A control collapsed for want of a second audio track or a subtitle must
     // not leave its label drawn over the clock.
@@ -5136,6 +5148,32 @@ private slots:
     QCOMPARE(targets.size(), 2);
     QVERIFY(targets.contains(first) && targets.contains(second));
     QMetaObject::invokeMethod(menu, "close");
+  }
+
+  void albumMenuFromTheHeaderActionsOpensUnderTheButton() {
+    QQuickItem* grid = item("library");
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("libraryContextMenu"));
+    QObject* albums = m_window->findChild<QObject*>(QStringLiteral("albumActionMenu"));
+    QVERIFY(menu && albums);
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, pathAt(0)));
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, pathAt(1)));
+    const auto cleanup = qScopeGuard([&] {
+      QMetaObject::invokeMethod(albums, "close");
+      QMetaObject::invokeMethod(menu, "close");
+      QMetaObject::invokeMethod(grid, "clearChecked");
+    });
+    QQuickItem* button = item("selectionActionsButton");
+    QTRY_VERIFY(button->isVisible());
+    waitForLayout();
+    click(button);
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QMetaObject::invokeMethod(menu, "triggered", Q_ARG(QString, QStringLiteral("organize")));
+    QTRY_VERIFY(albums->property("visible").toBool());
+    const QPointF below = button->mapToItem(m_window->contentItem(), QPointF(0, button->height()));
+    // Relative to the button, the old code dropped it in the window's corner.
+    QVERIFY2(albums->property("y").toReal() >= below.y(),
+             qPrintable(QString::number(albums->property("y").toReal())));
+    QVERIFY(albums->property("x").toReal() > below.x() - 300);
   }
 
   void compareAppearsForImageSelectionsAndUsesTheCapturedPair() {
@@ -5366,6 +5404,19 @@ private slots:
     QVERIFY(oldestRow && oldestRow->inherits("QQuickMenuItem"));
     QVERIFY(!oldestRow->property("indicator").value<QQuickItem*>());
     QVERIFY(!oldestRow->property("checked").toBool());
+    // The arrow keys move a visible highlight, not only the pointer.
+    QTest::keyClick(m_window, Qt::Key_Down);
+    QQuickItem* highlighted = nullptr;
+    QTRY_VERIFY((highlighted = find(m_window->contentItem(), [](QQuickItem* candidate) {
+      return candidate->inherits("QQuickMenuItem") && candidate->isVisible() &&
+             candidate->property("highlighted").toBool();
+    })) != nullptr);
+    auto* wash = highlighted->property("background").value<QQuickItem*>();
+    QVERIFY(wash && wash->property("color").value<QColor>().alpha() > 0);
+    // Opaque, so nothing under the menu shows through.
+    auto* panel = sortMenu->property("background").value<QQuickItem*>();
+    QVERIFY(panel);
+    QCOMPARE(panel->property("color").value<QColor>().alpha(), 255);
     click(oldest);
     QTRY_COMPARE(m_library->sortMode(), 1);
     QTRY_VERIFY(!sortMenu->property("visible").toBool());
@@ -5376,6 +5427,40 @@ private slots:
   // Switching Browse from Folders to a collection shows that collection's
   // buttons, and a count changing under a focused segment leaves the focus
   // where it was.
+  // An empty section says so, and a day under its month indents both its
+  // lines together.
+  void libraryBrowserEmptySectionsAndDayRows() {
+    QObject* browser = m_window->findChild<QObject*>(QStringLiteral("libraryBrowser"));
+    QVERIFY(browser);
+    const auto restore = qScopeGuard([&] { QMetaObject::invokeMethod(browser, "close"); });
+    QMetaObject::invokeMethod(browser, "open");
+    QTRY_VERIFY(browser->property("visible").toBool());
+    QQuickItem* empty = item("libraryChoicesEmpty");
+    QVERIFY(m_settings->smartCollectionNames().isEmpty());
+    browser->setProperty("section", 4);
+    QTRY_VERIFY(empty->isVisible());
+    QCOMPARE(empty->property("text").toString(), QStringLiteral("No smart collections yet"));
+    if (m_settings->albumNames().isEmpty()) {
+      browser->setProperty("section", 1);
+      QTRY_COMPARE(empty->property("text").toString(), QStringLiteral("No albums yet"));
+      QVERIFY(empty->isVisible());
+    }
+
+    browser->setProperty("section", 2);
+    QTRY_VERIFY(!empty->isVisible());
+    QQuickItem* choices = item("libraryChoices");
+    QQuickItem* dayTitle = nullptr;
+    QTRY_VERIFY((dayTitle = find(choices, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("browseChoiceTitle") && candidate->isVisible() &&
+             candidate->property("leftPadding").toReal() > 0;
+    })) != nullptr);
+    QQuickItem* dayDetail = find(dayTitle->parentItem(), [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("browseChoiceDetail");
+    });
+    QVERIFY(dayDetail);
+    QCOMPARE(dayDetail->property("leftPadding").toReal(), dayTitle->property("leftPadding").toReal());
+  }
+
   void libraryBrowserSegmentsShowCollectionActionsAndKeepFocus() {
     const QString album = QStringLiteral("Browse segment album");
     const QString tag = QStringLiteral("browse-segment-tag");
@@ -5510,10 +5595,24 @@ private slots:
     QTRY_VERIFY(search->mapToScene(QPointF()).y() + search->height() <= m_window->height());
     QQuickItem* addFolder = item("browseAddFolder");
     QVERIFY(addFolder->x() + addFolder->width() <= addFolder->parentItem()->width());
-    QTest::keyClick(m_window, Qt::Key_Tab, Qt::ShiftModifier);
+    // The section tabs sit outside the scrolling controls, wholly in view
+    // between them and the search box.
+    QQuickItem* facets = item("browseFacetSegments");
+    QTRY_VERIFY(facets->isVisible());
+    const qreal facetsTop = facets->mapToScene(QPointF()).y();
+    QVERIFY(facetsTop >= controls->mapToScene(QPointF(0, controls->height())).y());
+    QVERIFY(facetsTop + facets->height() <= search->mapToScene(QPointF()).y());
+    // Shift+Tab back past the tabs into the scrolling controls.
+    const auto insideControls = [&](QQuickItem* candidate) {
+      for (QQuickItem* up = candidate; up; up = up->parentItem())
+        if (up == controls) return true;
+      return false;
+    };
+    for (int step = 0; step < 12 && !insideControls(m_window->activeFocusItem()); ++step)
+      QTest::keyClick(m_window, Qt::Key_Tab, Qt::ShiftModifier);
     QTRY_VERIFY(m_window->activeFocusItem() != search);
     QQuickItem* focused = m_window->activeFocusItem();
-    QVERIFY(focused);
+    QVERIFY(focused && insideControls(focused));
     QTRY_VERIFY(focused->mapToItem(controls, QPointF()).y() >= 0);
     QTRY_VERIFY(focused->mapToItem(controls, QPointF()).y() + focused->height()
                 <= controls->height());
@@ -6768,7 +6867,10 @@ private slots:
     QVERIFY(focused->property("usable").toBool());
     QCOMPARE(focused->property("shortcut").toString(),
              m_registry->shortcutFor(QStringLiteral("copy")));
-    QCOMPARE(focused->property("toolTipText").toString(), QStringLiteral("Copy image  ·  Y"));
+    QCOMPARE(focused->property("toolTipText").toString(), QStringLiteral("Copy image"));
+    QObject* focusedTip = toolTipOf(focused);
+    QVERIFY(focusedTip);
+    QCOMPARE(focusedTip->property("shortcut").toString(), QStringLiteral("Y"));
 
     QTest::keyClick(m_window, Qt::Key_Down);
     QQuickItem* next = activeViewerAction();
@@ -6821,13 +6923,123 @@ private slots:
     QQuickItem* all = pill(m_window->contentItem(), QStringLiteral("All"));
     QVERIFY(all);
     QCOMPARE(all->property("shortcut").toString(), QStringLiteral("1"));
-    QCOMPARE(all->property("resolvedToolTip").toString(), QStringLiteral("All  ·  1"));
+    QCOMPARE(all->property("resolvedToolTip").toString(), QStringLiteral("All"));
+    QCOMPARE(toolTipOf(all)->property("shortcut").toString(), QStringLiteral("1"));
+
+    // The kind pills' keys are digits: "Videos · 5" read as five videos, so
+    // the key is drawn as a key beside the name, not run into the text.
+    QQuickItem* videos = pill(m_window->contentItem(), QStringLiteral("Videos"));
+    QVERIFY(videos);
+    QObject* tip = toolTipOf(videos);
+    QVERIFY(tip);
+    QCOMPARE(tip->property("text").toString(), QStringLiteral("Videos"));
+    QCOMPARE(tip->property("shortcut").toString(), QStringLiteral("5"));
+    QTest::mouseMove(m_window, videos->mapToScene(QPointF(videos->width() / 2, videos->height() / 2)).toPoint());
+    QTRY_VERIFY(tip->property("visible").toBool());
+    auto* key = tip->property("contentItem").value<QQuickItem*>()->findChild<QQuickItem*>(QStringLiteral("toolTipKey"));
+    QVERIFY(key && key->isVisible());
+    QCOMPARE(key->childItems().constFirst()->property("text").toString(), QStringLiteral("5"));
+    QQuickItem* favourites = pill(m_window->contentItem(), QStringLiteral("Favourites"));
+    QVERIFY(favourites);
+    QCOMPARE(toolTipOf(favourites)->property("text").toString(), QStringLiteral("Favourites"));
+    QCOMPARE(toolTipOf(favourites)->property("shortcut").toString(), QStringLiteral("7"));
+    QTest::mouseMove(m_window, QPoint(2, m_window->height() - 2));
+    QTRY_VERIFY(!tip->property("visible").toBool());
 
     openDetail(0);
     QQuickItem* rotate = pill(item("detail"), QStringLiteral("Rotate right"));
     QTRY_VERIFY(rotate != nullptr);
     QCOMPARE(rotate->property("shortcut").toString(), QStringLiteral("R"));
-    QCOMPARE(rotate->property("resolvedToolTip").toString(), QStringLiteral("Rotate right  ·  R"));
+    QCOMPARE(rotate->property("resolvedToolTip").toString(), QStringLiteral("Rotate right"));
+    QCOMPARE(toolTipOf(rotate)->property("shortcut").toString(), QStringLiteral("R"));
+  }
+
+  void longToolTipsWrapWithinTheWindow() {
+    QQuickItem* box = item("librarySearchBox");
+    QObject* tip = nullptr;
+    for (QObject* child : box->findChildren<QObject*>()) {
+      if (QByteArray(child->metaObject()->className()).startsWith("ThemedToolTip") &&
+          child->property("text").toString().startsWith(QStringLiteral("Search names")))
+        tip = child;
+    }
+    QVERIFY(tip);
+    QTest::mouseMove(m_window, box->mapToScene(QPointF(box->width() / 2, box->height() / 2)).toPoint());
+    QTRY_VERIFY(tip->property("visible").toBool());
+    const auto away = qScopeGuard([&] { QTest::mouseMove(m_window, QPoint(2, m_window->height() - 2)); });
+    QVERIFY2(tip->property("width").toReal() <= 420, qPrintable(tip->property("width").toString()));
+    auto* content = tip->property("contentItem").value<QQuickItem*>();
+    QVERIFY(content);
+    // Wrapped onto several lines rather than one long one.
+    QVERIFY(content->height() > 2 * tip->property("font").value<QFont>().pixelSize());
+    // At any width, the examples stay whole: no line ends on the minus of
+    // -word or splits the quoted phrase.
+    const QString text = tip->property("text").toString();
+    const QFont font = tip->property("font").value<QFont>();
+    for (int width = 160; width <= 420; width += 4) {
+      QTextLayout layout(text, font);
+      QTextOption option;
+      // As Text.Wrap lays it out: at spaces, and mid-word only for a word
+      // longer than the line.
+      option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+      layout.setTextOption(option);
+      layout.beginLayout();
+      QStringList lines;
+      for (QTextLine line = layout.createLine(); line.isValid(); line = layout.createLine()) {
+        line.setLineWidth(width);
+        lines.append(text.mid(line.textStart(), line.textLength()).trimmed());
+      }
+      layout.endLayout();
+      for (const QString& line : lines) {
+        QVERIFY2(!line.endsWith(u'-') && !line.endsWith(QStringLiteral("-\u2060")),
+                 qPrintable(QStringLiteral("%1: %2").arg(width).arg(lines.join(u'|'))));
+        QVERIFY2(!line.endsWith(QStringLiteral("\"quote")) && !line.startsWith(QStringLiteral("phrase\"")),
+                 qPrintable(QStringLiteral("%1: %2").arg(width).arg(lines.join(u'|'))));
+      }
+    }
+
+    // A long file name has no spaces to wrap at. It breaks where it must
+    // and stays inside the box instead of running past it.
+    QQmlComponent component(m_engine);
+    component.setData(R"QML(
+      import QtQuick
+      import Omaroll
+      Item {
+        width: 300
+        height: 40
+        ThemedToolTip {
+          objectName: "longNameTip"
+          text: "screenshot_20261114_134502_a_very_long_file_name_without_any_spaces_or_hyphens_from_the_summer_trip.png"
+          requested: true
+          delay: 0
+        }
+      }
+    )QML", QUrl());
+    std::unique_ptr<QObject> holder(component.create());
+    QVERIFY2(holder, qPrintable(component.errorString()));
+    auto* host = qobject_cast<QQuickItem*>(holder.get());
+    host->setParentItem(m_window->contentItem());
+    QObject* nameTip = holder->findChild<QObject*>(QStringLiteral("longNameTip"));
+    QVERIFY(nameTip);
+    QTRY_VERIFY(nameTip->property("visible").toBool());
+    QVERIFY(nameTip->property("width").toReal() <= 420);
+    auto* nameContent = nameTip->property("contentItem").value<QQuickItem*>();
+    QQuickItem* nameText = find(nameContent, [](QQuickItem* candidate) {
+      return candidate->inherits("QQuickText") && candidate->property("text").toString().startsWith(u"screenshot");
+    });
+    QVERIFY(nameText);
+    QTRY_VERIFY(nameText->property("lineCount").toInt() > 1);
+    QVERIFY2(nameText->property("contentWidth").toReal() <= nameText->width() + 0.5,
+             qPrintable(QStringLiteral("%1 > %2").arg(nameText->property("contentWidth").toReal())
+                            .arg(nameText->width())));
+    QMetaObject::invokeMethod(nameTip, "close");
+  }
+
+  // The themed tooltip a button or row owns.
+  static QObject* toolTipOf(QObject* owner) {
+    for (QObject* child : owner->findChildren<QObject*>()) {
+      if (QByteArray(child->metaObject()->className()).startsWith("ThemedToolTip")) return child;
+    }
+    return nullptr;
   }
 
   void extractedTextOpensASelectableLayoutPreservingReview() {
@@ -7222,11 +7434,23 @@ private slots:
     QCOMPARE(sheet->property("path").toString(), path);
     QCOMPARE(sheet->property("suffix").toString(), QStringLiteral(".") + QFileInfo(path).suffix());
 
+    // As much room under the buttons as over the title, with or without
+    // a message.
+    QQuickItem* panel = item("renamePanel");
+    QQuickItem* renameButton = pill(sheet, QStringLiteral("Rename"));
+    const auto bottomRoom = [&] {
+      return panel->height() - renameButton->mapToItem(panel, QPointF(0, renameButton->height())).y();
+    };
+    QTRY_COMPARE(bottomRoom(), 22.0);
+    const qreal plainHeight = panel->height();
     QQuickItem* input = item("renameInput");
     input->setProperty("text", QString());
     click(pill(sheet, QStringLiteral("Rename")));
     QVERIFY(sheet->isVisible());
     QVERIFY(!sheet->property("errorMessage").toString().isEmpty());
+    QVERIFY(item("renamePanelMessage")->isVisible());
+    QTRY_VERIFY(panel->height() > plainHeight);
+    QTRY_COMPARE(bottomRoom(), 22.0);
 
     const QString base = QStringLiteral("renamed through sheet");
     input->setProperty("text", base);
@@ -7567,6 +7791,33 @@ private slots:
       QTRY_COMPARE(detail->property("pdfPage").toInt(), 2);
       QVERIFY(QMetaObject::invokeMethod(detail, "stepPdfMatch", Q_ARG(QVariant, 1)));
       QTRY_COMPARE(detail->property("pdfPage").toInt(), 1);
+      // The match is marked on the page in view, not only counted.
+      QTRY_COMPARE_WITH_TIMEOUT(m_pdfInfo->matchPage(), 1, 8000);
+      QVERIFY(!m_pdfInfo->matchRects().isEmpty());
+      QTRY_VERIFY(find(detail, [](QQuickItem* candidate) {
+        return candidate->objectName() == QStringLiteral("pdfMatchMark") && candidate->isVisible()
+               && candidate->width() > 0;
+      }) != nullptr);
+      QVERIFY(QMetaObject::invokeMethod(detail, "stepPdfMatch", Q_ARG(QVariant, 1)));
+      QTRY_COMPARE_WITH_TIMEOUT(m_pdfInfo->matchPage(), 2, 8000);
+      // A new search drops the marks of the old one.
+      search->setProperty("text", QStringLiteral("zzzz-not-in-it"));
+      QVERIFY(QMetaObject::invokeMethod(detail, "findInPdf"));
+      QTRY_VERIFY(m_pdfInfo->matchRects().isEmpty());
+      QCOMPARE(m_pdfInfo->matchPage(), 0);
+    }
+
+    // The find and page rows sit on one themed, nearly opaque panel rather
+    // than straight on the white page.
+    QQuickItem* panel = item("pdfControlsPanel");
+    QVERIFY(panel->isVisible());
+    QCOMPARE(panel->property("color").value<QColor>().alphaF(), 1.0);
+    const QRectF panelBox = panel->mapRectToScene(panel->boundingRect());
+    for (const char* rowName : {"pdfSearchRow", "pdfPageRow"}) {
+      QQuickItem* row = item(rowName);
+      if (!row->isVisible()) continue;
+      const QRectF rowBox = row->mapRectToScene(row->boundingRect());
+      QVERIFY2(panelBox.contains(rowBox), rowName);
     }
 
     // Copy page text reports an outcome; whether the text extracts depends on
@@ -7888,6 +8139,13 @@ private slots:
     QObject* menu = m_window->findChild<QObject*>(QStringLiteral("albumActionMenu"));
     QVERIFY(menu);
     QTRY_VERIFY(menu->property("visible").toBool());
+    // With no tags the hidden separator leaves no gap between the rows.
+    if (m_settings->tagNames().isEmpty() && m_library->tagFilter().isEmpty()) {
+      QQuickItem* albumRow = item("albumMenuNewAlbum");
+      QQuickItem* tagRow = item("albumMenuNewTag");
+      QTRY_COMPARE(tagRow->mapToScene(QPointF()).y(),
+                   albumRow->mapToScene(QPointF(0, albumRow->height())).y());
+    }
     QQuickItem* newAlbum = find(m_window->contentItem(), [](QQuickItem* candidate) {
       return candidate->inherits("QQuickText") && candidate->isVisible() &&
              candidate->property("text").toString() == QStringLiteral("+ New album");
@@ -7933,6 +8191,41 @@ private slots:
     QCOMPARE(m_settings->tagPaths(QStringLiteral("UI Review")), QStringList{selected});
     m_settings->deleteTag(QStringLiteral("UI Review"));
     QMetaObject::invokeMethod(item("library"), "clearChecked");
+  }
+
+  // The Trash question says when .xmp sidecars go along, for one file and
+  // for a selection.
+  void trashPromptsNameTheSidecarsThatGoAlong() {
+    const QString first = pathAt(0), second = pathAt(1);
+    const QString sidecar = first + QStringLiteral(".xmp");
+    {
+      QFile file(sidecar);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"/>");
+    }
+    QQuickItem* confirm = item("confirm");
+    const auto cleanup = qScopeGuard([&] {
+      QMetaObject::invokeMethod(confirm, "close");
+      QFile::remove(sidecar);
+    });
+    QVERIFY(QMetaObject::invokeMethod(m_window, "requestDelete", Q_ARG(QVariant, first)));
+    QTRY_VERIFY(confirm->isVisible());
+    QCOMPARE(confirm->property("title").toString(), QStringLiteral("Move this item and its sidecar to Trash?"));
+    QVERIFY(QMetaObject::invokeMethod(confirm, "close"));
+    QTRY_VERIFY(!confirm->isVisible());
+    QVERIFY(QMetaObject::invokeMethod(m_window, "requestDeleteBatch",
+                                    Q_ARG(QVariant, QVariant(QStringList{first, second})),
+                                    Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant())));
+    QTRY_VERIFY(confirm->isVisible());
+    QCOMPARE(confirm->property("title").toString(), QStringLiteral("Move 2 items and a sidecar to Trash?"));
+    QVERIFY(QMetaObject::invokeMethod(confirm, "close"));
+    QTRY_VERIFY(!confirm->isVisible());
+    QFile::remove(sidecar);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "requestDeleteBatch",
+                                    Q_ARG(QVariant, QVariant(QStringList{first, second})),
+                                    Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant())));
+    QTRY_VERIFY(confirm->isVisible());
+    QCOMPARE(confirm->property("title").toString(), QStringLiteral("Move 2 items to Trash?"));
   }
 
   void keepingOneExactDuplicateMovesOnlyTheOtherCopyToTrash() {
@@ -8279,6 +8572,17 @@ private slots:
     QVERIFY2(factLine(small).startsWith(QStringLiteral("480 × 320  ·  ")), qPrintable(factLine(small)));
     QCOMPARE(compare->property("facts").value<QJSValue>().property(small).property("folder").toString(),
              dir.path());
+    // The three fact lines keep some room above and below inside their bar.
+    QQuickItem* facts = nullptr;
+    QTRY_VERIFY((facts = find(compare, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("compareFacts") && candidate->isVisible();
+    })) != nullptr);
+    QQuickItem* lines = find(facts, [](QQuickItem* candidate) {
+      return candidate->inherits("QQuickColumn");
+    });
+    QVERIFY(lines);
+    QVERIFY2(lines->y() >= 6 && facts->height() - lines->y() - lines->height() >= 6,
+             qPrintable(QStringLiteral("%1 %2 %3").arg(lines->y()).arg(lines->height()).arg(facts->height())));
 
     QVERIFY(QMetaObject::invokeMethod(compare, "requestKeep", Q_ARG(QVariant, large)));
     QQuickItem* confirm = item("compareKeepConfirm");
@@ -8809,7 +9113,16 @@ private slots:
     m_window->resize(560, 420);
     QTRY_VERIFY(!item("folderSidebar")->isVisible());
     QVERIFY(AppSettings().showFolderSidebar());
+    // The button shows what is on screen and says why, and neither it nor
+    // F9 flips the kept choice while nothing could appear.
+    QQuickItem* toggle = item("folderSidebarToggle");
+    QVERIFY(!toggle->property("active").toBool());
+    QVERIFY(toggle->property("toolTip").toString().contains(QStringLiteral("too narrow")));
+    QTest::keyClick(m_window, Qt::Key_F9);
+    QVERIFY(m_settings->showFolderSidebar());
+    QTRY_VERIFY(item("footerStatus")->property("text").toString().contains(QStringLiteral("Widen")));
     m_window->resize(760, 600);
+    QTRY_VERIFY(toggle->property("active").toBool());
     QTRY_VERIFY(item("folderSidebar")->isVisible());
     QVERIFY(item("library")->width() > 450);
   }
@@ -9111,6 +9424,10 @@ private slots:
     QVERIFY(m_settings->pinFolderPath(QFileInfo(m_oddPath).absolutePath()));
     QQuickItem* pins = item("pinnedFolders");
     QTRY_VERIFY(pins->isVisible());
+    // On the 20 px gutter, and no scroll bar for a pin that fits.
+    QCOMPARE(pins->mapToScene(QPointF()).x(), 20.0);
+    QCOMPARE(m_window->width() - (pins->mapToScene(QPointF()).x() + pins->width()), 20.0);
+    QVERIFY(!item("pinnedFoldersScrollBar")->isVisible());
     const QString folder = m_settings->pinnedFolders().first();
     QVERIFY(QMetaObject::invokeMethod(pins, "chosen", Q_ARG(QString, folder)));
     QCOMPARE(m_library->folderFilter(), folder);
@@ -9415,9 +9732,37 @@ private slots:
     const auto detachAudio = qScopeGuard([&] { player->setAudioBufferOutput(nullptr); });
     QTRY_VERIFY(frequency > 350 && frequency < 530);
     const int audioTrack = player->activeAudioTrack();
-    click(item("audioTrackButton"));
+    // The backend does not signal track changes; the label must still name
+    // a real track, before and after a switch.
+    QQuickItem* audioButton = item("audioTrackButton");
+    QCOMPARE(audioButton->property("label").toString(),
+             QStringLiteral("Audio %1").arg(std::max(0, audioTrack) + 1));
+    click(audioButton);
     QTRY_COMPARE(player->activeAudioTrack(), (audioTrack + 1) % 2);
+    QCOMPARE(audioButton->property("label").toString(),
+             QStringLiteral("Audio %1").arg(player->activeAudioTrack() + 1));
     QTRY_VERIFY(frequency > 760 && frequency < 1000);
+    // A switch keeps the place, playing or paused.
+    {
+      player->setPosition(4000);
+      QTRY_VERIFY(player->position() >= 4000);
+      click(audioButton);
+      QTRY_COMPARE(player->activeAudioTrack(), audioTrack < 0 ? 0 : audioTrack);
+      QTest::qWait(200);
+      QVERIFY2(player->position() >= 4000, qPrintable(QString::number(player->position())));
+      QCOMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+      player->pause();
+      QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+      player->setPosition(3000);
+      QTRY_COMPARE(player->position(), qint64(3000));
+      click(audioButton);
+      QTRY_COMPARE(player->activeAudioTrack(), (audioTrack + 1) % 2);
+      QTest::qWait(200);
+      QCOMPARE(player->position(), qint64(3000));
+      QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
+      player->play();
+      QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+    }
     const int subtitleTrack = player->activeSubtitleTrack();
     click(item("subtitleButton"));
     QTRY_COMPARE(player->activeSubtitleTrack(), subtitleTrack == -1 ? 0 : -1);

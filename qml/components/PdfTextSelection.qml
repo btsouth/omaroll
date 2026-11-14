@@ -33,6 +33,26 @@ Item {
         return span > 0 ? Math.max(0, Math.min(1, value / span)) : 0
     }
 
+    // Where Find's query is on this page: marked in the theme's yellow, the
+    // way a reader expects a found word, and outlined so it holds on a white
+    // page in every theme.
+    Repeater {
+        model: PdfInfo.matchPage === root.page ? PdfInfo.matchRects : []
+
+        delegate: Rectangle {
+            required property var modelData
+            objectName: "pdfMatchMark"
+            x: modelData.x * root.width - 2
+            y: modelData.y * root.height - 1
+            width: modelData.width * root.width + 4
+            height: modelData.height * root.height + 2
+            radius: 2
+            color: Qt.rgba(Theme.yellow.r, Theme.yellow.g, Theme.yellow.b, 0.45)
+            border.width: 2
+            border.color: Theme.accent
+        }
+    }
+
     // The words already selected on this page.
     Repeater {
         model: root.selectedRects
