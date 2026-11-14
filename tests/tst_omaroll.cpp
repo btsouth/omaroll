@@ -10890,6 +10890,32 @@ private slots:
     QCOMPARE(videoLines.value(0), QStringLiteral("MP4  ·  H.264  ·  High  ·  yuv420p"));
     QCOMPARE(videoLines.value(1), QStringLiteral("29.97 fps  ·  3.6 Mbps"));
     QCOMPARE(videoLines.value(2), QStringLiteral("AAC  ·  stereo  ·  48 kHz"));
+    QCOMPARE(videoLines.size(), 3);
+
+    // Every audio track and the subtitles, named as the player names them.
+    const QByteArray tracks = R"({
+      "streams": [
+        {"codec_type":"video","codec_name":"h264"},
+        {"codec_type":"audio","codec_name":"aac","sample_rate":"48000",
+         "channel_layout":"stereo","tags":{"language":"eng"}},
+        {"codec_type":"audio","codec_name":"opus","sample_rate":"48000",
+         "channel_layout":"mono","tags":{"language":"ger","title":"Commentary"}},
+        {"codec_type":"audio","codec_name":"aac","tags":{"language":"und"}},
+        {"codec_type":"subtitle","codec_name":"mov_text","tags":{"language":"fre"}},
+        {"codec_type":"subtitle","codec_name":"subrip"}
+      ],
+      "format": {"format_name":"matroska,webm"}
+    })";
+    const QStringList trackLines = MediaInspector::parseVideo(tracks, QStringLiteral("mkv"));
+    QVERIFY2(trackLines.contains(QStringLiteral("Audio 1  ·  English  ·  AAC  ·  stereo  ·  48 kHz")),
+             qPrintable(trackLines.join(u'|')));
+    QVERIFY(trackLines.contains(QStringLiteral("Audio 2  ·  Commentary  ·  Opus  ·  mono  ·  48 kHz")));
+    QVERIFY(trackLines.contains(QStringLiteral("Audio 3  ·  AAC")));
+    QVERIFY(trackLines.contains(QStringLiteral("Subtitles  ·  French, Track 2")));
+    // One tagged track keeps the plain line, with its language.
+    const QByteArray one = R"({"streams":[{"codec_type":"audio","codec_name":"aac",
+      "tags":{"language":"spa"}}],"format":{}})";
+    QCOMPARE(MediaInspector::parseVideo(one, QStringLiteral("mp4")).value(1), QStringLiteral("Spanish  ·  AAC"));
   }
 
   void embeddedMediaDatesParseWithoutChangingWallClockPhotoTime() {
