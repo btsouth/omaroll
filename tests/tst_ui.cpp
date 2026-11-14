@@ -8077,6 +8077,13 @@ private slots:
     QObject* menu = m_window->findChild<QObject*>(QStringLiteral("albumActionMenu"));
     QVERIFY(menu);
     QTRY_VERIFY(menu->property("visible").toBool());
+    // With no tags the hidden separator leaves no gap between the rows.
+    if (m_settings->tagNames().isEmpty() && m_library->tagFilter().isEmpty()) {
+      QQuickItem* albumRow = item("albumMenuNewAlbum");
+      QQuickItem* tagRow = item("albumMenuNewTag");
+      QTRY_COMPARE(tagRow->mapToScene(QPointF()).y(),
+                   albumRow->mapToScene(QPointF(0, albumRow->height())).y());
+    }
     QQuickItem* newAlbum = find(m_window->contentItem(), [](QQuickItem* candidate) {
       return candidate->inherits("QQuickText") && candidate->isVisible() &&
              candidate->property("text").toString() == QStringLiteral("+ New album");

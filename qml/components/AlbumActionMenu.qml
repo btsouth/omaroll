@@ -87,6 +87,7 @@ Menu {
 
     MenuItem {
         id: newAlbumRow
+        objectName: "albumMenuNewAlbum"
         text: "+ New album"
         Accessible.name: text
         height: 30
@@ -106,8 +107,12 @@ Menu {
         onTriggered: nameSheet.open(menu.targetPaths)
     }
 
+    // A hidden row still takes its height in the menu's list, so each one
+    // collapses to nothing while hidden.
     MenuSeparator {
+        objectName: "albumMenuTagSeparator"
         visible: Settings.tagNames.length > 0 || Captures.tagFilter !== ""
+        height: visible ? implicitHeight : 0
     }
 
     MenuItem {
@@ -173,6 +178,7 @@ Menu {
 
     MenuItem {
         id: newTagRow
+        objectName: "albumMenuNewTag"
         text: "+ New tag"
         Accessible.name: text
         height: 30
