@@ -2948,10 +2948,7 @@ Item {
                     readonly property string displayLabel: modelData.id === "play"
                                                            ? "Open in mpv" : modelData.label
                     readonly property string shortcut: modelData.shortcut
-                    readonly property string toolTipText: modelData.shortcut !== ""
-                                                           ? row.displayLabel + "  ·  "
-                                                             + modelData.shortcut
-                                                           : row.displayLabel
+                    readonly property string toolTipText: row.displayLabel
 
                     Accessible.role: Accessible.Button
                     Accessible.name: row.displayLabel
@@ -3010,6 +3007,7 @@ Item {
                     ThemedToolTip {
                         requested: rowHover.hovered && row.toolTipText !== ""
                         text: row.toolTipText
+                        shortcut: row.shortcut
                         delay: 500
                     }
 

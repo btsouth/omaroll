@@ -26,12 +26,9 @@ Item {
     property int badge: -1
     property string toolTip: ""
     property string shortcut: ""
-    readonly property string resolvedToolTip: {
-        const action = root.toolTip !== "" ? root.toolTip : root.label
-        return root.shortcut !== ""
-               ? action + "  ·  " + root.shortcut
-               : root.toolTip
-    }
+    // The tip's words; its key is drawn beside them as a key.
+    readonly property string resolvedToolTip: root.shortcut !== "" && root.toolTip === ""
+                                              ? root.label : root.toolTip
 
     signal clicked()
 
@@ -140,6 +137,7 @@ Item {
             requested: hover.hovered
             keyboardRequested: root.activeFocus && root.Window.window && root.Window.window.keyboardNavigation === true
             text: root.resolvedToolTip
+            shortcut: root.shortcut
             delay: 500
         }
 

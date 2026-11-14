@@ -6763,7 +6763,10 @@ private slots:
     QVERIFY(focused->property("usable").toBool());
     QCOMPARE(focused->property("shortcut").toString(),
              m_registry->shortcutFor(QStringLiteral("copy")));
-    QCOMPARE(focused->property("toolTipText").toString(), QStringLiteral("Copy image  ·  Y"));
+    QCOMPARE(focused->property("toolTipText").toString(), QStringLiteral("Copy image"));
+    QObject* focusedTip = toolTipOf(focused);
+    QVERIFY(focusedTip);
+    QCOMPARE(focusedTip->property("shortcut").toString(), QStringLiteral("Y"));
 
     QTest::keyClick(m_window, Qt::Key_Down);
     QQuickItem* next = activeViewerAction();
@@ -6816,13 +6819,43 @@ private slots:
     QQuickItem* all = pill(m_window->contentItem(), QStringLiteral("All"));
     QVERIFY(all);
     QCOMPARE(all->property("shortcut").toString(), QStringLiteral("1"));
-    QCOMPARE(all->property("resolvedToolTip").toString(), QStringLiteral("All  ·  1"));
+    QCOMPARE(all->property("resolvedToolTip").toString(), QStringLiteral("All"));
+    QCOMPARE(toolTipOf(all)->property("shortcut").toString(), QStringLiteral("1"));
+
+    // The kind pills' keys are digits: "Videos · 5" read as five videos, so
+    // the key is drawn as a key beside the name, not run into the text.
+    QQuickItem* videos = pill(m_window->contentItem(), QStringLiteral("Videos"));
+    QVERIFY(videos);
+    QObject* tip = toolTipOf(videos);
+    QVERIFY(tip);
+    QCOMPARE(tip->property("text").toString(), QStringLiteral("Videos"));
+    QCOMPARE(tip->property("shortcut").toString(), QStringLiteral("5"));
+    QTest::mouseMove(m_window, videos->mapToScene(QPointF(videos->width() / 2, videos->height() / 2)).toPoint());
+    QTRY_VERIFY(tip->property("visible").toBool());
+    auto* key = tip->property("contentItem").value<QQuickItem*>()->findChild<QQuickItem*>(QStringLiteral("toolTipKey"));
+    QVERIFY(key && key->isVisible());
+    QCOMPARE(key->childItems().constFirst()->property("text").toString(), QStringLiteral("5"));
+    QQuickItem* favourites = pill(m_window->contentItem(), QStringLiteral("Favourites"));
+    QVERIFY(favourites);
+    QCOMPARE(toolTipOf(favourites)->property("text").toString(), QStringLiteral("Favourites"));
+    QCOMPARE(toolTipOf(favourites)->property("shortcut").toString(), QStringLiteral("7"));
+    QTest::mouseMove(m_window, QPoint(2, m_window->height() - 2));
+    QTRY_VERIFY(!tip->property("visible").toBool());
 
     openDetail(0);
     QQuickItem* rotate = pill(item("detail"), QStringLiteral("Rotate right"));
     QTRY_VERIFY(rotate != nullptr);
     QCOMPARE(rotate->property("shortcut").toString(), QStringLiteral("R"));
-    QCOMPARE(rotate->property("resolvedToolTip").toString(), QStringLiteral("Rotate right  ·  R"));
+    QCOMPARE(rotate->property("resolvedToolTip").toString(), QStringLiteral("Rotate right"));
+    QCOMPARE(toolTipOf(rotate)->property("shortcut").toString(), QStringLiteral("R"));
+  }
+
+  // The themed tooltip a button or row owns.
+  static QObject* toolTipOf(QObject* owner) {
+    for (QObject* child : owner->findChildren<QObject*>()) {
+      if (QByteArray(child->metaObject()->className()).startsWith("ThemedToolTip")) return child;
+    }
+    return nullptr;
   }
 
   void extractedTextOpensASelectableLayoutPreservingReview() {

@@ -26,9 +26,8 @@ Item {
     readonly property color accentColour: root.osd ? Osd.accent : Theme.accent
     property real iconSize: 18
     readonly property bool hovered: mouse.containsMouse
-    readonly property string resolvedToolTip: root.shortcut !== ""
-                                              ? root.toolTip + "  ·  " + root.shortcut
-                                              : root.toolTip
+    // The tip's words; its key is drawn beside them as a key.
+    readonly property string resolvedToolTip: root.toolTip
 
     signal clicked()
 
@@ -108,6 +107,7 @@ Item {
         requested: root.hovered
         keyboardRequested: root.activeFocus && root.Window.window && root.Window.window.keyboardNavigation === true
         text: root.resolvedToolTip
+        shortcut: root.toolTip !== "" ? root.shortcut : ""
         delay: 500
     }
 }
