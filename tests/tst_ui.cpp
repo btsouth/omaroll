@@ -3690,9 +3690,17 @@ private slots:
 
     QQuickItem* slider = item("straightenSlider");
     QVERIFY(slider);
+    // The app's own track and accent fill, not the stock control.
+    auto* track = slider->property("background").value<QQuickItem*>();
+    QVERIFY(track);
+    QCOMPARE(track->objectName(), QStringLiteral("straightenTrack"));
     slider->setProperty("value", 7.5);
     QVERIFY(QMetaObject::invokeMethod(slider, "moved"));
     QCOMPARE(sheet->property("straighten").toDouble(), 7.5);
+    QQuickItem* fill = track->findChild<QQuickItem*>(QStringLiteral("straightenFill"));
+    QVERIFY(fill);
+    QTRY_VERIFY(fill->width() > track->width() / 4 - 1);
+    QVERIFY(fill->x() >= track->width() / 2 - 1);
     // The preview id carries the angle in tenths of a degree.
     QVERIFY(item("correctionPreview")->property("source").toUrl().toString().contains(".75"));
 
