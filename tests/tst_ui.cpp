@@ -7008,7 +7008,7 @@ private slots:
         height: 40
         ThemedToolTip {
           objectName: "longNameTip"
-          text: "screenshot-2026-11-14_13-45-02-a-very-long-file-name-without-any-spaces-at-all-from-the-summer-trip.png"
+          text: "screenshot_20261114_134502_a_very_long_file_name_without_any_spaces_or_hyphens_from_the_summer_trip.png"
           requested: true
           delay: 0
         }

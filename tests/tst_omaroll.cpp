@@ -7340,43 +7340,44 @@ private slots:
   }
 
   // Search marks and a selection on different pages share one word reader.
-  // Neither may leave the other waiting for good.
-  void pdfSelectionAndSearchMarksOnDifferentPagesBothArrive() {
+  // Neither may leave the other waiting for good. Marks wanted on page 1
+  // while a selection's words load on page 2: the marks' read follows, and
+  // the page 2 selection still arrives.
+  void pdfSelectionOnAnotherPageSurvivesTheSearchMarksRead() {
     if (!PdfSupport::available() || !PdfSupport::textAvailable()) {
       QSKIP("Poppler is not installed");
     }
-    const QString path = QFINDTESTDATA("fixtures/pdf/letter-pages.pdf");
-    {
-      // Marks wanted on page 1 while a selection's words load on page 2:
-      // the marks' read follows, and the page 2 selection still arrives.
-      PdfInspector inspector;
-      QSignalSpy failed(&inspector, &PdfInspector::selectionFailed);
-      inspector.inspect(path);
-      QTRY_COMPARE(inspector.pageCount(), 2);
-      inspector.find(QStringLiteral("o"));
-      QTRY_COMPARE(inspector.matches(), QVariantList({1, 2}));
-      inspector.updateSelection(2, 0, 0, 1, 1);
-      inspector.showMatches(1);
-      QTRY_VERIFY(inspector.matchPage() == 1 && !inspector.matchRects().isEmpty());
-      QTRY_VERIFY(inspector.hasSelection());
-      QCOMPARE(inspector.selectionPage(), 2);
-      QVERIFY(inspector.selectionText().contains(QStringLiteral("Second page")));
-      QVERIFY(failed.isEmpty());
+    PdfInspector inspector;
+    QSignalSpy failed(&inspector, &PdfInspector::selectionFailed);
+    inspector.inspect(QFINDTESTDATA("fixtures/pdf/letter-pages.pdf"));
+    QTRY_COMPARE(inspector.pageCount(), 2);
+    inspector.find(QStringLiteral("o"));
+    QTRY_COMPARE(inspector.matches(), QVariantList({1, 2}));
+    inspector.updateSelection(2, 0, 0, 1, 1);
+    inspector.showMatches(1);
+    QTRY_VERIFY(inspector.matchPage() == 1 && !inspector.matchRects().isEmpty());
+    QTRY_VERIFY(inspector.hasSelection());
+    QCOMPARE(inspector.selectionPage(), 2);
+    QVERIFY(inspector.selectionText().contains(QStringLiteral("Second page")));
+    QVERIFY(failed.isEmpty());
+  }
+
+  // Marks wanted on page 2 wait for a selection read of page 1; leaving the
+  // selection cancels that read and the marks are read after all.
+  void pdfSearchMarksStillArriveAfterTheSelectionIsDropped() {
+    if (!PdfSupport::available() || !PdfSupport::textAvailable()) {
+      QSKIP("Poppler is not installed");
     }
-    {
-      // Marks wanted on page 2 wait for a selection read of page 1; leaving
-      // the selection cancels that read and the marks are read after all.
-      PdfInspector inspector;
-      inspector.inspect(path);
-      QTRY_COMPARE(inspector.pageCount(), 2);
-      inspector.find(QStringLiteral("o"));
-      QTRY_COMPARE(inspector.matches(), QVariantList({1, 2}));
-      inspector.updateSelection(1, 0, 0, 1, 1);
-      inspector.showMatches(2);
-      inspector.clearSelection();
-      QTRY_VERIFY(inspector.matchPage() == 2 && !inspector.matchRects().isEmpty());
-      QVERIFY(!inspector.hasSelection());
-    }
+    PdfInspector inspector;
+    inspector.inspect(QFINDTESTDATA("fixtures/pdf/letter-pages.pdf"));
+    QTRY_COMPARE(inspector.pageCount(), 2);
+    inspector.find(QStringLiteral("o"));
+    QTRY_COMPARE(inspector.matches(), QVariantList({1, 2}));
+    inspector.updateSelection(1, 0, 0, 1, 1);
+    inspector.showMatches(2);
+    inspector.clearSelection();
+    QTRY_VERIFY(inspector.matchPage() == 2 && !inspector.matchRects().isEmpty());
+    QVERIFY(!inspector.hasSelection());
   }
 
   void pdfTallPageHasBoundedRaster() {
