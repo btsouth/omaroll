@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- View > Sort in the viewer's menu opens beside View, on the side away from
+  the menu it came from, instead of on top of it.
+- The PDF preview's find and page controls sit on a solid themed panel that
+  reads in light and dark themes, and Find marks the matching words on the
+  page.
+- Video details list every audio track and the embedded subtitles, named as
+  the player names them.
+- Tooltips draw a button's key as a key, so "Videos" with its `5` no longer
+  reads as five videos.
+
 ## 1.19.0
 
 A redesigned library and viewer, with date sections, file-manager selection,
