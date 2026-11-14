@@ -2217,6 +2217,9 @@ private slots:
       QVERIFY(sort.left() >= 0 && sort.right() <= m_window->width());
       QCOMPARE(sort.center().x() < view.center().x(), leftward);
       QCOMPARE(view.center().x() < top.center().x(), leftward);
+      // The rows' chevrons point the way their submenus went.
+      QCOMPARE(item(QStringLiteral("viewerMenu_group-viewArrow"))->property("pointsLeft").toBool(), leftward);
+      QCOMPARE(item(QStringLiteral("viewerMenu_group-sortArrow"))->property("pointsLeft").toBool(), leftward);
       QTest::keyClick(m_window, Qt::Key_Escape);
       QTest::keyClick(m_window, Qt::Key_Escape);
       QTest::keyClick(m_window, Qt::Key_Escape);
