@@ -9645,6 +9645,27 @@ private slots:
     QCOMPARE(audioButton->property("label").toString(),
              QStringLiteral("Audio %1").arg(player->activeAudioTrack() + 1));
     QTRY_VERIFY(frequency > 760 && frequency < 1000);
+    // A switch keeps the place, playing or paused.
+    {
+      player->setPosition(4000);
+      QTRY_VERIFY(player->position() >= 4000);
+      click(audioButton);
+      QTRY_COMPARE(player->activeAudioTrack(), audioTrack < 0 ? 0 : audioTrack);
+      QTest::qWait(200);
+      QVERIFY2(player->position() >= 4000, qPrintable(QString::number(player->position())));
+      QCOMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+      player->pause();
+      QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+      player->setPosition(3000);
+      QTRY_COMPARE(player->position(), qint64(3000));
+      click(audioButton);
+      QTRY_COMPARE(player->activeAudioTrack(), (audioTrack + 1) % 2);
+      QTest::qWait(200);
+      QCOMPARE(player->position(), qint64(3000));
+      QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
+      player->play();
+      QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+    }
     const int subtitleTrack = player->activeSubtitleTrack();
     click(item("subtitleButton"));
     QTRY_COMPARE(player->activeSubtitleTrack(), subtitleTrack == -1 ? 0 : -1);
