@@ -39,8 +39,15 @@ ToolTip {
     // The key that does the same, drawn as a key the way the shortcut list
     // draws it, so "Videos" and 5 do not read as five videos.
     property string shortcut: ""
+    // Long tips wrap rather than run across the window, and never wider
+    // than the window itself allows.
+    readonly property real windowWidth: owner && owner.Window.window ? owner.Window.width : 0
+    readonly property real maximumWidth: windowWidth > 0
+                                         ? Math.max(120, Math.min(420, windowWidth - 24)) : 420
     contentItem: Item {
-        implicitWidth: tipText.implicitWidth + (keyCap.visible ? keyCap.width + 10 : 0)
+        readonly property real keyRoom: keyCap.visible ? keyCap.width + 10 : 0
+        implicitWidth: Math.min(tipText.implicitWidth,
+                                tip.maximumWidth - tip.leftPadding - tip.rightPadding - keyRoom) + keyRoom
         implicitHeight: Math.max(tipText.implicitHeight, keyCap.visible ? keyCap.height : 0)
         Text {
             id: tipText

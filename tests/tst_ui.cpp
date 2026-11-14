@@ -6916,6 +6916,25 @@ private slots:
     QCOMPARE(toolTipOf(rotate)->property("shortcut").toString(), QStringLiteral("R"));
   }
 
+  void longToolTipsWrapWithinTheWindow() {
+    QQuickItem* box = item("librarySearchBox");
+    QObject* tip = nullptr;
+    for (QObject* child : box->findChildren<QObject*>()) {
+      if (QByteArray(child->metaObject()->className()).startsWith("ThemedToolTip") &&
+          child->property("text").toString().startsWith(QStringLiteral("Search names")))
+        tip = child;
+    }
+    QVERIFY(tip);
+    QTest::mouseMove(m_window, box->mapToScene(QPointF(box->width() / 2, box->height() / 2)).toPoint());
+    QTRY_VERIFY(tip->property("visible").toBool());
+    const auto away = qScopeGuard([&] { QTest::mouseMove(m_window, QPoint(2, m_window->height() - 2)); });
+    QVERIFY2(tip->property("width").toReal() <= 420, qPrintable(tip->property("width").toString()));
+    auto* content = tip->property("contentItem").value<QQuickItem*>();
+    QVERIFY(content);
+    // Wrapped onto several lines rather than one long one.
+    QVERIFY(content->height() > 2 * tip->property("font").value<QFont>().pixelSize());
+  }
+
   // The themed tooltip a button or row owns.
   static QObject* toolTipOf(QObject* owner) {
     for (QObject* child : owner->findChildren<QObject*>()) {
