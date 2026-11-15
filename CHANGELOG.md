@@ -43,6 +43,8 @@
   on screen: Mute for a video, Add background and Fit for a picture. `9` and
   `0` no longer change a video preview's volume; `↑` and `↓` do, as in the
   viewer.
+- Deleting a tag that has tags nested under it says how many went with it,
+  as in "Deleted tag Travel and 2 nested tags".
 
 ### Fixed
 
