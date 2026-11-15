@@ -5032,10 +5032,12 @@ private slots:
     QTRY_COMPARE(m_window->activeFocusItem(), resume);
     QTest::keyClick(m_window, Qt::Key_Right);
     QTRY_COMPARE(m_session->path(), paths.at(1));
-    QMediaPlayer* player = nullptr;
-    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
     QTRY_VERIFY(prop("resumeAvailable").toBool());
     QTRY_VERIFY(prompt->isVisible());
+    // The second file's own player; the first one's may not be gone yet.
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = qobject_cast<QMediaPlayer*>(prop("player").value<QObject*>()))
+                && player->source().toString().endsWith(QStringLiteral("resume-pass-2.mkv")));
     QTRY_COMPARE(m_window->activeFocusItem(), resume);
     QTest::keyClick(m_window, Qt::Key_Return);
     QTRY_VERIFY(!prop("resumeAvailable").toBool());
