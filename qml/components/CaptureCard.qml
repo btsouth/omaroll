@@ -81,6 +81,11 @@ Item {
         keyboardRequested: root.keyboardCurrent && root.Window.window && root.Window.window.keyboardNavigation === true
         text: root.fileName
         delay: 600
+        // Inside the tile, over its own info strip, so it never covers the
+        // section header above or the tiles around it.
+        widthLimit: Math.max(40, root.width - 12)
+        x: 6
+        y: Math.max(6, root.height - implicitHeight - 6)
     }
 
     signal activated()

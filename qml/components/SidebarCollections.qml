@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Window
 import QtQuick.Controls.Basic
+import QtQuick.Effects
 
 // Albums, tags and dates above the folder tree, as one recycling list of
 // flattened rows: a framed header per section, then its albums with a cover,
@@ -9,6 +10,12 @@ import QtQuick.Controls.Basic
 // A row narrows the library the way Browse does, so it combines with the
 // folder, search and other facets; the active row is highlighted, and
 // choosing it again clears that facet. Which sections are open is saved.
+//
+// Section headers stay in reach however long a section is: the header of
+// the section being scrolled through sticks to the top, where a click
+// collapses it, and the headers of the sections below stick to the bottom,
+// where a click goes to them. Ctrl+Up and Ctrl+Down move between headers
+// and Ctrl+Left collapses the current section from any of its rows.
 FocusScope {
     id: root
 
@@ -40,13 +47,37 @@ FocusScope {
     // From the rows rather than the list's contentHeight, which it estimates
     // from its own height and so would loop back into this.
     function rowHeight(kind) { return kind === "header" ? 36 : kind === "album" ? 42 : 32 }
-    readonly property real rowsHeight: {
+    readonly property int headerHeight: 36
+    // Where each row starts, and one more entry for the end.
+    readonly property var offsets: {
+        const out = [0]
         let total = 0
-        for (const row of rows) total += rowHeight(row.kind)
-        return total
+        for (const row of rows) {
+            total += rowHeight(row.kind)
+            out.push(total)
+        }
+        return out
     }
-    implicitHeight: Math.min(rowsHeight, maximumHeight)
+    readonly property real rowsHeight: offsets[offsets.length - 1]
+    // Whole rows only: the list ends on a row's edge rather than cutting
+    // the last one it shows through its text.
+    function fittedHeight(limit) {
+        if (rowsHeight <= limit) return rowsHeight
+        let fitted = 0
+        for (let i = 1; i < offsets.length && offsets[i] <= limit; ++i) fitted = offsets[i]
+        return fitted
+    }
+    implicitHeight: fittedHeight(maximumHeight)
     visible: rows.length > 0
+    // The scroll bar has a gutter of its own beside the rows, so it never
+    // crosses a header's frame or the keyboard ring.
+    readonly property bool overflowing: rowsHeight > list.height + 0.5
+    readonly property real gutter: overflowing ? 10 : 0
+    // The keyboard ring shows while the keyboard is in use; a click on a
+    // row or header does not leave one behind.
+    readonly property bool keyboardShown: !root.Window.window || root.Window.window.keyboardNavigation !== false
+    function keyboardUsed() { if (root.Window.window) root.Window.window.keyboardNavigation = true }
+    function pointerUsed() { if (root.Window.window) root.Window.window.keyboardNavigation = false }
 
     function shade(base, amount) { return Qt.rgba(base.r, base.g, base.b, amount) }
     function items(count) { return count === 1 ? "1 item" : count + " items" }
@@ -187,7 +218,12 @@ FocusScope {
             list.contentY = Math.max(list.originY, Math.min(end, list.contentY + topOffset))
         }
         root.restoring = false
-        root.currentKey = root.keyOf(root.rows[list.currentIndex])
+        if (root.revealPending && index >= 0) {
+            root.revealPending = false
+            list.forceLayout()
+            root.reveal(index)
+        }
+        if (!root.revealPending) root.currentKey = root.keyOf(root.rows[list.currentIndex])
         root.modelResets++
     }
     onRowsChanged: applyRows()
@@ -234,18 +270,18 @@ FocusScope {
 
     function focusFirst() {
         list.currentIndex = 0
-        list.positionViewAtIndex(0, ListView.Contain)
+        root.reveal(0)
         list.forceActiveFocus()
     }
     function focusLast() {
         list.currentIndex = rows.length - 1
-        list.positionViewAtIndex(list.currentIndex, ListView.Contain)
+        root.reveal(list.currentIndex)
         list.forceActiveFocus()
     }
     function moveTo(index) {
         if (index < 0 || index >= rows.length) return
         list.currentIndex = index
-        list.positionViewAtIndex(index, ListView.Contain)
+        root.reveal(index)
     }
     // The row a child sits under: a tag's parent tag, a month's year, or
     // the section header.
@@ -260,6 +296,118 @@ FocusScope {
         }
         return -1
     }
+    // Header rows, in order.
+    readonly property var headerIndices: {
+        const out = []
+        for (let i = 0; i < rows.length; ++i) if (rows[i].kind === "header") out.push(i)
+        return out
+    }
+    // The header of the section a row is in.
+    function sectionHeaderOf(index) {
+        let found = -1
+        for (const header of headerIndices) {
+            if (header > index) break
+            found = header
+        }
+        return found
+    }
+    // Which headers stick, for the list scrolled to top: the header of the
+    // section being looked through when its own row is above the view, and
+    // the headers below the view, stacked at the bottom.
+    function pinnedAt(top) {
+        const height = list.height
+        const bottom = []
+        let edge = top + height
+        for (let k = headerIndices.length - 1; k >= 0; --k) {
+            const header = headerIndices[k]
+            if (offsets[header] + root.headerHeight <= edge + 0.5) break
+            bottom.unshift(header)
+            edge -= root.headerHeight
+        }
+        let above = -1
+        for (const header of headerIndices) {
+            if (offsets[header] < top - 0.5 && bottom.indexOf(header) < 0) above = header
+        }
+        // Pushed up by the next header as it arrives.
+        let shift = 0
+        if (above >= 0) {
+            const next = headerIndices[headerIndices.indexOf(above) + 1]
+            if (next !== undefined) shift = Math.min(0, offsets[next] - top - root.headerHeight)
+        }
+        return {top: above, shift: shift, bottom: bottom,
+                topCover: above >= 0 ? root.headerHeight + shift : 0,
+                bottomCover: bottom.length * root.headerHeight}
+    }
+    // How far the view is scrolled, measured from a row on screen: the
+    // list's own origin is an estimate while rows above are unseen.
+    function exactViewTop() {
+        const at = list.indexAt(1, list.contentY + 1)
+        const item = at >= 0 ? list.itemAtIndex(at) : null
+        return item && at < root.offsets.length ? root.offsets[at] + list.contentY - item.y
+                                                : list.contentY - list.originY
+    }
+    readonly property real viewTop: { void list.contentY; void list.originY; void list.count; return exactViewTop() }
+    readonly property var pinned: { void list.height; return pinnedAt(root.viewTop) }
+    // Scrolls just enough that a row is in view and clear of the stuck
+    // headers.
+    function reveal(index) {
+        if (index < 0 || index >= rows.length) return
+        list.positionViewAtIndex(index, ListView.Contain)
+        const rowTop = offsets[index]
+        const rowBottom = offsets[index + 1]
+        const extent = Math.max(0, rowsHeight - list.height)
+        const start = root.exactViewTop()
+        let top = start
+        for (let pass = 0; pass < 2; ++pass) {
+            const pins = pinnedAt(top)
+            const cover = pins.top === index ? 0 : pins.topCover
+            if (rowTop < top + cover) top = rows[index].kind === "header" ? rowTop : rowTop - root.headerHeight
+            const after = pinnedAt(top)
+            const below = after.bottom.indexOf(index) >= 0 ? 0 : after.bottomCover
+            if (rowBottom > top + list.height - below) top = rowBottom - list.height + below
+            top = Math.max(0, Math.min(extent, top))
+        }
+        if (Math.abs(top - start) > 0.5) list.contentY += top - start
+    }
+    // A stuck header was clicked: collapse the section it heads when it is
+    // the one at the top, or go to it when it is below.
+    function pinnedHeaderClicked(index) {
+        const row = rows[index]
+        if (!row) return
+        const section = row.section
+        const atTop = root.pinned.top === index
+        if (atTop) root.setOpen(section, false)
+        else if (!row.open) root.setOpen(section, true)
+        const at = root.indexOfKey("header:" + section)
+        list.currentIndex = at
+        list.forceActiveFocus()
+        list.forceLayout()
+        if (atTop) root.reveal(at)
+        else list.positionViewAtIndex(at, ListView.Beginning)
+    }
+    function stepSection(index, step) {
+        const header = root.sectionHeaderOf(index)
+        const at = root.headerIndices.indexOf(header)
+        if (step < 0 && header >= 0 && header < index) return header
+        const next = root.headerIndices[at + step]
+        return next === undefined ? -1 : next
+    }
+    // Focus a row by kind and name once it is there, as after a rename,
+    // whose new row comes with the next rebuild.
+    function focusRow(kind, name) {
+        root.currentKey = kind + ":" + name
+        root.revealPending = true
+        const index = root.indexOfKey(root.currentKey)
+        if (index >= 0) {
+            list.currentIndex = index
+            root.revealPending = false
+            list.forceLayout()
+            root.reveal(index)
+        }
+        list.forceActiveFocus()
+    }
+    property bool revealPending: false
+
     function openMenu(index, item, x, y) {
         const row = rows[index]
         if (!row || (row.kind !== "album" && row.kind !== "tag")) return
@@ -274,6 +422,7 @@ FocusScope {
         objectName: "sidebarCollections"
         anchors.fill: parent
         clip: true
+        Accessible.description: "Ctrl+Up and Ctrl+Down go to the previous or next section, Ctrl+Left collapses this one"
         focus: true
         activeFocusOnTab: root.keyboardReachable
         boundsBehavior: Flickable.StopAtBounds
@@ -286,7 +435,10 @@ FocusScope {
         onCurrentIndexChanged: if (!root.restoring) root.currentKey = root.keyOf(root.rows[currentIndex])
         onActiveFocusChanged: if (activeFocus && currentIndex < 0 && count > 0) currentIndex = 0
         ScrollBar.vertical: ScrollBar {
-            policy: ScrollBar.AsNeeded
+            objectName: "sidebarCollectionsScrollBar"
+            policy: root.overflowing ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+            width: 6
+            Accessible.ignored: !root.overflowing
             contentItem: Rectangle {
                 visible: parent.size < 1
                 implicitWidth: 4
@@ -300,6 +452,24 @@ FocusScope {
             const index = currentIndex < 0 ? 0 : currentIndex
             const row = root.rows[index]
             if (!row) return
+            root.keyboardUsed()
+            const ctrl = (event.modifiers & Qt.ControlModifier) !== 0
+            if (ctrl && (event.key === Qt.Key_Down || event.key === Qt.Key_Up)) {
+                const target = root.stepSection(index, event.key === Qt.Key_Down ? 1 : -1)
+                if (target >= 0) root.moveTo(target)
+                event.accepted = true
+                return
+            }
+            if (ctrl && event.key === Qt.Key_Left) {
+                const header = root.sectionHeaderOf(index)
+                if (header >= 0) {
+                    const section = root.rows[header].section
+                    root.setOpen(section, false)
+                    root.moveTo(root.indexOfKey("header:" + section))
+                }
+                event.accepted = true
+                return
+            }
             if (event.key === Qt.Key_Down) {
                 if (index + 1 < root.rows.length) root.moveTo(index + 1)
                 else root.exitDown()
@@ -338,12 +508,36 @@ FocusScope {
             required property int index
             required property var modelData
             readonly property string kind: modelData.kind
-            readonly property bool current: ListView.isCurrentItem && list.activeFocus
+            readonly property bool current: ListView.isCurrentItem && list.activeFocus && root.keyboardShown
             readonly property bool active: { void Captures.albumFilter; void Captures.tagFilter
                                              void Captures.dateFrom; void Captures.dateTo
                                              return root.isActive(modelData) }
-            width: list.width
+            width: list.width - root.gutter
             height: root.rowHeight(kind)
+            // The list hands the keyboard to its current row, so the row
+            // itself is what a screen reader reads, not a nameless filler.
+            Accessible.role: kind === "header" ? Accessible.Heading : Accessible.ListItem
+            Accessible.name: {
+                const row = modelData
+                if (kind === "header") return row.label + ", " + row.count
+                const counted = count >= 0 ? ", " + root.items(count) : ""
+                switch (kind) {
+                case "album": return "Album " + row.name + counted
+                case "tag": return "Tag " + row.name + counted
+                default: return row.label + counted
+                }
+            }
+            Accessible.description: kind === "header"
+                                    ? (modelData.open ? "Expanded. Enter collapses it" : "Collapsed. Enter expands it")
+                                    : kind === "tag" && modelData.fromFile ? "From the files' keywords" : ""
+            Accessible.focusable: true
+            Accessible.focused: ListView.isCurrentItem && list.activeFocus
+            Accessible.selectable: kind !== "header"
+            Accessible.selected: active
+            // A header and a year open, as a tree item would.
+            Accessible.expandable: kind === "header" || kind === "year"
+            Accessible.expanded: (kind === "header" || kind === "year") && modelData.open === true
+            Accessible.onPressAction: root.activate(index)
             // Albums read their paths once per change, for the count and cover.
             readonly property var albumPaths: {
                 void root.detailRevision
@@ -367,8 +561,9 @@ FocusScope {
                 count: rowItem.kind === "header" ? rowItem.modelData.count : -1
                 expanded: rowItem.modelData.open === true
                 keyboardCurrent: rowItem.current
-                Accessible.ignored: !visible
+                Accessible.ignored: true
                 onToggled: {
+                    root.pointerUsed()
                     // The row first, so taking the keyboard does not
                     // scroll the list to its top row.
                     list.currentIndex = rowItem.index
@@ -389,25 +584,7 @@ FocusScope {
                        : mouse.containsMouse ? root.shade(Theme.foreground, 0.07) : "transparent"
                 border.width: rowItem.current ? 1 : 0
                 border.color: Theme.accent
-                Accessible.ignored: !visible
-                Accessible.role: Accessible.ListItem
-                Accessible.name: {
-                    const row = rowItem.modelData
-                    const counted = rowItem.count >= 0 ? ", " + root.items(rowItem.count) : ""
-                    switch (rowItem.kind) {
-                    case "album": return "Album " + row.name + counted
-                    case "tag": return "Tag " + row.name + counted
-                    default: return row.label + counted
-                    }
-                }
-                Accessible.description: rowItem.kind === "tag" && rowItem.modelData.fromFile
-                                        ? "From the files' keywords" : ""
-                Accessible.selectable: true
-                Accessible.selected: rowItem.active
-                // A year opens to its months, as a tree item would.
-                Accessible.expandable: rowItem.kind === "year"
-                Accessible.expanded: rowItem.kind === "year" && rowItem.modelData.open === true
-                Accessible.onPressAction: root.activate(rowItem.index)
+                Accessible.ignored: true
 
                 readonly property real indent: Math.min(rowItem.modelData.depth * 14, width / 2)
 
@@ -436,12 +613,30 @@ FocusScope {
                         return rowItem.kind === "album" ? Captures.coverFor(rowItem.albumPaths) : ({})
                     }
                     readonly property real dpr: Screen.devicePixelRatio
+                    // Rounded like the grid's thumbnails: clip alone only
+                    // cuts to the square.
+                    Rectangle {
+                        id: coverMask
+                        anchors.fill: parent
+                        radius: coverFrame.radius
+                        visible: false
+                        layer.enabled: coverFrame.radius > 0
+                        layer.smooth: true
+                    }
                     Image {
                         objectName: "albumCover"
                         anchors.fill: parent
                         fillMode: Image.PreserveAspectCrop
                         asynchronous: true
                         sourceSize: Qt.size(32, 32)
+                        layer.enabled: coverFrame.radius > 0
+                        layer.smooth: true
+                        layer.effect: MultiEffect {
+                            maskEnabled: true
+                            maskSource: coverMask
+                            maskThresholdMin: 0.5
+                            maskSpreadAtMin: 1.0
+                        }
                         readonly property var cover: coverFrame.cover
                         source: cover && cover.path
                                 ? "image://thumbs/" + coverFrame.dpr + (cover.isVideo ? "@20" : "")
@@ -489,6 +684,7 @@ FocusScope {
                     hoverEnabled: true
                     acceptedButtons: Qt.LeftButton | Qt.RightButton
                     onClicked: function (event) {
+                        root.pointerUsed()
                         list.currentIndex = rowItem.index
                         list.forceActiveFocus()
                         if (event.button === Qt.RightButton) {
@@ -507,6 +703,59 @@ FocusScope {
                           ? rowItem.modelData.name + " · from the files' keywords"
                           : String(rowItem.modelData.name)
                 }
+            }
+        }
+    }
+
+    // Stuck headers, drawn over the list on the sidebar's own background.
+    component PinnedHeader: Item {
+        id: pin
+        property int rowIndex: -1
+        readonly property var row: rowIndex >= 0 ? root.rows[rowIndex] : null
+        width: list.width - root.gutter
+        height: root.headerHeight
+        visible: row !== null && row !== undefined
+        Rectangle {
+            anchors.fill: parent
+            color: Qt.rgba(Theme.background.r, Theme.background.g, Theme.background.b, 1)
+        }
+        SidebarHeader {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 2
+            height: 28
+            label: pin.row ? pin.row.label : ""
+            count: pin.row ? pin.row.count : -1
+            expanded: !!pin.row && pin.row.open === true
+            keyboardCurrent: false
+            // The real header row is what the keyboard and screen readers
+            // reach; this is a shortcut to it for the pointer.
+            Accessible.ignored: true
+        }
+        MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: { root.pointerUsed(); root.pinnedHeaderClicked(pin.rowIndex) }
+        }
+    }
+    Item {
+        id: pins
+        anchors.fill: list
+        clip: true
+        PinnedHeader {
+            objectName: "pinnedTopHeader"
+            rowIndex: root.pinned.top
+            y: root.pinned.shift
+        }
+        Repeater {
+            model: root.pinned.bottom
+            PinnedHeader {
+                required property int modelData
+                required property int index
+                objectName: "pinnedBottomHeader"
+                rowIndex: modelData
+                y: pins.height - (root.pinned.bottom.length - index) * root.headerHeight
             }
         }
     }

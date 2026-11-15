@@ -328,7 +328,8 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
   m_sourceConnections.append(
       connect(model, &QAbstractItemModel::dataChanged, this,
               [this](const QModelIndex&, const QModelIndex&, const QList<int>& roles) {
-                if (roles.isEmpty() || roles.contains(CaptureRoles::PathRole)) {
+                if (roles.isEmpty() || roles.contains(CaptureRoles::PathRole) ||
+                    roles.contains(CaptureRoles::HiddenRole)) {
                   m_folderIndexTimer.start();
                 }
                 if (roles.isEmpty() || roles.contains(CaptureRoles::CapturedRole) ||
@@ -467,6 +468,7 @@ void CaptureFilterModel::setPairRawJpeg(bool value) {
   beginFilterUpdate();
   m_pairRawJpeg = value;
   endFilterUpdate();
+  if (rebuildDateIndex()) emit dateBucketsChanged();
   emit pairRawJpegChanged();
   emit countChanged();
 }
@@ -737,11 +739,40 @@ void CaptureFilterModel::clearDateRange() {
   }
 }
 
+// The RAW a JPEG is shown with while pairing is on, or null. The pair is
+// one tile, filed under the RAW's date, so dates count and match it there.
+const CaptureRecord* CaptureFilterModel::pairedRaw(const CaptureRecord& record) const {
+  if (!m_pairRawJpeg || m_duplicatesOnly || m_similarOnly || record.isRaw() ||
+      record.companionPath.isEmpty() || !sourceModel()) {
+    return nullptr;
+  }
+  const auto* captures = static_cast<const CaptureModel*>(sourceModel());
+  const int row = captures->rowOf(record.companionPath);
+  if (row < 0) return nullptr;
+  const CaptureRecord& raw = captures->recordAt(row);
+  if (!raw.isRaw() || (!m_showHidden && raw.hidden)) return nullptr;
+  return &raw;
+}
+
 bool CaptureFilterModel::rebuildDateIndex() {
+  // The same items the grid shows, counted the way its sections count
+  // them: hidden files only while they are shown, and a RAW+JPEG pair once,
+  // under the RAW's date.
   QMap<QDate, int> dayCounts;
   if (sourceModel()) {
+    QSet<QString> shownRaws;
     for (int row = 0; row < sourceModel()->rowCount(); ++row) {
-      const QDate date = sourceRecord(row).captured.date();
+      const CaptureRecord& record = sourceRecord(row);
+      if (record.isRaw() && (m_showHidden || !record.hidden)) shownRaws.insert(record.path);
+    }
+    // Review sets show both files of a pair, but the dates are the
+    // library's, so they follow the pairing setting alone.
+    const bool pairing = m_pairRawJpeg;
+    for (int row = 0; row < sourceModel()->rowCount(); ++row) {
+      const CaptureRecord& record = sourceRecord(row);
+      if (!m_showHidden && record.hidden) continue;
+      if (pairing && !record.isRaw() && shownRaws.contains(record.companionPath)) continue;
+      const QDate date = record.captured.date();
       if (date.isValid()) {
         ++dayCounts[date];
       }
@@ -974,6 +1005,7 @@ void CaptureFilterModel::setShowHidden(bool value) {
   beginFilterUpdate();
   m_showHidden = value;
   endFilterUpdate();
+  if (rebuildDateIndex()) emit dateBucketsChanged();
   vocabularyChanged();
   clearSmartCollection();
   emit showHiddenChanged();
@@ -1814,8 +1846,11 @@ bool CaptureFilterModel::matchesFilters(int sourceRow, const CaptureRecord& reco
   if (m_modifiedAfterMs > 0 && record.modified <= m_modifiedAfterMs) {
     return false;
   }
-  const QDate date = m_dateField == 1 ? QDateTime::fromMSecsSinceEpoch(record.modified).date()
-                                      : record.captured.date();
+  const CaptureRecord* raw =
+      m_dateFrom.isValid() || m_dateTo.isValid() ? pairedRaw(record) : nullptr;
+  const CaptureRecord& dated = raw ? *raw : record;
+  const QDate date = m_dateField == 1 ? QDateTime::fromMSecsSinceEpoch(dated.modified).date()
+                                      : dated.captured.date();
   if (m_dateFrom.isValid() && date < m_dateFrom) {
     return false;
   }

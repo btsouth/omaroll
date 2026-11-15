@@ -2,6 +2,7 @@
 #include "library/CaptureFilterModel.h"
 #include "library/CaptureModel.h"
 #include "library/CaptureRoles.h"
+#include "library/SectionRows.h"
 #include "sources/CameraRaw.h"
 #include "sources/CaptureScanner.h"
 #include "sources/RawJpegPairs.h"
@@ -94,6 +95,99 @@ private slots:
     const auto grouped = RawJpegPairs::grouped({jpeg, raw}, pairs);
     QCOMPARE(grouped, QStringList{raw});
     QCOMPARE(RawJpegPairs::grouped({jpeg, raw}, pairs, jpeg), QStringList{jpeg});
+  }
+
+  // A pair whose two files carry different dates is one item with the RAW's
+  // date: the sidebar's date counts, Jump to date's months and the grid's
+  // sections agree, and a date filter keeps or drops both files together.
+  void pairIsDatedOnceByItsRaw() {
+    if (!CameraRaw::isRaw(QStringLiteral("dng"))) QSKIP("Qt RAW support is unavailable");
+    const QString raw = makeRaw(QStringLiteral("Pair.DNG"));
+    const QString jpeg = makeJpeg(QStringLiteral("pair.jpg"));
+    const QString other = makeJpeg(QStringLiteral("other.jpg"));
+    QVERIFY(!raw.isEmpty() && !jpeg.isEmpty() && !other.isEmpty());
+    const auto touch = [](const QString& path, const QDateTime& when) {
+      QFile file(path);
+      return file.open(QIODevice::ReadWrite) && file.setFileTime(when, QFileDevice::FileModificationTime);
+    };
+    QVERIFY(touch(raw, QDateTime(QDate(2024, 3, 10), QTime(12, 0))));
+    QVERIFY(touch(jpeg, QDateTime(QDate(2025, 6, 15), QTime(12, 0))));
+    QVERIFY(touch(other, QDateTime(QDate(2023, 1, 5), QTime(12, 0))));
+    AppSettings settings;
+    settings.setScanDownloads(false);
+    CaptureModel model(&settings);
+    CaptureFilterModel proxy;
+    proxy.setSourceModel(&model);
+    QTRY_COMPARE_WITH_TIMEOUT(model.rowCount(), 3, 5000);
+    QTRY_COMPARE(proxy.count(), 2);
+    QTRY_VERIFY(!model.metadataIndexing());
+    const QDate rawDate = model.recordAt(model.rowOf(raw)).captured.date();
+    const QDate jpegDate = model.recordAt(model.rowOf(jpeg)).captured.date();
+    const QString rawMonth = rawDate.toString(QStringLiteral("yyyy-MM"));
+    const QString jpegMonth = jpegDate.toString(QStringLiteral("yyyy-MM"));
+    QVERIFY2(rawMonth != jpegMonth, "the pair's files must fall in different months");
+
+    // Sidebar and Browse counts: the library's months.
+    const auto bucketCounts = [&] {
+      QMap<QString, int> counts;
+      for (const QVariant& bucket : proxy.dateBuckets()) {
+        const QVariantMap month = bucket.toMap();
+        counts.insert(month.value(QStringLiteral("key")).toString(),
+                      month.value(QStringLiteral("count")).toInt());
+      }
+      return counts;
+    };
+    // Jump to date and the grid: the sections of what is shown.
+    auto* sections = qobject_cast<SectionRows*>(proxy.sectionRows());
+    QVERIFY(sections);
+    sections->setActive(true);
+    const auto sectionCounts = [&] {
+      sections->rebuildNow();
+      QMap<QString, int> counts;
+      for (const QVariant& entry : sections->months()) {
+        const QVariantMap month = entry.toMap();
+        counts[month.value(QStringLiteral("key")).toString()] +=
+            month.value(QStringLiteral("count")).toInt();
+      }
+      return counts;
+    };
+    QTRY_COMPARE(bucketCounts().value(rawMonth), 1);
+    QVERIFY(!bucketCounts().contains(jpegMonth));
+    QCOMPARE(bucketCounts().size(), 2);
+    QCOMPARE(sectionCounts(), bucketCounts());
+
+    // Filtering to the RAW's month keeps the pair together, with its badge;
+    // the JPEG's own month has nothing.
+    proxy.setDateRange(rawDate.toString(Qt::ISODate), rawDate.toString(Qt::ISODate), 0);
+    QCOMPARE(proxy.count(), 1);
+    QCOMPARE(proxy.pathAt(0), raw);
+    QCOMPARE(proxy.companionPathAt(0), jpeg);
+    proxy.setDateRange(jpegDate.toString(Qt::ISODate), jpegDate.toString(Qt::ISODate), 0);
+    QCOMPARE(proxy.count(), 0);
+    proxy.clearDateRange();
+
+    // Pairing off: two items, each by its own date, everywhere.
+    proxy.setPairRawJpeg(false);
+    QCOMPARE(proxy.count(), 3);
+    QCOMPARE(bucketCounts().value(jpegMonth), 1);
+    QCOMPARE(bucketCounts().value(rawMonth), 1);
+    QCOMPARE(sectionCounts(), bucketCounts());
+    proxy.setDateRange(jpegDate.toString(Qt::ISODate), jpegDate.toString(Qt::ISODate), 0);
+    QCOMPARE(proxy.count(), 1);
+    QCOMPARE(proxy.pathAt(0), jpeg);
+    proxy.clearDateRange();
+    proxy.setPairRawJpeg(true);
+    QCOMPARE(bucketCounts().value(rawMonth), 1);
+    QVERIFY(!bucketCounts().contains(jpegMonth));
+
+    // A hidden file is counted only while hidden files are shown.
+    settings.setHidden({other}, true);
+    QTRY_COMPARE(proxy.count(), 1);
+    QTRY_COMPARE(bucketCounts().size(), 1);
+    QCOMPARE(sectionCounts(), bucketCounts());
+    proxy.setShowHidden(true);
+    QCOMPARE(bucketCounts().size(), 2);
+    QCOMPARE(sectionCounts(), bucketCounts());
   }
 
   void scannerKeepsBothPhysicalRowsAndRejectsAmbiguity() {

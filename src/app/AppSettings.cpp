@@ -1033,7 +1033,9 @@ void AppSettings::relocatePath(const QString& oldPath, const QString& newPath) {
 
 QStringList AppSettings::albumNames() const {
   QStringList names = m_albums.keys();
-  names.sort(Qt::CaseInsensitive);
+  std::sort(names.begin(), names.end(), [](const QString& a, const QString& b) {
+    return TagNames::naturalCompare(a, b) < 0;
+  });
   return names;
 }
 

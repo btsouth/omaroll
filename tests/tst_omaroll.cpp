@@ -22,6 +22,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include "library/TagNames.h"
 #include "library/CaptureFilterModel.h"
 #include "library/FolderTreeModel.h"
 #include <QAbstractItemModelTester>
@@ -16890,6 +16891,31 @@ private slots:
     for (int index = 0; index < 12; ++index) QVERIFY(settings.createTag(QStringLiteral("t%1").arg(index)));
     QCOMPARE(settings.matchTags(QStringLiteral("t")).size(), 8);
     QCOMPARE(settings.matchTags(QStringLiteral("t"), {}, 3).size(), 3);
+  }
+
+  // Numbers in tag and album names sort as numbers, wherever they are
+  // listed: "Tag 2" before "Tag 10", at every level of the tree.
+  void tagsAndAlbumsSortNumbersNaturally() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    AppSettings settings;
+    for (const char* name : {"Trip", "Tag 10", "Tag 2", "tag 1", "Tag 02b", "Trip/Day 11", "Trip/Day 9"})
+      QVERIFY(settings.createTag(QString::fromUtf8(name)));
+    QCOMPARE(settings.tagNames(),
+             QStringList({QStringLiteral("tag 1"), QStringLiteral("Tag 2"), QStringLiteral("Tag 02b"),
+                          QStringLiteral("Tag 10"), QStringLiteral("Trip"), QStringLiteral("Trip/Day 9"),
+                          QStringLiteral("Trip/Day 11")}));
+    QStringList outline;
+    for (const QVariant& row : settings.tagOutline()) outline.append(row.toMap().value("name").toString());
+    QCOMPARE(outline, settings.tagNames());
+    for (const char* name : {"Album 10", "album 9", "Album 100", "Beach"})
+      QVERIFY(settings.createAlbum(QString::fromUtf8(name)));
+    QCOMPARE(settings.albumNames(), QStringList({QStringLiteral("album 9"), QStringLiteral("Album 10"),
+                                                 QStringLiteral("Album 100"), QStringLiteral("Beach")}));
+    QVERIFY(TagNames::naturalCompare(u"a007", u"a7") != 0);
+    QVERIFY(TagNames::naturalCompare(u"x9", u"x10") < 0);
+    QVERIFY(TagNames::naturalCompare(u"x", u"x1") < 0);
   }
 
   void everyAlbumAndTagChangeIsOneUndoStep() {

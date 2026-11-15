@@ -419,6 +419,7 @@ private:
   void reloadLibraryRoots();
   [[nodiscard]] bool rebuildFolderIndex();
   [[nodiscard]] bool rebuildDateIndex();
+  [[nodiscard]] const CaptureRecord* pairedRaw(const CaptureRecord& record) const;
   [[nodiscard]] bool rebuildCameraIndex();
   void rebuildDuplicateOrdinals();
   void rebuildLoneReviewPaths();

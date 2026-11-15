@@ -42,8 +42,12 @@ ToolTip {
     // Long tips wrap rather than run across the window, and never wider
     // than the window itself allows.
     readonly property real windowWidth: owner && owner.Window.window ? owner.Window.width : 0
-    readonly property real maximumWidth: windowWidth > 0
-                                         ? Math.max(120, Math.min(420, windowWidth - 24)) : 420
+    // An owner can keep the tip inside itself, as a tile does.
+    property real widthLimit: 0
+    readonly property real maximumWidth: {
+        const limit = windowWidth > 0 ? Math.max(120, Math.min(420, windowWidth - 24)) : 420
+        return widthLimit > 0 ? Math.min(limit, widthLimit) : limit
+    }
     contentItem: Item {
         readonly property real keyRoom: keyCap.visible ? keyCap.width + 10 : 0
         implicitWidth: Math.min(tipText.implicitWidth,
