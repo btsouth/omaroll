@@ -4066,8 +4066,11 @@ private slots:
     // arrow characters too small to read, and keep their names.
     for (const auto& [name, icon] : {std::pair{"correctionRotateLeft", "rotate-left"},
                                      std::pair{"correctionRotateRight", "rotate-right"}}) {
-      QQuickItem* button = item(name);
-      QCOMPARE(button->property("icon").toString(), QString::fromLatin1(icon));
+      QQuickItem* button = find(sheet, [&](QQuickItem* candidate) {
+        return candidate->objectName() == QLatin1String(name);
+      });
+      QVERIFY(button);
+      QTRY_COMPARE(button->property("icon").toString(), QString::fromLatin1(icon));
       QCOMPARE(button->property("accessibleName").toString(),
                QString::fromLatin1(icon) == QLatin1String("rotate-left") ? QStringLiteral("Rotate left")
                                                                         : QStringLiteral("Rotate right"));
@@ -6733,9 +6736,14 @@ private slots:
     // The copy rows sit with the other File rows.
     QQuickItem* copyPath = item("viewerAction_copy-path");
     QVERIFY(copyPath);
+    // As tall as the rows, or as the room under the header when they need
+    // more: no longer held to 380 px with room to spare.
     const qreal content = actions->property("contentHeight").toReal();
-    QTRY_VERIFY2(popup->height() >= content + 12 - 1,
-                 qPrintable(QStringLiteral("%1 < %2").arg(popup->height()).arg(content + 12)));
+    QQuickItem* panel = popup->parentItem();
+    const qreal room = panel->height() - 62;
+    QTRY_VERIFY2(popup->height() >= std::min(content + 12, room) - 1,
+                 qPrintable(QStringLiteral("%1 < min(%2, %3)").arg(popup->height()).arg(content + 12).arg(room)));
+    QVERIFY(popup->height() > 380 || content + 12 <= 380);
     QVERIFY(popup->mapRectToScene(popup->boundingRect()).bottom() <= detail->mapRectToScene(detail->boundingRect()).bottom());
     QTest::keyClick(m_window, Qt::Key_Escape);
     QTRY_VERIFY(!popup->isVisible());
@@ -8394,8 +8402,10 @@ private slots:
     {
       QQuickItem* hint = item("pdfSearchHint");
       QTRY_VERIFY(hint->isVisible());
-      QVERIFY(!hint->property("truncated").toBool());
-      QVERIFY(hint->x() >= 8 && hint->x() + hint->property("contentWidth").toReal() <= hint->parentItem()->width() - 8);
+      QTRY_COMPARE(hint->property("text").toString(), QStringLiteral("Find text"));
+      QTRY_VERIFY2(hint->implicitWidth() <= hint->width() + 0.5,
+                   qPrintable(QStringLiteral("%1 > %2").arg(hint->implicitWidth()).arg(hint->width())));
+      QVERIFY(hint->x() >= 8 && hint->x() + hint->width() <= hint->parentItem()->width() - 8);
     }
 
     // A wide window keeps every control, in any font metric: the labels are the
@@ -10891,7 +10901,9 @@ private slots:
     }
     QCOMPARE(player->activeSubtitleTrack(), 0);
     QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
-    QTRY_COMPARE_WITH_TIMEOUT(detail->property("subtitleOverlayText").toString(), QStringLiteral("Second subtitle"), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(m_subtitles->embeddedReady(path, 0), 10000);
+    QCOMPARE(m_subtitles->embeddedTextAt(path, 0, 7000), QStringLiteral("Second subtitle"));
+    QTRY_COMPARE(detail->property("subtitleOverlayText").toString(), QStringLiteral("Second subtitle"));
     QVERIFY(overlay->isVisible());
     // A paused seek moves the cue with it.
     player->setPosition(2000);

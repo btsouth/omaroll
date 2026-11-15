@@ -2445,6 +2445,9 @@ ApplicationWindow {
 
                 PillButton {
                     id: resumeButton
+                    // Out of the window's Tab chain: Qt would move Tab along
+                    // it before the prompt's own keys could keep it here.
+                    activeFocusOnTab: false
                     objectName: "viewerResumeButton"
                     label: "Resume from " + transport.clock(root.resumePosition)
                     floating: true
@@ -2454,6 +2457,9 @@ ApplicationWindow {
                 }
                 PillButton {
                     id: restartButton
+                    // Out of the window's Tab chain: Qt would move Tab along
+                    // it before the prompt's own keys could keep it here.
+                    activeFocusOnTab: false
                     objectName: "viewerRestartButton"
                     label: "Start over"
                     floating: true

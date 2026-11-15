@@ -4905,7 +4905,7 @@ private slots:
     for (QQuickItem* button : {resume, restart}) {
       QQuickItem* fill = button->childItems().value(0);
       QVERIFY(fill);
-      QVERIFY2(fill->property("color").value<QColor>().alphaF() >= 0.84,
+      QVERIFY2(fill->property("color").value<QColor>().alphaF() >= 0.95,
                qPrintable(button->objectName()));
     }
     QTRY_COMPARE(resume->childItems().value(0)->property("color").value<QColor>().alphaF(), 1.0);
@@ -4986,7 +4986,9 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_C);
     QTRY_COMPARE(player->activeSubtitleTrack(), 0);
     QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
-    QTRY_COMPARE_WITH_TIMEOUT(prop("subtitleText").toString(), QStringLiteral("Second subtitle"), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(m_subtitles->embeddedReady(m_session->path(), 0), 10000);
+    QCOMPARE(m_subtitles->embeddedTextAt(m_session->path(), 0, 7000), QStringLiteral("Second subtitle"));
+    QTRY_COMPARE(prop("subtitleText").toString(), QStringLiteral("Second subtitle"));
     QTRY_VERIFY(item(QStringLiteral("viewerSubtitles"))->isVisible());
     QVERIFY(QMetaObject::invokeMethod(m_window, "seekTo", Q_ARG(QVariant, 2000)));
     QTRY_COMPARE(prop("subtitleText").toString(), QStringLiteral("Omaroll subtitle test"));
@@ -6142,17 +6144,20 @@ private slots:
     }
     QVERIFY(!taken.isEmpty());
     open({path});
-    QTest::keyClick(m_window, Qt::Key_I);
+    // Shown whatever an earlier test left: the window is shared.
+    if (!prop("infoOpen").toBool()) QTest::keyClick(m_window, Qt::Key_I);
     QTRY_VERIFY(item(QStringLiteral("viewerInfoPanel"))->isVisible());
     QQuickItem* date = item(QStringLiteral("viewerInfoDate"));
-    QTRY_COMPARE(date->property("text").toString(), taken);
+    QTRY_COMPARE_WITH_TIMEOUT(date->property("text").toString(), taken, 10000);
     QStringList facts;
-    for (QQuickItem* line : m_window->contentItem()->findChildren<QQuickItem*>(QStringLiteral("viewerInfoLine"))) {
+    for (QQuickItem* line : itemsNamed(QStringLiteral("viewerInfoLine"))) {
       if (line->isVisible()) facts.append(line->property("text").toString());
     }
-    QVERIFY2(facts.contains(QStringLiteral("Modified  ·  ") + m_session->dateLabel()), qPrintable(facts.join(u'|')));
+    QVERIFY2(facts.contains(QStringLiteral("Modified  ·  ") + m_session->dateLabel()),
+             qPrintable(facts.join(u'|') + QStringLiteral(" / Modified  ·  ") + m_session->dateLabel()));
     for (const QString& fact : std::as_const(facts)) QVERIFY(!fact.startsWith(QStringLiteral("Taken")));
     QTest::keyClick(m_window, Qt::Key_I);
+    QTRY_VERIFY(!prop("infoOpen").toBool());
   }
 
   // At 560 px with twenty tags the details stop above the toolbar, keep the
@@ -6193,7 +6198,7 @@ private slots:
     QQuickItem* date = item(QStringLiteral("viewerInfoDate"));
     QVERIFY(date->mapToItem(chips, QPointF()).y() < 0);
     QVERIFY(date->mapToItem(scroll, QPointF(0, date->height())).y() <= scroll->height());
-    for (QQuickItem* line : m_window->contentItem()->findChildren<QQuickItem*>(QStringLiteral("viewerInfoLine"))) {
+    for (QQuickItem* line : itemsNamed(QStringLiteral("viewerInfoLine"))) {
       if (!line->isVisible()) continue;
       QVERIFY(!line->property("truncated").toBool());
       QVERIFY(line->mapToItem(chips, QPointF()).y() < 0);
@@ -8173,6 +8178,20 @@ private:
   }
 
   QVariant prop(const char* name) const { return m_window->property(name); }
+
+  // Every item with the name, by the item tree: a Repeater's rows are not
+  // QObject children of the window's content.
+  QList<QQuickItem*> itemsNamed(const QString& name) const {
+    QList<QQuickItem*> found;
+    std::function<void(QQuickItem*)> walk = [&](QQuickItem* at) {
+      for (QQuickItem* child : at->childItems()) {
+        if (child->objectName() == name) found.append(child);
+        walk(child);
+      }
+    };
+    walk(m_window->contentItem());
+    return found;
+  }
 
   void open(const QStringList& paths) {
     m_session->open(paths);

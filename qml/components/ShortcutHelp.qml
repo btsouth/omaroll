@@ -61,25 +61,31 @@ Popup {
     width: Math.min(room, columnCount * preferredColumnWidth + columnGap * (columnCount - 1) + 2 * padding)
     readonly property real naturalHeight: heading.implicitHeight + 12 + search.implicitHeight + 12
                                           + Math.max(columnsRow.implicitHeight, 40) + 2 * padding
-    // The height it opened at, held while filtering, so the title and the
-    // field stay where they are rather than re-centring with every key.
-    property real heldHeight: 0
-    height: Math.min(Math.max(naturalHeight, heldHeight), (parent ? parent.height : 0) - 24)
+    // Centred as it opens; then its top stays where it opened while a filter
+    // shortens the list, so the title and the field do not move with every
+    // key. The sheet still shrinks to what it lists.
+    property real heldTop: -1
+    readonly property real centredTop: Math.round(((parent ? parent.height : 0)
+                                                   - Math.min(naturalHeight, (parent ? parent.height : 0) - 24)) / 2)
+    readonly property real top: heldTop >= 0 ? Math.min(heldTop, centredTop) : centredTop
+    height: Math.min(naturalHeight, (parent ? parent.height : 0) - 12 - top)
     x: Math.round(((parent ? parent.width : 0) - width) / 2)
-    y: Math.round(((parent ? parent.height : 0) - height) / 2)
+    y: top
     modal: true
     focus: true
     onAboutToShow: {
-        root.heldHeight = 0;
+        root.heldTop = -1;
         search.text = "";
         root.filter = "";
     }
     onOpened: {
-        root.heldHeight = root.naturalHeight;
+        root.heldTop = root.centredTop;
         scroll.contentItem.contentY = 0;
         contentItem.forceActiveFocus();
     }
-    onClosed: root.heldHeight = 0
+    // Not onClosed: the windows that use this sheet handle that one.
+    onVisibleChanged: if (!visible) root.heldTop = -1
+    onFilterChanged: if (root.visible && root.heldTop < 0) root.heldTop = root.centredTop
     padding: 18
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     background: Rectangle {
