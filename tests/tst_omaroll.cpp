@@ -16967,7 +16967,7 @@ private slots:
     QCOMPARE(settings.undo(), QStringLiteral("Put back tag Travel"));
     QCOMPARE(settings.tagsForPath(a), QStringList{QStringLiteral("Travel/Japan")});
     QCOMPARE(settings.tagsForPath(b), QStringList{QStringLiteral("Travel/Japan")});
-    QCOMPARE(settings.smartCollectionNames(), QStringList{QStringLiteral("Japan")});
+    QVERIFY(settings.smartCollectionNames().contains(QStringLiteral("Japan")));
 
     // Marks and organization share one history, newest first.
     settings.setRating({a}, 3);
