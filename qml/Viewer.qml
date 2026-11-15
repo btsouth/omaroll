@@ -226,6 +226,9 @@ ApplicationWindow {
     property var subtitleFiles: []
     property string externalSubtitle: ""
     property int subtitleChoice: 0
+    // The embedded track chosen here, -1 for none. Kept beside the player's
+    // own, which does not always say when it changes.
+    property int subtitleTrack: -1
     property int subtitleOffsetMs: 0
     readonly property bool hasAudioChoices: root.player && root.player.audioTracks.length > 1
     readonly property string subtitleText: {
@@ -235,13 +238,10 @@ ApplicationWindow {
         // Paused, the player draws no new cue: a track switched on or a seek
         // shows the cue at the position from the track read with ffmpeg.
         // Off: nothing, even if the player still holds the last cue it drew.
-        // The player does not always say when its track changes, so the
-        // choice made here is what asks for this again.
-        void root.subtitleChoice
-        if (player && player.activeSubtitleTrack < 0) return ""
-        if (player && player.playbackState !== MediaPlayer.PlayingState && player.activeSubtitleTrack >= 0
-                && Subtitles.embeddedReady(Session.path, player.activeSubtitleTrack))
-            return Subtitles.embeddedTextAt(Session.path, player.activeSubtitleTrack, Math.round(player.position))
+        if (root.subtitleTrack < 0) return ""
+        if (player && player.playbackState !== MediaPlayer.PlayingState
+                && Subtitles.embeddedReady(Session.path, root.subtitleTrack))
+            return Subtitles.embeddedTextAt(Session.path, root.subtitleTrack, Math.round(player.position))
         return root.presentation ? root.presentation.subtitleText : ""
     }
 
@@ -937,6 +937,7 @@ ApplicationWindow {
         const subtitleTrack = choice.kind === "embedded" ? choice.index : -1
         const trackChanged = root.player.activeSubtitleTrack !== subtitleTrack
         root.player.activeSubtitleTrack = subtitleTrack
+        root.subtitleTrack = subtitleTrack
         if (trackChanged && root.presentation) root.presentation.trackChanged()
         root.externalSubtitle = choice.kind === "external" ? choice.path : ""
         root.say(choice.kind === "off" ? "Subtitles off" : "Subtitles: " + choice.label)
@@ -1575,6 +1576,7 @@ ApplicationWindow {
             root.resumePending = true
             root.externalSubtitle = ""
             root.subtitleChoice = 0
+            root.subtitleTrack = -1
             root.subtitleOffsetMs = 0
             if (Session.isVideo) {
                 Qt.callLater(root.startPlayer)

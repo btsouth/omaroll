@@ -6150,7 +6150,8 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_I);
     QTRY_VERIFY(item(QStringLiteral("viewerInfoPanel"))->isVisible());
     // The details are read on a worker; a busy suite can keep it waiting.
-    QTRY_VERIFY2_WITH_TIMEOUT(m_mediaInfo->path() == m_session->path() && !m_mediaInfo->lines().isEmpty(),
+    QTRY_VERIFY2_WITH_TIMEOUT(m_mediaInfo->path() == m_session->path()
+                                  && m_mediaInfo->lines().join(u'|').contains(QStringLiteral("Taken  ·  ")),
                               qPrintable(m_mediaInfo->path() + QStringLiteral(" / ") + m_session->path()
                                          + QStringLiteral(" / ") + m_mediaInfo->lines().join(u'|')),
                               20000);

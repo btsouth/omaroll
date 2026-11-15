@@ -168,6 +168,9 @@ Item {
     property var subtitleFiles: []
     property string externalSubtitle: ""
     property int subtitleChoice: 0
+    // The embedded track chosen here, -1 for none. Kept beside the player's
+    // own, which does not always say when it changes.
+    property int subtitleTrack: -1
     // The audio track in use, kept here: the ffmpeg backend does not signal
     // a track change, so a binding on the player's own index stays at the -1
     // it read before the file loaded ("Audio 0").
@@ -187,13 +190,10 @@ Item {
         if (externalSubtitle !== "") return externalCueText
         void Subtitles.revision
         // Off: nothing, even if the player still holds the last cue it drew.
-        // The player does not always say when its track changes, so the
-        // choice made here is what asks for this again.
-        void root.subtitleChoice
-        if (player && player.activeSubtitleTrack < 0) return ""
-        if (player && player.playbackState !== MediaPlayer.PlayingState && player.activeSubtitleTrack >= 0
-                && Subtitles.embeddedReady(root.path, player.activeSubtitleTrack))
-            return Subtitles.embeddedTextAt(root.path, player.activeSubtitleTrack, Math.round(player.position))
+        if (root.subtitleTrack < 0) return ""
+        if (player && player.playbackState !== MediaPlayer.PlayingState
+                && Subtitles.embeddedReady(root.path, root.subtitleTrack))
+            return Subtitles.embeddedTextAt(root.path, root.subtitleTrack, Math.round(player.position))
         return root.presentation ? root.presentation.subtitleText : ""
     }
     readonly property bool hasSubtitleChoices: (player && player.subtitleTracks.length > 0)
@@ -424,6 +424,7 @@ Item {
         resumePending = true
         externalSubtitle = ""
         subtitleChoice = 0
+        subtitleTrack = -1
         audioTrackChoice = 0
         subtitleOffsetMs = 0
         subtitleFiles = Subtitles.files(path)
@@ -673,6 +674,7 @@ Item {
         const choices = subtitleChoices()
         if (subtitleChoice < 0 || subtitleChoice >= choices.length) {
             subtitleChoice = 0
+            subtitleTrack = -1
         }
         const choice = choices[subtitleChoice]
         if (choice.kind === "embedded") {
@@ -691,6 +693,7 @@ Item {
     }
 
     function setSubtitleTrack(index) {
+        root.subtitleTrack = index
         if (player.activeSubtitleTrack === index) return
         player.activeSubtitleTrack = index
         if (presentation) presentation.trackChanged()
