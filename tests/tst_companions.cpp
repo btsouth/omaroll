@@ -185,7 +185,9 @@ private slots:
     proxy.setFavoritesOnly(true);
     QTRY_COMPARE(proxy.count(), 1);
     QCOMPARE(proxy.pathAt(0), jpeg);
-    QVERIFY(proxy.companionPathAt(0).isEmpty());
+    // Not folded: no RAW+JPG badge, though its companion can still be opened.
+    QVERIFY(proxy.data(proxy.index(0, 0), CaptureRoles::RawFormatRole).toString().isEmpty());
+    QCOMPARE(proxy.companionPathAt(0), raw);
     QCOMPARE(shownMonthOf(jpeg), jpegMonth);
     proxy.setDateRange(jpegDate.toString(Qt::ISODate), jpegDate.toString(Qt::ISODate), 0);
     QCOMPARE(proxy.count(), 1);
