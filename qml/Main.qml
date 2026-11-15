@@ -2230,8 +2230,15 @@ ApplicationWindow {
             root.renameFilterBefore = ""
             const back = root.renameReturn
             root.renameReturn = null
-            if (back && folderSidebar.visible && !root.modalOpen) {
-                Qt.callLater(function () { folderSidebar.focusCollection(back.kind, back.name) })
+            if (back) {
+                // Later, once modalOpen and the sidebar's enabled state have
+                // caught up with the sheet closing.
+                Qt.callLater(function () {
+                    if (folderSidebar.visible && folderSidebar.enabled && !root.modalOpen)
+                        folderSidebar.focusCollection(back.kind, back.name)
+                    else
+                        root.restoreFocusAfterSheet()
+                })
             } else {
                 root.restoreFocusAfterSheet()
             }
