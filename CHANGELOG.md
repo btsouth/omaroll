@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.19.1
+
+Fixes for menus, tooltips, the PDF preview and video details, found on a real
+desktop and by opening every menu and sheet after 1.19.0.
+[Install or update](https://github.com/btsouth/omaroll#install-or-update).
 
 ### Fixed
 
