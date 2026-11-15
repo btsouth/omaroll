@@ -1420,6 +1420,14 @@ QVariantList AppSettings::tagOutline() const {
   return rows;
 }
 
+int AppSettings::nestedTagCount(const QString& name) const {
+  if (name.isEmpty()) return 0;
+  const QStringList names = tagNames();
+  return static_cast<int>(std::count_if(names.cbegin(), names.cend(), [&name](const QString& tag) {
+    return TagNames::isUnderIgnoringCase(tag, name);
+  }));
+}
+
 bool AppSettings::createTag(const QString& name) {
   const QString normalized = normalizedTagName(name);
   if (normalized.isEmpty()) {

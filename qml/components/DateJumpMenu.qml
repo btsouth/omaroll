@@ -23,6 +23,14 @@ Popup {
     margins: 8
 
     property var rows: []
+    // The control that had the keyboard when the list opened. Escape or a
+    // click outside gives it back; choosing a row hands it to the grid.
+    property Item opener: null
+    function takeOpener() {
+        const item = menu.opener
+        menu.opener = null
+        return item
+    }
     function shade(base, amount) { return Qt.rgba(base.r, base.g, base.b, amount) }
     function items(count) { return count === 1 ? "1 item" : count + " items" }
     function pad(value) { return String(value).padStart(2, "0") }
@@ -48,10 +56,37 @@ Popup {
         return out
     }
 
+    // The view's months changed while the list is open: show them as they
+    // are now, keeping the highlighted row if it is still there, so a choice
+    // never names a month the view no longer has.
+    function refreshRows() {
+        const next = menu.buildRows()
+        if (JSON.stringify(next) === JSON.stringify(menu.rows)) return
+        const was = menu.rows[list.currentIndex]
+        menu.rows = next
+        if (next.length === 0) {
+            menu.close()
+            return
+        }
+        let index = -1
+        for (let i = 0; was && i < next.length; ++i) {
+            if (next[i].kind === was.kind && next[i].key === was.key) { index = i; break }
+        }
+        list.currentIndex = index >= 0 ? index : 0
+        list.positionViewAtIndex(list.currentIndex, ListView.Contain)
+    }
+    Connections {
+        target: Captures.sectionRows
+        enabled: menu.visible
+        function onRebuilt() { menu.refreshRows() }
+    }
+
     // Opens below |item|, on the month at the top of the grid now.
     function popupBelow(item, currentKey) {
+        menu.opener = item && item.activeFocus ? item : null
         menu.rows = menu.buildRows()
         if (menu.rows.length === 0) {
+            menu.opener = null
             host.say("No dated files in this view")
             return
         }
@@ -71,6 +106,7 @@ Popup {
     function choose(index, filter) {
         const row = menu.rows[index]
         if (!row) return
+        menu.opener = null
         menu.close()
         if (filter) menu.filterRequested(row.from, row.to, row.label)
         else menu.jumpRequested(row.key)

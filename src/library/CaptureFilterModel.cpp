@@ -43,6 +43,12 @@ CaptureFilterModel::CaptureFilterModel(QObject* parent) : QSortFilterProxyModel(
     emit countChanged();
   });
 
+  // Not restarted while it runs, so a long indexing pass still reports
+  // a few times a second.
+  m_filesChangedTimer.setSingleShot(true);
+  m_filesChangedTimer.setInterval(250);
+  connect(&m_filesChangedTimer, &QTimer::timeout, this, &CaptureFilterModel::filesChanged);
+
   m_folderIndexTimer.setSingleShot(true);
   m_folderIndexTimer.setInterval(0);
   connect(&m_folderIndexTimer, &QTimer::timeout, this, [this] {
@@ -202,6 +208,7 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
   m_pairingTimer.stop();
   m_groupedOutPaths.clear();
   m_folderIndexTimer.stop();
+  m_filesChangedTimer.stop();
   m_duplicateOrderTimer.stop();
   for (const QMetaObject::Connection& connection : std::as_const(m_sourceConnections)) {
     disconnect(connection);
@@ -241,6 +248,21 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
         if (!metadataOnly || !m_cameraFilter.isEmpty() || !m_lensFilter.isEmpty() ||
             m_dateFrom.isValid() || m_dateTo.isValid() || !m_query.isEmpty()) {
           pairingChanged();
+        }
+      }));
+  const auto filesChanged = [this] {
+    if (!m_filesChangedTimer.isActive()) m_filesChangedTimer.start();
+  };
+  m_sourceConnections.append(connect(model, &QAbstractItemModel::rowsInserted, this, filesChanged));
+  m_sourceConnections.append(connect(model, &QAbstractItemModel::rowsRemoved, this, filesChanged));
+  m_sourceConnections.append(connect(model, &QAbstractItemModel::modelReset, this, filesChanged));
+  m_sourceConnections.append(connect(model, &QAbstractItemModel::dataChanged, this,
+      [filesChanged](const QModelIndex&, const QModelIndex&, const QList<int>& roles) {
+        if (roles.isEmpty() || roles.contains(CaptureRoles::PathRole) ||
+            roles.contains(CaptureRoles::CapturedRole) || roles.contains(CaptureRoles::HiddenRole) ||
+            roles.contains(CaptureRoles::StampRole) ||
+            roles.contains(CaptureRoles::ThumbnailVersionRole)) {
+          filesChanged();
         }
       }));
   // Names, folders, captions and cameras are words "Did you mean" offers.

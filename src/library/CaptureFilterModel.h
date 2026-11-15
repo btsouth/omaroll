@@ -336,6 +336,10 @@ signals:
   void similarOnlyChanged();
   void pairRawJpegChanged();
   void countChanged();
+  // The source library's files, their capture dates, hidden state or
+  // thumbnails changed, at most a few times a second, whatever the filter
+  // shows. Collection covers follow it.
+  void filesChanged();
   // A document's text left memory but the disk cache no longer has it; its
   // producer should read it again.
   void documentTextLost(const QString& path);
@@ -538,6 +542,7 @@ private:
   bool m_storedScanning = false;
   QTimer m_storedScanTimer;
   QTimer m_folderIndexTimer;
+  QTimer m_filesChangedTimer;
   bool m_metadataIndexesDirty = false;
   QTimer m_duplicateOrderTimer;
   QTimer m_ocrFilterTimer;

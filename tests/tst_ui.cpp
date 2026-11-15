@@ -9967,6 +9967,164 @@ private slots:
     QTRY_VERIFY(sheet->isVisible());
     QTest::keyClick(m_window, Qt::Key_Escape);
     QTRY_VERIFY(!sheet->isVisible());
+
+    // Deleting a parent tag says its nested tags went too; Undo brings
+    // both back.
+    QTRY_VERIFY(!sheet->isVisible());
+    list->forceActiveFocus();
+    QTRY_VERIFY(collectionIndex("tag", "Sidebarq") > 0);
+    walkTo(collectionIndex("tag", "Sidebarq"));
+    QTest::keyClick(m_window, Qt::Key_Menu);
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QCOMPARE(menu->property("name").toString(), QStringLiteral("Sidebarq"));
+    QTest::keyClick(m_window, Qt::Key_Down);
+    QTest::keyClick(m_window, Qt::Key_Down);
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!m_settings->tagNames().contains(QStringLiteral("Sidebarq/Child")));
+    QTRY_VERIFY(item("footerStatus")->property("text").toString().startsWith(
+        QStringLiteral("Deleted tag Sidebarq and 1 nested tag")));
+    item("library")->forceActiveFocus();
+    QTest::keyClick(m_window, Qt::Key_Z, Qt::ControlModifier);
+    QTRY_VERIFY(m_settings->tagNames().contains(QStringLiteral("Sidebarq/Child")));
+    QCOMPARE(m_settings->tagItemCount(QStringLiteral("Sidebarq/Child")), 1);
+  }
+
+  // The collections list is not rebuilt by a search keystroke or by
+  // choosing one of its rows: its delegates stay. When its rows do change,
+  // the view stays where it was scrolled to.
+  void sidebarCollectionsKeepTheirRowsAndPlace() {
+    const QStringList before = m_settings->sidebarSections();
+    for (int at = 0; at < 40; ++at) {
+      QVERIFY(m_settings->createTag(QStringLiteral("Scrollz/T%1").arg(at, 2, 10, QLatin1Char('0'))));
+    }
+    QVERIFY(m_settings->addTag(QStringLiteral("Scrollz/T39"), {pathAt(0)}));
+    const auto cleanup = qScopeGuard([&] {
+      m_library->setSearchText({});
+      m_library->setTagFilter({}, {});
+      m_settings->deleteTag(QStringLiteral("Scrollz"));
+      m_settings->clearUndoHistory();
+      m_settings->setSidebarSections(before);
+      m_settings->setShowFolderSidebar(false);
+      item("library")->forceActiveFocus();
+    });
+    m_settings->setSidebarSections({"tags", "folders"});
+    m_settings->setShowFolderSidebar(true);
+    QQuickItem* pane = item("sidebarCollectionsPane");
+    QQuickItem* list = item("sidebarCollections");
+    QTRY_VERIFY(collectionIndex("tag", "Scrollz/T39") > 0);
+    QTRY_VERIFY(list->property("contentHeight").toReal() > list->height() + 200);
+    // Let the coalesced refreshes after the setup run.
+    QTest::qWait(400);
+    const int resets = pane->property("modelResets").toInt();
+    const auto shownAt = [&](int index) -> QQuickItem* {
+      QQuickItem* row = nullptr;
+      QMetaObject::invokeMethod(list, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, row), Q_ARG(int, index));
+      return row;
+    };
+    const auto inView = [&](QQuickItem* row) {
+      if (!row || !row->isVisible()) return false;
+      const QPointF top = row->mapToItem(list, QPointF(0, 0));
+      return top.y() >= -1 && top.y() + row->height() <= list->height() + 1;
+    };
+    QQuickItem* firstRow = shownAt(0);
+    QVERIFY(inView(firstRow));
+
+    // A search, typed.
+    QQuickItem* search = item("libraryFilterSearch");
+    search->forceActiveFocus();
+    QTRY_VERIFY(search->hasActiveFocus());
+    QTest::keyClicks(m_window, QStringLiteral("zq"));
+    QTRY_COMPARE(m_library->appliedSearchText(), QStringLiteral("zq"));
+    QTest::keyClick(m_window, Qt::Key_Backspace);
+    QTest::keyClick(m_window, Qt::Key_Backspace);
+    QTRY_VERIFY(m_library->appliedSearchText().isEmpty());
+    QTest::qWait(400);
+    QCOMPARE(pane->property("modelResets").toInt(), resets);
+    QCOMPARE(shownAt(0), firstRow);
+
+    // Scrolled to the end, the last tag is chosen where it is shown.
+    QMetaObject::invokeMethod(list, "positionViewAtEnd");
+    QTRY_VERIFY(list->property("atYEnd").toBool());
+    const int last = collectionIndex("tag", "Scrollz/T39");
+    QQuickItem* lastRow = nullptr;
+    QTRY_VERIFY(inView(lastRow = shownAt(last)));
+    QQuickItem* entry = find(lastRow, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("collectionRow") && candidate->isVisible();
+    });
+    QVERIFY(entry);
+    const qreal scrolled = list->property("contentY").toReal();
+    clickSettled(entry);
+    QTRY_COMPARE(m_library->tagFilter(), QStringLiteral("Scrollz/T39"));
+    QTRY_COMPARE(m_library->count(), 1);
+    QTest::qWait(400);
+    QCOMPARE(pane->property("modelResets").toInt(), resets);
+    QCOMPARE(shownAt(last), lastRow);
+    QVERIFY(inView(lastRow));
+    QVERIFY(qAbs(list->property("contentY").toReal() - scrolled) < 1);
+
+    // New rows, from a new tag, keep the view where it was.
+    QVERIFY(m_settings->createTag(QStringLiteral("Scrollz/T40")));
+    QTRY_VERIFY(collectionIndex("tag", "Scrollz/T40") > last);
+    QTRY_VERIFY(pane->property("modelResets").toInt() > resets);
+    QTRY_VERIFY(inView(shownAt(last)));
+    QVERIFY(qAbs(list->property("contentY").toReal() - scrolled) < 1);
+  }
+
+  // Up and Down walk both ways from All media through the pinned folders
+  // into the collections and back.
+  void sidebarArrowsWalkAllMediaPinsAndCollections() {
+    const QString folder = QFileInfo(m_oddPath).absolutePath();
+    const QString album = QStringLiteral("Sidebar walk");
+    const QStringList before = m_settings->sidebarSections();
+    const bool pinned = m_settings->pinFolderPath(folder);
+    QVERIFY(m_settings->createAlbum(album));
+    QVERIFY(m_settings->addToAlbum(album, {pathAt(0)}));
+    const auto cleanup = qScopeGuard([&] {
+      if (pinned) m_settings->unpinFolder(folder);
+      m_settings->deleteAlbum(album);
+      m_settings->clearUndoHistory();
+      m_settings->setSidebarSections(before);
+      m_settings->setShowFolderSidebar(false);
+      item("library")->forceActiveFocus();
+    });
+    QVERIFY(!m_settings->pinnedFolders().isEmpty());
+    m_settings->setSidebarSections({"albums", "folders"});
+    m_settings->setShowFolderSidebar(true);
+    QQuickItem* sidebar = item("folderSidebar");
+    QQuickItem* all = item("sidebarAllMedia");
+    QQuickItem* list = item("sidebarCollections");
+    QTRY_VERIFY(collectionIndex("album", album) > 0);
+    QTRY_VERIFY(list->isVisible() && list->height() >= 32);
+    const int pins = int(m_settings->pinnedFolders().size());
+    const auto pinRow = [&](int at) {
+      const QString path = m_settings->pinnedFolders().at(at);
+      return find(sidebar, [&](QQuickItem* candidate) {
+        return candidate->property("path").toString() == path && candidate->activeFocusOnTab()
+            && candidate != all;
+      });
+    };
+    QTRY_VERIFY(pinRow(pins - 1) != nullptr);
+
+    all->forceActiveFocus();
+    QTRY_VERIFY(all->hasActiveFocus());
+    // Up from the top stays there.
+    QTest::keyClick(m_window, Qt::Key_Up);
+    QVERIFY(all->hasActiveFocus());
+    for (int at = 0; at < pins; ++at) {
+      QTest::keyClick(m_window, Qt::Key_Down);
+      QTRY_VERIFY(pinRow(at)->hasActiveFocus());
+    }
+    QTest::keyClick(m_window, Qt::Key_Down);
+    QTRY_VERIFY(list->hasActiveFocus());
+    QCOMPARE(list->property("currentIndex").toInt(), 0);
+    QTest::keyClick(m_window, Qt::Key_Up);
+    QTRY_VERIFY(pinRow(pins - 1)->hasActiveFocus());
+    for (int at = pins - 2; at >= 0; --at) {
+      QTest::keyClick(m_window, Qt::Key_Up);
+      QTRY_VERIFY(pinRow(at)->hasActiveFocus());
+    }
+    QTest::keyClick(m_window, Qt::Key_Up);
+    QTRY_VERIFY(all->hasActiveFocus());
   }
 
   // Alt+T in the library opens Organize for the current file, with the
@@ -10092,6 +10250,46 @@ private slots:
     QTRY_COMPARE(m_library->dateFrom(), QStringLiteral("2019-05-01"));
     QCOMPARE(m_library->dateTo(), QStringLiteral("2019-05-31"));
     QTRY_COMPARE(m_library->count(), 3);
+    m_library->clearDateRange();
+    QTRY_COMPARE(m_library->count(), 24);
+
+    // Escape gives the keyboard back to the pill.
+    pill->forceActiveFocus();
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(jump->property("visible").toBool());
+    QTRY_VERIFY(list->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!jump->property("visible").toBool());
+    QTRY_VERIFY(pill->hasActiveFocus());
+    QTest::qWait(50);
+    QVERIFY(pill->hasActiveFocus());
+
+    // Months that change while it is open: the list follows, keeping the
+    // highlighted month while it is still there.
+    const auto jumpRows = [&] { return jump->property("rows").value<QJSValue>().toVariant().toList(); };
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(jump->property("visible").toBool());
+    QTest::keyClick(m_window, Qt::Key_Home);
+    QTest::keyClick(m_window, Qt::Key_Down);
+    QTest::keyClick(m_window, Qt::Key_Down);
+    QTRY_COMPARE(list->property("currentIndex").toInt(), 2);
+    QCOMPARE(jumpRows().at(2).toMap().value("key").toString(), QStringLiteral("2019-05"));
+    m_library->setDateRange(QStringLiteral("2019-01-01"), QStringLiteral("2019-12-31"), 0);
+    QTRY_COMPARE(jumpRows().size(), 5);
+    QVERIFY(jump->property("visible").toBool());
+    const QVariantMap kept = jumpRows().at(list->property("currentIndex").toInt()).toMap();
+    QCOMPARE(kept.value("key").toString(), QStringLiteral("2019-05"));
+    QCOMPARE(kept.value("kind").toString(), QStringLiteral("month"));
+    // The highlighted month gone, Shift+Enter still names one the view has.
+    m_library->setDateRange(QStringLiteral("2018-01-01"), QStringLiteral("2018-12-31"), 0);
+    QTRY_COMPARE(jumpRows().first().toMap().value("year").toInt(), 2018);
+    for (const QVariant& row : jumpRows()) QCOMPARE(row.toMap().value("year").toInt(), 2018);
+    const QVariantMap chosen = jumpRows().at(list->property("currentIndex").toInt()).toMap();
+    QTest::keyClick(m_window, Qt::Key_Return, Qt::ShiftModifier);
+    QTRY_VERIFY(!jump->property("visible").toBool());
+    QTRY_COMPARE(m_library->dateFrom(), chosen.value("from").toString());
+    QVERIFY(m_library->count() > 0);
+    QVERIFY(item("footerStatus")->property("text").toString().endsWith(chosen.value("label").toString()));
     m_library->clearDateRange();
     QTRY_COMPARE(m_library->count(), 24);
 

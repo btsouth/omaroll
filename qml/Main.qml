@@ -69,6 +69,10 @@ ApplicationWindow {
                                       || editorChooser.visible || folderDropConfirm.visible
                                       || launchRestore.visible
     readonly property bool anySheetOpen: modalOpen || detail.visible
+    // A text field or editor has the keyboard: an inline rename, a field in
+    // a sheet or popup. Letters with Alt belong to it, not the library.
+    readonly property bool typing: activeFocusItem !== null && activeFocusItem.cursorPosition !== undefined
+                                   && activeFocusItem.readOnly !== true
     // A popup menu is up; the press that closes it must not also land under it.
     readonly property bool folderSidebarFits: width >= 760
     readonly property bool folderSidebarVisible: Settings.showFolderSidebar && folderSidebarFits
@@ -87,7 +91,10 @@ ApplicationWindow {
     // clicked.
     onPopupOpenChanged: {
         if (!popupOpen && !anySheetOpen) {
-            if (folderSidebar.activeFocus) folderSidebar.focusAfterMenu()
+            // Jump to date dismissed: back to the pill that opened it.
+            const opener = dateJump.takeOpener()
+            if (root.canTakeFocusBack(opener)) opener.forceActiveFocus(Qt.OtherFocusReason)
+            else if (folderSidebar.activeFocus) folderSidebar.focusAfterMenu()
             else library.forceActiveFocus()
         }
     }
@@ -2201,13 +2208,25 @@ ApplicationWindow {
     // back.
     function deleteCollection(mode, name) {
         const before = Settings.latestUndoId
+        // A tag's nested tags go with it.
+        const nested = mode === "tag" ? Settings.nestedTagCount(name) : 0
         const views = mode === "album" ? Settings.deleteAlbum(name) : Settings.deleteTag(name)
-        const message = "Deleted " + mode + " " + name
-                        + (views === 1 ? " and the saved view that used it"
-                           : views > 1 ? " and " + views + " saved views that used it" : "")
+        const message = "Deleted " + mode + " " + name + root.deletedAlso(nested, views)
         const undoId = Settings.latestUndoId !== before ? Settings.latestUndoId : 0
         if (Settings.organizationError !== "") root.say(Settings.organizationError)
         else root.sayUndoable(message, undoId)
+    }
+
+    // What else a deletion took, as " and 2 nested tags" or
+    // ", 1 nested tag and the saved view that used it".
+    function deletedAlso(nested, views) {
+        const parts = []
+        if (nested > 0) parts.push(nested === 1 ? "1 nested tag" : nested + " nested tags")
+        if (views === 1) parts.push("the saved view that used it")
+        else if (views > 1) parts.push(views + " saved views that used it")
+        if (parts.length === 0) return ""
+        if (parts.length === 1) return " and " + parts[0]
+        return ", " + parts[0] + " and " + parts[1]
     }
 
     DateJumpMenu {
@@ -2811,7 +2830,7 @@ ApplicationWindow {
     // field taking the keyboard.
     Shortcut {
         sequences: ShortcutCatalog.sequence("library", "organize")
-        enabled: !root.anySheetOpen && !root.popupOpen && !filters.searchActive
+        enabled: !root.anySheetOpen && !root.popupOpen && !filters.searchActive && !root.typing
         onActivated: root.openOrganize()
     }
     Shortcut {

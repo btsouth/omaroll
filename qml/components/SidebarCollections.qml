@@ -20,9 +20,17 @@ FocusScope {
     // Years opened to their months, by year. Not saved: a year shows its
     // months only while it is being looked through.
     property var openYears: ({})
-    // Bumped when albums, tags or the library change, so counts and covers
-    // are read again.
+    // Bumped when albums or tags change, so the rows are read again.
     property int revision: 0
+    // Bumped when albums, tags or the library's files change, so the shown
+    // rows read their counts and covers again. Neither follows the filter:
+    // a search, or choosing a row here, leaves both alone.
+    property int detailRevision: 0
+    // How many times the list was handed new rows, for tests.
+    property int modelResets: 0
+    // Whether the keyboard walk and Tab may enter the list: not when it has
+    // no room to show a row.
+    property bool keyboardReachable: true
     signal renameRequested(string mode, string name)
     signal deleteRequested(string mode, string name)
     // Up from the first row and Down from the last leave the list.
@@ -52,14 +60,28 @@ FocusScope {
         return year + "-" + String(month).padStart(2, "0") + "-" + String(day).padStart(2, "0")
     }
 
+    // Organization can change in bursts while files' keywords are read;
+    // one pass after each burst is enough. Not restarted while it runs.
+    Timer {
+        id: organizationChanges
+        interval: 100
+        onTriggered: { root.revision++; root.detailRevision++ }
+    }
+    Timer {
+        id: fileChanges
+        interval: 100
+        onTriggered: root.detailRevision++
+    }
     Connections {
         target: Settings
-        function onAlbumsChanged() { root.revision++ }
-        function onTagsChanged() { root.revision++ }
+        function onAlbumsChanged() { if (!organizationChanges.running) organizationChanges.start() }
+        function onTagsChanged() { if (!organizationChanges.running) organizationChanges.start() }
     }
     Connections {
         target: Captures
-        function onCountChanged() { root.revision++ }
+        // Files came or went, or a capture date, thumbnail or hidden state
+        // changed: a cover may be another file now.
+        function onFilesChanged() { if (!fileChanges.running) fileChanges.start() }
     }
 
     // Years from Captures.dateBuckets, newest first, each with its months.
@@ -120,22 +142,45 @@ FocusScope {
 
     // The list keeps its place by row identity across rebuilds. The model
     // is handed over here rather than bound, so the reset it causes cannot
-    // move the current row before it is put back.
+    // move the current row before it is put back, and rows that read the
+    // same are not handed over at all, so their delegates stay.
     property string currentKey: ""
     property bool restoring: false
+    property string appliedRows: ""
     function keyOf(row) { return row ? row.kind + ":" + row.name : "" }
+    function indexOfKey(key) {
+        for (let i = 0; i < rows.length && key !== ""; ++i) {
+            if (keyOf(rows[i]) === key) return i
+        }
+        return -1
+    }
     function applyRows() {
+        const signature = JSON.stringify(root.rows)
+        if (signature === root.appliedRows) return
+        root.appliedRows = signature
         const key = root.currentKey
         const before = list.currentIndex
+        // The row at the top of the view and how far it is scrolled past,
+        // so the view stays where it was.
+        const old = list.model
+        const topIndex = old && old.length > 0 ? list.indexAt(0, list.contentY) : -1
+        const topItem = topIndex >= 0 ? list.itemAtIndex(topIndex) : null
+        const topKey = topItem ? root.keyOf(old[topIndex]) : ""
+        const topOffset = topItem ? list.contentY - topItem.y : 0
         root.restoring = true
         list.model = root.rows
-        let index = -1
-        for (let i = 0; i < rows.length && key !== ""; ++i) {
-            if (keyOf(rows[i]) === key) { index = i; break }
-        }
+        const index = root.indexOfKey(key)
         list.currentIndex = index >= 0 ? index : Math.min(before, rows.length - 1)
+        const top = root.indexOfKey(topKey)
+        if (top >= 0) {
+            list.forceLayout()
+            list.positionViewAtIndex(top, ListView.Beginning)
+            const end = list.originY + Math.max(0, list.contentHeight - list.height)
+            list.contentY = Math.max(list.originY, Math.min(end, list.contentY + topOffset))
+        }
         root.restoring = false
         root.currentKey = root.keyOf(root.rows[list.currentIndex])
+        root.modelResets++
     }
     onRowsChanged: applyRows()
     Component.onCompleted: applyRows()
@@ -222,7 +267,7 @@ FocusScope {
         anchors.fill: parent
         clip: true
         focus: true
-        activeFocusOnTab: true
+        activeFocusOnTab: root.keyboardReachable
         boundsBehavior: Flickable.StopAtBounds
         highlightMoveDuration: 0
         currentIndex: -1
@@ -291,13 +336,13 @@ FocusScope {
                                              return root.isActive(modelData) }
             width: list.width
             height: kind === "header" ? 36 : kind === "album" ? 42 : 32
-            // Albums read their paths once per rebuild, for the count and cover.
+            // Albums read their paths once per change, for the count and cover.
             readonly property var albumPaths: {
-                void root.revision
+                void root.detailRevision
                 return kind === "album" ? Settings.albumPaths(modelData.name) : []
             }
             readonly property int count: {
-                void root.revision
+                void root.detailRevision
                 return kind === "album" ? albumPaths.length
                      : kind === "tag" ? Settings.tagItemCount(modelData.name)
                      : modelData.count !== undefined ? modelData.count : -1
@@ -316,6 +361,9 @@ FocusScope {
                 keyboardCurrent: rowItem.current
                 Accessible.ignored: !visible
                 onToggled: {
+                    // The row first, so taking the keyboard does not
+                    // scroll the list to its top row.
+                    list.currentIndex = rowItem.index
                     list.forceActiveFocus()
                     root.activate(rowItem.index)
                 }
@@ -376,7 +424,7 @@ FocusScope {
                     color: root.shade(Theme.foreground, 0.08)
                     clip: true
                     readonly property var cover: {
-                        void root.revision
+                        void root.detailRevision
                         return rowItem.kind === "album" ? Captures.coverFor(rowItem.albumPaths) : ({})
                     }
                     readonly property real dpr: Screen.devicePixelRatio
@@ -433,6 +481,7 @@ FocusScope {
                     hoverEnabled: true
                     acceptedButtons: Qt.LeftButton | Qt.RightButton
                     onClicked: function (event) {
+                        list.currentIndex = rowItem.index
                         list.forceActiveFocus()
                         if (event.button === Qt.RightButton) {
                             root.openMenu(rowItem.index, entry, event.x, event.y)

@@ -326,6 +326,8 @@ public:
   // fromFile is set when no local tag has the name, so only keywords read
   // from files put it there.
   Q_INVOKABLE [[nodiscard]] QVariantList tagOutline() const;
+  // How many tags sit under |name|, which deleting it removes too.
+  Q_INVOKABLE [[nodiscard]] int nestedTagCount(const QString& name) const;
   Q_INVOKABLE bool createTag(const QString& name);
   Q_INVOKABLE int deleteTag(const QString& name);
   // Renames a tag and every tag nested under it, so "Travel/Japan" becomes

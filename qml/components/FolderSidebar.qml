@@ -40,12 +40,36 @@ FocusScope {
         if (open) sections.push("folders")
         Settings.sidebarSections = sections
     }
+    // The collections list takes the keyboard only with room for a row; in
+    // a short window with several pins it can have none.
+    readonly property bool collectionsReachable: collections.visible && collections.height >= 32
+    // All media, then the pinned folders, in order.
+    function topRows() {
+        return [allMedia].concat(pinnedRows.children.filter(function (item) {
+            return item.activeFocusOnTab === true
+        }))
+    }
     // Up out of the collections list, or out of the Folders header when
     // there is no list: the last pinned folder, else All media.
     function focusAbove() {
-        const pins = pinnedRows.children.filter(function (item) { return item.activeFocusOnTab === true })
-        if (pins.length > 0) pins[pins.length - 1].forceActiveFocus()
-        else allMedia.forceActiveFocus()
+        const rows = root.topRows()
+        rows[rows.length - 1].forceActiveFocus()
+    }
+    // Down from the last pinned folder, or All media: the collections, else
+    // the Folders header.
+    function focusBelowPins() {
+        if (root.collectionsReachable) collections.focusFirst()
+        else foldersHeader.forceActiveFocus()
+    }
+    // Up and Down on All media and the pins walk them in order and on into
+    // the collections and the folders. False for any other row.
+    function walk(item, step) {
+        const rows = root.topRows()
+        const at = rows.indexOf(item)
+        if (at < 0) return false
+        if (at + step >= rows.length) root.focusBelowPins()
+        else if (at + step >= 0) rows[at + step].forceActiveFocus()
+        return true
     }
     function syncSelection() {
         if (!root.visible) return
@@ -182,6 +206,10 @@ FocusScope {
                 }
             }
         }
+        Keys.onPressed: function (event) {
+            if (event.key === Qt.Key_Up || event.key === Qt.Key_Down)
+                event.accepted = root.walk(rowItem, event.key === Qt.Key_Up ? -1 : 1)
+        }
         Keys.onReturnPressed: activate()
         Keys.onEnterPressed: activate()
         Keys.onMenuPressed: {
@@ -273,6 +301,7 @@ FocusScope {
         anchors.rightMargin: 8
         height: visible ? implicitHeight : 0
         maximumHeight: root.foldersOpen ? Math.floor(root.collectionsRoom / 2) : root.collectionsRoom
+        keyboardReachable: root.collectionsReachable
         onExitUp: root.focusAbove()
         onExitDown: foldersHeader.forceActiveFocus()
         onRenameRequested: function (mode, name) { root.renameCollectionRequested(mode, name) }
@@ -304,7 +333,7 @@ FocusScope {
             } else if (event.key === Qt.Key_Down) {
                 if (root.foldersOpen && tree.rows > 0) { tree.forceActiveFocus(); tree.focusRow(0) }
             } else if (event.key === Qt.Key_Up) {
-                if (collections.visible) collections.focusLast()
+                if (root.collectionsReachable) collections.focusLast()
                 else root.focusAbove()
             } else {
                 return
