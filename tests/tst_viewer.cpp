@@ -1539,6 +1539,8 @@ private slots:
     QCOMPARE(watch.playerSource, QUrl::fromLocalFile(clip));
     auto* player = window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"));
     QVERIFY(player);
+    // Playback waits for the window's first frame, then starts by itself.
+    QTRY_VERIFY(window->property("framed").toBool());
     QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
     window->close();
     QTRY_VERIFY(!window->isVisible());
@@ -4800,6 +4802,53 @@ private slots:
     QCOMPARE(player->playbackState(), QMediaPlayer::PlayingState);
     player->pause();
     m_settings->clearVideoPosition(path);
+  }
+
+  // A video that opens before the window's first frame waits for that frame
+  // to start, then does what loading would have done: play, offer to resume,
+  // or start at a --start time.
+  void aVideoOpenedBeforeTheFirstFrameStartsAfterIt_data() {
+    QTest::addColumn<QString>("kind");
+    QTest::newRow("plain") << QStringLiteral("plain");
+    QTest::newRow("resume") << QStringLiteral("resume");
+    QTest::newRow("start") << QStringLiteral("start");
+  }
+
+  void aVideoOpenedBeforeTheFirstFrameStartsAfterIt() {
+    QFETCH(QString, kind);
+    const QString path = m_scratch.filePath(QStringLiteral("held-start.mkv"));
+    QVERIFY(QFile::exists(path) || QFile::copy(QFINDTESTDATA("fixtures/viewer/tracks.mkv"), path));
+    m_settings->clearVideoPosition(path);
+    if (kind == QLatin1String("resume")) m_settings->setVideoPosition(path, 7000);
+    const auto restore = qScopeGuard([this, path] {
+      m_window->setProperty("framed", true);
+      m_settings->clearVideoPosition(path);
+    });
+    m_window->setProperty("framed", false);
+    open({path});
+    if (kind == QLatin1String("start")) m_session->setStartPosition(path, 4000);
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_COMPARE(player->mediaStatus(), QMediaPlayer::LoadedMedia);
+    // Held: loaded, but nothing started and nothing decided yet.
+    QTest::qWait(200);
+    QCOMPARE(player->playbackState(), QMediaPlayer::StoppedState);
+    QVERIFY(!prop("resumeAvailable").toBool());
+
+    m_window->setProperty("framed", true);
+    if (kind == QLatin1String("resume")) {
+      QTRY_VERIFY(prop("resumeAvailable").toBool());
+      QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+      QTRY_VERIFY(item(QStringLiteral("viewerResumePrompt"))->isVisible());
+      return;
+    }
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+    if (kind == QLatin1String("start")) {
+      QTRY_VERIFY2(player->position() >= 3500, qPrintable(QString::number(player->position())));
+    }
+    const qint64 at = player->position();
+    QTRY_VERIFY(player->position() >= at + 300);
+    player->pause();
   }
 
   // The checked-in test pattern: saturated bars, two audio tracks and a
