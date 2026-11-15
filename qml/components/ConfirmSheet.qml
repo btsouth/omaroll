@@ -21,9 +21,11 @@ Item {
         return Qt.rgba(base.r, base.g, base.b, amount)
     }
 
+    // The confirm button, which Enter also presses, takes the keyboard, so
+    // a screen reader starts on the question's answer.
     function open() {
         visible = true
-        forceActiveFocus()
+        confirmButton.forceActiveFocus(Qt.PopupFocusReason)
     }
 
     function close() {
@@ -33,6 +35,10 @@ Item {
     visible: false
     anchors.fill: parent
     focus: visible
+    // A dialog, named by its question, with the detail read after it.
+    Accessible.role: Accessible.Dialog
+    Accessible.name: root.title
+    Accessible.description: root.detail
 
     // Own wheel input for the whole modal so it cannot scroll the library
     // underneath, as Settings does.
@@ -87,7 +93,10 @@ Item {
             spacing: 8
 
             Text {
+                objectName: "confirmationTitle"
                 width: parent.width
+                Accessible.role: Accessible.Heading
+                Accessible.name: text
                 text: root.title
                 font.family: Theme.fontFamily
                 font.pixelSize: 14
@@ -109,6 +118,8 @@ Item {
                 ScrollBar.vertical: ScrollBar { width: 6; policy: ScrollBar.AsNeeded }
                 Text {
                     id: detailText
+                    Accessible.role: Accessible.StaticText
+                    Accessible.name: text
                     width: parent.width - 12
                     text: root.detail
                     textFormat: Text.PlainText
@@ -127,8 +138,12 @@ Item {
                 spacing: 8
 
                 PillButton {
+                    id: cancelButton
                     objectName: "confirmSheetCancel"
                     label: root.cancelLabel
+                    // Tab is the sheet's own (below): a button that took it
+                    // would pass focus on to whatever lies behind the scrim.
+                    activeFocusOnTab: false
                     onClicked: {
                         root.close()
                         root.cancelled()
@@ -136,8 +151,12 @@ Item {
                 }
 
                 PillButton {
+                    id: confirmButton
+                    objectName: "confirmSheetConfirm"
                     label: root.confirmLabel
                     active: true
+                    activeFocusOnTab: false
+                    Accessible.defaultButton: true
                     onClicked: {
                         root.close()
                         root.accepted()
@@ -148,7 +167,11 @@ Item {
     }
 
     Keys.onPressed: function (event) {
-        if (event.key === Qt.Key_Escape) {
+        // Tab stays on the two buttons; nothing behind the scrim is reachable.
+        if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+            (cancelButton.activeFocus ? confirmButton : cancelButton).forceActiveFocus(Qt.TabFocusReason)
+            event.accepted = true
+        } else if (event.key === Qt.Key_Escape) {
             root.close()
             event.accepted = true
         } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {

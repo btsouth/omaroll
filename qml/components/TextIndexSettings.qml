@@ -47,7 +47,7 @@ Column {
             id: screenshotsToggle
             objectName: "textIndexScreenshotsOnlyToggle"
             anchors.verticalCenter: parent.verticalCenter
-            accessibleName: "Index screenshots only"
+            accessibleName: "Screenshots only"
             checked: Settings.textIndexScreenshotsOnly
             onToggled: Settings.textIndexScreenshotsOnly = !Settings.textIndexScreenshotsOnly
         }

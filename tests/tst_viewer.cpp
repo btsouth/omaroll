@@ -2553,6 +2553,180 @@ private slots:
     QVERIFY(!prop("infoOpen").toBool());
   }
 
+  // With the details open, Tab reaches every control on the card going
+  // forward, the same ones Shift+Tab reaches going back.
+  void tabReachesTheDetailsCardBothWays() {
+    open({media(QStringLiteral("Shot 1.jpg"))});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QTest::keyClick(m_window, Qt::Key_I);
+    QTRY_VERIFY(prop("infoOpen").toBool());
+    QQuickItem* keys = item(QStringLiteral("viewerKeys"));
+    QQuickItem* panel = item(QStringLiteral("viewerInfoPanel"));
+    const auto onCard = [&] {
+      for (QQuickItem* at = m_window->activeFocusItem(); at; at = at->parentItem())
+        if (at == panel) return true;
+      return false;
+    };
+    const auto walk = [&](bool forward) {
+      QStringList seen;
+      for (int step = 0; step < 80; ++step) {
+        if (forward) QTest::keyClick(m_window, Qt::Key_Tab);
+        else QTest::keyClick(m_window, Qt::Key_Backtab, Qt::ShiftModifier);
+        if (keys->hasActiveFocus()) break;
+        if (onCard()) seen.append(m_window->activeFocusItem()->objectName());
+      }
+      return seen;
+    };
+    const QStringList forward = walk(true);
+    QVERIFY(keys->hasActiveFocus());
+    QStringList backward = walk(false);
+    QVERIFY(keys->hasActiveFocus());
+    std::reverse(backward.begin(), backward.end());
+    QVERIFY2(forward.contains(QStringLiteral("viewerInfoFavourite")), qPrintable(forward.join(u',')));
+    QVERIFY2(forward.contains(QStringLiteral("viewerInfoCopyName")), qPrintable(forward.join(u',')));
+    QCOMPARE(forward, backward);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+  }
+
+  // The video bar's seek and volume are sliders to assistive technology,
+  // with their range, value and a readable value, and the arrows move them
+  // once they have the keyboard. The speed button names its speed.
+  void transportSlidersSayTheirValueAndTakeTheArrows() {
+    open({media(QStringLiteral("clip.mp4"))});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY_WITH_TIMEOUT(player->duration() > 0, 30000);
+    player->pause();
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "seekTo", Q_ARG(QVariant, 0)));
+    QTRY_VERIFY(player->position() < 500);
+
+    QQuickItem* seek = item(QStringLiteral("viewerScrub"));
+    QAccessibleInterface* seekFace = QAccessible::queryAccessibleInterface(seek);
+    QVERIFY(seekFace);
+    QCOMPARE(seekFace->role(), QAccessible::Slider);
+    QCOMPARE(seekFace->text(QAccessible::Name), QStringLiteral("Seek"));
+    QVERIFY(seekFace->valueInterface());
+    QCOMPARE(seekFace->valueInterface()->minimumValue().toReal(), 0.0);
+    QCOMPARE(seekFace->valueInterface()->maximumValue().toReal(), qreal(player->duration()));
+    QVERIFY2(seekFace->text(QAccessible::Description).startsWith(QStringLiteral("0:00 of ")),
+             qPrintable(seekFace->text(QAccessible::Description)));
+    QVERIFY(seek->activeFocusOnTab());
+
+    // Reached with Tab, in the bar's order.
+    QStringList order;
+    for (int step = 0; step < 40 && !seek->hasActiveFocus(); ++step) {
+      QTest::keyClick(m_window, Qt::Key_Tab);
+      order.append(m_window->activeFocusItem() ? m_window->activeFocusItem()->objectName() : QString());
+    }
+    QVERIFY2(seek->hasActiveFocus(), qPrintable(order.join(u',')));
+    QVERIFY(prop("controlsFocused").toBool());
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTRY_VERIFY(player->position() >= 4000);
+    QTRY_VERIFY(seekFace->valueInterface()->currentValue().toReal() >= 4000);
+    QVERIFY2(seekFace->text(QAccessible::Description).startsWith(QStringLiteral("0:05 of ")),
+             qPrintable(seekFace->text(QAccessible::Description)));
+    QTest::keyClick(m_window, Qt::Key_Home);
+    QTRY_VERIFY(player->position() < 500);
+    QVERIFY(seek->hasActiveFocus());
+
+    QQuickItem* volume = item(QStringLiteral("viewerVolume"));
+    QTRY_VERIFY(volume->isVisible());
+    QAccessibleInterface* volumeFace = QAccessible::queryAccessibleInterface(volume);
+    QVERIFY(volumeFace);
+    QCOMPARE(volumeFace->role(), QAccessible::Slider);
+    QCOMPARE(volumeFace->text(QAccessible::Name), QStringLiteral("Volume"));
+    QCOMPARE(volumeFace->valueInterface()->maximumValue().toReal(), 100.0);
+    QCOMPARE(volumeFace->valueInterface()->currentValue().toReal(), 80.0);
+    QCOMPARE(volumeFace->text(QAccessible::Description), QStringLiteral("80%"));
+    for (int step = 0; step < 20 && !volume->hasActiveFocus(); ++step) QTest::keyClick(m_window, Qt::Key_Tab);
+    QVERIFY(volume->hasActiveFocus());
+    // Left and Right change the volume here rather than seek.
+    const qint64 at = player->position();
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTRY_COMPARE(m_settings->videoVolume(), 0.85);
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QTRY_COMPARE(m_settings->videoVolume(), 0.75);
+    QCOMPARE(volumeFace->text(QAccessible::Description), QStringLiteral("75%"));
+    QVERIFY(qAbs(player->position() - at) < 1000);
+    m_settings->setVideoMuted(true);
+    QCOMPARE(volumeFace->text(QAccessible::Description), QStringLiteral("Muted"));
+    m_settings->setVideoMuted(false);
+
+    QQuickItem* speed = item(QStringLiteral("viewerSpeedButton"));
+    QTRY_VERIFY(speed->isVisible());
+    QAccessibleInterface* speedFace = QAccessible::queryAccessibleInterface(speed);
+    QCOMPARE(speedFace->role(), QAccessible::Button);
+    QCOMPARE(speedFace->text(QAccessible::Name), QStringLiteral("Playback speed 1×"));
+    speed->forceActiveFocus(Qt::TabFocusReason);
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_COMPARE(player->playbackRate(), 1.25);
+    QCOMPARE(speedFace->text(QAccessible::Name), QStringLiteral("Playback speed 1.25×"));
+  }
+
+  // The Trash question is a dialog named by its question, with the file as
+  // its text, and opens on its default button. Tab stays inside it, and
+  // closing it gives the keyboard back to the button that asked. The result
+  // is read out as an alert, and its Undo is a whole, focusable button.
+  void trashPromptIsADialogAndFocusComesBack() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QStringList files{dir.filePath(QStringLiteral("a.jpg")), dir.filePath(QStringLiteral("b.jpg"))};
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), files.at(0)));
+    QVERIFY(QFile::copy(media(QStringLiteral("shot 2.jpg")), files.at(1)));
+    open({files.at(0)});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QQuickItem* confirm = item(QStringLiteral("viewerConfirm"));
+    QQuickItem* trash = item(QStringLiteral("viewerTrashButton"));
+    QQuickItem* yes = find(confirm, [](QQuickItem* c) { return c->objectName() == QStringLiteral("confirmSheetConfirm"); });
+    QQuickItem* no = find(confirm, [](QQuickItem* c) { return c->objectName() == QStringLiteral("confirmSheetCancel"); });
+    QVERIFY(yes && no);
+    for (int step = 0; step < 40 && !trash->hasActiveFocus(); ++step) QTest::keyClick(m_window, Qt::Key_Tab);
+    QVERIFY(trash->hasActiveFocus());
+
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(confirm->isVisible());
+    QAccessibleInterface* dialog = QAccessible::queryAccessibleInterface(confirm);
+    QVERIFY(dialog);
+    QCOMPARE(dialog->role(), QAccessible::Dialog);
+    QCOMPARE(dialog->text(QAccessible::Name), QStringLiteral("Move this item to Trash?"));
+    QCOMPARE(dialog->text(QAccessible::Description), files.at(0));
+    QVERIFY(yes->hasActiveFocus());
+    QVERIFY(QAccessible::queryAccessibleInterface(yes)->state().defaultButton);
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QVERIFY(no->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QVERIFY(yes->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Backtab, Qt::ShiftModifier);
+    QVERIFY(no->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!confirm->isVisible());
+    QTRY_VERIFY(trash->hasActiveFocus());
+    QVERIFY(QFile::exists(files.at(0)));
+
+    // Confirmed with Enter on the default button.
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(confirm->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!QFile::exists(files.at(0)));
+    QTRY_COMPARE(m_session->path(), files.at(1));
+    QQuickItem* toast = item(QStringLiteral("viewerStatus"));
+    QAccessibleInterface* alert = QAccessible::queryAccessibleInterface(toast);
+    QCOMPARE(alert->role(), QAccessible::AlertMessage);
+    QCOMPARE(alert->text(QAccessible::Name), QStringLiteral("Moved to Trash"));
+    QQuickItem* undo = item(QStringLiteral("viewerUndoButton"));
+    QTRY_VERIFY(undo->isVisible());
+    QCOMPARE(undo->height(), toast->height());
+    QVERIFY(undo->height() >= 30);
+    QCOMPARE(QAccessible::queryAccessibleInterface(undo)->text(QAccessible::Name), QStringLiteral("Undo"));
+    for (int step = 0; step < 40 && !undo->hasActiveFocus(); ++step) QTest::keyClick(m_window, Qt::Key_Tab);
+    QVERIFY(undo->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(QFile::exists(files.at(0)));
+    QTRY_VERIFY(item(QStringLiteral("viewerKeys"))->hasActiveFocus());
+  }
+
   // A focused control that is switched off or hidden hands the keyboard back
   // to the picture: shortcuts keep working, and Space or Enter cannot press a
   // control nobody can see.
