@@ -115,6 +115,15 @@ output has no scanout, so this is when the compositor has the pixels, not
 when a panel shows them. It was not measured on Intel or AMD hardware, nor on
 a physical display.
 
+The offscreen startup probe (`tests/benchmark_startup.py`, llvmpipe) was run
+interleaved on the devbox container too, but that host stayed at a load of 6
+to 22 on 16 cores, with stages the change does not touch moving by tens of
+milliseconds, so those numbers are not used here. Its `image_frame` is also
+not comparable across the change: before, it was the fade's first frame,
+where the picture is drawn at opacity 0 and costs nothing; it is now the frame
+that actually draws the picture, which on llvmpipe includes compiling its
+shaders. Graphics warmup is off on the offscreen platform.
+
 ## Startup, stage by stage
 
 From `main()`, with `OMAROLL_STARTUP_TRACE=1` (stages are described in
