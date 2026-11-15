@@ -67,6 +67,54 @@ about 160 ms in its theme for fonts and 60 ms more for shaders:
 | First video frame decoded, from `main()` | 629 | 610 |
 | First image frame, from `main()` | 409 | 399 |
 
+## First picture at launch, 15 November 2026
+
+Measured at the compositor: when Hyprland maps the window, and when the
+screen centre first shows the picture. Medians of 12 interleaved launches
+each, in milliseconds from exec. Before is main at `14272c2`.
+
+| | Before | After |
+| --- | ---: | ---: |
+| 24 MP JPEG: window mapped | 311 | 298 |
+| 24 MP JPEG: picture complete | 516 | 396 |
+| 1080p video: window mapped | 355 | 331 |
+| 1080p video: first picture | 565 | 519 |
+| 1080p video: `video_frame`, from `main()` | 523 | 472 |
+
+What changed:
+
+- The first picture a window opens with no longer fades in, so it is complete
+  in its first frame. `image_frame` now counts a picture only at full
+  opacity; before, it marked the frame where the 140 ms fade started. Later
+  pictures that had to be read still fade in.
+- A launched video's player gets its file before the window is shown, so the
+  file opens while the window draws. Starting playback is where Qt builds the
+  decoders, on the window thread, so it waits for the window's first frame;
+  without that wait, a file that opened before the first expose put the
+  decoders ahead of the window and mapped it about 30 ms later.
+- On Wayland, a worker creates and drops an OpenGL context while QML loads
+  (`src/app/GraphicsWarmup.h`). Qt Quick still makes its throwaway context on
+  the window thread at the first expose (`QRhiGles2InitParams::newFallbackSurface`),
+  but it no longer starts the driver: about 24 ms instead of 40 on the
+  NVIDIA card, measured with an EGL call shim. The rest is per-context driver
+  work. Started any earlier, the driver's library loads slowed the theme's
+  font lookup by about 40 ms.
+
+The window still maps as soon as it can, before the picture; nothing waits
+for the media.
+
+How it was measured: the same machine as the table above, in a headless
+Hyprland 1920x1080@60 in omabox with animations off, host load 2.5 to 6.
+`grim` samples a 4x4 region at the screen centre from two threads, about
+every 7 to 8 ms. "Picture complete" is the first sample after which the
+centre stays at its settled colour; for the video, "first picture" is the
+first sample with saturated colour, the poster or a frame, whichever came
+first. Fresh profile per launch, warm fontconfig and shader caches, the same
+24 MP JPEG and a 1080p30 H.264 Matroska file with AAC audio. A headless
+output has no scanout, so this is when the compositor has the pixels, not
+when a panel shows them. It was not measured on Intel or AMD hardware, nor on
+a physical display.
+
 ## Startup, stage by stage
 
 From `main()`, with `OMAROLL_STARTUP_TRACE=1` (stages are described in
@@ -102,8 +150,8 @@ What changed:
 
 The rest of the time before the first frame is spent in Qt and the driver:
 loading QML, a temporary OpenGL context Qt creates on the window thread to
-choose a surface format (about 40 ms with NVIDIA), and the render thread's own
-context. Nothing before the theme is worth moving: the single-instance check
+choose a surface format (about 40 ms with NVIDIA, about 24 since the graphics
+warmup), and the render thread's own context. Nothing before the theme is worth moving: the single-instance check
 takes under a millisecond, the icon lookup about 3, hyprctl about 7 and the
 font lookup about 10 with a warm cache.
 
@@ -118,9 +166,10 @@ window thread (about 65 ms), and only then does decoding start.
 An experiment that started the player while the window was still hidden, and
 showed the window once the file was open, put the decoded picture in the
 window's first frame at 354 ms from launch, 106 ms behind mpv. The window
-mapped 110 ms later, at 347 ms. That needs a change in `qml/Viewer.qml`, whose
-player only gets a source once the window is visible, and a decision on
-whether a later window with the picture beats an earlier one without it.
+mapped 110 ms later, at 347 ms. Omaroll keeps the earlier window: the player
+now gets its file before the window is shown, and starts once the window has
+drawn (see First picture at launch), so the decoders are still built after
+the map.
 
 ## Budgets in CI
 
