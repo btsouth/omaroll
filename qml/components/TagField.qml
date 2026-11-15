@@ -130,9 +130,10 @@ FocusScope {
         selectedTextColor: root.osd ? Osd.brightForeground : Theme.brightForeground
         Accessible.role: Accessible.EditableText
         Accessible.name: "Add tag"
-        Accessible.description: root.rows.length > 0 && root.highlighted >= 0
-                                ? (root.rows[root.highlighted].create ? "Create tag " : "Suggestion ")
-                                  + root.rows[root.highlighted].name : ""
+        Accessible.description: {
+            const row = root.highlighted >= 0 ? root.rows[root.highlighted] : undefined
+            return row ? (row.create ? "Create tag " : "Suggestion ") + row.name : ""
+        }
         onTextChanged: root.refresh()
         onActiveFocusChanged: root.refresh()
 
