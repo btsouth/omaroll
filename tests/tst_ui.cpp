@@ -10033,8 +10033,8 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(std::all_of(added.cbegin(), added.cend(), [&](const QString& path) {
       return m_library->rowOf(path) >= 0;
     }), 10000);
-    m_window->resize(1000, 640);
-    waitForLayout(QSize(1000, 640));
+    m_window->resize(1280, 600);
+    waitForLayout(QSize(1280, 600));
     m_library->setFolderFilter(dir.path());
     QTRY_COMPARE(m_library->count(), 24);
     QTRY_VERIFY(item("reviewSets")->isVisible());

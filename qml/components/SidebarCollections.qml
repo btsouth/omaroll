@@ -118,17 +118,27 @@ FocusScope {
         return out
     }
 
-    // The list keeps its place by row identity across rebuilds.
+    // The list keeps its place by row identity across rebuilds. The model
+    // is handed over here rather than bound, so the reset it causes cannot
+    // move the current row before it is put back.
     property string currentKey: ""
+    property bool restoring: false
     function keyOf(row) { return row ? row.kind + ":" + row.name : "" }
-    onRowsChanged: {
+    function applyRows() {
         const key = root.currentKey
+        const before = list.currentIndex
+        root.restoring = true
+        list.model = root.rows
         let index = -1
         for (let i = 0; i < rows.length && key !== ""; ++i) {
             if (keyOf(rows[i]) === key) { index = i; break }
         }
-        list.currentIndex = index >= 0 ? index : Math.min(list.currentIndex, rows.length - 1)
+        list.currentIndex = index >= 0 ? index : Math.min(before, rows.length - 1)
+        root.restoring = false
+        root.currentKey = root.keyOf(root.rows[list.currentIndex])
     }
+    onRowsChanged: applyRows()
+    Component.onCompleted: applyRows()
 
     function isActive(row) {
         if (!row) return false
@@ -211,7 +221,6 @@ FocusScope {
         objectName: "sidebarCollections"
         anchors.fill: parent
         clip: true
-        model: root.rows
         focus: true
         activeFocusOnTab: true
         boundsBehavior: Flickable.StopAtBounds
@@ -221,7 +230,7 @@ FocusScope {
         reuseItems: true
         Accessible.role: Accessible.List
         Accessible.name: "Collections"
-        onCurrentIndexChanged: root.currentKey = root.keyOf(root.rows[currentIndex])
+        onCurrentIndexChanged: if (!root.restoring) root.currentKey = root.keyOf(root.rows[currentIndex])
         onActiveFocusChanged: if (activeFocus && currentIndex < 0 && count > 0) currentIndex = 0
         ScrollBar.vertical: ScrollBar {
             policy: ScrollBar.AsNeeded
