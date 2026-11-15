@@ -1289,11 +1289,31 @@ ApplicationWindow {
         enabled: !root.anySheetOpen && !albumActionMenu.visible
         browserOpen: libraryBrowser.visible
         searchSlot: searchSlot
+        chipInset: root.folderSidebarVisible ? folderSidebar.width : 0
         onMessage: function (text) { root.say(text) }
         // Leaving the search field must land focus back on the grid, or the
         // arrow keys go nowhere until a tile is clicked.
         onDone: library.forceActiveFocus()
         onBrowseRequested: libraryBrowser.open()
+    }
+
+    // Jump to date in the controls row, beside the sort, when the header
+    // has no room for its pill (a narrow window): the sidebar's Dates is
+    // hidden there too, so this is the pointer's way to a month.
+    DayHeader {
+        id: rowDatePill
+        objectName: "rowDatePill"
+        parent: filters
+        x: filters.rowSpareRight - implicitWidth
+        y: 7 + Math.round((26 - implicitHeight) / 2)
+        z: 1
+        visible: filters.visible && !datePill.visible && datePill.shown && interactive
+                 && filters.rowSpareRight - filters.rowSpareLeft >= implicitWidth
+        maximumWidth: Math.max(80, filters.rowSpareRight - filters.rowSpareLeft)
+        interactive: datePill.interactive
+        label: datePill.label
+        shown: datePill.shown
+        onClicked: dateJump.popupBelow(rowDatePill, library.currentMonthKey())
     }
 
     Item {
@@ -1330,17 +1350,24 @@ ApplicationWindow {
     FolderSidebar {
         id: folderSidebar
         objectName: "folderSidebar"
-        anchors.top: filters.bottom
+        // Under the filter controls, beside the chips row rather than below
+        // it, so choosing a row does not move the sidebar under the pointer.
+        anchors.top: filters.top
+        anchors.topMargin: filters.visible ? filters.controlsHeight : 0
         anchors.left: parent.left
         anchors.bottom: footer.top
         width: paneWidth
         visible: root.folderSidebarVisible
         enabled: !root.anySheetOpen && (!root.popupOpen || menuOpen)
         onChosen: function(path) { libraryBrowser.showFolder(path) }
+        onAllMediaChosen: libraryBrowser.showAll()
         onAddFolderRequested: libraryBrowser.addFolder()
         onGridFocusRequested: library.forceActiveFocus()
         onMessage: function(text) { root.say(text) }
-        onRenameCollectionRequested: function (mode, name) { root.renameCollection(mode, name) }
+        onRenameCollectionRequested: function (mode, name) {
+            root.renameCollection(mode, name)
+            root.renameReturn = {kind: mode, name: name}
+        }
         onDeleteCollectionRequested: function (mode, name) { root.deleteCollection(mode, name) }
         onVisibleChanged: if (!visible && activeFocus) library.forceActiveFocus()
     }
@@ -1922,9 +1949,21 @@ ApplicationWindow {
         Item { width: 1; height: 4; visible: emptyActions.count > 0 }
 
         // Side by side where they fit, two by two, or one above the other, in
-        // a narrow window.
+        // a narrow window. Wrapped, every button takes the widest one's
+        // width, so the rows line up rather than leave a ragged grid.
         Grid {
+            id: emptyGrid
+            objectName: "emptyActionsGrid"
             anchors.horizontalCenter: parent.horizontalCenter
+            readonly property real widest: {
+                let widest = 0
+                for (let i = 0; i < emptyActions.count; ++i) {
+                    const button = emptyActions.itemAt(i)
+                    if (button) widest = Math.max(widest, button.implicitWidth)
+                }
+                return widest
+            }
+            readonly property bool wrapped: columns < emptyActions.count
             readonly property real rowWidth: {
                 let total = Math.max(0, emptyActions.count - 1) * columnSpacing
                 for (let i = 0; i < emptyActions.count; ++i) {
@@ -1933,15 +1972,7 @@ ApplicationWindow {
                 }
                 return total
             }
-            readonly property real pairWidth: {
-                let widest = 0
-                for (let i = 0; i + 1 < emptyActions.count; i += 2) {
-                    const a = emptyActions.itemAt(i)
-                    const b = emptyActions.itemAt(i + 1)
-                    if (a && b) widest = Math.max(widest, a.implicitWidth + b.implicitWidth + columnSpacing)
-                }
-                return widest
-            }
+            readonly property real pairWidth: 2 * widest + columnSpacing
             columns: rowWidth <= library.width - 40 ? Math.max(1, emptyActions.count)
                      : pairWidth <= library.width - 40 ? 2 : 1
             columnSpacing: 8
@@ -1954,6 +1985,7 @@ ApplicationWindow {
                     required property string modelData
                     required property int index
                     objectName: "emptyAction_" + modelData
+                    width: emptyGrid.wrapped ? emptyGrid.widest : implicitWidth
                     // Off behind a sheet: a sheet button over one must not press it too.
                     enabled: !root.anySheetOpen && (modelData !== "set-default" || !MimeDefaults.busy)
                     active: index === 0
@@ -2172,6 +2204,7 @@ ApplicationWindow {
                 }
                 root.renamingCollection = false
                 root.renameFilterBefore = ""
+                if (root.renameReturn) root.renameReturn = {kind: "album", name: name}
                 root.say("Renamed album to " + name)
                 return
             }
@@ -2181,6 +2214,7 @@ ApplicationWindow {
                 }
                 root.renamingCollection = false
                 root.renameFilterBefore = ""
+                if (root.renameReturn) root.renameReturn = {kind: "tag", name: name}
                 root.say("Renamed tag to " + name)
                 return
             }
@@ -2205,12 +2239,29 @@ ApplicationWindow {
         onVisibleChanged: if (!visible) {
             root.renamingCollection = false
             root.renameFilterBefore = ""
-            root.restoreFocusAfterSheet()
+            const back = root.renameReturn
+            root.renameReturn = null
+            if (back) {
+                // Later, once modalOpen and the sidebar's enabled state have
+                // caught up with the sheet closing.
+                Qt.callLater(function () {
+                    if (folderSidebar.visible && folderSidebar.enabled && !root.modalOpen)
+                        folderSidebar.focusCollection(back.kind, back.name)
+                    else
+                        root.restoreFocusAfterSheet()
+                })
+            } else {
+                root.restoreFocusAfterSheet()
+            }
         }
     }
 
     // Rename and delete for an album or tag, from Browse or the sidebar.
+    // A rename from a sidebar row's menu gives the keyboard back to that
+    // row, under its new name.
+    property var renameReturn: null
     function renameCollection(mode, name) {
+        root.renameReturn = null
         root.renamingCollection = true
         root.renameFilterBefore = mode === "album" ? Captures.albumFilter : Captures.tagFilter
         albumNameSheet.openRename(mode, name)

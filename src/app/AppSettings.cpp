@@ -1034,7 +1034,9 @@ void AppSettings::relocatePath(const QString& oldPath, const QString& newPath) {
 
 QStringList AppSettings::albumNames() const {
   QStringList names = m_albums.keys();
-  names.sort(Qt::CaseInsensitive);
+  std::sort(names.begin(), names.end(), [](const QString& a, const QString& b) {
+    return TagNames::naturalCompare(a, b) < 0;
+  });
   return names;
 }
 
@@ -1915,7 +1917,10 @@ QStringList AppSettings::albumsForPath(const QString& path) const {
       }
     }
   }
-  names.sort(Qt::CaseInsensitive);
+  // The order albumNames has, so "Trip 2" comes before "Trip 10".
+  std::sort(names.begin(), names.end(), [](const QString& a, const QString& b) {
+    return TagNames::naturalCompare(a, b) < 0;
+  });
   return names;
 }
 
@@ -2169,7 +2174,9 @@ QVariantMap AppSettings::createAlbumFor(const QString& name, const QStringList& 
 
 QStringList AppSettings::smartCollectionNames() const {
   QStringList names = m_smartCollections.keys();
-  names.sort(Qt::CaseInsensitive);
+  std::sort(names.begin(), names.end(), [](const QString& a, const QString& b) {
+    return TagNames::naturalCompare(a, b) < 0;
+  });
   return names;
 }
 

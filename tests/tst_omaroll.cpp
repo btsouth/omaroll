@@ -22,6 +22,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include "library/TagNames.h"
 #include "library/CaptureFilterModel.h"
 #include "library/FolderTreeModel.h"
 #include <QAbstractItemModelTester>
@@ -17069,6 +17070,27 @@ private slots:
     QVERIFY(settings.organizationError().isEmpty());
   }
 
+  // A file's album chips come in the same natural order as the album list.
+  void albumsOnAFileSortNaturally() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    const QString media = dir.filePath(QStringLiteral("a.png"));
+    {
+      QFile file(media);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("png");
+    }
+    AppSettings settings;
+    for (const char* name : {"Trip 10", "trip 2", "Trip 1"}) {
+      QVERIFY(settings.createAlbum(QString::fromLatin1(name)));
+      QVERIFY(settings.addToAlbum(QString::fromLatin1(name), {media}));
+    }
+    const QStringList expected{QStringLiteral("Trip 1"), QStringLiteral("trip 2"), QStringLiteral("Trip 10")};
+    QCOMPARE(settings.albumsForPath(media), expected);
+    QCOMPARE(settings.albumNames(), expected);
+  }
+
   void matchTagsFindsWordStartsIgnoringCaseAndAccents() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -17091,6 +17113,65 @@ private slots:
     for (int index = 0; index < 12; ++index) QVERIFY(settings.createTag(QStringLiteral("t%1").arg(index)));
     QCOMPARE(settings.matchTags(QStringLiteral("t")).size(), 8);
     QCOMPARE(settings.matchTags(QStringLiteral("t"), {}, 3).size(), 3);
+  }
+
+  // Numbers in tag and album names sort as numbers, wherever they are
+  // listed: "Tag 2" before "Tag 10", at every level of the tree.
+  void tagsAndAlbumsSortNumbersNaturally() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    AppSettings settings;
+    for (const char* name : {"Trip", "Tag 10", "Tag 2", "tag 1", "Tag 02b", "Trip/Day 11", "Trip/Day 9"})
+      QVERIFY(settings.createTag(QString::fromUtf8(name)));
+    QCOMPARE(settings.tagNames(),
+             QStringList({QStringLiteral("tag 1"), QStringLiteral("Tag 2"), QStringLiteral("Tag 02b"),
+                          QStringLiteral("Tag 10"), QStringLiteral("Trip"), QStringLiteral("Trip/Day 9"),
+                          QStringLiteral("Trip/Day 11")}));
+    QStringList outline;
+    for (const QVariant& row : settings.tagOutline()) outline.append(row.toMap().value("name").toString());
+    QCOMPARE(outline, settings.tagNames());
+    for (const char* name : {"Album 10", "album 9", "Album 100", "Beach"})
+      QVERIFY(settings.createAlbum(QString::fromUtf8(name)));
+    QCOMPARE(settings.albumNames(), QStringList({QStringLiteral("album 9"), QStringLiteral("Album 10"),
+                                                 QStringLiteral("Album 100"), QStringLiteral("Beach")}));
+    QVERIFY(TagNames::naturalCompare(u"a007", u"a7") != 0);
+    QVERIFY(TagNames::naturalCompare(u"x9", u"x10") < 0);
+    QVERIFY(TagNames::naturalCompare(u"x", u"x1") < 0);
+    // Saved views list the same way.
+    for (const char* name : {"View 10", "view 9", "View 1"})
+      QVERIFY(settings.saveSmartCollection(QString::fromUtf8(name), {{QStringLiteral("kind"), 0}}));
+    QCOMPARE(settings.smartCollectionNames(),
+             QStringList({QStringLiteral("View 1"), QStringLiteral("view 9"), QStringLiteral("View 10")}));
+
+    // A strict weak ordering over a tricky mixed set, so std::sort stays
+    // sound: other scripts' digits, punctuation between '9' and 'A', case,
+    // leading zeros and prefixes.
+    const QStringList tricky{QStringLiteral("x5"), QStringLiteral("x:"), QString::fromUtf8("x٣"),
+                             QStringLiteral("x10"), QStringLiteral("x05"), QStringLiteral("x5a"),
+                             QStringLiteral("X5"), QStringLiteral("x"), QString::fromUtf8("x٢"),
+                             QStringLiteral("a"), QStringLiteral("10"), QString::fromUtf8("٢"),
+                             QStringLiteral("Tag 2"), QStringLiteral("tag 02"), QStringLiteral("Tag 10"),
+                             QStringLiteral("x05a"), QStringLiteral("x5b"), QStringLiteral("x0"),
+                             QStringLiteral("x00"), QString::fromUtf8("ｘ5")};
+    const auto less = [](const QString& a, const QString& b) { return TagNames::naturalCompare(a, b) < 0; };
+    const auto same = [&](const QString& a, const QString& b) { return !less(a, b) && !less(b, a); };
+    for (const QString& a : tricky) {
+      QVERIFY2(!less(a, a), qPrintable(a));
+      for (const QString& b : tricky) {
+        QVERIFY2(!(less(a, b) && less(b, a)), qPrintable(a + QStringLiteral(" / ") + b));
+        QCOMPARE(TagNames::naturalCompare(a, b) < 0, TagNames::naturalCompare(b, a) > 0);
+        for (const QString& c : tricky) {
+          if (less(a, b) && less(b, c)) QVERIFY2(less(a, c), qPrintable(a + QStringLiteral(" < ") + b + QStringLiteral(" < ") + c));
+          if (same(a, b) && same(b, c)) QVERIFY(same(a, c));
+        }
+      }
+    }
+    QStringList sorted = tricky;
+    std::sort(sorted.begin(), sorted.end(), less);
+    QVERIFY(std::is_sorted(sorted.begin(), sorted.end(), less));
+    QVERIFY(less(QStringLiteral("x5"), QStringLiteral("x10")));
+    QVERIFY(less(QStringLiteral("x5"), QStringLiteral("x:")));
   }
 
   void everyAlbumAndTagChangeIsOneUndoStep() {

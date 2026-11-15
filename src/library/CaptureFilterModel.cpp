@@ -328,7 +328,8 @@ void CaptureFilterModel::setSourceModel(QAbstractItemModel* model) {
   m_sourceConnections.append(
       connect(model, &QAbstractItemModel::dataChanged, this,
               [this](const QModelIndex&, const QModelIndex&, const QList<int>& roles) {
-                if (roles.isEmpty() || roles.contains(CaptureRoles::PathRole)) {
+                if (roles.isEmpty() || roles.contains(CaptureRoles::PathRole) ||
+                    roles.contains(CaptureRoles::HiddenRole)) {
                   m_folderIndexTimer.start();
                 }
                 if (roles.isEmpty() || roles.contains(CaptureRoles::CapturedRole) ||
@@ -428,28 +429,48 @@ void CaptureFilterModel::rebuildLoneReviewPaths() {
   }
 }
 
+// Source rows of files that have a RAW/JPEG companion, by path: one pass,
+// so pairing never looks a partner up row by row.
+QHash<QString, int> CaptureFilterModel::pairPartners() const {
+  QHash<QString, int> rows;
+  if (!sourceModel()) return rows;
+  for (int row = 0; row < sourceModel()->rowCount(); ++row) {
+    const CaptureRecord& record = sourceRecord(row);
+    if (!record.companionPath.isEmpty()) rows.insert(record.path, row);
+  }
+  return rows;
+}
+
 void CaptureFilterModel::rebuildPairing() {
   m_groupedOutPaths.clear();
   rebuildLoneReviewPaths();
   if (!m_pairRawJpeg || m_duplicatesOnly || m_similarOnly || !sourceModel()) return;
-  // Two source passes per filter/scan batch, then constant-time row decisions.
-  QSet<QString> eligible;
-  for (int row = 0; row < sourceModel()->rowCount(); ++row) {
-    const CaptureRecord& record = sourceRecord(row);
-    if (!record.companionPath.isEmpty() && matchesFilters(row, record)) eligible.insert(record.path);
-  }
-  for (int row = 0; row < sourceModel()->rowCount(); ++row) {
-    const CaptureRecord& record = sourceRecord(row);
-    if (!record.isRaw() || record.companionPath.isEmpty() || !eligible.contains(record.path) ||
-        !eligible.contains(record.companionPath)) continue;
-    const bool explicitRaw = m_explicitPaths.contains(record.path);
-    const bool explicitJpeg = m_explicitPaths.contains(record.companionPath);
+  // A pair folds into one tile, the RAW's unless only the JPEG was asked
+  // for, when that file matches and its partner matches everything else.
+  // Dates do not decide the fold: the tile is dated by the file it shows,
+  // which then meets the date filter or not, so a pair is never split by
+  // a date range into a JPEG on its own. A pair that does not fold is two
+  // tiles, each tested by its own date. Two source passes per filter or scan batch,
+  // then constant-time row decisions.
+  const QHash<QString, int> partners = pairPartners();
+  for (auto it = partners.cbegin(); it != partners.cend(); ++it) {
+    const int rawRow = it.value();
+    const CaptureRecord& raw = sourceRecord(rawRow);
+    if (!raw.isRaw()) continue;
+    const int jpegRow = partners.value(raw.companionPath, -1);
+    if (jpegRow < 0) continue;
+    const CaptureRecord& jpeg = sourceRecord(jpegRow);
+    const bool explicitRaw = m_explicitPaths.contains(raw.path);
+    const bool explicitJpeg = m_explicitPaths.contains(jpeg.path);
     if (explicitRaw && explicitJpeg) continue;
-    if (explicitJpeg) {
-      m_groupedOutPaths.insert(record.path);
-    } else {
-      m_groupedOutPaths.insert(record.companionPath);
+    const int shownRow = explicitJpeg ? jpegRow : rawRow;
+    const int otherRow = explicitJpeg ? rawRow : jpegRow;
+    const CaptureRecord& shown = sourceRecord(shownRow);
+    const CaptureRecord& other = sourceRecord(otherRow);
+    if (!matchesFilters(shownRow, shown, RelaxDates) || !matchesFilters(otherRow, other, RelaxDates)) {
+      continue;
     }
+    m_groupedOutPaths.insert(other.path);
   }
 }
 
@@ -459,6 +480,8 @@ void CaptureFilterModel::setExplicitPaths(const QStringList& paths) {
   beginFilterUpdate();
   m_explicitPaths = explicitPaths;
   endFilterUpdate();
+  // Which file of a pair stands for it can change.
+  if (rebuildDateIndex()) emit dateBucketsChanged();
   emit countChanged();
 }
 
@@ -467,6 +490,7 @@ void CaptureFilterModel::setPairRawJpeg(bool value) {
   beginFilterUpdate();
   m_pairRawJpeg = value;
   endFilterUpdate();
+  if (rebuildDateIndex()) emit dateBucketsChanged();
   emit pairRawJpegChanged();
   emit countChanged();
 }
@@ -738,10 +762,34 @@ void CaptureFilterModel::clearDateRange() {
 }
 
 bool CaptureFilterModel::rebuildDateIndex() {
+  // The same items the grid shows with no filter, counted the way its
+  // sections count them: hidden files only while they are shown, and a
+  // RAW+JPEG pair once, under the date of the file that stands for it.
+  // Review sets show both files of a pair, but the dates are the library's,
+  // so they follow the pairing setting alone.
   QMap<QDate, int> dayCounts;
   if (sourceModel()) {
+    const QHash<QString, int> partners = pairPartners();
+    QSet<QString> folded;
+    if (m_pairRawJpeg) {
+      for (auto it = partners.cbegin(); it != partners.cend(); ++it) {
+        const CaptureRecord& record = sourceRecord(it.value());
+        if (!record.isRaw()) continue;
+        const int jpegRow = partners.value(record.companionPath, -1);
+        if (jpegRow < 0) continue;
+        const CaptureRecord& jpeg = sourceRecord(jpegRow);
+        if (!m_showHidden && (record.hidden || jpeg.hidden)) continue;
+        const bool explicitRaw = m_explicitPaths.contains(record.path);
+        const bool explicitJpeg = m_explicitPaths.contains(jpeg.path);
+        if (explicitRaw && explicitJpeg) continue;
+        folded.insert(explicitJpeg ? record.path : jpeg.path);
+      }
+    }
     for (int row = 0; row < sourceModel()->rowCount(); ++row) {
-      const QDate date = sourceRecord(row).captured.date();
+      const CaptureRecord& record = sourceRecord(row);
+      if (!m_showHidden && record.hidden) continue;
+      if (folded.contains(record.path)) continue;
+      const QDate date = record.captured.date();
       if (date.isValid()) {
         ++dayCounts[date];
       }
@@ -974,6 +1022,7 @@ void CaptureFilterModel::setShowHidden(bool value) {
   beginFilterUpdate();
   m_showHidden = value;
   endFilterUpdate();
+  if (rebuildDateIndex()) emit dateBucketsChanged();
   vocabularyChanged();
   clearSmartCollection();
   emit showHiddenChanged();
@@ -1811,16 +1860,18 @@ bool CaptureFilterModel::matchesFilters(int sourceRow, const CaptureRecord& reco
   if (refine && !m_lensFilter.isEmpty() && record.lens != m_lensFilter) {
     return false;
   }
-  if (m_modifiedAfterMs > 0 && record.modified <= m_modifiedAfterMs) {
-    return false;
-  }
-  const QDate date = m_dateField == 1 ? QDateTime::fromMSecsSinceEpoch(record.modified).date()
-                                      : record.captured.date();
-  if (m_dateFrom.isValid() && date < m_dateFrom) {
-    return false;
-  }
-  if (m_dateTo.isValid() && date > m_dateTo) {
-    return false;
+  if ((relax & RelaxDates) == 0) {
+    if (m_modifiedAfterMs > 0 && record.modified <= m_modifiedAfterMs) {
+      return false;
+    }
+    const QDate date = m_dateField == 1 ? QDateTime::fromMSecsSinceEpoch(record.modified).date()
+                                        : record.captured.date();
+    if (m_dateFrom.isValid() && date < m_dateFrom) {
+      return false;
+    }
+    if (m_dateTo.isValid() && date > m_dateTo) {
+      return false;
+    }
   }
   if (!m_folderFilter.isEmpty()) {
     const QString directory = QFileInfo(record.path).absolutePath();
