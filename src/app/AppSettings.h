@@ -709,6 +709,10 @@ private:
     // view with it). Only these are put back, so undoing a step never
     // touches a view saved or deleted after it.
     QStringList changedViews;
+    // Those views as the step left them; one missing here was removed by
+    // it. A view edited, saved again or deleted since no longer matches
+    // and is left as it is.
+    QMap<QString, QVariantMap> viewsAfter;
   };
   struct UndoStep {
     int id = 0;

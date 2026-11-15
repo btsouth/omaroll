@@ -56,7 +56,12 @@ Popup {
                 return row.kind === kind && menu.folded(row.name) === query
             })
         }
-        if (!exact("album") && menu.typed.indexOf("/") < 0) out.push({kind: "album", name: menu.typed, create: true})
+        // An album name is cut at 60 characters; compare what would be made.
+        const album = menu.typed.slice(0, 60).trim()
+        const albumExists = menu.allRows.some(function (row) {
+            return row.kind === "album" && menu.folded(row.name) === menu.folded(album)
+        })
+        if (!albumExists && album.indexOf("/") < 0) out.push({kind: "album", name: album, create: true})
         if (!exact("tag")) out.push({kind: "tag", name: menu.typed, create: true})
         return out
     }
@@ -109,14 +114,16 @@ Popup {
         const keep = list.currentIndex
         let message
         if (row.create) {
-            const result = row.kind === "album" ? Settings.createAlbumFor(row.name, paths)
+            // Create never adds to an album that is already there.
+            const result = row.kind === "album" ? Settings.createAlbumFor(row.name, paths, true)
                                                 : Settings.createTagFor(row.name, paths)
             if (result.name === "") {
                 host.say(Settings.organizationError || "Use a shorter name"
                          + (row.kind === "album" ? " without a slash" : ""))
                 return
             }
-            message = "Created " + row.kind + " " + result.name + " with " + menu.items(result.count)
+            message = (result.created ? "Created " + row.kind + " " : "Tagged as ") + result.name
+                      + (result.created ? " with " : " on ") + menu.items(result.count)
             filter.text = ""
         } else if (menu.stateOf(row) === Qt.Checked) {
             if (row.kind === "album") {
@@ -138,8 +145,10 @@ Popup {
         }
         list.currentIndex = Math.min(keep, list.count - 1)
         const undoId = Settings.latestUndoId !== before ? Settings.latestUndoId : 0
-        if (undoId > 0) host.sayUndoable(message, undoId)
-        else host.say(Settings.organizationError || message)
+        // An undo step does not mean the change was saved.
+        if (Settings.organizationError !== "") host.say(Settings.organizationError)
+        else if (undoId > 0) host.sayUndoable(message, undoId)
+        else host.say(message)
     }
 
     // Arrow keys from the field and the list; typing goes back to the field.

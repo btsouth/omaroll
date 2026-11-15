@@ -17069,6 +17069,21 @@ private slots:
                QStringLiteral("Trips/Japan"));
       QCOMPARE(settings.smartCollectionNames(),
                QStringList({QStringLiteral("Japan"), QStringLiteral("Later view"), QStringLiteral("New")}));
+      // A view the rename changed and the user then edited keeps the edit.
+      QVERIFY(settings.renameTag(QStringLiteral("Places"), QStringLiteral("Trips")));
+      QCOMPARE(settings.smartCollection(QStringLiteral("Japan")).value(QStringLiteral("tag")).toString(),
+               QStringLiteral("Trips/Japan"));
+      const QVariantMap edited{{QStringLiteral("tag"), QStringLiteral("Trips/Japan")}, {QStringLiteral("favorite"), true}};
+      QVERIFY(settings.saveSmartCollection(QStringLiteral("Japan"), edited));
+      QCOMPARE(settings.undo(), QStringLiteral("Renamed tag Trips back to Places"));
+      QVERIFY(settings.tagNames().contains(QStringLiteral("Places/Japan")));
+      QCOMPARE(settings.smartCollection(QStringLiteral("Japan")), edited);
+      // And one deleted after the rename stays deleted.
+      QVERIFY(settings.saveSmartCollection(QStringLiteral("Japan"), {{QStringLiteral("tag"), QStringLiteral("Places/Japan")}}));
+      QVERIFY(settings.renameTag(QStringLiteral("Places"), QStringLiteral("Trips")));
+      settings.deleteSmartCollection(QStringLiteral("Japan"));
+      QCOMPARE(settings.undo(), QStringLiteral("Renamed tag Trips back to Places"));
+      QVERIFY(!settings.smartCollectionNames().contains(QStringLiteral("Japan")));
     }
   }
 

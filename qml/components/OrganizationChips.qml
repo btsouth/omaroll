@@ -64,7 +64,8 @@ Column {
             message = chip.fromFile ? "Hid tag " + chip.name + " here; the file is unchanged"
                                     : "Removed tag " + chip.name
         }
-        root.statusRequested(message, Settings.latestUndoId !== before ? Settings.latestUndoId : 0)
+        root.statusRequested(Settings.organizationError || message,
+                             Settings.latestUndoId !== before ? Settings.latestUndoId : 0)
         // The chip that takes its place, or the field after the last one.
         Qt.callLater(function () {
             const next = chipRepeater.count > 0 ? chipRepeater.itemAt(Math.min(index, chipRepeater.count - 1)) : null

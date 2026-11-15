@@ -19,6 +19,8 @@ Rectangle {
     property bool favorite: false
     property var lines: []
     property bool loading: false
+    // A menu or sheet is open over the viewer; Alt+T waits for it.
+    property bool blockingActionOpen: false
     // "latitude, longitude" when the file says where it was taken.
     property string coordinates: ""
 
@@ -67,7 +69,7 @@ Rectangle {
     // Alt+T, while the details are shown.
     Shortcut {
         sequences: ShortcutCatalog.sequence("quick", "tag")
-        enabled: root.visible
+        enabled: root.visible && !root.blockingActionOpen
         onActivated: chips.focusTagField()
     }
 

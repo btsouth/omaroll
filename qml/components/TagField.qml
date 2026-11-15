@@ -68,8 +68,10 @@ FocusScope {
         if (typed === "") return
         const before = Settings.latestUndoId
         const result = Settings.createTagFor(typed, root.paths)
-        if (result.name === "") {
-            root.tagged(Settings.organizationError || "Use a shorter tag name", 0)
+        const undoId = Settings.latestUndoId !== before ? Settings.latestUndoId : 0
+        if (result.name === "" || Settings.organizationError !== "") {
+            // Not saved: the typed name stays, and the line says why.
+            root.tagged(Settings.organizationError || "Use a shorter tag name", undoId)
             return
         }
         input.text = ""
@@ -78,7 +80,7 @@ FocusScope {
         const message = result.created ? "Created tag " + result.name + items
                       : count === 0 ? "Already tagged " + result.name
                       : "Tagged " + result.name + items
-        root.tagged(message, Settings.latestUndoId !== before ? Settings.latestUndoId : 0)
+        root.tagged(message, undoId)
     }
 
     function accept() {

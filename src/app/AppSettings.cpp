@@ -3661,6 +3661,10 @@ void AppSettings::pushOrganizationUndo(OrganizationSnapshot before, const QStrin
     for (auto it = m_smartCollections.cbegin(); it != m_smartCollections.cend(); ++it) {
       if (!views.contains(it.key())) step.organization.changedViews.append(it.key());
     }
+    for (const QString& name : std::as_const(step.organization.changedViews)) {
+      const auto now = m_smartCollections.constFind(name);
+      if (now != m_smartCollections.cend()) step.organization.viewsAfter.insert(name, now.value());
+    }
   }
   step.message = message;
   pushUndoStep(std::move(step));
@@ -3676,9 +3680,16 @@ void AppSettings::restoreOrganization(OrganizationSnapshot snapshot) {
   const bool albums = m_albums != snapshot.albums;
   const bool tags = m_tags != snapshot.tags;
   const bool removals = m_removedEmbeddedTags != snapshot.removedEmbeddedTags;
-  // Only the views this step changed: one saved or deleted since stays.
+  // Only the views this step changed, and only while they are still as it
+  // left them: one saved, edited or deleted since stays.
   bool views = false;
   for (const QString& name : std::as_const(snapshot.changedViews)) {
+    const auto after = snapshot.viewsAfter.constFind(name);
+    const auto now = m_smartCollections.constFind(name);
+    const bool untouched = after == snapshot.viewsAfter.cend()
+                               ? now == m_smartCollections.cend()
+                               : now != m_smartCollections.cend() && now.value() == after.value();
+    if (!untouched) continue;
     const auto before = snapshot.smartCollections.constFind(name);
     if (before != snapshot.smartCollections.cend()) {
       if (m_smartCollections.value(name) != before.value()) {

@@ -8199,6 +8199,40 @@ private slots:
     QMetaObject::invokeMethod(item("library"), "clearChecked");
   }
 
+  // An album name is cut at 60 characters, so a longer name that would be
+  // cut to an album already there is not offered as a new one.
+  void organizeOffersNoAlbumThatIsCutToAnExistingOne() {
+    const QString album = QString(60, QLatin1Char('k'));
+    QVERIFY(m_settings->createAlbum(album));
+    QQuickItem* grid = item("library");
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, pathAt(0)));
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("albumActionMenu"));
+    QVERIFY(menu);
+    const auto cleanup = qScopeGuard([&] {
+      QMetaObject::invokeMethod(menu, "close");
+      QMetaObject::invokeMethod(grid, "clearChecked");
+      m_settings->deleteAlbum(album);
+      m_settings->clearUndoHistory();
+    });
+    QQuickItem* organize = pill(m_window->contentItem(), QStringLiteral("Organize"));
+    QVERIFY(organize);
+    waitForLayout();
+    organize = pill(m_window->contentItem(), QStringLiteral("Organize"));
+    click(organize);
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QTRY_VERIFY(item("organizeFilter")->hasActiveFocus());
+    typeText(album + QStringLiteral("B"));
+    const auto createKinds = [&] {
+      QStringList kinds;
+      for (const QVariant& row : menu->property("rows").value<QJSValue>().toVariant().toList()) {
+        if (row.toMap().value(QStringLiteral("create")).toBool()) kinds.append(row.toMap().value(QStringLiteral("kind")).toString());
+      }
+      return kinds;
+    };
+    QTRY_COMPARE(createKinds(), QStringList{QStringLiteral("tag")});
+    QVERIFY(m_settings->albumPaths(album).isEmpty());
+  }
+
   // Organize: the filter has focus on open, arrows reach the checks, Space
   // turns a mixed check into all and all into none, typing goes back to the
   // field, and a name that matches nothing can be created. Each change is
