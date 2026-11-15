@@ -96,9 +96,8 @@
 - The PDF find and page fields keep their hints clear of the edges.
 - Corrections uses the rotate icons in a narrow window.
 - Compare says Fit while the pictures fit their cells, not 100%.
-- Subtitles switched on, changed or sought while a video is paused show the
-  cue at that spot at once, in the viewer and the preview, instead of only
-  once playback resumes.
+- Switching subtitles off clears the cue on screen at once, in the viewer
+  and the preview.
 - The "Text results may be incomplete" note no longer covers the preview's
   zoom bar; it shows with the grid only.
 - The preview's shortcut help lists Previous / next file as one row, as the

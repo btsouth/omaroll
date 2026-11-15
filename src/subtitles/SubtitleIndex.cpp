@@ -5,9 +5,6 @@
 #include <QtConcurrentRun>
 #include <QFile>
 #include <QFileInfo>
-#include <QElapsedTimer>
-#include <QProcess>
-#include <QStandardPaths>
 #include <QRegularExpression>
 #include <QtNumeric>
 
@@ -180,7 +177,6 @@ QString friendlyLanguage(const QString& tag) {
 } // namespace
 
 SubtitleIndex::SubtitleIndex(QObject* parent) : QObject(parent) {
-  m_extractors.setMaxThreadCount(1);
   connect(&m_watcher, &QFileSystemWatcher::fileChanged, this, &SubtitleIndex::invalidate);
   connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this,
           [this](const QString& directory) {
@@ -280,19 +276,15 @@ SubtitleIndex::Parsed SubtitleIndex::parse(const QString& path) {
   if (bytes.size() > kMaximumFileBytes) {
     return parsed;
   }
-  return parseText(QString::fromUtf8(bytes),
-                   info.suffix().compare(QLatin1String("vtt"), Qt::CaseInsensitive) == 0);
-}
-
-SubtitleIndex::Parsed SubtitleIndex::parseText(QString text, bool webvtt) {
-  Parsed parsed;
+  QString text = QString::fromUtf8(bytes);
   if (!text.isEmpty() && text.at(0) == QChar(0xFEFF)) {
     text.remove(0, 1);
   }
   text.replace(QLatin1String("\r\n"), QLatin1String("\n"));
   text.replace(QLatin1Char('\r'), QLatin1Char('\n'));
   const QStringList lines = text.split(QLatin1Char('\n'));
-  webvtt = webvtt || (!lines.isEmpty() && lines.first().startsWith(QLatin1String("WEBVTT")));
+  const bool webvtt = info.suffix().compare(QLatin1String("vtt"), Qt::CaseInsensitive) == 0 ||
+                      (!lines.isEmpty() && lines.first().startsWith(QLatin1String("WEBVTT")));
   parsed.cues = webvtt ? parseVtt(lines) : parseSrt(lines);
   std::stable_sort(parsed.cues.begin(), parsed.cues.end(),
                    [](const Cue& a, const Cue& b) { return a.start < b.start; });
@@ -338,84 +330,4 @@ QString SubtitleIndex::textAt(const QString& subtitlePath, qint64 positionMs) {
 
 int SubtitleIndex::cueCount(const QString& subtitlePath) {
   return static_cast<int>(cuesFor(subtitlePath).cues.size());
-}
-
-SubtitleIndex::~SubtitleIndex() {
-  m_stop->store(true);
-  m_extractors.waitForDone();
-}
-
-SubtitleIndex::Parsed SubtitleIndex::extract(const QString& videoPath, int track,
-                                             const std::atomic_bool& stop) {
-  const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
-  if (ffmpeg.isEmpty() || track < 0) return {};
-  QProcess process;
-  // An argv, never a shell line; the file name is passed as it is.
-  process.start(ffmpeg, {QStringLiteral("-nostdin"), QStringLiteral("-v"), QStringLiteral("error"),
-                         QStringLiteral("-i"), videoPath, QStringLiteral("-map"),
-                         QStringLiteral("0:s:%1").arg(track), QStringLiteral("-f"),
-                         QStringLiteral("srt"), QStringLiteral("pipe:1")});
-  if (stop.load() || !process.waitForStarted(5000)) return {};
-  // A long film's text track takes a moment; a stuck one is given up on.
-  QByteArray output;
-  QElapsedTimer clock;
-  clock.start();
-  while (!process.waitForFinished(100)) {
-    output += process.readAllStandardOutput();
-    if (output.size() > kMaximumFileBytes || clock.elapsed() > 60000 || stop.load()
-        || process.state() == QProcess::NotRunning) {
-      break;
-    }
-  }
-  if (process.state() != QProcess::NotRunning) {
-    process.kill();
-    process.waitForFinished(2000);
-    return {};
-  }
-  output += process.readAllStandardOutput();
-  if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0
-      || output.size() > kMaximumFileBytes) {
-    return {};
-  }
-  return parseText(QString::fromUtf8(output), false);
-}
-
-const SubtitleIndex::Parsed* SubtitleIndex::embeddedFor(const QString& videoPath, int track) {
-  if (videoPath.isEmpty() || track < 0) return nullptr;
-  const QFileInfo info(videoPath);
-  if (!info.isFile()) return nullptr;
-  // The file's time is in the key, so a replaced file is read again.
-  const QString key = QString::number(track) + QLatin1Char(':')
-                      + QString::number(info.lastModified().toMSecsSinceEpoch()) + QLatin1Char(':')
-                      + videoPath;
-  const auto found = m_embedded.constFind(key);
-  if (found != m_embedded.cend()) return &*found;
-  if (!m_embeddedPending.contains(key)) {
-    m_embeddedPending.insert(key);
-    auto* watcher = new QFutureWatcher<Parsed>(this);
-    connect(watcher, &QFutureWatcher<Parsed>::finished, this, [this, watcher, key] {
-      m_embeddedPending.remove(key);
-      m_embedded.insert(key, watcher->result());
-      ++m_revision;
-      emit changed();
-      watcher->deleteLater();
-    });
-    watcher->setFuture(QtConcurrent::run(&m_extractors, [videoPath, track, stop = m_stop] {
-      return extract(videoPath, track, *stop);
-    }));
-  }
-  return nullptr;
-}
-
-bool SubtitleIndex::embeddedReady(const QString& videoPath, int track) {
-  const Parsed* parsed = embeddedFor(videoPath, track);
-  return parsed && !parsed->cues.isEmpty();
-}
-
-QString SubtitleIndex::embeddedTextAt(const QString& videoPath, int track, qint64 positionMs) {
-  const Parsed* parsed = embeddedFor(videoPath, track);
-  if (!parsed || parsed->cues.isEmpty() || positionMs < 0) return {};
-  QStringList active;
-  collect(*parsed, 1, 0, parsed->leaves, positionMs, active);
-  return active.join(QLatin1Char('\n'));
 }

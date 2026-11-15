@@ -10871,46 +10871,6 @@ private slots:
     QVERIFY(narrow.top() >= 0);
   }
 
-  // Qt draws an embedded cue only while the video plays. Switched on while
-  // paused, or sought while paused, the preview still shows the cue at the
-  // paused position.
-  void pausedPreviewShowsTheEmbeddedCue() {
-    if (QStandardPaths::findExecutable(QStringLiteral("ffmpeg")).isEmpty()) QSKIP("ffmpeg is unavailable");
-    const QString path = QFileInfo(m_oddPath).dir().filePath(QStringLiteral("paused-cue.mkv"));
-    QVERIFY(QFile::exists(path) || QFile::copy(QFINDTESTDATA("fixtures/viewer/tracks.mkv"), path));
-    const auto cleanup = qScopeGuard([&] {
-      invoke("dismissTopLayer");
-      QFile::remove(path);
-    });
-    m_settings->clearVideoPosition(path);
-    rescan();
-    QTRY_VERIFY(m_library->rowOf(path) >= 0);
-    openDetail(m_library->rowOf(path));
-    auto* player = m_window->findChild<QMediaPlayer*>(QStringLiteral("videoPlayer"));
-    QVERIFY(player);
-    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
-    player->pause();
-    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
-    player->setPosition(7000);
-    QTRY_COMPARE(player->position(), 7000);
-    QQuickItem* overlay = item("subtitleOverlay");
-    QQuickItem* detail = item("detail");
-    for (int step = 0; step < 4 && player->activeSubtitleTrack() != 0; ++step) {
-      click(item("subtitleButton"));
-      QTest::qWait(50);
-    }
-    QCOMPARE(player->activeSubtitleTrack(), 0);
-    QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
-    QTRY_VERIFY_WITH_TIMEOUT(m_subtitles->embeddedReady(path, 0), 10000);
-    QCOMPARE(m_subtitles->embeddedTextAt(path, 0, 7000), QStringLiteral("Second subtitle"));
-    QTRY_COMPARE(detail->property("subtitleOverlayText").toString(), QStringLiteral("Second subtitle"));
-    QVERIFY(overlay->isVisible());
-    // A paused seek moves the cue with it.
-    player->setPosition(2000);
-    QTRY_COMPARE(detail->property("subtitleOverlayText").toString(), QStringLiteral("Omaroll subtitle test"));
-    QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
-  }
-
   void videoTracksSeekingAndMinimizeRestore() {
     const QString source = QFINDTESTDATA("fixtures/viewer/tracks.mkv");
     QVERIFY(!source.isEmpty());

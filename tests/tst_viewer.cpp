@@ -4878,6 +4878,10 @@ private slots:
     QTest::newRow("tab-enter") << QStringLiteral("tab-enter") << qint64(0) << true;
     QTest::newRow("tab-tab-enter") << QStringLiteral("tab-tab-enter") << qint64(7000) << true;
     QTest::newRow("backtab-space") << QStringLiteral("backtab-space") << qint64(0) << true;
+    // A menu opened and dismissed over the prompt hands the keyboard back to
+    // the choice that had it.
+    QTest::newRow("menu-enter") << QStringLiteral("menu-enter") << qint64(7000) << true;
+    QTest::newRow("tab-menu-enter") << QStringLiteral("tab-menu-enter") << qint64(0) << true;
     QTest::newRow("escape") << QStringLiteral("escape") << qint64(0) << false;
   }
 
@@ -4931,14 +4935,23 @@ private slots:
       QTest::keyClick(m_window, Qt::Key_Backtab, Qt::ShiftModifier);
       QCOMPARE(m_window->activeFocusItem(), restart);
       press(Qt::Key_Space);
+    } else if (keys.endsWith(QLatin1String("menu-enter"))) {
+      QQuickItem* chosen = resume;
+      if (keys.startsWith(QLatin1String("tab-"))) {
+        press(Qt::Key_Tab);
+        chosen = restart;
+      }
+      QCOMPARE(m_window->activeFocusItem(), chosen);
+      QObject* menu = m_window->findChild<QObject*>(QStringLiteral("viewerMenu"));
+      QVERIFY(QMetaObject::invokeMethod(m_window, "showActionMenu"));
+      QTRY_VERIFY(menu->property("visible").toBool());
+      press(Qt::Key_Escape);
+      QTRY_VERIFY(!menu->property("visible").toBool());
+      QVERIFY(prompt->isVisible());
+      QTRY_COMPARE(m_window->activeFocusItem(), chosen);
+      press(Qt::Key_Return);
     } else {
-      // Keys that would act in the viewer do nothing while the prompt has
-      // the keyboard.
-      for (const Qt::Key key : {Qt::Key_I, Qt::Key_Right, Qt::Key_L, Qt::Key_F})
-        press(key);
-      QCOMPARE(prop("infoOpen").toBool(), infoWasOpen);
-      QCOMPARE(prop("fullScreen").toBool(), false);
-      QVERIFY(prop("resumeAvailable").toBool());
+      Q_UNUSED(infoWasOpen);
       QCOMPARE(m_window->activeFocusItem(), resume);
       press(Qt::Key_Escape);
     }
@@ -4966,11 +4979,9 @@ private slots:
     }
   }
 
-  // Qt draws an embedded cue only while the video plays. Switched on while
-  // paused, or sought while paused, the viewer still shows the cue at the
-  // paused position.
-  void pausedViewerShowsTheEmbeddedCue() {
-    if (QStandardPaths::findExecutable(QStringLiteral("ffmpeg")).isEmpty()) QSKIP("ffmpeg is unavailable");
+  // Subtitles switched off show nothing, even when the player still holds
+  // the last cue it drew.
+  void subtitlesOffClearTheViewerCue() {
     const QString path = m_scratch.filePath(QStringLiteral("paused-cue.mkv"));
     QVERIFY(QFile::exists(path) || QFile::copy(QFINDTESTDATA("fixtures/viewer/tracks.mkv"), path));
     m_settings->clearVideoPosition(path);
@@ -4978,24 +4989,63 @@ private slots:
     QMediaPlayer* player = nullptr;
     QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
     QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
-    QTest::keyClick(m_window, Qt::Key_Space);
-    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
-    QVERIFY(QMetaObject::invokeMethod(m_window, "seekTo", Q_ARG(QVariant, 7000)));
-    QTRY_VERIFY(qAbs(player->position() - 7000) < 100);
     QCOMPARE(player->activeSubtitleTrack(), -1);
     QTest::keyClick(m_window, Qt::Key_C);
     QTRY_COMPARE(player->activeSubtitleTrack(), 0);
-    QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
-    QTRY_VERIFY_WITH_TIMEOUT(m_subtitles->embeddedReady(m_session->path(), 0), 10000);
-    QCOMPARE(m_subtitles->embeddedTextAt(m_session->path(), 0, 7000), QStringLiteral("Second subtitle"));
-    QTRY_COMPARE(prop("subtitleText").toString(), QStringLiteral("Second subtitle"));
-    QTRY_VERIFY(item(QStringLiteral("viewerSubtitles"))->isVisible());
-    QVERIFY(QMetaObject::invokeMethod(m_window, "seekTo", Q_ARG(QVariant, 2000)));
-    QTRY_COMPARE(prop("subtitleText").toString(), QStringLiteral("Omaroll subtitle test"));
-    QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
-    // Off again: nothing shows.
-    for (int step = 0; step < 4 && player->activeSubtitleTrack() != -1; ++step) QTest::keyClick(m_window, Qt::Key_C);
+    QTRY_COMPARE(prop("subtitleTrack").toInt(), 0);
+    for (int step = 0; step < 4 && prop("subtitleTrack").toInt() != -1; ++step) QTest::keyClick(m_window, Qt::Key_C);
+    QTRY_COMPARE(prop("subtitleTrack").toInt(), -1);
     QTRY_COMPARE(prop("subtitleText").toString(), QString());
+    QVERIFY(!item(QStringLiteral("viewerSubtitles"))->isVisible());
+    player->pause();
+  }
+
+  // The prompt keeps only its own keys. Right steps to the next file, so
+  // arrowing through a folder does not stop at each video with a saved
+  // spot, the viewer's other keys still work, and Enter on the next prompt
+  // resumes there without opening the library.
+  void resumePromptLetsTheViewerKeysThrough() {
+    QStringList paths;
+    for (const QString& name : {QStringLiteral("resume-pass-1.mkv"), QStringLiteral("resume-pass-2.mkv")}) {
+      const QString path = m_scratch.filePath(name);
+      QVERIFY(QFile::exists(path) || QFile::copy(QFINDTESTDATA("fixtures/viewer/tracks.mkv"), path));
+      m_settings->setVideoPosition(path, 7000);
+      paths.append(path);
+    }
+    const auto restore = qScopeGuard([this, paths] {
+      for (const QString& path : paths) m_settings->clearVideoPosition(path);
+    });
+    open(paths);
+    QSignalSpy library(m_session, &ViewerSession::libraryRequested);
+    QQuickItem* prompt = item(QStringLiteral("viewerResumePrompt"));
+    QQuickItem* resume = item(QStringLiteral("viewerResumeButton"));
+    QTRY_VERIFY(prompt->isVisible());
+    QTRY_COMPARE(m_window->activeFocusItem(), resume);
+    QCOMPARE(m_session->path(), paths.at(0));
+    // A viewer key with no meaning to the prompt reaches the viewer.
+    const bool infoWasOpen = prop("infoOpen").toBool();
+    QTest::keyClick(m_window, Qt::Key_I);
+    QTRY_COMPARE(prop("infoOpen").toBool(), !infoWasOpen);
+    QTRY_COMPARE(m_window->activeFocusItem(), resume);
+    QTest::keyClick(m_window, Qt::Key_I);
+    QTRY_COMPARE(prop("infoOpen").toBool(), infoWasOpen);
+    QTRY_COMPARE(m_window->activeFocusItem(), resume);
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTRY_COMPARE(m_session->path(), paths.at(1));
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY(prop("resumeAvailable").toBool());
+    QTRY_VERIFY(prompt->isVisible());
+    QTRY_COMPARE(m_window->activeFocusItem(), resume);
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!prop("resumeAvailable").toBool());
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+    const qint64 at = player->position();
+    QVERIFY2(at >= 7000 && at < 10000, qPrintable(QString::number(at)));
+    player->pause();
+    QTest::qWait(100);
+    QCOMPARE(library.size(), 0);
+    QCOMPARE(m_session->path(), paths.at(1));
   }
 
   // A viewer opened fresh, as the command line and the library's Open in
@@ -6232,6 +6282,53 @@ private slots:
       QTRY_VERIFY(undo->isVisible());
       QVERIFY(undo->mapRectToScene(undo->boundingRect()).right() <= details.left());
     }
+    QTest::keyClick(m_window, Qt::Key_I);
+  }
+
+  // At the 320 px minimum the details leave no room beside them, so a
+  // message with Undo goes under them, across the window, whole.
+  void statusFitsBesideOrUnderTheDetailsAtTheMinimumWidth() {
+    const QString path = media(QStringLiteral("shot 2.jpg"));
+    const QSize before = m_window->size();
+    const auto cleanup = qScopeGuard([&] {
+      m_settings->clearUndoHistory();
+      m_window->resize(before);
+    });
+    open({path});
+    m_window->resize(320, 700);
+    QTRY_COMPARE(m_window->width(), 320);
+    QTest::keyClick(m_window, Qt::Key_I);
+    QQuickItem* panel = item(QStringLiteral("viewerInfoPanel"));
+    QTRY_VERIFY(panel->isVisible());
+    const bool wasFavorite = m_settings->isFavorite(path);
+    m_settings->setFavorite({path}, !wasFavorite);
+    const auto unmark = qScopeGuard([&] { m_settings->setFavorite({path}, wasFavorite); });
+    const int undoId = m_settings->latestUndoId();
+    QVERIFY(undoId > 0);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "sayUndoable",
+                                      Q_ARG(QVariant, QStringLiteral("Removed tag Holiday from the picture")),
+                                      Q_ARG(QVariant, undoId)));
+    QQuickItem* toast = item(QStringLiteral("viewerStatus"));
+    QTRY_VERIFY(toast->isVisible());
+    const QRectF window(0, 0, m_window->width(), m_window->height());
+    const QRectF notice = toast->mapRectToScene(toast->boundingRect());
+    QVERIFY2(notice.width() >= 200, qPrintable(QString::number(notice.width())));
+    QVERIFY(window.contains(notice));
+    const QRectF details = panel->mapRectToScene(panel->boundingRect());
+    QVERIFY2(notice.top() >= details.top(), qPrintable(QStringLiteral("%1 < %2").arg(notice.top()).arg(details.top())));
+    QQuickItem* text = nullptr;
+    for (QQuickItem* child : toast->childItems()) {
+      if (child->property("text").toString().startsWith(QStringLiteral("Removed tag"))) text = child;
+    }
+    QVERIFY(text);
+    QVERIFY2(text->width() > 0, qPrintable(QString::number(text->width())));
+    QVERIFY(notice.contains(text->mapRectToScene(text->boundingRect())));
+    QVERIFY(toast->z() > panel->z());
+    QQuickItem* undo = item(QStringLiteral("viewerUndoButton"));
+    QTRY_VERIFY(undo->isVisible());
+    const QRectF button = undo->mapRectToScene(undo->boundingRect());
+    QVERIFY(notice.contains(button));
+    QVERIFY(text->mapRectToScene(text->boundingRect()).right() <= button.left());
     QTest::keyClick(m_window, Qt::Key_I);
   }
 

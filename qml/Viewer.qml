@@ -235,13 +235,8 @@ ApplicationWindow {
         void Subtitles.revision
         if (externalSubtitle !== "" && player)
             return Subtitles.textAt(externalSubtitle, Math.round(player.position) - root.subtitleOffsetMs)
-        // Paused, the player draws no new cue: a track switched on or a seek
-        // shows the cue at the position from the track read with ffmpeg.
         // Off: nothing, even if the player still holds the last cue it drew.
         if (root.subtitleTrack < 0) return ""
-        if (player && player.playbackState !== MediaPlayer.PlayingState
-                && Subtitles.embeddedReady(Session.path, root.subtitleTrack))
-            return Subtitles.embeddedTextAt(Session.path, root.subtitleTrack, Math.round(player.position))
         return root.presentation ? root.presentation.subtitleText : ""
     }
 
@@ -286,7 +281,8 @@ ApplicationWindow {
         // Only the window's own controls and the picture: a prompt can take
         // the keyboard before blockingActionOpen has caught up with it.
         if (root.activeFocusItem !== null && !root.blockingActionOpen
-                && (root.activeFocusItem === keys || root.focusInside(root.activeFocusItem)))
+                && (root.activeFocusItem === keys || root.focusInside(root.activeFocusItem)
+                    || resumeRow.activeFocusInside))
             root.focusOutsidePrompts = root.activeFocusItem
         Qt.callLater(root.reclaimFocus)
     }
@@ -298,7 +294,12 @@ ApplicationWindow {
     property Item focusBeforePrompt: null
     function restoreFocusAfterPrompt() {
         const at = root.focusBeforePrompt
-        if (at && at !== keys && at.visible && at.enabled && root.focusInside(at)) {
+        // A resume prompt still showing gets the keyboard back, on the
+        // choice that had it, so Enter answers it rather than opening the
+        // library.
+        if (resumePrompt.visible && !root.sheetOpen) {
+            (at === restartButton ? restartButton : resumeButton).forceActiveFocus(Qt.OtherFocusReason)
+        } else if (at && at !== keys && at.visible && at.enabled && root.focusInside(at)) {
             at.forceActiveFocus(Qt.OtherFocusReason)
         } else {
             keys.forceActiveFocus()
@@ -2426,18 +2427,9 @@ ApplicationWindow {
                 if (resumePrompt.visible && !root.blockingActionOpen && !root.sheetOpen)
                     resumeButton.forceActiveFocus(Qt.OtherFocusReason)
             }
-            // Escape leaves the video paused at the start; play starts it
-            // from there. Nothing else reaches the viewer's shortcuts.
-            Keys.onPressed: function (event) {
-                if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
-                    (resumeButton.activeFocus ? restartButton : resumeButton).forceActiveFocus(Qt.TabFocusReason)
-                } else if (event.key === Qt.Key_Escape) {
-                    root.dismissResume()
-                }
-                event.accepted = true
-            }
-            Keys.onReleased: function (event) { event.accepted = true }
-            Keys.onShortcutOverride: function (event) { event.accepted = true }
+            // The prompt's own keys stop in its row; every other key is the
+            // viewer's, so F11 and the rest still work.
+            Keys.forwardTo: [keys]
 
             MouseArea {
                 anchors.fill: parent
@@ -2447,6 +2439,32 @@ ApplicationWindow {
             Row {
                 id: resumeRow
                 readonly property bool activeFocusInside: resumeButton.activeFocus || restartButton.activeFocus
+                // Tab moves between the two, Enter and Space press the
+                // focused one and never reach Open in library, Escape leaves
+                // the video paused at the start, and Left and Right step to
+                // the next file rather than stopping at the prompt.
+                function ownKey(event) {
+                    if ((event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) !== 0)
+                        return false
+                    return [Qt.Key_Tab, Qt.Key_Backtab, Qt.Key_Escape, Qt.Key_Return, Qt.Key_Enter,
+                            Qt.Key_Space, Qt.Key_Left, Qt.Key_Right].indexOf(event.key) >= 0
+                }
+                Keys.onPressed: function (event) {
+                    if (!resumeRow.ownKey(event)) {
+                        event.accepted = false
+                        return
+                    }
+                    if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+                        (resumeButton.activeFocus ? restartButton : resumeButton).forceActiveFocus(Qt.TabFocusReason)
+                    } else if (event.key === Qt.Key_Escape) {
+                        root.dismissResume()
+                    } else if (event.key === Qt.Key_Left || event.key === Qt.Key_Right) {
+                        root.step(event.key === Qt.Key_Left ? -1 : 1)
+                    }
+                    event.accepted = true
+                }
+                Keys.onReleased: function (event) { event.accepted = resumeRow.ownKey(event) }
+                Keys.onShortcutOverride: function (event) { event.accepted = resumeRow.ownKey(event) }
                 anchors.centerIn: parent
                 spacing: 8
 
@@ -2786,13 +2804,18 @@ ApplicationWindow {
     Rectangle {
         id: toast
         objectName: "viewerStatus"
-        anchors.top: parent.top
-        anchors.topMargin: 58
         readonly property bool undoable: root.undoId > 0 && root.undoId === Settings.latestUndoId
         // Beside the details while they are open, not under them, so the
-        // message and its Undo stay in sight and in reach.
-        readonly property real room: infoPanel.visible ? infoPanel.x - 8 : parent.width
+        // message and its Undo stay in sight and in reach. A window too
+        // narrow for that puts it under the details, across the window,
+        // and over their foot when they reach the bottom.
+        readonly property real sideRoom: infoPanel.visible ? infoPanel.x - 8 : parent.width
+        readonly property bool beside: !infoPanel.visible || sideRoom - 32 >= 200
+        readonly property real room: beside ? sideRoom : parent.width
         x: Math.round((room - width) / 2)
+        y: beside ? 58 : Math.max(58, Math.min(infoPanel.y + infoPanel.height + 8,
+                                               infoPanel.bottomLimit - height))
+        z: beside ? 0 : 1
         width: Math.max(0, Math.min(toastText.implicitWidth + 28
                                     + (undoable ? undoButton.implicitWidth - 6 : 0), room - 32))
         // Tall enough for Undo to be a whole button, not a word to aim at.
