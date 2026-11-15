@@ -348,6 +348,9 @@ FocusScope {
                                         ? "From the files' keywords" : ""
                 Accessible.selectable: true
                 Accessible.selected: rowItem.active
+                // A year opens to its months, as a tree item would.
+                Accessible.expandable: rowItem.kind === "year"
+                Accessible.expanded: rowItem.kind === "year" && rowItem.modelData.open === true
                 Accessible.onPressAction: root.activate(rowItem.index)
 
                 readonly property real indent: Math.min(rowItem.modelData.depth * 14, width / 2)

@@ -9906,8 +9906,12 @@ private slots:
     const int yearIndex = collectionIndex("header", "dates") + 1;
     walkTo(yearIndex);
     const int rowsBefore = int(collectionRows().size());
+    QTRY_VERIFY(collectionEntry(yearIndex) != nullptr);
+    QVERIFY(QAccessible::queryAccessibleInterface(collectionEntry(yearIndex))->state().expandable);
+    QVERIFY(!QAccessible::queryAccessibleInterface(collectionEntry(yearIndex))->state().expanded);
     QTest::keyClick(m_window, Qt::Key_Right);
     QTRY_VERIFY(collectionRows().size() > rowsBefore);
+    QTRY_VERIFY(QAccessible::queryAccessibleInterface(collectionEntry(yearIndex))->state().expanded);
     QTest::keyClick(m_window, Qt::Key_Right);
     QTRY_COMPARE(list->property("currentIndex").toInt(), yearIndex + 1);
     const QVariantMap month = collectionRows().at(yearIndex + 1).toMap();
