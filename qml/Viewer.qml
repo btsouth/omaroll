@@ -834,6 +834,13 @@ ApplicationWindow {
         root.player.play()
     }
 
+    // The resume prompt put away without an answer: the video stays paused
+    // where it opened, and the saved spot is kept for next time.
+    function dismissResume() {
+        root.resumeAvailable = false
+        root.resumePending = false
+    }
+
     function restartVideo() {
         if (!root.player) {
             return
@@ -2382,14 +2389,43 @@ ApplicationWindow {
             }
         }
 
-        // A saved spot is offered rather than jumped to.
-        Item {
+        // A saved spot is offered rather than jumped to. The prompt takes the
+        // keyboard while it shows, so Enter answers it rather than reaching
+        // a viewer shortcut, and hands it back to the picture afterwards.
+        Rectangle {
             id: resumePrompt
             objectName: "viewerResumePrompt"
             anchors.centerIn: parent
-            width: resumeRow.implicitWidth
-            height: resumeRow.implicitHeight
+            width: resumeRow.implicitWidth + 16
+            height: resumeRow.implicitHeight + 16
+            // Solid, like the notices, so it reads over any frame.
+            radius: Theme.cornerRadius > 0 ? Theme.cornerRadius + 2 : 4
+            color: Osd.panelSolid
+            border.width: 1
+            border.color: Osd.border
             visible: Session.isVideo && root.resumeAvailable && !root.slideshowRunning
+            Accessible.role: Accessible.Grouping
+            Accessible.name: "Resume where you left off"
+            onVisibleChanged: {
+                if (visible) Qt.callLater(resumePrompt.takeFocus)
+                else if (resumeRow.activeFocusInside) keys.forceActiveFocus()
+            }
+            function takeFocus() {
+                if (resumePrompt.visible && !root.blockingActionOpen && !root.sheetOpen)
+                    resumeButton.forceActiveFocus(Qt.OtherFocusReason)
+            }
+            // Escape leaves the video paused at the start; play starts it
+            // from there. Nothing else reaches the viewer's shortcuts.
+            Keys.onPressed: function (event) {
+                if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+                    (resumeButton.activeFocus ? restartButton : resumeButton).forceActiveFocus(Qt.TabFocusReason)
+                } else if (event.key === Qt.Key_Escape) {
+                    root.dismissResume()
+                }
+                event.accepted = true
+            }
+            Keys.onReleased: function (event) { event.accepted = true }
+            Keys.onShortcutOverride: function (event) { event.accepted = true }
 
             MouseArea {
                 anchors.fill: parent
@@ -2398,9 +2434,12 @@ ApplicationWindow {
 
             Row {
                 id: resumeRow
+                readonly property bool activeFocusInside: resumeButton.activeFocus || restartButton.activeFocus
+                anchors.centerIn: parent
                 spacing: 8
 
                 PillButton {
+                    id: resumeButton
                     objectName: "viewerResumeButton"
                     label: "Resume from " + transport.clock(root.resumePosition)
                     floating: true
@@ -2409,6 +2448,7 @@ ApplicationWindow {
                     onClicked: root.resumeVideo()
                 }
                 PillButton {
+                    id: restartButton
                     objectName: "viewerRestartButton"
                     label: "Start over"
                     floating: true
@@ -2728,12 +2768,15 @@ ApplicationWindow {
     Rectangle {
         id: toast
         objectName: "viewerStatus"
-        anchors.horizontalCenter: parent.horizontalCenter
         anchors.top: parent.top
         anchors.topMargin: 58
         readonly property bool undoable: root.undoId > 0 && root.undoId === Settings.latestUndoId
-        width: Math.min(toastText.implicitWidth + 28
-                        + (undoable ? undoButton.implicitWidth - 6 : 0), parent.width - 48)
+        // Beside the details while they are open, not under them, so the
+        // message and its Undo stay in sight and in reach.
+        readonly property real room: infoPanel.visible ? infoPanel.x - 8 : parent.width
+        x: Math.round((room - width) / 2)
+        width: Math.max(0, Math.min(toastText.implicitWidth + 28
+                                    + (undoable ? undoButton.implicitWidth - 6 : 0), room - 32))
         // Tall enough for Undo to be a whole button, not a word to aim at.
         height: Math.max(toastText.implicitHeight + 14, undoable ? undoButton.implicitHeight : 0)
         // Read out as it appears, the way a notification is.
@@ -2757,6 +2800,10 @@ ApplicationWindow {
             anchors.verticalCenter: parent.verticalCenter
             width: Math.min(implicitWidth, parent.width - 28
                             - (toast.undoable ? undoButton.implicitWidth - 6 : 0))
+            // A narrow toast beside the details wraps rather than losing
+            // what it says.
+            wrapMode: Text.Wrap
+            maximumLineCount: 3
             elide: Text.ElideRight
             text: root.status
             font.family: Theme.fontFamily
@@ -2871,7 +2918,16 @@ ApplicationWindow {
         anchors.right: parent.right
         anchors.topMargin: 58
         anchors.rightMargin: 14
-        height: Math.min(implicitHeight, Math.max(0, parent.height - y - 16))
+        // Clear of the toolbar, transport and filmstrip under it: a long
+        // list of tags scrolls inside the panel instead.
+        readonly property real bottomLimit: {
+            let bottom = parent.height - 16
+            for (const bar of [toolbar, transport, filmstrip]) {
+                if (bar.visible && bar.x + bar.width > x) bottom = Math.min(bottom, bar.y - 8)
+            }
+            return bottom
+        }
+        height: Math.min(implicitHeight, Math.max(0, bottomLimit - y))
         visible: root.infoOpen
         fileName: Session.fileName
         folder: Session.folder

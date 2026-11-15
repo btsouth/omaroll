@@ -43,6 +43,19 @@ Menu {
         menu.rightMargin = right
     }
     onAboutToShow: followCascade()
+
+    // Which side a submenu of this menu opens on: its own while it is up;
+    // before that, the side this one cascaded to, or the left when the
+    // window has no room for it on the right.
+    function submenuOpensLeft(sub) {
+        if (!sub) return false
+        if (sub.visible) return sub.cascadedLeft === true
+        if (menu.cascadedLeft) return true
+        if (!menu.background || !menu.hostWindow) return false
+        const right = menu.background.mapToItem(null, menu.background.width, 0).x
+        const width = sub.width > 0 ? sub.width : sub.implicitWidth
+        return right - menu.overlap + width > menu.hostWindow.width - 8
+    }
     // A margin worked out for another window width or another place of the
     // parent would squeeze the submenu, so it is redone while open and
     // dropped on close.
@@ -86,6 +99,36 @@ Menu {
         ScrollBar.vertical: ScrollBar {
             policy: list.interactive ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
             width: 6
+            contentItem: Rectangle {
+                implicitWidth: 4
+                radius: 2
+                color: Osd.track
+            }
+        }
+
+        // Left and Right follow the side a submenu opens on: a submenu that
+        // opens on the left opens with Left and closes with Right. The rows
+        // pass the arrows they do not use up to here.
+        Keys.onPressed: function (event) {
+            if (event.key !== Qt.Key_Left && event.key !== Qt.Key_Right) return
+            if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.ShiftModifier)) return
+            const towardsLeft = event.key === Qt.Key_Left
+            const row = menu.currentIndex >= 0 ? menu.itemAt(menu.currentIndex) : null
+            if (row && row.subMenu && row.enabled) {
+                if (towardsLeft === menu.submenuOpensLeft(row.subMenu)) {
+                    row.triggered()
+                    event.accepted = true
+                    return
+                }
+            }
+            if (menu.parentViewerMenu && towardsLeft !== menu.cascadedLeft) {
+                menu.close()
+                event.accepted = true
+                return
+            }
+            // The other arrow does nothing, rather than what Qt would do
+            // for a submenu on the right.
+            event.accepted = true
         }
 
         // The wheel and touchpad scroll it whatever the pointer is over, and
@@ -120,8 +163,8 @@ Menu {
             z: 2
             visible: list.interactive && !list.atYBeginning
             gradient: Gradient {
-                GradientStop { position: 0.0; color: Theme.background }
-                GradientStop { position: 1.0; color: menu.shade(Theme.background, 0) }
+                GradientStop { position: 0.0; color: Osd.panelSolid }
+                GradientStop { position: 1.0; color: menu.shade(Osd.panelSolid, 0) }
             }
         }
         Rectangle {
@@ -133,17 +176,19 @@ Menu {
             z: 2
             visible: list.interactive && !list.atYEnd
             gradient: Gradient {
-                GradientStop { position: 0.0; color: menu.shade(Theme.background, 0) }
-                GradientStop { position: 1.0; color: Theme.background }
+                GradientStop { position: 0.0; color: menu.shade(Osd.panelSolid, 0) }
+                GradientStop { position: 1.0; color: Osd.panelSolid }
             }
         }
     }
 
+    // Dark in every theme, like the rest of the viewer's chrome over the
+    // picture (see Osd), so its menus match its toolbar and details.
     background: Rectangle {
         implicitWidth: 236
-        color: Theme.background
+        color: Osd.panelSolid
         border.width: 1
-        border.color: menu.shade(Theme.foreground, 0.16)
+        border.color: Osd.border
         radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
 
         Connections {

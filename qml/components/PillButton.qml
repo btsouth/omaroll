@@ -74,8 +74,12 @@ Item {
                               : root.shade(Theme.background, hover.hovered ? 0.92 : 0.72))
                   : root.shade(root.textColour, hover.hovered ? 0.09 : 0.0))
         border.width: root.activeFocus ? 2 : (root.segment && !root.active ? 0 : 1)
+        // A chosen button with the keyboard on it still shows the focus:
+        // its outline is already the accent, so focus draws in the bright
+        // text colour instead.
         border.color: root.active
-                      ? root.shade(root.accentColour, root.floating ? 0.90 : 0.55)
+                      ? (root.activeFocus ? root.brightColour
+                                          : root.shade(root.accentColour, root.floating ? 0.90 : 0.55))
                       : root.activeFocus
                         ? root.accentColour
                         : root.shade(root.textColour,

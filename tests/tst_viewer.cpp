@@ -2359,6 +2359,67 @@ private slots:
     m_window->resize(1280, 820);
   }
 
+  // Left and Right follow the side a submenu opens on: at the window's right
+  // edge View and Sort open to the left, so Left opens them and Right closes
+  // them; from the left edge it is the other way round.
+  void viewerSubmenuArrowsFollowTheirSide() {
+    open({media(QStringLiteral("Shot 1.jpg"))});
+    QTRY_VERIFY(m_session->count() > 1);
+    QTRY_VERIFY(prop("imageReady").toBool());
+    m_window->resize(1280, 820);
+    QTRY_COMPARE(m_window->width(), 1280);
+    auto* menu = m_window->findChild<QObject*>(QStringLiteral("viewerMenu"));
+    auto* viewMenu = m_window->findChild<QObject*>(QStringLiteral("viewerSubmenu_view"));
+    auto* sortMenu = m_window->findChild<QObject*>(QStringLiteral("viewerSubmenu_sort"));
+    QVERIFY(menu && viewMenu && sortMenu);
+    const auto visible = [](QObject* popup) { return popup->property("visible").toBool(); };
+    // Down until the row is the keyboard's.
+    const auto reach = [&](const QString& name) {
+      QQuickItem* row = item(name);
+      QVERIFY(row);
+      for (int step = 0; step < 30 && !row->property("highlighted").toBool(); ++step)
+        QTest::keyClick(m_window, Qt::Key_Down);
+      QVERIFY2(row->property("highlighted").toBool(), qPrintable(name));
+    };
+    const auto check = [&](bool leftward) {
+      const Qt::Key into = leftward ? Qt::Key_Left : Qt::Key_Right;
+      const Qt::Key back = leftward ? Qt::Key_Right : Qt::Key_Left;
+      reach(QStringLiteral("viewerMenu_group-view"));
+      QCOMPARE(item(QStringLiteral("viewerMenu_group-viewArrow"))->property("pointsLeft").toBool(), leftward);
+      // The arrow pointing away from the submenu does nothing.
+      QTest::keyClick(m_window, back);
+      QTest::qWait(50);
+      QVERIFY(!visible(viewMenu));
+      QVERIFY(visible(menu));
+      QTest::keyClick(m_window, into);
+      QTRY_VERIFY(visible(viewMenu));
+      QTest::qWait(50);
+      QCOMPARE(viewMenu->property("cascadedLeft").toBool(), leftward);
+      reach(QStringLiteral("viewerMenu_group-sort"));
+      QTest::keyClick(m_window, into);
+      QTRY_VERIFY(visible(sortMenu));
+      QTest::qWait(50);
+      QCOMPARE(sortMenu->property("cascadedLeft").toBool(), leftward);
+      QTest::keyClick(m_window, back);
+      QTRY_VERIFY(!visible(sortMenu));
+      QVERIFY(visible(viewMenu));
+      QTest::keyClick(m_window, back);
+      QTRY_VERIFY(!visible(viewMenu));
+      QVERIFY(visible(menu));
+      QTest::keyClick(m_window, Qt::Key_Escape);
+      QTRY_VERIFY(!visible(menu));
+    };
+
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openViewForRender", Q_ARG(QVariant, QStringLiteral("viewer-menu"))));
+    QTRY_VERIFY(visible(menu));
+    QTest::qWait(50);
+    check(true);
+    QTest::mouseClick(m_window, Qt::RightButton, Qt::NoModifier, QPoint(40, 120));
+    QTRY_VERIFY(visible(menu));
+    QTest::qWait(50);
+    check(false);
+  }
+
   // The file goes out as the same text/uri-list and text/plain a library
   // tile carries, from a Ctrl+drag on the picture or a drag on its name.
   void dragOutCarriesWhatALibraryTileCarries() {
@@ -4802,6 +4863,97 @@ private slots:
     QCOMPARE(player->playbackState(), QMediaPlayer::PlayingState);
     player->pause();
     m_settings->clearVideoPosition(path);
+  }
+
+  // The resume prompt takes the keyboard as it appears. Enter and Space press
+  // the focused choice, Tab moves between the two, Escape puts the prompt
+  // away with the video paused, and no key reaches a viewer shortcut: Enter
+  // used to fall through to Open in library and close the viewer.
+  void resumePromptKeyboard_data() {
+    QTest::addColumn<QString>("keys");
+    QTest::addColumn<qint64>("from");
+    QTest::addColumn<bool>("plays");
+    QTest::newRow("enter") << QStringLiteral("enter") << qint64(7000) << true;
+    QTest::newRow("space") << QStringLiteral("space") << qint64(7000) << true;
+    QTest::newRow("tab-enter") << QStringLiteral("tab-enter") << qint64(0) << true;
+    QTest::newRow("tab-tab-enter") << QStringLiteral("tab-tab-enter") << qint64(7000) << true;
+    QTest::newRow("backtab-space") << QStringLiteral("backtab-space") << qint64(0) << true;
+    QTest::newRow("escape") << QStringLiteral("escape") << qint64(0) << false;
+  }
+
+  void resumePromptKeyboard() {
+    QFETCH(QString, keys);
+    QFETCH(qint64, from);
+    QFETCH(bool, plays);
+    const QString path = m_scratch.filePath(QStringLiteral("resume-keys.mkv"));
+    QVERIFY(QFile::exists(path) || QFile::copy(QFINDTESTDATA("fixtures/viewer/tracks.mkv"), path));
+    m_settings->setVideoPosition(path, 7000);
+    const auto restore = qScopeGuard([this, path] { m_settings->clearVideoPosition(path); });
+    open({path});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY(prop("resumeAvailable").toBool());
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    QQuickItem* prompt = item(QStringLiteral("viewerResumePrompt"));
+    QTRY_VERIFY(prompt->isVisible());
+    QQuickItem* resume = item(QStringLiteral("viewerResumeButton"));
+    QQuickItem* restart = item(QStringLiteral("viewerRestartButton"));
+    QTRY_COMPARE(m_window->activeFocusItem(), resume);
+
+    QSignalSpy library(m_session, &ViewerSession::libraryRequested);
+    const bool infoWasOpen = prop("infoOpen").toBool();
+    const QString file = m_session->path();
+    const auto press = [this](Qt::Key key) { QTest::keyClick(m_window, key); };
+    if (keys == QLatin1String("enter")) {
+      press(Qt::Key_Return);
+    } else if (keys == QLatin1String("space")) {
+      press(Qt::Key_Space);
+    } else if (keys == QLatin1String("tab-enter")) {
+      press(Qt::Key_Tab);
+      QCOMPARE(m_window->activeFocusItem(), restart);
+      press(Qt::Key_Enter);
+    } else if (keys == QLatin1String("tab-tab-enter")) {
+      press(Qt::Key_Tab);
+      press(Qt::Key_Tab);
+      QCOMPARE(m_window->activeFocusItem(), resume);
+      press(Qt::Key_Return);
+    } else if (keys == QLatin1String("backtab-space")) {
+      QTest::keyClick(m_window, Qt::Key_Backtab, Qt::ShiftModifier);
+      QCOMPARE(m_window->activeFocusItem(), restart);
+      press(Qt::Key_Space);
+    } else {
+      // Keys that would act in the viewer do nothing while the prompt has
+      // the keyboard.
+      for (const Qt::Key key : {Qt::Key_I, Qt::Key_Right, Qt::Key_L, Qt::Key_F})
+        press(key);
+      QCOMPARE(prop("infoOpen").toBool(), infoWasOpen);
+      QCOMPARE(prop("fullScreen").toBool(), false);
+      QVERIFY(prop("resumeAvailable").toBool());
+      QCOMPARE(m_window->activeFocusItem(), resume);
+      press(Qt::Key_Escape);
+    }
+    QTRY_VERIFY(!prop("resumeAvailable").toBool());
+    QTRY_VERIFY(!prompt->isVisible());
+    // The viewer is still open on the same file, with the keyboard back on
+    // the picture.
+    QTest::qWait(100);
+    QCOMPARE(library.size(), 0);
+    QVERIFY(m_window->isVisible());
+    QCOMPARE(m_session->path(), file);
+    QTRY_COMPARE(m_window->activeFocusItem(), item(QStringLiteral("viewerKeys")));
+    if (plays) {
+      QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+      const qint64 at = player->position();
+      QVERIFY2(at >= from && at < from + 3000, qPrintable(QString::number(at)));
+      player->pause();
+    } else {
+      QTest::qWait(300);
+      QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
+      QVERIFY2(player->position() < 1000, qPrintable(QString::number(player->position())));
+      // Enter now is the viewer's own again.
+      press(Qt::Key_Return);
+      QCOMPARE(library.size(), 1);
+    }
   }
 
   // A video that opens before the window's first frame waits for that frame

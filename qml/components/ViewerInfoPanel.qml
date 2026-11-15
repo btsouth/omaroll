@@ -24,6 +24,23 @@ Rectangle {
     // "latitude, longitude" when the file says where it was taken.
     property string coordinates: ""
 
+    // The capture date heads the details when the file has one, in the same
+    // long form as the file's own date; the modified time moves down among
+    // the facts. Without one, the file's date stays at the top.
+    readonly property string takenPrefix: "Taken  ·  "
+    readonly property string takenLabel: {
+        for (const line of root.lines) {
+            if (line.startsWith(root.takenPrefix)) return line.substring(root.takenPrefix.length)
+        }
+        return ""
+    }
+    readonly property string headerDate: root.takenLabel !== "" ? root.takenLabel : root.dateLabel
+    readonly property var factLines: {
+        const out = root.lines.filter(function (line) { return !line.startsWith(root.takenPrefix) })
+        if (root.takenLabel !== "" && root.dateLabel !== "") out.push("Modified  ·  " + root.dateLabel)
+        return out
+    }
+
     signal rateRequested(int stars)
     signal favoriteToggled()
     signal folderRequested()
@@ -119,14 +136,28 @@ Rectangle {
         anchors.right: parent.right
         anchors.bottom: copyActions.top
         anchors.margins: 16
+        anchors.rightMargin: 6
         anchors.bottomMargin: 8
         contentHeight: content.implicitHeight
         clip: true
         boundsBehavior: Flickable.StopAtBounds
+        // Says there is more below while the content scrolls, in the gutter
+        // beside it rather than over the chips.
+        ScrollBar.vertical: ScrollBar {
+            objectName: "viewerInfoScrollBar"
+            policy: infoScroll.contentHeight > infoScroll.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+            width: 6
+            contentItem: Rectangle {
+                implicitWidth: 4
+                radius: 2
+                color: Osd.track
+            }
+            background: null
+        }
 
         Column {
             id: content
-            width: parent.width
+            width: parent.width - 10
             spacing: 6
 
             Text {
@@ -143,23 +174,54 @@ Rectangle {
             }
 
             Text {
+                objectName: "viewerInfoTechnical"
                 width: parent.width
                 visible: text !== ""
                 text: [root.technical, root.sizeLabel].filter(function (part) {
                     return part !== ""
                 }).join("  ·  ")
+                wrapMode: Text.Wrap
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
                 color: Osd.mutedText
             }
 
             Text {
+                objectName: "viewerInfoDate"
                 width: parent.width
-                visible: root.dateLabel !== ""
-                text: root.dateLabel
+                visible: root.headerDate !== ""
+                text: root.headerDate
+                wrapMode: Text.Wrap
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
                 color: Osd.mutedText
+            }
+
+            // The facts sit above the tags, so a long list of tags cannot
+            // push them out of sight.
+            Text {
+                width: parent.width
+                visible: root.loading
+                text: "Reading details…"
+                font.family: Theme.fontFamily
+                font.pixelSize: 11
+                color: Osd.mutedText
+            }
+
+            Repeater {
+                model: root.factLines
+                // Wrapped rather than cut: a track's codec and channels are
+                // at the end of its line.
+                Text {
+                    required property string modelData
+                    objectName: "viewerInfoLine"
+                    width: content.width
+                    text: modelData
+                    wrapMode: Text.Wrap
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 11
+                    color: Osd.foreground
+                }
             }
 
             Item { width: 1; height: 4 }
@@ -268,30 +330,6 @@ Rectangle {
 
             Item { width: 1; height: 4 }
 
-            Text {
-                width: parent.width
-                visible: root.loading
-                text: "Reading details…"
-                font.family: Theme.fontFamily
-                font.pixelSize: 11
-                color: Osd.mutedText
-            }
-
-            Repeater {
-                model: root.lines
-                Text {
-                    required property string modelData
-                    width: content.width
-                    text: modelData
-                    elide: Text.ElideRight
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 11
-                    color: Osd.foreground
-                }
-            }
-
-            Item { width: 1; height: 4 }
-
             // Where the file lives, once: the name is the title above, so
             // this is its folder, shortened in the middle so both ends stay.
             // The whole path is in the tip and Copy path below; a click shows
@@ -386,6 +424,7 @@ Rectangle {
         PillButton {
             objectName: "viewerInfoCopyLocation"
             visible: root.coordinates !== ""
+            osd: true
             label: "Copy location"
             toolTip: root.coordinates
             onClicked: root.copyLocationRequested()

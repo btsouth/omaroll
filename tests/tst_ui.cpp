@@ -6568,7 +6568,9 @@ private slots:
   }
 
   // Tab opens the otherwise hidden action menu; arrows move through available
-  // rows, Escape closes it and hands focus back without closing the preview.
+  // rows, Escape closes it and hands focus to its button without closing the
+  // preview. The next Tab moves on from the button instead of opening the
+  // menu again.
   void hiddenActionMenuNavigatesAndEscapeReturnsToPreview() {
     QQuickItem* detail = item("detail");
     openDetail(0);
@@ -6589,9 +6591,26 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_Escape);
     QTRY_VERIFY(!detail->property("actionNavigationActive").toBool());
     QVERIFY(detail->isVisible());
-    QTRY_VERIFY(detail->hasActiveFocus());
+    QQuickItem* overflow = item("viewerOverflowButton");
+    QTRY_VERIFY(overflow->hasActiveFocus());
     QVERIFY(!item("viewerActionPopup")->isVisible());
 
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QTest::qWait(50);
+    QVERIFY(!item("viewerActionPopup")->isVisible());
+    QVERIFY(!detail->property("actionNavigationActive").toBool());
+    QVERIFY(!overflow->hasActiveFocus());
+    QVERIFY(detail->isVisible());
+
+    // Enter on the button opens the menu; a second Escape and the click
+    // outside still leave the preview open.
+    overflow->forceActiveFocus();
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(item("viewerActionPopup")->isVisible());
+    QTRY_COMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_copy"));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(overflow->hasActiveFocus());
+    detail->forceActiveFocus();
     QTest::keyClick(m_window, Qt::Key_Tab);
     QTRY_VERIFY(item("viewerActionPopup")->isVisible());
     const bool favourite = detail->property("favorite").toBool();

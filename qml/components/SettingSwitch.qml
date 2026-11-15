@@ -29,16 +29,28 @@ Item {
     Accessible.onPressAction: if (root.enabled) root.toggled()
     Accessible.onToggleAction: if (root.enabled) root.toggled()
 
+    // Keyboard focus: a ring outside the track with a gap, so it reads on an
+    // accent-filled "on" switch as well as an off one, in any theme.
+    Rectangle {
+        objectName: "settingSwitchFocus"
+        anchors.fill: parent
+        anchors.margins: -4
+        visible: root.activeFocus
+        color: "transparent"
+        radius: Theme.cornerRadius > 0 ? height / 2 : 5
+        border.width: 2
+        border.color: Theme.accent
+    }
+
     Rectangle {
         id: track
         anchors.fill: parent
         radius: Theme.cornerRadius > 0 ? height / 2 : 3
         color: root.checked ? root.shade(Theme.accent, 0.85)
                             : root.shade(Theme.foreground, hover.hovered ? 0.22 : 0.16)
-        border.width: root.activeFocus ? 2 : 1
-        border.color: root.activeFocus ? Theme.brightForeground
-                      : root.checked ? root.shade(Theme.accent, 0.95)
-                      : root.shade(Theme.foreground, 0.28)
+        border.width: 1
+        border.color: root.checked ? root.shade(Theme.accent, 0.95)
+                                   : root.shade(Theme.foreground, 0.28)
 
         Behavior on color { ColorAnimation { duration: 120; easing.type: Easing.OutQuad } }
 

@@ -185,12 +185,18 @@ Rectangle {
             event.accepted = true
         }
 
+        // Clear of the track's ends, with a tint inside, so the keyboard's
+        // place reads at a glance over any frame.
         Rectangle {
+            objectName: "viewerScrubFocus"
             anchors.fill: parent
-            anchors.margins: -2
+            anchors.leftMargin: -8
+            anchors.rightMargin: -8
+            anchors.topMargin: -3
+            anchors.bottomMargin: -3
             visible: scrub.activeFocus
             radius: Math.min(height / 2, Theme.cornerRadius > 0 ? Theme.cornerRadius : 3)
-            color: "transparent"
+            color: Osd.hover
             border.width: 2
             border.color: Osd.accent
         }
@@ -427,7 +433,7 @@ Rectangle {
                     Settings.videoMuted = false
                 }
             }
-            function setFrom(x) { setLevel(x / width) }
+            function setFrom(x) { setLevel((x - inset) / Math.max(1, width - 2 * inset)) }
             // From the level heard: down from muted stays muted at 0, and
             // the volume kept for unmuting is left alone.
             function change(amount) {
@@ -446,32 +452,52 @@ Rectangle {
             }
 
             Rectangle {
+                objectName: "viewerVolumeFocus"
                 anchors.fill: parent
-                anchors.margins: -2
                 visible: volume.activeFocus
                 radius: Math.min(height / 2, Theme.cornerRadius > 0 ? Theme.cornerRadius : 3)
-                color: "transparent"
+                color: Osd.hover
                 border.width: 2
                 border.color: Osd.accent
             }
 
+            // Inset, so the focus ring clears both ends of the track.
+            readonly property real inset: 8
             Rectangle {
+                id: volumeTrack
                 anchors.left: parent.left
                 anchors.right: parent.right
+                anchors.leftMargin: volume.inset
+                anchors.rightMargin: volume.inset
                 anchors.verticalCenter: parent.verticalCenter
                 height: 3
                 radius: 1.5
                 color: Osd.track
 
                 Rectangle {
-                    width: parent.width * parent.parent.level
+                    width: parent.width * volume.level
                     height: parent.height
                     radius: parent.radius
                     color: Osd.foreground
                 }
             }
+            // The level's handle, as the seek bar shows its own when focused.
+            Rectangle {
+                objectName: "viewerVolumeHandle"
+                width: 10
+                height: 10
+                radius: 5
+                x: volumeTrack.x + volumeTrack.width * volume.level - width / 2
+                anchors.verticalCenter: parent.verticalCenter
+                color: Osd.brightForeground
+                border.width: 2
+                border.color: Osd.accent
+                visible: volume.activeFocus || volumeMouse.containsMouse || volumeMouse.pressed
+            }
             MouseArea {
+                id: volumeMouse
                 anchors.fill: parent
+                hoverEnabled: true
                 preventStealing: true
                 cursorShape: Qt.PointingHandCursor
                 onPressed: function (mouse) { parent.setFrom(mouse.x) }
