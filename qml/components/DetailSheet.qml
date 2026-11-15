@@ -186,6 +186,8 @@ Item {
     readonly property string subtitleOverlayText: {
         if (externalSubtitle !== "") return externalCueText
         void Subtitles.revision
+        // Off: nothing, even if the player still holds the last cue it drew.
+        if (player && player.activeSubtitleTrack < 0) return ""
         if (player && player.playbackState !== MediaPlayer.PlayingState && player.activeSubtitleTrack >= 0
                 && Subtitles.embeddedReady(root.path, player.activeSubtitleTrack))
             return Subtitles.embeddedTextAt(root.path, player.activeSubtitleTrack, Math.round(player.position))
@@ -1033,6 +1035,12 @@ Item {
                     PillButton { label: modelData }
                 }
             }
+            TextMetrics {
+                id: pdfSearchHintMetrics
+                font.family: Theme.fontFamily
+                font.pixelSize: 11
+                text: "Find text"
+            }
             // The page box fits its hint with room either side.
             TextMetrics {
                 id: pdfPageHintMetrics
@@ -1853,7 +1861,8 @@ Item {
                 visible: root.isDocument && PdfInfo.available && PdfInfo.textSearchAvailable
 
                 Rectangle {
-                    width: root.compactPdfSearch ? 110 : 220
+                    // Narrow, still as wide as its short hint and the padding.
+                    width: root.compactPdfSearch ? Math.max(110, Math.ceil(pdfSearchHintMetrics.advanceWidth) + 16) : 220
                     height: 28
                     radius: Theme.cornerRadius > 0 ? Math.min(4, Theme.cornerRadius) : 3
                     color: root.shade(Theme.foreground, 0.06)
@@ -1886,7 +1895,7 @@ Item {
                         anchors.rightMargin: 8
                         visible: pdfSearch.text === ""
                         // Short enough for the narrow field, never touching its edge.
-                        text: root.compactPdfSearch ? "Find text" : "Find in document"
+                        text: root.compactPdfSearch ? pdfSearchHintMetrics.text : "Find in document"
                         elide: Text.ElideRight
                         font.family: Theme.fontFamily
                         font.pixelSize: 11

@@ -6143,9 +6143,11 @@ private slots:
       if (line.startsWith(QStringLiteral("Taken  ·  "))) taken = line.mid(QStringLiteral("Taken  ·  ").size());
     }
     QVERIFY(!taken.isEmpty());
+    // The window is shared: start with the details closed, then open them
+    // on this file.
+    if (prop("infoOpen").toBool()) m_window->setProperty("infoOpen", false);
     open({path});
-    // Shown whatever an earlier test left: the window is shared.
-    if (!prop("infoOpen").toBool()) QTest::keyClick(m_window, Qt::Key_I);
+    QTest::keyClick(m_window, Qt::Key_I);
     QTRY_VERIFY(item(QStringLiteral("viewerInfoPanel"))->isVisible());
     QQuickItem* date = item(QStringLiteral("viewerInfoDate"));
     QTRY_COMPARE_WITH_TIMEOUT(date->property("text").toString(), taken, 10000);

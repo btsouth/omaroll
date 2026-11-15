@@ -234,6 +234,8 @@ ApplicationWindow {
             return Subtitles.textAt(externalSubtitle, Math.round(player.position) - root.subtitleOffsetMs)
         // Paused, the player draws no new cue: a track switched on or a seek
         // shows the cue at the position from the track read with ffmpeg.
+        // Off: nothing, even if the player still holds the last cue it drew.
+        if (player && player.activeSubtitleTrack < 0) return ""
         if (player && player.playbackState !== MediaPlayer.PlayingState && player.activeSubtitleTrack >= 0
                 && Subtitles.embeddedReady(Session.path, player.activeSubtitleTrack))
             return Subtitles.embeddedTextAt(Session.path, player.activeSubtitleTrack, Math.round(player.position))
