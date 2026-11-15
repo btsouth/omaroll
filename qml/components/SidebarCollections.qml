@@ -37,7 +37,15 @@ FocusScope {
     signal exitUp()
     signal exitDown()
 
-    implicitHeight: Math.min(list.contentHeight, maximumHeight)
+    // From the rows rather than the list's contentHeight, which it estimates
+    // from its own height and so would loop back into this.
+    function rowHeight(kind) { return kind === "header" ? 36 : kind === "album" ? 42 : 32 }
+    readonly property real rowsHeight: {
+        let total = 0
+        for (const row of rows) total += rowHeight(row.kind)
+        return total
+    }
+    implicitHeight: Math.min(rowsHeight, maximumHeight)
     visible: rows.length > 0
 
     function shade(base, amount) { return Qt.rgba(base.r, base.g, base.b, amount) }
@@ -335,7 +343,7 @@ FocusScope {
                                              void Captures.dateFrom; void Captures.dateTo
                                              return root.isActive(modelData) }
             width: list.width
-            height: kind === "header" ? 36 : kind === "album" ? 42 : 32
+            height: root.rowHeight(kind)
             // Albums read their paths once per change, for the count and cover.
             readonly property var albumPaths: {
                 void root.detailRevision
