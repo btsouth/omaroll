@@ -75,6 +75,10 @@ class AppSettings final : public QObject {
                  showGridFilenamesChanged)
   Q_PROPERTY(bool showFolderSidebar READ showFolderSidebar WRITE setShowFolderSidebar NOTIFY showFolderSidebarChanged)
   Q_PROPERTY(int folderSidebarWidth READ folderSidebarWidth WRITE setFolderSidebarWidth NOTIFY folderSidebarWidthChanged)
+  // The sidebar sections shown expanded: any of "albums", "tags", "dates"
+  // and "folders".
+  Q_PROPERTY(QStringList sidebarSections READ sidebarSections WRITE setSidebarSections NOTIFY
+                 sidebarSectionsChanged)
   Q_PROPERTY(int previewWidth READ previewWidth WRITE setPreviewWidth NOTIFY previewWidthChanged)
   Q_PROPERTY(int previewHeight READ previewHeight WRITE setPreviewHeight NOTIFY previewHeightChanged)
   Q_PROPERTY(bool slideshowVideos READ slideshowVideos WRITE setSlideshowVideos NOTIFY
@@ -238,6 +242,8 @@ public:
   void setShowFolderSidebar(bool value);
   [[nodiscard]] int folderSidebarWidth() const { return m_folderSidebarWidth; }
   void setFolderSidebarWidth(int width);
+  [[nodiscard]] QStringList sidebarSections() const { return m_sidebarSections; }
+  void setSidebarSections(const QStringList& sections);
   [[nodiscard]] int previewWidth() const { return m_previewWidth; }
   void setPreviewWidth(int width);
   [[nodiscard]] int previewHeight() const { return m_previewHeight; }
@@ -316,6 +322,10 @@ public:
   [[nodiscard]] QHash<QString, QStringList> tagsByPath() const;
   [[nodiscard]] QHash<QString, QStringList> albumsByPath() const;
   Q_INVOKABLE [[nodiscard]] int tagItemCount(const QString& name) const;
+  // Every tag in tagNames order as {name, fromFile}, for the sidebar's tree.
+  // fromFile is set when no local tag has the name, so only keywords read
+  // from files put it there.
+  Q_INVOKABLE [[nodiscard]] QVariantList tagOutline() const;
   Q_INVOKABLE bool createTag(const QString& name);
   Q_INVOKABLE int deleteTag(const QString& name);
   // Renames a tag and every tag nested under it, so "Travel/Japan" becomes
@@ -496,6 +506,7 @@ signals:
   void showGridFilenamesChanged();
   void showFolderSidebarChanged();
   void folderSidebarWidthChanged();
+  void sidebarSectionsChanged();
   void previewWidthChanged();
   void previewHeightChanged();
   void slideshowVideosChanged();
@@ -765,6 +776,7 @@ private:
   bool m_showGridFilenames = false;
   bool m_showFolderSidebar = false;
   int m_folderSidebarWidth = 240;
+  QStringList m_sidebarSections;
   int m_previewWidth = 1000;
   int m_previewHeight = 700;
   bool m_slideshowVideos = false;

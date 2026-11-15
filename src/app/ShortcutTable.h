@@ -101,6 +101,7 @@ inline QVariantList rows() {
   {"context": "library", "id": "section-prev", "keys": ["Backtab"], "label": "Previous section", "group": "Navigation", "flag": "", "tokens": ["Backtab"]},
   {"context": "library", "id": "sections", "keys": ["1", "2", "3", "4", "5", "6", "7", "8"], "label": "Choose section", "group": "Navigation", "flag": "", "tokens": ["1", "2", "3", "4", "5", "6", "7", "8"]},
   {"context": "library", "id": "rating", "keys": ["Alt+0", "Alt+1", "Alt+2", "Alt+3", "Alt+4", "Alt+5"], "label": "Clear / set rating", "group": "Organization", "flag": "", "tokens": ["0", "1", "2", "3", "4", "5"]},
+  {"context": "library", "id": "organize", "keys": ["Alt+T"], "label": "Albums and tags, with the filter ready", "group": "Organization", "flag": "", "tokens": ["T"]},
   {"context": "preview", "id": "previous", "keys": ["Left"], "label": "Previous file", "group": "Navigation", "flag": "", "tokens": ["Left"]},
   {"context": "preview", "id": "next", "keys": ["Right"], "label": "Next file", "group": "Navigation", "flag": "", "tokens": ["Right"]},
   {"context": "preview", "id": "slideshow", "keys": ["F5"], "label": "Slideshow", "group": "View", "flag": "", "tokens": ["F5"]},

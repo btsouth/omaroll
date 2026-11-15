@@ -81,13 +81,13 @@ ApplicationWindow {
         }
         Settings.showFolderSidebar = !Settings.showFolderSidebar
     }
-    readonly property bool popupOpen: folderSidebar.menuOpen || filters.menuOpen || albumActionMenu.visible || contextMenu.visible || detail.contextMenuOpen
+    readonly property bool popupOpen: folderSidebar.menuOpen || filters.menuOpen || albumActionMenu.visible || dateJump.visible || contextMenu.visible || detail.contextMenuOpen
     // A menu takes the keyboard while it is up and does not give it back to
     // the grid on its own, which left the arrow keys dead until a tile was
     // clicked.
     onPopupOpenChanged: {
         if (!popupOpen && !anySheetOpen) {
-            if (folderSidebar.activeFocus) folderSidebar.focusTree()
+            if (folderSidebar.activeFocus) folderSidebar.focusAfterMenu()
             else library.forceActiveFocus()
         }
     }
@@ -1233,6 +1233,8 @@ ApplicationWindow {
             }
 
             DayHeader {
+                id: datePill
+                objectName: "datePill"
                 anchors.verticalCenter: parent.verticalCenter
                 // Only where it fits beside a usable search field.
                 visible: shown && header.width - 20 - header.titleNeed - 16 - 200 - 16 - 20
@@ -1240,8 +1242,13 @@ ApplicationWindow {
                                   - settingsButton.implicitWidth - 3 * headerActions.spacing
                                   >= implicitWidth + headerActions.spacing
                 maximumWidth: Math.max(80, root.width * 0.24)
-                label: library.currentDayLabel
+                // In a date sort it is the way to a month: named Jump to date
+                // while the top section's own header is in view.
+                interactive: Captures.sectionRows.mode === 1 && Captures.count > 0
+                label: library.currentDayLabel !== "" ? library.currentDayLabel
+                       : interactive ? "Jump to date" : ""
                 shown: Captures.count > 0 && library.checkedCount === 0
+                onClicked: dateJump.popupBelow(datePill, library.currentMonthKey())
             }
 
             PillButton {
@@ -1326,6 +1333,8 @@ ApplicationWindow {
         onAddFolderRequested: libraryBrowser.addFolder()
         onGridFocusRequested: library.forceActiveFocus()
         onMessage: function(text) { root.say(text) }
+        onRenameCollectionRequested: function (mode, name) { root.renameCollection(mode, name) }
+        onDeleteCollectionRequested: function (mode, name) { root.deleteCollection(mode, name) }
         onVisibleChanged: if (!visible && activeFocus) library.forceActiveFocus()
     }
 
@@ -1506,6 +1515,17 @@ ApplicationWindow {
 
     // The context menu's x and y are relative to whatever it popped up from,
     // which is the Actions button when opened from the header.
+    function openOrganize() {
+        const paths = library.checkedCount > 0 ? library.checkedPaths().slice()
+                    : root.currentPath() !== "" ? [root.currentPath()] : []
+        if (paths.length === 0) {
+            root.say("Pick a file to organize")
+            return
+        }
+        albumActionMenu.targetPaths = paths
+        albumActionMenu.popup(library, 8, 8)
+    }
+
     function popupAlbumMenuAtContextMenu() {
         const from = contextMenu.parent || root.contentItem
         const point = from.mapToItem(root.contentItem, contextMenu.x, contextMenu.y)
@@ -2171,6 +2191,39 @@ ApplicationWindow {
         }
     }
 
+    // Rename and delete for an album or tag, from Browse or the sidebar.
+    function renameCollection(mode, name) {
+        root.renamingCollection = true
+        root.renameFilterBefore = mode === "album" ? Captures.albumFilter : Captures.tagFilter
+        albumNameSheet.openRename(mode, name)
+    }
+    // Saved views that open the album or tag go with it; Undo brings both
+    // back.
+    function deleteCollection(mode, name) {
+        const before = Settings.latestUndoId
+        const views = mode === "album" ? Settings.deleteAlbum(name) : Settings.deleteTag(name)
+        const message = "Deleted " + mode + " " + name
+                        + (views === 1 ? " and the saved view that used it"
+                           : views > 1 ? " and " + views + " saved views that used it" : "")
+        const undoId = Settings.latestUndoId !== before ? Settings.latestUndoId : 0
+        if (Settings.organizationError !== "") root.say(Settings.organizationError)
+        else root.sayUndoable(message, undoId)
+    }
+
+    DateJumpMenu {
+        id: dateJump
+        host: root
+        onJumpRequested: function (key) {
+            if (!library.positionAtMonth(key)) root.say("Nothing from then in this view")
+            library.forceActiveFocus()
+        }
+        onFilterRequested: function (from, to, label) {
+            Captures.setDateRange(from, to, 0)
+            root.say("Showing " + label)
+            library.forceActiveFocus()
+        }
+    }
+
     AlbumActionMenu {
         id: albumActionMenu
         host: root
@@ -2261,11 +2314,7 @@ ApplicationWindow {
         // following event-loop turn so its text field wins that handoff.
         onCreateAlbumRequested: Qt.callLater(function () { albumNameSheet.open([]) })
         onCreateTagRequested: Qt.callLater(function () { albumNameSheet.open([], "tag") })
-        onRenameCollectionRequested: Qt.callLater(function () {
-            root.renamingCollection = true
-            root.renameFilterBefore = mode === "album" ? Captures.albumFilter : Captures.tagFilter
-            albumNameSheet.openRename(mode, name)
-        })
+        onRenameCollectionRequested: Qt.callLater(function () { root.renameCollection(mode, name) })
         onSaveSmartCollectionRequested: Qt.callLater(function () {
             albumNameSheet.open([], "smart", Captures.currentView())
         })
@@ -2757,6 +2806,13 @@ ApplicationWindow {
                 onActivated: root.rate(ratingKey.index)
             }
         }
+    }
+    // Organize for the selection, or the current tile, with its filter
+    // field taking the keyboard.
+    Shortcut {
+        sequences: ShortcutCatalog.sequence("library", "organize")
+        enabled: !root.anySheetOpen && !root.popupOpen && !filters.searchActive
+        onActivated: root.openOrganize()
     }
     Shortcut {
         sequences: ShortcutCatalog.sequence("library", "select-all")

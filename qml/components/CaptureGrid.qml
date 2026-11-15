@@ -884,6 +884,20 @@ FocusScope {
         onStickyLabelChanged: root.updateDay()
     }
 
+    // The date pill's jump: a month's first section at the top, its first
+    // tile current. Only date sorts have sections to jump to.
+    // The month at the top of the view, as "yyyy-MM", or "".
+    function currentMonthKey() {
+        if (!root.sectioned) return ""
+        const row = root.sectionModel.rowAtY(Math.max(0, reviewSets.exactTop - reviewSets.summaryHeight),
+                                             reviewSets.headerHeight, grid.cellHeight)
+        const month = root.sectionModel.monthOfRow(row)
+        return month.key !== undefined ? month.key : ""
+    }
+    function positionAtMonth(key) {
+        return root.sectioned && root.sectionModel.mode === 1 && reviewSets.positionAtSection(key)
+    }
+
     // The view that is showing, as a flickable plus the geometry the rubber
     // band needs.
     function activeView() { return root.sectioned ? reviewSets : grid }

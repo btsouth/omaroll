@@ -1187,6 +1187,32 @@ QVariantMap CaptureFilterModel::tileAt(int row) const {
   return tile;
 }
 
+QVariantMap CaptureFilterModel::coverFor(const QStringList& paths) const {
+  const auto* source = static_cast<const CaptureModel*>(sourceModel());
+  if (!source) return {};
+  const CaptureRecord* best = nullptr;
+  for (const QString& path : paths) {
+    const int row = source->rowOf(path);
+    if (row < 0) continue;
+    const CaptureRecord& record = source->recordAt(row);
+    if (best) {
+      // A shown file beats a hidden one, then the newer capture wins.
+      if (record.hidden != best->hidden) {
+        if (record.hidden) continue;
+      } else if (record.captured <= best->captured) {
+        continue;
+      }
+    }
+    best = &record;
+  }
+  if (!best) return {};
+  return {{QStringLiteral("path"), best->path},
+          {QStringLiteral("isVideo"), best->isVideo()},
+          {QStringLiteral("isDocument"), best->isDocument()},
+          {QStringLiteral("stamp"), best->modified},
+          {QStringLiteral("thumbnailVersion"), best->thumbnailVersion}};
+}
+
 QVariantList CaptureFilterModel::reviewSections() const {
   QVariantList sections;
   if (!m_duplicatesOnly && !m_similarOnly) {

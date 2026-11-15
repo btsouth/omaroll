@@ -258,6 +258,9 @@ set(OMAROLL_QML_FILES
   qml/components/EditorChooser.qml
   qml/components/PinnedFolders.qml
   qml/components/FolderSidebar.qml
+  qml/components/SidebarHeader.qml
+  qml/components/SidebarCollections.qml
+  qml/components/DateJumpMenu.qml
   qml/components/AlbumActionMenu.qml
   qml/components/AlbumNameSheet.qml
   qml/components/OrganizationChips.qml
