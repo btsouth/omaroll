@@ -6156,7 +6156,13 @@ private slots:
                                          + QStringLiteral(" / ") + m_mediaInfo->lines().join(u'|')),
                               20000);
     QQuickItem* date = item(QStringLiteral("viewerInfoDate"));
-    QTRY_COMPARE(date->property("text").toString(), taken);
+    QQuickItem* panel = item(QStringLiteral("viewerInfoPanel"));
+    QTRY_VERIFY2(date->property("text").toString() == taken,
+                 qPrintable(date->property("text").toString() + QStringLiteral(" | panel lines: ")
+                            + panel->property("lines").toStringList().join(u'|') + QStringLiteral(" | taken: ")
+                            + panel->property("takenLabel").toString() + QStringLiteral(" | MediaInfo.path ")
+                            + m_mediaInfo->path() + QStringLiteral(" | windows ")
+                            + QString::number(QGuiApplication::topLevelWindows().size())));
     QStringList facts;
     for (QQuickItem* line : itemsNamed(QStringLiteral("viewerInfoLine"))) {
       if (line->isVisible()) facts.append(line->property("text").toString());
