@@ -173,10 +173,14 @@ public:
       // lag behind it and would take the picture back. Positions are whole
       // milliseconds and a seek to a frame's exact start can pick the one
       // before it, so aim for the middle of the frame.
+      // The flag first: it is set after the times, so they are this
+      // video's. A time past the opening second is not from these frames.
+      const bool seen = m_frameSeen.load(std::memory_order_acquire);
       const qint64 frameStart = m_frameStart.load(std::memory_order_relaxed);
       const qint64 frameEnd = std::max(frameStart, m_frameEnd.load(std::memory_order_relaxed));
-      m_player->setPosition(m_frameSeen && frameStart >= 0 ? (frameStart + frameEnd + 1000) / 2000
-                                                           : m_player->position());
+      const qint64 shown = (frameStart + frameEnd + 1000) / 2000;
+      m_player->setPosition(seen && frameStart >= 0 && shown < kEarlyTrackChangeMs ? shown
+                                                                                   : m_player->position());
     }
     // Audio-only media never delivers frames, so there is nothing to stall.
     if (!m_player->hasVideo() || m_player->playbackState() != QMediaPlayer::PlayingState) {
