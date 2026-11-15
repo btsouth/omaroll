@@ -856,6 +856,9 @@ FocusScope {
                                                 ? Captures.lensFilter === value
                                                 : Captures.cameraFilter === value)
                                              : Captures.smartCollectionFilter === value
+                    // Only keywords read from files name this tag, as the
+                    // sidebar's file icon shows.
+                    readonly property bool fromFile: root.section === 3 && Settings.tagFromFile(value)
                     readonly property int itemCount: root.section === 0
                                                      ? Captures.folderItemCount(value)
                                                      : root.section === 1
@@ -865,6 +868,7 @@ FocusScope {
                                                      ? Settings.tagItemCount(value) : 0
                     Accessible.role: Accessible.ListItem
                     Accessible.name: objectChoice ? choiceLabel : value
+                    Accessible.description: fromFile ? "From the files' keywords" : ""
                     Accessible.selectable: true
                     Accessible.selected: selectedChoice
                     Accessible.focused: ListView.isCurrentItem && choices.activeFocus
@@ -892,7 +896,17 @@ FocusScope {
                             width: parent.width
                             text: root.section === 0 ? root.nameForPath(choiceRow.value)
                                                      : choiceRow.choiceLabel
-                            leftPadding: choiceRow.indent
+                            leftPadding: choiceRow.indent + (choiceRow.fromFile ? 16 : 0)
+
+                            Icon {
+                                objectName: "browseChoiceFileIcon"
+                                visible: choiceRow.fromFile
+                                x: choiceRow.indent
+                                anchors.verticalCenter: parent.verticalCenter
+                                name: "file"
+                                size: 12
+                                color: Theme.mutedText
+                            }
                             elide: Text.ElideRight
                             font.family: Theme.fontFamily
                             font.pixelSize: 11
@@ -912,9 +926,6 @@ FocusScope {
                                   : (choiceRow.cameraChoice
                                      ? (choiceRow.modelData.type === "lens" ? "Lens  ·  "
                                                                             : "Camera  ·  ")
-                                     // As the sidebar's file icon: only files' keywords name it.
-                                     : root.section === 3 && Settings.tagFromFile(choiceRow.value)
-                                     ? "From file keywords  ·  "
                                      : "")
                                     + root.formatCount(choiceRow.itemCount)
                                     + (choiceRow.itemCount === 1 ? " item" : " items")

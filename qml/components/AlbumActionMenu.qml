@@ -15,6 +15,8 @@ Popup {
     required property var grid
     property var targetPaths: []
     objectName: "albumActionMenu"
+    // Inside the window, so the compositor cannot make it translucent.
+    popupType: Popup.Item
     // Modal, undimmed: the press that closes the menu is consumed here
     // rather than also landing on the tile or pill under it.
     modal: true

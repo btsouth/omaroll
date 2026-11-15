@@ -1994,33 +1994,19 @@ const AppSettings::TagCache& AppSettings::tagCache() const {
       }
     }
   }
-  // Tree order, as TagNames::lessThan has it, with each name split once
-  // rather than on every comparison.
-  struct Keyed {
-    QStringList levels;
-    QString name;
-  };
-  QList<Keyed> keyed;
-  keyed.reserve(names.size());
-  for (QString& name : names) keyed.append({name.split(QLatin1Char('/')), std::move(name)});
-  std::sort(keyed.begin(), keyed.end(), [](const Keyed& first, const Keyed& second) {
-    const QStringList& a = first.levels;
-    const QStringList& b = second.levels;
-    for (qsizetype index = 0; index < qMin(a.size(), b.size()); ++index) {
-      if (const int order = a.at(index).compare(b.at(index), Qt::CaseInsensitive); order != 0) return order < 0;
-    }
-    return a.size() < b.size();
-  });
-  cache.names.reserve(keyed.size());
-  cache.folded.reserve(keyed.size());
-  cache.searchFolded.reserve(keyed.size());
-  cache.indexByFold.reserve(keyed.size());
-  for (Keyed& entry : keyed) {
-    const QString folded = TagNames::folded(entry.name);
+  // Tree order, as TagNames::lessThan has it. Sorted once per change, not
+  // on every read.
+  std::sort(names.begin(), names.end(), tagLessThan);
+  cache.names.reserve(names.size());
+  cache.folded.reserve(names.size());
+  cache.searchFolded.reserve(names.size());
+  cache.indexByFold.reserve(names.size());
+  for (QString& name : names) {
+    const QString folded = TagNames::folded(name);
     cache.indexByFold.insert(folded, cache.names.size());
     cache.folded.append(folded);
-    cache.searchFolded.append(searchFolded(entry.name));
-    cache.names.append(std::move(entry.name));
+    cache.searchFolded.append(searchFolded(name));
+    cache.names.append(std::move(name));
   }
   return cache;
 }

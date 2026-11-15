@@ -224,6 +224,9 @@ FocusScope {
     Popup {
         id: suggestions
         objectName: "tagSuggestions"
+        // Drawn inside the window: as a window of its own the compositor
+        // can make it translucent, with the panel reading through.
+        popupType: Popup.Item
         property bool upward: false
         // The space the list may take on its side of the field.
         property real room: 0

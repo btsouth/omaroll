@@ -8659,9 +8659,32 @@ private slots:
     auto* background = popup->property("background").value<QQuickItem*>();
     QVERIFY(background);
     QCOMPARE(background->property("color").value<QColor>().alphaF(), 1.0);
+    // Drawn in the window: a popup window of its own can be made
+    // translucent by the compositor.
+    const auto itemType = [](QObject* popup) {
+      const QMetaProperty type = popup->metaObject()->property(popup->metaObject()->indexOfProperty("popupType"));
+      return QString::fromLatin1(type.enumerator().valueToKey(type.read(popup).toInt()));
+    };
+    QCOMPARE(itemType(popup), QStringLiteral("Item"));
+    QCOMPARE(itemType(m_window->findChild<QObject*>(QStringLiteral("albumActionMenu"))), QStringLiteral("Item"));
     QTest::keyClick(m_window, Qt::Key_Escape);
     QTRY_COMPARE(input->property("text").toString(), QString());
     QTest::keyClick(m_window, Qt::Key_Escape);
+    QMetaObject::invokeMethod(item("detail"), "close");
+    QTRY_VERIFY(!item("detail")->isVisible());
+
+    // Browse marks a tag only files' keywords name with a file icon, as the
+    // sidebar does.
+    QVERIFY(m_settings->tagFromFile(QStringLiteral("Bulk")));
+    QObject* browser = m_window->findChild<QObject*>(QStringLiteral("libraryBrowser"));
+    const auto closeBrowser = qScopeGuard([&] { QMetaObject::invokeMethod(browser, "close"); });
+    QMetaObject::invokeMethod(browser, "open");
+    QTRY_VERIFY(browser->property("visible").toBool());
+    clickPlaced(item("browseFacet-3"));
+    QTRY_COMPARE(browser->property("section").toInt(), 3);
+    QTRY_VERIFY(find(m_window->contentItem(), [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("browseChoiceFileIcon") && candidate->isVisible();
+    }) != nullptr);
   }
 
   // A tag added in the narrow preview sorts among many chips, often above
