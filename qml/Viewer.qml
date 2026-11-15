@@ -235,6 +235,9 @@ ApplicationWindow {
         // Paused, the player draws no new cue: a track switched on or a seek
         // shows the cue at the position from the track read with ffmpeg.
         // Off: nothing, even if the player still holds the last cue it drew.
+        // The player does not always say when its track changes, so the
+        // choice made here is what asks for this again.
+        void root.subtitleChoice
         if (player && player.activeSubtitleTrack < 0) return ""
         if (player && player.playbackState !== MediaPlayer.PlayingState && player.activeSubtitleTrack >= 0
                 && Subtitles.embeddedReady(Session.path, player.activeSubtitleTrack))

@@ -180,6 +180,7 @@ QString friendlyLanguage(const QString& tag) {
 } // namespace
 
 SubtitleIndex::SubtitleIndex(QObject* parent) : QObject(parent) {
+  m_extractors.setMaxThreadCount(1);
   connect(&m_watcher, &QFileSystemWatcher::fileChanged, this, &SubtitleIndex::invalidate);
   connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this,
           [this](const QString& directory) {
@@ -339,7 +340,13 @@ int SubtitleIndex::cueCount(const QString& subtitlePath) {
   return static_cast<int>(cuesFor(subtitlePath).cues.size());
 }
 
-SubtitleIndex::Parsed SubtitleIndex::extract(const QString& videoPath, int track) {
+SubtitleIndex::~SubtitleIndex() {
+  m_stop->store(true);
+  m_extractors.waitForDone();
+}
+
+SubtitleIndex::Parsed SubtitleIndex::extract(const QString& videoPath, int track,
+                                             const std::atomic_bool& stop) {
   const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
   if (ffmpeg.isEmpty() || track < 0) return {};
   QProcess process;
@@ -348,14 +355,14 @@ SubtitleIndex::Parsed SubtitleIndex::extract(const QString& videoPath, int track
                          QStringLiteral("-i"), videoPath, QStringLiteral("-map"),
                          QStringLiteral("0:s:%1").arg(track), QStringLiteral("-f"),
                          QStringLiteral("srt"), QStringLiteral("pipe:1")});
-  if (!process.waitForStarted(5000)) return {};
+  if (stop.load() || !process.waitForStarted(5000)) return {};
   // A long film's text track takes a moment; a stuck one is given up on.
   QByteArray output;
   QElapsedTimer clock;
   clock.start();
   while (!process.waitForFinished(100)) {
     output += process.readAllStandardOutput();
-    if (output.size() > kMaximumFileBytes || clock.elapsed() > 60000
+    if (output.size() > kMaximumFileBytes || clock.elapsed() > 60000 || stop.load()
         || process.state() == QProcess::NotRunning) {
       break;
     }
@@ -393,7 +400,9 @@ const SubtitleIndex::Parsed* SubtitleIndex::embeddedFor(const QString& videoPath
       emit changed();
       watcher->deleteLater();
     });
-    watcher->setFuture(QtConcurrent::run([videoPath, track] { return extract(videoPath, track); }));
+    watcher->setFuture(QtConcurrent::run(&m_extractors, [videoPath, track, stop = m_stop] {
+      return extract(videoPath, track, *stop);
+    }));
   }
   return nullptr;
 }

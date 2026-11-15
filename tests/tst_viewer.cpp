@@ -6149,8 +6149,13 @@ private slots:
     open({path});
     QTest::keyClick(m_window, Qt::Key_I);
     QTRY_VERIFY(item(QStringLiteral("viewerInfoPanel"))->isVisible());
+    // The details are read on a worker; a busy suite can keep it waiting.
+    QTRY_VERIFY2_WITH_TIMEOUT(m_mediaInfo->path() == m_session->path() && !m_mediaInfo->lines().isEmpty(),
+                              qPrintable(m_mediaInfo->path() + QStringLiteral(" / ") + m_session->path()
+                                         + QStringLiteral(" / ") + m_mediaInfo->lines().join(u'|')),
+                              20000);
     QQuickItem* date = item(QStringLiteral("viewerInfoDate"));
-    QTRY_COMPARE_WITH_TIMEOUT(date->property("text").toString(), taken, 10000);
+    QTRY_COMPARE(date->property("text").toString(), taken);
     QStringList facts;
     for (QQuickItem* line : itemsNamed(QStringLiteral("viewerInfoLine"))) {
       if (line->isVisible()) facts.append(line->property("text").toString());
