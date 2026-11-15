@@ -50,6 +50,8 @@
   screen reader says "Show hidden media" rather than "Hidden items".
 - Resume and Start over in the viewer play the video from the chosen spot
   instead of leaving it paused until Space.
+- Switching the audio track or subtitles in the first moments of a video no
+  longer holds the picture for over half a second while the sound carries on.
 
 ## 1.19.1
 

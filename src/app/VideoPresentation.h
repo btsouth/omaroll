@@ -26,6 +26,8 @@
 //   the picture for good, often with the clock. If frames stop, seek in place.
 //   This also covers a change right after opening, when the stall can follow
 //   a single new frame, so it times from the last frame, not a fixed window.
+//   A change at the very start always stalls (see startsAtBeginning()), so
+//   it seeks in place at once instead of waiting for frames to stop.
 //
 // And it says when a file gives nothing to show: loaded with no audio or
 // video stream, or played to its end, or stuck, without a first frame. Qt
@@ -83,6 +85,10 @@ public:
   static constexpr int kStallWatchMs = 2400;
   static constexpr int kResyncGraceMs = 1200;
   static constexpr int kStallResyncs = 2;
+  // A track change within this time and this many frames of opening is
+  // sought in place at once (see startsAtBeginning()).
+  static constexpr int kEarlyTrackChangeMs = 1000;
+  static constexpr quint64 kEarlyTrackChangeFrames = 4;
   // Generous: a first frame normally takes well under a second, even for 4K
   // decoded in software or under a sanitizer, and this counts only time the
   // clock stood still.
@@ -144,6 +150,7 @@ public:
   }
   Q_INVOKABLE void reset() {
     m_frameSeen = false;
+    m_framesAtOpen = m_frames.load(std::memory_order_acquire);
     m_ready = false;
     m_stallTimer.stop();
     m_openTimer.stop();
@@ -159,16 +166,25 @@ public:
   }
   // Call after changing the player's audio or subtitle track.
   Q_INVOKABLE void trackChanged() {
+    if (!m_player) return;
+    const bool early = startsAtBeginning();
+    if (early) {
+      // To the picture shown rather than the reported position, which can
+      // lag behind it and would take the picture back.
+      const qint64 frameStart = m_frameStart.load(std::memory_order_relaxed);
+      m_player->setPosition(m_frameSeen && frameStart >= 0 ? frameStart / 1000 : m_player->position());
+    }
     // Audio-only media never delivers frames, so there is nothing to stall.
-    if (!m_player || !m_player->hasVideo()
-        || m_player->playbackState() != QMediaPlayer::PlayingState) {
+    if (!m_player->hasVideo() || m_player->playbackState() != QMediaPlayer::PlayingState) {
       return;
     }
     m_stallClock.start();
     // Slow video needs room for its longer limit and one recovery seek.
     m_stallUntil = std::max<qint64>(kStallWatchMs, stallMs() + kResyncGraceMs + kStallMs);
     m_stallProgress = 0;
-    m_stallLimit = 0;
+    // An early change has already been sought in place; give it the time a
+    // seek gets to show its frame.
+    m_stallLimit = early ? kResyncGraceMs : 0;
     m_stallResyncs = 0;
     m_stallFrames = m_frames.load(std::memory_order_acquire);
     m_stallTimer.start();
@@ -375,6 +391,29 @@ private:
     const qreal rate = m_player ? std::max<qreal>(0.25, m_player->playbackRate()) : 1.0;
     return std::max<qint64>(kStallMs, qint64(3 * frameUs / 1000 / rate));
   }
+  // Whether a track change now would leave the streams ahead of the clock.
+  // Qt's FFmpeg backend replaces its demuxer on a track change and starts the
+  // new one where the renderers are, but at position 0 it skips the seek, as
+  // for a freshly opened file. The old demuxer has already read ahead, by up
+  // to 4 s, so the new decoders start from there: the picture stops (for good
+  // when no keyframe follows) and the clock stops with it. That holds while
+  // the picture is on its first frame of the file, and the video renderer
+  // still draws the up to three frames it had queued after the change, so
+  // allow for those. A seek in place then starts every stream again at the
+  // picture; one Qt already made is only repeated.
+  bool startsAtBeginning() const {
+    if (!m_player || !m_player->isSeekable()
+        || m_player->playbackState() == QMediaPlayer::StoppedState
+        || m_player->position() >= kEarlyTrackChangeMs) {
+      return false;
+    }
+    const auto status = m_player->mediaStatus();
+    if (status != QMediaPlayer::LoadedMedia && status != QMediaPlayer::BufferingMedia
+        && status != QMediaPlayer::BufferedMedia) {
+      return false;
+    }
+    return m_frames.load(std::memory_order_acquire) - m_framesAtOpen <= kEarlyTrackChangeFrames;
+  }
   void resync() {
     if (!m_player) return;
     m_player->setPosition(m_player->position());
@@ -404,6 +443,7 @@ private:
   qint64 m_stallLimit = 0;
   int m_stallResyncs = 0;
   quint64 m_stallFrames = 0;
+  quint64 m_framesAtOpen = 0;
   bool m_ready = false;
   bool m_hasFrame = false;
   bool m_heapHeld = false;
