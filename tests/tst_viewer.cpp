@@ -6143,35 +6143,33 @@ private slots:
       if (line.startsWith(QStringLiteral("Taken  ·  "))) taken = line.mid(QStringLiteral("Taken  ·  ").size());
     }
     QVERIFY(!taken.isEmpty());
-    // The window is shared: start with the details closed, then open them
-    // on this file.
-    if (prop("infoOpen").toBool()) m_window->setProperty("infoOpen", false);
-    open({path});
-    QTest::keyClick(m_window, Qt::Key_I);
-    QTRY_VERIFY(item(QStringLiteral("viewerInfoPanel"))->isVisible());
-    // The details are read on a worker; a busy suite can keep it waiting.
-    QTRY_VERIFY2_WITH_TIMEOUT(m_mediaInfo->path() == m_session->path()
-                                  && m_mediaInfo->lines().join(u'|').contains(QStringLiteral("Taken  ·  ")),
-                              qPrintable(m_mediaInfo->path() + QStringLiteral(" / ") + m_session->path()
-                                         + QStringLiteral(" / ") + m_mediaInfo->lines().join(u'|')),
-                              20000);
-    QQuickItem* date = item(QStringLiteral("viewerInfoDate"));
-    QQuickItem* panel = item(QStringLiteral("viewerInfoPanel"));
-    QTRY_VERIFY2(date->property("text").toString() == taken,
-                 qPrintable(date->property("text").toString() + QStringLiteral(" | panel lines: ")
-                            + panel->property("lines").toStringList().join(u'|') + QStringLiteral(" | taken: ")
-                            + panel->property("takenLabel").toString() + QStringLiteral(" | MediaInfo.path ")
-                            + m_mediaInfo->path() + QStringLiteral(" | windows ")
-                            + QString::number(QGuiApplication::topLevelWindows().size())));
+    // A window of its own, as the app opens one: the shared test window's
+    // details have had their lines written by another test.
+    ViewerWindows viewers(*m_engine);
+    viewers.setPlacementQuery([](QObject*, HyprlandPlacement::Reply reply) { reply({}); });
+    QQuickWindow* window = viewers.open({path});
+    QVERIFY(window);
+    const auto closeWindow = qScopeGuard([window] { window->close(); });
+    QTRY_VERIFY(window->property("framed").toBool());
+    QTest::keyClick(window, Qt::Key_I);
+    const auto named = [window](const QString& name) {
+      return find(window->contentItem(), [&name](QQuickItem* candidate) { return candidate->objectName() == name; });
+    };
+    QTRY_VERIFY(named(QStringLiteral("viewerInfoPanel"))->isVisible());
+    QQuickItem* date = named(QStringLiteral("viewerInfoDate"));
+    QTRY_COMPARE_WITH_TIMEOUT(date->property("text").toString(), taken, 15000);
     QStringList facts;
-    for (QQuickItem* line : itemsNamed(QStringLiteral("viewerInfoLine"))) {
-      if (line->isVisible()) facts.append(line->property("text").toString());
-    }
-    QVERIFY2(facts.contains(QStringLiteral("Modified  ·  ") + m_session->dateLabel()),
-             qPrintable(facts.join(u'|') + QStringLiteral(" / Modified  ·  ") + m_session->dateLabel()));
+    std::function<void(QQuickItem*)> walk = [&](QQuickItem* at) {
+      for (QQuickItem* child : at->childItems()) {
+        if (child->objectName() == QStringLiteral("viewerInfoLine") && child->isVisible())
+          facts.append(child->property("text").toString());
+        walk(child);
+      }
+    };
+    walk(window->contentItem());
+    const QString modified = viewers.sessionOf(window)->dateLabel();
+    QVERIFY2(facts.contains(QStringLiteral("Modified  ·  ") + modified), qPrintable(facts.join(u'|')));
     for (const QString& fact : std::as_const(facts)) QVERIFY(!fact.startsWith(QStringLiteral("Taken")));
-    QTest::keyClick(m_window, Qt::Key_I);
-    QTRY_VERIFY(!prop("infoOpen").toBool());
   }
 
   // At 560 px with twenty tags the details stop above the toolbar, keep the
