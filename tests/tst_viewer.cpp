@@ -4588,6 +4588,52 @@ private slots:
     m_settings->clearVideoPosition(path);
   }
 
+  // Every way of answering the resume prompt plays from the spot chosen. A
+  // click on the stage plays or pauses once the double click time is over,
+  // so a click on one of the prompt's buttons must not reach it as well.
+  void resumeChoicesPlay_data() {
+    QTest::addColumn<QString>("choice");
+    QTest::addColumn<qint64>("from");
+    QTest::newRow("resume-button") << QStringLiteral("viewerResumeButton") << qint64(7000);
+    QTest::newRow("start-over-button") << QStringLiteral("viewerRestartButton") << qint64(0);
+    QTest::newRow("stage") << QStringLiteral("stage") << qint64(7000);
+    QTest::newRow("space") << QStringLiteral("space") << qint64(7000);
+  }
+
+  void resumeChoicesPlay() {
+    QFETCH(QString, choice);
+    QFETCH(qint64, from);
+    const QString path = m_scratch.filePath(QStringLiteral("resume-choice.mkv"));
+    QVERIFY(QFile::exists(path) || QFile::copy(QFINDTESTDATA("fixtures/viewer/tracks.mkv"), path));
+    m_settings->setVideoPosition(path, 7000);
+    open({path});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY(prop("resumeAvailable").toBool());
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    QTRY_VERIFY(item(QStringLiteral("viewerResumePrompt"))->isVisible());
+    if (choice == QLatin1String("space")) {
+      QTest::keyClick(m_window, Qt::Key_Space);
+    } else if (choice == QLatin1String("stage")) {
+      QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, QPoint(m_window->width() / 4, m_window->height() / 3));
+    } else {
+      QQuickItem* button = item(choice);
+      QVERIFY(button && button->isVisible());
+      QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier,
+                        button->mapToScene(QPointF(button->width() / 2, button->height() / 2)).toPoint());
+    }
+    QTRY_VERIFY(!prop("resumeAvailable").toBool());
+    // Past the double click time, when a stage tap would act.
+    QTest::qWait(QGuiApplication::styleHints()->mouseDoubleClickInterval() + 200);
+    QCOMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+    const qint64 at = player->position();
+    QVERIFY2(at >= from && at < from + 3000, qPrintable(QString::number(at)));
+    QTRY_VERIFY(player->position() >= at + 300);
+    QCOMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+    player->pause();
+    m_settings->clearVideoPosition(path);
+  }
+
   // The checked-in test pattern: saturated bars, two audio tracks and a
   // subtitle track. Under OpenGL the bars must reach the screen, not just a
   // decoded frame in memory.

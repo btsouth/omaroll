@@ -2145,11 +2145,20 @@ ApplicationWindow {
             // screen. Pictures take their clicks inside the pan area below:
             // a handler up here takes the press for itself, and a drag on a
             // zoomed picture would never reach it.
+            // The resume prompt's buttons take only a passive grab, so their
+            // clicks arrive here too and would pause what they just played.
             TapHandler {
                 acceptedButtons: Qt.LeftButton
                 enabled: Session.isVideo
-                onSingleTapped: root.togglePlayback()
-                onDoubleTapped: root.setFullScreen(!root.fullScreen)
+                property bool onPrompt: false
+                onPressedChanged: {
+                    if (pressed) {
+                        onPrompt = resumePrompt.visible
+                                   && resumePrompt.contains(resumePrompt.mapFromItem(null, point.scenePressPosition))
+                    }
+                }
+                onSingleTapped: if (!onPrompt) root.togglePlayback()
+                onDoubleTapped: if (!onPrompt) root.setFullScreen(!root.fullScreen)
             }
             TapHandler {
                 acceptedButtons: Qt.RightButton
@@ -2341,6 +2350,7 @@ ApplicationWindow {
 
         // A saved spot is offered rather than jumped to.
         Item {
+            id: resumePrompt
             objectName: "viewerResumePrompt"
             anchors.centerIn: parent
             width: resumeRow.implicitWidth
@@ -2365,6 +2375,7 @@ ApplicationWindow {
                     onClicked: root.resumeVideo()
                 }
                 PillButton {
+                    objectName: "viewerRestartButton"
                     label: "Start over"
                     floating: true
                     osd: true

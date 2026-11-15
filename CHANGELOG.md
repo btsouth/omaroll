@@ -31,6 +31,8 @@
   opened it, in the viewer and the library.
 - Settings switches and buttons are named as their rows are titled, so a
   screen reader says "Show hidden media" rather than "Hidden items".
+- Resume and Start over in the viewer play the video from the chosen spot
+  instead of leaving it paused until Space.
 
 ## 1.19.1
 
