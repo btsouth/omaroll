@@ -71,15 +71,18 @@ about 160 ms in its theme for fonts and 60 ms more for shaders:
 
 Measured at the compositor: when Hyprland maps the window, and when the
 screen centre first shows the picture. Medians of 12 interleaved launches
-each, in milliseconds from exec. Before is main at `14272c2`.
+each, in milliseconds from exec. Before is main at `45267c1`.
 
 | | Before | After |
 | --- | ---: | ---: |
-| 24 MP JPEG: window mapped | 311 | 298 |
-| 24 MP JPEG: picture complete | 516 | 396 |
-| 1080p video: window mapped | 355 | 331 |
-| 1080p video: first picture | 565 | 519 |
-| 1080p video: `video_frame`, from `main()` | 523 | 472 |
+| 24 MP JPEG: window mapped | 298 | 306 |
+| 24 MP JPEG: picture complete | 526 | 409 |
+| 1080p video: window mapped | 341 | 340 |
+| 1080p video: first picture | 565 | 517 |
+| 1080p video: `video_frame`, from `main()` | 526 | 472 |
+
+The window maps at the same time either way; the 8 ms on the picture is
+within the spread between launches.
 
 What changed:
 
@@ -92,25 +95,27 @@ What changed:
   decoders, on the window thread, so it waits for the window's first frame;
   without that wait, a file that opened before the first expose put the
   decoders ahead of the window and mapped it about 30 ms later.
-- On Wayland, a worker creates and drops an OpenGL context while QML loads
-  (`src/app/GraphicsWarmup.h`). Qt Quick still makes its throwaway context on
-  the window thread at the first expose (`QRhiGles2InitParams::newFallbackSurface`),
-  but it no longer starts the driver: about 24 ms instead of 40 on the
-  NVIDIA card, measured with an EGL call shim. The rest is per-context driver
-  work. Started any earlier, the driver's library loads slowed the theme's
-  font lookup by about 40 ms.
+
+Qt Quick's temporary OpenGL context at the first expose
+(`QRhiGles2InitParams::newFallbackSurface`) costs about 40 ms on the window
+thread with the NVIDIA card. Starting the driver on a worker while QML loads
+cut that to about 24 ms there, but it was not shipped: it was never tried on
+Mesa (AMD, Intel), and it runs two driver initialisations at once on every
+launch.
 
 The window still maps as soon as it can, before the picture; nothing waits
 for the media.
 
 How it was measured: the same machine as the table above, in a headless
-Hyprland 1920x1080@60 in omabox with animations off, host load 2.5 to 6.
+Hyprland 1920x1080@60 in omabox with animations off, host load 2.9 to 3.8
+(one minute average; other agents and a VM were running).
 `grim` samples a 4x4 region at the screen centre from two threads, about
 every 7 to 8 ms. "Picture complete" is the first sample after which the
 centre stays at its settled colour; for the video, "first picture" is the
 first sample with saturated colour, the poster or a frame, whichever came
 first. Fresh profile per launch, warm fontconfig and shader caches, the same
-24 MP JPEG and a 1080p30 H.264 Matroska file with AAC audio. A headless
+6000x4000 JPEG and a 1080p30 H.264 Matroska file with AAC audio, both ffmpeg
+test patterns. A headless
 output has no scanout, so this is when the compositor has the pixels, not
 when a panel shows them. It was not measured on Intel or AMD hardware, nor on
 a physical display.
