@@ -10033,7 +10033,8 @@ private slots:
     QQuickItem* search = item("libraryFilterSearch");
     search->forceActiveFocus();
     QTRY_VERIFY(search->hasActiveFocus());
-    QTest::keyClicks(m_window, QStringLiteral("zq"));
+    QTest::keyClick(m_window, Qt::Key_Z);
+    QTest::keyClick(m_window, Qt::Key_Q);
     QTRY_COMPARE(m_library->appliedSearchText(), QStringLiteral("zq"));
     QTest::keyClick(m_window, Qt::Key_Backspace);
     QTest::keyClick(m_window, Qt::Key_Backspace);
