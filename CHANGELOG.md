@@ -72,6 +72,29 @@
   instead of leaving it paused until Space.
 - Switching the audio track or subtitles in the first moments of a video no
   longer holds the picture for over half a second while the sound carries on.
+- The viewer's resume prompt takes the keyboard as it appears: `Enter` or
+  `Space` presses Resume, `Tab` moves to Start over, and `Escape` puts it
+  away with the video paused. `Enter` no longer closes the viewer and opens
+  the library instead. The prompt sits on a solid panel that reads over any
+  frame, and the preview uses the same words, "Resume from 0:35" and "Start
+  over".
+- `Escape` in the preview's All actions menu hands focus to its button, so
+  the next `Tab` moves on instead of opening the menu again. The menu lists
+  File once, with Copy path and Copy file name in it, and is as tall as its
+  rows when the window has room.
+- Shortcut help keeps its title and filter field still while you type.
+- The viewer's details lead with the date a picture was taken, in the same
+  long form the preview uses, with the modified time among the details, and
+  wrap long track lines instead of cutting them off. Its menus are dark like
+  the rest of the viewer's controls in a light theme.
+- In a viewer submenu that opens to the left, `Left` opens it and `Right`
+  closes it.
+- A focused settings switch shows a clear ring, also when it is on.
+- The preview's Fullscreen button lines up with the video bar, with one
+  outline.
+- The PDF find and page fields keep their hints clear of the edges.
+- Corrections uses the rotate icons in a narrow window.
+- Compare says Fit while the pictures fit their cells, not 100%.
 
 ## 1.19.1
 

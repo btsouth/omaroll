@@ -6053,6 +6053,94 @@ private slots:
     QVERIFY(m_settings->tagPaths(QStringLiteral("fam")).isEmpty());
   }
 
+  // A file with a capture date leads the details with it, in the long form
+  // the file's own date uses; the modified time moves down among the facts.
+  void infoPanelLeadsWithTheCaptureDate() {
+    if (!CameraRaw::isRaw(QStringLiteral("dng"))) QSKIP("Qt RAW support is unavailable");
+    const QString path = m_scratch.filePath(QStringLiteral("dated.dng"));
+    QVERIFY(QFile::exists(path) || QFile::copy(QFINDTESTDATA("fixtures/raw/camera.dng"), path));
+    QString taken;
+    for (const QString& line : MediaInspector::describeRaw(path)) {
+      if (line.startsWith(QStringLiteral("Taken  ·  "))) taken = line.mid(QStringLiteral("Taken  ·  ").size());
+    }
+    QVERIFY(!taken.isEmpty());
+    open({path});
+    QTest::keyClick(m_window, Qt::Key_I);
+    QTRY_VERIFY(item(QStringLiteral("viewerInfoPanel"))->isVisible());
+    QQuickItem* date = item(QStringLiteral("viewerInfoDate"));
+    QTRY_COMPARE(date->property("text").toString(), taken);
+    QStringList facts;
+    for (QQuickItem* line : m_window->contentItem()->findChildren<QQuickItem*>(QStringLiteral("viewerInfoLine"))) {
+      if (line->isVisible()) facts.append(line->property("text").toString());
+    }
+    QVERIFY2(facts.contains(QStringLiteral("Modified  ·  ") + m_session->dateLabel()), qPrintable(facts.join(u'|')));
+    for (const QString& fact : std::as_const(facts)) QVERIFY(!fact.startsWith(QStringLiteral("Taken")));
+    QTest::keyClick(m_window, Qt::Key_I);
+  }
+
+  // At 560 px with twenty tags the details stop above the toolbar, keep the
+  // file's facts in view above the chips, and scroll their own content with
+  // a bar that says so. A message with Undo shows beside them, not under.
+  void infoPanelFitsANarrowWindowWithManyTags() {
+    const QString path = media(QStringLiteral("shot 2.jpg"));
+    QStringList many;
+    for (int index = 1; index <= 20; ++index) many.append(QStringLiteral("Narrow/Tag number %1").arg(index));
+    const QSize before = m_window->size();
+    const auto cleanup = qScopeGuard([&] {
+      for (const QString& tag : std::as_const(many)) m_settings->deleteTag(tag);
+      m_settings->deleteTag(QStringLiteral("Narrow"));
+      m_settings->clearUndoHistory();
+      m_window->resize(before);
+    });
+    for (const QString& tag : std::as_const(many)) QCOMPARE(m_settings->createTagFor(tag, {path}).value("count").toInt(), 1);
+    open({path});
+    m_window->resize(560, 900);
+    QTRY_COMPARE(m_window->width(), 560);
+    QTest::keyClick(m_window, Qt::Key_I);
+    QQuickItem* panel = item(QStringLiteral("viewerInfoPanel"));
+    QTRY_VERIFY(panel->isVisible());
+    QQuickItem* toolbar = item(QStringLiteral("viewerToolbar"));
+    QTRY_VERIFY(toolbar->isVisible());
+    const QRectF bar = toolbar->mapRectToScene(toolbar->boundingRect());
+    QTRY_VERIFY2(panel->mapRectToScene(panel->boundingRect()).bottom() <= bar.top(),
+                 qPrintable(QStringLiteral("%1 > %2").arg(panel->mapRectToScene(panel->boundingRect()).bottom()).arg(bar.top())));
+    QQuickItem* scroll = item(QStringLiteral("viewerInfoScroll"));
+    QTRY_VERIFY(scroll->property("contentHeight").toReal() > scroll->height());
+    QTRY_VERIFY(item(QStringLiteral("viewerInfoScrollBar"))->isVisible());
+    // The facts come before the chips, so they are at the top of the scroll.
+    QQuickItem* technical = item(QStringLiteral("viewerInfoTechnical"));
+    QQuickItem* chips = item(QStringLiteral("viewerInfoOrganization"));
+    QTRY_VERIFY(technical->isVisible());
+    QVERIFY(technical->mapToItem(chips, QPointF()).y() < 0);
+    QVERIFY(!technical->property("truncated").toBool());
+    QQuickItem* date = item(QStringLiteral("viewerInfoDate"));
+    QVERIFY(date->mapToItem(chips, QPointF()).y() < 0);
+    QVERIFY(date->mapToItem(scroll, QPointF(0, date->height())).y() <= scroll->height());
+    for (QQuickItem* line : m_window->contentItem()->findChildren<QQuickItem*>(QStringLiteral("viewerInfoLine"))) {
+      if (!line->isVisible()) continue;
+      QVERIFY(!line->property("truncated").toBool());
+      QVERIFY(line->mapToItem(chips, QPointF()).y() < 0);
+    }
+
+    // A long message with Undo, beside the open details.
+    const int undoId = m_settings->latestUndoId();
+    QVERIFY(QMetaObject::invokeMethod(m_window, "sayUndoable",
+                                      Q_ARG(QVariant, QStringLiteral("Removed new tag A really long tag name typed into the field to see it wrap")),
+                                      Q_ARG(QVariant, undoId)));
+    QQuickItem* toast = item(QStringLiteral("viewerStatus"));
+    QTRY_VERIFY(toast->isVisible());
+    const QRectF details = panel->mapRectToScene(panel->boundingRect());
+    QVERIFY2(toast->mapRectToScene(toast->boundingRect()).right() <= details.left(),
+             qPrintable(QStringLiteral("%1 > %2").arg(toast->mapRectToScene(toast->boundingRect()).right()).arg(details.left())));
+    QVERIFY(toast->mapRectToScene(toast->boundingRect()).left() >= 0);
+    if (undoId > 0) {
+      QQuickItem* undo = item(QStringLiteral("viewerUndoButton"));
+      QTRY_VERIFY(undo->isVisible());
+      QVERIFY(undo->mapRectToScene(undo->boundingRect()).right() <= details.left());
+    }
+    QTest::keyClick(m_window, Qt::Key_I);
+  }
+
   // The details carry the file's chips and a tag field. Alt+T reaches the
   // field while they are shown, and the panel's own status line offers Undo.
   void infoPanelChipsAltTAndTheStatusUndo() {

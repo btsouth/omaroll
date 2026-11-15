@@ -282,8 +282,7 @@ QStringList MediaInspector::parseImage(const QByteArray& output) {
   const QDateTime date =
       QDateTime::fromString(taken, QStringLiteral("yyyy:MM:dd HH:mm:ss"));
   if (date.isValid()) {
-    lines.append(QStringLiteral("Taken  ·  ") +
-                 QLocale::system().toString(date, QLocale::ShortFormat));
+    lines.append(QStringLiteral("Taken  ·  ") + dateLabel(date));
   }
 
   const QString make = present(fields.value(3));
@@ -378,6 +377,12 @@ QString MediaInspector::videoCoordinates(const QByteArray& output) {
   const double longitude = match.captured(2).toDouble();
   if (latitude == 0 && longitude == 0) return {};
   return coordinateText(latitude, longitude);
+}
+
+QString MediaInspector::dateLabel(const QDateTime& when) {
+  const QLocale locale = QLocale::system();
+  return locale.toString(when.date(), QStringLiteral("d MMMM yyyy")) + QStringLiteral("  ·  ") +
+         locale.toString(when.time(), QLocale::ShortFormat);
 }
 
 QStringList MediaInspector::describeRaw(const QString& path) {

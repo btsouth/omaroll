@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QDateTime>
 #include <QObject>
 #include <QPointer>
 #include <QStringList>
@@ -43,6 +44,9 @@ public:
   // ImageMagick reports no EXIF for camera raws; their own headers are read
   // in-process instead, into the same lines.
   [[nodiscard]] static QStringList describeRaw(const QString& path);
+  // A capture date as the details show it: the long date the viewer and
+  // the preview use for a file's date, then the time, in the user's locale.
+  [[nodiscard]] static QString dateLabel(const QDateTime& when);
   // The coordinates in ImageMagick's output for parseImage(), or in
   // ffprobe's for parseVideo(), as coordinates() gives them.
   [[nodiscard]] static QString imageCoordinates(const QByteArray& output);

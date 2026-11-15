@@ -11011,7 +11011,15 @@ private slots:
                              "Prime 50mm\n28/10\n1/125\n400\n50/1\n8\nsRGB\n";
     const QStringList imageLines = MediaInspector::parseImage(image);
     QCOMPARE(imageLines.value(0), QStringLiteral("JPEG  ·  sRGB  ·  8-bit"));
-    QVERIFY(imageLines.value(1).startsWith(QStringLiteral("Taken  ·  ")));
+    // The long date in the user's locale, as the viewer and preview show a
+    // file's date, not a short numeric one.
+    QCOMPARE(imageLines.value(1),
+             QStringLiteral("Taken  ·  ") +
+                 QLocale::system().toString(QDate(2020, 5, 6), QStringLiteral("d MMMM yyyy")) +
+                 QStringLiteral("  ·  ") +
+                 QLocale::system().toString(QTime(7, 8, 9), QLocale::ShortFormat));
+    QCOMPARE(MediaInspector::dateLabel(QDateTime(QDate(2020, 5, 6), QTime(7, 8, 9))),
+             imageLines.value(1).mid(QStringLiteral("Taken  ·  ").size()));
     QCOMPARE(imageLines.value(2), QStringLiteral("Camera  ·  TestMake Model X"));
     QCOMPARE(imageLines.value(3), QStringLiteral("Lens  ·  Prime 50mm"));
     QCOMPARE(imageLines.value(4), QStringLiteral("f/2.8  ·  1/125 s  ·  ISO 400  ·  50 mm"));
@@ -12451,9 +12459,10 @@ private slots:
     QCOMPARE(MediaInspector::describeRaw(camera),
              QStringList({QStringLiteral("DNG"),
                           QStringLiteral("Taken  ·  ") +
-                              QLocale::system().toString(
-                                  QDateTime(QDate(2026, 9, 30), QTime(14, 5, 6)),
-                                  QLocale::ShortFormat),
+                              QLocale::system().toString(QDate(2026, 9, 30),
+                                                         QStringLiteral("d MMMM yyyy")) +
+                              QStringLiteral("  ·  ") +
+                              QLocale::system().toString(QTime(14, 5, 6), QLocale::ShortFormat),
                           QStringLiteral("Camera  ·  Omaroll Test Camera"),
                           QStringLiteral("Lens  ·  Test Lens 35mm F2.8"),
                           QStringLiteral("f/2.8  ·  1/125 s  ·  ISO 400  ·  35 mm")}));
