@@ -177,8 +177,25 @@ QtObject {
                 };
                 groups.push(group);
             }
+            // One row per action: keys that do the same thing, such as the
+            // arrows and Page Up and Down for the next file, share a row.
+            const same = group.rows.find(function (other) {
+                return other.label === row.label;
+            });
+            if (same) {
+                same.keys = display([same.keys, row.keys]);
+                same.caps = same.caps.concat(row.caps);
+                continue;
+            }
             group.rows.push(row);
         }
+        // Getting around first and the window last, whatever order the
+        // table lists them in.
+        const order = ["Navigation", "View", "Playback", "Organization", "Actions", "Window", "Search syntax"];
+        groups.sort(function (a, b) {
+            const left = order.indexOf(a.title), right = order.indexOf(b.title);
+            return (left < 0 ? order.length : left) - (right < 0 ? order.length : right);
+        });
         return groups;
     }
 }

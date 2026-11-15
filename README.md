@@ -38,7 +38,8 @@ Everything works locally, without accounts or telemetry.
    ```
 
 3. Double-click a picture or video in your file manager, or run
-   `omaroll photo.jpg`. Run `omaroll` on its own for the library.
+   `omaroll photo.jpg`. Run `omaroll` on its own for the library, where
+   `Ctrl+Shift+O` opens a file from the desktop's file chooser.
 4. Press `?` or `F1` in the library or the viewer for its shortcuts. Close any
    open sheet or menu first.
 5. Optional: Omarchy dims every window a little. To keep pictures at full

@@ -9,6 +9,7 @@
 
 #include "actions/ActionLauncher.h"
 #include "actions/ActionRegistry.h"
+#include "actions/FileChooserRequest.h"
 #include "actions/FileDrag.h"
 #include "actions/ExternalEditors.h"
 #include "app/AppSettings.h"
@@ -2551,6 +2552,317 @@ private slots:
     QVERIFY(prop("infoOpen").toBool());
     QTest::keyClick(m_window, Qt::Key_Escape);
     QVERIFY(!prop("infoOpen").toBool());
+  }
+
+  // With the details open, Tab reaches every control on the card going
+  // forward, the same ones Shift+Tab reaches going back.
+  void tabReachesTheDetailsCardBothWays() {
+    open({media(QStringLiteral("Shot 1.jpg"))});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QTest::keyClick(m_window, Qt::Key_I);
+    QTRY_VERIFY(prop("infoOpen").toBool());
+    QQuickItem* keys = item(QStringLiteral("viewerKeys"));
+    QQuickItem* panel = item(QStringLiteral("viewerInfoPanel"));
+    const auto onCard = [&] {
+      for (QQuickItem* at = m_window->activeFocusItem(); at; at = at->parentItem())
+        if (at == panel) return true;
+      return false;
+    };
+    const auto walk = [&](bool forward) {
+      QStringList seen;
+      for (int step = 0; step < 80; ++step) {
+        if (forward) QTest::keyClick(m_window, Qt::Key_Tab);
+        else QTest::keyClick(m_window, Qt::Key_Backtab, Qt::ShiftModifier);
+        if (keys->hasActiveFocus()) break;
+        if (onCard()) seen.append(m_window->activeFocusItem()->objectName());
+      }
+      return seen;
+    };
+    const QStringList forward = walk(true);
+    QVERIFY(keys->hasActiveFocus());
+    QStringList backward = walk(false);
+    QVERIFY(keys->hasActiveFocus());
+    std::reverse(backward.begin(), backward.end());
+    QVERIFY2(forward.contains(QStringLiteral("viewerInfoFavourite")), qPrintable(forward.join(u',')));
+    QVERIFY2(forward.contains(QStringLiteral("viewerInfoCopyName")), qPrintable(forward.join(u',')));
+    QCOMPARE(forward, backward);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+  }
+
+  // The video bar's seek and volume are sliders to assistive technology,
+  // with their range, value and a readable value, and the arrows move them
+  // once they have the keyboard. The speed button names its speed.
+  void transportSlidersSayTheirValueAndTakeTheArrows() {
+    open({media(QStringLiteral("clip.mp4"))});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY_WITH_TIMEOUT(player->duration() > 0, 30000);
+    player->pause();
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "seekTo", Q_ARG(QVariant, 0)));
+    QTRY_VERIFY(player->position() < 500);
+
+    QQuickItem* seek = item(QStringLiteral("viewerScrub"));
+    QAccessibleInterface* seekFace = QAccessible::queryAccessibleInterface(seek);
+    QVERIFY(seekFace);
+    QCOMPARE(seekFace->role(), QAccessible::Slider);
+    QCOMPARE(seekFace->text(QAccessible::Name), QStringLiteral("Seek"));
+    QVERIFY(seekFace->valueInterface());
+    QCOMPARE(seekFace->valueInterface()->minimumValue().toReal(), 0.0);
+    QCOMPARE(seekFace->valueInterface()->maximumValue().toReal(), qreal(player->duration()));
+    QVERIFY2(seekFace->text(QAccessible::Description).startsWith(QStringLiteral("0:00 of ")),
+             qPrintable(seekFace->text(QAccessible::Description)));
+    QVERIFY(seek->activeFocusOnTab());
+
+    // Reached with Tab, in the bar's order.
+    QStringList order;
+    for (int step = 0; step < 40 && !seek->hasActiveFocus(); ++step) {
+      QTest::keyClick(m_window, Qt::Key_Tab);
+      order.append(m_window->activeFocusItem() ? m_window->activeFocusItem()->objectName() : QString());
+    }
+    QVERIFY2(seek->hasActiveFocus(), qPrintable(order.join(u',')));
+    QVERIFY(prop("controlsFocused").toBool());
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTRY_VERIFY(player->position() >= 4000);
+    QTRY_VERIFY(seekFace->valueInterface()->currentValue().toReal() >= 4000);
+    QVERIFY2(seekFace->text(QAccessible::Description).startsWith(QStringLiteral("0:05 of ")),
+             qPrintable(seekFace->text(QAccessible::Description)));
+    QTest::keyClick(m_window, Qt::Key_Home);
+    QTRY_VERIFY(player->position() < 500);
+    QVERIFY(seek->hasActiveFocus());
+
+    QQuickItem* volume = item(QStringLiteral("viewerVolume"));
+    QTRY_VERIFY(volume->isVisible());
+    QAccessibleInterface* volumeFace = QAccessible::queryAccessibleInterface(volume);
+    QVERIFY(volumeFace);
+    QCOMPARE(volumeFace->role(), QAccessible::Slider);
+    QCOMPARE(volumeFace->text(QAccessible::Name), QStringLiteral("Volume"));
+    QCOMPARE(volumeFace->valueInterface()->maximumValue().toReal(), 100.0);
+    QCOMPARE(volumeFace->valueInterface()->currentValue().toReal(), 80.0);
+    QCOMPARE(volumeFace->text(QAccessible::Description), QStringLiteral("80%"));
+    for (int step = 0; step < 20 && !volume->hasActiveFocus(); ++step) QTest::keyClick(m_window, Qt::Key_Tab);
+    QVERIFY(volume->hasActiveFocus());
+    // Left and Right change the volume here rather than seek.
+    const qint64 at = player->position();
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTRY_COMPARE(m_settings->videoVolume(), 0.85);
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QTRY_COMPARE(m_settings->videoVolume(), 0.75);
+    QCOMPARE(volumeFace->text(QAccessible::Description), QStringLiteral("75%"));
+    QVERIFY(qAbs(player->position() - at) < 1000);
+    m_settings->setVideoMuted(true);
+    QCOMPARE(volumeFace->text(QAccessible::Description), QStringLiteral("Muted"));
+    // Muted reads as 0, and stepping down from there stays muted at 0
+    // rather than jumping back to the volume kept for unmuting.
+    QTRY_COMPARE(volumeFace->valueInterface()->currentValue().toReal(), 0.0);
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QVERIFY(QMetaObject::invokeMethod(volume, "change", Q_ARG(QVariant, -0.05)));
+    QVERIFY(m_settings->videoMuted());
+    QCOMPARE(m_settings->videoVolume(), 0.75);
+    QCOMPARE(volumeFace->valueInterface()->currentValue().toReal(), 0.0);
+    m_settings->setVideoMuted(false);
+    QTRY_COMPARE(volumeFace->valueInterface()->currentValue().toReal(), 75.0);
+
+    // A value written by assistive technology sets the volume, and seeks.
+    volumeFace->valueInterface()->setCurrentValue(30);
+    QTRY_COMPARE(m_settings->videoVolume(), 0.3);
+    QCOMPARE(volumeFace->valueInterface()->currentValue().toReal(), 30.0);
+    const qint64 middle = player->duration() / 2;
+    seekFace->valueInterface()->setCurrentValue(qreal(middle));
+    QTRY_VERIFY(qAbs(player->position() - middle) < 500);
+    QTRY_VERIFY(qAbs(seekFace->valueInterface()->currentValue().toReal() - player->position()) < 1);
+
+    QQuickItem* speed = item(QStringLiteral("viewerSpeedButton"));
+    QTRY_VERIFY(speed->isVisible());
+    QAccessibleInterface* speedFace = QAccessible::queryAccessibleInterface(speed);
+    QCOMPARE(speedFace->role(), QAccessible::Button);
+    QCOMPARE(speedFace->text(QAccessible::Name), QStringLiteral("Playback speed 1×"));
+    speed->forceActiveFocus(Qt::TabFocusReason);
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_COMPARE(player->playbackRate(), 1.25);
+    QCOMPARE(speedFace->text(QAccessible::Name), QStringLiteral("Playback speed 1.25×"));
+  }
+
+  // The Trash question is a dialog named by its question, with the file as
+  // its text, and opens on its default button. Tab stays inside it, and
+  // closing it gives the keyboard back to the button that asked. The result
+  // is read out as an alert, and its Undo is a whole, focusable button.
+  void trashPromptIsADialogAndFocusComesBack() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QStringList files{dir.filePath(QStringLiteral("a.jpg")), dir.filePath(QStringLiteral("b.jpg"))};
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), files.at(0)));
+    QVERIFY(QFile::copy(media(QStringLiteral("shot 2.jpg")), files.at(1)));
+    open({files.at(0)});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QTRY_COMPARE(m_session->count(), 2);
+    QQuickItem* confirm = item(QStringLiteral("viewerConfirm"));
+    QQuickItem* trash = item(QStringLiteral("viewerTrashButton"));
+    QQuickItem* yes = find(confirm, [](QQuickItem* c) { return c->objectName() == QStringLiteral("confirmSheetConfirm"); });
+    QQuickItem* no = find(confirm, [](QQuickItem* c) { return c->objectName() == QStringLiteral("confirmSheetCancel"); });
+    QVERIFY(yes && no);
+    for (int step = 0; step < 40 && !trash->hasActiveFocus(); ++step) QTest::keyClick(m_window, Qt::Key_Tab);
+    QVERIFY(trash->hasActiveFocus());
+
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(confirm->isVisible());
+    QAccessibleInterface* dialog = QAccessible::queryAccessibleInterface(confirm);
+    QVERIFY(dialog);
+    QCOMPARE(dialog->role(), QAccessible::Dialog);
+    QCOMPARE(dialog->text(QAccessible::Name), QStringLiteral("Move this item to Trash?"));
+    QCOMPARE(dialog->text(QAccessible::Description), files.at(0));
+    QVERIFY(yes->hasActiveFocus());
+    QVERIFY(QAccessible::queryAccessibleInterface(yes)->state().defaultButton);
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QVERIFY(no->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QVERIFY(yes->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Backtab, Qt::ShiftModifier);
+    QVERIFY(no->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!confirm->isVisible());
+    QTRY_VERIFY(trash->hasActiveFocus());
+    QVERIFY(QFile::exists(files.at(0)));
+
+    // Confirmed with Enter on the default button.
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(confirm->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!QFile::exists(files.at(0)));
+    QTRY_COMPARE(m_session->path(), files.at(1));
+    QQuickItem* toast = item(QStringLiteral("viewerStatus"));
+    QAccessibleInterface* alert = QAccessible::queryAccessibleInterface(toast);
+    QCOMPARE(alert->role(), QAccessible::AlertMessage);
+    QCOMPARE(alert->text(QAccessible::Name), QStringLiteral("Moved to Trash"));
+    QQuickItem* undo = item(QStringLiteral("viewerUndoButton"));
+    QTRY_VERIFY(undo->isVisible());
+    QCOMPARE(undo->height(), toast->height());
+    QVERIFY(undo->height() >= 30);
+    QCOMPARE(QAccessible::queryAccessibleInterface(undo)->text(QAccessible::Name), QStringLiteral("Undo"));
+    for (int step = 0; step < 40 && !undo->hasActiveFocus(); ++step) QTest::keyClick(m_window, Qt::Key_Tab);
+    QVERIFY(undo->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(QFile::exists(files.at(0)));
+    QTRY_VERIFY(item(QStringLiteral("viewerKeys"))->hasActiveFocus());
+  }
+
+  // A held Enter on the Trash button opens the question once and never
+  // answers it: its repeats neither confirm the prompt nor press the button
+  // again once the keyboard comes back to it. Only a fresh press confirms.
+  void aHeldEnterNeverChainsTrashConfirmations() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QStringList files{dir.filePath(QStringLiteral("a.jpg")), dir.filePath(QStringLiteral("b.jpg"))};
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), files.at(0)));
+    QVERIFY(QFile::copy(media(QStringLiteral("shot 2.jpg")), files.at(1)));
+    open({files.at(0)});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QTRY_COMPARE(m_session->count(), 2);
+    QQuickItem* confirm = item(QStringLiteral("viewerConfirm"));
+    QQuickItem* trash = item(QStringLiteral("viewerTrashButton"));
+    for (int step = 0; step < 40 && !trash->hasActiveFocus(); ++step) QTest::keyClick(m_window, Qt::Key_Tab);
+    QVERIFY(trash->hasActiveFocus());
+    const auto remaining = [&] {
+      return int(QFile::exists(files.at(0))) + int(QFile::exists(files.at(1)));
+    };
+    // A key pressed now and held, or (|fresh| false) one already held
+    // before, which only sends its repeats.
+    const auto hold = [&](Qt::Key key, const QString& text, int repeats, bool fresh = true) {
+      if (fresh) {
+        QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier, text);
+        QCoreApplication::sendEvent(m_window, &press);
+      }
+      for (int i = 0; i < repeats; ++i) {
+        QKeyEvent repeat(QEvent::KeyPress, key, Qt::NoModifier, text, true);
+        QCoreApplication::sendEvent(m_window, &repeat);
+        QCoreApplication::processEvents();
+      }
+      QKeyEvent release(QEvent::KeyRelease, key, Qt::NoModifier, text);
+      QCoreApplication::sendEvent(m_window, &release);
+      QCoreApplication::processEvents();
+    };
+
+    // Enter held on the button: the question opens and stays unanswered.
+    hold(Qt::Key_Return, QStringLiteral("\r"), 8);
+    QTRY_VERIFY(confirm->isVisible());
+    QCOMPARE(remaining(), 2);
+    // Nor do the repeats of a Space held since before it opened.
+    hold(Qt::Key_Space, QStringLiteral(" "), 8, false);
+    QVERIFY(confirm->isVisible());
+    QCOMPARE(remaining(), 2);
+
+    // A fresh Enter answers it, and only it; focus returns to Trash, and
+    // the rest of that press, held, does not start the next question.
+    hold(Qt::Key_Return, QStringLiteral("\r"), 8);
+    QTRY_VERIFY(!confirm->isVisible());
+    QTRY_COMPARE(remaining(), 1);
+    QVERIFY(!QFile::exists(files.at(0)));
+    QTRY_VERIFY(trash->hasActiveFocus());
+    hold(Qt::Key_Return, QStringLiteral("\r"), 0);
+    QTRY_VERIFY(confirm->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!confirm->isVisible());
+    QCOMPARE(remaining(), 1);
+  }
+
+  // Help starts with Navigation, files the flips and saved copy under View,
+  // and gives each action one row: the arrows and Page Up and Down share
+  // "Previous / next file".
+  void helpReadsFromNavigationWithOneRowPerAction() {
+    open({media(QStringLiteral("Shot 1.jpg"))});
+    QObject* help = m_window->findChild<QObject*>(QStringLiteral("viewerShortcutHelp"));
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(help->property("visible").toBool());
+    const QVariantList groups = help->property("groups").value<QJSValue>().toVariant().toList();
+    QStringList titles;
+    QString flipGroup, openFile;
+    int previousRows = 0;
+    for (const QVariant& group : groups) {
+      const QVariantMap map = group.toMap();
+      titles.append(map.value(QStringLiteral("title")).toString());
+      QStringList seen;
+      for (const QVariant& entry : map.value(QStringLiteral("rows")).toList()) {
+        const QVariantMap row = entry.toMap();
+        const QString label = row.value(QStringLiteral("label")).toString();
+        QVERIFY2(!seen.contains(label), qPrintable(label));
+        seen.append(label);
+        if (label == QStringLiteral("Previous / next file")) {
+          ++previousRows;
+          QCOMPARE(row.value(QStringLiteral("caps")).toList().size(), 4);
+        }
+        if (label == QStringLiteral("Flip horizontally")) flipGroup = titles.last();
+        if (label == QStringLiteral("Open a file")) openFile = row.value(QStringLiteral("keys")).toString();
+      }
+    }
+    QCOMPARE(titles.first(), QStringLiteral("Navigation"));
+    QVERIFY(!titles.contains(QStringLiteral("Zoom")));
+    QCOMPARE(flipGroup, QStringLiteral("View"));
+    QCOMPARE(previousRows, 1);
+    QCOMPARE(openFile, QStringLiteral("Ctrl+Shift+O"));
+    QVariant columns;
+    QVERIFY(QMetaObject::invokeMethod(help, "columnsFor", Q_RETURN_ARG(QVariant, columns),
+                                      Q_ARG(QVariant, help->property("columnCount"))));
+    const QVariantList first = (columns.metaType() == QMetaType::fromType<QJSValue>() ? columns.value<QJSValue>().toVariant() : columns).toList().value(0).toList();
+    QCOMPARE(first.value(0).toMap().value(QStringLiteral("title")).toString(), QStringLiteral("Navigation"));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!help->property("visible").toBool());
+  }
+
+  // Ctrl+Shift+O asks the desktop's file chooser for a file to open;
+  // Ctrl+O still offers another app for the one on screen.
+  void ctrlShiftOChoosesAFileToOpen() {
+    open({media(QStringLiteral("Shot 1.jpg"))});
+    // A chooser still waiting on a portal must not reach the next test.
+    const auto closeChoosers = qScopeGuard([this] { qDeleteAll(m_actions->findChildren<FileChooserRequest*>()); });
+    QSignalSpy failed(m_actions, &ActionLauncher::failed);
+    QTest::keyClick(m_window, Qt::Key_O, Qt::ControlModifier | Qt::ShiftModifier);
+    // A portal answers with a chooser; a test bus without one says so.
+    QTRY_VERIFY(!m_actions->findChildren<FileChooserRequest*>().isEmpty() || failed.count() > 0);
+    if (failed.count() > 0) {
+      const QString message = failed.first().first().toString();
+      QVERIFY2(message.contains(QStringLiteral("file chooser")), qPrintable(message));
+    }
   }
 
   // A focused control that is switched off or hidden hands the keyboard back

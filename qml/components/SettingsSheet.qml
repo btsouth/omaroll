@@ -555,7 +555,7 @@ Item {
                     SettingSwitch {
                         id: toggleDownloads
                         objectName: "scanDownloadsToggle"
-                        accessibleName: "Scan Downloads"
+                        accessibleName: "Include Downloads"
                         anchors.verticalCenter: parent.verticalCenter
                         checked: Settings.scanDownloads
                         onToggled: Settings.scanDownloads = !Settings.scanDownloads
@@ -571,7 +571,7 @@ Item {
                     PillButton {
                         id: depthButton
                         objectName: "folderDepthButton"
-                        accessibleName: "Folder scan depth: " + label
+                        accessibleName: "Folder depth: " + label
                         toolTip: "Click for the next depth, from 1 to 8"
                         anchors.verticalCenter: parent.verticalCenter
                         label: Settings.recursionDepth + " deep"
@@ -589,7 +589,7 @@ Item {
                     SettingSwitch {
                         id: hiddenButton
                         objectName: "showHiddenToggle"
-                        accessibleName: "Hidden items"
+                        accessibleName: "Show hidden media"
                         anchors.verticalCenter: parent.verticalCenter
                         checked: Captures.showHidden
                         onToggled: Captures.showHidden = !Captures.showHidden
@@ -618,7 +618,7 @@ Item {
 
                     SettingSwitch {
                         id: pairingToggle
-                        accessibleName: "Pair RAW and JPEG"
+                        accessibleName: "Group matching RAW and JPEG files"
                         objectName: "pairRawJpegToggle"
                         anchors.verticalCenter: parent.verticalCenter
                         checked: Settings.pairRawJpeg
@@ -649,7 +649,7 @@ Item {
                     PillButton {
                         id: cacheButton
                         objectName: "thumbnailCacheButton"
-                        accessibleName: "Thumbnail cache size: " + label
+                        accessibleName: "Thumbnail cache: " + label
                         toolTip: "Click for the next size, from 64 MB to 1 GB"
                         anchors.verticalCenter: parent.verticalCenter
                         label: root.cacheLabel(Settings.thumbnailCacheMb)
@@ -703,7 +703,7 @@ Item {
                     PillButton {
                         id: imageActionButton
                         objectName: "imageDefaultButton"
-                        accessibleName: "Default picture action: " + label
+                        accessibleName: "Image default: " + label
                         toolTip: "Click for the next action"
                         anchors.verticalCenter: parent.verticalCenter
                         label: root.actionLabel(Settings.imagePrimaryAction)
@@ -790,7 +790,7 @@ Item {
                     PillButton {
                         id: videoActionButton
                         objectName: "videoDefaultButton"
-                        accessibleName: "Default video action: " + label
+                        accessibleName: "Video default: " + label
                         toolTip: "Click for the next action"
                         anchors.verticalCenter: parent.verticalCenter
                         label: root.actionLabel(Settings.videoPrimaryAction)
@@ -822,7 +822,7 @@ Item {
                     SettingSwitch {
                         id: slideshowVideosButton
                         objectName: "slideshowVideosToggle"
-                        accessibleName: "Include videos in slideshow"
+                        accessibleName: "Videos in slideshows"
                         anchors.verticalCenter: parent.verticalCenter
                         checked: Settings.slideshowVideos
                         onToggled: Settings.slideshowVideos = !Settings.slideshowVideos

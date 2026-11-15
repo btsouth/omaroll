@@ -98,10 +98,12 @@ Item {
         onClicked: root.clicked()
     }
 
+    // One press, one click: a held key's repeats are swallowed, so holding
+    // Enter cannot press a button again, or confirm the prompt it opened.
     Keys.onPressed: function(event) {
         if (root.enabled && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
                              || event.key === Qt.Key_Space)) {
-            root.clicked()
+            if (!event.isAutoRepeat) root.clicked()
             event.accepted = true
         }
     }
