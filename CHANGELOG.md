@@ -72,6 +72,12 @@
   instead of leaving it paused until Space.
 - Switching the audio track or subtitles in the first moments of a video no
   longer holds the picture for over half a second while the sound carries on.
+- The file name shown for the keyboard's current tile stays inside the tile
+  instead of covering the day header and the tiles around it.
+- The grid's scroll thumb matches the view as soon as a search is cleared.
+- On a narrow tile a star rating shortens to "★4" before the file size gives
+  way, so copies in a duplicate set can still be told apart.
+- The empty library's buttons line up when they wrap onto two rows.
 
 ## 1.19.1
 
