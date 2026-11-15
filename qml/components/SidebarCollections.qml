@@ -767,9 +767,14 @@ FocusScope {
         property string name: ""
         modal: true
         dim: false
+        // Drawn in the window as an item and opaque whatever the theme's
+        // alpha: as a separate popup window it was see-through on the
+        // desktop, with the sidebar showing behind its rows.
+        popupType: Popup.Item
         background: Rectangle {
+            objectName: "sidebarCollectionMenuBackground"
             implicitWidth: 200
-            color: Theme.background
+            color: Qt.rgba(Theme.background.r, Theme.background.g, Theme.background.b, 1)
             border.width: 1
             border.color: root.shade(Theme.foreground, 0.16)
             radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3

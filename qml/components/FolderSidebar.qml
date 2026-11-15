@@ -493,12 +493,15 @@ FocusScope {
         id: folderMenu
         objectName: "sidebarFolderMenu"
         property string path: ""
-        // Modal, undimmed, and drawn like the app's other menus.
+        // Modal, undimmed, and drawn like the app's other menus: an item in
+        // the window, opaque whatever the theme's alpha.
         modal: true
         dim: false
+        popupType: Popup.Item
         background: Rectangle {
+            objectName: "sidebarFolderMenuBackground"
             implicitWidth: 220
-            color: Theme.background
+            color: Qt.rgba(Theme.background.r, Theme.background.g, Theme.background.b, 1)
             border.width: 1
             border.color: root.shade(Theme.foreground, 0.16)
             radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3

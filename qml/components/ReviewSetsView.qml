@@ -458,7 +458,8 @@ FocusScope {
         width: bubbleText.implicitWidth + 20
         height: bubbleText.implicitHeight + 10
         radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
-        color: Qt.rgba(Theme.background.r, Theme.background.g, Theme.background.b, 0.94)
+        // Opaque, so the tiles under it never show through the month.
+        color: Qt.rgba(Theme.background.r, Theme.background.g, Theme.background.b, 1)
         border.width: 1
         border.color: Qt.rgba(Theme.foreground.r, Theme.foreground.g, Theme.foreground.b, 0.18)
         Accessible.ignored: true

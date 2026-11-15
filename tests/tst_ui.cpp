@@ -9743,6 +9743,7 @@ private slots:
     click(row, Qt::RightButton);
     QObject* menu = m_window->findChild<QObject*>(QStringLiteral("sidebarFolderMenu"));
     QTRY_VERIFY(menu->property("visible").toBool());
+    QVERIFY(opaquePopup(menu, QStringLiteral("sidebarFolderMenuBackground")));
     QTest::keyClick(m_window, Qt::Key_F9);
     QVERIFY(m_settings->showFolderSidebar());
   }
@@ -9993,6 +9994,9 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_Menu);
     QTRY_VERIFY(menu->property("visible").toBool());
     QCOMPARE(menu->property("name").toString(), album);
+    // Opaque, and drawn in the window rather than as a popup window of
+    // its own, which the desktop showed see-through.
+    QVERIFY(opaquePopup(menu, QStringLiteral("sidebarCollectionMenuBackground")));
     QTest::keyClick(m_window, Qt::Key_Down);
     QTest::keyClick(m_window, Qt::Key_Down);
     QTest::keyClick(m_window, Qt::Key_Return);
@@ -10653,6 +10657,7 @@ private slots:
     pill->forceActiveFocus();
     QTest::keyClick(m_window, Qt::Key_Return);
     QTRY_VERIFY(jump->property("visible").toBool());
+    QVERIFY(opaquePopup(jump, QStringLiteral("dateJumpBackground")));
     QTRY_VERIFY(list->hasActiveFocus());
     QTest::keyClick(m_window, Qt::Key_Escape);
     QTRY_VERIFY(!jump->property("visible").toBool());
@@ -10738,6 +10743,8 @@ private slots:
     walk(reviewSets);
     QVERIFY(marks >= 1);
     QVERIFY(bubble->z() > item("reviewSetsList")->z());
+    QCOMPARE(bubble->property("color").value<QColor>().alphaF(), 1.0);
+    QCOMPARE(bubble->opacity(), 1.0);
     QTest::mouseRelease(m_window, Qt::LeftButton, Qt::NoModifier, bottom.toPoint());
     QTest::mouseMove(m_window, QPoint(5, 5));
     QTRY_VERIFY(!bubble->property("shown").toBool());
@@ -12021,6 +12028,16 @@ private:
       qFatal("no item named %s", qPrintable(objectName));
     }
     return found;
+  }
+
+  // A menu or popup in the window itself, with a fully opaque background
+  // at full opacity, whatever alpha the theme's colors carry.
+  bool opaquePopup(QObject* popup, const QString& backgroundName) const {
+    if (!popup || popup->property("popupType").toInt() != 0) return false; // Popup.Item
+    if (popup->property("opacity").toReal() < 1.0) return false;
+    auto* background = qvariant_cast<QQuickItem*>(popup->property("background"));
+    if (!background || background->objectName() != backgroundName) return false;
+    return background->property("color").value<QColor>().alphaF() == 1.0 && background->opacity() == 1.0;
   }
 
   // The collections list in the sidebar: each row's data, by row.
