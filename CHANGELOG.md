@@ -52,6 +52,8 @@
 
 ### Fixed
 
+- A notice in the library preview keeps its words while it fades out,
+  instead of shrinking to an empty box.
 - The video bar's seek and volume read as sliders to screen readers, with
   the time or the percentage, and take the arrow keys once reached with
   `Tab`. The speed button says the speed.

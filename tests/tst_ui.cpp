@@ -10843,8 +10843,11 @@ private slots:
       };
       // Caption controls also show a transient notice and a hover tooltip.
       // Clear those independently changing overlays before comparing pixels.
+      // The notice's toast over the top of the video fades out, and a slow
+      // render loop can still be drawing that fade between the captures.
       QTest::mouseMove(m_window, QPoint(5, 5));
       QVERIFY(QMetaObject::invokeMethod(m_window, "say", Q_ARG(QVariant, QString())));
+      QTRY_VERIFY(!item("previewStatusToast")->isVisible());
       // Pause acknowledgement can precede the last queued frame on slower
       // decoders. Detach delivery and re-submit one immutable frame, so the
       // only pixels allowed to change in this comparison are captions.
