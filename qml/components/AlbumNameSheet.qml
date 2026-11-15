@@ -53,18 +53,14 @@ Item {
             root.close()
             return
         }
-        const created = mode === "tag" ? Settings.createTag(name)
+        // Created and filled in one step, so one Undo takes both back.
+        const created = mode === "tag" ? Settings.createTagFor(name, paths, true).created
                         : mode === "smart" ? Settings.saveSmartCollection(name, savedView)
-                                           : Settings.createAlbum(name)
+                                           : Settings.createAlbumFor(name, paths, true).created
         if (!created) {
             errorMessage = Settings.organizationError || (mode === "smart"
                            ? "Use a name without a slash." : "Use a unique name without a slash.")
             return
-        }
-        if (mode === "album" && paths.length > 0) {
-            Settings.addToAlbum(name, paths)
-        } else if (mode === "tag" && paths.length > 0) {
-            Settings.addTag(name, paths)
         }
         if (Settings.organizationError !== "") {
             errorMessage = Settings.organizationError
