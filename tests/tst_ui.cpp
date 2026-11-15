@@ -10077,8 +10077,6 @@ private slots:
     // move with the list's origin when its rows are handed over.
     QTRY_VERIFY(inView(shownAt(last)));
     const qreal after = shownAt(last)->mapToItem(list, QPointF(0, 0)).y();
-    qInfo() << "last row at" << shownTop << "then" << after << "contentY" << scrolled << "then"
-            << list->property("contentY").toReal() << "originY" << list->property("originY").toReal();
     QVERIFY(qAbs(after - shownTop) < 1);
   }
 
