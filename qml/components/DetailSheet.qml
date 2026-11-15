@@ -2494,6 +2494,7 @@ Item {
 
             Rectangle {
                 id: statusToast
+                objectName: "previewStatusToast"
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.top: parent.top
                 anchors.topMargin: 14
