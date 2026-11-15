@@ -9843,21 +9843,27 @@ private slots:
     QAccessibleInterface* named = QAccessible::queryAccessibleInterface(list);
     QCOMPARE(named->role(), QAccessible::List);
     QCOMPARE(named->text(QAccessible::Name), QStringLiteral("Collections"));
-    QQuickItem* albumsHeader = find(collectionDelegate(collectionIndex("header", "albums")), [](QQuickItem* candidate) {
-      return candidate->isVisible() && QAccessible::queryAccessibleInterface(candidate)
-             && QAccessible::queryAccessibleInterface(candidate)->role() == QAccessible::Heading;
+    const auto accessibleEntry = [&](const QString& kind, const QString& name) -> QAccessibleInterface* {
+      QQuickItem* entry = collectionEntry(collectionIndex(kind, name));
+      return entry ? QAccessible::queryAccessibleInterface(entry) : nullptr;
+    };
+    QQuickItem* albumsRow = nullptr;
+    QTRY_VERIFY((albumsRow = collectionDelegate(collectionIndex("header", "albums"))) != nullptr);
+    QQuickItem* albumsHeader = find(albumsRow, [](QQuickItem* candidate) {
+      QAccessibleInterface* face = candidate->isVisible() ? QAccessible::queryAccessibleInterface(candidate) : nullptr;
+      return face && face->role() == QAccessible::Heading;
     });
     QVERIFY(albumsHeader);
     QAccessibleInterface* heading = QAccessible::queryAccessibleInterface(albumsHeader);
     QVERIFY(heading->text(QAccessible::Name).startsWith(QStringLiteral("Albums, ")));
     QVERIFY(heading->state().expandable);
     QVERIFY(heading->state().expanded);
-    QAccessibleInterface* albumItem = QAccessible::queryAccessibleInterface(collectionEntry(collectionIndex("album", album)));
-    QCOMPARE(albumItem->role(), QAccessible::ListItem);
-    QTRY_COMPARE(QAccessible::queryAccessibleInterface(collectionEntry(collectionIndex("album", album)))
-                     ->text(QAccessible::Name), QStringLiteral("Album Sidebar keys, 2 items"));
-    QCOMPARE(QAccessible::queryAccessibleInterface(collectionEntry(collectionIndex("tag", "Sidebarq/Child")))
-                 ->text(QAccessible::Name), QStringLiteral("Tag Sidebarq/Child, 1 item"));
+    QTRY_VERIFY(accessibleEntry("album", album) != nullptr);
+    QCOMPARE(accessibleEntry("album", album)->role(), QAccessible::ListItem);
+    QTRY_COMPARE(accessibleEntry("album", album)->text(QAccessible::Name), QStringLiteral("Album Sidebar keys, 2 items"));
+    QTRY_VERIFY(accessibleEntry("tag", "Sidebarq/Child") != nullptr);
+    QTRY_COMPARE(accessibleEntry("tag", "Sidebarq/Child")->text(QAccessible::Name),
+                 QStringLiteral("Tag Sidebarq/Child, 1 item"));
     QAccessibleInterface* folders = QAccessible::queryAccessibleInterface(foldersHeader);
     QCOMPARE(folders->role(), QAccessible::Heading);
     QVERIFY(folders->state().expanded);
