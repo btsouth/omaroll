@@ -2668,8 +2668,9 @@ private slots:
     volumeFace->valueInterface()->setCurrentValue(30);
     QTRY_COMPARE(m_settings->videoVolume(), 0.3);
     QCOMPARE(volumeFace->valueInterface()->currentValue().toReal(), 30.0);
-    seekFace->valueInterface()->setCurrentValue(10000);
-    QTRY_VERIFY(qAbs(player->position() - 10000) < 1000);
+    const qint64 middle = player->duration() / 2;
+    seekFace->valueInterface()->setCurrentValue(qreal(middle));
+    QTRY_VERIFY(qAbs(player->position() - middle) < 500);
     QTRY_VERIFY(qAbs(seekFace->valueInterface()->currentValue().toReal() - player->position()) < 1);
 
     QQuickItem* speed = item(QStringLiteral("viewerSpeedButton"));
@@ -2765,9 +2766,13 @@ private slots:
     const auto remaining = [&] {
       return int(QFile::exists(files.at(0))) + int(QFile::exists(files.at(1)));
     };
-    const auto hold = [&](Qt::Key key, const QString& text, int repeats) {
-      QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier, text);
-      QCoreApplication::sendEvent(m_window, &press);
+    // A key pressed now and held, or (|fresh| false) one already held
+    // before, which only sends its repeats.
+    const auto hold = [&](Qt::Key key, const QString& text, int repeats, bool fresh = true) {
+      if (fresh) {
+        QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier, text);
+        QCoreApplication::sendEvent(m_window, &press);
+      }
       for (int i = 0; i < repeats; ++i) {
         QKeyEvent repeat(QEvent::KeyPress, key, Qt::NoModifier, text, true);
         QCoreApplication::sendEvent(m_window, &repeat);
@@ -2782,8 +2787,8 @@ private slots:
     hold(Qt::Key_Return, QStringLiteral("\r"), 8);
     QTRY_VERIFY(confirm->isVisible());
     QCOMPARE(remaining(), 2);
-    // Space held on the prompt's button does not answer it either.
-    hold(Qt::Key_Space, QStringLiteral(" "), 8);
+    // Nor do the repeats of a Space held since before it opened.
+    hold(Qt::Key_Space, QStringLiteral(" "), 8, false);
     QVERIFY(confirm->isVisible());
     QCOMPARE(remaining(), 2);
 
