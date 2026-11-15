@@ -3204,12 +3204,20 @@ private slots:
     auto* stars = object->findChild<QQuickItem*>(QStringLiteral("captureStars"));
     auto* size = object->findChild<QQuickItem*>(QStringLiteral("captureSizeLabel"));
     QVERIFY(stars && size);
+    auto* when = object->findChild<QQuickItem*>(QStringLiteral("captureWhenLabel"));
+    QVERIFY(when);
     object->setProperty("rating", 4);
-    QVERIFY(stars->isVisible());
-    QVERIFY(size->isVisible());
+    object->setProperty("width", 100);
     QCOMPARE(stars->property("text").toString(), QStringLiteral("★4"));
+    // Room for the time, the size and "★4", not for four stars drawn out.
+    const qreal tight = 16 + when->implicitWidth() + 8 + size->implicitWidth() + 8
+                        + stars->implicitWidth() + 8;
+    object->setProperty("width", tight);
+    QVERIFY(stars->isVisible());
+    QCOMPARE(stars->property("text").toString(), QStringLiteral("★4"));
+    QVERIFY(size->isVisible());
     // With room, the stars are drawn out.
-    object->setProperty("width", 480);
+    object->setProperty("width", tight + 200);
     QCOMPARE(stars->property("text").toString(), QStringLiteral("★★★★"));
     QVERIFY(size->isVisible());
   }
@@ -10079,6 +10087,8 @@ private slots:
       const QPointF top = row->mapToItem(list, QPointF(0, 0));
       return top.y() >= -1 && top.y() + row->height() <= list->height() + 1;
     };
+    // From the top of the list, wherever an earlier test left it.
+    QMetaObject::invokeMethod(list, "positionViewAtBeginning");
     QQuickItem* firstRow = shownAt(0);
     QVERIFY(inView(firstRow));
 
@@ -10389,8 +10399,8 @@ private slots:
       typeText(to);
       QTest::keyClick(m_window, Qt::Key_Return);
       QTRY_VERIFY(!sheet->isVisible());
-      QTRY_VERIFY(collectionIndex(kind, to) > 0);
-      QTRY_VERIFY(list->hasActiveFocus());
+      QTRY_VERIFY2(collectionIndex(kind, to) > 0, qPrintable(focusName()));
+      QTRY_VERIFY2(list->hasActiveFocus(), qPrintable(focusName()));
       QTRY_COMPARE(list->property("currentIndex").toInt(), collectionIndex(kind, to));
       QTest::qWait(250);
       QVERIFY(list->hasActiveFocus());
@@ -10458,7 +10468,8 @@ private slots:
     // Scrolled down in the whole library, then a search, then cleared.
     QMetaObject::invokeMethod(reviewSets, "scrollToExact", Q_ARG(QVariant, 400));
     QTRY_VERIFY(reviewSets->property("exactTop").toReal() > 0);
-    m_library->setSearchText(QStringLiteral("png"));
+    const QString name = QFileInfo(pathAt(0)).completeBaseName();
+    m_library->setSearchText(name);
     m_library->commitPendingSearch();
     QTRY_VERIFY(m_library->count() > 0);
     QVERIFY(QQuickTest::qWaitForPolish(m_window));
@@ -12028,6 +12039,14 @@ private:
       qFatal("no item named %s", qPrintable(objectName));
     }
     return found;
+  }
+
+  QString focusName() const {
+    QQuickItem* focused = m_window->activeFocusItem();
+    QString chain;
+    for (QQuickItem* at = focused; at; at = at->parentItem())
+      chain += QString::fromLatin1(at->metaObject()->className()) + QLatin1Char(':') + at->objectName() + QLatin1Char(' ');
+    return chain;
   }
 
   // A menu or popup in the window itself, with a fully opaque background

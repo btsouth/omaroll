@@ -711,10 +711,13 @@ FocusScope {
     component PinnedHeader: Item {
         id: pin
         property int rowIndex: -1
-        readonly property var row: rowIndex >= 0 ? root.rows[rowIndex] : null
+        // Only a header row: while rows are handed over the index can
+        // briefly name another kind.
+        readonly property var row: rowIndex >= 0 && root.rows[rowIndex] && root.rows[rowIndex].kind === "header"
+                                   ? root.rows[rowIndex] : null
         width: list.width - root.gutter
         height: root.headerHeight
-        visible: row !== null && row !== undefined
+        visible: row !== null
         Rectangle {
             anchors.fill: parent
             color: Qt.rgba(Theme.background.r, Theme.background.g, Theme.background.b, 1)
@@ -726,7 +729,7 @@ FocusScope {
             anchors.bottomMargin: 2
             height: 28
             label: pin.row ? pin.row.label : ""
-            count: pin.row ? pin.row.count : -1
+            count: pin.row && pin.row.count !== undefined ? pin.row.count : -1
             expanded: !!pin.row && pin.row.open === true
             keyboardCurrent: false
             // The real header row is what the keyboard and screen readers
