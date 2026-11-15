@@ -248,14 +248,18 @@ Every viewer shortcut is listed in [Shortcuts](docs/shortcuts.md#viewer), and
   date, camera or lens, combine those filters, and resize the grid. Date sorts put a header over each
   day, or over each month where days hold less than half a row or tiles are at
   the two smallest sizes, with the count and a Select control for that day.
-  Tiles from other days show their date. Original photo and video dates are
-  used when available. Add folders without importing or copying their files.
+  Tiles from other days show their date. In a date sort the date pill above
+  the grid jumps to a month, and the scrollbar marks the years and names the
+  month as you drag it. Original photo and video dates are used when
+  available. Add folders without importing or copying their files.
 - **Organize without changing originals.** Albums, nested tags, captions,
   favourites, ratings and saved searches live in Omaroll's settings. A file's
   albums and tags show as chips under its caption in the preview and in the
   viewer's details (`I`); `Alt+T` types a new tag, with suggestions, and Delete
-  on a chip removes it. Organize checks every album and tag for a selection,
-  showing which hold all, some or none of it. Ctrl+Z undoes marks, album and
+  on a chip removes it. Organize (`Alt+T` in the grid) checks every album and
+  tag for a selection, showing which hold all, some or none of it. The `F9`
+  sidebar lists albums with a cover, tags as a tree and dates by year and
+  month above the folders, each section collapsible. Ctrl+Z undoes marks, album and
   tag changes and moves to Trash, and Settings backs up or restores your
   organization.
 - **Keep what other photo tools wrote.** Keywords, star ratings and

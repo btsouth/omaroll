@@ -21,6 +21,18 @@
 - Settings has a switch for reading keywords and ratings from files.
 - `Ctrl+Shift+O` opens a file with the desktop's file chooser, from the
   library, the preview or the viewer.
+- The `F9` sidebar lists albums with a cover, tags as an indented tree with a
+  file icon on keywords that come only from files, and dates by year and
+  month, above the folders. A row filters like Browse, choosing it again
+  clears it, and each section collapses with its framed header, remembered
+  between runs. The arrow keys walk the rows and into the folder tree, and the
+  Menu key renames or deletes an album or tag.
+- In a date sort the date pill is a Jump to date button listing the view's
+  years and months with counts: Enter scrolls to one, Shift+Enter shows only
+  it. The scrollbar marks where each year starts and names the month at the
+  thumb while it is hovered or dragged.
+- `Alt+T` in the library opens Organize for the selection or the current file
+  with its filter ready.
 
 ### Changed
 
