@@ -244,7 +244,13 @@ void ViewerWindows::show(Viewer& viewer, const QStringList& files,
       window->resize(ViewerSession::preferredWindowSize(screen->availableGeometry().size()));
     }
     window->setWindowStates(Qt::WindowNoState);
+    // The player and picture get their files now, so a video starts opening
+    // before the window maps instead of after its first frame. The window
+    // still maps as soon as it can; nothing here waits for the media.
+    window->setProperty("opening", true);
+    QMetaObject::invokeMethod(window, "startPlayer");
     window->show();
+    window->setProperty("opening", false);
   }
   if (QGuiApplication::platformName() != u"offscreen") {
     window->raise();

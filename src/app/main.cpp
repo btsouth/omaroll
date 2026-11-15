@@ -15,6 +15,7 @@
 #include "app/SingleInstance.h"
 #include "app/StartupTrace.h"
 #include "app/VideoPlayback.h"
+#include "app/GraphicsWarmup.h"
 #include "app/VideoWarmup.h"
 #include "library/CaptureFilterModel.h"
 #include "library/FolderTreeModel.h"
@@ -711,6 +712,9 @@ int main(int argc, char* argv[]) {
                             QStringLiteral("/omaroll"),
                         runtime.isEmpty() ? QString() : runtime + QStringLiteral("/omaroll"));
   }
+  // Start the OpenGL driver while QML loads, rather than on the window thread
+  // when the first window is exposed (app/GraphicsWarmup.h).
+  if (!rendering) GraphicsWarmup::start();
   // A video opened from outside: load the backend and start the GPU driver
   // while the window loads (app/VideoWarmup.h).
   if (!rendering && opensInViewer(request, preferLibrary) &&

@@ -200,8 +200,17 @@ ApplicationWindow {
     // its source, even of the same file, so it only follows this property,
     // which changes when the file does. A binding on the player itself is
     // rewritten whenever the session notifies, which cancels autoplay.
-    readonly property url videoSource: root.visible && Session.isVideo && !root.reloadingVideo
+    readonly property url videoSource: root.mediaWanted && Session.isVideo && !root.reloadingVideo
                                        ? Session.url : ""
+    // Set from C++ for the moment before the window is shown, so the player
+    // and the picture get their files before the window maps rather than
+    // after its first frame (ViewerWindows::show).
+    property bool opening: false
+    readonly property bool mediaWanted: root.visible || root.opening
+    // Whether this window has moved past the file it opened with. That
+    // first picture is simply there, as in imv; later ones that had to be
+    // read fade in.
+    property bool pictureShown: false
     readonly property bool playing: player !== null
                                     && player.playbackState === MediaPlayer.PlayingState
     property bool resumeAvailable: false
@@ -384,7 +393,8 @@ ApplicationWindow {
 
     // Called by the opt-in startup trace, before scene synchronization.
     function startupReadiness() {
-        if (root.imageReady) return 2
+        // A picture counts once it is fully opaque, not as its fade starts.
+        if (root.imageReady && stillLoader.opacity >= 1 && !fadeIn.running) return 2
         const poster = Session.isVideo && videoPoster.visible && videoPoster.status === Image.Ready
         return (Session.isVideo && root.player && root.player.hasVideo ? 2 : 0)
             | (poster ? 8 : 0) | (Session.isVideo && videoOutput.visible ? 16 : 0)
@@ -1526,6 +1536,7 @@ ApplicationWindow {
                 return
             }
             actionMenu.close()
+            if (root.loadedMediaPath !== "" && Session.path !== "") root.pictureShown = true
             root.loadedMediaPath = Session.path
             root.loadedMediaVersion = Session.contentVersion
             if (samePath && Session.isVideo && root.player) {
@@ -1600,6 +1611,7 @@ ApplicationWindow {
         actionMenu.close()
         shortcutHelp.close()
         Session.clear()
+        root.pictureShown = false
     }
 
     Connections {
@@ -1794,7 +1806,7 @@ ApplicationWindow {
             id: staticStill
             Image {
                 objectName: "viewerImage"
-                source: root.visible && !Session.isVideo ? Session.imageUrl : ""
+                source: root.mediaWanted && !Session.isVideo ? Session.imageUrl : ""
                 asynchronous: true
                 // Wide-gamut pictures are converted to the screen's sRGB.
                 // The preloaded neighbours match, so they share its cache.
@@ -1806,12 +1818,13 @@ ApplicationWindow {
                 mipmap: true
                 fillMode: Image.Stretch
                 // A preloaded neighbour is simply there; one that had to be
-                // read fades in rather than popping.
+                // read fades in rather than popping, except the first one a
+                // window opens with, which nothing was on screen before.
                 property bool waited: false
                 onStatusChanged: {
                     if (status === Image.Loading) {
                         waited = true
-                    } else if (status === Image.Ready && waited) {
+                    } else if (status === Image.Ready && waited && root.pictureShown) {
                         fadeIn.restart()
                     }
                     if (status !== Image.Loading) {
@@ -1907,7 +1920,7 @@ ApplicationWindow {
             smooth: true
             // The thumbnail provider applies the ratio from its URL once.
             sourceSize: Qt.size(Math.round(width), Math.round(height))
-            source: root.visible && Session.isVideo && Session.path !== ""
+            source: root.mediaWanted && Session.isVideo && Session.path !== ""
                     ? "image://thumbs/" + root.dpr + "@40~" + Session.thumbnailVersion
                       + encodeURIComponent(Session.path)
                     : ""

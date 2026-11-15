@@ -1456,6 +1456,109 @@ private slots:
              qPrintable(color.name()));
   }
 
+  // The file a window opens with is simply there; a later picture that had to
+  // be read fades in. The startup trace counts a picture only once it is
+  // fully opaque, not as its fade starts.
+  void onlyPicturesAfterTheFirstFadeIn() {
+    const QString folder = m_scratch.filePath(QStringLiteral("first-picture"));
+    QVERIFY(QDir().mkpath(folder));
+    QStringList paths;
+    for (int index = 0; index < 5; ++index) {
+      paths.append(folder + QStringLiteral("/%1.jpg").arg(index));
+      QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), paths.last()));
+    }
+    QQuickItem* still = item(QStringLiteral("viewerStillLoader"));
+    QVERIFY(still);
+    const auto readiness = [this] {
+      QVariant ready;
+      QMetaObject::invokeMethod(m_window, "startupReadiness", Q_RETURN_ARG(QVariant, ready));
+      return ready.toInt();
+    };
+    qreal lowest = 1;
+    int readyWhileFading = 0;
+    const QMetaObject::Connection watch =
+        connect(still, &QQuickItem::opacityChanged, this, [&] {
+          lowest = std::min(lowest, still->opacity());
+          if (still->opacity() < 1 && (readiness() & 2)) ++readyWhileFading;
+        });
+    const auto unwatch = qScopeGuard([watch] { disconnect(watch); });
+
+    open({paths.first()});
+    QTRY_COMPARE(m_session->count(), 5);
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QTRY_VERIFY(readiness() & 2);
+    // Longer than the fade, in case one started late.
+    QTest::qWait(400);
+    QCOMPARE(lowest, 1.0);
+
+    // Not a preloaded neighbour, so it is read and fades in.
+    QVERIFY(m_session->jump(2));
+    QTRY_VERIFY(lowest < 1);
+    QTRY_COMPARE(still->opacity(), 1.0);
+    QCOMPARE(readyWhileFading, 0);
+    QTRY_VERIFY(readiness() & 2);
+
+    // Closed and opened again, it is a first picture again.
+    m_window->close();
+    QTRY_VERIFY(!m_window->isVisible());
+    lowest = 1;
+    open({paths.at(4)});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QTest::qWait(400);
+    QCOMPARE(lowest, 1.0);
+  }
+
+  // A launch gives the player (or the picture) its file before the window is
+  // shown, so a video starts opening before the window maps, and the window
+  // still shows at once rather than waiting for it.
+  void aLaunchGivesTheMediaItsFileBeforeTheWindowShows_data() {
+    QTest::addColumn<QString>("name");
+    QTest::newRow("video") << QStringLiteral("clip.mp4");
+    QTest::newRow("picture") << QStringLiteral("Shot 1.jpg");
+  }
+
+  void aLaunchGivesTheMediaItsFileBeforeTheWindowShows() {
+    QFETCH(QString, name);
+    struct ShowWatch : QObject {
+      bool shown = false;
+      QUrl playerSource;
+      QUrl pictureSource;
+      bool eventFilter(QObject* watched, QEvent* event) override {
+        auto* window = qobject_cast<QQuickWindow*>(watched);
+        if (event->type() == QEvent::Show && window && !shown) {
+          shown = true;
+          if (auto* player = window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))) {
+            playerSource = player->source();
+          }
+          if (QObject* picture = window->findChild<QObject*>(QStringLiteral("viewerImage"))) {
+            pictureSource = picture->property("source").toUrl();
+          }
+        }
+        return false;
+      }
+    } watch;
+    qApp->installEventFilter(&watch);
+    const auto removeWatch = qScopeGuard([&watch] { qApp->removeEventFilter(&watch); });
+    ViewerWindows viewers(*m_engine);
+    viewers.setPlacementQuery([](QObject*, HyprlandPlacement::Reply reply) { reply({}); });
+    QQuickWindow* window = viewers.open({media(name)});
+    QVERIFY(window);
+    QVERIFY(watch.shown);
+    QVERIFY(window->isVisible());
+    QCOMPARE(window->property("opening").toBool(), false);
+    if (name.endsWith(QStringLiteral(".mp4"))) {
+      QCOMPARE(watch.playerSource, QUrl::fromLocalFile(media(name)));
+      auto* player = window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"));
+      QVERIFY(player);
+      QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+    } else {
+      QVERIFY(!watch.pictureSource.isEmpty());
+      QVERIFY(!window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer")));
+    }
+    window->close();
+    QTRY_VERIFY(!window->isVisible());
+  }
+
   void theToolbarHasTheCommonPictureControls() {
     const QString folder = m_scratch.filePath(QStringLiteral("toolbar"));
     QVERIFY(QDir().mkpath(folder));
