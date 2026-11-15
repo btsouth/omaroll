@@ -6364,23 +6364,43 @@ private slots:
                 !named(QStringLiteral("emptyAction_clear-search"))->isEnabled());
     invoke("dismissTopLayer");
     QTRY_VERIFY(named(QStringLiteral("emptyAction_clear-search"))->isEnabled());
-    // Wrapped, the actions share one width, so the rows line up.
-    for (const int width : {560, 1280}) {
-      m_window->resize(width, m_window->height());
-      waitForLayout(QSize(width, m_window->height()));
-      QQuickItem* actions = item(QStringLiteral("emptyActionsGrid"));
-      QList<qreal> widths;
-      for (QQuickItem* child : actions->childItems()) {
-        if (child->objectName().startsWith(QStringLiteral("emptyAction_")) && child->isVisible())
-          widths.append(child->width());
-      }
-      QVERIFY(!widths.isEmpty());
-      if (actions->property("wrapped").toBool()) {
-        for (const qreal each : widths) QCOMPARE(each, widths.first());
+    // Wrapped, the actions share one width, so the rows line up. The empty
+    // state steps aside while text is being indexed for the search, which
+    // a slow run can catch, so wait for it to show its actions; and the
+    // window's size goes back whatever happens, or every later test would
+    // run in a narrow window.
+    {
+      const QSize restore = m_window->size();
+      const auto restoreSize = qScopeGuard([&] {
+        m_window->resize(restore);
+        waitForLayout(restore);
+      });
+      for (const int width : {560, 1280}) {
+        m_window->resize(width, m_window->height());
+        waitForLayout(QSize(width, m_window->height()));
+        QList<qreal> widths;
+        bool wrapped = false;
+        const auto readActions = [&] {
+          widths.clear();
+          QQuickItem* actions = item(QStringLiteral("emptyActionsGrid"));
+          if (!actions->isVisible()) return false;
+          for (QQuickItem* child : actions->childItems()) {
+            if (child->objectName().startsWith(QStringLiteral("emptyAction_")) && child->isVisible())
+              widths.append(child->width());
+          }
+          wrapped = actions->property("wrapped").toBool();
+          return !widths.isEmpty();
+        };
+        QTRY_VERIFY2(readActions(), qPrintable(QStringLiteral("empty state visible %1 at %2")
+                                                  .arg(item(QStringLiteral("libraryEmptyState"))->isVisible())
+                                                  .arg(width)));
+        QVERIFY(QQuickTest::qWaitForPolish(m_window));
+        QTRY_VERIFY(readActions());
+        if (wrapped) {
+          for (const qreal each : widths) QCOMPARE(each, widths.first());
+        }
       }
     }
-    m_window->resize(1280, 820);
-    waitForLayout(QSize(1280, 820));
     QVERIFY(clickAction(QStringLiteral("emptyAction_clear-search")));
     QTRY_VERIFY(m_library->searchText().isEmpty());
     QTRY_VERIFY(m_library->count() > 0);
