@@ -21,9 +21,25 @@
 - Settings has a switch for reading keywords and ratings from files.
 - `Ctrl+Shift+O` opens a file with the desktop's file chooser, from the
   library, the preview or the viewer.
+- The `F9` sidebar lists albums with a cover, tags as an indented tree with a
+  file icon on keywords that come only from files, and dates by year and
+  month, above the folders. A row filters like Browse, choosing it again
+  clears it, and each section collapses with its framed header, remembered
+  between runs. The arrow keys walk the rows and into the folder tree, and the
+  Menu key renames or deletes an album or tag.
+- In a date sort the date pill is a Jump to date button listing the view's
+  years and months with counts: Enter scrolls to one, Shift+Enter shows only
+  it. The scrollbar marks where each year starts and names the month at the
+  thumb while it is hovered or dragged.
+- `Alt+T` in the library opens Organize for the selection or the current file
+  with its filter ready.
 
 ### Changed
 
+- A picture opened from the file manager appears at once instead of fading in.
+  Later pictures still fade in when they had to be read.
+- A video opened from the file manager starts opening its file before the
+  window appears, so its first frame shows sooner.
 - Shortcut help starts with Navigation and reads down each column in order.
   Keys that do the same thing share one row, so "Previous / next file" is
   listed once, and the viewer's flips and saved copy sit under View.
@@ -31,6 +47,8 @@
   on screen: Mute for a video, Add background and Fit for a picture. `9` and
   `0` no longer change a video preview's volume; `↑` and `↓` do, as in the
   viewer.
+- Deleting a tag that has tags nested under it says how many went with it,
+  as in "Deleted tag Travel and 2 nested tags".
 
 ### Fixed
 

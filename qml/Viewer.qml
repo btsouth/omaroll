@@ -200,8 +200,23 @@ ApplicationWindow {
     // its source, even of the same file, so it only follows this property,
     // which changes when the file does. A binding on the player itself is
     // rewritten whenever the session notifies, which cancels autoplay.
-    readonly property url videoSource: root.visible && Session.isVideo && !root.reloadingVideo
+    readonly property url videoSource: root.mediaWanted && Session.isVideo && !root.reloadingVideo
                                        ? Session.url : ""
+    // Set from C++ for the moment before the window is shown, so a video's
+    // player and poster get their file before the window maps rather than
+    // after its first frame (ViewerWindows::show).
+    property bool opening: false
+    readonly property bool mediaWanted: root.visible || root.opening
+    // Whether the window has drawn since it was shown. Qt builds a video's
+    // decoders on this thread when playback starts, so a file that opens
+    // before the first frame waits for it rather than holding the window
+    // back. Cleared and set from C++ (ViewerWindows::show).
+    property bool framed: true
+    onFramedChanged: if (root.framed && root.player) root.player.releaseStart()
+    // Whether this window has moved past the file it opened with. That
+    // first picture is simply there, as in imv; later ones that had to be
+    // read fade in.
+    property bool pictureShown: false
     readonly property bool playing: player !== null
                                     && player.playbackState === MediaPlayer.PlayingState
     property bool resumeAvailable: false
@@ -384,7 +399,8 @@ ApplicationWindow {
 
     // Called by the opt-in startup trace, before scene synchronization.
     function startupReadiness() {
-        if (root.imageReady) return 2
+        // A picture counts once it is fully opaque, not as its fade starts.
+        if (root.imageReady && stillLoader.opacity >= 1 && !fadeIn.running) return 2
         const poster = Session.isVideo && videoPoster.visible && videoPoster.status === Image.Ready
         return (Session.isVideo && root.player && root.player.hasVideo ? 2 : 0)
             | (poster ? 8 : 0) | (Session.isVideo && videoOutput.visible ? 16 : 0)
@@ -1526,6 +1542,7 @@ ApplicationWindow {
                 return
             }
             actionMenu.close()
+            if (root.loadedMediaPath !== "" && Session.path !== "") root.pictureShown = true
             root.loadedMediaPath = Session.path
             root.loadedMediaVersion = Session.contentVersion
             if (samePath && Session.isVideo && root.player) {
@@ -1600,6 +1617,7 @@ ApplicationWindow {
         actionMenu.close()
         shortcutHelp.close()
         Session.clear()
+        root.pictureShown = false
     }
 
     Connections {
@@ -1806,12 +1824,13 @@ ApplicationWindow {
                 mipmap: true
                 fillMode: Image.Stretch
                 // A preloaded neighbour is simply there; one that had to be
-                // read fades in rather than popping.
+                // read fades in rather than popping, except the first one a
+                // window opens with, which nothing was on screen before.
                 property bool waited: false
                 onStatusChanged: {
                     if (status === Image.Loading) {
                         waited = true
-                    } else if (status === Image.Ready && waited) {
+                    } else if (status === Image.Ready && waited && root.pictureShown) {
                         fadeIn.restart()
                     }
                     if (status !== Image.Loading) {
@@ -1907,7 +1926,7 @@ ApplicationWindow {
             smooth: true
             // The thumbnail provider applies the ratio from its URL once.
             sourceSize: Qt.size(Math.round(width), Math.round(height))
-            source: root.visible && Session.isVideo && Session.path !== ""
+            source: root.mediaWanted && Session.isVideo && Session.path !== ""
                     ? "image://thumbs/" + root.dpr + "@40~" + Session.thumbnailVersion
                       + encodeURIComponent(Session.path)
                     : ""
@@ -1925,8 +1944,19 @@ ApplicationWindow {
                     // or past it, so a seek the backend loses is sent again.
                     property real launchTarget: -1
                     property int launchRetries: 0
+                    // Opened before the window's first frame and not started yet.
+                    property bool startHeld: false
+                    function releaseStart() {
+                        if (!startHeld) return
+                        startHeld = false
+                        // What loading would have done, then the play the
+                        // source asked for unless that chose otherwise.
+                        handleStatus()
+                        if (playbackState === MediaPlayer.StoppedState && !root.resumeAvailable) play()
+                    }
                     function applyLaunchStart() {
                         if (Session.pendingStartPosition(Session.path) < 0) return false
+                        if (startHeld) return true
                         root.resumePending = false
                         root.resumeAvailable = false
                         if (seekable && duration > 0 && (mediaStatus === MediaPlayer.LoadedMedia
@@ -1972,13 +2002,15 @@ ApplicationWindow {
                     }
                     onSourceChanged: {
                         if (root.presentation) root.presentation.reset()
+                        startHeld = false
                         launchTarget = -1
                         root.videoError = ""
                         if (source.toString() !== "") {
                             playbackRate = Settings.rememberPlaybackSpeed ? Settings.videoPlaybackRate : 1
                             mediaPlayer.resumeIdentity = Settings.videoIdentity(Session.path)
                             Mpris.track(mediaPlayer, root)
-                            play()
+                            if (root.framed) play()
+                            else startHeld = true
                         } else {
                             Mpris.release(mediaPlayer)
                         }
@@ -2024,7 +2056,9 @@ ApplicationWindow {
                             Settings.setVideoPosition(Session.path, Math.round(position), mediaPlayer.resumeIdentity)
                         }
                     }
-                    onMediaStatusChanged: {
+                    onMediaStatusChanged: handleStatus()
+                    function handleStatus() {
+                        if (startHeld) return
                         const explicitStart = applyLaunchStart()
                         if (mediaStatus === MediaPlayer.LoadedMedia && root.resumePending
                                 && !root.slideshowRunning && !explicitStart) {

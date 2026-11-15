@@ -56,6 +56,9 @@ public:
     int count = 0;
     QString label;
     bool month = false;
+    // "yyyy-MM" of the section's first tile, empty for an unknown date or a
+    // review set.
+    QString monthKey;
     bool operator==(const Section&) const = default;
   };
 
@@ -106,6 +109,15 @@ public:
   Q_INVOKABLE QVariantList sections() const;
   // First library row of the section holding item, or -1.
   Q_INVOKABLE int sectionFirstOf(int item) const;
+  // In a date sort, the view's months in its order: each a map of key
+  // ("yyyy-MM"), label ("May 2026"), year, count and headerRow, the list row
+  // of the month's first header. Day sections of one month merge.
+  Q_INVOKABLE QVariantList months() const;
+  // The first header row of that month now, or -1.
+  Q_INVOKABLE int headerRowOfMonth(const QString& key) const;
+  // The month key and label of the section a list row belongs to, as
+  // {key, label}; empty for a review set or an unknown date.
+  Q_INVOKABLE QVariantMap monthOfRow(int row) const;
   // Exact geometry with header rows headerHeight and tile rows rowHeight
   // high: where a row starts, which row covers y, and the total height.
   Q_INVOKABLE double rowY(int row, double headerHeight, double rowHeight) const;
@@ -134,6 +146,8 @@ private:
   QTimer m_rebuild;
   QList<Section> m_sections;
   QList<Row> m_rows;
+  // The list row of each section's header, by section.
+  QList<int> m_headerRows;
   // Header rows before each row, and one past the end.
   QList<int> m_headersBefore{0};
   bool m_active = false;

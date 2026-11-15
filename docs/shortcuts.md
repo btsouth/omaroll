@@ -120,7 +120,10 @@ the viewer. The preview is the built-in viewer inside the library.
 | `Alt+T` in the library preview | Add a tag: Up and Down pick a suggestion, Tab takes it, Enter or a comma adds it, Escape clears then leaves |
 | `Delete` `Backspace` on a chip | Remove that album or tag from the file |
 | `1`-`8` · `Tab` `Shift+Tab` | Jump to a section · next · previous section; with the sidebar open, Tab moves between the grid and sidebar |
-| `↑` `↓` · `←` `→` · `Enter` in the sidebar | Move · collapse or expand · open the folder |
+| `↑` `↓` · `←` `→` · `Enter` in the sidebar | Move through albums, tags, dates and folders · collapse or expand · open it, or clear it when it is already open |
+| `Menu` on a sidebar album or tag | Rename or delete it |
+| `Alt+T` in the library | Albums and tags for the selection or the current file, with the filter field ready |
+| the date pill · `Enter` · `Shift+Enter` | Jump to date: list the months · scroll to one · show only that month |
 | `Alt+1`-`Alt+5` · `Alt+0` | Rate · clear rating, in the grid or the viewer |
 | `Page Up` `Page Down` in a PDF preview | Previous · next page |
 | `Select text` in a PDF, then drag | Pick the words under the pointer |

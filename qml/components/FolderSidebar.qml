@@ -6,19 +6,70 @@ FocusScope {
     id: root
 
     property real paneWidth: Settings.folderSidebarWidth
-    readonly property bool menuOpen: folderMenu.visible
+    readonly property bool menuOpen: folderMenu.visible || collections.menuOpen
+    readonly property bool foldersOpen: Settings.sidebarSections.indexOf("folders") >= 0
     property var expandedPathsBeforeReset: []
     property bool expansionRestorePending: false
     signal chosen(string path)
     signal addFolderRequested()
     signal gridFocusRequested()
     signal message(string text)
+    signal renameCollectionRequested(string mode, string name)
+    signal deleteCollectionRequested(string mode, string name)
 
     function shade(base, amount) { return Qt.rgba(base.r, base.g, base.b, amount) }
     function basename(path) { return String(path).split("/").filter(Boolean).pop() || "/" }
+    // The sidebar's keyboard home: the folder tree, or with it collapsed or
+    // empty, the Folders header.
     function focusTree() {
+        if (!root.foldersOpen || tree.rows === 0) {
+            foldersHeader.forceActiveFocus()
+            return
+        }
         tree.forceActiveFocus()
         if (tree.currentRow < 0 && tree.rows > 0) tree.focusRow(0)
+    }
+    // After a menu closes: the collections list keeps the keyboard if it had
+    // it, as the tree does.
+    function focusAfterMenu() {
+        if (collections.activeFocus) collections.listView.forceActiveFocus()
+        else root.focusTree()
+    }
+    function setFoldersOpen(open) {
+        const sections = Settings.sidebarSections.filter(function (name) { return name !== "folders" })
+        if (open) sections.push("folders")
+        Settings.sidebarSections = sections
+    }
+    // The collections list takes the keyboard only with room for a row; in
+    // a short window with several pins it can have none.
+    readonly property bool collectionsReachable: collections.visible && collections.height >= 32
+    // All media, then the pinned folders, in order.
+    function topRows() {
+        return [allMedia].concat(pinnedRows.children.filter(function (item) {
+            return item.activeFocusOnTab === true
+        }))
+    }
+    // Up out of the collections list, or out of the Folders header when
+    // there is no list: the last pinned folder, else All media.
+    function focusAbove() {
+        const rows = root.topRows()
+        rows[rows.length - 1].forceActiveFocus()
+    }
+    // Down from the last pinned folder, or All media: the collections, else
+    // the Folders header.
+    function focusBelowPins() {
+        if (root.collectionsReachable) collections.focusFirst()
+        else foldersHeader.forceActiveFocus()
+    }
+    // Up and Down on All media and the pins walk them in order and on into
+    // the collections and the folders. False for any other row.
+    function walk(item, step) {
+        const rows = root.topRows()
+        const at = rows.indexOf(item)
+        if (at < 0) return false
+        if (at + step >= rows.length) root.focusBelowPins()
+        else if (at + step >= 0) rows[at + step].forceActiveFocus()
+        return true
     }
     function syncSelection() {
         if (!root.visible) return
@@ -155,6 +206,10 @@ FocusScope {
                 }
             }
         }
+        Keys.onPressed: function (event) {
+            if (event.key === Qt.Key_Up || event.key === Qt.Key_Down)
+                event.accepted = root.walk(rowItem, event.key === Qt.Key_Up ? -1 : 1)
+        }
         Keys.onReturnPressed: activate()
         Keys.onEnterPressed: activate()
         Keys.onMenuPressed: {
@@ -231,29 +286,72 @@ FocusScope {
         }
     }
 
-    Text {
-        id: foldersLabel
+    // Albums, tags and dates. With Folders open it takes at most half of
+    // the room below the pins, so the tree always keeps some.
+    readonly property real collectionsRoom: Math.max(0, addFolder.y - 8 - pinnedSection.y
+                                                    - pinnedSection.height - 8 - foldersHeader.height - 8)
+    SidebarCollections {
+        id: collections
+        objectName: "sidebarCollectionsPane"
         anchors.top: pinnedSection.bottom
+        anchors.topMargin: visible ? 8 : 0
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.leftMargin: 8
+        anchors.rightMargin: 8
+        height: visible ? implicitHeight : 0
+        maximumHeight: root.foldersOpen ? Math.floor(root.collectionsRoom / 2) : root.collectionsRoom
+        keyboardReachable: root.collectionsReachable
+        onExitUp: root.focusAbove()
+        onExitDown: foldersHeader.forceActiveFocus()
+        onRenameRequested: function (mode, name) { root.renameCollectionRequested(mode, name) }
+        onDeleteRequested: function (mode, name) { root.deleteCollectionRequested(mode, name) }
+    }
+
+    SidebarHeader {
+        id: foldersHeader
+        objectName: "sidebarFoldersHeader"
+        anchors.top: collections.bottom
         anchors.topMargin: 8
         anchors.left: parent.left
-        anchors.leftMargin: 16
-        height: 24
-        text: "Folders"
-        color: Theme.mutedText
-        font.family: Theme.fontFamily
-        font.pixelSize: 11
-        font.weight: Font.DemiBold
+        anchors.right: parent.right
+        anchors.leftMargin: 8
+        anchors.rightMargin: 8
+        height: implicitHeight
+        label: "Folders"
+        expanded: root.foldersOpen
+        activeFocusOnTab: true
+        onToggled: { forceActiveFocus(); root.setFoldersOpen(!root.foldersOpen) }
+        Keys.onPressed: function (event) {
+            if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
+                root.setFoldersOpen(!root.foldersOpen)
+            } else if (event.key === Qt.Key_Right) {
+                if (!root.foldersOpen) root.setFoldersOpen(true)
+                else if (tree.rows > 0) { tree.forceActiveFocus(); tree.focusRow(0) }
+            } else if (event.key === Qt.Key_Left) {
+                if (root.foldersOpen) root.setFoldersOpen(false)
+            } else if (event.key === Qt.Key_Down) {
+                if (root.foldersOpen && tree.rows > 0) { tree.forceActiveFocus(); tree.focusRow(0) }
+            } else if (event.key === Qt.Key_Up) {
+                if (root.collectionsReachable) collections.focusLast()
+                else root.focusAbove()
+            } else {
+                return
+            }
+            event.accepted = true
+        }
     }
 
     ItemSelectionModel { id: selection; model: FolderTree }
     TreeView {
         id: tree
         objectName: "folderSidebarTree"
-        anchors.top: foldersLabel.bottom
+        anchors.top: foldersHeader.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: addFolder.top
         anchors.margins: 8
+        visible: root.foldersOpen
         clip: true
         model: FolderTree
         selectionModel: selection
@@ -277,7 +375,11 @@ FocusScope {
             const row = currentRow < 0 ? 0 : currentRow
             const index = tree.index(row, 0)
             if (event.key === Qt.Key_Down) focusRow(Math.min(rows - 1, row + 1))
-            else if (event.key === Qt.Key_Up) focusRow(Math.max(0, row - 1))
+            else if (event.key === Qt.Key_Up) {
+                // Up from the first folder goes back to the Folders header.
+                if (row <= 0) foldersHeader.forceActiveFocus()
+                else focusRow(row - 1)
+            }
             else if (event.key === Qt.Key_Right) {
                 if (!isExpanded(row)) expand(row)
                 else if (FolderTree.hasChildren(index)) focusRow(row + 1)
