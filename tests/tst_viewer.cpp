@@ -5738,6 +5738,31 @@ private slots:
     QVERIFY(video.contains(QStringLiteral("library")));
   }
 
+  // "Albums and tags…" sits above Move to Trash with Alt+T beside it, and
+  // does what Alt+T does: the details, with the tag field ready.
+  void theMenuOffersAlbumsAndTagsAboveTrash() {
+    open({media(QStringLiteral("Shot 1.jpg"))});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("viewerMenu"));
+    QVERIFY(menu);
+    QTest::mouseClick(m_window, Qt::RightButton, Qt::NoModifier,
+                      QPoint(m_window->width() / 2, m_window->height() / 2));
+    QTRY_VERIFY(menu->property("visible").toBool());
+    const QStringList ids = menuIds(menu);
+    QVERIFY(ids.contains(QStringLiteral("tag")));
+    QVERIFY(ids.indexOf(QStringLiteral("tag")) < ids.indexOf(QStringLiteral("trash")));
+    QQuickItem* row = menuRow(QStringLiteral("tag"));
+    QCOMPARE(row->property("text").toString(), QString::fromUtf8("Albums and tags…"));
+    QCOMPARE(row->property("shortcutText").toString(), QStringLiteral("Alt+T"));
+    QVERIFY(QMetaObject::invokeMethod(row, "click"));
+    QTRY_VERIFY(!menu->property("visible").toBool());
+    QTRY_VERIFY(prop("infoOpen").toBool());
+    QTRY_VERIFY(item(QStringLiteral("tagFieldInput"))->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    m_window->setProperty("infoOpen", false);
+  }
+
   void slideshowMenuKeepsItsTargetAndResumesAfterAnAction() {
     const QString first = media(QStringLiteral("Shot 1.jpg"));
     const QString second = media(QStringLiteral("shot 2.jpg"));

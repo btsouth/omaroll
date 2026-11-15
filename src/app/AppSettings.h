@@ -350,6 +350,11 @@ public:
   // level, then any word. Names in |exclude| are left out.
   Q_INVOKABLE [[nodiscard]] QStringList matchTags(const QString& text, const QStringList& exclude = {},
                                                   int limit = 8) const;
+  // Whether a tag of this name exists, ignoring case: the spelling tagNames
+  // shows it by, or empty.
+  Q_INVOKABLE [[nodiscard]] QString existingTag(const QString& name) const;
+  // Only keywords read from files name it; no local tag does.
+  Q_INVOKABLE [[nodiscard]] bool tagFromFile(const QString& name) const;
   // Every album, then every tag, with how many of |paths| hold it directly:
   // {kind: "album" or "tag", name, count, fromFile}. fromFile marks a tag
   // that exists only as keywords in files.
@@ -661,8 +666,13 @@ private:
   // instance would not report the format error itself.
   bool m_damaged = false;
   [[nodiscard]] QSettings::Status settingsStatus() const {
-    return m_damaged ? QSettings::FormatError : m_settings.status();
+    if (m_damaged) return QSettings::FormatError;
+    // QSettings keeps its first error for good; a write seen to land since
+    // then means the folder is writable again.
+    const QSettings::Status status = m_settings.status();
+    return status == QSettings::AccessError && m_writeRecovered ? QSettings::NoError : status;
   }
+  bool m_writeRecovered = false;
   QDate m_snapshotDate;
   QTimer m_snapshotRefresh;
   // Picks up the launch check's result once the backup thread has it.
@@ -748,6 +758,8 @@ private:
   // its own message are kept, so the group is one step.
   void pushOrganizationUndo(OrganizationSnapshot before, const QString& message);
   void restoreOrganization(OrganizationSnapshot snapshot);
+  // Puts back the organization from just before a change whose save failed.
+  void rollBackOrganization(const OrganizationSnapshot& state);
   int m_undoGroup = 0;
   bool m_groupChanged = false;
   OrganizationSnapshot m_groupBefore;
@@ -845,6 +857,26 @@ private:
   [[nodiscard]] QString displayTag(const QString& folded,
                                    const QHash<QString, QString>& localByFold) const;
   [[nodiscard]] QHash<QString, QString> localTagsByFold() const;
+  // tagNames and what is derived from it, kept until the local tags or the
+  // keyword index change. The copies held here share data with the live
+  // containers; any write detaches them, which is how a change is noticed.
+  // Typing in a tag field reads this on every key, and the sidebar counts
+  // every tag, so none of it is rebuilt per read.
+  struct TagCache {
+    QMap<QString, QList<AlbumEntry>> tags;
+    QHash<QString, QSet<QString>> embeddedIndex;
+    QHash<QString, QString> embeddedSpelling;
+    bool built = false;
+    QStringList names;
+    // TagNames::folded and the accent-free search form of each name.
+    QStringList folded;
+    QStringList searchFolded;
+    QHash<QString, qsizetype> indexByFold;
+    QHash<QString, QString> localByFold;
+    QHash<QString, QStringList> paths;
+  };
+  mutable TagCache m_tagCache;
+  [[nodiscard]] const TagCache& tagCache() const;
   // Files whose own keywords hold |name| or something nested under it.
   [[nodiscard]] QStringList visibleKeywords(const QString& path) const;
   [[nodiscard]] QStringList embeddedCarriers(const QString& name) const;

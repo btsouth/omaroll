@@ -20,6 +20,8 @@ FocusScope {
     property int highlighted: -1
     // What happened, and the undo step that takes it back (0 for none).
     signal tagged(string message, int undoId)
+    // The tag the files now carry, after an add that was saved.
+    signal added(string name)
     // Ctrl+Z with nothing typed: the app's undo, not the field's.
     signal undoRequested()
 
@@ -48,18 +50,30 @@ FocusScope {
             root.highlighted = -1
             return
         }
+        // One lookup each: reading Settings.tagNames here copied every tag
+        // on every key, which froze typing with a few hundred tags.
         const found = Settings.matchTags(typed, root.present, 8)
-        const lower = typed.toLowerCase()
-        const exists = Settings.tagNames.some(function (name) { return name.toLowerCase() === lower })
+        const exists = Settings.existingTag(typed) !== ""
         const next = found.map(function (name) { return {name: name, create: false} })
         if (!exists) next.push({name: typed, create: true})
         root.rows = next
         root.highlighted = next.length > 0 ? 0 : -1
-        // Upward when the space below would not hold the list.
+        root.placeSuggestions()
+    }
+
+    // Below the field while at least three rows fit there, scrolling the
+    // rest; above only when they do not, so the list covers the chips over
+    // the field only when it has to.
+    function placeSuggestions() {
         const window = root.Window.window
-        const bottom = root.mapToItem(null, 0, root.height).y
-        suggestions.upward = window !== null && bottom + suggestions.implicitHeight + 8 > window.height
-                             && bottom - root.height > suggestions.implicitHeight + 8
+        if (window === null) return
+        const top = root.mapToItem(null, 0, 0).y
+        const below = window.height - (top + root.height) - 4 - 8
+        const above = top - 4 - 8
+        const wanted = root.rows.length * suggestions.rowHeight + suggestions.padding * 2
+        const least = Math.min(wanted, 3 * suggestions.rowHeight + suggestions.padding * 2)
+        suggestions.upward = below < least && above > below
+        suggestions.room = Math.max(0, suggestions.upward ? above : below)
     }
 
     function add(name) {
@@ -81,6 +95,7 @@ FocusScope {
                       : count === 0 ? "Already tagged " + result.name
                       : "Tagged " + result.name + items
         root.tagged(message, undoId)
+        root.added(result.name)
     }
 
     function accept() {
@@ -141,7 +156,8 @@ FocusScope {
         focus: true
         activeFocusOnTab: true
         selectByMouse: true
-        maximumLength: 120
+        // Tag names keep 80 characters (TagNames::normalized).
+        maximumLength: 80
         font.family: Theme.fontFamily
         font.pixelSize: 13
         color: root.textColour
@@ -209,18 +225,28 @@ FocusScope {
         id: suggestions
         objectName: "tagSuggestions"
         property bool upward: false
+        // The space the list may take on its side of the field.
+        property real room: 0
+        readonly property int rowHeight: 28
         visible: root.rows.length > 0 && input.activeFocus
         // The field keeps the keyboard; the list only shows and takes clicks.
         focus: false
         modal: false
         closePolicy: Popup.NoAutoClose
+        // Kept inside the window: the room was measured for it.
+        margins: 0
         x: 0
         y: upward ? -height - 4 : root.height + 4
         width: root.width
         padding: 4
-        implicitHeight: list.contentHeight + topPadding + bottomPadding
+        // Whole rows only, so no half-cut row shows at the edge.
+        height: Math.min(list.contentHeight,
+                         Math.max(1, Math.floor((room - topPadding - bottomPadding) / rowHeight)) * rowHeight)
+                + topPadding + bottomPadding
         background: Rectangle {
-            color: root.osd ? Osd.panelSolid : Theme.background
+            // Opaque: text under the list must not read through it.
+            color: root.osd ? Qt.rgba(Osd.panelSolid.r, Osd.panelSolid.g, Osd.panelSolid.b, 1)
+                            : Theme.background
             radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
             border.width: 1
             border.color: root.osd ? Osd.border : root.shade(Theme.foreground, 0.16)
@@ -230,9 +256,12 @@ FocusScope {
             id: list
             objectName: "tagSuggestionList"
             implicitHeight: contentHeight
+            clip: true
             interactive: false
+            boundsBehavior: Flickable.StopAtBounds
             model: root.rows
             currentIndex: root.highlighted
+            onCurrentIndexChanged: if (currentIndex >= 0) positionViewAtIndex(currentIndex, ListView.Contain)
             Accessible.role: Accessible.List
             Accessible.name: "Tag suggestions"
 
@@ -242,7 +271,7 @@ FocusScope {
                 required property int index
                 readonly property bool current: index === root.highlighted
                 width: ListView.view.width
-                height: 28
+                height: suggestions.rowHeight
                 radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 3) : 0
                 color: row.current || rowMouse.containsMouse ? root.shade(root.textColour, 0.10) : "transparent"
                 Accessible.role: Accessible.ListItem

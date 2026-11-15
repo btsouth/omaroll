@@ -100,7 +100,11 @@ FocusScope {
         })
     }
 
-    function close() { visible = false }
+    // Escape answers the delete question first, then closes Browse.
+    function close() {
+        if (deleteConfirm.visible) deleteConfirm.close()
+        else visible = false
+    }
     function addFolder() { folderDialog.open() }
 
     function clearLibraryView() {
@@ -263,7 +267,7 @@ FocusScope {
         else showSmart(String(choice))
     }
 
-    function deleteCurrentChoice() {
+    function deleteCurrentChoice(confirmedName) {
         const index = choices.currentIndex
         if (index < 0 || index >= choices.count || section === 0 || section === 2
                 || section === 5) {
@@ -272,8 +276,15 @@ FocusScope {
         const name = String(choices.model[index])
         // Saved views that open a deleted album or tag go with it.
         let views = 0
-        // A tag's nested tags go with it.
+        // A tag's nested tags go with it, so that is asked first.
         const nested = section === 3 ? Settings.nestedTagCount(name) : 0
+        if (nested > 0 && confirmedName !== name) {
+            deleteConfirm.name = name
+            deleteConfirm.title = "Delete tag " + name + " and "
+                                  + (nested === 1 ? "1 nested tag?" : nested + " nested tags?")
+            deleteConfirm.open()
+            return
+        }
         if (section === 1) views = Settings.deleteAlbum(name)
         else if (section === 3) views = Settings.deleteTag(name)
         else Settings.deleteSmartCollection(name)
@@ -901,6 +912,9 @@ FocusScope {
                                   : (choiceRow.cameraChoice
                                      ? (choiceRow.modelData.type === "lens" ? "Lens  ·  "
                                                                             : "Camera  ·  ")
+                                     // As the sidebar's file icon: only files' keywords name it.
+                                     : root.section === 3 && Settings.tagFromFile(choiceRow.value)
+                                     ? "From file keywords  ·  "
                                      : "")
                                     + root.formatCount(choiceRow.itemCount)
                                     + (choiceRow.itemCount === 1 ? " item" : " items")
@@ -939,5 +953,15 @@ FocusScope {
                                  ? "Folder added. Omaroll is scanning it now."
                                  : "That folder is already added, unavailable, or is your home folder."
         }
+    }
+
+    ConfirmSheet {
+        id: deleteConfirm
+        objectName: "browseDeleteConfirm"
+        property string name: ""
+        detail: "No file is changed; keywords read from files are hidden here. Ctrl+Z puts it all back."
+        confirmLabel: "Delete"
+        onAccepted: root.deleteCurrentChoice(deleteConfirm.name)
+        onVisibleChanged: if (!visible && root.visible) choices.forceActiveFocus()
     }
 }

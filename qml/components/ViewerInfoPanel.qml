@@ -66,6 +66,8 @@ Rectangle {
         }
     }
 
+    function focusTagField() { chips.focusTagField() }
+
     // Alt+T, while the details are shown.
     Shortcut {
         sequences: ShortcutCatalog.sequence("quick", "tag")
@@ -226,7 +228,7 @@ Rectangle {
                     wrapMode: Text.Wrap
                     font.family: Theme.fontFamily
                     font.pixelSize: 11
-                    color: Osd.mutedText
+                    color: root.status === Settings.organizationError ? Osd.error : Osd.mutedText
                     Accessible.role: Accessible.AlertMessage
                     Accessible.name: root.status
                 }

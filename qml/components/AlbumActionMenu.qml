@@ -24,8 +24,14 @@ Popup {
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     parent: host.contentItem
     width: Math.min(320, host.width - 16)
-    height: Math.min(implicitHeight, host.height - 16)
+    // One size for as long as it is open, set when it opens from every row:
+    // filtering shortens the list inside it rather than the menu, so the
+    // menu neither jumps nor resizes while typing.
+    property real openHeight: 0
+    height: Math.min(openHeight, host.contentItem.height - topMargin - bottomMargin)
     margins: 8
+    // Clear of the footer, which reports each change.
+    bottomMargin: 40
 
     property int revision: 0
     Connections {
@@ -35,7 +41,12 @@ Popup {
     }
     readonly property var allRows: {
         menu.revision
-        return menu.visible ? Settings.organizationFor(menu.targetPaths) : []
+        if (!menu.visible) return []
+        // Folded once here, not for every row on every key.
+        return Settings.organizationFor(menu.targetPaths).map(function (row) {
+            row.folded = menu.folded(row.name)
+            return row
+        })
     }
     readonly property string typed: filter.text.trim().replace(/\s+/g, " ")
     // The rows the filter leaves, then a create row for each kind the typed
@@ -43,7 +54,7 @@ Popup {
     readonly property var rows: {
         const query = menu.folded(menu.typed)
         const shown = query === "" ? menu.allRows : menu.allRows.filter(function (row) {
-            return menu.folded(row.name).indexOf(query) >= 0
+            return row.folded.indexOf(query) >= 0
         })
         const out = shown.slice()
         if (menu.typed === "") {
@@ -53,18 +64,25 @@ Popup {
         }
         const exact = function (kind) {
             return menu.allRows.some(function (row) {
-                return row.kind === kind && menu.folded(row.name) === query
+                return row.kind === kind && row.folded === query
             })
         }
-        // An album name is cut at 60 characters; compare what would be made.
-        const album = menu.typed.slice(0, 60).trim()
+        // An album name is cut at 60 characters; compare what would be made,
+        // and the row says it was cut.
+        const album = menu.typed.slice(0, menu.albumLimit).trim()
+        const albumFolded = menu.folded(album)
         const albumExists = menu.allRows.some(function (row) {
-            return row.kind === "album" && menu.folded(row.name) === menu.folded(album)
+            return row.kind === "album" && row.folded === albumFolded
         })
-        if (!albumExists && album.indexOf("/") < 0) out.push({kind: "album", name: album, create: true})
+        if (!albumExists && album.indexOf("/") < 0)
+            out.push({kind: "album", name: album, create: true, cut: menu.typed.length > menu.albumLimit})
         if (!exact("tag")) out.push({kind: "tag", name: menu.typed, create: true})
         return out
     }
+
+    // What AppSettings keeps of a name.
+    readonly property int albumLimit: 60
+    readonly property int tagLimit: 80
 
     function folded(text) {
         return text.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase()
@@ -76,11 +94,17 @@ Popup {
         menu.x = Math.max(8, Math.min(point.x, host.contentItem.width - menu.width - 8))
         menu.y = point.y
         filter.text = ""
+        // The field, then every row of the unfiltered list, up to what the
+        // window holds.
+        const rows = Settings.organizationFor(menu.targetPaths).length + 2
+        const room = host.contentItem.height - menu.topMargin - menu.bottomMargin
+        menu.openHeight = Math.max(120, Math.min(room, 30 + 6 + rows * 30 + 2 * menu.padding))
         menu.open()
         list.currentIndex = -1
         // Upward when the space below cannot hold it.
-        if (menu.y + menu.height > host.contentItem.height - 8)
-            menu.y = Math.max(8, Math.min(point.y, host.contentItem.height - 8) - menu.height)
+        const bottom = host.contentItem.height - menu.bottomMargin
+        if (menu.y + menu.height > bottom)
+            menu.y = Math.max(menu.topMargin, Math.min(point.y, bottom) - menu.height)
         filter.forceActiveFocus()
     }
 
@@ -93,6 +117,7 @@ Popup {
     function accessibleName(row) {
         if (row.create) return row.name === "" ? (row.kind === "album" ? "New album" : "New tag")
                                                : "Create " + row.kind + " " + row.name
+                                                 + (row.cut ? ", cut to " + menu.albumLimit + " characters" : "")
         return row.name + ", " + row.kind + ", on " + row.count + " of " + menu.targetPaths.length
     }
 
@@ -154,6 +179,16 @@ Popup {
     // Arrow keys from the field and the list; typing goes back to the field.
     function handleKey(event, fromField) {
         const count = list.count
+        // Ctrl+Z takes back the last change, as it does in the library; the
+        // field keeps it for its own text while there is any.
+        if (event.key === Qt.Key_Z && (event.modifiers & Qt.ControlModifier)
+                && !(event.modifiers & (Qt.ShiftModifier | Qt.AltModifier))
+                && (!fromField || filter.text === "")) {
+            const keep = list.currentIndex
+            host.undo()
+            list.currentIndex = Math.min(keep, list.count - 1)
+            return true
+        }
         if (event.key === Qt.Key_Down || event.key === Qt.Key_Up
                 || event.key === Qt.Key_Home || event.key === Qt.Key_End) {
             if (fromField && (event.key === Qt.Key_Home || event.key === Qt.Key_End)) return false
@@ -235,7 +270,9 @@ Popup {
                 verticalAlignment: TextInput.AlignVCenter
                 clip: true
                 focus: true
-                maximumLength: 120
+                // The longest name anything here keeps (a tag's); a longer
+                // album name is cut, and its create row says so.
+                maximumLength: menu.tagLimit
                 font.family: Theme.fontFamily
                 font.pixelSize: 12
                 color: Theme.foreground
@@ -265,7 +302,7 @@ Popup {
             id: list
             objectName: "organizeList"
             width: parent.width
-            height: Math.min(contentHeight, Math.max(60, menu.host.height - 16 - 2 * menu.padding - 36))
+            height: Math.max(0, menu.availableHeight - 36)
             clip: true
             boundsBehavior: Flickable.StopAtBounds
             model: menu.rows
@@ -352,7 +389,8 @@ Popup {
                           ? (row.modelData.name === ""
                              ? (row.modelData.kind === "album" ? "+ New album" : "+ New tag")
                              : (row.modelData.kind === "album" ? "Create album “" : "Create tag “")
-                               + row.modelData.name + "”")
+                               + row.modelData.name + "”"
+                               + (row.modelData.cut ? " (cut to " + menu.albumLimit + " characters)" : ""))
                           : row.modelData.name
                     elide: Text.ElideMiddle
                     font.family: Theme.fontFamily

@@ -8594,6 +8594,365 @@ private slots:
     QVERIFY(flow->width() <= scroll->width());
   }
 
+  // Hundreds of tags read from files: a key in the tag field stays quick.
+  // Each key used to rebuild and sort every tag hundreds of times, about a
+  // second per key with 550 tags, and minutes for a sentence. The list it
+  // shows is opaque, so nothing under it reads through.
+  void typingATagStaysQuickWithManyTags() {
+    QList<AppSettings::EmbeddedUpdate> batch;
+    QList<AppSettings::EmbeddedUpdate> forget;
+    for (int file = 0; file < 2000; ++file) {
+      AppSettings::EmbeddedUpdate update;
+      update.path = m_scratch.filePath(QStringLiteral("absent/%1.jpg").arg(file));
+      for (int pick = 0; pick < 3; ++pick) {
+        const int keyword = (file * 7 + pick * 131) % 620;
+        update.values.keywords.append(
+            QStringLiteral("Bulk/Group %1/Keyword %2").arg(keyword / 40).arg(keyword, 3, 10, QLatin1Char('0')));
+      }
+      batch.append(update);
+      AppSettings::EmbeddedUpdate empty;
+      empty.path = update.path;
+      forget.append(empty);
+    }
+    m_settings->setEmbedded(batch);
+    const auto cleanup = qScopeGuard([&] {
+      m_settings->setEmbedded(forget);
+      m_settings->clearUndoHistory();
+    });
+    QVERIFY(m_settings->tagNames().size() > 600);
+    openDetail(0);
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->isVisible());
+    QTest::keyClick(m_window, Qt::Key_T, Qt::AltModifier);
+    QQuickItem* input = item("tagFieldInput");
+    QTRY_VERIFY(input->hasActiveFocus());
+    const QString entry = QStringLiteral("bulk/group 3/keyword 1 then a sentence typed to reach seventy chars")
+                              .leftJustified(70, QLatin1Char('x'));
+    QCOMPARE(entry.size(), 70);
+    // Far above what the field needs now and far below what it took.
+    constexpr qint64 kBound = 15000;
+    QElapsedTimer typing;
+    typing.start();
+    qint64 slowest = 0;
+    for (const QChar character : entry) {
+      const qint64 before = typing.elapsed();
+      QTest::keyClick(m_window, character.toLatin1());
+      slowest = std::max(slowest, typing.elapsed() - before);
+      if (typing.elapsed() > kBound) break;
+    }
+    const qint64 total = typing.elapsed();
+    qInfo("typed %lld of 70 keys in %lld ms, slowest key %lld ms",
+          static_cast<long long>(input->property("text").toString().size()), static_cast<long long>(total),
+          static_cast<long long>(slowest));
+    QVERIFY2(total < kBound, qPrintable(QString::number(total)));
+    QCOMPARE(input->property("text").toString(), entry);
+
+    // Suggestions for a short entry, on an opaque list.
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_COMPARE(input->property("text").toString(), QString());
+    typeText(QStringLiteral("keyword 01"));
+    QQuickItem* field = item("organizationTagField");
+    QTRY_VERIFY(field->property("rows").value<QJSValue>().toVariant().toList().size() > 1);
+    QObject* popup = m_window->findChild<QObject*>(QStringLiteral("tagSuggestions"));
+    QVERIFY(popup);
+    QTRY_VERIFY(popup->property("visible").toBool());
+    auto* background = popup->property("background").value<QQuickItem*>();
+    QVERIFY(background);
+    QCOMPARE(background->property("color").value<QColor>().alphaF(), 1.0);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_COMPARE(input->property("text").toString(), QString());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+  }
+
+  // A tag added in the narrow preview sorts among many chips, often above
+  // the field: it is scrolled into view, and the details show a scroll bar
+  // while they run past the panel. The suggestions open below the field
+  // when there is room for a few rows, and show whole rows only.
+  void anAddedChipComesIntoViewAndSuggestionsStayClear() {
+    m_window->resize(560, 420);
+    const auto restore = qScopeGuard([&] { m_window->resize(1280, 820); });
+    openDetail(1);
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->isVisible());
+    const QString path = detail->property("path").toString();
+    QStringList many;
+    for (int index = 0; index < 16; ++index) many.append(QStringLiteral("Wrapping chip %1").arg(index));
+    const QString added = QStringLiteral("Aa added first");
+    const auto cleanup = qScopeGuard([&] {
+      for (const QString& tag : std::as_const(many)) m_settings->deleteTag(tag);
+      m_settings->deleteTag(added);
+      m_settings->clearUndoHistory();
+    });
+    for (const QString& tag : std::as_const(many)) QVERIFY(m_settings->createTagFor(tag, {path}).value("count").toInt() == 1);
+    QTest::keyClick(m_window, Qt::Key_T, Qt::AltModifier);
+    QQuickItem* input = item("tagFieldInput");
+    QTRY_VERIFY(input->hasActiveFocus());
+    QQuickItem* scroll = item("inspectorScroll");
+    QTRY_VERIFY(scroll->property("contentHeight").toReal() > scroll->height());
+    auto* bar = item("inspectorScrollBar");
+    auto* thumb = bar->property("contentItem").value<QQuickItem*>();
+    QVERIFY(thumb);
+    QTRY_VERIFY(thumb->opacity() > 0);
+
+    // Suggestions: whole rows, on the side with room.
+    typeText(QStringLiteral("wrapping"));
+    QObject* popup = m_window->findChild<QObject*>(QStringLiteral("tagSuggestions"));
+    QTRY_VERIFY(popup->property("visible").toBool());
+    const qreal rowsHeight = popup->property("height").toReal() - popup->property("topPadding").toReal()
+                             - popup->property("bottomPadding").toReal();
+    QVERIFY2(std::fmod(rowsHeight, 28.0) < 0.5, qPrintable(QString::number(rowsHeight)));
+    auto* list = item("tagSuggestionList");
+    const QPointF listTop = list->mapToScene(QPointF());
+    QVERIFY(listTop.y() >= 0);
+    QVERIFY(listTop.y() + list->height() <= m_window->height());
+    QQuickItem* field = item("organizationTagField");
+    const qreal fieldBottom = field->mapToScene(QPointF(0, field->height())).y();
+    if (m_window->height() - fieldBottom > 3 * 28 + 24) {
+      QVERIFY(!popup->property("upward").toBool());
+    }
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_COMPARE(input->property("text").toString(), QString());
+
+    typeText(added.toLower());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(m_settings->tagsForPath(path).contains(QStringLiteral("aa added first")));
+    QQuickItem* chip = nullptr;
+    QTRY_VERIFY((chip = find(m_window->contentItem(), [&](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("organizationChip_tag_aa added first") && candidate->isVisible();
+    })) != nullptr);
+    const auto inView = [&] {
+      const qreal top = chip->mapToItem(scroll, QPointF()).y();
+      return top >= 0 && top + chip->height() <= scroll->height();
+    };
+    QTRY_VERIFY(inView());
+    // It stays there once the panel settles.
+    QTest::qWait(200);
+    QVERIFY(inView());
+    QVERIFY(input->hasActiveFocus());
+    m_settings->deleteTag(QStringLiteral("aa added first"));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+  }
+
+  // Ctrl+Z in the preview brings a removed chip back without losing the
+  // keyboard: the chip that had it keeps it, and Tab goes on from there.
+  void undoInThePreviewKeepsTheKeyboardOnTheChips() {
+    openDetail(0);
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->isVisible());
+    const QString path = detail->property("path").toString();
+    const QString first = QStringLiteral("focus aa");
+    const QString second = QStringLiteral("focus bb");
+    const auto cleanup = qScopeGuard([&] {
+      m_settings->deleteTag(first);
+      m_settings->deleteTag(second);
+      m_settings->clearUndoHistory();
+    });
+    QVERIFY(m_settings->createTagFor(first, {path}).value("count").toInt() == 1);
+    QVERIFY(m_settings->createTagFor(second, {path}).value("count").toInt() == 1);
+    detail->setProperty("showInfo", true);
+    const auto chip = [&](const QString& name) {
+      return find(m_window->contentItem(), [&](QQuickItem* candidate) {
+        return candidate->objectName() == QStringLiteral("organizationChip_tag_") + name && candidate->isVisible();
+      });
+    };
+    QTRY_VERIFY(chip(first) != nullptr);
+    chip(first)->forceActiveFocus(Qt::TabFocusReason);
+    QTRY_VERIFY(chip(first)->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Delete);
+    QTRY_VERIFY(!m_settings->tagsForPath(path).contains(first));
+    QTRY_VERIFY(chip(second) && chip(second)->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Z, Qt::ControlModifier);
+    QTRY_VERIFY(m_settings->tagsForPath(path).contains(first));
+    QTRY_VERIFY(chip(second) && chip(second)->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QQuickItem* focused = m_window->activeFocusItem();
+    QVERIFY(focused);
+    QVERIFY2(focused->objectName().startsWith(QStringLiteral("organizationChip_")) ||
+                 focused->objectName() == QStringLiteral("tagFieldInput"),
+             qPrintable(focused->objectName()));
+  }
+
+  // Organize keeps one place and size while it is open, typing included;
+  // Ctrl+Z inside it takes back the last change and the rows follow; and
+  // the field stops at the longest name kept, saying when an album name
+  // would be cut.
+  void organizeStaysPutUndoesAndSaysWhenANameIsCut() {
+    const QString album = QStringLiteral("zzundo");
+    QQuickItem* grid = item("library");
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, pathAt(0)));
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("albumActionMenu"));
+    QVERIFY(menu);
+    const auto cleanup = qScopeGuard([&] {
+      QMetaObject::invokeMethod(menu, "close");
+      QMetaObject::invokeMethod(grid, "clearChecked");
+      m_settings->deleteAlbum(album);
+      m_settings->clearUndoHistory();
+    });
+    QQuickItem* organize = pill(m_window->contentItem(), QStringLiteral("Organize"));
+    QVERIFY(organize);
+    waitForLayout();
+    organize = pill(m_window->contentItem(), QStringLiteral("Organize"));
+    click(organize);
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QQuickItem* filter = item("organizeFilter");
+    QTRY_VERIFY(filter->hasActiveFocus());
+    const qreal height = menu->property("height").toReal();
+    const qreal y = menu->property("y").toReal();
+    QVERIFY(height > 0);
+    typeText(album);
+    QTRY_VERIFY(!menu->property("rows").value<QJSValue>().toVariant().toList().isEmpty());
+    QTest::qWait(50);
+    QCOMPARE(menu->property("height").toReal(), height);
+    QCOMPARE(menu->property("y").toReal(), y);
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(m_settings->albumNames().contains(album));
+    QTRY_COMPARE(filter->property("text").toString(), QString());
+    QCOMPARE(menu->property("height").toReal(), height);
+    QCOMPARE(menu->property("y").toReal(), y);
+    const auto albumRow = [&] {
+      return find(m_window->contentItem(), [&](QQuickItem* candidate) {
+        return candidate->objectName() == QStringLiteral("organizeRow_album_") + album && candidate->isVisible();
+      });
+    };
+    QTRY_VERIFY(albumRow() != nullptr);
+    QTest::keyClick(m_window, Qt::Key_Z, Qt::ControlModifier);
+    QTRY_VERIFY(!m_settings->albumNames().contains(album));
+    QVERIFY(menu->property("visible").toBool());
+    QTRY_VERIFY(albumRow() == nullptr);
+
+    // 90 keys reach the field; it keeps 80, a tag's limit, and the album
+    // row says its name is cut to 60.
+    typeText(QString(90, QLatin1Char('q')));
+    QCOMPARE(filter->property("text").toString().size(), 80);
+    QCOMPARE(filter->property("maximumLength").toInt(), 80);
+    bool cut = false;
+    for (const QVariant& row : menu->property("rows").value<QJSValue>().toVariant().toList()) {
+      const QVariantMap map = row.toMap();
+      if (map.value(QStringLiteral("create")).toBool() && map.value(QStringLiteral("kind")).toString() == QStringLiteral("album")) {
+        cut = map.value(QStringLiteral("cut")).toBool();
+        QCOMPARE(map.value(QStringLiteral("name")).toString().size(), 60);
+      }
+    }
+    QVERIFY(cut);
+    QVERIFY(find(m_window->contentItem(), [](QQuickItem* candidate) {
+      return candidate->inherits("QQuickText") && candidate->isVisible() &&
+             candidate->property("text").toString().endsWith(QStringLiteral("(cut to 60 characters)"));
+    }) != nullptr);
+    QQuickItem* sheet = item("albumNameSheet");
+    const QString mode = sheet->property("mode").toString();
+    sheet->setProperty("mode", QStringLiteral("album"));
+    QCOMPARE(item("collectionNameInput")->property("maximumLength").toInt(), 60);
+    sheet->setProperty("mode", QStringLiteral("tag"));
+    QCOMPARE(item("collectionNameInput")->property("maximumLength").toInt(), 80);
+    sheet->setProperty("mode", mode);
+  }
+
+  // Deleting a tag asks first when nested tags go with it, from the sidebar
+  // and from Browse; a tag with none goes as before.
+  void deletingATagWithNestedTagsAsksFirst() {
+    const QStringList tags = {QStringLiteral("Nest"), QStringLiteral("Nest/One"), QStringLiteral("Nest/Two"),
+                              QStringLiteral("Lone")};
+    for (const QString& tag : tags) QVERIFY(m_settings->createTag(tag));
+    QObject* browser = m_window->findChild<QObject*>(QStringLiteral("libraryBrowser"));
+    const auto cleanup = qScopeGuard([&] {
+      QMetaObject::invokeMethod(browser, "close");
+      QMetaObject::invokeMethod(browser, "close");
+      for (const QString& tag : tags) m_settings->deleteTag(tag);
+      m_settings->clearUndoHistory();
+    });
+    QQuickItem* confirm = item("confirm");
+    QVERIFY(QMetaObject::invokeMethod(m_window, "deleteCollection", Q_ARG(QVariant, QStringLiteral("tag")),
+                                      Q_ARG(QVariant, QStringLiteral("Nest")), Q_ARG(QVariant, QVariant())));
+    QTRY_VERIFY(confirm->isVisible());
+    QCOMPARE(confirm->property("title").toString(), QStringLiteral("Delete tag Nest and 2 nested tags?"));
+    QCOMPARE(confirm->property("confirmLabel").toString(), QStringLiteral("Delete"));
+    QVERIFY(m_settings->tagNames().contains(QStringLiteral("Nest/One")));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!confirm->isVisible());
+    QVERIFY(m_settings->tagNames().contains(QStringLiteral("Nest")));
+    QTRY_COMPARE(confirm->property("confirmLabel").toString(), QStringLiteral("Move to Trash"));
+    QVERIFY(QMetaObject::invokeMethod(m_window, "deleteCollection", Q_ARG(QVariant, QStringLiteral("tag")),
+                                      Q_ARG(QVariant, QStringLiteral("Nest")), Q_ARG(QVariant, QVariant())));
+    QTRY_VERIFY(confirm->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!m_settings->tagNames().contains(QStringLiteral("Nest")));
+    QVERIFY(!m_settings->tagNames().contains(QStringLiteral("Nest/Two")));
+    QVERIFY(QMetaObject::invokeMethod(m_window, "deleteCollection", Q_ARG(QVariant, QStringLiteral("tag")),
+                                      Q_ARG(QVariant, QStringLiteral("Lone")), Q_ARG(QVariant, QVariant())));
+    QTRY_VERIFY(!m_settings->tagNames().contains(QStringLiteral("Lone")));
+    QVERIFY(!confirm->isVisible());
+
+    // Browse, with the same question.
+    for (const QString& tag : tags) QVERIFY(m_settings->createTag(tag));
+    QMetaObject::invokeMethod(browser, "open");
+    QTRY_VERIFY(browser->property("visible").toBool());
+    clickPlaced(item("browseFacet-3"));
+    QTRY_COMPARE(browser->property("section").toInt(), 3);
+    QQuickItem* choices = item("libraryChoices");
+    QTRY_VERIFY(m_settings->tagNames().indexOf(QStringLiteral("Nest")) >= 0);
+    choices->setProperty("currentIndex", m_settings->tagNames().indexOf(QStringLiteral("Nest")));
+    QQuickItem* browseConfirm = item("browseDeleteConfirm");
+    QVERIFY(QMetaObject::invokeMethod(browser, "deleteCurrentChoice", Q_ARG(QVariant, QVariant())));
+    QTRY_VERIFY(browseConfirm->isVisible());
+    QCOMPARE(browseConfirm->property("title").toString(), QStringLiteral("Delete tag Nest and 2 nested tags?"));
+    QVERIFY(m_settings->tagNames().contains(QStringLiteral("Nest")));
+    // Escape answers the question and leaves Browse open.
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!browseConfirm->isVisible());
+    QVERIFY(browser->property("visible").toBool());
+    QVERIFY(m_settings->tagNames().contains(QStringLiteral("Nest")));
+    QVERIFY(QMetaObject::invokeMethod(browser, "deleteCurrentChoice", Q_ARG(QVariant, QVariant())));
+    QTRY_VERIFY(browseConfirm->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(!m_settings->tagNames().contains(QStringLiteral("Nest")));
+    QTRY_VERIFY(choices->hasActiveFocus());
+  }
+
+  // "Albums and tags…" heads the Organize group, above Move to Trash, with
+  // Alt+T beside it, in the grid's menu and the preview's.
+  void albumsAndTagsSitsAboveTrashWithItsKey() {
+    const auto ids = [](const QVariant& rows) {
+      QStringList out;
+      for (const QVariant& row : rows.value<QJSValue>().toVariant().toList())
+        out.append(row.toMap().value(QStringLiteral("id")).toString());
+      return out;
+    };
+    const auto shortcutOf = [](const QVariant& rows, const QString& id) {
+      for (const QVariant& row : rows.value<QJSValue>().toVariant().toList())
+        if (row.toMap().value(QStringLiteral("id")).toString() == id)
+          return row.toMap().value(QStringLiteral("shortcut")).toString();
+      return QString();
+    };
+    QVariant single;
+    QVERIFY(QMetaObject::invokeMethod(m_window, "singleEntries", Q_RETURN_ARG(QVariant, single),
+                                      Q_ARG(QVariant, pathAt(0))));
+    QStringList order = ids(single);
+    QVERIFY(order.contains(QStringLiteral("organize")));
+    QVERIFY2(order.indexOf(QStringLiteral("organize")) < order.indexOf(QStringLiteral("trash")), qPrintable(order.join(',')));
+    QCOMPARE(shortcutOf(single, QStringLiteral("organize")), QStringLiteral("Alt+T"));
+    QVariant selection;
+    QVERIFY(QMetaObject::invokeMethod(m_window, "selectionEntries", Q_RETURN_ARG(QVariant, selection),
+                                      Q_ARG(QVariant, QVariant(QStringList{pathAt(0), pathAt(1)}))));
+    order = ids(selection);
+    QVERIFY(order.indexOf(QStringLiteral("organize")) < order.indexOf(QStringLiteral("trash")));
+    QCOMPARE(shortcutOf(selection, QStringLiteral("organize")), QStringLiteral("Alt+T"));
+
+    openDetail(0);
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->isVisible());
+    QVariant preview;
+    QVERIFY(QMetaObject::invokeMethod(detail, "visibleActions", Q_RETURN_ARG(QVariant, preview)));
+    order = ids(preview);
+    QVERIFY(order.contains(QStringLiteral("organize")));
+    QVERIFY2(order.indexOf(QStringLiteral("organize")) < order.indexOf(QStringLiteral("trash")), qPrintable(order.join(',')));
+    QCOMPARE(shortcutOf(preview, QStringLiteral("organize")), QStringLiteral("Alt+T"));
+    // It does what Alt+T does there: the details, with the tag field ready.
+    QVERIFY(QMetaObject::invokeMethod(detail, "invokeAction", Q_ARG(QVariant, QStringLiteral("organize"))));
+    QTRY_VERIFY(item("tagFieldInput")->hasActiveFocus());
+    QVERIFY(detail->property("showInfo").toBool());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+  }
+
   // The Trash question says when .xmp sidecars go along, for one file and
   // for a selection.
   void trashPromptsNameTheSidecarsThatGoAlong() {
@@ -9981,6 +10340,10 @@ private slots:
     QCOMPARE(menu->property("name").toString(), QStringLiteral("Sidebarq"));
     QTest::keyClick(m_window, Qt::Key_Down);
     QTest::keyClick(m_window, Qt::Key_Down);
+    QTest::keyClick(m_window, Qt::Key_Return);
+    // A delete that takes nested tags along asks first.
+    QTRY_VERIFY(item("confirm")->isVisible());
+    QVERIFY(m_settings->tagNames().contains(QStringLiteral("Sidebarq/Child")));
     QTest::keyClick(m_window, Qt::Key_Return);
     QTRY_VERIFY(!m_settings->tagNames().contains(QStringLiteral("Sidebarq/Child")));
     QTRY_VERIFY(item("footerStatus")->property("text").toString().startsWith(

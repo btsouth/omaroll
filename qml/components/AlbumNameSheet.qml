@@ -46,7 +46,7 @@ Item {
             const renamed = mode === "tag" ? Settings.renameTag(renameFrom, name)
                                            : Settings.renameAlbum(renameFrom, name)
             if (!renamed) {
-                errorMessage = Settings.organizationError || "That name is taken or invalid."
+                errorMessage = Settings.organizationError || root.whyNot(name)
                 return
             }
             root.saved(name, 0, mode + "Rename")
@@ -58,8 +58,7 @@ Item {
                         : mode === "smart" ? Settings.saveSmartCollection(name, savedView)
                                            : Settings.createAlbumFor(name, paths, true).created
         if (!created) {
-            errorMessage = Settings.organizationError || (mode === "smart"
-                           ? "Use a name without a slash." : "Use a unique name without a slash.")
+            errorMessage = Settings.organizationError || root.whyNot(name)
             return
         }
         if (Settings.organizationError !== "") {
@@ -68,6 +67,23 @@ Item {
         }
         root.saved(name, paths.length, mode)
         root.close()
+    }
+
+    // Why a name was refused, naming what is in the way.
+    function whyNot(name) {
+        if (name === "" || name.replace(/\//g, "").trim() === "") return "Type a name."
+        if (mode !== "tag" && name.indexOf("/") >= 0)
+            return (mode === "smart" ? "Collection" : "Album") + " names cannot contain a slash."
+        const lower = name.toLowerCase()
+        const same = function (other) { return other.toLowerCase() === lower }
+        const taken = mode === "tag" ? Settings.existingTag(name)
+                    : (mode === "smart" ? Settings.smartCollectionNames : Settings.albumNames).find(same)
+        if (taken) {
+            return "There is already " + (mode === "tag" ? "a tag" : mode === "smart" ? "a smart collection"
+                                                                    : "an album")
+                   + " called " + taken + "."
+        }
+        return "That name cannot be used."
     }
 
     function shade(base, amount) {
@@ -162,7 +178,8 @@ Item {
                     anchors.rightMargin: 10
                     verticalAlignment: TextInput.AlignVCenter
                     clip: true
-                    maximumLength: 60
+                    // What AppSettings keeps: 80 for a tag, 60 otherwise.
+                    maximumLength: root.mode === "tag" ? 80 : 60
                     font.family: Theme.fontFamily
                     font.pixelSize: 12
                     color: Theme.foreground
