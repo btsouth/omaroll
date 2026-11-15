@@ -10,6 +10,7 @@
 // Events go through QTest into the offscreen window, never to the live seat.
 
 #include "actions/ActionLauncher.h"
+#include "actions/FileChooserRequest.h"
 #include "actions/ActionRegistry.h"
 #include "actions/ExternalEditors.h"
 #include "actions/TailscalePeers.h"
@@ -436,8 +437,95 @@ private slots:
     QCOMPARE(rawRows, 2);
   }
 
+  // Help reads from Navigation down, one row per action, and in the preview
+  // lists M and 0 only for the kind of file on screen. 0 no longer turns a
+  // video preview's volume up; the arrows do, as in the viewer.
+  void helpGroupsReadInOrderWithOneRowPerAction() {
+    const auto restoreSize = qScopeGuard([&] { m_window->resize(1280, 820); });
+    m_window->resize(1280, 820);
+    QObject* help = m_window->findChild<QObject*>(QStringLiteral("libraryShortcutHelp"));
+    QVERIFY(help);
+    const auto groups = [help] { return help->property("groups").value<QJSValue>().toVariant().toList(); };
+    const auto labels = [&] {
+      QStringList all;
+      for (const QVariant& group : groups())
+        for (const QVariant& row : group.toMap().value(QStringLiteral("rows")).toList())
+          all.append(row.toMap().value(QStringLiteral("label")).toString());
+      return all;
+    };
+    const auto check = [&] {
+      const QVariantList list = groups();
+      QVERIFY(!list.isEmpty());
+      QCOMPARE(list.first().toMap().value(QStringLiteral("title")).toString(), QStringLiteral("Navigation"));
+      for (const QVariant& group : list) {
+        QStringList seen;
+        for (const QVariant& row : group.toMap().value(QStringLiteral("rows")).toList()) {
+          const QString label = row.toMap().value(QStringLiteral("label")).toString();
+          QVERIFY2(!seen.contains(label), qPrintable(label));
+          seen.append(label);
+        }
+      }
+      // The first column starts with Navigation too.
+      QVariant columns;
+      QVERIFY(QMetaObject::invokeMethod(help, "columnsFor", Q_RETURN_ARG(QVariant, columns),
+                                        Q_ARG(QVariant, help->property("columnCount"))));
+      const QVariantList first = (columns.metaType() == QMetaType::fromType<QJSValue>() ? columns.value<QJSValue>().toVariant() : columns).toList().value(0).toList();
+      QVERIFY(!first.isEmpty());
+      QCOMPARE(first.first().toMap().value(QStringLiteral("title")).toString(), QStringLiteral("Navigation"));
+    };
+
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(help->property("visible").toBool());
+    check();
+    QVERIFY(labels().contains(QStringLiteral("Open a file")));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!help->property("visible").toBool());
+
+    int pictureRow = -1, videoRow = -1;
+    for (int row = 0; row < m_library->rowCount(); ++row) {
+      if (m_library->isVideoAt(row)) { if (videoRow < 0) videoRow = row; }
+      else if (!m_library->isDocumentAt(row) && pictureRow < 0) pictureRow = row;
+    }
+    QVERIFY(pictureRow >= 0 && videoRow >= 0);
+    const auto cleanup = qScopeGuard([&] { invoke("dismissTopLayer"); });
+    QQuickItem* detail = item("detail");
+
+    openDetail(pictureRow);
+    QTRY_VERIFY(detail->isVisible());
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(help->property("visible").toBool());
+    check();
+    QVERIFY(labels().contains(QStringLiteral("Add background")));
+    QVERIFY(labels().contains(QStringLiteral("Fit picture / PDF")));
+    QVERIFY(!labels().contains(QStringLiteral("Mute")));
+    QVERIFY(!labels().contains(QStringLiteral("Volume up / down")));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!help->property("visible").toBool());
+
+    openDetail(videoRow);
+    QTRY_VERIFY(detail->property("isVideo").toBool());
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(help->property("visible").toBool());
+    QVERIFY(labels().contains(QStringLiteral("Mute")));
+    QVERIFY(labels().contains(QStringLiteral("Volume up / down")));
+    QVERIFY(!labels().contains(QStringLiteral("Add background")));
+    QVERIFY(!labels().contains(QStringLiteral("Fit picture / PDF")));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!help->property("visible").toBool());
+    const qreal volume = m_settings->videoVolume();
+    const auto restoreVolume = qScopeGuard([&] { m_settings->setVideoVolume(volume); });
+    m_settings->setVideoVolume(0.5);
+    QTest::keyClick(m_window, Qt::Key_0);
+    QTest::keyClick(m_window, Qt::Key_9);
+    QTest::qWait(50);
+    QCOMPARE(m_settings->videoVolume(), 0.5);
+    QTest::keyClick(m_window, Qt::Key_Up);
+    QTRY_VERIFY(m_settings->videoVolume() > 0.5);
+  }
+
   // A sheet or prompt opened from a focused control gives the keyboard back
-  // to that control when it closes.
+  // to that control when it closes. Ctrl+Shift+O asks the desktop's file
+  // chooser for a file to open.
   void focusComesBackToTheControlThatOpenedASheet() {
     QQuickItem* settingsButton = item("settingsButton");
     QQuickItem* settings = item("settingsSheet");
@@ -459,6 +547,16 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_Escape);
     QTRY_VERIFY(!help->property("visible").toBool());
     QTRY_VERIFY(grid->hasActiveFocus());
+
+    QSignalSpy failed(m_actions, &ActionLauncher::failed);
+    QTest::keyClick(m_window, Qt::Key_O, Qt::ControlModifier | Qt::ShiftModifier);
+    QTRY_VERIFY(!m_actions->findChildren<FileChooserRequest*>().isEmpty() || failed.count() > 0);
+    if (failed.count() > 0) {
+      const QString message = failed.first().first().toString();
+      QVERIFY2(message.contains(QStringLiteral("file chooser")), qPrintable(message));
+    }
+    // The footer's notice would hide its hints from the tests after this one.
+    QVERIFY(QMetaObject::invokeMethod(m_window, "say", Q_ARG(QVariant, QString())));
   }
 
   void aboutLinksMissingToolsAndWindowRules() {

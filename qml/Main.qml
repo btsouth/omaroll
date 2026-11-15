@@ -2581,6 +2581,9 @@ ApplicationWindow {
 
     function showShortcutHelp() {
         shortcutHelp.context = detail.visible ? "preview" : "library"
+        // A key that means one thing for a video and another for a picture
+        // (M, 0) is listed only for the kind on screen.
+        shortcutHelp.video = detail.visible && detail.isVideo
         shortcutHelp.open()
     }
     ShortcutHelp {
@@ -2782,6 +2785,14 @@ ApplicationWindow {
     Shortcut {
         sequences: ShortcutCatalog.sequence("library", "quit")
         onActivated: Qt.quit()
+    }
+    // The desktop's file chooser, from the library or its preview, as the
+    // empty library's Open file button does.
+    Shortcut {
+        sequences: ShortcutCatalog.sequence("library", "open-file")
+        enabled: !root.modalOpen && !root.popupOpen
+        autoRepeat: false
+        onActivated: Actions.chooseFilesToOpen()
     }
     // Sheets can move focus into a child control, so Escape is owned here at
     // window scope. With no sheet, the search field still owns its Escape.

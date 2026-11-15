@@ -15,6 +15,7 @@ The viewer opens when you double-click a picture or video, or run
 | `Home` `End` | First · last file, or the start · end of a video |
 | mouse back/forward buttons | Previous · next file |
 | `Ctrl+O` | Choose another application for the current file |
+| `Ctrl+Shift+O` | Open a file with the desktop's file chooser |
 | wheel · pinch | Zoom around the pointer |
 | `+` `-` | Zoom in · out |
 | drag · two-finger scroll | Move around a zoomed picture, down a long screenshot |
@@ -90,7 +91,7 @@ the viewer. The preview is the built-in viewer inside the library.
 | `←` `→` in a preview | Previous · next file in the same folder |
 | `J` `L` in a video preview | Seek backward · forward five seconds |
 | `,` `.` in a video preview | Step one frame back · forward |
-| `M` · `↑` `↓` or `9` `0` in a video preview | Mute · volume down/up |
+| `M` · `↑` `↓` in a video preview | Mute · volume up/down |
 | `[` `]` · `Backspace` in a video preview | Change speed · reset speed |
 | `Home` `End` in a video preview | Start · end |
 | `+` `-` · `0` · `1` · `R` in an image preview | Zoom · fit · toggle fit and actual size · rotate |
@@ -98,13 +99,14 @@ the viewer. The preview is the built-in viewer inside the library.
 | `F11` in a preview | Enter · leave fullscreen |
 | `F5` in a preview | Start · pause slideshow |
 | `I` in a preview | Show · hide file info and actions |
-| `M` | Add background |
+| `M` on the grid or a picture preview | Add background |
 | `T` · `P` | Trim · Play a recording |
 | `G` in a video preview | Save the current frame beside the recording |
 | `A` · `C` | Annotate · Extract text |
 | `E` | Convert or resize, including the selection |
 | mouse back/forward buttons in a preview | Previous · next file |
 | `Ctrl+O` | Choose another application for the current file |
+| `Ctrl+Shift+O` | Open a file with the desktop's file chooser |
 | `N` | Rename, preserving the extension |
 | `Y` · `S` · `F` | Clipboard · Send · Show in file manager |
 | `Ctrl+Shift+C` | Copy the current file path as text; Copy file name is in the menu |

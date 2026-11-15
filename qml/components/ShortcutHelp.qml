@@ -24,22 +24,34 @@ Popup {
         return Math.max(1, Math.min(3, fit, groups.length))
     }
 
-    // Groups into columns, longest first, each into the shortest column so far.
+    // Groups into columns: the first group (Navigation) heads the first
+    // column, then the rest longest first, each into the shortest column so
+    // far, so the sheet stays as short as it can. Within a column the groups
+    // keep their reading order.
     function columnsFor(count) {
         let columns = [], sizes = [];
         for (let i = 0; i < count; ++i) {
             columns.push([]);
             sizes.push(0);
         }
-        const ordered = groups.slice().sort(function (a, b) {
+        const ordered = groups.slice(0, 1).concat(groups.slice(1).sort(function (a, b) {
             return b.rows.length - a.rows.length;
-        });
+        }));
         for (const group of ordered) {
             const index = sizes.indexOf(Math.min.apply(null, sizes));
             columns[index].push(group);
             sizes[index] += group.rows.length + 2;
         }
-        return columns;
+        for (const column of columns) {
+            column.sort(function (a, b) {
+                return groups.indexOf(a) - groups.indexOf(b);
+            });
+        }
+        // And the columns follow their first groups' order.
+        return columns.sort(function (a, b) {
+            return (a.length ? groups.indexOf(a[0]) : groups.length)
+                   - (b.length ? groups.indexOf(b[0]) : groups.length);
+        });
     }
 
     parent: Overlay.overlay
@@ -178,7 +190,10 @@ Popup {
                                 width: parent.width
                                 spacing: 2
                                 Text {
+                                    objectName: "shortcutGroupTitle"
                                     text: parent.modelData.title
+                                    Accessible.role: Accessible.Heading
+                                    Accessible.name: text
                                     color: Theme.accent
                                     font.family: Theme.fontFamily
                                     font.pixelSize: 13

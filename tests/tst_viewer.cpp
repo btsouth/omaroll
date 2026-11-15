@@ -9,6 +9,7 @@
 
 #include "actions/ActionLauncher.h"
 #include "actions/ActionRegistry.h"
+#include "actions/FileChooserRequest.h"
 #include "actions/FileDrag.h"
 #include "actions/ExternalEditors.h"
 #include "app/AppSettings.h"
@@ -2725,6 +2726,63 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_Return);
     QTRY_VERIFY(QFile::exists(files.at(0)));
     QTRY_VERIFY(item(QStringLiteral("viewerKeys"))->hasActiveFocus());
+  }
+
+  // Help starts with Navigation, files the flips and saved copy under View,
+  // and gives each action one row: the arrows and Page Up and Down share
+  // "Previous / next file".
+  void helpReadsFromNavigationWithOneRowPerAction() {
+    open({media(QStringLiteral("Shot 1.jpg"))});
+    QObject* help = m_window->findChild<QObject*>(QStringLiteral("viewerShortcutHelp"));
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(help->property("visible").toBool());
+    const QVariantList groups = help->property("groups").value<QJSValue>().toVariant().toList();
+    QStringList titles;
+    QString flipGroup, openFile;
+    int previousRows = 0;
+    for (const QVariant& group : groups) {
+      const QVariantMap map = group.toMap();
+      titles.append(map.value(QStringLiteral("title")).toString());
+      QStringList seen;
+      for (const QVariant& entry : map.value(QStringLiteral("rows")).toList()) {
+        const QVariantMap row = entry.toMap();
+        const QString label = row.value(QStringLiteral("label")).toString();
+        QVERIFY2(!seen.contains(label), qPrintable(label));
+        seen.append(label);
+        if (label == QStringLiteral("Previous / next file")) {
+          ++previousRows;
+          QCOMPARE(row.value(QStringLiteral("caps")).toList().size(), 4);
+        }
+        if (label == QStringLiteral("Flip horizontally")) flipGroup = titles.last();
+        if (label == QStringLiteral("Open a file")) openFile = row.value(QStringLiteral("keys")).toString();
+      }
+    }
+    QCOMPARE(titles.first(), QStringLiteral("Navigation"));
+    QVERIFY(!titles.contains(QStringLiteral("Zoom")));
+    QCOMPARE(flipGroup, QStringLiteral("View"));
+    QCOMPARE(previousRows, 1);
+    QCOMPARE(openFile, QStringLiteral("Ctrl+Shift+O"));
+    QVariant columns;
+    QVERIFY(QMetaObject::invokeMethod(help, "columnsFor", Q_RETURN_ARG(QVariant, columns),
+                                      Q_ARG(QVariant, help->property("columnCount"))));
+    const QVariantList first = (columns.metaType() == QMetaType::fromType<QJSValue>() ? columns.value<QJSValue>().toVariant() : columns).toList().value(0).toList();
+    QCOMPARE(first.value(0).toMap().value(QStringLiteral("title")).toString(), QStringLiteral("Navigation"));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!help->property("visible").toBool());
+  }
+
+  // Ctrl+Shift+O asks the desktop's file chooser for a file to open;
+  // Ctrl+O still offers another app for the one on screen.
+  void ctrlShiftOChoosesAFileToOpen() {
+    open({media(QStringLiteral("Shot 1.jpg"))});
+    QSignalSpy failed(m_actions, &ActionLauncher::failed);
+    QTest::keyClick(m_window, Qt::Key_O, Qt::ControlModifier | Qt::ShiftModifier);
+    // A portal answers with a chooser; a test bus without one says so.
+    QTRY_VERIFY(!m_actions->findChildren<FileChooserRequest*>().isEmpty() || failed.count() > 0);
+    if (failed.count() > 0) {
+      const QString message = failed.first().first().toString();
+      QVERIFY2(message.contains(QStringLiteral("file chooser")), qPrintable(message));
+    }
   }
 
   // A focused control that is switched off or hidden hands the keyboard back
