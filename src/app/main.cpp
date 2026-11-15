@@ -6,7 +6,6 @@
 #include "app/AppSettings.h"
 #include "app/DemoLibrary.h"
 #include "app/Diagnostics.h"
-#include "app/GraphicsWarmup.h"
 #include "app/HyprlandSetup.h"
 #include "app/HeadlessAudio.h"
 #include "app/OpenRequest.h"
@@ -819,10 +818,6 @@ int main(int argc, char* argv[]) {
   engine.rootContext()->setContextProperty(QStringLiteral("Mpris"), &mpris);
 
   startup.mark("services");
-  // Start the OpenGL driver while QML loads, rather than on the window thread
-  // when the first window is exposed (app/GraphicsWarmup.h). Not earlier: the
-  // driver's library loads would hold up the theme's font lookup.
-  if (!rendering) GraphicsWarmup::start();
 
   // Declared after the engine, so every window goes before it does.
   std::unique_ptr<LibraryWindow> libraryWindow;

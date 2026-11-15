@@ -53,8 +53,6 @@ add_library(omaroll_core STATIC
   src/app/PlaybackHeap.h
   src/app/VideoPresentation.h
   src/app/VideoPlayback.h
-  src/app/GraphicsWarmup.cpp
-  src/app/GraphicsWarmup.h
   src/app/VideoWarmup.cpp
   src/app/VideoWarmup.h
   src/app/TsanHandoff.h

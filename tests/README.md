@@ -197,10 +197,6 @@ at entry to `main`, excluding process spawning and dynamic loading before main:
   about 150 ms on the reference machine instead of about 10.
 - `warmup_done`: a direct video launch has loaded the multimedia backend and
   started the GPU driver on a worker (`src/app/VideoWarmup.h`).
-- `graphics_warmup_done`: on Wayland with OpenGL, a worker has created and
-  dropped an OpenGL context while QML loads (`src/app/GraphicsWarmup.h`), so
-  the throwaway context Qt Quick makes on the window thread at the first
-  expose no longer pays for starting the driver.
 - `scenegraph`: the render thread has its graphics context.
 - `player`: the quick viewer is creating its player. A launch does this
   before the window is shown; playback (where Qt builds the decoders on the

@@ -122,7 +122,7 @@ milliseconds, so those numbers are not used here. Its `image_frame` is also
 not comparable across the change: before, it was the fade's first frame,
 where the picture is drawn at opacity 0 and costs nothing; it is now the frame
 that actually draws the picture, which on llvmpipe includes compiling its
-shaders. Graphics warmup is off on the offscreen platform.
+shaders.
 
 ## Startup, stage by stage
 
@@ -159,8 +159,8 @@ What changed:
 
 The rest of the time before the first frame is spent in Qt and the driver:
 loading QML, a temporary OpenGL context Qt creates on the window thread to
-choose a surface format (about 40 ms with NVIDIA, about 24 since the graphics
-warmup), and the render thread's own context. Nothing before the theme is worth moving: the single-instance check
+choose a surface format (about 40 ms with NVIDIA), and the render thread's own
+context. Nothing before the theme is worth moving: the single-instance check
 takes under a millisecond, the icon lookup about 3, hyprctl about 7 and the
 font lookup about 10 with a warm cache.
 
