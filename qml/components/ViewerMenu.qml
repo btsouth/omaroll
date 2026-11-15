@@ -45,15 +45,19 @@ Menu {
     onAboutToShow: followCascade()
 
     // Which side a submenu of this menu opens on: its own while it is up;
-    // before that, the side this one cascaded to, or the left when the
-    // window has no room for it on the right.
+    // before that, the side this one cascaded to when it has room there, as
+    // followCascade() decides, or the left when the window has no room for
+    // it on the right.
     function submenuOpensLeft(sub) {
         if (!sub) return false
         if (sub.visible) return sub.cascadedLeft === true
-        if (menu.cascadedLeft) return true
-        if (!menu.background || !menu.hostWindow) return false
-        const right = menu.background.mapToItem(null, menu.background.width, 0).x
+        if (!menu.background || !menu.hostWindow) return menu.cascadedLeft === true
         const width = sub.width > 0 ? sub.width : sub.implicitWidth
+        if (menu.cascadedLeft) {
+            const start = menu.background.mapToItem(null, 0, 0).x
+            if (start - width + sub.overlap >= 8) return true
+        }
+        const right = menu.background.mapToItem(null, menu.background.width, 0).x
         return right - menu.overlap + width > menu.hostWindow.width - 8
     }
     // A margin worked out for another window width or another place of the

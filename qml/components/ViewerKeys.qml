@@ -6,7 +6,27 @@ Item {
     // The Viewer window whose actions the keys perform.
     required property var viewer
 
+    // Enter, Space or Escape held after answering the resume prompt: its
+    // repeats are dropped, and letting it go or a new key ends that.
+    function promptKey(event) {
+        return [Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space, Qt.Key_Escape].indexOf(event.key) >= 0
+    }
+    Keys.onReleased: function (event) {
+        if (viewer.promptKeyHeld && promptKey(event) && !event.isAutoRepeat) {
+            viewer.promptKeyHeld = false
+            event.accepted = true
+        } else {
+            event.accepted = false
+        }
+    }
     Keys.onPressed: function (event) {
+        if (viewer.promptKeyHeld) {
+            if (event.isAutoRepeat && promptKey(event)) {
+                event.accepted = true
+                return
+            }
+            viewer.promptKeyHeld = false
+        }
         if (event.key === ShortcutCatalog.quickKeys.Tab || event.key === ShortcutCatalog.quickKeys.Backtab) viewer.keyboardNavigation = true
         if (viewer.sheetOpen) {
             event.accepted = false

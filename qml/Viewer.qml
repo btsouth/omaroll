@@ -291,6 +291,9 @@ ApplicationWindow {
     // otherwise the picture does. Taken as the prompt opens: while it
     // closes, focus passes through other items first.
     property Item focusOutsidePrompts: null
+    // Set as the resume prompt goes with the keyboard on it, until the key
+    // that answered it is let go (ViewerKeys).
+    property bool promptKeyHeld: false
     property Item focusBeforePrompt: null
     function restoreFocusAfterPrompt() {
         const at = root.focusBeforePrompt
@@ -842,6 +845,11 @@ ApplicationWindow {
             return
         }
         root.seekTo(root.resumePosition)
+        // A file stepped to can still be loading when Resume is pressed, and
+        // a seek sent then is lost. Kept as the target, it is sent again
+        // once playback shows it did not land.
+        root.player.launchTarget = Math.round(root.resumePosition)
+        root.player.launchRetries = 0
         root.player.play()
     }
 
@@ -2420,8 +2428,14 @@ ApplicationWindow {
             Accessible.role: Accessible.Grouping
             Accessible.name: "Resume where you left off"
             onVisibleChanged: {
-                if (visible) Qt.callLater(resumePrompt.takeFocus)
-                else if (resumeRow.activeFocusInside) keys.forceActiveFocus()
+                if (visible) {
+                    Qt.callLater(resumePrompt.takeFocus)
+                } else if (resumeRow.activeFocusInside) {
+                    // The key that answered may still be held: its repeats
+                    // must not go on to open the library or pause.
+                    root.promptKeyHeld = true
+                    keys.forceActiveFocus()
+                }
             }
             function takeFocus() {
                 if (resumePrompt.visible && !root.blockingActionOpen && !root.sheetOpen)

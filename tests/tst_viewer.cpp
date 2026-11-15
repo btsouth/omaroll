@@ -2418,6 +2418,37 @@ private slots:
     QTRY_VERIFY(visible(menu));
     QTest::qWait(50);
     check(false);
+
+    // At 560 px View still opens to the left, but Sort has no room left of
+    // it and opens to the right. Its arrow and its keys say so before it
+    // opens.
+    m_window->resize(560, 820);
+    QTRY_COMPARE(m_window->width(), 560);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "openViewForRender", Q_ARG(QVariant, QStringLiteral("viewer-menu"))));
+    QTRY_VERIFY(visible(menu));
+    QTest::qWait(50);
+    reach(QStringLiteral("viewerMenu_group-view"));
+    QVERIFY(item(QStringLiteral("viewerMenu_group-viewArrow"))->property("pointsLeft").toBool());
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QTRY_VERIFY(visible(viewMenu));
+    QTest::qWait(50);
+    QVERIFY(viewMenu->property("cascadedLeft").toBool());
+    reach(QStringLiteral("viewerMenu_group-sort"));
+    QVERIFY(!item(QStringLiteral("viewerMenu_group-sortArrow"))->property("pointsLeft").toBool());
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QTest::qWait(50);
+    QVERIFY(!visible(sortMenu));
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTRY_VERIFY(visible(sortMenu));
+    QTest::qWait(50);
+    QVERIFY(!sortMenu->property("cascadedLeft").toBool());
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QTRY_VERIFY(!visible(sortMenu));
+    QVERIFY(visible(viewMenu));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!visible(menu));
+    m_window->resize(1280, 820);
   }
 
   // The file goes out as the same text/uri-list and text/plain a library
@@ -5000,6 +5031,61 @@ private slots:
     player->pause();
   }
 
+  // A key held down on the prompt answers it once. Its repeats do not go
+  // on to the viewer, where Enter opens the library, Space pauses and
+  // Escape closes; once it is let go the viewer's keys work again.
+  void resumePromptIgnoresAHeldKey_data() {
+    QTest::addColumn<int>("key");
+    QTest::addColumn<bool>("plays");
+    QTest::newRow("enter") << int(Qt::Key_Return) << true;
+    QTest::newRow("space") << int(Qt::Key_Space) << true;
+    QTest::newRow("escape") << int(Qt::Key_Escape) << false;
+  }
+
+  void resumePromptIgnoresAHeldKey() {
+    QFETCH(int, key);
+    QFETCH(bool, plays);
+    const QString path = m_scratch.filePath(QStringLiteral("resume-held.mkv"));
+    QVERIFY(QFile::exists(path) || QFile::copy(QFINDTESTDATA("fixtures/viewer/tracks.mkv"), path));
+    m_settings->setVideoPosition(path, 7000);
+    const auto restore = qScopeGuard([this, path] { m_settings->clearVideoPosition(path); });
+    open({path});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_VERIFY(prop("resumeAvailable").toBool());
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    QTRY_COMPARE(m_window->activeFocusItem(), item(QStringLiteral("viewerResumeButton")));
+    QSignalSpy library(m_session, &ViewerSession::libraryRequested);
+    const QString text = key == Qt::Key_Space ? QStringLiteral(" ") : key == Qt::Key_Return ? QStringLiteral("\r") : QString();
+    const auto send = [&](QEvent::Type type, bool repeat) {
+      QKeyEvent event(type, key, Qt::NoModifier, text, repeat);
+      QCoreApplication::sendEvent(m_window, &event);
+    };
+    send(QEvent::KeyPress, false);
+    QTRY_VERIFY(!prop("resumeAvailable").toBool());
+    for (int repeat = 0; repeat < 4; ++repeat) {
+      send(QEvent::KeyRelease, true);
+      send(QEvent::KeyPress, true);
+      QTest::qWait(30);
+    }
+    send(QEvent::KeyRelease, false);
+    QTest::qWait(200);
+    QCOMPARE(library.size(), 0);
+    QVERIFY(m_window->isVisible());
+    QCOMPARE(m_session->path(), path);
+    if (plays) {
+      QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+      QTRY_VERIFY_WITH_TIMEOUT(player->position() >= 7000, 2000);
+    } else {
+      QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    }
+    player->pause();
+    // Let go, Enter is the viewer's own again.
+    QTRY_COMPARE(m_window->activeFocusItem(), item(QStringLiteral("viewerKeys")));
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QCOMPARE(library.size(), 1);
+  }
+
   // The prompt keeps only its own keys. Right steps to the next file, so
   // arrowing through a folder does not stop at each video with a saved
   // spot, the viewer's other keys still work, and Enter on the next prompt
@@ -5039,9 +5125,13 @@ private slots:
     QTRY_VERIFY((player = qobject_cast<QMediaPlayer*>(prop("player").value<QObject*>()))
                 && player->source().toString().endsWith(QStringLiteral("resume-pass-2.mkv")));
     QTRY_COMPARE(m_window->activeFocusItem(), resume);
+    // Pressed at once: the second file can still be loading, and the seek
+    // to its saved spot must not be lost. Played from the start instead, it
+    // could not reach 7 s in the 2 s allowed.
     QTest::keyClick(m_window, Qt::Key_Return);
     QTRY_VERIFY(!prop("resumeAvailable").toBool());
     QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+    QTRY_VERIFY_WITH_TIMEOUT(player->position() >= 7000, 2000);
     const qint64 at = player->position();
     QVERIFY2(at >= 7000 && at < 10000, qPrintable(QString::number(at)));
     player->pause();
@@ -8311,7 +8401,10 @@ private:
       QVERIFY(QTest::qWaitForWindowExposed(m_window));
     }
     m_window->requestActivate();
-    QTRY_VERIFY(item(QStringLiteral("viewerKeys"))->hasActiveFocus());
+    // The picture has the keyboard, or a video's resume prompt does.
+    QTRY_VERIFY(item(QStringLiteral("viewerKeys"))->hasActiveFocus()
+                || item(QStringLiteral("viewerResumeButton"))->hasActiveFocus()
+                || item(QStringLiteral("viewerRestartButton"))->hasActiveFocus());
   }
 
   static QQuickItem* find(QQuickItem* root, const std::function<bool(QQuickItem*)>& match) {
