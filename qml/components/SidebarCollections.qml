@@ -342,7 +342,8 @@ FocusScope {
         const topHeld = above >= 0 || headerIndices.some(function (header) {
             return offsets[header] <= top + 0.5 && offsets[header] + root.headerHeight > top + 0.5
         })
-        while (bottom.length > room - (topHeld ? 1 : 0)) bottom.pop()
+        const keep = Math.max(0, room - (topHeld ? 1 : 0))
+        if (bottom.length > keep) bottom.length = keep
         // Pushed up by the next header as it arrives.
         let shift = 0
         if (above >= 0) {
