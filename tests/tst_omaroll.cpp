@@ -16869,6 +16869,228 @@ private slots:
     QCOMPARE(count(rows({a, b}), "tag:Travel"), 1);
   }
 
+  // A library with hundreds of keyword tags: typing a tag and drawing the
+  // sidebar must not cost work per key that grows with every tag. Reading
+  // tagNames rebuilt and re-sorted the whole list each time, and the tag
+  // field read it on every key, which froze the window for minutes.
+  void manyTagsStayQuickToTypeAndMatch() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    AppSettings settings;
+    for (int index = 0; index < 40; ++index) QVERIFY(settings.createTag(QStringLiteral("Local/Tag number %1").arg(index)));
+    // 3000 files, 620 keywords between them, a few on each file.
+    QList<AppSettings::EmbeddedUpdate> batch;
+    constexpr int kFiles = 3000;
+    constexpr int kKeywords = 620;
+    for (int file = 0; file < kFiles; ++file) {
+      QStringList keywords;
+      for (int pick = 0; pick < 4; ++pick) {
+        const int keyword = (file * 7 + pick * 131) % kKeywords;
+        keywords.append(QStringLiteral("Bulk/Group %1/Keyword %2").arg(keyword / 40).arg(keyword, 3, 10, QLatin1Char('0')));
+      }
+      batch.append(embeddedUpdate(dir.filePath(QStringLiteral("missing/%1.jpg").arg(file)), keywords));
+    }
+    settings.setEmbedded(batch);
+    const QStringList names = settings.tagNames();
+    QVERIFY2(names.size() > 600, qPrintable(QString::number(names.size())));
+
+    // A 70-character entry typed a key at a time: per key, what the tag
+    // field asks for.
+    const QString typed = QStringLiteral("Bulk/Group 3/Keyword 1 and a few more words to make seventy chars");
+    const QString entry = typed.leftJustified(70, QLatin1Char('x'));
+    const QStringList present{names.at(5), names.at(9)};
+    QElapsedTimer typing;
+    typing.start();
+    for (qsizetype length = 1; length <= entry.size(); ++length) {
+      const QString prefix = entry.left(length);
+      const QStringList found = settings.matchTags(prefix, present, 8);
+      QVERIFY(found.size() <= 8);
+      (void)settings.existingTag(prefix);
+      (void)settings.tagNames();
+    }
+    const qint64 typingMs = typing.elapsed();
+
+    // The sidebar's draw: the outline, then a count for every tag.
+    QElapsedTimer drawing;
+    drawing.start();
+    const QVariantList outline = settings.tagOutline();
+    int counted = 0;
+    for (const QVariant& row : outline) counted += settings.tagItemCount(row.toMap().value(QStringLiteral("name")).toString());
+    const qint64 drawingMs = drawing.elapsed();
+    QVERIFY(counted > 0);
+    // Organize for a selection of files.
+    QElapsedTimer organizing;
+    organizing.start();
+    QStringList selection;
+    for (int file = 0; file < 20; ++file) selection.append(dir.filePath(QStringLiteral("missing/%1.jpg").arg(file)));
+    const QVariantList rows = settings.organizationFor(selection);
+    const qint64 organizingMs = organizing.elapsed();
+    QVERIFY(rows.size() >= names.size());
+    qInfo("%lld tags: typing 70 keys %lld ms, sidebar counts %lld ms, organize %lld ms",
+          static_cast<long long>(names.size()), static_cast<long long>(typingMs),
+          static_cast<long long>(drawingMs), static_cast<long long>(organizingMs));
+    // Generous for sanitizer builds; the old code took about 630 ms here.
+    QVERIFY2(typingMs < 100, qPrintable(QString::number(typingMs)));
+    QVERIFY2(drawingMs < 3000, qPrintable(QString::number(drawingMs)));
+    QVERIFY2(organizingMs < 1000, qPrintable(QString::number(organizingMs)));
+
+    // Still right after a change: the cached names follow it.
+    QVERIFY(settings.createTag(QStringLiteral("Bulk/Group 3/Added later")));
+    QVERIFY(settings.tagNames().contains(QStringLiteral("Bulk/Group 3/Added later")));
+    QCOMPARE(settings.existingTag(QStringLiteral("bulk/group 3/added LATER")), QStringLiteral("Bulk/Group 3/Added later"));
+    QCOMPARE(settings.matchTags(QStringLiteral("added lat")), QStringList{QStringLiteral("Bulk/Group 3/Added later")});
+    QVERIFY(!settings.tagFromFile(QStringLiteral("Bulk/Group 3/Added later")));
+    QVERIFY(settings.tagFromFile(QStringLiteral("Bulk/Group 3/Keyword 120")));
+    const QString carrier = dir.filePath(QStringLiteral("missing/0.jpg"));
+    const int before = settings.tagItemCount(QStringLiteral("Bulk/Group 0/Keyword 000"));
+    settings.setEmbedded({embeddedUpdate(carrier, {})});
+    QCOMPARE(settings.tagItemCount(QStringLiteral("Bulk/Group 0/Keyword 000")), before - 1);
+    QVERIFY(settings.deleteTag(QStringLiteral("Bulk/Group 3/Added later")) >= 0);
+    QVERIFY(!settings.tagNames().contains(QStringLiteral("Bulk/Group 3/Added later")));
+    QVERIFY(settings.existingTag(QStringLiteral("Bulk/Group 3/Added later")).isEmpty());
+  }
+
+  // With the settings file unwritable, a change is not kept on screen to be
+  // written later: the albums and tags stay as saved and the error says so.
+  void organizationChangesThatCannotBeSavedDoNotStay() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    const QString media = dir.filePath(QStringLiteral("a.png"));
+    {
+      QFile file(media);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("png");
+    }
+    AppSettings settings;
+    QVERIFY(settings.createAlbum(QStringLiteral("Kept")));
+    QVERIFY(settings.addToAlbum(QStringLiteral("Kept"), {media}));
+    QVERIFY(settings.createTag(QStringLiteral("Travel/Japan")));
+    QVERIFY(settings.organizationError().isEmpty());
+    const int undoBefore = settings.latestUndoId();
+
+    QSettings stored(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("omaroll"), QStringLiteral("omaroll"));
+    stored.sync();
+    const QString ini = stored.fileName();
+    const QString saved = ini + QStringLiteral(".saved");
+    QVERIFY(QFile::rename(ini, saved));
+    QVERIFY(QDir().mkpath(ini)); // Deterministic write failure, even as root.
+    auto restoreFile = qScopeGuard([&] {
+      QDir().rmdir(ini);
+      QFile::rename(saved, ini);
+    });
+
+    QVERIFY(!settings.createAlbum(QStringLiteral("ROtest")));
+    QVERIFY(!settings.organizationError().isEmpty());
+    QCOMPARE(settings.albumNames(), QStringList{QStringLiteral("Kept")});
+    QVERIFY(!settings.createAlbumFor(QStringLiteral("Fresh"), {media}, true).value(QStringLiteral("created")).toBool());
+    QCOMPARE(settings.albumNames(), QStringList{QStringLiteral("Kept")});
+    QVERIFY(settings.createTagFor(QStringLiteral("New tag"), {media}).value(QStringLiteral("name")).toString().isEmpty());
+    QVERIFY(!settings.tagNames().contains(QStringLiteral("New tag")));
+    QVERIFY(!settings.createTag(QStringLiteral("Other")));
+    QVERIFY(!settings.tagNames().contains(QStringLiteral("Other")));
+    QVERIFY(!settings.renameAlbum(QStringLiteral("Kept"), QStringLiteral("Renamed")));
+    QCOMPARE(settings.albumNames(), QStringList{QStringLiteral("Kept")});
+    settings.deleteAlbum(QStringLiteral("Kept"));
+    QCOMPARE(settings.albumNames(), QStringList{QStringLiteral("Kept")});
+    settings.removeFromAlbum(QStringLiteral("Kept"), {media});
+    QCOMPARE(settings.albumPaths(QStringLiteral("Kept")), QStringList{media});
+    QVERIFY(!settings.addTag(QStringLiteral("Travel"), {media}));
+    QVERIFY(settings.tagPaths(QStringLiteral("Travel")).isEmpty());
+    QVERIFY(!settings.renameTag(QStringLiteral("Travel"), QStringLiteral("Trips")));
+    settings.deleteTag(QStringLiteral("Travel"));
+    QCOMPARE(settings.tagNames(), QStringList({QStringLiteral("Travel"), QStringLiteral("Travel/Japan")}));
+    // Nothing to undo that never happened.
+    QCOMPARE(settings.latestUndoId(), undoBefore);
+    // An undo that cannot be saved leaves the change, and its step, in place.
+    QVERIFY(settings.canUndo());
+    QCOMPARE(settings.undo(), settings.organizationError());
+    QVERIFY(settings.tagNames().contains(QStringLiteral("Travel/Japan")));
+    QCOMPARE(settings.latestUndoId(), undoBefore);
+
+    restoreFile.dismiss();
+    QVERIFY(QDir().rmdir(ini));
+    QVERIFY(QFile::rename(saved, ini));
+    // Writable again: the next change saves, and the error goes. Nothing
+    // that failed was waiting to be written with it.
+    QVERIFY(settings.createAlbum(QStringLiteral("After")));
+    QVERIFY(settings.organizationError().isEmpty());
+    QCOMPARE(settings.albumNames(), QStringList({QStringLiteral("After"), QStringLiteral("Kept")}));
+    AppSettings restarted;
+    QCOMPARE(restarted.albumNames(), QStringList({QStringLiteral("After"), QStringLiteral("Kept")}));
+    QCOMPARE(restarted.albumPaths(QStringLiteral("Kept")), QStringList{media});
+    QCOMPARE(restarted.tagNames(), QStringList({QStringLiteral("Travel"), QStringLiteral("Travel/Japan")}));
+  }
+
+  // A save that fails stays the answer even when writing the old state back
+  // works; and once saves work again, a sync with nothing to write does not
+  // bring the old error back.
+  void aFailedSaveStaysFailedWhenItsRollbackSaves() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    const QString media = dir.filePath(QStringLiteral("a.png"));
+    {
+      QFile file(media);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("png");
+    }
+    AppSettings settings;
+    QVERIFY(settings.createAlbum(QStringLiteral("Kept")));
+    QSettings stored(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("omaroll"), QStringLiteral("omaroll"));
+    stored.sync();
+    const QString ini = stored.fileName();
+    const QString saved = ini + QStringLiteral(".saved");
+    QVERIFY(QFile::rename(ini, saved));
+    QVERIFY(QDir().mkpath(ini));
+    // Writable again the moment the first write is reported failed, so the
+    // rollback's own write lands.
+    auto fix = connect(&settings, &AppSettings::organizationErrorChanged, this, [&] {
+      if (!settings.organizationError().isEmpty() && QFileInfo(ini).isDir()) {
+        QDir().rmdir(ini);
+        QFile::rename(saved, ini);
+      }
+    });
+    const QVariantMap result = settings.createTagFor(QStringLiteral("Flaky"), {media});
+    disconnect(fix);
+    QVERIFY(QFileInfo(ini).isFile());
+    QVERIFY(!result.value(QStringLiteral("created")).toBool());
+    QVERIFY(result.value(QStringLiteral("name")).toString().isEmpty());
+    QVERIFY(!settings.tagNames().contains(QStringLiteral("Flaky")));
+    QVERIFY(!settings.organizationError().isEmpty());
+
+    // Saving works again.
+    QVERIFY(settings.createTag(QStringLiteral("Next")));
+    QVERIFY(settings.organizationError().isEmpty());
+    // Nothing to write: no error comes back.
+    settings.relocatePath(dir.filePath(QStringLiteral("none.png")), dir.filePath(QStringLiteral("other.png")));
+    QVERIFY(settings.organizationError().isEmpty());
+    QVERIFY(settings.createAlbum(QStringLiteral("After")));
+    QVERIFY(settings.organizationError().isEmpty());
+  }
+
+  // A file's album chips come in the same natural order as the album list.
+  void albumsOnAFileSortNaturally() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    const QString media = dir.filePath(QStringLiteral("a.png"));
+    {
+      QFile file(media);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("png");
+    }
+    AppSettings settings;
+    for (const char* name : {"Trip 10", "trip 2", "Trip 1"}) {
+      QVERIFY(settings.createAlbum(QString::fromLatin1(name)));
+      QVERIFY(settings.addToAlbum(QString::fromLatin1(name), {media}));
+    }
+    const QStringList expected{QStringLiteral("Trip 1"), QStringLiteral("trip 2"), QStringLiteral("Trip 10")};
+    QCOMPARE(settings.albumsForPath(media), expected);
+    QCOMPARE(settings.albumNames(), expected);
+  }
+
   void matchTagsFindsWordStartsIgnoringCaseAndAccents() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

@@ -36,6 +36,8 @@
 
 ### Changed
 
+- A refused album or tag name says why, naming the album or tag already
+  called that.
 - A picture opened from the file manager appears at once instead of fading in.
   Later pictures still fade in when they had to be read.
 - A video opened from the file manager starts opening its file before the
@@ -47,8 +49,8 @@
   on screen: Mute for a video, Add background and Fit for a picture. `9` and
   `0` no longer change a video preview's volume; `↑` and `↓` do, as in the
   viewer.
-- Deleting a tag that has tags nested under it says how many went with it,
-  as in "Deleted tag Travel and 2 nested tags".
+- Deleting a tag that has tags nested under it asks first, and then says how
+  many went with it, as in "Deleted tag Travel and 2 nested tags".
 - A RAW+JPEG pair shown as one tile now counts once and is dated by the
   file the tile shows, usually the RAW, in date filters, saved views, Browse
   and Jump to date. When the two files' dates differed, the JPEG used to be
@@ -56,6 +58,10 @@
 
 ### Fixed
 
+- An album or tag change that could not be saved, such as with a read-only
+  settings folder, no longer stays on screen to be written later; and once
+  the folder is writable again, saving works without a restart.
+- New tags made from the name sheet keep up to 80 characters, as elsewhere.
 - A notice in the library preview keeps its words while it fades out,
   instead of shrinking to an empty box.
 - The video bar's seek and volume read as sliders to screen readers, with

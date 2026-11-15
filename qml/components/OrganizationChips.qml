@@ -13,8 +13,11 @@ Column {
     // Over a picture or video: dark in every theme (see Osd).
     property bool osd: false
     readonly property bool editing: field.editing
+    readonly property Item tagField: field
     // What changed, and the undo step that takes it back (0 for none).
     signal statusRequested(string message, int undoId)
+    // A chip just added, for the scrolled panel around it to bring into view.
+    signal revealRequested(Item item)
 
     readonly property color textColour: root.osd ? Osd.foreground : Theme.foreground
     readonly property color mutedColour: root.osd ? Osd.mutedText : Theme.mutedText
@@ -23,8 +26,55 @@ Column {
     property int revision: 0
     Connections {
         target: Settings
-        function onTagsChanged() { root.revision++ }
-        function onAlbumsChanged() { root.revision++ }
+        function onTagsChanged() { root.rebuild() }
+        function onAlbumsChanged() { root.rebuild() }
+    }
+
+    // The chips are made again on every change, Undo included. A chip that
+    // had the keyboard hands it to the same chip made again, else to the one
+    // now in its place, else to the field; otherwise it would go nowhere and
+    // the next Tab would start over at the top of the window.
+    property var focusedChip: null
+    function rebuild() {
+        const window = root.Window.window
+        const focused = window ? window.activeFocusItem : null
+        for (let index = 0; focused && index < chipRepeater.count; ++index) {
+            const chip = chipRepeater.itemAt(index)
+            if (chip === focused) {
+                root.focusedChip = {kind: chip.modelData.kind, name: chip.modelData.name, index: index}
+                Qt.callLater(root.restoreChipFocus)
+                break
+            }
+        }
+        root.revision++
+    }
+    function restoreChipFocus() {
+        const wanted = root.focusedChip
+        root.focusedChip = null
+        if (!wanted) return
+        if (!root.visible) return
+        const same = root.chipItem(wanted.kind, wanted.name)
+        const next = same ? same
+                   : chipRepeater.count > 0 ? chipRepeater.itemAt(Math.min(wanted.index, chipRepeater.count - 1))
+                   : null
+        if (next) next.forceActiveFocus(Qt.TabFocusReason)
+        else field.focusField()
+    }
+    function chipItem(kind, name) {
+        for (let index = 0; index < chipRepeater.count; ++index) {
+            const chip = chipRepeater.itemAt(index)
+            if (chip && chip.modelData.kind === kind && chip.modelData.name === name) return chip
+        }
+        return null
+    }
+
+    property string addedTag: ""
+    function revealAdded() {
+        // Placed now, so its position is where it will be drawn.
+        chipFlow.forceLayout()
+        const chip = root.chipItem("tag", root.addedTag)
+        root.addedTag = ""
+        if (chip) root.revealRequested(chip)
     }
     readonly property var chips: {
         root.revision
@@ -77,6 +127,7 @@ Column {
     spacing: 6
 
     Flow {
+        id: chipFlow
         objectName: "organizationChipFlow"
         width: parent.width
         spacing: 6
@@ -188,6 +239,10 @@ Column {
         present: root.chips.filter(function (chip) { return chip.kind === "tag" })
                      .map(function (chip) { return chip.name })
         onTagged: function (message, undoId) { root.statusRequested(message, undoId) }
+        onAdded: function (name) {
+            root.addedTag = name
+            Qt.callLater(root.revealAdded)
+        }
         onUndoRequested: if (Settings.canUndo()) root.statusRequested(Settings.undo(), 0)
     }
 }

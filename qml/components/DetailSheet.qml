@@ -282,6 +282,13 @@ Item {
             rows.unshift({id: "companion", label: "View " + companion.substring(companion.lastIndexOf(".") + 1).toUpperCase() + " companion",
                           available: true, native: true, shortcut: "", hint: "", primary: false, group: "File"})
         }
+        // Above Move to Trash, with the key that does the same here.
+        const organize = {id: "organize", label: "Albums and tags…", available: true, native: true, primary: false,
+                          group: "Organize", hint: "",
+                          shortcut: ShortcutCatalog.display(ShortcutCatalog.sequence("preview", "tag"))}
+        const organizeAt = rows.findIndex(function (row) { return row.group === "Organize" })
+        if (organizeAt < 0) rows.push(organize)
+        else rows.splice(organizeAt, 0, organize)
         for (const row of rows) {
             if (row.id === "favorite") row.label = Settings.isFavorite(root.path) ? "Unfavourite" : "Favourite"
             if (row.id === "hide") row.label = Settings.isHidden(root.path) ? "Unhide" : "Hide"
@@ -322,6 +329,13 @@ Item {
     }
 
     function invokeAction(id) {
+        // As Alt+T: the albums and tags are the chips in the details.
+        if (id === "organize") {
+            root.actionNavigationActive = false
+            root.showInfo = true
+            Qt.callLater(organizationChips.focusTagField)
+            return
+        }
         // Nested sheets restore the focused row when they return. Immediate
         // actions finish the menu interaction and return to the preview.
         if (actionNavigationActive && ["export", "tailscale", "ocr"].indexOf(id) < 0) {
@@ -2521,7 +2535,7 @@ Item {
                     text: current !== "" ? current : last
                     font.family: Theme.fontFamily
                     font.pixelSize: 12
-                    color: Osd.accent
+                    color: text !== "" && text === Settings.organizationError ? Osd.error : Osd.accent
                 }
             }
 
@@ -2580,9 +2594,39 @@ Item {
                 contentHeight: inspectorColumn.implicitHeight + 36
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
-                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                // Shown whenever the details run past the panel, not only
+                // while scrolling, so it is clear there is more.
+                ScrollBar.vertical: ScrollBar {
+                    objectName: "inspectorScrollBar"
+                    policy: inspectorScroll.contentHeight > inspectorScroll.height
+                            ? ScrollBar.AlwaysOn : ScrollBar.AsNeeded
+                }
+
+                // A tag just added sorts among the chips, often above the
+                // field and out of view: it is shown, with the field too
+                // when both fit, until the keyboard moves or the panel is
+                // scrolled.
+                property Item revealedChip: null
+                onMovementStarted: revealedChip = null
+                function revealChip(chip) {
+                    const field = organizationChips.tagField
+                    const top = chip.mapToItem(inspectorScroll.contentItem, 0, 0).y - 8
+                    const bottom = field.mapToItem(inspectorScroll.contentItem, 0, field.height).y + 8
+                    const maximum = Math.max(0, inspectorScroll.contentHeight - inspectorScroll.height)
+                    if (bottom - top > inspectorScroll.height) {
+                        inspectorScroll.contentY = Math.max(0, Math.min(maximum, top))
+                    } else if (top < inspectorScroll.contentY) {
+                        inspectorScroll.contentY = Math.max(0, top)
+                    } else if (bottom > inspectorScroll.contentY + inspectorScroll.height) {
+                        inspectorScroll.contentY = Math.min(maximum, bottom - inspectorScroll.height)
+                    }
+                }
 
                 function revealFocusedControl() {
+                    if (inspectorScroll.revealedChip) {
+                        inspectorScroll.revealChip(inspectorScroll.revealedChip)
+                        return
+                    }
                     const focused = root.Window.window ? root.Window.window.activeFocusItem : null
                     let ancestor = focused
                     while (ancestor && ancestor !== inspectorColumn) ancestor = ancestor.parent
@@ -2597,6 +2641,7 @@ Item {
                 Connections {
                     target: root.Window.window
                     function onActiveFocusItemChanged() {
+                        inspectorScroll.revealedChip = null
                         if (root.visible) Qt.callLater(inspectorScroll.revealFocusedControl)
                     }
                 }
@@ -2837,6 +2882,21 @@ Item {
                         width: parent.width
                         path: root.path
                         onStatusRequested: function (message, undoId) { root.undoableStatusRequested(message, undoId) }
+                        onRevealRequested: function (chip) {
+                            inspectorScroll.revealedChip = chip
+                            inspectorScroll.revealChip(chip)
+                        }
+                        onPathChanged: inspectorScroll.revealedChip = null
+                    }
+                    // Typing again goes back to the field, which the added
+                    // chip may have scrolled out of view.
+                    Connections {
+                        target: organizationChips.tagField
+                        function onTextChanged() {
+                            if (organizationChips.tagField.text === "" || !inspectorScroll.revealedChip) return
+                            inspectorScroll.revealedChip = null
+                            Qt.callLater(inspectorScroll.revealFocusedControl)
+                        }
                     }
 
                     // Technical details: codec, bitrate and stream lines,

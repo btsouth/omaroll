@@ -100,7 +100,11 @@ FocusScope {
         })
     }
 
-    function close() { visible = false }
+    // Escape answers the delete question first, then closes Browse.
+    function close() {
+        if (deleteConfirm.visible) deleteConfirm.close()
+        else visible = false
+    }
     function addFolder() { folderDialog.open() }
 
     function clearLibraryView() {
@@ -263,17 +267,28 @@ FocusScope {
         else showSmart(String(choice))
     }
 
-    function deleteCurrentChoice() {
+    // With |confirmedName|, the tag the delete question named: that one goes,
+    // whatever row is current now.
+    function deleteCurrentChoice(confirmedName) {
+        const confirmed = confirmedName !== undefined && confirmedName !== null && confirmedName !== ""
         const index = choices.currentIndex
-        if (index < 0 || index >= choices.count || section === 0 || section === 2
-                || section === 5) {
+        if (section === 0 || section === 2 || section === 5
+                || (!confirmed && (index < 0 || index >= choices.count))) {
             return
         }
-        const name = String(choices.model[index])
+        if (confirmed && section !== 3) return
+        const name = confirmed ? String(confirmedName) : String(choices.model[index])
         // Saved views that open a deleted album or tag go with it.
         let views = 0
-        // A tag's nested tags go with it.
+        // A tag's nested tags go with it, so that is asked first.
         const nested = section === 3 ? Settings.nestedTagCount(name) : 0
+        if (nested > 0 && !confirmed) {
+            deleteConfirm.name = name
+            deleteConfirm.title = "Delete tag " + name + " and "
+                                  + (nested === 1 ? "1 nested tag?" : nested + " nested tags?")
+            deleteConfirm.open()
+            return
+        }
         if (section === 1) views = Settings.deleteAlbum(name)
         else if (section === 3) views = Settings.deleteTag(name)
         else Settings.deleteSmartCollection(name)
@@ -845,6 +860,9 @@ FocusScope {
                                                 ? Captures.lensFilter === value
                                                 : Captures.cameraFilter === value)
                                              : Captures.smartCollectionFilter === value
+                    // Only keywords read from files name this tag, as the
+                    // sidebar's file icon shows.
+                    readonly property bool fromFile: root.section === 3 && Settings.tagFromFile(value)
                     readonly property int itemCount: root.section === 0
                                                      ? Captures.folderItemCount(value)
                                                      : root.section === 1
@@ -854,6 +872,7 @@ FocusScope {
                                                      ? Settings.tagItemCount(value) : 0
                     Accessible.role: Accessible.ListItem
                     Accessible.name: objectChoice ? choiceLabel : value
+                    Accessible.description: fromFile ? "From the files' keywords" : ""
                     Accessible.selectable: true
                     Accessible.selected: selectedChoice
                     Accessible.focused: ListView.isCurrentItem && choices.activeFocus
@@ -881,7 +900,17 @@ FocusScope {
                             width: parent.width
                             text: root.section === 0 ? root.nameForPath(choiceRow.value)
                                                      : choiceRow.choiceLabel
-                            leftPadding: choiceRow.indent
+                            leftPadding: choiceRow.indent + (choiceRow.fromFile ? 16 : 0)
+
+                            Icon {
+                                objectName: "browseChoiceFileIcon"
+                                visible: choiceRow.fromFile
+                                x: choiceRow.indent
+                                anchors.verticalCenter: parent.verticalCenter
+                                name: "file"
+                                size: 12
+                                color: Theme.mutedText
+                            }
                             elide: Text.ElideRight
                             font.family: Theme.fontFamily
                             font.pixelSize: 11
@@ -939,5 +968,15 @@ FocusScope {
                                  ? "Folder added. Omaroll is scanning it now."
                                  : "That folder is already added, unavailable, or is your home folder."
         }
+    }
+
+    ConfirmSheet {
+        id: deleteConfirm
+        objectName: "browseDeleteConfirm"
+        property string name: ""
+        detail: "No file is changed; keywords read from files are hidden here. Ctrl+Z puts it all back."
+        confirmLabel: "Delete"
+        onAccepted: root.deleteCurrentChoice(deleteConfirm.name)
+        onVisibleChanged: if (!visible && root.visible) choices.forceActiveFocus()
     }
 }

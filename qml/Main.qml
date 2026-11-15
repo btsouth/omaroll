@@ -1489,8 +1489,19 @@ ApplicationWindow {
         rows.push({id: "copy-path", label: "Copy path", available: true, group: "File", shortcut: "Ctrl+Shift+C"},
                   {id: "copy-name", label: "Copy file name", available: true, group: "File"})
         rows.unshift({id: "preview", label: "Open in Omaroll", available: true, group: "File"})
-        rows.push({id: "organize", label: "Albums and tags…", available: true, group: "Organize"})
+        root.insertOrganize(rows, {available: true})
         return rows
+    }
+
+    // "Albums and tags…" heads the Organize group, above Move to Trash,
+    // with its key.
+    function insertOrganize(rows, extra) {
+        const row = Object.assign({id: "organize", label: "Albums and tags…", group: "Organize",
+                                   shortcut: ShortcutCatalog.display(ShortcutCatalog.sequence("library", "organize"))},
+                                  extra)
+        const at = rows.findIndex(function (other) { return other.group === "Organize" })
+        if (at < 0) rows.push(row)
+        else rows.splice(at, 0, row)
     }
 
     function selectionEntries(paths) {
@@ -1514,11 +1525,11 @@ ApplicationWindow {
         })) rows.push({id: "print", label: "Print selected files", group: "File", available: Registry.available("print"), hint: "cups"})
         if (canExport) rows.push({id: "export", label: "Convert / resize", group: "Edit and finish", available: Registry.available("export"), hint: "Omarchy"})
         if (paths.length > 1 && root.allCorrectable(paths)) rows.push({id: "correctionsbatch", label: "Correct selected pictures", group: "Edit and finish", available: true})
-        rows.push({id: "organize", label: "Albums and tags…", group: "Organize"},
-                  {id: "favorite", label: paths.every(function(p) { return Settings.isFavorite(p) }) ? "Unfavourite" : "Favourite", group: "Organize"},
+        root.insertOrganize(rows, {})
+        rows.push({id: "favorite", label: paths.every(function(p) { return Settings.isFavorite(p) }) ? "Unfavourite" : "Favourite", group: "Organize"},
                   {id: "hide", label: paths.every(function(p) { return Settings.isHidden(p) }) ? "Unhide" : "Hide", group: "Organize"},
                   {id: "trash", label: "Move to Trash", group: "Organize"})
-        return rows.map(function(row) { row.shortcut = Registry.shortcutFor(row.id); return row })
+        return rows.map(function(row) { row.shortcut = row.shortcut || Registry.shortcutFor(row.id); return row })
     }
 
     function prepareContextMenu(paths) {
@@ -2090,8 +2101,8 @@ ApplicationWindow {
                   : ""
             font.family: Theme.fontFamily
             font.pixelSize: 11
-            color: notice.text !== "" || making !== ""
-                   ? Theme.accent : Theme.mutedText
+            color: notice.text !== "" && notice.text === Settings.organizationError ? Theme.red
+                   : notice.text !== "" || making !== "" ? Theme.accent : Theme.mutedText
             Behavior on color { ColorAnimation { duration: 180 } }
             // A result is read out as it appears, the way a notification is.
             Accessible.role: notice.text !== "" ? Accessible.AlertMessage : Accessible.StaticText
@@ -2257,10 +2268,20 @@ ApplicationWindow {
     }
     // Saved views that open the album or tag go with it; Undo brings both
     // back.
-    function deleteCollection(mode, name) {
+    function deleteCollection(mode, name, confirmed) {
         const before = Settings.latestUndoId
-        // A tag's nested tags go with it.
+        // A tag's nested tags go with it, so that is asked first.
         const nested = mode === "tag" ? Settings.nestedTagCount(name) : 0
+        if (nested > 0 && confirmed !== true) {
+            root.pendingCollectionDelete = {mode: mode, name: name}
+            confirm.title = "Delete tag " + name + " and "
+                            + (nested === 1 ? "1 nested tag?" : nested + " nested tags?")
+            confirm.detail = "No file is changed; keywords read from files are hidden here. Ctrl+Z puts it all back."
+            // Once the row menu that asked has closed and handed back the
+            // keyboard, so the question keeps it.
+            Qt.callLater(confirm.open)
+            return
+        }
         const views = mode === "album" ? Settings.deleteAlbum(name) : Settings.deleteTag(name)
         const message = "Deleted " + mode + " " + name + root.deletedAlso(nested, views)
         const undoId = Settings.latestUndoId !== before ? Settings.latestUndoId : 0
@@ -2411,10 +2432,21 @@ ApplicationWindow {
     ConfirmSheet {
         id: confirm
         objectName: "confirm"
-        confirmLabel: "Move to Trash"
-        onAccepted: root.trashPending()
-        onVisibleChanged: if (!visible) root.restoreFocusAfterSheet()
+        confirmLabel: root.pendingCollectionDelete.name !== undefined ? "Delete" : "Move to Trash"
+        onAccepted: {
+            const target = root.pendingCollectionDelete
+            if (target.name !== undefined) root.deleteCollection(target.mode, target.name, true)
+            else root.trashPending()
+        }
+        onVisibleChanged: {
+            if (visible) return
+            root.restoreFocusAfterSheet()
+            // After onAccepted, which follows the close.
+            Qt.callLater(function () { root.pendingCollectionDelete = ({}) })
+        }
     }
+    // A tag delete waiting on the same question, {mode, name}.
+    property var pendingCollectionDelete: ({})
 
     // Moves what the Trash prompt was asked about, once it is confirmed or
     // when Settings says not to ask.

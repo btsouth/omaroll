@@ -28,6 +28,8 @@ QtObject {
     // The panel over a white frame, the worst case for light text on it.
     readonly property color worstBacking: root.over(root.panel, Qt.rgba(1, 1, 1, 1))
     readonly property color accent: root.legible(Theme.accent, root.worstBacking, 4.5)
+    // For a line that reports something went wrong, such as a save.
+    readonly property color error: root.legible(Theme.red, root.worstBacking, 4.5)
 
     function over(top, bottom) {
         const a = top.a
