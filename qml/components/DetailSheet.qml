@@ -2513,7 +2513,12 @@ Item {
                     anchors.centerIn: parent
                     width: Math.min(implicitWidth, parent.width - 28)
                     elide: Text.ElideRight
-                    text: root.status
+                    // Keeps its words while it fades out, rather than
+                    // shrinking to an empty box.
+                    property string last: ""
+                    readonly property string current: root.status
+                    onCurrentChanged: if (current !== "") last = current
+                    text: current !== "" ? current : last
                     font.family: Theme.fontFamily
                     font.pixelSize: 12
                     color: Osd.accent
