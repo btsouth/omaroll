@@ -10538,14 +10538,14 @@ private slots:
       waitForLayout(QSize(1280, 820));
     });
     m_library->setSortMode(CaptureFilterModel::NewestFirst);
-    QQuickItem* pill = item("datePill");
+    QQuickItem* headerPill = item("datePill");
     QQuickItem* rowPill = item("rowDatePill");
-    QTRY_VERIFY(pill->property("interactive").toBool());
-    QTRY_VERIFY(pill->isVisible());
+    QTRY_VERIFY(headerPill->property("interactive").toBool());
+    QTRY_VERIFY(headerPill->isVisible());
     QVERIFY(!rowPill->isVisible());
     m_window->resize(560, 820);
     waitForLayout(QSize(560, 820));
-    QTRY_VERIFY(!pill->isVisible());
+    QTRY_VERIFY(!headerPill->isVisible());
     QTRY_VERIFY(rowPill->isVisible());
     // Clear of the filters and the sort.
     QQuickItem* sort = pill(item("filters"), QStringLiteral("Newest  ▾"));
