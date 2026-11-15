@@ -9732,6 +9732,8 @@ private slots:
     QTRY_VERIFY(collectionIndex("album", album) > 0);
     QVERIFY(collectionIndex("header", "albums") >= 0);
     QVERIFY(collectionIndex("header", "dates") >= 0);
+    // Tag rows follow a burst of tag changes once it settles.
+    QTRY_VERIFY(collectionIndex("tag", "Sidebarz/Place") >= 0);
     const int parent = collectionIndex("tag", "Sidebarz");
     const int child = collectionIndex("tag", "Sidebarz/Place");
     QVERIFY(parent >= 0 && child == parent + 1);
@@ -10044,11 +10046,14 @@ private slots:
     QCOMPARE(shownAt(0), firstRow);
 
     // Scrolled to the end, the last tag is chosen where it is shown.
-    QMetaObject::invokeMethod(list, "positionViewAtEnd");
-    QTRY_VERIFY(list->property("atYEnd").toBool());
+    list->forceActiveFocus();
+    QTRY_VERIFY(list->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_End);
     const int last = collectionIndex("tag", "Scrollz/T39");
+    QTRY_COMPARE(list->property("currentIndex").toInt(), int(collectionRows().size()) - 1);
     QQuickItem* lastRow = nullptr;
     QTRY_VERIFY(inView(lastRow = shownAt(last)));
+    QVERIFY(list->property("contentY").toReal() > list->property("originY").toReal() + 100);
     QQuickItem* entry = find(lastRow, [](QQuickItem* candidate) {
       return candidate->objectName() == QStringLiteral("collectionRow") && candidate->isVisible();
     });
