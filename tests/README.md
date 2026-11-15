@@ -198,11 +198,15 @@ at entry to `main`, excluding process spawning and dynamic loading before main:
 - `warmup_done`: a direct video launch has loaded the multimedia backend and
   started the GPU driver on a worker (`src/app/VideoWarmup.h`).
 - `scenegraph`: the render thread has its graphics context.
-- `player`: the quick viewer is creating its player. `media_loaded`: the window
+- `player`: the quick viewer is creating its player. A launch does this
+  before the window is shown; playback (where Qt builds the decoders on the
+  window thread) waits for the window's first frame. `media_loaded`: the window
   thread has learned the file is open; decoding starts from here.
 - `first_frame`: first scene-graph frame submitted.
 - `image_frame`: frame submitted after the requested still image reports a
-  successful decode and has nonzero display dimensions. For videos, the
+  successful decode, has nonzero display dimensions and is fully opaque. The
+  first picture a window opens with does not fade in; a later one counts
+  once its fade has finished. For videos, the
   existing milestone uses the player's `hasVideo` track flag; it does not
   establish decoded pixels or presentation.
 - `poster_frame`: frame submitted with the quick viewer's video thumbnail

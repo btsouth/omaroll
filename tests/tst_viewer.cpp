@@ -1456,6 +1456,96 @@ private slots:
              qPrintable(color.name()));
   }
 
+  // The file a window opens with is simply there; a later picture that had to
+  // be read fades in. The startup trace counts a picture only once it is
+  // fully opaque, not as its fade starts.
+  void onlyPicturesAfterTheFirstFadeIn() {
+    const QString folder = m_scratch.filePath(QStringLiteral("first-picture"));
+    QVERIFY(QDir().mkpath(folder));
+    QStringList paths;
+    for (int index = 0; index < 5; ++index) {
+      paths.append(folder + QStringLiteral("/%1.jpg").arg(index));
+      QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), paths.last()));
+    }
+    QQuickItem* still = item(QStringLiteral("viewerStillLoader"));
+    QVERIFY(still);
+    const auto readiness = [this] {
+      QVariant ready;
+      QMetaObject::invokeMethod(m_window, "startupReadiness", Q_RETURN_ARG(QVariant, ready));
+      return ready.toInt();
+    };
+    qreal lowest = 1;
+    int readyWhileFading = 0;
+    const QMetaObject::Connection watch =
+        connect(still, &QQuickItem::opacityChanged, this, [&] {
+          lowest = std::min(lowest, still->opacity());
+          if (still->opacity() < 1 && (readiness() & 2)) ++readyWhileFading;
+        });
+    const auto unwatch = qScopeGuard([watch] { disconnect(watch); });
+
+    open({paths.first()});
+    QTRY_COMPARE(m_session->count(), 5);
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QTRY_VERIFY(readiness() & 2);
+    // Longer than the fade, in case one started late.
+    QTest::qWait(400);
+    QCOMPARE(lowest, 1.0);
+
+    // Not a preloaded neighbour, so it is read and fades in.
+    QVERIFY(m_session->jump(2));
+    QTRY_VERIFY(lowest < 1);
+    QTRY_COMPARE(still->opacity(), 1.0);
+    QCOMPARE(readyWhileFading, 0);
+    QTRY_VERIFY(readiness() & 2);
+
+    // Closed and opened again, it is a first picture again.
+    m_window->close();
+    QTRY_VERIFY(!m_window->isVisible());
+    lowest = 1;
+    open({paths.at(4)});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QTest::qWait(400);
+    QCOMPARE(lowest, 1.0);
+  }
+
+  // A launched video's player has its file before the window is shown, so it
+  // starts opening before the window maps, and the window still shows at once
+  // rather than waiting for it.
+  void aLaunchedVideoHasItsFileBeforeTheWindowShows() {
+    struct ShowWatch : QObject {
+      bool shown = false;
+      QUrl playerSource;
+      bool eventFilter(QObject* watched, QEvent* event) override {
+        auto* window = qobject_cast<QQuickWindow*>(watched);
+        if (event->type() == QEvent::Show && window && !shown) {
+          shown = true;
+          if (auto* player = window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))) {
+            playerSource = player->source();
+          }
+        }
+        return false;
+      }
+    } watch;
+    qApp->installEventFilter(&watch);
+    const auto removeWatch = qScopeGuard([&watch] { qApp->removeEventFilter(&watch); });
+    ViewerWindows viewers(*m_engine);
+    viewers.setPlacementQuery([](QObject*, HyprlandPlacement::Reply reply) { reply({}); });
+    const QString clip = media(QStringLiteral("clip.mp4"));
+    QQuickWindow* window = viewers.open({clip});
+    QVERIFY(window);
+    QVERIFY(watch.shown);
+    QVERIFY(window->isVisible());
+    QCOMPARE(window->property("opening").toBool(), false);
+    QCOMPARE(watch.playerSource, QUrl::fromLocalFile(clip));
+    auto* player = window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"));
+    QVERIFY(player);
+    // Playback waits for the window's first frame, then starts by itself.
+    QTRY_VERIFY(window->property("framed").toBool());
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+    window->close();
+    QTRY_VERIFY(!window->isVisible());
+  }
+
   void theToolbarHasTheCommonPictureControls() {
     const QString folder = m_scratch.filePath(QStringLiteral("toolbar"));
     QVERIFY(QDir().mkpath(folder));
@@ -4712,6 +4802,53 @@ private slots:
     QCOMPARE(player->playbackState(), QMediaPlayer::PlayingState);
     player->pause();
     m_settings->clearVideoPosition(path);
+  }
+
+  // A video that opens before the window's first frame waits for that frame
+  // to start, then does what loading would have done: play, offer to resume,
+  // or start at a --start time.
+  void aVideoOpenedBeforeTheFirstFrameStartsAfterIt_data() {
+    QTest::addColumn<QString>("kind");
+    QTest::newRow("plain") << QStringLiteral("plain");
+    QTest::newRow("resume") << QStringLiteral("resume");
+    QTest::newRow("start") << QStringLiteral("start");
+  }
+
+  void aVideoOpenedBeforeTheFirstFrameStartsAfterIt() {
+    QFETCH(QString, kind);
+    const QString path = m_scratch.filePath(QStringLiteral("held-start.mkv"));
+    QVERIFY(QFile::exists(path) || QFile::copy(QFINDTESTDATA("fixtures/viewer/tracks.mkv"), path));
+    m_settings->clearVideoPosition(path);
+    if (kind == QLatin1String("resume")) m_settings->setVideoPosition(path, 7000);
+    const auto restore = qScopeGuard([this, path] {
+      m_window->setProperty("framed", true);
+      m_settings->clearVideoPosition(path);
+    });
+    m_window->setProperty("framed", false);
+    open({path});
+    if (kind == QLatin1String("start")) m_session->setStartPosition(path, 4000);
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_COMPARE(player->mediaStatus(), QMediaPlayer::LoadedMedia);
+    // Held: loaded, but nothing started and nothing decided yet.
+    QTest::qWait(200);
+    QCOMPARE(player->playbackState(), QMediaPlayer::StoppedState);
+    QVERIFY(!prop("resumeAvailable").toBool());
+
+    m_window->setProperty("framed", true);
+    if (kind == QLatin1String("resume")) {
+      QTRY_VERIFY(prop("resumeAvailable").toBool());
+      QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+      QTRY_VERIFY(item(QStringLiteral("viewerResumePrompt"))->isVisible());
+      return;
+    }
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+    if (kind == QLatin1String("start")) {
+      QTRY_VERIFY2(player->position() >= 3500, qPrintable(QString::number(player->position())));
+    }
+    const qint64 at = player->position();
+    QTRY_VERIFY(player->position() >= at + 300);
+    player->pause();
   }
 
   // The checked-in test pattern: saturated bars, two audio tracks and a

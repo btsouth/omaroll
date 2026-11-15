@@ -244,7 +244,30 @@ void ViewerWindows::show(Viewer& viewer, const QStringList& files,
       window->resize(ViewerSession::preferredWindowSize(screen->availableGeometry().size()));
     }
     window->setWindowStates(Qt::WindowNoState);
+    // A video's player gets its file now, so it starts opening before the
+    // window maps instead of after its first frame. The window still maps as
+    // soon as it can: playback, where Qt builds the decoders on this thread,
+    // starts once the window has drawn (Viewer.qml's framed), or after a
+    // second if no frame is reported.
+    // Each showing counts its own frame: a fallback left from an earlier
+    // showing of this window, closed within the second, must not release
+    // this one's start.
+    const qulonglong opening = window->property("_omarollOpening").toULongLong() + 1;
+    window->setProperty("_omarollOpening", opening);
+    window->setProperty("framed", false);
+    const auto framed = [window = QPointer<QQuickWindow>(window), opening] {
+      if (window && window->property("_omarollOpening").toULongLong() == opening) {
+        window->setProperty("framed", true);
+      }
+    };
+    // Swapped on the render thread; handled on this one.
+    connect(window, &QQuickWindow::frameSwapped, window, framed,
+            static_cast<Qt::ConnectionType>(Qt::QueuedConnection | Qt::SingleShotConnection));
+    QTimer::singleShot(1000, window, framed);
+    window->setProperty("opening", true);
+    QMetaObject::invokeMethod(window, "startPlayer");
     window->show();
+    window->setProperty("opening", false);
   }
   if (QGuiApplication::platformName() != u"offscreen") {
     window->raise();

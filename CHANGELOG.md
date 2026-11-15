@@ -24,6 +24,10 @@
 
 ### Changed
 
+- A picture opened from the file manager appears at once instead of fading in.
+  Later pictures still fade in when they had to be read.
+- A video opened from the file manager starts opening its file before the
+  window appears, so its first frame shows sooner.
 - Shortcut help starts with Navigation and reads down each column in order.
   Keys that do the same thing share one row, so "Previous / next file" is
   listed once, and the viewer's flips and saved copy sit under View.
