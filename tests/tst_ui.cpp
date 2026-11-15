@@ -8733,6 +8733,17 @@ private slots:
     if (m_window->height() - fieldBottom > 3 * 28 + 24) {
       QVERIFY(!popup->property("upward").toBool());
     }
+    // Shortened to three rows: the rest are reached with the wheel, and the
+    // field keeps the keyboard.
+    popup->setProperty("room", 3 * 28 + 8);
+    QTRY_VERIFY(list->property("contentHeight").toReal() > list->height());
+    QVERIFY(list->property("interactive").toBool());
+    const QPointF middle = list->mapToScene(QPointF(list->width() / 2, list->height() / 2));
+    QWheelEvent wheel(middle, m_window->mapToGlobal(middle), QPoint(), QPoint(0, -120), Qt::NoButton,
+                      Qt::NoModifier, Qt::NoScrollPhase, false);
+    QCoreApplication::sendEvent(m_window, &wheel);
+    QTRY_VERIFY(list->property("contentY").toReal() > 0);
+    QVERIFY(input->hasActiveFocus());
     QTest::keyClick(m_window, Qt::Key_Escape);
     QTRY_COMPARE(input->property("text").toString(), QString());
 
@@ -8752,6 +8763,13 @@ private slots:
     QTest::qWait(200);
     QVERIFY(inView());
     QVERIFY(input->hasActiveFocus());
+    // Typing again brings the field back into view.
+    typeText(QStringLiteral("x"));
+    QTRY_VERIFY([&] {
+      const qreal top = field->mapToItem(scroll, QPointF()).y();
+      return top >= 0 && top + field->height() <= scroll->height();
+    }());
+    QTest::keyClick(m_window, Qt::Key_Escape);
     m_settings->deleteTag(QStringLiteral("aa added first"));
     QTest::keyClick(m_window, Qt::Key_Escape);
   }
@@ -8926,8 +8944,15 @@ private slots:
     QVERIFY(m_settings->tagNames().contains(QStringLiteral("Nest")));
     QVERIFY(QMetaObject::invokeMethod(browser, "deleteCurrentChoice", Q_ARG(QVariant, QVariant())));
     QTRY_VERIFY(browseConfirm->isVisible());
+    // The list moves under the question: the tag it named is the one that
+    // goes, not the row now current.
+    QVERIFY(m_settings->createTag(QStringLiteral("Aaa moved in")));
+    choices->setProperty("currentIndex", m_settings->tagNames().indexOf(QStringLiteral("Lone")));
     QTest::keyClick(m_window, Qt::Key_Return);
     QTRY_VERIFY(!m_settings->tagNames().contains(QStringLiteral("Nest")));
+    QVERIFY(m_settings->tagNames().contains(QStringLiteral("Lone")));
+    QVERIFY(m_settings->tagNames().contains(QStringLiteral("Aaa moved in")));
+    m_settings->deleteTag(QStringLiteral("Aaa moved in"));
     QTRY_VERIFY(choices->hasActiveFocus());
   }
 

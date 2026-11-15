@@ -3680,6 +3680,7 @@ void AppSettings::setValue(const char* key, const QVariant& value) {
     return;
   }
   m_settings.setValue(key, value);
+  m_writePending = true;
 }
 
 bool AppSettings::syncOrganization() {
@@ -3696,10 +3697,14 @@ bool AppSettings::syncOrganization() {
   };
   const auto before = failedBefore ? stamp() : std::pair<qint64, qint64>{};
   m_settings.sync();
+  // Only a write that was due and did not land counts as failing again; a
+  // sync with nothing to write leaves the file as it was.
   if (failedBefore) {
     const auto after = stamp();
-    m_writeRecovered = after.first >= 0 && after != before;
+    if (after.first >= 0 && after != before) m_writeRecovered = true;
+    else if (m_writePending) m_writeRecovered = false;
   }
+  m_writePending = false;
   const QString error = settingsStatus() == QSettings::NoError ? QString()
       : settingsStatus() == QSettings::FormatError
           ? QStringLiteral("Your settings file is damaged. Restore the last good backup in Settings, or keep a copy and repair it before saving organization.")
@@ -3755,6 +3760,9 @@ void AppSettings::rollBackOrganization(const OrganizationSnapshot& state) {
   const bool removals = m_removedEmbeddedTags != state.removedEmbeddedTags;
   const bool views = m_smartCollections != state.smartCollections;
   if (!albums && !tags && !removals && !views) return;
+  // The failure stays what is reported, even when writing the old state
+  // back works: the change asked for was not saved.
+  const QString failure = m_organizationError;
   m_albums = state.albums;
   m_tags = state.tags;
   m_removedEmbeddedTags = state.removedEmbeddedTags;
@@ -3768,6 +3776,10 @@ void AppSettings::rollBackOrganization(const OrganizationSnapshot& state) {
   if (views) persistSmartCollections();
   m_deferOrganizationSync = false;
   syncOrganization();
+  if (m_organizationError.isEmpty() && !failure.isEmpty()) {
+    m_organizationError = failure;
+    emit organizationErrorChanged();
+  }
   if (removals) {
     rebuildRemovalIndex();
     rebuildEmbeddedIndex();

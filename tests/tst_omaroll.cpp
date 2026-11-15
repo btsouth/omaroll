@@ -17022,6 +17022,53 @@ private slots:
     QCOMPARE(restarted.tagNames(), QStringList({QStringLiteral("Travel"), QStringLiteral("Travel/Japan")}));
   }
 
+  // A save that fails stays the answer even when writing the old state back
+  // works; and once saves work again, a sync with nothing to write does not
+  // bring the old error back.
+  void aFailedSaveStaysFailedWhenItsRollbackSaves() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    const QString media = dir.filePath(QStringLiteral("a.png"));
+    {
+      QFile file(media);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("png");
+    }
+    AppSettings settings;
+    QVERIFY(settings.createAlbum(QStringLiteral("Kept")));
+    QSettings stored(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("omaroll"), QStringLiteral("omaroll"));
+    stored.sync();
+    const QString ini = stored.fileName();
+    const QString saved = ini + QStringLiteral(".saved");
+    QVERIFY(QFile::rename(ini, saved));
+    QVERIFY(QDir().mkpath(ini));
+    // Writable again the moment the first write is reported failed, so the
+    // rollback's own write lands.
+    auto fix = connect(&settings, &AppSettings::organizationErrorChanged, this, [&] {
+      if (!settings.organizationError().isEmpty() && QFileInfo(ini).isDir()) {
+        QDir().rmdir(ini);
+        QFile::rename(saved, ini);
+      }
+    });
+    const QVariantMap result = settings.createTagFor(QStringLiteral("Flaky"), {media});
+    disconnect(fix);
+    QVERIFY(QFileInfo(ini).isFile());
+    QVERIFY(!result.value(QStringLiteral("created")).toBool());
+    QVERIFY(result.value(QStringLiteral("name")).toString().isEmpty());
+    QVERIFY(!settings.tagNames().contains(QStringLiteral("Flaky")));
+    QVERIFY(!settings.organizationError().isEmpty());
+
+    // Saving works again.
+    QVERIFY(settings.createTag(QStringLiteral("Next")));
+    QVERIFY(settings.organizationError().isEmpty());
+    // Nothing to write: no error comes back.
+    settings.relocatePath(dir.filePath(QStringLiteral("none.png")), dir.filePath(QStringLiteral("other.png")));
+    QVERIFY(settings.organizationError().isEmpty());
+    QVERIFY(settings.createAlbum(QStringLiteral("After")));
+    QVERIFY(settings.organizationError().isEmpty());
+  }
+
   void matchTagsFindsWordStartsIgnoringCaseAndAccents() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

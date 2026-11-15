@@ -70,6 +70,8 @@ Column {
 
     property string addedTag: ""
     function revealAdded() {
+        // Placed now, so its position is where it will be drawn.
+        chipFlow.forceLayout()
         const chip = root.chipItem("tag", root.addedTag)
         root.addedTag = ""
         if (chip) root.revealRequested(chip)
@@ -125,6 +127,7 @@ Column {
     spacing: 6
 
     Flow {
+        id: chipFlow
         objectName: "organizationChipFlow"
         width: parent.width
         spacing: 6

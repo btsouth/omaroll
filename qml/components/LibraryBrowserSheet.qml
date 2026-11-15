@@ -267,18 +267,22 @@ FocusScope {
         else showSmart(String(choice))
     }
 
+    // With |confirmedName|, the tag the delete question named: that one goes,
+    // whatever row is current now.
     function deleteCurrentChoice(confirmedName) {
+        const confirmed = confirmedName !== undefined && confirmedName !== null && confirmedName !== ""
         const index = choices.currentIndex
-        if (index < 0 || index >= choices.count || section === 0 || section === 2
-                || section === 5) {
+        if (section === 0 || section === 2 || section === 5
+                || (!confirmed && (index < 0 || index >= choices.count))) {
             return
         }
-        const name = String(choices.model[index])
+        if (confirmed && section !== 3) return
+        const name = confirmed ? String(confirmedName) : String(choices.model[index])
         // Saved views that open a deleted album or tag go with it.
         let views = 0
         // A tag's nested tags go with it, so that is asked first.
         const nested = section === 3 ? Settings.nestedTagCount(name) : 0
-        if (nested > 0 && confirmedName !== name) {
+        if (nested > 0 && !confirmed) {
             deleteConfirm.name = name
             deleteConfirm.title = "Delete tag " + name + " and "
                                   + (nested === 1 ? "1 nested tag?" : nested + " nested tags?")

@@ -2888,6 +2888,16 @@ Item {
                         }
                         onPathChanged: inspectorScroll.revealedChip = null
                     }
+                    // Typing again goes back to the field, which the added
+                    // chip may have scrolled out of view.
+                    Connections {
+                        target: organizationChips.tagField
+                        function onTextChanged() {
+                            if (organizationChips.tagField.text === "" || !inspectorScroll.revealedChip) return
+                            inspectorScroll.revealedChip = null
+                            Qt.callLater(inspectorScroll.revealFocusedControl)
+                        }
+                    }
 
                     // Technical details: codec, bitrate and stream lines,
                     // collapsed until asked for so the surface stays calm.

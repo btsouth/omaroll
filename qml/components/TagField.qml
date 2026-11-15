@@ -260,8 +260,17 @@ FocusScope {
             objectName: "tagSuggestionList"
             implicitHeight: contentHeight
             clip: true
-            interactive: false
+            // Scrolls by wheel or drag when it is shortened to fit; the
+            // field keeps the keyboard either way.
+            interactive: contentHeight > height
+            focus: false
+            activeFocusOnTab: false
             boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar {
+                objectName: "tagSuggestionScrollBar"
+                policy: list.contentHeight > list.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+                focusPolicy: Qt.NoFocus
+            }
             model: root.rows
             currentIndex: root.highlighted
             onCurrentIndexChanged: if (currentIndex >= 0) positionViewAtIndex(currentIndex, ListView.Contain)

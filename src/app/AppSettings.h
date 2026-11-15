@@ -673,6 +673,8 @@ private:
     return status == QSettings::AccessError && m_writeRecovered ? QSettings::NoError : status;
   }
   bool m_writeRecovered = false;
+  // A value was set since the last sync, so that sync had something to write.
+  bool m_writePending = false;
   QDate m_snapshotDate;
   QTimer m_snapshotRefresh;
   // Picks up the launch check's result once the backup thread has it.
