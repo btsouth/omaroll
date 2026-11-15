@@ -17032,6 +17032,147 @@ private slots:
     }
   }
 
+  // An undo step puts back only the saved views it changed itself.
+  void undoLeavesViewsSavedOrDeletedAfterItAlone() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    const QString file = embeddedFixture(dir, QStringLiteral("a.png"));
+    {
+      AppSettings settings;
+      // A view saved after a tag change survives undoing it, and a restart.
+      QVERIFY(settings.createTagFor(QStringLiteral("Travel"), {file}).value(QStringLiteral("created")).toBool());
+      QVERIFY(settings.saveSmartCollection(QStringLiteral("Later view"), {{QStringLiteral("favorite"), true}}));
+      QCOMPARE(settings.undo(), QStringLiteral("Removed new tag Travel"));
+      QVERIFY(!settings.tagNames().contains(QStringLiteral("Travel")));
+      QCOMPARE(settings.smartCollectionNames(), QStringList{QStringLiteral("Later view")});
+    }
+    {
+      AppSettings settings;
+      QCOMPARE(settings.smartCollectionNames(), QStringList{QStringLiteral("Later view")});
+      // A view deleted after a tag change stays deleted.
+      QVERIFY(settings.saveSmartCollection(QStringLiteral("Gone"), {{QStringLiteral("favorite"), true}}));
+      QVERIFY(settings.createTagFor(QStringLiteral("Food"), {file}).value(QStringLiteral("created")).toBool());
+      settings.deleteSmartCollection(QStringLiteral("Gone"));
+      QCOMPARE(settings.undo(), QStringLiteral("Removed new tag Food"));
+      QVERIFY(!settings.smartCollectionNames().contains(QStringLiteral("Gone")));
+      // A rename puts back the view it renamed, and leaves one saved since.
+      QVERIFY(settings.createTag(QStringLiteral("Places/Japan")));
+      QVERIFY(settings.addTag(QStringLiteral("Places/Japan"), {file}));
+      QVERIFY(settings.saveSmartCollection(QStringLiteral("Japan"), {{QStringLiteral("tag"), QStringLiteral("Places/Japan")}}));
+      QVERIFY(settings.renameTag(QStringLiteral("Places"), QStringLiteral("Trips")));
+      QVERIFY(settings.saveSmartCollection(QStringLiteral("New"), {{QStringLiteral("tag"), QStringLiteral("Trips/Japan")}}));
+      QCOMPARE(settings.undo(), QStringLiteral("Renamed tag Trips back to Places"));
+      QCOMPARE(settings.smartCollection(QStringLiteral("Japan")).value(QStringLiteral("tag")).toString(),
+               QStringLiteral("Places/Japan"));
+      QCOMPARE(settings.smartCollection(QStringLiteral("New")).value(QStringLiteral("tag")).toString(),
+               QStringLiteral("Trips/Japan"));
+      QCOMPARE(settings.smartCollectionNames(),
+               QStringList({QStringLiteral("Japan"), QStringLiteral("Later view"), QStringLiteral("New")}));
+    }
+  }
+
+  // Undo snapshots share the organization with the live state; a rescan or
+  // a fingerprint pass that changes nothing must not copy it away from them.
+  void undoSnapshotsKeepSharingThroughAnUnchangedRescan() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("library"))));
+    const QString a = embeddedFixture(dir, QStringLiteral("library/a.png"));
+    const QString b = embeddedFixture(dir, QStringLiteral("library/b.png"));
+    const auto records = CaptureScanner::scan({{dir.filePath(QStringLiteral("library")), 2, CaptureRecord::Picture,
+                                                CaptureRecord::Video}});
+    AppSettings settings;
+    settings.setEmbedded({embeddedUpdate(b, {QStringLiteral("Noise"), QStringLiteral("Keep")})});
+    QVERIFY(settings.createAlbum(QStringLiteral("Trip")));
+    QVERIFY(settings.addToAlbum(QStringLiteral("Trip"), {a}));
+    QVERIFY(settings.createTag(QStringLiteral("Travel")));
+    QVERIFY(settings.addTag(QStringLiteral("Travel"), {a}));
+    settings.removeTag(QStringLiteral("Noise"), {b});
+    settings.waitForFingerprints();
+    settings.reconcileAlbums(records);
+    settings.reconcileTags(records);
+    settings.waitForFingerprints();
+    // Three steps, each changing one map: tags, then albums, then hidden
+    // rows. The maps a step left alone are the live ones, shared.
+    QVERIFY(settings.addTag(QStringLiteral("Travel"), {b}));
+    QVERIFY(settings.addToAlbum(QStringLiteral("Trip"), {b}));
+    settings.removeTag(QStringLiteral("Keep"), {b});
+    settings.waitForFingerprints();
+    QVERIFY(settings.m_undoStack.size() >= 3);
+    const auto& albumStep = settings.m_undoStack.at(settings.m_undoStack.size() - 2).organization;
+    const auto& hideStep = settings.m_undoStack.constLast().organization;
+    const auto shared = [&] {
+      return albumStep.tags.isSharedWith(settings.m_tags) && hideStep.tags.isSharedWith(settings.m_tags) &&
+             hideStep.albums.isSharedWith(settings.m_albums);
+    };
+    QVERIFY(shared());
+    // Changing nothing writes nothing.
+    QVERIFY(!settings.addToAlbum(QStringLiteral("Trip"), {b}));
+    QVERIFY(!settings.addTag(QStringLiteral("Travel"), {b}));
+    settings.removeTag(QStringLiteral("Absent"), {a});
+    settings.removeFromAlbum(QStringLiteral("Trip"), {dir.filePath(QStringLiteral("none.png"))});
+    QVERIFY(shared());
+    const auto removed = settings.m_removedEmbeddedTags;
+    for (int round = 0; round < 2; ++round) {
+      settings.reconcileAlbums(records);
+      settings.reconcileTags(records);
+      settings.waitForFingerprints();
+      QVERIFY2(shared(), qPrintable(QString::number(round)));
+      QVERIFY(removed.isSharedWith(settings.m_removedEmbeddedTags));
+    }
+    // And the history is still there.
+    QCOMPARE(settings.undo(), QStringLiteral("Put back tag Keep on 1 item"));
+  }
+
+  // A rescan that repairs a file moved outside Omaroll changes organization
+  // the undo snapshots do not know, so it ends their history; undoing past
+  // it would put the moved file back at its old path.
+  void aRescanThatRepairsAMoveEndsOrganizationUndo() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("library/sub"))));
+    const QString a = embeddedFixture(dir, QStringLiteral("library/a.png"));
+    const QString b = embeddedFixture(dir, QStringLiteral("library/b.png"));
+    const auto scan = [&] {
+      return CaptureScanner::scan({{dir.filePath(QStringLiteral("library")), 2, CaptureRecord::Picture,
+                                    CaptureRecord::Video}});
+    };
+    AppSettings settings;
+    QVERIFY(settings.createAlbum(QStringLiteral("Trip")));
+    QVERIFY(settings.addToAlbum(QStringLiteral("Trip"), {b}));
+    settings.reconcileAlbums(scan());
+    settings.reconcileTags(scan());
+    QVERIFY(settings.createTagFor(QStringLiteral("Travel"), {a}).value(QStringLiteral("created")).toBool());
+    // An ordinary rescan keeps the history.
+    settings.reconcileAlbums(scan());
+    settings.reconcileTags(scan());
+    QVERIFY(settings.canUndo());
+    const QString moved = dir.filePath(QStringLiteral("library/sub/b.png"));
+    QVERIFY(QFile::rename(b, moved));
+    settings.reconcileAlbums(scan());
+    QCOMPARE(settings.albumPaths(QStringLiteral("Trip")), QStringList{moved});
+    QVERIFY(!settings.canUndo());
+    QVERIFY(settings.undo().isEmpty());
+    QCOMPARE(settings.albumPaths(QStringLiteral("Trip")), QStringList{moved});
+  }
+
+  // A create that is refused lets go of the snapshot it took.
+  void aRefusedCreateHoldsNoSnapshot() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    AppSettings settings;
+    QVERIFY(settings.createAlbum(QStringLiteral("Trip")));
+    QVERIFY(settings.createTagFor(QStringLiteral("/ /"), {}).value(QStringLiteral("name")).toString().isEmpty());
+    QVERIFY(settings.createTagFor(QStringLiteral("Trip"), {}, true).value(QStringLiteral("created")).toBool());
+    QVERIFY(settings.createTagFor(QStringLiteral("trip"), {}, true).value(QStringLiteral("name")).toString().isEmpty());
+    QVERIFY(settings.m_groupBefore.albums.isEmpty());
+    QVERIFY(settings.m_groupBefore.tags.isEmpty());
+  }
+
   void keywordsFromFilesAreReadOnceOffTheWindowThread() {
     MetadataSandbox sandbox("records \"$@\"\nprintf 'image\\n' >> \"$OMAROLL_METADATA_LOG\"\n");
     QVERIFY(sandbox.valid());

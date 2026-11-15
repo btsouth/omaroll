@@ -242,6 +242,8 @@ Item {
     // The status line lives on the window, not here; asking for a message
     // through a signal keeps that binding intact.
     signal statusRequested(string message)
+    // The same for a change the footer can offer to undo.
+    signal undoableStatusRequested(string message, int undoId)
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
@@ -2828,7 +2830,7 @@ Item {
                         objectName: "previewOrganization"
                         width: parent.width
                         path: root.path
-                        onStatusRequested: function (message) { root.statusRequested(message) }
+                        onStatusRequested: function (message, undoId) { root.undoableStatusRequested(message, undoId) }
                     }
 
                     // Technical details: codec, bitrate and stream lines,

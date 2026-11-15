@@ -87,6 +87,31 @@ Rectangle {
     }
 
     Flickable {
+        id: infoScroll
+        objectName: "viewerInfoScroll"
+        // The focused control stays in view, also when chips above it wrap
+        // onto another line or the window is short (Alt+T reaches the tag
+        // field below the fold).
+        function revealFocusedControl() {
+            const window = root.Window.window
+            const focused = window ? window.activeFocusItem : null
+            let ancestor = focused
+            while (ancestor && ancestor !== content) ancestor = ancestor.parent
+            if (!focused || ancestor !== content) return
+            const top = focused.mapToItem(content, 0, 0).y
+            const bottom = top + focused.height
+            const maximum = Math.max(0, contentHeight - height)
+            if (top < contentY) contentY = Math.max(0, top)
+            else if (bottom > contentY + height) contentY = Math.min(maximum, bottom - height)
+        }
+        onContentHeightChanged: if (root.visible) Qt.callLater(infoScroll.revealFocusedControl)
+        onHeightChanged: if (root.visible) Qt.callLater(infoScroll.revealFocusedControl)
+        Connections {
+            target: root.Window.window
+            function onActiveFocusItemChanged() {
+                if (root.visible) Qt.callLater(infoScroll.revealFocusedControl)
+            }
+        }
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right

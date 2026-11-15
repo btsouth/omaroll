@@ -2060,6 +2060,7 @@ ApplicationWindow {
             root.organizationStatus(text !== "" ? "Caption saved" : "Caption removed")
         }
         onStatusRequested: function (message) { root.say(message) }
+        onUndoableStatusRequested: function (message, undoId) { root.sayUndoable(message, undoId) }
         objectName: "detail"
         selectionLabel: root.viewerPaths.indexOf(detail.path) < 0 ? ""
                         : (root.viewerPaths.indexOf(detail.path) + 1)

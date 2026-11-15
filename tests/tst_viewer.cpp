@@ -5411,6 +5411,47 @@ private slots:
     QVERIFY(!panel->isVisible());
   }
 
+  // In a short window with chips wrapping over several lines, Alt+T scrolls
+  // the details so the field it focuses is in view. Arrow keys typed there
+  // never change the file, and another file clears what was typed.
+  void tagFieldStaysInViewAndKeepsItsKeys() {
+    const QString first = media(QStringLiteral("Shot 1.jpg"));
+    const QString second = media(QStringLiteral("shot 2.jpg"));
+    QStringList many;
+    for (int index = 0; index < 14; ++index) many.append(QStringLiteral("Wrapping chip %1").arg(index));
+    const QSize before = m_window->size();
+    const auto cleanup = qScopeGuard([&] {
+      for (const QString& tag : std::as_const(many)) m_settings->deleteTag(tag);
+      m_settings->clearUndoHistory();
+      m_window->resize(before);
+    });
+    for (const QString& tag : std::as_const(many)) QCOMPARE(m_settings->createTagFor(tag, {first}).value("count").toInt(), 1);
+    open({first, second});
+    QCOMPARE(m_session->path(), first);
+    m_window->resize(420, 300);
+    QTest::keyClick(m_window, Qt::Key_I);
+    QQuickItem* panel = item(QStringLiteral("viewerInfoPanel"));
+    QTRY_VERIFY(panel->isVisible());
+    QTest::keyClick(m_window, Qt::Key_T, Qt::AltModifier);
+    QQuickItem* input = item(QStringLiteral("tagFieldInput"));
+    QTRY_VERIFY(input->hasActiveFocus());
+    QQuickItem* scroll = item(QStringLiteral("viewerInfoScroll"));
+    QVERIFY(scroll->property("contentHeight").toReal() > scroll->height());
+    QTRY_VERIFY(input->mapToItem(scroll, QPointF()).y() >= 0);
+    QTRY_VERIFY(input->mapToItem(scroll, QPointF(0, input->height())).y() <= scroll->height());
+    for (const char character : QByteArray("fam")) QTest::keyClick(m_window, character);
+    for (const Qt::Key key : {Qt::Key_Right, Qt::Key_Home, Qt::Key_Left, Qt::Key_Up, Qt::Key_Down,
+                              Qt::Key_End, Qt::Key_Right, Qt::Key_PageDown}) {
+      QTest::keyClick(m_window, key);
+    }
+    QCOMPARE(m_session->path(), first);
+    QCOMPARE(input->property("text").toString(), QStringLiteral("fam"));
+    QVERIFY(QMetaObject::invokeMethod(m_window, "step", Q_ARG(QVariant, 1)));
+    QTRY_COMPARE(m_session->path(), second);
+    QTRY_COMPARE(input->property("text").toString(), QString());
+    QVERIFY(m_settings->tagPaths(QStringLiteral("fam")).isEmpty());
+  }
+
   // The details carry the file's chips and a tag field. Alt+T reaches the
   // field while they are shown, and the panel's own status line offers Undo.
   void infoPanelChipsAltTAndTheStatusUndo() {
@@ -5419,6 +5460,8 @@ private slots:
     const auto cleanup = qScopeGuard([&] {
       m_settings->deleteTag(tag);
       m_settings->deleteAlbum(QStringLiteral("Viewer album"));
+      // Later tests share this profile; leave them no steps to undo.
+      m_settings->clearUndoHistory();
     });
     QVERIFY(m_settings->createAlbum(QStringLiteral("Viewer album")));
     QVERIFY(m_settings->addToAlbum(QStringLiteral("Viewer album"), {path}));

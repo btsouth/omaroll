@@ -8219,6 +8219,8 @@ private slots:
       QMetaObject::invokeMethod(grid, "clearChecked");
       m_settings->deleteAlbum(album);
       m_settings->deleteTag(tag);
+      // Later tests share this profile; leave them no steps to undo.
+      m_settings->clearUndoHistory();
     });
     QQuickItem* organize = pill(m_window->contentItem(), QStringLiteral("Organize"));
     QVERIFY(organize);
@@ -8298,7 +8300,11 @@ private slots:
     QTRY_VERIFY(detail->isVisible());
     const QString path = detail->property("path").toString();
     const QString tag = QStringLiteral("zzchip");
-    const auto cleanup = qScopeGuard([&] { m_settings->deleteTag(tag); });
+    const auto cleanup = qScopeGuard([&] {
+      m_settings->deleteTag(tag);
+      // Later tests share this profile; leave them no steps to undo.
+      m_settings->clearUndoHistory();
+    });
     QTest::keyClick(m_window, Qt::Key_T, Qt::AltModifier);
     QQuickItem* input = item("tagFieldInput");
     QTRY_VERIFY(input->hasActiveFocus());
@@ -8307,6 +8313,8 @@ private slots:
     QTRY_COMPARE(m_settings->tagPaths(tag), QStringList{path});
     QCOMPARE(input->property("text").toString(), QString());
     QVERIFY(input->hasActiveFocus());
+    // The footer offers Undo for a preview edit too.
+    QTRY_VERIFY(item("footerUndoButton")->isVisible());
     QQuickItem* chip = nullptr;
     QTRY_VERIFY((chip = find(m_window->contentItem(), [&](QQuickItem* candidate) {
       return candidate->objectName() == QStringLiteral("organizationChip_tag_") + tag && candidate->isVisible();
@@ -8323,6 +8331,23 @@ private slots:
     QTRY_VERIFY(find(m_window->contentItem(), [&](QQuickItem* candidate) {
       return candidate->objectName() == QStringLiteral("organizationChip_tag_") + tag && candidate->isVisible();
     }) != nullptr);
+
+    // Arrow keys in the field stay there: they never step to another file
+    // with the typed text still waiting. Another file clears the text.
+    QTest::keyClick(m_window, Qt::Key_T, Qt::AltModifier);
+    QTRY_VERIFY(input->hasActiveFocus());
+    typeText(QStringLiteral("fam"));
+    for (const Qt::Key key : {Qt::Key_Right, Qt::Key_Home, Qt::Key_Left, Qt::Key_Up, Qt::Key_Down,
+                              Qt::Key_End, Qt::Key_Right, Qt::Key_PageDown}) {
+      QTest::keyClick(m_window, key);
+    }
+    QCOMPARE(detail->property("path").toString(), path);
+    QCOMPARE(input->property("text").toString(), QStringLiteral("fam"));
+    QVERIFY(input->hasActiveFocus());
+    QVERIFY(QMetaObject::invokeMethod(detail, "requestNavigation", Q_ARG(QVariant, 1)));
+    QTRY_VERIFY(detail->property("path").toString() != path);
+    QTRY_COMPARE(input->property("text").toString(), QString());
+    QVERIFY(m_settings->tagPaths(QStringLiteral("fam")).isEmpty());
   }
 
   // The tag field's suggestions: Up and Down move, Tab completes, a comma
@@ -8335,6 +8360,8 @@ private slots:
       m_settings->deleteTag(QStringLiteral("Autumn"));
       m_settings->deleteTag(QStringLiteral("Autumn leaves"));
       m_settings->deleteTag(QStringLiteral("zq"));
+      // Later tests share this profile; leave them no steps to undo.
+      m_settings->clearUndoHistory();
     });
     m_window->resize(560, 420);
     const auto restore = qScopeGuard([&] { m_window->resize(1280, 820); });
@@ -8342,6 +8369,14 @@ private slots:
     QQuickItem* detail = item("detail");
     QTRY_VERIFY(detail->isVisible());
     const QString path = detail->property("path").toString();
+    // Enough chips to wrap over several lines and push the field down.
+    QStringList many;
+    for (int index = 0; index < 14; ++index) many.append(QStringLiteral("Wrapping chip %1").arg(index));
+    const auto dropMany = qScopeGuard([&] {
+      for (const QString& tag : std::as_const(many)) m_settings->deleteTag(tag);
+      m_settings->clearUndoHistory();
+    });
+    for (const QString& tag : std::as_const(many)) QVERIFY(m_settings->createTagFor(tag, {path}).value("count").toInt() == 1);
     QTest::keyClick(m_window, Qt::Key_T, Qt::AltModifier);
     QQuickItem* field = item("organizationTagField");
     QQuickItem* input = item("tagFieldInput");

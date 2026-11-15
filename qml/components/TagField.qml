@@ -101,6 +101,23 @@ FocusScope {
     implicitWidth: 200
     implicitHeight: 30
 
+    // What was typed belongs to the files it was typed for.
+    onPathsChanged: {
+        input.text = ""
+        root.refresh()
+    }
+
+    // Arrow, Home, End and page keys the field did not use (Left at the
+    // start, Up with no suggestions) stop here: further up they would move
+    // to another file with the typed text still waiting.
+    Keys.onPressed: function (event) {
+        if (event.modifiers & Qt.AltModifier) return
+        if ([Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down, Qt.Key_Home, Qt.Key_End,
+             Qt.Key_PageUp, Qt.Key_PageDown].indexOf(event.key) >= 0) {
+            event.accepted = true
+        }
+    }
+
     Rectangle {
         anchors.fill: parent
         radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 4) : 3

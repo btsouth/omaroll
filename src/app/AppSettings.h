@@ -447,6 +447,8 @@ public:
     return m_undoStack.isEmpty() ? 0 : m_undoStack.constLast().id;
   }
   Q_INVOKABLE QString undo();
+  // Forgets every undo step. For tests that share one profile.
+  void clearUndoHistory();
   // Records files just moved to Trash as one step, from the records
   // ActionLauncher::trashCaptured returns. |origin| is the viewer session the
   // files left, if any; each record may carry the index it had there. Returns
@@ -703,6 +705,10 @@ private:
     QMap<QString, QList<AlbumEntry>> tags;
     QMap<QString, QList<AlbumEntry>> removedEmbeddedTags;
     QMap<QString, QVariantMap> smartCollections;
+    // The saved views this step changed (a rename or delete that took a
+    // view with it). Only these are put back, so undoing a step never
+    // touches a view saved or deleted after it.
+    QStringList changedViews;
   };
   struct UndoStep {
     int id = 0;
