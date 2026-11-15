@@ -3189,6 +3189,31 @@ private slots:
     QVERIFY(QAccessible::queryAccessibleInterface(card)->text(QAccessible::Name).contains(QStringLiteral("looser match")));
   }
 
+  // On a narrow tile a star rating shrinks to "★4" before the size gives
+  // way: the size is what tells copies in a duplicate set apart.
+  void ratedNarrowTilesKeepTheirSize() {
+    QQmlComponent component(m_engine);
+    component.setData(R"QML(
+      import QtQuick
+      import Omaroll
+      CaptureCard { width: 260; height: 160; fileName: "sidecar-photo.jpg"
+                    dateShown: true; dateLabel: "1 Jul 2023"; timeLabel: "11:30AM"; sizeLabel: "53.3 kB" }
+    )QML", QUrl());
+    std::unique_ptr<QObject> object(component.create());
+    QVERIFY2(object, qPrintable(component.errorString()));
+    auto* stars = object->findChild<QQuickItem*>(QStringLiteral("captureStars"));
+    auto* size = object->findChild<QQuickItem*>(QStringLiteral("captureSizeLabel"));
+    QVERIFY(stars && size);
+    object->setProperty("rating", 4);
+    QVERIFY(stars->isVisible());
+    QVERIFY(size->isVisible());
+    QCOMPARE(stars->property("text").toString(), QStringLiteral("★4"));
+    // With room, the stars are drawn out.
+    object->setProperty("width", 480);
+    QCOMPARE(stars->property("text").toString(), QStringLiteral("★★★★"));
+    QVERIFY(size->isVisible());
+  }
+
   void failedTrashTargetsRemainChecked() {
     QTemporaryDir dir;
     const QString good = dir.filePath(QStringLiteral("trash-good.png"));
@@ -6312,6 +6337,23 @@ private slots:
                 !named(QStringLiteral("emptyAction_clear-search"))->isEnabled());
     invoke("dismissTopLayer");
     QTRY_VERIFY(named(QStringLiteral("emptyAction_clear-search"))->isEnabled());
+    // Wrapped, the actions share one width, so the rows line up.
+    for (const int width : {560, 1280}) {
+      m_window->resize(width, m_window->height());
+      waitForLayout(QSize(width, m_window->height()));
+      QQuickItem* actions = item(QStringLiteral("emptyActionsGrid"));
+      QList<qreal> widths;
+      for (QQuickItem* child : actions->childItems()) {
+        if (child->objectName().startsWith(QStringLiteral("emptyAction_")) && child->isVisible())
+          widths.append(child->width());
+      }
+      QVERIFY(!widths.isEmpty());
+      if (actions->property("wrapped").toBool()) {
+        for (const qreal each : widths) QCOMPARE(each, widths.first());
+      }
+    }
+    m_window->resize(1280, 820);
+    waitForLayout(QSize(1280, 820));
     QVERIFY(clickAction(QStringLiteral("emptyAction_clear-search")));
     QTRY_VERIFY(m_library->searchText().isEmpty());
     QTRY_VERIFY(m_library->count() > 0);
@@ -10481,6 +10523,37 @@ private slots:
   // years and months, Enter scrolls to one and Shift+Enter shows only it.
   // The scrollbar marks the years, and a bubble names the month at the
   // thumb while it is dragged.
+  // In a narrow window the header has no room for Jump to date, so the
+  // pill sits in the controls row beside the sort instead.
+  void jumpToDateStaysReachableInANarrowWindow() {
+    QObject* jump = m_window->findChild<QObject*>(QStringLiteral("dateJumpMenu"));
+    QVERIFY(jump);
+    const auto cleanup = qScopeGuard([&] {
+      QMetaObject::invokeMethod(jump, "close");
+      m_window->resize(1280, 820);
+      waitForLayout(QSize(1280, 820));
+    });
+    m_library->setSortMode(CaptureFilterModel::NewestFirst);
+    QQuickItem* pill = item("datePill");
+    QQuickItem* rowPill = item("rowDatePill");
+    QTRY_VERIFY(pill->property("interactive").toBool());
+    QTRY_VERIFY(pill->isVisible());
+    QVERIFY(!rowPill->isVisible());
+    m_window->resize(560, 820);
+    waitForLayout(QSize(560, 820));
+    QTRY_VERIFY(!pill->isVisible());
+    QTRY_VERIFY(rowPill->isVisible());
+    // Clear of the filters and the sort.
+    QQuickItem* sort = pill(item("filters"), QStringLiteral("Newest  ▾"));
+    QQuickItem* browse = item("libraryBrowseButton");
+    const QRectF at = rowPill->mapRectToScene(rowPill->boundingRect());
+    QVERIFY(!sort || at.right() <= sort->mapToScene(QPointF(0, 0)).x());
+    QVERIFY(at.left() >= browse->mapToScene(QPointF(browse->width(), 0)).x());
+    QCOMPARE(QAccessible::queryAccessibleInterface(rowPill)->text(QAccessible::Name), QStringLiteral("Jump to date"));
+    click(rowPill);
+    QTRY_VERIFY(jump->property("visible").toBool());
+  }
+
   void datePillJumpsAndFiltersAndTheScrubberNamesTheMonth() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

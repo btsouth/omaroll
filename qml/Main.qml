@@ -1297,6 +1297,25 @@ ApplicationWindow {
         onBrowseRequested: libraryBrowser.open()
     }
 
+    // Jump to date in the controls row, beside the sort, when the header
+    // has no room for its pill (a narrow window): the sidebar's Dates is
+    // hidden there too, so this is the pointer's way to a month.
+    DayHeader {
+        id: rowDatePill
+        objectName: "rowDatePill"
+        parent: filters
+        x: filters.rowSpareRight - implicitWidth
+        y: 7 + Math.round((26 - implicitHeight) / 2)
+        z: 1
+        visible: filters.visible && !datePill.visible && datePill.shown && interactive
+                 && filters.rowSpareRight - filters.rowSpareLeft >= implicitWidth
+        maximumWidth: Math.max(80, filters.rowSpareRight - filters.rowSpareLeft)
+        interactive: datePill.interactive
+        label: datePill.label
+        shown: datePill.shown
+        onClicked: dateJump.popupBelow(rowDatePill, library.currentMonthKey())
+    }
+
     Item {
         id: folderShortcuts
         anchors.top: filters.bottom
@@ -1919,9 +1938,21 @@ ApplicationWindow {
         Item { width: 1; height: 4; visible: emptyActions.count > 0 }
 
         // Side by side where they fit, two by two, or one above the other, in
-        // a narrow window.
+        // a narrow window. Wrapped, every button takes the widest one's
+        // width, so the rows line up rather than leave a ragged grid.
         Grid {
+            id: emptyGrid
+            objectName: "emptyActionsGrid"
             anchors.horizontalCenter: parent.horizontalCenter
+            readonly property real widest: {
+                let widest = 0
+                for (let i = 0; i < emptyActions.count; ++i) {
+                    const button = emptyActions.itemAt(i)
+                    if (button) widest = Math.max(widest, button.implicitWidth)
+                }
+                return widest
+            }
+            readonly property bool wrapped: columns < emptyActions.count
             readonly property real rowWidth: {
                 let total = Math.max(0, emptyActions.count - 1) * columnSpacing
                 for (let i = 0; i < emptyActions.count; ++i) {
@@ -1930,15 +1961,7 @@ ApplicationWindow {
                 }
                 return total
             }
-            readonly property real pairWidth: {
-                let widest = 0
-                for (let i = 0; i + 1 < emptyActions.count; i += 2) {
-                    const a = emptyActions.itemAt(i)
-                    const b = emptyActions.itemAt(i + 1)
-                    if (a && b) widest = Math.max(widest, a.implicitWidth + b.implicitWidth + columnSpacing)
-                }
-                return widest
-            }
+            readonly property real pairWidth: 2 * widest + columnSpacing
             columns: rowWidth <= library.width - 40 ? Math.max(1, emptyActions.count)
                      : pairWidth <= library.width - 40 ? 2 : 1
             columnSpacing: 8
@@ -1951,6 +1974,7 @@ ApplicationWindow {
                     required property string modelData
                     required property int index
                     objectName: "emptyAction_" + modelData
+                    width: emptyGrid.wrapped ? emptyGrid.widest : implicitWidth
                     // Off behind a sheet: a sheet button over one must not press it too.
                     enabled: !root.anySheetOpen && (modelData !== "set-default" || !MimeDefaults.busy)
                     active: index === 0

@@ -141,6 +141,10 @@ Item {
     // Where the chips row starts: beside the folder sidebar when it shows,
     // since the sidebar sits right under the controls.
     property real chipInset: 0
+    // The free stretch of the controls row between the filters and the
+    // sort, where the date pill goes when the header has no room for it.
+    readonly property real rowSpareLeft: kinds.x + kinds.width + 12
+    readonly property real rowSpareRight: sortButton.x - 12
     readonly property alias searchField: searchBox
     // The header shows the bar only once there is something to filter.
     readonly property bool shown: Captures.sourceCount > 0 || chips.chips.length > 0

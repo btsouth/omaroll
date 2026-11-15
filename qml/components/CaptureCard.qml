@@ -414,14 +414,24 @@ Item {
         }
 
         // Stars sit at the right end of the strip, so they read with the
-        // time and size rather than competing with the picture.
+        // time and size rather than competing with the picture. Where the
+        // row of stars would push the size out, they shrink to "★4" first:
+        // the size is what tells copies apart.
+        TextMetrics {
+            id: fullStars
+            font: stars.font
+            text: "★".repeat(root.rating)
+        }
         Text {
             id: stars
+            objectName: "captureStars"
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             anchors.margins: 8
             visible: root.rating > 0
-            text: "★".repeat(root.rating)
+            readonly property bool compact: root.rating > 1 && root.sizeLabel !== ""
+                && whenText.implicitWidth + 8 + sizeText.implicitWidth + 8 + fullStars.advanceWidth > metadataRow.width
+            text: compact ? "★" + root.rating : "★".repeat(root.rating)
             font.pixelSize: 11
             color: root.thumbnailReady ? Theme.yellow : Theme.foreground
         }
@@ -454,6 +464,7 @@ Item {
             }
 
             Text {
+                id: sizeText
                 objectName: "captureSizeLabel"
                 x: whenText.width + 8
                 visible: whenText.implicitWidth + 8 + implicitWidth <= metadataRow.room
