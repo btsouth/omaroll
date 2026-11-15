@@ -10473,7 +10473,11 @@ private slots:
         if (clip->height() < row->height()) continue;
         const qreal y = row->mapToItem(clip, QPointF(0, 0)).y();
         QVERIFY2(y >= -0.5 && y + row->height() <= clip->height() + 0.5,
-                 qPrintable(QStringLiteral("height %1 row %2 at %3 in %4").arg(height).arg(index).arg(y).arg(clip->height())));
+                 qPrintable(QStringLiteral("height %1 row %2 at %3 in %4, pane %5 clip at %6 contentY %7 pins %8")
+                                .arg(height).arg(index).arg(y).arg(clip->height()).arg(list->height())
+                                .arg(clip->y()).arg(list->property("contentY").toReal())
+                                .arg(QString::fromUtf8(QJsonDocument::fromVariant(
+                                    pane->property("pinned").value<QJSValue>().toVariant()).toJson(QJsonDocument::Compact)))));
       }
     };
     check(420);
