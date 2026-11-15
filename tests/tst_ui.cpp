@@ -8707,6 +8707,14 @@ private slots:
       m_settings->clearUndoHistory();
     });
     for (const QString& tag : std::as_const(many)) QVERIFY(m_settings->createTagFor(tag, {path}).value("count").toInt() == 1);
+    // Suggestions to offer: tags this file does not carry.
+    QStringList spare;
+    for (int index = 0; index < 6; ++index) spare.append(QStringLiteral("Wrapping spare %1").arg(index));
+    const auto dropSpare = qScopeGuard([&] {
+      for (const QString& tag : std::as_const(spare)) m_settings->deleteTag(tag);
+      m_settings->clearUndoHistory();
+    });
+    for (const QString& tag : std::as_const(spare)) QVERIFY(m_settings->createTag(tag));
     QTest::keyClick(m_window, Qt::Key_T, Qt::AltModifier);
     QQuickItem* input = item("tagFieldInput");
     QTRY_VERIFY(input->hasActiveFocus());
