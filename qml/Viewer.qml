@@ -54,8 +54,12 @@ ApplicationWindow {
                                               || permanentConfirm.visible || editorChooser.visible || shortcutHelp.visible
                                               || renameSheet.visible || folderPicker.visible
     onBlockingActionOpenChanged: {
-        if (root.blockingActionOpen) slideshowTimer.stop()
-        else Qt.callLater(root.resumeSlideshow)
+        if (root.blockingActionOpen) {
+            root.focusBeforePrompt = root.focusOutsidePrompts
+            slideshowTimer.stop()
+        } else {
+            Qt.callLater(root.resumeSlideshow)
+        }
     }
     property bool videoPausedForRender: false
     property int visibilityBeforeFullScreen: Window.Windowed
@@ -254,14 +258,33 @@ ApplicationWindow {
     property Item keyboardFocusItem: null
     onActiveFocusItemChanged: {
         if (root.activeFocusItem !== null) root.keyboardFocusItem = root.activeFocusItem
+        // Only the window's own controls and the picture: a prompt can take
+        // the keyboard before blockingActionOpen has caught up with it.
+        if (root.activeFocusItem !== null && !root.blockingActionOpen
+                && (root.activeFocusItem === keys || root.focusInside(root.activeFocusItem)))
+            root.focusOutsidePrompts = root.activeFocusItem
         Qt.callLater(root.reclaimFocus)
+    }
+    // The control that had the keyboard before a prompt, sheet or menu took
+    // it. It gets the keyboard back when that closes, if it is still there;
+    // otherwise the picture does. Taken as the prompt opens: while it
+    // closes, focus passes through other items first.
+    property Item focusOutsidePrompts: null
+    property Item focusBeforePrompt: null
+    function restoreFocusAfterPrompt() {
+        const at = root.focusBeforePrompt
+        if (at && at !== keys && at.visible && at.enabled && root.focusInside(at)) {
+            at.forceActiveFocus(Qt.OtherFocusReason)
+        } else {
+            keys.forceActiveFocus()
+        }
     }
     readonly property bool controlsFocused: root.keyboardFocusItem !== null
                                             && root.keyboardFocusItem !== keys
                                             && root.focusInside(root.keyboardFocusItem)
     function focusInside(item) {
         for (let at = item; at; at = at.parent) {
-            if (at === chrome || at === errorState || at === infoPanel) return true
+            if (at === chrome || at === errorState || at === infoPanel || at === toast) return true
         }
         return false
     }
@@ -1613,7 +1636,9 @@ ApplicationWindow {
     Timer {
         id: statusTimer
         interval: 2600
-        onTriggered: root.status = ""
+        // Kept while its Undo has the keyboard, so it is not pulled away
+        // from under a key about to press it.
+        onTriggered: if (undoButton.activeFocus) restart(); else root.status = ""
     }
 
     Timer {
@@ -2674,8 +2699,15 @@ ApplicationWindow {
         anchors.topMargin: 58
         readonly property bool undoable: root.undoId > 0 && root.undoId === Settings.latestUndoId
         width: Math.min(toastText.implicitWidth + 28
-                        + (undoable ? undoButton.implicitWidth + 14 : 0), parent.width - 48)
-        height: toastText.implicitHeight + 14
+                        + (undoable ? undoButton.implicitWidth - 6 : 0), parent.width - 48)
+        // Tall enough for Undo to be a whole button, not a word to aim at.
+        height: Math.max(toastText.implicitHeight + 14, undoable ? undoButton.implicitHeight : 0)
+        // Read out as it appears, the way a notification is.
+        Accessible.role: Accessible.AlertMessage
+        Accessible.name: root.status
+        Accessible.ignored: !visible
+        // A focused Undo still hears the viewer's shortcuts.
+        Keys.forwardTo: [keys]
         radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, height / 2) : 3
         color: Osd.panelSolid
         border.width: 1
@@ -2690,40 +2722,30 @@ ApplicationWindow {
             anchors.leftMargin: 14
             anchors.verticalCenter: parent.verticalCenter
             width: Math.min(implicitWidth, parent.width - 28
-                            - (toast.undoable ? undoButton.implicitWidth + 14 : 0))
+                            - (toast.undoable ? undoButton.implicitWidth - 6 : 0))
             elide: Text.ElideRight
             text: root.status
             font.family: Theme.fontFamily
             font.pixelSize: 12
             color: Osd.accent
+            Accessible.ignored: true
         }
 
-        Text {
+        // The toast's full height, and in the Tab order while it shows.
+        IconButton {
             id: undoButton
             objectName: "viewerUndoButton"
-            anchors.left: toastText.right
-            anchors.leftMargin: 14
-            anchors.verticalCenter: parent.verticalCenter
+            osd: true
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
             visible: toast.undoable
-            text: "Undo"
-            font.family: Theme.fontFamily
-            font.pixelSize: 12
-            font.bold: true
-            font.underline: undoArea.containsMouse
-            color: Osd.foreground
-            Accessible.role: Accessible.Button
-            Accessible.name: "Undo"
-            Accessible.description: "Shortcut Ctrl+Z"
-            Accessible.onPressAction: root.undo()
-
-            MouseArea {
-                id: undoArea
-                anchors.fill: parent
-                anchors.margins: -6
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.undo()
-            }
+            // Not behind a prompt, sheet or menu.
+            enabled: !root.blockingActionOpen
+            label: "Undo"
+            toolTip: "Undo"
+            shortcut: ShortcutCatalog.quickHints.undo
+            onClicked: root.undo()
         }
     }
 
@@ -2868,7 +2890,7 @@ ApplicationWindow {
         onRowsChanged: root.rebuildMenu(actionMenu)
         Component.onCompleted: root.rebuildMenu(actionMenu)
         onClosed: {
-            if (!shortcutHelp.visible) keys.forceActiveFocus()
+            if (!shortcutHelp.visible) root.restoreFocusAfterPrompt()
             const id = root.pendingMenuAction
             root.pendingMenuAction = ""
             if (id !== "") root.perform(id)
@@ -2949,13 +2971,13 @@ ApplicationWindow {
         animated: Session.isAnimated
         audioChoices: root.hasAudioChoices
         sidecarSubtitles: root.externalSubtitle !== ""
-        onClosed: keys.forceActiveFocus()
+        onClosed: root.restoreFocusAfterPrompt()
     }
 
     EditorChooser {
         id: editorChooser
         objectName: "editorChooser"
-        onClosed: keys.forceActiveFocus()
+        onClosed: root.restoreFocusAfterPrompt()
     }
 
     ConfirmSheet {
@@ -2977,7 +2999,7 @@ ApplicationWindow {
             if (target.path === undefined) return
             root.trashTarget(target, index, serial)
         }
-        onVisibleChanged: if (!visible) keys.forceActiveFocus()
+        onVisibleChanged: if (!visible) root.restoreFocusAfterPrompt()
     }
 
     RenameSheet {
@@ -2988,7 +3010,7 @@ ApplicationWindow {
         onRenamed: function (oldPath, newPath, fileName) {
             root.finishRename(oldPath, newPath, fileName, renameSheet.renamedMediaPath)
         }
-        onVisibleChanged: if (!visible) keys.forceActiveFocus()
+        onVisibleChanged: if (!visible) root.restoreFocusAfterPrompt()
     }
 
     FolderDialog {
@@ -3002,7 +3024,7 @@ ApplicationWindow {
             if (target.path !== undefined) root.transferTo(target, selectedFolder.toString(), folderPicker.copy)
         }
         onRejected: folderPicker.target = ({})
-        onVisibleChanged: if (!visible) keys.forceActiveFocus()
+        onVisibleChanged: if (!visible) root.restoreFocusAfterPrompt()
     }
 
     ConfirmSheet {
@@ -3020,7 +3042,7 @@ ApplicationWindow {
             permanentConfirm.target = ({})
             root.deletePermanently(target, viewedPath)
         }
-        onVisibleChanged: if (!visible) keys.forceActiveFocus()
+        onVisibleChanged: if (!visible) root.restoreFocusAfterPrompt()
     }
 
     // The keyboard. One handler rather than window shortcuts: shifted pairs

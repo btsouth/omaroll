@@ -3383,9 +3383,8 @@ Item {
             event.accepted = true
             return
         }
-        if (root.isVideo && (event.key === ShortcutCatalog.previewKeyCodes["Up"] || event.key === ShortcutCatalog.previewKeyCodes["Down"]
-                             || event.key === ShortcutCatalog.previewKeyCodes["9"] || event.key === ShortcutCatalog.previewKeyCodes["0"])) {
-            root.adjustVolume(event.key === ShortcutCatalog.previewKeyCodes["Up"] || event.key === ShortcutCatalog.previewKeyCodes["0"] ? 0.05 : -0.05)
+        if (root.isVideo && (event.key === ShortcutCatalog.previewKeyCodes["Up"] || event.key === ShortcutCatalog.previewKeyCodes["Down"])) {
+            root.adjustVolume(event.key === ShortcutCatalog.previewKeyCodes["Up"] ? 0.05 : -0.05)
             event.accepted = true
             return
         }

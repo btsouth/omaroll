@@ -118,9 +118,41 @@ Rectangle {
         color: Osd.foreground
     }
 
+    // A slider to assistive technology and the keyboard: focused with Tab,
+    // the arrows seek five seconds and Home and End go to either end.
     Item {
         id: scrub
         objectName: "viewerScrub"
+        activeFocusOnTab: root.duration > 0
+        // Written by assistive technology as well as read: Qt sets "value"
+        // for a slider's setCurrentValue. It follows the player, and a
+        // value written from outside seeks there.
+        property real value: 0
+        readonly property real playerValue: root.position
+        property bool following: false
+        function follow() {
+            following = true
+            value = playerValue
+            following = false
+        }
+        onPlayerValueChanged: follow()
+        Component.onCompleted: follow()
+        onValueChanged: {
+            if (following) return
+            if (root.player && root.duration > 0 && Math.abs(value - playerValue) >= 1) {
+                root.seekRequested(Math.max(0, Math.min(root.duration, value)))
+            } else {
+                follow()
+            }
+        }
+        readonly property real minimumValue: 0
+        readonly property real maximumValue: Math.max(0, root.duration)
+        readonly property real stepSize: 5000
+        Accessible.role: Accessible.Slider
+        Accessible.name: "Seek"
+        Accessible.description: root.clock(root.position) + " of " + root.clock(root.duration)
+        Accessible.onIncreaseAction: scrub.seekBy(5000)
+        Accessible.onDecreaseAction: scrub.seekBy(-5000)
         anchors.left: elapsed.right
         anchors.right: total.left
         anchors.leftMargin: 12
@@ -131,7 +163,37 @@ Rectangle {
 
         readonly property real fraction: root.duration > 0
                                          ? Math.max(0, Math.min(1, root.position / root.duration)) : 0
-        readonly property bool lifted: scrubMouse.containsMouse || scrubMouse.pressed
+        readonly property bool lifted: scrubMouse.containsMouse || scrubMouse.pressed || activeFocus
+
+        function seekBy(milliseconds) {
+            if (root.player && root.duration > 0) {
+                root.seekRequested(Math.max(0, Math.min(root.duration, root.position + milliseconds)))
+            }
+        }
+
+        Keys.onPressed: function (event) {
+            if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.ShiftModifier)) return
+            if (event.key === Qt.Key_Left || event.key === Qt.Key_Right) {
+                scrub.seekBy(event.key === Qt.Key_Left ? -5000 : 5000)
+            } else if (event.key === Qt.Key_Home || event.key === Qt.Key_End) {
+                if (root.player && root.duration > 0) {
+                    root.seekRequested(event.key === Qt.Key_Home ? 0 : root.duration)
+                }
+            } else {
+                return
+            }
+            event.accepted = true
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: -2
+            visible: scrub.activeFocus
+            radius: Math.min(height / 2, Theme.cornerRadius > 0 ? Theme.cornerRadius : 3)
+            color: "transparent"
+            border.width: 2
+            border.color: Osd.accent
+        }
 
         function seekTo(x) {
             if (root.player && root.duration > 0 && width > 0) {
@@ -270,16 +332,31 @@ Rectangle {
             id: speedButton
             objectName: "viewerSpeedButton"
             visible: root.speedWanted
+            activeFocusOnTab: true
+            readonly property string rateLabel: Number(root.rate.toFixed(2)) + "×"
+            Accessible.role: Accessible.Button
+            Accessible.name: "Playback speed " + rateLabel
+            Accessible.description: "Shortcut [ or ]"
+            Accessible.onPressAction: if (root.player) root.cycleRate()
+            Keys.onPressed: function (event) {
+                if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+                        || event.key === Qt.Key_Space) {
+                    if (root.player && !event.isAutoRepeat) root.cycleRate()
+                    event.accepted = true
+                }
+            }
             anchors.verticalCenter: parent.verticalCenter
             width: speedLabel.implicitWidth + 16
             height: 30
             radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, height / 2) : 3
             color: speedMouse.containsMouse ? Osd.hover : "transparent"
+            border.width: activeFocus ? 2 : 0
+            border.color: Osd.accent
 
             Text {
                 id: speedLabel
                 anchors.centerIn: parent
-                text: Number(root.rate.toFixed(2)) + "×"
+                text: speedButton.rateLabel
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
                 font.weight: Math.abs(root.rate - 1) > 0.01 ? Font.DemiBold : Font.Normal
@@ -307,20 +384,75 @@ Rectangle {
 
         // Volume, for a window wide enough to give it room. Up and Down and
         // the wheel over the speaker set it everywhere else.
+        // Focused with Tab, the arrows change it by 5%.
         Item {
+            id: volume
             objectName: "viewerVolume"
             visible: root.wide
             anchors.verticalCenter: parent.verticalCenter
             width: 64
             height: 24
+            activeFocusOnTab: true
 
             readonly property real level: Settings.videoMuted ? 0 : Settings.videoVolume
+            // In percent, as heard: 0 while muted. Written by assistive
+            // technology too (Qt sets "value"), which sets the volume.
+            property real value: 0
+            readonly property real heardValue: Math.round(level * 100)
+            property bool following: false
+            function follow() {
+                following = true
+                value = heardValue
+                following = false
+            }
+            onHeardValueChanged: follow()
+            Component.onCompleted: follow()
+            onValueChanged: {
+                if (following) return
+                if (Math.round(value) !== heardValue) setLevel(Math.round(value) / 100)
+                follow()
+            }
+            readonly property real minimumValue: 0
+            readonly property real maximumValue: 100
+            readonly property real stepSize: 5
+            Accessible.role: Accessible.Slider
+            Accessible.name: "Volume"
+            Accessible.description: Settings.videoMuted ? "Muted" : Math.round(Settings.videoVolume * 100) + "%"
+            Accessible.onIncreaseAction: volume.change(0.05)
+            Accessible.onDecreaseAction: volume.change(-0.05)
 
-            function setFrom(x) {
-                Settings.videoVolume = Math.max(0, Math.min(1, x / width))
+            function setLevel(level) {
+                Settings.videoVolume = Math.max(0, Math.min(1, level))
                 if (Settings.videoVolume > 0) {
                     Settings.videoMuted = false
                 }
+            }
+            function setFrom(x) { setLevel(x / width) }
+            // From the level heard: down from muted stays muted at 0, and
+            // the volume kept for unmuting is left alone.
+            function change(amount) {
+                if (amount < 0 && level <= 0) return
+                setLevel(Math.round((level + amount) * 100) / 100)
+            }
+
+            Keys.onPressed: function (event) {
+                if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.ShiftModifier)) return
+                if (event.key === Qt.Key_Left || event.key === Qt.Key_Down) volume.change(-0.05)
+                else if (event.key === Qt.Key_Right || event.key === Qt.Key_Up) volume.change(0.05)
+                else if (event.key === Qt.Key_Home) volume.setLevel(0)
+                else if (event.key === Qt.Key_End) volume.setLevel(1)
+                else return
+                event.accepted = true
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: -2
+                visible: volume.activeFocus
+                radius: Math.min(height / 2, Theme.cornerRadius > 0 ? Theme.cornerRadius : 3)
+                color: "transparent"
+                border.width: 2
+                border.color: Osd.accent
             }
 
             Rectangle {

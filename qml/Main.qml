@@ -128,9 +128,49 @@ ApplicationWindow {
         root.say(Settings.organizationError || message)
     }
 
+    // The control that had the keyboard before a sheet, prompt or menu took
+    // it, such as the header's Trash button or the preview's Trash action.
+    // It gets the keyboard back when the sheet closes, if it can still take
+    // it; otherwise the preview or the grid does, as before. It is taken as
+    // the sheet opens: while one closes, focus passes through other items.
+    property Item focusBeforeSheet: null
+    property Item focusOutsideSheets: null
+    onActiveFocusItemChanged: {
+        if (activeFocusItem !== null && !root.modalOpen && !root.popupOpen
+                && !root.insideSheet(activeFocusItem))
+            root.focusOutsideSheets = activeFocusItem
+    }
+    // A sheet can take the keyboard as it shows, before modalOpen has
+    // caught up with it.
+    function insideSheet(item) {
+        const sheets = [confirm, permanentConfirm, folderDropConfirm, launchRestore, matteSheet,
+                        correctionSheet, batchSheet, compareSheet, libraryBrowser, settingsSheet,
+                        albumNameSheet, exportSheet, renameSheet, tailscaleSheet, textReviewSheet,
+                        editorChooser]
+        for (let at = item; at; at = at.parent) {
+            if (sheets.indexOf(at) >= 0) return true
+        }
+        return false
+    }
+    onModalOpenChanged: if (modalOpen) root.focusBeforeSheet = root.focusOutsideSheets
+    // A control on the library's own chrome that can still take the keyboard.
+    // The grid and the preview are left out: they put focus back on their
+    // own current tile or action.
+    function canTakeFocusBack(item) {
+        if (!item || !item.visible || !item.enabled || !item.activeFocusOnTab) return false
+        for (let at = item; at; at = at.parent) {
+            if (at === library || at === detail) return false
+            if (at === root.contentItem) return true
+        }
+        return false
+    }
+
     function restoreFocusAfterSheet() {
         Qt.callLater(function () {
-            if (detail.visible) {
+            const before = root.focusBeforeSheet
+            if (!root.modalOpen && root.canTakeFocusBack(before)) {
+                before.forceActiveFocus(Qt.OtherFocusReason)
+            } else if (detail.visible) {
                 detail.restoreFocus()
             } else if (!root.modalOpen) {
                 library.forceActiveFocus()
@@ -1994,6 +2034,9 @@ ApplicationWindow {
             color: notice.text !== "" || making !== ""
                    ? Theme.accent : Theme.mutedText
             Behavior on color { ColorAnimation { duration: 180 } }
+            // A result is read out as it appears, the way a notification is.
+            Accessible.role: notice.text !== "" ? Accessible.AlertMessage : Accessible.StaticText
+            Accessible.name: text
         }
 
         FooterHints {
@@ -2008,32 +2051,25 @@ ApplicationWindow {
             visible: notice.text === "" && Actions.pendingOutputs.length === 0 && !root.libraryEmpty
         }
 
-        // Undo for the result on the left, such as a move to Trash.
-        Text {
+        // Undo for the result on the left, such as a move to Trash: a whole
+        // button the footer's height, reached with Tab as well as Ctrl+Z.
+        IconButton {
             id: footerUndo
             objectName: "footerUndoButton"
             anchors.right: helpHint.left
-            anchors.rightMargin: 16
-            anchors.verticalCenter: parent.verticalCenter
+            anchors.rightMargin: 10
+            anchors.top: parent.top
+            anchors.topMargin: 1
+            anchors.bottom: parent.bottom
             visible: notice.undoable
-            text: "Undo"
-            font.family: Theme.fontFamily
-            font.pixelSize: 11
-            font.bold: true
-            font.underline: footerUndoArea.containsMouse
-            color: Theme.foreground
-            Accessible.role: Accessible.Button
-            Accessible.name: "Undo"
-            Accessible.description: "Shortcut Ctrl+Z"
-            Accessible.onPressAction: root.undo()
-
-            MouseArea {
-                id: footerUndoArea
-                anchors.fill: parent
-                anchors.margins: -6
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.undo()
+            // Not behind a sheet or menu, where Tab could still reach it.
+            enabled: !root.anySheetOpen && !root.popupOpen
+            label: "Undo"
+            toolTip: "Undo"
+            shortcut: ShortcutCatalog.sequence("library", "undo")[0]
+            onClicked: {
+                root.undo()
+                library.forceActiveFocus()
             }
         }
 
@@ -2482,7 +2518,8 @@ ApplicationWindow {
     Timer {
         id: noticeTimer
         interval: 4200
-        onTriggered: notice.text = ""
+        // Kept while its Undo has the keyboard.
+        onTriggered: if (footerUndo.activeFocus) restart(); else notice.text = ""
     }
 
     Connections {
@@ -2546,6 +2583,9 @@ ApplicationWindow {
 
     function showShortcutHelp() {
         shortcutHelp.context = detail.visible ? "preview" : "library"
+        // A key that means one thing for a video and another for a picture
+        // (M, 0) is listed only for the kind on screen.
+        shortcutHelp.video = detail.visible && detail.isVideo
         shortcutHelp.open()
     }
     ShortcutHelp {
@@ -2747,6 +2787,14 @@ ApplicationWindow {
     Shortcut {
         sequences: ShortcutCatalog.sequence("library", "quit")
         onActivated: Qt.quit()
+    }
+    // The desktop's file chooser, from the library or its preview, as the
+    // empty library's Open file button does.
+    Shortcut {
+        sequences: ShortcutCatalog.sequence("library", "open-file")
+        enabled: !root.modalOpen && !root.popupOpen
+        autoRepeat: false
+        onActivated: Actions.chooseFilesToOpen()
     }
     // Sheets can move focus into a child control, so Escape is owned here at
     // window scope. With no sheet, the search field still owns its Escape.

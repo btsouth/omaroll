@@ -2,8 +2,37 @@
 
 ## Unreleased
 
+### Added
+
+- `Ctrl+Shift+O` opens a file with the desktop's file chooser, from the
+  library, the preview or the viewer.
+
+### Changed
+
+- Shortcut help starts with Navigation and reads down each column in order.
+  Keys that do the same thing share one row, so "Previous / next file" is
+  listed once, and the viewer's flips and saved copy sit under View.
+- In the library preview, `M` and `0` are listed only for the kind of file
+  on screen: Mute for a video, Add background and Fit for a picture. `9` and
+  `0` no longer change a video preview's volume; `↑` and `↓` do, as in the
+  viewer.
+
 ### Fixed
 
+- The video bar's seek and volume read as sliders to screen readers, with
+  the time or the percentage, and take the arrow keys once reached with
+  `Tab`. The speed button says the speed.
+- Confirmation prompts, such as Move to Trash, are read as a dialog with
+  their question and detail, and open with the confirm button focused. `Tab`
+  stays on their two buttons.
+- Notices such as "Moved to Trash" are read out as they appear, and their
+  Undo is a full-height button that `Tab` reaches in the viewer.
+- Closing a prompt or sheet gives the keyboard back to the button that
+  opened it, in the viewer and the library. A held `Enter` or `Space`
+  presses a button once and never answers the prompt it opens; only a fresh
+  press does.
+- Settings switches and buttons are named as their rows are titled, so a
+  screen reader says "Show hidden media" rather than "Hidden items".
 - Resume and Start over in the viewer play the video from the chosen spot
   instead of leaving it paused until Space.
 

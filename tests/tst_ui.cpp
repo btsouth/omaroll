@@ -10,6 +10,7 @@
 // Events go through QTest into the offscreen window, never to the live seat.
 
 #include "actions/ActionLauncher.h"
+#include "actions/FileChooserRequest.h"
 #include "actions/ActionRegistry.h"
 #include "actions/ExternalEditors.h"
 #include "actions/TailscalePeers.h"
@@ -434,6 +435,130 @@ private slots:
       }
     }
     QCOMPARE(rawRows, 2);
+  }
+
+  // Help reads from Navigation down, one row per action, and in the preview
+  // lists M and 0 only for the kind of file on screen. 0 no longer turns a
+  // video preview's volume up; the arrows do, as in the viewer.
+  void helpGroupsReadInOrderWithOneRowPerAction() {
+    const auto restoreSize = qScopeGuard([&] { m_window->resize(1280, 820); });
+    m_window->resize(1280, 820);
+    QObject* help = m_window->findChild<QObject*>(QStringLiteral("libraryShortcutHelp"));
+    QVERIFY(help);
+    const auto groups = [help] { return help->property("groups").value<QJSValue>().toVariant().toList(); };
+    const auto labels = [&] {
+      QStringList all;
+      for (const QVariant& group : groups())
+        for (const QVariant& row : group.toMap().value(QStringLiteral("rows")).toList())
+          all.append(row.toMap().value(QStringLiteral("label")).toString());
+      return all;
+    };
+    const auto check = [&] {
+      const QVariantList list = groups();
+      QVERIFY(!list.isEmpty());
+      QCOMPARE(list.first().toMap().value(QStringLiteral("title")).toString(), QStringLiteral("Navigation"));
+      for (const QVariant& group : list) {
+        QStringList seen;
+        for (const QVariant& row : group.toMap().value(QStringLiteral("rows")).toList()) {
+          const QString label = row.toMap().value(QStringLiteral("label")).toString();
+          QVERIFY2(!seen.contains(label), qPrintable(label));
+          seen.append(label);
+        }
+      }
+      // The first column starts with Navigation too.
+      QVariant columns;
+      QVERIFY(QMetaObject::invokeMethod(help, "columnsFor", Q_RETURN_ARG(QVariant, columns),
+                                        Q_ARG(QVariant, help->property("columnCount"))));
+      const QVariantList first = (columns.metaType() == QMetaType::fromType<QJSValue>() ? columns.value<QJSValue>().toVariant() : columns).toList().value(0).toList();
+      QVERIFY(!first.isEmpty());
+      QCOMPARE(first.first().toMap().value(QStringLiteral("title")).toString(), QStringLiteral("Navigation"));
+    };
+
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(help->property("visible").toBool());
+    check();
+    QVERIFY(labels().contains(QStringLiteral("Open a file")));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!help->property("visible").toBool());
+
+    int pictureRow = -1, videoRow = -1;
+    for (int row = 0; row < m_library->rowCount(); ++row) {
+      if (m_library->isVideoAt(row)) { if (videoRow < 0) videoRow = row; }
+      else if (!m_library->isDocumentAt(row) && pictureRow < 0) pictureRow = row;
+    }
+    QVERIFY(pictureRow >= 0 && videoRow >= 0);
+    const auto cleanup = qScopeGuard([&] { invoke("dismissTopLayer"); });
+    QQuickItem* detail = item("detail");
+
+    openDetail(pictureRow);
+    QTRY_VERIFY(detail->isVisible());
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(help->property("visible").toBool());
+    check();
+    QVERIFY(labels().contains(QStringLiteral("Add background")));
+    QVERIFY(labels().contains(QStringLiteral("Fit picture / PDF")));
+    QVERIFY(!labels().contains(QStringLiteral("Mute")));
+    QVERIFY(!labels().contains(QStringLiteral("Volume up / down")));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!help->property("visible").toBool());
+
+    openDetail(videoRow);
+    QTRY_VERIFY(detail->property("isVideo").toBool());
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(help->property("visible").toBool());
+    QVERIFY(labels().contains(QStringLiteral("Mute")));
+    QVERIFY(labels().contains(QStringLiteral("Volume up / down")));
+    QVERIFY(!labels().contains(QStringLiteral("Add background")));
+    QVERIFY(!labels().contains(QStringLiteral("Fit picture / PDF")));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!help->property("visible").toBool());
+    const qreal volume = m_settings->videoVolume();
+    const auto restoreVolume = qScopeGuard([&] { m_settings->setVideoVolume(volume); });
+    m_settings->setVideoVolume(0.5);
+    QTest::keyClick(m_window, Qt::Key_0);
+    QTest::keyClick(m_window, Qt::Key_9);
+    QTest::qWait(50);
+    QCOMPARE(m_settings->videoVolume(), 0.5);
+    QTest::keyClick(m_window, Qt::Key_Up);
+    QTRY_VERIFY(m_settings->videoVolume() > 0.5);
+  }
+
+  // A sheet or prompt opened from a focused control gives the keyboard back
+  // to that control when it closes. Ctrl+Shift+O asks the desktop's file
+  // chooser for a file to open.
+  void focusComesBackToTheControlThatOpenedASheet() {
+    QQuickItem* settingsButton = item("settingsButton");
+    QQuickItem* settings = item("settingsSheet");
+    settingsButton->forceActiveFocus(Qt::TabFocusReason);
+    QVERIFY(settingsButton->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(settings->isVisible());
+    QVERIFY(!settingsButton->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!settings->isVisible());
+    QTRY_VERIFY(settingsButton->hasActiveFocus());
+
+    // From the grid, the grid gets it back, as before.
+    QQuickItem* grid = item("library");
+    grid->forceActiveFocus();
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QObject* help = m_window->findChild<QObject*>(QStringLiteral("libraryShortcutHelp"));
+    QTRY_VERIFY(help->property("visible").toBool());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!help->property("visible").toBool());
+    QTRY_VERIFY(grid->hasActiveFocus());
+
+    // A chooser still waiting on a portal must not reach the next test.
+    const auto closeChoosers = qScopeGuard([this] { qDeleteAll(m_actions->findChildren<FileChooserRequest*>()); });
+    QSignalSpy failed(m_actions, &ActionLauncher::failed);
+    QTest::keyClick(m_window, Qt::Key_O, Qt::ControlModifier | Qt::ShiftModifier);
+    QTRY_VERIFY(!m_actions->findChildren<FileChooserRequest*>().isEmpty() || failed.count() > 0);
+    if (failed.count() > 0) {
+      const QString message = failed.first().first().toString();
+      QVERIFY2(message.contains(QStringLiteral("file chooser")), qPrintable(message));
+    }
+    // The footer's notice would hide its hints from the tests after this one.
+    QVERIFY(QMetaObject::invokeMethod(m_window, "say", Q_ARG(QVariant, QString())));
   }
 
   void aboutLinksMissingToolsAndWindowRules() {
@@ -956,7 +1081,7 @@ private slots:
     QVERIFY(QMetaObject::invokeMethod(item("settingsSheet"), "open"));
     QQuickItem* scroll = item("settingsScroll");
     QQuickItem* first = find(item("settingsSheet"), [](QQuickItem* candidate) {
-      return candidate->property("accessibleName").toString() == QStringLiteral("Scan Downloads");
+      return candidate->property("accessibleName").toString() == QStringLiteral("Include Downloads");
     });
     QVERIFY(first);
     first->forceActiveFocus();
@@ -994,17 +1119,17 @@ private slots:
     };
     struct Switch { const char* object; const char* property; const char* name; QObject* owner; };
     const QList<Switch> switches = {
-        {"scanDownloadsToggle", "scanDownloads", "Scan Downloads", m_settings},
-        {"showHiddenToggle", "showHidden", "Hidden items", m_library},
+        {"scanDownloadsToggle", "scanDownloads", "Include Downloads", m_settings},
+        {"showHiddenToggle", "showHidden", "Show hidden media", m_library},
         {"gridFilenamesToggle", "showGridFilenames", "Show filenames in grid", m_settings},
-        {"pairRawJpegToggle", "pairRawJpeg", "Pair RAW and JPEG", m_settings},
+        {"pairRawJpegToggle", "pairRawJpeg", "Group matching RAW and JPEG files", m_settings},
         {"permanentDeleteConfirmation", "confirmPermanentDelete", "Confirm permanent deletion", m_settings},
         {"enlargeSmallPicturesButton", "enlargeSmallPictures", "Enlarge small pictures to fit", m_settings},
         {"slideshowShuffleToggle", "slideshowShuffle", "Shuffle slideshow", m_settings},
         {"rememberPlaybackSpeedButton", "rememberPlaybackSpeed", "Remember playback speed", m_settings},
-        {"slideshowVideosToggle", "slideshowVideos", "Include videos in slideshow", m_settings},
+        {"slideshowVideosToggle", "slideshowVideos", "Videos in slideshows", m_settings},
         {"backgroundTextIndexToggle", "backgroundTextIndex", "Index text in the background", m_settings},
-        {"textIndexScreenshotsOnlyToggle", "textIndexScreenshotsOnly", "Index screenshots only", m_settings},
+        {"textIndexScreenshotsOnlyToggle", "textIndexScreenshotsOnly", "Screenshots only", m_settings},
     };
     int way = 0;
     for (const Switch& entry : switches) {
@@ -1029,6 +1154,9 @@ private slots:
       QVERIFY(accessible);
       QCOMPARE(accessible->role(), QAccessible::CheckBox);
       QCOMPARE(accessible->text(QAccessible::Name), QString::fromLatin1(entry.name));
+      // Named as its row is titled, so the words on screen are the ones read.
+      QCOMPARE(accessible->text(QAccessible::Name),
+               control->parentItem()->parentItem()->property("title").toString());
       QVERIFY(accessible->state().checkable);
       QCOMPARE(bool(accessible->state().checked), before);
 
@@ -1079,6 +1207,8 @@ private slots:
       const auto putBack = qScopeGuard([&] { m_settings->setProperty(property, before); });
       const QString name = control->property("accessibleName").toString();
       QVERIFY2(name.endsWith(control->property("label").toString()), qPrintable(name));
+      const QString title = control->parentItem()->parentItem()->property("title").toString();
+      QVERIFY2(!title.isEmpty() && name.startsWith(title + QStringLiteral(": ")), qPrintable(name));
       control->forceActiveFocus();
       QTRY_VERIFY2(inView(control), object);
       click(control);
@@ -8403,16 +8533,40 @@ private slots:
                              m_library->rowOf(copy) >= 0, 10000);
     QQuickItem* grid = item("library");
 
-    // One file, put back with the footer's Undo.
+    // One file, put back with the footer's Undo. The question is a dialog
+    // named by its title, opened on its default button.
     grid->setProperty("currentIndex", m_library->rowOf(first));
     QTest::keyClick(m_window, Qt::Key_Delete);
-    QTRY_VERIFY(item("confirm")->isVisible());
+    QQuickItem* confirm = item("confirm");
+    QTRY_VERIFY(confirm->isVisible());
+    QAccessibleInterface* dialog = QAccessible::queryAccessibleInterface(confirm);
+    QCOMPARE(dialog->role(), QAccessible::Dialog);
+    QVERIFY(!dialog->text(QAccessible::Name).isEmpty());
+    QCOMPARE(dialog->text(QAccessible::Name), confirm->property("title").toString());
+    QCOMPARE(dialog->text(QAccessible::Description), confirm->property("detail").toString());
+    QQuickItem* yes = find(confirm, [](QQuickItem* c) { return c->objectName() == QStringLiteral("confirmSheetConfirm"); });
+    QVERIFY(yes && yes->hasActiveFocus());
     QTest::keyClick(m_window, Qt::Key_Return);
     QTRY_VERIFY(!item("confirm")->isVisible());
     QTRY_VERIFY(!QFileInfo::exists(first));
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(first) < 0, 10000);
     QQuickItem* undo = item("footerUndoButton");
     QTRY_VERIFY(undo->isVisible());
+    // The result is read out as an alert; Undo is a whole button the
+    // footer's height rather than a word to aim at.
+    QAccessibleInterface* status = QAccessible::queryAccessibleInterface(item("footerStatus"));
+    QCOMPARE(status->role(), QAccessible::AlertMessage);
+    QVERIFY(!status->text(QAccessible::Name).isEmpty());
+    QVERIFY(undo->height() >= 30);
+    QCOMPARE(QAccessible::queryAccessibleInterface(undo)->role(), QAccessible::Button);
+    QVERIFY(undo->activeFocusOnTab());
+    // Behind a sheet, Tab cannot land on it and Space cannot undo.
+    QVERIFY(undo->isEnabled());
+    QVERIFY(QMetaObject::invokeMethod(item("settingsSheet"), "open"));
+    QTRY_VERIFY(item("settingsSheet")->isVisible());
+    QVERIFY(!undo->isEnabled());
+    QVERIFY(QMetaObject::invokeMethod(item("settingsSheet"), "close"));
+    QTRY_VERIFY(undo->isEnabled());
     click(undo);
     QTRY_VERIFY(QFileInfo::exists(first));
     QCOMPARE(QImage(first).pixelColor(0, 0), QColor(201, 33, 77));

@@ -32,6 +32,8 @@ Item {
             else viewer.perform("copy")
         } else if (control && !shift && event.key === ShortcutCatalog.quickKeys.S) {
             if (!event.isAutoRepeat) viewer.saveViewCopy()
+        } else if (control && shift && event.key === ShortcutCatalog.quickKeys.O) {
+            if (!event.isAutoRepeat) Actions.chooseFilesToOpen()
         } else if (control && event.key === ShortcutCatalog.quickKeys.O) {
             viewer.perform("open-with")
         } else if (control && event.key === ShortcutCatalog.quickKeys.W) {
