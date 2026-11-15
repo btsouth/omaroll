@@ -38,6 +38,7 @@
 #include <QVariantMap>
 
 #include <algorithm>
+#include <array>
 #include <condition_variable>
 #include <cstdio>
 #include <deque>
@@ -1257,12 +1258,7 @@ void AppSettings::removeUnavailableFromAlbum(const QString& name) {
   }
 }
 
-QHash<QString, QString> AppSettings::localTagsByFold() const {
-  QHash<QString, QString> byFold;
-  byFold.reserve(m_tags.size());
-  for (auto it = m_tags.cbegin(); it != m_tags.cend(); ++it) byFold.insert(TagNames::folded(it.key()), it.key());
-  return byFold;
-}
+QHash<QString, QString> AppSettings::localTagsByFold() const { return tagCache().localByFold; }
 
 QString AppSettings::displayTag(const QString& keyword, const QHash<QString, QString>& localByFold) const {
   // Level by level: a local tag's spelling, else the spelling of a keyword
@@ -1284,30 +1280,11 @@ QString AppSettings::displayTag(const QString& keyword, const QHash<QString, QSt
   return result;
 }
 
-QStringList AppSettings::tagNames() const {
-  QStringList names = m_tags.keys();
-  if (!m_embeddedTagIndex.isEmpty()) {
-    const QHash<QString, QString> local = localTagsByFold();
-    QSet<QString> present(local.keyBegin(), local.keyEnd());
-    for (auto it = m_embeddedTagIndex.cbegin(); it != m_embeddedTagIndex.cend(); ++it) {
-      if (present.contains(it.key())) continue;
-      // Ancestors too, so the tree in Browse has no gaps.
-      const QStringList segments = displayTag(m_embeddedSpelling.value(it.key()), local).split(QLatin1Char('/'));
-      for (qsizetype depth = 1; depth <= segments.size(); ++depth) {
-        const QString level = segments.first(depth).join(QLatin1Char('/'));
-        const QString folded = TagNames::folded(level);
-        if (!present.contains(folded)) {
-          present.insert(folded);
-          names.append(level);
-        }
-      }
-    }
-  }
-  std::sort(names.begin(), names.end(), tagLessThan);
-  return names;
-}
+QStringList AppSettings::tagNames() const { return tagCache().names; }
 
 QStringList AppSettings::tagPaths(const QString& name) const {
+  const TagCache& cache = tagCache();
+  if (const auto known = cache.paths.constFind(name); known != cache.paths.cend()) return known.value();
   QStringList paths;
   QSet<QString> seen;
   const auto collect = [&](const QList<AlbumEntry>& entries) {
@@ -1336,6 +1313,7 @@ QStringList AppSettings::tagPaths(const QString& name) const {
       }
     }
   }
+  m_tagCache.paths.insert(name, paths);
   return paths;
 }
 
@@ -1939,7 +1917,10 @@ QStringList AppSettings::albumsForPath(const QString& path) const {
       }
     }
   }
-  names.sort(Qt::CaseInsensitive);
+  // The order albumNames has, so "Trip 2" comes before "Trip 10".
+  std::sort(names.begin(), names.end(), [](const QString& a, const QString& b) {
+    return TagNames::naturalCompare(a, b) < 0;
+  });
   return names;
 }
 
@@ -1987,30 +1968,93 @@ int tagMatchRank(const QString& name, const QString& query) {
 }
 } // namespace
 
+const AppSettings::TagCache& AppSettings::tagCache() const {
+  TagCache& cache = m_tagCache;
+  if (cache.built && cache.tags.isSharedWith(m_tags) && cache.embeddedIndex.isSharedWith(m_embeddedTagIndex) &&
+      cache.embeddedSpelling.isSharedWith(m_embeddedSpelling)) {
+    return cache;
+  }
+  cache = TagCache{};
+  cache.tags = m_tags;
+  cache.embeddedIndex = m_embeddedTagIndex;
+  cache.embeddedSpelling = m_embeddedSpelling;
+  cache.built = true;
+  QHash<QString, QString>& local = cache.localByFold;
+  local.reserve(m_tags.size());
+  for (auto it = m_tags.cbegin(); it != m_tags.cend(); ++it) local.insert(TagNames::folded(it.key()), it.key());
+  QStringList names = m_tags.keys();
+  if (!m_embeddedTagIndex.isEmpty()) {
+    QSet<QString> present(local.keyBegin(), local.keyEnd());
+    for (auto it = m_embeddedTagIndex.cbegin(); it != m_embeddedTagIndex.cend(); ++it) {
+      if (present.contains(it.key())) continue;
+      // Ancestors too, so the tree in Browse has no gaps.
+      const QStringList segments = displayTag(m_embeddedSpelling.value(it.key()), local).split(QLatin1Char('/'));
+      for (qsizetype depth = 1; depth <= segments.size(); ++depth) {
+        const QString level = segments.first(depth).join(QLatin1Char('/'));
+        const QString folded = TagNames::folded(level);
+        if (!present.contains(folded)) {
+          present.insert(folded);
+          names.append(level);
+        }
+      }
+    }
+  }
+  // Tree order, as TagNames::lessThan has it. Sorted once per change, not
+  // on every read.
+  std::sort(names.begin(), names.end(), tagLessThan);
+  cache.names.reserve(names.size());
+  cache.folded.reserve(names.size());
+  cache.searchFolded.reserve(names.size());
+  cache.indexByFold.reserve(names.size());
+  for (QString& name : names) {
+    const QString folded = TagNames::folded(name);
+    cache.indexByFold.insert(folded, cache.names.size());
+    cache.folded.append(folded);
+    cache.searchFolded.append(searchFolded(name));
+    cache.names.append(std::move(name));
+  }
+  return cache;
+}
+
 QStringList AppSettings::matchTags(const QString& text, const QStringList& exclude, int limit) const {
   const QString query = searchFolded(text.simplified());
   if (query.isEmpty() || limit <= 0) return {};
   QSet<QString> skipped;
   for (const QString& name : exclude) skipped.insert(TagNames::folded(name));
-  struct Match {
-    int rank;
-    QString name;
-  };
-  QList<Match> matches;
-  for (const QString& name : tagNames()) {
-    if (skipped.contains(TagNames::folded(name))) continue;
-    const int rank = tagMatchRank(searchFolded(name), query);
-    if (rank >= 0) matches.append({rank, name});
+  const TagCache& cache = tagCache();
+  // The best |limit| per rank; tagNames is in tree order already, so the
+  // first found in a rank come first.
+  std::array<QStringList, 3> ranked;
+  for (qsizetype index = 0; index < cache.names.size(); ++index) {
+    const int rank = tagMatchRank(cache.searchFolded.at(index), query);
+    if (rank < 0 || ranked[rank].size() >= limit) continue;
+    if (!skipped.isEmpty() && skipped.contains(cache.folded.at(index))) continue;
+    ranked[rank].append(cache.names.at(index));
+    if (ranked[0].size() >= limit) break;
   }
-  // tagNames is in tree order already; a stable sort keeps that within a rank.
-  std::stable_sort(matches.begin(), matches.end(),
-                   [](const Match& a, const Match& b) { return a.rank < b.rank; });
   QStringList names;
-  for (const Match& match : std::as_const(matches)) {
-    if (names.size() >= limit) break;
-    names.append(match.name);
+  for (const QStringList& rank : ranked) {
+    for (const QString& name : rank) {
+      if (names.size() >= limit) return names;
+      names.append(name);
+    }
   }
   return names;
+}
+
+bool AppSettings::tagFromFile(const QString& name) const {
+  if (name.isEmpty()) return false;
+  const TagCache& cache = tagCache();
+  const QString folded = TagNames::folded(name);
+  return cache.indexByFold.contains(folded) && !cache.localByFold.contains(folded);
+}
+
+QString AppSettings::existingTag(const QString& name) const {
+  const QString normalized = normalizedTagName(name);
+  if (normalized.isEmpty()) return {};
+  const TagCache& cache = tagCache();
+  const auto found = cache.indexByFold.constFind(TagNames::folded(normalized));
+  return found == cache.indexByFold.cend() ? QString() : cache.names.at(found.value());
 }
 
 QVariantList AppSettings::organizationFor(const QStringList& paths) const {
@@ -2042,7 +2086,8 @@ QVariantList AppSettings::organizationFor(const QStringList& paths) const {
       }
     }
   }
-  for (const QString& name : tagNames()) {
+  const TagCache& cache = tagCache();
+  for (const QString& name : cache.names) {
     QSet<QString> carriers = held(m_tags.value(name));
     carriers.unite(fromFiles.value(TagNames::folded(name)));
     rows.append(row(QStringLiteral("tag"), name, static_cast<int>(carriers.size()), !m_tags.contains(name)));
@@ -2056,15 +2101,9 @@ QVariantMap AppSettings::createTagFor(const QString& name, const QStringList& pa
                      {QStringLiteral("created"), false}};
   const QString normalized = normalizedTagName(name);
   if (normalized.isEmpty()) return result;
-  QString existing;
   // A new tag may take a name that so far only files carry, as createTag
   // allows.
-  for (const QString& tag : mustBeNew ? QStringList() : tagNames()) {
-    if (tag.compare(normalized, Qt::CaseInsensitive) == 0) {
-      existing = tag;
-      break;
-    }
-  }
+  const QString existing = mustBeNew ? QString() : existingTag(normalized);
   if (!existing.isEmpty()) {
     result.insert(QStringLiteral("name"), existing);
     result.insert(QStringLiteral("count"), addTagPaths(existing, paths));
@@ -2079,6 +2118,12 @@ QVariantMap AppSettings::createTagFor(const QString& name, const QStringList& pa
   --m_undoGroup;
   // Always let go of the snapshot, so a refused create does not hold it.
   OrganizationSnapshot groupBefore = std::exchange(m_groupBefore, {});
+  if (!m_organizationError.isEmpty()) {
+    // The create was saved and adding the files was not: neither stays.
+    rollBackOrganization(groupBefore);
+    result.insert(QStringLiteral("name"), QString());
+    return result;
+  }
   if (m_groupChanged) {
     pushOrganizationUndo(std::move(groupBefore), QStringLiteral("Removed new tag %1").arg(normalized));
   }
@@ -2111,6 +2156,12 @@ QVariantMap AppSettings::createAlbumFor(const QString& name, const QStringList& 
   --m_undoGroup;
   // Always let go of the snapshot, so a refused create does not hold it.
   OrganizationSnapshot groupBefore = std::exchange(m_groupBefore, {});
+  if (!m_organizationError.isEmpty()) {
+    // The create was saved and adding the files was not: neither stays.
+    rollBackOrganization(groupBefore);
+    result.insert(QStringLiteral("name"), QString());
+    return result;
+  }
   if (m_groupChanged) {
     pushOrganizationUndo(std::move(groupBefore), QStringLiteral("Removed new album %1").arg(normalized));
   }
@@ -3636,11 +3687,31 @@ void AppSettings::setValue(const char* key, const QVariant& value) {
     return;
   }
   m_settings.setValue(key, value);
+  m_writePending = true;
 }
 
 bool AppSettings::syncOrganization() {
   if (m_deferOrganizationSync) return true;
+  // After a failed write QSettings reports the error on every later sync,
+  // so whether this one landed is read from the file: a save replaces it.
+  const bool failedBefore = m_settings.status() == QSettings::AccessError;
+  const auto stamp = [this] {
+    struct stat status {};
+    if (::stat(QFile::encodeName(m_settings.fileName()).constData(), &status) != 0 || !S_ISREG(status.st_mode))
+      return std::pair<qint64, qint64>{-1, -1};
+    return std::pair<qint64, qint64>{qint64(status.st_ino),
+                                      qint64(status.st_mtim.tv_sec) * 1000000000 + status.st_mtim.tv_nsec};
+  };
+  const auto before = failedBefore ? stamp() : std::pair<qint64, qint64>{};
   m_settings.sync();
+  // Only a write that was due and did not land counts as failing again; a
+  // sync with nothing to write leaves the file as it was.
+  if (failedBefore) {
+    const auto after = stamp();
+    if (after.first >= 0 && after != before) m_writeRecovered = true;
+    else if (m_writePending) m_writeRecovered = false;
+  }
+  m_writePending = false;
   const QString error = settingsStatus() == QSettings::NoError ? QString()
       : settingsStatus() == QSettings::FormatError
           ? QStringLiteral("Your settings file is damaged. Restore the last good backup in Settings, or keep a copy and repair it before saving organization.")
@@ -3690,8 +3761,49 @@ AppSettings::OrganizationSnapshot AppSettings::organizationSnapshot() const {
   return {m_albums, m_tags, m_removedEmbeddedTags, m_smartCollections};
 }
 
+void AppSettings::rollBackOrganization(const OrganizationSnapshot& state) {
+  const bool albums = m_albums != state.albums;
+  const bool tags = m_tags != state.tags;
+  const bool removals = m_removedEmbeddedTags != state.removedEmbeddedTags;
+  const bool views = m_smartCollections != state.smartCollections;
+  if (!albums && !tags && !removals && !views) return;
+  // The failure stays what is reported, even when writing the old state
+  // back works: the change asked for was not saved.
+  const QString failure = m_organizationError;
+  m_albums = state.albums;
+  m_tags = state.tags;
+  m_removedEmbeddedTags = state.removedEmbeddedTags;
+  m_smartCollections = state.smartCollections;
+  // Written back too, so a later save that does work writes what is on
+  // screen rather than the change that failed.
+  m_deferOrganizationSync = true;
+  if (albums) persistAlbums();
+  if (tags) persistTags();
+  if (removals) persistRemovals();
+  if (views) persistSmartCollections();
+  m_deferOrganizationSync = false;
+  syncOrganization();
+  if (m_organizationError.isEmpty() && !failure.isEmpty()) {
+    m_organizationError = failure;
+    emit organizationErrorChanged();
+  }
+  if (removals) {
+    rebuildRemovalIndex();
+    rebuildEmbeddedIndex();
+  }
+  if (albums) emit albumsChanged();
+  if (views) emit smartCollectionsChanged();
+  if (tags || removals) emit tagsChanged();
+}
+
 void AppSettings::pushOrganizationUndo(OrganizationSnapshot before, const QString& message) {
   if (m_undoing) return;
+  // A change that could not be saved does not stay on screen, where it
+  // would look kept and be written later without asking.
+  if (!m_organizationError.isEmpty()) {
+    rollBackOrganization(before);
+    return;
+  }
   if (m_undoGroup > 0) {
     m_groupChanged = true;
     return;
@@ -3835,8 +3947,17 @@ QString AppSettings::undo() {
         .arg(restored.size()).arg(total).arg(problems.first());
   }
   if (step.isOrganization) {
+    const OrganizationSnapshot current = organizationSnapshot();
     m_undoing = true;
-    restoreOrganization(std::move(step.organization));
+    restoreOrganization(step.organization);
+    if (!m_organizationError.isEmpty()) {
+      // Not saved: the change stays as it was, and so does its undo step.
+      rollBackOrganization(current);
+      m_undoing = false;
+      m_undoStack.append(std::move(step));
+      emit undoChanged();
+      return m_organizationError;
+    }
     m_undoing = false;
     emit undoChanged();
     return step.message;

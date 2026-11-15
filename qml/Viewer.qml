@@ -1350,6 +1350,7 @@ ApplicationWindow {
         top.push({id: "info", label: root.infoOpen ? "Hide details" : "Details"})
         top.push({id: "help", label: "Keyboard shortcuts"})
         top.push({separator: true})
+        top.push({id: "tag", label: "Albums and tags…"})
         top.push({id: "favorite",
                   label: root.favorite ? "Remove from favourites" : "Add to favourites"})
         top.push({id: "trash", label: "Move to Trash"})
@@ -1474,6 +1475,11 @@ ApplicationWindow {
             return
         case "favorite":
             root.toggleFavorite()
+            return
+        case "tag":
+            // As Alt+T: the details hold the albums and tags.
+            root.infoOpen = true
+            Qt.callLater(infoPanel.focusTagField)
             return
         case "trash":
             root.requestTrash()
