@@ -1508,30 +1508,19 @@ private slots:
     QCOMPARE(lowest, 1.0);
   }
 
-  // A launch gives the player (or the picture) its file before the window is
-  // shown, so a video starts opening before the window maps, and the window
-  // still shows at once rather than waiting for it.
-  void aLaunchGivesTheMediaItsFileBeforeTheWindowShows_data() {
-    QTest::addColumn<QString>("name");
-    QTest::newRow("video") << QStringLiteral("clip.mp4");
-    QTest::newRow("picture") << QStringLiteral("Shot 1.jpg");
-  }
-
-  void aLaunchGivesTheMediaItsFileBeforeTheWindowShows() {
-    QFETCH(QString, name);
+  // A launched video's player has its file before the window is shown, so it
+  // starts opening before the window maps, and the window still shows at once
+  // rather than waiting for it.
+  void aLaunchedVideoHasItsFileBeforeTheWindowShows() {
     struct ShowWatch : QObject {
       bool shown = false;
       QUrl playerSource;
-      QUrl pictureSource;
       bool eventFilter(QObject* watched, QEvent* event) override {
         auto* window = qobject_cast<QQuickWindow*>(watched);
         if (event->type() == QEvent::Show && window && !shown) {
           shown = true;
           if (auto* player = window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))) {
             playerSource = player->source();
-          }
-          if (QObject* picture = window->findChild<QObject*>(QStringLiteral("viewerImage"))) {
-            pictureSource = picture->property("source").toUrl();
           }
         }
         return false;
@@ -1541,20 +1530,16 @@ private slots:
     const auto removeWatch = qScopeGuard([&watch] { qApp->removeEventFilter(&watch); });
     ViewerWindows viewers(*m_engine);
     viewers.setPlacementQuery([](QObject*, HyprlandPlacement::Reply reply) { reply({}); });
-    QQuickWindow* window = viewers.open({media(name)});
+    const QString clip = media(QStringLiteral("clip.mp4"));
+    QQuickWindow* window = viewers.open({clip});
     QVERIFY(window);
     QVERIFY(watch.shown);
     QVERIFY(window->isVisible());
     QCOMPARE(window->property("opening").toBool(), false);
-    if (name.endsWith(QStringLiteral(".mp4"))) {
-      QCOMPARE(watch.playerSource, QUrl::fromLocalFile(media(name)));
-      auto* player = window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"));
-      QVERIFY(player);
-      QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
-    } else {
-      QVERIFY(!watch.pictureSource.isEmpty());
-      QVERIFY(!window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer")));
-    }
+    QCOMPARE(watch.playerSource, QUrl::fromLocalFile(clip));
+    auto* player = window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"));
+    QVERIFY(player);
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
     window->close();
     QTRY_VERIFY(!window->isVisible());
   }

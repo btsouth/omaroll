@@ -202,8 +202,8 @@ ApplicationWindow {
     // rewritten whenever the session notifies, which cancels autoplay.
     readonly property url videoSource: root.mediaWanted && Session.isVideo && !root.reloadingVideo
                                        ? Session.url : ""
-    // Set from C++ for the moment before the window is shown, so the player
-    // and the picture get their files before the window maps rather than
+    // Set from C++ for the moment before the window is shown, so a video's
+    // player and poster get their file before the window maps rather than
     // after its first frame (ViewerWindows::show).
     property bool opening: false
     readonly property bool mediaWanted: root.visible || root.opening
@@ -1806,7 +1806,7 @@ ApplicationWindow {
             id: staticStill
             Image {
                 objectName: "viewerImage"
-                source: root.mediaWanted && !Session.isVideo ? Session.imageUrl : ""
+                source: root.visible && !Session.isVideo ? Session.imageUrl : ""
                 asynchronous: true
                 // Wide-gamut pictures are converted to the screen's sRGB.
                 // The preloaded neighbours match, so they share its cache.
