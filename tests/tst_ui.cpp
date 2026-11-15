@@ -9847,8 +9847,13 @@ private slots:
     QTRY_VERIFY((image = find(collectionDelegate(collectionIndex("album", album)), [](QQuickItem* candidate) {
       return candidate->objectName() == QStringLiteral("albumCover");
     })) != nullptr);
-    QTRY_VERIFY(image->property("source").toUrl().toString(QUrl::FullyEncoded).endsWith(
-        QString::fromUtf8(QUrl::toPercentEncoding(newest))));
+    // The QML encodes with encodeURIComponent, which keeps "(" and ")" that
+    // toPercentEncoding escapes, so compare the decoded source: the file name
+    // may be the fixture's odd one.
+    const auto coverSource = [image] {
+      return QUrl::fromPercentEncoding(image->property("source").toUrl().toString(QUrl::FullyEncoded).toUtf8());
+    };
+    QTRY_VERIFY2(coverSource().endsWith(newest), qPrintable(coverSource() + QStringLiteral(" for ") + newest));
     QVERIFY(image->property("source").toUrl().toString().startsWith(QStringLiteral("image://thumbs/")));
     QVERIFY(m_library->coverFor({QStringLiteral("/nowhere/at/all.png")}).isEmpty());
 

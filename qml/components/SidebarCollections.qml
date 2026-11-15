@@ -335,9 +335,14 @@ FocusScope {
         // Stuck headers never take the room of the last row that would
         // show: in a short pane they give way, the farthest first, then
         // the top one, so a row (even an album's) always has its height.
+        // A header in its own place at the top takes that slot as a stuck
+        // one would, so the row under it has room too.
         const room = Math.max(0, Math.floor((height - root.rowHeight("album")) / root.headerHeight))
         if (above >= 0 && room < 1) above = -1
-        while (bottom.length > room - (above >= 0 ? 1 : 0)) bottom.pop()
+        const topHeld = above >= 0 || headerIndices.some(function (header) {
+            return offsets[header] <= top + 0.5 && offsets[header] + root.headerHeight > top + 0.5
+        })
+        while (bottom.length > room - (topHeld ? 1 : 0)) bottom.pop()
         // Pushed up by the next header as it arrives.
         let shift = 0
         if (above >= 0) {
