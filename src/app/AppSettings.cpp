@@ -1133,11 +1133,13 @@ bool AppSettings::addToAlbum(const QString& name, const QStringList& paths) {
 }
 
 int AppSettings::addToAlbumPaths(const QString& name, const QStringList& paths) {
-  auto it = m_albums.find(name);
-  if (it == m_albums.end()) {
+  if (!m_albums.contains(name)) {
     return 0;
   }
+  // Taken before the iterator: find() on data the snapshot shares would
+  // write into the snapshot too.
   OrganizationSnapshot before = organizationSnapshot();
+  auto it = m_albums.find(name);
   int changed = 0;
   for (const QString& path : paths) {
     // An entry already here for this path stands, unless its file is gone:
@@ -1181,11 +1183,13 @@ void AppSettings::removeFromAlbum(const QString& name, const QStringList& paths)
 }
 
 int AppSettings::removeFromAlbumPaths(const QString& name, const QStringList& paths) {
-  auto it = m_albums.find(name);
-  if (it == m_albums.end()) {
+  if (!m_albums.contains(name)) {
     return 0;
   }
+  // Taken before the iterator: find() on data the snapshot shares would
+  // write into the snapshot too.
   OrganizationSnapshot before = organizationSnapshot();
+  auto it = m_albums.find(name);
   const QSet<QString> wanted(paths.cbegin(), paths.cend());
   int changed = 0;
   for (qsizetype index = it->size() - 1; index >= 0; --index) {
@@ -1203,11 +1207,13 @@ int AppSettings::removeFromAlbumPaths(const QString& name, const QStringList& pa
 }
 
 void AppSettings::removeUnavailableFromAlbum(const QString& name) {
-  auto it = m_albums.find(name);
-  if (it == m_albums.end()) {
+  if (!m_albums.contains(name)) {
     return;
   }
+  // Taken before the iterator: find() on data the snapshot shares would
+  // write into the snapshot too.
   OrganizationSnapshot before = organizationSnapshot();
+  auto it = m_albums.find(name);
   int changed = 0;
   for (qsizetype index = it->size() - 1; index >= 0; --index) {
     if (!it->at(index).resolved) {
