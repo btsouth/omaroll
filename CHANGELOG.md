@@ -19,6 +19,10 @@
   tags, saved views included, one step per action. The viewer's details have
   their own status line with Undo.
 - Settings has a switch for reading keywords and ratings from files.
+### Fixed
+
+- Resume and Start over in the viewer play the video from the chosen spot
+  instead of leaving it paused until Space.
 
 ## 1.19.1
 
