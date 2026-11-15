@@ -125,8 +125,10 @@ FocusScope {
             const offset = within - root.sections.rowY(row, root.headerHeight, root.cellHeight)
             list.contentY = (item ? item.y : list.contentY) + offset
         }
-        root.scrolling = false
+        // Still scrolling while the offset is read back: the scrollbar's
+        // position follows it, and a drag must not take that as a new drag.
         root.updateExactTop()
+        root.scrolling = false
     }
 
     Binding { target: root.sections; property: "active"; value: root.visible }
@@ -187,6 +189,23 @@ FocusScope {
         if (step > 0) return at + 1 < all.length ? all[at + 1].first : current
         if (current > all[at].first) return all[at].first
         return at > 0 ? all[at - 1].first : current
+    }
+
+    // Scrolls a month's first header to the top, in a date sort, and makes
+    // its first tile current. False when the view has nothing from it.
+    function positionAtSection(key) {
+        if (root.sections.rebuildPending()) root.sections.rebuildNow()
+        const row = root.sections.headerRowOfMonth(key)
+        if (row < 0) return false
+        const first = root.sections.rowAt(row).first
+        root.scrollToExact(root.summaryHeight + root.sections.rowY(row, root.headerHeight, root.cellHeight))
+        if (root.host) {
+            root.suppressReveal = true
+            root.host.pick(first)
+            root.suppressReveal = false
+        }
+        Qt.callLater(root.updateSticky)
+        return true
     }
 
     function rowsPerPage() { return Math.max(1, Math.floor(list.height / root.cellHeight)) }
@@ -349,10 +368,111 @@ FocusScope {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         width: 12
+        hoverEnabled: true
         size: list.height / Math.max(root.exactHeight, 1)
         position: root.exactTop / Math.max(root.exactHeight, 1)
         onPositionChanged: {
             if (pressed && !root.scrolling) root.scrollToExact(position * root.exactHeight)
+        }
+    }
+
+    // The date scrubber, for the mouse: in a date sort the scrollbar marks
+    // where each year starts, and while it is dragged or hovered a bubble
+    // names the month at the thumb. Keyboard users have the date pill.
+    readonly property bool dateScrubber: root.sections.mode === 1 && scrollbar.visible
+                                         && scrollbar.policy === ScrollBar.AlwaysOn
+    // Each year's first header as a fraction of the content, newest first in
+    // a newest-first sort. Read again after every rebuild.
+    readonly property var yearMarks: {
+        void root.revision
+        if (!root.dateScrubber) return []
+        const marks = []
+        let year = -1
+        for (const month of root.sections.months()) {
+            if (month.year === year) continue
+            year = month.year
+            const y = root.summaryHeight + root.sections.rowY(month.headerRow, root.headerHeight, root.cellHeight)
+            marks.push({year: year, fraction: y / Math.max(root.exactHeight, 1)})
+        }
+        return marks
+    }
+    // The month at the top of the viewport, which is what the thumb's
+    // position stands for.
+    readonly property string scrubLabel: {
+        void root.exactTop
+        void root.revision
+        if (!root.dateScrubber) return ""
+        const row = root.sections.rowAtY(Math.max(0, root.exactTop - root.summaryHeight),
+                                         root.headerHeight, root.cellHeight)
+        const month = root.sections.monthOfRow(row)
+        return month.label !== undefined ? month.label : ""
+    }
+    Item {
+        id: yearTicks
+        anchors.fill: scrollbar
+        visible: root.dateScrubber
+        Repeater {
+            model: root.yearMarks
+            Item {
+                required property var modelData
+                required property int index
+                x: 0
+                y: Math.round(modelData.fraction * (yearTicks.height - 1))
+                width: yearTicks.width
+                // The first mark sits at the very top, where it says nothing.
+                visible: modelData.fraction > 0.002
+                Rectangle {
+                    anchors.right: parent.right
+                    width: parent.width
+                    height: 1
+                    color: Qt.rgba(Theme.foreground.r, Theme.foreground.g, Theme.foreground.b, 0.45)
+                }
+                Text {
+                    objectName: "scrubberYear"
+                    anchors.right: parent.right
+                    anchors.rightMargin: parent.width + 2
+                    anchors.verticalCenter: parent.top
+                    // Only while the bar is in use, so the labels never sit
+                    // over tiles at rest.
+                    visible: scrollbar.hovered || scrollbar.pressed
+                    text: parent.modelData.year
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 10
+                    color: Theme.mutedText
+                    Accessible.ignored: true
+                }
+            }
+        }
+    }
+    Rectangle {
+        id: scrubBubble
+        objectName: "scrubBubble"
+        readonly property bool shown: root.dateScrubber && (scrollbar.pressed || scrollbar.hovered)
+                                      && root.scrubLabel !== ""
+        visible: opacity > 0
+        opacity: shown ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: 120 } }
+        anchors.right: scrollbar.left
+        anchors.rightMargin: 34
+        y: Math.max(0, Math.min(root.height - height,
+                                scrollbar.y + scrollbar.position * scrollbar.height
+                                + scrollbar.size * scrollbar.height / 2 - height / 2))
+        width: bubbleText.implicitWidth + 20
+        height: bubbleText.implicitHeight + 10
+        radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
+        color: Qt.rgba(Theme.background.r, Theme.background.g, Theme.background.b, 0.94)
+        border.width: 1
+        border.color: Qt.rgba(Theme.foreground.r, Theme.foreground.g, Theme.foreground.b, 0.18)
+        Accessible.ignored: true
+        Text {
+            id: bubbleText
+            objectName: "scrubBubbleLabel"
+            anchors.centerIn: parent
+            text: root.scrubLabel
+            font.family: Theme.fontFamily
+            font.pixelSize: 12
+            font.weight: Font.DemiBold
+            color: Theme.brightForeground
         }
     }
 

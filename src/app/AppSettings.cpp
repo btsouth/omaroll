@@ -78,6 +78,7 @@ constexpr auto kTileWidth = "view/tileWidth";
 constexpr auto kShowGridFilenames = "view/showGridFilenames";
 constexpr auto kShowFolderSidebar = "view/showFolderSidebar";
 constexpr auto kFolderSidebarWidth = "view/folderSidebarWidth";
+constexpr auto kSidebarSections = "view/sidebarSections";
 constexpr auto kPreviewWidth = "view/previewWidth";
 constexpr auto kPreviewHeight = "view/previewHeight";
 constexpr int kMinimumTileWidth = 160;
@@ -159,6 +160,16 @@ QString identityVersionFor(const QString& path) {
       .arg(qlonglong(status.st_size)).arg(qlonglong(status.st_mtim.tv_sec))
       .arg(qlonglong(status.st_mtim.tv_nsec)).arg(qlonglong(status.st_ctim.tv_sec))
       .arg(qlonglong(status.st_ctim.tv_nsec));
+}
+
+// The sidebar's known sections, in their order, once each.
+QStringList sidebarSectionList(const QStringList& sections) {
+  QStringList known;
+  for (const char* name : {"albums", "tags", "dates", "folders"}) {
+    const QString section = QString::fromLatin1(name);
+    if (sections.contains(section)) known.append(section);
+  }
+  return known;
 }
 
 } // namespace
@@ -352,6 +363,11 @@ AppSettings::AppSettings(QObject* parent)
   m_showGridFilenames = m_settings.value(kShowGridFilenames, false).toBool();
   m_showFolderSidebar = m_settings.value(kShowFolderSidebar, false).toBool();
   m_folderSidebarWidth = qBound(180, m_settings.value(kFolderSidebarWidth, 240).toInt(), 400);
+  m_sidebarSections = sidebarSectionList(
+      m_settings.contains(kSidebarSections)
+          ? m_settings.value(kSidebarSections).toStringList()
+          : QStringList{QStringLiteral("albums"), QStringLiteral("tags"), QStringLiteral("dates"),
+                        QStringLiteral("folders")});
   m_previewWidth = qBound(500, m_settings.value(kPreviewWidth, 1000).toInt(), 8192);
   m_previewHeight = qBound(360, m_settings.value(kPreviewHeight, 700).toInt(), 8192);
   m_slideshowVideos = m_settings.value(kSlideshowVideos, false).toBool();
@@ -705,6 +721,15 @@ void AppSettings::setFolderSidebarWidth(int width) {
   m_folderSidebarWidth = bounded;
   m_settings.setValue(kFolderSidebarWidth, bounded);
   emit folderSidebarWidthChanged();
+}
+
+void AppSettings::setSidebarSections(const QStringList& sections) {
+  const QStringList known = sidebarSectionList(sections);
+  if (m_sidebarSections == known) return;
+  m_sidebarSections = known;
+  // An empty list is kept as such: every section collapsed.
+  m_settings.setValue(kSidebarSections, known);
+  emit sidebarSectionsChanged();
 }
 
 void AppSettings::setPreviewWidth(int width) {
@@ -1381,6 +1406,26 @@ QHash<QString, QStringList> AppSettings::albumsByPath() const {
 
 int AppSettings::tagItemCount(const QString& name) const {
   return static_cast<int>(tagPaths(name).size());
+}
+
+QVariantList AppSettings::tagOutline() const {
+  const QHash<QString, QString> local = localTagsByFold();
+  QVariantList rows;
+  const QStringList names = tagNames();
+  rows.reserve(names.size());
+  for (const QString& name : names) {
+    rows.append(QVariantMap{{QStringLiteral("name"), name},
+                            {QStringLiteral("fromFile"), !local.contains(TagNames::folded(name))}});
+  }
+  return rows;
+}
+
+int AppSettings::nestedTagCount(const QString& name) const {
+  if (name.isEmpty()) return 0;
+  const QStringList names = tagNames();
+  return static_cast<int>(std::count_if(names.cbegin(), names.cend(), [&name](const QString& tag) {
+    return TagNames::isUnderIgnoringCase(tag, name);
+  }));
 }
 
 bool AppSettings::createTag(const QString& name) {

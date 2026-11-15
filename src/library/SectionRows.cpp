@@ -187,18 +187,19 @@ QList<SectionRows::Section> SectionRows::computeSections() const {
     // every row or two: compact tiles, or under half a row per day.
     const bool monthly = m_compact || items * 2 < dayCount * m_columns;
     const QDate date = days.at(start).date;
+    const QString key = date.isValid() ? date.toString(QStringLiteral("yyyy-MM")) : QString();
     if (!date.isValid()) {
-      sections.append({days.at(start).first, items, QStringLiteral("Unknown date"), true});
+      sections.append({days.at(start).first, items, QStringLiteral("Unknown date"), true, key});
     } else if (monthly) {
       sections.append({days.at(start).first, items,
-                       locale.toString(date, QStringLiteral("MMMM yyyy")), true});
+                       locale.toString(date, QStringLiteral("MMMM yyyy")), true, key});
     } else {
       for (qsizetype day = start; day < end; ++day) {
         const Day& run = days.at(day);
         sections.append(
             {run.first, run.count,
              m_source->data(m_source->index(run.first, 0), CaptureRoles::DayLabelRole).toString(),
-             false});
+             false, key});
       }
     }
     start = end;
@@ -218,8 +219,11 @@ SectionRows::RowKey SectionRows::keyOf(const Row& row) {
 
 void SectionRows::apply(QList<Section> sections) {
   QList<Row> rows;
+  QList<int> headerRows;
+  headerRows.reserve(sections.size());
   for (qsizetype index = 0; index < sections.size(); ++index) {
     const Section& section = sections.at(index);
+    headerRows.append(static_cast<int>(rows.size()));
     rows.append({true, section.first, section.count, section});
     for (int offset = 0; offset < section.count; offset += m_columns) {
       rows.append({false, section.first + offset, std::min(m_columns, section.count - offset),
@@ -227,6 +231,7 @@ void SectionRows::apply(QList<Section> sections) {
     }
   }
   m_sections = std::move(sections);
+  m_headerRows = std::move(headerRows);
 
   // Walk both lists matching rows by key. A row only the old list has is
   // removed where it sits, a row only the new list has is inserted there,
@@ -371,6 +376,48 @@ QVariantList SectionRows::sections() const {
                             {QStringLiteral("month"), section.month}});
   }
   return list;
+}
+
+QVariantList SectionRows::months() const {
+  QVariantList list;
+  const QLocale locale = QLocale::system();
+  QString last;
+  for (qsizetype index = 0; index < m_sections.size(); ++index) {
+    const Section& section = m_sections.at(index);
+    if (section.monthKey.isEmpty()) continue;
+    if (section.monthKey == last && !list.isEmpty()) {
+      QVariantMap month = list.takeLast().toMap();
+      month.insert(QStringLiteral("count"),
+                   month.value(QStringLiteral("count")).toInt() + section.count);
+      list.append(month);
+      continue;
+    }
+    last = section.monthKey;
+    const QDate start = QDate::fromString(section.monthKey + QStringLiteral("-01"), Qt::ISODate);
+    list.append(QVariantMap{{QStringLiteral("key"), section.monthKey},
+                            {QStringLiteral("label"), locale.toString(start, QStringLiteral("MMMM yyyy"))},
+                            {QStringLiteral("year"), start.year()},
+                            {QStringLiteral("count"), section.count},
+                            {QStringLiteral("headerRow"), m_headerRows.value(index, -1)}});
+  }
+  return list;
+}
+
+int SectionRows::headerRowOfMonth(const QString& key) const {
+  if (key.isEmpty()) return -1;
+  for (qsizetype index = 0; index < m_sections.size(); ++index) {
+    if (m_sections.at(index).monthKey == key) return m_headerRows.value(index, -1);
+  }
+  return -1;
+}
+
+QVariantMap SectionRows::monthOfRow(int row) const {
+  if (row < 0 || row >= m_rows.size()) return {};
+  const QString& key = m_rows.at(row).section.monthKey;
+  if (key.isEmpty()) return {};
+  const QDate start = QDate::fromString(key + QStringLiteral("-01"), Qt::ISODate);
+  return {{QStringLiteral("key"), key},
+          {QStringLiteral("label"), QLocale::system().toString(start, QStringLiteral("MMMM yyyy"))}};
 }
 
 int SectionRows::sectionFirstOf(int item) const {

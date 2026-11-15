@@ -247,6 +247,11 @@ public:
   // Every role of a row by its QML name, for views that lay rows out
   // themselves rather than through a delegate model.
   Q_INVOKABLE QVariantMap tileAt(int row) const;
+  // A cover for a collection: of the files in |paths| the library holds, the
+  // newest shown one (hidden files only when nothing else is there), as the
+  // path, isVideo, isDocument, stamp and thumbnailVersion fields a tile uses
+  // for its thumbnail. Empty when the library holds none of them.
+  Q_INVOKABLE QVariantMap coverFor(const QStringList& paths) const;
   // While a review filter is on, its sets in view order: each a map of
   // first (row), count and label ("Similar set 2"). Empty otherwise.
   Q_INVOKABLE QVariantList reviewSections() const;
@@ -331,6 +336,10 @@ signals:
   void similarOnlyChanged();
   void pairRawJpegChanged();
   void countChanged();
+  // The source library's files, their capture dates, hidden state or
+  // thumbnails changed, at most a few times a second, whatever the filter
+  // shows. Collection covers follow it.
+  void filesChanged();
   // A document's text left memory but the disk cache no longer has it; its
   // producer should read it again.
   void documentTextLost(const QString& path);
@@ -533,6 +542,7 @@ private:
   bool m_storedScanning = false;
   QTimer m_storedScanTimer;
   QTimer m_folderIndexTimer;
+  QTimer m_filesChangedTimer;
   bool m_metadataIndexesDirty = false;
   QTimer m_duplicateOrderTimer;
   QTimer m_ocrFilterTimer;

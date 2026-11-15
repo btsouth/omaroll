@@ -272,12 +272,18 @@ FocusScope {
         const name = String(choices.model[index])
         // Saved views that open a deleted album or tag go with it.
         let views = 0
+        // A tag's nested tags go with it.
+        const nested = section === 3 ? Settings.nestedTagCount(name) : 0
         if (section === 1) views = Settings.deleteAlbum(name)
         else if (section === 3) views = Settings.deleteTag(name)
         else Settings.deleteSmartCollection(name)
+        const also = []
+        if (nested > 0) also.push(nested === 1 ? "1 nested tag" : nested + " nested tags")
+        if (views === 1) also.push("the saved view that used it")
+        else if (views > 1) also.push(views + " saved views that used it")
         folderMessage = "Deleted " + name
-                        + (views === 1 ? " and the saved view that used it"
-                           : views > 1 ? " and " + views + " saved views that used it" : "")
+                        + (also.length === 1 ? " and " + also[0]
+                           : also.length === 2 ? ", " + also[0] + " and " + also[1] : "")
                         + (section === 4 ? "" : ". Ctrl+Z in the library puts it back.")
         Qt.callLater(syncCurrentChoice)
     }
