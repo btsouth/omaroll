@@ -11,6 +11,8 @@ FocusScope {
     property var expandedPathsBeforeReset: []
     property bool expansionRestorePending: false
     signal chosen(string path)
+    // All media: the whole library, every facet but the search cleared.
+    signal allMediaChosen()
     signal addFolderRequested()
     signal gridFocusRequested()
     signal message(string text)
@@ -18,6 +20,19 @@ FocusScope {
     signal deleteCollectionRequested(string mode, string name)
 
     function shade(base, amount) { return Qt.rgba(base.r, base.g, base.b, amount) }
+    // The keyboard ring shows while the keyboard is in use, not after a click.
+    readonly property bool keyboardShown: !root.Window.window || root.Window.window.keyboardNavigation !== false
+    function keyboardUsed() { if (root.Window.window) root.Window.window.keyboardNavigation = true }
+    function pointerUsed() { if (root.Window.window) root.Window.window.keyboardNavigation = false }
+    // Nothing narrows the library but, perhaps, the search.
+    readonly property bool wholeLibrary: Captures.folderFilter === "" && Captures.albumFilter === ""
+        && Captures.tagFilter === "" && Captures.dateFrom === "" && Captures.dateTo === ""
+        && Captures.modifiedAfter === "" && Captures.cameraFilter === "" && Captures.lensFilter === ""
+        && Captures.minimumRating === 0 && !Captures.duplicatesOnly && !Captures.similarOnly
+        && Captures.smartCollectionFilter === ""
+    // After a rename from a row's menu, the keyboard goes back to that row
+    // under its new name.
+    function focusCollection(kind, name) { collections.focusRow(kind, name) }
     function basename(path) { return String(path).split("/").filter(Boolean).pop() || "/" }
     // The sidebar's keyboard home: the folder tree, or with it collapsed or
     // empty, the Folders header.
@@ -125,8 +140,12 @@ FocusScope {
         color: root.shade(Theme.background, 0.85)
     }
 
+    // Drawn in a gutter of its own beside the rows, which leave room for it
+    // when it is needed.
     component FolderScrollBar: ScrollBar {
-        policy: ScrollBar.AsNeeded
+        policy: size < 1 ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+        width: 6
+        Accessible.ignored: size >= 1
         contentItem: Rectangle {
             visible: parent.size < 1
             implicitWidth: 4
@@ -145,18 +164,22 @@ FocusScope {
         property int indentation: 0
         property bool branch: false
         property bool expanded: false
-        property bool keyboardCurrent: activeFocus
+        property bool active: Captures.folderFilter === path
+        property bool keyboardCurrent: activeFocus && root.keyboardShown
         signal activate()
         signal toggle()
         implicitHeight: 34
         radius: Math.min(6, Theme.cornerRadius)
-        color: Captures.folderFilter === path ? root.shade(Theme.accent, 0.18)
+        color: active ? root.shade(Theme.accent, 0.18)
                  : mouse.containsMouse ? root.shade(Theme.foreground, 0.07) : "transparent"
         border.width: keyboardCurrent ? 1 : 0
         border.color: Theme.accent
         Accessible.role: Accessible.Button
         Accessible.name: label + (count >= 0 ? ", " + count + " items" : "")
         Accessible.description: path
+        Accessible.focusable: true
+        Accessible.selectable: true
+        Accessible.selected: active
         Accessible.onPressAction: activate()
 
         Text {
@@ -196,6 +219,7 @@ FocusScope {
             hoverEnabled: true
             acceptedButtons: Qt.LeftButton | Qt.RightButton
             onClicked: function(event) {
+                root.pointerUsed()
                 if (event.button === Qt.RightButton && rowItem.path !== "") {
                     folderMenu.path = rowItem.path
                     folderMenu.popup(rowItem, event.x, event.y)
@@ -207,6 +231,7 @@ FocusScope {
             }
         }
         Keys.onPressed: function (event) {
+            root.keyboardUsed()
             if (event.key === Qt.Key_Up || event.key === Qt.Key_Down)
                 event.accepted = root.walk(rowItem, event.key === Qt.Key_Up ? -1 : 1)
         }
@@ -234,7 +259,9 @@ FocusScope {
         height: implicitHeight
         label: "All media"
         activeFocusOnTab: true
-        onActivate: { forceActiveFocus(); root.chosen("") }
+        active: root.wholeLibrary
+        Accessible.focused: activeFocus
+        onActivate: { forceActiveFocus(); root.allMediaChosen() }
     }
 
     Column {
@@ -248,27 +275,30 @@ FocusScope {
         visible: Settings.pinnedFolders.length > 0
         height: visible ? implicitHeight : 0
         spacing: 4
-        Text {
-            text: "Pinned"
-            height: 24
-            leftPadding: 8
-            color: Theme.mutedText
-            font.family: Theme.fontFamily
-            font.pixelSize: 11
-            font.weight: Font.DemiBold
+        // Framed like the other section titles, but always open.
+        SidebarHeader {
+            objectName: "sidebarPinnedHeader"
+            width: parent.width
+            height: 28
+            label: "Pinned"
+            collapsible: false
         }
         Flickable {
             id: pinnedList
             width: parent.width
-            height: Math.min(pinnedRows.height, Math.max(34, root.height / 4))
+            // Whole rows.
+            height: Math.min(pinnedRows.height, Math.max(34, Math.floor(root.height / 4 / 34) * 34))
             contentWidth: width
             contentHeight: pinnedRows.height
             clip: true
             boundsBehavior: Flickable.StopAtBounds
+            Accessible.role: Accessible.List
+            Accessible.name: "Pinned folders"
+            readonly property real gutter: pinnedRows.height > height + 0.5 ? 10 : 0
             ScrollBar.vertical: FolderScrollBar {}
             Column {
                 id: pinnedRows
-                width: parent.width
+                width: parent.width - pinnedList.gutter
                 Repeater {
                     model: Settings.pinnedFolders
                     FolderRow {
@@ -278,6 +308,7 @@ FocusScope {
                         path: modelData
                         label: root.basename(path)
                         activeFocusOnTab: true
+                        Accessible.focused: activeFocus
                         onActiveFocusChanged: if (activeFocus) pinnedList.contentY = Math.max(0, y + height - pinnedList.height)
                         onActivate: { forceActiveFocus(); root.chosen(path) }
                     }
@@ -286,10 +317,12 @@ FocusScope {
         }
     }
 
-    // Albums, tags and dates. With Folders open it takes at most half of
-    // the room below the pins, so the tree always keeps some.
+    // Albums, tags and dates share the room below the pins with the folder
+    // tree. The tree asks for its rows and keeps at most half when both
+    // want more; a short or empty tree gives the rest of its share up.
     readonly property real collectionsRoom: Math.max(0, addFolder.y - 8 - pinnedSection.y
                                                     - pinnedSection.height - 8 - foldersHeader.height - 8)
+    readonly property real treeWants: root.foldersOpen ? tree.rows * 34 + 16 : 0
     SidebarCollections {
         id: collections
         objectName: "sidebarCollectionsPane"
@@ -300,7 +333,9 @@ FocusScope {
         anchors.leftMargin: 8
         anchors.rightMargin: 8
         height: visible ? implicitHeight : 0
-        maximumHeight: root.foldersOpen ? Math.floor(root.collectionsRoom / 2) : root.collectionsRoom
+        maximumHeight: root.foldersOpen
+                       ? Math.max(Math.floor(root.collectionsRoom / 2), root.collectionsRoom - root.treeWants)
+                       : root.collectionsRoom
         keyboardReachable: root.collectionsReachable
         onExitUp: root.focusAbove()
         onExitDown: foldersHeader.forceActiveFocus()
@@ -321,8 +356,12 @@ FocusScope {
         label: "Folders"
         expanded: root.foldersOpen
         activeFocusOnTab: true
-        onToggled: { forceActiveFocus(); root.setFoldersOpen(!root.foldersOpen) }
+        keyboardCurrent: activeFocus && root.keyboardShown
+        Accessible.focusable: true
+        Accessible.focused: activeFocus
+        onToggled: { root.pointerUsed(); forceActiveFocus(); root.setFoldersOpen(!root.foldersOpen) }
         Keys.onPressed: function (event) {
+            root.keyboardUsed()
             if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
                 root.setFoldersOpen(!root.foldersOpen)
             } else if (event.key === Qt.Key_Right) {
@@ -349,8 +388,11 @@ FocusScope {
         anchors.top: foldersHeader.bottom
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.bottom: addFolder.top
         anchors.margins: 8
+        // Down to Add folder, ending on a row's edge when the rows run on.
+        readonly property real room: Math.max(0, addFolder.y - 8 - y)
+        readonly property real gutter: rows * 34 > room + 0.5 ? 10 : 0
+        height: rows * 34 > room ? Math.floor(room / 34) * 34 : room
         visible: root.foldersOpen
         clip: true
         model: FolderTree
@@ -358,7 +400,8 @@ FocusScope {
         activeFocusOnTab: true
         keyNavigationEnabled: false
         pointerNavigationEnabled: false
-        columnWidthProvider: function(column) { return tree.width }
+        columnWidthProvider: function(column) { return tree.width - tree.gutter }
+        onGutterChanged: forceLayout()
         rowHeightProvider: function(row) { return 34 }
         boundsBehavior: Flickable.StopAtBounds
         Accessible.role: Accessible.Tree
@@ -372,6 +415,7 @@ FocusScope {
         }
         onActiveFocusChanged: if (activeFocus && currentRow < 0) focusRow(0)
         Keys.onPressed: function(event) {
+            root.keyboardUsed()
             const row = currentRow < 0 ? 0 : currentRow
             const index = tree.index(row, 0)
             if (event.key === Qt.Key_Down) focusRow(Math.min(rows - 1, row + 1))
@@ -408,16 +452,18 @@ FocusScope {
             required property int mediaCount
             // TreeView supplies the inherited expanded property too.
             required property bool current
-            implicitWidth: tree.width
+            implicitWidth: tree.width - tree.gutter
             path: folderPath
             label: folderName
             count: mediaCount
             indentation: Math.min(depth * 16, tree.width / 2)
             branch: hasChildren
             required expanded
-            keyboardCurrent: current && tree.activeFocus
+            keyboardCurrent: current && tree.activeFocus && root.keyboardShown
             Accessible.role: Accessible.TreeItem
-            Accessible.selected: Captures.folderFilter === path
+            // The row with the ring is the one read as focused, not the
+            // tree's first row.
+            Accessible.focused: current && tree.activeFocus
             onActivate: {
                 tree.forceActiveFocus()
                 tree.focusRow(row)
@@ -447,12 +493,15 @@ FocusScope {
         id: folderMenu
         objectName: "sidebarFolderMenu"
         property string path: ""
-        // Modal, undimmed, and drawn like the app's other menus.
+        // Modal, undimmed, and drawn like the app's other menus: an item in
+        // the window, opaque whatever the theme's alpha.
         modal: true
         dim: false
+        popupType: Popup.Item
         background: Rectangle {
+            objectName: "sidebarFolderMenuBackground"
             implicitWidth: 220
-            color: Theme.background
+            color: Qt.rgba(Theme.background.r, Theme.background.g, Theme.background.b, 1)
             border.width: 1
             border.color: root.shade(Theme.foreground, 0.16)
             radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3

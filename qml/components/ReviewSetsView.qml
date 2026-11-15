@@ -338,8 +338,15 @@ FocusScope {
                 root.restoreTop()
             }
             Qt.callLater(root.updateSticky)
-            Qt.callLater(root.updateExactTop)
+            Qt.callLater(root.settleExactTop)
         }
+    }
+    // After new rows the list lays them out at its next polish; until then
+    // the rows it reports are the old ones, and the scroll thumb read from
+    // them stayed wrong until the next scroll.
+    function settleExactTop() {
+        list.forceLayout()
+        root.updateExactTop()
     }
     Connections {
         target: root.host
@@ -378,7 +385,9 @@ FocusScope {
 
     // The date scrubber, for the mouse: in a date sort the scrollbar marks
     // where each year starts, and while it is dragged or hovered a bubble
-    // names the month at the thumb. Keyboard users have the date pill.
+    // names the month and year at the thumb. The marks stay in the bar's
+    // own gutter and carry no labels, so nothing is drawn over the tiles or
+    // headers but the bubble. Keyboard users have the date pill.
     readonly property bool dateScrubber: root.sections.mode === 1 && scrollbar.visible
                                          && scrollbar.policy === ScrollBar.AlwaysOn
     // Each year's first header as a fraction of the content, newest first in
@@ -422,24 +431,11 @@ FocusScope {
                 // The first mark sits at the very top, where it says nothing.
                 visible: modelData.fraction > 0.002
                 Rectangle {
+                    objectName: "scrubberYearMark"
                     anchors.right: parent.right
                     width: parent.width
                     height: 1
                     color: Qt.rgba(Theme.foreground.r, Theme.foreground.g, Theme.foreground.b, 0.45)
-                }
-                Text {
-                    objectName: "scrubberYear"
-                    anchors.right: parent.right
-                    anchors.rightMargin: parent.width + 2
-                    anchors.verticalCenter: parent.top
-                    // Only while the bar is in use, so the labels never sit
-                    // over tiles at rest.
-                    visible: scrollbar.hovered || scrollbar.pressed
-                    text: parent.modelData.year
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 10
-                    color: Theme.mutedText
-                    Accessible.ignored: true
                 }
             }
         }
@@ -451,16 +447,19 @@ FocusScope {
                                       && root.scrubLabel !== ""
         visible: opacity > 0
         opacity: shown ? 1 : 0
+        // Over the tiles, which are drawn after it.
+        z: 2
         Behavior on opacity { NumberAnimation { duration: 120 } }
         anchors.right: scrollbar.left
-        anchors.rightMargin: 34
+        anchors.rightMargin: 8
         y: Math.max(0, Math.min(root.height - height,
                                 scrollbar.y + scrollbar.position * scrollbar.height
                                 + scrollbar.size * scrollbar.height / 2 - height / 2))
         width: bubbleText.implicitWidth + 20
         height: bubbleText.implicitHeight + 10
         radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3
-        color: Qt.rgba(Theme.background.r, Theme.background.g, Theme.background.b, 0.94)
+        // Opaque, so the tiles under it never show through the month.
+        color: Qt.rgba(Theme.background.r, Theme.background.g, Theme.background.b, 1)
         border.width: 1
         border.color: Qt.rgba(Theme.foreground.r, Theme.foreground.g, Theme.foreground.b, 0.18)
         Accessible.ignored: true
@@ -824,6 +823,7 @@ FocusScope {
             if (!root.scrolling) root.updateExactTop()
         }
         onHeightChanged: Qt.callLater(root.updateExactTop)
+        onContentHeightChanged: Qt.callLater(root.updateExactTop)
         // The list moves its origin as it learns the real height of rows it
         // had estimated, without moving contentY.
         onOriginYChanged: Qt.callLater(root.updateExactTop)

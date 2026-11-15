@@ -3189,6 +3189,58 @@ private slots:
     QVERIFY(QAccessible::queryAccessibleInterface(card)->text(QAccessible::Name).contains(QStringLiteral("looser match")));
   }
 
+  // On a narrow tile a star rating shrinks to "★4" before the size gives
+  // way: the size is what tells copies in a duplicate set apart.
+  void ratedNarrowTilesKeepTheirSize() {
+    QQmlComponent component(m_engine);
+    component.setData(R"QML(
+      import QtQuick
+      import Omaroll
+      CaptureCard { width: 260; height: 160; fileName: "sidecar-photo.jpg"
+                    dateShown: true; dateLabel: "1 Jul 2023"; timeLabel: "11:30AM"; sizeLabel: "53.3 kB" }
+    )QML", QUrl());
+    std::unique_ptr<QObject> object(component.create());
+    QVERIFY2(object, qPrintable(component.errorString()));
+    auto* stars = object->findChild<QQuickItem*>(QStringLiteral("captureStars"));
+    auto* size = object->findChild<QQuickItem*>(QStringLiteral("captureSizeLabel"));
+    QVERIFY(stars && size);
+    auto* when = object->findChild<QQuickItem*>(QStringLiteral("captureWhenLabel"));
+    QVERIFY(when);
+    object->setProperty("rating", 4);
+    object->setProperty("width", 100);
+    QCOMPARE(stars->property("text").toString(), QStringLiteral("★4"));
+    // Room for the time, the size and "★4", not for four stars drawn out.
+    const qreal tight = 16 + when->implicitWidth() + 8 + size->implicitWidth() + 8
+                        + stars->implicitWidth() + 8;
+    object->setProperty("width", tight);
+    QVERIFY(stars->isVisible());
+    QCOMPARE(stars->property("text").toString(), QStringLiteral("★4"));
+    QVERIFY(size->isVisible());
+    // With room, the stars are drawn out.
+    object->setProperty("width", tight + 200);
+    QCOMPARE(stars->property("text").toString(), QStringLiteral("★★★★"));
+    QVERIFY(size->isVisible());
+  }
+
+  // A very long name keeps its tip inside a small tile, cut short.
+  void filenameTipFitsASmallTile() {
+    QQmlComponent component(m_engine);
+    component.setData(R"QML(
+      import QtQuick
+      import Omaroll
+      CaptureCard { width: 140; height: 90 }
+    )QML", QUrl());
+    std::unique_ptr<QObject> object(component.create());
+    QVERIFY2(object, qPrintable(component.errorString()));
+    object->setProperty("fileName", QStringLiteral("a very long file name ").repeated(10) + QStringLiteral(".jpg"));
+    QObject* tip = object->findChild<QObject*>(QStringLiteral("captureFilenameTip"));
+    QVERIFY(tip);
+    QVERIFY(tip->property("maximumLines").toInt() >= 1);
+    QVERIFY2(tip->property("implicitHeight").toReal() <= 90 - 12 + 0.5,
+             qPrintable(QString::number(tip->property("implicitHeight").toReal())));
+    QVERIFY(tip->property("implicitWidth").toReal() <= 140 - 12 + 0.5);
+  }
+
   void failedTrashTargetsRemainChecked() {
     QTemporaryDir dir;
     const QString good = dir.filePath(QStringLiteral("trash-good.png"));
@@ -6312,6 +6364,43 @@ private slots:
                 !named(QStringLiteral("emptyAction_clear-search"))->isEnabled());
     invoke("dismissTopLayer");
     QTRY_VERIFY(named(QStringLiteral("emptyAction_clear-search"))->isEnabled());
+    // Wrapped, the actions share one width, so the rows line up. The empty
+    // state steps aside while text is being indexed for the search, which
+    // a slow run can catch, so wait for it to show its actions; and the
+    // window's size goes back whatever happens, or every later test would
+    // run in a narrow window.
+    {
+      const QSize restore = m_window->size();
+      const auto restoreSize = qScopeGuard([&] {
+        m_window->resize(restore);
+        waitForLayout(restore);
+      });
+      for (const int width : {560, 1280}) {
+        m_window->resize(width, m_window->height());
+        waitForLayout(QSize(width, m_window->height()));
+        QList<qreal> widths;
+        bool wrapped = false;
+        const auto readActions = [&] {
+          widths.clear();
+          QQuickItem* actions = item(QStringLiteral("emptyActionsGrid"));
+          if (!actions->isVisible()) return false;
+          for (QQuickItem* child : actions->childItems()) {
+            if (child->objectName().startsWith(QStringLiteral("emptyAction_")) && child->isVisible())
+              widths.append(child->width());
+          }
+          wrapped = actions->property("wrapped").toBool();
+          return !widths.isEmpty();
+        };
+        QTRY_VERIFY2(readActions(), qPrintable(QStringLiteral("empty state visible %1 at %2")
+                                                  .arg(item(QStringLiteral("libraryEmptyState"))->isVisible())
+                                                  .arg(width)));
+        QVERIFY(QQuickTest::qWaitForPolish(m_window));
+        QTRY_VERIFY(readActions());
+        if (wrapped) {
+          for (const qreal each : widths) QCOMPARE(each, widths.first());
+        }
+      }
+    }
     QVERIFY(clickAction(QStringLiteral("emptyAction_clear-search")));
     QTRY_VERIFY(m_library->searchText().isEmpty());
     QTRY_VERIFY(m_library->count() > 0);
@@ -9701,6 +9790,7 @@ private slots:
     click(row, Qt::RightButton);
     QObject* menu = m_window->findChild<QObject*>(QStringLiteral("sidebarFolderMenu"));
     QTRY_VERIFY(menu->property("visible").toBool());
+    QVERIFY(opaquePopup(menu, QStringLiteral("sidebarFolderMenuBackground")));
     QTest::keyClick(m_window, Qt::Key_F9);
     QVERIFY(m_settings->showFolderSidebar());
   }
@@ -9757,8 +9847,13 @@ private slots:
     QTRY_VERIFY((image = find(collectionDelegate(collectionIndex("album", album)), [](QQuickItem* candidate) {
       return candidate->objectName() == QStringLiteral("albumCover");
     })) != nullptr);
-    QTRY_VERIFY(image->property("source").toUrl().toString(QUrl::FullyEncoded).endsWith(
-        QString::fromUtf8(QUrl::toPercentEncoding(newest))));
+    // The QML encodes with encodeURIComponent, which keeps "(" and ")" that
+    // toPercentEncoding escapes, so compare the decoded source: the file name
+    // may be the fixture's odd one.
+    const auto coverSource = [image] {
+      return QUrl::fromPercentEncoding(image->property("source").toUrl().toString(QUrl::FullyEncoded).toUtf8());
+    };
+    QTRY_VERIFY2(coverSource().endsWith(newest), qPrintable(coverSource() + QStringLiteral(" for ") + newest));
     QVERIFY(image->property("source").toUrl().toString().startsWith(QStringLiteral("image://thumbs/")));
     QVERIFY(m_library->coverFor({QStringLiteral("/nowhere/at/all.png")}).isEmpty());
 
@@ -9769,7 +9864,8 @@ private slots:
     QTRY_COMPARE(m_library->albumFilter(), album);
     QTRY_COMPARE(m_library->count(), 2);
     QTRY_VERIFY(collectionDelegate(collectionIndex("album", album))->property("active").toBool());
-    QVERIFY(QAccessible::queryAccessibleInterface(collectionEntry(collectionIndex("album", album)))->state().selected);
+    // The row the list hands the keyboard to is what is read out.
+    QVERIFY(QAccessible::queryAccessibleInterface(collectionDelegate(collectionIndex("album", album)))->state().selected);
     clickSettled(collectionEntry(collectionIndex("album", album)));
     QTRY_VERIFY(m_library->albumFilter().isEmpty());
     // Facets combine: a tag and a year narrow together.
@@ -9800,9 +9896,14 @@ private slots:
     QTRY_VERIFY(item("folderSidebarTree")->isVisible());
     QTRY_VERIFY(collectionIndex("album", album) > 0);
     QCOMPARE(collectionIndex("tag", "Sidebarz"), -1);
-    // With Folders open the list takes at most half the room.
+    // With Folders open the tree keeps the room its rows need, or half the
+    // room when both want more.
     QQuickItem* pane = item("sidebarCollectionsPane");
-    QVERIFY(pane->property("maximumHeight").toReal() <= item("folderSidebar")->height() / 2);
+    QQuickItem* sidebar = item("folderSidebar");
+    const qreal room = sidebar->property("collectionsRoom").toReal();
+    const qreal treeWants = sidebar->property("treeWants").toReal();
+    QCOMPARE(pane->property("maximumHeight").toReal(), qMax<qreal>(std::floor(room / 2), room - treeWants));
+    QVERIFY(room - pane->property("maximumHeight").toReal() >= qMin(treeWants, room / 2) - 1);
   }
 
   // Up and Down walk the collections and into the folder tree and back;
@@ -9841,22 +9942,20 @@ private slots:
     QTRY_VERIFY(tree->property("rows").toInt() > 0);
 
     // The accessibility tree: a named list, headings that say whether they
-    // are open, and rows read like the row.
+    // are open, and rows read like the row. The list hands the keyboard to
+    // its current row's delegate, so the delegate itself carries all that
+    // rather than being a nameless filler around it.
     QAccessibleInterface* named = QAccessible::queryAccessibleInterface(list);
     QCOMPARE(named->role(), QAccessible::List);
     QCOMPARE(named->text(QAccessible::Name), QStringLiteral("Collections"));
     const auto accessibleEntry = [&](const QString& kind, const QString& name) -> QAccessibleInterface* {
-      QQuickItem* entry = collectionEntry(collectionIndex(kind, name));
-      return entry ? QAccessible::queryAccessibleInterface(entry) : nullptr;
+      QQuickItem* row = collectionDelegate(collectionIndex(kind, name));
+      return row ? QAccessible::queryAccessibleInterface(row) : nullptr;
     };
     QQuickItem* albumsRow = nullptr;
     QTRY_VERIFY((albumsRow = collectionDelegate(collectionIndex("header", "albums"))) != nullptr);
-    QQuickItem* albumsHeader = find(albumsRow, [](QQuickItem* candidate) {
-      QAccessibleInterface* face = candidate->isVisible() ? QAccessible::queryAccessibleInterface(candidate) : nullptr;
-      return face && face->role() == QAccessible::Heading;
-    });
-    QVERIFY(albumsHeader);
-    QAccessibleInterface* heading = QAccessible::queryAccessibleInterface(albumsHeader);
+    QAccessibleInterface* heading = QAccessible::queryAccessibleInterface(albumsRow);
+    QCOMPARE(heading->role(), QAccessible::Heading);
     QVERIFY(heading->text(QAccessible::Name).startsWith(QStringLiteral("Albums, ")));
     QVERIFY(heading->state().expandable);
     QVERIFY(heading->state().expanded);
@@ -9908,12 +10007,13 @@ private slots:
     const int yearIndex = collectionIndex("header", "dates") + 1;
     walkTo(yearIndex);
     const int rowsBefore = int(collectionRows().size());
-    QTRY_VERIFY(collectionEntry(yearIndex) != nullptr);
-    QVERIFY(QAccessible::queryAccessibleInterface(collectionEntry(yearIndex))->state().expandable);
-    QVERIFY(!QAccessible::queryAccessibleInterface(collectionEntry(yearIndex))->state().expanded);
+    QTRY_VERIFY(collectionDelegate(yearIndex) != nullptr);
+    QVERIFY(QAccessible::queryAccessibleInterface(collectionDelegate(yearIndex))->state().expandable);
+    QVERIFY(!QAccessible::queryAccessibleInterface(collectionDelegate(yearIndex))->state().expanded);
+    QVERIFY(QAccessible::queryAccessibleInterface(collectionDelegate(yearIndex))->state().focused);
     QTest::keyClick(m_window, Qt::Key_Right);
     QTRY_VERIFY(collectionRows().size() > rowsBefore);
-    QTRY_VERIFY(QAccessible::queryAccessibleInterface(collectionEntry(yearIndex))->state().expanded);
+    QTRY_VERIFY(QAccessible::queryAccessibleInterface(collectionDelegate(yearIndex))->state().expanded);
     QTest::keyClick(m_window, Qt::Key_Right);
     QTRY_COMPARE(list->property("currentIndex").toInt(), yearIndex + 1);
     const QVariantMap month = collectionRows().at(yearIndex + 1).toMap();
@@ -9946,6 +10046,9 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_Menu);
     QTRY_VERIFY(menu->property("visible").toBool());
     QCOMPARE(menu->property("name").toString(), album);
+    // Opaque, and drawn in the window rather than as a popup window of
+    // its own, which the desktop showed see-through.
+    QVERIFY(opaquePopup(menu, QStringLiteral("sidebarCollectionMenuBackground")));
     QTest::keyClick(m_window, Qt::Key_Down);
     QTest::keyClick(m_window, Qt::Key_Down);
     QTest::keyClick(m_window, Qt::Key_Return);
@@ -10028,6 +10131,8 @@ private slots:
       const QPointF top = row->mapToItem(list, QPointF(0, 0));
       return top.y() >= -1 && top.y() + row->height() <= list->height() + 1;
     };
+    // From the top of the list, wherever an earlier test left it.
+    QMetaObject::invokeMethod(list, "positionViewAtBeginning");
     QQuickItem* firstRow = shownAt(0);
     QVERIFY(inView(firstRow));
 
@@ -10137,6 +10242,437 @@ private slots:
     QTRY_VERIFY(all->hasActiveFocus());
   }
 
+  // All media is lit only while nothing but the search narrows the library,
+  // and choosing it clears every facet as Browse's Whole library does,
+  // keeping the search.
+  void sidebarAllMediaClearsFacetsAndKeepsSearch() {
+    const QStringList before = m_settings->sidebarSections();
+    const auto cleanup = qScopeGuard([&] {
+      m_library->clearFacets(true);
+      m_settings->setSidebarSections(before);
+      m_settings->setShowFolderSidebar(false);
+      item("library")->forceActiveFocus();
+    });
+    m_settings->setSidebarSections({"dates", "folders"});
+    m_settings->setShowFolderSidebar(true);
+    QQuickItem* all = item("sidebarAllMedia");
+    QTRY_VERIFY(all->isVisible());
+    QTRY_VERIFY(all->property("active").toBool());
+    const int total = m_library->count();
+    const QString from = m_library->dateBuckets().first().toMap().value("from").toString();
+    const QString to = m_library->dateBuckets().first().toMap().value("to").toString();
+    m_library->setDateRange(from, to, 0);
+    QTRY_VERIFY(!all->property("active").toBool());
+    QVERIFY(QAccessible::queryAccessibleInterface(all)->state().selectable);
+    QVERIFY(!QAccessible::queryAccessibleInterface(all)->state().selected);
+    clickSettled(all);
+    QTRY_VERIFY(m_library->dateFrom().isEmpty());
+    QTRY_COMPARE(m_library->count(), total);
+    QTRY_VERIFY(all->property("active").toBool());
+    // Tag and album the same way; the search stays.
+    m_library->setTagFilter(QStringLiteral("Nothing"), {pathAt(0)});
+    m_library->setAlbumFilter(QStringLiteral("Nowhere"), {pathAt(0)});
+    m_library->setSearchText(QStringLiteral("png"));
+    QTRY_VERIFY(!all->property("active").toBool());
+    clickSettled(all);
+    QTRY_VERIFY(m_library->tagFilter().isEmpty());
+    QVERIFY(m_library->albumFilter().isEmpty());
+    QCOMPARE(m_library->searchText(), QStringLiteral("png"));
+    QTRY_VERIFY(all->property("active").toBool());
+    QVERIFY(QAccessible::queryAccessibleInterface(all)->state().selected);
+  }
+
+  // The collections and the folder tree share the pane: a short tree gives
+  // its room up, both end on a row's edge, the scroll bar has a gutter of
+  // its own, and every section header stays one click or key away however
+  // long the Tags section is.
+  void sidebarCollectionsShareTheRoomAndKeepSectionsInReach() {
+    const QStringList before = m_settings->sidebarSections();
+    for (int at = 1; at <= 80; ++at) QVERIFY(m_settings->createTag(QStringLiteral("Reach/T%1").arg(at)));
+    const auto cleanup = qScopeGuard([&] {
+      m_settings->deleteTag(QStringLiteral("Reach"));
+      m_settings->clearUndoHistory();
+      m_settings->setSidebarSections(before);
+      m_settings->setShowFolderSidebar(false);
+      item("library")->forceActiveFocus();
+    });
+    m_settings->setSidebarSections({"tags", "dates", "folders"});
+    m_settings->setShowFolderSidebar(true);
+    QQuickItem* sidebar = item("folderSidebar");
+    QQuickItem* pane = item("sidebarCollectionsPane");
+    QQuickItem* list = item("sidebarCollections");
+    QQuickItem* tree = item("folderSidebarTree");
+    QTRY_VERIFY(collectionIndex("tag", "Reach/T80") > 0);
+    QTRY_VERIFY(tree->property("rows").toInt() > 0);
+    QVERIFY(QQuickTest::qWaitForPolish(m_window));
+    // Numbers sort as numbers.
+    QVERIFY(collectionIndex("tag", "Reach/T9") < collectionIndex("tag", "Reach/T10"));
+
+    // Room: the tree's rows all show, and the collections take the rest.
+    const qreal room = sidebar->property("collectionsRoom").toReal();
+    const int treeRows = tree->property("rows").toInt();
+    QVERIFY(treeRows * 34 + 16 < room / 2);
+    QTRY_VERIFY(pane->height() > room / 2);
+    QVERIFY(tree->height() >= treeRows * 34);
+    // The list ends on a row's edge.
+    const QVariantList offsets = pane->property("offsets").value<QJSValue>().toVariant().toList();
+    bool onEdge = false;
+    for (const QVariant& offset : offsets) onEdge = onEdge || qAbs(offset.toReal() - pane->height()) < 0.5;
+    QVERIFY(onEdge);
+
+    // The scroll bar sits beside the rows, not over them.
+    QTRY_VERIFY(pane->property("overflowing").toBool());
+    QQuickItem* bar = find(pane, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("sidebarCollectionsScrollBar");
+    });
+    QVERIFY(bar && bar->isVisible());
+    QQuickItem* first = collectionDelegate(0);
+    QVERIFY(first);
+    QVERIFY(first->mapToScene(QPointF(first->width(), 0)).x() <= bar->mapToScene(QPointF(0, 0)).x() + 0.5);
+
+    // At the top, Dates sticks to the bottom; a click there goes to it.
+    QMetaObject::invokeMethod(list, "positionViewAtBeginning");
+    QQuickItem* top = find(pane, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("pinnedTopHeader");
+    });
+    QVERIFY(top);
+    const int tagsHeader = collectionIndex("header", "tags");
+    const int datesHeader = collectionIndex("header", "dates");
+    const auto bottomPin = [&]() -> QQuickItem* {
+      return find(pane, [](QQuickItem* candidate) {
+        return candidate->objectName() == QStringLiteral("pinnedBottomHeader") && candidate->isVisible();
+      });
+    };
+    QTRY_VERIFY(bottomPin() != nullptr);
+    QCOMPARE(bottomPin()->property("rowIndex").toInt(), datesHeader);
+    QVERIFY(!top->isVisible());
+    click(bottomPin());
+    QTRY_VERIFY(list->hasActiveFocus());
+    QTRY_COMPARE(list->property("currentIndex").toInt(), datesHeader);
+    const auto inView = [&](int index) {
+      QQuickItem* row = nullptr;
+      QMetaObject::invokeMethod(list, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, row), Q_ARG(int, index));
+      if (!row || !row->isVisible()) return false;
+      const qreal y = row->mapToItem(list, QPointF(0, 0)).y();
+      return y >= -1 && y + row->height() <= list->height() + 1;
+    };
+    QTRY_VERIFY(inView(datesHeader));
+    // Scrolled into the tags, Tags sticks to the top.
+    QTRY_VERIFY(top->isVisible());
+    QCOMPARE(top->property("rowIndex").toInt(), tagsHeader);
+    // Ctrl+Up goes back to the Tags header, Ctrl+Down on to Dates.
+    QTest::keyClick(m_window, Qt::Key_Up);
+    QTRY_COMPARE(list->property("currentIndex").toInt(), datesHeader - 1);
+    QTest::keyClick(m_window, Qt::Key_Up, Qt::ControlModifier);
+    QTRY_COMPARE(list->property("currentIndex").toInt(), tagsHeader);
+    QTRY_VERIFY(inView(tagsHeader));
+    QTest::keyClick(m_window, Qt::Key_Down, Qt::ControlModifier);
+    QTRY_COMPARE(list->property("currentIndex").toInt(), datesHeader);
+    // Ctrl+Left from deep in the tags collapses them.
+    const int deep = collectionIndex("tag", "Reach/T40");
+    QMetaObject::invokeMethod(pane, "moveTo", Q_ARG(QVariant, deep));
+    QTRY_COMPARE(list->property("currentIndex").toInt(), deep);
+    QTRY_VERIFY(inView(deep));
+    // The current row is clear of the stuck headers.
+    QQuickItem* deepRow = collectionDelegate(deep);
+    const qreal deepY = deepRow->mapToItem(list, QPointF(0, 0)).y();
+    QVERIFY(!top->isVisible() || deepY >= top->y() + top->height() - 0.5);
+    if (QQuickItem* pin = bottomPin()) QVERIFY(deepY + deepRow->height() <= pin->mapToItem(list, QPointF(0, 0)).y() + 0.5);
+    QTest::keyClick(m_window, Qt::Key_Left, Qt::ControlModifier);
+    QTRY_VERIFY(!m_settings->sidebarSections().contains(QStringLiteral("tags")));
+    QTRY_COMPARE(list->property("currentIndex").toInt(), collectionIndex("header", "tags"));
+    // A click on the top stuck header collapses the section it heads.
+    m_settings->setSidebarSections({"tags", "dates", "folders"});
+    QTRY_VERIFY(collectionIndex("tag", "Reach/T80") > 0);
+    QMetaObject::invokeMethod(pane, "moveTo", Q_ARG(QVariant, collectionIndex("tag", "Reach/T60")));
+    QTRY_VERIFY(top->isVisible());
+    QTRY_COMPARE(top->property("rowIndex").toInt(), collectionIndex("header", "tags"));
+    QVERIFY(QQuickTest::qWaitForPolish(m_window));
+    click(top);
+    QTRY_VERIFY(!m_settings->sidebarSections().contains(QStringLiteral("tags")));
+    QTRY_COMPARE(list->property("currentIndex").toInt(), collectionIndex("header", "tags"));
+
+    // A click leaves no keyboard ring; the keyboard brings it back.
+    m_window->setProperty("keyboardNavigation", false);
+    QQuickItem* datesRow = collectionDelegate(collectionIndex("header", "dates"));
+    QVERIFY(datesRow);
+    clickSettled(datesRow);
+    QTRY_VERIFY(!m_settings->sidebarSections().contains(QStringLiteral("dates")));
+    QTRY_VERIFY(list->hasActiveFocus());
+    QTRY_COMPARE(list->property("currentIndex").toInt(), collectionIndex("header", "dates"));
+    QVERIFY(!collectionDelegate(collectionIndex("header", "dates"))->property("current").toBool());
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTRY_VERIFY(m_settings->sidebarSections().contains(QStringLiteral("dates")));
+    QTRY_VERIFY(collectionDelegate(collectionIndex("header", "dates"))->property("current").toBool());
+  }
+
+  // In a short pane the stuck headers give way before they would cover
+  // the last row that shows: some row always has its height, and any row
+  // can be scrolled into view clear of them.
+  void sidebarStuckHeadersLeaveRoomInAShortPane() {
+    const QStringList before = m_settings->sidebarSections();
+    const QString album = QStringLiteral("Short pane");
+    QVERIFY(m_settings->createAlbum(album));
+    QVERIFY(m_settings->addToAlbum(album, {pathAt(0)}));
+    for (int at = 1; at <= 30; ++at) QVERIFY(m_settings->createTag(QStringLiteral("Shortz/T%1").arg(at)));
+    const QStringList pins = m_settings->pinnedFolders();
+    const QString folder = QFileInfo(pathAt(0)).absolutePath();
+    const bool pinned = m_settings->pinFolderPath(folder);
+    const QSize size = m_window->size();
+    const auto cleanup = qScopeGuard([&] {
+      if (pinned) m_settings->unpinFolder(folder);
+      m_settings->deleteAlbum(album);
+      m_settings->deleteTag(QStringLiteral("Shortz"));
+      m_settings->clearUndoHistory();
+      m_settings->setSidebarSections(before);
+      m_settings->setShowFolderSidebar(false);
+      m_window->resize(size);
+      waitForLayout(size);
+      item("library")->forceActiveFocus();
+    });
+    m_settings->setSidebarSections({"albums", "tags", "dates", "folders"});
+    m_settings->setShowFolderSidebar(true);
+    QQuickItem* pane = item("sidebarCollectionsPane");
+    QQuickItem* list = item("sidebarCollections");
+    QQuickItem* clip = item("collectionRowsClip");
+    QTRY_VERIFY(collectionIndex("tag", "Shortz/T30") > 0);
+    const auto check = [&](int height) {
+      m_window->resize(780, height);
+      waitForLayout(QSize(780, height));
+      QVERIFY(QQuickTest::qWaitForPolish(m_window));
+      const qreal listHeight = list->height();
+      const qreal extent = qMax<qreal>(0, pane->property("rowsHeight").toReal() - listHeight);
+      for (qreal top = 0; top <= extent + 1; top += 13) {
+        QVariant pins;
+        QMetaObject::invokeMethod(pane, "pinnedAt", Q_RETURN_ARG(QVariant, pins), Q_ARG(QVariant, top));
+        const QVariantMap map = pins.value<QJSValue>().toVariant().toMap();
+        const qreal covered = map.value("topCover").toReal() + map.value("bottomCover").toReal();
+        if (listHeight >= 42) {
+          QVERIFY2(listHeight - covered >= 42 - 0.5,
+                   qPrintable(QStringLiteral("height %1 top %2 covered %3 of %4")
+                                  .arg(height).arg(top).arg(covered).arg(listHeight)));
+        } else {
+          QCOMPARE(covered, 0.0);
+        }
+      }
+      // Every section header, and the last row, comes into view clear of
+      // the stuck headers.
+      list->forceActiveFocus();
+      const QVariantList rows = collectionRows();
+      for (const int index : {collectionIndex("header", "albums"), collectionIndex("album", album),
+                              collectionIndex("header", "tags"), collectionIndex("tag", "Shortz/T15"),
+                              collectionIndex("header", "dates"), int(rows.size()) - 1}) {
+        QMetaObject::invokeMethod(pane, "moveTo", Q_ARG(QVariant, index));
+        QVERIFY(QQuickTest::qWaitForPolish(m_window));
+        QQuickItem* row = nullptr;
+        QTRY_VERIFY((row = [&] {
+          QQuickItem* found = nullptr;
+          QMetaObject::invokeMethod(list, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, found), Q_ARG(int, index));
+          return found;
+        }()) != nullptr);
+        if (clip->height() < row->height()) continue;
+        const qreal y = row->mapToItem(clip, QPointF(0, 0)).y();
+        QVERIFY2(y >= -0.5 && y + row->height() <= clip->height() + 0.5,
+                 qPrintable(QStringLiteral("height %1 row %2 at %3 in %4, pane %5 clip at %6 contentY %7 pins %8")
+                                .arg(height).arg(index).arg(y).arg(clip->height()).arg(list->height())
+                                .arg(clip->y()).arg(list->property("contentY").toReal())
+                                .arg(QString::fromUtf8(QJsonDocument::fromVariant(
+                                    pane->property("pinned").value<QJSValue>().toVariant()).toJson(QJsonDocument::Compact)))));
+      }
+    };
+    check(420);
+    check(520);
+    check(820);
+  }
+
+  // A rename's row that is not there to focus does not leave a jump
+  // pending for a later rebuild; one under a collapsed section is opened.
+  void sidebarFocusRowDropsARowThatIsNotThere() {
+    const QStringList before = m_settings->sidebarSections();
+    QVERIFY(m_settings->createTag(QStringLiteral("Focusz/Inner")));
+    const auto cleanup = qScopeGuard([&] {
+      // Years are opened per session; close the one opened here.
+      item("sidebarCollectionsPane")->setProperty("openYears", QVariantMap());
+      m_settings->deleteTag(QStringLiteral("Focusz"));
+      m_settings->clearUndoHistory();
+      m_settings->setSidebarSections(before);
+      m_settings->setShowFolderSidebar(false);
+      item("library")->forceActiveFocus();
+    });
+    m_settings->setSidebarSections({"tags", "dates", "folders"});
+    m_settings->setShowFolderSidebar(true);
+    QQuickItem* pane = item("sidebarCollectionsPane");
+    QQuickItem* list = item("sidebarCollections");
+    QTRY_VERIFY(collectionIndex("tag", "Focusz/Inner") > 0);
+    QTest::qWait(250);
+    QMetaObject::invokeMethod(pane, "moveTo", Q_ARG(QVariant, 0));
+    QTRY_COMPARE(list->property("currentIndex").toInt(), 0);
+    QMetaObject::invokeMethod(pane, "focusRow", Q_ARG(QVariant, QStringLiteral("tag")),
+                              Q_ARG(QVariant, QStringLiteral("Nowhere/At all")));
+    QVERIFY(!pane->property("revealPending").toBool());
+    QCOMPARE(list->property("currentIndex").toInt(), 0);
+    // An unrelated rebuild leaves the current row alone.
+    const int year = collectionIndex("header", "dates") + 1;
+    QMetaObject::invokeMethod(pane, "setYearOpen", Q_ARG(QVariant, collectionRows().at(year).toMap().value("name")),
+                              Q_ARG(QVariant, true));
+    QTRY_VERIFY(collectionRows().size() > year + 1);
+    QCOMPARE(list->property("currentIndex").toInt(), 0);
+    QCOMPARE(pane->property("currentKey").toString(), QStringLiteral("header:tags"));
+    // Under a collapsed Tags section the row is opened to.
+    m_settings->setSidebarSections({"dates", "folders"});
+    QTRY_COMPARE(collectionIndex("tag", "Focusz/Inner"), -1);
+    QMetaObject::invokeMethod(pane, "focusRow", Q_ARG(QVariant, QStringLiteral("tag")),
+                              Q_ARG(QVariant, QStringLiteral("Focusz/Inner")));
+    QTRY_VERIFY(m_settings->sidebarSections().contains(QStringLiteral("tags")));
+    QTRY_COMPARE(list->property("currentIndex").toInt(), collectionIndex("tag", "Focusz/Inner"));
+    QVERIFY(list->hasActiveFocus());
+  }
+
+  // Renaming an album or tag from its row's menu gives the keyboard back to
+  // the row, under its new name.
+  void sidebarRenameReturnsFocusToTheRenamedRow() {
+    const QString album = QStringLiteral("Rename from row");
+    const QStringList before = m_settings->sidebarSections();
+    QVERIFY(m_settings->createAlbum(album));
+    QVERIFY(m_settings->addToAlbum(album, {pathAt(0)}));
+    QVERIFY(m_settings->createTag(QStringLiteral("Renamez")));
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("sidebarCollectionMenu"));
+    const auto cleanup = qScopeGuard([&] {
+      QMetaObject::invokeMethod(menu, "close");
+      for (const QString& name : {album, QStringLiteral("Renamed row")}) m_settings->deleteAlbum(name);
+      for (const QString& name : {QStringLiteral("Renamez"), QStringLiteral("Renamedz")}) m_settings->deleteTag(name);
+      m_settings->clearUndoHistory();
+      m_settings->setSidebarSections(before);
+      m_settings->setShowFolderSidebar(false);
+      item("library")->forceActiveFocus();
+    });
+    m_settings->setSidebarSections({"albums", "tags", "folders"});
+    m_settings->setShowFolderSidebar(true);
+    QQuickItem* list = item("sidebarCollections");
+    QQuickItem* sheet = item("albumNameSheet");
+    QTRY_VERIFY(collectionIndex("album", album) > 0);
+    QTRY_VERIFY(collectionIndex("tag", "Renamez") > 0);
+    const auto renameFromMenu = [&](const QString& kind, const QString& from, const QString& to) {
+      list->forceActiveFocus();
+      QMetaObject::invokeMethod(item("sidebarCollectionsPane"), "moveTo", Q_ARG(QVariant, collectionIndex(kind, from)));
+      QTRY_COMPARE(list->property("currentIndex").toInt(), collectionIndex(kind, from));
+      QTest::keyClick(m_window, Qt::Key_Menu);
+      QTRY_VERIFY(menu->property("visible").toBool());
+      QTest::keyClick(m_window, Qt::Key_Down);
+      QTest::keyClick(m_window, Qt::Key_Return);
+      QTRY_VERIFY(sheet->isVisible());
+      QTest::keyClick(m_window, Qt::Key_A, Qt::ControlModifier);
+      typeText(to);
+      QTest::keyClick(m_window, Qt::Key_Return);
+      QTRY_VERIFY(!sheet->isVisible());
+      QTRY_VERIFY2(collectionIndex(kind, to) > 0, qPrintable(focusName()));
+      QTRY_VERIFY2(list->hasActiveFocus(), qPrintable(focusName()));
+      QTRY_COMPARE(list->property("currentIndex").toInt(), collectionIndex(kind, to));
+      QTest::qWait(250);
+      QVERIFY(list->hasActiveFocus());
+      QCOMPARE(list->property("currentIndex").toInt(), collectionIndex(kind, to));
+    };
+    renameFromMenu(QStringLiteral("album"), album, QStringLiteral("Renamed row"));
+    renameFromMenu(QStringLiteral("tag"), QStringLiteral("Renamez"), QStringLiteral("Renamedz"));
+    // Escape keeps the row too.
+    list->forceActiveFocus();
+    QMetaObject::invokeMethod(item("sidebarCollectionsPane"), "moveTo",
+                              Q_ARG(QVariant, collectionIndex("album", "Renamed row")));
+    QTest::keyClick(m_window, Qt::Key_Menu);
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QTest::keyClick(m_window, Qt::Key_Down);
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(sheet->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!sheet->isVisible());
+    QTRY_VERIFY(list->hasActiveFocus());
+    QCOMPARE(list->property("currentIndex").toInt(), collectionIndex("album", "Renamed row"));
+  }
+
+  // The sidebar stays put when a filter adds the chips row: it sits beside
+  // the chips, not under them, so the row just clicked stays under the
+  // pointer.
+  void sidebarStaysPutWhenTheChipsRowAppears() {
+    const QStringList before = m_settings->sidebarSections();
+    const auto cleanup = qScopeGuard([&] {
+      m_library->clearDateRange();
+      m_settings->setSidebarSections(before);
+      m_settings->setShowFolderSidebar(false);
+      item("library")->forceActiveFocus();
+    });
+    m_settings->setSidebarSections({"dates", "folders"});
+    m_settings->setShowFolderSidebar(true);
+    QQuickItem* sidebar = item("folderSidebar");
+    QQuickItem* chips = item("activeFilterChips");
+    QTRY_VERIFY(sidebar->isVisible());
+    QTRY_VERIFY(collectionIndex("year", collectionRows().value(collectionIndex("header", "dates") + 1)
+                                            .toMap().value("name").toString()) > 0);
+    QVERIFY(QQuickTest::qWaitForPolish(m_window));
+    const qreal top = sidebar->mapToScene(QPointF(0, 0)).y();
+    const int year = collectionIndex("header", "dates") + 1;
+    QQuickItem* entry = collectionEntry(year);
+    QVERIFY(entry);
+    const QPointF at = entry->mapToScene(QPointF(entry->width() / 2, entry->height() / 2));
+    clickSettled(entry);
+    QTRY_VERIFY(!m_library->dateFrom().isEmpty());
+    QTRY_VERIFY(chips->isVisible());
+    QVERIFY(QQuickTest::qWaitForPolish(m_window));
+    QCOMPARE(sidebar->mapToScene(QPointF(0, 0)).y(), top);
+    QQuickItem* still = collectionEntry(year);
+    QVERIFY(still->contains(still->mapFromScene(at)));
+    // The chips start right of the sidebar, above the grid.
+    QVERIFY(chips->mapToScene(QPointF(0, 0)).x() >= sidebar->mapToScene(QPointF(sidebar->width(), 0)).x());
+  }
+
+  // After the search is cleared the scroll thumb matches the view at once,
+  // not after the next scroll.
+  void gridScrollThumbFollowsAClearedSearch() {
+    QQuickItem* reviewSets = item("reviewSets");
+    QTRY_VERIFY(reviewSets->isVisible());
+    QQuickItem* reviewList = item("reviewSetsList");
+    const auto cleanup = qScopeGuard([&] { m_library->setSearchText({}); });
+    // Scrolled down in the whole library, then a search, then cleared.
+    QMetaObject::invokeMethod(reviewSets, "scrollToExact", Q_ARG(QVariant, 400));
+    QTRY_VERIFY(reviewSets->property("exactTop").toReal() > 0);
+    const QString name = QFileInfo(pathAt(0)).completeBaseName();
+    m_library->setSearchText(name);
+    m_library->commitPendingSearch();
+    QTRY_VERIFY(m_library->count() > 0);
+    QVERIFY(QQuickTest::qWaitForPolish(m_window));
+    m_library->setSearchText({});
+    m_library->commitPendingSearch();
+    QTest::qWait(200);
+    QVERIFY(QQuickTest::qWaitForPolish(m_window));
+    const qreal shown = reviewSets->property("exactTop").toReal();
+    QMetaObject::invokeMethod(reviewSets, "updateExactTop");
+    QCOMPARE(reviewSets->property("exactTop").toReal(), shown);
+    QQuickItem* bar = item("sectionsScrollBar");
+    const qreal height = reviewSets->property("exactHeight").toReal();
+    QVERIFY(qAbs(bar->property("position").toReal() - shown / height) < 0.001);
+    Q_UNUSED(reviewList);
+  }
+
+  // The keyboard's file-name tip stays inside its tile: it covers neither
+  // the section header above nor the tiles beside it.
+  void filenameTipStaysInsideItsTile() {
+    QQuickItem* grid = item("library");
+    grid->forceActiveFocus();
+    QTest::keyClick(m_window, Qt::Key_Right);
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QTRY_VERIFY(m_window->property("keyboardNavigation").toBool());
+    const QString path = pathAt(grid->property("currentIndex").toInt());
+    QQuickItem* card = nullptr;
+    QTRY_VERIFY((card = cardFor(path)) != nullptr);
+    QObject* tip = card->findChild<QObject*>(QStringLiteral("captureFilenameTip"));
+    QVERIFY(tip);
+    QTRY_VERIFY(tip->property("visible").toBool());
+    const qreal x = tip->property("x").toReal(), y = tip->property("y").toReal();
+    const qreal w = tip->property("width").toReal(), h = tip->property("height").toReal();
+    QVERIFY(x >= 0 && y >= 0);
+    QVERIFY2(x + w <= card->width() + 0.5, qPrintable(QStringLiteral("%1 + %2 > %3").arg(x).arg(w).arg(card->width())));
+    QVERIFY(y + h <= card->height() + 0.5);
+  }
+
   // Alt+T in the library opens Organize for the current file, with the
   // filter taking the keys.
   void altTOpensOrganizeWithTheFilter() {
@@ -10168,6 +10704,37 @@ private slots:
   // years and months, Enter scrolls to one and Shift+Enter shows only it.
   // The scrollbar marks the years, and a bubble names the month at the
   // thumb while it is dragged.
+  // In a narrow window the header has no room for Jump to date, so the
+  // pill sits in the controls row beside the sort instead.
+  void jumpToDateStaysReachableInANarrowWindow() {
+    QObject* jump = m_window->findChild<QObject*>(QStringLiteral("dateJumpMenu"));
+    QVERIFY(jump);
+    const auto cleanup = qScopeGuard([&] {
+      QMetaObject::invokeMethod(jump, "close");
+      m_window->resize(1280, 820);
+      waitForLayout(QSize(1280, 820));
+    });
+    m_library->setSortMode(CaptureFilterModel::NewestFirst);
+    QQuickItem* headerPill = item("datePill");
+    QQuickItem* rowPill = item("rowDatePill");
+    QTRY_VERIFY(headerPill->property("interactive").toBool());
+    QTRY_VERIFY(headerPill->isVisible());
+    QVERIFY(!rowPill->isVisible());
+    m_window->resize(560, 820);
+    waitForLayout(QSize(560, 820));
+    QTRY_VERIFY(!headerPill->isVisible());
+    QTRY_VERIFY(rowPill->isVisible());
+    // Clear of the filters and the sort.
+    QQuickItem* sort = pill(item("filters"), QStringLiteral("Newest  ▾"));
+    QQuickItem* browse = item("libraryBrowseButton");
+    const QRectF at = rowPill->mapRectToScene(rowPill->boundingRect());
+    QVERIFY(!sort || at.right() <= sort->mapToScene(QPointF(0, 0)).x());
+    QVERIFY(at.left() >= browse->mapToScene(QPointF(browse->width(), 0)).x());
+    QCOMPARE(QAccessible::queryAccessibleInterface(rowPill)->text(QAccessible::Name), QStringLiteral("Jump to date"));
+    click(rowPill);
+    QTRY_VERIFY(jump->property("visible").toBool());
+  }
+
   void datePillJumpsAndFiltersAndTheScrubberNamesTheMonth() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -10267,6 +10834,7 @@ private slots:
     pill->forceActiveFocus();
     QTest::keyClick(m_window, Qt::Key_Return);
     QTRY_VERIFY(jump->property("visible").toBool());
+    QVERIFY(opaquePopup(jump, QStringLiteral("dateJumpBackground")));
     QTRY_VERIFY(list->hasActiveFocus());
     QTest::keyClick(m_window, Qt::Key_Escape);
     QTRY_VERIFY(!jump->property("visible").toBool());
@@ -10332,6 +10900,28 @@ private slots:
     QMetaObject::invokeMethod(grid, "currentMonthKey", Q_RETURN_ARG(QVariant, key));
     const QDate shown = QDate::fromString(key.toString() + QStringLiteral("-01"), Qt::ISODate);
     QCOMPARE(label->property("text").toString(), locale.toString(shown, QStringLiteral("MMMM yyyy")));
+    // The year marks stay in the bar's own gutter, with no labels over the
+    // tiles or headers; the bubble, drawn over the tiles, names the year.
+    QVERIFY(find(reviewSets, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("scrubberYear");
+    }) == nullptr);
+    const QRectF barArea = bar->mapRectToScene(bar->boundingRect());
+    int marks = 0;
+    std::function<void(QQuickItem*)> walk = [&](QQuickItem* node) {
+      for (QQuickItem* child : node->childItems()) {
+        if (child->objectName() == QStringLiteral("scrubberYearMark") && child->isVisible()) {
+          ++marks;
+          const QRectF mark = child->mapRectToScene(child->boundingRect());
+          QVERIFY(mark.left() >= barArea.left() - 0.5 && mark.right() <= barArea.right() + 0.5);
+        }
+        walk(child);
+      }
+    };
+    walk(reviewSets);
+    QVERIFY(marks >= 1);
+    QVERIFY(bubble->z() > item("reviewSetsList")->z());
+    QCOMPARE(bubble->property("color").value<QColor>().alphaF(), 1.0);
+    QCOMPARE(bubble->opacity(), 1.0);
     QTest::mouseRelease(m_window, Qt::LeftButton, Qt::NoModifier, bottom.toPoint());
     QTest::mouseMove(m_window, QPoint(5, 5));
     QTRY_VERIFY(!bubble->property("shown").toBool());
@@ -11541,8 +12131,14 @@ private:
   // been laid out again, rather than sleeping through a guessed polish pass.
   // It does not cover timers or animations that move items afterwards, so a
   // geometry check that follows it uses QTRY.
+  // The window reports its new size before its content is resized to it,
+  // so wait for the content too, or the checks that follow see the layout
+  // of the size before.
   void waitForLayout(const QSize& size = QSize()) {
-    if (size.isValid()) QTRY_COMPARE(m_window->size(), size);
+    if (size.isValid()) {
+      QTRY_COMPARE(m_window->size(), size);
+      QTRY_COMPARE(m_window->contentItem()->size(), QSizeF(size));
+    }
     QVERIFY(QQuickTest::qWaitForPolish(m_window));
   }
 
@@ -11615,6 +12211,24 @@ private:
       qFatal("no item named %s", qPrintable(objectName));
     }
     return found;
+  }
+
+  QString focusName() const {
+    QQuickItem* focused = m_window->activeFocusItem();
+    QString chain;
+    for (QQuickItem* at = focused; at; at = at->parentItem())
+      chain += QString::fromLatin1(at->metaObject()->className()) + QLatin1Char(':') + at->objectName() + QLatin1Char(' ');
+    return chain;
+  }
+
+  // A menu or popup in the window itself, with a fully opaque background
+  // at full opacity, whatever alpha the theme's colors carry.
+  bool opaquePopup(QObject* popup, const QString& backgroundName) const {
+    if (!popup || popup->property("popupType").toInt() != 0) return false; // Popup.Item
+    if (popup->property("opacity").toReal() < 1.0) return false;
+    auto* background = qvariant_cast<QQuickItem*>(popup->property("background"));
+    if (!background || background->objectName() != backgroundName) return false;
+    return background->property("color").value<QColor>().alphaF() == 1.0 && background->opacity() == 1.0;
   }
 
   // The collections list in the sidebar: each row's data, by row.
