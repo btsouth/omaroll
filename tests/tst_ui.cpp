@@ -12131,8 +12131,14 @@ private:
   // been laid out again, rather than sleeping through a guessed polish pass.
   // It does not cover timers or animations that move items afterwards, so a
   // geometry check that follows it uses QTRY.
+  // The window reports its new size before its content is resized to it,
+  // so wait for the content too, or the checks that follow see the layout
+  // of the size before.
   void waitForLayout(const QSize& size = QSize()) {
-    if (size.isValid()) QTRY_COMPARE(m_window->size(), size);
+    if (size.isValid()) {
+      QTRY_COMPARE(m_window->size(), size);
+      QTRY_COMPARE(m_window->contentItem()->size(), QSizeF(size));
+    }
     QVERIFY(QQuickTest::qWaitForPolish(m_window));
   }
 
