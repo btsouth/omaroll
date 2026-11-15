@@ -447,9 +447,10 @@ void CaptureFilterModel::rebuildPairing() {
   if (!m_pairRawJpeg || m_duplicatesOnly || m_similarOnly || !sourceModel()) return;
   // A pair folds into one tile, the RAW's unless only the JPEG was asked
   // for, when that file matches and its partner matches everything else.
-  // The tile is dated by the file it shows, so a date filter tests the
-  // partner by that date too; a pair that does not fold is two tiles, each
-  // tested by its own date. Two source passes per filter or scan batch,
+  // Dates do not decide the fold: the tile is dated by the file it shows,
+  // which then meets the date filter or not, so a pair is never split by
+  // a date range into a JPEG on its own. A pair that does not fold is two
+  // tiles, each tested by its own date. Two source passes per filter or scan batch,
   // then constant-time row decisions.
   const QHash<QString, int> partners = pairPartners();
   for (auto it = partners.cbegin(); it != partners.cend(); ++it) {
@@ -466,7 +467,7 @@ void CaptureFilterModel::rebuildPairing() {
     const int otherRow = explicitJpeg ? rawRow : jpegRow;
     const CaptureRecord& shown = sourceRecord(shownRow);
     const CaptureRecord& other = sourceRecord(otherRow);
-    if (!matchesFilters(shownRow, shown) || !matchesFilters(otherRow, other, RelaxNothing, &shown)) {
+    if (!matchesFilters(shownRow, shown, RelaxDates) || !matchesFilters(otherRow, other, RelaxDates)) {
       continue;
     }
     m_groupedOutPaths.insert(other.path);
@@ -1826,7 +1827,7 @@ bool CaptureFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex& sour
 }
 
 bool CaptureFilterModel::matchesFilters(int sourceRow, const CaptureRecord& record,
-                                        int relax, const CaptureRecord* datedBy) const {
+                                        int relax) const {
   if (!m_showHidden && record.hidden) {
     return false;
   }
@@ -1859,18 +1860,18 @@ bool CaptureFilterModel::matchesFilters(int sourceRow, const CaptureRecord& reco
   if (refine && !m_lensFilter.isEmpty() && record.lens != m_lensFilter) {
     return false;
   }
-  // A file folded into its partner's tile is dated by that tile.
-  const CaptureRecord& dated = datedBy ? *datedBy : record;
-  if (m_modifiedAfterMs > 0 && dated.modified <= m_modifiedAfterMs) {
-    return false;
-  }
-  const QDate date = m_dateField == 1 ? QDateTime::fromMSecsSinceEpoch(dated.modified).date()
-                                      : dated.captured.date();
-  if (m_dateFrom.isValid() && date < m_dateFrom) {
-    return false;
-  }
-  if (m_dateTo.isValid() && date > m_dateTo) {
-    return false;
+  if ((relax & RelaxDates) == 0) {
+    if (m_modifiedAfterMs > 0 && record.modified <= m_modifiedAfterMs) {
+      return false;
+    }
+    const QDate date = m_dateField == 1 ? QDateTime::fromMSecsSinceEpoch(record.modified).date()
+                                        : record.captured.date();
+    if (m_dateFrom.isValid() && date < m_dateFrom) {
+      return false;
+    }
+    if (m_dateTo.isValid() && date > m_dateTo) {
+      return false;
+    }
   }
   if (!m_folderFilter.isEmpty()) {
     const QString directory = QFileInfo(record.path).absolutePath();

@@ -403,12 +403,11 @@ private:
   void applySearchText(const QString& text);
   void reloadOrganization();
   // What emptyReason() may leave out when asking whether anything matches.
-  enum Relax { RelaxNothing = 0, RelaxSearch = 1, RelaxRefinements = 2 };
-  // datedBy: the file whose dates stand for this one, for a file folded
-  // into its RAW/JPEG partner's tile.
+  // RelaxDates: whether a RAW/JPEG pair folds does not hang on dates, as
+  // the tile is dated by the file it shows.
+  enum Relax { RelaxNothing = 0, RelaxSearch = 1, RelaxRefinements = 2, RelaxDates = 4 };
   [[nodiscard]] bool matchesFilters(int sourceRow, const CaptureRecord& record,
-                                    int relax = RelaxNothing,
-                                    const CaptureRecord* datedBy = nullptr) const;
+                                    int relax = RelaxNothing) const;
   [[nodiscard]] bool anyMatches(int relax) const;
   [[nodiscard]] bool matchesSearch(int sourceRow, const CaptureRecord& record) const;
   [[nodiscard]] const SearchKeys& searchKeys(int sourceRow, const CaptureRecord& record) const;
